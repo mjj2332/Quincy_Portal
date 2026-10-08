@@ -45,6 +45,9 @@ const GET_TEMPLATES = [
   "/api/admin/stages",
   "/api/admin/attention",
   "/api/projects/:projectId/jobs",
+  // Whiteboard (#708)
+  "/api/projects/:projectId/whiteboard",
+  "/api/projects/:projectId/whiteboard/versions",
   // Signed downloads (#707): the asset tool's visibility check, and the redemption of an asset URL.
   "/media/asset/:assetId/:variant",
 ] as const;
@@ -90,6 +93,8 @@ const WRITE_ROUTES = [
   ["DELETE", "/api/assets/:assetId/select"],
   ["POST", "/api/projects/:projectId/link-previews"],
   ["POST", "/api/notice-board/link-previews"],
+  // Whiteboard (#708): the one edit tool. There is no restore route here, on purpose.
+  ["POST", "/api/projects/:projectId/whiteboard/server-edits"],
   // Signed downloads (#707): get_selection_download_url creates the zip ticket. It is a read-scope tool; the ticket is the only thing written.
   ["POST", "/api/projects/:projectId/download-selection"],
 ] as const;

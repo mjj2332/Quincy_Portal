@@ -194,6 +194,8 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/api/projects/:projectId/collaboration-summary", class: "scoped" },
   { method: "GET", path: "/api/projects/:projectId/whiteboard/socket", class: "scoped" },
   { method: "GET", path: "/api/projects/:projectId/whiteboard/versions", class: "scoped" },
+  { method: "GET", path: "/api/projects/:projectId/whiteboard", class: "scoped" },
+  { method: "POST", path: "/api/projects/:projectId/whiteboard/server-edits", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/whiteboard/versions/:versionId/restore", class: "scoped" },
   { method: "GET", path: "/api/projects/:projectId/comment-read-marker", class: "scoped" },
   { method: "PATCH", path: "/api/projects/:projectId/comment-read-marker", class: "scoped" },

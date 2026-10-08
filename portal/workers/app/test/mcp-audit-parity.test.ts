@@ -113,6 +113,7 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "unselect_asset_for_editing", stage: "edited_review", setup: selectedSetup, args: ({ assetId }) => ({ assetId: assetId! }) },
   { tool: "request_project_link_preview", stage: "edited_review", args: ({ projectId }) => ({ projectId, url: "https://example.com/parity-preview" }) },
   { tool: "request_notice_link_preview", args: () => ({ url: "https://example.com/parity-notice-preview" }) },
+  { tool: "edit_project_whiteboard", stage: "edited_review", args: ({ projectId }) => ({ projectId, expectedGeneration: 1, edits: [{ op: "add_text", x: 0, y: 0, text: "Parity whiteboard" }] }) },
 ];
 
 /** Write tools whose route writes no audit_log or activity row at all (so there is nothing to stamp), each with the reason. */
