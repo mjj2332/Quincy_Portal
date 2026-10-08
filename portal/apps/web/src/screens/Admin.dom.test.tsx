@@ -589,3 +589,48 @@ describe("Admin notification delivery operations", () => {
     expect([...host.querySelectorAll<HTMLButtonElement>('[data-testid="admin-notification-delivery-actions"] button')]).toHaveLength(0);
   });
 });
+
+describe("Admin AI apps (MCP) switch (#702)", () => {
+  let host: HTMLElement;
+  beforeEach(() => {
+    host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    apiGetMock.mockReset(); apiPatchMock.mockReset();
+  });
+  afterEach(async () => { if (root) await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; document.body.replaceChildren(); });
+
+  const baseGet = (path: string) => path === "/api/users" ? Promise.resolve({ users: [] }) : path === "/api/users/external-provisioning-freeze" ? Promise.resolve({ frozen: false }) : Promise.resolve({ enabled: false });
+  const mcpSwitch = () => host.querySelector<HTMLElement>('[aria-label="Enable AI apps (MCP)"]')!;
+  function deferred<T>() { let resolve!: (v: T) => void; let reject!: (e: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
+  async function mount() { await act(async () => { root!.render(<Admin currentUserId="self" />); await Promise.resolve(); }); await flush(); }
+
+  it("disables the switch while the GET is loading", async () => {
+    const get = deferred<{ enabled: boolean }>();
+    apiGetMock.mockImplementation((path) => path === "/api/users/mcp-settings" ? get.promise : baseGet(path));
+    await mount();
+    expect(mcpSwitch().hasAttribute("data-disabled")).toBe(true);
+    await act(async () => { get.resolve({ enabled: true }); await Promise.resolve(); }); await flush();
+    expect(mcpSwitch().hasAttribute("data-disabled")).toBe(false);
+    expect(mcpSwitch().getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("shows a failed GET as a visible error and keeps the switch disabled", async () => {
+    apiGetMock.mockImplementation((path) => path === "/api/users/mcp-settings" ? Promise.reject(new Error("MCP setting unavailable")) : baseGet(path));
+    await mount();
+    expect(host.querySelector('[data-testid="admin-mcp-access"] [role="alert"]')?.textContent).toContain("MCP setting unavailable");
+    expect(mcpSwitch().hasAttribute("data-disabled")).toBe(true);
+  });
+
+  it("a slow GET that resolves after a PATCH does not revert the switch", async () => {
+    let mcpGets = 0; const reread = deferred<{ enabled: boolean }>();
+    apiGetMock.mockImplementation((path) => path === "/api/users/mcp-settings" ? (++mcpGets === 1 ? Promise.resolve({ enabled: false }) : reread.promise) : baseGet(path));
+    const patch = deferred<{ enabled: boolean }>();
+    apiPatchMock.mockReturnValue(patch.promise);
+    await mount();
+    await click(mcpSwitch()); await flush();                       // PATCH in flight
+    const refresh = [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Refresh")!;
+    await click(refresh); await flush();                           // a re-read starts while the PATCH is pending
+    await act(async () => { patch.resolve({ enabled: true }); await Promise.resolve(); }); await flush();
+    await act(async () => { reread.resolve({ enabled: false }); await Promise.resolve(); }); await flush();  // stale read lands last
+    expect(mcpSwitch().getAttribute("aria-checked")).toBe("true");
+  });
+});
