@@ -363,6 +363,29 @@ describe("Video Collection links", () => {
   });
 });
 
+describe("Video link tools only act on Video Collection links", () => {
+  it("a Copy or Floorplan link id is refused by remove, update and reorder, and the link survives", async () => {
+    const projectId = await newProject();
+    const now = Date.now();
+    const video = body(await ok("editor", "add_video_link", { projectId, url: "https://example.test/video" }));
+    for (const kind of ["copy", "floorplan"] as const) {
+      const collectionId = crypto.randomUUID(); const linkId = crypto.randomUUID();
+      await DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, ?, 'empty', 0, ?, ?)").bind(collectionId, projectId, kind, now, now).run();
+      await DB.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, position, created_at, updated_at) VALUES (?, ?, ?, NULL, 'manual', 1024, ?, ?)").bind(linkId, collectionId, `https://example.test/${kind}`, now, now).run();
+      for (const [name, args] of [
+        ["remove_video_link", {}],
+        ["update_video_link", { url: "https://example.test/hijack" }],
+        ["reorder_video_link", { beforeId: null, afterId: video.id }],
+      ] as const) {
+        const outcome = await call("editor", name, { projectId, linkId, ...args });
+        expect(outcome.result?.isError, `${kind} ${name}`).toBe(true);
+        expect(plain(outcome.result), `${kind} ${name}`).toMatch(/^HTTP 404:/);
+      }
+      expect(await DB.prepare("SELECT url, position FROM collection_links WHERE id = ?").bind(linkId).first()).toEqual({ url: `https://example.test/${kind}`, position: 1024 });
+    }
+  });
+});
+
 describe("notifications", () => {
   async function notify(userId: string) {
     const id = crypto.randomUUID();

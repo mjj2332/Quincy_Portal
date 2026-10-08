@@ -88,7 +88,7 @@ export function writeTool(def: {
   anyCapability?: readonly Capability[];
   destructive?: boolean;
   idempotent?: boolean;
-  run?: (send: WriteSend, input: Record<string, unknown>) => Promise<McpToolResult>;
+  run?: (send: WriteSend, input: Record<string, unknown>, read: (path: string, query?: Record<string, string>) => Promise<Response>) => Promise<McpToolResult>;
 }): McpTool {
   return {
     name: def.name,
@@ -104,7 +104,8 @@ export function writeTool(def: {
       const path = def.template.replace(PARAM, (_, name: string) => { used.add(name); return encodeURIComponent(String(input[name])); });
       const body = Object.fromEntries(Object.entries(input).filter(([key, value]) => !used.has(key) && value !== undefined));
       const send: WriteSend = (explicit) => dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, { method: def.method, path, ...(explicit !== undefined ? { body: explicit } : {}) });
-      if (def.run) return def.run(send, input);
+      const read = (readPath: string, query?: Record<string, string>) => dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, { method: "GET", path: readPath, ...(query ? { query } : {}) });
+      if (def.run) return def.run(send, input, read);
       return jsonResult(await send(Object.keys(body).length || def.method !== "DELETE" ? body : undefined));
     },
   };

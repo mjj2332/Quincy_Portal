@@ -28,14 +28,14 @@ owner; implementation plan pending the parallel Opus + Codex review.
 |---|---|---|---|
 | `read` | all reads below | 1 h | rotating, lapses after 30 d unused |
 | `write` | non-admin writes | 1 h | rotating, lapses after 30 d unused |
-| `admin` | admin-capability writes; separate warning on consent | 15 min | none |
+| `admin` | Project delete, `adminBackend` writes and `/api/admin/*` writes; separate warning on consent | 15 min | none |
 
 The consent screen names the client and shows its redirect domain prominently. It also says "This
 app will see Portal data you can see". Consent is refused during an impersonation session.
 
 ## Tools (v1)
 
-Tool names use glossary terms. Every removal and every admin write is marked `destructiveHint`.
+Tool names use glossary terms. Every removal and every `admin`-scope write is marked `destructiveHint`.
 
 **Reads**
 - Projects: search and list (address, Stage, Editor, dates), Project detail (Deadline, Editors,

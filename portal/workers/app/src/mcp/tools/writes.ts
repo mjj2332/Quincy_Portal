@@ -286,8 +286,16 @@ const videoLinkTools: McpTool[] = [
   writeTool({
     name: "remove_video_link",
     method: "DELETE", template: "/api/projects/:projectId/links/:linkId", anyCapability: ["editProject", "manageExtras", "uploadExtras"], destructive: true,
-    description: "Remove a link from a Project's Video Collection. Links delivered by Tonomo cannot be removed.",
+    description: "Remove a link from a Project's Video Collection. Links delivered by Tonomo cannot be removed. Only Video Collection links; the id of a link in another Collection is refused.",
     inputSchema: { projectId, linkId },
+    // The DELETE route lets a manageExtras role delete a link in any Collection, so confirm through the Video links read that this id is one.
+    run: async (send, input, read) => {
+      const listing = await read(`/api/projects/${encodeURIComponent(String(input.projectId))}/links`, { collection: "video" });
+      if (!listing.ok) return jsonResult(listing);
+      const links = (parseJson(await listing.text())?.links ?? []) as { id?: string }[];
+      if (!links.some((link) => link.id === input.linkId)) return { content: [{ type: "text", text: "HTTP 404: {\"error\":\"Link not found in this Project's Video Collection\"}" }], isError: true };
+      return jsonResult(await send());
+    },
   }),
 ];
 
