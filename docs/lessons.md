@@ -6032,3 +6032,14 @@ Tags: css-tokens, gantt-calendar · #692, #693, #695
   - Measure candidate wording in the real font, with canvas or an offscreen span, before choosing it.
 
 Guards: `config/phone-breakpoint.guard.test.ts`, `reui/gantt/gantt-create-task.dom.test.tsx` (the `+` token pins), `ProductionGantt-attention-badge.dom.test.tsx`.
+
+## In-process MCP dispatch skips the Origin check by object identity, never by header (#701)
+Tags: auth, workers-runtime · #701, #710
+
+- **Why a bearer path skips `requireAppOrigin`.** An MCP tool calls the real Hono route in-process with a synthetic `Request` that carries no Origin, cookie or Authorization header, so the cookie-session Origin check would reject it.
+- **The skip must not be spoofable.** The verified principal is bound to that one `Request` object in `AsyncLocalStorage` (`lib/mcp-dispatch-context.ts`), and `requireAppOrigin` and `requireSession` read it with `mcpDispatchFor(c.req.raw)`, which answers only when the store's request **is** the request being handled (`===`).
+  - A header such as `X-MCP-Principal`, or a flag on `c.env`, would be forgeable by any browser request, so neither is used.
+  - A nested or stray call gets `null` and falls back to the Origin check; a browser request can never reach the bound path.
+- **Rules that follow.** Do not spread or clone `env` when dispatching (#360), do not add a route to the MCP allowlist (`mcp/route-allowlist.ts`) without its own review, and keep the skip to exactly the dispatched request.
+
+Guards: `workers/app/src/mcp/route-allowlist.ts` (the dispatch throws `McpRouteNotAllowedError` for any other route).

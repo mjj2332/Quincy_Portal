@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # AI clients act as the staff member, through one remote MCP server on the app Worker
@@ -49,3 +49,25 @@ the Origin check's place.
 - The whiteboard Durable Object must accept edits from a server-side participant, not only from
   WebSocket connections.
 - The MCP route needs rate limiting per grant; the API has had none.
+
+## Consequences as built
+
+The decision stands as written. Where the build differs from the text above (operator detail:
+`docs/Guides/MCP.md`):
+
+- **Revocation has two layers.** Besides the `requireSession`-style role, active and
+  `authorizationEpoch` re-checks, each Connected app is a live `mcp_connections` row in D1. That row is
+  the revocation boundary; the OAuth library's grant is revoked best-effort alongside it. The OAuth
+  library is Cloudflare `workers-oauth-provider`, with its state in `OAUTH_KV`.
+- **`admin` scope is narrower than "admin reads and writes".** Admin reads are `read`-scope tools gated by
+  the admin-only capability; the `admin` scope covers the destructive admin writes and `delete_project`.
+- **Consent defaults.** Read is always on. Write and Admin each start unticked, even when the client
+  asked for them, and Admin is offered to Admins only.
+- **Rate limiting** is the Workers Rate Limiting binding (`MCP_CALLS`, `MCP_WRITES`), keyed by
+  connection, not a Durable Object. A failing binding fails open and is logged.
+- **Downloads** serve stored renditions only (`409 rendition_not_ready` otherwise), and redemption
+  re-checks the live grant, so revoking an app kills links already issued.
+- **Whiteboard.** Version restore is not exposed. A move is refused when it would re-route an elbow
+  arrow with a pinned segment (`pinned_elbow_arrow`).
+- **`delete_project`** needs the Project archived first, and its confirm token is an HMAC (5 minutes,
+  per Project and connection) over a hash of the summary, so a changed Project is refused.
