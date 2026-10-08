@@ -8,6 +8,7 @@ import {
   Shield,
   Megaphone,
   ChevronsUpDown,
+  Plug,
   Settings,
   LogOut,
   type LucideIcon,
@@ -273,6 +274,7 @@ export function NavigationRail({ navigation, user, variant = "rail", showBell = 
   // Exact, not the coarse section: since #115 `activeSectionId === "notifications"` also covers
   // the list at `/settings/notifications`, where this item is not the current page.
   const preferencesActive = navigation.preferencesActive;
+  const connectedAppsActive = navigation.connectedAppsActive;
   // The bell's own anchor (#113) — the rail's fixed `sidebar-container` div, not the trigger, so
   // the panel's left edge sits 8px off the rail's right edge regardless of where inside the rail
   // header the trigger sits. `Sidebar` spreads its own rest props onto that div (`reui/sidebar.tsx`), so a plain
@@ -453,9 +455,10 @@ export function NavigationRail({ navigation, user, variant = "rail", showBell = 
                 </MenuPrimitive.GroupLabel>
               </MenuPrimitive.Group>
               {/* The Sheet has no settings icon, so its account menu keeps the preferences row the
-                  narrow shell has always had. On the wide rail, settings is its own icon and the
+                  narrow shell has always had, plus Connected apps (#702). On the wide rail, settings is its own icon and the
                   menu holds identity and Sign out only (ADR 0015). */}
               {isSheet && (
+                <>
                 <MenuPrimitive.LinkItem
                   closeOnClick
                   label="Notification preferences"
@@ -468,6 +471,18 @@ export function NavigationRail({ navigation, user, variant = "rail", showBell = 
                   <Settings aria-hidden="true" />
                   Notification preferences
                 </MenuPrimitive.LinkItem>
+                <MenuPrimitive.LinkItem
+                  closeOnClick
+                  label="Connected apps"
+                  render={<InternalLink to="/settings/connected-apps" className={ACCOUNT_MENU_ITEM} />}
+                  data-active={connectedAppsActive ? "" : undefined}
+                  aria-current={connectedAppsActive ? "page" : undefined}
+                  data-testid="navigation-rail-connected-apps"
+                >
+                  <Plug aria-hidden="true" />
+                  Connected apps
+                </MenuPrimitive.LinkItem>
+                </>
               )}
               {/* Base UI's Menu has no separator part of its own (verified against
                   `@base-ui/react/menu`'s exports) — `reui/separator.tsx` is a real `role="separator"`,

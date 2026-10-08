@@ -11,6 +11,7 @@ import { pushToast as toast } from "../lib/toast-store";
 import { ToastViewport } from "../components/quincy/ToastViewport";
 import { Modal } from "../components/Modal";
 import { Button } from "@/components/reui/button";
+import { Switch } from "@/components/reui/switch";
 import { cn } from "@/lib/utils";
 import { Eyebrow } from "@/components/quincy/Eyebrow";
 import { Input } from "@/components/reui/input";
@@ -158,6 +159,16 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
   const [users, setUsers] = useState<User[]>([]);
   const [impersonationEnabled, setImpersonationEnabled] = useState(false);
   const [isUpdatingImpersonation, setIsUpdatingImpersonation] = useState(false);
+  // #702: the `mcp_access` runtime switch for AI clients; off until an admin turns it on.
+  const [mcpEnabled, setMcpEnabled] = useState(false);
+  const [isUpdatingMcp, setIsUpdatingMcp] = useState(false);
+  const [isLoadingMcp, setIsLoadingMcp] = useState(true);
+  const [mcpError, setMcpError] = useState<string>();
+  // Bumped when a toggle starts and when it settles. A read that began before a bump, or while a toggle
+  // was in flight, is stale and must not overwrite the toggled state.
+  const mcpWriteSeq = useRef(0);
+  const mcpWriting = useRef(false);
+  const [isRevokingConnectedApps, setIsRevokingConnectedApps] = useState(false);
   const [provisioningFreeze, setProvisioningFreeze] = useState<ProvisioningFreezeResponse>();
   const [isReleasingFreeze, setIsReleasingFreeze] = useState(false);
   const [integrations, setIntegrations] = useState<Integration[]>([]);
@@ -215,6 +226,18 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
       ]);
       setUsers(usersResponse.users);
       setImpersonationEnabled(settingsResponse.enabled);
+      // Its own read: a failure here must not blank the Users tab.
+      const seq = mcpWriteSeq.current; const writingAtStart = mcpWriting.current;
+      setIsLoadingMcp(true); setMcpError(undefined);
+      apiGet<ImpersonationSettingsResponse>("/api/users/mcp-settings").then((response) => {
+        if (writingAtStart || seq !== mcpWriteSeq.current) return;
+        setMcpEnabled(response?.enabled === true);
+        setIsLoadingMcp(false);
+      }, (reason) => {
+        if (writingAtStart || seq !== mcpWriteSeq.current) return;
+        setMcpError(reason instanceof Error ? reason.message : "The AI apps setting could not be loaded.");
+        setIsLoadingMcp(false);
+      });
       setProvisioningFreeze(freezeResponse);
     } catch (reason) {
       setUsersError(reason instanceof Error ? reason.message : "Users could not be loaded.");
@@ -233,6 +256,38 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
       toast(reason instanceof Error ? reason.message : "The impersonation setting could not be updated.", "error");
     } finally {
       setIsUpdatingImpersonation(false);
+    }
+  }
+
+  async function toggleMcp(requested: boolean) {
+    setIsUpdatingMcp(true); mcpWriting.current = true; mcpWriteSeq.current += 1;
+    try {
+      const response = await apiPatch<ImpersonationSettingsResponse, { enabled: boolean }>("/api/users/mcp-settings", { enabled: requested });
+      setMcpEnabled(response.enabled);
+      setIsLoadingMcp(false); setMcpError(undefined);
+    } catch (reason) {
+      toast(reason instanceof Error ? reason.message : "The AI apps setting could not be updated.", "error");
+    } finally {
+      mcpWriting.current = false; mcpWriteSeq.current += 1;
+      setIsUpdatingMcp(false);
+    }
+  }
+
+  async function revokeAllConnectedApps() {
+    if (!await confirm({
+      title: "Revoke all Connected apps?",
+      message: "Every AI app connected by anyone will stop working immediately. People can connect again later.",
+      confirmLabel: "Revoke all",
+      danger: true,
+    })) return;
+    setIsRevokingConnectedApps(true);
+    try {
+      const response = await apiPost<{ revoked: number }, Record<string, never>>("/api/admin/connected-apps/revoke-all", {});
+      toast(`Revoked ${response.revoked} connected app${response.revoked === 1 ? "" : "s"}.`, "success");
+    } catch (reason) {
+      toast(reason instanceof Error ? reason.message : "Connected apps could not be revoked.", "error");
+    } finally {
+      setIsRevokingConnectedApps(false);
     }
   }
 
@@ -534,6 +589,11 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
         {isLoadingUsers && <EmptyState role="status" title="Loading users.">Reading the studio access roster.</EmptyState>}
         {!isLoadingUsers && usersError && <EmptyState role="alert" tone="error" title="Users are unavailable.">{usersError}<div className="mt-[var(--space-4)]"><Button type="button" variant="outline" onClick={() => void loadUsers()}>Try again</Button></div></EmptyState>}
         {!isLoadingUsers && !usersError && <label className={cn(TOGGLE_ROW, "mb-[var(--space-4)]")}><input type="checkbox" className={CHECKBOX_INPUT} checked={impersonationEnabled} disabled={isUpdatingImpersonation} onChange={toggleImpersonation} aria-label="Enable user impersonation (testing)" /><span>Enable user impersonation (testing)</span></label>}
+        {!isLoadingUsers && !usersError && <div className={cn(TOGGLE_ROW, "mb-[var(--space-4)] flex-wrap justify-between gap-[var(--space-3)]")} data-testid="admin-mcp-access">
+          <span className="flex items-center gap-[var(--space-2)]"><Switch checked={mcpEnabled} disabled={isUpdatingMcp || isLoadingMcp || mcpError !== undefined} onCheckedChange={(next) => void toggleMcp(next)} aria-label="Enable AI apps (MCP)" /><span>Enable AI apps (MCP)</span></span>
+          {mcpError && <Notice role="alert" className="basis-full">{mcpError}</Notice>}
+          <Button type="button" variant="destructive" className="max-[721px]:w-full" disabled={isRevokingConnectedApps} onClick={() => void revokeAllConnectedApps()}>Revoke all Connected apps</Button>
+        </div>}
         {!isLoadingUsers && !usersError && provisioningFreeze?.frozen && <Notice tone="caution" role="status" data-testid="admin-provisioning-freeze" className="mb-[var(--space-4)] flex flex-wrap items-center justify-between gap-[var(--space-3)]">
           <span>External Editor provisioning has been frozen since {formatDate(provisioningFreeze.frozenAt === null ? null : new Date(provisioningFreeze.frozenAt).toISOString())}. The Cloudflare cache purge after a role change did not complete, so no one can be made an External Editor. Purge the zone manually, then release the freeze.</span>
           <Button type="button" variant="outline" disabled={isReleasingFreeze} onClick={() => void releaseProvisioningFreeze()}>Release freeze</Button>

@@ -39,6 +39,7 @@ export type StaffNavigationSectionId =
   | "admin"
   | "notices"
   | "notifications"
+  | "connected-apps"
   | "not-found";
 
 /**
@@ -75,6 +76,8 @@ export type StaffNavigation = {
    * one coarse section, which is right for the shell and wrong for `aria-current` on the item.
    */
   preferencesActive: boolean;
+  /** The account menu's "Connected apps" item is current on the list only (#702); the consent page is a one-off. */
+  connectedAppsActive: boolean;
 };
 
 export type StaffNavigationCapabilities = {
@@ -96,6 +99,9 @@ function sectionFor(route: StaffRoute): StaffNavigationSectionId {
     // same as every Dashboard view folding to "dashboard".
     case "notifications": return "notifications";
     case "notification-preferences": return "notifications";
+    // The list and the consent page are one screen identity to the shell (#702).
+    case "connected-apps": return "connected-apps";
+    case "connected-app-consent": return "connected-apps";
     default: return "not-found";
   }
 }
@@ -188,6 +194,7 @@ export function buildStaffNavigation(
     groups: [{ id: "primary", label: "Primary navigation", items }],
     activeSectionId,
     preferencesActive: route.kind === "notification-preferences",
+    connectedAppsActive: route.kind === "connected-apps",
   };
 }
 

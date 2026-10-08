@@ -124,6 +124,23 @@ describe("terminal route manifest", () => {
     expect(() => assertSecurityRouteManifest(duplicate)).not.toThrow();
   });
 
+  it("classifies every MCP door and Connected apps route (#702)", () => {
+    const expected: [string, string, string][] = [
+      ["GET", "/api/connected-apps/consent/:handle", "principal-global"], ["POST", "/api/connected-apps/consent/:handle", "principal-global"],
+      ["GET", "/api/connected-apps", "principal-global"], ["DELETE", "/api/connected-apps/:id", "principal-global"],
+      ["POST", "/api/admin/connected-apps/revoke-all", "withheld"],
+      ["ALL", "/.well-known/oauth-authorization-server", "bearer-protocol"], ["ALL", "/.well-known/oauth-authorization-server/*", "bearer-protocol"],
+      ["ALL", "/.well-known/oauth-protected-resource", "bearer-protocol"], ["ALL", "/.well-known/oauth-protected-resource/*", "bearer-protocol"],
+      ["ALL", "/oauth/token", "bearer-protocol"], ["ALL", "/oauth/register", "bearer-protocol"], ["GET", "/oauth/authorize", "bearer-protocol"],
+      ["ALL", "/mcp", "bearer-protocol"], ["ALL", "/mcp/", "bearer-protocol"],
+    ];
+    for (const [method, path, routeClass] of expected) {
+      const row = PROJECT_SECURITY_ROUTE_CLASSIFICATION.find((entry) => entry.method === method && entry.path === path);
+      expect(row?.class, `${method} ${path}`).toBe(routeClass);
+      expect(app.routes.some((route) => route.method === method && route.path === path), `registered ${method} ${path}`).toBe(true);
+    }
+  });
+
   it("classifies GET /api/production-gantt as scoped-project / external-safe", () => {
     for (const path of ["/api/production-gantt", "/api/production-gantt/"]) {
       const route = PROJECT_SECURITY_ROUTE_CLASSIFICATION.find((entry) => entry.method === "GET" && entry.path === path);

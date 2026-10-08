@@ -7,5 +7,9 @@
     "deploy": "wrangler deploy",
     "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.2.3",
+    "@modelcontextprotocol/sdk": "^1.32.1"
   }
 }

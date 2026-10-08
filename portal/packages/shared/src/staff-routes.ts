@@ -193,11 +193,16 @@ export type StaffRoute =
   | { kind: "notices" }
   | { kind: "notifications" }
   | { kind: "notification-preferences" }
+  | { kind: "connected-apps" }
+  /** `handle` is the 43-character base64url OAuth consent handle (#702). */
+  | { kind: "connected-app-consent"; handle: string }
   | { kind: "not-found" }
   | { kind: "reserved" };
 
 export const CANONICAL_LOWERCASE_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const UUID = CANONICAL_LOWERCASE_UUID_REGEX;
+/** The OAuth consent handle grammar (#702): 43 base64url characters. */
+export const CONSENT_HANDLE = /^[A-Za-z0-9_-]{43}$/u;
 const reservedRoots = new Set(["api", "media", "__transform-source", "d"]);
 /**
  * #337: the one query string each Workspace tab's arrival intent is spelled as. Collaboration's
@@ -304,6 +309,8 @@ export function parseStaffPathname(pathname: string): StaffRoute {
   // segments, so the longer, more specific match must win or it would never be reached.
   if (segments.length === 3 && segments[0] === "settings" && segments[1] === "notifications" && segments[2] === "preferences") return { kind: "notification-preferences" };
   if (segments.length === 2 && segments[0] === "settings" && segments[1] === "notifications") return { kind: "notifications" };
+  if (segments.length === 2 && segments[0] === "settings" && segments[1] === "connected-apps") return { kind: "connected-apps" };
+  if (segments.length === 4 && segments[0] === "settings" && segments[1] === "connected-apps" && segments[2] === "consent") return CONSENT_HANDLE.test(segments[3]!) ? { kind: "connected-app-consent", handle: segments[3]! } : { kind: "not-found" };
   if (segments[0] !== "projects") return { kind: "not-found" };
   if (segments.length === 2 && segments[1] === "new") return { kind: "create-project" };
   if (!UUID.test(segments[1] ?? "")) return { kind: "not-found" };
@@ -898,6 +905,8 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
     case "notices": return "/notices";
     case "notifications": return "/settings/notifications";
     case "notification-preferences": return "/settings/notifications/preferences";
+    case "connected-apps": return "/settings/connected-apps";
+    case "connected-app-consent": return `/settings/connected-apps/consent/${route.handle}`;
   }
 }
 
@@ -913,7 +922,7 @@ export function projectNotificationRoute(projectId: string | null, type: string)
 export function safeStaffDestination(value: unknown): string | null {
   if (typeof value !== "string" || unsafeText(value) || value.includes("#") || !value.startsWith("/") || value.startsWith("//")) return null;
   const route = parseStaffLocation(value);
-  if (route.kind !== "dashboard" && route.kind !== "create-project" && route.kind !== "project" && route.kind !== "edit-project" && route.kind !== "admin" && route.kind !== "notices" && route.kind !== "notifications" && route.kind !== "notification-preferences") return null;
+  if (route.kind !== "dashboard" && route.kind !== "create-project" && route.kind !== "project" && route.kind !== "edit-project" && route.kind !== "admin" && route.kind !== "notices" && route.kind !== "notifications" && route.kind !== "notification-preferences" && route.kind !== "connected-apps" && route.kind !== "connected-app-consent") return null;
   const canonical = staffPathFor(route);
   return parseStaffLocation(canonical).kind === "not-found" ? null : canonical;
 }

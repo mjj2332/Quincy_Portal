@@ -58,6 +58,8 @@ import { Admin } from "../screens/Admin";
 import { CreateProject } from "../screens/CreateProject";
 import { EditProject } from "../screens/EditProject";
 import { NotificationPreferences } from "../screens/NotificationPreferences";
+import { ConnectedApps } from "../screens/ConnectedApps";
+import { ConnectedAppConsent } from "../screens/ConnectedAppConsent";
 import { NoticeBoardPage } from "../screens/NoticeBoardPage";
 import { Notifications } from "../screens/Notifications";
 import { buttonClasses } from "../components/quincy/Button";
@@ -656,6 +658,28 @@ const notificationPreferencesRoute = createRoute({
   },
 });
 
+// #702 — Connected apps (AI clients acting as the user) and its OAuth consent page. The consent route is reached
+// by a full-page redirect from `/oauth/authorize`; the page leaves with `window.location.assign`, never the router.
+const connectedAppsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings/connected-apps",
+  component: function ConnectedAppsLeaf() {
+    const { route } = useShell();
+    if (route.kind !== "connected-apps") return <NotAvailable />;
+    return <ConnectedApps />;
+  },
+});
+
+const connectedAppConsentRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings/connected-apps/consent/$handle",
+  component: function ConnectedAppConsentLeaf() {
+    const { route, user } = useShell();
+    if (route.kind !== "connected-app-consent") return <NotAvailable />;
+    return <ConnectedAppConsent key={route.handle} handle={route.handle} isAdmin={user.role === "admin"} />;
+  },
+});
+
 // Everything else — an unroutable path, or a reserved delivery or backend namespace — is handled
 // by the root's `notFoundComponent`. An explicit "$" catch-all leaf was tried here first and
 // removed: deleting it changed no test, because the root already renders the same view inside the
@@ -663,7 +687,7 @@ const notificationPreferencesRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   dashboardLayerRoute.addChildren([dashboardRoute, projectRoute, editProjectRoute]),
   createProjectRoute, adminRoute, noticesRoute, notificationsRoute,
-  notificationPreferencesRoute,
+  notificationPreferencesRoute, connectedAppsRoute, connectedAppConsentRoute,
 ]);
 
 /**

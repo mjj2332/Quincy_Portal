@@ -37,6 +37,8 @@ import { productionCalendarRoutes } from "./routes/production-calendar";
 import { productionGanttRoutes } from "./routes/production-gantt";
 import { projectActivityRoutes } from "./routes/project-activity";
 import { projectWhiteboardRoutes } from "./routes/project-whiteboard";
+import { connectedAppsRoutes } from "./routes/connected-apps";
+import { mountMcp } from "./mcp";
 import { verifyTransformSource } from "./lib/transform-source";
 import { requireAppOrigin } from "./middleware/origin";
 import { safeStaffDestination } from "@quincy/shared";
@@ -74,7 +76,7 @@ app.all("/api/auth/*", terminalRoute("/api/auth/*", (c) => getAuth(c.env).handle
 const api = new Hono<AppEnv>();
 api.use("/*", requireSession);
 api.get("/me", terminalRoute("/me", (c) => { const { via: _via, ...user } = c.get("user"); const response = { user, capabilities: [...(ROLE_CAPABILITIES[user.role] ?? [])] }; return c.json(user.role === "external_editor" ? externalMeResponseSchema.parse(response) : response); }));
-api.route("/", usersRoutes).route("/", projectsRoutes).route("/", projectDeadlineRoutes).route("/", notificationPreferencesRoutes).route("/", externalUploadsRoutes).route("/", uploadsRoutes).route("/", collectionsRoutes).route("/", integrationsRoutes).route("/", reviewRoutes).route("/", annotationsRoutes).route("/", stagesRoutes).route("/", adminRoutes).route("/", noticeBoardRoutes).route("/", mentionableUsersRoutes).route("/", projectCommentsRoutes).route("/", embeddedMediaRoutes).route("/", linkPreviewRoutes).route("/", projectSubtasksRoutes).route("/", notificationsRoutes).route("/", assetsRoutes).route("/", projectAccessSnapshotRoutes).route("/", dashboardPeopleRoutes).route("/", productionCalendarRoutes).route("/", productionGanttRoutes).route("/", projectActivityRoutes).route("/", projectWhiteboardRoutes).route("/", bootTimingRoutes);
+api.route("/", usersRoutes).route("/", projectsRoutes).route("/", projectDeadlineRoutes).route("/", notificationPreferencesRoutes).route("/", externalUploadsRoutes).route("/", uploadsRoutes).route("/", collectionsRoutes).route("/", integrationsRoutes).route("/", reviewRoutes).route("/", annotationsRoutes).route("/", stagesRoutes).route("/", adminRoutes).route("/", noticeBoardRoutes).route("/", mentionableUsersRoutes).route("/", projectCommentsRoutes).route("/", embeddedMediaRoutes).route("/", linkPreviewRoutes).route("/", projectSubtasksRoutes).route("/", notificationsRoutes).route("/", assetsRoutes).route("/", projectAccessSnapshotRoutes).route("/", dashboardPeopleRoutes).route("/", productionCalendarRoutes).route("/", productionGanttRoutes).route("/", projectActivityRoutes).route("/", projectWhiteboardRoutes).route("/", connectedAppsRoutes).route("/", bootTimingRoutes);
 app.route("/api", api);
 app.all("/api", terminalRoute("/api", (c) => c.json({ error: "Not found" }, 404)));
 app.all("/api/*", terminalRoute("/api/*", (c) => c.json({ error: "Not found" }, 404)));
@@ -103,6 +105,8 @@ app.get("/__transform-source/*", terminalRoute("/__transform-source/*", async (c
   if (object.httpEtag) headers.etag = object.httpEtag;
   return new Response(object.body, { headers });
 }));
+// MCP door (#702): outside `/api` (router-wide middleware leaks across sibling mounts), before the SPA fallback.
+mountMcp(app, (request, env, ctx) => app.fetch(request, env, ctx));
 // `/d` is reserved for the future client-delivery Worker. It is intentionally
 // unauthenticated and must run before the static-asset SPA fallback.
 app.all("/d", terminalRoute("/d", (c) => c.notFound()));
