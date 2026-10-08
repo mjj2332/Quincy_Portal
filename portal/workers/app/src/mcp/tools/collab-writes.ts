@@ -112,13 +112,13 @@ const previewUrl = z.string().min(1).max(LINK_PREVIEW_URL_MAX).describe("The add
 const previewTools: McpTool[] = [
   writeTool({
     name: "request_project_link_preview",
-    method: "POST", template: "/api/projects/:projectId/link-previews", capability: "collaborateOnProject",
+    method: "POST", template: "/api/projects/:projectId/link-previews", capability: "collaborateOnProject", openWorld: true,
     description: "Ask the Portal to fetch a link preview card (title, description, image) for an address, for a Project's discussion. Fetches the address from the Portal's servers. The card is returned only: comment and Notice board tools take plain text and cannot attach it. Refused on an archived Project.",
     inputSchema: { projectId, url: previewUrl },
   }),
   writeTool({
     name: "request_notice_link_preview",
-    method: "POST", template: "/api/notice-board/link-previews", capability: "viewNoticeBoard",
+    method: "POST", template: "/api/notice-board/link-previews", capability: "viewNoticeBoard", openWorld: true,
     description: "Ask the Portal to fetch a link preview card (title, description, image) for an address, for the Notice board. Fetches the address from the Portal's servers. The card is returned only: comment and Notice board tools take plain text and cannot attach it.",
     inputSchema: { url: previewUrl },
   }),

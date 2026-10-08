@@ -48,7 +48,8 @@ describe("ConnectedApps", () => {
     await mount();
     await act(async () => { revokeButton()!.click(); await Promise.resolve(); });
     await flush();
-    expect(document.querySelector('[data-testid="connected-app-revoke-confirm"]')?.textContent).toContain("Disconnect Claude Desktop?");
+    expect(document.querySelector('[data-testid="connected-app-revoke-confirm"]')?.textContent).toContain("Revoke Claude Desktop?");
+    expect(document.querySelector('[data-testid="connected-app-revoke-action"]')?.className).toContain("bg-destructive");
     await act(async () => { document.querySelector<HTMLElement>('[data-testid="connected-app-revoke-cancel"]')!.click(); await Promise.resolve(); });
     await flush();
     expect(apiDeleteMock).not.toHaveBeenCalled();

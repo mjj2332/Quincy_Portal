@@ -124,9 +124,9 @@ function CommentItem({ comment, isOwn, readOnly, now, saving, editing, editingOv
     <InitialsAvatar name={comment.author.name} />
     <header className="flex flex-wrap items-baseline gap-x-[var(--space-2)] gap-y-[var(--space-1)] min-w-0 self-center">
       <strong className="[font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)] text-foreground min-w-0 [overflow-wrap:anywhere]">{comment.author.name}</strong>
-      <ViaClientMark client={comment.viaClient} />
       {isOwn && <StatusPill tone="neutral">You</StatusPill>}
       {comment.author.isExternal && <StatusPill tone="info">External editor</StatusPill>}
+      <ViaClientMark client={comment.viaClient} />
       <CollaborationTimestamp instant={comment.createdAt} now={now} mode="relative" />
       {comment.editedAt && <span className={cn(META_TEXT, "!normal-case")}>· Edited</span>}
     </header>

@@ -48,6 +48,9 @@ const GET_TEMPLATES = [
   // Whiteboard (#708)
   "/api/projects/:projectId/whiteboard",
   "/api/projects/:projectId/whiteboard/versions",
+  // Admin reads of the Dropbox integration (#709): the inputs the admin Dropbox writes need
+  "/api/integrations/dropbox/editor-folders",
+  "/api/integrations/dropbox/monitors/:scope",
   // Signed downloads (#707): the asset tool's visibility check, and the redemption of an asset URL.
   "/media/asset/:assetId/:variant",
 ] as const;
@@ -99,9 +102,47 @@ const WRITE_ROUTES = [
   ["POST", "/api/projects/:projectId/download-selection"],
 ] as const;
 
+/**
+ * Admin-scope writes (#709). Each is one `admin` tool's one route; none is reachable with a `write` grant. The never-list
+ * (users, flags and *-settings, Connected apps, impersonation, uploads, OAuth and /api/auth) can appear nowhere in this file:
+ * `mcp-admin.test.ts` walks every entry against a denylist.
+ */
+const ADMIN_ROUTES = [
+  ["POST", "/api/integrations/dropbox/monitors/:scope/reset"],
+  ["POST", "/api/integrations/dropbox/editor-folders/link"],
+  ["POST", "/api/integrations/dropbox/mappings/:mappingId/resolve"],
+  ["POST", "/api/integrations/dropbox/path-claims/reassign"],
+  ["POST", "/api/projects/:projectId/send-to-autohdr"],
+  ["POST", "/api/projects/:projectId/fetch-edited"],
+  ["POST", "/api/jobs/:jobId/retry"],
+  ["POST", "/api/admin/renditions-dlq/:deadLetterId/replay"],
+  ["POST", "/api/admin/webhook-events/:eventId/retry"],
+  ["POST", "/api/admin/agencies"],
+  ["PATCH", "/api/admin/agencies/:agencyId"],
+  ["POST", "/api/admin/agents"],
+  ["PATCH", "/api/admin/agents/:agentId"],
+  ["PATCH", "/api/admin/stages/:key"],
+  ["POST", "/api/admin/renditions/backfill"],
+  ["POST", "/api/admin/autohdr/backfill"],
+  ["POST", "/api/admin/autohdr/scaffold-backfill"],
+  ["POST", "/api/projects/:projectId/sync-dropbox"],
+  ["POST", "/api/projects/:projectId/autohdr-coverage"],
+  ["POST", "/api/admin/notification-deliveries/:outboxId/replay"],
+  ["POST", "/api/admin/notification-deliveries/:outboxId/discard"],
+  ["POST", "/api/admin/renditions-dlq/:deadLetterId/discard"],
+  ["POST", "/api/admin/webhook-events/:eventId/discard"],
+  ["POST", "/api/admin/attention/orphan-uploads/:watchId/acknowledge"],
+  ["DELETE", "/api/assets/:assetId"],
+  // A POST that only reads (its body carries a Dropbox path): `admin_inspect_editor_folder`, readOnlyHint.
+  ["POST", "/api/integrations/dropbox/editor-folders/inspect"],
+  // Project delete: only through the confirm round trip in `tools/admin-writes.ts`.
+  ["DELETE", "/api/projects/:projectId"],
+] as const;
+
 export const MCP_ALLOWED_ROUTES: readonly { method: string; template: string; pattern: RegExp }[] = [
   ...GET_TEMPLATES.map((template) => ({ method: "GET", template, pattern: patternFor(template) })),
   ...WRITE_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })),
+  ...ADMIN_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })),
   ...REDEMPTION_ONLY_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })),
 ];
 

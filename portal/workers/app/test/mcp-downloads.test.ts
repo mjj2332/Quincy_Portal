@@ -1,5 +1,5 @@
 import { env, SELF } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { buildDownloadUrl, signDownload, type DownloadTarget } from "../src/mcp/download-signature";
 import { MCP_TOOLS } from "../src/mcp/tools/registry";
@@ -199,5 +199,65 @@ describe("selection zips", () => {
   it("answers 403 to a tampered ticket", async () => {
     const issued = await issueZip("editor");
     expect((await redeem(issued.url.replace(/[0-9a-f]\?/, (m) => (m[0] === "0" ? "1" : "0") + "?"))).status).toBe(403);
+  });
+});
+
+describe("renditions are served from storage only", () => {
+  it("a cold web variant is refused at issue and answers 409 at redemption, with no Location", async () => {
+    const outcome = await call("editor", "get_asset_download_url", { assetId: otherAssetId, variant: "web" });
+    expect(outcome.result?.isError).toBe(true);
+    expect(plain(outcome.result)).toContain("This size isn't ready yet; request variant 'original' or try again later");
+    expect(plain(outcome.result)).not.toContain("/dl/");
+    const { url } = await claimsFor("editor", { kind: "asset", assetId: otherAssetId, variant: "web" }, nowSec() + 300);
+    const response = await redeem(url);
+    expect(response.status).toBe(409); expect(response.headers.get("location")).toBeNull();
+    expect(await response.json()).toEqual({ error: "rendition_not_ready" });
+  });
+  it("a warm stored rendition streams", async () => {
+    await testEnv.MEDIA.put("mcp-dl/a-thumb.webp", "stored-thumb-bytes", { httpMetadata: { contentType: "image/webp" } });
+    await DB.prepare("INSERT INTO asset_renditions (id, asset_id, variant, r2_key, bytes, content_type, width, height, spec_version, created_at) VALUES (?, ?, 'thumb', 'mcp-dl/a-thumb.webp', 18, 'image/webp', 1, 1, 'v1', ?)").bind(crypto.randomUUID(), assetId, Date.now()).run();
+    const issued = await issueAsset("editor", "thumb");
+    const response = await redeem(issued.url);
+    expect(response.status).toBe(200); expect(response.headers.get("location")).toBeNull();
+    expect(new TextDecoder().decode(await response.arrayBuffer())).toBe("stored-thumb-bytes");
+  });
+  it("no /dl response ever carries a Location header", async () => {
+    const issued = await issueAsset("editor");
+    const cold = await claimsFor("editor", { kind: "asset", assetId: otherAssetId, variant: "thumb" }, nowSec() + 300);
+    for (const url of [issued.url, cold.url, withParam(issued.url, "sig", "0".repeat(64)), `${testEnv.APP_ORIGIN}/dl/asset/${assetId}/web`, `${testEnv.APP_ORIGIN}/dl/nope`]) {
+      const response = await redeem(url);
+      expect(response.headers.get("location"), url).toBeNull(); await response.body?.cancel();
+    }
+  });
+});
+
+describe("zip lifetime and provenance", () => {
+  afterEach(() => { vi.useRealTimers(); });
+  it("an MCP zip ticket and URL last 15 minutes: still streams at 6 minutes, 410 past 15", async () => {
+    const issued = await issueZip("editor");
+    const exp = Number(new URL(issued.url).searchParams.get("exp"));
+    expect(exp - nowSec()).toBeGreaterThan(14 * 60); expect(exp - nowSec()).toBeLessThanOrEqual(15 * 60);
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(Date.now() + 6 * 60_000);
+    const later = await redeem(issued.url);
+    expect(later.status).toBe(200); await later.body?.cancel();
+    vi.setSystemTime(Date.now() + 10 * 60_000);
+    expect((await redeem(issued.url)).status).toBe(410);
+  });
+  it("a cookie user's ticket keeps its 5 minutes", async () => {
+    const response = await SELF.fetch(`${h.ORIGIN}/api/projects/${projectId}/download-selection`, { method: "POST", headers: { cookie: h.cookies.editor!, origin: h.ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ assetIds: [assetId] }) });
+    expect(response.status).toBe(201);
+    const ticket = ((await response.json()) as { downloadUrl: string }).downloadUrl.split("/").at(-2)!;
+    const row = await DB.prepare("SELECT expires_at, created_at FROM download_selection_tickets WHERE id = ?").bind(ticket).first<{ expires_at: number; created_at: number }>();
+    expect(row!.expires_at - row!.created_at).toBe(5 * 60_000);
+  });
+  it("project.download_selection and mcp_download.redeem both carry via: mcp, client and the connection", async () => {
+    const issued = await issueZip("admin");
+    const response = await redeem(issued.url); expect(response.status).toBe(200); await response.arrayBuffer();
+    const rows = await DB.prepare("SELECT action, meta_json FROM audit_log WHERE target_id = ? AND action IN ('project.download_selection','mcp_download.redeem') AND actor_id = ? ORDER BY rowid DESC").bind(projectId, adminId).all<{ action: string; meta_json: string }>();
+    for (const action of ["project.download_selection", "mcp_download.redeem"]) {
+      const row = rows.results.find((r) => r.action === action);
+      expect(row, action).toBeDefined();
+      expect(JSON.parse(row!.meta_json), action).toMatchObject({ via: "mcp", client: CLIENT, connectionId: tokens.admin!.connectionId });
+    }
   });
 });

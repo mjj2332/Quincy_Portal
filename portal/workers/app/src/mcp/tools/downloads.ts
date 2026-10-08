@@ -11,9 +11,6 @@ import type { McpPrincipal } from "../../lib/mcp-dispatch-context";
  * route the UI uses, signs a short-lived URL for it, and the redemption (`mcp/downloads.ts`) dispatches to that route again.
  */
 
-/** The route's own selection ticket lives 5 minutes (`DOWNLOAD_SELECTION_TICKET_MS`); a zip URL outliving it would only 404. */
-const ZIP_URL_TTL_SECONDS = 5 * 60;
-
 export const auditPrincipalOf = (principal: McpPrincipal): AuditPrincipal => ({ id: principal.userId, impersonatedBy: null, via: { kind: "mcp", clientName: principal.clientName, connectionId: principal.connectionId } });
 
 async function signedUrl(ctx: McpToolContext, target: DownloadTarget, ttlSeconds: number): Promise<{ url: string; expiresAt: string } | null> {
@@ -36,13 +33,17 @@ const getAssetDownloadUrl: McpTool = {
   annotations: { readOnlyHint: true, openWorldHint: false },
   inputSchema: {
     assetId: z.string().uuid().describe("The asset's id, from list_project_assets."),
-    variant: z.enum(["original", "web", "thumb"]).describe("original is the file as uploaded; web and thumb are the smaller renditions."),
+    variant: z.enum(["original", "web", "thumb"]).describe("original is the file as uploaded; web and thumb are the smaller stored renditions; if one is not ready yet the tool says so, and original always works."),
   },
   call: async (ctx, input) => {
     const assetId = String(input.assetId), variant = String(input.variant);
     // The visibility proof: the same route the UI opens, run as this user. Its body is never read.
     const probe = await dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, { method: "GET", path: `/media/asset/${encodeURIComponent(assetId)}/${encodeURIComponent(variant)}` });
-    // A 3xx is the route's own hand-off to the image transformer, issued only after every access check passed.
+    // A 3xx is the route's hand-off to the image transformer for a rendition not stored yet. MCP serves stored renditions only.
+    if (probe.status >= 300 && probe.status < 400) {
+      await probe.body?.cancel();
+      return { content: [{ type: "text", text: "This size isn't ready yet; request variant 'original' or try again later" }], isError: true };
+    }
     if (probe.status >= 400) return jsonResult(probe);
     await probe.body?.cancel();
     const url = await signedUrl(ctx, { kind: "asset", assetId, variant }, DOWNLOAD_MAX_TTL_SECONDS);
@@ -54,7 +55,7 @@ const getAssetDownloadUrl: McpTool = {
 
 const getSelectionDownloadUrl: McpTool = {
   name: "get_selection_download_url",
-  description: "A signed, short-lived download link for a zip of chosen photo assets in one Project (all RAW, or all edited; up to 500 assets and 256 MiB). Creates the zip selection as this user, then returns { url, expiresAt }; the link works for about 5 minutes. Refused when this user may not download that selection. The link is a bearer: do not share or store it.",
+  description: "A signed, short-lived (15 minutes) download link for a zip of chosen photo assets in one Project (all RAW, or all edited; up to 500 assets and 256 MiB). Creates the zip selection as this user, then returns { url, expiresAt }. Refused when this user may not download that selection. The link is a bearer: do not share or store it.",
   scope: "read",
   anyCapability: ["selectForEditing", "downloadFinal"],
   route: { method: "POST", template: "/api/projects/:projectId/download-selection" },
@@ -70,7 +71,7 @@ const getSelectionDownloadUrl: McpTool = {
     const downloadUrl = ((await created.json().catch(() => null)) as { downloadUrl?: unknown } | null)?.downloadUrl;
     const ticket = typeof downloadUrl === "string" ? /\/download-selection\/([A-Za-z0-9_-]+)\/archive\.zip$/.exec(downloadUrl)?.[1] : undefined;
     if (!ticket) return { content: [{ type: "text", text: "The download selection could not be created." }], isError: true };
-    const url = await signedUrl(ctx, { kind: "zip", projectId, ticket }, ZIP_URL_TTL_SECONDS);
+    const url = await signedUrl(ctx, { kind: "zip", projectId, ticket }, DOWNLOAD_MAX_TTL_SECONDS);
     if (!url) return notConfigured();
     await audit(ctx.env, auditPrincipalOf(ctx.principal), "mcp_download.issue", "project", projectId, { count: (input.assetIds as unknown[]).length, expiresAt: url.expiresAt });
     return issued(url);
