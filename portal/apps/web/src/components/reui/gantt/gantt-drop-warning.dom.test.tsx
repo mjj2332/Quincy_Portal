@@ -422,8 +422,8 @@ describe("#221 design fixes - the cursor-following overlays stay inside the visi
 
   /**
    * The axis (the full scroll width) spans 0..1440 while the pane that shows it is only 600..1400
-   * on screen. The pane is every ANCESTOR of the axis (the scroll viewport among them), found by
-   * containment rather than by the viewport's vendor `data-slot` (Guard F). `bar`, when given,
+   * on screen. The pane is the lane overlay (#727: the visible lane right of the sticky tree column,
+   * which the drag clamps against), found by its `data-testid`, plus every ANCESTOR of the axis. `bar`, when given,
    * gets its own rect so a grab offset can be measured.
    */
   function stubPaneGeometry(bar?: { el: Element; left: number; right: number }) {
@@ -431,6 +431,7 @@ describe("#221 design fixes - the cursor-following overlays stay inside the visi
     expect(axis).not.toBeNull();
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
       if (bar && this === bar.el) return rect(bar.left, bar.right);
+      if (this.getAttribute("data-testid") === "gantt-lane-overlay") return rect(PANE.left, PANE.right);
       if (this !== axis && this.contains(axis)) return rect(PANE.left, PANE.right);
       return rect(0, 1440);
     });
