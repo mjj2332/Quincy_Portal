@@ -7,7 +7,9 @@ import { cn } from "@/lib/utils"
  * matching `@base-ui/react` 1.7.0 in `portal/package.json`. Two mechanical edits: dropped the
  * registry's `"use client"` directive (meaningless in this Vite SPA) and imported `cn` from
  * `@/lib/utils` instead of the registry's raw `"cn"` package (see `reui/checkbox.tsx`'s header
- * for why that package must never be installed). No other change.
+ * for why that package must never be installed).
+ * Quincy adaptation (#724): the off track is `bg-control-off`, not the registry's `bg-input` (a 1.6:1
+ * hairline, under WCAG 1.4.11). No other change.
  */
 function Switch({
   className,
@@ -21,7 +23,7 @@ function Switch({
       data-slot="switch"
       data-size={size}
       className={cn(
-        "peer group/switch relative inline-flex shrink-0 items-center rounded-full border border-transparent transition-all outline-none group-has-[:focus-visible]/field-label:border-transparent group-has-[:focus-visible]/field-label:ring-0 after:absolute after:-inset-x-3 after:-inset-y-2 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 data-[size=default]:h-[18.4px] data-[size=default]:w-[32px] data-[size=sm]:h-[14px] data-[size=sm]:w-[24px] data-checked:bg-primary data-unchecked:bg-input data-disabled:cursor-not-allowed data-disabled:opacity-50",
+        "peer group/switch relative inline-flex shrink-0 items-center rounded-full border border-transparent transition-all outline-none group-has-[:focus-visible]/field-label:border-transparent group-has-[:focus-visible]/field-label:ring-0 after:absolute after:-inset-x-3 after:-inset-y-2 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 data-[size=default]:h-[18.4px] data-[size=default]:w-[32px] data-[size=sm]:h-[14px] data-[size=sm]:w-[24px] data-checked:bg-primary data-unchecked:bg-control-off data-disabled:cursor-not-allowed data-disabled:opacity-50",
         className
       )}
       {...props}
