@@ -478,9 +478,10 @@ export class Snapshots {
 
   // ---- MCP edits (#708) -----------------------------------------------------------------------------------------------
 
-  findServerEdit(requestId: string): { actor_id: string; fingerprint: string; result_json: string } | null {
+  /** `result_json` is "" once the result has been dropped (see `pruneServerEdits`): the id is remembered, its answer is not. */
+  findServerEdit(requestId: string): { actor_id: string; fingerprint: string; result_json: string; audit_done: number } | null {
     this.ensureSchema();
-    return this.sql.exec<{ actor_id: string; fingerprint: string; result_json: string }>("SELECT actor_id, fingerprint, result_json FROM wb_server_edits WHERE request_id = ?", requestId).toArray()[0] ?? null;
+    return this.sql.exec<{ actor_id: string; fingerprint: string; result_json: string; audit_done: number }>("SELECT actor_id, fingerprint, result_json, audit_done FROM wb_server_edits WHERE request_id = ?", requestId).toArray()[0] ?? null;
   }
 
   /**
@@ -494,10 +495,13 @@ export class Snapshots {
     this.pruneServerEdits();
   }
 
-  /** Delivered records older than a day are no longer needed to answer a retry. A record whose audit is still pending is never dropped. */
+  /**
+   * A request id is never forgotten (the row is tiny), or a late retry would apply its edits a second time. After a day only the
+   * stored RESULT is dropped, and a retry of such an id is refused as expired. A record whose audit is still pending keeps its result.
+   */
   pruneServerEdits(): void {
     this.ensureSchema();
-    this.sql.exec("DELETE FROM wb_server_edits WHERE audit_done = 1 AND created_at < ?", this.host.clock() - SERVER_EDIT_RETENTION_MS);
+    this.sql.exec("UPDATE wb_server_edits SET result_json = '' WHERE audit_done = 1 AND result_json <> '' AND created_at < ?", this.host.clock() - SERVER_EDIT_RETENTION_MS);
   }
 
   // ---- audit ----------------------------------------------------------------------------------------------------------

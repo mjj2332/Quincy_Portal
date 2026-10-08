@@ -276,18 +276,60 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
     return { x: c.x + dx * t + (dx / length) * ARROW_GAP, y: c.y + dy * t + (dy / length) * ARROW_GAP };
   };
 
-  const pointsOf = (arrow: Row): Array<{ x: number; y: number }> =>
-    (Array.isArray(arrow.points) ? arrow.points as number[][] : [[0, 0], [0, 0]]).map((p) => ({ x: num(arrow.x) + num(p[0]), y: num(arrow.y) + num(p[1]) }));
-  /** The arrow's geometry with each bound end on its element's outline; an unbound end stays where it is. Interior points are kept. */
+  /** The arrow's points in WORLD coordinates: an arrow's `angle` turns it about the centre of its points' bounding box. */
+  const pointsOf = (arrow: Row): Array<{ x: number; y: number }> => {
+    const local = (Array.isArray(arrow.points) ? arrow.points as number[][] : [[0, 0], [0, 0]]).map((p) => ({ x: num(arrow.x) + num(p[0]), y: num(arrow.y) + num(p[1]) }));
+    const angle = num(arrow.angle);
+    if (angle === 0) return local;
+    const xs = local.map((p) => p.x); const ys = local.map((p) => p.y);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2; const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    return local.map((p) => ({ x: cx + (p.x - cx) * Math.cos(angle) - (p.y - cy) * Math.sin(angle), y: cy + (p.x - cx) * Math.sin(angle) + (p.y - cy) * Math.cos(angle) }));
+  };
+  const bindingTarget = (end: unknown) => end && typeof end === "object" ? live(String((end as { elementId?: unknown }).elementId)) : undefined;
+  /** Where on `box` a point sits, as fractions of its width and height (an elbow binding's `fixedPoint`). */
+  const fixedPointOf = (box: Row, p: { x: number; y: number }): [number, number] => {
+    const clamp = (value: number) => Math.min(1, Math.max(0, value));
+    return [clamp((p.x - num(box.x)) / Math.max(num(box.width), 1e-9)), clamp((p.y - num(box.y)) / Math.max(num(box.height), 1e-9))];
+  };
+  /**
+   * The arrow's geometry with each bound end on its element's outline, always written UNROTATED (`angle: 0`, points in world
+   * space). An unbound end stays where it is. A plain multi-point arrow keeps its interior points, carried by the similarity that
+   * maps its old end-to-end segment onto the new one (so a bend stays where it was relative to the ends). An elbow arrow's old bends
+   * are dropped: it becomes a 3-segment orthogonal route, horizontal-vertical-horizontal when the ends are further apart across
+   * than down, else vertical-horizontal-vertical, leaving each bound element from the middle of its facing side.
+   */
   const routeArrow = (arrow: Row): Record<string, unknown> => {
-    const abs = pointsOf(arrow);
-    const binding = (end: unknown) => end && typeof end === "object" ? live(String((end as { elementId?: unknown }).elementId)) : undefined;
-    const first = binding(arrow.startBinding); const last = binding(arrow.endBinding);
-    const startTarget = first ? centre(first) : abs[0]!; const endTarget = last ? centre(last) : abs.at(-1)!;
-    if (first) abs[0] = outline(first, abs.length > 2 ? abs[1]! : endTarget);
-    if (last) abs[abs.length - 1] = outline(last, abs.length > 2 ? abs.at(-2)! : startTarget);
-    const xs = abs.map((p) => p.x); const ys = abs.map((p) => p.y);
-    return { x: abs[0]!.x, y: abs[0]!.y, width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys), points: abs.map((p) => [p.x - abs[0]!.x, p.y - abs[0]!.y]) };
+    const old = pointsOf(arrow);
+    const first = bindingTarget(arrow.startBinding); const last = bindingTarget(arrow.endBinding);
+    const startTarget = first ? centre(first) : old[0]!; const endTarget = last ? centre(last) : old.at(-1)!;
+    let route: Array<{ x: number; y: number }>;
+    const extras: Record<string, unknown> = { angle: 0 };
+    if (arrow.elbowed === true) {
+      const horizontal = Math.abs(endTarget.x - startTarget.x) >= Math.abs(endTarget.y - startTarget.y);
+      // Facing-side midpoints: aim along the dominant axis from the element's own centre line.
+      const facing = (box: Row, otherCentre: { x: number; y: number }) => outline(box, horizontal ? { x: otherCentre.x, y: centre(box).y } : { x: centre(box).x, y: otherCentre.y });
+      const start = first ? facing(first, endTarget) : old[0]!; const end = last ? facing(last, startTarget) : old.at(-1)!;
+      const mid = horizontal ? (start.x + end.x) / 2 : (start.y + end.y) / 2;
+      route = horizontal ? [start, { x: mid, y: start.y }, { x: mid, y: end.y }, end] : [start, { x: start.x, y: mid }, { x: end.x, y: mid }, end];
+      extras.fixedSegments = null; extras.startIsSpecial = null; extras.endIsSpecial = null;
+      for (const [key, binding, box, point] of [["startBinding", arrow.startBinding, first, start], ["endBinding", arrow.endBinding, last, end]] as const) {
+        if (box && binding && typeof binding === "object") extras[key] = { ...(binding as object), fixedPoint: fixedPointOf(box, point) };
+      }
+    } else {
+      const start = first ? outline(first, old.length > 2 ? old[1]! : endTarget) : old[0]!;
+      const end = last ? outline(last, old.length > 2 ? old.at(-2)! : startTarget) : old.at(-1)!;
+      const before = { x: old.at(-1)!.x - old[0]!.x, y: old.at(-1)!.y - old[0]!.y };
+      const after = { x: end.x - start.x, y: end.y - start.y };
+      const span = before.x * before.x + before.y * before.y;
+      const factor = span === 0 ? null : { re: (after.x * before.x + after.y * before.y) / span, im: (after.y * before.x - after.x * before.y) / span };
+      const inner = factor ? old.slice(1, -1).map((p) => {
+        const dx = p.x - old[0]!.x; const dy = p.y - old[0]!.y;
+        return { x: start.x + dx * factor.re - dy * factor.im, y: start.y + dx * factor.im + dy * factor.re };
+      }) : [];
+      route = [start, ...inner, end];
+    }
+    const xs = route.map((p) => p.x); const ys = route.map((p) => p.y);
+    return { ...extras, x: route[0]!.x, y: route[0]!.y, width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys), points: route.map((p) => [p.x - route[0]!.x, p.y - route[0]!.y]) };
   };
   const arrowsBoundTo = (id: string): Row[] => [...working.values()].filter((row) => row.type === "arrow" && !row.isDeleted
     && [row.startBinding, row.endBinding].some((end) => end && typeof end === "object" && (end as { elementId?: unknown }).elementId === id));

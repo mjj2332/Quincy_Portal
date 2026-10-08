@@ -350,14 +350,24 @@ describe("review round 1 (Sol)", () => {
     expect(await refused("member2", "edit_project_whiteboard", { projectId, expectedGeneration: 1, requestId, edits: [text("original")] }, 409)).toMatchObject({ code: "request_id_reused" });
     expect(await storedRows(projectId)).toEqual(rows);
   });
-  it("a retry still answers after the board moved on, and the record is bounded to a day", async () => {
+  it("a retry still answers after the board moved on; after a day only the result is dropped, and the id is never forgotten", async () => {
     const projectId = await newProject(); const requestId = crypto.randomUUID();
     const first = await edit("member", projectId, [text("a")], 1, requestId);
     await edit("member", projectId, [text("b")]);
     expect(await edit("member", projectId, [text("a")], 1, requestId)).toEqual(first);
+    const rowsBefore = await storedRows(projectId); const auditBefore = await auditRows(projectId);
     await setClock(projectId, farFuture() + 48 * 3_600_000);
     await fire(projectId);
-    expect(await runInDurableObject(stubFor(projectId), async (_i, state) => state.storage.sql.exec("SELECT COUNT(*) AS n FROM wb_server_edits").one().n)).toBe(0);
+    const kept = await runInDurableObject(stubFor(projectId), async (_i, state) => state.storage.sql.exec("SELECT request_id, actor_id, fingerprint, audit_done, result_json FROM wb_server_edits WHERE request_id = ?", requestId).toArray());
+    expect(kept).toHaveLength(1);
+    expect(kept[0]).toMatchObject({ actor_id: memberId, audit_done: 1, result_json: "" });
+    expect((kept[0]!.fingerprint as string).length).toBe(64);
+    const expired = await refused("member", "edit_project_whiteboard", { projectId, expectedGeneration: 1, requestId, edits: [text("a")] }, 409);
+    expect(expired).toMatchObject({ code: "request_expired" });
+    expect(await refused("member", "edit_project_whiteboard", { projectId, expectedGeneration: 1, requestId, edits: [text("other")] }, 409)).toMatchObject({ code: "request_id_reused" });
+    expect(await storedRows(projectId)).toEqual(rowsBefore);
+    expect(await auditRows(projectId)).toEqual(auditBefore);
+    expect(auditBefore).toHaveLength(2);
   });
 
   it("an audit write that fails stays pending and lands exactly once on the next alarm", async () => {

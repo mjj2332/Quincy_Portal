@@ -377,8 +377,9 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
       const prior = this.snapshots.findServerEdit(input.requestId);
       if (prior) {
         if (prior.actor_id !== input.actor.id || prior.fingerprint !== fingerprint) return editsFailure(409, "request_id_reused", "That requestId was already used for different edits. Use a new one.");
+        if (prior.result_json === "") return editsFailure(409, "request_expired", "That requestId was used more than a day ago and its result is no longer kept. Read the board with get_project_whiteboard to see whether the edits landed; nothing was applied now.");
         const stored = JSON.parse(prior.result_json) as { generation: number; results: Array<{ op: WhiteboardServerEdit["op"]; id: string }> };
-        await this.snapshots.deliverAudits();
+        if (prior.audit_done === 0) await this.snapshots.deliverAudits();     // never reaches audit delivery for an id already delivered
         return { ok: true, generation: stored.generation, results: stored.results };
       }
       const generation = this.snapshots.generation();

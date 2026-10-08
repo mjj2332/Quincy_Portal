@@ -138,4 +138,68 @@ describe("server-made elements through the installed Excalidraw", () => {
     expect(restored.find((row) => row.id === arrowId)!.isDeleted).toBe(true);
     expect(((restored.find((row) => row.id === a)!.boundElements ?? []) as unknown[]).length).toBe(0);
   });
+
+  const rawRect = (id: string, x: number, y: number, width: number, height: number, extra: Record<string, unknown> = {}) =>
+    ({ id, type: "rectangle", x, y, width, height, angle: 0, version: 1, versionNonce: 1, isDeleted: false, index: `a${id}`, boundElements: null, ...extra }) as unknown as StoredElement;
+  const rawArrow = (extra: Record<string, unknown>) =>
+    ({ id: "arr", type: "arrow", angle: 0, version: 1, versionNonce: 1, isDeleted: false, index: "azz", boundElements: null, startArrowhead: null, endArrowhead: "arrow", lastCommittedPoint: null, ...extra }) as unknown as StoredElement;
+  const worldPoints = (row: Record<string, unknown>) => (row.points as number[][]).map((p) => ({ x: (row.x as number) + p[0]!, y: (row.y as number) + p[1]! }));
+  /** 0 on the outline of a box turned by `angle`, in its own frame (max-norm for a rectangle). */
+  const rectNorm = (p: { x: number; y: number }, box: Record<string, unknown>) => {
+    const cx = (box.x as number) + (box.width as number) / 2; const cy = (box.y as number) + (box.height as number) / 2;
+    const a = -(box.angle as number); const dx = p.x - cx; const dy = p.y - cy;
+    const lx = dx * Math.cos(a) - dy * Math.sin(a); const ly = dx * Math.sin(a) + dy * Math.cos(a);
+    return Math.max(Math.abs(lx) / ((box.width as number) / 2), Math.abs(ly) / ((box.height as number) / 2));
+  };
+
+  it("re-routes a ROTATED arrow between rotated rectangles in world coordinates and writes it back unrotated", () => {
+    const quarter = Math.PI / 2;
+    const a = rawRect("A", 0, 0, 100, 50, { angle: quarter }); const b = rawRect("B", 500, 0, 100, 50, { angle: quarter });
+    // World: from A's right side (76,25) to B's left side (524,25). Stored turned -90 degrees about the box centre (300,25).
+    const arrow = rawArrow({ x: 300, y: 249, width: 0, height: 448, angle: quarter, points: [[0, 0], [0, -448]], startBinding: { elementId: "A", focus: 0, gap: 1 }, endBinding: { elementId: "B", focus: 0, gap: 1 }, elbowed: false });
+    const rows = [a, b, arrow];
+    const moved = must(expandServerEdits([{ op: "edit", id: "B", y: 200 }], rows, deps()));
+    const next = moved.elements.find((row) => row.id === "arr")!;
+    expect(next.angle).toBe(0);
+    const back = restore(rowsOf(rows, moved.elements));
+    const row = back.find((r) => r.id === "arr")!;
+    const [start, end] = [worldPoints(row)[0]!, worldPoints(row).at(-1)!];
+    expect(rectNorm(start, back.find((r) => r.id === "A")!)).toBeCloseTo(1, 1);
+    expect(rectNorm(end, back.find((r) => r.id === "B")!)).toBeCloseTo(1, 1);
+    expect(end.y).toBeGreaterThan(150);                                          // followed B down
+    expect(row.angle).toBe(0);
+  });
+
+  it("re-routes an elbow arrow as an axis-aligned H-V-H or V-H-V path with fresh fixed points", () => {
+    const a = rawRect("A", 0, 0, 100, 100); const b = rawRect("B", 500, 0, 100, 100);
+    const arrow = rawArrow({ x: 101, y: 50, width: 398, height: 0, points: [[0, 0], [199, 0], [398, 0]], elbowed: true, fixedSegments: [{ start: [199, 0], end: [199, 0], index: 2 }], startIsSpecial: null, endIsSpecial: null,
+      startBinding: { elementId: "A", focus: 0, gap: 1, fixedPoint: [1.01, 0.5] }, endBinding: { elementId: "B", focus: 0, gap: 1, fixedPoint: [-0.01, 0.5] } });
+    const rows = [a, b, arrow];
+    for (const [y, shape] of [[100, "H-V-H"], [-40, "H-V-H"]] as const) {
+      const moved = must(expandServerEdits([{ op: "edit", id: "B", y }], rows, deps()));
+      const row = restore(rowsOf(rows, moved.elements)).find((r) => r.id === "arr")!;
+      const pts = worldPoints(row);
+      expect(pts, shape).toHaveLength(4);
+      for (let i = 1; i < pts.length; i++) expect(Math.abs(pts[i]!.x - pts[i - 1]!.x) < 1e-6 || Math.abs(pts[i]!.y - pts[i - 1]!.y) < 1e-6, `segment ${i}`).toBe(true);
+      expect(row.elbowed).toBe(true);
+      expect(row.fixedSegments ?? null).toBeNull();
+      expect((moved.elements.find((r) => r.id === "arr")!.endBinding as { fixedPoint: number[] }).fixedPoint[1]).toBeCloseTo(0.5, 9);
+      expect((row.endBinding as { fixedPoint: number[] }).fixedPoint[1]).toBeCloseTo(0.5, 2);
+      expect(pts.at(-1)!.y).toBeCloseTo(y + 50, 3);
+    }
+    // A dominant vertical run chooses V-H-V.
+    const tall = must(expandServerEdits([{ op: "edit", id: "B", x: 120, y: 600 }], rows, deps()));
+    const pts = worldPoints(restore(rowsOf(rows, tall.elements)).find((r) => r.id === "arr")!);
+    for (let i = 1; i < pts.length; i++) expect(Math.abs(pts[i]!.x - pts[i - 1]!.x) < 1e-6 || Math.abs(pts[i]!.y - pts[i - 1]!.y) < 1e-6).toBe(true);
+    expect(Math.abs(pts[1]!.x - pts[0]!.x)).toBeLessThan(1e-6);                 // first run is vertical
+  });
+
+  it("keeps a plain multi-point arrow's interior points, carried along with its ends", () => {
+    const a = rawRect("A", 0, 0, 100, 100); const b = rawRect("B", 500, 0, 100, 100);
+    const arrow = rawArrow({ x: 101, y: 50, width: 398, height: 100, points: [[0, 0], [199, 100], [398, 0]], elbowed: false, startBinding: { elementId: "A", focus: 0, gap: 1 }, endBinding: { elementId: "B", focus: 0, gap: 1 } });
+    const moved = must(expandServerEdits([{ op: "edit", id: "B", y: 100 }], [a, b, arrow], deps()));
+    const pts = worldPoints(moved.elements.find((r) => r.id === "arr")!);
+    expect(pts).toHaveLength(3);
+    expect(pts[1]!.y).toBeGreaterThan(150);                                       // the bend went down with the far end
+  });
 });
