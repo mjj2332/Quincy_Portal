@@ -11,7 +11,7 @@ function patternFor(template: string): RegExp {
   return new RegExp(`^${body}$`);
 }
 
-/** GETs only in this ticket (#703). */
+/** Reads (#703). */
 const GET_TEMPLATES = [
   "/api/me",
   // Projects
@@ -47,8 +47,36 @@ const GET_TEMPLATES = [
   "/api/projects/:projectId/jobs",
 ] as const;
 
-export const MCP_ALLOWED_ROUTES: readonly { method: string; template: string; pattern: RegExp }[] =
-  GET_TEMPLATES.map((template) => ({ method: "GET", template, pattern: patternFor(template) }));
+/** Core writes (#705). Each is one tool's one route; `mcp-writes.test.ts` checks the pairing both ways. */
+const WRITE_ROUTES = [
+  ["POST", "/api/projects"],
+  ["PATCH", "/api/projects/:projectId"],
+  ["POST", "/api/projects/:projectId/priority"],
+  ["PUT", "/api/projects/:projectId/deadline"],
+  ["PUT", "/api/projects/:projectId/editors/:userId"],
+  ["DELETE", "/api/projects/:projectId/editors/:userId"],
+  ["POST", "/api/projects/:projectId/stage"],
+  ["POST", "/api/projects/:projectId/archive"],
+  ["POST", "/api/projects/:projectId/restore"],
+  ["POST", "/api/projects/:projectId/subtasks"],
+  ["PATCH", "/api/projects/:projectId/subtasks/:subtaskId"],
+  ["POST", "/api/projects/:projectId/subtasks/:subtaskId/reorder"],
+  ["DELETE", "/api/projects/:projectId/subtasks/:subtaskId"],
+  ["POST", "/api/projects/:projectId/comments"],
+  ["PATCH", "/api/projects/:projectId/comments/:commentId"],
+  ["DELETE", "/api/projects/:projectId/comments/:commentId"],
+  ["POST", "/api/projects/:projectId/links"],
+  ["PATCH", "/api/projects/:projectId/links/:linkId"],
+  ["POST", "/api/projects/:projectId/links/:linkId/reorder"],
+  ["DELETE", "/api/projects/:projectId/links/:linkId"],
+  ["POST", "/api/notifications/:notificationId/read"],
+  ["POST", "/api/notifications/read-all"],
+] as const;
+
+export const MCP_ALLOWED_ROUTES: readonly { method: string; template: string; pattern: RegExp }[] = [
+  ...GET_TEMPLATES.map((template) => ({ method: "GET", template, pattern: patternFor(template) })),
+  ...WRITE_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })),
+];
 
 export function isAllowedMcpRoute(method: string, path: string): boolean {
   if (path.startsWith("/api/auth/") || path === "/api/auth") return false;

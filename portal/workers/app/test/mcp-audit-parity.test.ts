@@ -1,29 +1,17 @@
 import { env } from "cloudflare:test";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
 import { app } from "../src/index";
 import type { McpPrincipal } from "../src/lib/mcp-dispatch-context";
-import { dispatchToApi, type McpFetchApp } from "../src/mcp/dispatch";
+import type { McpFetchApp } from "../src/mcp/dispatch";
+import { MCP_TOOLS } from "../src/mcp/tools/registry";
 
 /**
- * Audit parity (#704, plan #699 ticket 4): every write the MCP door can reach must stamp provenance on every audit_log and
- * project_activity_events row it creates. Later tickets (core writes, collaboration writes, admin) append to WRITE_CALLS and,
- * only with a stated reason, to EXCEPTIONS.
- *
- * Test-local allowlist override: the production list is NOT widened here. Add the route to ROUTES below when adding a call.
+ * Audit parity (#704, extended by #705): every write tool the MCP door lists must stamp provenance on every audit_log and
+ * project_activity_events row it creates. Each call below drives the tool itself (so the route it dispatches to is the production
+ * allowlist), and the completeness test fails when a write tool has neither a call nor a stated reason in NO_AUDIT_ROWS.
+ * Later tickets (collaboration writes, admin) append to WRITE_CALLS and, only with a stated reason, to EXCEPTIONS.
  */
-const { ROUTES } = vi.hoisted(() => ({
-  ROUTES: [
-    ["POST", "/api/projects/[A-Za-z0-9_-]+/comments"],
-    ["POST", "/api/projects/[A-Za-z0-9_-]+/subtasks"],
-    ["PUT", "/api/projects/[A-Za-z0-9_-]+/deadline"],
-    ["POST", "/api/projects/[A-Za-z0-9_-]+/stage"],
-  ] as ReadonlyArray<readonly [method: string, pattern: string]>,
-}));
-vi.mock("../src/mcp/route-allowlist", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../src/mcp/route-allowlist")>();
-  return { ...original, isAllowedMcpRoute: (method: string, path: string) => original.isAllowedMcpRoute(method, path) || ROUTES.some(([m, p]) => m === method && new RegExp(`^${p}$`).test(path)) };
-});
 
 /** audit_log actions a write may create WITHOUT provenance, each with the reason. A listed action that never appears fails the run, so the list cannot go stale. */
 const EXCEPTIONS: ReadonlyArray<{ action: string; reason: string }> = [
@@ -36,18 +24,80 @@ declare const __PORTAL_MIGRATION_SQL__: string;
 declare const __PORTAL_SEED_SQL__: string;
 
 const adminId = "6b851dc8-14cf-4f90-bd29-ce6c27f86385";
+const editorId = "b6000000-0000-4000-8000-000000000001";
 const ctx = { waitUntil: () => undefined, passThroughOnException: () => undefined, props: {} } as unknown as ExecutionContext;
 const fetchApp: McpFetchApp = (request, e, c) => app.fetch(request, e, c);
 const principal: McpPrincipal = { userId: adminId, connectionId: "conn-parity", clientName: "Parity Client", authorizationEpoch: 0 };
 const doc = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
 
-type WriteCall = { name: string; stage: string; request: (projectId: string) => { method: string; path: string; body: unknown } };
+type Setup = { projectId: string; [key: string]: string };
+type WriteCall = {
+  tool: string;
+  stage?: string;
+  archived?: boolean;
+  /** Extra rows the call needs; returns ids the arguments can use. */
+  setup?: (projectId: string) => Promise<Record<string, string>>;
+  args: (ids: Setup) => Record<string, unknown>;
+};
+
+const insert = async (sql: string, ...bindings: unknown[]) => { await database.DB.prepare(sql).bind(...bindings).run(); };
+const subtaskSetup = async (projectId: string) => {
+  const created = async (title: string) => { const body = JSON.parse(await callTool("create_subtask", { projectId, title })) as { id?: string; subtask?: { id: string } }; return (body.subtask?.id ?? body.id)!; };
+  return { subtaskId: await created("Parity"), otherId: await created("Other") };
+};
+const commentSetup = async (projectId: string) => {
+  const created = JSON.parse(await callTool("add_project_comment", { projectId, text: "Seed" })) as { id: string };
+  return { commentId: created.id };
+};
+const linkSetup = async (projectId: string) => {
+  const first = JSON.parse(await callTool("add_video_link", { projectId, url: `https://example.test/${crypto.randomUUID()}` })) as { id: string };
+  const second = JSON.parse(await callTool("add_video_link", { projectId, url: `https://example.test/${crypto.randomUUID()}` })) as { id: string };
+  return { linkId: first.id, otherId: second.id };
+};
+const memberSetup = async (projectId: string) => {
+  const membershipCycle = crypto.randomUUID();
+  await insert("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)", membershipCycle, projectId, editorId, Date.now());
+  return { membershipCycle };
+};
+
 const WRITE_CALLS: readonly WriteCall[] = [
-  { name: "comment create", stage: "edited_review", request: (id) => ({ method: "POST", path: `/api/projects/${id}/comments`, body: { content: doc("Parity comment") } }) },
-  { name: "subtask create", stage: "edited_review", request: (id) => ({ method: "POST", path: `/api/projects/${id}/subtasks`, body: { title: "Parity subtask" } }) },
-  { name: "deadline set", stage: "edited_review", request: (id) => ({ method: "PUT", path: `/api/projects/${id}/deadline`, body: { expectedVersion: 0, deadline: { localCivil: "2037-02-15T09:00" }, reminderOffsetsMinutes: [60] } }) },
-  { name: "stage move leaving Awaiting RAW", stage: "awaiting_raw", request: (id) => ({ method: "POST", path: `/api/projects/${id}/stage`, body: { expected: { stageKey: "awaiting_raw", boardRevision: 0 }, targetStageKey: "raw_review", placement: { kind: "append" }, confirmation: { reasons: [] } } }) },
+  { tool: "create_project", args: () => ({ street: "Parity Created", shootDate: "2037-05-04" }) },
+  { tool: "update_project_details", stage: "edited_review", args: ({ projectId }) => ({ projectId, suburb: "Parity", shootDate: "2037-06-01" }) },
+  { tool: "set_project_priority", stage: "edited_review", args: ({ projectId }) => ({ projectId, priority: 2 }) },
+  { tool: "set_project_deadline", stage: "edited_review", args: ({ projectId }) => ({ projectId, expectedVersion: 0, deadline: { localCivil: "2037-02-15T09:00" }, reminderOffsetsMinutes: [60] }) },
+  { tool: "add_project_editor", stage: "edited_review", args: ({ projectId }) => ({ projectId, userId: editorId }) },
+  { tool: "remove_project_editor", stage: "edited_review", setup: memberSetup, args: ({ projectId, membershipCycle }) => ({ projectId, userId: editorId, membershipCycle: membershipCycle! }) },
+  { tool: "move_project_stage", stage: "awaiting_raw", args: ({ projectId }) => ({ projectId, expectedStageKey: "awaiting_raw", expectedBoardRevision: 0, targetStageKey: "raw_review" }) },
+  { tool: "archive_project", stage: "edited_review", args: ({ projectId }) => ({ projectId }) },
+  { tool: "restore_project", stage: "edited_review", archived: true, args: ({ projectId }) => ({ projectId }) },
+  { tool: "create_subtask", stage: "edited_review", args: ({ projectId }) => ({ projectId, title: "Parity subtask" }) },
+  { tool: "update_subtask", stage: "edited_review", setup: subtaskSetup, args: ({ projectId, subtaskId }) => ({ projectId, subtaskId: subtaskId!, title: "Renamed", done: true }) },
+  { tool: "reorder_subtask", stage: "edited_review", setup: subtaskSetup, args: ({ projectId, subtaskId, otherId }) => ({ projectId, subtaskId: subtaskId!, beforeId: otherId!, afterId: null }) },
+  { tool: "delete_subtask", stage: "edited_review", setup: subtaskSetup, args: ({ projectId, subtaskId }) => ({ projectId, subtaskId: subtaskId! }) },
+  { tool: "add_project_comment", stage: "edited_review", args: ({ projectId }) => ({ projectId, text: "Parity comment" }) },
+  { tool: "edit_project_comment", stage: "edited_review", setup: commentSetup, args: ({ projectId, commentId }) => ({ projectId, commentId: commentId!, text: "Edited" }) },
+  { tool: "delete_project_comment", stage: "edited_review", setup: commentSetup, args: ({ projectId, commentId }) => ({ projectId, commentId: commentId! }) },
+  { tool: "add_video_link", stage: "edited_review", args: ({ projectId }) => ({ projectId, url: "https://example.test/parity", label: "Parity" }) },
+  { tool: "update_video_link", stage: "edited_review", setup: linkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, url: "https://example.test/parity-b" }) },
+  { tool: "reorder_video_link", stage: "edited_review", setup: linkSetup, args: ({ projectId, linkId, otherId }) => ({ projectId, linkId: linkId!, beforeId: otherId!, afterId: null }) },
+  { tool: "remove_video_link", stage: "edited_review", setup: linkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId! }) },
 ];
+
+/** Write tools whose route writes no audit_log or activity row at all (so there is nothing to stamp), each with the reason. */
+const NO_AUDIT_ROWS: ReadonlyArray<{ tool: string; reason: string }> = [
+  { tool: "mark_notification_read", reason: "The notifications read route only sets read_at; it writes no audit row." },
+  { tool: "mark_all_notifications_read", reason: "The notifications read-all route only sets read_at; it writes no audit row." },
+];
+
+const mcpTool = (name: string) => MCP_TOOLS.find((tool) => tool.name === name)!;
+async function callTool(name: string, args: Record<string, unknown>) {
+  const result = await mcpTool(name).call({ env: testEnv, executionCtx: ctx, fetchApp, principal, role: "admin" }, args);
+  expect(result.isError, `${name}: ${result.content[0]!.text}`).toBeUndefined();
+  return result.content[0]!.text;
+}
+function callToolRaw(name: string, args: Record<string, unknown>) {
+  return mcpTool(name).call({ env: testEnv, executionCtx: ctx, fetchApp, principal, role: "admin" }, args);
+}
 
 async function executeSql(sql: string): Promise<void> {
   for (const chunk of sql.split("--> statement-breakpoint")) {
@@ -66,6 +116,7 @@ beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__);
   await executeSql(__PORTAL_SEED_SQL__);
   const now = Date.now();
+  await database.DB.prepare("INSERT OR IGNORE INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Parity Editor', 'parity-editor@example.test', 1, 'editor', 1, ?, ?)").bind(editorId, now, now).run();
   await database.DB.batch([
     database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'"),
     database.DB.prepare("INSERT INTO mcp_connections (id, user_id, client_id, client_name, redirect_host, scopes, authorization_epoch, created_at) VALUES ('conn-parity', ?, 'client-1', 'Parity Client', 'client.example.test', '[\"write\"]', 0, ?)").bind(adminId, now),
@@ -76,28 +127,32 @@ beforeAll(async () => {
 describe("every row an MCP write creates carries provenance", () => {
   const seen = new Set<string>();
 
+  it("covers every write tool", () => {
+    const writes = MCP_TOOLS.filter((tool) => tool.annotations.readOnlyHint === false).map((tool) => tool.name).sort();
+    expect([...WRITE_CALLS.map((call) => call.tool), ...NO_AUDIT_ROWS.map((entry) => entry.tool)].sort()).toEqual(writes);
+  });
+
   for (const call of WRITE_CALLS) {
-    it(call.name, async () => {
+    it(call.tool, async () => {
       const projectId = crypto.randomUUID();
       const now = Date.now();
-      await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_revision, created_at, updated_at) VALUES (?, 'Parity Street', ?, 0, ?, ?)").bind(projectId, call.stage, now, now).run();
+      await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_revision, archived_at, created_at, updated_at) VALUES (?, 'Parity Street', ?, 0, ?, ?, ?)").bind(projectId, call.stage ?? "edited_review", call.archived ? now : null, now, now).run();
+      const ids: Setup = { projectId, ...(call.setup ? await call.setup(projectId) : {}) };
       const [auditMark, activityMark] = [await maxRowid("audit_log"), await maxRowid("project_activity_events")];
-      const request = call.request(projectId);
-      expect(ROUTES.some(([method, pattern]) => method === request.method && new RegExp(`^${pattern}$`).test(request.path))).toBe(true);
-      const response = await dispatchToApi(fetchApp, testEnv, ctx, principal, request);
-      expect(response.status, await response.clone().text()).toBeLessThan(300);
+      const result = await callToolRaw(call.tool, call.args(ids));
+      expect(result.isError, `${call.tool}: ${result.content[0]!.text}`).toBeUndefined();
 
       const audit = (await database.DB.prepare("SELECT action, meta_json FROM audit_log WHERE rowid > ? ORDER BY rowid").bind(auditMark).all<{ action: string; meta_json: string | null }>()).results;
       const activity = (await database.DB.prepare("SELECT event_type, via_client FROM project_activity_events WHERE rowid > ? ORDER BY rowid").bind(activityMark).all<{ event_type: string; via_client: string | null }>()).results;
-      expect(audit.length).toBeGreaterThan(0);
+      expect(audit.length, `${call.tool}: audit rows`).toBeGreaterThan(0);
       const covered = audit.filter((row) => !EXCEPTIONS.some((exception) => exception.action === row.action));
       expect(covered.length).toBeGreaterThan(0);
       for (const row of audit) {
         if (EXCEPTIONS.some((exception) => exception.action === row.action)) { seen.add(row.action); continue; }
         const meta = row.meta_json ? JSON.parse(row.meta_json) as Record<string, unknown> : {};
-        expect(meta, `${call.name}: audit ${row.action}`).toMatchObject({ via: "mcp", client: "Parity Client", connectionId: "conn-parity" });
+        expect(meta, `${call.tool}: audit ${row.action}`).toMatchObject({ via: "mcp", client: "Parity Client", connectionId: "conn-parity" });
       }
-      for (const row of activity) expect(row.via_client, `${call.name}: activity ${row.event_type}`).toBe("Parity Client");
+      for (const row of activity) expect(row.via_client, `${call.tool}: activity ${row.event_type}`).toBe("Parity Client");
     });
   }
 

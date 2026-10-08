@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
 import { MCP_ALLOWED_ROUTES, isAllowedMcpRoute } from "../src/mcp/route-allowlist";
 import { MCP_TOOLS, toolsFor } from "../src/mcp/tools/registry";
+import { WRITE_TOOLS } from "../src/mcp/tools/writes";
 import { mcpHarness } from "./mcp-oauth-support";
 
 declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL__: string;
@@ -26,6 +27,7 @@ const READ_NAMES = [
   "get_project_subtasks", "get_project_links", "list_people_for_filters", "list_project_comments", "get_project_activity", "get_collaboration_summary",
   "list_project_assets", "list_asset_annotations", "list_notifications", "list_notice_board",
 ];
+const WRITE_NAMES = WRITE_TOOLS.map((tool) => tool.name);
 const ADMIN_NAMES = [
   "admin_list_users", "admin_tonomo_health", "admin_list_webhook_events", "admin_get_webhook_event", "admin_list_dead_letters",
   "admin_list_notification_deliveries", "admin_list_agencies", "admin_list_agency_contacts", "admin_list_stages", "admin_get_attention", "admin_list_project_jobs",
@@ -42,6 +44,7 @@ beforeAll(async () => {
   await DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?)").bind(collectionId, visibleProject, now, now).run();
   await DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, 'mcp-reads/a.jpg', 'a.jpg', 10, 'upload', ?, ?)").bind(assetId, collectionId, now, now).run();
   await DB.prepare("INSERT INTO annotations (id, asset_id, author_id, author_role, scope, note_text, created_at) VALUES (?, ?, ?, 'editor', 'raw', 'Check the window', ?)").bind(annotationId, assetId, editorId, now).run();
+  tokens.adminReadOnly = await h.connect("read", "admin");
   for (const [name, scope] of [["admin", "read write admin"], ["editor", "read"], ["photographer", "read"], ["external", "read"]] as const) tokens[name] = await h.connect(scope, name);
 });
 beforeEach(() => { delete (testEnv as { MCP_CALLS?: unknown }).MCP_CALLS; delete (testEnv as { MCP_WRITES?: unknown }).MCP_WRITES; });
@@ -50,8 +53,9 @@ const names = async (who: string) => (await h.toolsList(tokens[who]!.accessToken
 const text = (result?: { content: { text: string }[] }) => JSON.parse(result!.content[0]!.text) as unknown;
 
 describe("tools/list follows the role and the granted scopes", () => {
-  it("admin sees every read tool and every admin read", async () => {
-    expect(await names("admin")).toEqual([...READ_NAMES, ...ADMIN_NAMES].sort());
+  it("admin with every scope sees every read tool, every admin read and every write tool", async () => {
+    expect(await names("admin")).toEqual([...READ_NAMES, ...ADMIN_NAMES, ...WRITE_NAMES].sort());
+    expect(await names("adminReadOnly")).toEqual([...READ_NAMES, ...ADMIN_NAMES].sort());
   });
   it("editor and photographer see no admin tools; photographer lacks Edited-only tools", async () => {
     const editor = await names("editor"); const photographer = await names("photographer");
@@ -64,9 +68,10 @@ describe("tools/list follows the role and the granted scopes", () => {
     expect(await names("external")).toEqual(READ_NAMES.filter((n) => !["list_project_assignment_candidates", "list_notice_board"].includes(n)).sort());
   });
   it("a read-only grant lists only read-only tools; no read scope lists none", async () => {
-    const list = await h.toolsList(tokens.admin!.accessToken);
+    const list = await h.toolsList(tokens.adminReadOnly!.accessToken);
     expect(list.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
-    expect(toolsFor("admin", ["write"])).toEqual([]);
+    expect(toolsFor("admin", ["write"]).every((tool) => tool.annotations.readOnlyHint === false)).toBe(true);
+    expect(toolsFor("admin", ["admin"]).map((tool) => tool.name)).toEqual([]);
   });
 });
 
@@ -195,19 +200,19 @@ describe("rate limit per Connected app", () => {
 describe("route allowlist and the tool registry agree", () => {
   it("every tool dispatches to an allowlisted route, and every allowlist entry belongs to a tool", () => {
     const toolTemplates = new Set(MCP_TOOLS.map((tool) => `${tool.route.method} ${tool.route.template}`));
-    for (const tool of MCP_TOOLS) {
+    for (const tool of MCP_TOOLS.filter((candidate) => candidate.annotations.readOnlyHint === true)) {
       const path = tool.route.template.replace(/:[A-Za-z]+/g, "x1");
       expect(isAllowedMcpRoute(tool.route.method, path), tool.name).toBe(true);
       expect(MCP_ALLOWED_ROUTES.some((route) => route.method === tool.route.method && route.template === tool.route.template), tool.name).toBe(true);
-      expect(tool.annotations.readOnlyHint, tool.name).toBe(true);
     }
     for (const route of MCP_ALLOWED_ROUTES) expect(toolTemplates.has(`${route.method} ${route.template}`), `${route.method} ${route.template}`).toBe(true);
     expect(new Set(MCP_TOOLS.map((tool) => tool.name)).size).toBe(MCP_TOOLS.length);
   });
-  it("is GET-only, has no wildcard, and keeps /api/auth out", () => {
-    expect(MCP_ALLOWED_ROUTES.every((route) => route.method === "GET" && !route.template.includes("*"))).toBe(true);
+  it("has no wildcard, only reads outside the write tools' routes, and keeps /api/auth out", () => {
+    const writeRoutes = new Set(WRITE_TOOLS.map((tool) => `${tool.route.method} ${tool.route.template}`));
+    expect(MCP_ALLOWED_ROUTES.every((route) => !route.template.includes("*") && (route.method === "GET" || writeRoutes.has(`${route.method} ${route.template}`)))).toBe(true);
     expect(isAllowedMcpRoute("GET", "/api/auth/get-session")).toBe(false);
     expect(isAllowedMcpRoute("GET", "/api/projects/x/jobs/extra")).toBe(false);
-    expect(isAllowedMcpRoute("POST", "/api/projects")).toBe(false);
+    expect(isAllowedMcpRoute("POST", "/api/projects/x1/send-to-autohdr")).toBe(false);
   });
 });
