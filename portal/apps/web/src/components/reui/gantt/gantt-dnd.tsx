@@ -113,6 +113,11 @@
  * toward the end, the hint had ridden off-screen. Its width is re-read each move (the hint appears
  * mid-gesture). Not applied to a consumer's custom move overlay. Covered by
  * `gantt-drop-warning.dom.test.tsx`.
+ *
+ * 2026-10-08, #727 - CHANGED (ADR 0009 addendum). The tree is now a sticky column inside the one scroller, so the
+ * scroller's rect spans the tree. The cached `paneRect` (overlay clamps) and the edge auto-scroll zone measure the
+ * lane overlay (`data-slot="gantt-lane-overlay"`, the visible lane right of the tree) instead; scroll writes still
+ * go to the `[data-gantt-scroller]` element. A dragged bar therefore never clamps or auto-scrolls under the tree.
  */
 
 import { useCallback, useEffect } from "react"
@@ -320,11 +325,17 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   const timelineViewport = viewRoot?.querySelector<HTMLElement>(
     "[data-gantt-scroller]"
   )
+  // 2026-10-08, #727: the scroller now also spans the sticky tree column, so the VISIBLE timeline
+  // lane is the lane overlay (the box right of the tree); clamping and edge auto-scroll measure it
+  // and a dragged bar never goes under the tree. The scroller still receives the scroll writes.
+  const laneEl =
+    viewRoot?.querySelector<HTMLElement>('[data-slot="gantt-lane-overlay"]') ??
+    timelineViewport
   let paneRect: DOMRect | null = null
   const cachePane = (rect: DOMRect | null) => {
     paneRect = rect
   }
-  const measurePane = () => cachePane(timelineViewport?.getBoundingClientRect() ?? null)
+  const measurePane = () => cachePane(laneEl?.getBoundingClientRect() ?? null)
   let lastProposalKey = ""
   let touchTimer: ReturnType<typeof setTimeout> | null = null
   let lastPointer: PointerEvent = startEvent
@@ -976,7 +987,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   const autoScrollTick = () => {
     autoScrollRaf = 0
     if (finished || !active || !surface || !timelineViewport) return
-    const pane = timelineViewport.getBoundingClientRect()
+    const pane = (laneEl ?? timelineViewport).getBoundingClientRect()
     cachePane(pane)
     const x = lastPointer.clientX
     let speed = 0

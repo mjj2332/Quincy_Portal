@@ -4757,8 +4757,9 @@ Tags: gantt-calendar · #414, #415
 
 - **Place the row by writing `scrollTop`, never `scrollIntoView`.** `scrollGanttRowToTop`
   (`ProductionGantt.tsx`) reads the timeline row's rect against the viewport and the sticky timeline
-  header, then writes the same `scrollTop` to both pane viewports (as the vendor wheel handler does).
-  `scrollIntoView` scrolls every ancestor (the page itself on a phone, the hazard in the earlier Gantt
+  header, then writes that `scrollTop` to the Timeline's single scroller. Since #727 the tree is a sticky
+  column inside that scroller, so one write moves tree rows and bars together; before it there were two
+  pane viewports and the write (and the vendor wheel handler) mirrored both. `scrollIntoView` scrolls every ancestor (the page itself on a phone, the hazard in the earlier Gantt
   horizontal-displacement lesson) and `block: "start"` parks the row under the sticky header. `scrollLeft`
   is never written, so the vendor's centre-on-now survives. Do not clamp against `scrollHeight`: browsers
   clamp natively and happy-dom reports 0.
@@ -4777,7 +4778,23 @@ Tags: gantt-calendar · #414, #415
   re-arms the request.
 - **Test seam.** happy-dom lays nothing out: stub `clientHeight` and a scroll-following
   `getBoundingClientRect` (a static rect makes "refetch leaves scrollTop alone" vacuous), and identify the
-  vendor viewport by a `dataset.slot` read rather than a `[data-slot]` selector (test-seam guard F).
+  vendor viewport by a `dataset.slot` read rather than a `[data-slot]` selector (test-seam guard F). There
+  is exactly one viewport now: assert `toHaveLength(1)`, because an "all viewports equal" check over two
+  (or zero) passes vacuously.
+
+## Native scrolling needs one passive scroller; the sticky tree lives inside it (#722, #727)
+Tags: gantt-calendar, css-tokens · #722, #727
+
+- **A non-passive wheel listener turns the thread-scrolled path into a main-thread one.** The Timeline cancelled vertical wheel and forwarded it in JS to keep two panes in step. Under Safari GPU-memory pressure rAF fell to a few per second and the tree lagged or froze while the browser's own scroll (Table, Board) stayed smooth. Mirroring a second scroller from `scroll` events drifts under the same conditions, so neither "forward the wheel" nor "mirror passively" is a fix.
+- **Make it one scroller.** The tree is a `sticky start-0` column and each column's header is `sticky top-0`, all inside one scroller, so there is one `scrollTop` to drift from and the browser scrolls it natively. The guard `reui/gantt/gantt-single-scroller.guard.test.ts` allows exactly one `scrollTop =` write in `gantt-view.tsx` (`revealRowNearest`) and one non-passive wheel listener (the zoom one; #728 gates it on a held modifier).
+- **What sticky inside a scroller costs.**
+  - The tree column must be `overflow-x-clip`, never `hidden`/`auto`: either would be its own scroll container and trap the sticky header (see the `overflow: hidden` lesson above). So the tree can no longer scroll sideways on its own; the desktop splitter minimum equals the columns (396px) so Name, People and Due always fit.
+  - Everything that read "the pane" now measures an overlay that sits OUTSIDE the scroller: the splitter, a lane overlay (zoom control, offscreen chips) and a tree overlay (reorder indicator). `anchorZoomPointer`, drag clamping and edge auto-scroll use the lane overlay's rect, because the scroller's rect now spans the tree.
+  - Track geometry subtracts the tree inset from widths only: `start` stays `|scrollLeft|`, `visibleWidth = clientWidth - inset`, `trackWidth = scrollWidth - inset` (`scrollerGeometry`). Any "not laid out yet" test is `visibleWidth <= 0`, not `=== 0`: an unlaid scroller reads negative.
+  - The width is one CSS variable, `--gantt-tree-inset`, on the body; a splitter drag writes it once and the column, overlays, scroll-padding, the axis-group label offset and the horizontal scrollbar start all follow. Scroll-padding (65px top, the inset at the inline start) keeps focus and reveals from parking under the sticky parts.
+  - The timeline column is `isolate` so bars, ghosts, the now line and dependencies cannot paint over the tree column.
+
+Guards: `reui/gantt/gantt-single-scroller.guard.test.ts`, `reui/gantt/gantt-single-scroller.dom.test.tsx`, `reui/gantt/gantt-track-geometry.dom.test.tsx`.
 
 ## Icon-only rail (#426): what retiring the expanded rail left behind
 Tags: css-tokens, reui-vendor · #426
