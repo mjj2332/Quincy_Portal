@@ -1,7 +1,8 @@
-import { isStageKey, subtaskAssigneeOptionsResponseSchema, type CalendarPerson, type ChecklistScheduleDto, type CollectionKind, type EditorFolderAttentionDto, type MonitoredRawFolder, type ProjectDeadlineSchedule, type ProjectDefaultRangeDto, type ProjectMembershipDto, type ProjectMemberRole, type Role, type SubtaskRemindersDto } from "@quincy/shared";
+import { isStageKey, projectDefaultAsOf, subtaskAssigneeOptionsResponseSchema, type CalendarPerson, type ChecklistScheduleDto, type CollectionKind, type EditorFolderAttentionDto, type MonitoredRawFolder, type ProjectDeadlineSchedule, type ProjectDefaultRangeDto, type ProjectMembershipDto, type ProjectMemberRole, type Role, type SubtaskRemindersDto } from "@quincy/shared";
 import { QueryClient, QueryClientContext, useQuery, useQueryClient, type QueryFunctionContext, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
-import { useCallback, useContext, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { ApiError, apiGet } from "./api";
+import { useNow } from "./use-now";
 import { externalApiGet, externalProjectDetailToWorkspace } from "./external-api-response";
 import type { ExternalProjectDetailDto } from "@quincy/shared";
 import { createActiveProjectDetailsInvalidatedMessage, createDashboardBoardInvalidatedMessage, createProductionCalendarInvalidatedMessage, createProductionGanttInvalidatedMessage, getProjectQueryRuntime, projectResourceKey, useProjectQueryRuntime, type ProjectDataResource, type ProjectQueryRuntime } from "./project-query-sync";
@@ -258,7 +259,10 @@ export function useProjectSubtaskDefaultRange(projectId: string): ProjectDefault
   // Read the cache directly, with no observer: an observer would rebuild the entry after a principal clear or a Project removal.
   const subscribe = useCallback((onChange: () => void) => queryClient.getQueryCache().subscribe(onChange), [queryClient]);
   const getSnapshot = useCallback(() => queryClient.getQueryData<ProjectDefaultRangeDto | null>(key) ?? null, [queryClient, key]);
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const cached = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  // The cached default is as of the list response; a default that has since fallen into the past moves forward (#736).
+  const now = useNow(60_000);
+  return useMemo(() => (cached ? projectDefaultAsOf(cached, now) : null), [cached, now]);
 }
 
 export type SubtaskAssigneeOptions = { candidates: Array<{ id: string; name: string }> };

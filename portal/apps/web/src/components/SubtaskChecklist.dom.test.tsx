@@ -92,7 +92,7 @@ const draftDay = async (popup: HTMLElement, day: string) => { await pickPopupDay
 function saveButton(scope: Element) { return [...scope.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Apply")!; }
 
 beforeEach(() => { optionsResponse = { candidates: [{ id: "20000000-0000-4000-8000-000000000002", name: "Nora Jones", role: "editor" }, { id: "30000000-0000-4000-8000-000000000003", name: "Ada Smith", role: "photographer" }, { id: "40000000-0000-4000-8000-000000000004", name: "Ben Ortiz", role: "editor" }, { id: "50000000-0000-4000-8000-000000000005", name: "Cy Young", role: "editor" }, { id: "60000000-0000-4000-8000-000000000006", name: "Dee Park", role: "editor" }] }; floating.modalValues.length = 0; apiGetMock.mockReset().mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: [task, second] })); apiPostMock.mockReset().mockResolvedValue({ ...task, id: "task-new", title: "Schedule staging", position: 3072 }); apiPatchMock.mockReset().mockImplementation((path, body) => { const base = path.includes("task-2") ? second : task; return Promise.resolve({ ...base, ...("schedule" in (body as object) || "assignees" in (body as object) ? {} : body as object) }); }); apiDeleteMock.mockReset().mockResolvedValue({ ok: true }); confirmMock.mockReset().mockResolvedValue(true); });
-afterEach(async () => { await act(async () => root?.unmount()); root = null; document.body.replaceChildren(); });
+afterEach(async () => { vi.restoreAllMocks(); await act(async () => root?.unmount()); root = null; document.body.replaceChildren(); });
 
 describe("SubtaskChecklist", () => {
   it("in the rail layout puts each row's title and its meta controls on separate lines (#377)", async () => {
@@ -398,6 +398,7 @@ describe("SubtaskChecklist", () => {
   });
 
   it("shows the Project default on the composer trigger and posts no schedule when none was chosen", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.UTC(year, 5, 1)); // before the default's dates, so it is shown as given (#736)
     const projectDefaultRange = { start: { localCivil: `${year}-11-02T09:00`, fold: 0 as const }, end: { localCivil: `${year}-11-06T17:00`, fold: 0 as const } };
     const created = { ...task, id: "task-default", title: "Plain", position: 3072, dueDate: `${year}-11-06T17:00`, schedule: presetScheduleDto(`${year}-11-02`, `${year}-11-06`, 1) };
     let posted = false;
@@ -416,6 +417,21 @@ describe("SubtaskChecklist", () => {
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!);
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks`, { title: "Plain" });
     await waitFor(() => expect(item(host, "Plain").textContent).toContain(formatSchedule(created.schedule)));
+  });
+
+  it("shows today's 09:00 to 17:00 as the composer default when the cached default has gone past, and still posts no schedule (#736)", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.UTC(year, 9, 7, 23)); // 8 Oct 10:00 Sydney (AEDT)
+    const projectDefaultRange = { start: { localCivil: `${year}-08-30T09:00`, fold: 0 as const }, end: { localCivil: `${year}-08-30T17:00`, fold: 0 as const } };
+    apiGetMock.mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: [task, second], projectDefaultRange }));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const host = mount(); await act(async () => { root!.render(<QueryClientProvider client={queryClient}><SubtaskChecklist projectId={projectId} /></QueryClientProvider>); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    for (let attempt = 0; attempt < 50 && document.body.textContent?.includes("Loading checklist…"); attempt += 1) await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 5)); });
+    await click(document.getElementById(`subtask-add-${projectId}`)!);
+    const trigger = host.querySelector<HTMLButtonElement>('[aria-label^="Schedule for new subtask"]')!;
+    expect(trigger.getAttribute("aria-label")).toBe(`Schedule for new subtask: ${formatCivilRange({ start: { localCivil: `${year}-10-08T09:00` }, end: { localCivil: `${year}-10-08T17:00` } })}`);
+    await typeInto(host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!, "Today");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!);
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks`, { title: "Today" });
   });
 
   it("sends a chosen range from the composer, and cannot choose Unscheduled (Apply waits for both ends)", async () => {

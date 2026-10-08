@@ -217,6 +217,7 @@ export const externalAnnotationListResponseSchema = z.object({ annotations: z.ar
 export const externalCommentListResponseSchema = z.object({
   project: z.object({ id: uuid, street: z.string() }).strict(), comments: z.array(externalCommentSchema), nextCursor: z.string().max(2048).optional(),
 }).strict();
+/** `projectDefaultRange` depends on the server clock (#736): a default that has already ended is moved to today 09:00-17:00 Sydney, or tomorrow once 17:00 has passed, so two reads at different times can differ. */
 export const externalChecklistListResponseSchema = z.object({ subtasks: z.array(externalChecklistItemSchema), projectDefaultRange: projectDefaultRangeSchema }).strict();
 export const externalCollectionLinkListResponseSchema = z.object({ links: z.array(externalCollectionLinkSchema) }).strict();
 export const externalMentionableListResponseSchema = z.object({ users: z.array(externalMentionableUserSchema).max(20) }).strict();

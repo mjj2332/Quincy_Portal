@@ -29,6 +29,7 @@ let runtime: ProjectQueryRuntime | null = null;
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise((resolve) => setTimeout(resolve, 0)); }); }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
   root = null; host?.remove(); host = null; runtime?.dispose(); runtime = null; queryClient?.clear(); queryClient = null; apiGetMock.mockReset(); session.role = null;
 });
@@ -109,6 +110,7 @@ describe("SubtaskChecklist access-generation boundary", () => {
       schedule: presetScheduleDto("2026-09-01", "2026-09-01", 1), reminders: subtaskReminders(),
       createdBy: person, createdAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:00.000Z",
     };
+    vi.spyOn(Date, "now").mockReturnValue(Date.UTC(2026, 7, 1)); // before the default range below (#736)
     apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("subtask-assignee-options") ? { candidates: [person] } : { subtasks: [external], projectDefaultRange: { start: { localCivil: "2026-09-01T09:00", fold: 0 }, end: { localCivil: "2026-09-01T17:00", fold: 0 } } }));
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     await act(async () => { root!.render(<SubtaskChecklist projectId={projectId} />); await Promise.resolve(); await Promise.resolve(); }); await flush();

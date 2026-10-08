@@ -1,6 +1,6 @@
 import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
 import { presetSubtaskInsertValues, SUBTASK_SCHEDULE_INSERT_COLUMNS, externalSubtaskAssigneeOptionsResponseSchema, subtaskAssigneeOptionsResponseSchema } from "@quincy/shared";
@@ -375,6 +375,9 @@ describe("project subtasks API", () => {
 
 describe("default Subtask range (#339)", () => {
   const CREATED_SPLIT = Date.UTC(2026, 5, 30, 15); // 2026-07-01 01:00 in Sydney
+  // The clock decides whether a default is already in the past (#736); pin it before every date these rows use.
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-06-01T00:00:00.000Z")); });
+  afterEach(() => { vi.useRealTimers(); });
   type Seed = { shootDate?: string | null; deadlineLocalCivil?: string | null; createdAt?: number };
   async function seedProject(seed: Seed = {}) {
     const id = crypto.randomUUID(); const createdAt = seed.createdAt ?? CREATED_SPLIT;
@@ -414,6 +417,23 @@ describe("default Subtask range (#339)", () => {
     const item = await create(await seedProject(seed));
     expect(item.schedule).toMatchObject({ state: "range", version: 1, start: { localCivil: start }, end: { localCivil: end } });
     expect(item.dueDate).toBe(end);
+  });
+
+  it("a past shoot date with no Deadline creates today 09:00 to 17:00, or tomorrow once 17:00 has passed (#736)", async () => {
+    const id = await seedProject({ shootDate: "2026-08-30" });
+    vi.setSystemTime(new Date("2026-10-07T23:00:00.000Z")); // 8 Oct 10:00 Sydney
+    expect((await create(id, { title: "Morning" })).schedule).toMatchObject({ state: "range", start: { localCivil: "2026-10-08T09:00" }, end: { localCivil: "2026-10-08T17:00" } });
+    vi.setSystemTime(new Date("2026-10-08T06:00:00.000Z")); // 8 Oct 17:00 Sydney exactly
+    expect((await create(id, { title: "Five" })).schedule).toMatchObject({ start: { localCivil: "2026-10-09T09:00" }, end: { localCivil: "2026-10-09T17:00" } });
+  });
+
+  it("a list response's projectDefaultRange follows the clock (#736)", async () => {
+    const id = await seedProject({ shootDate: "2026-08-30" });
+    const read = async () => (await (await request(`/api/projects/${id}/subtasks`, "subtasks-admin-token", "GET")).json() as { projectDefaultRange: { start: { localCivil: string }; end: { localCivil: string } } }).projectDefaultRange;
+    vi.setSystemTime(new Date("2026-10-08T05:59:00.000Z")); // 16:59 Sydney
+    expect(await read()).toMatchObject({ start: { localCivil: "2026-10-08T09:00" }, end: { localCivil: "2026-10-08T17:00" } });
+    vi.setSystemTime(new Date("2026-10-08T06:01:00.000Z")); // 17:01 Sydney
+    expect(await read()).toMatchObject({ start: { localCivil: "2026-10-09T09:00" }, end: { localCivil: "2026-10-09T17:00" } });
   });
 
   it("keeps an explicit range unchanged and rejects an explicit unscheduled create (#340)", async () => {

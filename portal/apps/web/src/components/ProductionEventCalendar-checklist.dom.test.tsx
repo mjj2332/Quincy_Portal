@@ -70,7 +70,7 @@ const day = (date: string) => at(`${date}T00:00`);
 
 let h: Harness;
 beforeEach(() => { h = createHarness(); });
-afterEach(() => { h.teardown(); });
+afterEach(() => { vi.restoreAllMocks(); h.teardown(); });
 
 /** The Calendar item picker for an event, by its name (#583): null once it has closed. */
 function pickerFor(event: ChecklistCalendarEventDto): HTMLElement | null {
@@ -250,6 +250,7 @@ describe("ProductionEventCalendar checklist writes", () => {
   });
 
   it("#423: the schedule picker offers the Project default from the bounds and resets the range to it", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.UTC(2026, 6, 15)); // before the default's dates (#736)
     const event = oneDayEvent(dated("2026-08-12"));
     await mount([event], {
       projectBounds: [{ projectId: PROJECT_ID, shootDate: "2026-08-01", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-14T17:00", deadlineFold: 0 }],

@@ -465,6 +465,16 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
     expect(draftDue()!.textContent).toMatch(/\S/);
   });
 
+  it("a Project default that has gone past shows today's 17:00 instead of the stale Deadline (#736)", async () => {
+    // Ten days on at 10:00 Sydney: the fixture's shoot date and Deadline (+5 days, 15:00) are both behind us.
+    const later = new Date(`${isoDate(10)}T10:00:00+11:00`).getTime();
+    vi.spyOn(Date, "now").mockReturnValue(later);
+    await mount();
+    await click(plus(STREET_A)!);
+    expect(draftDue()!.getAttribute("aria-label")).toContain("17:00");
+    expect(draftDue()!.getAttribute("aria-label")).not.toContain("15:00");
+  });
+
   it("the Due default is muted text naming the default's end like the Due column, not a pill; its name keeps the text", async () => {
     await mount();
     await click(plus(STREET_A)!);
