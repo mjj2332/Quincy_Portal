@@ -1,7 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
-import { MCP_ALLOWED_ROUTES, isAllowedMcpRoute } from "../src/mcp/route-allowlist";
+import { MCP_ALLOWED_ROUTES, REDEMPTION_ONLY_ROUTES, isAllowedMcpRoute } from "../src/mcp/route-allowlist";
 import { MCP_TOOLS, strictInput, toolsFor } from "../src/mcp/tools/registry";
 import { COLLAB_WRITE_TOOLS } from "../src/mcp/tools/collab-writes";
 import { mcpHarness } from "./mcp-oauth-support";
@@ -453,7 +453,7 @@ describe("inputs are strict", () => {
 
 describe("route allowlist and the tool registry agree", () => {
   it("every write tool dispatches to one allowlisted (method, path) and every non-GET entry belongs to a tool", () => {
-    const toolRoutes = new Set(MCP_TOOLS.map((tool) => `${tool.route.method} ${tool.route.template}`));
+    const toolRoutes = new Set([...MCP_TOOLS.map((tool) => `${tool.route.method} ${tool.route.template}`), ...REDEMPTION_ONLY_ROUTES.map(([method, template]) => `${method} ${template}`)]);
     for (const tool of MCP_TOOLS.filter((candidate) => WRITE_NAMES.includes(candidate.name))) {
       const path = tool.route.template.replace(/:[A-Za-z]+/g, "x1");
       expect(isAllowedMcpRoute(tool.route.method, path), tool.name).toBe(true);

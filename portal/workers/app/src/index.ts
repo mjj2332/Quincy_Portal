@@ -39,6 +39,7 @@ import { projectActivityRoutes } from "./routes/project-activity";
 import { projectWhiteboardRoutes } from "./routes/project-whiteboard";
 import { connectedAppsRoutes } from "./routes/connected-apps";
 import { mountMcp } from "./mcp";
+import { mountMcpDownloads } from "./mcp/downloads";
 import { verifyTransformSource } from "./lib/transform-source";
 import { requireAppOrigin } from "./middleware/origin";
 import { safeStaffDestination } from "@quincy/shared";
@@ -107,6 +108,8 @@ app.get("/__transform-source/*", terminalRoute("/__transform-source/*", async (c
 }));
 // MCP door (#702): outside `/api` (router-wide middleware leaks across sibling mounts), before the SPA fallback.
 mountMcp(app, (request, env, ctx) => app.fetch(request, env, ctx));
+// Signed MCP downloads (#707): outside `/api` for the same reason, no cookie CORS. Redemption dispatches back through `app.fetch`.
+mountMcpDownloads(app, (request, env, ctx) => app.fetch(request, env, ctx));
 // `/d` is reserved for the future client-delivery Worker. It is intentionally
 // unauthenticated and must run before the static-asset SPA fallback.
 app.all("/d", terminalRoute("/d", (c) => c.notFound()));

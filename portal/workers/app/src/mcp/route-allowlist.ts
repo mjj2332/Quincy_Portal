@@ -45,6 +45,13 @@ const GET_TEMPLATES = [
   "/api/admin/stages",
   "/api/admin/attention",
   "/api/projects/:projectId/jobs",
+  // Signed downloads (#707): the asset tool's visibility check, and the redemption of an asset URL.
+  "/media/asset/:assetId/:variant",
+] as const;
+
+/** Reached only by redeeming a signed download URL (#707): no tool owns it, `mcp/downloads.ts` dispatches to it. */
+export const REDEMPTION_ONLY_ROUTES = [
+  ["GET", "/api/projects/:projectId/download-selection/:ticket/archive.zip"],
 ] as const;
 
 /** Writes (#705 core, #706 collaboration). Each is one tool's one route; `mcp-writes.test.ts` checks the pairing both ways. */
@@ -83,11 +90,14 @@ const WRITE_ROUTES = [
   ["DELETE", "/api/assets/:assetId/select"],
   ["POST", "/api/projects/:projectId/link-previews"],
   ["POST", "/api/notice-board/link-previews"],
+  // Signed downloads (#707): get_selection_download_url creates the zip ticket. It is a read-scope tool; the ticket is the only thing written.
+  ["POST", "/api/projects/:projectId/download-selection"],
 ] as const;
 
 export const MCP_ALLOWED_ROUTES: readonly { method: string; template: string; pattern: RegExp }[] = [
   ...GET_TEMPLATES.map((template) => ({ method: "GET", template, pattern: patternFor(template) })),
   ...WRITE_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })),
+  ...REDEMPTION_ONLY_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })),
 ];
 
 export function isAllowedMcpRoute(method: string, path: string): boolean {

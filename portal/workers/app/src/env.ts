@@ -23,6 +23,8 @@ export interface Env {
   APP_ORIGIN: string;
   BETTER_AUTH_SECRET?: string;
   TRANSFORM_SOURCE_SECRET?: string;
+  /** HMAC key for MCP signed download URLs (#707). Separate from `TRANSFORM_SOURCE_SECRET`; set on the app Worker only. */
+  MCP_DOWNLOAD_SECRET?: string;
   /** Internal service principal used by background rendition generation. */
   TRANSFORM_SOURCE_PRINCIPAL_ID?: string;
   TRANSFORM_SOURCE_AUTHORIZATION_EPOCH?: string;

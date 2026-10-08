@@ -34,6 +34,7 @@ export default defineConfig({
       miniflare: {
         bindings: {
           TRANSFORM_SOURCE_SECRET: "test-transform-source-secret-32-bytes",
+          MCP_DOWNLOAD_SECRET: "test-mcp-download-secret-32-bytes!!",
           // Primary suite is production-shaped: direct browser PUTs must not leak here.
           APP_ENV: "production",
           GOOGLE_CLIENT_ID: "test-google-client",
