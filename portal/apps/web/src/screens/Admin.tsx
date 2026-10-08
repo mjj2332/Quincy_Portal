@@ -266,7 +266,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
       setMcpEnabled(response.enabled);
       setIsLoadingMcp(false); setMcpError(undefined);
     } catch (reason) {
-      toast(reason instanceof Error ? reason.message : "The MCP access setting could not be updated.", "error");
+      toast(reason instanceof Error ? reason.message : "The AI apps setting could not be updated.", "error");
     } finally {
       mcpWriting.current = false; mcpWriteSeq.current += 1;
       setIsUpdatingMcp(false);
@@ -592,7 +592,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
         {!isLoadingUsers && !usersError && <div className={cn(TOGGLE_ROW, "mb-[var(--space-4)] flex-wrap justify-between gap-[var(--space-3)]")} data-testid="admin-mcp-access">
           <span className="flex items-center gap-[var(--space-2)]"><Switch checked={mcpEnabled} disabled={isUpdatingMcp || isLoadingMcp || mcpError !== undefined} onCheckedChange={(next) => void toggleMcp(next)} aria-label="Enable AI apps (MCP)" /><span>Enable AI apps (MCP)</span></span>
           {mcpError && <Notice role="alert" className="basis-full">{mcpError}</Notice>}
-          <Button type="button" variant="destructive" disabled={isRevokingConnectedApps} onClick={() => void revokeAllConnectedApps()}>Revoke all Connected apps</Button>
+          <Button type="button" variant="destructive" className="max-[721px]:w-full" disabled={isRevokingConnectedApps} onClick={() => void revokeAllConnectedApps()}>Revoke all Connected apps</Button>
         </div>}
         {!isLoadingUsers && !usersError && provisioningFreeze?.frozen && <Notice tone="caution" role="status" data-testid="admin-provisioning-freeze" className="mb-[var(--space-4)] flex flex-wrap items-center justify-between gap-[var(--space-3)]">
           <span>External Editor provisioning has been frozen since {formatDate(provisioningFreeze.frozenAt === null ? null : new Date(provisioningFreeze.frozenAt).toISOString())}. The Cloudflare cache purge after a role change did not complete, so no one can be made an External Editor. Purge the zone manually, then release the freeze.</span>
