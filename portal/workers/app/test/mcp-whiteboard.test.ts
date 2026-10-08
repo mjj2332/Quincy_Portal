@@ -5,7 +5,7 @@ import type { Env } from "../src/env";
 import { isAllowedMcpRoute } from "../src/mcp/route-allowlist";
 import { MCP_TOOLS, strictInput, toolsFor } from "../src/mcp/tools/registry";
 import { mcpHarness } from "./mcp-oauth-support";
-import { alarmAt, cookie, fire, inject, failOnce, touchesAudit, farFuture, setClock, stubFor, join, memberId, member2Id, newProject, outsiderId, externalId, seedWhiteboardWorld, storedRows, tokens } from "./whiteboard-support";
+import { alarmAt, cookie, element, fire, inject, failOnce, save, touchesAudit, farFuture, setClock, stubFor, join, memberId, member2Id, newProject, outsiderId, externalId, seedWhiteboardWorld, storedRows, tokens } from "./whiteboard-support";
 
 /**
  * #708: the whiteboard tools. Two reads (the simplified board and its versions) and one edit tool whose edits the server expands
@@ -387,5 +387,57 @@ describe("review round 1 (Sol)", () => {
     expect(await auditRows(projectId)).toHaveLength(1);
     await edit("member", projectId, [text("audited later")], 1, requestId);     // a retry cannot double-insert
     expect(await auditRows(projectId)).toHaveLength(1);
+  });
+});
+
+describe("elbow arrows (#708 review round 4)", () => {
+  /** A board drawn in the browser: two boxes and an elbow arrow between them, `fixedSegments` as given. */
+  async function elbowBoard(fixedSegments: unknown) {
+    const projectId = await newProject();
+    const { client } = await join(projectId, "member");
+    const box = (id: string, x: number) => element(id, 1, 1, { x, y: 0, width: 100, height: 100, angle: 0, boundElements: [{ id: "elbow", type: "arrow" }] });
+    await save(client, 1, box("A", 0), box("B", 500), element("elbow", 1, 1, {
+      type: "arrow", x: 101, y: 20, width: 398, height: 150, angle: 0, points: [[0, 0], [49, 0], [49, -120], [349, -120], [349, 30], [398, 30]], elbowed: true, fixedSegments,
+      startIsSpecial: false, endIsSpecial: false, startArrowhead: null, endArrowhead: "arrow", lastCommittedPoint: null, boundElements: null,
+      startBinding: { elementId: "A", focus: 0, gap: 1, fixedPoint: [1.01, 0.2] }, endBinding: { elementId: "B", focus: 0, gap: 1, fixedPoint: [-0.01, 0.5] },
+    }));
+    client.ws.close(1000);
+    return projectId;
+  }
+  const boardState = (projectId: string) => runInDurableObject(stubFor(projectId), async (_instance, state) => state.storage.sql.exec("SELECT generation, scene_revision FROM wb_state WHERE id = 1").toArray()[0]);
+
+  it("refuses to move a shape whose elbow arrow has a pinned segment: nothing applied, generation and revision unchanged", async () => {
+    const projectId = await elbowBoard([{ start: [49, -120], end: [349, -120], index: 3 }]);
+    const before = await byId(projectId); const stateBefore = await boardState(projectId);
+    const mark = (await DB.prepare("SELECT COALESCE(MAX(rowid), 0) AS n FROM audit_log").first<{ n: number }>())!.n;
+    for (const move of [{ op: "edit", id: "A", y: -120 }, { op: "edit", id: "B", y: 100 }]) {
+      const body = await refused("member", "edit_project_whiteboard", { projectId, expectedGeneration: 1, edits: [{ op: "add_text", x: 0, y: 0, text: "first" }, move] }, 422);
+      expect(body).toMatchObject({ code: "pinned_elbow_arrow", generation: 1 });
+      expect(body.error).toBe("Edit 2: This shape has an elbow arrow with a pinned segment; move it in the board editor.");
+    }
+    expect(await byId(projectId)).toEqual(before);
+    expect(await boardState(projectId)).toEqual(stateBefore);
+    expect((await DB.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE rowid > ?").bind(mark).first<{ n: number }>())!.n).toBe(0);
+    expect((await read("member", projectId)).generation).toBe(1);
+  });
+
+  it("still re-routes an un-pinned elbow arrow, and a curved arrow, when a shape moves", async () => {
+    const projectId = await elbowBoard(null);
+    const revision = (await boardState(projectId))!.scene_revision as number;
+    await edit("member", projectId, [{ op: "edit", id: "B", y: 100 }]);
+    const arrow = (await byId(projectId)).elbow!;
+    const points = arrow.points as number[][];
+    expect(points).toHaveLength(4);
+    expect(arrow).toMatchObject({ elbowed: true, fixedSegments: null, x: 101, y: 20, version: 2 });
+    expect((arrow.y as number) + points.at(-1)![1]!).toBeCloseTo(150.01, 6);
+    expect((await boardState(projectId))!.scene_revision).toBeGreaterThan(revision);
+
+    const made = await edit("member", projectId, [{ op: "add_shape", shapeKind: "rectangle", x: 0, y: 400, w: 100, h: 100 }, { op: "add_shape", shapeKind: "rectangle", x: 500, y: 400, w: 100, h: 100 }]);
+    const [c, d] = (made.applied as Array<{ id: string }>).map((entry) => entry.id) as [string, string];
+    const curved = (await edit("member", projectId, [{ op: "add_arrow", from: c, to: d }])).applied[0].id as string;
+    await edit("member", projectId, [{ op: "edit", id: d, y: 700 }]);
+    const moved = (await byId(projectId))[curved]!;
+    expect(moved).toMatchObject({ elbowed: false, version: 2 });
+    expect((moved.y as number) + (moved.points as number[][]).at(-1)![1]!).toBeGreaterThan(600);
   });
 });

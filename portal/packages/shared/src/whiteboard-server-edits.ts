@@ -34,15 +34,14 @@ export const WHITEBOARD_PAPER = {
 export const WHITEBOARD_NOTE_INK = "#171717"; // neutral-900
 
 /**
- * The sticky colours an MCP client names. The names are the tool's published contract, so they stay as they are: `pink` is the
- * Portal's `red` paper and `purple` its `violet`. The Portal has no orange paper; `orange` is orange-200, the same family.
+ * The sticky colours an MCP client names: exactly the Portal's note papers, under the tool's published names (`pink` is the
+ * Portal's `red` paper and `purple` its `violet`).
  */
 export const WHITEBOARD_STICKY_COLORS = {
   yellow: WHITEBOARD_PAPER.yellow,
   green: WHITEBOARD_PAPER.green,
   blue: WHITEBOARD_PAPER.blue,
   pink: WHITEBOARD_PAPER.red,
-  orange: "#ffd6a7", // orange-200
   purple: WHITEBOARD_PAPER.violet,
 } as const;
 const stickyColor = z.union([z.enum(Object.keys(WHITEBOARD_STICKY_COLORS) as [keyof typeof WHITEBOARD_STICKY_COLORS, ...Array<keyof typeof WHITEBOARD_STICKY_COLORS>]), z.string().regex(/^#[0-9a-fA-F]{6}$/)]);
@@ -80,7 +79,7 @@ export type ExpandDeps = {
 };
 export type ExpandResult =
   | { ok: true; elements: StoredElement[]; results: Array<{ op: WhiteboardServerEdit["op"]; id: string }> }
-  | { ok: false; code: "unknown_element" | "invalid_edit" | "media_unavailable"; message: string; editIndex: number };
+  | { ok: false; code: "unknown_element" | "invalid_edit" | "media_unavailable" | "pinned_elbow_arrow"; message: string; editIndex: number };
 
 type Row = StoredElement & Record<string, unknown>;
 const FONT_SIZE = 20;
@@ -96,6 +95,13 @@ const MEDIA_MAX_SIDE = 480;
 const ARROW_GAP = 1;
 const DEFAULT_IMAGE: [number, number] = [400, 300];
 const DEFAULT_VIDEO: [number, number] = [480, 270];
+/**
+ * An elbow arrow with a pinned (user-fixed) segment. The server does not re-route one: the editor's own elbow router cannot run in
+ * the Worker (Excalidraw needs a DOM and its Scene to route), and a hand-written router kept disagreeing with it -- e.g. an end
+ * moved onto the pinned run's line, which the editor then merges, dropping the pin. A move that would re-route one is refused.
+ */
+const pinnedElbow = (row: Record<string, unknown>) => row.elbowed === true && Array.isArray(row.fixedSegments) && row.fixedSegments.length > 0;
+const PINNED_ELBOW_REFUSAL = "This shape has an elbow arrow with a pinned segment; move it in the board editor.";
 const BINDABLE = new Set(["rectangle", "ellipse", "diamond", "text", "image"]);
 const CONTAINERS = new Set(["rectangle", "ellipse", "diamond"]);
 
@@ -257,10 +263,12 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
     return row;
   };
 
-  const move = (row: Row, x: number | undefined, y: number | undefined): void => {
+  /** Moves `row`, re-routing the arrows bound to it; returns a refusal (and changes nothing) when one of them cannot be re-routed. */
+  const move = (row: Row, x: number | undefined, y: number | undefined): string | undefined => {
     const dx = x === undefined ? 0 : x - num(row.x);
     const dy = y === undefined ? 0 : y - num(row.y);
-    if (dx === 0 && dy === 0) return;
+    if (dx === 0 && dy === 0) return undefined;
+    if (row.type !== "arrow" && arrowsBoundTo(row.id).some(pinnedElbow)) return PINNED_ELBOW_REFUSAL;
     if (row.type === "arrow") {
       // Dragging a whole arrow detaches it, as the editor does.
       for (const end of [row.startBinding, row.endBinding]) {
@@ -268,12 +276,13 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
         if (target) bump(target, { boundElements: withoutBound(target, row.id) });
       }
       bump(row, { x: num(row.x) + dx, y: num(row.y) + dy, startBinding: null, endBinding: null });
-      return;
+      return undefined;
     }
     const moved = bump(row, { x: num(row.x) + dx, y: num(row.y) + dy });
     const inner = CONTAINERS.has(String(row.type)) ? innerText(row) : undefined;
     if (inner) bump(inner, { x: num(inner.x) + dx, y: num(inner.y) + dy });
     for (const arrow of arrowsBoundTo(moved.id)) bump(arrow, routeArrow(arrow, moved.id));
+    return undefined;
   };
 
   const centre = (box: Row) => ({ x: num(box.x) + num(box.width) / 2, y: num(box.y) + num(box.height) / 2 });
@@ -327,8 +336,6 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
     const value = binding && typeof binding === "object" ? (binding as { fixedPoint?: unknown }).fixedPoint : undefined;
     return Array.isArray(value) && value.length === 2 && value.every((v) => typeof v === "number" && Number.isFinite(v)) ? [value[0], value[1]] : null;
   };
-  const EPS = 1e-6;
-  const same = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.abs(a.x - b.x) < EPS && Math.abs(a.y - b.y) < EPS;
   /**
    * The arrow's geometry after the element `movedId` moved, always written UNROTATED (`angle: 0`, points in world space). Only an
    * end bound to `movedId` moves; the other end keeps its point exactly. A plain multi-point arrow keeps its interior points,
@@ -361,20 +368,11 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
     return { ...extras, x: route[0]!.x, y: route[0]!.y, width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys), points: route.map((p) => [p.x - route[0]!.x, p.y - route[0]!.y]) };
   };
   /**
-   * An elbow arrow, in Excalidraw's own model: a binding's `fixedPoint` is a ratio of the bound element's unturned box, and a
-   * `fixedSegments` entry pins segment `index` (points[index-1] -> points[index]) in place on the board, start/end local to points[0].
-   *
-   * The moved end is placed at its binding's `fixedPoint` (the facing-side midpoint only when the binding has none, which then
-   * gets a fresh `fixedPoint`). With pinned segments, every point from the start of the first pinned segment to the end of the last
-   * is kept in world space; only the adjustable run between the moved end and its nearest pinned segment is replaced, by an L that
-   * leaves the pinned segment at a right angle and meets the end. Pinned `start`/`end`/`index` are then re-derived from the new
-   * points, as the editor's own endpoint drag does.
-   *
-   * IMPOSSIBLE PIN RULE: a pinned segment that touches the moved end itself (index 1 for the start, the last index for the end)
-   * can keep its line only if the new end lies on that line. When it does not -- or a stored pin is degenerate (outside the points,
-   * zero-length or not axis-aligned) -- `fixedSegments` is cleared and the arrow is re-routed as if it had none: a 3-segment route,
-   * horizontal-vertical-horizontal when the ends' elements are further apart across than down, else vertical-horizontal-vertical.
-   * (The editor instead adds a padded detour and `startIsSpecial`/`endIsSpecial`; this simpler rule is what a server can do.)
+   * An UN-PINNED elbow arrow (a pinned one is refused before this runs: see `pinnedElbow`), in Excalidraw's own model: a binding's
+   * `fixedPoint` is a ratio of the bound element's unturned box. The moved end is placed at its binding's `fixedPoint` (the
+   * facing-side midpoint only when the binding has none, which then gets a fresh `fixedPoint`); the other end keeps its point. The
+   * route is three segments, horizontal-vertical-horizontal when the ends' elements are further apart across than down, else
+   * vertical-horizontal-vertical.
    */
   const routeElbow = (arrow: Row, old: Array<{ x: number; y: number }>, first: Row | undefined, last: Row | undefined, startMoves: boolean, endMoves: boolean,
     startTarget: { x: number; y: number }, endTarget: { x: number; y: number }, extras: Record<string, unknown>): Array<{ x: number; y: number }> => {
@@ -391,45 +389,9 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
     for (const [key, binding, box, point] of [["startBinding", arrow.startBinding, first, start], ["endBinding", arrow.endBinding, last, end]] as const) {
       if (box && binding && typeof binding === "object" && !storedFixedPoint(binding)) extras[key] = { ...(binding as object), fixedPoint: fixedPointOf(box, point) };
     }
-
-    const pins = (Array.isArray(arrow.fixedSegments) ? arrow.fixedSegments as Array<{ index?: unknown }> : []).map((pin) => num(pin.index, -1)).sort((a, b) => a - b);
-    const along = (index: number) => { const a = old[index - 1]!; const b = old[index]!; return Math.abs(a.y - b.y) < EPS ? "h" : "v"; };
-    const valid = pins.every((index) => Number.isInteger(index) && index >= 1 && index < old.length && !same(old[index - 1]!, old[index]!)
-      && (Math.abs(old[index - 1]!.x - old[index]!.x) < EPS || Math.abs(old[index - 1]!.y - old[index]!.y) < EPS));
-    const onLine = (index: number, p: { x: number; y: number }) => along(index) === "h" ? Math.abs(p.y - old[index]!.y) < EPS : Math.abs(p.x - old[index]!.x) < EPS;
-    const firstPin = pins[0]; const lastPin = pins.at(-1);
-    const keep = firstPin !== undefined && lastPin !== undefined && valid
-      && !(startMoves && firstPin === 1 && !onLine(1, start)) && !(endMoves && lastPin === old.length - 1 && !onLine(lastPin, end));
-    if (!keep) {
-      const mid = horizontal ? (start.x + end.x) / 2 : (start.y + end.y) / 2;
-      extras.fixedSegments = null; extras.startIsSpecial = null; extras.endIsSpecial = null;
-      return horizontal ? [start, { x: mid, y: start.y }, { x: mid, y: end.y }, end] : [start, { x: start.x, y: mid }, { x: end.x, y: mid }, end];
-    }
-    // An L from `from` to the pinned point `pinned`, whose leg at `pinned` is at a right angle to that pin; a zero-length leg is dropped.
-    const ell = (from: { x: number; y: number }, pinned: { x: number; y: number }, pin: "h" | "v") => {
-      const corner = pin === "h" ? { x: pinned.x, y: from.y } : { x: from.x, y: pinned.y };
-      return same(corner, from) || same(corner, pinned) ? [] : [corner];
-    };
-    const middle = old.slice(firstPin - 1, lastPin + 1);
-    let head = old.slice(0, firstPin - 1);
-    if (startMoves) {
-      if (firstPin === 1) middle[0] = start;
-      else head = [start, ...ell(start, middle[0]!, along(firstPin))];
-    }
-    let tail = old.slice(lastPin + 1);
-    if (endMoves) {
-      if (lastPin === old.length - 1) middle[middle.length - 1] = end;
-      else tail = [...ell(end, middle.at(-1)!, along(lastPin)).reverse(), end];
-    }
-    const route = [...head, ...middle, ...tail];
-    const shift = head.length - (firstPin - 1);
-    extras.fixedSegments = pins.map((index) => {
-      const at = index + shift;
-      return { index: at, start: [route[at - 1]!.x - route[0]!.x, route[at - 1]!.y - route[0]!.y], end: [route[at]!.x - route[0]!.x, route[at]!.y - route[0]!.y] };
-    });
-    if (startMoves) extras.startIsSpecial = false;
-    if (endMoves) extras.endIsSpecial = false;
-    return route;
+    const mid = horizontal ? (start.x + end.x) / 2 : (start.y + end.y) / 2;
+    extras.fixedSegments = null; extras.startIsSpecial = null; extras.endIsSpecial = null;
+    return horizontal ? [start, { x: mid, y: start.y }, { x: mid, y: end.y }, end] : [start, { x: start.x, y: mid }, { x: end.x, y: mid }, end];
   };
   const arrowsBoundTo = (id: string): Row[] => [...working.values()].filter((row) => row.type === "arrow" && !row.isDeleted
     && [row.startBinding, row.endBinding].some((end) => end && typeof end === "object" && (end as { elementId?: unknown }).elementId === id));
@@ -503,7 +465,10 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
           else if (CONTAINERS.has(String(row.type))) setBoundText(row, edit.text, STICKY_FONT_SIZE);
           else return fail(editIndex, "invalid_edit", `A ${String(row.type)} holds no text.`);
         }
-        if (edit.x !== undefined || edit.y !== undefined) move(working.get(row.id)!, edit.x, edit.y);
+        if (edit.x !== undefined || edit.y !== undefined) {
+          const refusal = move(working.get(row.id)!, edit.x, edit.y);
+          if (refusal) return fail(editIndex, "pinned_elbow_arrow", refusal);
+        }
         results.push({ op: edit.op, id: row.id });
         break;
       }

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeAll, describe, expect, it } from "vitest";
-import { expandServerEdits, IndexSpace, WHITEBOARD_NOTE_INK, WHITEBOARD_PAPER, WHITEBOARD_STICKY_COLORS, type StoredElement, type WhiteboardServerEdit } from "@quincy/shared";
+import { expandServerEdits, IndexSpace, WHITEBOARD_NOTE_INK, WHITEBOARD_PAPER, WHITEBOARD_STICKY_COLORS, whiteboardServerEditSchema, type StoredElement, type WhiteboardServerEdit } from "@quincy/shared";
 
 /**
  * #708: the elements the server writes for an MCP client's edits must survive the INSTALLED Excalidraw (`restoreElements` is the
@@ -170,29 +170,37 @@ describe("server-made elements through the installed Excalidraw", () => {
     expect(row.angle).toBe(0);
   });
 
-  it("clears a pinned segment only when it is adjacent to the moved end and the new end is off its line, then re-routes H-V-H or V-H-V from the fixed points", () => {
+  const orthogonal = (pts: Array<{ x: number; y: number }>) => {
+    for (let i = 1; i < pts.length; i++) expect(Math.abs(pts[i]!.x - pts[i - 1]!.x) < 1e-6 || Math.abs(pts[i]!.y - pts[i - 1]!.y) < 1e-6, `segment ${i}`).toBe(true);
+  };
+
+  it("re-routes an UN-PINNED elbow arrow H-V-H or V-H-V from the fixed points (fixedSegments null or empty)", () => {
     const a = rawRect("A", 0, 0, 100, 100); const b = rawRect("B", 500, 0, 100, 100);
-    const arrow = rawArrow({ x: 101, y: 50, width: 398, height: 0, points: [[0, 0], [199, 0], [398, 0]], elbowed: true, fixedSegments: [{ start: [199, 0], end: [199, 0], index: 2 }], startIsSpecial: null, endIsSpecial: null,
-      startBinding: { elementId: "A", focus: 0, gap: 1, fixedPoint: [1.01, 0.5] }, endBinding: { elementId: "B", focus: 0, gap: 1, fixedPoint: [-0.01, 0.5] } });
-    const rows = [a, b, arrow];
-    for (const [y, shape] of [[100, "H-V-H"], [-40, "H-V-H"]] as const) {
-      const moved = must(expandServerEdits([{ op: "edit", id: "B", y }], rows, deps()));
-      const row = restore(rowsOf(rows, moved.elements)).find((r) => r.id === "arr")!;
-      const pts = worldPoints(row);
-      expect(pts, shape).toHaveLength(4);
-      for (let i = 1; i < pts.length; i++) expect(Math.abs(pts[i]!.x - pts[i - 1]!.x) < 1e-6 || Math.abs(pts[i]!.y - pts[i - 1]!.y) < 1e-6, `segment ${i}`).toBe(true);
-      expect(row.elbowed).toBe(true);
-      expect(row.fixedSegments ?? null).toBeNull();                              // the pin on B's own segment cannot hold: cleared
-      expect((moved.elements.find((r) => r.id === "arr")!.endBinding as { fixedPoint: number[] }).fixedPoint[1]).toBeCloseTo(0.5, 9);
-      expect((row.endBinding as { fixedPoint: number[] }).fixedPoint[1]).toBeCloseTo(0.5, 2);
-      expect(pts.at(-1)!.y).toBeCloseTo(y + 50.01, 9);                         // B's fixed point; 0.5 reads as 0.5001, as in the editor
-      expect(pts[0]).toEqual({ x: 101, y: 50 });                                  // A did not move
+    for (const fixedSegments of [null, []]) {
+      const arrow = rawArrow({ x: 101, y: 50, width: 398, height: 0, points: [[0, 0], [199, 0], [398, 0]], elbowed: true, fixedSegments, startIsSpecial: null, endIsSpecial: null,
+        startBinding: { elementId: "A", focus: 0, gap: 1, fixedPoint: [1.01, 0.5] }, endBinding: { elementId: "B", focus: 0, gap: 1, fixedPoint: [-0.01, 0.5] } });
+      const rows = [a, b, arrow];
+      for (const [y, shape] of [[100, "H-V-H"], [-40, "H-V-H"]] as const) {
+        const moved = must(expandServerEdits([{ op: "edit", id: "B", y }], rows, deps()));
+        const written = moved.elements.find((r) => r.id === "arr")!;
+        expect(written.fixedSegments).toBeNull();
+        const row = restore(rowsOf(rows, moved.elements)).find((r) => r.id === "arr")!;
+        const pts = worldPoints(row);
+        expect(pts, shape).toHaveLength(4);
+        orthogonal(pts);
+        expect(row.elbowed).toBe(true);
+        expect(row.fixedSegments ?? null).toBeNull();
+        expect((written.endBinding as { fixedPoint: number[] }).fixedPoint[1]).toBeCloseTo(0.5, 9);
+        expect((row.endBinding as { fixedPoint: number[] }).fixedPoint[1]).toBeCloseTo(0.5, 2);
+        expect(pts.at(-1)!.y).toBeCloseTo(y + 50.01, 9);                         // B's fixed point; 0.5 reads as 0.5001, as in the editor
+        expect(pts[0]).toEqual({ x: 101, y: 50 });                                  // A did not move
+      }
+      // A dominant vertical run chooses V-H-V.
+      const tall = must(expandServerEdits([{ op: "edit", id: "B", x: 120, y: 600 }], rows, deps()));
+      const pts = worldPoints(restore(rowsOf(rows, tall.elements)).find((r) => r.id === "arr")!);
+      orthogonal(pts);
+      expect(Math.abs(pts[1]!.x - pts[0]!.x)).toBeLessThan(1e-6);                 // first run is vertical
     }
-    // A dominant vertical run chooses V-H-V.
-    const tall = must(expandServerEdits([{ op: "edit", id: "B", x: 120, y: 600 }], rows, deps()));
-    const pts = worldPoints(restore(rowsOf(rows, tall.elements)).find((r) => r.id === "arr")!);
-    for (let i = 1; i < pts.length; i++) expect(Math.abs(pts[i]!.x - pts[i - 1]!.x) < 1e-6 || Math.abs(pts[i]!.y - pts[i - 1]!.y) < 1e-6).toBe(true);
-    expect(Math.abs(pts[1]!.x - pts[0]!.x)).toBeLessThan(1e-6);                 // first run is vertical
   });
 
   // Sol's scenario: A's end is at (101,20), not the facing midpoint, and the arrow carries a pinned detour (segment 3, y -100).
@@ -203,49 +211,34 @@ describe("server-made elements through the installed Excalidraw", () => {
       startBinding: { elementId: "A", focus: 0, gap: 1, fixedPoint: [1.01, 0.2] }, endBinding: { elementId: "B", focus: 0, gap: 1, fixedPoint: [-0.01, 0.5] } });
     return [a, b, arrow];
   };
-  const orthogonal = (pts: Array<{ x: number; y: number }>) => {
-    for (let i = 1; i < pts.length; i++) expect(Math.abs(pts[i]!.x - pts[i - 1]!.x) < 1e-6 || Math.abs(pts[i]!.y - pts[i - 1]!.y) < 1e-6, `segment ${i}`).toBe(true);
-  };
-  const pinnedWorld = (row: Record<string, unknown>) => (row.fixedSegments as Array<{ start: number[]; end: number[]; index: number }>).map((s) => ({ index: s.index, start: [(row.x as number) + s.start[0]!, (row.y as number) + s.start[1]!], end: [(row.x as number) + s.end[0]!, (row.y as number) + s.end[1]!] }));
+  const PINNED = /elbow arrow with a pinned segment; move it in the board editor/;
 
-  it("moving only B keeps A's end exactly and the pinned detour, re-routing just B's side orthogonally", () => {
+  /**
+   * The server cannot use the editor's elbow router (it needs a DOM and the editor's Scene), and four review rounds each found a
+   * case the hand-written one got wrong -- the last: moving A to y -120 makes the approach run collinear with the pinned run, which
+   * the editor's normalisation merges, dropping the pin. So a move that would re-route a pinned elbow arrow is refused whole.
+   */
+  it("refuses to move a shape whose bound elbow arrow has a pinned segment, whichever end moves, and applies nothing from the batch", () => {
     const rows = detour();
-    const moved = must(expandServerEdits([{ op: "edit", id: "B", y: 100 }], rows, deps()));
-    const row = restore(rowsOf(rows, moved.elements)).find((r) => r.id === "arr")!;
-    const pts = worldPoints(row);
-    expect(pts[0]).toEqual({ x: 101, y: 20 });                                    // A did not move: its end is untouched
-    expect(pts.slice(0, 4)).toEqual([{ x: 101, y: 20 }, { x: 150, y: 20 }, { x: 150, y: -100 }, { x: 450, y: -100 }]);
-    expect(pinnedWorld(row)).toEqual([{ index: 3, start: [150, -100], end: [450, -100] }]);
-    // B's own fixed point (-0.01, 0.5) on the lowered B; the editor reads a 0.5 ratio as 0.5001, and so does the server.
-    expect(pts.at(-1)!.x).toBeCloseTo(499, 9); expect(pts.at(-1)!.y).toBeCloseTo(150.01, 9);
-    expect(pts[4]!.x).toBe(450);                                                  // B's side re-routed: down from the pin's end, across to B
-    orthogonal(pts);
-    const written = moved.elements.find((r) => r.id === "arr")!;
-    expect(written.startBinding).toEqual({ elementId: "A", focus: 0, gap: 1, fixedPoint: [1.01, 0.2] });
-    expect(written.endBinding).toEqual({ elementId: "B", focus: 0, gap: 1, fixedPoint: [-0.01, 0.5] });
-  });
-
-  it("moving A instead keeps the pinned detour in place on the board, re-expressed from the arrow's new origin", () => {
-    const rows = detour();
-    const moved = must(expandServerEdits([{ op: "edit", id: "A", y: 50 }], rows, deps()));
-    const row = restore(rowsOf(rows, moved.elements)).find((r) => r.id === "arr")!;
-    const pts = worldPoints(row);
-    expect(pts[0]).toEqual({ x: 101, y: 70 });
-    expect(pts.at(-1)).toEqual({ x: 499, y: 50 });                                // B did not move: its end is untouched
-    expect(pinnedWorld(row)).toEqual([{ index: 3, start: [150, -100], end: [450, -100] }]);
-    orthogonal(pts);
-  });
-
-  it("keeps a pin on the moved end's own segment when the new end still lies on its line", () => {
+    for (const edit of [{ op: "edit", id: "B", y: 100 }, { op: "edit", id: "A", y: 50 }, { op: "edit", id: "A", y: -120 }, { op: "edit", id: "A", x: 10, y: -120 }] as const) {
+      const result = expandServerEdits([{ op: "add_text", x: 0, y: 0, text: "first" }, edit], rows, deps());
+      expect(result, JSON.stringify(edit)).toMatchObject({ ok: false, code: "pinned_elbow_arrow", editIndex: 1 });
+      if (!result.ok) expect(result.message).toMatch(PINNED);
+    }
+    // A pin on the moved end's own segment is refused too.
     const a = rawRect("A", 0, 0, 100, 100); const b = rawRect("B", 500, 0, 100, 100);
     const arrow = rawArrow({ x: 101, y: 20, width: 398, height: 20, points: [[0, 0], [199, 0], [199, 20], [398, 20]], elbowed: true,
       fixedSegments: [{ start: [199, 20], end: [398, 20], index: 3 }], startIsSpecial: false, endIsSpecial: false,
       startBinding: { elementId: "A", focus: 0, gap: 1, fixedPoint: [1.01, 0.2] }, endBinding: { elementId: "B", focus: 0, gap: 1, fixedPoint: [-0.01, 0.4] } });
-    const rows = [a, b, arrow];
-    const moved = must(expandServerEdits([{ op: "edit", id: "B", x: 560 }], rows, deps()));
-    const row = restore(rowsOf(rows, moved.elements)).find((r) => r.id === "arr")!;
-    expect(worldPoints(row)).toEqual([{ x: 101, y: 20 }, { x: 300, y: 20 }, { x: 300, y: 40 }, { x: 559, y: 40 }]);
-    expect(pinnedWorld(row)).toEqual([{ index: 3, start: [300, 40], end: [559, 40] }]);
+    expect(expandServerEdits([{ op: "edit", id: "B", x: 560 }], [a, b, arrow], deps())).toMatchObject({ ok: false, code: "pinned_elbow_arrow", editIndex: 0 });
+  });
+
+  it("still allows what does not re-route a pinned elbow arrow: a move to where the shape already is, a text edit, a delete", () => {
+    const rows = detour();
+    expect(must(expandServerEdits([{ op: "edit", id: "A", x: 0, y: 0 }], rows, deps())).elements).toEqual([]);
+    must(expandServerEdits([{ op: "edit", id: "B", text: "label" }], rows, deps()));
+    const cut = must(expandServerEdits([{ op: "delete", id: "B" }], rows, deps()));
+    expect(cut.elements.find((r) => r.id === "arr")).toMatchObject({ endBinding: null, fixedSegments: [{ index: 3 }] });
   });
 
   it("honours a fixedPoint on a ROTATED target, in the target's own turned frame", () => {
@@ -280,7 +273,9 @@ describe("an AI sticky is the Portal's own Sticky Note (board-scene `note`)", ()
 
   it("uses the Portal's paper colours, keeping the client-facing names", () => {
     expect(WHITEBOARD_STICKY_COLORS).toMatchObject({ yellow: WHITEBOARD_PAPER.yellow, green: WHITEBOARD_PAPER.green, blue: WHITEBOARD_PAPER.blue, pink: WHITEBOARD_PAPER.red, purple: WHITEBOARD_PAPER.violet });
-    expect(Object.keys(WHITEBOARD_STICKY_COLORS).sort()).toEqual(["blue", "green", "orange", "pink", "purple", "yellow"]);
+    expect(Object.keys(WHITEBOARD_STICKY_COLORS).sort()).toEqual(["blue", "green", "pink", "purple", "yellow"]);
+    expect(Object.values(WHITEBOARD_STICKY_COLORS).sort()).toEqual(Object.values(WHITEBOARD_PAPER).sort()); // exactly the Portal's notes
+    expect(whiteboardServerEditSchema.safeParse({ op: "add_sticky", x: 0, y: 0, text: "t", color: "orange" }).success).toBe(false);
     expect(WHITEBOARD_PAPER).toEqual({ yellow: "#fff085", green: "#b9f8cf", blue: "#bedbff", red: "#ffc9c9", violet: "#ddd6ff" });
   });
 
