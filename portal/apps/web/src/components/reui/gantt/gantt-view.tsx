@@ -322,6 +322,12 @@
  * into the input, which paints later and won the tap. The box now grows 24px toward the empty indent; the glyph (re-centred by the padding), the gutter
  * and the input do not move. The coarse and phone variants set the same value, so the cascade trap of #692 (the coarse variant winning where both set
  * one property) does not apply. A Codex alternative, a start margin on the title wrapper, was rejected: it moves the input off the child rows' titles.
+ *
+ * 2026-10-09, #698 - CHANGED, class tokens only (ADR 0009 addendum). The sticky `+` opener draws its focus outline inside its own box on coarse
+ * pointers and on phones (a -2px outline offset, with an important focus-visible twin so it beats the base ring offset, plus the at-rest twin the
+ * inset-offset guard requires; the same spelling as GANTT_ROW_LINK in ProductionGantt). On a 44px row the opener fills the row, so the outset ring reached
+ * 4px above it and the sticky tree header (z-30) painted over that at scrollTop 0. Scroll padding cannot help at scrollTop 0 and a spacer would break
+ * the flush landing. Fine-pointer desktop keeps the outset ring.
  */
 
 import {
@@ -4171,7 +4177,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
   )
 })
 
-/** The 4px focus ring (`--space-1`) paints outside the `+`'s own box; reveal that much more around it. */
+/** The fine-pointer `+` keeps an outset 4px focus ring (`--space-1`) outside its own box; reveal that much more around it. Coarse pointers and phones draw the ring inside the box (#698), so this room is only for the desktop ring. */
 const FOCUS_RING_ROOM_PX = 4
 
 /**
@@ -4381,7 +4387,7 @@ const GanttTreeRow = memo(function GanttTreeRow({
                 data-gantt-create-trigger={row.resource.id}
                 aria-label={settings.i18n.functions.addTaskIn(row.resource.title)}
                 aria-expanded={createOpen}
-                className="text-muted-foreground hover:text-foreground! bg-background pointer-coarse:bg-transparent pointer-coarse:bg-[image:linear-gradient(var(--background),var(--background))] pointer-coarse:bg-no-repeat pointer-coarse:bg-center max-[721px]:bg-transparent max-[721px]:bg-[image:linear-gradient(var(--background),var(--background))] max-[721px]:bg-no-repeat max-[721px]:bg-center aria-expanded:bg-none! sticky end-0 focus-visible:z-[2] max-[721px]:end-[var(--space-1)] ms-2 max-[721px]:ms-auto size-5! shrink-0 opacity-0 group-hover/gantt-row:opacity-100 group-data-hover/gantt-row:opacity-100 focus:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 max-[721px]:opacity-100 aria-expanded:opacity-100 aria-expanded:bg-transparent! pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[721px]:min-h-[44px] max-[721px]:min-w-[44px]"
+                className="text-muted-foreground hover:text-foreground! bg-background pointer-coarse:bg-transparent pointer-coarse:bg-[image:linear-gradient(var(--background),var(--background))] pointer-coarse:bg-no-repeat pointer-coarse:bg-center max-[721px]:bg-transparent max-[721px]:bg-[image:linear-gradient(var(--background),var(--background))] max-[721px]:bg-no-repeat max-[721px]:bg-center aria-expanded:bg-none! sticky end-0 focus-visible:z-[2] max-[721px]:end-[var(--space-1)] ms-2 max-[721px]:ms-auto size-5! shrink-0 opacity-0 group-hover/gantt-row:opacity-100 group-data-hover/gantt-row:opacity-100 focus:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 max-[721px]:opacity-100 aria-expanded:opacity-100 aria-expanded:bg-transparent! pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[721px]:min-h-[44px] max-[721px]:min-w-[44px] pointer-coarse:-outline-offset-2 pointer-coarse:focus-visible:!-outline-offset-2 max-[721px]:-outline-offset-2 max-[721px]:focus-visible:!-outline-offset-2"
                 onClick={() => onOpenCreate(row)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {

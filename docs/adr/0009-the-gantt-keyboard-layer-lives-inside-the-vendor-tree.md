@@ -309,3 +309,10 @@ Class tokens only on the vendored `GanttGroupCreateRow`. On coarse pointers and 
 extends 24px toward the start (`-ms-6` with `ps-6`, both variants identical) so it no longer overlaps the title
 input, which the 20px gutter could not hold. The glyph, the gutter span and the title wrapper are unchanged, so the
 input stays aligned with child-row titles. Pinned by `gantt-create-task.dom.test.tsx`.
+
+## Addendum (2026-10-09, #698): the + opener's focus ring is inset on touch
+
+Class tokens only. On coarse pointers and phones the sticky `+` opener draws its focus outline inside its box
+(`-outline-offset-2`, with the important focus-visible twin and the at-rest twin), because the first row's outset ring
+was clipped by the sticky tree header at scrollTop 0. Fine-pointer desktop keeps the outset ring. Pinned by
+`gantt-create-task.dom.test.tsx`.

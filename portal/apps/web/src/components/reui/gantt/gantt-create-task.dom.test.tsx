@@ -755,7 +755,7 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
       expect(seen).toBe(slot);
     });
 
-    it("keeps the sticky + clear of its focus ring at <= 720px (inset by --space-1, not an inward ring)", async () => {
+    it("keeps the sticky + clear of the pane edge at <= 720px (end inset by --space-1; the ring itself is covered by the #698 test)", async () => {
       await render(stackView());
       const cls = createButton("Alpha")!.className;
       expect(cls).toContain("max-[721px]:end-[var(--space-1)]");
@@ -788,6 +788,21 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
     const titleWrapper = input().parentElement as HTMLElement;
     expect(titleWrapper.className).toContain("min-w-0");
     expect(titleWrapper.className).toContain("flex-1");
+  });
+
+  it("the + draws its focus ring inside its own box on coarse pointers and phones, outset on fine desktop (#698)", async () => {
+    await render(view({ onCreateGroupTask: ok, columns: [people, due] }));
+    const cls = createButton("Alpha")!.className;
+    // an inset outline so the sticky tree header cannot clip the first row's ring; each focus-visible
+    // twin is important so it beats the base ring offset, and the at-rest twin keeps the guard satisfied
+    for (const token of [
+      "pointer-coarse:-outline-offset-2",
+      "pointer-coarse:focus-visible:!-outline-offset-2",
+      "max-[721px]:-outline-offset-2",
+      "max-[721px]:focus-visible:!-outline-offset-2",
+    ]) expect(cls).toContain(token);
+    // fine-pointer desktop keeps the outset ring: no unprefixed inset offset
+    expect(cls).not.toMatch(/(^|\s)(focus-visible:)?!?-outline-offset-2/);
   });
 
   it("renderCreateStack is ignored when a column carries a create cell", async () => {

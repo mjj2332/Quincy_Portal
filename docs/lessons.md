@@ -6070,3 +6070,16 @@ Tags: whiteboard, workers-runtime · #708
 - **Fix:** a move that would re-route an elbow arrow with a non-empty `fixedSegments` is refused (`pinned_elbow_arrow`, 422, nothing applied). Un-pinned elbow and curved arrows still re-route. A person moves the pinned case in the board editor.
 
 Guards: `apps/web/src/lib/whiteboard-server-edits.test.ts` ("refuses to move a shape whose bound elbow arrow has a pinned segment"), `workers/app/test/mcp-whiteboard.test.ts` ("elbow arrows").
+
+## Touch targets: grow a 44px box toward empty space, and inset the focus ring of a first-row control (#697, #698)
+Tags: gantt-calendar, focus-overlays · #697, #698
+
+- **#697.** The create row's Cancel x got a 44px minimum box on coarse pointers, centred in a 20px gutter with 4px before the title input. It spilled 12px, 8px of it into the input, which paints later and won the tap.
+  - Fix the box, not the neighbour: a start margin and equal start padding (`-ms-6` / `ps-6`) grow it toward the empty indent while the glyph and the input stay put. Moving the input would break its alignment with child-row titles.
+  - Check with real coarse-pointer emulation: `elementFromPoint` on a grid over the box must return the button.
+- **#698.** On 44px touch rows the `+` fills its row, so the outset focus ring (2px, offset 2px) reaches 4px above it. At scrollTop 0 the sticky tree header (z-30) paints over that.
+  - Scroll padding cannot help at scrollTop 0, and a spacer breaks the flush landing. Draw the ring inside the box on coarse pointers and phones (`-outline-offset-2` plus the important focus-visible twin and the at-rest twin that `insetOffsetProblems` requires). Fine-pointer desktop keeps the outset ring.
+  - Check with the page focused (`document.hasFocus()`), Tab to the first row, and read the computed outline offset.
+
+Guards: `reui/gantt/gantt-create-task.dom.test.tsx` (the x and `+` token pins), `design-system-guards.test.ts`, `config/phone-breakpoint.guard.test.ts`.
+
