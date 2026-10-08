@@ -6,10 +6,16 @@
  * the Gantt:
  *
  * - With `GestureEvent` (WebKit): the wheel listener is attached while Control or Meta is physically
- *   held (window keydown attaches; keyup, window blur and visibilitychange detach). A pinch arrives
+ *   held. Held state lives at module level (capture-phase window keydown/keyup, so an input that
+ *   stops propagation cannot hide it) and survives a rebind; blur and visibilitychange clear it. A pinch arrives
  *   as gesturestart/gesturechange instead and is forwarded as a scale ratio.
  * - Without `GestureEvent` (Chromium and others): a pinch arrives as ctrl+wheel with no keydown, so
  *   the listener stays attached.
+ *
+ * WebKit pinch limitation: `gesturestart` is NOT cancelled (we cannot know yet whether the zoom will be
+ * consumed), and `gesturechange` is cancelled only when the callback consumed the step. A pinch
+ * rejected at a zoom limit therefore reaches the browser, but whether Safari can hand an already-begun
+ * gesture to page zoom mid-gesture is unverified on a real device.
  *
  * Targets inside the tree column are skipped so the browser's page zoom still works there.
  */
@@ -18,8 +24,11 @@ const TREE_COLUMN = "[data-gantt-tree-column]"
 
 export interface GatedWheelZoomHandlers {
   onWheel: (e: WheelEvent) => void
-  /** `ratio` is the scale change since the previous gesture event; `clientX` anchors the zoom. */
-  onGesture: (ratio: number, clientX: number) => void
+  /**
+   * `ratio` is the scale change since the previous gesture event; `clientX` anchors the zoom.
+   * Return true when the step was applied (the gesture is then cancelled), false to leave it to the browser.
+   */
+  onGesture: (ratio: number, clientX: number) => boolean
 }
 
 function inTreeColumn(target: EventTarget | null): boolean {
@@ -31,65 +40,72 @@ interface GestureLike extends Event {
   clientX: number
 }
 
+// Modifier state is module-level so it outlives any one binding (a scale change rebinds the host).
+let modifierHeld = false
+let trackerInstalled = false
+const modifierListeners = new Set<() => void>()
+
+function setHeld(next: boolean) {
+  if (next === modifierHeld) return
+  modifierHeld = next
+  for (const fn of [...modifierListeners]) fn()
+}
+
+function installModifierTracker() {
+  if (trackerInstalled) return
+  trackerInstalled = true
+  // Capture phase: a focused input that calls stopPropagation() must not hide the modifier.
+  window.addEventListener("keydown", (e) => setHeld(e.key === "Control" || e.key === "Meta" || e.ctrlKey || e.metaKey), true)
+  window.addEventListener("keyup", (e) => setHeld(e.ctrlKey || e.metaKey), true)
+  window.addEventListener("blur", () => setHeld(false))
+  document.addEventListener("visibilitychange", () => setHeld(false))
+}
+
 export function bindGatedWheelZoom(host: HTMLElement, handlers: GatedWheelZoomHandlers): () => void {
   const wheel = (e: WheelEvent) => {
     if (inTreeColumn(e.target)) return
     handlers.onWheel(e)
   }
-  const attachWheel = () => host.addEventListener("wheel", wheel, { passive: false })
-  const detachWheel = () => host.removeEventListener("wheel", wheel)
-
-  if (!("GestureEvent" in window)) {
-    attachWheel()
-    return detachWheel
-  }
-
   let attached = false
   const attach = () => {
     if (attached) return
     attached = true
-    attachWheel()
+    host.addEventListener("wheel", wheel, { passive: false })
   }
   const detach = () => {
     if (!attached) return
     attached = false
-    detachWheel()
+    host.removeEventListener("wheel", wheel)
   }
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Control" || e.key === "Meta" || e.ctrlKey || e.metaKey) attach()
+
+  if (!("GestureEvent" in window)) {
+    attach()
+    return detach
   }
-  const onKeyUp = (e: KeyboardEvent) => {
-    if (!e.ctrlKey && !e.metaKey) detach()
-  }
-  const onVisibility = () => detach()
+
+  installModifierTracker()
+  const sync = () => (modifierHeld ? attach() : detach())
+  modifierListeners.add(sync)
+  sync()
 
   let lastScale = 1
   const onGestureStart = (e: Event) => {
     if (inTreeColumn(e.target)) return
-    e.preventDefault()
     lastScale = 1
   }
   const onGestureChange = (e: Event) => {
     if (inTreeColumn(e.target)) return
-    e.preventDefault()
     const g = e as GestureLike
     const ratio = lastScale > 0 ? g.scale / lastScale : 1
     lastScale = g.scale
-    handlers.onGesture(ratio, g.clientX)
+    if (handlers.onGesture(ratio, g.clientX)) e.preventDefault()
   }
 
-  window.addEventListener("keydown", onKeyDown)
-  window.addEventListener("keyup", onKeyUp)
-  window.addEventListener("blur", detach)
-  document.addEventListener("visibilitychange", onVisibility)
   host.addEventListener("gesturestart", onGestureStart)
   host.addEventListener("gesturechange", onGestureChange)
   return () => {
+    modifierListeners.delete(sync)
     detach()
-    window.removeEventListener("keydown", onKeyDown)
-    window.removeEventListener("keyup", onKeyUp)
-    window.removeEventListener("blur", detach)
-    document.removeEventListener("visibilitychange", onVisibility)
     host.removeEventListener("gesturestart", onGestureStart)
     host.removeEventListener("gesturechange", onGestureChange)
   }

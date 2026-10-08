@@ -35,6 +35,28 @@ function functionBody(text: string, name: string): { start: number; end: number 
   throw new Error(`unbalanced ${name}`);
 }
 
+/**
+ * Start offsets of every `addEventListener("wheel", ...)` call whose full (balanced-paren) argument
+ * text contains `passive: false`, so inline callbacks with their own parens are still caught.
+ */
+function nonPassiveWheelCalls(text: string): number[] {
+  const hits: number[] = [];
+  for (const m of text.matchAll(/addEventListener\(\s*["']wheel["']/g)) {
+    const open = m.index! + "addEventListener".length;
+    let depth = 0;
+    let end = text.length;
+    for (let i = open; i < text.length; i++) {
+      if (text[i] === "(") depth++;
+      else if (text[i] === ")" && --depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    if (/passive\s*:\s*false/.test(text.slice(open, end))) hits.push(m.index!);
+  }
+  return hits;
+}
+
 describe("stripComments", () => {
   it("self-test: removes line and block comments, keeps code and urls in strings", () => {
     const out = stripComments('a // scrollTop = 1\n/* scrollTop = 2 */ b = "http://x"');
@@ -58,14 +80,23 @@ describe("gantt-view.tsx single-scroller guard", () => {
   it("registers no non-passive wheel listener outside the gated zoom helper", () => {
     const dir = fileURLToPath(new URL("./", import.meta.url));
     const files = readdirSync(dir).filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f) && f !== "gantt-wheel-zoom.ts");
-    const offenders = files.filter((f) => /["']wheel["'][^)]*passive:\s*false/.test(stripComments(readFileSync(dir + f, "utf8"))));
+    const offenders = files.filter((f) => nonPassiveWheelCalls(stripComments(readFileSync(dir + f, "utf8"))).length > 0);
     expect(offenders).toEqual([]);
     expect(source).toContain("bindGatedWheelZoom(");
   });
 
+  it("the guard scan rejects inline-callback, identifier-callback and options-first shapes", () => {
+    expect(nonPassiveWheelCalls('el.addEventListener("wheel", (e) => onWheel(e), { passive: false })')).toHaveLength(1);
+    expect(nonPassiveWheelCalls("el.addEventListener('wheel', function (e) { f(g(e)) }, { passive: false, capture: true })")).toHaveLength(1);
+    expect(nonPassiveWheelCalls('el.addEventListener("wheel", wheel, { passive: false })')).toHaveLength(1);
+    expect(nonPassiveWheelCalls('el.addEventListener("wheel", wheel, { passive: true })')).toHaveLength(0);
+    expect(nonPassiveWheelCalls('el.addEventListener("wheel", (e) => f(e))')).toHaveLength(0);
+    expect(nonPassiveWheelCalls('el.addEventListener("keydown", (e) => f(e), { passive: false })')).toHaveLength(0);
+  });
+
   it("the gated helper has exactly one non-passive wheel listener, inside bindGatedWheelZoom", () => {
     const helper = stripComments(readFileSync(fileURLToPath(new URL("./gantt-wheel-zoom.ts", import.meta.url)), "utf8"));
-    const matches = [...helper.matchAll(/addEventListener\(\s*"wheel"[^)]*passive:\s*false/g)].map((m) => m.index!);
+    const matches = nonPassiveWheelCalls(helper);
     expect(matches).toHaveLength(1);
     const body = functionBody(helper, "bindGatedWheelZoom");
     expect(matches[0]!).toBeGreaterThan(body.start);

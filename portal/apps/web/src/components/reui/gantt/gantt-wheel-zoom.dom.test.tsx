@@ -12,7 +12,7 @@ function setup(opts: { webkit: boolean }) {
   host.append(tree, lane)
   document.body.appendChild(host)
   const onWheel = vi.fn()
-  const onGesture = vi.fn()
+  const onGesture = vi.fn(() => true)
   const unbind = bindGatedWheelZoom(host, { onWheel, onGesture })
   return { host, tree, treeChild, lane, onWheel, onGesture, unbind }
 }
@@ -26,6 +26,7 @@ const key = (type: "keydown" | "keyup", init: KeyboardEventInit) =>
   window.dispatchEvent(new KeyboardEvent(type, init))
 
 afterEach(() => {
+  window.dispatchEvent(new Event("blur"))
   delete (window as unknown as Record<string, unknown>).GestureEvent
   document.body.innerHTML = ""
 })
@@ -89,7 +90,7 @@ describe("bindGatedWheelZoom with GestureEvent (WebKit)", () => {
     const host = document.createElement("div")
     ;(window as unknown as Record<string, unknown>).GestureEvent = class {}
     const spy = vi.spyOn(host, "addEventListener")
-    const unbind = bindGatedWheelZoom(host, { onWheel: vi.fn(), onGesture: vi.fn() })
+    const unbind = bindGatedWheelZoom(host, { onWheel: vi.fn(), onGesture: vi.fn(() => true) })
     expect(spy.mock.calls.filter((c) => c[0] === "wheel")).toHaveLength(0)
     key("keydown", { key: "Control", ctrlKey: true })
     const wheelCalls = spy.mock.calls.filter((c) => c[0] === "wheel")
@@ -107,11 +108,9 @@ describe("bindGatedWheelZoom with GestureEvent (WebKit)", () => {
     s.unbind()
   })
 
-  it("forwards pinch as a scale ratio between gesturechange events and prevents default", () => {
+  it("forwards pinch as a scale ratio between gesturechange events and prevents default when consumed", () => {
     const s = setup({ webkit: true })
-    const start = new Event("gesturestart", { bubbles: true, cancelable: true })
-    s.lane.dispatchEvent(start)
-    expect(start.defaultPrevented).toBe(true)
+    s.lane.dispatchEvent(new Event("gesturestart", { bubbles: true, cancelable: true }))
     const g1 = Object.assign(new Event("gesturechange", { bubbles: true, cancelable: true }), {
       scale: 1.2,
       clientX: 50,
@@ -126,6 +125,48 @@ describe("bindGatedWheelZoom with GestureEvent (WebKit)", () => {
     s.lane.dispatchEvent(g2)
     expect(s.onGesture.mock.calls[1]![0]).toBeCloseTo(1.5)
     s.unbind()
+  })
+
+  it("does not cancel a pinch the callback rejects (zoom limit), so browser zoom can take it", () => {
+    const s = setup({ webkit: true })
+    s.onGesture.mockReturnValue(false)
+    const start = new Event("gesturestart", { bubbles: true, cancelable: true })
+    s.lane.dispatchEvent(start)
+    const g = Object.assign(new Event("gesturechange", { bubbles: true, cancelable: true }), { scale: 1.2, clientX: 5 })
+    s.lane.dispatchEvent(g)
+    expect(start.defaultPrevented).toBe(false)
+    expect(g.defaultPrevented).toBe(false)
+    expect(s.onGesture).toHaveBeenCalledTimes(1)
+    s.unbind()
+  })
+
+  it("tracks the modifier in the capture phase, so an input that stops propagation cannot hide it", () => {
+    const s = setup({ webkit: true })
+    const input = document.createElement("input")
+    input.addEventListener("keydown", (e) => e.stopPropagation())
+    input.addEventListener("keyup", (e) => e.stopPropagation())
+    document.body.appendChild(input)
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true, bubbles: true }))
+    wheel(s.lane, { metaKey: true })
+    expect(s.onWheel).toHaveBeenCalledTimes(1)
+    input.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", bubbles: true }))
+    wheel(s.lane, { metaKey: true })
+    expect(s.onWheel).toHaveBeenCalledTimes(1)
+    s.unbind()
+  })
+
+  it("keeps a held modifier across a rebind: the new binding zooms without a new keydown", () => {
+    const first = setup({ webkit: true })
+    key("keydown", { key: "Meta", metaKey: true })
+    first.unbind()
+    const onWheel = vi.fn()
+    const unbind = bindGatedWheelZoom(first.host, { onWheel, onGesture: vi.fn(() => true) })
+    wheel(first.lane, { metaKey: true })
+    expect(onWheel).toHaveBeenCalledTimes(1)
+    key("keyup", { key: "Meta" })
+    wheel(first.lane, { metaKey: true })
+    expect(onWheel).toHaveBeenCalledTimes(1)
+    unbind()
   })
 
   it("leaves pinch inside the tree column to the browser", () => {

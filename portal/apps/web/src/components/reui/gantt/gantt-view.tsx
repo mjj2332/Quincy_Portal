@@ -2212,7 +2212,7 @@ function GanttView({
   // Both handlers read the live logic through a ref, so a zoom step never re-binds mid-gesture.
   const wheelZoomRef = useRef<{
     wheel: (e: WheelEvent) => void
-    gesture: (ratio: number, clientX: number) => void
+    gesture: (ratio: number, clientX: number) => boolean
   } | null>(null)
   useEffect(() => {
     const applyZoom = (next: number, clientX: number) => {
@@ -2239,10 +2239,11 @@ function GanttView({
         applyZoom(next, e.clientX)
       },
       gesture: (ratio, clientX) => {
-        if (!viewConfig.wheelZoom) return
+        if (!viewConfig.wheelZoom) return false
         const next = clampZoom(zoom * ratio)
-        if (Math.abs(next - zoom) < 1e-4) return
+        if (Math.abs(next - zoom) < 1e-4) return false
         applyZoom(next, clientX)
+        return true
       },
     }
   })
@@ -2251,7 +2252,7 @@ function GanttView({
     if (!viewport || !viewConfig.wheelZoom) return
     return bindGatedWheelZoom(viewport, {
       onWheel: (e) => wheelZoomRef.current?.wheel(e),
-      onGesture: (ratio, clientX) => wheelZoomRef.current?.gesture(ratio, clientX),
+      onGesture: (ratio, clientX) => wheelZoomRef.current?.gesture(ratio, clientX) ?? false,
     })
   }, [viewConfig.scrollbars, viewConfig.wheelZoom, scale])
 
