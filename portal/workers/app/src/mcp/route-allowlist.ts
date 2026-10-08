@@ -120,6 +120,16 @@ const ADMIN_ROUTES = [
   ["POST", "/api/admin/renditions/backfill"],
   ["POST", "/api/admin/autohdr/backfill"],
   ["POST", "/api/admin/autohdr/scaffold-backfill"],
+  ["POST", "/api/projects/:projectId/sync-dropbox"],
+  ["POST", "/api/projects/:projectId/autohdr-coverage"],
+  ["POST", "/api/admin/notification-deliveries/:outboxId/replay"],
+  ["POST", "/api/admin/notification-deliveries/:outboxId/discard"],
+  ["POST", "/api/admin/renditions-dlq/:deadLetterId/discard"],
+  ["POST", "/api/admin/webhook-events/:eventId/discard"],
+  ["POST", "/api/admin/attention/orphan-uploads/:watchId/acknowledge"],
+  ["DELETE", "/api/assets/:assetId"],
+  // A POST that only reads (its body carries a Dropbox path): `admin_inspect_editor_folder`, readOnlyHint.
+  ["POST", "/api/integrations/dropbox/editor-folders/inspect"],
   // Project delete: only through the confirm round trip in `tools/admin-writes.ts`.
   ["DELETE", "/api/projects/:projectId"],
 ] as const;

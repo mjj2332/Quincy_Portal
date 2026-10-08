@@ -8,6 +8,7 @@ import { signConfirmToken, CONFIRM_TTL_SECONDS } from "../src/mcp/confirm-token"
 import { MCP_ALLOWED_ROUTES } from "../src/mcp/route-allowlist";
 import { MCP_TOOLS, strictInput, toolsFor } from "../src/mcp/tools/registry";
 import { mcpHarness } from "./mcp-oauth-support";
+import { seedAsset, seedCoverage, seedDelivery, seedOpenDeadLetter, seedOrphanReport, seedPoisonEvent } from "./mcp-admin-fixtures";
 
 declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL__: string;
 const testEnv = env as unknown as Env;
@@ -42,8 +43,21 @@ const ADMIN_TOOLS: Record<string, { method: string; template: string; capability
   admin_backfill_autohdr: { method: "POST", template: "/api/admin/autohdr/backfill", capability: "adminBackend" },
   admin_backfill_autohdr_scaffolds: { method: "POST", template: "/api/admin/autohdr/scaffold-backfill", capability: "adminBackend" },
   delete_project: { method: "DELETE", template: "/api/projects/:projectId", capability: "adminBackend" },
+  admin_sync_project_dropbox: { method: "POST", template: "/api/projects/:projectId/sync-dropbox", capability: "adminBackend" },
+  admin_resolve_autohdr_coverage: { method: "POST", template: "/api/projects/:projectId/autohdr-coverage", capability: "adminBackend" },
+  admin_replay_notification_delivery: { method: "POST", template: "/api/admin/notification-deliveries/:outboxId/replay", capability: "adminBackend" },
+  admin_discard_notification_delivery: { method: "POST", template: "/api/admin/notification-deliveries/:outboxId/discard", capability: "adminBackend" },
+  admin_discard_dead_letter: { method: "POST", template: "/api/admin/renditions-dlq/:deadLetterId/discard", capability: "adminBackend" },
+  admin_discard_webhook_event: { method: "POST", template: "/api/admin/webhook-events/:eventId/discard", capability: "adminBackend" },
+  admin_acknowledge_orphan_file_report: { method: "POST", template: "/api/admin/attention/orphan-uploads/:watchId/acknowledge", capability: "adminBackend" },
+  admin_delete_asset: { method: "DELETE", template: "/api/assets/:assetId", capability: "adminBackend" },
+};
+/** The one admin-scope tool that only reads (a POST so that its body can carry a path): readOnlyHint, not destructive. */
+const ADMIN_SCOPE_READS: Record<string, { method: string; template: string; capability: string }> = {
+  admin_inspect_editor_folder: { method: "POST", template: "/api/integrations/dropbox/editor-folders/inspect", capability: "manageIntegrations" },
 };
 const ADMIN_WRITE_NAMES = Object.keys(ADMIN_TOOLS);
+const ADMIN_SCOPE_NAMES = [...ADMIN_WRITE_NAMES, ...Object.keys(ADMIN_SCOPE_READS)];
 const ADMIN_READ_ADDITIONS = ["admin_preview_editor_folders", "admin_inspect_dropbox_monitor"];
 
 /** A recording stand-in for the background Worker's RPC surface. */
@@ -63,6 +77,8 @@ const BACKGROUND_RESULTS: Record<string, (...args: unknown[]) => unknown> = {
   previewEditorFolders: () => ({ items: [], nextCursor: null }),
   inspectDropboxMonitor: (scope) => ({ scope }),
   processTonomoEvents: () => undefined,
+  inspectEditorFolder: () => ({ rootPath: "/Editors/Inspect", inputs: [], outputs: [] }),
+  triggerDropboxSync: () => ({ jobId: "job-dropbox-sync" }),
 };
 const fakeBackground = new Proxy({}, {
   get: (_target, name) => typeof name !== "string" || name === "then" ? undefined : async (...args: unknown[]) => { bgCalls.push({ name, args }); return BACKGROUND_RESULTS[name]?.(...args) ?? {}; },
@@ -132,19 +148,20 @@ beforeEach(() => {
 describe("the admin scope: grants, lifetimes and visibility", () => {
   it("lists exactly the admin tools, each destructive, each tied to its route and capability", () => {
     const adminScope = MCP_TOOLS.filter((tool) => tool.scope === "admin");
-    expect(adminScope.map((tool) => tool.name).sort()).toEqual([...ADMIN_WRITE_NAMES].sort());
+    expect(adminScope.map((tool) => tool.name).sort()).toEqual([...ADMIN_SCOPE_NAMES].sort());
     for (const tool of adminScope) {
-      expect(tool.annotations, tool.name).toMatchObject({ readOnlyHint: false, destructiveHint: true });
-      expect({ method: tool.route.method, template: tool.route.template, capability: tool.capability }, tool.name).toEqual(ADMIN_TOOLS[tool.name]);
+      const reads = tool.name in ADMIN_SCOPE_READS;
+      expect(tool.annotations, tool.name).toMatchObject(reads ? { readOnlyHint: true } : { readOnlyHint: false, destructiveHint: true });
+      expect({ method: tool.route.method, template: tool.route.template, capability: tool.capability }, tool.name).toEqual((reads ? ADMIN_SCOPE_READS : ADMIN_TOOLS)[tool.name]);
     }
   });
 
   it("an admin with read and write but no admin grant sees no admin write tool and no delete_project", async () => {
     const list = (await h.toolsList(tokens.adminRW!.accessToken)).map((tool) => tool.name);
-    for (const name of ADMIN_WRITE_NAMES) expect(list, name).not.toContain(name);
+    for (const name of ADMIN_SCOPE_NAMES) expect(list, name).not.toContain(name);
     expect(list).toContain("admin_list_users");
     const full = (await h.toolsList(tokens.adminFull!.accessToken)).map((tool) => tool.name);
-    for (const name of [...ADMIN_WRITE_NAMES, ...ADMIN_READ_ADDITIONS]) expect(full, name).toContain(name);
+    for (const name of [...ADMIN_SCOPE_NAMES, ...ADMIN_READ_ADDITIONS]) expect(full, name).toContain(name);
     const called = await callOver("adminRW", "delete_project", { projectId: crypto.randomUUID() });
     expect(called.error !== undefined || called.result?.isError === true).toBe(true);
   });
@@ -152,7 +169,7 @@ describe("the admin scope: grants, lifetimes and visibility", () => {
   it("only an admin holding the admin grant is offered the tools, whatever the scopes say", () => {
     for (const role of ["editor", "photographer", "external_editor"]) expect(toolsFor(role, ["read", "write", "admin"]).filter((tool) => tool.scope === "admin"), role).toEqual([]);
     expect(toolsFor("admin", ["read", "write"]).filter((tool) => tool.scope === "admin")).toEqual([]);
-    expect(toolsFor("admin", ["read", "write", "admin"]).filter((tool) => tool.scope === "admin").length).toBe(ADMIN_WRITE_NAMES.length);
+    expect(toolsFor("admin", ["read", "write", "admin"]).filter((tool) => tool.scope === "admin").length).toBe(ADMIN_SCOPE_NAMES.length);
   });
 
   it("an editor cannot get admin at consent, and an admin grant on a demoted user lists nothing", async () => {
@@ -161,11 +178,11 @@ describe("the admin scope: grants, lifetimes and visibility", () => {
     // Asked for admin, granted only read: the token's scope carries no admin and no admin tool is listed.
     const readOnly = await h.connect("read admin", "editor", ["read"]);
     const names = (await h.toolsList(readOnly.accessToken)).map((tool) => tool.name);
-    for (const name of ADMIN_WRITE_NAMES) expect(names, name).not.toContain(name);
+    for (const name of ADMIN_SCOPE_NAMES) expect(names, name).not.toContain(name);
     // A demotion needs no epoch bump to take effect on the tool list: the capability gate is live.
     await DB.prepare("UPDATE user SET role = 'editor' WHERE id = ?").bind(demotedId).run();
     const after = (await h.toolsList(tokens.demotedFull!.accessToken)).map((tool) => tool.name);
-    for (const name of ADMIN_WRITE_NAMES) expect(after, name).not.toContain(name);
+    for (const name of ADMIN_SCOPE_NAMES) expect(after, name).not.toContain(name);
   });
 
   it("admin grants live 15 minutes with no refresh; other grants live an hour and refresh", () => {
@@ -176,7 +193,7 @@ describe("the admin scope: grants, lifetimes and visibility", () => {
   });
 
   it("every admin tool's input is strict", () => {
-    for (const name of ADMIN_WRITE_NAMES) {
+    for (const name of ADMIN_SCOPE_NAMES) {
       const tool = mcpTool(name);
       const sample = Object.fromEntries(Object.keys(tool.inputSchema).map((key) => [key, undefined]));
       expect(strictInput(tool).safeParse({ ...sample, notARealKey: 1 }).success, name).toBe(false);
@@ -276,6 +293,80 @@ describe("each admin tool's happy path", () => {
     expect(renamed).toMatchObject({ key, label: "Raw review (renamed)" });
     await ok("admin_update_stage", { key, label: before ?? "Raw review" });
     expect((await auditSince(mark, "pipeline_stage.update"))[0]).toMatchObject(viaMcp);
+  });
+
+  it("Dropbox sync for one Project runs the route's admin branch and stamps via", async () => {
+    const projectId = await newProject(); const mark = await maxRowid();
+    const result = json(await ok("admin_sync_project_dropbox", { projectId }));
+    expect(result.edited).toMatchObject({ jobId: "job-fetch" });
+    expect(bgCalls.some((call) => call.name === "fetchEditedFromAutoHdr")).toBe(true);
+    expect((await auditSince(mark, "project.fetch_edited"))[0]).toMatchObject(viaMcp);
+    // The route's own gate still holds: a archived Project cannot be synced.
+    const archived = await newProject({ archived: true });
+    expect(await refused("admin_sync_project_dropbox", { projectId: archived })).toMatch(/^HTTP 409:/);
+  });
+
+  it("AutoHDR coverage resolution records the manual association", async () => {
+    const projectId = await newProject(); const mark = await maxRowid();
+    const seed = await seedCoverage(DB, projectId, adminId);
+    expect(json(await ok("admin_resolve_autohdr_coverage", { projectId, handoffId: seed.handoffId, assetId: seed.assetId, readinessUnitKey: seed.readinessUnitKey }))).toEqual({ ok: true });
+    expect((await DB.prepare("SELECT match_kind FROM autohdr_final_associations WHERE handoff_id = ? AND asset_id = ?").bind(seed.handoffId, seed.assetId).first<{ match_kind: string }>())?.match_kind).toBe("manual");
+    expect((await auditSince(mark, "autohdr.coverage.resolve"))[0]).toMatchObject(viaMcp);
+    expect(await refused("admin_resolve_autohdr_coverage", { projectId, handoffId: seed.handoffId, assetId: seed.assetId, readinessUnitKey: "asset:nope" })).toMatch(/^HTTP 409:/);
+  });
+
+  it("notification deliveries: replay re-queues the failed email, discard drops the rest", async () => {
+    const projectId = await newProject(); const mark = await maxRowid();
+    const replayable = await seedDelivery(DB, projectId, adminId);
+    const replayed = json(await ok("admin_replay_notification_delivery", { outboxId: replayable.outboxId, channels: ["email"] }));
+    expect(replayed.item.outboxId).toBe(replayable.outboxId);
+    expect((await DB.prepare("SELECT status FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'email'").bind(replayable.outboxId).first<{ status: string }>())!.status).toBe("pending");
+    expect((await auditSince(mark, "notification.delivery.replay"))[0]).toMatchObject(viaMcp);
+
+    const discardable = await seedDelivery(DB, projectId, adminId);
+    await ok("admin_discard_notification_delivery", { outboxId: discardable.outboxId });
+    expect((await DB.prepare("SELECT status FROM notification_outbox WHERE id = ?").bind(discardable.outboxId).first<{ status: string }>())!.status).toBe("discarded");
+    expect((await auditSince(mark, "notification.delivery.discard"))[0]).toMatchObject(viaMcp);
+    expect(await refused("admin_replay_notification_delivery", { outboxId: crypto.randomUUID() })).toMatch(/^HTTP 404:/);
+  });
+
+  it("dead-letter discard and webhook-event discard close the item and are audited", async () => {
+    const projectId = await newProject(); const mark = await maxRowid();
+    const { deadLetterId } = await seedOpenDeadLetter(DB, projectId);
+    await ok("admin_discard_dead_letter", { deadLetterId });
+    expect((await DB.prepare("SELECT status FROM rendition_dlq_events WHERE id = ?").bind(deadLetterId).first<{ status: string }>())!.status).toBe("discarded");
+    expect((await auditSince(mark, "rendition.dlq.discard"))[0]).toMatchObject(viaMcp);
+    expect(await refused("admin_discard_dead_letter", { deadLetterId })).toMatch(/^HTTP 409:/);
+
+    const { eventId } = await seedPoisonEvent(DB);
+    await ok("admin_discard_webhook_event", { eventId });
+    expect((await DB.prepare("SELECT status FROM webhook_events WHERE id = ?").bind(eventId).first<{ status: string }>())!.status).toBe("processed");
+    expect((await auditSince(mark, "tonomo_event.discard"))[0]).toMatchObject(viaMcp);
+  });
+
+  it("an orphan-upload report is acknowledged (the report only: no file moves)", async () => {
+    const projectId = await newProject(); const mark = await maxRowid();
+    const { watchId } = await seedOrphanReport(DB, projectId);
+    expect(json(await ok("admin_acknowledge_orphan_file_report", { watchId }))).toEqual({ ok: true });
+    expect((await DB.prepare("SELECT 1 FROM editor_folder_orphan_watches WHERE id = ?").bind(watchId).first())).toBeNull();
+    expect((await auditSince(mark, "editor_folder.move.orphan_upload.acknowledged"))[0]).toMatchObject(viaMcp);
+    expect(await refused("admin_acknowledge_orphan_file_report", { watchId })).toMatch(/^HTTP 404:/);
+  });
+
+  it("asset delete removes the asset and says via MCP", async () => {
+    const projectId = await newProject(); const mark = await maxRowid();
+    const { assetId } = await seedAsset(DB, projectId);
+    await ok("admin_delete_asset", { assetId });
+    expect(await DB.prepare("SELECT 1 FROM assets WHERE id = ?").bind(assetId).first()).toBeNull();
+    expect((await auditSince(mark, "asset.delete"))[0]).toMatchObject(viaMcp);
+    expect(await refused("admin_delete_asset", { assetId })).toMatch(/^HTTP 404:/);
+  });
+
+  it("Editor-folder inspect is a read: it hands the Project and root to the background Worker and writes nothing", async () => {
+    const mark = await maxRowid(); const projectId = crypto.randomUUID();
+    expect(json(await ok("admin_inspect_editor_folder", { projectId, rootPath: "/Editors/Inspect" }))).toMatchObject({ rootPath: "/Editors/Inspect" });
+    expect(bgCalls.find((call) => call.name === "inspectEditorFolder")?.args).toEqual([projectId, "/Editors/Inspect"]);
+    expect(await maxRowid()).toBe(mark);
   });
 
   it("backfills pass their plain JSON through", async () => {
@@ -436,6 +527,64 @@ describe("delete_project: the server-enforced confirm round trip", () => {
     // The fresh summary now sees three assets and issues a token that works.
     const fresh = await ok("delete_project", { projectId });
     expect(fresh).toMatch(/"raw":\s*3/);
+  });
+
+  const commentDoc = (text: string) => JSON.stringify({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+  /** Every asset row the delete removes is counted: superseded versions and unpublished (pending or failed) edits included. */
+  async function withVersions() {
+    const { projectId } = await doomed();
+    const now = Date.now(); const floorplan = crypto.randomUUID(); const edited = crypto.randomUUID();
+    await DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'floorplan', 'empty', 1, ?, ?)").bind(floorplan, projectId, now, now).run();
+    await DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'edited', 'empty', 0, ?, ?)").bind(edited, projectId, now, now).run();
+    const addAsset = (collectionId: string, name: string, extra: { superseded?: boolean; publishStatus?: string } = {}) =>
+      DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, publish_status, version, superseded_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 10, 'upload', ?, 1, ?, ?, ?)")
+        .bind(crypto.randomUUID(), collectionId, collectionId === floorplan ? "floorplan_pdf" : "photo", `doomed/${projectId}/${name}`, name, extra.publishStatus ?? "ready", extra.superseded ? now : null, now, now).run();
+    await addAsset(floorplan, "plan-current.pdf");
+    for (let version = 1; version <= 9; version++) await addAsset(floorplan, `plan-v${version}.pdf`, { superseded: true });
+    await addAsset(edited, "pending.jpg", { publishStatus: "pending" });
+    await addAsset(edited, "failed.jpg", { publishStatus: "failed" });
+    return { projectId, floorplan };
+  }
+
+  it("counts every asset version the delete destroys, by Collection and state", async () => {
+    const { projectId } = await withVersions();
+    const text = await ok("delete_project", { projectId });
+    expect(text).toMatch(/"floorplan":\s*10\b/);
+    expect(text).toMatch(/"edited":\s*2\b/);
+    expect(text).toMatch(/"raw":\s*2\b/);
+    const states = json(text.slice(text.indexOf("{\n"))).willBeDestroyed.assetStatesByCollection;
+    expect(states.floorplan).toEqual({ current: 1, superseded: 9, pending: 0, failed: 0 });
+    expect(states.edited).toEqual({ current: 0, superseded: 0, pending: 1, failed: 1 });
+    expect(states.raw).toEqual({ current: 2, superseded: 0, pending: 0, failed: 0 });
+    // The summary is not a sample: the figure equals the rows the delete route removes.
+    expect((await DB.prepare("SELECT COUNT(*) AS n FROM assets a JOIN collections c ON c.id = a.collection_id WHERE c.project_id = ?").bind(projectId).first<{ n: number }>())!.n).toBe(14);
+  });
+
+  it("comments and Subtasks are exact, with no 50+ cap", async () => {
+    const { projectId } = await doomed();
+    const now = Date.now();
+    for (let n = 0; n < 60; n++) await DB.prepare("INSERT INTO project_comments (id, project_id, author_id, body, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), projectId, adminId, `c${n}`, commentDoc(`c${n}`), now + n).run();
+    const text = await ok("delete_project", { projectId });
+    expect(text).toMatch(/"comments":\s*61\b/);
+  });
+
+  it("one more asset row between the two calls (a superseded version) makes the second call refuse and delete nothing", async () => {
+    const { projectId, floorplan } = await withVersions(); const mark = await maxRowid();
+    const token = tokenFrom(await ok("delete_project", { projectId }));
+    const now = Date.now();
+    await DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, version, superseded_at, created_at, updated_at) VALUES (?, ?, 'floorplan_pdf', ?, 'plan-late.pdf', 10, 'upload', 1, ?, ?, ?)").bind(crypto.randomUUID(), floorplan, `doomed/${projectId}/plan-late.pdf`, now, now, now).run();
+    expect(await refused("delete_project", { projectId, confirm: true, confirmToken: token })).toMatch(/Project changed; re-confirm/i);
+    expect(await exists(projectId)).toBe(true);
+    expect((await DB.prepare("SELECT 1 FROM audit_log WHERE rowid > ? AND action = 'project.delete'").bind(mark).all()).results).toEqual([]);
+    expect(await ok("delete_project", { projectId })).toMatch(/"floorplan":\s*11\b/);
+  });
+
+  it("a comment added between the two calls also changes the summary", async () => {
+    const { projectId } = await doomed();
+    const token = tokenFrom(await ok("delete_project", { projectId }));
+    await DB.prepare("INSERT INTO project_comments (id, project_id, author_id, body, content_json, created_at) VALUES (?, ?, ?, 'late', ?, ?)").bind(crypto.randomUUID(), projectId, adminId, commentDoc("late"), Date.now()).run();
+    expect(await refused("delete_project", { projectId, confirm: true, confirmToken: token })).toMatch(/Project changed; re-confirm/i);
+    expect(await exists(projectId)).toBe(true);
   });
 
   it("the confirmed call dispatches the real delete: purge, tombstone and an audit row that says via MCP", async () => {

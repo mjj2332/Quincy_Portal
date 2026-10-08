@@ -221,6 +221,6 @@ describe("route allowlist and the tool registry agree", () => {
     expect(MCP_ALLOWED_ROUTES.every((route) => !route.template.includes("*") && (route.method === "GET" || writeRoutes.has(`${route.method} ${route.template}`)))).toBe(true);
     expect(isAllowedMcpRoute("GET", "/api/auth/get-session")).toBe(false);
     expect(isAllowedMcpRoute("GET", "/api/projects/x/jobs/extra")).toBe(false);
-    expect(isAllowedMcpRoute("POST", "/api/admin/notification-deliveries/x1/discard")).toBe(false);
+    expect(isAllowedMcpRoute("POST", "/api/admin/notification-deliveries/x1/unknown")).toBe(false);
   });
 });

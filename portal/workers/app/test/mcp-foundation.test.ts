@@ -155,8 +155,8 @@ describe("dispatchToApi", () => {
     const spy = vi.fn<McpFetchApp>();
     const principal = await insertConnection("conn-allow", photographerId);
     for (const input of [
-      { method: "DELETE", path: "/api/assets/x" },
-      { method: "POST", path: "/api/admin/webhook-events/x/discard" },
+      { method: "DELETE", path: "/api/projects/x/assets/y" },
+      { method: "POST", path: "/api/admin/webhook-events/x/unknown" },
       { method: "POST", path: "/api/integrations/dropbox/connect-url" },
       { method: "PATCH", path: "/api/users/x" },
       { method: "GET", path: "/api/auth/session" },

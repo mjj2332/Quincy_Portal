@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { COLLECTION_KINDS } from "@quincy/shared";
 import { dispatchToApi } from "../dispatch";
 import { CONFIRM_TTL_SECONDS, sha256Hex, signConfirmToken, verifyConfirmToken } from "../confirm-token";
 import { jsonResult, writeTool, type McpTool, type McpToolContext, type McpToolResult } from "./define";
@@ -82,6 +81,65 @@ const replayTools: McpTool[] = [
   }),
 ];
 
+const operationsTools: McpTool[] = [
+  writeTool({
+    ...admin, name: "admin_sync_project_dropbox", method: "POST", template: "/api/projects/:projectId/sync-dropbox", capability: "adminBackend",
+    description: "Admin: sync one Project with Dropbox now: RAW files in, and the edited photos fetched back from AutoHDR. Returns the job ids, or why a side was skipped. An archived Project is refused.",
+    inputSchema: { projectId },
+  }),
+  writeTool({
+    ...admin, name: "admin_resolve_autohdr_coverage", method: "POST", template: "/api/projects/:projectId/autohdr-coverage", capability: "adminBackend",
+    description: "Admin: mark one AutoHDR readiness unit as covered by a chosen current edited photo, when the automatic match missed it. The Portal checks that the handoff, the photo and the unit belong together.",
+    inputSchema: { projectId, handoffId: uuid("The AutoHDR handoff's id."), assetId: uuid("The current edited photo that covers the unit."), readinessUnitKey: z.string().min(1).max(240).describe("The readiness unit's key in that handoff, for example asset:<id>.") },
+  }),
+  writeTool({
+    ...admin, name: "admin_replay_notification_delivery", method: "POST", template: "/api/admin/notification-deliveries/:outboxId/replay", capability: "adminBackend",
+    description: "Admin: send a failed or discarded notification delivery again. A delivery whose email may already have been accepted (status unknown) is refused unless channels is exactly [\"email\"] and acknowledgeDuplicateEmail is true, which accepts a possible duplicate email. Find the id with admin_list_notification_deliveries. Returns the delivery row.",
+    inputSchema: {
+      outboxId: uuid("The delivery's id, from admin_list_notification_deliveries."),
+      channels: z.array(z.enum(["in_app", "email"])).min(1).max(2).optional().describe("Which channels to replay; omit for both."),
+      acknowledgeDuplicateEmail: z.literal(true).optional().describe("true: a person accepts that the email may be sent twice. Only with channels [\"email\"]."),
+    },
+  }),
+  writeTool({
+    ...admin, name: "admin_discard_notification_delivery", method: "POST", template: "/api/admin/notification-deliveries/:outboxId/discard", capability: "adminBackend",
+    description: "Admin: give up on a notification delivery that has not been sent, so it is never retried. Find the id with admin_list_notification_deliveries. Returns the delivery row.",
+    inputSchema: { outboxId: uuid("The delivery's id, from admin_list_notification_deliveries.") },
+  }),
+  writeTool({
+    ...admin, name: "admin_discard_dead_letter", method: "POST", template: "/api/admin/renditions-dlq/:deadLetterId/discard", capability: "adminBackend",
+    description: "Admin: close one open rendition dead letter without building the preview again. The id comes from admin_list_dead_letters.",
+    inputSchema: { deadLetterId: uuid("The dead letter's id, from admin_list_dead_letters.") },
+  }),
+  writeTool({
+    ...admin, name: "admin_discard_webhook_event", method: "POST", template: "/api/admin/webhook-events/:eventId/discard", capability: "adminBackend",
+    description: "Admin: give up on one poison Tonomo webhook event, marking it processed with a note. It is not run again. The id comes from admin_list_webhook_events.",
+    inputSchema: { eventId: uuid("The webhook event's id, from admin_list_webhook_events.") },
+  }),
+  writeTool({
+    ...admin, name: "admin_acknowledge_orphan_file_report", method: "POST", template: "/api/admin/attention/orphan-uploads/:watchId/acknowledge", capability: "adminBackend",
+    description: "Admin: acknowledge a report that a file landed under an Editor folder's old path after the folder moved, which removes it from the attention list. It moves and uploads nothing. The id comes from admin_get_attention.",
+    inputSchema: { watchId: uuid("The orphan-upload report's id, from admin_get_attention.") },
+  }),
+  writeTool({
+    ...admin, name: "admin_delete_asset", method: "DELETE", template: "/api/assets/:assetId", capability: "adminBackend",
+    description: "Admin: PERMANENTLY delete one asset (a floorplan PDF and its preview go together), with its stored files, annotations and previews. Refused while background work runs for the Project, or while the asset is a current edited source or has a premium unlock.",
+    inputSchema: { assetId: uuid("The asset's id.") },
+  }),
+];
+
+/** Reads in the `admin` scope: a POST whose body carries a Dropbox path, so it cannot be a GET read tool. Nothing is written. */
+const inspectEditorFolder: McpTool = {
+  name: "admin_inspect_editor_folder",
+  description: "Admin: look at a Dropbox Editor folder for one Project (read only; nothing is linked or changed). Use it before admin_link_editor_folder to see what is there.",
+  scope: "admin",
+  capability: "manageIntegrations",
+  route: { method: "POST", template: "/api/integrations/dropbox/editor-folders/inspect" },
+  annotations: { readOnlyHint: true, openWorldHint: false },
+  inputSchema: { projectId, rootPath: z.string().min(1).max(2000).describe("The Dropbox path of the Editor folder to inspect.") },
+  call: async (ctx, input) => jsonResult(await dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, { method: "POST", path: "/api/integrations/dropbox/editor-folders/inspect", body: { projectId: input.projectId, rootPath: input.rootPath } })),
+};
+
 const optionalText = (what: string) => z.string().trim().nullable().optional().describe(`${what} Null clears it; omit to leave it as it is.`);
 const directoryTools: McpTool[] = [
   writeTool({
@@ -146,52 +204,49 @@ const backfillTools: McpTool[] = [
  * verify the token, recompute the summary, refuse if it changed, otherwise dispatch the existing delete route as the user, so its own
  * authorization, audit, purge and tombstone run unchanged.
  */
-type Summary = { street: string; orderId: string | null; collections: Record<string, { assets: number; received: number }>; comments: number; subtasks: number };
+const ASSET_STATES = ["current", "superseded", "pending", "failed"] as const;
+type AssetStates = Record<(typeof ASSET_STATES)[number], number>;
+type Summary = { street: string; orderId: string | null; collections: Record<string, { assets: number; states: AssetStates; received: number }>; comments: number; subtasks: number };
 type Read = { ok: true; summary: Summary } | { ok: false; result: McpToolResult };
 
-const COMMENT_PAGE = 50;
-const COMMENT_PAGE_CAP = 400;
 const text = (message: string, isError = false): McpToolResult => ({ content: [{ type: "text", text: message }], ...(isError ? { isError: true as const } : {}) });
 const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === "object" ? value as Record<string, unknown> : {};
 
+/**
+ * What the delete route destroys, counted from D1 over exactly its set: every `assets` row under the Project's Collections (the route's
+ * own `assetIds` query), whatever its version or publish state, plus all `project_comments` and `project_subtasks` rows that the cascade
+ * removes. Exact counts, no pages and no cap, so any change between the two calls changes the summary hash. The Project detail read keeps
+ * the route's own project check (404 and so on) and supplies the street, order id and archived state.
+ */
 async function readSummary(ctx: McpToolContext, projectId: string): Promise<Read> {
-  const get = (path: string, query?: Record<string, string>) => dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, { method: "GET", path, ...(query ? { query } : {}) });
-  const base = `/api/projects/${encodeURIComponent(projectId)}`;
-  const detailResponse = await get(base);
+  const detailResponse = await dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, { method: "GET", path: `/api/projects/${encodeURIComponent(projectId)}` });
   if (!detailResponse.ok) return { ok: false, result: await jsonResult(detailResponse) };
   const detail = asRecord(await detailResponse.json());
   if (detail.archivedAt === null || detail.archivedAt === undefined) {
     return { ok: false, result: text("Only an archived Project can be deleted. Archive it first with archive_project, then call delete_project again.", true) };
   }
+  const [rows, counts] = await ctx.env.DB.batch([
+    ctx.env.DB.prepare(`SELECT c.kind AS kind, c.received_count AS received,
+        COALESCE(SUM(CASE WHEN a.id IS NOT NULL AND a.publish_status = 'ready' AND a.superseded_at IS NULL THEN 1 ELSE 0 END), 0) AS current,
+        COALESCE(SUM(CASE WHEN a.id IS NOT NULL AND a.publish_status = 'ready' AND a.superseded_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS superseded,
+        COALESCE(SUM(CASE WHEN a.publish_status = 'pending' THEN 1 ELSE 0 END), 0) AS pending,
+        COALESCE(SUM(CASE WHEN a.publish_status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
+      FROM collections c LEFT JOIN assets a ON a.collection_id = c.id WHERE c.project_id = ? GROUP BY c.id`).bind(projectId),
+    ctx.env.DB.prepare("SELECT (SELECT COUNT(*) FROM project_comments WHERE project_id = ?1) AS comments, (SELECT COUNT(*) FROM project_subtasks WHERE project_id = ?1) AS subtasks").bind(projectId),
+  ]);
   const collections: Summary["collections"] = {};
-  const declared = Array.isArray(detail.collections) ? detail.collections.map(asRecord) : [];
-  for (const kind of COLLECTION_KINDS) {
-    const collection = declared.find((candidate) => candidate.kind === kind);
-    if (!collection) continue;
-    const assetsResponse = await get(`${base}/assets`, { collection: kind });
-    if (!assetsResponse.ok) return { ok: false, result: await jsonResult(assetsResponse) };
-    const assets = asRecord(await assetsResponse.json()).assets;
-    collections[kind] = { assets: Array.isArray(assets) ? assets.length : 0, received: Number(collection.receivedCount ?? 0) };
+  for (const row of (rows?.results ?? []) as { kind: string; received: number; current: number; superseded: number; pending: number; failed: number }[]) {
+    const states: AssetStates = { current: row.current, superseded: row.superseded, pending: row.pending, failed: row.failed };
+    collections[row.kind] = { assets: states.current + states.superseded + states.pending + states.failed, states, received: row.received };
   }
-  let comments = 0;
-  for (let before: string | undefined, page = 0; page < COMMENT_PAGE_CAP; page++) {
-    const response = await get(`${base}/comments`, { limit: String(COMMENT_PAGE), ...(before ? { before } : {}) });
-    if (!response.ok) return { ok: false, result: await jsonResult(response) };
-    const body = asRecord(await response.json());
-    comments += Array.isArray(body.comments) ? body.comments.length : 0;
-    if (typeof body.nextCursor !== "string") break;
-    before = body.nextCursor;
-  }
-  const subtasksResponse = await get(`${base}/subtasks`);
-  if (!subtasksResponse.ok) return { ok: false, result: await jsonResult(subtasksResponse) };
-  const subtasks = asRecord(await subtasksResponse.json()).subtasks;
-  return { ok: true, summary: { street: String(detail.street ?? ""), orderId: typeof detail.orderId === "string" && detail.orderId.trim() !== "" ? detail.orderId : null, collections, comments, subtasks: Array.isArray(subtasks) ? subtasks.length : 0 } };
+  const total = (counts?.results?.[0] ?? {}) as { comments?: number; subtasks?: number };
+  return { ok: true, summary: { street: String(detail.street ?? ""), orderId: typeof detail.orderId === "string" && detail.orderId.trim() !== "" ? detail.orderId : null, collections, comments: Number(total.comments ?? 0), subtasks: Number(total.subtasks ?? 0) } };
 }
 
 /** Canonical form of the summary: fixed key order, only strings and integers, no timestamps, so the same Project hashes the same. */
 function canonicalSummary(summary: Summary): string {
   const kinds = Object.keys(summary.collections).sort();
-  return JSON.stringify({ street: summary.street, orderId: summary.orderId, collections: kinds.map((kind) => [kind, summary.collections[kind]!.assets, summary.collections[kind]!.received]), comments: summary.comments, subtasks: summary.subtasks });
+  return JSON.stringify({ street: summary.street, orderId: summary.orderId, collections: kinds.map((kind) => { const c = summary.collections[kind]!; return [kind, c.states.current, c.states.superseded, c.states.pending, c.states.failed, c.received]; }), comments: summary.comments, subtasks: summary.subtasks });
 }
 
 const deleteProject: McpTool = {
@@ -228,6 +283,8 @@ const deleteProject: McpTool = {
         project: { id, street: summary.street },
         willBeDestroyed: {
           assetsByCollection: Object.fromEntries(Object.entries(summary.collections).map(([kind, counts]) => [kind, counts.assets])),
+          assetStatesByCollection: Object.fromEntries(Object.entries(summary.collections).map(([kind, counts]) => [kind, counts.states])),
+          assetsNote: "Every asset row is counted: current, superseded versions, and pending or failed edits.",
           comments: summary.comments,
           subtasks: summary.subtasks,
           whiteboard: "the Project whiteboard and its saved versions",
@@ -251,4 +308,4 @@ const deleteProject: McpTool = {
   },
 };
 
-export const ADMIN_WRITE_TOOLS: readonly McpTool[] = [...dropboxTools, ...autoHdrTools, ...replayTools, ...directoryTools, ...backfillTools, deleteProject];
+export const ADMIN_WRITE_TOOLS: readonly McpTool[] = [...dropboxTools, ...autoHdrTools, ...replayTools, ...directoryTools, ...backfillTools, ...operationsTools, inspectEditorFolder, deleteProject];

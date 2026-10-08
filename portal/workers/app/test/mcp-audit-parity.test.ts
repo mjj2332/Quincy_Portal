@@ -5,6 +5,7 @@ import { app } from "../src/index";
 import type { McpPrincipal } from "../src/lib/mcp-dispatch-context";
 import type { McpFetchApp } from "../src/mcp/dispatch";
 import { MCP_TOOLS } from "../src/mcp/tools/registry";
+import { seedAsset, seedCoverage, seedDelivery, seedOpenDeadLetter, seedOrphanReport, seedPoisonEvent } from "./mcp-admin-fixtures";
 
 /**
  * Audit parity (#704, extended by #705): every write tool the MCP door lists must stamp provenance on every audit_log and
@@ -101,6 +102,12 @@ const webhookSetup = async () => {
   await insert("INSERT INTO webhook_events (id, source, event_id, payload_json, status, error, received_at, processed_at) VALUES (?, 'tonomo', ?, '{}', 'poison', 'boom', ?, ?)", eventId, `parity-${eventId}`, Date.now(), Date.now());
   return { eventId };
 };
+const coverageSetup = async (projectId: string) => { const seed = await seedCoverage(database.DB, projectId, adminId); return { handoffId: seed.handoffId, assetId: seed.assetId, readinessUnitKey: seed.readinessUnitKey }; };
+const deliverySetup = async (projectId: string) => ({ outboxId: (await seedDelivery(database.DB, projectId, adminId)).outboxId });
+const openDeadLetterSetup = async (projectId: string) => ({ deadLetterId: (await seedOpenDeadLetter(database.DB, projectId)).deadLetterId });
+const poisonSetup = async () => ({ eventId: (await seedPoisonEvent(database.DB)).eventId });
+const orphanSetup = async (projectId: string) => ({ watchId: (await seedOrphanReport(database.DB, projectId)).watchId });
+const plainAssetSetup = async (projectId: string) => ({ assetId: (await seedAsset(database.DB, projectId)).assetId });
 /** The first delete_project call returns the token the second one needs. */
 const deleteSetup = async (projectId: string) => {
   const first = await callTool("delete_project", { projectId });
@@ -128,6 +135,14 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "admin_backfill_renditions", args: () => ({ dryRun: true, limit: 1 }) },
   { tool: "admin_backfill_autohdr", args: () => ({ dryRun: true, limit: 1 }) },
   { tool: "admin_backfill_autohdr_scaffolds", args: () => ({ dryRun: true, limit: 1 }) },
+  { tool: "admin_sync_project_dropbox", args: ({ projectId }) => ({ projectId }) },
+  { tool: "admin_resolve_autohdr_coverage", setup: coverageSetup, args: ({ projectId, handoffId, assetId, readinessUnitKey }) => ({ projectId, handoffId: handoffId!, assetId: assetId!, readinessUnitKey: readinessUnitKey! }) },
+  { tool: "admin_replay_notification_delivery", setup: deliverySetup, args: ({ outboxId }) => ({ outboxId: outboxId!, channels: ["email"] }) },
+  { tool: "admin_discard_notification_delivery", setup: deliverySetup, args: ({ outboxId }) => ({ outboxId: outboxId! }) },
+  { tool: "admin_discard_dead_letter", setup: openDeadLetterSetup, args: ({ deadLetterId }) => ({ deadLetterId: deadLetterId! }) },
+  { tool: "admin_discard_webhook_event", setup: poisonSetup, args: ({ eventId }) => ({ eventId: eventId! }) },
+  { tool: "admin_acknowledge_orphan_file_report", setup: orphanSetup, args: ({ watchId }) => ({ watchId: watchId! }) },
+  { tool: "admin_delete_asset", setup: plainAssetSetup, args: ({ assetId }) => ({ assetId: assetId! }) },
   { tool: "delete_project", stage: "edited_review", archived: true, setup: deleteSetup, args: ({ projectId, confirmToken }) => ({ projectId, confirm: true, confirmToken: confirmToken! }) },
   { tool: "create_project", args: () => ({ street: "Parity Created", shootDate: "2037-05-04" }) },
   { tool: "update_project_details", stage: "edited_review", args: ({ projectId }) => ({ projectId, suburb: "Parity", shootDate: "2037-06-01" }) },
@@ -180,7 +195,7 @@ async function callTool(name: string, args: Record<string, unknown>) {
 /** The background Worker's RPC surface, answered locally for the admin tools: the route's audit row is what is under test. */
 const adminFakeBackground = new Proxy({}, {
   get: (_target, name) => typeof name !== "string" || name === "then" ? undefined : async () => (({
-    sendSelectedToAutoHdr: { ok: true, jobId: "job" }, fetchEditedFromAutoHdr: { ok: true, jobId: "job" }, triggerEditorSync: { jobId: "job" },
+    triggerDropboxSync: { jobId: "job" }, sendSelectedToAutoHdr: { ok: true, jobId: "job" }, fetchEditedFromAutoHdr: { ok: true, jobId: "job" }, triggerEditorSync: { jobId: "job" },
     backfillRenditions: { scanned: 0, wouldEnqueue: 0, enqueued: 0, skipped: 0, nextCursor: null, dryRun: true }, backfillAutoHdrV2: { scanned: 0 },
   } as Record<string, unknown>)[name] ?? {}),
 });

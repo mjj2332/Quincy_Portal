@@ -466,8 +466,8 @@ describe("route allowlist and the tool registry agree", () => {
   it("never opens /api/auth or a wildcard, and refuses routes no tool owns", () => {
     expect(MCP_ALLOWED_ROUTES.every((route) => !route.template.includes("*") && !route.template.startsWith("/api/auth"))).toBe(true);
     expect(isAllowedMcpRoute("POST", "/api/auth/sign-out")).toBe(false);
-    expect(isAllowedMcpRoute("DELETE", "/api/assets/x1")).toBe(false);
+    expect(isAllowedMcpRoute("DELETE", "/api/projects/x1/assets/x2")).toBe(false);
     expect(isAllowedMcpRoute("PATCH", "/api/users/x1")).toBe(false);
-    expect(isAllowedMcpRoute("POST", "/api/admin/notification-deliveries/x1/discard")).toBe(false);
+    expect(isAllowedMcpRoute("POST", "/api/admin/notification-deliveries/x1/unknown")).toBe(false);
   });
 });
