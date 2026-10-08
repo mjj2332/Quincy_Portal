@@ -3,8 +3,11 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
 import { MCP_ALLOWED_ROUTES, isAllowedMcpRoute } from "../src/mcp/route-allowlist";
 import { MCP_TOOLS, toolsFor } from "../src/mcp/tools/registry";
-import { WRITE_TOOLS } from "../src/mcp/tools/writes";
+import { COLLAB_WRITE_TOOLS } from "../src/mcp/tools/collab-writes";
+import { WRITE_TOOLS as CORE_WRITE_TOOLS } from "../src/mcp/tools/writes";
 import { mcpHarness } from "./mcp-oauth-support";
+
+const WRITE_TOOLS = [...CORE_WRITE_TOOLS, ...COLLAB_WRITE_TOOLS];
 
 declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL__: string;
 const testEnv = env as unknown as Env;
