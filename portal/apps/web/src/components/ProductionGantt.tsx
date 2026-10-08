@@ -355,7 +355,7 @@ const NO_SELECTED_ROWS: string[] = [];
  * against `scrollHeight`: the browser clamps a `scrollTop` write natively.
  */
 export function scrollGanttRowToTop(root: HTMLElement, rowId: string): "done" | "unmeasured" | "missing" {
-  const timeline = root.querySelector<HTMLElement>('[data-slot="gantt-timeline-pane"] [data-slot="scroll-area-viewport"]');
+  const timeline = root.querySelector<HTMLElement>("[data-gantt-scroller]");
   if (!timeline) return "missing";
   const row = Array.from(timeline.querySelectorAll<HTMLElement>("[data-gantt-row-id]")).find((el) => el.getAttribute("data-gantt-row-id") === rowId);
   if (!row) return "missing";
@@ -1828,7 +1828,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         return;
       }
       if (result === "unmeasured") {
-        const timeline = container.querySelector<HTMLElement>('[data-slot="gantt-timeline-pane"] [data-slot="scroll-area-viewport"]');
+        const timeline = container.querySelector<HTMLElement>("[data-gantt-scroller]");
         if (timeline && typeof ResizeObserver !== "undefined") {
           const observer = new ResizeObserver(() => {
             if (timeline.clientHeight <= 0) return;
@@ -1851,7 +1851,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       loadNextPage();
       return;
     }
-    const timeline = container.querySelector<HTMLElement>('[data-slot="gantt-timeline-pane"] [data-slot="scroll-area-viewport"]');
+    const timeline = container.querySelector<HTMLElement>("[data-gantt-scroller]");
     // Someone already scrolled while pages were loading: leave their position alone.
     if (request === "open" && timeline && timeline.scrollTop > 0) {
       landingRequestRef.current = null;

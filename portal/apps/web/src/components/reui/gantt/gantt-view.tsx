@@ -271,6 +271,12 @@
  * 44px `metrics` on `(pointer: coarse)` as well as on phones), so the sticky `+` opener's width-scoped coarse negative block margin and 6px-short
  * backing size are removed: it fills its own row everywhere. This supersedes the round-2 sentence above about coarse tablets keeping the 40px-row
  * geometry. The removed classes are described in words, not spelled, because Tailwind scans comments and would keep their rules in the built CSS.
+ *
+ * 2026-10-08, #726 — CHANGED, internal refactor, no behaviour change (ADR 0009 addendum). The timeline viewport carries
+ * `data-gantt-scroller`; a live `scrollerRef` getter finds it. Every track-offset read (auto-centre, infinite edge growth, centre
+ * report, re-seat, zoom anchors, header pan, offscreen chips) goes through `trackGeometry` in `gantt-track-geometry.ts`, called
+ * with inset 0, so the values equal the old `scrollWidth`/`clientWidth`/`|scrollLeft|` reads exactly. `getScrollStart` is removed.
+ * Groundwork for the single-scroller layout (#727).
  */
 
 import {
@@ -282,6 +288,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type CSSProperties,
   type RefObject,
 } from "react"
@@ -369,6 +376,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/reui/tooltip"
+import { findScroller, trackGeometry } from "./gantt-track-geometry"
 import { PlusIcon, MinusIcon, GripVerticalIcon, ChevronRightIcon, ChevronLeftIcon, XIcon } from "lucide-react"
 
 /** Current time, refreshed on an interval and on tab focus. */
@@ -653,19 +661,16 @@ interface GanttViewProps extends useRender.ComponentProps<"div"> {
   interval?: number
 }
 
-/** The pane's scrollable viewport (custom ScrollArea or native host). */
+/** Write a distance-from-inline-start back as a signed scrollLeft. */
+/** The tree pane's scrollable viewport (custom ScrollArea or native host). */
 function getPaneViewport(pane: HTMLElement | null): HTMLElement | null {
   return (
     pane?.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]") ?? null
   )
 }
 
-/** Distance scrolled from the inline-start edge (RTL reports negative). */
-function getScrollStart(viewport: HTMLElement): number {
-  return Math.abs(viewport.scrollLeft)
-}
+const GANTT_SCROLLER_PROPS = { "data-gantt-scroller": "" } as ComponentProps<typeof ScrollArea>["viewportProps"]
 
-/** Write a distance-from-inline-start back as a signed scrollLeft. */
 function setScrollStart(viewport: HTMLElement, value: number) {
   viewport.scrollLeft =
     getComputedStyle(viewport).direction === "rtl" ? -value : value
@@ -1670,6 +1675,16 @@ function GanttView({
   }, [])
 
   const bodyRef = useRef<HTMLDivElement | null>(null)
+  // #726: the timeline's scroll viewport, resolved live by its `data-gantt-scroller` marker (the
+  // ScrollArea remounts on a scale change, so a stored node would go stale).
+  const scrollerRef = useMemo(
+    () => ({
+      get current(): HTMLElement | null {
+        return findScroller(bodyRef.current)
+      },
+    }),
+    []
+  )
   const treePaneRef = useRef<HTMLDivElement | null>(null)
   const timelinePaneRef = useRef<HTMLDivElement | null>(null)
   const treeRowsRef = useRef<HTMLDivElement | null>(null)
@@ -1738,7 +1753,7 @@ function GanttView({
   // Both panes scroll vertically; whichever moves drives the other.
   useEffect(() => {
     const treeViewport = getPaneViewport(treePaneRef.current)
-    const timelineViewport = getPaneViewport(timelinePaneRef.current)
+    const timelineViewport = scrollerRef.current
     if (!treeViewport || !timelineViewport) return
     const link = (source: HTMLElement, target: HTMLElement) => {
       // Mirror only when the source's own vertical position changed -
@@ -1892,12 +1907,12 @@ function GanttView({
     const run = () => {
       waiter?.disconnect()
       waiter = null
-      const viewport = getPaneViewport(timelinePaneRef.current)
+      const viewport = scrollerRef.current
       const axis = viewport?.querySelector<HTMLElement>("[data-gantt-axis]")
       if (!viewport || !axis) return
-      if (viewport.clientWidth === 0) {
+      if (trackGeometry(viewport).visibleWidth === 0) {
         waiter = new ResizeObserver(() => {
-          if (viewport.clientWidth > 0) run()
+          if (trackGeometry(viewport).visibleWidth > 0) run()
         })
         waiter.observe(viewport)
         return
@@ -1911,7 +1926,7 @@ function GanttView({
         return
       }
       extendLockRef.current = false
-      if (viewport.scrollWidth <= viewport.clientWidth) return
+      if (trackGeometry(viewport).trackWidth <= trackGeometry(viewport).visibleWidth) return
       // read the clock at run time - the effect must not depend on a
       // reactive now that re-runs it (and the whole grid) every 30s.
       // Target now ONLY when the anchor period itself contains it: keying
@@ -1936,7 +1951,7 @@ function GanttView({
       )
       setScrollStart(
         viewport,
-        Math.max(0, fraction * viewport.scrollWidth - viewport.clientWidth / 2)
+        Math.max(0, fraction * trackGeometry(viewport).trackWidth - trackGeometry(viewport).visibleWidth / 2)
       )
     }
     run()
@@ -2014,7 +2029,7 @@ function GanttView({
 
   useEffect(() => {
     if (!viewConfig.infiniteScroll) return
-    const viewport = getPaneViewport(timelinePaneRef.current)
+    const viewport = scrollerRef.current
     if (!viewport) return
     const tryExtend = (direction: "before" | "after") => {
       // anchor the left edge as an instant, from the LIVE axis range
@@ -2027,7 +2042,7 @@ function GanttView({
       pendingRestoreRef.current = {
         ms:
           liveStart +
-          (getScrollStart(viewport) / viewport.scrollWidth) *
+          (trackGeometry(viewport).start / trackGeometry(viewport).trackWidth) *
             (liveEnd - liveStart),
         align: "start",
       }
@@ -2043,9 +2058,9 @@ function GanttView({
       if (extendLockRef.current) return
       if (performance.now() - lastUserScrollRef.current > 1200) return
       // a track that fits the pane has no scroll gesture to extend from
-      if (viewport.scrollWidth <= viewport.clientWidth + 8) return
-      const fromStart = getScrollStart(viewport)
-      const fromEnd = viewport.scrollWidth - fromStart - viewport.clientWidth
+      if (trackGeometry(viewport).trackWidth <= trackGeometry(viewport).visibleWidth + 8) return
+      const fromStart = trackGeometry(viewport).start
+      const fromEnd = trackGeometry(viewport).trackWidth - fromStart - trackGeometry(viewport).visibleWidth
       const direction =
         fromStart < infiniteEdgePx
           ? ("before" as const)
@@ -2062,14 +2077,14 @@ function GanttView({
       // under the pointer, so an edge reading mid-gesture is meaningless
       if (e.ctrlKey || e.metaKey) return
       if (extendLockRef.current || e.deltaX === 0) return
-      if (viewport.scrollWidth <= viewport.clientWidth + 8) return
+      if (trackGeometry(viewport).trackWidth <= trackGeometry(viewport).visibleWidth + 8) return
       const towardStart = isRtl ? e.deltaX > 0 : e.deltaX < 0
-      if (towardStart && getScrollStart(viewport) <= 0) {
+      if (towardStart && trackGeometry(viewport).start <= 0) {
         tryExtend("before")
       } else if (
         !towardStart &&
-        getScrollStart(viewport) + viewport.clientWidth >=
-          viewport.scrollWidth - 1
+        trackGeometry(viewport).start + trackGeometry(viewport).visibleWidth >=
+          trackGeometry(viewport).trackWidth - 1
       ) {
         tryExtend("after")
       }
@@ -2092,7 +2107,7 @@ function GanttView({
   // looking at. Throttled to period boundaries (a coarse key) so scrolling
   // within a period never re-renders the grid.
   useEffect(() => {
-    const viewport = getPaneViewport(timelinePaneRef.current)
+    const viewport = scrollerRef.current
     if (!viewport) return
     const keyFmt =
       scale === "day"
@@ -2113,8 +2128,8 @@ function GanttView({
       const liveEnd = Number(axis?.dataset.ganttRangeEnd)
       if (!axis || Number.isNaN(liveStart) || Number.isNaN(liveEnd)) return
       const fraction =
-        (getScrollStart(viewport) + viewport.clientWidth / 2) /
-        Math.max(1, viewport.scrollWidth)
+        (trackGeometry(viewport).start + trackGeometry(viewport).visibleWidth / 2) /
+        Math.max(1, trackGeometry(viewport).trackWidth)
       const centerMs = liveStart + fraction * (liveEnd - liveStart)
       // fine center first (controlled-zoom anchor), then the coarse-keyed
       // store report that drives the nav title
@@ -2156,12 +2171,12 @@ function GanttView({
     let attempts = 0
     const seat = () => {
       raf = null
-      const viewport = getPaneViewport(timelinePaneRef.current)
+      const viewport = scrollerRef.current
       if (viewport && pendingRestoreRef.current) {
         // Not laid out yet (0-width on first mount): centering with a 0 offset
         // parks the view a half-pane off. Defer until the pane is measured so
         // "center" lands the anchored instant in the middle on initial load.
-        if (viewport.clientWidth === 0 && attempts++ < 20) {
+        if (trackGeometry(viewport).visibleWidth === 0 && attempts++ < 20) {
           raf = requestAnimationFrame(seat)
           return
         }
@@ -2174,10 +2189,10 @@ function GanttView({
           1
         )
         const offset =
-          offsetPx ?? (align === "center" ? viewport.clientWidth / 2 : 0)
+          offsetPx ?? (align === "center" ? trackGeometry(viewport).visibleWidth / 2 : 0)
         setScrollStart(
           viewport,
-          Math.max(0, fraction * viewport.scrollWidth - offset)
+          Math.max(0, fraction * trackGeometry(viewport).trackWidth - offset)
         )
       }
       extendLockRef.current = false
@@ -2198,7 +2213,7 @@ function GanttView({
 
   /** Keep the view centered on the same instant across a zoom step. */
   const anchorZoomCenter = () => {
-    const viewport = getPaneViewport(timelinePaneRef.current)
+    const viewport = scrollerRef.current
     const axis = viewport?.querySelector<HTMLElement>("[data-gantt-axis]")
     if (!viewport || !axis) return
     const liveStart = Number(axis.dataset.ganttRangeStart)
@@ -2207,8 +2222,8 @@ function GanttView({
     pendingRestoreRef.current = {
       ms:
         liveStart +
-        ((getScrollStart(viewport) + viewport.clientWidth / 2) /
-          viewport.scrollWidth) *
+        ((trackGeometry(viewport).start + trackGeometry(viewport).visibleWidth / 2) /
+          trackGeometry(viewport).trackWidth) *
           (liveEnd - liveStart),
       align: "center",
     }
@@ -2221,7 +2236,7 @@ function GanttView({
    * under the cursor.
    */
   const anchorZoomPointer = (clientX: number) => {
-    const viewport = getPaneViewport(timelinePaneRef.current)
+    const viewport = scrollerRef.current
     const axis = viewport?.querySelector<HTMLElement>("[data-gantt-axis]")
     if (!viewport || !axis) return
     const liveStart = Number(axis.dataset.ganttRangeStart)
@@ -2232,7 +2247,7 @@ function GanttView({
     pendingRestoreRef.current = {
       ms:
         liveStart +
-        ((getScrollStart(viewport) + offsetPx) / viewport.scrollWidth) *
+        ((trackGeometry(viewport).start + offsetPx) / trackGeometry(viewport).trackWidth) *
           (liveEnd - liveStart),
       align: "start",
       offsetPx,
@@ -2266,7 +2281,7 @@ function GanttView({
     }
   })
   useEffect(() => {
-    const viewport = getPaneViewport(timelinePaneRef.current)
+    const viewport = scrollerRef.current
     if (!viewport) return
     const onWheel = (e: WheelEvent) => wheelZoomRef.current?.(e)
     viewport.addEventListener("wheel", onWheel, { passive: false })
@@ -2276,7 +2291,7 @@ function GanttView({
   // Drag-to-pan from the header (intent-based: activates after 4px)
   const beginHeaderPan = (e: React.PointerEvent) => {
     if (e.button !== 0) return
-    const viewport = getPaneViewport(timelinePaneRef.current)
+    const viewport = scrollerRef.current
     if (!viewport) return
     const pointerId = e.pointerId
     const startX = e.clientX
@@ -3347,6 +3362,7 @@ function GanttView({
             // the thumb is measured against the visible lane, not the full pane.
             <ScrollArea
               key={scale}
+              viewportProps={GANTT_SCROLLER_PROPS}
               className="h-full [&>[data-orientation=vertical]]:top-[65px]! [&>[data-orientation=vertical]]:bottom-4! [&>[data-orientation=vertical]]:h-auto!"
             >
               {/* A FLEX column, not a percentage: the content's own
@@ -3362,6 +3378,7 @@ function GanttView({
           ) : (
             <div
               data-slot="scroll-area-viewport"
+              data-gantt-scroller=""
               data-gantt-native-scroll=""
               className="h-full overflow-auto overscroll-contain"
             >
@@ -5445,7 +5462,7 @@ function GanttOffscreenChips({
 
   useEffect(() => {
     const pane = paneRef.current
-    const viewport = getPaneViewport(pane)
+    const viewport = findScroller(pane)
     if (!pane || !viewport) return
     let raf = 0
     const measure = () => {
@@ -5457,9 +5474,9 @@ function GanttOffscreenChips({
       const headerBottom = header
         ? header.getBoundingClientRect().bottom - paneRect.top
         : 0
-      const trackW = viewport.scrollWidth
-      const visibleStart = getScrollStart(viewport)
-      const visibleEnd = visibleStart + viewport.clientWidth
+      const trackW = trackGeometry(viewport).trackWidth
+      const visibleStart = trackGeometry(viewport).start
+      const visibleEnd = visibleStart + trackGeometry(viewport).visibleWidth
       // The floating zoom control shares the right edge. The chips stay in
       // their column - a shifted chip reads as misaligned, and its position
       // IS its meaning - so it is the ZOOM CONTROL that glides inward while
@@ -5508,7 +5525,7 @@ function GanttOffscreenChips({
           next.push({
             ...base,
             side: "end",
-            target: endPx - viewport.clientWidth + 24,
+            target: endPx - trackGeometry(viewport).visibleWidth + 24,
           })
         }
       }
@@ -5540,7 +5557,7 @@ function GanttOffscreenChips({
   if (chips.length === 0) return null
 
   const scrollTo = (chip: OffscreenChip) => {
-    const viewport = getPaneViewport(paneRef.current)
+    const viewport = findScroller(paneRef.current)
     if (!viewport) return
     const target = Math.max(0, chip.target)
     viewport.scrollTo({
