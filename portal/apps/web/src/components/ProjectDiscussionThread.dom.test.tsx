@@ -135,6 +135,16 @@ describe("ProjectDiscussionThread", () => {
     expect(host.querySelector('article[data-comment-id="comment-own"] [data-testid="via-client-mark"]')).toBeNull();
   });
 
+  it("renders the via badge for an External Editor too (#704)", async () => {
+    const previousRole = state.sessionUser.role;
+    state.sessionUser.role = "external_editor";
+    try {
+      state.commentsQuery = queryState({ data: { pages: [{ project, comments: [{ ...otherComment, id: "comment-via", viaClient: "Claude" }] }], pageParams: [null] } });
+      render(); await flush();
+      expect([...host.querySelectorAll('[data-testid="via-client-mark"]')].map((mark) => mark.textContent)).toEqual(["via Claude"]);
+    } finally { state.sessionUser.role = previousRole; }
+  });
+
   it("loads mentionables through the existing project-scoped endpoint", async () => {
     render(); await flush();
     await click(host.querySelector<HTMLElement>(`[data-testid="mention-project-comment-${projectId}"]`)!);

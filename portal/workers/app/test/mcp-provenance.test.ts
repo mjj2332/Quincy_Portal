@@ -31,6 +31,8 @@ declare const __PORTAL_SEED_SQL__: string;
 
 const adminId = "6b851dc8-14cf-4f90-bd29-ce6c27f86385";
 const adminToken = "mcp-provenance-admin-session-token";
+const externalId = "c2000000-0000-4000-8000-000000000704";
+const externalToken = "mcp-provenance-external-session-token";
 const projectId = "c1000000-0000-4000-8000-000000000704";
 const ctx = { waitUntil: () => undefined, passThroughOnException: () => undefined, props: {} } as unknown as ExecutionContext;
 const fetchApp: McpFetchApp = (request, e, c) => app.fetch(request, e, c);
@@ -46,9 +48,9 @@ async function executeSql(sql: string): Promise<void> {
   }
 }
 
-async function cookieRequest(path: string, method = "GET", body?: unknown): Promise<Response> {
+async function cookieRequest(path: string, method = "GET", body?: unknown, token = adminToken): Promise<Response> {
   const context = await createAuth(testEnv).$context;
-  const cookie = `${context.authCookies.sessionToken.name}=${adminToken}.${await makeSignature(adminToken, authSecret)}`;
+  const cookie = `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`;
   const headers = new Headers({ cookie, origin: testEnv.APP_ORIGIN });
   if (body !== undefined) headers.set("content-type", "application/json");
   return app.fetch(new Request(`${testEnv.APP_ORIGIN}${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), testEnv, ctx);
@@ -78,6 +80,9 @@ beforeAll(async () => {
   await database.DB.batch([
     database.DB.prepare("INSERT OR IGNORE INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES ('mcp-provenance-admin-session', ?, ?, ?, ?, ?)").bind(now + 3_600_000, adminToken, adminId, now, now),
     database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Provenance Street', 'edited_review', ?, ?)").bind(projectId, now, now),
+    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Provenance External', ?, 1, 'external_editor', 1, ?, ?)").bind(externalId, `${externalId}@example.test`, now, now),
+    database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES ('mcp-provenance-external-session', ?, ?, ?, ?, ?)").bind(now + 3_600_000, externalToken, externalId, now, now),
+    database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, externalId, now),
     database.DB.prepare("INSERT INTO mcp_connections (id, user_id, client_id, client_name, redirect_host, scopes, authorization_epoch, created_at) VALUES ('conn-prov', ?, 'client-1', 'Test Client', 'client.example.test', '[\"write\"]', 0, ?)").bind(adminId, now),
     database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_by, updated_at) VALUES ('mcp_access', 1, NULL, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1").bind(now),
   ]);
@@ -139,6 +144,28 @@ describe("a Project comment posted through MCP", () => {
     expect(created.map((item) => item.viaClient)).toHaveLength(2);
     expect(created.map((item) => item.viaClient)).toEqual(expect.arrayContaining([null, "Test Client"]));
     expect(Object.keys(externalProjectActivityFeedItemSchema.shape)).not.toContain("viaClient");
+  });
+});
+
+describe("an assigned External Editor sees the same provenance on comments", () => {
+  it("returns viaClient on the list, with null for a cookie comment", async () => {
+    const mcp = await (await viaMcp("POST", `/api/projects/${projectId}/comments`, { content: doc("External sees MCP") })).json() as { id: string };
+    const browser = await (await cookieRequest(`/api/projects/${projectId}/comments`, "POST", { content: doc("External sees browser") })).json() as { id: string };
+    const response = await cookieRequest(`/api/projects/${projectId}/comments`, "GET", undefined, externalToken);
+    expect(response.status).toBe(200);
+    const list = await response.json() as { comments: Array<{ id: string; viaClient: string | null }> };
+    expect(list.comments.find((comment) => comment.id === mcp.id)?.viaClient).toBe("Test Client");
+    expect(list.comments.find((comment) => comment.id === browser.id)?.viaClient).toBeNull();
+  });
+
+  it("returns viaClient on the external create and edit responses", async () => {
+    const created = await cookieRequest(`/api/projects/${projectId}/comments`, "POST", { content: doc("External authored") }, externalToken);
+    expect(created.status).toBe(201);
+    const body = await created.json() as { id: string; viaClient: string | null };
+    expect(body.viaClient).toBeNull();
+    const edited = await cookieRequest(`/api/projects/${projectId}/comments/${body.id}`, "PATCH", { content: doc("External edited") }, externalToken);
+    expect(edited.status).toBe(200);
+    expect((await edited.json() as { viaClient: string | null }).viaClient).toBeNull();
   });
 });
 
