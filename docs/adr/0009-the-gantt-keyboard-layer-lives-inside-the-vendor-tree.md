@@ -293,6 +293,12 @@ consumer decision (`ProductionGantt.tsx` splits its old `narrowTree` into `names
   `offscreenSide` in `gantt-track-geometry.ts`, which `gantt-offscreen-side.test.ts` covers.
 - **`zoomControl`** is the existing prop; the consumer passes `false` on the names-only layout.
   `wheelZoom` is independent of it and stays on.
+- **#738: the zoom control can render into a consumer-provided target.** `GanttView` takes
+  `zoomControlTarget?: HTMLElement | null`. An element portals the buttons into it as a toolbar
+  `ButtonGroup` (ghost `icon-sm`, tooltip below); `undefined` keeps the floating box (vendor consumers,
+  harness); `null` renders neither until the target mounts. Zoom state stays inside `GanttView`, so
+  wheel and pinch anchoring is unchanged. The Production Gantt targets the Timeline nav row.
 
 Covered by `gantt-offscreen-side.test.ts`, `gantt-offscreen-chips.dom.test.tsx`,
-`gantt-wheel-zoom.dom.test.tsx` and `ProductionGantt-narrow-layout.dom.test.tsx`.
+`gantt-wheel-zoom.dom.test.tsx`, `gantt-zoom-target.dom.test.tsx`, `ProductionGantt-zoom.dom.test.tsx`
+and `ProductionGantt-narrow-layout.dom.test.tsx`.
