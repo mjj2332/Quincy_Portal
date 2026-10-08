@@ -49,6 +49,18 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); act(() => root.unmount()); document.body.replaceChildren(); });
 
 describe("ProjectActivityView", () => {
+  it("marks a row an AI client wrote with a via badge beside the actor, and leaves browser rows and External rows unmarked (#704)", () => {
+    const viaItem = { ...item("activity-via", 1_756_675_200_000, "Details were updated."), viaClient: "Claude" };
+    const plain = { ...item("activity-plain", 1_756_675_100_000, "Another update."), viaClient: null };
+    queryState.value = feed(feedPage([viaItem, plain]));
+    useProjectActivityQueryMock.mockReturnValue(state({ data: queryState.value }));
+    render();
+    const marks = [...host.querySelectorAll('[data-testid="via-client-mark"]')];
+    expect(marks.map((mark) => mark.textContent)).toEqual(["via Claude"]);
+    expect(marks[0]!.closest("li")?.textContent).toContain("Details were updated.");
+    expect(rowsOf().find((row) => row.textContent?.includes("Another update."))?.querySelector('[data-testid="via-client-mark"]')).toBeNull();
+  });
+
   it("renders loading, then activity data, timestamps, actor-less rows without a System label, and pagination", () => {
     render();
     expect(host.querySelector('[role="status"]')?.textContent).toContain("Loading activity.");

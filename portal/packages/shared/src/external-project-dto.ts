@@ -168,7 +168,8 @@ export const externalChecklistItemSchema = z.object({
   createdAt: iso,
   updatedAt: iso,
 }).strict();
-export const externalCommentSchema = z.object({ id: uuid, author: externalPersonSchema, body: z.string(), content: z.unknown(), createdAt: iso, editedAt: iso.nullable() }).strict();
+/** `viaClient` (#704): the MCP client the comment was written through, or null. Defaults to null where a payload does not carry it (the Project detail comments). */
+export const externalCommentSchema = z.object({ id: uuid, author: externalPersonSchema, body: z.string(), content: z.unknown(), createdAt: iso, editedAt: iso.nullable(), viaClient: z.string().nullable().default(null) }).strict();
 export const externalCommentReadStateSchema = z.object({
   projectId: uuid,
   marker: z.object({ throughCommentId: uuid, throughCreatedAt: iso, updatedAt: iso }).strict().nullable(),

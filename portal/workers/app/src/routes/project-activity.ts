@@ -34,6 +34,7 @@ type ActivityDbRow = {
   actor_id: unknown;
   safe_payload_json: unknown;
   actor_name?: unknown;
+  via_client?: unknown;
 };
 
 function malformedEncoding(rawQuery: string): boolean {
@@ -111,7 +112,7 @@ async function handler(c: Context<AppEnv>) {
   bindings.push(query.limit + 1);
   const statement = c.env.DB.prepare(`
     SELECT activity.id, activity.event_type, activity.category, activity.occurred_at,
-      activity.actor_id, activity.safe_payload_json${external ? "" : ", actor.name AS actor_name"}
+      activity.actor_id, activity.safe_payload_json${external ? "" : ", activity.via_client, actor.name AS actor_name"}
     FROM project_activity_events activity
     ${external ? "" : "LEFT JOIN user actor ON actor.id = activity.actor_id"}
     WHERE ${predicates.join(" AND ")}
@@ -163,7 +164,7 @@ async function handler(c: Context<AppEnv>) {
         else rejectedRow(row, "external_policy_projection_rejected");
       } else {
         const actor = parsed.actorId !== null && typeof row.actor_name === "string" ? { id: parsed.actorId, name: row.actor_name } : null;
-        items.push(projectActivityFeedItemFromRow(parsed, visible.projectLabel ?? "Project", actor));
+        items.push(projectActivityFeedItemFromRow(parsed, visible.projectLabel ?? "Project", actor, typeof row.via_client === "string" ? row.via_client : null));
       }
     } catch {
       rejectedRow(row, "strict_feed_projection_rejected");

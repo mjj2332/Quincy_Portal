@@ -181,7 +181,7 @@ export async function moveProjectStage(input: MoveProjectStageInput): Promise<Mo
   const shootDateFill = buildStageShootDateFill({
     db, projectId: project.id, from: project.stageKey, to: targetStageKey,
     winnerAuditId: auditId, winnerAuditAction: "stage.set", fillAuditId: newId(),
-    actorId: principal.id, impersonatedBy: principal.impersonatedBy, now,
+    actorId: principal.id, impersonatedBy: principal.impersonatedBy, via: principal.via, now,
   });
   const bundle = composeStageBundle({ stage, activity, deadline, workflow: buildWorkflowTail({ db, auditId, kind: "none" }, "none"), shootDateFill });
   const results = await db.batch(bundle.statements);

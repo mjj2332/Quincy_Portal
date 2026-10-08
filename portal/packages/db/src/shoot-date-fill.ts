@@ -60,6 +60,9 @@ SELECT ?1, ?2, '${SHOOT_DATE_FILL_AUDIT_ACTION}', 'project', ?3, ?4, ?5
 WHERE changes() = 1
 RETURNING id;`;
 
+/** The MCP provenance an audit row carries, as `SessionUser.via` shapes it. */
+export type ShootDateFillVia = { clientName: string; connectionId: string };
+
 export function buildShootDateFillBundle(input: {
   db: D1Database;
   projectId: string;
@@ -69,12 +72,15 @@ export function buildShootDateFillBundle(input: {
   actorId: string | null;
   /** The Admin impersonating `actorId`, when there is one (mirrors `auditMeta`). */
   impersonatedBy?: string | null;
+  /** The MCP connection acting as `actorId`, when there is one (mirrors `auditMeta`, #704). */
+  via?: ShootDateFillVia | null;
   now: number;
 }): PreparedStatementBundle<ShootDateFillIndexes> {
   const shootDate = sydneyBusinessDate(input.now);
   const reason: ShootDateFillReason = input.trigger.kind;
   const meta: Record<string, unknown> = { shootDate, previousShootDate: null, reason };
   if (input.impersonatedBy) meta.impersonatedBy = input.impersonatedBy;
+  if (input.via) Object.assign(meta, { via: "mcp", client: input.via.clientName, connectionId: input.via.connectionId });
   const update = input.trigger.kind === "stage_move"
     ? input.db.prepare(STAGE_FILL_UPDATE_SQL).bind(shootDate, input.now, input.projectId, input.trigger.winnerAuditId, input.trigger.winnerAuditAction, input.trigger.destinationStage)
     : input.db.prepare(DEADLINE_FILL_UPDATE_SQL).bind(shootDate, input.now, input.projectId, input.trigger.winnerAuditId, DEADLINE_SAVED_AUDIT_ACTION);
@@ -108,6 +114,7 @@ export function buildStageShootDateFill(input: {
   fillAuditId: string;
   actorId: string | null;
   impersonatedBy?: string | null;
+  via?: ShootDateFillVia | null;
   now: number;
 }): PreparedStatementBundle<ShootDateFillIndexes> | undefined {
   if (!stageMoveFillsShootDate(input.from, input.to)) return undefined;
@@ -118,6 +125,7 @@ export function buildStageShootDateFill(input: {
     fillAuditId: input.fillAuditId,
     actorId: input.actorId,
     impersonatedBy: input.impersonatedBy,
+    via: input.via,
     now: input.now,
   });
 }
