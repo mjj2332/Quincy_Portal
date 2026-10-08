@@ -242,7 +242,7 @@
  * (`onCreateTaskClose` tells the consumer). An empty creatable group is now a leaf (it used to be
  * an expandable group). #678: `GanttGroupCreateRow` mirrors `GanttTreeRow`'s cells (name cell with
  * the cancel x in the toggle gutter and the title input, then one cell per column rendering
- * `GanttColumn.renderCreate`); with no column carrying one (<= 720px) the editor is a bottom
+ * `GanttColumn.renderCreate`); with no column carrying one (names-only layout, < 1024px, #734) the editor is a bottom
  * `Sheet` (`reui/sheet.tsx`, base-nova) carrying the title, `renderCreateStack`'s controls and
  * Cancel / Add, with an `OverlayContainerContext` slot like `ProjectSheet`; it has no row, spacer
  * or dependency offset (`createRowRem` is 0). Row mode: Escape stays on the input: popups portal out of the row but
@@ -297,6 +297,14 @@
  * (`GestureEvent` present). Engines without `GestureEvent` keep the listener attached, since their pinch is ctrl+wheel with no keydown.
  * Targets inside the tree column are skipped so browser page zoom works there (the scroller now spans the tree). Pointer anchoring,
  * exponential zoom and the hand-back to browser zoom at the limits are unchanged. This is the only non-passive wheel listener in the Gantt.
+ *
+ * 2026-10-08, #734 - CHANGED, behaviour (ADR 0009 addendum). `GanttOffscreenChips` no longer emits an edge chip the moment a bar leaves the
+ * visible lane: it waits until the bar's EXTERNAL label has left too, so a chip stops covering label text that is still readable. `measure` reads the
+ * label overhang from rects (`labelOverhang`: the `after` label past the segment wrapper's inline-end edge, the `before` label past its inline-start
+ * edge, in either text direction; an inside label adds nothing) for rows that are already candidates, and `offscreenSide` (`gantt-track-geometry.ts`,
+ * pure) decides start / end / none. The 2px sub-pixel allowance is kept. Not changed: chip targets, focus hand-off, the vertical filter, the zoom-band dodge.
+ * Additive `data-testid`s on the external bar label and the chip (guard F: DOM tests select by testid, not the vendor slot). The label is not observed on its own, so a font-driven label resize waits for the next scroll, resize or data refresh. Consumer side, no edit here: the
+ * names-only layout (< 1024px) passes `zoomControl={false}`; `wheelZoom` stays on, so Ctrl/Cmd-wheel and pinch still zoom.
  */
 
 import {
@@ -401,6 +409,7 @@ import {
   GANTT_SCROLLER_SELECTOR,
   GANTT_TREE_COLUMN_SELECTOR,
   findScroller,
+  offscreenSide,
   scrollerGeometry,
 } from "./gantt-track-geometry"
 import { bindGatedWheelZoom } from "./gantt-wheel-zoom"
@@ -3703,7 +3712,7 @@ const GanttDependencyLayer = memo(function GanttDependencyLayer({
  *   carrying `GanttColumn.renderCreate`, so the draft's Assignees and Due stay visible beside the
  *   title (#678). The timeline pane carries a matching-height spacer; it has no
  *   `data-slot="gantt-row-group"`, so row reorder and the timeline's row geometry never see it.
- * - **Bottom sheet** (`sheet`, <= 720px: no column to align to): the same draft state in a
+ * - **Bottom sheet** (`sheet`, names-only layout below 1024px: no column to align to): the same draft state in a
  *   base-nova `Sheet` (`reui/sheet.tsx`, `side="bottom"`), headed "New task in <group>", with the
  *   title input, `renderCreateStack`'s Assignees / Due controls and Cancel + Add. No row and no
  *   spacer: nothing in the panes makes room for it. The popup carries an
@@ -3736,7 +3745,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
   columns: GanttColumn[]
   nameWidth: number
   nameFill: boolean
-  /** <= 720px: a bottom sheet instead of a row. */
+  /** Names-only layout (< 1024px, #734): a bottom sheet instead of a row. */
   sheet: boolean
   /** Written with whether the typed title has content, so a `+` on another group can read it. */
   dirtyRef: RefObject<boolean>
@@ -5012,6 +5021,7 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
               {placement !== "inside" && (
                 <span
                   data-slot="gantt-bar-label"
+                  data-testid="gantt-bar-label"
                   data-placement={placement}
                   className={cn(
                     "text-foreground pointer-events-none absolute top-1/2 z-10 max-w-60 -translate-y-1/2 truncate font-medium",
@@ -5442,6 +5452,29 @@ function sameChips(a: OffscreenChip[], b: OffscreenChip[]): boolean {
 }
 
 /**
+ * #734: how far a row's external bar labels reach past their bars, measured from the rendered rects. The
+ * `after` label overhangs the inline-end edge of its segment wrapper, the `before` label the inline-start
+ * edge; `max(label.right - wrapper.right, wrapper.left - label.left)` is that distance in either text
+ * direction (the label sits on the one side, so the other term is negative). Inside labels add nothing.
+ */
+function labelOverhang(rowEl: HTMLElement): { leadPx: number; trailPx: number } {
+  let leadPx = 0
+  let trailPx = 0
+  for (const label of rowEl.querySelectorAll<HTMLElement>(
+    "[data-slot=gantt-bar-label][data-placement]"
+  )) {
+    const wrapper = label.parentElement
+    if (!wrapper) continue
+    const l = label.getBoundingClientRect()
+    const w = wrapper.getBoundingClientRect()
+    const overhang = Math.max(l.right - w.right, w.left - l.left, 0)
+    if (label.dataset.placement === "after") trailPx = Math.max(trailPx, overhang)
+    else if (label.dataset.placement === "before") leadPx = Math.max(leadPx, overhang)
+  }
+  return { leadPx, trailPx }
+}
+
+/**
  * Edge chips for rows whose bars sit entirely outside the visible timeline;
  * clicking scrolls the bar back into view. Reads geometry straight from the
  * DOM (row data attributes), so scrolling never re-renders the grid.
@@ -5514,13 +5547,21 @@ function GanttOffscreenChips({
           label: rowEl.dataset.ganttBarLabel ?? "",
           startMs: Number.isNaN(startMs) ? null : startMs,
         }
-        if (endPx <= visibleStart + 2) {
+        // #734: a bar past an edge only earns its chip once its external label has left too, so measure the
+        // label overhang (rects, never an estimated text width) for the rows that are already candidates.
+        const bare = { startPx, endPx, leadPx: 0, trailPx: 0 }
+        let side = offscreenSide(bare, visibleStart, visibleEnd)
+        if (side) {
+          const overhang = labelOverhang(rowEl)
+          side = offscreenSide({ ...bare, ...overhang }, visibleStart, visibleEnd)
+        }
+        if (side === "start") {
           next.push({
             ...base,
             side: "start",
             target: startPx - 24,
           })
-        } else if (startPx >= visibleEnd - 2) {
+        } else if (side === "end") {
           if (zoom && top >= zoom.top && top <= zoom.bottom) {
             chipInZoomBand = true
           }
@@ -5589,6 +5630,7 @@ function GanttOffscreenChips({
                 <button
                   type="button"
                   data-slot="gantt-offscreen-chip"
+                  data-testid="gantt-offscreen-chip"
                   data-side={chip.side}
                   aria-label={settings.i18n.labels.jumpToBar(chip.label)}
                   // #219 PR A fix (dr-219a HIGH #3): border was bare - see the tree

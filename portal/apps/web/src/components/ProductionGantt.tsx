@@ -63,10 +63,10 @@
  *
  * ## #344 / #678 / #679 — "+" on the Project row
  * Each Project whose `permissions.canEditChildren` holds carries a `+` on its row (no idle "+ Add task" rows); it opens
- * ONE editor (a row on desktop, a bottom sheet at <= 720px; the vendored tree owns the row, the title and the open state; `onCreateGroupTask` / `canCreateTask` here
+ * ONE editor (a row on desktop, a bottom sheet below 1024px; the vendored tree owns the row, the title and the open state; `onCreateGroupTask` / `canCreateTask` here
  * own the write and the gate). The editor keeps the row's columns: the draft's Assignees and Due are
  * `GanttColumn.renderCreate` cells under People and Due (`ProductionGanttCreateDraft.tsx`: `quincy/SubtaskAssigneePicker`
- * and `quincy/SubtaskScheduleControl`, as the Checklist composer), or, at <= 720px, sit in the add-task bottom sheet
+ * and `quincy/SubtaskScheduleControl`, as the Checklist composer), or, below 1024px, sit in the add-task bottom sheet
  * (`renderCreateStack`). The draft lives here (`createDraft`), is reported dirty to the vendor (`createTaskDirty`) and dropped
  * on `onCreateTaskClose` / a generation change. Enter posts ONE `POST /api/projects/:id/subtasks` with the Checklist
  * composer's body: `{ title }`, plus `assigneeIds` / `schedule` / `reminderOffsetsMinutes` only when set (the server applies
@@ -106,7 +106,7 @@
  * settle refetch (`producer: "gantt"`) are the controller's, and an End-only edit resends the unchanged Start. A conflict's own
  * `current` (and a full item's `currentSubtask`) is adopted, so a continuation-page row (never returned by the refetch) retries
  * at the version that won, never the stale one (`onEditorConflict` -> `adoptGanttChildSchedule`); the draft is kept and never
- * re-sent on its own. At <= 720px the Due column is not rendered, so the range is edited from the bar or the Checklist.
+ * re-sent on its own. Below 1024px the Due column is not rendered, so the range is edited from the bar or the Checklist.
  * #585: Escape or an outside press on a CONFLICTED picker ends the controller's session (a closed one must not hold the lock and
  * the accept gate) but keeps the draft and the notice: `conflictStash` (Gantt state, per Subtask, shared by the Due cell and the bar
  * picker) holds `{ validationError, latestItem }` while `retainedSchedules` holds the draft. A reopened picker shows the editor's own
@@ -124,7 +124,7 @@
  * An External Editor's row carries team assignees plus a hidden count, exactly as the Checklist does.
  * Reuse ledger: picker — `quincy/SubtaskAssigneePicker`, borderless like the Project row's People trigger (`reui/combobox` `multiple` + `reui/item` +
  * `reui/avatar`); read-only stack — `quincy/AvatarStack` (`reui/avatar`), and nothing at all when read-only and empty; empty editable trigger — `quincy/EmptyAssigneeGlyph` (hand-built Quincy glyph composed from lucide `UserPlus`, extracted from `ProductionGanttProjectCells`; no ReUI item is a dashed add-person circle, and `AvatarStack`'s hairline empty circle measured ~1.7:1); conflict / gate notices —
- * `pushToast`; on a phone (<= 720px) the People column is not rendered, so a Subtask's assignees are edited from the Checklist the row link opens; the wrapper that keeps a press or key off the row is a plain `<span>` carrying
+ * `pushToast`; below 1024px the People column is not rendered, so a Subtask's assignees are edited from the Checklist the row link opens; the wrapper that keeps a press or key off the row is a plain `<span>` carrying
  * `stopPropagation`, the pattern `GanttChildLoadErrorBadge` and the Deadline action already use (no new
  * primitive: it has no role and no state of its own).
  *
@@ -325,15 +325,15 @@ const ganttFormatEventTime = mergeGanttI18n(GANTT_I18N).functions.formatEventTim
  * the wide panel is the name column at 180px (the vendor splitter's own default — a Project row's
  * fixed parts are 12px padding each side, the 24px toggle gutter and the 96px street floor, ~144px,
  * so the street keeps its 96px) plus People (88px) and Due (128px, which holds "Fri 2 Oct · 17:00",
- * "Set deadline" and "Fix deadline"): 180 + 88 + 128 = 396. The narrow (<= 720px) panel carries the
- * name column alone — People and Due are not rendered on a phone, where the row link opens the
+ * "Set deadline" and "Fix deadline"): 180 + 88 + 128 = 396. The narrow (< 1024px, #734) panel carries the
+ * name column alone — People and Due are not rendered there, where the row link opens the
  * Project and both are editable there — so it needs no override. The vendor seeds the width once,
  * so a breakpoint crossed mid-session does not re-seed it.
  */
 const GANTT_NAME_COLUMN_WIDTH = 180;
-// #727: minWidth 396 = Name 180 + People 88 + Due 128. The tree column is sticky inside the one scroller and clips (never scrolls sideways), so on desktop the splitter must never narrow past the columns. Phones (GANTT_TREE_PANEL_NARROW) have no columns and keep the vendor floor.
+// #727: minWidth 396 = Name 180 + People 88 + Due 128. The tree column is sticky inside the one scroller and clips (never scrolls sideways), so on desktop the splitter must never narrow past the columns. The names-only layout (GANTT_TREE_PANEL_NARROW) has no columns and keep the vendor floor.
 const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: GANTT_NAME_COLUMN_WIDTH, width: 396, minWidth: 396, minWidthHard: true };
-// #686: no floor on a phone. The vendor default (208px) made the row wider than the tree pane, so the sticky `+` overlaid the title; with none, the name cell fills exactly the pane.
+// #686: no floor on the names-only layout. The vendor default (208px) made the row wider than the tree pane, so the sticky `+` overlaid the title; with none, the name cell fills exactly the pane.
 const GANTT_TREE_PANEL_NARROW: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: 0 };
 /** Scroll distance (px) from the bottom of the panel at which the next project page is requested. */
 const NEAR_BOTTOM_THRESHOLD_PX = 240;
@@ -1343,7 +1343,13 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // #372 — Subtask range end. The Due cell's picker is the presentation of the controller's own schedule editor.
   // -------------------------------------------------------------------------------------------
   // The Subtask whose inline editor session the controller holds, if any.
-  const narrowTree = useMediaQuery("(max-width: 720px)");
+  // #734: two breakpoints, because two different things changed width. `namesOnly` (viewport < 1024px) is the names-only
+  // task list: there is no room for the People and Due columns beside a usable lane (the 396px list left ~208px at 780px),
+  // so everything that exists because those columns are missing keys off it. `phone` (<= 720px) is the density breakpoint:
+  // it only chooses the 44px row metric, and the `max-[721px]:` classes stay phone-only. Row height follows the pointer, not the
+  // width (#695), so `coarsePointer` joins `phone` there.
+  const namesOnly = useMediaQuery("(max-width: 1023px)");
+  const phone = useMediaQuery("(max-width: 720px)");
   // Same media feature Tailwind's `pointer-coarse:` compiles to, so the JS row metric and the CSS variant agree (#695).
   const coarsePointer = useMediaQuery("(pointer: coarse)");
   // #582: an inline session is drawn by the Due cell ("due-cell", the default) or by the item menu's bar picker ("item").
@@ -1371,20 +1377,20 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     if (!gone.length) return;
     dropScheduleDrafts(gone);
   }, [conflictStash, rowConfirmedRemoved, dropScheduleDrafts]);
-  // The cell that draws the editor is gone (the Due column hides at <= 720px, the row left the chart, or a failed refetch
+  // The cell that draws the editor is gone (the Due column hides below 1024px, the row left the chart, or a failed refetch
   // replaced the whole chart with its error state while the cached rows remain): a session no one can see would hold the
   // lock and the accept gate, so it is cancelled. Not a save; nothing was sent.
   const chartReplaced = query.isPending || query.isError;
   const dueEditorRowVisible = dueEditorSubtaskId ? [...assigneeCellByChecklistResourceId.values()].some((cell) => cell.row.id === dueEditorSubtaskId) : true;
   useEffect(() => {
     if (!dueEditorSubtaskId) return;
-    if (narrowTree || chartReplaced) dismissScheduleEditor();
+    if (namesOnly || chartReplaced) dismissScheduleEditor();
     // The row left the drawn rows: a true discard only once the current data CONFIRMS the removal; a walk still restarting is a dismissal.
     else if (!dueEditorRowVisible) {
       if (dueEditor && rowConfirmedRemoved(dueEditorSubtaskId, dueEditor.source.project.id)) { clearScheduleStash(dueEditorSubtaskId); commands.cancelScheduleEditor(); }
       else dismissScheduleEditor();
     }
-  }, [dueEditorSubtaskId, dueEditor, narrowTree, chartReplaced, dueEditorRowVisible, dismissScheduleEditor, clearScheduleStash, rowConfirmedRemoved, commands]);
+  }, [dueEditorSubtaskId, dueEditor, namesOnly, chartReplaced, dueEditorRowVisible, dismissScheduleEditor, clearScheduleStash, rowConfirmedRemoved, commands]);
   const openDueEditor = useCallback((cell: GanttAssigneeCell) => {
     const project = projectById.get(cell.projectId);
     const source = project ? ganttChecklistSource(project, cell.row) : null;
@@ -1581,8 +1587,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     return map;
   }, [displayProjects, attentionByResourceId, live, openUnscheduledProjectDialog, openMoveDialog]);
 
-  // At <= 720px the Due column is not rendered, so the row's reason stays on the name cell's badge.
-  const hideAttentionBadgeFor = useMemo(() => (narrowTree ? new Set<string>() : new Set(deadlineActionByProjectResourceId.keys())), [narrowTree, deadlineActionByProjectResourceId]);
+  // Below 1024px the Due column is not rendered, so the row's reason stays on the name cell's badge.
+  const hideAttentionBadgeFor = useMemo(() => (namesOnly ? new Set<string>() : new Set(deadlineActionByProjectResourceId.keys())), [namesOnly, deadlineActionByProjectResourceId]);
   const renderResourceLabel = useCallback(
     ({ resource }: { resource: GanttResource }) => (
       <GanttResourceLabel
@@ -1610,9 +1616,9 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const resetCreateDraft = useCallback(() => setCreateDraft(EMPTY_CREATE_DRAFT), []);
   const columns = useMemo<GanttColumn[]>(() => {
     const projectFor = (resource: GanttResource) => (resource.id.startsWith("project:") ? projectById.get(resource.id.slice("project:".length)) : undefined);
-    // Phones (<= 720px): no People/Due columns at all; the row link opens the Project, where both
+    // Below 1024px: no People/Due columns at all; the row link opens the Project, where both
     // are editable.
-    if (narrowTree) return [];
+    if (namesOnly) return [];
     return [
       {
         id: "people",
@@ -1668,9 +1674,9 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         renderCreate: ({ parentId, pending }) => <GanttCreateDraftDue draft={createDraft} projectDefault={projectDefaultById.get(parentId.slice("project:".length)) ?? null} pending={pending} onChange={changeCreateDraft} />,
       },
     ];
-  }, [createDraft, changeCreateDraft, projectDefaultById, projectById, live, identity.role, narrowTree, deadlineActionByProjectResourceId, attentionByResourceId, assigneeCellByChecklistResourceId, assigneeBusyIds, commitAssignees, dueEditor, dueEditorSubtaskId, retainedScheduleFor, openDueEditor, commands.submitScheduleEditor, commands.cancelScheduleEditor, dismissScheduleEditor, clearScheduleStash, stashErrorFor]);
+  }, [createDraft, changeCreateDraft, projectDefaultById, projectById, live, identity.role, namesOnly, deadlineActionByProjectResourceId, attentionByResourceId, assigneeCellByChecklistResourceId, assigneeBusyIds, commitAssignees, dueEditor, dueEditorSubtaskId, retainedScheduleFor, openDueEditor, commands.submitScheduleEditor, commands.cancelScheduleEditor, dismissScheduleEditor, clearScheduleStash, stashErrorFor]);
 
-  // #678: at <= 720px there are no People/Due columns to align the draft to, so the vendor stacks these under the title.
+  // #678: below 1024px there are no People/Due columns to align the draft to, so the vendor stacks these under the title.
   const renderCreateStack = useCallback(({ parentId, pending }: { parentId: string; pending: boolean }) => {
     const projectId = parentId.slice("project:".length);
     return <GanttCreateDraftStack projectId={projectId} role={identity.role} draft={createDraft} projectDefault={projectDefaultById.get(projectId) ?? null} pending={pending} onChange={changeCreateDraft} />;
@@ -2201,8 +2207,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             timeZone={GANTT_TIME_ZONE}
             i18n={GANTT_I18N}
             // #256: the name column fills the tree panel (see GANTT_NAME_COLUMN_WIDTH).
-            treePanel={narrowTree ? GANTT_TREE_PANEL_NARROW : GANTT_TREE_PANEL}
-            metrics={narrowTree || coarsePointer ? GANTT_METRICS_TOUCH : undefined}
+            treePanel={namesOnly ? GANTT_TREE_PANEL_NARROW : GANTT_TREE_PANEL}
+            metrics={phone || coarsePointer ? GANTT_METRICS_TOUCH : undefined}
+            // #734: the names-only layout hides the zoom buttons; Ctrl/Cmd-wheel and pinch (wheelZoom, on by default) still zoom.
+            zoomControl={!namesOnly}
             columns={columns}
             interactions={interactions}
             onEventUpdate={handleEventUpdate}
@@ -2231,7 +2239,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             createTaskDirty={createDraftIsDirty(createDraft)}
             createTaskResetKey={generationKey}
             onCreateTaskClose={resetCreateDraft}
-            renderCreateStack={narrowTree ? renderCreateStack : undefined}
+            renderCreateStack={namesOnly ? renderCreateStack : undefined}
             renderResourceLabel={renderResourceLabel}
             renderEvent={renderEvent}
             className="min-h-0 flex-1"

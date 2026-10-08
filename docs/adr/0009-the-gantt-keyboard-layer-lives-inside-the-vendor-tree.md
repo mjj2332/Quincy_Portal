@@ -216,7 +216,7 @@ paired with a timeline spacer):
   (a typed title, or the consumer's `createTaskDirty`) and focuses it, so nothing typed is lost.
 - **The editor keeps the row's cells.** `GanttGroupCreateRow` mirrors `GanttTreeRow`: a name cell
   (the cancel x in the toggle gutter, then the title input) and one cell per column rendering the
-  new `GanttColumn.renderCreate(ctx)`. With no column carrying one (<= 720px, a phone's `columns: []`)
+  new `GanttColumn.renderCreate(ctx)`. With no column carrying one (the names-only layout, < 1024px since #734, `columns: []`)
   the editor is a **bottom sheet** instead of a row (owner decision, #678 round 2): the same component on
   `reui/sheet.tsx` (`side="bottom"`), headed "New task in <Project>", holding the title input, the
   new `renderCreateStack` controls (Assignees, Due) and Cancel / Add. It has no row, spacer or dependency
@@ -278,3 +278,21 @@ and the gesture handling are private to `gantt-view.tsx` / `gantt-dnd.tsx` / `ga
 What stays out: the Production Gantt's choice of `minWidthHard` and its tree widths (consumer
 policy). Covered by `gantt-single-scroller.dom.test.tsx`, `gantt-track-geometry.dom.test.tsx`,
 `gantt-wheel-zoom.dom.test.tsx` and `gantt-view-overflow-clip.dom.test.tsx`.
+
+## Addendum: names-only below 1024px, chips wait for the label (#734)
+
+#734 (owner-approved follow-up to #722) moves the names-only task list from phones (<= 720px) to every
+viewport below 1024px, because the 396px Name/People/Due list left a ~208px lane at 780px. This is a
+consumer decision (`ProductionGantt.tsx` splits its old `narrowTree` into `namesOnly`, < 1024px, and
+`phone`, <= 720px, which only picks the 44px row metric), so the vendor-tree surface that changes is small:
+
+- **Create stack.** With no column carrying `renderCreate` (`columns: []`), the add-task editor is the
+  bottom sheet at every width below 1024px, not only on phones. Nothing in `GanttGroupCreateRow` changed.
+- **`GanttOffscreenChips`.** The chip appears once the bar and its external label are both outside the
+  lane, using the label's measured rect rather than an estimated text width. The decision is the pure
+  `offscreenSide` in `gantt-track-geometry.ts`, which `gantt-offscreen-side.test.ts` covers.
+- **`zoomControl`** is the existing prop; the consumer passes `false` on the names-only layout.
+  `wheelZoom` is independent of it and stays on.
+
+Covered by `gantt-offscreen-side.test.ts`, `gantt-offscreen-chips.dom.test.tsx`,
+`gantt-wheel-zoom.dom.test.tsx` and `ProductionGantt-narrow-layout.dom.test.tsx`.

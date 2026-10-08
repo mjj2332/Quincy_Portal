@@ -21,6 +21,7 @@ import { ProductionGantt } from "./ProductionGantt";
 import { CELL_TRIGGER } from "./ProjectDeadlineCell";
 import { applyPopup, dateTimePopup, pickPopupDay } from "@/testing/date-time-popup";
 import { startMoment, endMoment, subtaskReminders } from "@/testing/subtask-schedule";
+import { mockViewport } from "@/testing/viewport";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
@@ -272,13 +273,10 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
     expect(draftDue()!.getAttribute("aria-label")).toContain("→");
   });
 
-  describe("on a phone (<= 720px) the editor is a bottom sheet", () => {
-    let original: typeof window.matchMedia;
-    beforeEach(() => {
-      original = window.matchMedia;
-      window.matchMedia = ((query: string) => ({ matches: query === "(max-width: 720px)", media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
-    });
-    afterEach(() => { window.matchMedia = original; });
+  describe("on a phone (<= 720px) the editor is a bottom sheet with 44px rows", () => {
+    let viewport: ReturnType<typeof mockViewport>;
+    beforeEach(() => { viewport = mockViewport({ width: 720 }); });
+    afterEach(() => { viewport.restore(); });
     const sheet = () => document.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-sheet"]');
 
     it("project rows are 2.75rem (44px) so each 44px + fits its own row, and both panes agree (#693)", async () => {
@@ -615,31 +613,12 @@ describe("ProductionGantt — one editor at a time", () => {
   });
 });
 
-describe("ProductionGantt — a coarse-pointer tablet (>720px) gets 44px rows and keeps the inline create row (#695)", () => {
-  let matches: Map<string, boolean>;
-  let listeners: Map<string, Set<() => void>>;
-  beforeEach(() => {
-    matches = new Map([["(pointer: coarse)", true]]);
-    listeners = new Map();
-    vi.stubGlobal("matchMedia", (query: string) => {
-      const set = listeners.get(query) ?? new Set<() => void>();
-      listeners.set(query, set);
-      return {
-        media: query,
-        get matches() { return matches.get(query) ?? false; },
-        addEventListener: (_type: string, listener: () => void) => set.add(listener),
-        removeEventListener: (_type: string, listener: () => void) => set.delete(listener),
-        addListener: (listener: () => void) => set.add(listener),
-        removeListener: (listener: () => void) => set.delete(listener),
-        onchange: null,
-        dispatchEvent: () => false,
-      } as unknown as MediaQueryList;
-    });
-  });
-  afterEach(() => { vi.unstubAllGlobals(); });
+describe("ProductionGantt — a coarse-pointer tablet (>= 1024px) gets 44px rows and keeps the inline create row (#695)", () => {
+  let viewport: ReturnType<typeof mockViewport>;
+  beforeEach(() => { viewport = mockViewport({ width: 1280, coarse: true }); });
+  afterEach(() => { viewport.restore(); });
   const setCoarse = async (value: boolean) => {
-    matches.set("(pointer: coarse)", value);
-    await act(async () => { listeners.get("(pointer: coarse)")?.forEach((listener) => listener()); await Promise.resolve(); });
+    await viewport.set({ coarse: value });
     await settle();
   };
   const rowHeights = () => Array.from(host.querySelectorAll<HTMLElement>("[data-gantt-row-id]")).map((el) => el.style.height).filter(Boolean);
@@ -674,8 +653,8 @@ describe("ProductionGantt — a coarse-pointer tablet (>720px) gets 44px rows an
     expect(spacer!.style.height).toBe("2.75rem");
   });
 
-  it("a fine pointer above 720px stays at 2.5rem", async () => {
-    matches.set("(pointer: coarse)", false);
+  it("a fine pointer at 1280px stays at 2.5rem", async () => {
+    await viewport.set({ coarse: false });
     await mount();
     expect(new Set(rowHeights())).toEqual(new Set(["2.5rem"]));
   });

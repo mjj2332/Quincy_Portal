@@ -19,6 +19,7 @@ import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
 import { ProductionGantt } from "./ProductionGantt";
 import { dateTimePopup, popupButton, pressInPopup, rangeToggles } from "@/testing/date-time-popup";
 import { endMoment, startMoment, subtaskReminders } from "@/testing/subtask-schedule";
+import { mockViewport } from "@/testing/viewport";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 vi.mock("../lib/api", async (importOriginal) => ({
@@ -339,19 +340,14 @@ describe("ProductionGantt item menu (#463)", () => {
       });
     });
 
-    it("stays open at a 720px-wide viewport (a bar session is not cancelled by narrowing)", async () => {
-      const original = window.matchMedia;
-      window.matchMedia = ((query: string) => ({
-        matches: query === "(max-width: 720px)",
-        media: query,
-        addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false,
-      })) as unknown as typeof window.matchMedia;
+    it("stays open in the names-only layout, here 720px (a bar session is not cancelled by narrowing)", async () => {
+      const viewport = mockViewport({ width: 720 });
       try {
         await openPicker();
         await flush(4);
         expect(picker()).not.toBeNull();
         expect(gateStates().at(-1)).toBe(true);
-      } finally { window.matchMedia = original; }
+      } finally { viewport.restore(); }
     });
   });
 

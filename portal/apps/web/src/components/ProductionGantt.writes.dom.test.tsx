@@ -1706,7 +1706,7 @@ describe("ProductionGantt — Add task row (#344)", () => {
     expect(title.className.split(/\s+/)).toContain("max-[721px]:flex-none");
     expect(title.className.split(/\s+/)).toContain("truncate");
 
-    // narrowTree is `(max-width: 720px)` (width <= 720); `max-[720px]:` compiles to width < 720, leaving 720 in neither variant (#692).
+    // the phone density breakpoint is `(max-width: 720px)` (width <= 720); `max-[720px]:` compiles to width < 720, leaving 720 in neither variant (#692).
     expect([badge, meta, outer, title].map((el) => el.className).join(" ")).not.toContain("max-[720px]");
   });
 
