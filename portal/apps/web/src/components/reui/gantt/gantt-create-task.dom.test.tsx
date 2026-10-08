@@ -755,7 +755,7 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
       expect(seen).toBe(slot);
     });
 
-    it("keeps the sticky + clear of its focus ring at <= 720px (inset by --space-1, not an inward ring)", async () => {
+    it("keeps the sticky + clear of the pane edge at <= 720px (end inset by --space-1; the ring itself is covered by the #698 test)", async () => {
       await render(stackView());
       const cls = createButton("Alpha")!.className;
       expect(cls).toContain("max-[721px]:end-[var(--space-1)]");
@@ -773,6 +773,47 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
     expect(input().placeholder).toBe("New task");
     const cancel = host.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-cancel"]')!;
     for (const cls of ["pointer-coarse:min-h-[44px]", "pointer-coarse:min-w-[44px]", "max-[721px]:min-h-[44px]", "max-[721px]:min-w-[44px]"]) expect(cancel.className).toContain(cls);
+  });
+
+  it("the x's 44px touch box reaches into the empty indent, not the title input (#697)", async () => {
+    await render(view({ onCreateGroupTask: ok, columns: [people, due] }));
+    await click(createButton("Alpha")!);
+    const cancel = host.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-cancel"]')!;
+    // a start margin and start padding of the same size on coarse pointers and phones: the box grows
+    // 24px toward the indent while the glyph (centred by the padding) and the input stay where they were
+    for (const cls of ["pointer-coarse:-ms-6", "pointer-coarse:ps-6", "max-[721px]:-ms-6", "max-[721px]:ps-6"]) expect(cancel.className).toContain(cls);
+    // the title wrapper and the gutter span are unchanged, so the input keeps its alignment with child rows
+    const gutter = cancel.parentElement as HTMLElement;
+    expect(gutter.classList.contains("w-5")).toBe(true);
+    expect(gutter.classList.contains("me-1")).toBe(true);
+    // the -ms-6 / ps-6 growth assumes 24px of empty start space before the gutter at depth 0: the name
+    // cell's ps-3 (12px) plus the one-level-deeper spacer ((depth + 1) * 0.875rem = 14px at 16px/rem)
+    const nameCell = host.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-name-cell"]')!;
+    expect(nameCell.classList.contains("ps-3")).toBe(true);
+    const spacer = gutter.previousElementSibling as HTMLElement;
+    expect(spacer.style.width).toBe("0.875rem");
+    expect(12 + parseFloat(spacer.style.width) * 16).toBeGreaterThanOrEqual(24);
+    const titleWrapper = input().parentElement as HTMLElement;
+    expect(titleWrapper.className).toContain("min-w-0");
+    expect(titleWrapper.className).toContain("flex-1");
+  });
+
+  it("the + draws its focus ring inside its own box on coarse pointers and phones, outset on fine desktop (#698)", async () => {
+    await render(view({ onCreateGroupTask: ok, columns: [people, due] }));
+    const cls = createButton("Alpha")!.className;
+    // an inset outline so the sticky tree header cannot clip the first row's ring; each focus-visible
+    // twin is important so it beats the base ring offset, and the at-rest twin keeps the guard satisfied
+    for (const token of [
+      "pointer-coarse:-outline-offset-2",
+      "pointer-coarse:focus-visible:!-outline-offset-2",
+      "max-[721px]:-outline-offset-2",
+      "max-[721px]:focus-visible:!-outline-offset-2",
+    ]) expect(cls).toContain(token);
+    // fine-pointer desktop keeps the outset ring: no unprefixed inset offset
+    expect(cls).not.toMatch(/(^|\s)(focus-visible:)?!?-outline-offset-2/);
+    // and its ring configuration is the one main had: no inset ring, the focus-visible lift above the next opener's backing
+    expect(cls).not.toContain("ring-inset");
+    expect(cls).toContain("focus-visible:z-[2]");
   });
 
   it("renderCreateStack is ignored when a column carries a create cell", async () => {
