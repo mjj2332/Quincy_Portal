@@ -5,6 +5,12 @@ import type { AutoHdrApiSendResult } from "./autohdr/api-send";
 import type { ReviewedEditorCandidate } from "./editor-folders/backfill";
 import type { LinkPreviewFetchResult } from "./link-preview-fetch";
 
+/**
+ * Provenance of an MCP-driven call (#709), passed as the trailing argument of an RPC that writes an audit row from this Worker.
+ * The app builds it from `SessionUser.via`; `withVia` stamps it into the row's meta in the same shape `auditMeta()` uses there.
+ */
+export type McpVia = { clientName: string; connectionId: string };
+
 /** Public, serializable surface exposed over the BACKGROUND service binding. */
 export declare abstract class QuincyBackground extends WorkerEntrypoint {
   abstract triggerDropboxSync(projectId: string): Promise<{ jobId: string }>;
@@ -31,8 +37,8 @@ export declare abstract class QuincyBackground extends WorkerEntrypoint {
   abstract backfillAutoHdrV2(params: BackfillParams): Promise<BackfillResult>;
   abstract inspectDropboxMonitor(scope: "raw" | "autohdr" | "editor"): Promise<Record<string, unknown>>;
   abstract resetDropboxMonitor(scope: "raw" | "autohdr" | "editor"): Promise<Record<string, unknown>>;
-  abstract resolveAutoHdrMapping(mappingId: string, chosenPathKey: string, verifiedFolderId: string, actorId: string): Promise<Record<string, unknown>>;
-  abstract reassignAutoHdrPathClaim(pathKey: string, targetMappingId: string, verifiedFolderId: string, actorId: string): Promise<Record<string, unknown>>;
+  abstract resolveAutoHdrMapping(mappingId: string, chosenPathKey: string, verifiedFolderId: string, actorId: string, via?: McpVia): Promise<Record<string, unknown>>;
+  abstract reassignAutoHdrPathClaim(pathKey: string, targetMappingId: string, verifiedFolderId: string, actorId: string, via?: McpVia): Promise<Record<string, unknown>>;
   abstract publishManualUpload(projectId: string, assetId: string): Promise<{ jobId: string }>;
   abstract publishManualEditedUpload(projectId: string, assetId: string): Promise<{ jobId: string }>;
   abstract handleDropboxWebhook(): Promise<void>;

@@ -86,6 +86,8 @@ export function writeTool(def: {
   inputSchema: ZodRawShape;
   capability?: Capability;
   anyCapability?: readonly Capability[];
+  /** `write` (default) or `admin` (#709). Every `admin` tool is destructive: that is set here, not left to each definition. */
+  scope?: Extract<McpScope, "write" | "admin">;
   destructive?: boolean;
   idempotent?: boolean;
   run?: (send: WriteSend, input: Record<string, unknown>, read: (path: string, query?: Record<string, string>) => Promise<Response>) => Promise<McpToolResult>;
@@ -93,11 +95,11 @@ export function writeTool(def: {
   return {
     name: def.name,
     description: def.description,
-    scope: "write",
+    scope: def.scope ?? "write",
     ...(def.capability ? { capability: def.capability } : {}),
     ...(def.anyCapability ? { anyCapability: def.anyCapability } : {}),
     route: { method: def.method, template: def.template },
-    annotations: { readOnlyHint: false, destructiveHint: def.destructive === true, ...(def.idempotent ? { idempotentHint: true } : {}), openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: def.destructive === true || def.scope === "admin", ...(def.idempotent ? { idempotentHint: true } : {}), openWorldHint: false },
     inputSchema: def.inputSchema,
     call: async (ctx, input) => {
       const used = new Set<string>();

@@ -81,7 +81,54 @@ const noticeSetup = async () => {
   return { postId: created.post.id };
 };
 
+/** Admin tools (#709): the rows each one's route writes, so the setups seed what the route needs. */
+const agencySetup = async () => ({ agencyId: (JSON.parse(await callTool("admin_create_agency", { name: `Parity Agency ${crypto.randomUUID()}` })) as { id: string }).id });
+const agentSetup = async () => ({ agentId: (JSON.parse(await callTool("admin_create_agent", { name: "Parity Agent" })) as { id: string }).id });
+const jobSetup = async (projectId: string) => {
+  const jobId = crypto.randomUUID(); const now = Date.now();
+  await insert("INSERT INTO jobs (id, kind, status, project_id, retries, created_at, updated_at) VALUES (?, 'editor_sync', 'failed', ?, 0, ?, ?)", jobId, projectId, now, now);
+  return { jobId };
+};
+const deadLetterSetup = async (projectId: string) => {
+  const { assetId } = await assetSetup(projectId); const deadLetterId = crypto.randomUUID();
+  await insert("INSERT INTO rendition_dlq_events (id, asset_id, status, received_at) VALUES (?, ?, 'open', ?)", deadLetterId, assetId, Date.now());
+  const holder = testEnv as unknown as { RENDITIONS_ENABLED?: boolean; RENDITION_QUEUE?: unknown };
+  holder.RENDITIONS_ENABLED = true; holder.RENDITION_QUEUE = { send: async () => undefined };
+  return { deadLetterId };
+};
+const webhookSetup = async () => {
+  const eventId = crypto.randomUUID();
+  await insert("INSERT INTO webhook_events (id, source, event_id, payload_json, status, error, received_at, processed_at) VALUES (?, 'tonomo', ?, '{}', 'poison', 'boom', ?, ?)", eventId, `parity-${eventId}`, Date.now(), Date.now());
+  return { eventId };
+};
+/** The first delete_project call returns the token the second one needs. */
+const deleteSetup = async (projectId: string) => {
+  const first = await callTool("delete_project", { projectId });
+  return { confirmToken: /"confirmToken":\s*"([^"]+)"/.exec(first)![1]! };
+};
+const editorCandidate = {
+  projectId: "00000000-0000-4000-8000-000000000001", connectionId: "dbx-1", expectedShootDate: "2037-01-02", expectedRawFolderPath: null, expectedRawFolderLink: null,
+  rootPath: "/Editors/Parity", rootFolderId: "id:root",
+  inputRoots: [{ path: "/Editors/Parity/Input", section: null, folderId: "id:in" }], outputRoots: [{ path: "/Editors/Parity/Output", section: null, folderId: "id:out" }],
+};
+
 const WRITE_CALLS: readonly WriteCall[] = [
+  { tool: "admin_reset_dropbox_monitor", args: () => ({ scope: "raw" }) },
+  { tool: "admin_link_editor_folder", args: () => ({ reviewed: true, candidate: editorCandidate }) },
+  { tool: "admin_send_to_autohdr", args: ({ projectId }) => ({ projectId }) },
+  { tool: "admin_fetch_edited_from_autohdr", args: ({ projectId }) => ({ projectId }) },
+  { tool: "admin_retry_job", setup: jobSetup, args: ({ jobId }) => ({ jobId: jobId! }) },
+  { tool: "admin_replay_dead_letter", setup: deadLetterSetup, args: ({ deadLetterId }) => ({ deadLetterId: deadLetterId! }) },
+  { tool: "admin_retry_webhook_event", setup: webhookSetup, args: ({ eventId }) => ({ eventId: eventId! }) },
+  { tool: "admin_create_agency", args: () => ({ name: `Parity Agency ${crypto.randomUUID()}` }) },
+  { tool: "admin_update_agency", setup: agencySetup, args: ({ agencyId }) => ({ agencyId: agencyId!, notes: "Parity" }) },
+  { tool: "admin_create_agent", args: () => ({ name: "Parity Agent" }) },
+  { tool: "admin_update_agent", setup: agentSetup, args: ({ agentId }) => ({ agentId: agentId!, phone: "0400 000 000" }) },
+  { tool: "admin_update_stage", args: () => ({ key: "raw_review", label: "Raw review" }) },
+  { tool: "admin_backfill_renditions", args: () => ({ dryRun: true, limit: 1 }) },
+  { tool: "admin_backfill_autohdr", args: () => ({ dryRun: true, limit: 1 }) },
+  { tool: "admin_backfill_autohdr_scaffolds", args: () => ({ dryRun: true, limit: 1 }) },
+  { tool: "delete_project", stage: "edited_review", archived: true, setup: deleteSetup, args: ({ projectId, confirmToken }) => ({ projectId, confirm: true, confirmToken: confirmToken! }) },
   { tool: "create_project", args: () => ({ street: "Parity Created", shootDate: "2037-05-04" }) },
   { tool: "update_project_details", stage: "edited_review", args: ({ projectId }) => ({ projectId, suburb: "Parity", shootDate: "2037-06-01" }) },
   { tool: "set_project_priority", stage: "edited_review", args: ({ projectId }) => ({ projectId, priority: 2 }) },
@@ -117,6 +164,8 @@ const WRITE_CALLS: readonly WriteCall[] = [
 
 /** Write tools whose route writes no audit_log or activity row at all (so there is nothing to stamp), each with the reason. */
 const NO_AUDIT_ROWS: ReadonlyArray<{ tool: string; reason: string }> = [
+  { tool: "admin_resolve_autohdr_mapping", reason: "The audit row is written by the background Worker, not the route. Its via is asserted in workers/background/test/autohdr-mapping.test.ts, and the app's hand-off in mcp-admin.test.ts." },
+  { tool: "admin_reassign_autohdr_path_claim", reason: "The audit row is written by the background Worker, not the route. Its via is asserted in workers/background/test/autohdr-mapping.test.ts, and the app's hand-off in mcp-admin.test.ts." },
   { tool: "mark_notification_read", reason: "The notifications read route only sets read_at; it writes no audit row." },
   { tool: "mark_all_notifications_read", reason: "The notifications read-all route only sets read_at; it writes no audit row." },
 ];
@@ -128,11 +177,19 @@ async function callTool(name: string, args: Record<string, unknown>) {
   return result.content[0]!.text;
 }
 /** The background Worker's page fetch, answered locally: a link preview only writes its audit row once a page was fetched. */
+/** The background Worker's RPC surface, answered locally for the admin tools: the route's audit row is what is under test. */
+const adminFakeBackground = new Proxy({}, {
+  get: (_target, name) => typeof name !== "string" || name === "then" ? undefined : async () => (({
+    sendSelectedToAutoHdr: { ok: true, jobId: "job" }, fetchEditedFromAutoHdr: { ok: true, jobId: "job" }, triggerEditorSync: { jobId: "job" },
+    backfillRenditions: { scanned: 0, wouldEnqueue: 0, enqueued: 0, skipped: 0, nextCursor: null, dryRun: true }, backfillAutoHdrV2: { scanned: 0 },
+  } as Record<string, unknown>)[name] ?? {}),
+});
 const fakeBackground = { fetchLinkPreview: async () => ({ ok: true as const, finalUrl: "https://example.com/parity", title: "Parity", description: null, siteName: null, image: null }) };
 async function callToolRaw(name: string, args: Record<string, unknown>) {
   const holder = testEnv as unknown as { BACKGROUND: unknown };
   const original = holder.BACKGROUND;
   if (name.endsWith("link_preview")) holder.BACKGROUND = fakeBackground;
+  else if (mcpTool(name).scope === "admin") holder.BACKGROUND = adminFakeBackground;
   try { return await mcpTool(name).call({ env: testEnv, executionCtx: ctx, fetchApp, principal, role: "admin" }, args); }
   finally { holder.BACKGROUND = original; }
 }

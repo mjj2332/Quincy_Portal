@@ -86,4 +86,18 @@ export const ADMIN_READ_TOOLS: readonly McpTool[] = [
     description: "Admin: a Project's background jobs (AutoHDR, Editor sync, manual publishes) with status, error and timestamps.",
     inputSchema: { projectId: z.string().uuid().describe("The Project's id.") },
   }),
+  readTool({
+    name: "admin_preview_editor_folders",
+    template: "/api/integrations/dropbox/editor-folders",
+    capability: "manageIntegrations",
+    description: "Admin: a page of Projects with the Dropbox Editor folders the Portal found for them, each a candidate for admin_link_editor_folder. When more exist the response has nextCursor; pass it as `cursor`.",
+    inputSchema: { cursor: z.string().uuid().optional().describe("Opaque cursor from the previous page's nextCursor.") },
+  }),
+  readTool({
+    name: "admin_inspect_dropbox_monitor",
+    template: "/api/integrations/dropbox/monitors/:scope",
+    capability: "manageIntegrations",
+    description: "Admin: the state of one Dropbox monitor (raw, autohdr or editor): its cursor and health. admin_reset_dropbox_monitor resets it.",
+    inputSchema: { scope: z.enum(["raw", "autohdr", "editor"]).describe("Which monitor.") },
+  }),
 ];

@@ -7,6 +7,8 @@ import { enqueueRenditionSafely, renditionsEnabled, type RenditionMessage } from
 import { DropboxSyncDO } from "./do/dropbox-sync";
 import { TonomoProcessorDO } from "./do/tonomo-processor";
 import type { Env } from "./env";
+import { withVia } from "./lib/via";
+import type { McpVia } from "./rpc-types";
 import { dbFor } from "./lib/db";
 import { createJob, setJobStatus } from "./lib/jobs";
 import type { DropboxSyncMessage, IngestMessage } from "./messages";
@@ -704,7 +706,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     return stub.inspect();
   }
 
-  async resolveAutoHdrMapping(mappingId: string, chosenPathKey: string, verifiedFolderId: string, actorId: string): Promise<Record<string, unknown>> {
+  async resolveAutoHdrMapping(mappingId: string, chosenPathKey: string, verifiedFolderId: string, actorId: string, via?: McpVia): Promise<Record<string, unknown>> {
     const db = dbFor(this.env);
     const claim = await db.select({
       id: autoHdrPathClaims.id,
@@ -729,7 +731,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       this.env.DB.prepare("UPDATE autohdr_output_mappings SET state = 'active', final_path = ?, final_path_key = ?, folder_id = ?, diagnostic = NULL, observed_at = ?, updated_at = ? WHERE id = ? AND state = 'blocked_collision'")
         .bind(claim.path, claim.pathKey, metadata.id, now.getTime(), now.getTime(), mappingId),
       this.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'integration.autohdr_mapping.resolve', 'autohdr_mapping', ?, ?, ? WHERE changes() = 1")
-        .bind(crypto.randomUUID(), actorId, mappingId, JSON.stringify({ chosenPathKey: claim.pathKey, verifiedFolderId: metadata.id }), now.getTime()),
+        .bind(crypto.randomUUID(), actorId, mappingId, JSON.stringify(withVia({ chosenPathKey: claim.pathKey, verifiedFolderId: metadata.id }, via)), now.getTime()),
       this.env.DB.prepare("UPDATE autohdr_path_claims SET state = CASE WHEN id = ? THEN 'active' ELSE 'tombstone' END, folder_id = CASE WHEN id = ? THEN ? ELSE folder_id END, diagnostic = NULL, updated_at = ? WHERE mapping_id = ? AND EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ? AND state = 'active' AND final_path_key = ?)")
         .bind(claim.id, claim.id, metadata.id, now.getTime(), mappingId, mappingId, claim.pathKey),
       this.env.DB.prepare("UPDATE autohdr_handoffs SET state = 'started', last_error = NULL, updated_at = ? WHERE id = (SELECT handoff_id FROM autohdr_output_mappings WHERE id = ? AND state = 'active' AND final_path_key = ?) AND state = 'blocked'")
@@ -745,7 +747,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     return { mappingId, finalPath: claim.path, finalPathKey: claim.pathKey, folderId: metadata.id, state: "active" };
   }
 
-  async reassignAutoHdrPathClaim(pathKey: string, targetMappingId: string, verifiedFolderId: string, actorId: string): Promise<Record<string, unknown>> {
+  async reassignAutoHdrPathClaim(pathKey: string, targetMappingId: string, verifiedFolderId: string, actorId: string, via?: McpVia): Promise<Record<string, unknown>> {
     const db = dbFor(this.env);
     const target = await db.select({
       mappingId: autoHdrOutputMappings.id,
@@ -789,7 +791,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       this.env.DB.prepare("UPDATE autohdr_output_mappings SET state = 'active', final_path = ?, final_path_key = ?, folder_id = ?, diagnostic = NULL, observed_at = ?, updated_at = ? WHERE id = ? AND state = 'blocked_collision' AND EXISTS (SELECT 1 FROM autohdr_path_claims WHERE id = ? AND mapping_id = ? AND state = 'active')")
         .bind(source.path, source.pathKey, metadata.id, now, now, target.mappingId, source.claimId, target.mappingId),
       this.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'integration.autohdr_path_claim.reassign', 'autohdr_mapping', ?, ?, ? WHERE changes() = 1")
-        .bind(crypto.randomUUID(), actorId, target.mappingId, JSON.stringify({ pathKey: source.pathKey, sourceMappingId: source.sourceMappingId, verifiedFolderId: metadata.id }), now),
+        .bind(crypto.randomUUID(), actorId, target.mappingId, JSON.stringify(withVia({ pathKey: source.pathKey, sourceMappingId: source.sourceMappingId, verifiedFolderId: metadata.id }, via)), now),
       this.env.DB.prepare("UPDATE autohdr_handoffs SET state = 'starting', last_error = NULL, updated_at = ? WHERE id = ? AND state = 'blocked' AND EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ? AND state = 'active' AND final_path_key = ?)")
         .bind(now, target.handoffId, target.mappingId, source.pathKey),
       this.env.DB.prepare("UPDATE jobs SET status = 'queued', error = NULL, updated_at = ? WHERE id = ? AND status = 'failed' AND EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ? AND state = 'active' AND final_path_key = ?)")
