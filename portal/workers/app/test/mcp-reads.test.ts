@@ -1,7 +1,7 @@
 import { env, SELF as workerSelf } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
-import { MCP_ALLOWED_ROUTES, isAllowedMcpRoute } from "../src/mcp/route-allowlist";
+import { MCP_ALLOWED_ROUTES, REDEMPTION_ONLY_ROUTES, isAllowedMcpRoute } from "../src/mcp/route-allowlist";
 import { MCP_TOOLS, toolsFor } from "../src/mcp/tools/registry";
 import { COLLAB_WRITE_TOOLS } from "../src/mcp/tools/collab-writes";
 import { WRITE_TOOLS as CORE_WRITE_TOOLS } from "../src/mcp/tools/writes";
@@ -29,6 +29,7 @@ const READ_NAMES = [
   "get_me", "list_projects", "my_tasks", "get_project", "list_stages", "list_project_assignment_candidates", "list_subtask_assignee_options",
   "get_project_subtasks", "get_project_links", "list_people_for_filters", "list_project_comments", "get_project_activity", "get_collaboration_summary",
   "list_project_assets", "list_asset_annotations", "list_notifications", "list_notice_board",
+  "get_asset_download_url", "get_selection_download_url",
 ];
 const WRITE_NAMES = WRITE_TOOLS.map((tool) => tool.name);
 const ADMIN_NAMES = [
@@ -65,10 +66,10 @@ describe("tools/list follows the role and the granted scopes", () => {
     expect(editor.filter((n) => n.startsWith("admin_"))).toEqual([]);
     expect(photographer.filter((n) => n.startsWith("admin_"))).toEqual([]);
     expect(editor).toEqual(READ_NAMES.filter((n) => n !== "list_project_assignment_candidates").sort());
-    expect(photographer).toEqual(READ_NAMES.filter((n) => !["list_project_assignment_candidates", "get_project_links"].includes(n)).sort());
+    expect(photographer).toEqual(READ_NAMES.filter((n) => !["list_project_assignment_candidates", "get_project_links", "get_selection_download_url"].includes(n)).sort());
   });
   it("external_editor sees only the subset its routes serve", async () => {
-    expect(await names("external")).toEqual(READ_NAMES.filter((n) => !["list_project_assignment_candidates", "list_notice_board"].includes(n)).sort());
+    expect(await names("external")).toEqual(READ_NAMES.filter((n) => !["list_project_assignment_candidates", "list_notice_board", "get_selection_download_url"].includes(n)).sort());
   });
   it("a read-only grant lists only read-only tools; no read scope lists none", async () => {
     const list = await h.toolsList(tokens.adminReadOnly!.accessToken);
@@ -242,7 +243,7 @@ describe("get_project_links takes the route's collection enum", () => {
 
 describe("route allowlist and the tool registry agree", () => {
   it("every tool dispatches to an allowlisted route, and every allowlist entry belongs to a tool", () => {
-    const toolTemplates = new Set(MCP_TOOLS.map((tool) => `${tool.route.method} ${tool.route.template}`));
+    const toolTemplates = new Set([...MCP_TOOLS.map((tool) => `${tool.route.method} ${tool.route.template}`), ...REDEMPTION_ONLY_ROUTES.map(([method, template]) => `${method} ${template}`)]);
     for (const tool of MCP_TOOLS.filter((candidate) => candidate.annotations.readOnlyHint === true)) {
       const path = tool.route.template.replace(/:[A-Za-z]+/g, "x1");
       expect(isAllowedMcpRoute(tool.route.method, path), tool.name).toBe(true);
@@ -252,7 +253,8 @@ describe("route allowlist and the tool registry agree", () => {
     expect(new Set(MCP_TOOLS.map((tool) => tool.name)).size).toBe(MCP_TOOLS.length);
   });
   it("has no wildcard, only reads outside the write tools' routes, and keeps /api/auth out", () => {
-    const writeRoutes = new Set(WRITE_TOOLS.map((tool) => `${tool.route.method} ${tool.route.template}`));
+    // The download tools are read-scope; the one non-GET route they own creates a zip ticket (#707).
+    const writeRoutes = new Set([...WRITE_TOOLS, ...MCP_TOOLS.filter((tool) => tool.name.endsWith("_download_url"))].map((tool) => `${tool.route.method} ${tool.route.template}`));
     expect(MCP_ALLOWED_ROUTES.every((route) => !route.template.includes("*") && (route.method === "GET" || writeRoutes.has(`${route.method} ${route.template}`)))).toBe(true);
     expect(isAllowedMcpRoute("GET", "/api/auth/get-session")).toBe(false);
     expect(isAllowedMcpRoute("GET", "/api/projects/x/jobs/extra")).toBe(false);

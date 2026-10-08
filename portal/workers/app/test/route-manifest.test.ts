@@ -133,6 +133,8 @@ describe("terminal route manifest", () => {
       ["ALL", "/.well-known/oauth-protected-resource", "bearer-protocol"], ["ALL", "/.well-known/oauth-protected-resource/*", "bearer-protocol"],
       ["ALL", "/oauth/token", "bearer-protocol"], ["ALL", "/oauth/register", "bearer-protocol"], ["GET", "/oauth/authorize", "bearer-protocol"],
       ["ALL", "/mcp", "bearer-protocol"], ["ALL", "/mcp/", "bearer-protocol"],
+      ["GET", "/dl/asset/:assetId/:variant", "bearer-protocol"], ["GET", "/dl/zip/:projectId/:ticket", "bearer-protocol"],
+      ["ALL", "/dl", "terminal-fallback"], ["ALL", "/dl/*", "terminal-fallback"],
     ];
     for (const [method, path, routeClass] of expected) {
       const row = PROJECT_SECURITY_ROUTE_CLASSIFICATION.find((entry) => entry.method === method && entry.path === path);

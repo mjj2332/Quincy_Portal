@@ -65,6 +65,8 @@ function isExactLegacyStageBody(body: unknown): body is { stageKey: string } {
     && typeof (body as { stageKey?: unknown }).stageKey === "string";
 }
 const DOWNLOAD_SELECTION_TICKET_MS = 5 * 60 * 1000;
+/** #707: a ticket issued to an MCP connection lives as long as its signed URL (15 minutes). */
+const MCP_DOWNLOAD_SELECTION_TICKET_MS = 15 * 60 * 1000;
 const unavailableSelectionError = "One or more selected assets are not available in this project";
 const unsupportedSelectionError = "Download Selection supports one RAW or Edited photo selection";
 
@@ -85,7 +87,7 @@ type ValidatedDownloadSelection = {
   entries: DownloadSelectionEntry[];
   collection: "raw" | "edited";
   totalBytes: number;
-  principal: { id: string; role: AppEnv["Variables"]["user"]["role"]; impersonatedBy: string | null };
+  principal: { id: string; role: AppEnv["Variables"]["user"]["role"]; impersonatedBy: string | null; via?: AppEnv["Variables"]["user"]["via"] };
 };
 
 /**
@@ -142,7 +144,7 @@ async function validateDownloadSelection(c: Context<AppEnv>, projectId: string, 
     totalBytes += entry.bytes;
   }
   if (totalBytes > DOWNLOAD_SELECTION_MAX_BYTES) return c.json({ error: "Selected assets exceed the 256 MiB download limit" }, 413);
-  return { entries, collection, totalBytes, principal: { id: principal.id, role: principal.role, impersonatedBy: c.get("user").impersonatedBy } };
+  return { entries, collection, totalBytes, principal: { id: principal.id, role: principal.role, impersonatedBy: c.get("user").impersonatedBy, via: c.get("user").via } };
 }
 
 async function addCollections(db: ReturnType<typeof createDb>, projectId: string, orderedServices: CollectionKind[] | undefined) {
@@ -1068,7 +1070,7 @@ projectsRoutes.post("/projects/:id/download-selection", terminalRoute("/projects
     userId: validated.principal.id,
     projectId,
     assetIdsJson: JSON.stringify(data.assetIds),
-    expiresAt: new Date(now.getTime() + DOWNLOAD_SELECTION_TICKET_MS),
+    expiresAt: new Date(now.getTime() + (c.get("user").via?.kind === "mcp" ? MCP_DOWNLOAD_SELECTION_TICKET_MS : DOWNLOAD_SELECTION_TICKET_MS)),
     createdAt: now,
   });
   return c.json({ downloadUrl: `/api/projects/${projectId}/download-selection/${ticket}/archive.zip` }, 201);
