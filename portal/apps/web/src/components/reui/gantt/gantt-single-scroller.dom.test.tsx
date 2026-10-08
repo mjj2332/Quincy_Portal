@@ -14,9 +14,10 @@ if (!Element.prototype.getAnimations) {
 }
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Gantt } from "@/components/reui/gantt/gantt";
 import { GanttView } from "@/components/reui/gantt/gantt-view";
+import { GANTT_HEADER_PX } from "@/components/reui/gantt/gantt-track-geometry";
 
 let root: Root | null = null;
 let host: HTMLElement;
@@ -106,7 +107,7 @@ describe.each(["custom", "native"] as const)("single scroller (%s scrollbars)", 
   it("reserves scroll-padding for the sticky header and the tree inset", async () => {
     await mount(scrollbars);
     const scroller = host.querySelector<HTMLElement>("[data-gantt-scroller]")!;
-    expect(scroller.style.getPropertyValue("scroll-padding-top")).toBe("65px");
+    expect(scroller.style.getPropertyValue("scroll-padding-top")).toBe(`${GANTT_HEADER_PX}px`);
     expect(scroller.style.getPropertyValue("scroll-padding-inline-start")).toBe("var(--gantt-tree-inset)");
   });
 });
@@ -170,5 +171,54 @@ describe("tree floor and overlay stacking (Sol review on #727)", () => {
     }
     // the scrollbar rail keeps its own z so it still covers the scroller's bottom strip
     expect(byTestId("gantt-tree-scrollbar-rail")!.className).toContain("z-30");
+  });
+});
+
+describe("scroll intent from the tree column (#727)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  // The scroller has no layout in happy-dom: give it a wide track so a scroll at the start edge reads as
+  // "asked to grow the range before".
+  async function mountScrollable() {
+    // intent is "within 1200ms of a stamp initialised to 0": start the clock well past that so only a
+    // real gesture can open the window (a fresh test process is under 1.2s old)
+    vi.spyOn(performance, "now").mockReturnValue(60_000);
+    await mount("custom");
+    const scroller = host.querySelector<HTMLElement>("[data-gantt-scroller]")!;
+    Object.defineProperty(scroller, "clientWidth", { value: 800, configurable: true });
+    Object.defineProperty(scroller, "scrollWidth", { value: 3000, configurable: true });
+    let left = 0;
+    Object.defineProperty(scroller, "scrollLeft", { get: () => left, set: (v: number) => (left = v), configurable: true });
+    const axis = () => scroller.querySelector<HTMLElement>("[data-gantt-axis]")!.dataset.ganttRangeStart;
+    return { scroller, axis, before: axis() };
+  }
+  async function scrollAfter(scroller: HTMLElement, gesture: (tree: HTMLElement) => void) {
+    await act(async () => {
+      gesture(byTestId("gantt-tree-column")!);
+      scroller.dispatchEvent(new Event("scroll"));
+      await Promise.resolve();
+    });
+  }
+
+  it("a pointerdown or keydown inside the tree column is not scroll intent", async () => {
+    for (const gesture of [
+      (tree: HTMLElement) => tree.dispatchEvent(new Event("pointerdown", { bubbles: true })),
+      (tree: HTMLElement) => tree.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })),
+    ]) {
+      const { scroller, axis, before } = await mountScrollable();
+      await scrollAfter(scroller, gesture);
+      expect(axis()).toBe(before);
+      await act(async () => root!.unmount());
+      host.remove();
+      host = document.createElement("div");
+      document.body.appendChild(host);
+      root = createRoot(host);
+    }
+  });
+
+  it("a wheel inside the tree column still is (it scrolls the timeline)", async () => {
+    const { scroller, axis, before } = await mountScrollable();
+    await scrollAfter(scroller, (tree) => tree.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 40 })));
+    expect(axis()).not.toBe(before);
   });
 });

@@ -235,3 +235,46 @@ What stays out: the write (one `POST /api/projects/:id/subtasks` carrying `assig
 (`quincy/SubtaskAssigneePicker`, `quincy/SubtaskScheduleControl`) and the draft's state.
 `gantt-create-task.dom.test.tsx` covers the seam; `ProductionGantt-create-draft.dom.test.tsx` and
 `ProductionGantt.writes.dom.test.tsx` cover the consumer.
+
+## Addendum (2026-10-08, #722 via #726 / #727 / #728): one scroller, a hard tree floor, two Quincy-only files
+
+The Timeline had two scroll panes (tree and timeline) kept in step by a bidirectional scroll-sync
+and a wheel driver, which drifted and put JS on the scrolling path. #722 restructures it in three
+steps, all inside this tree for the same reason as everything above: the layout, the geometry reads
+and the gesture handling are private to `gantt-view.tsx` / `gantt-dnd.tsx` / `gantt.tsx`.
+
+- **Two panes become one scroller (#727).** `bodyRef` no longer scrolls. It holds the single scroller
+  (`data-gantt-scroller`), whose content is a sticky `start-0`, x-clipped tree column and an isolated
+  timeline column, each with its own sticky-top header. Tree rows and bars share one `scrollTop`, so
+  they cannot drift; the scroll-sync and the wheel-driver effect are deleted. The splitter, the lane
+  overlay (zoom control, offscreen chips) and the tree overlay (reorder indicator) are overlays
+  outside the scroller, so "the visible pane rect" reads keep meaning what they did
+  (`laneOverlayRef` / `treeOverlayRef`). The tree's width is one CSS variable, `--gantt-tree-inset`,
+  on the body. Behaviour change: the tree no longer scrolls sideways on its own (it clips), and a
+  horizontal wheel over it pans the timeline.
+- **`GanttTreePanelConfig.minWidthHard` (#727), additive, default false.** Because the tree clips
+  rather than scrolls, a consumer whose columns must stay visible (the Production Gantt) needs
+  `minWidth` to be a floor, not a preference the container can override. With it set, the timeline
+  lane takes what remains, capped only by the container. Without it the vendor clamp is unchanged.
+- **Two new files, Quincy-only.** Neither exists in the registry item, and both are here for the
+  reason `gantt-lib.tsx` is: the logic is shared by more than one vendored file and a wrapper could
+  not reach it.
+  - `gantt-track-geometry.ts` (#726, extended in #727): the one place the horizontal track geometry
+    (`start`, `visibleWidth`, `trackWidth`, minus the tree inset) is computed, plus
+    `GANTT_SCROLLER_SELECTOR`, `findScroller`, `GANTT_TREE_COLUMN_SELECTOR` and `GANTT_HEADER_PX`.
+    `gantt-view.tsx` (auto-centre, infinite edge growth, re-seat, zoom anchors, header pan, chips),
+    `gantt-dnd.tsx` (edge auto-scroll) and `ProductionGantt.tsx` all read it. Inlining it would put a
+    copy of the RTL fold and the inset rule in each, which is the drift this change removes.
+  - `gantt-wheel-zoom.ts` (#728): the only non-passive wheel listener in the Gantt. A cancellable
+    listener makes the browser wait on script before it scrolls, so it must not sit on the scroller
+    in the steady state; this helper attaches it only while Control or Meta is held (and uses
+    `gesturestart` / `gesturechange` where `GestureEvent` exists), skipping the tree column so page
+    zoom still works there. It is a self-contained lifecycle with module-level modifier state, which
+    belongs beside, not inside, the 5,000-line view.
+- **Scroll intent.** The intent listeners that gate infinite range growth moved to the body (the
+  scroller spans the tree now). A pointer press or key inside the tree column edits the tree and
+  scrolls nothing, so it is not intent; a wheel or touch there still is.
+
+What stays out: the Production Gantt's choice of `minWidthHard` and its tree widths (consumer
+policy). Covered by `gantt-single-scroller.dom.test.tsx`, `gantt-track-geometry.dom.test.tsx`,
+`gantt-wheel-zoom.dom.test.tsx` and `gantt-view-overflow-clip.dom.test.tsx`.
