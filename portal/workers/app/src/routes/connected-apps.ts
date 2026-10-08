@@ -69,6 +69,8 @@ connectedAppsRoutes.post("/connected-apps/consent/:handle", terminalRoute("/conn
 
   const connectionId = newId(); const now = Date.now();
   const clientId = approved.request.clientId;
+  // Library grants of the rows this consent supersedes; revoked best-effort below. D1 is the boundary.
+  const superseded = await c.env.DB.prepare("SELECT oauth_grant_id, user_id FROM mcp_connections WHERE user_id = ? AND client_id = ? AND revoked_at IS NULL").bind(user.id, clientId).all<{ oauth_grant_id: string | null; user_id: string }>();
   await c.env.DB.batch([
     c.env.DB.prepare("UPDATE mcp_connections SET revoked_at = ?, revoked_by = ?, revoke_reason = 'superseded' WHERE user_id = ? AND client_id = ? AND revoked_at IS NULL").bind(now, user.id, user.id, clientId),
     c.env.DB.prepare("INSERT INTO mcp_connections (id, user_id, client_id, client_name, redirect_host, scopes, authorization_epoch, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
@@ -78,8 +80,11 @@ connectedAppsRoutes.post("/connected-apps/consent/:handle", terminalRoute("/conn
   try {
     const { redirectTo } = await api.completeAuthorization({
       request: approved.request, userId: user.id, metadata: { clientId }, scope: granted,
+      // Never let the library sweep this user+client: a concurrent consent's newer grant would die with it.
+      revokeExistingGrants: false,
       props: { userId: user.id, connectionId, authorizationEpoch: user.authorizationEpoch, clientName: stored.clientName },
     });
+    await revokeInLibrary(c.env, superseded.results);
     return respond({ redirectTo }, approved.headers);
   } catch (error) {
     await c.env.DB.prepare("UPDATE mcp_connections SET revoked_at = ?, revoked_by = ?, revoke_reason = 'failed' WHERE id = ? AND revoked_at IS NULL").bind(Date.now(), user.id, connectionId).run();

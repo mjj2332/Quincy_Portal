@@ -42,8 +42,12 @@ describe("ConnectedAppConsent", () => {
     expect(document.querySelector('[data-testid="consent-localhost"]')).toBeNull();
     expect(checkbox("read")?.checked).toBe(true);
     expect(checkbox("read")?.disabled).toBe(true);
-    expect(checkbox("write")?.checked).toBe(true);
+    expect(checkbox("write")?.checked).toBe(false);
     expect(checkbox("admin")).toBeNull();
+    // The warning is the real legend of the scope group, not a loose paragraph.
+    const legend = document.querySelector("fieldset > legend");
+    expect(legend?.textContent).toBe("This app will see Portal data you can see");
+    expect(legend?.closest("fieldset")?.contains(checkbox("read"))).toBe(true);
   });
 
   it("flags a localhost redirect", async () => {
@@ -67,10 +71,17 @@ describe("ConnectedAppConsent", () => {
 
   it("Approve posts the chosen scopes and leaves with window.location.assign", async () => {
     await mount();
-    await act(async () => { checkbox("write")!.click(); await Promise.resolve(); });
     await act(async () => { button("Approve").click(); await Promise.resolve(); });
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/connected-apps/consent/${HANDLE}`, { decision: "approve", scopes: ["read"] });
+  });
+
+  it("Approve includes Write only when ticked", async () => {
+    await mount();
+    await act(async () => { checkbox("write")!.click(); await Promise.resolve(); });
+    await act(async () => { button("Approve").click(); await Promise.resolve(); });
+    await flush();
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/connected-apps/consent/${HANDLE}`, { decision: "approve", scopes: ["read", "write"] });
     expect(assign).toHaveBeenCalledWith("https://claude.ai/cb?code=x");
   });
 
@@ -87,6 +98,8 @@ describe("ConnectedAppConsent", () => {
     await mount();
     expect(document.querySelector('[data-testid="consent-expired"]')?.textContent).toContain("expired or was already used");
     expect(document.querySelector("button")).toBeNull();
+    expect(document.body.textContent).not.toContain("An app is asking to act as you");
+    expect(document.querySelector('[data-testid="consent-expired"]')?.parentElement?.querySelector('a[href="/settings/connected-apps"]')).not.toBeNull();
   });
 
   it("shows a refusal and stays on the page", async () => {
