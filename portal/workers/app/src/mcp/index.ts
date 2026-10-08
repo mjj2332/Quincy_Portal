@@ -6,9 +6,11 @@ import type { AppEnv } from "../env";
 import { isMcpAccessEnabled } from "../lib/mcp-access";
 import { loadMcpAuthority, parseGrantProps, MCP_SCOPES, type McpScope } from "./authority";
 import { getAuthorizationServer, mcpResource } from "./oauth-server";
-import { toolsFor } from "./tools/registry";
+import { toolsFor, strictInput } from "./tools/registry";
+import { checkMcpRateLimit, rateLimitedResult } from "./rate-limit";
 import { CONSENT_PATH_PREFIX, storeConsentDescription } from "./consent";
 import type { McpFetchApp } from "./dispatch";
+import type { McpTool } from "./tools/registry";
 
 const CORS = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", "access-control-allow-headers": "authorization, content-type, mcp-protocol-version, mcp-session-id, accept", "access-control-expose-headers": "www-authenticate, mcp-session-id", "access-control-max-age": "86400" } as const;
 const LAST_USED_GRANULARITY_MS = 60_000;
@@ -37,6 +39,32 @@ function withCors(response: Response): Response {
   const headers = new Headers(response.headers);
   for (const [k, v] of Object.entries(CORS)) headers.set(k, v);
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+type JsonRpcMessage = { jsonrpc?: string; id?: string | number | null; method?: string; params?: { name?: unknown } };
+
+/** A JSON-RPC response for a body that holds a rate-limited `tools/call`, or null when every call is within its limits. */
+async function rateLimitDenials(c: Context<AppEnv>, connectionId: string, tools: readonly McpTool[]): Promise<Response | null> {
+  if (c.req.method !== "POST") return null;
+  let body: unknown;
+  try { body = await c.req.raw.clone().json(); } catch { return null; }
+  const messages = (Array.isArray(body) ? body : [body]) as JsonRpcMessage[];
+  const verdicts = new Map<JsonRpcMessage, ReturnType<typeof rateLimitedResult>>();
+  for (const message of messages) {
+    if (!message || typeof message !== "object" || message.method !== "tools/call" || message.id === undefined || message.id === null) continue;
+    const tool = tools.find((candidate) => candidate.name === message.params?.name);
+    const kind = await checkMcpRateLimit(c.env, connectionId, tool !== undefined && tool.annotations.readOnlyHint !== true);
+    if (kind) verdicts.set(message, rateLimitedResult(kind));
+  }
+  if (verdicts.size === 0) return null;
+  const reply = (message: JsonRpcMessage) => {
+    const verdict = verdicts.get(message);
+    return verdict
+      ? { jsonrpc: "2.0", id: message.id, result: verdict }
+      : { jsonrpc: "2.0", id: message.id ?? null, error: { code: -32000, message: "Not processed: this batch contained a rate-limited call" } };
+  };
+  const replies = messages.filter((message) => message && typeof message === "object" && message.id !== undefined && message.id !== null).map(reply);
+  return c.json(Array.isArray(body) ? replies : replies[0]!, 200);
 }
 
 export function mountMcp(app: Hono<AppEnv>, fetchApp: McpFetchApp) {
@@ -83,9 +111,15 @@ export function mountMcp(app: Hono<AppEnv>, fetchApp: McpFetchApp) {
     c.executionCtx.waitUntil(c.env.DB.prepare("UPDATE mcp_connections SET last_used_at = ? WHERE id = ? AND (last_used_at IS NULL OR last_used_at < ?)").bind(now, props.connectionId, now - LAST_USED_GRANULARITY_MS).run());
 
     const principal = { userId: props.userId, connectionId: props.connectionId, clientName: props.clientName, authorizationEpoch: props.authorizationEpoch };
+    const tools = toolsFor(authority.user.role, scopes);
+
+    // Rate limit per Connected app: every tools/call is counted, and a call to a tool without readOnlyHint also counts as a write.
+    const denied = await rateLimitDenials(c, props.connectionId, tools);
+    if (denied) return withCors(denied);
+
     const server = new McpServer({ name: "quincy-portal", version: "1.0.0" });
-    for (const tool of toolsFor(authority.user.role, scopes)) {
-      server.registerTool(tool.name, { description: tool.description, inputSchema: tool.inputSchema, annotations: tool.annotations }, async (input: Record<string, unknown>) =>
+    for (const tool of tools) {
+      server.registerTool(tool.name, { description: tool.description, inputSchema: strictInput(tool), annotations: tool.annotations }, async (input: Record<string, unknown>) =>
         tool.call({ env: c.env, executionCtx: c.executionCtx as ExecutionContext, fetchApp, principal, role: authority.user.role }, input));
     }
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });

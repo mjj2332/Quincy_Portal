@@ -1,42 +1,23 @@
-import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
-import type { ZodRawShape } from "zod";
-import type { Capability } from "@quincy/shared";
+import { z } from "zod";
 import { roleHasCapability } from "@quincy/shared";
-import type { Env } from "../../env";
-import type { McpFetchApp } from "../dispatch";
-import { dispatchToApi } from "../dispatch";
-import type { McpPrincipal } from "../../lib/mcp-dispatch-context";
 import type { McpScope } from "../authority";
+import { readTool, type McpTool } from "./define";
+import { READ_TOOLS } from "./reads";
+import { ADMIN_READ_TOOLS } from "./admin-reads";
 
-export type McpToolContext = { env: Env; executionCtx: ExecutionContext; fetchApp: McpFetchApp; principal: McpPrincipal; role: string };
+export type { McpTool, McpToolContext, McpToolResult } from "./define";
 
-export type McpTool = {
-  name: string;
-  description: string;
-  scope: McpScope;
-  capability?: Capability;
-  annotations: ToolAnnotations;
-  inputSchema: ZodRawShape;
-  call(ctx: McpToolContext, input: Record<string, unknown>): Promise<{ content: { type: "text"; text: string }[]; isError?: boolean }>;
-};
+const getMe = readTool({ name: "get_me", template: "/api/me", description: "The Portal staff member this connection acts as: their profile, role and capabilities." });
 
-async function jsonResult(response: Response) {
-  const text = await response.text();
-  return { content: [{ type: "text" as const, text }], ...(response.ok ? {} : { isError: true }) };
-}
+export const MCP_TOOLS: readonly McpTool[] = [getMe, ...READ_TOOLS, ...ADMIN_READ_TOOLS];
 
-const getMe: McpTool = {
-  name: "get_me",
-  description: "The Portal staff member this connection acts as: their profile, role and capabilities.",
-  scope: "read",
-  annotations: { readOnlyHint: true, openWorldHint: false },
-  inputSchema: {},
-  call: async (ctx) => jsonResult(await dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, { method: "GET", path: "/api/me" })),
-};
+/** A tool's input as the strict object its callers are held to: unknown arguments are an error. */
+export const strictInput = (tool: McpTool) => z.object(tool.inputSchema).strict();
 
-export const MCP_TOOLS: readonly McpTool[] = [getMe];
-
-/** Only the tools the role and the granted scopes allow. `admin` implies nothing else: scopes are explicit. */
+/** Only the tools the role and the granted scopes allow. `admin` implies nothing else: scopes are explicit. The route still enforces everything. */
 export function toolsFor(role: string, scopes: readonly McpScope[]): McpTool[] {
-  return MCP_TOOLS.filter((tool) => scopes.includes(tool.scope) && (!tool.capability || roleHasCapability(role as never, tool.capability)));
+  return MCP_TOOLS.filter((tool) =>
+    scopes.includes(tool.scope)
+    && (!tool.capability || roleHasCapability(role as never, tool.capability))
+    && (!tool.anyCapability || tool.anyCapability.some((capability) => roleHasCapability(role as never, capability))));
 }

@@ -123,7 +123,7 @@ describe("full flow", () => {
       const init = await rpc(tokens.access_token, "initialize", initParams, path);
       expect(init.status).toBe(200);
       const list = await (await rpc(tokens.access_token, "tools/list", {}, path)).json() as { result: { tools: { name: string }[] } };
-      expect(list.result.tools.map((x) => x.name)).toEqual(["get_me"]);
+      expect(list.result.tools.map((x) => x.name)).toContain("get_me");
     }
     const call = await (await rpc(tokens.access_token, "tools/call", { name: "get_me", arguments: {} })).json() as { result: { content: { text: string }[] } };
     const me = JSON.parse(call.result.content[0]!.text) as { user: { id: string; role: string } };
@@ -157,7 +157,7 @@ describe("full flow", () => {
   it("a write-only tool listing follows the granted scopes", async () => {
     const { tokens } = await connect("read");
     const list = await (await rpc(tokens.access_token, "tools/list")).json() as { result: { tools: { name: string }[] } };
-    expect(list.result.tools.map((x) => x.name)).toEqual(["get_me"]);
+    expect(list.result.tools.map((x) => x.name)).toContain("get_me");
   });
 });
 
