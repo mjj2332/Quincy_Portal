@@ -312,7 +312,7 @@
  * bottom sheet is capped at the 560px dialog rung and centred from 721px up, with `--radius-lg` top corners (owner choice); a phone stays full-bleed and square.
  *
  * 2026-10-08, #738 - CHANGED, behaviour (ADR 0009 addendum). `GanttView` takes `zoomControlTarget?: HTMLElement | null`. An element
- * portals the zoom buttons into it as a horizontal `ButtonGroup` of ghost `icon-sm` buttons (size-4 glyphs, tooltip below), same
+ * portals the zoom buttons into it as a labelled `role="group"` row of nav-config buttons (as `GanttNavPrev`/`Next`) (size-4 glyphs, tooltip below), same
  * handlers, step, bounds and focusable `aria-disabled` at the limits; `undefined` keeps the floating box (vendor consumers, harness);
  * `null` renders neither. The handlers moved to `zoomInStep`/`zoomOutStep`. Zoom state and wheel/pinch anchoring are unchanged,
  * and the `--gantt-zoom-shift` chip dodge still serves the floating box only.
@@ -399,7 +399,6 @@ import {
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/reui/button"
-import { ButtonGroup } from "@/components/reui/button-group"
 import { Input } from "@/components/reui/input"
 import { FieldLabel } from "@/components/reui/field"
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from "@/components/reui/sheet"
@@ -711,7 +710,7 @@ interface GanttViewProps extends useRender.ComponentProps<"div"> {
   /**
    * #738: where the zoom buttons render. `undefined` keeps the floating box in the lane overlay
    * (vendor consumers, the harness). An element portals the buttons into it as a toolbar
-   * `ButtonGroup`. `null` renders nothing - the consumer's target has not mounted yet, and the
+   * group composed like the nav arrows. `null` renders nothing - the consumer's target has not mounted yet, and the
    * floating box must not flash first. Zoom state stays in `GanttView`, so wheel/pinch anchoring is
    * untouched. Only read when `zoomControl` is on.
    */
@@ -3438,21 +3437,25 @@ function GanttView({
           {viewConfig.zoomControl &&
             zoomControlTarget &&
             createPortal(
-              <ButtonGroup
+              // #738: composed like GanttNavPrev/Next (a plain flex row of nav-config buttons), not a ButtonGroup,
+              // whose seam radii fought `rounded-none!` and left the two buttons unlike the arrows on hover/focus
+              <div
+                role="group"
                 data-slot="gantt-zoom-toolbar"
                 data-testid="gantt-zoom"
-                aria-label={settings.i18n.labels.zoomIn + " / " + settings.i18n.labels.zoomOut}
+                aria-label={settings.i18n.labels.zoomOut + " / " + settings.i18n.labels.zoomIn}
+                className="flex items-center"
               >
                 <TooltipProvider delay={600} closeDelay={0} timeout={300}>
                   <Tooltip>
                     <TooltipTrigger
                       render={
                         <Button
-                          variant="ghost"
-                          size="icon-sm"
+                          variant={viewConfig.navButtonVariant}
+                          size={viewConfig.navButtonSize === "sm" ? "icon-sm" : "icon"}
                           aria-label={settings.i18n.labels.zoomOut}
                           aria-disabled={!canZoomOut || undefined}
-                          className="rounded-none! aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
+                          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
                           onClick={zoomOutStep}
                         />
                       }
@@ -3467,11 +3470,11 @@ function GanttView({
                     <TooltipTrigger
                       render={
                         <Button
-                          variant="ghost"
-                          size="icon-sm"
+                          variant={viewConfig.navButtonVariant}
+                          size={viewConfig.navButtonSize === "sm" ? "icon-sm" : "icon"}
                           aria-label={settings.i18n.labels.zoomIn}
                           aria-disabled={!canZoomIn || undefined}
-                          className="rounded-none! aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
+                          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
                           onClick={zoomInStep}
                         />
                       }
@@ -3483,7 +3486,7 @@ function GanttView({
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
-              </ButtonGroup>,
+              </div>,
               zoomControlTarget
             )}
           {customScrollbars && (

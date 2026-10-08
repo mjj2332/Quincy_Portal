@@ -114,6 +114,22 @@ describe("ProductionGantt zoom buttons (#738)", () => {
     expect(zoomButton("Zoom out")).not.toBeNull();
   });
 
+  it("are composed like the prev/next arrows, so corners match on hover and focus (design review)", async () => {
+    await mountAt(1280);
+    const group = navZoom().querySelector<HTMLElement>('[data-testid="gantt-zoom"]')!;
+    expect(group.getAttribute("role")).toBe("group");
+    expect(group.getAttribute("aria-label")).toBe("Zoom out / Zoom in");
+    // the arrows' own radius classes, with no ButtonGroup seam radii and no `rounded-none!` override
+    const radii = (el: Element) => el.className.split(/\s+/).filter((c) => c.includes("rounded")).sort();
+    const nav = host.querySelector<HTMLElement>('[data-testid="gantt-nav-zoom"]')!.parentElement!;
+    const arrow = [...nav.querySelectorAll<HTMLButtonElement>("button")].find((b) => /prev/i.test(b.getAttribute("aria-label") ?? ""))!;
+    expect(arrow).toBeDefined();
+    for (const name of ["Zoom out", "Zoom in"] as const) {
+      expect(radii(zoomButton(name))).toEqual(radii(arrow));
+      expect(zoomButton(name).closest('[data-slot="button-group"]')).toBeNull();
+    }
+  });
+
   it("a click moves the zoom by one step (0.25)", async () => {
     await mountAt(1280);
     const base = trackRem();

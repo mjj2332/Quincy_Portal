@@ -295,7 +295,7 @@ consumer decision (`ProductionGantt.tsx` splits its old `narrowTree` into `names
   `wheelZoom` is independent of it and stays on.
 - **#738: the zoom control can render into a consumer-provided target.** `GanttView` takes
   `zoomControlTarget?: HTMLElement | null`. An element portals the buttons into it as a toolbar
-  `ButtonGroup` (ghost `icon-sm`, tooltip below); `undefined` keeps the floating box (vendor consumers,
+  labelled `role="group"` row composed like `GanttNavPrev`/`Next` (nav-config variant and size, tooltip below); `undefined` keeps the floating box (vendor consumers,
   harness); `null` renders neither until the target mounts. Zoom state stays inside `GanttView`, so
   wheel and pinch anchoring is unchanged. The Production Gantt targets the Timeline nav row.
 
