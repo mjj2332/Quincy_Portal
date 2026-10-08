@@ -12,7 +12,7 @@ function setup(opts: { webkit: boolean }) {
   host.append(tree, lane)
   document.body.appendChild(host)
   const onWheel = vi.fn()
-  const onGesture = vi.fn(() => true)
+  const onGesture = vi.fn((_ratio: number, _clientX: number) => true)
   const unbind = bindGatedWheelZoom(host, { onWheel, onGesture })
   return { host, tree, treeChild, lane, onWheel, onGesture, unbind }
 }
