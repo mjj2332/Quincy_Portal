@@ -306,6 +306,10 @@
  * bounds alone are not used. The 2px sub-pixel allowance is kept. Not changed: chip targets, focus hand-off, the vertical filter, the zoom-band dodge.
  * Additive `data-testid`s on the external bar label and the chip (guard F: DOM tests select by testid, not the vendor slot). The label is not observed on its own, so a font-driven label resize waits for the next scroll, resize or data refresh. Consumer side, no edit here: the
  * names-only layout (< 1024px) passes `zoomControl={false}`; `wheelZoom` stays on, so Ctrl/Cmd-wheel and pinch still zoom.
+ *
+ * 2026-10-08, #734 follow-up - CHANGED, behaviour (ADR 0009 addendum). `treeWidth` re-seeds from `treePanel.width` when the config's
+ * `width` or `minWidth` changes (a consumer swapping tree configs across a breakpoint); a splitter drag is otherwise kept. The add-task
+ * bottom sheet is capped at the 560px dialog rung and centred from 721px up (full-bleed on a phone).
  */
 
 import {
@@ -1505,6 +1509,14 @@ function GanttView({
   const clampTree = (width: number) =>
     Math.min(Math.max(width, treeConfig.minWidth), treeConfig.maxWidth)
   const [treeWidth, setTreeWidth] = useState(treeConfig.width)
+  // #734: the width seeds from the config once, so a config swap (the Production Gantt trades GANTT_TREE_PANEL for
+  // the names-only one across 1024px) would leave the old width behind. Re-seed when the config's own width or floor
+  // changes; a splitter drag is untouched otherwise. Derived during render, so no frame paints the stale width.
+  const [seededTree, setSeededTree] = useState({ width: treeConfig.width, minWidth: treeConfig.minWidth })
+  if (seededTree.width !== treeConfig.width || seededTree.minWidth !== treeConfig.minWidth) {
+    setSeededTree({ width: treeConfig.width, minWidth: treeConfig.minWidth })
+    setTreeWidth(treeConfig.width)
+  }
   const configuredTreeWidth = clampTree(treeWidth)
   const columns = viewConfig.columns ?? []
   // #678: the editor row keeps the tree row's columns; with no column carrying a create cell (a
@@ -3934,7 +3946,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
             return false
           }}
           // `focus-visible:!outline-none`: the sheet itself can hold focus between controls (see ProjectSheet).
-          className="z-[var(--z-dialog)] max-h-[calc(100dvh-var(--space-4))] gap-[var(--space-3)] p-[var(--space-4)] pb-[max(var(--space-4),env(safe-area-inset-bottom))] focus-visible:!outline-none"
+          className="z-[var(--z-dialog)] max-h-[calc(100dvh-var(--space-4))] min-[721px]:mx-auto min-[721px]:max-w-[560px] gap-[var(--space-3)] p-[var(--space-4)] pb-[max(var(--space-4),env(safe-area-inset-bottom))] focus-visible:!outline-none"
           overlayProps={{
             // Mandatory: the Gantt can itself sit inside another Sheet's Root (the Project sheet, the rail), and Base UI
             // renders no backdrop for a NESTED dialog unless forced - without a scrim a phone tap outside would do nothing.

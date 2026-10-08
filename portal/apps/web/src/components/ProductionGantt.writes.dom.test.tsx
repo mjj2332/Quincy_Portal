@@ -1687,7 +1687,7 @@ describe("ProductionGantt — Add task row (#344)", () => {
     await render();
     const badge = host.querySelector<HTMLElement>(`[data-testid="gantt-row-attention-missing_deadline"]`)!;
     const tokens = badge.className.split(/\s+/);
-    for (const token of ["min-w-0", "truncate", "min-[721px]:shrink-0"]) expect(tokens, token).toContain(token);
+    for (const token of ["min-w-0", "truncate", "min-[1024px]:shrink-0"]) expect(tokens, token).toContain(token);
     expect(tokens).not.toContain("shrink-0");
     expect(tokens).not.toContain("max-[721px]:max-w-[45%]");
     expect(badge.getAttribute("title")).toBe("Deadline not set");

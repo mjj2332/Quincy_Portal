@@ -327,8 +327,8 @@ const ganttFormatEventTime = mergeGanttI18n(GANTT_I18N).functions.formatEventTim
  * so the street keeps its 96px) plus People (88px) and Due (128px, which holds "Fri 2 Oct · 17:00",
  * "Set deadline" and "Fix deadline"): 180 + 88 + 128 = 396. The narrow (< 1024px, #734) panel carries the
  * name column alone — People and Due are not rendered there, where the row link opens the
- * Project and both are editable there — so it needs no override. The vendor seeds the width once,
- * so a breakpoint crossed mid-session does not re-seed it.
+ * Project and both are editable there — so it needs no override. The vendor re-seeds the width when
+ * the config's width/minWidth change, so a breakpoint crossed mid-session follows the new panel.
  */
 const GANTT_NAME_COLUMN_WIDTH = 180;
 // #727: minWidth 396 = Name 180 + People 88 + Due 128. The tree column is sticky inside the one scroller and clips (never scrolls sideways), so on desktop the splitter must never narrow past the columns. The names-only layout (GANTT_TREE_PANEL_NARROW) has no columns and keep the vendor floor.
@@ -449,7 +449,7 @@ export function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAtte
     <span
       className={cn(
         // #689: on a phone the label is line 2 under the project name and truncates there; desktop keeps it whole beside the name.
-        "min-w-0 truncate text-[10px] uppercase tracking-[0.04em] max-[721px]:tracking-[var(--tracking-normal)] min-[721px]:shrink-0",
+        "min-w-0 truncate text-[10px] uppercase tracking-[0.04em] max-[721px]:tracking-[var(--tracking-normal)] min-[1024px]:shrink-0",
         critical ? "text-signal-critical" : "text-muted-foreground",
       )}
       data-testid={`gantt-row-attention-${reason}`}
@@ -473,7 +473,7 @@ function GanttChildLoadErrorBadge({ onRetry }: { onRetry: () => void }) {
     <button
       type="button"
       data-testid="gantt-children-retry"
-      className="shrink-0 truncate text-[10px] uppercase tracking-[0.04em] text-signal-critical underline max-[721px]:min-w-0 max-[721px]:max-w-full max-[721px]:-outline-offset-2 max-[721px]:focus-visible:!-outline-offset-2"
+      className="min-w-0 truncate text-[10px] uppercase tracking-[0.04em] text-signal-critical underline min-[1024px]:shrink-0 max-[721px]:min-w-0 max-[721px]:max-w-full max-[721px]:-outline-offset-2 max-[721px]:focus-visible:!-outline-offset-2"
       onClick={(event) => {
         // The row label sits inside the tree panel's own row-select affordance — stop this click
         // from also being read as "select this row".

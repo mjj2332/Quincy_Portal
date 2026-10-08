@@ -127,6 +127,11 @@ describe("ProductionGantt breakpoints (#734)", () => {
     it(`attention badge ${narrow ? "stays on the name cell (the Due cell is gone)" : "moves to the Due cell"}`, async () => {
       await mountAt(width);
       expect(has("gantt-row-attention-missing_deadline")).toBe(narrow);
+      if (narrow) {
+        const cls = document.querySelector<HTMLElement>('[data-testid="gantt-row-attention-missing_deadline"]')!.className;
+        expect(cls).toContain("min-[1024px]:shrink-0"); // shrinkable in the 288px names-only cell
+        expect(cls).not.toContain("min-[721px]:shrink-0");
+      }
     });
 
     it(`the add-task editor is ${narrow ? "a bottom sheet" : "an inline row"}`, async () => {
@@ -134,6 +139,8 @@ describe("ProductionGantt breakpoints (#734)", () => {
       await act(async () => { plus().click(); await Promise.resolve(); });
       await settle();
       expect(sheet() !== null).toBe(narrow);
+      // #734: on the dialog ladder from 721px (560px, centred); a phone stays full-bleed.
+      if (narrow) expect(sheet()!.className).toContain("min-[721px]:max-w-[560px]");
       expect(editorRow() !== null).toBe(!narrow);
     });
   });
