@@ -41,6 +41,11 @@ async function redeem(c: Context<AppEnv>, fetchApp: McpFetchApp, target: Downloa
       ? `/media/asset/${encodeURIComponent(target.assetId)}/${encodeURIComponent(target.variant)}`
       : `/api/projects/${encodeURIComponent(target.projectId)}/download-selection/${encodeURIComponent(target.ticket)}/archive.zip`;
     const response = await dispatchToApi(fetchApp, c.env, c.executionCtx as ExecutionContext, principal, { method: "GET", path });
+    // Stored renditions only: a 3xx is the hand-off to the image transformer, whose bearer outlives revocation. Never forward it.
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel();
+      return new Response(JSON.stringify({ error: "rendition_not_ready" }), { status: 409, headers: { "content-type": "application/json", "cache-control": "private, no-store" } });
+    }
     if (response.status >= 400) { await response.body?.cancel(); return forbidden(); }
     // Written before the bytes flow, like the zip route's own audit: a stream cannot show that every byte arrived.
     await audit(c.env, auditPrincipalOf(principal), "mcp_download.redeem", target.kind === "asset" ? "asset" : "project", target.kind === "asset" ? target.assetId : target.projectId, target.kind === "asset" ? { variant: target.variant } : { ticket: target.ticket });
