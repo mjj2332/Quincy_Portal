@@ -67,6 +67,7 @@ routing, or the review lightbox, and keep it current as you work. Find entries w
   touching-X-read-Y table. `npm run verify` (from `portal/`) runs everything CI runs.
 - **Area maps:** `docs/maps/README.md` — notifications, queues, routes, Project sheet, date/time
   controls, new tables, Base UI, tokens. Read the matching map before exploring.
+- **MCP (AI clients):** `docs/Guides/MCP.md` — connecting, scopes, tool table, controls, rollback.
 - **Orchestration tooling:** `scripts/agents/` (`preflight.sh`, `serve-branch.sh`, `sol-review.sh`,
   `codex-plan.sh`, `agy-pass.sh`) and brief templates in `docs/subagents/templates/`. QA serves a
   branch only through `serve-branch.sh`, never from the main checkout. Settled plans go to the

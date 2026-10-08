@@ -233,6 +233,14 @@ _Avoid_: Agent (an Agent is the real-estate Client), bot, assistant
 One staff member's revocable grant letting one AI client act as them.
 _Avoid_: Integration, API key, token
 
+**Scope**:
+What a Connected app was granted: read, write, or admin. Write and admin are separate, explicit
+choices at consent.
+
+**Via marker**:
+The "via ‹client›" label on a comment, activity entry or audit record made by an AI client for the
+staff member.
+
 ### Notifications
 
 **Notification**:
