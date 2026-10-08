@@ -31,6 +31,7 @@ import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { CollaborationTimestamp } from "./quincy/CollaborationTimestamp";
+import { ViaClientMark } from "./ViaClientMark";
 import { ICON_BUTTON } from "./quincy/icon-button";
 import { MENU_ITEM, Menu, MenuPrimitive } from "./quincy/menu";
 import { ARCHIVED_NOTICE_CLASS } from "./archived-notice";
@@ -123,6 +124,7 @@ function CommentItem({ comment, isOwn, readOnly, now, saving, editing, editingOv
     <InitialsAvatar name={comment.author.name} />
     <header className="flex flex-wrap items-baseline gap-x-[var(--space-2)] gap-y-[var(--space-1)] min-w-0 self-center">
       <strong className="[font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)] text-foreground min-w-0 [overflow-wrap:anywhere]">{comment.author.name}</strong>
+      <ViaClientMark client={comment.viaClient} />
       {isOwn && <StatusPill tone="neutral">You</StatusPill>}
       {comment.author.isExternal && <StatusPill tone="info">External editor</StatusPill>}
       <CollaborationTimestamp instant={comment.createdAt} now={now} mode="relative" />

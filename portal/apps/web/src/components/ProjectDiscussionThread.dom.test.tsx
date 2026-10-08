@@ -125,6 +125,16 @@ describe("ProjectDiscussionThread", () => {
     expect(state.commentsQuery.fetchNextPage).toHaveBeenCalledOnce();
   });
 
+  it("marks a comment written through an AI client with a subtle via badge, and leaves browser comments unmarked (#704)", async () => {
+    const viaComment = { ...otherComment, id: "comment-via", viaClient: "Claude" };
+    state.commentsQuery = queryState({ data: { pages: [{ project, comments: [viaComment, { ...ownComment, viaClient: null }] }], pageParams: [null] } });
+    render(); await flush();
+    const marks = [...host.querySelectorAll('[data-testid="via-client-mark"]')];
+    expect(marks.map((mark) => mark.textContent)).toEqual(["via Claude"]);
+    expect(marks[0]!.closest("article")?.getAttribute("data-comment-id")).toBe("comment-via");
+    expect(host.querySelector('article[data-comment-id="comment-own"] [data-testid="via-client-mark"]')).toBeNull();
+  });
+
   it("loads mentionables through the existing project-scoped endpoint", async () => {
     render(); await flush();
     await click(host.querySelector<HTMLElement>(`[data-testid="mention-project-comment-${projectId}"]`)!);

@@ -11,6 +11,7 @@ import { projectMentionableUsers } from "../lib/project-collaboration";
 import { projectStageForRole } from "./stages";
 import {
   advanceProjectCommentReadMarker,
+  commentViaClients,
   CommentMediaConflictError,
   CommentProjectArchivedError,
   createProjectComment,
@@ -123,7 +124,8 @@ projectCommentsRoutes.get("/projects/:projectId/comments", terminalRoute("/proje
   const oldest = rows.at(-1)?.comment;
   const filled = await fillLinkPreviews(c.env.DB, rows.map(serializeProjectComment));
   if (c.get("user").role === "external_editor") return c.json(externalCommentListResponseSchema.parse({ project: access, comments: filled.map((comment) => externalCommentSchema.parse(comment)), ...(oldest && rows.length === (parsed.data.limit ?? MAX_LIMIT) ? { nextCursor: encodeCursor(oldest) } : {}) }));
-  return c.json({ project: access, comments: filled, ...(oldest && rows.length === (parsed.data.limit ?? MAX_LIMIT) ? { nextCursor: encodeCursor(oldest) } : {}) });
+  const viaClients = await commentViaClients(c.env.DB, filled.map((comment) => comment.id));
+  return c.json({ project: access, comments: filled.map((comment) => ({ ...comment, viaClient: viaClients.get(comment.id) ?? null })), ...(oldest && rows.length === (parsed.data.limit ?? MAX_LIMIT) ? { nextCursor: encodeCursor(oldest) } : {}) });
 }));
 
 projectCommentsRoutes.post("/projects/:projectId/comments", terminalRoute("/projects/:projectId/comments", async (c) => {
@@ -140,7 +142,7 @@ projectCommentsRoutes.post("/projects/:projectId/comments", terminalRoute("/proj
   c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
   if (!result.comment) return c.json({ error: "Comment could not be created" }, 500);
   const [created] = await fillLinkPreviews(c.env.DB, [serializeProjectComment(result.comment)]);
-  return c.json(c.get("user").role === "external_editor" ? externalCommentSchema.parse(created) : created, 201);
+  return c.json(c.get("user").role === "external_editor" ? externalCommentSchema.parse(created) : { ...created!, viaClient: currentUser.via?.clientName ?? null }, 201);
 }));
 
 projectCommentsRoutes.patch("/projects/:projectId/comments/:commentId", terminalRoute("/projects/:projectId/comments/:commentId", async (c) => {
@@ -160,7 +162,7 @@ projectCommentsRoutes.patch("/projects/:projectId/comments/:commentId", terminal
   c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
   if (!result.comment) return c.json({ error: "Comment could not be updated" }, 500);
   const [edited] = await fillLinkPreviews(c.env.DB, [serializeProjectComment(result.comment)]);
-  return c.json(c.get("user").role === "external_editor" ? externalCommentSchema.parse(edited) : edited);
+  return c.json(c.get("user").role === "external_editor" ? externalCommentSchema.parse(edited) : { ...edited!, viaClient: (await commentViaClients(c.env.DB, [commentId])).get(commentId) ?? null });
 }));
 
 projectCommentsRoutes.delete("/projects/:projectId/comments/:commentId", terminalRoute("/projects/:projectId/comments/:commentId", async (c) => {

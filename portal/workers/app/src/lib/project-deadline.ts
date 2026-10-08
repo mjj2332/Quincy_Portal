@@ -339,7 +339,7 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
   const shootDateFill = request.operation === "set"
     ? buildShootDateFillBundle({
       db, projectId: input.projectId, trigger: { kind: "deadline_set", winnerAuditId: auditId },
-      fillAuditId: crypto.randomUUID(), actorId, impersonatedBy: input.principal?.impersonatedBy ?? null, now,
+      fillAuditId: crypto.randomUUID(), actorId, impersonatedBy: input.principal?.impersonatedBy ?? null, via: input.principal?.via ?? null, now,
     })
     : undefined;
   if (shootDateFill) statements.push(...shootDateFill.statements);

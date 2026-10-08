@@ -308,6 +308,8 @@ export const projectActivityEvents = sqliteTable(
     deepLinkKind: text("deep_link_kind", { enum: ["project", "project_collaboration"] as const }).notNull(),
     deepLinkPath: text("deep_link_path").notNull(),
     createdAt: integer("created_at").notNull(),
+    /** The MCP client that acted, copied from the gating audit row; NULL for a browser action (#704). */
+    viaClient: text("via_client"),
   },
   (t) => [
     index("project_activity_events_project_occurred_idx").on(t.projectId, desc(t.occurredAt), desc(t.id)),
