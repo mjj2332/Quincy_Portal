@@ -136,3 +136,30 @@ describe("--gantt-tree-inset", () => {
     expect(body.style.getPropertyValue("--gantt-tree-inset")).toBe("450px");
   });
 });
+
+describe("tree floor and overlay stacking (Sol review on #727)", () => {
+  it("keeps the tree at its minWidth when the container is too narrow to spare it", async () => {
+    const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 596 });
+    try {
+      await mount("custom", { width: 396, minWidth: 396 });
+      expect(byTestId("gantt-body")!.style.getPropertyValue("--gantt-tree-inset")).toBe("396px");
+    } finally {
+      if (desc) Object.defineProperty(HTMLElement.prototype, "clientWidth", desc);
+      else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+    }
+  });
+
+  it("does not make the tree overlay a stacking context, so the reorder indicator (z 110) can clear the body-mounted carry overlay (z 100)", async () => {
+    await mount("custom");
+    const overlay = byTestId("gantt-tree-overlay")!;
+    const trapping = /^(isolate|z-\d+|z-\[.*\]|transform|will-change-.*)$/;
+    for (let el: HTMLElement | null = overlay; el && el !== host; el = el.parentElement) {
+      expect(el.className.split(/\s+/).filter((c) => trapping.test(c)), el.getAttribute("data-testid") ?? el.tagName).toEqual(
+        el === overlay ? [] : el.getAttribute("data-testid") === "gantt-timeline-column" ? ["isolate"] : [],
+      );
+    }
+    // the scrollbar rail keeps its own z so it still covers the scroller's bottom strip
+    expect(byTestId("gantt-tree-scrollbar-rail")!.className).toContain("z-30");
+  });
+});
