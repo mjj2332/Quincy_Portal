@@ -289,6 +289,13 @@
  * scrollbar start follow the inset. DELETED: the bidirectional scroll-sync and the wheel-driver effect (and `getPaneViewport`);
  * `revealRowNearest` does one `scrollTop` write. CHANGED behaviour: the tree no longer scrolls sideways on its own (it clips), and a
  * horizontal wheel over it pans the timeline. Wheel-zoom gating is untouched here (#728).
+ *
+ * 2026-10-08, #728 - CHANGED, behaviour (ADR 0009 addendum): the ctrl/meta wheel-zoom listener is no longer attached to the scroller
+ * for good. `bindGatedWheelZoom` (`gantt-wheel-zoom.ts`) attaches the cancellable wheel listener only while Control or Meta is held (window
+ * keydown attaches; keyup, blur and visibilitychange detach; disable and unmount detach), and a WebKit pinch uses gesturestart/gesturechange
+ * (`GestureEvent` present). Engines without `GestureEvent` keep the listener attached, since their pinch is ctrl+wheel with no keydown.
+ * Targets inside the tree column are skipped so browser page zoom works there (the scroller now spans the tree). Pointer anchoring,
+ * exponential zoom and the hand-back to browser zoom at the limits are unchanged. This is the only non-passive wheel listener in the Gantt.
  */
 
 import {
@@ -389,6 +396,7 @@ import {
   TooltipTrigger,
 } from "@/components/reui/tooltip"
 import { findScroller, scrollerGeometry } from "./gantt-track-geometry"
+import { bindGatedWheelZoom } from "./gantt-wheel-zoom"
 import { PlusIcon, MinusIcon, GripVerticalIcon, ChevronRightIcon, ChevronLeftIcon, XIcon } from "lucide-react"
 
 /** Current time, refreshed on an interval and on tab focus. */
@@ -2202,38 +2210,55 @@ function GanttView({
   }
 
   // ----- ctrl/cmd + wheel (and trackpad pinch) zooms the time range -----
-  // The listener is manual and non-passive because it must preventDefault:
-  // React's synthetic wheel handler cannot. It attaches once and reads the
-  // live logic through a ref, so a zoom step never re-binds mid-gesture.
-  const wheelZoomRef = useRef<((e: WheelEvent) => void) | null>(null)
+  // #728: the cancellable listener is not on the scroller in the steady state. `bindGatedWheelZoom`
+  // attaches it only while Control or Meta is held (WebKit pinch uses gesture events instead; engines
+  // without GestureEvent keep it attached because their pinch arrives as ctrl+wheel with no keydown).
+  // Both handlers read the live logic through a ref, so a zoom step never re-binds mid-gesture.
+  const wheelZoomRef = useRef<{
+    wheel: (e: WheelEvent) => void
+    gesture: (ratio: number, clientX: number) => boolean
+  } | null>(null)
   useEffect(() => {
-    wheelZoomRef.current = (e: WheelEvent) => {
-      if (!viewConfig.wheelZoom) return
-      // Browsers deliver a trackpad pinch as wheel + ctrlKey on every
-      // platform; metaKey is the Mac keyboard idiom the same gesture implies.
-      if (!e.ctrlKey && !e.metaKey) return
-      const lines = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1
-      // Continuous, not stepped: a pinch emits dozens of small deltas per
-      // second, so the button's 0.25 step would slam to a limit instantly.
-      // Exponential keeps each notch proportional at any zoom level.
-      const next = clampZoom(zoom * Math.exp(-e.deltaY * lines * 0.002))
-      // Already clamped: hand the gesture back so the browser's own page
-      // zoom still works for anyone who relies on it.
-      if (Math.abs(next - zoom) < 1e-4) return
-      e.preventDefault()
+    const applyZoom = (next: number, clientX: number) => {
       // Controlled zoom anchors via fineCenterRef when the parent adopts;
       // pre-setting an anchor would leak stale if the parent ignores it.
-      if (viewConfig.zoom === undefined) anchorZoomPointer(e.clientX)
+      if (viewConfig.zoom === undefined) anchorZoomPointer(clientX)
       setZoomValue(+next.toFixed(4))
+    }
+    wheelZoomRef.current = {
+      wheel: (e: WheelEvent) => {
+        if (!viewConfig.wheelZoom) return
+        // Browsers deliver a trackpad pinch as wheel + ctrlKey on every
+        // platform; metaKey is the Mac keyboard idiom the same gesture implies.
+        if (!e.ctrlKey && !e.metaKey) return
+        const lines = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1
+        // Continuous, not stepped: a pinch emits dozens of small deltas per
+        // second, so the button's 0.25 step would slam to a limit instantly.
+        // Exponential keeps each notch proportional at any zoom level.
+        const next = clampZoom(zoom * Math.exp(-e.deltaY * lines * 0.002))
+        // Already clamped: hand the gesture back so the browser's own page
+        // zoom still works for anyone who relies on it.
+        if (Math.abs(next - zoom) < 1e-4) return
+        e.preventDefault()
+        applyZoom(next, e.clientX)
+      },
+      gesture: (ratio, clientX) => {
+        if (!viewConfig.wheelZoom) return false
+        const next = clampZoom(zoom * ratio)
+        if (Math.abs(next - zoom) < 1e-4) return false
+        applyZoom(next, clientX)
+        return true
+      },
     }
   })
   useEffect(() => {
     const viewport = scrollerRef.current
-    if (!viewport) return
-    const onWheel = (e: WheelEvent) => wheelZoomRef.current?.(e)
-    viewport.addEventListener("wheel", onWheel, { passive: false })
-    return () => viewport.removeEventListener("wheel", onWheel)
-  }, [viewConfig.scrollbars, scale])
+    if (!viewport || !viewConfig.wheelZoom) return
+    return bindGatedWheelZoom(viewport, {
+      onWheel: (e) => wheelZoomRef.current?.wheel(e),
+      onGesture: (ratio, clientX) => wheelZoomRef.current?.gesture(ratio, clientX) ?? false,
+    })
+  }, [viewConfig.scrollbars, viewConfig.wheelZoom, scale])
 
   // Drag-to-pan from the header (intent-based: activates after 4px)
   const beginHeaderPan = (e: React.PointerEvent) => {
