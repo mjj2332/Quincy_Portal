@@ -121,4 +121,13 @@ describe("defaultSubtaskRange never ends in the past (#736)", () => {
     expect(projectDefaultAsOf(dto, sydney(2026, 10, 8, 10))).toEqual({ start: { localCivil: "2026-10-08T09:00", fold: 0 }, end: { localCivil: "2026-10-08T17:00", fold: 0 } });
     expect(projectDefaultAsOf(dto, sydney(2026, 10, 8, 17))).toEqual({ start: { localCivil: "2026-10-09T09:00", fold: 0 }, end: { localCivil: "2026-10-09T17:00", fold: 0 } });
   });
+
+  it("projectDefaultAsOf reads a cached end on the repeated hour by its fold (Sol #736)", () => {
+    // DST ends 2027-04-04 03:00 AEDT: 02:30 occurs at 15:30Z (fold 0) and again at 16:30Z (fold 1).
+    const at = Date.parse("2027-04-03T16:00:00Z");
+    const earlier = { start: { localCivil: "2027-04-03T09:00", fold: 0 as const }, end: { localCivil: "2027-04-04T02:30", fold: 0 as const } };
+    const later = { start: earlier.start, end: { localCivil: "2027-04-04T02:30", fold: 1 as const } };
+    expect(projectDefaultAsOf(earlier, at)).toEqual({ start: { localCivil: "2027-04-04T09:00", fold: 0 }, end: { localCivil: "2027-04-04T17:00", fold: 0 } });
+    expect(projectDefaultAsOf(later, at)).toBe(later);
+  });
 });

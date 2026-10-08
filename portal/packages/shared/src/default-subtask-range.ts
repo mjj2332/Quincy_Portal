@@ -46,7 +46,7 @@ function presetRange(day: string): DefaultSubtaskRange {
  */
 export function notBeforeNow(range: DefaultSubtaskRange, now: number): DefaultSubtaskRange {
   if (!Number.isFinite(now)) throw new RangeError("now must be a finite epoch time");
-  const resolved = resolveSydneyCivilMinute(range.end.localCivil, range.end.disambiguation);
+  const resolved = resolveSydneyCivilMinute(range.end.localCivil, range.end.disambiguation ?? "earlier");
   if (!resolved.ok || resolved.value.epochMs > now) return range;
   const today = sydneyBusinessDate(now);
   const todayEnd = resolveSydneyCivilMinute(`${today}T${SUBTASK_END_PRESET_TIME}`);
@@ -131,7 +131,7 @@ export function defaultSubtaskRangeDto(input: DefaultSubtaskRangeInput): Project
 /** `notBeforeNow` on the wire shape, for clients holding a cached default. A pushed range carries no fold. */
 export function projectDefaultAsOf(dto: ProjectDefaultRangeDto, now: number): ProjectDefaultRangeDto {
   const pushed = notBeforeNow(
-    { state: "range", start: { localCivil: dto.start.localCivil }, end: { localCivil: dto.end.localCivil, ...(dto.end.fold === 1 ? { disambiguation: "later" as const } : {}) } },
+    { state: "range", start: { localCivil: dto.start.localCivil }, end: { localCivil: dto.end.localCivil, disambiguation: dto.end.fold === 1 ? "later" : "earlier" } },
     now,
   );
   if (pushed.end.localCivil === dto.end.localCivil && pushed.start.localCivil === dto.start.localCivil) return dto;
