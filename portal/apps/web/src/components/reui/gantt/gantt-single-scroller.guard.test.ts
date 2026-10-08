@@ -3,12 +3,14 @@
  *
  * 1. The only `scrollTop =` write is inside `revealRowNearest`. A second write is the sign of a
  *    mirrored second scroller (the deleted scroll-sync / wheel-driver effect) coming back.
- * 2. The only non-passive wheel listener is the existing zoom one. A non-passive wheel listener
- *    blocks the browser's threaded scrolling (PR3, #728, gates that one on a held modifier).
+ * 2. #728: the only non-passive wheel listener lives in `bindGatedWheelZoom` (`gantt-wheel-zoom.ts`),
+ *    which attaches it only while a modifier is held (or on engines without GestureEvent). A
+ *    non-passive wheel listener blocks the browser's threaded scrolling, so `gantt-view.tsx` and every
+ *    other Gantt file must have none.
  *
  * Comments are stripped first so prose cannot satisfy or trip either check.
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -53,10 +55,20 @@ describe("gantt-view.tsx single-scroller guard", () => {
     expect(source).not.toMatch(/getPaneViewport|treeViewport/);
   });
 
-  it("registers a non-passive wheel listener only for the zoom handler", () => {
-    const nonPassive = [...source.matchAll(/addEventListener\(\s*"wheel"[^)]*passive:\s*false/g)];
-    expect(nonPassive).toHaveLength(1);
-    expect(nonPassive[0]![0]).toContain("onWheel");
-    expect(source).toContain("wheelZoomRef.current?.(e)");
+  it("registers no non-passive wheel listener outside the gated zoom helper", () => {
+    const dir = fileURLToPath(new URL("./", import.meta.url));
+    const files = readdirSync(dir).filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f) && f !== "gantt-wheel-zoom.ts");
+    const offenders = files.filter((f) => /["']wheel["'][^)]*passive:\s*false/.test(stripComments(readFileSync(dir + f, "utf8"))));
+    expect(offenders).toEqual([]);
+    expect(source).toContain("bindGatedWheelZoom(");
+  });
+
+  it("the gated helper has exactly one non-passive wheel listener, inside bindGatedWheelZoom", () => {
+    const helper = stripComments(readFileSync(fileURLToPath(new URL("./gantt-wheel-zoom.ts", import.meta.url)), "utf8"));
+    const matches = [...helper.matchAll(/addEventListener\(\s*"wheel"[^)]*passive:\s*false/g)].map((m) => m.index!);
+    expect(matches).toHaveLength(1);
+    const body = functionBody(helper, "bindGatedWheelZoom");
+    expect(matches[0]!).toBeGreaterThan(body.start);
+    expect(matches[0]!).toBeLessThan(body.end);
   });
 });
