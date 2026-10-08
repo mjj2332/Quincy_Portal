@@ -582,7 +582,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
 
         {isLoadingUsers && <EmptyState role="status" title="Loading users.">Reading the studio access roster.</EmptyState>}
         {!isLoadingUsers && usersError && <EmptyState role="alert" tone="error" title="Users are unavailable.">{usersError}<div className="mt-[var(--space-4)]"><Button type="button" variant="outline" onClick={() => void loadUsers()}>Try again</Button></div></EmptyState>}
-        {!isLoadingUsers && !usersError && <label className={cn(TOGGLE_ROW, "mb-[var(--space-4)]")}><Switch checked={impersonationEnabled} disabled={isUpdatingImpersonation} onCheckedChange={(next) => void toggleImpersonation(next)} aria-label="Enable user impersonation (testing)" /><span>Enable user impersonation (testing)</span></label>}
+        {!isLoadingUsers && !usersError && <label className={cn(TOGGLE_ROW, "mb-[var(--space-4)] w-fit")}><Switch checked={impersonationEnabled} disabled={isUpdatingImpersonation} onCheckedChange={(next) => void toggleImpersonation(next)} aria-label="Enable user impersonation (testing)" /><span>Enable user impersonation (testing)</span></label>}
         {!isLoadingUsers && !usersError && <div className={cn(TOGGLE_ROW, "mb-[var(--space-4)] flex-wrap justify-between gap-[var(--space-3)]")} data-testid="admin-mcp-access">
           <label className={TOGGLE_ROW}><Switch checked={mcpEnabled} disabled={isUpdatingMcp || isLoadingMcp || mcpError !== undefined} onCheckedChange={(next) => void toggleMcp(next)} aria-label="Enable AI apps (MCP)" /><span>Enable AI apps (MCP)</span></label>
           {mcpError && <Notice role="alert" className="basis-full">{mcpError}</Notice>}
