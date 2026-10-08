@@ -39,6 +39,8 @@ export type Comment = {
   content: RichTextDoc;
   createdAt: string;
   editedAt: string | null;
+  /** The MCP client the comment was written through; absent or null for a browser comment and for External Editors (#704). */
+  viaClient?: string | null;
 };
 
 export type CommentResponse = {

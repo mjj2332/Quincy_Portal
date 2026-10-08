@@ -507,6 +507,25 @@ export async function advanceProjectCommentReadMarker(db: D1Database, userId: st
   };
 }
 
+/**
+ * The MCP client each comment was created through, read from its create audit row (#704). Read time, not stored on the
+ * comment: no comment migration. `audit_target_idx` (target_type, target_id) serves the lookup. A comment not in the map
+ * was written from a browser, or before provenance existed.
+ */
+export async function commentViaClients(db: D1Database, commentIds: readonly string[]): Promise<Map<string, string>> {
+  const clients = new Map<string, string>();
+  if (commentIds.length === 0) return clients;
+  const rows = await db.prepare(`
+    SELECT target_id AS id, json_extract(meta_json, '$.client') AS client
+    FROM audit_log
+    WHERE target_type = 'project_comment' AND action = 'project_comment.create'
+      AND target_id IN (${commentIds.map(() => "?").join(", ")})
+      AND json_valid(meta_json) AND json_extract(meta_json, '$.via') = 'mcp'
+  `).bind(...commentIds).all<{ id: string | null; client: unknown }>();
+  for (const row of rows.results ?? []) if (row.id && typeof row.client === "string") clients.set(row.id, row.client);
+  return clients;
+}
+
 export function serializeProjectComment(row: CommentRow) {
   return {
     id: row.comment.id,

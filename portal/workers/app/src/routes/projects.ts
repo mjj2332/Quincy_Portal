@@ -391,7 +391,7 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
     manualDeadlineStatements.push(raw.prepare(`
       INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?, ?, 'project.deadline.schedule_saved', 'project', ?, ?, ? WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
-    `).bind(scheduleAuditId, c.get("user").id, projectId, auditMeta(c.get("user"), { version: 1, operation: "set", via: "create" }), now, projectAuditId));
+    `).bind(scheduleAuditId, c.get("user").id, projectId, auditMeta(c.get("user"), { version: 1, operation: "set", source: "create" }), now, projectAuditId));
     for (const occurrence of planDeadlineOccurrences(manualDeadline.deadlineAt, manualDeadline.offsets, now)) {
       manualDeadlineStatements.push(raw.prepare(`
         INSERT INTO project_deadline_occurrences

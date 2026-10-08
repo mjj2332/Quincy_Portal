@@ -12,6 +12,7 @@ import { CollaborationTimestamp } from "./quincy/CollaborationTimestamp";
 import { DateGroupHeading } from "./quincy/DateGroupHeading";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { StatusPill } from "./quincy/StatusPill";
+import { ViaClientMark } from "./ViaClientMark";
 import { SEGMENT_BUTTON, SEGMENT_GROUP } from "./quincy/segment";
 import { useProjectActivityQuery, type ProjectActivityResponse } from "../lib/project-activity";
 
@@ -148,9 +149,10 @@ export function ProjectActivityView({ projectId, enabled = true, onAccessFailure
     <DayGroups buckets={buckets} idPrefix={idPrefix} renderRow={(item) => {
       // The External payload has no `actor`; an internal-shaped item is still suppressed for External.
       const actor = !external && "actor" in item ? item.actor : null;
+      const viaClient = !external && "viaClient" in item ? item.viaClient : null;
       return <li key={item.id} className={ROW}>
         {actor ? <InitialsAvatar name={actor.name} className="size-5 self-start" /> : <span aria-hidden="true" />}
-        <p className={ROW_TEXT}>{actor && <><strong className={ACTOR}>{actor.name}</strong>{" · "}</>}{item.presentation.body}</p>
+        <p className={ROW_TEXT}>{actor && <><strong className={ACTOR}>{actor.name}</strong>{viaClient && <>{" "}<ViaClientMark client={viaClient} /></>}{" · "}</>}{item.presentation.body}</p>
         <CollaborationTimestamp instant={item.occurredAt} now={now} mode="dayGrouped" />
       </li>;
     }} />

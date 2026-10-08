@@ -98,9 +98,10 @@ export function buildProjectActivityStatements(input: AppendProjectActivityInput
     INSERT INTO project_activity_events (
       id, schema_version, event_type, category, project_id, actor_kind, actor_id,
       occurred_at, source_kind, source_id, source_key, safe_payload_json,
-      deep_link_kind, deep_link_path, created_at
+      deep_link_kind, deep_link_path, created_at, via_client
     )
-    SELECT ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    SELECT ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      (SELECT json_extract(meta_json, '$.client') FROM audit_log WHERE id = ? AND json_valid(meta_json) AND json_extract(meta_json, '$.via') = 'mcp')
     WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
     ON CONFLICT(event_type, source_key) DO NOTHING
     RETURNING id
@@ -108,7 +109,7 @@ export function buildProjectActivityStatements(input: AppendProjectActivityInput
     activity.id, activity.type, PROJECT_ACTIVITY_REGISTRY[activity.type].category, activity.projectId,
     activity.actorKind, activity.actorId, activity.occurredAt, activity.source.kind,
     activity.source.id, activity.source.key, sourcePayload, activity.deepLink.kind,
-    activity.deepLink.path, createdAt, input.winnerAuditId,
+    activity.deepLink.path, createdAt, input.winnerAuditId, input.winnerAuditId,
   );
   const eligibleRoles = PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor;
   const broadBindings = input.broadMode === "activity_only" ? [] : [
