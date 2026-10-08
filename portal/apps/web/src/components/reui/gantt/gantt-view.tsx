@@ -1655,11 +1655,15 @@ function GanttView({
   const clampContainer = (width: number, container: number) => {
     if (container <= 0) return width
     const ceiling = container - minTimelineWidth - 1
-    // The tree's own minWidth is a PREFERENCE, not a licence to squeeze the
-    // timeline out of existence: cap it by what the container can actually
-    // spare. Without this cap a consumer minWidth wider than the container
-    // wins outright and the timeline collapses below minTimelineWidth with
-    // the splitter already pinned, so the space cannot be dragged back.
+    // `minWidthHard` (#727): the tree's columns are sticky and clip (they never
+    // scroll sideways), so a consumer whose columns must stay visible makes
+    // minWidth a hard floor and the timeline lane takes what remains, capped
+    // only by the container so the splitter never leaves the box. Otherwise
+    // minWidth is a PREFERENCE capped by what the container can spare, so the
+    // timeline is never squeezed out of existence.
+    if (treeConfig.minWidthHard) {
+      return Math.max(Math.min(width, ceiling), Math.min(treeConfig.minWidth, container - 1))
+    }
     const floor = Math.min(treeConfig.minWidth, Math.max(ceiling, 0))
     return Math.max(Math.min(width, ceiling), Math.min(floor, container - 1))
   }
@@ -3223,7 +3227,7 @@ function GanttView({
           ref={treePaneRef}
           data-slot="gantt-tree-overlay"
           data-testid="gantt-tree-overlay"
-          className="pointer-events-none absolute inset-y-0 start-0 z-30"
+          className="pointer-events-none absolute inset-y-0 start-0"
           style={{ width: "var(--gantt-tree-inset)" }}
         >
           {/* Reserved horizontal-scrollbar rail: the bottom strip reads as one continuous band
@@ -3233,7 +3237,8 @@ function GanttView({
             <div
               aria-hidden
               data-slot="gantt-tree-scrollbar-rail"
-              className="bg-background border-t-border pointer-events-none absolute inset-x-0 bottom-0 h-4 border-t"
+              data-testid="gantt-tree-scrollbar-rail"
+              className="bg-background border-t-border pointer-events-none absolute inset-x-0 bottom-0 z-30 h-4 border-t"
             />
           )}
           {/* Reorder insertion indicator, pinned to the visible pane */}
@@ -3245,7 +3250,8 @@ function GanttView({
               style={{ top: reorder.top - 4, zIndex: 110 }}
             >
               {/* caret head pointing along the insertion line; the whole
-                  indicator sits above the row carry overlay (z 100) */}
+                  indicator sits above the row carry overlay (z 100). The tree overlay
+                  deliberately creates no stacking context, or this z would be trapped. */}
               <span
                 className={cn(
                   "ms-0.5 size-0 shrink-0 border-y-4 border-s-8 border-y-transparent",
@@ -3378,7 +3384,7 @@ function GanttView({
             <div
               aria-hidden
               data-slot="gantt-timeline-scrollbar-rail"
-              className="bg-background border-t-border pointer-events-none absolute inset-x-0 bottom-0 h-4 border-t"
+              className="bg-background border-t-border pointer-events-none absolute inset-x-0 bottom-0 z-30 h-4 border-t"
             />
           )}
           {viewConfig.offscreenIndicators && (

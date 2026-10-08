@@ -331,7 +331,7 @@ const ganttFormatEventTime = mergeGanttI18n(GANTT_I18N).functions.formatEventTim
  */
 const GANTT_NAME_COLUMN_WIDTH = 180;
 // #727: minWidth 396 = Name 180 + People 88 + Due 128. The tree column is sticky inside the one scroller and clips (never scrolls sideways), so on desktop the splitter must never narrow past the columns. Phones (GANTT_TREE_PANEL_NARROW) have no columns and keep the vendor floor.
-const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: GANTT_NAME_COLUMN_WIDTH, width: 396, minWidth: 396 };
+const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: GANTT_NAME_COLUMN_WIDTH, width: 396, minWidth: 396, minWidthHard: true };
 // #686: no floor on a phone. The vendor default (208px) made the row wider than the tree pane, so the sticky `+` overlaid the title; with none, the name cell fills exactly the pane.
 const GANTT_TREE_PANEL_NARROW: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: 0 };
 /** Scroll distance (px) from the bottom of the panel at which the next project page is requested. */
