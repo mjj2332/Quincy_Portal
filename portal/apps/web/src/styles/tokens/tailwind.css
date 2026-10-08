@@ -17,7 +17,6 @@
   --border: var(--border-hairline);
   --input: var(--border-hairline);
   /* Off track of a toggle (#724): the hairline in --input is 1.6:1 on paper, under WCAG 1.4.11. */
-  --control-off: var(--greige-500);
   --ring: var(--focus-ring);
 }
 

@@ -103,6 +103,13 @@ describe("Switch off-state contrast (#724, WCAG 1.4.11)", () => {
     });
   }
 
+  it("default off track is at least 3:1 on every paper surface it can sit on", () => {
+    const hex = (role: string) => resolve(`var(${role})`, [...surfaces.root]);
+    for (const paper of ["--paper-000", "--paper-050", "--paper-100", "--paper-200"]) {
+      expect(contrast(hex("--control-off"), hex(paper)), paper).toBeGreaterThanOrEqual(3);
+    }
+  });
+
   it("the inverse and default blocks both declare --control-off", () => {
     expect(inverseRoles).toMatch(/--control-off:/);
     expect(defaultRoles).toMatch(/--control-off:/);
