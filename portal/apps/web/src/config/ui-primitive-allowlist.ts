@@ -34,6 +34,6 @@ export const UI_PRIMITIVE_ALLOWLIST: Record<string, UiPrimitiveAllowance> = {
   "components/ProjectTeamCombobox.tsx": { count: 2, ledger: "baseline (#262)" },
   "components/SubtaskChecklist.tsx": { count: 5, ledger: "baseline (#262); the schedule picker (6 raw controls) moved to quincy/SubtaskScheduleControl.tsx (#372)" },
   "components/UploadDropzone.tsx": { count: 2, ledger: "baseline (#262)" },
-  "screens/Admin.tsx": { count: 3, ledger: "baseline (#262)" },
+  "screens/Admin.tsx": { count: 2, ledger: "baseline (#262)" },
   "screens/ProjectWorkspace.tsx": { count: 3, ledger: "baseline (#262)" },
 };

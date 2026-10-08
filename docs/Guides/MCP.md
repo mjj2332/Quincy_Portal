@@ -28,8 +28,8 @@ It is **off by default**. An Admin turns it on with the `mcp_access` runtime fla
    on your own computer (`localhost`) is flagged. It says the app will see Portal data you can see. Then
    choose what to grant:
    - **Read** is always on.
-   - **Write** is a separate tick and **starts unticked**, even when the client asked for it. Without it
-     the client can look but not change anything.
+   - **Write** is a separate tick, offered only when the client asked for it, and it **starts ticked**.
+     Untick it and the client can look but not change anything.
    - **Admin** is offered to Admins only, starts unticked, and carries its own warning. Only grant it to
      an app you trust.
 6. Approve. The client is now listed under **Connected apps** (`/settings/connected-apps`).
@@ -238,7 +238,7 @@ bearer: whoever holds it can fetch the file until it expires, so do not paste it
 
 `edit_project_whiteboard` enters the Project's live whiteboard as a participant labelled
 "‹user› via ‹client›", so everyone with the board open sees the change at once. The client sends a short
-list of simple commands (text, sticky notes, shapes, arrows, existing Embedded media, edit, delete) and
+list of simple commands (text, sticky notes (colours yellow, green, blue, pink or purple: the Portal's own note papers, no hex), shapes, arrows, existing Embedded media, edit, delete) and
 the server builds the real elements. Edits apply in order and all-or-nothing, against the `generation` the
 client just read: if the board was restored since, the call is refused and the client reads it again.
 

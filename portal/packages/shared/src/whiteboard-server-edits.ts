@@ -44,7 +44,7 @@ export const WHITEBOARD_STICKY_COLORS = {
   pink: WHITEBOARD_PAPER.red,
   purple: WHITEBOARD_PAPER.violet,
 } as const;
-const stickyColor = z.union([z.enum(Object.keys(WHITEBOARD_STICKY_COLORS) as [keyof typeof WHITEBOARD_STICKY_COLORS, ...Array<keyof typeof WHITEBOARD_STICKY_COLORS>]), z.string().regex(/^#[0-9a-fA-F]{6}$/)]);
+const stickyColor = z.enum(Object.keys(WHITEBOARD_STICKY_COLORS) as [keyof typeof WHITEBOARD_STICKY_COLORS, ...Array<keyof typeof WHITEBOARD_STICKY_COLORS>]);
 
 const point = z.object({ x: coordinate, y: coordinate }).strict();
 const arrowEnd = z.union([elementId, point]);

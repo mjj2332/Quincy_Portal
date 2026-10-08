@@ -140,14 +140,14 @@ describe("every op expands into a schema-valid element", () => {
     expect(view[applied[5]!.id]).toMatchObject({ kind: "media", embeddedMediaId: media });
   });
 
-  it("falls back to a default size for media with no recorded size, and accepts a hex sticky colour", async () => {
+  it("falls back to a default size for media with no recorded size, and grows a sticky for long text", async () => {
     const projectId = await newProject();
     const video = await addMedia(projectId, { kind: "video", width: null, height: null });
-    const result = await edit("member", projectId, [{ op: "place_media", embeddedMediaId: video, x: 0, y: 0 }, { op: "add_sticky", x: 0, y: 0, text: "x".repeat(400), color: "#12ab34" }]);
+    const result = await edit("member", projectId, [{ op: "place_media", embeddedMediaId: video, x: 0, y: 0 }, { op: "add_sticky", x: 0, y: 0, text: "x".repeat(400), color: "green" }]);
     const rows = await byId(projectId);
     expect(rows[result.applied[0].id]).toMatchObject({ width: 480, height: 270, customData: { quincyMedia: { kind: "video" } } });
     const sticky = rows[result.applied[1].id]!;
-    expect(sticky).toMatchObject({ backgroundColor: "#12ab34" });
+    expect(sticky).toMatchObject({ backgroundColor: "#b9f8cf" });
     expect(sticky.height as number).toBeGreaterThan(76);                       // the sticky grows from 76 to hold long text
   });
 
