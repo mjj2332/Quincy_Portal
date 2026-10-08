@@ -156,7 +156,8 @@ describe("dispatchToApi", () => {
     const principal = await insertConnection("conn-allow", photographerId);
     for (const input of [
       { method: "DELETE", path: "/api/projects/x" },
-      { method: "POST", path: "/api/projects" },
+      { method: "POST", path: "/api/projects/x/send-to-autohdr" },
+      { method: "PATCH", path: "/api/users/x" },
       { method: "GET", path: "/api/auth/session" },
       { method: "GET", path: "/api/integrations" },
       { method: "GET", path: "/api/projects/a/b" },

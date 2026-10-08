@@ -8,6 +8,7 @@ import type { McpPrincipal } from "../../lib/mcp-dispatch-context";
 import type { McpScope } from "../authority";
 
 export type McpToolContext = { env: Env; executionCtx: ExecutionContext; fetchApp: McpFetchApp; principal: McpPrincipal; role: string };
+export type McpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type McpToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
 export type McpTool = {
@@ -19,16 +20,16 @@ export type McpTool = {
   /** The role must hold at least one of these (routes that check a different capability per input). */
   anyCapability?: readonly Capability[];
   /** The one allowlisted route this tool dispatches to; `template` must equal an entry in `route-allowlist.ts`. */
-  route: { method: "GET"; template: string };
+  route: { method: McpMethod; template: string };
   annotations: ToolAnnotations;
   inputSchema: ZodRawShape;
   call(ctx: McpToolContext, input: Record<string, unknown>): Promise<McpToolResult>;
 };
 
-/** The route's JSON as text; a non-2xx becomes `isError` carrying the status and the route's error body. */
+/** The route's JSON as text; a non-2xx becomes `isError` carrying the status and the route's error body. A 2xx with no body (a 204) reads as "OK". */
 export async function jsonResult(response: Response): Promise<McpToolResult> {
   const text = await response.text();
-  if (response.ok) return { content: [{ type: "text", text }] };
+  if (response.ok) return { content: [{ type: "text", text: text === "" ? `OK (HTTP ${response.status})` : text }] };
   return { content: [{ type: "text", text: `HTTP ${response.status}: ${text}` }], isError: true };
 }
 
@@ -68,3 +69,49 @@ export function readTool(def: {
     },
   };
 }
+
+/** The `{ send }` a write tool's `run` gets: dispatches the tool's one (method, path) with a chosen body. */
+export type WriteSend = (body?: unknown) => Promise<Response>;
+
+/**
+ * A write tool: `scope: "write"`, dispatching to exactly one (method, path). Input keys named in the route template fill the path;
+ * every other key is the JSON body unless `run` builds it. `run` may call `send` more than once (the confirmation tools do) but
+ * always to the same route.
+ */
+export function writeTool(def: {
+  name: string;
+  description: string;
+  method: Exclude<McpMethod, "GET">;
+  template: string;
+  inputSchema: ZodRawShape;
+  capability?: Capability;
+  anyCapability?: readonly Capability[];
+  destructive?: boolean;
+  idempotent?: boolean;
+  run?: (send: WriteSend, input: Record<string, unknown>, read: (path: string, query?: Record<string, string>) => Promise<Response>) => Promise<McpToolResult>;
+}): McpTool {
+  return {
+    name: def.name,
+    description: def.description,
+    scope: "write",
+    ...(def.capability ? { capability: def.capability } : {}),
+    ...(def.anyCapability ? { anyCapability: def.anyCapability } : {}),
+    route: { method: def.method, template: def.template },
+    annotations: { readOnlyHint: false, destructiveHint: def.destructive === true, ...(def.idempotent ? { idempotentHint: true } : {}), openWorldHint: false },
+    inputSchema: def.inputSchema,
+    call: async (ctx, input) => {
+      const used = new Set<string>();
+      const path = def.template.replace(PARAM, (_, name: string) => { used.add(name); return encodeURIComponent(String(input[name])); });
+      const body = Object.fromEntries(Object.entries(input).filter(([key, value]) => !used.has(key) && value !== undefined));
+      const send: WriteSend = (explicit) => dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, { method: def.method, path, ...(explicit !== undefined ? { body: explicit } : {}) });
+      const read = (readPath: string, query?: Record<string, string>) => dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, { method: "GET", path: readPath, ...(query ? { query } : {}) });
+      if (def.run) return def.run(send, input, read);
+      return jsonResult(await send(Object.keys(body).length || def.method !== "DELETE" ? body : undefined));
+    },
+  };
+}
+
+/** A tool result that is not an error but asks the AI client to go back to the user first. */
+export const confirmationRequired = (reason: string): McpToolResult => ({
+  content: [{ type: "text", text: `Confirmation required: ${reason}. Ask the user, then call again with confirm: true.` }],
+});
