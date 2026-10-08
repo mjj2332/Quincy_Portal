@@ -158,7 +158,7 @@ describe("dispatchToApi", () => {
       { method: "DELETE", path: "/api/projects/x" },
       { method: "POST", path: "/api/projects" },
       { method: "GET", path: "/api/auth/session" },
-      { method: "GET", path: "/api/users" },
+      { method: "GET", path: "/api/integrations" },
       { method: "GET", path: "/api/projects/a/b" },
       { method: "GET", path: "/api/projects/../auth/session" },
       { method: "GET", path: "/api/me?x=1" },

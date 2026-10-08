@@ -8,6 +8,9 @@ export interface Env {
   SESSIONS: KVNamespace;
   /** workers-oauth-provider state (#702). The binding name is fixed by the library. */
   OAUTH_KV: KVNamespace;
+  /** Workers Rate Limiting bindings for /mcp (#703), keyed by connection id. Absent in tests and local runs, which allows every call. */
+  MCP_CALLS?: RateLimit;
+  MCP_WRITES?: RateLimit;
   INGEST_QUEUE: Queue;
   NOTIFICATION_QUEUE: Queue<NotificationOutboxMessage>;
   /** Bound only after the rendition queue has been provisioned and the red gate is green. */

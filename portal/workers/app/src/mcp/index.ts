@@ -6,9 +6,11 @@ import type { AppEnv } from "../env";
 import { isMcpAccessEnabled } from "../lib/mcp-access";
 import { loadMcpAuthority, parseGrantProps, MCP_SCOPES, type McpScope } from "./authority";
 import { getAuthorizationServer, mcpResource } from "./oauth-server";
-import { toolsFor } from "./tools/registry";
+import { toolsFor, strictInput } from "./tools/registry";
+import { checkMcpRateLimit, rateLimitedResult, readBoundedBody } from "./rate-limit";
 import { CONSENT_PATH_PREFIX, storeConsentDescription } from "./consent";
 import type { McpFetchApp } from "./dispatch";
+import type { McpTool } from "./tools/registry";
 
 const CORS = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", "access-control-allow-headers": "authorization, content-type, mcp-protocol-version, mcp-session-id, accept", "access-control-expose-headers": "www-authenticate, mcp-session-id", "access-control-max-age": "86400" } as const;
 const LAST_USED_GRANULARITY_MS = 60_000;
@@ -38,6 +40,30 @@ function withCors(response: Response): Response {
   const headers = new Headers(response.headers);
   for (const [k, v] of Object.entries(CORS)) headers.set(k, v);
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+type JsonRpcMessage = { jsonrpc?: string; id?: string | number | null; method?: string; params?: { name?: unknown } };
+const rpcError = (c: Context<AppEnv>, status: 400 | 413, code: number, message: string) => c.json({ jsonrpc: "2.0", id: null, error: { code, message } }, status);
+
+/**
+ * Reads the POST body once, bounded to 1 MiB, and parses it once. Returns the parsed body for the transport to reuse,
+ * or the Response to send: 413 when too large, -32700 when not JSON, -32600 for a batch (removed in protocol 2025-06-18),
+ * or the rate-limit result when the single `tools/call` is over its limit.
+ */
+async function admitBody(c: Context<AppEnv>, connectionId: string, tools: readonly McpTool[]): Promise<{ parsedBody?: unknown } | { response: Response }> {
+  if (c.req.method !== "POST") return {};
+  const read = await readBoundedBody(c.req.raw);
+  if ("tooLarge" in read) return { response: rpcError(c, 413, -32600, "Request body is too large") };
+  let body: unknown;
+  try { body = JSON.parse(read.text); } catch { return { response: rpcError(c, 400, -32700, "Parse error") }; }
+  if (Array.isArray(body)) return { response: rpcError(c, 400, -32600, "Batching is not supported") };
+  const message = body as JsonRpcMessage | null;
+  if (message && typeof message === "object" && message.method === "tools/call" && message.id !== undefined && message.id !== null) {
+    const tool = tools.find((candidate) => candidate.name === message.params?.name);
+    const kind = await checkMcpRateLimit(c.env, connectionId, tool !== undefined && tool.annotations.readOnlyHint !== true);
+    if (kind) return { response: c.json({ jsonrpc: "2.0", id: message.id, result: rateLimitedResult(kind) }, 200) };
+  }
+  return { parsedBody: body };
 }
 
 export function mountMcp(app: Hono<AppEnv>, fetchApp: McpFetchApp) {
@@ -84,14 +110,20 @@ export function mountMcp(app: Hono<AppEnv>, fetchApp: McpFetchApp) {
     c.executionCtx.waitUntil(c.env.DB.prepare("UPDATE mcp_connections SET last_used_at = ? WHERE id = ? AND (last_used_at IS NULL OR last_used_at < ?)").bind(now, props.connectionId, now - LAST_USED_GRANULARITY_MS).run());
 
     const principal = { userId: props.userId, connectionId: props.connectionId, clientName: props.clientName, authorizationEpoch: props.authorizationEpoch };
+    const tools = toolsFor(authority.user.role, scopes);
+
+    // Rate limit per Connected app: every tools/call is counted, and a call to a tool without readOnlyHint also counts as a write.
+    const admitted = await admitBody(c, props.connectionId, tools);
+    if ("response" in admitted) return withCors(admitted.response);
+
     const server = new McpServer({ name: "quincy-portal", version: "1.0.0" });
-    for (const tool of toolsFor(authority.user.role, scopes)) {
-      server.registerTool(tool.name, { description: tool.description, inputSchema: tool.inputSchema, annotations: tool.annotations }, async (input: Record<string, unknown>) =>
+    for (const tool of tools) {
+      server.registerTool(tool.name, { description: tool.description, inputSchema: strictInput(tool), annotations: tool.annotations }, async (input: Record<string, unknown>) =>
         tool.call({ env: c.env, executionCtx: c.executionCtx as ExecutionContext, fetchApp, principal, role: authority.user.role }, input));
     }
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
-    return withCors(await transport.handleRequest(c.req.raw));
+    return withCors(await transport.handleRequest(c.req.raw, admitted.parsedBody === undefined ? undefined : { parsedBody: admitted.parsedBody }));
   });
   app.all("/mcp", mcpHandler("/mcp"));
   app.all("/mcp/", mcpHandler("/mcp/"));

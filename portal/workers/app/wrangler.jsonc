@@ -29,6 +29,11 @@
     { "binding": "SESSIONS", "id": "1344f43c2da84b28bc8729ac15c36925" },
     { "binding": "OAUTH_KV", "id": "8f755548fe4049538916612a12dbf448" }
   ],
+  // #703: per-connection limits on /mcp tools/call (ADR 0019). Namespace ids are account-wide: keep them unique.
+  "ratelimits": [
+    { "name": "MCP_CALLS", "namespace_id": "703001", "simple": { "limit": 60, "period": 60 } },
+    { "name": "MCP_WRITES", "namespace_id": "703002", "simple": { "limit": 20, "period": 60 } }
+  ],
   "queues": {
     "producers": [
       { "binding": "INGEST_QUEUE", "queue": "quincy-ingest" },
