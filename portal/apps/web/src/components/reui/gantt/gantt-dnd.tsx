@@ -117,7 +117,7 @@
  * 2026-10-08, #727 - CHANGED (ADR 0009 addendum). The tree is now a sticky column inside the one scroller, so the
  * scroller's rect spans the tree. The cached `paneRect` (overlay clamps) and the edge auto-scroll zone measure the
  * lane overlay (`data-slot="gantt-lane-overlay"`, the visible lane right of the tree) instead; scroll writes still
- * go to the `[data-gantt-scroller]` element. A dragged bar therefore never clamps or auto-scrolls under the tree.
+ * go to the `GANTT_SCROLLER_SELECTOR` element. A dragged bar therefore never clamps or auto-scrolls under the tree.
  */
 
 import { useCallback, useEffect } from "react"
@@ -147,6 +147,7 @@ import type {
   GanttSegment,
 } from "@/components/reui/gantt/gantt-types"
 import { addDays, differenceInCalendarDays } from "date-fns"
+import { GANTT_SCROLLER_SELECTOR } from "./gantt-track-geometry"
 
 /**
  * Activation policy (dnd-kit parity where proven):
@@ -320,11 +321,9 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   // a `const` further down would still be in its TDZ there. `paneRect` is the VISIBLE timeline
   // pane (the axis rect is the full scroll width): cached on activation, refreshed by
   // `autoScrollTick`, measured afresh by the resize chip's clamp.
-  // 2026-10-08, #726: looked up by `[data-gantt-scroller]` instead of the pane's scroll-area viewport
+  // 2026-10-08, #726: looked up by `GANTT_SCROLLER_SELECTOR` instead of the pane's scroll-area viewport
   // selector, so the lookup survives the single-scroller layout (#727). Same element today.
-  const timelineViewport = viewRoot?.querySelector<HTMLElement>(
-    "[data-gantt-scroller]"
-  )
+  const timelineViewport = viewRoot?.querySelector<HTMLElement>(GANTT_SCROLLER_SELECTOR)
   // 2026-10-08, #727: the scroller now also spans the sticky tree column, so the VISIBLE timeline
   // lane is the lane overlay (the box right of the tree); clamping and edge auto-scroll measure it
   // and a dragged bar never goes under the tree. The scroller still receives the scroll writes.
@@ -986,8 +985,8 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   // (`timelineViewport` is hoisted up beside `let surface` - #221 design fixes.)
   const autoScrollTick = () => {
     autoScrollRaf = 0
-    if (finished || !active || !surface || !timelineViewport) return
-    const pane = (laneEl ?? timelineViewport).getBoundingClientRect()
+    if (finished || !active || !surface || !timelineViewport || !laneEl) return
+    const pane = laneEl.getBoundingClientRect()
     cachePane(pane)
     const x = lastPointer.clientX
     let speed = 0

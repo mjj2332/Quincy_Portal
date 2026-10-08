@@ -20,7 +20,7 @@
  * Targets inside the tree column are skipped so the browser's page zoom still works there.
  */
 
-const TREE_COLUMN = "[data-gantt-tree-column]"
+import { GANTT_TREE_COLUMN_SELECTOR } from "./gantt-track-geometry"
 
 export interface GatedWheelZoomHandlers {
   onWheel: (e: WheelEvent) => void
@@ -32,7 +32,7 @@ export interface GatedWheelZoomHandlers {
 }
 
 function inTreeColumn(target: EventTarget | null): boolean {
-  return target instanceof Element && target.closest(TREE_COLUMN) !== null
+  return target instanceof Element && target.closest(GANTT_TREE_COLUMN_SELECTOR) !== null
 }
 
 interface GestureLike extends Event {

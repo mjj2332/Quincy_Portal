@@ -276,16 +276,17 @@
  * `data-gantt-scroller`; a live `scrollerRef` getter finds it. Every track-offset read (auto-centre, infinite edge growth, centre
  * report, re-seat, zoom anchors, header pan, offscreen chips) goes through `trackGeometry` in `gantt-track-geometry.ts`, called
  * with inset 0, so the values equal the old `scrollWidth`/`clientWidth`/`|scrollLeft|` reads exactly. `getScrollStart` is removed.
- * Groundwork for the single-scroller layout (#727). *
+ * Groundwork for the single-scroller layout (#727).
+ *
  * 2026-10-08, #727 - CHANGED, structural (ADR 0009 addendum): ONE native scroller. `bodyRef` no longer scrolls; it holds the scroller
  * (`data-gantt-scroller`, a Base UI ScrollArea viewport or, with `scrollbars: "native"`, a plain overflow div) whose content is two
  * columns: the tree column (`gantt-tree-pane`, sticky inline-start 0, clipped on x, width `var(--gantt-tree-inset)`) and the timeline
  * column (`gantt-timeline-pane`, isolated). Each column keeps its own sticky-top header (the tree header is the corner), so tree rows and
  * bars share one scrollTop and cannot drift; the browser scrolls them on its scrolling thread. The splitter, the lane overlay (zoom
  * control, offscreen chips, scrollbar rail) and the tree overlay (reorder indicator, rail) are overlays OUTSIDE the scroller, so
- * `timelinePaneRef`/`treePaneRef` (now the lane/tree overlays) still mean "the visible pane". `--gantt-tree-inset` lives on `bodyRef`
+ * `laneOverlayRef`/`treeOverlayRef` (the lane/tree overlays, formerly the pane refs) still mean "the visible pane". `--gantt-tree-inset` lives on `bodyRef`
  * and is written by the splitter drag (one write). Geometry reads use `scrollerGeometry` (the measured tree inset); the two "not laid
- * out" checks are `<= 0`. Scroll-padding (65px top, the inset at the inline start), the axis-group label offset and the horizontal
+ * out" checks are `<= 0`. Scroll-padding (the header height at the top, the inset at the inline start), the axis-group label offset and the horizontal
  * scrollbar start follow the inset. DELETED: the bidirectional scroll-sync and the wheel-driver effect (and `getPaneViewport`);
  * `revealRowNearest` does one `scrollTop` write. CHANGED behaviour: the tree no longer scrolls sideways on its own (it clips), and a
  * horizontal wheel over it pans the timeline. Wheel-zoom gating is untouched here (#728).
@@ -395,7 +396,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/reui/tooltip"
-import { findScroller, scrollerGeometry } from "./gantt-track-geometry"
+import {
+  GANTT_HEADER_PX,
+  GANTT_SCROLLER_SELECTOR,
+  GANTT_TREE_COLUMN_SELECTOR,
+  findScroller,
+  scrollerGeometry,
+} from "./gantt-track-geometry"
 import { bindGatedWheelZoom } from "./gantt-wheel-zoom"
 import { PlusIcon, MinusIcon, GripVerticalIcon, ChevronRightIcon, ChevronLeftIcon, XIcon } from "lucide-react"
 
@@ -683,11 +690,11 @@ interface GanttViewProps extends useRender.ComponentProps<"div"> {
 
 /**
  * #727: scroll-padding on the one scroller, so focus, `scrollIntoView` and a row reveal never park
- * a target under the sticky parts: 65px is the two-row header (64px + its rule), and the inline
+ * a target under the sticky parts: the top is the two-row header (`GANTT_HEADER_PX`, 64px + its rule), and the inline
  * start is the sticky tree column's width.
  */
 const SCROLLER_PADDING: CSSProperties = {
-  scrollPaddingTop: "65px",
+  scrollPaddingTop: `${GANTT_HEADER_PX}px`,
   scrollPaddingInlineStart: "var(--gantt-tree-inset)",
 }
 
@@ -1715,8 +1722,8 @@ function GanttView({
     }),
     []
   )
-  const treePaneRef = useRef<HTMLDivElement | null>(null)
-  const timelinePaneRef = useRef<HTMLDivElement | null>(null)
+  const treeOverlayRef = useRef<HTMLDivElement | null>(null)
+  const laneOverlayRef = useRef<HTMLDivElement | null>(null)
   const treeRowsRef = useRef<HTMLDivElement | null>(null)
 
   // Track the body width so the tree pane can yield on narrow containers.
@@ -1947,6 +1954,14 @@ function GanttView({
     const markIntent = () => {
       lastUserScrollRef.current = performance.now()
     }
+    // the tree column sits inside the scroller now: pressing a key or the pointer there edits the
+    // tree and scrolls nothing, so it is not scroll intent (wheel and touch there DO scroll the timeline)
+    const inTree = (target: EventTarget | null) =>
+      target instanceof Element && target.closest(GANTT_TREE_COLUMN_SELECTOR) !== null
+    const markKeyIntent = (e: KeyboardEvent) => {
+      if (inTree(e.target)) return
+      markIntent()
+    }
     // zooming is not scroll intent - the re-seat it triggers must not be
     // mistaken for the user reaching an edge and asking to grow the range
     const markWheelIntent = (e: WheelEvent) => {
@@ -1956,6 +1971,7 @@ function GanttView({
     // pointerdown counts only where pressing can scroll: the scrollbars,
     // the pan header, or a native-scroll host - NOT bars, chips, or zoom
     const onPointerDown = (e: PointerEvent) => {
+      if (inTree(e.target)) return
       const target = e.target as HTMLElement | null
       if (
         target?.closest(
@@ -1968,12 +1984,12 @@ function GanttView({
     pane.addEventListener("wheel", markWheelIntent, { passive: true })
     pane.addEventListener("pointerdown", onPointerDown)
     pane.addEventListener("touchstart", markIntent, { passive: true })
-    pane.addEventListener("keydown", markIntent)
+    pane.addEventListener("keydown", markKeyIntent)
     return () => {
       pane.removeEventListener("wheel", markWheelIntent)
       pane.removeEventListener("pointerdown", onPointerDown)
       pane.removeEventListener("touchstart", markIntent)
-      pane.removeEventListener("keydown", markIntent)
+      pane.removeEventListener("keydown", markKeyIntent)
     }
   }, [])
 
@@ -2197,7 +2213,7 @@ function GanttView({
     // trackPoint mirrors in RTL, where the range start is the right edge. #727: measured from the
     // lane overlay (the visible lane, past the sticky tree column), not the scroller, whose left
     // edge sits under the tree.
-    const offsetPx = trackPoint(timelinePaneRef.current ?? viewport, clientX).offset
+    const offsetPx = trackPoint(laneOverlayRef.current ?? viewport, clientX).offset
     const geometry = scrollerGeometry(viewport)
     pendingRestoreRef.current = {
       ms:
@@ -2318,7 +2334,7 @@ function GanttView({
       e.preventDefault()
       e.stopPropagation()
       const container = treeRowsRef.current
-      const pane = treePaneRef.current
+      const pane = treeOverlayRef.current
       if (!container || !pane) return
       const rowEls = Array.from(
         container.querySelectorAll<HTMLElement>("[data-slot=gantt-row-group]")
@@ -3224,7 +3240,7 @@ function GanttView({
         {/* Tree overlay: the visible tree area, outside the scroller. Pane-rect reads (row reorder) and the
             reorder indicator live here, so they keep meaning "the visible tree". */}
         <div
-          ref={treePaneRef}
+          ref={treeOverlayRef}
           data-slot="gantt-tree-overlay"
           data-testid="gantt-tree-overlay"
           className="pointer-events-none absolute inset-y-0 start-0"
@@ -3271,7 +3287,7 @@ function GanttView({
             scroller. The zoom control and the offscreen chips ride it; every "visible pane rect"
             read (chips, zoom anchor, drag clamping) measures this box. */}
         <div
-          ref={timelinePaneRef}
+          ref={laneOverlayRef}
           data-slot="gantt-lane-overlay"
           data-testid="gantt-lane-overlay"
           className="pointer-events-none absolute inset-y-0 end-0 z-30"
@@ -3389,7 +3405,7 @@ function GanttView({
           )}
           {viewConfig.offscreenIndicators && (
             <GanttOffscreenChips
-              paneRef={timelinePaneRef}
+              paneRef={laneOverlayRef}
               occurrences={occurrences}
               locale={settings.locale}
               refreshKey={`${scale}:${rangeKey}:${zoom}:${rows.length}:${clampedTreeWidth}:${viewConfig.scrollbars}`}
@@ -4066,7 +4082,7 @@ const FOCUS_RING_ROOM_PX = 4
  * #727: tree rows and bars share the one scroller, so this is one `scrollTop` write.
  */
 function revealRowNearest(row: HTMLElement | null, margin = 0) {
-  const viewport = row?.closest<HTMLElement>("[data-gantt-scroller]")
+  const viewport = row?.closest<HTMLElement>(GANTT_SCROLLER_SELECTOR)
   if (!row || !viewport || viewport.clientHeight === 0) return
   const header = viewport.querySelector<HTMLElement>('[data-slot="gantt-tree-header"],[data-slot="gantt-timeline-header"]')
   const headerHeight = header?.getBoundingClientRect().height ?? 0

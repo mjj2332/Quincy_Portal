@@ -59,17 +59,19 @@ describe("findScroller", () => {
 })
 
 describe("scrollerGeometry (#727)", () => {
-  it("uses the measured width of the sticky tree column as the inset", () => {
+  it("uses --gantt-tree-inset (the width the sticky tree column is given) as the inset", () => {
     const scroller = fakeScroller({ scrollLeft: 100, clientWidth: 1000.5, scrollWidth: 4000.5 });
-    const column = document.createElement("div");
-    column.setAttribute("data-gantt-tree-column", "");
-    column.getBoundingClientRect = () => ({ width: 396.25 }) as DOMRect;
-    scroller.append(column);
+    // the inset is the number that sizes the column (inherited from the Gantt body), not its rect
+    const body = document.createElement("div");
+    body.style.setProperty("--gantt-tree-inset", "396.25px");
+    body.append(scroller);
+    document.body.append(body);
     expect(treeInset(scroller)).toBe(396.25);
     expect(scrollerGeometry(scroller)).toEqual({ start: 100, visibleWidth: 604.25, trackWidth: 3604.25 });
+    body.remove();
   });
 
-  it("is the plain geometry (inset 0) when there is no tree column or it is not laid out", () => {
+  it("is the plain geometry (inset 0) when there is no tree column or the variable is unset", () => {
     const scroller = fakeScroller({ scrollLeft: -450, clientWidth: 800, scrollWidth: 3000, direction: "rtl" });
     expect(treeInset(scroller)).toBe(0);
     expect(scrollerGeometry(scroller)).toEqual({ start: 450, visibleWidth: 800, trackWidth: 3000 });

@@ -174,6 +174,7 @@ import { roleHasCapability, subtaskIdFromCalendarEntityId, type ChecklistSchedul
 import { Gantt, useGanttNavigation, useGanttSelector, type GanttColumn, type GanttMetrics, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
 import { mergeGanttI18n, type GanttI18nOverrides } from "@/components/reui/gantt/gantt-i18n";
 import { toZoned } from "@/components/reui/gantt/gantt-lib";
+import { GANTT_SCROLLER_SELECTOR } from "@/components/reui/gantt/gantt-track-geometry";
 import { GanttNav, GanttNavNext, GanttNavPrev, GanttNavToday, GanttScaleSwitcher, GanttTitle, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
 import { TooltipProvider } from "@/components/reui/tooltip";
 import { GanttView } from "@/components/reui/gantt/gantt-view";
@@ -356,7 +357,7 @@ const NO_SELECTED_ROWS: string[] = [];
  * against `scrollHeight`: the browser clamps a `scrollTop` write natively.
  */
 export function scrollGanttRowToTop(root: HTMLElement, rowId: string): "done" | "unmeasured" | "missing" {
-  const timeline = root.querySelector<HTMLElement>("[data-gantt-scroller]");
+  const timeline = root.querySelector<HTMLElement>(GANTT_SCROLLER_SELECTOR);
   if (!timeline) return "missing";
   const row = Array.from(timeline.querySelectorAll<HTMLElement>("[data-gantt-row-id]")).find((el) => el.getAttribute("data-gantt-row-id") === rowId);
   if (!row) return "missing";
@@ -1827,7 +1828,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         return;
       }
       if (result === "unmeasured") {
-        const timeline = container.querySelector<HTMLElement>("[data-gantt-scroller]");
+        const timeline = container.querySelector<HTMLElement>(GANTT_SCROLLER_SELECTOR);
         if (timeline && typeof ResizeObserver !== "undefined") {
           const observer = new ResizeObserver(() => {
             if (timeline.clientHeight <= 0) return;
@@ -1850,7 +1851,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       loadNextPage();
       return;
     }
-    const timeline = container.querySelector<HTMLElement>("[data-gantt-scroller]");
+    const timeline = container.querySelector<HTMLElement>(GANTT_SCROLLER_SELECTOR);
     // Someone already scrolled while pages were loading: leave their position alone.
     if (request === "open" && timeline && timeline.scrollTop > 0) {
       landingRequestRef.current = null;
