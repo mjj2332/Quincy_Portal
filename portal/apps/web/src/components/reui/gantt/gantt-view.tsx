@@ -316,6 +316,12 @@
  * handlers, step, bounds and focusable `aria-disabled` at the limits; `undefined` keeps the floating box (vendor consumers, harness);
  * `null` renders neither. The handlers moved to `zoomInStep`/`zoomOutStep`. Zoom state and wheel/pinch anchoring are unchanged,
  * and the `--gantt-zoom-shift` chip dodge still serves the floating box only.
+ *
+ * 2026-10-09, #697 - CHANGED, class tokens only (ADR 0009 addendum). The create row's Cancel x takes a start margin and start padding of 24px on coarse
+ * pointers and on phones (the -ms-6 / ps-6 pair). Its 44px touch box was centred in a 20px gutter with 4px before the title input, so it spilled 8px
+ * into the input, which paints later and won the tap. The box now grows 24px toward the empty indent; the glyph (re-centred by the padding), the gutter
+ * and the input do not move. The coarse and phone variants set the same value, so the cascade trap of #692 (the coarse variant winning where both set
+ * one property) does not apply. A Codex alternative, a start margin on the title wrapper, was rejected: it moves the input off the child rows' titles.
  */
 
 import {
@@ -4094,7 +4100,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
       size="icon-xs"
       data-testid="gantt-group-create-task-cancel"
       aria-label={cancelAddTaskIn(groupTitle)}
-      className="text-muted-foreground hover:text-foreground! size-5! pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[721px]:min-h-[44px] max-[721px]:min-w-[44px]"
+      className="text-muted-foreground hover:text-foreground! size-5! pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[721px]:min-h-[44px] max-[721px]:min-w-[44px] pointer-coarse:-ms-6 pointer-coarse:ps-6 max-[721px]:-ms-6 max-[721px]:ps-6"
       onClick={close}
     >
       <XIcon className="size-3.5" aria-hidden="true" />

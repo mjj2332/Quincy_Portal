@@ -775,6 +775,21 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
     for (const cls of ["pointer-coarse:min-h-[44px]", "pointer-coarse:min-w-[44px]", "max-[721px]:min-h-[44px]", "max-[721px]:min-w-[44px]"]) expect(cancel.className).toContain(cls);
   });
 
+  it("the x's 44px touch box reaches into the empty indent, not the title input (#697)", async () => {
+    await render(view({ onCreateGroupTask: ok, columns: [people, due] }));
+    await click(createButton("Alpha")!);
+    const cancel = host.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-cancel"]')!;
+    // a start margin and start padding of the same size on coarse pointers and phones: the box grows
+    // 24px toward the indent while the glyph (centred by the padding) and the input stay where they were
+    for (const cls of ["pointer-coarse:-ms-6", "pointer-coarse:ps-6", "max-[721px]:-ms-6", "max-[721px]:ps-6"]) expect(cancel.className).toContain(cls);
+    // the title wrapper and the gutter span are unchanged, so the input keeps its alignment with child rows
+    const gutter = cancel.parentElement as HTMLElement;
+    expect(gutter.className).toBe("me-1 flex w-5 shrink-0 items-center justify-center");
+    const titleWrapper = input().parentElement as HTMLElement;
+    expect(titleWrapper.className).toContain("min-w-0");
+    expect(titleWrapper.className).toContain("flex-1");
+  });
+
   it("renderCreateStack is ignored when a column carries a create cell", async () => {
     await render(view({ onCreateGroupTask: ok, columns: [people], renderCreateStack: () => <span data-testid="draft-stack" /> }));
     await click(createButton("Alpha")!);
