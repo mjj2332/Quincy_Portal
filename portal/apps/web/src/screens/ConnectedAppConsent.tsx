@@ -5,8 +5,9 @@ import { Notice } from "@/components/quincy/Notice";
 import { Badge } from "@/components/reui/badge";
 import { Button } from "@/components/reui/button";
 import { Checkbox } from "@/components/reui/checkbox";
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/reui/field";
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/reui/field";
 import { Frame, FramePanel } from "@/components/reui/frame";
+import { InternalLink } from "@/components/InternalLink";
 
 type Consent = { clientName: string; redirectHost: string; isLocalhost: boolean; scopes: string[]; warning: string };
 type Scope = "read" | "write" | "admin";
@@ -38,8 +39,8 @@ export function ConnectedAppConsent({ handle, isAdmin }: { handle: string; isAdm
     apiGet<Consent>(`/api/connected-apps/consent/${encodeURIComponent(handle)}`).then((value) => {
       if (!active) return;
       setConsent(value);
-      // Read is required; write is on when asked for; admin is always an explicit opt-in.
-      setGranted(new Set<Scope>(value.scopes.includes("write") ? ["read", "write"] : ["read"]));
+      // Read is locked on; Write and Admin are each an explicit opt-in, even when the client asked for them.
+      setGranted(new Set<Scope>(["read"]));
     }, (reason) => {
       if (!active) return;
       if (reason instanceof ApiError && reason.status === 404) setExpired(true);
@@ -72,11 +73,14 @@ export function ConnectedAppConsent({ handle, isAdmin }: { handle: string; isAdm
         <div>
           <Eyebrow className="block mb-[var(--space-3)]">Personal settings</Eyebrow>
           <h1 className={H1}>Connect an app</h1>
-          <p className={LEDE}>An app is asking to act as you in the Portal.</p>
+          {!expired && <p className={LEDE}>An app is asking to act as you in the Portal.</p>}
         </div>
       </header>
 
-      {expired && <Notice role="alert" data-testid="consent-expired">This connection request expired or was already used. Start the connection again from the app.</Notice>}
+      {expired && <div>
+        <Notice role="alert" data-testid="consent-expired">This connection request expired or was already used. Start the connection again from the app.</Notice>
+        <p className="mt-[var(--space-4)] mb-0"><InternalLink to="/settings/connected-apps" className="underline">Go to Connected apps</InternalLink></p>
+      </div>}
       {loadError && <Notice role="alert">{loadError}</Notice>}
       {!consent && !expired && !loadError && <p role="status" className="m-0 text-foreground-secondary">Loading…</p>}
 
@@ -89,8 +93,8 @@ export function ConnectedAppConsent({ handle, isAdmin }: { handle: string; isAdm
               {consent.isLocalhost && <> <Badge variant="warning-light" data-testid="consent-localhost">Runs on this computer</Badge></>}
             </p>
             {consent.isLocalhost && <Notice tone="caution" role="note" className="mb-[var(--space-4)]">This app runs on your own device. Any program on it could be receiving the connection, whatever name it shows.</Notice>}
-            <p className="mt-0 mb-[var(--space-4)]" data-testid="consent-warning">{consent.warning}</p>
-
+            <FieldSet>
+            <FieldLegend data-testid="consent-warning">{consent.warning}</FieldLegend>
             <FieldGroup>
               {offered.map((scope) => (
                 <Field key={scope} orientation="horizontal">
@@ -102,6 +106,7 @@ export function ConnectedAppConsent({ handle, isAdmin }: { handle: string; isAdm
                 </Field>
               ))}
             </FieldGroup>
+            </FieldSet>
             {granted.has("admin") && <Notice tone="caution" role="note" className="mt-[var(--space-4)]" data-testid="consent-admin-warning">Admin lets this app use admin tools as you, such as Dropbox, AutoHDR and retries. Only grant it to an app you trust.</Notice>}
             {error && <Notice role="alert" className="mt-[var(--space-4)]">{error}</Notice>}
 

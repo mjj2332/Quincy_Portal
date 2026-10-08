@@ -71,7 +71,7 @@ export function ConnectedApps() {
           {apps !== null && apps.length > 0 && (
             <ItemGroup>
               {apps.map((app) => (
-                <Item key={app.id} variant="outline" data-testid="connected-app-row">
+                <Item key={app.id} variant="outline" className="rounded-[var(--radius-card)]" data-testid="connected-app-row">
                   <ItemContent>
                     <ItemTitle>{app.clientName}</ItemTitle>
                     <ItemDescription>
@@ -94,12 +94,12 @@ export function ConnectedApps() {
       <AlertDialog open={revoking !== null} onOpenChange={(open) => { if (!open && !pending) setRevoking(null); }}>
         <AlertDialogContent size="default" data-testid="connected-app-revoke-confirm">
           <AlertDialogHeader>
-            <AlertDialogTitle>Disconnect {revoking?.clientName}?</AlertDialogTitle>
+            <AlertDialogTitle>Revoke {revoking?.clientName}?</AlertDialogTitle>
             <AlertDialogDescription className="text-foreground-secondary">It will stop working immediately. You can connect it again later.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel data-testid="connected-app-revoke-cancel">Cancel</AlertDialogCancel>
-            <AlertDialogAction data-testid="connected-app-revoke-action" disabled={pending} onClick={() => void revoke()}>{pending ? "Revoking…" : "Revoke"}</AlertDialogAction>
+            <AlertDialogAction variant="destructive" data-testid="connected-app-revoke-action" disabled={pending} onClick={() => void revoke()}>{pending ? "Revoking…" : "Revoke"}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
