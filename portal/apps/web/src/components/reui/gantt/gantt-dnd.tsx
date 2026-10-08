@@ -316,7 +316,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   // pane (the axis rect is the full scroll width): cached on activation, refreshed by
   // `autoScrollTick`, measured afresh by the resize chip's clamp.
   const timelineViewport = viewRoot?.querySelector<HTMLElement>(
-    "[data-slot=gantt-timeline-pane] [data-slot=scroll-area-viewport]"
+    "[data-gantt-scroller]"
   )
   let paneRect: DOMRect | null = null
   const cachePane = (rect: DOMRect | null) => {
