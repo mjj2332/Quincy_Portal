@@ -276,6 +276,7 @@ describe("an AI sticky is the Portal's own Sticky Note (board-scene `note`)", ()
     expect(Object.keys(WHITEBOARD_STICKY_COLORS).sort()).toEqual(["blue", "green", "pink", "purple", "yellow"]);
     expect(Object.values(WHITEBOARD_STICKY_COLORS).sort()).toEqual(Object.values(WHITEBOARD_PAPER).sort()); // exactly the Portal's notes
     expect(whiteboardServerEditSchema.safeParse({ op: "add_sticky", x: 0, y: 0, text: "t", color: "orange" }).success).toBe(false);
+    expect(whiteboardServerEditSchema.safeParse({ op: "add_sticky", x: 0, y: 0, text: "t", color: "#12ab34" }).success).toBe(false); // named papers only
     expect(WHITEBOARD_PAPER).toEqual({ yellow: "#fff085", green: "#b9f8cf", blue: "#bedbff", red: "#ffc9c9", violet: "#ddd6ff" });
   });
 

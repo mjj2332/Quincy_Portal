@@ -39,8 +39,8 @@ export function ConnectedAppConsent({ handle, isAdmin }: { handle: string; isAdm
     apiGet<Consent>(`/api/connected-apps/consent/${encodeURIComponent(handle)}`).then((value) => {
       if (!active) return;
       setConsent(value);
-      // Read is locked on; Write and Admin are each an explicit opt-in, even when the client asked for them.
-      setGranted(new Set<Scope>(["read"]));
+      // Read is locked on. Write starts ticked when the client asked for it; Admin is always an explicit opt-in.
+      setGranted(new Set<Scope>(value.scopes.includes("write") ? ["read", "write"] : ["read"]));
     }, (reason) => {
       if (!active) return;
       if (reason instanceof ApiError && reason.status === 404) setExpired(true);

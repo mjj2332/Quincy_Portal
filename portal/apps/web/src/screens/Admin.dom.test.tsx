@@ -217,15 +217,15 @@ describe("Admin Pipeline configuration boundary", () => {
     await act(async () => { root!.render(<Admin currentUserId="self" />); await Promise.resolve(); });
     await flush();
 
-    const toggle = host.querySelector<HTMLInputElement>('[aria-label="Enable user impersonation (testing)"]')!;
-    expect(toggle.checked).toBe(false);
+    const toggle = host.querySelector<HTMLElement>('[aria-label="Enable user impersonation (testing)"]')!;
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
     expect(host.textContent).not.toContain("Act as");
 
     apiPatchMock.mockResolvedValueOnce({ enabled: true });
     await click(toggle);
     await flush();
     expect(apiPatchMock).toHaveBeenCalledWith("/api/users/impersonation-settings", { enabled: true });
-    expect(toggle.checked).toBe(true);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
     expect(userRow(host, "Active Editor").textContent).toContain("Act as");
     expect(userRow(host, "Active Photographer").textContent).toContain("Act as");
     expect(userRow(host, "The Admin").textContent).not.toContain("Act as");
@@ -386,10 +386,10 @@ describe("Admin Pipeline configuration boundary", () => {
     apiPatchMock.mockRejectedValueOnce(new Error("Setting unavailable"));
     await act(async () => { root!.render(<Admin currentUserId="self" />); await Promise.resolve(); });
     await flush();
-    const toggle = host.querySelector<HTMLInputElement>('[aria-label="Enable user impersonation (testing)"]')!;
+    const toggle = host.querySelector<HTMLElement>('[aria-label="Enable user impersonation (testing)"]')!;
     await click(toggle);
     await flush();
-    expect(toggle.checked).toBe(false);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
     expect(host.textContent).toContain("Setting unavailable");
   });
 

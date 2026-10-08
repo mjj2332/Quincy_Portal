@@ -42,7 +42,7 @@ describe("ConnectedAppConsent", () => {
     expect(document.querySelector('[data-testid="consent-localhost"]')).toBeNull();
     expect(checkbox("read")?.checked).toBe(true);
     expect(checkbox("read")?.disabled).toBe(true);
-    expect(checkbox("write")?.checked).toBe(false);
+    expect(checkbox("write")?.checked).toBe(true);
     expect(checkbox("admin")).toBeNull();
     // The warning is the real legend of the scope group, not a loose paragraph.
     const legend = document.querySelector("fieldset > legend");
@@ -69,20 +69,30 @@ describe("ConnectedAppConsent", () => {
     expect(document.querySelector('[data-testid="consent-admin-warning"]')).not.toBeNull();
   });
 
-  it("Approve posts the chosen scopes and leaves with window.location.assign", async () => {
-    await mount();
+  it("offers no Write box when the client did not request write", async () => {
+    apiGetMock.mockResolvedValue(consent({ scopes: ["read"] }));
+    await mount(true);
+    expect(checkbox("write")).toBeNull();
+    expect(checkbox("admin")).toBeNull();
     await act(async () => { button("Approve").click(); await Promise.resolve(); });
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/connected-apps/consent/${HANDLE}`, { decision: "approve", scopes: ["read"] });
   });
 
-  it("Approve includes Write only when ticked", async () => {
+  it("Approve posts read and write by default and leaves with window.location.assign", async () => {
     await mount();
-    await act(async () => { checkbox("write")!.click(); await Promise.resolve(); });
     await act(async () => { button("Approve").click(); await Promise.resolve(); });
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/connected-apps/consent/${HANDLE}`, { decision: "approve", scopes: ["read", "write"] });
     expect(assign).toHaveBeenCalledWith("https://claude.ai/cb?code=x");
+  });
+
+  it("Approve drops Write once it is unticked", async () => {
+    await mount();
+    await act(async () => { checkbox("write")!.click(); await Promise.resolve(); });
+    await act(async () => { button("Approve").click(); await Promise.resolve(); });
+    await flush();
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/connected-apps/consent/${HANDLE}`, { decision: "approve", scopes: ["read"] });
   });
 
   it("Deny posts a deny decision", async () => {

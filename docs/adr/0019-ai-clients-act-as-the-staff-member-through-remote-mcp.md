@@ -61,8 +61,8 @@ The decision stands as written. Where the build differs from the text above (ope
   library is Cloudflare `workers-oauth-provider`, with its state in `OAUTH_KV`.
 - **`admin` scope is narrower than "admin reads and writes".** Admin reads are `read`-scope tools gated by
   the admin-only capability; the `admin` scope covers the destructive admin writes and `delete_project`.
-- **Consent defaults.** Read is always on. Write and Admin each start unticked, even when the client
-  asked for them, and Admin is offered to Admins only.
+- **Consent defaults.** Read is always on. Write is offered only when the client asked for it and starts
+  ticked. Admin starts unticked and is offered to Admins only.
 - **Rate limiting** is the Workers Rate Limiting binding (`MCP_CALLS`, `MCP_WRITES`), keyed by
   connection, not a Durable Object. A failing binding fails open and is logged.
 - **Downloads** serve stored renditions only (`409 rendition_not_ready` otherwise), and redemption
