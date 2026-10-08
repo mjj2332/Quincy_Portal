@@ -60,6 +60,27 @@ const memberSetup = async (projectId: string) => {
   return { membershipCycle };
 };
 
+const assetSetup = async (projectId: string) => {
+  const collectionId = crypto.randomUUID(); const assetId = crypto.randomUUID(); const now = Date.now();
+  await insert("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?)", collectionId, projectId, now, now);
+  await insert("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, 'p.jpg', 10, 'upload', ?, ?)", assetId, collectionId, `parity/${assetId}.jpg`, now, now);
+  return { assetId };
+};
+const annotationSetup = async (projectId: string) => {
+  const { assetId } = await assetSetup(projectId);
+  const created = JSON.parse(await callTool("create_annotation", { assetId, noteText: "Seed" })) as { id: string };
+  return { assetId, annotationId: created.id };
+};
+const selectedSetup = async (projectId: string) => {
+  const ids = await assetSetup(projectId);
+  await callTool("select_asset_for_editing", ids);
+  return ids;
+};
+const noticeSetup = async () => {
+  const created = JSON.parse(await callTool("create_notice_post", { text: "Seed notice" })) as { post: { id: string } };
+  return { postId: created.post.id };
+};
+
 const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "create_project", args: () => ({ street: "Parity Created", shootDate: "2037-05-04" }) },
   { tool: "update_project_details", stage: "edited_review", args: ({ projectId }) => ({ projectId, suburb: "Parity", shootDate: "2037-06-01" }) },
@@ -81,6 +102,17 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "update_video_link", stage: "edited_review", setup: linkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, url: "https://example.test/parity-b" }) },
   { tool: "reorder_video_link", stage: "edited_review", setup: linkSetup, args: ({ projectId, linkId, otherId }) => ({ projectId, linkId: linkId!, beforeId: otherId!, afterId: null }) },
   { tool: "remove_video_link", stage: "edited_review", setup: linkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId! }) },
+  { tool: "create_annotation", stage: "edited_review", setup: assetSetup, args: ({ assetId }) => ({ assetId: assetId!, noteText: "Parity note" }) },
+  { tool: "edit_annotation", stage: "edited_review", setup: annotationSetup, args: ({ annotationId }) => ({ annotationId: annotationId!, noteText: "Edited" }) },
+  { tool: "delete_annotation", stage: "edited_review", setup: annotationSetup, args: ({ annotationId }) => ({ annotationId: annotationId! }) },
+  { tool: "create_notice_post", args: () => ({ text: "Parity notice" }) },
+  { tool: "edit_notice_post", setup: noticeSetup, args: ({ postId }) => ({ postId: postId!, text: "Edited notice" }) },
+  { tool: "delete_notice_post", setup: noticeSetup, args: ({ postId }) => ({ postId: postId! }) },
+  { tool: "set_asset_review", stage: "edited_review", setup: assetSetup, args: ({ assetId }) => ({ assetId: assetId!, stars: 3 }) },
+  { tool: "select_asset_for_editing", stage: "edited_review", setup: assetSetup, args: ({ assetId }) => ({ assetId: assetId! }) },
+  { tool: "unselect_asset_for_editing", stage: "edited_review", setup: selectedSetup, args: ({ assetId }) => ({ assetId: assetId! }) },
+  { tool: "request_project_link_preview", stage: "edited_review", args: ({ projectId }) => ({ projectId, url: "https://example.com/parity-preview" }) },
+  { tool: "request_notice_link_preview", args: () => ({ url: "https://example.com/parity-notice-preview" }) },
 ];
 
 /** Write tools whose route writes no audit_log or activity row at all (so there is nothing to stamp), each with the reason. */
@@ -95,8 +127,14 @@ async function callTool(name: string, args: Record<string, unknown>) {
   expect(result.isError, `${name}: ${result.content[0]!.text}`).toBeUndefined();
   return result.content[0]!.text;
 }
-function callToolRaw(name: string, args: Record<string, unknown>) {
-  return mcpTool(name).call({ env: testEnv, executionCtx: ctx, fetchApp, principal, role: "admin" }, args);
+/** The background Worker's page fetch, answered locally: a link preview only writes its audit row once a page was fetched. */
+const fakeBackground = { fetchLinkPreview: async () => ({ ok: true as const, finalUrl: "https://example.com/parity", title: "Parity", description: null, siteName: null, image: null }) };
+async function callToolRaw(name: string, args: Record<string, unknown>) {
+  const holder = testEnv as unknown as { BACKGROUND: unknown };
+  const original = holder.BACKGROUND;
+  if (name.endsWith("link_preview")) holder.BACKGROUND = fakeBackground;
+  try { return await mcpTool(name).call({ env: testEnv, executionCtx: ctx, fetchApp, principal, role: "admin" }, args); }
+  finally { holder.BACKGROUND = original; }
 }
 
 async function executeSql(sql: string): Promise<void> {

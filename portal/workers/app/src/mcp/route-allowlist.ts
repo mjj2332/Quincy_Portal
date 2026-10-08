@@ -47,7 +47,7 @@ const GET_TEMPLATES = [
   "/api/projects/:projectId/jobs",
 ] as const;
 
-/** Core writes (#705). Each is one tool's one route; `mcp-writes.test.ts` checks the pairing both ways. */
+/** Writes (#705 core, #706 collaboration). Each is one tool's one route; `mcp-writes.test.ts` checks the pairing both ways. */
 const WRITE_ROUTES = [
   ["POST", "/api/projects"],
   ["PATCH", "/api/projects/:projectId"],
@@ -71,6 +71,18 @@ const WRITE_ROUTES = [
   ["DELETE", "/api/projects/:projectId/links/:linkId"],
   ["POST", "/api/notifications/:notificationId/read"],
   ["POST", "/api/notifications/read-all"],
+  // Collaboration writes (#706)
+  ["POST", "/api/assets/:assetId/annotations"],
+  ["PATCH", "/api/annotations/:annotationId"],
+  ["DELETE", "/api/annotations/:annotationId"],
+  ["POST", "/api/notice-board/posts"],
+  ["PATCH", "/api/notice-board/posts/:postId"],
+  ["DELETE", "/api/notice-board/posts/:postId"],
+  ["POST", "/api/assets/:assetId/review"],
+  ["POST", "/api/assets/:assetId/select"],
+  ["DELETE", "/api/assets/:assetId/select"],
+  ["POST", "/api/projects/:projectId/link-previews"],
+  ["POST", "/api/notice-board/link-previews"],
 ] as const;
 
 export const MCP_ALLOWED_ROUTES: readonly { method: string; template: string; pattern: RegExp }[] = [
