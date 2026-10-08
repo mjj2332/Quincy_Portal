@@ -1687,7 +1687,7 @@ describe("ProductionGantt — Add task row (#344)", () => {
     await render();
     const badge = host.querySelector<HTMLElement>(`[data-testid="gantt-row-attention-missing_deadline"]`)!;
     const tokens = badge.className.split(/\s+/);
-    for (const token of ["min-w-0", "truncate", "min-[721px]:shrink-0"]) expect(tokens, token).toContain(token);
+    for (const token of ["min-w-0", "truncate", "min-[1024px]:shrink-0"]) expect(tokens, token).toContain(token);
     expect(tokens).not.toContain("shrink-0");
     expect(tokens).not.toContain("max-[721px]:max-w-[45%]");
     expect(badge.getAttribute("title")).toBe("Deadline not set");
@@ -1706,7 +1706,7 @@ describe("ProductionGantt — Add task row (#344)", () => {
     expect(title.className.split(/\s+/)).toContain("max-[721px]:flex-none");
     expect(title.className.split(/\s+/)).toContain("truncate");
 
-    // narrowTree is `(max-width: 720px)` (width <= 720); `max-[720px]:` compiles to width < 720, leaving 720 in neither variant (#692).
+    // the phone density breakpoint is `(max-width: 720px)` (width <= 720); `max-[720px]:` compiles to width < 720, leaving 720 in neither variant (#692).
     expect([badge, meta, outer, title].map((el) => el.className).join(" ")).not.toContain("max-[720px]");
   });
 

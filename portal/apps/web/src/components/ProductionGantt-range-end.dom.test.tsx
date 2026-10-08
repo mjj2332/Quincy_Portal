@@ -31,6 +31,7 @@ import { ToastViewport } from "./quincy/ToastViewport";
 import { ProductionGantt } from "./ProductionGantt";
 import { endMoment, startMoment, subtaskReminders } from "@/testing/subtask-schedule";
 import { applyPopup, dateTimePopup, pickPopupDay, popupButton, pressInPopup, rangeToggles, typePopupTime, rangeMoment } from "@/testing/date-time-popup";
+import { mockViewport } from "@/testing/viewport";
 
 const shellBottom = vi.hoisted(() => vi.fn(() => 50));
 vi.mock("../lib/shell-chrome", () => ({ shellChromeBottom: () => shellBottom() }));
@@ -899,29 +900,22 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     expect(patches()).toHaveLength(0);
   });
 
-  it("R20 the Due column is not rendered at 720px and returns at 721px, and an open picker cannot strand the gate when it narrows", async () => {
-    const original = window.matchMedia;
-    let narrow = false;
-    const listeners = new Set<() => void>();
-    window.matchMedia = ((query: string) => ({
-      get matches() { return query === "(max-width: 720px)" ? narrow : false; },
-      media: query,
-      addEventListener: (_: string, listener: () => void) => { listeners.add(listener); },
-      removeEventListener: (_: string, listener: () => void) => { listeners.delete(listener); },
-      addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false,
-    })) as unknown as typeof window.matchMedia;
+  it("R20 the Due column is not rendered at 1023px and returns at 1024px, and an open picker cannot strand the gate when it narrows", async () => {
+    const viewport = mockViewport({ width: 1280 });
     try {
       await render();
       expect(dueCells().length).toBeGreaterThan(0);
       await openDue(RANGE_TITLE);
       expect(onAcceptGateChange).toHaveBeenLastCalledWith(true);
-      narrow = true;
-      await act(async () => { listeners.forEach((listener) => listener()); await Promise.resolve(); });
+      await viewport.set({ width: 1023 });
       await flush(4);
       expect(dueCells()).toHaveLength(0);
       await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
       expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
-    } finally { window.matchMedia = original; }
+      await viewport.set({ width: 1024 });
+      await flush(4);
+      expect(dueCells().length).toBeGreaterThan(0);
+    } finally { viewport.restore(); }
   });
 });
 
@@ -1159,18 +1153,9 @@ describe("ProductionGantt — Edit schedule… on the bar (#582)", () => {
     expect(patchBody().schedule.reminderOffsetsMinutes).toEqual([1440, 240]);
   });
 
-  it("B4 narrowing to 720px cancels a Due-cell picker but a bar picker survives it", async () => {
-    const original = window.matchMedia;
-    let narrow = false;
-    const listeners = new Set<() => void>();
-    window.matchMedia = ((query: string) => ({
-      get matches() { return query === "(max-width: 720px)" ? narrow : false; },
-      media: query,
-      addEventListener: (_: string, listener: () => void) => { listeners.add(listener); },
-      removeEventListener: (_: string, listener: () => void) => { listeners.delete(listener); },
-      addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false,
-    })) as unknown as typeof window.matchMedia;
-    const narrowNow = async () => { narrow = true; await act(async () => { listeners.forEach((listener) => listener()); await Promise.resolve(); }); await flush(4); };
+  it("B4 narrowing to 1023px cancels a Due-cell picker but a bar picker survives it", async () => {
+    const viewport = mockViewport({ width: 1280 });
+    const narrowNow = async () => { await viewport.set({ width: 1023 }); await flush(4); };
     try {
       await render();
       await openDue(RANGE_TITLE);
@@ -1178,8 +1163,7 @@ describe("ProductionGantt — Edit schedule… on the bar (#582)", () => {
       await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
       expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
 
-      narrow = false;
-      await act(async () => { listeners.forEach((listener) => listener()); await Promise.resolve(); });
+      await viewport.set({ width: 1024 });
       await flush(4);
       await openFromBar(RANGE_TITLE);
       await narrowNow();
@@ -1189,7 +1173,7 @@ describe("ProductionGantt — Edit schedule… on the bar (#582)", () => {
       await applyPopup(barPicker(RANGE_TITLE)!);
       await flush(8);
       expect(patches()).toHaveLength(1);
-    } finally { window.matchMedia = original; }
+    } finally { viewport.restore(); }
   });
 
   it("B5 a later-page row's conflict adopts the body's current schedule on the bar picker: no stale retry, the later-page bar picker converges", async () => {
@@ -1358,18 +1342,9 @@ describe("ProductionGantt — Edit schedule… on the bar (#582)", () => {
     await expectBarDraftAndReapply();
   });
 
-  it("B11 a dismissed conflict keeps its stash when the chart narrows to 720px: the bar picker reopens with the draft, and a narrowed Due picker is dismissed, not discarded", async () => {
-    const original = window.matchMedia;
-    let narrow = false;
-    const listeners = new Set<() => void>();
-    window.matchMedia = ((query: string) => ({
-      get matches() { return query === "(max-width: 720px)" ? narrow : false; },
-      media: query,
-      addEventListener: (_: string, listener: () => void) => { listeners.add(listener); },
-      removeEventListener: (_: string, listener: () => void) => { listeners.delete(listener); },
-      addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false,
-    })) as unknown as typeof window.matchMedia;
-    const setNarrow = async (next: boolean) => { narrow = next; await act(async () => { listeners.forEach((listener) => listener()); await Promise.resolve(); }); await flush(4); };
+  it("B11 a dismissed conflict keeps its stash when the chart narrows to 1023px: the bar picker reopens with the draft, and a narrowed Due picker is dismissed, not discarded", async () => {
+    const viewport = mockViewport({ width: 1280 });
+    const setNarrow = async (next: boolean) => { await viewport.set({ width: next ? 1023 : 1024 }); await flush(4); };
     try {
       await render();
       // A Due picker with a conflict is cancelled by narrowing, but the conflict context is kept.
@@ -1386,6 +1361,6 @@ describe("ProductionGantt — Edit schedule… on the bar (#582)", () => {
       await openDue(RANGE_TITLE);
       expect(picker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
       expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(5), "17:00"));
-    } finally { window.matchMedia = original; }
+    } finally { viewport.restore(); }
   });
 });

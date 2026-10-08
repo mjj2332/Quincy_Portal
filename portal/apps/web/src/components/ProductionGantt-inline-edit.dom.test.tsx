@@ -32,6 +32,7 @@ import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
 import type { ProjectMember } from "../lib/project-data";
 import { ConfirmModalHost } from "./ConfirmDialog";
 import { ProductionGantt, type ProductionGanttProps } from "./ProductionGantt";
+import { mockViewport } from "@/testing/viewport";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPutMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
@@ -528,9 +529,8 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
     expect(host.querySelector('[data-testid="gantt-team-trigger"]')).not.toBeNull();
   });
 
-  it("T7c on a phone the People and Due columns are not rendered, and the row link is still there", async () => {
-    const original = window.matchMedia;
-    window.matchMedia = ((query: string) => ({ matches: query === "(max-width: 720px)", media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
+  it("T7c in the names-only layout (here 720px) the People and Due columns are not rendered, and the row link is still there", async () => {
+    const viewport = mockViewport({ width: 720 });
     try {
       await render();
       expect(host.querySelector('[data-testid="gantt-project-link"]')).not.toBeNull();
@@ -540,7 +540,7 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
       expect(host.querySelector('[data-testid="gantt-deadline-action"]')).toBeNull();
       expect(host.textContent).not.toContain("People");
       expect(host.textContent).not.toContain("Due");
-    } finally { window.matchMedia = original; }
+    } finally { viewport.restore(); }
   });
 
   it("T8 more than three members: two avatars and +N, a dual-role person counting once", async () => {

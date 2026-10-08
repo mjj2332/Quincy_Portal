@@ -58,3 +58,29 @@ export function treeInset(scroller: HTMLElement): number {
 export function scrollerGeometry(scroller: HTMLElement): TrackGeometry {
   return trackGeometry(scroller, treeInset(scroller))
 }
+
+/** Sub-pixel slack kept from the original chip test: a bar edge within 2px of the lane edge still counts as past it. */
+const OFFSCREEN_SLACK_PX = 2
+
+/** The PAINTED extent of one Gantt row in track pixels: the union of its bar wrapper(s) and external label(s). */
+export interface RowExtentPx {
+  /** Inline-start edge of whatever the row paints. */
+  startPx: number
+  /** Inline-end edge of whatever the row paints. */
+  endPx: number
+}
+
+/**
+ * #734: which edge chip a row earns. Everything the row paints (bar wrapper AND external label, which can extend past
+ * the temporal bounds for a minimum-width bar or a centred milestone) must have left the visible lane
+ * (`visibleStart`..`visibleEnd`), so a chip never covers anything still readable. Callers pass the painted extent.
+ */
+export function offscreenSide(
+  row: RowExtentPx,
+  visibleStart: number,
+  visibleEnd: number
+): "start" | "end" | null {
+  if (row.endPx <= visibleStart + OFFSCREEN_SLACK_PX) return "start"
+  if (row.startPx >= visibleEnd - OFFSCREEN_SLACK_PX) return "end"
+  return null
+}

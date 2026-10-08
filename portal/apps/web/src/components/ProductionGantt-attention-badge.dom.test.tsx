@@ -28,6 +28,9 @@ describe("GanttRowAttentionBadge short phone labels (#693)", () => {
       expect(shortSpan.getAttribute("aria-hidden")).toBe("true");
       expect(shortSpan.className).toContain("min-[721px]:hidden");
       expect(el.className).toContain("truncate");
+      // #734: shrinkable in the 288px names-only cell (721-1023); only >= 1024 keeps it whole.
+      expect(el.className).toContain("min-[1024px]:shrink-0");
+      expect(el.className).not.toContain("min-[721px]:shrink-0");
       expect(el.className).toContain("tracking-[0.04em]");
       expect(el.className).toContain("max-[721px]:tracking-[var(--tracking-normal)]");
       expect(el.className.includes("text-signal-critical")).toBe(critical);

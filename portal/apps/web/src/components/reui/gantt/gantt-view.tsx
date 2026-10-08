@@ -242,7 +242,7 @@
  * (`onCreateTaskClose` tells the consumer). An empty creatable group is now a leaf (it used to be
  * an expandable group). #678: `GanttGroupCreateRow` mirrors `GanttTreeRow`'s cells (name cell with
  * the cancel x in the toggle gutter and the title input, then one cell per column rendering
- * `GanttColumn.renderCreate`); with no column carrying one (<= 720px) the editor is a bottom
+ * `GanttColumn.renderCreate`); with no column carrying one (names-only layout, < 1024px, #734) the editor is a bottom
  * `Sheet` (`reui/sheet.tsx`, base-nova) carrying the title, `renderCreateStack`'s controls and
  * Cancel / Add, with an `OverlayContainerContext` slot like `ProjectSheet`; it has no row, spacer
  * or dependency offset (`createRowRem` is 0). Row mode: Escape stays on the input: popups portal out of the row but
@@ -297,6 +297,19 @@
  * (`GestureEvent` present). Engines without `GestureEvent` keep the listener attached, since their pinch is ctrl+wheel with no keydown.
  * Targets inside the tree column are skipped so browser page zoom works there (the scroller now spans the tree). Pointer anchoring,
  * exponential zoom and the hand-back to browser zoom at the limits are unchanged. This is the only non-passive wheel listener in the Gantt.
+ *
+ * 2026-10-08, #734 - CHANGED, behaviour (ADR 0009 addendum). `GanttOffscreenChips` no longer emits an edge chip the moment a bar leaves the
+ * visible lane: it waits until everything the row PAINTS has left too, so a chip stops covering label text that is still readable. `measure` reads the
+ * painted extent from rects (`paintedExtent`: the union of the segment wrappers and external bar labels, converted from viewport x to track x through
+ * the lane overlay, mirrored in RTL) for rows that are already candidates, and `offscreenSide` (`gantt-track-geometry.ts`, pure) decides start / end /
+ * none from that extent. The painted extent can exceed the temporal bounds (a minimum-width bar, a centred milestone), which is why the temporal
+ * bounds alone are not used. The 2px sub-pixel allowance is kept. Not changed: chip targets, focus hand-off, the vertical filter, the zoom-band dodge.
+ * Additive `data-testid`s on the external bar label and the chip (guard F: DOM tests select by testid, not the vendor slot). The label is not observed on its own, so a font-driven label resize waits for the next scroll, resize or data refresh. Consumer side, no edit here: the
+ * names-only layout (< 1024px) passes `zoomControl={false}`; `wheelZoom` stays on, so Ctrl/Cmd-wheel and pinch still zoom.
+ *
+ * 2026-10-08, #734 follow-up - CHANGED, behaviour (ADR 0009 addendum). `treeWidth` re-seeds from `treePanel.width` when the config's
+ * `width` or `minWidth` changes (a consumer swapping tree configs across a breakpoint); a splitter drag is otherwise kept. The add-task
+ * bottom sheet is capped at the 560px dialog rung and centred from 721px up, with `--radius-lg` top corners (owner choice); a phone stays full-bleed and square.
  */
 
 import {
@@ -401,6 +414,7 @@ import {
   GANTT_SCROLLER_SELECTOR,
   GANTT_TREE_COLUMN_SELECTOR,
   findScroller,
+  offscreenSide,
   scrollerGeometry,
 } from "./gantt-track-geometry"
 import { bindGatedWheelZoom } from "./gantt-wheel-zoom"
@@ -1495,6 +1509,14 @@ function GanttView({
   const clampTree = (width: number) =>
     Math.min(Math.max(width, treeConfig.minWidth), treeConfig.maxWidth)
   const [treeWidth, setTreeWidth] = useState(treeConfig.width)
+  // #734: the width seeds from the config once, so a config swap (the Production Gantt trades GANTT_TREE_PANEL for
+  // the names-only one across 1024px) would leave the old width behind. Re-seed when the config's own width or floor
+  // changes; a splitter drag is untouched otherwise. Derived during render, so no frame paints the stale width.
+  const [seededTree, setSeededTree] = useState({ width: treeConfig.width, minWidth: treeConfig.minWidth })
+  if (seededTree.width !== treeConfig.width || seededTree.minWidth !== treeConfig.minWidth) {
+    setSeededTree({ width: treeConfig.width, minWidth: treeConfig.minWidth })
+    setTreeWidth(treeConfig.width)
+  }
   const configuredTreeWidth = clampTree(treeWidth)
   const columns = viewConfig.columns ?? []
   // #678: the editor row keeps the tree row's columns; with no column carrying a create cell (a
@@ -3703,7 +3725,7 @@ const GanttDependencyLayer = memo(function GanttDependencyLayer({
  *   carrying `GanttColumn.renderCreate`, so the draft's Assignees and Due stay visible beside the
  *   title (#678). The timeline pane carries a matching-height spacer; it has no
  *   `data-slot="gantt-row-group"`, so row reorder and the timeline's row geometry never see it.
- * - **Bottom sheet** (`sheet`, <= 720px: no column to align to): the same draft state in a
+ * - **Bottom sheet** (`sheet`, names-only layout below 1024px: no column to align to): the same draft state in a
  *   base-nova `Sheet` (`reui/sheet.tsx`, `side="bottom"`), headed "New task in <group>", with the
  *   title input, `renderCreateStack`'s Assignees / Due controls and Cancel + Add. No row and no
  *   spacer: nothing in the panes makes room for it. The popup carries an
@@ -3736,7 +3758,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
   columns: GanttColumn[]
   nameWidth: number
   nameFill: boolean
-  /** <= 720px: a bottom sheet instead of a row. */
+  /** Names-only layout (< 1024px, #734): a bottom sheet instead of a row. */
   sheet: boolean
   /** Written with whether the typed title has content, so a `+` on another group can read it. */
   dirtyRef: RefObject<boolean>
@@ -3924,7 +3946,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
             return false
           }}
           // `focus-visible:!outline-none`: the sheet itself can hold focus between controls (see ProjectSheet).
-          className="z-[var(--z-dialog)] max-h-[calc(100dvh-var(--space-4))] gap-[var(--space-3)] p-[var(--space-4)] pb-[max(var(--space-4),env(safe-area-inset-bottom))] focus-visible:!outline-none"
+          className="z-[var(--z-dialog)] max-h-[calc(100dvh-var(--space-4))] min-[721px]:mx-auto min-[721px]:max-w-[560px] min-[721px]:rounded-t-[var(--radius-lg)] gap-[var(--space-3)] p-[var(--space-4)] pb-[max(var(--space-4),env(safe-area-inset-bottom))] focus-visible:!outline-none"
           overlayProps={{
             // Mandatory: the Gantt can itself sit inside another Sheet's Root (the Project sheet, the rail), and Base UI
             // renders no backdrop for a NESTED dialog unless forced - without a scrim a phone tap outside would do nothing.
@@ -5012,6 +5034,7 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
               {placement !== "inside" && (
                 <span
                   data-slot="gantt-bar-label"
+                  data-testid="gantt-bar-label"
                   data-placement={placement}
                   className={cn(
                     "text-foreground pointer-events-none absolute top-1/2 z-10 max-w-60 -translate-y-1/2 truncate font-medium",
@@ -5442,6 +5465,38 @@ function sameChips(a: OffscreenChip[], b: OffscreenChip[]): boolean {
 }
 
 /**
+ * #734: the extent a row PAINTS, in track pixels - the union of its segment wrappers and external bar labels, read
+ * from rendered rects (never an estimated text width). It can exceed the temporal bar bounds: a minimum-width bar
+ * and a centred milestone paint a wider wrapper than they span, and an `after` / `before` label hangs past it.
+ * Viewport x becomes track x through the lane overlay (`pane`, whose inline-start edge sits at `visibleStart` in
+ * the track): from its left edge in LTR, from its right edge in RTL where the axis mirrors.
+ */
+function paintedExtent(
+  rowEl: HTMLElement,
+  paneRect: DOMRect,
+  visibleStart: number,
+  rtl: boolean,
+  temporal: { startPx: number; endPx: number }
+): { startPx: number; endPx: number } {
+  let startPx = temporal.startPx
+  let endPx = temporal.endPx
+  for (const el of rowEl.querySelectorAll<HTMLElement>(
+    "[data-lane], [data-slot=gantt-bar-label][data-placement]"
+  )) {
+    const r = el.getBoundingClientRect()
+    const a = rtl
+      ? visibleStart + (paneRect.right - r.right)
+      : visibleStart + (r.left - paneRect.left)
+    const b = rtl
+      ? visibleStart + (paneRect.right - r.left)
+      : visibleStart + (r.right - paneRect.left)
+    startPx = Math.min(startPx, a)
+    endPx = Math.max(endPx, b)
+  }
+  return { startPx, endPx }
+}
+
+/**
  * Edge chips for rows whose bars sit entirely outside the visible timeline;
  * clicking scrolls the bar back into view. Reads geometry straight from the
  * DOM (row data attributes), so scrolling never re-renders the grid.
@@ -5476,6 +5531,7 @@ function GanttOffscreenChips({
         ? header.getBoundingClientRect().bottom - paneRect.top
         : 0
       const geometry = scrollerGeometry(viewport)
+      const rtl = getComputedStyle(viewport).direction === "rtl"
       const trackW = geometry.trackWidth
       const visibleStart = geometry.start
       const visibleEnd = visibleStart + geometry.visibleWidth
@@ -5514,13 +5570,25 @@ function GanttOffscreenChips({
           label: rowEl.dataset.ganttBarLabel ?? "",
           startMs: Number.isNaN(startMs) ? null : startMs,
         }
-        if (endPx <= visibleStart + 2) {
+        // #734: a row past an edge only earns its chip once everything it paints (wrapper and external label) has left too,
+        // so measure the painted extent (rects, never an estimated text width) for the rows that are already candidates.
+        const bare = { startPx, endPx }
+        let side = offscreenSide(bare, visibleStart, visibleEnd)
+        if (side) {
+          // painted bounds are never narrower than the temporal ones, so only a candidate row needs the rect reads
+          side = offscreenSide(
+            paintedExtent(rowEl, paneRect, visibleStart, rtl, bare),
+            visibleStart,
+            visibleEnd
+          )
+        }
+        if (side === "start") {
           next.push({
             ...base,
             side: "start",
             target: startPx - 24,
           })
-        } else if (startPx >= visibleEnd - 2) {
+        } else if (side === "end") {
           if (zoom && top >= zoom.top && top <= zoom.bottom) {
             chipInZoomBand = true
           }
@@ -5589,6 +5657,7 @@ function GanttOffscreenChips({
                 <button
                   type="button"
                   data-slot="gantt-offscreen-chip"
+                  data-testid="gantt-offscreen-chip"
                   data-side={chip.side}
                   aria-label={settings.i18n.labels.jumpToBar(chip.label)}
                   // #219 PR A fix (dr-219a HIGH #3): border was bare - see the tree

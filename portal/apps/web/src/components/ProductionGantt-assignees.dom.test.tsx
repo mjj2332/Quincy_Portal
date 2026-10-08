@@ -19,6 +19,7 @@ import { ToastViewport } from "./quincy/ToastViewport";
 import { ProductionGantt } from "./ProductionGantt";
 import { startMoment, endMoment } from "@/testing/subtask-schedule";
 import { subtaskReminders } from "@/testing/subtask-schedule";
+import { mockViewport } from "@/testing/viewport";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPatchMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
@@ -222,16 +223,15 @@ describe("ProductionGantt — Subtask assignees (#372)", () => {
     expect(projectRow.querySelector('[data-testid="gantt-subtask-assignees"]')).toBeNull();
   });
 
-  it("on a phone the People column is not rendered, so no Subtask assignee control is either", async () => {
-    const original = window.matchMedia;
-    window.matchMedia = ((query: string) => ({ matches: query === "(max-width: 720px)", media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
+  it("in the names-only layout (here 720px) the People column is not rendered, so no Subtask assignee control is either", async () => {
+    const viewport = mockViewport({ width: 720 });
     try {
       await mount();
       expect(host.textContent).toContain("Row one");
       expect(trigger("Row one")).toBeNull();
       expect(host.querySelector('[data-testid="gantt-subtask-assignees"]')).toBeNull();
       expect(host.querySelectorAll('button[aria-label^="Assignees for"]')).toHaveLength(0);
-    } finally { window.matchMedia = original; }
+    } finally { viewport.restore(); }
   });
 
   it("refreshes the Gantt, Calendar, Checklist and Activity after a commit, and does not suppress this tab's own Gantt refetch", async () => {

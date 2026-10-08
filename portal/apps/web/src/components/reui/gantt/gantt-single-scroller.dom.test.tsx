@@ -222,3 +222,18 @@ describe("scroll intent from the tree column (#727)", () => {
     expect(axis()).not.toBe(before);
   });
 });
+
+describe("tree width follows a tree-panel config swap (#734)", () => {
+  const readInset = () => {
+    const el = host.querySelector<HTMLElement>('[style*="--gantt-tree-inset"]')!;
+    return el.style.getPropertyValue("--gantt-tree-inset");
+  };
+  it("re-seeds to the new config's width and back", async () => {
+    await mount("native", { width: 396, minWidth: 396, minWidthHard: true });
+    expect(readInset()).toBe("396px");
+    await mount("native", { width: 288, minWidth: 120 });
+    expect(readInset()).toBe("288px");
+    await mount("native", { width: 396, minWidth: 396, minWidthHard: true });
+    expect(readInset()).toBe("396px");
+  });
+});

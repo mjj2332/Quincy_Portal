@@ -1,4 +1,11 @@
+if (!Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = () => []
+}
+import { act } from "react"
+import { createRoot } from "react-dom/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { Gantt } from "./gantt"
+import { GanttView } from "./gantt-view"
 import { bindGatedWheelZoom } from "./gantt-wheel-zoom"
 
 function setup(opts: { webkit: boolean }) {
@@ -189,5 +196,37 @@ describe("bindGatedWheelZoom without GestureEvent (Chromium)", () => {
     s.unbind()
     wheel(s.lane, { ctrlKey: true })
     expect(s.onWheel).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("zoomControl={false} keeps wheel and pinch zoom (#734)", () => {
+  it("hides the zoom control but a ctrl-wheel on the lane still zooms", async () => {
+    ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    const host = document.createElement("div")
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    const onZoomChange = vi.fn()
+    await act(async () => {
+      root.render(
+        <Gantt resources={[{ id: "r1", title: "Row 1" }]} events={[]} date={new Date("2026-03-02T00:00:00Z")} scale="week" timeZone="UTC" zoomControl={false} wheelZoom zoom={1} onZoomChange={onZoomChange}>
+          <GanttView />
+        </Gantt>,
+      )
+      await Promise.resolve()
+    })
+    expect(host.querySelector('[data-testid="gantt-zoom"]')).toBeNull()
+    const scroller = host.querySelector<HTMLElement>("[data-gantt-scroller]")!
+    const lane = scroller
+    // WebKit-style engines (GestureEvent present) bind the wheel listener only while Control is held
+    key("keydown", { key: "Control", ctrlKey: true })
+    await act(async () => {
+      // happy-dom's WheelEvent drops ctrlKey, so carry the fields on a plain event
+      lane.dispatchEvent(Object.assign(new Event("wheel", { bubbles: true, cancelable: true }), { ctrlKey: true, deltaY: -100, deltaMode: 0, clientX: 0 }))
+      await Promise.resolve()
+    })
+    expect(onZoomChange).toHaveBeenCalled()
+    expect(onZoomChange.mock.calls[0]![0]).toBeGreaterThan(1)
+    await act(async () => { root.unmount() })
+    host.remove()
   })
 })
