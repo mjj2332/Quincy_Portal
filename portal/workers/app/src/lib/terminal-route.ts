@@ -237,6 +237,8 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "PATCH", path: "/api/users/external-provisioning-freeze", class: "withheld" },
   { method: "GET", path: "/api/users/impersonation-settings", class: "withheld" },
   { method: "PATCH", path: "/api/users/impersonation-settings", class: "withheld" },
+  { method: "GET", path: "/api/users/mcp-settings", class: "withheld" },
+  { method: "PATCH", path: "/api/users/mcp-settings", class: "withheld" },
   { method: "GET", path: "/api/users/embedded-heic-settings", class: "withheld" },
   { method: "PATCH", path: "/api/users/embedded-heic-settings", class: "withheld" },
   { method: "GET", path: "/api/users", class: "withheld" },

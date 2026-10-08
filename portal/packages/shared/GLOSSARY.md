@@ -223,6 +223,16 @@ Someone assigned to a Project to capture its RAW media. Assigned Projects only, 
 only while the Project remains in the early Stages.
 _Avoid_: Shooter, creative
 
+### AI access
+
+**AI client**:
+An AI application that operates the Portal as a staff member, with no permissions of its own.
+_Avoid_: Agent (an Agent is the real-estate Client), bot, assistant
+
+**Connected app**:
+One staff member's revocable grant letting one AI client act as them.
+_Avoid_: Integration, API key, token
+
 ### Notifications
 
 **Notification**:

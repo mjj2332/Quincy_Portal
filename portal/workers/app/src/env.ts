@@ -35,5 +35,5 @@ export interface Env {
   NOTIFICATIONS_FROM_ADDRESS?: string;
 }
 
-export type SessionUser = { id: string; email: string; name: string; role: Role; active: boolean; authorizationEpoch: number; impersonatedBy: string | null };
+export type SessionUser = { id: string; email: string; name: string; role: Role; active: boolean; authorizationEpoch: number; impersonatedBy: string | null; /** Set only for a request dispatched on behalf of an MCP connection (#701). */ via?: { kind: "mcp"; clientName: string; connectionId: string } };
 export type AppEnv = { Bindings: Env; Variables: { user: SessionUser } };

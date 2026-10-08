@@ -9,11 +9,13 @@ import { requireCapability } from "../middleware/capability";
 import { audit, auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { USER_IMPERSONATION_FLAG } from "../lib/impersonation";
+import { MCP_ACCESS_FLAG } from "../lib/mcp-access";
 import { jsonInput } from "./helpers";
 
 const input = z.object({ email: z.string().email(), name: z.string().min(1).max(200), role: z.enum(ROLES) });
 const patchInput = input.partial().omit({ email: true }).extend({ active: z.boolean().optional(), defaultEditor: z.boolean().optional() });
 const impersonationSettingsInput = z.object({ enabled: z.boolean() }).strict();
+const mcpSettingsInput = z.object({ enabled: z.boolean() }).strict();
 const embeddedHeicSettingsInput = z.object({ enabled: z.boolean() }).strict();
 const provisioningFreezeInput = z.object({ frozen: z.literal(false) }).strict();
 /** Set by the background worker when the bounded zone purge exhausts (#161); only an admin release clears it. */
@@ -52,6 +54,25 @@ usersRoutes.patch("/users/impersonation-settings", terminalRoute("/users/imperso
       .bind(data.enabled ? 1 : 0, user.id, now, USER_IMPERSONATION_FLAG),
     c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .bind(newId(), user.id, "user.impersonation_toggle", "feature_flag", USER_IMPERSONATION_FLAG, auditMeta(user, { enabled: data.enabled }), now),
+  ]);
+  return c.json({ enabled: data.enabled });
+}));
+usersRoutes.get("/users/mcp-settings", terminalRoute("/users/mcp-settings", async (c) => {
+  const row = await createDb(c.env.DB).select({ enabled: schema.featureFlags.enabled })
+    .from(schema.featureFlags).where(eq(schema.featureFlags.key, MCP_ACCESS_FLAG)).get();
+  return c.json({ enabled: row?.enabled === true });
+}));
+usersRoutes.patch("/users/mcp-settings", terminalRoute("/users/mcp-settings", async (c) => {
+  const data = await jsonInput(c, mcpSettingsInput); if (data instanceof Response) return data;
+  const existing = await createDb(c.env.DB).select({ key: schema.featureFlags.key }).from(schema.featureFlags)
+    .where(eq(schema.featureFlags.key, MCP_ACCESS_FLAG)).get();
+  if (!existing) return c.json({ error: "MCP access setting is unavailable" }, 500);
+  const user = c.get("user"); const now = Date.now();
+  await c.env.DB.batch([
+    c.env.DB.prepare("UPDATE feature_flags SET enabled = ?, updated_by = ?, updated_at = ? WHERE key = ?")
+      .bind(data.enabled ? 1 : 0, user.id, now, MCP_ACCESS_FLAG),
+    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(newId(), user.id, "user.mcp_access_toggle", "feature_flag", MCP_ACCESS_FLAG, auditMeta(user, { enabled: data.enabled }), now),
   ]);
   return c.json({ enabled: data.enabled });
 }));
