@@ -315,6 +315,8 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   // a `const` further down would still be in its TDZ there. `paneRect` is the VISIBLE timeline
   // pane (the axis rect is the full scroll width): cached on activation, refreshed by
   // `autoScrollTick`, measured afresh by the resize chip's clamp.
+  // 2026-10-08, #726: looked up by `[data-gantt-scroller]` instead of the pane's scroll-area viewport
+  // selector, so the lookup survives the single-scroller layout (#727). Same element today.
   const timelineViewport = viewRoot?.querySelector<HTMLElement>(
     "[data-gantt-scroller]"
   )

@@ -271,6 +271,12 @@
  * 44px `metrics` on `(pointer: coarse)` as well as on phones), so the sticky `+` opener's width-scoped coarse negative block margin and 6px-short
  * backing size are removed: it fills its own row everywhere. This supersedes the round-2 sentence above about coarse tablets keeping the 40px-row
  * geometry. The removed classes are described in words, not spelled, because Tailwind scans comments and would keep their rules in the built CSS.
+ *
+ * 2026-10-08, #726 — CHANGED, internal refactor, no behaviour change (ADR 0009 addendum). The timeline viewport carries
+ * `data-gantt-scroller`; a live `scrollerRef` getter finds it. Every track-offset read (auto-centre, infinite edge growth, centre
+ * report, re-seat, zoom anchors, header pan, offscreen chips) goes through `trackGeometry` in `gantt-track-geometry.ts`, called
+ * with inset 0, so the values equal the old `scrollWidth`/`clientWidth`/`|scrollLeft|` reads exactly. `getScrollStart` is removed.
+ * Groundwork for the single-scroller layout (#727).
  */
 
 import {
