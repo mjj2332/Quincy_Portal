@@ -1647,12 +1647,17 @@ function GanttView({
   const clampContainer = (width: number, container: number) => {
     if (container <= 0) return width
     const ceiling = container - minTimelineWidth - 1
-    // The tree's minWidth is a hard floor (#727): its sticky columns clip and
-    // never scroll sideways, so squeezing it would hide Name/People/Due. When
-    // the container cannot spare it, the timeline lane takes what remains. The
-    // only cap is the container itself, so the splitter never leaves the box.
-    const floor = Math.min(treeConfig.minWidth, container - 1)
-    return Math.max(Math.min(width, ceiling), floor)
+    // `minWidthHard` (#727): the tree's columns are sticky and clip (they never
+    // scroll sideways), so a consumer whose columns must stay visible makes
+    // minWidth a hard floor and the timeline lane takes what remains, capped
+    // only by the container so the splitter never leaves the box. Otherwise
+    // minWidth is a PREFERENCE capped by what the container can spare, so the
+    // timeline is never squeezed out of existence.
+    if (treeConfig.minWidthHard) {
+      return Math.max(Math.min(width, ceiling), Math.min(treeConfig.minWidth, container - 1))
+    }
+    const floor = Math.min(treeConfig.minWidth, Math.max(ceiling, 0))
+    return Math.max(Math.min(width, ceiling), Math.min(floor, container - 1))
   }
   const clampedTreeWidth = clampContainer(configuredTreeWidth, containerWidth)
   /** Live width while the splitter is dragging; render reads it so a

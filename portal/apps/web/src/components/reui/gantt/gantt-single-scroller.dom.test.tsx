@@ -53,7 +53,7 @@ const RESOURCES = [
   { id: "r2", title: "Row 2" },
 ];
 
-async function mount(scrollbars: "custom" | "native", treePanel?: { width?: number; minWidth?: number }) {
+async function mount(scrollbars: "custom" | "native", treePanel?: { width?: number; minWidth?: number; minWidthHard?: boolean }) {
   await render(
     <Gantt
       resources={RESOURCES}
@@ -138,16 +138,25 @@ describe("--gantt-tree-inset", () => {
 });
 
 describe("tree floor and overlay stacking (Sol review on #727)", () => {
-  it("keeps the tree at its minWidth when the container is too narrow to spare it", async () => {
+  async function insetAtContainer(container: number, treePanel: { width?: number; minWidth?: number; minWidthHard?: boolean }) {
     const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
-    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 596 });
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => container });
     try {
-      await mount("custom", { width: 396, minWidth: 396 });
-      expect(byTestId("gantt-body")!.style.getPropertyValue("--gantt-tree-inset")).toBe("396px");
+      await mount("custom", treePanel);
+      return byTestId("gantt-body")!.style.getPropertyValue("--gantt-tree-inset");
     } finally {
       if (desc) Object.defineProperty(HTMLElement.prototype, "clientWidth", desc);
       else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
     }
+  }
+
+  it("keeps the tree at a hard minWidth when the container is too narrow to spare it", async () => {
+    expect(await insetAtContainer(596, { width: 396, minWidth: 396, minWidthHard: true })).toBe("396px");
+  });
+
+  it("still yields a soft minWidth to the timeline's minimum (phones keep the vendor clamp)", async () => {
+    // 358px phone body: ceiling = 358 - MIN_TIMELINE_WIDTH - 1; the soft floor caps at it, not at minWidth.
+    expect(await insetAtContainer(358, { width: 180 })).not.toBe("180px");
   });
 
   it("does not make the tree overlay a stacking context, so the reorder indicator (z 110) can clear the body-mounted carry overlay (z 100)", async () => {
