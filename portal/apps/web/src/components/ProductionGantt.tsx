@@ -233,6 +233,7 @@ import {
   type ProductionGanttFacetFilters,
 } from "../lib/production-gantt-filters";
 import { deadlineFoldOf, projectDefaultFromFacts } from "../lib/date-time-range";
+import { useNow } from "../lib/use-now";
 import { useStages } from "../lib/stages";
 import { useMediaQuery } from "../lib/use-media-query";
 import { ProductionEventCalendarDialogs } from "./ProductionEventCalendarDialogs";
@@ -1281,6 +1282,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     const adopted = adoptedAssignees[row.id];
     return adopted ? adoptGanttChecklistRow(row, adopted) : row;
   }, [adoptedAssignees]);
+  const defaultNow = useNow(60_000);
   const projectDefaultById = useMemo(() => {
     const map = new Map<string, ProjectDefaultRangeDto | null>();
     for (const project of displayProjects) {
@@ -1289,10 +1291,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         shootDate: project.shootDate,
         createdAt: project.createdAt,
         deadline: deadline ? { localCivil: deadline.localCivil, fold: deadlineFoldOf(deadline.localCivil, deadline.at) } : null,
-      }));
+      }, defaultNow));
     }
     return map;
-  }, [displayProjects]);
+  }, [displayProjects, defaultNow]);
   const assigneeCellByChecklistResourceId = useMemo(() => {
     const map = new Map<string, GanttAssigneeCell>();
     for (const project of displayProjects) {

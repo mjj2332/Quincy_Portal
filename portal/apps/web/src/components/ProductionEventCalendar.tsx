@@ -77,6 +77,7 @@ import {
 } from "../lib/production-event-calendar-adapter";
 import { eventCalendarUpdateToProposal, type EventCalendarUpdateLike } from "../lib/production-event-calendar-scheduling";
 import { projectDefaultFromFacts } from "../lib/date-time-range";
+import { useNow } from "../lib/use-now";
 import { staffPathFor } from "../lib/router";
 import { calendarScheduleBounds, type ScheduleBounds } from "../lib/schedule-bounds";
 import { useCalendarSchedulingPort, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
@@ -330,7 +331,8 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
 
   // Draw from the accepted baseline; the live query only while nothing holds the gate.
   const source: ProductionCalendarRangeResponse | null = commands.acceptedResponse ?? (!blocked ? query.data ?? null : null);
-  const projectDefaults = useMemo(() => new Map((source?.projectBounds ?? query.data?.projectBounds ?? []).map((bound) => [bound.projectId, projectDefaultFromFacts({ shootDate: bound.shootDate, createdAt: bound.createdAt, deadline: bound.deadlineLocalCivil ? { localCivil: bound.deadlineLocalCivil, fold: bound.deadlineFold ?? 0 } : null })])), [source?.projectBounds, query.data?.projectBounds]);
+  const defaultNow = useNow(60_000);
+  const projectDefaults = useMemo(() => new Map((source?.projectBounds ?? query.data?.projectBounds ?? []).map((bound) => [bound.projectId, projectDefaultFromFacts({ shootDate: bound.shootDate, createdAt: bound.createdAt, deadline: bound.deadlineLocalCivil ? { localCivil: bound.deadlineLocalCivil, fold: bound.deadlineFold ?? 0 } : null }, defaultNow)])), [source?.projectBounds, query.data?.projectBounds, defaultNow]);
   boundsRef.current = useMemo(() => new Map((source?.projectBounds ?? query.data?.projectBounds ?? []).map((bound) => [bound.projectId, calendarScheduleBounds(bound)])), [source?.projectBounds, query.data?.projectBounds]);
 
   const shownProjects = query.data?.projectBounds ? query.data.projectBounds.length : null;

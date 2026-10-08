@@ -157,9 +157,9 @@ export function deadlineFoldOf(localCivil: string, atInstant: string): 0 | 1 {
  * with its fold. Null when `createdAt` is not a usable instant (the shared rule throws on it). The Calendar's
  * `projectBounds` and the Gantt's project row both carry exactly these.
  */
-export function projectDefaultFromFacts(facts: { shootDate: string | null; createdAt: string; deadline: { localCivil: string; fold: 0 | 1 } | null }): ProjectDefaultRangeDto | null {
+export function projectDefaultFromFacts(facts: { shootDate: string | null; createdAt: string; deadline: { localCivil: string; fold: 0 | 1 } | null }, now: number): ProjectDefaultRangeDto | null {
   try {
-    return defaultSubtaskRangeDto({ shootDate: facts.shootDate, deadline: facts.deadline, projectCreatedAt: Date.parse(facts.createdAt) });
+    return defaultSubtaskRangeDto({ shootDate: facts.shootDate, deadline: facts.deadline, projectCreatedAt: Date.parse(facts.createdAt), now });
   } catch {
     return null;
   }

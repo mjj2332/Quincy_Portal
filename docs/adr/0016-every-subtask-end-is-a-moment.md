@@ -62,7 +62,7 @@ the range reschedules them.
   to 17:00 without a Deadline; and when the Deadline is not after the start, the start moves to 09:00
   on the Deadline's day, or the day before). The list response carries it as `projectDefaultRange`
   so the composer can show the concrete range; an untouched composer still sends no schedule and the
-  server fills it.
+  server fills it. *(Amended by #736: a default whose end is at or before now becomes today 09:00 to 17:00 Sydney, or tomorrow once 17:00 has passed; see ADR 0011.)*
 - **Server.** A date-only end is refused with `subtask_schedule_time_required`, naming the endpoint
   that lacks a time. A legacy `kind` in a request body is ignored, so an open tab from before the
   change gets that field-named error for a date-only end and succeeds with a timed one. The start

@@ -307,8 +307,8 @@ async function inventoriesForRole(role: Role): Promise<TabInventories> {
 }
 
 describe("external-editor visibility inventory", () => {
-  beforeEach(() => { document.body.innerHTML = ""; });
-  afterEach(async () => { await unmount(); document.body.innerHTML = ""; });
+  beforeEach(() => { document.body.innerHTML = ""; vi.spyOn(Date, "now").mockReturnValue(Date.UTC(2026, 7, 1)); /* before the 2026-09-01 default range (#736) */ });
+  afterEach(async () => { vi.restoreAllMocks(); await unmount(); document.body.innerHTML = ""; });
 
   it("captures a non-trivial inventory on every tab for both roles, so an empty render cannot pass vacuously", async () => {
     const external = await inventoriesForRole("external_editor");

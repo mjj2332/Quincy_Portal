@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveSydneyCivilMinute } from "@quincy/shared";
-import { applyRangeShortcut, buildRangeShortcuts, momentLabel, type DateTimeRangeValue, type RangeShortcut } from "./date-time-range";
+import { applyRangeShortcut, buildRangeShortcuts, momentLabel, projectDefaultFromFacts, type DateTimeRangeValue, type RangeShortcut } from "./date-time-range";
 
 /** #683: a shortcut sets the ACTIVE end only; Project default is the one that sets both. Wed 7 Oct 2026 unless stated. */
 const TODAY = "2026-10-07";
@@ -191,5 +191,16 @@ describe("applyRangeShortcut: a gapped other end is filled from the pair (#683 r
   it("START: a shifted end that lands in the gap falls back to the pair's end", () => {
     // 1 Oct 09:00 to 2 Oct 02:30 is 17.5 civil hours; Today START on Sat 3 Oct (09:00) plus that is 4 Oct 02:30, which does not exist.
     expect(apply("today", "start", { start: "2026-10-01T09:00", end: "2026-10-02T02:30" }, "2026-10-03")).toEqual({ start: moment("2026-10-03T09:00"), end: moment("2026-10-03T17:00") });
+  });
+});
+
+describe("projectDefaultFromFacts (#736)", () => {
+  const facts = { shootDate: "2026-08-30", createdAt: "2026-08-01T00:00:00.000Z", deadline: null };
+  it("keeps a default that has not ended yet", () => {
+    expect(projectDefaultFromFacts(facts, Date.UTC(2026, 7, 29))).toEqual({ start: moment("2026-08-30T09:00"), end: moment("2026-08-30T17:00") });
+  });
+  it("moves a past default to today 09:00-17:00 Sydney, and to tomorrow once 17:00 has passed", () => {
+    expect(projectDefaultFromFacts(facts, Date.UTC(2026, 9, 7, 23))).toEqual({ start: moment("2026-10-08T09:00"), end: moment("2026-10-08T17:00") });
+    expect(projectDefaultFromFacts(facts, Date.UTC(2026, 9, 8, 6))).toEqual({ start: moment("2026-10-09T09:00"), end: moment("2026-10-09T17:00") });
   });
 });

@@ -170,22 +170,24 @@ export const projectSubtasksRoutes = new Hono<AppEnv>();
 
 projectSubtasksRoutes.get("/projects/:projectId/subtasks", terminalRoute("/projects/:projectId/subtasks", async (c) => {
   const projectId = c.req.param("projectId"); if (!idParam.safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
+  const now = Date.now();
   if (c.get("user").role === "external_editor") {
     if (!await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
     const rows = await externalSubtaskQuery(createDb(c.env.DB), projectId, c.get("user").id).orderBy(asc(schema.projectSubtasks.position), asc(schema.projectSubtasks.id)).all();
     const assignees = await hydrateProjectAssignees(c.env.DB, projectId);
     const reminders = await readSubtaskReminders(c.env.DB, rows.map((row) => row.id));
-    return c.json(externalChecklistListResponseSchema.parse({ subtasks: rows.map((row) => externalSubtaskDto(row, assignees.get(row.id) ?? [], reminders.get(row.id) ?? DEFAULT_SUBTASK_REMINDERS)), projectDefaultRange: await projectDefaultRangeDtoFor(c.env, projectId) }));
+    return c.json(externalChecklistListResponseSchema.parse({ subtasks: rows.map((row) => externalSubtaskDto(row, assignees.get(row.id) ?? [], reminders.get(row.id) ?? DEFAULT_SUBTASK_REMINDERS)), projectDefaultRange: await projectDefaultRangeDtoFor(c.env, projectId, now) }));
   }
   const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
   const rows = await subtaskQuery(createDb(c.env.DB), projectId).orderBy(asc(schema.projectSubtasks.position), asc(schema.projectSubtasks.id)).all();
   const assignees = await hydrateProjectAssignees(c.env.DB, projectId);
   const reminders = await readSubtaskReminders(c.env.DB, rows.map((row) => row.subtask.id));
-  return c.json({ subtasks: rows.map((row) => serializeProjectSubtask(row, assignees.get(row.subtask.id) ?? [], reminders.get(row.subtask.id) ?? DEFAULT_SUBTASK_REMINDERS)), projectDefaultRange: await projectDefaultRangeDtoFor(c.env, projectId) });
+  return c.json({ subtasks: rows.map((row) => serializeProjectSubtask(row, assignees.get(row.subtask.id) ?? [], reminders.get(row.subtask.id) ?? DEFAULT_SUBTASK_REMINDERS)), projectDefaultRange: await projectDefaultRangeDtoFor(c.env, projectId, now) });
 }));
 
 projectSubtasksRoutes.get("/projects/:projectId/subtask-assignee-options", terminalRoute("/projects/:projectId/subtask-assignee-options", async (c) => {
   const projectId = c.req.param("projectId"); if (!idParam.safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
+  const now = Date.now();
   if (c.get("user").role === "external_editor") {
     if (!await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
     // Team members only: an External Editor is never offered a person hidden from them.

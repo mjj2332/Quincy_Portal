@@ -235,23 +235,24 @@ function validateTitle(title: unknown): ProjectSubtaskCommandResult | null {
 }
 
 /** The Project's default Subtask range input: its shoot date, creation instant and effective Deadline with its stored fold. */
-export function projectDefaultRange(project: { shootDate: string | null; createdAt: Date; deadlineLocalCivil: string | null; deadlineAt: number | null; deadlineFold: number | null }): RangeChecklistScheduleInput {
-  return defaultSubtaskRange(projectDefaultRangeInput(project));
+export function projectDefaultRange(project: { shootDate: string | null; createdAt: Date; deadlineLocalCivil: string | null; deadlineAt: number | null; deadlineFold: number | null }, now: number): RangeChecklistScheduleInput {
+  return defaultSubtaskRange(projectDefaultRangeInput(project, now));
 }
 
-export function projectDefaultRangeInput(project: { shootDate: string | null; createdAt: Date; deadlineLocalCivil: string | null; deadlineAt: number | null; deadlineFold: number | null }) {
+export function projectDefaultRangeInput(project: { shootDate: string | null; createdAt: Date; deadlineLocalCivil: string | null; deadlineAt: number | null; deadlineFold: number | null }, now: number) {
   const localCivil = effectiveDeadlineLocalCivil(project);
   return {
     shootDate: project.shootDate,
     deadline: localCivil ? { localCivil, fold: project.deadlineFold === 1 ? 1 as const : 0 as const } : null,
     projectCreatedAt: project.createdAt.getTime(),
+    now,
   };
 }
 
 /** The same default, as the list responses carry it for the editors' "Project default" (ADR 0016). */
-export async function projectDefaultRangeDtoFor(env: AppEnv["Bindings"], projectId: string): Promise<ProjectDefaultRangeDto | null> {
+export async function projectDefaultRangeDtoFor(env: AppEnv["Bindings"], projectId: string, now: number): Promise<ProjectDefaultRangeDto | null> {
   const project = await createDb(env.DB).select({ shootDate: schema.projects.shootDate, createdAt: schema.projects.createdAt, deadlineLocalCivil: schema.projects.deadlineLocalCivil, deadlineAt: schema.projects.deadlineAt, deadlineFold: schema.projects.deadlineFold }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
-  return project ? defaultSubtaskRangeDto(projectDefaultRangeInput(project)) : null;
+  return project ? defaultSubtaskRangeDto(projectDefaultRangeInput(project, now)) : null;
 }
 
 async function authorizedProject(env: AppEnv["Bindings"], principal: SessionUser, projectId: string) {
@@ -327,7 +328,7 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
 
   if (operation.kind === "create") {
     // No range given: copy the Project's shoot date at 09:00 to its Deadline once (ADR 0011, ADR 0016). The copy is the Subtask's own afterwards.
-    const requested = operation.schedule ?? projectDefaultRange(project);
+    const requested = operation.schedule ?? projectDefaultRange(project, now);
     // Ranges only (ADR 0011). The route's schema enforces this too; this guard covers direct callers.
     if (requested.state !== "range") return invalidRequest("subtask_schedule_range_required", "A Subtask needs a start and an end.");
     const offsets = operation.item.reminderOffsetsMinutes === undefined ? [...SUBTASK_REMINDER_DEFAULT_OFFSETS] : parseReminderOffsets(operation.item.reminderOffsetsMinutes, "reminderOffsetsMinutes");

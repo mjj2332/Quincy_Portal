@@ -24,6 +24,8 @@ later-known end (the Deadline, or the old due date). Historical: this conversion
 the end and starts on the shoot date; a timed one starts at 00:00 studio time on that date, so
 the range never mixes a date end with a timed end.
 
+(Amended by #736: a default whose end is at or before the moment of creation instead becomes today 09:00–17:00 Sydney, or tomorrow once today's 17:00 has passed. This applies to a past Deadline too. Future shoot dates and Deadlines are untouched, and a past start with a future end is kept. The server's clock decides at create; client previews apply the same rule with their own clock.)
+
 ## Consequences
 
 - ADR 0010 (external drop onto the calendar) is superseded once this lands: there is nothing
