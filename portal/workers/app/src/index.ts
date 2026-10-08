@@ -73,7 +73,7 @@ app.post("/api/auth/admin/impersonate-user/", requireSession, requireCapability(
 app.all("/api/auth/*", terminalRoute("/api/auth/*", (c) => getAuth(c.env).handler(c.req.raw)));
 const api = new Hono<AppEnv>();
 api.use("/*", requireSession);
-api.get("/me", terminalRoute("/me", (c) => { const user = c.get("user"); const response = { user, capabilities: [...(ROLE_CAPABILITIES[user.role] ?? [])] }; return c.json(user.role === "external_editor" ? externalMeResponseSchema.parse(response) : response); }));
+api.get("/me", terminalRoute("/me", (c) => { const { via: _via, ...user } = c.get("user"); const response = { user, capabilities: [...(ROLE_CAPABILITIES[user.role] ?? [])] }; return c.json(user.role === "external_editor" ? externalMeResponseSchema.parse(response) : response); }));
 api.route("/", usersRoutes).route("/", projectsRoutes).route("/", projectDeadlineRoutes).route("/", notificationPreferencesRoutes).route("/", externalUploadsRoutes).route("/", uploadsRoutes).route("/", collectionsRoutes).route("/", integrationsRoutes).route("/", reviewRoutes).route("/", annotationsRoutes).route("/", stagesRoutes).route("/", adminRoutes).route("/", noticeBoardRoutes).route("/", mentionableUsersRoutes).route("/", projectCommentsRoutes).route("/", embeddedMediaRoutes).route("/", linkPreviewRoutes).route("/", projectSubtasksRoutes).route("/", notificationsRoutes).route("/", assetsRoutes).route("/", projectAccessSnapshotRoutes).route("/", dashboardPeopleRoutes).route("/", productionCalendarRoutes).route("/", productionGanttRoutes).route("/", projectActivityRoutes).route("/", projectWhiteboardRoutes).route("/", bootTimingRoutes);
 app.route("/api", api);
 app.all("/api", terminalRoute("/api", (c) => c.json({ error: "Not found" }, 404)));

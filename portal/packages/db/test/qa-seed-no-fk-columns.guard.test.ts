@@ -41,6 +41,8 @@ const NOT_ENTITY_REFERENCES: Readonly<Record<string, string>> = {
   "embedded_media.upload_id": "an R2 multipart-upload id",
   "embedded_media_cleanup.upload_id": "an R2 multipart-upload id",
   "link_preview_attempts.preview_id": "history: the id of the preview an attempt made, which the card's removal does not undo, so it may name no row",
+  "mcp_connections.client_id": "the OAuth client id held in the OAuth library's KV (dynamic client registration), not a row in this database",
+  "mcp_connections.oauth_grant_id": "the OAuth library's grant id in OAUTH_KV, not a row in this database",
 };
 
 /**

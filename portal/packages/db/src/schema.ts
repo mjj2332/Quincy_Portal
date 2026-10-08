@@ -1705,3 +1705,27 @@ export const externalEditedUploadParts = sqliteTable(
     check("external_edited_upload_parts_status_check", sql`${t.status} IN ('pending','uploading','uploaded')`),
   ],
 );
+
+/** MCP access (#701): one row per consented AI client connection, the Portal's record of authority checked on every MCP call. `scopes` is a JSON array of read, write and admin. */
+export const mcpConnections = sqliteTable(
+  "mcp_connections",
+  {
+    id: id(),
+    userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    clientId: text("client_id").notNull(),
+    clientName: text("client_name").notNull(),
+    redirectHost: text("redirect_host").notNull(),
+    scopes: text("scopes").notNull(),
+    authorizationEpoch: integer("authorization_epoch").notNull(),
+    oauthGrantId: text("oauth_grant_id").unique(),
+    createdAt: createdAt(),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+    revokedBy: text("revoked_by"),
+    revokeReason: text("revoke_reason"),
+  },
+  (t) => [
+    index("mcp_connections_user_revoked_idx").on(t.userId, t.revokedAt),
+    index("mcp_connections_client_idx").on(t.clientId),
+  ],
+);
