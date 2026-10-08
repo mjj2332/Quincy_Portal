@@ -104,6 +104,7 @@
   --foreground-secondary: var(--text-secondary);
   --surface-sunken:       var(--bg-sunken);
   --border-hover:         var(--greige-300);
+  --control-off:          var(--greige-500);     /* the off Switch track (#724) — 4.58:1 or better on every paper surface, 5.36:1 vs its paper thumb */
   --primary-hover:        var(--ink-700);
 
   /* ---- Star roles ---- */
