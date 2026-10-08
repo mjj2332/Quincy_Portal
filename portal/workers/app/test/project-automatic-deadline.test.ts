@@ -348,7 +348,7 @@ describe("Deadline and Priority on create (#488)", () => {
     const saved = await auditsOf(id, "project.deadline.schedule_saved");
     expect(saved).toHaveLength(1);
     expect(saved[0]!.actor_id).toBe(userId);
-    expect(JSON.parse(saved[0]!.meta_json)).toMatchObject({ version: 1, operation: "set", via: "create" });
+    expect(JSON.parse(saved[0]!.meta_json)).toMatchObject({ version: 1, operation: "set", source: "create" });
     const detail = await (await request(`/api/projects/${id}`, "GET")).json() as { deadlineSchedule: { source: string; version: number; reminderOffsetsMinutes: number[]; deadline: { localCivil: string } } };
     expect(detail.deadlineSchedule).toMatchObject({ source: "manual", version: 1, reminderOffsetsMinutes: [120, 30], deadline: { localCivil: "2026-10-06T10:00" } });
   });

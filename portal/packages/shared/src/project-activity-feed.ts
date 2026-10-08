@@ -32,6 +32,8 @@ export const projectActivityFeedItemSchema = z.object({
   occurredAt: safeOccurredAt,
   presentation,
   actor: z.object({ id: z.string(), name: z.string() }).strict().nullable(),
+  /** The MCP client the action went through, or null for a browser action (#704). Staff feed only: the external item carries no actor. Defaults to null so a response from a Worker older than this change still parses. */
+  viaClient: z.string().nullable().default(null),
 }).strict();
 export type ProjectActivityFeedItem = z.infer<typeof projectActivityFeedItemSchema>;
 
@@ -114,7 +116,7 @@ export function decodeProjectActivityCursor(value: unknown): ProjectActivityCurs
   try { return encodeProjectActivityCursor(cursor) === value ? cursor : null; } catch { return null; }
 }
 
-export function projectActivityFeedItemFromRow(row: ProjectActivityFeedRow, projectLabel: string, actor: { id: string; name: string } | null): ProjectActivityFeedItem {
+export function projectActivityFeedItemFromRow(row: ProjectActivityFeedRow, projectLabel: string, actor: { id: string; name: string } | null, viaClient: string | null = null): ProjectActivityFeedItem {
   if (!isProjectActivityLiveType(row.type)) throw new TypeError("Project activity type is not live");
   return projectActivityFeedItemSchema.parse({
     id: row.id,
@@ -125,6 +127,7 @@ export function projectActivityFeedItemFromRow(row: ProjectActivityFeedRow, proj
     // bake an "Ting — " prefix into the body. Notifications keep the prefix (they have no `actor` field).
     presentation: renderProjectActivityNotification(row.type, row.safePayload, projectLabel, null),
     actor,
+    viaClient,
   });
 }
 
