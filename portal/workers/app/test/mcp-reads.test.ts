@@ -35,7 +35,10 @@ const WRITE_NAMES = WRITE_TOOLS.map((tool) => tool.name);
 const ADMIN_NAMES = [
   "admin_list_users", "admin_tonomo_health", "admin_list_webhook_events", "admin_get_webhook_event", "admin_list_dead_letters",
   "admin_list_notification_deliveries", "admin_list_agencies", "admin_list_agency_contacts", "admin_list_stages", "admin_get_attention", "admin_list_project_jobs",
+  "admin_preview_editor_folders", "admin_inspect_dropbox_monitor",
 ];
+/** Admin-scope writes (#709): listed only to an admin whose grant holds `admin`; mcp-admin.test.ts owns their detail. */
+const ADMIN_WRITE_NAMES = MCP_TOOLS.filter((tool) => tool.scope === "admin").map((tool) => tool.name);
 
 beforeAll(async () => {
   await h.executeSql(__PORTAL_MIGRATION_SQL__); await h.executeSql(__PORTAL_SEED_SQL__);
@@ -58,7 +61,7 @@ const text = (result?: { content: { text: string }[] }) => JSON.parse(result!.co
 
 describe("tools/list follows the role and the granted scopes", () => {
   it("admin with every scope sees every read tool, every admin read and every write tool", async () => {
-    expect(await names("admin")).toEqual([...READ_NAMES, ...ADMIN_NAMES, ...WRITE_NAMES].sort());
+    expect(await names("admin")).toEqual([...READ_NAMES, ...ADMIN_NAMES, ...WRITE_NAMES, ...ADMIN_WRITE_NAMES].sort());
     expect(await names("adminReadOnly")).toEqual([...READ_NAMES, ...ADMIN_NAMES].sort());
   });
   it("editor and photographer see no admin tools; photographer lacks Edited-only tools", async () => {
@@ -75,7 +78,7 @@ describe("tools/list follows the role and the granted scopes", () => {
     const list = await h.toolsList(tokens.adminReadOnly!.accessToken);
     expect(list.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
     expect(toolsFor("admin", ["write"]).every((tool) => tool.annotations.readOnlyHint === false)).toBe(true);
-    expect(toolsFor("admin", ["admin"]).map((tool) => tool.name)).toEqual([]);
+    expect(toolsFor("admin", ["admin"]).map((tool) => tool.name).sort()).toEqual([...ADMIN_WRITE_NAMES].sort());
   });
 });
 
@@ -254,10 +257,10 @@ describe("route allowlist and the tool registry agree", () => {
   });
   it("has no wildcard, only reads outside the write tools' routes, and keeps /api/auth out", () => {
     // The download tools are read-scope; the one non-GET route they own creates a zip ticket (#707).
-    const writeRoutes = new Set([...WRITE_TOOLS, ...MCP_TOOLS.filter((tool) => tool.name.endsWith("_download_url"))].map((tool) => `${tool.route.method} ${tool.route.template}`));
+    const writeRoutes = new Set([...WRITE_TOOLS, ...MCP_TOOLS.filter((tool) => tool.name.endsWith("_download_url") || tool.scope === "admin")].map((tool) => `${tool.route.method} ${tool.route.template}`));
     expect(MCP_ALLOWED_ROUTES.every((route) => !route.template.includes("*") && (route.method === "GET" || writeRoutes.has(`${route.method} ${route.template}`)))).toBe(true);
     expect(isAllowedMcpRoute("GET", "/api/auth/get-session")).toBe(false);
     expect(isAllowedMcpRoute("GET", "/api/projects/x/jobs/extra")).toBe(false);
-    expect(isAllowedMcpRoute("POST", "/api/projects/x1/send-to-autohdr")).toBe(false);
+    expect(isAllowedMcpRoute("POST", "/api/admin/notification-deliveries/x1/unknown")).toBe(false);
   });
 });

@@ -26,6 +26,11 @@ export function auditMeta(principal: AuditPrincipal, meta?: Record<string, unkno
   return JSON.stringify(value);
 }
 
+/** The provenance a background RPC needs to stamp into an audit row it writes itself (#709): undefined for a cookie session. */
+export function mcpViaOf(principal: AuditPrincipal): { clientName: string; connectionId: string } | undefined {
+  return principal?.via ? { clientName: principal.via.clientName, connectionId: principal.via.connectionId } : undefined;
+}
+
 export async function audit(
   env: Env,
   principal: AuditPrincipal,

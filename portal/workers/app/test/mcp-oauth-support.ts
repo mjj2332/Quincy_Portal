@@ -33,17 +33,18 @@ export function mcpHarness(testEnv: Env) {
   }
   const consentFetch = (handle: string, who: string, binding: string, body: unknown) => workerSelf.fetch(`${ORIGIN}/api/connected-apps/consent/${handle}`, { method: "POST", headers: { ...json, origin: ORIGIN, cookie: [cookies[who], binding].join("; ") }, body: JSON.stringify(body) });
   /** Runs DCR, authorize, consent and the token exchange for `who`, and returns the access token. */
-  async function connect(scope: string, who: string): Promise<{ accessToken: string; connectionId: string }> {
+  async function connect(scope: string, who: string, granted?: string[]): Promise<{ accessToken: string; connectionId: string; expiresIn: number; refreshToken: string | undefined }> {
     const client_id = await register();
     const a = await authorize(client_id, scope);
     expect(a.res.status).toBe(302);
-    const approved = await consentFetch(a.handle, who, a.binding, { decision: "approve", scopes: scope.split(" ") });
+    const approved = await consentFetch(a.handle, who, a.binding, { decision: "approve", scopes: granted ?? scope.split(" ") });
     expect(approved.status).toBe(200);
     const code = new URL(((await approved.json()) as { redirectTo: string }).redirectTo).searchParams.get("code")!;
     const res = await workerSelf.fetch(`${ORIGIN}/oauth/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "authorization_code", code, client_id, redirect_uri: REDIRECT, code_verifier: a.verifier, resource: RESOURCE }) });
     expect(res.status).toBe(200);
     const row = await DB.prepare("SELECT id FROM mcp_connections WHERE client_id = ?").bind(client_id).first<{ id: string }>();
-    return { accessToken: ((await res.json()) as { access_token: string }).access_token, connectionId: row!.id };
+    const tokens = (await res.json()) as { access_token: string; refresh_token?: string; expires_in: number };
+    return { accessToken: tokens.access_token, connectionId: row!.id, expiresIn: tokens.expires_in, refreshToken: tokens.refresh_token };
   }
   let rpcId = 0;
   const rpc = (token: string, method: string, params: unknown = {}) => workerSelf.fetch(`${ORIGIN}/mcp`, { method: "POST", headers: { ...json, accept: "application/json, text/event-stream", authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params }) });
@@ -51,5 +52,5 @@ export function mcpHarness(testEnv: Env) {
   const toolsList = async (token: string) => ((await (await rpc(token, "tools/list")).json()) as { result: { tools: { name: string; annotations?: { readOnlyHint?: boolean } }[] } }).result.tools;
   const callTool = async (token: string, name: string, args: unknown = {}) => (await (await rpc(token, "tools/call", { name, arguments: args })).json()) as { result?: ToolResult; error?: { code: number; message: string } };
   const asCookie = (who: string, path: string) => workerSelf.fetch(`${ORIGIN}${path}`, { headers: { cookie: cookies[who]! } });
-  return { DB, ORIGIN, cookies, executeSql, addUser, addSession, connect, rpc, toolsList, callTool, asCookie };
+  return { DB, ORIGIN, cookies, executeSql, addUser, addSession, register, authorize, consentFetch, connect, rpc, toolsList, callTool, asCookie };
 }

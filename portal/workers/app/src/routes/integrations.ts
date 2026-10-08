@@ -9,6 +9,7 @@ import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { z } from "zod";
 import { jsonInput } from "./helpers";
+import { mcpViaOf } from "../lib/audit";
 
 export const integrationsRoutes = new Hono<AppEnv>();
 const stateKey = (nonce: string) => `dropbox_oauth_state:${nonce}`;
@@ -66,13 +67,13 @@ integrationsRoutes.post("/integrations/dropbox/mappings/:mappingId/resolve", ter
   if (!z.string().uuid().safeParse(mappingId).success) return c.json({ error: "Invalid mapping id" }, 400);
   const data = await jsonInput(c, z.object({ chosenPathKey: z.string().min(1), verifiedFolderId: z.string().min(1) }));
   if (data instanceof Response) return data;
-  const result = await c.env.BACKGROUND.resolveAutoHdrMapping(mappingId, data.chosenPathKey, data.verifiedFolderId, c.get("user").id);
+  const result = await c.env.BACKGROUND.resolveAutoHdrMapping(mappingId, data.chosenPathKey, data.verifiedFolderId, c.get("user").id, mcpViaOf(c.get("user")));
   return c.json(result);
 }));
 integrationsRoutes.post("/integrations/dropbox/path-claims/reassign", terminalRoute("/integrations/dropbox/path-claims/reassign", async (c) => {
   const data = await jsonInput(c, z.object({ pathKey: z.string().min(1), targetMappingId: z.string().uuid(), verifiedFolderId: z.string().min(1) }));
   if (data instanceof Response) return data;
-  const result = await c.env.BACKGROUND.reassignAutoHdrPathClaim(data.pathKey, data.targetMappingId, data.verifiedFolderId, c.get("user").id);
+  const result = await c.env.BACKGROUND.reassignAutoHdrPathClaim(data.pathKey, data.targetMappingId, data.verifiedFolderId, c.get("user").id, mcpViaOf(c.get("user")));
   return c.json(result);
 }));
 integrationsRoutes.post("/integrations/dropbox/connect-url", terminalRoute("/integrations/dropbox/connect-url", async (c) => {
