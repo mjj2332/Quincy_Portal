@@ -22,6 +22,7 @@ import {
   sourceFrom,
   u32,
   u8,
+  u64,
   videoTrack,
   type Mp4Spec,
   type TrackSpec,
@@ -339,6 +340,40 @@ describe("probeMp4 sample descriptions and short boxes", () => {
   it("an stts count larger than its payload is box_size_invalid", async () => {
     const sttsRaw = box("stts", u8(0, 0, 0, 0), u32(1000), u32(300), u32(1001));
     expect(await reasonOf(buildMp4(one(videoTrack({ sttsRaw }))))).toBe("box_size_invalid");
+  });
+
+  const tmcdT = (over: Partial<TrackSpec> = {}): TrackSpec => ({
+    handler: "tmcd",
+    timescale: 30000,
+    tmcd: { flags: 1, timescale: 30000, frameDuration: 1001, numberOfFrames: 30, startFrame: 5 },
+    ...over,
+  });
+  const z = u8(0, 0, 0, 0);
+  it.each<[string, TrackSpec]>([
+    ["video stco declaring 1000 entries", videoTrack({ stcoRaw: box("stco", z, u32(1000), u32(100)) })],
+    ["video co64 declaring 1000 entries", videoTrack({ stcoRaw: box("co64", z, u32(1000), u64(100)) })],
+    ["video variable stsz declaring 1000 sizes", videoTrack({ stszRaw: box("stsz", z, u32(0), u32(1000)) })],
+    ["video stsc declaring 1000 entries", videoTrack({ stscRaw: box("stsc", z, u32(1000), u32(1), u32(1), u32(1)) })],
+  ])("%s -> box_size_invalid", async (_n, v) => {
+    expect(await reasonOf(buildMp4(one(v)))).toBe("box_size_invalid");
+  });
+  it.each<[string, TrackSpec]>([
+    ["timecode stsc declaring 1000 entries", tmcdT({ stscRaw: box("stsc", z, u32(1000), u32(1), u32(1), u32(1)) })],
+    ["timecode stco declaring 1000 entries", tmcdT({ stcoRaw: box("stco", z, u32(1000), u32(100)) })],
+    ["timecode variable stsz declaring 1000 sizes", tmcdT({ stszRaw: box("stsz", z, u32(0), u32(1000)) })],
+    ["timecode stts declaring 1000 entries", tmcdT({ sttsRaw: box("stts", z, u32(1000), u32(1), u32(1)) })],
+    ["tmcd entry of size 20", tmcdT({ entryRaw: box("tmcd", new Uint8Array(12)) })],
+    ["tmcd entry overrunning stsd", tmcdT({ entryRaw: rawBox(500, "tmcd", new Uint8Array(40)) })],
+  ])("%s -> box_size_invalid", async (_n, tc) => {
+    expect(await reasonOf(buildMp4({ tracks: [videoTrack(), tc] }))).toBe("box_size_invalid");
+  });
+  it("a fixed-size stsz declaring 1000 samples is fine", async () => {
+    const v = videoTrack({ stszRaw: box("stsz", z, u32(4), u32(1000)) });
+    expect((await probeMp4(buildMp4(one(v)))).ok).toBe(true);
+  });
+  it("an unknown-type timecode entry still gives no timecode", async () => {
+    const p = await probeOf({ tracks: [videoTrack(), tmcdT({ entryRaw: box("xxxx", new Uint8Array(40)) })] });
+    expect(p.startTimecode).toBeNull();
   });
 
   it("truncating a valid moov at every byte offset never throws", async () => {

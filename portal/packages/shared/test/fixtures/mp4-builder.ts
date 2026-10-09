@@ -109,6 +109,11 @@ export type TrackSpec = {
   tkhdRaw?: Uint8Array;
   mdhdRaw?: Uint8Array;
   sttsRaw?: Uint8Array;
+  stscRaw?: Uint8Array;
+  stcoRaw?: Uint8Array;
+  stszRaw?: Uint8Array;
+  /** Replaces the main stsd sample entry. */
+  entryRaw?: Uint8Array;
 };
 
 export type Mp4Spec = {
@@ -191,14 +196,15 @@ function trak(t: TrackSpec, i: number, chunkOffset: number): Uint8Array {
   } else {
     entry = box("mp4a", zeros(6), u16(1), zeros(20));
   }
+  if (t.entryRaw) entry = t.entryRaw;
   const stts = t.stts ?? (t.handler === "tmcd" ? [[1, 1]] : [[300, 1001]]);
   const stbl = box(
     "stbl",
     fullBox("stsd", 0, 0, u32(1 + extraEntries.length), entry, ...extraEntries),
     t.sttsRaw ?? fullBox("stts", 0, 0, u32(stts.length), ...stts.map(([c, d]) => concat(u32(c), u32(d)))),
-    fullBox("stsc", 0, 0, u32(1), u32(1), u32(1), u32(t.stscDesc ?? 1)),
-    fullBox("stsz", 0, 0, u32(4), u32(1)),
-    t.co64 ? fullBox("co64", 0, 0, u32(1), u64(chunkOffset)) : fullBox("stco", 0, 0, u32(1), u32(chunkOffset)),
+    t.stscRaw ?? fullBox("stsc", 0, 0, u32(1), u32(1), u32(1), u32(t.stscDesc ?? 1)),
+    t.stszRaw ?? fullBox("stsz", 0, 0, u32(4), u32(1)),
+    t.stcoRaw ?? (t.co64 ? fullBox("co64", 0, 0, u32(1), u64(chunkOffset)) : fullBox("stco", 0, 0, u32(1), u32(chunkOffset))),
   );
   return box("trak", tkhd, edts, tref, box("mdia", mdhd, hdlr, box("minf", stbl)));
 }

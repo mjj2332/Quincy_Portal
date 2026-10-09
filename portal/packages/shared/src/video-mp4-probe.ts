@@ -388,7 +388,24 @@ function stblOf(buf: Uint8Array, dv: DataView, t: TrackLight): { mdhd: MBox; stb
   if (!mdhd || !minf) throw reject("moov_missing", "mdhd/minf");
   const stbl = boxes(buf, dv, minf.start, minf.end, 4).find((b) => b.type === "stbl");
   if (!stbl) throw reject("moov_missing", "stbl");
-  return { mdhd, stbl: boxes(buf, dv, stbl.start, stbl.end, 5) };
+  const kids = boxes(buf, dv, stbl.start, stbl.end, 5);
+  for (const k of kids) checkTable(dv, k);
+  return { mdhd, stbl: kids };
+}
+
+/** Declared entry count x entry size must fit the box payload, for every sample table we may read. */
+function checkTable(dv: DataView, k: MBox): void {
+  const entry: Record<string, number> = { stts: 8, ctts: 8, stsc: 12, stco: 4, co64: 8, stss: 4 };
+  const size = entry[k.type];
+  if (size !== undefined) {
+    need(k, 8);
+    if (dv.getUint32(k.start + 4) > Math.floor((k.end - k.start - 8) / size)) throw reject("box_size_invalid", `${k.type} entries`);
+  } else if (k.type === "stsz") {
+    need(k, 12);
+    if (dv.getUint32(k.start + 4) === 0 && dv.getUint32(k.start + 8) > Math.floor((k.end - k.start - 12) / 4)) {
+      throw reject("box_size_invalid", "stsz entries");
+    }
+  }
 }
 
 function mdhdTimescale(dv: DataView, mdhd: MBox): number {
@@ -490,8 +507,12 @@ function parseTmcd(
   if (!stsd) return null;
   need(stsd, 16);
   const es = stsd.start + 8;
+  if (dv.getUint32(stsd.start + 4) < 1) return null;
+  if (stsd.end - es < 8) throw reject("box_size_invalid", "sample entry");
   const esize = dv.getUint32(es);
-  if (esize < 34 || es + esize > stsd.end || fourcc(buf, es + 4) !== "tmcd") return null;
+  if (esize < 8 || esize > stsd.end - es) throw reject("box_size_invalid", "sample entry");
+  if (fourcc(buf, es + 4) !== "tmcd") return null;
+  if (esize < 34) throw reject("box_size_invalid", "tmcd sample entry");
   const flags = dv.getUint32(es + 20);
   const numberOfFrames = dv.getUint8(es + 32);
 
