@@ -23,7 +23,7 @@ One line per new UI element. Searches: installed `components/reui/` and `compone
 | Composer visibility switch | `reui/toggle-group` (two items, Internal pressed by default) | over `reui/switch` because both options stay labelled; over `c-tabs-9` because tabs mean panels |
 | Set in / Set out | `quincy/Button variant="secondary"` + `reui/kbd` hint, `aria-keyshortcuts`; the composer is an `@container` and the Kbd goes `@max-[280px]:sr-only` (still read by assistive tech) | installed |
 | Post / Save / Cancel | `quincy/Button` primary / secondary; Post stays left-aligned, the lock hint follows it | installed |
-| Anchor text in composer and edit form | mono text span as a `bg-muted` chip (as the 4d-ii timecode chip); composer shows only the timecode (or In / Out), Set in / Set out share its row; one `ANCHOR_CHIP` class set shared with the edit form | text |
+| Anchor text in composer and edit form | mono text span as a `bg-muted` chip (as the 4d-ii timecode chip); composer shows only the timecode (or In / Out), Set in / Set out share its row; one `ANCHOR_CHIP` class set shared with the edit form; the edit form is an `@container` too, so its chip takes its own row when narrow | text |
 | Archived notice | `ARCHIVED_NOTICE_CLASS` paragraph (`components/archived-notice`) | #527 precedent |
 | Load, write and conflict errors | `quincy/Notice` (`critical`, `caution`) | installed |
 | Empty states | `quincy/EmptyState size="compact"` | installed |

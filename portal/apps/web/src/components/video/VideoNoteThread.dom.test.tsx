@@ -211,6 +211,19 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(host.querySelector('[aria-label="Actions for note by Mia Chen"]')).not.toBeNull();
   });
 
+  it("final: choosing Edit from the ⋯ menu by keyboard lands focus in the edit textarea, not on the trigger", async () => {
+    await render(thread({ revision: 3 }));
+    const trigger = host.querySelector<HTMLElement>('[aria-label="Actions for note by Terry"]')!;
+    trigger.focus();
+    await act(async () => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); trigger.click(); await Promise.resolve(); await Promise.resolve(); });
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((candidate) => candidate.textContent === "Edit")!;
+    item.focus();
+    await act(async () => { item.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); item.click(); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
+    expect(document.activeElement).toBe(host.querySelector('[data-notes-form="edit"] textarea'));
+    expect(host.querySelector('[data-notes-form="edit"]')!.getAttribute("data-size-container")).toBe("true");
+  });
+
   it("17: Delete hands the note and its thread to the panel (it owns the confirm); the thread deletes nothing itself", async () => {
     const root0 = thread({ author: { kind: "staff", person: mia } });
     const mineReply = reply(root0);

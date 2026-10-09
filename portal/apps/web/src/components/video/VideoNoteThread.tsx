@@ -18,7 +18,7 @@ import { Button as ReuiButton } from "../reui/button";
 import { Item } from "../reui/item";
 import { Kbd } from "../reui/kbd";
 import { Textarea } from "../reui/textarea";
-import { ANCHOR_CHIP } from "./VideoNoteComposer";
+import { ANCHOR_CHIP, ANCHOR_CHIP_ROW } from "./VideoNoteComposer";
 
 /** What a thread asks of the panel. Every write rejects with the original error, which the thread classifies. */
 export type ThreadActions = {
@@ -147,13 +147,14 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
 
   const editForm = (note: VideoNoteDto) => editing && editing.noteId === note.id && <form
     data-notes-form="edit"
-    className="grid gap-[var(--space-2)]"
+    data-size-container="true"
+    className="@container grid gap-[var(--space-2)]"
     onSubmit={(event) => { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit }); }}
   >
     <label className="sr-only" htmlFor={`video-note-edit-${note.id}`}>Edit note</label>
     <Textarea id={`video-note-edit-${note.id}`} data-testid="video-note-edit-body" value={editing.text} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) store.setOpenText(assetId, event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit }); } }} />
     {editing.frames && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-      <span data-testid="video-note-edit-anchor" className={ANCHOR_CHIP}>{editAnchorLabel(marks, timecode)}</span>
+      <span data-testid="video-note-edit-anchor" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}>{editAnchorLabel(marks, timecode)}</span>
       <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-in" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "in", frameOnScreen(clock.getState()), clock); }}>Set in <Kbd>I</Kbd></Button>
       <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-out" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "out", frameOnScreen(clock.getState()), clock); }}>Set out <Kbd>O</Kbd></Button>
       <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-make-point" disabled={busy || !clock} onClick={() => { if (clock) store.makePoint(assetId, clock); }}>Make point</Button>
