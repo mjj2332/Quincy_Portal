@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { framesToTimecode, type VideoNotePasteCommitResponse, type VideoNotePastePreviewResponse, type VideoNotePasteRow, type VideoNotePasteSkipReason, type VideoVersionDto } from "@quincy/shared";
 import { classifyVideoNoteError } from "../../lib/video-note-errors";
 import type { NoteFormStore, PasteClipboard } from "../../lib/video-note-form-store";
@@ -38,7 +38,7 @@ const timecodeOf = (version: VideoVersionDto) => (frame: number) => framesToTime
  * The offset and the ticks live in the Video tab's form store (keyed by this Version), so closing and reopening loses nothing; everything
  * else here is only what the server last said, asked again on open. A commit is idempotent, so after a network failure it may simply be sent again.
  */
-export function VideoNotePasteDialog({ open, onOpenChange, store, assetId, target, source, clipboard, previewPaste, commitPaste, onPasted }: {
+export function VideoNotePasteDialog({ open, onOpenChange, store, assetId, target, source, clipboard, previewPaste, commitPaste }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   store: NoteFormStore;
@@ -49,7 +49,6 @@ export function VideoNotePasteDialog({ open, onOpenChange, store, assetId, targe
   clipboard: PasteClipboard;
   previewPaste: (input: { sourceAssetId: string; noteIds: readonly string[]; offsetFrames: number }) => Promise<VideoNotePastePreviewResponse>;
   commitPaste: (input: { sourceAssetId: string; notes: ReadonlyArray<{ noteId: string; revision: number }>; offsetFrames: number }) => Promise<VideoNotePasteCommitResponse>;
-  onPasted: (result: VideoNotePasteCommitResponse) => void;
 }) {
   const draft = useSyncExternalStore(store.subscribe, () => store.pasteDraft(assetId));
   // The preview follows the offset once it has rested; the field itself is always live.
@@ -64,31 +63,26 @@ export function VideoNotePasteDialog({ open, onOpenChange, store, assetId, targe
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
-  const [pending, setPending] = useState(false);
+  // Owned by the store: a remount, or a completion that arrives late, sees the same answer.
+  const op = useSyncExternalStore(store.subscribe, () => store.pasteOp(assetId));
+  const pending = op.status === "committing";
+  const invalid = op.status === "stale";
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<{ text: string; retry: boolean } | null>(null);
-  const latest = useRef(0);
-  // Set by a 409: the next plan to arrive is the fresh one, so ticks for notes it can no longer paste are dropped.
-  const pruneTicks = useRef(false);
   const noteIdsKey = clipboard.noteIds.join(",");
 
   useEffect(() => {
     if (!open) return;
-    const mine = ++latest.current;
+    const mine = store.startPastePreview(assetId);
     setLoading(true); setLoadError(null);
     previewPaste({ sourceAssetId: clipboard.sourceAssetId, noteIds: clipboard.noteIds, offsetFrames: asked }).then(
       (plan) => {
-        if (mine !== latest.current) return;
-        if (pruneTicks.current) {
-          pruneTicks.current = false;
-          const pastable = new Set(plan.rows.filter((row) => row.status === "mapped").map((row) => row.noteId));
-          for (const noteId of store.pasteDraft(assetId).unticked) if (!pastable.has(noteId)) store.setPasteTicked(assetId, noteId, true);
-        }
+        if (!store.settlePastePreview(assetId, mine, true)) return;
         setPreview(plan); setLoading(false);
       },
-      (error: unknown) => { if (mine === latest.current) { setLoading(false); setLoadError(classifyVideoNoteError(error).kind === "network" ? "Couldn't reach the server." : error instanceof Error && error.message ? error.message : "The notes could not be previewed."); } },
+      (error: unknown) => { if (store.settlePastePreview(assetId, mine, false)) { setLoading(false); setLoadError(classifyVideoNoteError(error).kind === "network" ? "Couldn't reach the server." : error instanceof Error && error.message ? error.message : "The notes could not be previewed."); } },
     );
-    return () => { latest.current += 1; };
+    return () => { store.endPastePreview(assetId); };
     // `previewPaste` changes identity with the query client only; the plan depends on what is copied, where it goes and the offset.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, clipboard.sourceAssetId, noteIdsKey, asked, assetId, reload]);
@@ -99,7 +93,7 @@ export function VideoNotePasteDialog({ open, onOpenChange, store, assetId, targe
   const left = useMemo(() => (preview?.rows ?? []).filter((row): row is Skipped => row.status === "skipped"), [preview]);
   const unticked = useMemo(() => new Set(draft.unticked), [draft.unticked]);
   const chosen = mapped.filter((row) => !unticked.has(row.noteId));
-  const settled = preview !== null && !loading && preview.offsetFrames === draft.offset;
+  const settled = preview !== null && !loading && !invalid && preview.offsetFrames === draft.offset;
 
   const sourceTc = useMemo(() => (source ? timecodeOf(source) : (frame: number) => String(frame)), [source]);
   const targetTc = useMemo(() => timecodeOf(target), [target]);
@@ -107,15 +101,19 @@ export function VideoNotePasteDialog({ open, onOpenChange, store, assetId, targe
 
   async function submit() {
     if (!preview || pending || chosen.length === 0) return;
-    setPending(true); setFailure(null); setNotice(null);
+    const opId = store.beginPasteCommit(assetId);
+    if (opId === null) return;
+    setFailure(null); setNotice(null);
     try {
       const result = await commitPaste({ sourceAssetId: clipboard.sourceAssetId, notes: chosen.map((row) => ({ noteId: row.noteId, revision: row.source.revision })), offsetFrames: preview.offsetFrames });
-      onPasted(result);
+      store.completePasteCommit(assetId, opId, { kind: "success", message: `Pasted ${result.copied} ${result.copied === 1 ? "note" : "notes"}${result.skipped > 0 ? ` · ${result.skipped} left out` : ""}` });
     } catch (error) {
       const classified = classifyVideoNoteError(error);
-      if (classified.kind === "stale" && classified.preview) {
-        // The 409's plan covers only the notes that were sent; ask again for the whole clipboard, at the offset on screen. Ticks and offset stay in the store.
-        pruneTicks.current = true;
+      const stale = classified.kind === "stale" && classified.preview;
+      // A completion that no longer owns the paste (it was superseded) changes nothing, here or in the store.
+      if (!store.completePasteCommit(assetId, opId, { kind: stale ? "stale" : "failed" })) return;
+      if (stale) {
+        // The 409's plan covers only the notes that were sent; ask again for the whole clipboard, at the offset on screen. Ticks and offset stay in the store, and Paste stays off until the fresh plan arrives.
         setReload((n) => n + 1);
         setNotice("Some notes changed since the preview, so the list was refreshed. Check it, then paste again.");
       } else if (classified.kind === "network") {
@@ -125,7 +123,7 @@ export function VideoNotePasteDialog({ open, onOpenChange, store, assetId, targe
       } else {
         setFailure({ text: error instanceof Error && error.message ? error.message : "The notes could not be pasted.", retry: false });
       }
-    } finally { setPending(false); }
+    }
   }
 
   return <Dialog open={open} onOpenChange={(next) => { if (!pending || next) onOpenChange(next); }}>
@@ -151,7 +149,7 @@ export function VideoNotePasteDialog({ open, onOpenChange, store, assetId, targe
       </NumberField>
 
       {notice && <Notice tone="caution" role="status" data-testid="video-note-paste-notice">{notice}</Notice>}
-      {loadError && <Notice tone="critical" role="alert" data-testid="video-note-paste-load-error" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{loadError}</span><Button type="button" variant="text" onClick={() => { setReload((n) => n + 1); }}>Retry</Button></Notice>}
+      {loadError && <Notice tone="critical" role="alert" data-testid="video-note-paste-load-error" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{loadError}</span><Button type="button" variant="text" onClick={() => { setReload((n) => n + 1); }}>Try again</Button></Notice>}
 
       <div className="min-h-0 flex-1 overflow-y-auto" data-testid="video-note-paste-body" aria-busy={loading}>
         {preview === null && !loadError && <p role="status" className="m-0 text-foreground-secondary [font:var(--type-label)]">Checking the notes…</p>}

@@ -654,3 +654,55 @@ describe("paste clipboard and draft (#741 5c-ui)", () => {
     expect(store.pasteDraft(V2).offset).toBe(0);
   });
 });
+
+describe("paste operation (#741 5c-ui round 3)", () => {
+  const ok = { kind: "success", message: "Pasted 1 note" } as const;
+
+  it("a commit owns the draft: its completion clears the draft, closes the dialog and leaves the notice", () => {
+    store.setPasteOpen(V2, true);
+    store.setPasteOffset(V2, 4);
+    store.setPasteTicked(V2, "a", false);
+    const opId = store.beginPasteCommit(V2)!;
+    expect(store.pasteOp(V2).status).toBe("committing");
+    expect(store.beginPasteCommit(V2)).toBeNull();
+    expect(store.completePasteCommit(V2, opId, ok)).toBe(true);
+    expect(store.pasteDraft(V2)).toEqual({ offset: 0, unticked: [] });
+    expect(store.pasteOpen(V2)).toBe(false);
+    expect(store.pasteResult(V2)).toBe("Pasted 1 note");
+    expect(store.pasteOp(V2).status).toBe("idle");
+  });
+
+  it("cancelAll supersedes a commit in flight: its late completion changes nothing", () => {
+    const opId = store.beginPasteCommit(V2)!;
+    store.cancelAll();
+    store.setPasteOffset(V2, 9);
+    store.setPasteOpen(V2, true);
+    expect(store.completePasteCommit(V2, opId, ok)).toBe(false);
+    expect(store.pasteDraft(V2).offset).toBe(9);
+    expect(store.pasteOpen(V2)).toBe(true);
+    expect(store.pasteResult(V2)).toBeNull();
+  });
+
+  it("leave does not drop the op; a second completion of the same op is ignored", () => {
+    const opId = store.beginPasteCommit(V2)!;
+    store.leave(V2);
+    expect(store.pasteOp(V2).status).toBe("committing");
+    expect(store.completePasteCommit(V2, opId, { kind: "failed" })).toBe(true);
+    expect(store.completePasteCommit(V2, opId, ok)).toBe(false);
+    expect(store.pasteOp(V2).status).toBe("failed");
+  });
+
+  it("a stale commit invalidates the preview until a fresh one succeeds; only the latest preview may settle", () => {
+    const opId = store.beginPasteCommit(V2)!;
+    store.completePasteCommit(V2, opId, { kind: "stale" });
+    const first = store.startPastePreview(V2);
+    expect(store.pasteOp(V2).status).toBe("stale");
+    const second = store.startPastePreview(V2);
+    expect(store.settlePastePreview(V2, first, true)).toBe(false);
+    expect(store.settlePastePreview(V2, second, false)).toBe(true);
+    expect(store.pasteOp(V2).status).toBe("stale");
+    const third = store.startPastePreview(V2);
+    expect(store.settlePastePreview(V2, third, true)).toBe(true);
+    expect(store.pasteOp(V2).status).toBe("idle");
+  });
+});

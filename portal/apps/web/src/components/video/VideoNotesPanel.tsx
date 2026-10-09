@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { roleHasCapability, VIDEO_NOTE_PASTE_MAX, type VideoDto, type VideoNoteDto, type VideoNotePasteCommitResponse, type VideoNoteThreadDto } from "@quincy/shared";
+import { roleHasCapability, VIDEO_NOTE_PASTE_MAX, type VideoDto, type VideoNoteDto, type VideoNoteThreadDto } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
 import { useNow } from "../../lib/use-now";
 import { noteCounts, type NoteStatusFilter, type NoteVisibilityFilter } from "../../lib/video-note-view";
@@ -57,23 +57,25 @@ export function VideoNotesPanel({ session, video, detailsRows }: { session: Vide
   const canCopy = !readOnly && roleHasCapability(session.role, "annotateVideo");
   const clipboard = useSyncExternalStore(session.forms.subscribe, () => session.forms.clipboard(video.id));
   const pasteFrom = clipboard && clipboard.sourceAssetId !== session.assetId ? clipboard : null;
-  const [pasteOpen, setPasteOpen] = useState(false);
+  const pasteOpen = useSyncExternalStore(session.forms.subscribe, () => session.forms.pasteOpen(session.assetId));
+  const pasteResult = useSyncExternalStore(session.forms.subscribe, () => session.forms.pasteResult(session.assetId));
+  const setPasteOpen = (next: boolean) => { session.forms.setPasteOpen(session.assetId, next); };
   const [pasted, setPasted] = useState<string | null>(null);
   useEffect(() => {
     if (pasted === null) return;
     const timer = setTimeout(() => { setPasted(null); }, 6000);
     return () => { clearTimeout(timer); };
   }, [pasted]);
+  useEffect(() => {
+    if (pasteResult === null) return;
+    const timer = setTimeout(() => { session.forms.clearPasteResult(session.assetId); }, 6000);
+    return () => { clearTimeout(timer); };
+  }, [pasteResult, session.forms, session.assetId]);
   const copyShown = () => {
     const ids = shown.map((thread) => thread.id);
     if (ids.length === 0) { setPasted("No notes to copy"); return; }
     session.forms.copyNotes(video.id, { sourceAssetId: session.assetId, sourceVersion: version.version, noteIds: ids });
     setPasted(ids.length > VIDEO_NOTE_PASTE_MAX ? `Copied the first ${VIDEO_NOTE_PASTE_MAX} of ${ids.length} notes` : `Copied ${ids.length} ${ids.length === 1 ? "note" : "notes"}`);
-  };
-  const onPasted = (result: VideoNotePasteCommitResponse) => {
-    session.forms.resetPaste(session.assetId);
-    setPasteOpen(false);
-    setPasted(`Pasted ${result.copied} ${result.copied === 1 ? "note" : "notes"}${result.skipped > 0 ? ` · ${result.skipped} left out` : ""}`);
   };
 
   const counts = useMemo(() => noteCounts(threads ?? [], filters), [threads, filters]);
@@ -182,7 +184,7 @@ export function VideoNotesPanel({ session, video, detailsRows }: { session: Vide
       </div>
     </div>
 
-    {pasted && <Notice tone="positive" role="status" data-testid="video-notes-paste-status" className="max-[721px]:order-2">{pasted}</Notice>}
+    {(pasteResult ?? pasted) && <Notice tone="positive" role="status" data-testid="video-notes-paste-status" className="max-[721px]:order-2">{pasteResult ?? pasted}</Notice>}
 
     {total > 0 && <div className="grid gap-[var(--space-2)] max-[721px]:order-2" data-testid="video-notes-filters">
       {filterGroup<NoteStatusFilter>("Show notes that are", "status", filters.status, [
@@ -240,7 +242,6 @@ export function VideoNotesPanel({ session, video, detailsRows }: { session: Vide
       clipboard={pasteFrom}
       previewPaste={session.previewPaste}
       commitPaste={session.commitPaste}
-      onPasted={onPasted}
     />}
 
     <ConfirmDeleteDialog

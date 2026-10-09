@@ -1269,6 +1269,69 @@ describe("Copy and paste notes (#741 5c-ui)", () => {
     expect(stores.made.at(-1)!.pasteDraft(ids.asset2)).toEqual({ offset: 3, unticked: [v1.b.id] });
   });
 
+  it("an untick survives a stale refresh that skips the note and an offset change that brings it back (#741 5c-ui round 3)", async () => {
+    const v1 = v1Notes();
+    await copyOnV1(v1);
+    await openPasteDialog();
+    await click(rows()[1]!.querySelector<HTMLElement>('[role="checkbox"]')!);
+    const planAt = (offsetFrames: number, skipB: boolean) => ({
+      sourceVersion: 1, targetVersion: 2, offsetFrames,
+      rows: v1.all.map((n) => skipB && n.id === v1.b.id
+        ? { noteId: n.id, status: "skipped", reason: "out_of_range", source: src(n) }
+        : { noteId: n.id, status: "mapped", source: src(n), to: { startFrame: n.startFrame! + offsetFrames, endFrame: n.endFrame === null ? null : n.endFrame + offsetFrames }, shortened: false }),
+    });
+    api.apiPost.mockRejectedValueOnce(new ApiError("Some notes changed since the preview.", 409, { code: "paste_stale", error: "x", preview: planAt(0, true) }));
+    api.apiPost.mockImplementationOnce(async () => planAt(0, true));
+    await click(tid("video-note-paste-submit")!); await flush(6);
+    expect(rows().map((r) => r.dataset.noteId)).toEqual([v1.a.id, v1.c.id]);
+    expect(stores.made.at(-1)!.pasteDraft(ids.asset2).unticked).toEqual([v1.b.id]);
+    await setOffset("1"); await settle(PASTE_DEBOUNCE); await flush(4);
+    expect(rows().map((r) => r.dataset.noteId)).toEqual([v1.a.id, v1.b.id, v1.c.id]);
+    expect(rows().map((r) => r.querySelector('[role="checkbox"]')!.getAttribute("aria-checked"))).toEqual(["true", "false", "true"]);
+    await click(tid("video-note-paste-submit")!); await flush(6);
+    expect((api.apiPost.mock.calls.at(-1)![1] as { notes: Array<{ noteId: string }> }).notes.map((n) => n.noteId)).toEqual([v1.a.id, v1.c.id]);
+  });
+
+  it("a paste that finishes after a remount, once a newer draft exists, leaves that draft and its dialog alone (#741 5c-ui round 3)", async () => {
+    await copyOnV1();
+    await openPasteDialog();
+    let finish!: (value: unknown) => void;
+    api.apiPost.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await click(tid("video-note-paste-submit")!); await flush(4);
+    expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(true);
+    // Remount: the Version goes away and comes back. The store still says a commit is out.
+    await pickVersion("v1"); await pickVersion("v2");
+    expect(pasteDialog()).not.toBeNull();
+    expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(true);
+    const store = stores.made.at(-1)!;
+    // The session ends (cancelAll) and the person starts a newer draft.
+    store.cancelAll();
+    store.setPasteOffset(ids.asset2, 7);
+    store.setPasteTicked(ids.asset2, "keep-me", false);
+    await act(async () => { finish({ sourceVersion: 1, targetVersion: 2, offsetFrames: 0, copied: 3, skipped: 0, rows: [] }); await Promise.resolve(); });
+    await flush(6); await settle(200);
+    expect(pasteDialog()).not.toBeNull();
+    expect(store.pasteDraft(ids.asset2)).toEqual({ offset: 7, unticked: ["keep-me"] });
+    expect(tid("video-notes-paste-status")).toBeNull();
+  });
+
+  it("a stale refresh that fails keeps Paste disabled and offers 'Try again', which asks for the preview again (#741 5c-ui round 3)", async () => {
+    const { v1 } = await copyOnV1();
+    await openPasteDialog();
+    api.apiPost.mockRejectedValueOnce(new ApiError("Some notes changed since the preview.", 409, { code: "paste_stale", error: "x", preview: { sourceVersion: 1, targetVersion: 2, offsetFrames: 0, rows: [] } }));
+    api.apiPost.mockRejectedValueOnce(new ApiError("Network error", 0));
+    await click(tid("video-note-paste-submit")!); await flush(6);
+    expect(tid("video-note-paste-load-error")).not.toBeNull();
+    expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(true);
+    expect(stores.made.at(-1)!.pasteOp(ids.asset2).status).toBe("stale");
+    const retry = [...tid("video-note-paste-load-error")!.querySelectorAll("button")].find((b) => b.textContent === "Try again")!;
+    await click(retry); await flush(6);
+    expect(api.apiPost.mock.calls.at(-1)![0]).toMatch(/note-paste\/preview$/);
+    expect(tid("video-note-paste-load-error")).toBeNull();
+    expect(rows().map((r) => r.dataset.noteId)).toEqual(v1.all.map((n) => n.id));
+    expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("a network failure keeps the dialog and offers 'Try again', which sends the same payload", async () => {
     await copyOnV1();
     await openPasteDialog();

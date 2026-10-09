@@ -43,12 +43,20 @@ export type Op = { id: number; form: "composer" | "open"; phase: "confirming" | 
 export type PasteDraft = { offset: number; unticked: readonly string[] };
 /** The notes copied from one Version of a Video (#741 5c-ui): ids only, the paste dialog asks the server for the plan. */
 export type PasteClipboard = { sourceAssetId: string; sourceVersion: number; noteIds: readonly string[] };
-export type Slot = { composer: Composer; open: OpenForm | null; marks: StoredMarks; op: Op | null; spent: boolean; /** Why a form closed by itself (its note was deleted elsewhere). */ notice: (Problem & { rootId: string }) | null; paste: PasteDraft };
+/**
+ * The one paste operation per target Version (#741 5c-ui). `opId` names the commit that owns the draft: a completion acts only while it still
+ * matches. `stale` means the last preview was invalidated by a 409 and no fresh one has succeeded yet, so Paste stays off. `previewRevision`
+ * orders previews: only the latest one may write its plan back.
+ */
+export type PasteOp = { opId: number; status: "idle" | "previewing" | "committing" | "failed" | "stale"; previewRevision: number };
+export type PasteCommitOutcome = { kind: "success"; message: string } | { kind: "stale" } | { kind: "failed" };
+export type Slot = { composer: Composer; open: OpenForm | null; marks: StoredMarks; op: Op | null; spent: boolean; /** Why a form closed by itself (its note was deleted elsewhere). */ notice: (Problem & { rootId: string }) | null; paste: PasteDraft; pasteOp: PasteOp; /** Whether the paste dialog is open, and what the last paste said. */ pasteOpen: boolean; pasteResult: string | null };
 
 const NO_MARKS: StoredMarks = { clock: null, value: EMPTY_MARKS, touched: false, seed: EMPTY_MARKS };
 const EMPTY_COMPOSER: Composer = { body: "", visibility: "internal", anchorFrame: null, revision: 0, problem: null };
 const EMPTY_PASTE: PasteDraft = Object.freeze({ offset: 0, unticked: Object.freeze([]) as readonly string[] });
-const EMPTY_SLOT: Slot = Object.freeze({ composer: EMPTY_COMPOSER, open: null, marks: NO_MARKS, op: null, spent: false, notice: null, paste: EMPTY_PASTE });
+const EMPTY_PASTE_OP: PasteOp = Object.freeze({ opId: 0, status: "idle", previewRevision: 0 });
+const EMPTY_SLOT: Slot = Object.freeze({ composer: EMPTY_COMPOSER, open: null, marks: NO_MARKS, op: null, spent: false, notice: null, paste: EMPTY_PASTE, pasteOp: EMPTY_PASTE_OP, pasteOpen: false, pasteResult: null });
 
 export function effectiveMarks(marks: StoredMarks, clock: object | null): { value: NoteMarks; touched: boolean } {
   return marks.clock !== null && marks.clock === clock ? marks : { value: marks.seed, touched: false };
@@ -294,8 +302,60 @@ export function createNoteFormStore(key: string) {
     },
     resetPaste(assetId: string) { if (slot(assetId).paste !== EMPTY_PASTE) put(assetId, { paste: EMPTY_PASTE }); },
 
+    // Paste operation state (#741 5c-ui): the dialog renders it and never owns it, so a remount, an archive/restore or a late completion cannot disagree with it.
+    pasteOp: (assetId: string): PasteOp => slot(assetId).pasteOp,
+    pasteOpen: (assetId: string): boolean => slot(assetId).pasteOpen,
+    pasteResult: (assetId: string): string | null => slot(assetId).pasteResult,
+    setPasteOpen(assetId: string, open: boolean) { if (slot(assetId).pasteOpen !== open) put(assetId, { pasteOpen: open, ...(open ? { pasteResult: null } : {}) }); },
+    clearPasteResult(assetId: string) { if (slot(assetId).pasteResult !== null) put(assetId, { pasteResult: null }); },
+    /** A commit starts and owns the draft. Null when one is already out. */
+    beginPasteCommit(assetId: string): number | null {
+      const held = slot(assetId).pasteOp;
+      if (dead || held.status === "committing") return null;
+      const opId = ++seq;
+      put(assetId, { pasteOp: { ...held, opId, status: "committing" } });
+      return opId;
+    },
+    /** A commit settles. Acts only if it still owns the Version's paste; success then clears the draft, closes the dialog and leaves the notice. Returns whether it acted. */
+    completePasteCommit(assetId: string, opId: number, outcome: PasteCommitOutcome): boolean {
+      const held = slot(assetId);
+      if (dead || held.pasteOp.opId !== opId || held.pasteOp.status !== "committing") return false;
+      if (outcome.kind === "success") put(assetId, { paste: EMPTY_PASTE, pasteOpen: false, pasteResult: outcome.message, pasteOp: { ...held.pasteOp, status: "idle" } });
+      else put(assetId, { pasteOp: { ...held.pasteOp, status: outcome.kind } });
+      return true;
+    },
+    /** A preview is asked for. Returns its revision; a plan may be shown only while that is still the latest. A stale preview stays invalid until one succeeds. */
+    startPastePreview(assetId: string): number {
+      const held = slot(assetId).pasteOp;
+      const previewRevision = held.previewRevision + 1;
+      const status = held.status === "stale" || held.status === "committing" ? held.status : "previewing";
+      put(assetId, { pasteOp: { ...held, previewRevision, status } });
+      return previewRevision;
+    },
+    /** A preview settles. Returns whether it is still the latest (and so may be shown). */
+    settlePastePreview(assetId: string, previewRevision: number, ok: boolean): boolean {
+      const held = slot(assetId).pasteOp;
+      if (held.previewRevision !== previewRevision) return false;
+      const status = held.status === "previewing" || (ok && held.status === "stale") ? "idle" : held.status;
+      if (status !== held.status) put(assetId, { pasteOp: { ...held, status } });
+      return true;
+    },
+    /** The dialog stopped asking (closed, or about to ask again): whatever is out no longer counts. */
+    endPastePreview(assetId: string) {
+      const held = slot(assetId).pasteOp;
+      if (held.previewRevision === 0 && held.status === "idle") return;
+      put(assetId, { pasteOp: { ...held, previewRevision: held.previewRevision + 1, status: held.status === "previewing" ? "idle" : held.status } });
+    },
+
     /** The person's session ended: every frame confirmation stops. A request already sent is never touched. */
-    cancelAll() { for (const assetId of [...slots.keys()]) cancelConfirmation(assetId); },
+    cancelAll() {
+      for (const assetId of [...slots.keys()]) {
+        cancelConfirmation(assetId);
+        // A paste commit already sent is not touched, but it stops owning the draft: its completion is ignored.
+        const held = slot(assetId).pasteOp;
+        if (held.status === "committing") put(assetId, { pasteOp: { ...held, opId: ++seq, status: "idle" } });
+      }
+    },
     /** This store is being replaced (another person or Project): nothing it started may write or send again. */
     retire() { dead = true; slots.clear(); clipboards.clear(); listeners.clear(); },
   };
