@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ChevronDown } from "lucide-react";
 import type { VideoDto } from "@quincy/shared";
 import { Badge } from "../reui/badge";
 import { Button } from "../quincy/Button";
@@ -51,9 +52,9 @@ export function VideoCard({ video, canUpload, myUpload, atUploadCap, onVersionFi
       <div className="grid gap-[var(--space-3)] px-[var(--space-4)] pb-[var(--space-4)]">
         <div className="grid gap-[var(--space-1)]">
           <h3 className="serif [font:var(--type-h3)]">{video.title}</h3>
-          <div className="flex flex-wrap items-center gap-x-[var(--space-2)]">
+          <div className="flex flex-col items-start gap-[var(--space-1)]">
             <Popover>
-              <PopoverTrigger render={<Button type="button" variant="text" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}>{count === 1 ? "1 version" : `${count} versions`}</PopoverTrigger>
+              <PopoverTrigger render={<Button type="button" variant="text" className="-ml-[var(--space-2)] px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11" />}>{count === 1 ? "1 version" : `${count} versions`}<ChevronDown aria-hidden="true" className="size-3" /></PopoverTrigger>
               <PopoverContent align="start" aria-label={`Versions of ${video.title}`}>
                 <PopoverTitle>Versions</PopoverTitle>
                 <ItemGroup>

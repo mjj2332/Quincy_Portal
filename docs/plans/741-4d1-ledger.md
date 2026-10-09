@@ -14,7 +14,7 @@ One line per new UI element. ReUI MCP queried (`search` "file upload dropzone vi
 | Video card shell | `reui/frame` (`Frame` + `FramePanel`, ADR 0014) | installed |
 | Poster | `components/LazyImage` | installed; a posterless card shows a plain "No poster" text block (text, not a widget) |
 | Version / Premium / duration chips | `reui/badge` (`secondary`, `warning`, `invert`) | installed |
-| "N versions" list | `reui/popover` (`PopoverTrigger` rendering `quincy/Button` variant `text` with the coarse tap-target classes, `PopoverContent`, `PopoverTitle`) + `reui/item` rows | installed; Base UI popover, no hand-built role |
+| "N versions" list | `reui/popover` (`PopoverTrigger` rendering `quincy/Button` variant `text` with the coarse tap-target classes and a lucide `ChevronDown` affordance, `PopoverContent`, `PopoverTitle`) + `reui/item` rows | installed; Base UI popover, no hand-built role |
 | "Uploading v4 · 42%" spinner | `reui/spinner` | installed |
 | Empty state | `quincy/EmptyState` | installed |
 | Load-failure and gate-check-failure notice with Retry | `quincy/Notice` + `quincy/Button` | installed |
