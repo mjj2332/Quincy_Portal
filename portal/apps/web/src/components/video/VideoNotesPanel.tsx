@@ -177,7 +177,7 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
           timecode={session.timecode}
           marks={composerActive ? session.forms.marks : EMPTY_MARKS}
           active={composerActive}
-          blocked={session.forms.phase === "posting" && !composerActive}
+          otherForm={session.forms.active.kind === "edit" || session.forms.active.kind === "reply" ? session.forms.active.kind : null}
           onActivate={session.forms.openComposer}
           onPhaseChange={session.forms.setPhase}
           onMark={session.forms.markFromClock}

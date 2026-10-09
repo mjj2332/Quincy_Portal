@@ -354,4 +354,20 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     await click(visibilityItem("public"));
     expect(visibilityItem("public").getAttribute("aria-pressed")).toBe("true");
   });
+
+  it("another form open: Post, Set in and Set out are disabled with a hint, typing still works; the hint names the form", async () => {
+    const f = fakeClock();
+    const { rerender } = await render({ clock: f.clock, active: false, otherForm: "edit" });
+    await type("still typing");
+    expect(textarea().value).toBe("still typing");
+    expect(postButton().disabled).toBe(true);
+    expect((byTestId("video-note-set-in") as HTMLButtonElement).disabled).toBe(true);
+    expect((byTestId("video-note-set-out") as HTMLButtonElement).disabled).toBe(true);
+    expect(byTestId("video-note-other-form-hint")!.textContent).toBe("Finish or cancel the open edit first.");
+    await rerender({ otherForm: "reply" });
+    expect(byTestId("video-note-other-form-hint")!.textContent).toBe("Finish or cancel the open reply first.");
+    await rerender({ otherForm: null, active: true });
+    expect(byTestId("video-note-other-form-hint")).toBeNull();
+    expect(postButton().disabled).toBe(false);
+  });
 });

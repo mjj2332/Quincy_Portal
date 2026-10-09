@@ -707,7 +707,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     expect(api.apiPatch).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n4.id}`, { expectedRevision: 1, startFrame: 20, endFrame: 251 });
   });
 
-  it("finding 2: opening a reply closes an open edit (and its marks); the composer takes I and O again", async () => {
+  it("finding 2: opening a reply closes an open edit (and its marks); once the reply is closed the composer takes I and O again", async () => {
     const s = seed();
     await openFilm({}, 20);
     await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit");
@@ -717,10 +717,10 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await dispatchKey(popup(), "i");
     await flush(2);
     expect(composerAnchor()).not.toContain("In ");
-    await click(tid("video-note-set-in")!);
+    await click(tid("video-note-reply-cancel")!);
+    await dispatchKey(popup(), "i");
     await flush(2);
     expect(composerAnchor()).toContain("In ");
-    expect(document.querySelectorAll('[data-notes-form="reply"]').length).toBe(0);
   });
 
   it("finding 8: filtering the edited note away closes its form and hands I and O to the composer", async () => {
@@ -808,5 +808,21 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await click(tid("video-note-delete-confirm-action")!);
     await settle(50);
     expect(api.apiDeleteWithBody.mock.calls[0]![1]).toEqual({ expectedRevision: 1 });
+  });
+
+  it("an open edit or reply keeps the composer's Post and Set in/out disabled (nothing is discarded silently) until it is closed", async () => {
+    const s = seed();
+    await openFilm({}, 20);
+    await type(composerText(), "Draft");
+    await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit");
+    expect((tid("video-note-post") as HTMLButtonElement).disabled).toBe(true);
+    expect((tid("video-note-set-in") as HTMLButtonElement).disabled).toBe(true);
+    expect(tid("video-note-other-form-hint")!.textContent).toBe("Finish or cancel the open edit first.");
+    expect(editForms().length).toBe(1);
+    await click(tid("video-note-edit-cancel")!);
+    expect(tid("video-note-other-form-hint")).toBeNull();
+    expect((tid("video-note-post") as HTMLButtonElement).disabled).toBe(false);
+    await click(tid("video-note-reply-button", threadOf(s.n2.id))!);
+    expect(tid("video-note-other-form-hint")!.textContent).toBe("Finish or cancel the open reply first.");
   });
 });

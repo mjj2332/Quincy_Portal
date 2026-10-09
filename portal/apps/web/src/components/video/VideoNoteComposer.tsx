@@ -31,7 +31,7 @@ const isAbort = (error: unknown) => error instanceof DOMException ? error.name =
  * (10 s at most) and only then sends. Nothing retries by itself: after a network failure the note may or may not have posted, so the draft
  * is kept and the person refreshes. Visibility starts Internal every time the composer is empty and is never sticky; it is immutable once posted.
  */
-export function VideoNoteComposer({ clock, frameCount, timecode, marks, active = true, blocked = false, onActivate, onPhaseChange, onMark, onClearMarks, draft, onDraftChange, post, onRefresh, onWriteError }: {
+export function VideoNoteComposer({ clock, frameCount, timecode, marks, active = true, otherForm = null, onActivate, onPhaseChange, onMark, onClearMarks, draft, onDraftChange, post, onRefresh, onWriteError }: {
   clock: VideoFrameClock | null;
   frameCount: number;
   timecode: (frame: number) => string;
@@ -39,9 +39,9 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, active =
   marks: NoteMarks;
   /** Whether the composer is the one active form. When it stops being, a pending frame confirmation is cancelled and the text is kept. */
   active?: boolean;
-  /** Another form's request is out: the composer cannot become the active form until it settles. */
-  blocked?: boolean;
-  /** Post and the mark buttons take the composer back as the active form (which closes any other form). */
+  /** An edit or reply form is open: Post, Set in and Set out are disabled (nothing else is discarded silently) and a hint says why. Typing stays allowed. */
+  otherForm?: "edit" | "reply" | null;
+  /** Post and the mark buttons make the composer the active form. */
   onActivate?: () => void;
   /** "confirming" and "posting" freeze the active form's marks (I and O do nothing); "posting" also stops another form opening. */
   onPhaseChange?: (phase: "idle" | "confirming" | "posting") => void;
@@ -93,7 +93,7 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, active =
 
   const pendingFrames = marksToFrames(marks, frameCount);
   const tooLong = body.length > VIDEO_NOTE_BODY_MAX;
-  const canPost = clock !== null && phase === "idle" && !blocked && body.trim() !== "" && !tooLong;
+  const canPost = clock !== null && phase === "idle" && otherForm === null && body.trim() !== "" && !tooLong;
   const frozen = phase !== "idle";
 
   function changeBody(next: string) {
@@ -171,8 +171,8 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, active =
   >
     <div className="flex flex-wrap items-center gap-[var(--space-2)]">
       <span data-testid="video-note-anchor" aria-live="off" className={`text-foreground ${MONO}`}>{anchorText}</span>
-      <Button type="button" variant="secondary" data-testid="video-note-set-in" className={SMALL_BUTTON} disabled={clock === null || frozen || blocked} onClick={() => { onActivate?.(); onMark("in"); }}>Set in <Kbd>I</Kbd></Button>
-      <Button type="button" variant="secondary" data-testid="video-note-set-out" className={SMALL_BUTTON} disabled={clock === null || frozen || blocked} onClick={() => { onActivate?.(); onMark("out"); }}>Set out <Kbd>O</Kbd></Button>
+      <Button type="button" variant="secondary" data-testid="video-note-set-in" className={SMALL_BUTTON} disabled={clock === null || frozen || otherForm !== null} onClick={() => { onActivate?.(); onMark("in"); }}>Set in <Kbd>I</Kbd></Button>
+      <Button type="button" variant="secondary" data-testid="video-note-set-out" className={SMALL_BUTTON} disabled={clock === null || frozen || otherForm !== null} onClick={() => { onActivate?.(); onMark("out"); }}>Set out <Kbd>O</Kbd></Button>
       {pendingFrames && <Button type="button" variant="text" data-testid="video-note-clear-marks" disabled={frozen} onClick={onClearMarks}>Clear marks</Button>}
     </div>
     <label className="sr-only" htmlFor="video-note-body">Add a note</label>
@@ -200,6 +200,7 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, active =
       </div>
       <Button type="submit" data-testid="video-note-post" disabled={!canPost}>{label}</Button>
     </div>
+    {otherForm !== null && <span data-testid="video-note-other-form-hint" className="text-foreground-secondary [font:var(--type-label)]">{`Finish or cancel the open ${otherForm} first.`}</span>}
     {clock === null && <span className="text-foreground-secondary [font:var(--type-label)]">Loading the film…</span>}
   </form>;
 }
