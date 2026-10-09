@@ -506,25 +506,38 @@ function parseTmcd(
   const stsd = stbl.find((b) => b.type === "stsd");
   if (!stsd) return null;
   need(stsd, 16);
-  const es = stsd.start + 8;
-  if (dv.getUint32(stsd.start + 4) < 1) return null;
-  if (stsd.end - es < 8) throw reject("box_size_invalid", "sample entry");
-  const esize = dv.getUint32(es);
-  if (esize < 8 || esize > stsd.end - es) throw reject("box_size_invalid", "sample entry");
-  if (fourcc(buf, es + 4) !== "tmcd") return null;
-  if (esize < 34) throw reject("box_size_invalid", "tmcd sample entry");
-  const flags = dv.getUint32(es + 20);
-  const numberOfFrames = dv.getUint8(es + 32);
+  const descCount = dv.getUint32(stsd.start + 4);
+  if (descCount > Math.floor((stsd.end - stsd.start - 8) / 8)) throw reject("box_size_invalid", "stsd entries");
+  const descs: Array<{ start: number; size: number }> = [];
+  for (let p = stsd.start + 8, i = 0; i < descCount; i++) {
+    if (stsd.end - p < 8) throw reject("box_size_invalid", "sample entry");
+    const size = dv.getUint32(p);
+    if (size < 8 || size > stsd.end - p) throw reject("box_size_invalid", "sample entry");
+    descs.push({ start: p, size });
+    p += size;
+  }
+  if (descs.length === 0) return null;
 
+  // The first chunk and the description it uses come from the first stsc entry.
   let firstChunk = 1;
+  let descIndex = 1;
   const stsc = stbl.find((b) => b.type === "stsc");
   if (stsc) {
     need(stsc, 8);
     if (dv.getUint32(stsc.start + 4) >= 1) {
       need(stsc, 20);
       firstChunk = dv.getUint32(stsc.start + 8);
+      descIndex = dv.getUint32(stsc.start + 16);
     }
   }
+  if (descIndex < 1 || descIndex > descs.length) throw reject("box_size_invalid", `stsc description index ${descIndex}`);
+  const desc = descs[descIndex - 1]!;
+  const es = desc.start;
+  if (fourcc(buf, es + 4) !== "tmcd") return null;
+  if (desc.size < 34) throw reject("box_size_invalid", "tmcd sample entry");
+  const flags = dv.getUint32(es + 20);
+  const numberOfFrames = dv.getUint8(es + 32);
+
   let sampleOffset: number | null = null;
   const co = stbl.find((b) => b.type === "stco" || b.type === "co64");
   if (co && firstChunk >= 1) {

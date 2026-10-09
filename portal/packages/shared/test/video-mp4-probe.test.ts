@@ -22,6 +22,7 @@ import {
   sourceFrom,
   u32,
   u8,
+  u16,
   u64,
   videoTrack,
   type Mp4Spec,
@@ -365,6 +366,19 @@ describe("probeMp4 sample descriptions and short boxes", () => {
     ["tmcd entry of size 20", tmcdT({ entryRaw: box("tmcd", new Uint8Array(12)) })],
     ["tmcd entry overrunning stsd", tmcdT({ entryRaw: rawBox(500, "tmcd", new Uint8Array(40)) })],
   ])("%s -> box_size_invalid", async (_n, tc) => {
+    expect(await reasonOf(buildMp4({ tracks: [videoTrack(), tc] }))).toBe("box_size_invalid");
+  });
+  const tmcdEntry = (flags: number, frames: number) => box("tmcd", zeros6(), u16(1), u32(0), u32(flags), u32(30000), u32(1001), u8(frames, 0));
+  const zeros6 = () => new Uint8Array(6);
+  const scDesc = (i: number) => box("stsc", z, u32(1), u32(1), u32(1), u32(i));
+  it("a tmcd track whose stsc references description 2 reads that description", async () => {
+    const tc = tmcdT({ entryRaw: tmcdEntry(0, 25), stsdExtraRaw: [tmcdEntry(1, 30)], stscRaw: scDesc(2) });
+    const p = await probeOf({ tracks: [videoTrack(), tc] });
+    expect(p.startTimecode).toEqual({ frames: 5, dropFrame: true, nominalFps: 30 });
+    expect(p.warnings).toEqual([]);
+  });
+  it("a tmcd stsc description index out of range -> box_size_invalid", async () => {
+    const tc = tmcdT({ stscRaw: scDesc(3) });
     expect(await reasonOf(buildMp4({ tracks: [videoTrack(), tc] }))).toBe("box_size_invalid");
   });
   it("a fixed-size stsz declaring 1000 samples is fine", async () => {
