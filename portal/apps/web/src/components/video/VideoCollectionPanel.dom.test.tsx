@@ -76,7 +76,7 @@ describe("Video cards (#741 4d-i)", () => {
     expect(card.textContent).toContain("v2");
     expect(card.querySelector("img")?.getAttribute("src")).toBe(`/media/video/${ids.asset}/poster`);
     expect(card.querySelector('[data-testid="video-card-poster"]')?.getAttribute("data-orientation")).toBe("landscape");
-    expect(card.textContent).not.toContain("Open review");
+    expect(card.textContent).toContain("Open review");
   });
 
   it.each([[{ num: 30000, den: 1001 }, "29.97\u00a0fps"], [{ num: 24000, den: 1001 }, "23.976\u00a0fps"], [{ num: 25, den: 1 }, "25\u00a0fps"]])("reads %j as %s", async (fps, text) => {

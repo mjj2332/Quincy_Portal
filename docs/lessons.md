@@ -6104,3 +6104,13 @@ Tags: media-renditions, workers-runtime · #741, #751
 - **A notice about a person names the person.** The terminal-principal broadcast carries the principal id of the query client that saw the 401 (`bindQueryClientPrincipal`), and the store clears only that person's uploads, so a retired person's late 401 clears nothing the current person owns.
 
 Guards: `apps/web/src/lib/video-upload-store.test.ts` ("Cancel leaves the reservation to the server"), `video-upload-terminal.test.ts` ("the terminal notice names its principal"), `components/video/VideoCollectionPanel.dom.test.tsx` ("The server owns the reservation").
+## A media element taken out of the page keeps playing, and a fake clock needs the element's real events (#741 4d-ii)
+Tags: media-renditions, testing-guards · #741
+
+- **A removed `<video>` does not stop.** Switching Version re-keys the player, which unmounts the old element. The browser keeps decoding and playing a detached media element (sound and all) until it is collected. `VideoFrameClock.dispose` therefore pauses the element, and `VideoReviewViewer.dom.test.tsx` ("switching Version pauses the old one") asserts the old element reports `paused`.
+- **Reverse play does not exist.** Chrome and Firefox ignore a negative `playbackRate`. J is emulated by seeking backward one seek at a time, after each `seeked`, muted, stopping at frame 0; it never queues seeks, so it degrades on long GOPs instead of storming the decoder.
+- **Seek to the middle of the frame.** `currentTime = frameSeekSeconds(f)` lands on frame f; the start of the frame can land on f-1 after rounding. The frame on screen is read back from `requestVideoFrameCallback`'s `mediaTime`, with a 250 ms fallback to the playhead when the browser presents nothing (a seek to the frame already shown).
+- **Testing without a decoder.** happy-dom has no media pipeline. `testing/video-element.ts` replaces `currentTime`, `paused`, `seeking`, `play`/`pause`, `requestVideoFrameCallback` on the prototype and finishes seeks only when the test says so, which is what makes coalescing and the reverse loop assertable.
+
+Guards: `lib/video-frame-clock.dom.test.tsx`, `components/quincy/VideoPlayer.dom.test.tsx`, `components/video/VideoReviewViewer.dom.test.tsx`.
+

@@ -17,3 +17,10 @@ export function formatDuration(durationMs: number): string {
 export function formatVideoDate(iso: string): string {
   return new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric" }).format(new Date(iso));
 }
+
+/** Megabytes (1 MB = 1,000,000 bytes), one decimal under 100 MB; gigabytes from 1,000 MB. */
+export function formatBytes(bytes: number): string {
+  if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
+  const mb = bytes / 1_000_000;
+  return mb >= 100 ? `${Math.round(mb)} MB` : `${mb.toFixed(1)} MB`;
+}

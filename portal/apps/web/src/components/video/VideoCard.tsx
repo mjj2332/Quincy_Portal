@@ -18,10 +18,11 @@ const META = "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_v
 export const VIDEO_ACCEPT = ".mp4,video/mp4";
 
 /**
- * One Video as a card (#741 4d-i): poster, newest Version, duration, a Versions list, and who is uploading. The Open review action,
- * selection and note chips arrive in later slices. `onVersionFile` checks and starts the upload and returns a message when the file is refused.
+ * One Video as a card (#741 4d-i): poster, newest Version, duration, a Versions list, and who is uploading. Open review (4d-ii) hands
+ * the Video and the control that was pressed to `onOpen`; selection and note chips arrive in later slices. `onVersionFile` checks and
+ * starts the upload and returns a message when the file is refused.
  */
-export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation }: {
+export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen }: {
   video: VideoDto;
   canUpload: boolean;
   currentUserId: string | null;
@@ -31,6 +32,8 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
   onVersionFile: (video: VideoDto, file: File) => Promise<string | null>;
   /** Asks the server to drop an upload this tab has no job for. */
   onCancelReservation: (reservationId: string) => Promise<void>;
+  /** Opens the review player on this Video; `trigger` is where focus returns on close. */
+  onOpen: (video: VideoDto, trigger: HTMLElement) => void;
 }) {
   const [cancelling, setCancelling] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -82,15 +85,16 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
           <Button type="button" variant="secondary" className="min-h-[44px]" disabled={cancelling} onClick={() => { setCancelling(true); void onCancelReservation(cancellable.reservationId).finally(() => setCancelling(false)); }}>{cancelling ? "Cancelling…" : "Cancel upload"}</Button>
         </div>}
         {message && <Notice tone="critical" role="alert">{message}</Notice>}
-        {canUpload && !busy && <div className="flex flex-wrap gap-[var(--space-2)]">
-          <FilePickButton
+        <div className="flex flex-wrap gap-[var(--space-2)]">
+          <Button type="button" variant="primary" className="min-h-[44px]" onClick={(event) => onOpen(video, event.currentTarget)}>Open review</Button>
+          {canUpload && !busy && <FilePickButton
             accept={VIDEO_ACCEPT}
             variant="secondary"
             className="min-h-[44px]"
             disabled={checking}
             onFile={(file) => { setMessage(null); setChecking(true); void onVersionFile(video, file).then((refused) => setMessage(refused)).finally(() => setChecking(false)); }}
-          >{checking ? "Checking…" : `Upload v${nextNumber}`}</FilePickButton>
-        </div>}
+          >{checking ? "Checking…" : `Upload v${nextNumber}`}</FilePickButton>}
+        </div>
       </div>
     </FramePanel>
   </Frame>;
