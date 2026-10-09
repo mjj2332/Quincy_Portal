@@ -60,7 +60,7 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
   useEffect(() => { if (threads) forms.retireMissing(assetId, threads); }, [forms, assetId, threads]);
   useEffect(() => { if (clock) forms.observeClock(assetId, clock); }, [forms, assetId, clock]);
   useEffect(() => { if (readOnly) forms.close(assetId); }, [forms, assetId, readOnly]);
-  useEffect(() => () => { forms.rearm(assetId); }, [forms, assetId]);
+  useEffect(() => () => { forms.leave(assetId); }, [forms, assetId]);
   const markers = useMemo<TimelineMarker[]>(() => shown.filter((thread) => thread.startFrame !== null).map((thread) => ({ id: thread.id, startFrame: thread.startFrame!, endFrame: thread.endFrame, tone: thread.visibility, selected: thread.id === live.selectedId, createdAt: thread.createdAt })), [shown, live.selectedId]);
 
   const select = useCallback((id: string | null) => { update((current) => ({ ...current, selectedId: id })); }, [update]);

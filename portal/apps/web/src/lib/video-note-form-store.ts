@@ -257,6 +257,12 @@ export function createNoteFormStore(key: string) {
     },
     /** Dismisses the notice a closed form left behind. */
     dismissNotice(assetId: string) { if (slot(assetId).notice) put(assetId, { notice: null }); },
+    /** The viewer leaves this Version: Escape is re-armed, and an empty composer is Internal again (a draft keeps its text and its visibility). */
+    leave(assetId: string) {
+      const held = slot(assetId);
+      const reset = held.composer.body === "" && held.composer.visibility !== "internal";
+      if (held.spent || reset) put(assetId, { ...(held.spent ? { spent: false } : {}), ...(reset ? { composer: { ...held.composer, visibility: "internal" as const, revision: held.composer.revision + 1 } } : {}) });
+    },
     rearm(assetId: string) { if (slot(assetId).spent) put(assetId, { spent: false }); },
     /** The open form's note left the Version's full list (deleted elsewhere): the form goes, unless its own request is out (it is reconciled again when that settles). */
     retireMissing(assetId: string, threads: readonly VideoNoteThreadDto[]) { latest.set(assetId, threads); reconcile(assetId); },

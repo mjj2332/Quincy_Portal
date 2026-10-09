@@ -554,6 +554,19 @@ describe("Sol r7", () => {
   });
 });
 
+describe("Sol r14", () => {
+  it("leaving a Version resets an empty composer's visibility to Internal; a composer with text keeps its text and visibility", () => {
+    store.setVisibility(V2, "public");
+    expect(store.slot(V2).composer.visibility).toBe("public");
+    store.leave(V2);
+    expect(store.slot(V2).composer.visibility).toBe("internal");
+    store.setBody(V2, "draft", 1);
+    store.setVisibility(V2, "public");
+    store.leave(V2);
+    expect(store.slot(V2).composer).toMatchObject({ body: "draft", visibility: "public" });
+  });
+});
+
 describe("subscription (#741 5b form store)", () => {
   it("tells subscribers about a change, and stops after unsubscribe; retire silences everyone", () => {
     const listener = vi.fn();
