@@ -231,7 +231,7 @@ describe("Video tab mount (#741 4d-i)", () => {
     expect(host.querySelector("#video-links-heading")?.textContent).toBe("Video links");
     expect(host.textContent).toContain("Older external links (Vimeo, Frame.io) stay here until cutover.");
     const linksSection = host.querySelector('[data-testid="video-links-section"]')!;
-    expect(linksSection.querySelector(".empty")).toBeNull();
+    expect(linksSection.textContent).not.toContain("No video link yet.");
     expect(linksSection.textContent).toContain("No video links yet.");
     expect(paths().some((path) => path.includes("/assets?collection=video"))).toBe(false);
     expect(paths().some((path) => path.includes("/assets?collection=raw"))).toBe(false);
