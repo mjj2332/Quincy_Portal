@@ -28,6 +28,8 @@ function placeholders(count: number) { return Array.from({ length: count }, () =
 const ASSET_DELETE_CLAIM_MAX_RETRIES = 5;
 const ASSET_DELETE_CLAIM_RETRY_DELAY_MS = 150;
 
+const VIDEO_VERSION_IMMUTABLE_BODY = { error: "Video versions cannot be deleted.", code: "video_version_immutable" } as const;
+
 export const assetsRoutes = new Hono<AppEnv>();
 assetsRoutes.use("/assets/:id", requireCapability("adminBackend"));
 
@@ -49,6 +51,8 @@ assetsRoutes.delete("/assets/:id", terminalRoute("/assets/:id", async (c) => {
   }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id))
     .where(eq(schema.assets.id, primaryAssetId)).get();
   if (!primary) return c.json({ error: "Asset not found" }, 404);
+  // A video Version is immutable in v1 (#741): there is no Version delete, and an Admin cannot reach one through this route.
+  if (primary.kind === "video") return c.json(VIDEO_VERSION_IMMUTABLE_BODY, 409);
 
   // Excludes this route's own "asset_delete" kind: two Dropbox-sourced assets deleted in the same
   // bulk action would otherwise see each other's momentary job row here and self-block — that
@@ -125,7 +129,7 @@ assetsRoutes.delete("/assets/:id", terminalRoute("/assets/:id", async (c) => {
   let lastDropboxOutcome: DropboxOutcome | null = null;
   let lastDropboxReason: string | undefined;
   const targetSql = `(${idMarks})`;
-  const deleteParams = [...targetIds, ...targetIds, targetCount, ...targetIds, ...targetIds];
+  const deleteParams = [...targetIds, ...targetIds, targetCount, ...targetIds, ...targetIds, ...targetIds];
 
   try {
     // Read before the batch: D1 cascades the annotation rows away with the asset (#283). Inside the
@@ -138,7 +142,8 @@ assetsRoutes.delete("/assets/:id", terminalRoute("/assets/:id", async (c) => {
         WHERE id IN ${targetSql}
           AND (SELECT count(*) FROM assets WHERE id IN ${targetSql}) = ?
           AND NOT EXISTS (SELECT 1 FROM premium_unlocks WHERE asset_id IN ${targetSql} AND scope = 'asset')
-          AND NOT EXISTS (SELECT 1 FROM edited_source_claims WHERE current_asset_id IN ${targetSql})`)
+          AND NOT EXISTS (SELECT 1 FROM edited_source_claims WHERE current_asset_id IN ${targetSql})
+          AND NOT EXISTS (SELECT 1 FROM assets WHERE id IN ${targetSql} AND kind = 'video')`)
         .bind(...deleteParams),
       c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?, ?, 'asset.delete', 'asset', ?, ?, ? WHERE changes() > 0`)
@@ -167,6 +172,8 @@ assetsRoutes.delete("/assets/:id", terminalRoute("/assets/:id", async (c) => {
     if ((results[0]?.meta.changes ?? 0) === 0) {
       const stillThere = await db.select({ id: schema.assets.id }).from(schema.assets).where(eq(schema.assets.id, primaryAssetId)).get();
       if (!stillThere) return c.json({ error: "Asset not found" }, 404);
+      const nowVideo = await db.select({ id: schema.assets.id }).from(schema.assets).where(and(inArray(schema.assets.id, targetIds), eq(schema.assets.kind, "video"))).get();
+      if (nowVideo) return c.json(VIDEO_VERSION_IMMUTABLE_BODY, 409);
       const currentTargetCount = (await db.select({ count: sql<number>`count(*)` }).from(schema.assets).where(inArray(schema.assets.id, targetIds)).get())?.count ?? 0;
       if (currentTargetCount !== targetCount) return c.json({ error: "The floorplan pair changed during deletion — retry the delete.", blocker: "floorplan_pair" }, 409);
       const premium = await db.select({ assetId: schema.premiumUnlocks.assetId }).from(schema.premiumUnlocks).where(and(inArray(schema.premiumUnlocks.assetId, targetIds), eq(schema.premiumUnlocks.scope, "asset"))).get();

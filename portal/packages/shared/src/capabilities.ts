@@ -44,6 +44,12 @@ export const CAPABILITIES = [
   "moveProjectStage",
   "viewProductionCalendar",
   "uploadExtras",
+  "viewVideo",
+  "uploadVideo",
+  "annotateVideo",
+  "shareVideo",
+  "releaseVideo",
+  "manageVideoPremium",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -60,6 +66,9 @@ export const EXTERNAL_EDITOR_CAPABILITIES = [
   "moveProjectStage",
   "viewProductionCalendar",
   "uploadExtras",
+  "viewVideo",
+  "uploadVideo",
+  "annotateVideo",
 ] as const satisfies readonly Capability[];
 
 /** Foreground ZIP-selection limits shared by the API and its preflight UI. */
@@ -103,6 +112,12 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "prioritizeProjects",
     "moveProjectStage",
     "viewProductionCalendar",
+    "viewVideo",
+    "uploadVideo",
+    "annotateVideo",
+    "shareVideo",
+    "releaseVideo",
+    "manageVideoPremium",
   ],
   editor: [
     "viewAllProjects",
@@ -124,6 +139,11 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "collaborateOnProject",
     "moveProjectStage",
     "viewProductionCalendar",
+    "viewVideo",
+    "uploadVideo",
+    "annotateVideo",
+    "shareVideo",
+    "releaseVideo",
   ],
   external_editor: EXTERNAL_EDITOR_CAPABILITIES,
   photographer: [

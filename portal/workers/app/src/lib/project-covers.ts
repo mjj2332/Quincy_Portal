@@ -18,8 +18,9 @@ export async function coverMaps(db: ReturnType<typeof createDb>, projectIds: str
     // D1/Drizzle mis-renders correlated scalar subqueries. Keep both lookups set-based;
     // the grouped RAW query uses SQLite's bare-column-with-min() behaviour for its asset id.
     const [storedCovers, automaticCovers] = await Promise.all([
+      // A video Asset is never a cover: it has no image rendition, and the Video routes are its only door (#741).
       db.select({ projectId: schema.projects.id, assetId: schema.assets.id }).from(schema.projects)
-        .innerJoin(schema.assets, eq(schema.projects.coverAssetId, schema.assets.id))
+        .innerJoin(schema.assets, and(eq(schema.projects.coverAssetId, schema.assets.id), eq(schema.assets.kind, "photo")))
         .innerJoin(schema.collections, storedCollectionJoin)
         .where(inArray(schema.projects.id, ids)).all(),
       db.select({ projectId: schema.collections.projectId, assetId: schema.assets.id, filename: sql<string>`min(${schema.assets.originalFilename})` }).from(schema.assets)

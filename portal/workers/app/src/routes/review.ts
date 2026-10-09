@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { createDb, schema } from "@quincy/db";
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { CollectionKind } from "@quincy/shared";
 import { externalAssetListResponseSchema, externalAssetSchema, RENDITION_SPEC_VERSION } from "@quincy/shared";
@@ -16,13 +16,13 @@ import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visib
 import { resolveVisibleProject, visibleProjectWhere } from "../lib/visible-project-scope";
 
 const reviewInput = z.object({ stars: z.number().int().min(1).max(5).nullable().optional(), colorLabel: z.enum(["select", "maybe", "cut", "hero"]).nullable().optional(), decision: z.enum(["approved", "flagged"]).nullable().optional(), recommended: z.boolean().optional() });
-async function assetContext(c: Context<AppEnv>, assetId: string) { return createDb(c.env.DB).select({ projectId: schema.collections.projectId, kind: schema.collections.kind, publishStatus: schema.assets.publishStatus }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(and(eq(schema.assets.id, assetId), sql`${schema.assets.supersededAt} IS NULL`)).get(); }
+async function assetContext(c: Context<AppEnv>, assetId: string) { return createDb(c.env.DB).select({ projectId: schema.collections.projectId, kind: schema.collections.kind, publishStatus: schema.assets.publishStatus }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(and(eq(schema.assets.id, assetId), sql`${schema.assets.supersededAt} IS NULL`, ne(schema.assets.kind, "video"))).get(); }
 async function externalAssetContext(c: Context<AppEnv>, assetId: string) {
   const user = c.get("user");
   return createDb(c.env.DB).select({ id: schema.assets.id, projectId: schema.collections.projectId, kind: schema.assets.kind, collectionKind: schema.collections.kind, publishStatus: schema.assets.publishStatus })
     .from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).innerJoin(schema.projects, eq(schema.collections.projectId, schema.projects.id))
     .leftJoin(schema.projectMembers, and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id)))
-    .where(and(eq(schema.assets.id, assetId), isNull(schema.assets.supersededAt), visibleProjectWhere(user))).get();
+    .where(and(eq(schema.assets.id, assetId), isNull(schema.assets.supersededAt), ne(schema.assets.kind, "video"), visibleProjectWhere(user))).get();
 }
 function unavailableAsset(c: Context<AppEnv>, asset: { kind: string; publishStatus: string }): Response | null { return isUserVisibleAsset(asset.kind, asset.publishStatus) ? null : unpublishedAssetResponse(c); }
 export const reviewRoutes = new Hono<AppEnv>();
@@ -49,7 +49,7 @@ reviewRoutes.get("/projects/:id/assets", terminalRoute("/projects/:id/assets", a
       .leftJoin(schema.assetReviewState, eq(schema.assetReviewState.assetId, schema.assets.id))
       .leftJoin(schema.assetRenditions, and(eq(schema.assetRenditions.assetId, schema.assets.id), inArray(schema.assetRenditions.variant, ["thumb", "web"]), eq(schema.assetRenditions.specVersion, RENDITION_SPEC_VERSION), sql`${schema.assetRenditions.contentType} in ('image/webp', 'image/jpeg')`))
       .leftJoin(schema.selections, eq(schema.selections.assetId, schema.assets.id))
-      .where(and(isNull(schema.assets.supersededAt), kind === "edited" ? eq(schema.assets.publishStatus, "ready") : sql`1 = 1`, visibleProjectWhere(c.get("user"))))
+      .where(and(isNull(schema.assets.supersededAt), ne(schema.assets.kind, "video"), kind === "edited" ? eq(schema.assets.publishStatus, "ready") : sql`1 = 1`, visibleProjectWhere(c.get("user"))))
       .orderBy(asc(sql`lower(${schema.assets.originalFilename})`), asc(schema.assets.originalFilename), asc(schema.assets.id)).all();
     const readiness = new Map<string, Set<"thumb" | "web">>();
     const unique: typeof rows = [];
@@ -77,8 +77,8 @@ reviewRoutes.get("/projects/:id/assets", terminalRoute("/projects/:id/assets", a
     .from(schema.assets)
     .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, projectId), eq(schema.collections.kind, kind)))
     .where(kind === "edited"
-      ? and(eq(schema.assets.publishStatus, "ready"), sql`${schema.assets.supersededAt} IS NULL`)
-      : sql`${schema.assets.supersededAt} IS NULL`)
+      ? and(eq(schema.assets.publishStatus, "ready"), sql`${schema.assets.supersededAt} IS NULL`, ne(schema.assets.kind, "video"))
+      : and(sql`${schema.assets.supersededAt} IS NULL`, ne(schema.assets.kind, "video")))
     .leftJoin(schema.assetReviewState, eq(schema.assetReviewState.assetId, schema.assets.id))
     .leftJoin(schema.assetRenditions, and(
       eq(schema.assetRenditions.assetId, schema.assets.id),

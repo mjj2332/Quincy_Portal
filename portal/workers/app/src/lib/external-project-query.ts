@@ -71,7 +71,7 @@ async function coverFor(db: Db, project: ProjectRow) {
   if (project.coverAssetId) {
     const stored = await db.select({ id: schema.assets.id }).from(schema.assets)
       .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, project.id)))
-      .where(and(eq(schema.assets.id, project.coverAssetId), isNull(schema.assets.supersededAt), sql`(${schema.collections.kind} <> 'edited' OR ${schema.assets.publishStatus} = 'ready')`)).get();
+      .where(and(eq(schema.assets.id, project.coverAssetId), eq(schema.assets.kind, "photo"), isNull(schema.assets.supersededAt), sql`(${schema.collections.kind} <> 'edited' OR ${schema.assets.publishStatus} = 'ready')`)).get();
     if (stored) return stored.id;
   }
   const fallback = await db.select({ id: schema.assets.id }).from(schema.assets)
