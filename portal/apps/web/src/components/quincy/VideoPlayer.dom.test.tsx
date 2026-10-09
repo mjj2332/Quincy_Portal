@@ -498,3 +498,69 @@ describe("VideoPlayer K chords (#741 4d-ii Sol final)", () => {
     expect(video().playbackRate).toBe(1);
   });
 });
+
+describe("VideoPlayer notes seams (#741 5b)", () => {
+  it("I and O mark the frame on screen when the host takes marks, and do nothing without onMark", async () => {
+    const onMark = vi.fn();
+    await mount(versionOf(), { onMark });
+    await load();
+    await present(12);
+    await key("i");
+    expect(onMark).toHaveBeenLastCalledWith("in", 12);
+    await key("o");
+    expect(onMark).toHaveBeenLastCalledWith("out", 12);
+    onMark.mockClear();
+    await key("i", { repeat: true });
+    expect(onMark).not.toHaveBeenCalled();
+    await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
+    await mount(versionOf());
+    await load();
+    await key("i");
+    expect(byTestId("video-player")).not.toBeNull();
+  });
+
+  it("while a seek is in flight a mark takes the frame on its way, not the old one", async () => {
+    const onMark = vi.fn();
+    await mount(versionOf(), { onMark });
+    await load();
+    await key("ArrowRight");
+    await key("ArrowRight");
+    await key("o");
+    expect(onMark).toHaveBeenCalledWith("out", 2);
+  });
+
+  it("the key legend gains in / out only with onMark", async () => {
+    await mount(versionOf());
+    expect(byTestId("video-key-legend")!.textContent).not.toContain("in/out");
+    await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
+    await mount(versionOf(), { onMark: () => {} });
+    expect(byTestId("video-key-legend")!.textContent).toContain("in/out");
+  });
+
+  it("draws markers under the track and the pending band before the slider so the thumb paints over it; a marker click reports its id", async () => {
+    const onMarkerSelect = vi.fn();
+    await mount(versionOf(), {
+      markers: [{ id: "n1", startFrame: 100, endFrame: null, tone: "internal", selected: false }],
+      pendingRange: { startFrame: 10, endFrame: 20 },
+      onMarkerSelect,
+    });
+    const scrubber = byTestId("video-scrubber")!;
+    const band = scrubber.querySelector("[data-testid=video-pending-band]")!;
+    const slider = scrubber.querySelector("[data-slot=slider]")!;
+    const lane = scrubber.querySelector<HTMLElement>("[data-testid=video-marker-lane]")!;
+    expect(band.compareDocumentPosition(slider) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(slider.compareDocumentPosition(lane) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    lane.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 12, right: 1000, bottom: 12, x: 0, y: 0, toJSON: () => ({}) });
+    await act(async () => { lane.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 6 + (988 * 100) / 2999 })); });
+    expect(onMarkerSelect).toHaveBeenCalledWith("n1");
+  });
+
+  it("hands the clock up once the element is ready, and null when the player goes away", async () => {
+    const onClockChange = vi.fn();
+    await mount(versionOf(), { onClockChange });
+    const clocks = onClockChange.mock.calls.map(([clock]) => clock);
+    expect(clocks.some((clock) => clock !== null && typeof clock.awaitConfirmedFrame === "function")).toBe(true);
+    await act(async () => { root!.unmount(); }); root = null;
+    expect(onClockChange.mock.calls.at(-1)![0]).toBeNull();
+  });
+});

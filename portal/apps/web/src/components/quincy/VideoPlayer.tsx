@@ -2,7 +2,7 @@ import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
 import { Maximize, Pause, Play, StepBack, StepForward, Volume2, VolumeX } from "lucide-react";
 import { framesToTimecode, rationalToNumber, type VideoVersionDto } from "@quincy/shared";
 import { cn } from "@/lib/utils";
-import { useVideoFrameClock } from "../../lib/video-frame-clock";
+import { useVideoFrameClock, type VideoFrameClock } from "../../lib/video-frame-clock";
 import { playerKeyAction, type PlayerKeyAction } from "../../lib/video-player-keys";
 import { nextShuttleRate } from "../../lib/video-shuttle";
 import { usePictureBox } from "../../lib/use-picture-box";
@@ -12,6 +12,7 @@ import { Slider } from "../reui/slider";
 import { Toggle } from "../reui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
 import { Notice } from "./Notice";
+import { VideoPendingRangeBand, VideoTimelineMarkers, type TimelineMarker } from "./VideoTimelineMarkers";
 
 /** What the player reads of a Version: where it streams, how it is timed, and how its timecode is labelled. */
 export type VideoPlayerVersion = Pick<VideoVersionDto, "streamUrl" | "fps" | "frameCount" | "width" | "height" | "tcNominalFps" | "tcDropFrame" | "startTimecodeFrames" | "hasAudio">;
@@ -45,12 +46,22 @@ function IconTip({ label, keys, children }: { label: string; keys?: string; chil
  * surface (`data-surface="inverse"`) around it, like the Lightbox. `keyboard="self"` listens on the player; `"host"` leaves the
  * scope to the caller, who forwards events to `controlRef.handleKeyDown`.
  */
-export function VideoPlayer({ version, title, controlRef, keyboard = "self", className }: {
+export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, markers, pendingRange, onMarkerSelect, onMark, onClockChange }: {
   version: VideoPlayerVersion;
   title: string;
   controlRef?: Ref<VideoPlayerControl>;
   keyboard?: "self" | "host";
   className?: string;
+  /** Notes (or anything frame-anchored) to draw under the track. Data, not note DTOs: the guest page and Compare pass their own. */
+  markers?: readonly TimelineMarker[];
+  /** The in / out marks being composed, drawn as a band over the track. */
+  pendingRange?: { startFrame: number; endFrame: number | null } | null;
+  /** A fine-pointer click on a marker (the lane is inert on touch). */
+  onMarkerSelect?: (id: string) => void;
+  /** Takes I and O: called with the frame on screen (the one on its way while a seek is in flight). Without it I and O are not bound. */
+  onMark?: (kind: "in" | "out", frame: number) => void;
+  /** The frame clock, once the element is ready, and null when it goes away; siblings (the notes composer) subscribe to it on their own. */
+  onClockChange?: (clock: VideoFrameClock | null) => void;
 }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [failed, setFailed] = useState(false);
@@ -69,6 +80,14 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const chipTimecode = timecode(clock.frame);
   const chipFull = `${chipTimecode} · frame ${clock.frame}`;
   const chip = box && box.width >= chipFull.length * CHIP_GLYPH_PX + CHIP_CHROME_PX ? chipFull : chipTimecode;
+
+  const onClockChangeRef = useRef(onClockChange);
+  onClockChangeRef.current = onClockChange;
+  const instance = clock.instance;
+  useEffect(() => {
+    onClockChangeRef.current?.(instance);
+    return () => { onClockChangeRef.current?.(null); };
+  }, [instance]);
 
   const apply = useCallback((action: PlayerKeyAction) => {
     switch (action.type) {
@@ -111,9 +130,14 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
 
   const handleKeyDown = useCallback((event: KeyboardEvent | ReactKeyboardEvent): boolean => {
     const native = "nativeEvent" in event ? event.nativeEvent : event;
-    const action = playerKeyAction(native, { k: kHeld.current !== null });
+    const action = playerKeyAction(native, { k: kHeld.current !== null, marks: onMark !== undefined });
     if (!action) return false;
     event.preventDefault();
+    if (action.type === "mark") {
+      // The frame on screen: while playing, the one the browser last presented; paused, the one a seek in flight is bringing.
+      onMark?.(action.kind, clock.playing ? clock.frame : (clock.targetFrame ?? clock.frame));
+      return true;
+    }
     const isK = native.key === "k" || native.key === "K";
     if (isK) {
       const playing = nextShuttleRate(clock.rate, "toggle") === 0;
@@ -127,7 +151,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     }
     apply(action);
     return true;
-  }, [apply, clock]);
+  }, [apply, clock, onMark]);
   useImperativeHandle(controlRef, () => ({ handleKeyDown }), [handleKeyDown]);
 
   const toggleMuted = (next: boolean) => { setMutedState(next); clock.setMuted(next); };
@@ -165,8 +189,9 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
       {failed && <div data-surface="default" className="absolute inset-x-[var(--space-3)] top-[var(--space-3)]"><Notice tone="caution" role="alert" className="bg-card">This version can't play in this browser.</Notice></div>}
     </div>
 
-    {/* The scrubber. Note markers (5b) are drawn over this track; the slider owns its step (one frame) and its keys. */}
+    {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}
     <div data-testid="video-scrubber" className="relative">
+      {pendingRange !== undefined && <VideoPendingRangeBand range={pendingRange} frameCount={version.frameCount} />}
       <Slider
         value={[Math.min(shownFrame, Math.max(1, lastFrame))]}
         min={0}
@@ -176,6 +201,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         onValueChange={(value) => { clock.seekToFrame(Array.isArray(value) ? (value[0] ?? 0) : value); }}
         thumbProps={{ getAriaLabel: () => "Timeline", getAriaValueText: (_formatted, value) => timecode(value) }}
       />
+      {markers !== undefined && <VideoTimelineMarkers markers={markers} frameCount={version.frameCount} {...(onMarkerSelect ? { onSelect: onMarkerSelect } : {})} />}
     </div>
 
     <div className="flex flex-wrap items-center gap-[var(--space-2)]">
@@ -195,6 +221,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>J</Kbd><Kbd className={LEGEND_KBD}>K</Kbd><Kbd className={LEGEND_KBD}>L</Kbd></KbdGroup>shuttle</span>
         <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>←</Kbd><Kbd className={LEGEND_KBD}>→</Kbd></KbdGroup>frame</span>
         <span className="inline-flex items-center gap-[var(--space-1)]"><Kbd className={LEGEND_KBD}>Space</Kbd>play</span>
+        {onMark && <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>I</Kbd><Kbd className={LEGEND_KBD}>O</Kbd></KbdGroup>in/out</span>}
       </div>
       <div className="ml-auto flex items-center gap-[var(--space-1)]">
         <IconTip label={muted ? "Unmute" : "Mute"}>
