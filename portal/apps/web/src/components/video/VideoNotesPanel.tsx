@@ -139,16 +139,16 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
       </Popover>
     </div>
 
-    <div className="grid gap-[var(--space-2)] max-[721px]:order-2" data-testid="video-notes-filters">
+    {total > 0 && <div className="grid gap-[var(--space-2)] max-[721px]:order-2" data-testid="video-notes-filters">
       {filterGroup<NoteStatusFilter>("Show notes that are", "status", filters.status, [
         { value: "open", label: "Open", count: counts.status.open }, { value: "resolved", label: "Resolved", count: counts.status.resolved }, { value: "all", label: "All", count: counts.status.all },
       ], (status) => { setFilters({ ...filters, status }); })}
       {filterGroup<NoteVisibilityFilter>("Show notes visible to", "visibility", filters.visibility, [
         { value: "all", label: "All", count: counts.visibility.all }, { value: "public", label: "Client-visible", count: counts.visibility.public }, { value: "internal", label: "Internal", count: counts.visibility.internal },
       ], (visibility) => { setFilters({ ...filters, visibility }); })}
-    </div>
+    </div>}
 
-    <div ref={listRef} className="flex flex-col min-[721px]:min-h-0 min-[721px]:flex-1 max-[721px]:order-3">
+    <div ref={listRef} className="flex flex-col min-[721px]:min-h-[max(8rem,40%)] min-[721px]:flex-1 max-[721px]:order-3">
       <ScrollArea className="min-[721px]:min-h-0 min-[721px]:flex-1" data-testid="video-notes-list" viewportProps={{ tabIndex: -1 }}>
         <div className="grid gap-[var(--space-2)] pe-[var(--space-1)]">
           {loading && <span data-testid="video-notes-loading" role="status" className="text-foreground-secondary [font:var(--type-label)]">Loading notes…</span>}
@@ -174,7 +174,7 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
       </ScrollArea>
     </div>
 
-    <div className="min-[721px]:border-t min-[721px]:border-border min-[721px]:pt-[var(--space-3)] max-[721px]:order-1">
+    <div className="min-[721px]:shrink-0 min-[721px]:border-t min-[721px]:border-border min-[721px]:pt-[var(--space-3)] max-[721px]:order-1">
       {readOnly
         ? <p data-testid="video-notes-archived" className={ARCHIVED_NOTICE_CLASS}>Read-only while archived. Restore the project before adding or changing notes.</p>
         : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} />}

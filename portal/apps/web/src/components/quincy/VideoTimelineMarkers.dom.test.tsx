@@ -101,6 +101,21 @@ describe("VideoTimelineMarkers clustering (#741 5b, round 2)", () => {
     expect(host.querySelector<HTMLElement>("[data-cluster-count]")!.dataset.clusterCount).toBe("3");
   });
 
+  it("a cluster holding an internal note carries the internal marker (amber edge and a diamond); an all-public one does not", async () => {
+    await render(<VideoTimelineMarkers markers={close} frameCount={300} />);
+    await resize(1000);
+    const mixed = host.querySelector<HTMLElement>("[data-cluster-count]")!;
+    expect(mixed.dataset.hasInternal).toBe("true");
+    expect(mixed.querySelector("[data-cluster-diamond]")).not.toBeNull();
+    expect(mixed.className).toContain("h-4");
+    await act(async () => { root!.unmount(); }); host.replaceChildren();
+    await render(<VideoTimelineMarkers markers={close.map((m) => ({ ...m, tone: "public" as const }))} frameCount={300} />);
+    await resize(1000);
+    const plain = host.querySelector<HTMLElement>("[data-cluster-count]")!;
+    expect(plain.dataset.hasInternal).toBe("false");
+    expect(plain.querySelector("[data-cluster-diamond]")).toBeNull();
+  });
+
   it("a cluster shows as selected when any of its notes is, and a press on it selects its earliest note", async () => {
     const onSelect = vi.fn();
     await render(<VideoTimelineMarkers markers={close.map((m) => (m.id === "b" ? { ...m, selected: true } : m))} frameCount={300} onSelect={onSelect} />);

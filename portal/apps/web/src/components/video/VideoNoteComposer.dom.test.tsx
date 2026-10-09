@@ -349,10 +349,14 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     expect((byTestId("video-note-set-in") as HTMLButtonElement).disabled).toBe(true);
     expect((byTestId("video-note-set-out") as HTMLButtonElement).disabled).toBe(true);
     expect(byTestId("video-note-other-form-hint")!.textContent).toBe("Finish or cancel the open edit first.");
+    expect(byTestId("video-note-composer")!.dataset.locked).toBe("true");
+    expect(byTestId("video-note-composer")!.className).toContain("opacity-60");
+    expect(byTestId("video-note-other-form-hint")!.nextElementSibling).toBe(postButton()); // the hint sits next to Post
     await act(async () => { store.openReply(A, "00000000-0000-4000-8000-000000000009"); });
     expect(byTestId("video-note-other-form-hint")!.textContent).toBe("Finish or cancel the open reply first.");
     await act(async () => { store.close(A); });
     expect(byTestId("video-note-other-form-hint")).toBeNull();
+    expect(byTestId("video-note-composer")!.dataset.locked).toBe("false");
     expect(postButton().disabled).toBe(false);
   });
 

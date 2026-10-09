@@ -68,13 +68,20 @@ beforeEach(() => { vi.useRealTimers(); clockFrame = 20; store = createNoteFormSt
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren(); });
 
 describe("VideoNoteThread (#741 5b)", () => {
-  it("13: shows Internal on an internal note and its replies, Client-visible on a public one", async () => {
+  it("13: shows Internal on an internal root, Client-visible on a public one; replies carry no badge (they inherit it)", async () => {
     const internal = thread({ visibility: "internal" }); const withReply = { ...internal, replies: [reply(internal)] } as VideoNoteThreadDto;
     await render(withReply);
-    expect(tids("video-note-visibility-badge").map((b) => b.dataset.visibility)).toEqual(["internal", "internal"]);
+    expect(tids("video-note-visibility-badge").map((b) => b.dataset.visibility)).toEqual(["internal"]);
+    expect(tids("video-note-reply").every((r) => r.querySelector('[data-testid="video-note-visibility-badge"]') === null)).toBe(true);
+    expect(tid("video-note-header-row")!.querySelector('[data-testid="video-note-visibility-badge"]')).not.toBeNull();
     await act(async () => { root!.unmount(); }); host.remove();
     await render(thread({ visibility: "public" }));
     expect(tid("video-note-visibility-badge")!.textContent).toContain("Client-visible");
+  });
+
+  it("every link-style thread control keeps the 44px phone target (LINK_BUTTON carries max-[721px]:min-h-11)", async () => {
+    await render(thread({ visibility: "public" }));
+    for (const id of ["video-note-reply-button", "video-note-resolve"]) expect(tid(id)!.className).toContain("max-[721px]:min-h-11");
   });
 
   it("14: Reply opens a form that names the inherited visibility, has no visibility control, posts the body only and returns focus to Reply", async () => {

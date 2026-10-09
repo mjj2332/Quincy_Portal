@@ -30,7 +30,7 @@ export type ThreadActions = {
 
 const MONO = "[font:var(--type-mono)] tabular-nums";
 const SMALL = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
-const LINK_BUTTON = "min-h-8 pointer-coarse:min-h-11";
+const LINK_BUTTON = "min-h-8 pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
 function VisibilityBadge({ visibility }: { visibility: VideoNoteDto["visibility"] }) {
   return visibility === "internal"
@@ -127,14 +127,21 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     </Menu>;
   }
 
-  const header = (note: VideoNoteDto) => <header className="flex min-w-0 flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)]">
-    <InitialsAvatar name={authorName(note)} className="size-6" />
-    <strong className="min-w-0 text-foreground [font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)] [overflow-wrap:anywhere]">{authorName(note)}</strong>
-    <span className={cn(META_TEXT, "!normal-case")}>{roleLabel(note)}</span>
-    <CollaborationTimestamp instant={note.createdAt} now={now} mode="relative" />
-    {note.editedAt && !note.deleted && <span className={cn(META_TEXT, "!normal-case")}>· Edited</span>}
-    <VisibilityBadge visibility={note.visibility} />
-    <span className="ms-auto">{renderMenu(note)}</span>
+  // The root's header is two rows: who and when, then the visibility badge (left) and the "⋯" menu (right). A reply has no badge (it
+  // inherits the root's), so its menu sits at the end of the first row.
+  const header = (note: VideoNoteDto, root: boolean) => <header className="grid min-w-0 gap-[var(--space-1)]">
+    <div className="flex min-w-0 flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)]">
+      <InitialsAvatar name={authorName(note)} className="size-6" />
+      <strong className="min-w-0 text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-snug)_var(--font-sans)] [overflow-wrap:anywhere]">{authorName(note)}</strong>
+      <span className={cn(META_TEXT, "!normal-case")}>{roleLabel(note)}</span>
+      <CollaborationTimestamp instant={note.createdAt} now={now} mode="relative" />
+      {note.editedAt && !note.deleted && <span className={cn(META_TEXT, "!normal-case")}>· Edited</span>}
+      {!root && <span className="ms-auto">{renderMenu(note)}</span>}
+    </div>
+    {root && <div data-testid="video-note-header-row" className="flex min-w-0 items-center justify-between gap-[var(--space-2)]">
+      <VisibilityBadge visibility={note.visibility} />
+      <span className="ms-auto">{renderMenu(note)}</span>
+    </div>}
   </header>;
 
   const editForm = (note: VideoNoteDto) => editing && editing.noteId === note.id && <form
@@ -163,7 +170,7 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
   return <Item variant="outline" size="sm" className="block min-w-0 data-[selected=true]:border-foreground" data-testid="video-note-thread" data-note-id={thread.id} data-selected={selected ? "true" : "false"} data-resolved={thread.resolved ? "true" : "false"} ref={articleRef as never}>
     <div className="grid min-w-0 gap-[var(--space-2)]">
       {pinned && <Notice tone="caution" data-testid="video-note-pinned">Outside current filters</Notice>}
-      {header(thread)}
+      {header(thread, true)}
       <div className="flex flex-wrap items-center gap-[var(--space-2)]">
         {thread.startFrame !== null && <ReuiButton type="button" variant="secondary" size="sm" data-testid="video-note-anchor-button" aria-label={`Go to ${label}`} className={cn("pointer-coarse:min-h-11 max-[721px]:min-h-11", MONO)} onClick={() => { onSeek(thread); }}>{label}</ReuiButton>}
         {resolvedLine && <span className={cn(META_TEXT, "!normal-case")}>{resolvedLine}</span>}
@@ -171,7 +178,7 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
       {editing?.noteId === thread.id ? editForm(thread) : <NoteText note={thread} />}
       {thread.replies.length > 0 && <div className="grid gap-[var(--space-2)] border-s border-border ps-[var(--space-3)]">
         {thread.replies.map((reply) => <div key={reply.id} data-testid="video-note-reply" data-note-id={reply.id} className="grid gap-[var(--space-1)]">
-          {header(reply)}
+          {header(reply, false)}
           {editing?.noteId === reply.id ? editForm(reply) : <NoteText note={reply} />}
         </div>)}
       </div>}

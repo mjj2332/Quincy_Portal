@@ -70,14 +70,17 @@ export function VideoTimelineMarkers({ markers, frameCount, onSelect, className 
           data-marker-id={marker.id}
           data-cluster-count={cluster.members.length}
           data-tone={tones.size === 1 ? marker.tone : "mixed"}
+          data-has-internal={tones.has("internal") ? "true" : "false"}
           data-selected={cluster.members.some((member) => member.selected) ? "true" : "false"}
           style={fractionStyle(f, f)}
           className={cn(
             "absolute top-1/2 -translate-x-1/2 -translate-y-1/2", LEFT,
-            "inline-flex h-3 min-w-3 items-center justify-center rounded-full bg-foreground px-1 text-background font-mono tabular-nums text-[length:var(--text-xs)] leading-none",
+            "inline-flex h-4 min-w-4 items-center justify-center gap-0.5 rounded-full bg-foreground px-1 text-background font-mono tabular-nums text-[length:var(--text-xs)] leading-none",
+            // A cluster holding an internal note carries the internal treatment: an amber edge and a diamond, never colour alone.
+            "data-[has-internal=true]:border data-[has-internal=true]:border-[var(--signal-caution-on-inverse)]",
             "data-[selected=true]:outline data-[selected=true]:outline-2 data-[selected=true]:outline-offset-1 data-[selected=true]:outline-foreground",
           )}
-        >{cluster.members.length}</span>;
+        >{tones.has("internal") && <span aria-hidden="true" data-cluster-diamond="" className="size-1.5 shrink-0 rotate-45 rounded-[1px] bg-[var(--signal-caution-on-inverse)]" />}{cluster.members.length}</span>;
       }
       const range = marker.endFrame !== null;
       const [from, to] = range ? spanFractions(marker.startFrame, marker.endFrame!, frameCount) : [frameFraction(marker.startFrame, frameCount), frameFraction(marker.startFrame, frameCount)];

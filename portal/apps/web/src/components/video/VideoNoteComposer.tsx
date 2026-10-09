@@ -3,6 +3,7 @@ import { VIDEO_NOTE_BODY_MAX, type VideoNoteCreateInput, type VideoNoteVisibilit
 import { useFrameClockSelector, type VideoFrameClock } from "../../lib/video-frame-clock";
 import { effectiveMarks, frameOnScreen, type NoteFormStore } from "../../lib/video-note-form-store";
 import { EMPTY_MARKS, marksToFrames } from "../../lib/video-note-marks";
+import { cn } from "../../lib/utils";
 import { Button } from "../quincy/Button";
 import { Notice } from "../quincy/Notice";
 import { Textarea } from "../reui/textarea";
@@ -14,6 +15,8 @@ const HINT: Record<VideoNoteVisibility, string> = {
   public: "Shown to the client on the review link.",
 };
 const MONO = "[font:var(--type-mono)] tabular-nums";
+// On a short window the list needs the height: two rows until the field is focused or holds text (the 800px query is the window's height).
+const SHORT_TEXTAREA = "[@media(max-height:800px)]:min-h-16 [@media(max-height:800px)]:focus:min-h-24 [@media(max-height:800px)]:[&:not(:placeholder-shown)]:min-h-24";
 const SMALL_BUTTON = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
 /**
@@ -49,19 +52,21 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   const submit = () => { if (canPost && clock) void store.post(assetId, { clock, frameCount, send: post }); };
   const mark = (kind: "in" | "out") => { if (clock) store.mark(assetId, kind, frameOnScreen(clock.getState()), clock); };
 
+  // The anchor is only the timecode (or the in -> out pair); "Note at" stays for screen readers.
   const anchorText = pendingFrames
     ? marks.in !== null && marks.out !== null ? `In ${timecode(marks.in)} → Out ${timecode(marks.out)}` : marks.in !== null ? `In ${timecode(marks.in)}` : `Out ${timecode(marks.out!)}`
-    : `Note at ${timecode(composer.anchorFrame ?? liveFrame)}`;
+    : timecode(composer.anchorFrame ?? liveFrame);
   const label = phase === "confirming" ? "Confirming…" : phase === "posting" ? "Posting…" : problem?.retry ? "Retry" : "Post";
 
   return <form
     data-testid="video-note-composer"
     data-notes-form="composer"
-    className="grid gap-[var(--space-2)]"
+    className={cn("grid gap-[var(--space-2)]", otherForm !== null && "opacity-60")}
+    data-locked={otherForm !== null ? "true" : "false"}
     onSubmit={(event) => { event.preventDefault(); submit(); }}
   >
     <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-      <span data-testid="video-note-anchor" aria-live="off" className={`text-foreground ${MONO}`}>{anchorText}</span>
+      <span data-testid="video-note-anchor" aria-live="off" className={cn("rounded-md bg-muted px-[var(--space-2)] py-[var(--space-1)] text-foreground", MONO)}>{!pendingFrames && <span className="sr-only">Note at </span>}{anchorText}</span>
       <Button type="button" variant="secondary" data-testid="video-note-set-in" className={SMALL_BUTTON} disabled={clock === null || frozen || otherForm !== null} onClick={() => { mark("in"); }}>Set in <Kbd>I</Kbd></Button>
       <Button type="button" variant="secondary" data-testid="video-note-set-out" className={SMALL_BUTTON} disabled={clock === null || frozen || otherForm !== null} onClick={() => { mark("out"); }}>Set out <Kbd>O</Kbd></Button>
       {pendingFrames && <Button type="button" variant="text" data-testid="video-note-clear-marks" disabled={frozen} onClick={() => { store.clearMarks(assetId); }}>Clear marks</Button>}
@@ -72,6 +77,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
       value={composer.body}
       placeholder="Add a note at this frame…"
       readOnly={frozen}
+      className={SHORT_TEXTAREA}
       onChange={(event) => { if (!frozen) store.setBody(assetId, event.target.value, clock ? frameOnScreen(clock.getState()) : 0); }}
       onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } }}
     />
@@ -89,9 +95,11 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
         </ToggleGroup>
         <span data-testid="video-note-visibility-hint" className="text-foreground-secondary [font:var(--type-label)]">{HINT[visibility]}</span>
       </div>
-      <Button type="submit" data-testid="video-note-post" disabled={!canPost}>{label}</Button>
+      <div className="flex flex-wrap items-center justify-end gap-[var(--space-2)]">
+        {otherForm !== null && <span data-testid="video-note-other-form-hint" className="text-foreground-secondary [font:var(--type-label)]">{`Finish or cancel the open ${otherForm} first.`}</span>}
+        <Button type="submit" data-testid="video-note-post" disabled={!canPost}>{label}</Button>
+      </div>
     </div>
-    {otherForm !== null && <span data-testid="video-note-other-form-hint" className="text-foreground-secondary [font:var(--type-label)]">{`Finish or cancel the open ${otherForm} first.`}</span>}
     {clock === null && <span className="text-foreground-secondary [font:var(--type-label)]">Loading the film…</span>}
   </form>;
 }

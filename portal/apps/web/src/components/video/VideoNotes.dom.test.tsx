@@ -182,8 +182,9 @@ describe("Video notes panel (#741 5b)", () => {
     const badge = (el: Element) => tid("video-note-visibility-badge", el)!;
     expect(badge(threadOf(s.n1.id)).textContent).toContain("Internal");
     expect(badge(threadOf(s.n2.id)).textContent).toContain("Client-visible");
-    for (const reply of [...threadOf(s.n5.id).querySelectorAll<HTMLElement>('[data-testid="video-note-reply"]')]) expect(badge(reply).textContent).toContain("Internal");
-    for (const reply of [...threadOf(s.n2.id).querySelectorAll<HTMLElement>('[data-testid="video-note-reply"]')]) expect(badge(reply).textContent).toContain("Client-visible");
+    // Replies inherit the root's visibility and carry no badge of their own.
+    for (const reply of [...threadOf(s.n5.id).querySelectorAll<HTMLElement>('[data-testid="video-note-reply"]')]) expect(tid("video-note-visibility-badge", reply)).toBeNull();
+    for (const reply of [...threadOf(s.n2.id).querySelectorAll<HTMLElement>('[data-testid="video-note-reply"]')]) expect(tid("video-note-visibility-badge", reply)).toBeNull();
   });
 
   it("a note with replies lists them under it, oldest first; a tombstone reads 'Note deleted' with its replies and no Reply button (story 34)", async () => {
@@ -254,6 +255,7 @@ describe("Video notes panel (#741 5b)", () => {
 
   it("filter buttons carry honest counts under the other axis, and an empty result says so", async () => {
     await openFilm();
+    expect(tid("video-notes-filters")).not.toBeNull();
     expect(tid("video-notes-filter-status-open")!.textContent).toContain("5");
     expect(tid("video-notes-filter-status-resolved")!.textContent).toContain("1");
     expect(tid("video-notes-filter-status-all")!.textContent).toContain("6");
@@ -267,6 +269,7 @@ describe("Video notes panel (#741 5b)", () => {
   it("with no notes at all it says so", async () => {
     await openFilm({ notes: { [ids.asset2]: [], [ids.asset1]: [] } });
     expect(tid("video-notes-empty")!.textContent).toBe("No notes on this version yet.");
+    expect(tid("video-notes-filters")).toBeNull(); // nothing to filter
   });
 
   it("Version details move behind a header button (and the popover holds the same rows)", async () => {
