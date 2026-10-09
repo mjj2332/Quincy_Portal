@@ -253,8 +253,8 @@ export class VideoUpload {
         const status = error instanceof ApiError ? error.status : 0;
         if (status === 422 && code === "video_rejected") { this.fail(rejectionMessage(error), null); await this.abortOnServer(); throw abortError(); }
         if (status === 409 && code === "upload_unavailable") { this.fail(error instanceof Error ? error.message : "This upload has expired. Start a new one.", null); await this.abortOnServer(); throw abortError(); }
-        if (status === 400 && code === "upload_missing") { this.fail("The file did not finish uploading. Upload it again.", null); await this.abortOnServer(); throw abortError(); }
-        const transient = status === 0 || (status === 503 && code === "probe_unavailable") || (status === 409 && code === "completion_failed") || status >= 500;
+        // 400 upload_missing is the server's retryable answer: a part had not landed yet, and it released the claim back to pending.
+        const transient = (status === 400 && code === "upload_missing") || status === 0 || (status === 503 && code === "probe_unavailable") || (status === 409 && code === "completion_failed") || status >= 500;
         if (!transient) { this.fail(error instanceof Error ? error.message : "The upload could not be finished.", null); await this.abortOnServer(); throw abortError(); }
         if (attempt >= delays.length) { this.fail("The upload is stored, but finishing it did not work. Retry finishing; the file is not sent again.", "finish"); throw abortError(); }
         await sleep(delays[attempt]!, this.controller.signal);

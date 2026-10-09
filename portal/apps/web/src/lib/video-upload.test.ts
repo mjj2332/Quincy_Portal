@@ -190,6 +190,15 @@ describe("VideoUpload (#741 4d-i)", () => {
     expect(n).toBe(3);
   });
 
+  it("treats 400 upload_missing as retryable: re-posts complete without re-uploading and never aborts", async () => {
+    routes[RESERVE] = () => json(devReserve, 201);
+    routes["PUT /api/projects/:p/video-uploads/:r/direct"] = () => new Response(null, { status: 200 });
+    let aborts = 0; routes["POST /api/projects/:p/video-uploads/:r/abort"] = () => { aborts += 1; return new Response(null, { status: 204 }); };
+    let n = 0; routes[COMPLETE] = () => (++n < 2 ? json({ error: "missing", code: "upload_missing" }, 400) : json(completeBody(), 201));
+    const { job } = await make({ completeDelaysMs: [0, 0, 0] }); job.start(); await until(job, "done");
+    expect(n).toBe(2); expect(aborts).toBe(0);
+  });
+
   it("after the complete ladder offers Retry finishing, which does not re-upload", async () => {
     routes[RESERVE] = () => json(devReserve, 201); routes[COMPLETE] = () => json({ error: "x", code: "completion_failed" }, 409);
     const { job } = await make({ completeDelaysMs: [0, 0, 0] }); job.start(); await until(job, "failed");
