@@ -25,6 +25,7 @@ const NOT_ENTITY_REFERENCES: Readonly<Record<string, string>> = {
   "document_uploads.version_group_id": "a generated grouping key shared by every version of one document, never any row's id",
   "document_uploads.pdf_upload_id": "an R2 multipart-upload id",
   "document_uploads.preview_upload_id": "an R2 multipart-upload id",
+  "video_upload_reservations.upload_id": "an R2 multipart-upload id",
   "assets.version_group_id": "a generated grouping key shared by every version of one asset, never any row's id",
   "autohdr_handoffs.workflow_id": "a Cloudflare Workflows instance id",
   "autohdr_fetch_claims.workflow_id": "a Cloudflare Workflows instance id",

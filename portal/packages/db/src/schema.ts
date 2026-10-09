@@ -3,7 +3,7 @@
  * Metadata only: media bytes live in R2; dense annotation JSON lives in R2 (ref here).
  * All media rows use immutable, versioned R2 keys.
  */
-import { sqliteTable, text, integer, real, index, unique, uniqueIndex, check, primaryKey } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index, unique, uniqueIndex, check, primaryKey, type AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { desc, sql } from "drizzle-orm";
 
 const id = () => text("id").primaryKey();
@@ -1729,5 +1729,193 @@ export const mcpConnections = sqliteTable(
   (t) => [
     index("mcp_connections_user_revoked_idx").on(t.userId, t.revokedAt),
     index("mcp_connections_client_idx").on(t.clientId),
+  ],
+);
+
+/* ------------------------------------------------- staff-side video review (#741, migration 0068) */
+export const guestReviewers = sqliteTable("guest_reviewers", {
+  id: id(),
+  emailNormalized: text("email_normalized").notNull().unique(),
+  displayName: text("display_name"),
+  createdAt: integer("created_at").notNull(),
+});
+
+export const videos = sqliteTable(
+  "videos",
+  {
+    /** Equals assets.version_group_id of this Video's Versions. */
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    collectionId: text("collection_id").notNull().references(() => collections.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    premium: integer("premium").notNull().default(0),
+    position: integer("position").notNull().default(0),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    index("videos_collection_position_idx").on(t.collectionId, t.position, t.id),
+    index("videos_project_idx").on(t.projectId),
+    check("videos_title_check", sql`length(trim(${t.title})) BETWEEN 1 AND 200`),
+    check("videos_premium_check", sql`${t.premium} IN (0, 1)`),
+    check("videos_position_check", sql`${t.position} >= 0`),
+    check("videos_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
+    check("videos_updated_at_check", sql`typeof(${t.updatedAt}) = 'integer'`),
+  ],
+);
+
+export const videoVersionMeta = sqliteTable(
+  "video_version_meta",
+  {
+    assetId: text("asset_id").primaryKey().references(() => assets.id, { onDelete: "cascade" }),
+    videoId: text("video_id").notNull().references(() => videos.id, { onDelete: "cascade" }),
+    fpsNum: integer("fps_num").notNull(),
+    fpsDen: integer("fps_den").notNull(),
+    mediaTimescale: integer("media_timescale").notNull(),
+    frameDelta: integer("frame_delta").notNull(),
+    frameCount: integer("frame_count").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    codec: text("codec", { enum: ["avc1", "avc3"] as const }).notNull(),
+    codecString: text("codec_string").notNull(),
+    startTcFrames: integer("start_tc_frames"),
+    tcNominalFps: integer("tc_nominal_fps").notNull(),
+    tcDropFrame: integer("tc_drop_frame").notNull(),
+    fastStart: integer("fast_start").notNull(),
+    hasAudio: integer("has_audio").notNull(),
+    probeVersion: integer("probe_version").notNull(),
+    posterKey: text("poster_key").unique(),
+    uploadedBy: text("uploaded_by").notNull().references(() => user.id),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("video_version_meta_video_idx").on(t.videoId),
+    check("video_version_meta_fps_num_check", sql`${t.fpsNum} > 0`),
+    check("video_version_meta_fps_den_check", sql`${t.fpsDen} > 0`),
+    check("video_version_meta_media_timescale_check", sql`${t.mediaTimescale} > 0`),
+    check("video_version_meta_frame_delta_check", sql`${t.frameDelta} > 0`),
+    check("video_version_meta_frame_count_check", sql`${t.frameCount} > 0`),
+    check("video_version_meta_duration_ms_check", sql`${t.durationMs} > 0`),
+    check("video_version_meta_width_check", sql`${t.width} > 0`),
+    check("video_version_meta_height_check", sql`${t.height} > 0`),
+    check("video_version_meta_codec_check", sql`${t.codec} IN ('avc1', 'avc3')`),
+    check("video_version_meta_start_tc_frames_check", sql`${t.startTcFrames} IS NULL OR ${t.startTcFrames} >= 0`),
+    check("video_version_meta_tc_nominal_fps_check", sql`${t.tcNominalFps} > 0`),
+    check("video_version_meta_tc_drop_frame_check", sql`${t.tcDropFrame} IN (0, 1)`),
+    check("video_version_meta_fast_start_check", sql`${t.fastStart} IN (0, 1)`),
+    check("video_version_meta_has_audio_check", sql`${t.hasAudio} IN (0, 1)`),
+    check("video_version_meta_probe_version_check", sql`${t.probeVersion} > 0`),
+    check("video_version_meta_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
+  ],
+);
+
+export const videoUploadReservations = sqliteTable(
+  "video_upload_reservations",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    collectionId: text("collection_id").notNull().references(() => collections.id, { onDelete: "cascade" }),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    /** No FK: the Video row is created at completion. */
+    videoId: text("video_id").notNull(),
+    newVideoTitle: text("new_video_title"),
+    version: integer("version").notNull(),
+    /** No FK: the Asset row is created at completion. */
+    assetId: text("asset_id").notNull().unique(),
+    r2Key: text("r2_key").notNull().unique(),
+    originalFilename: text("original_filename").notNull(),
+    bytes: integer("bytes").notNull(),
+    contentType: text("content_type").notNull(),
+    uploadId: text("upload_id"),
+    supersedesAssetId: text("supersedes_asset_id"),
+    clientProbeJson: text("client_probe_json"),
+    status: text("status", { enum: ["pending", "completing", "aborting", "completed", "rejected", "expired", "failed"] as const }).notNull().default("pending"),
+    rejectReason: text("reject_reason"),
+    expiresAt: integer("expires_at").notNull(),
+    completingAt: integer("completing_at"),
+    completedAt: integer("completed_at"),
+    completionAuditId: text("completion_audit_id").notNull().unique(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("video_upload_reservations_active_video_unique").on(t.videoId).where(sql`${t.status} IN ('pending', 'completing', 'aborting')`),
+    index("video_upload_reservations_status_expiry_idx").on(t.status, t.expiresAt),
+    index("video_upload_reservations_project_creator_idx").on(t.projectId, t.createdBy),
+    check("video_upload_reservations_version_check", sql`${t.version} >= 1`),
+    check("video_upload_reservations_bytes_check", sql`${t.bytes} > 0 AND ${t.bytes} <= 2000000000`),
+    check("video_upload_reservations_content_type_check", sql`${t.contentType} = 'video/mp4'`),
+    check("video_upload_reservations_status_check", sql`${t.status} IN ('pending', 'completing', 'aborting', 'completed', 'rejected', 'expired', 'failed')`),
+    check("video_upload_reservations_title_check", sql`(${t.version} = 1) = (${t.newVideoTitle} IS NOT NULL)`),
+    check("video_upload_reservations_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
+    check("video_upload_reservations_updated_at_check", sql`typeof(${t.updatedAt}) = 'integer'`),
+  ],
+);
+
+export const videoNotes = sqliteTable(
+  "video_notes",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    videoId: text("video_id").notNull().references(() => videos.id, { onDelete: "cascade" }),
+    assetId: text("asset_id").notNull().references(() => assets.id, { onDelete: "cascade" }),
+    parentId: text("parent_id").references((): AnySQLiteColumn => videoNotes.id, { onDelete: "cascade" }),
+    authorUserId: text("author_user_id").references(() => user.id),
+    authorGuestId: text("author_guest_id").references(() => guestReviewers.id),
+    authorRole: text("author_role", { enum: ["admin", "editor", "external_editor", "photographer", "guest"] as const }).notNull(),
+    visibility: text("visibility", { enum: ["public", "internal"] as const }).notNull(),
+    startFrame: integer("start_frame"),
+    endFrame: integer("end_frame"),
+    drawingFrame: integer("drawing_frame"),
+    body: text("body").notNull(),
+    resolvedAt: integer("resolved_at"),
+    resolvedBy: text("resolved_by").references(() => user.id),
+    revision: integer("revision").notNull().default(1),
+    deletedAt: integer("deleted_at"),
+    copiedFromNoteId: text("copied_from_note_id").references((): AnySQLiteColumn => videoNotes.id, { onDelete: "set null" }),
+    copiedFromVersion: integer("copied_from_version"),
+    originalAuthorName: text("original_author_name"),
+    originalAuthorRole: text("original_author_role"),
+    createdAt: integer("created_at").notNull(),
+    editedAt: integer("edited_at"),
+  },
+  (t) => [
+    index("video_notes_asset_frame_idx").on(t.assetId, t.parentId, t.startFrame),
+    index("video_notes_parent_idx").on(t.parentId),
+    index("video_notes_video_idx").on(t.videoId),
+    index("video_notes_project_created_idx").on(t.projectId, t.createdAt),
+    uniqueIndex("video_notes_copy_unique").on(t.assetId, t.copiedFromNoteId).where(sql`${t.copiedFromNoteId} IS NOT NULL`),
+    check("video_notes_author_role_check", sql`${t.authorRole} IN ('admin', 'editor', 'external_editor', 'photographer', 'guest')`),
+    check("video_notes_visibility_check", sql`${t.visibility} IN ('public', 'internal')`),
+    check("video_notes_start_frame_check", sql`${t.startFrame} IS NULL OR ${t.startFrame} >= 0`),
+    check("video_notes_drawing_frame_check", sql`${t.drawingFrame} IS NULL OR ${t.drawingFrame} >= 0`),
+    check("video_notes_body_check", sql`length(${t.body}) <= 10000`),
+    check("video_notes_revision_check", sql`${t.revision} >= 1`),
+    check("video_notes_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
+    check("video_notes_one_author_check", sql`(${t.authorUserId} IS NULL) <> (${t.authorGuestId} IS NULL)`),
+    check("video_notes_guest_public_check", sql`${t.authorGuestId} IS NULL OR (${t.visibility} = 'public' AND ${t.authorRole} = 'guest')`),
+    check("video_notes_root_frame_check", sql`(${t.parentId} IS NULL) = (${t.startFrame} IS NOT NULL)`),
+    check("video_notes_end_frame_check", sql`${t.endFrame} IS NULL OR (${t.startFrame} IS NOT NULL AND ${t.endFrame} > ${t.startFrame})`),
+    check("video_notes_reply_shape_check", sql`${t.parentId} IS NULL OR (${t.drawingFrame} IS NULL AND ${t.resolvedAt} IS NULL AND ${t.copiedFromVersion} IS NULL)`),
+    check("video_notes_resolved_pair_check", sql`(${t.resolvedAt} IS NULL) = (${t.resolvedBy} IS NULL)`),
+    check("video_notes_copy_provenance_check", sql`(${t.copiedFromVersion} IS NULL) = (${t.originalAuthorName} IS NULL) AND (${t.copiedFromVersion} IS NULL) = (${t.originalAuthorRole} IS NULL)`),
+    check("video_notes_copy_source_check", sql`${t.copiedFromNoteId} IS NULL OR ${t.copiedFromVersion} IS NOT NULL`),
+  ],
+);
+
+export const videoNoteMarkup = sqliteTable(
+  "video_note_markup",
+  {
+    noteId: text("note_id").primaryKey().references(() => videoNotes.id, { onDelete: "cascade" }),
+    strokesJson: text("strokes_json").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    check("video_note_markup_strokes_check", sql`length(CAST(${t.strokesJson} AS BLOB)) <= 524288`),
+    check("video_note_markup_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
+    check("video_note_markup_updated_at_check", sql`typeof(${t.updatedAt}) = 'integer'`),
   ],
 );
