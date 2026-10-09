@@ -8,6 +8,9 @@
  * - The group takes Quincy's field box (`reui/input.tsx` FIELD_BOX: 38px, 44px at <=720px, `--radius-sm`, `border-border`, `--field-bg`).
  * - `focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50` removed and the input's `outline-none` dropped: the global
  *   `:focus-visible` outline is the one focus line (`reui/input.tsx` divergences 3 and 4).
+ * - Quincy adaptation (#741 5c-ui round 5): the focus line is drawn on the GROUP (`has-[:focus-visible]:outline…` with the global rule's tokens:
+ *   `--border-width-bold` solid `--focus-ring`, offset 2px), and the inner input is `outline-none`, so the ring wraps the whole field box instead of
+ *   the bare input inside the border. This supersedes the "input's outline-none dropped" line above for this component only.
  * - Stepper buttons hover on `bg-secondary` (`accent` is not a Quincy surface) and keep the group's radius.
  */
 import type { ReactNode } from "react"
@@ -25,7 +28,7 @@ const NumberFieldContext = createContext<{
 } | null>(null)
 
 const numberFieldGroupVariants = cva(
-  "relative flex w-full justify-between rounded-[var(--radius-sm)] border border-border bg-[var(--field-bg)] transition-colors data-disabled:pointer-events-none data-disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20",
+  "relative flex w-full justify-between rounded-[var(--radius-sm)] border border-border bg-[var(--field-bg)] transition-colors has-[:focus-visible]:outline-[length:var(--border-width-bold)] has-[:focus-visible]:outline-solid has-[:focus-visible]:outline-[var(--focus-ring)] has-[:focus-visible]:outline-offset-2 data-disabled:pointer-events-none data-disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20",
   {
     variants: {
       // Ladders restored from the pre-rename source. Rhea was added after they
@@ -61,7 +64,7 @@ const numberFieldButtonVariants = cva(
 )
 
 const numberFieldInputVariants = cva(
-  "w-full min-w-0 flex-1 bg-transparent text-center tabular-nums",
+  "w-full min-w-0 flex-1 bg-transparent text-center tabular-nums focus-visible:!outline-none",
   {
     variants: {
       size: {

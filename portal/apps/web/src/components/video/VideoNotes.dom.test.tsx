@@ -1336,6 +1336,36 @@ describe("Copy and paste notes (#741 5c-ui)", () => {
     expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it("Cancel and Escape return focus to the Notes actions trigger (#741 5c-ui round 5)", async () => {
+    await copyOnV1();
+    await openPasteDialog();
+    await click(tid("video-note-paste-cancel")!); await settle(300);
+    expect(pasteDialog()).toBeNull();
+    expect(document.activeElement).toBe(tid("video-notes-menu"));
+    (document.activeElement as HTMLElement).blur();
+    await openPasteDialog();
+    await dispatchKey(offsetInput(), "Escape"); await settle(300);
+    expect(pasteDialog()).toBeNull();
+    expect(document.activeElement).toBe(tid("video-notes-menu"));
+  });
+
+  it("marks the table as stacking below 721px, with each timecode labelled by its Version (#741 5c-ui round 5)", async () => {
+    await copyOnV1();
+    await openPasteDialog();
+    const table = tid("video-note-paste-table")!;
+    expect(table.getAttribute("data-layout")).toBe("stack-below-721");
+    expect(tid("video-note-paste-source", rows()[0]!)!.getAttribute("data-version")).toBe("v1");
+    expect(tid("video-note-paste-target", rows()[0]!)!.parentElement!.getAttribute("data-version")).toBe("v2");
+  });
+
+  it("hides the offset field when nothing can be pasted (#741 5c-ui round 5)", async () => {
+    const v1 = v1Notes();
+    await copyOnV1(v1, { [v1.a.id]: "out_of_range", [v1.b.id]: "out_of_range", [v1.c.id]: "out_of_range" });
+    await openPasteDialog();
+    expect(tid("video-note-paste-none")).not.toBeNull();
+    expect(tid("video-note-paste-offset")).toBeNull();
+  });
+
   it("a stale refresh that fails keeps Paste disabled and offers 'Try again', which asks for the preview again (#741 5c-ui round 3)", async () => {
     const { v1 } = await copyOnV1();
     await openPasteDialog();

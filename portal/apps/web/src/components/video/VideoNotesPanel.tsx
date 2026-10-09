@@ -235,6 +235,7 @@ export function VideoNotesPanel({ session, video, detailsRows }: { session: Vide
     {canCopy && pasteFrom && <VideoNotePasteDialog
       open={pasteOpen}
       onOpenChange={setPasteOpen}
+      finalFocus={() => document.querySelector<HTMLElement>('[data-testid="video-notes-menu"]')}
       store={session.forms}
       assetId={session.assetId}
       target={version}
