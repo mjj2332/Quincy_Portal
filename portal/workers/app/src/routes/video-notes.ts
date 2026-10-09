@@ -10,7 +10,7 @@ import { projectIsArchived } from "../lib/project-archive";
 import { terminalRoute } from "../lib/terminal-route";
 import { videoReviewGate } from "../lib/video-review-gate";
 import {
-  countOwnReplies, createVideoNote, createVideoNoteReply, deleteVideoNote, editVideoNote, findNoteHead, listVideoNotes, readThread, setVideoNoteResolution,
+  createVideoNote, createVideoNoteReply, deleteVideoNote, editVideoNote, findNoteHead, listVideoNotes, readThread, setVideoNoteResolution,
   versionFrameCount, type NoteHead,
 } from "../lib/video-notes";
 import { jsonInput } from "./helpers";
@@ -27,7 +27,10 @@ const uuid = z.string().uuid();
 export const videoNotesRoutes = new Hono<AppEnv>();
 
 type Ctx = Context<AppEnv>;
-const archivedBody = { error: "Archived projects are read-only; video notes can't be changed.", code: "project_archived" } as const;
+/** Archived write refusal, pre-check and in-batch alike: staff 409, an External the same 404 as an invisible Project (docs/lessons.md #527). */
+const archivedResponse = (c: Ctx) => c.get("user").role === "external_editor"
+  ? c.json({ error: "Project not found" }, 404)
+  : c.json({ error: "Archived projects are read-only; video notes can't be changed.", code: "project_archived" }, 409);
 
 /** Gate, capability, access and (for writes) archived. Returns the refusal, or null to carry on. */
 async function admit(c: Ctx, projectId: string, write: boolean): Promise<Response | null> {
@@ -35,7 +38,7 @@ async function admit(c: Ctx, projectId: string, write: boolean): Promise<Respons
   if (!await videoReviewGate(c.env.DB, projectId, "notes")) return c.json({ error: "Not found" }, 404);
   if (!roleHasCapability(user.role, write ? "annotateVideo" : "viewVideo")) return c.json({ error: "Forbidden" }, 403);
   if (!await hasProjectAccess(c, projectId)) return user.role === "external_editor" ? c.json({ error: "Project not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if (write && await projectIsArchived(c.env, projectId)) return c.json(archivedBody, 409);
+  if (write && await projectIsArchived(c.env, projectId)) return archivedResponse(c);
   return null;
 }
 const notFound = (c: Ctx) => c.json({ error: "Note not found" }, 404);
@@ -63,7 +66,7 @@ videoNotesRoutes.post("/projects/:projectId/video-versions/:assetId/notes", term
   // Checked here so a CHECK failure never surfaces as a 500; the audit gate repeats the same bounds in SQL. Half-open [start, end), end <= frameCount, frame 0 is valid.
   if (input.startFrame >= frameCount || (endFrame !== null && endFrame > frameCount)) return c.json({ error: "The frames are outside this Version.", code: "frame_out_of_range", frameCount }, 422);
   const outcome = await createVideoNote(c.env.DB, { projectId, assetId, principal: principalOf(c), visibility: input.visibility, startFrame: input.startFrame, endFrame, body: input.body, now: Date.now() });
-  if (outcome.kind === "archived") return c.json(archivedBody, 409);
+  if (outcome.kind === "archived") return archivedResponse(c);
   if (outcome.kind === "gone") return c.json({ error: "Version not found" }, 404);
   return thread(c, outcome.value, 201);
 }));
@@ -77,7 +80,7 @@ videoNotesRoutes.post("/projects/:projectId/video-notes/:noteId/replies", termin
   if (parent.parent_id !== null) return c.json({ error: "Replies attach to a note, not to another reply.", code: "not_a_thread" }, 422);
   if (parent.deleted_at !== null) return deletedResponse(c);
   const outcome = await createVideoNoteReply(c.env.DB, { projectId, parent, principal: principalOf(c), body: input.body, now: Date.now() });
-  if (outcome.kind === "archived") return c.json(archivedBody, 409);
+  if (outcome.kind === "archived") return archivedResponse(c);
   if (outcome.kind === "gone") return deletedResponse(c);
   return thread(c, outcome.value, 201);
 }));
@@ -109,7 +112,7 @@ videoNotesRoutes.patch("/projects/:projectId/video-notes/:noteId", terminalRoute
   const outcome = await editVideoNote(c.env.DB, { projectId, note, principal, expectedRevision: input.expectedRevision, body, startFrame, endFrame, now: Date.now() });
   switch (outcome.kind) {
     case "ok": case "noop": return thread(c, outcome.value);
-    case "archived": return c.json(archivedBody, 409);
+    case "archived": return archivedResponse(c);
     case "gone": return notFound(c);
     case "forbidden": return c.json({ error: "Forbidden: only the author can edit this note." }, 403);
     case "deleted": return deletedResponse(c);
@@ -129,11 +132,10 @@ videoNotesRoutes.delete("/projects/:projectId/video-notes/:noteId", terminalRout
   if (note.author_user_id !== principal.id) return c.json({ error: "Forbidden: only the author can delete this note." }, 403);
   if (note.deleted_at !== null) return deletedResponse(c);
   if (note.revision !== input.expectedRevision) { const current = await readThread(c.env.DB, projectId, note.parent_id ?? note.id); return current ? conflict(c, current) : notFound(c); }
-  const ownRepliesRemoved = note.parent_id === null ? await countOwnReplies(c.env.DB, note.id, principal.id) : 0;
-  const outcome = await deleteVideoNote(c.env.DB, { projectId, note, principal, expectedRevision: input.expectedRevision, ownRepliesRemoved, now: Date.now() });
+  const outcome = await deleteVideoNote(c.env.DB, { projectId, note, principal, expectedRevision: input.expectedRevision, now: Date.now() });
   switch (outcome.kind) {
     case "ok": return c.json(videoNoteDeleteResponseSchema.parse({ thread: outcome.value }));
-    case "archived": return c.json(archivedBody, 409);
+    case "archived": return archivedResponse(c);
     case "gone": return notFound(c);
     case "forbidden": return c.json({ error: "Forbidden: only the author can delete this note." }, 403);
     case "deleted": return deletedResponse(c);
@@ -149,7 +151,7 @@ videoNotesRoutes.put("/projects/:projectId/video-notes/:noteId/resolution", term
   const note: NoteHead | null = await findNoteHead(c.env.DB, projectId, noteId); if (!note) return notFound(c);
   if (note.parent_id !== null) return c.json({ error: "Only a note can be resolved, not a reply.", code: "not_a_thread" }, 422);
   const outcome = await setVideoNoteResolution(c.env.DB, { projectId, note, principal: principalOf(c), resolved: input.resolved, now: Date.now() });
-  if (outcome.kind === "archived") return c.json(archivedBody, 409);
+  if (outcome.kind === "archived") return archivedResponse(c);
   if (outcome.kind === "gone") return notFound(c);
   return thread(c, outcome.value);
 }));

@@ -399,7 +399,41 @@ describe("an archived Project (story 43)", () => {
   });
 });
 
+describe("an archive that lands inside the batch, seen by an assigned External", () => {
+  it("answers 404 like an invisible Project, on create, reply, edit, delete and resolve; staff keep 409", async () => {
+    const project = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'External Race Street', 'editing_autohdr', ?, ?)").bind(project, now, now).run();
+    for (const user of [ids.member, ids.external]) await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), project, user, now).run();
+    await setVideoFlags(`video_review_pilot:${project}`);
+    const version = await seedVideoVersion({ projectId: project, uploader: ids.member }); const note = await seedVideoNote({ assetId: version.assetId, author: ids.external });
+    const cases: Array<[string, string, Json]> = [
+      ["POST", notesPath(version.assetId, project), { startFrame: 1, visibility: "public", body: "x" }], ["POST", `${notePath(note.id, project)}/replies`, { body: "x" }],
+      ["PATCH", notePath(note.id, project), { expectedRevision: 1, body: "raced" }], ["DELETE", notePath(note.id, project), { expectedRevision: 1 }], ["PUT", `${notePath(note.id, project)}/resolution`, { resolved: true }],
+    ];
+    for (const [method, path, body] of cases) {
+      await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(project).run();
+      const response = await racing(project, method, path, body, { who: "external" });
+      expect([response.status, (await json(response)).code], `external ${method} ${path}`).toEqual([404, undefined]);
+    }
+    expect(await noteAudit()).toEqual([]);
+    expect(await noteRow(note.id)).toMatchObject({ body: "Seeded note", revision: 1, resolved_at: null });
+  });
+});
+
 describe("audit (story 41)", () => {
+  it("counts the author's replies inside the deletion batch: a reply landing after the route's read is in the audit", async () => {
+    const version = await seedVideoVersion(); const note = await seedVideoNote({ assetId: version.assetId, author: ids.member });
+    const late = async () => {
+      const reply = await seedVideoNote({ assetId: version.assetId, parentId: note.id });
+      await database.DB.prepare("UPDATE video_notes SET author_user_id = ? WHERE id = ?").bind(ids.member, reply.id).run();
+    };
+    const response = await racing(ids.project, "DELETE", notePath(note.id), { expectedRevision: 1 }, { before: late });
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(await database.DB.prepare("SELECT COUNT(*) AS n FROM video_notes WHERE parent_id = ?").bind(note.id).first()).toEqual({ n: 0 });
+    const audit = await noteAudit("video_note.delete"); expect(audit).toHaveLength(1);
+    expect(JSON.parse(audit[0]!.meta_json!)).toMatchObject({ mode: "removed", ownRepliesRemoved: 1 });
+  });
+
   it("writes each action with its meta, never a body, and the impersonation keys only when impersonating", async () => {
     const version = await seedVideoVersion();
     const note = await createOk("member", version.assetId, { visibility: "internal", body: "SECRET create", startFrame: 12, endFrame: 20 });
@@ -439,19 +473,19 @@ async function fetchImpersonation(userId: string): Promise<string> {
   for (const value of headers.getSetCookie?.() ?? []) { const pair = value.split(";", 1)[0]!; const at = pair.indexOf("="); if (at > 0) cookies.set(pair.slice(0, at), pair.slice(at + 1)); }
   return [...cookies].map(([name, value]) => `${name}=${value}`).join("; ");
 }
-/** The real app against a D1 whose first multi-statement batch archives `projectId` just before it runs. Signs in as the Project's member Editor. */
-async function racing(projectId: string, method: string, path: string, body: unknown) {
+/** The real app against a D1 whose first multi-statement batch archives `projectId` (or runs `before`) just before it runs. Signs in as `who`, default the member Editor. */
+async function racing(projectId: string, method: string, path: string, body: unknown, options: { who?: Who; before?: () => Promise<void> } = {}) {
   let flipped = false;
   const db = new Proxy(database.DB, {
     get(target, property) {
       if (property === "batch") return async (statements: D1PreparedStatement[]) => {
-        if (!flipped && statements.length >= 2) { flipped = true; await target.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), projectId).run(); }
+        if (!flipped && statements.length >= 2) { flipped = true; if (options.before) await options.before(); else await target.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), projectId).run(); }
         return target.batch(statements);
       };
       const value = Reflect.get(target, property, target); return typeof value === "function" ? value.bind(target) : value;
     },
   }) as D1Database;
-  const headers = new Headers({ cookie: await cookie("member"), origin: baseEnv.APP_ORIGIN, "content-type": "application/json" });
+  const headers = new Headers({ cookie: await cookie(options.who ?? "member"), origin: baseEnv.APP_ORIGIN, "content-type": "application/json" });
   const executionContext = { waitUntil: () => undefined, passThroughOnException: () => undefined, props: undefined } as unknown as ExecutionContext;
   return app.fetch(new Request(`https://portal.test${path}`, { method, headers, body: JSON.stringify(body) }), { ...baseEnv, DB: db } as Env, executionContext);
 }

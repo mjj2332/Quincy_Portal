@@ -163,15 +163,19 @@ export type DeleteOutcome =
  * Hard delete when nobody else replied (own replies and markup cascade), otherwise a tombstone. One batch, so a reply cannot land between the
  * two statements: the DELETE's NOT EXISTS and the UPDATE's survival of the row are decided in the same transaction. `changes()` excludes cascaded rows.
  */
-export async function deleteVideoNote(db: D1Database, input: { projectId: string; note: NoteHead; principal: Principal; expectedRevision: number; ownRepliesRemoved: number; now: number }): Promise<DeleteOutcome> {
+export async function deleteVideoNote(db: D1Database, input: { projectId: string; note: NoteHead; principal: Principal; expectedRevision: number; now: number }): Promise<DeleteOutcome> {
   const { note, principal } = input; const hardAudit = newId(); const tombAudit = newId();
   const base = { projectId: input.projectId, assetId: note.asset_id, parentId: note.parent_id };
+  // The hard-delete conditions, shared by the audit that precedes the DELETE and the DELETE itself (?1 note, ?2 Project, ?3 user, ?4 revision).
+  const hardWhere = `FROM video_notes n WHERE n.id = ?1 AND n.project_id = ?2 AND n.author_user_id = ?3 AND n.revision = ?4 AND n.deleted_at IS NULL AND ${projectFence(2)}
+      AND NOT EXISTS (SELECT 1 FROM video_notes c WHERE c.parent_id = ?1 AND (c.author_user_id IS NULL OR c.author_user_id <> ?3))`;
   const results = await db.batch([
+    // The audit goes first so the author's replies are counted before the DELETE cascades them: the winning audit records what was actually removed.
+    db.prepare(`${AUDIT_INSERT} SELECT ?5, ?3, 'video_note.delete', 'video_note', ?1, json_set(?6, '$.ownRepliesRemoved', (SELECT COUNT(*) FROM video_notes r WHERE r.parent_id = ?1 AND r.author_user_id = ?3)), ?7 ${hardWhere}`)
+      .bind(note.id, input.projectId, principal.id, input.expectedRevision, hardAudit, auditMeta(principal, { ...base, mode: "removed" }), input.now),
     db.prepare(`DELETE FROM video_notes WHERE id = ?1 AND project_id = ?2 AND author_user_id = ?3 AND revision = ?4 AND deleted_at IS NULL AND ${projectFence(2)}
-      AND NOT EXISTS (SELECT 1 FROM video_notes c WHERE c.parent_id = ?1 AND (c.author_user_id IS NULL OR c.author_user_id <> ?3))`)
-      .bind(note.id, input.projectId, principal.id, input.expectedRevision),
-    db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.delete', 'video_note', ?3, ?4, ?5 WHERE changes() = 1`)
-      .bind(hardAudit, principal.id, note.id, auditMeta(principal, { ...base, mode: "removed", ownRepliesRemoved: input.ownRepliesRemoved }), input.now),
+      AND NOT EXISTS (SELECT 1 FROM video_notes c WHERE c.parent_id = ?1 AND (c.author_user_id IS NULL OR c.author_user_id <> ?3)) AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?5)`)
+      .bind(note.id, input.projectId, principal.id, input.expectedRevision, hardAudit),
     db.prepare(`UPDATE video_notes SET deleted_at = ?1, body = '', drawing_frame = NULL, revision = revision + 1
       WHERE id = ?2 AND project_id = ?3 AND author_user_id = ?4 AND revision = ?5 AND deleted_at IS NULL AND ${projectFence(3)}`)
       .bind(input.now, note.id, input.projectId, principal.id, input.expectedRevision),
@@ -180,7 +184,7 @@ export async function deleteVideoNote(db: D1Database, input: { projectId: string
     db.prepare("DELETE FROM video_note_markup WHERE note_id = ?1 AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?2)").bind(note.id, tombAudit),
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
   ]);
-  const removed = (results[0]?.meta.changes ?? 0) >= 1; const tombstoned = !removed && (results[2]?.meta.changes ?? 0) === 1;
+  const removed = (results[1]?.meta.changes ?? 0) >= 1; const tombstoned = !removed && (results[2]?.meta.changes ?? 0) === 1;
   const rootId = note.parent_id ?? note.id;
   if (removed || tombstoned) return { kind: "ok", mode: removed ? "removed" : "tombstone", value: removed && note.parent_id === null ? null : await readThread(db, input.projectId, rootId) };
   if (archivedInSnapshot(results.at(-1))) return { kind: "archived" };
@@ -190,11 +194,6 @@ export async function deleteVideoNote(db: D1Database, input: { projectId: string
   if (current.deleted_at !== null) return { kind: "deleted" };
   const thread = await readThread(db, input.projectId, rootId);
   return thread ? { kind: "conflict", value: thread } : { kind: "gone" };
-}
-
-/** Own replies under a root, for the delete audit. */
-export async function countOwnReplies(db: D1Database, noteId: string, userId: string): Promise<number> {
-  return (await db.prepare("SELECT COUNT(*) AS n FROM video_notes WHERE parent_id = ?1 AND author_user_id = ?2").bind(noteId, userId).first<{ n: number }>())?.n ?? 0;
 }
 
 /** Resolve or reopen a root. Not author-only and not revisioned (resolving must never conflict with an author's edit). Already in the target state changes nothing and writes no audit. */
