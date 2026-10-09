@@ -67,8 +67,8 @@ beforeAll(async () => {
       .bind(manifestUnassignedProjectId, now, now, manifestArchivedProjectId, now, now),
     database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?")
       .bind(now, manifestArchivedProjectId),
-    database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?), (?, ?, 'edited', 'empty', 0, ?, ?)")
-      .bind(manifestRawCollectionId, manifestProjectId, now, now, manifestEditedCollectionId, manifestProjectId, now, now),
+    database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?), (?, ?, 'edited', 'empty', 0, ?, ?), (?, ?, 'video', 'empty', 0, ?, ?)")
+      .bind(manifestRawCollectionId, manifestProjectId, now, now, manifestEditedCollectionId, manifestProjectId, now, now, crypto.randomUUID(), manifestProjectId, now, now),
     database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)")
       .bind(manifestMembershipId, manifestProjectId, externalUserId, now),
     // Test-only flag rows (never a migration): the video review gate is open on the manifest Project with the upload part on, so the
@@ -89,6 +89,7 @@ function concreteManifestPath(path: string, projectId = manifestProjectId): stri
     .replaceAll(":subtaskId", crypto.randomUUID())
     .replaceAll(":linkId", crypto.randomUUID())
     .replaceAll(":sessionId", crypto.randomUUID())
+    .replaceAll(":reservationId", crypto.randomUUID())
     .replaceAll(":ticket", crypto.randomUUID())
     .replaceAll(":partNumber", "1")
     .replaceAll(":sessionToken", "A".repeat(43))
@@ -297,6 +298,23 @@ describe("terminal route manifest", () => {
     expect(completeResponse.status).toBe(409);
     const abortResponse = await SELF.fetch(`https://portal.test/api/projects/${manifestProjectId}/documents/${upload}/abort`, { method: "POST", headers: jsonHeaders });
     expect(abortResponse.status).toBe(204);
+
+    // Staff video upload (#741 4b): the gate is open on this Project and it has a Video Collection, so a valid reservation reaches the same
+    // operational 503 as a document presign in the production-shaped suite (no R2 S3 credentials), and every other route answers its own 404.
+    const videoReserve = await SELF.fetch(`https://portal.test/api/projects/${manifestProjectId}/video-uploads`, {
+      method: "POST", headers: jsonHeaders, body: JSON.stringify({ title: "Manifest cut", filename: "manifest.mp4", bytes: 1000, contentType: "video/mp4" }),
+    });
+    expect(videoReserve.status).toBe(baseEnv.APP_ENV === "dev" ? 201 : 503);
+    if (videoReserve.status === 201) EXTERNAL_API_RESPONSE_SCHEMAS["video-upload-reserve"].parse(await videoReserve.json());
+    else await expect(videoReserve.json()).resolves.toEqual({ error: "R2 S3 upload credentials are not configured" });
+    for (const [method, path] of [["POST", "complete"], ["POST", "abort"]] as const) {
+      const unknown = await SELF.fetch(`https://portal.test/api/projects/${manifestProjectId}/video-uploads/${crypto.randomUUID()}/${path}`, { method, headers: jsonHeaders, body: "{}" });
+      expect(unknown.status, `${method} video-uploads/:reservationId/${path}`).toBe(404);
+    }
+    const unknownPoster = await SELF.fetch(`https://portal.test/api/projects/${manifestProjectId}/video-versions/${crypto.randomUUID()}/poster`, { method: "PUT", headers: { cookie, origin: baseEnv.APP_ORIGIN }, body: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]) });
+    expect(unknownPoster.status).toBe(404);
+    const directUpload = await SELF.fetch(`https://portal.test/api/projects/${manifestProjectId}/video-uploads/${crypto.randomUUID()}/direct`, { method: "PUT", headers: { cookie, origin: baseEnv.APP_ORIGIN }, body: new Uint8Array(4) });
+    expect(directUpload.status).toBe(404);
   });
 
   it("keeps assigned-project Stage misses generic for External Editors", async () => {

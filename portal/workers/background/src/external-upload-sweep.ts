@@ -18,7 +18,7 @@ const isFinalJpeg = (object: R2Object | null, bytes: number) => Boolean(
   object && object.size === bytes && object.httpMetadata?.contentType === "image/jpeg",
 );
 
-function isMissingMultipartUploadError(error: unknown): boolean {
+export function isMissingMultipartUploadError(error: unknown): boolean {
   for (let current: unknown = error; current; current = current instanceof Error ? current.cause : undefined) {
     if (!current || typeof current !== "object") continue;
     const value = current as { status?: unknown; code?: unknown; name?: unknown; message?: unknown };

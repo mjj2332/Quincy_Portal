@@ -53,6 +53,7 @@ import { scanProjectDeadlineOccurrences } from "./project-deadline";
 import { reconcileSubtaskReminderOccurrences, scanSubtaskReminderOccurrences } from "./subtask-reminders";
 import { runEmailDigests } from "./email-digest";
 import { sweepExternalEditedUploads } from "./external-upload-sweep";
+import { sweepVideoUploads } from "./video-upload-sweep";
 import { sweepEmbeddedMedia } from "./embedded-media-sweep";
 import { sweepEmbeddedMediaOrphans } from "./embedded-media-orphan-sweep";
 import { fetchLinkPreview as readLinkPreview, type LinkPreviewFetchResult } from "./link-preview-fetch";
@@ -161,6 +162,12 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         console.log("External upload sweep", swept);
       } catch (error) {
         console.error("External upload sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      }
+      try {
+        const swept = await sweepVideoUploads(this.env, controller.scheduledTime);
+        if (swept.scanned) console.log("Video upload sweep", swept);
+      } catch (error) {
+        console.error("Video upload sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
       }
       try {
         const purged = await processExternalRoleCachePurges(this.env, controller.scheduledTime);

@@ -50,9 +50,9 @@ export const videoVersionDtoSchema = z.object({
   version: z.number().int().positive(),
   current: z.boolean(),
   uploadedBy: videoPersonSchema,
-  createdAt: z.string().min(1),
+  createdAt: z.string().datetime(),
   originalFilename: z.string(),
-  bytes: z.number().int().nonnegative(),
+  bytes: z.number().int().positive(),
   fps: z.object({ num: z.number().int().positive(), den: z.number().int().positive() }).strict(),
   frameCount: z.number().int().positive(),
   durationMs: z.number().int().positive(),
@@ -75,12 +75,13 @@ export const videoDtoSchema = z.object({
   title: z.string(),
   premium: z.boolean(),
   position: z.number().int().nonnegative(),
-  createdAt: z.string().min(1),
-  currentAssetId: z.string().uuid().nullable(),
+  createdAt: z.string().datetime(),
+  /** Non-null: a Video row exists only after a Version 1 completes. */
+  currentAssetId: z.string().uuid(),
   /** The Version being uploaded now, if any: its number, who is uploading, and when the reservation lapses. */
-  uploading: z.object({ version: z.number().int().positive(), uploader: videoPersonSchema, expiresAt: z.string().min(1) }).strict().nullable(),
+  uploading: z.object({ version: z.number().int().positive(), uploader: videoPersonSchema, expiresAt: z.string().datetime() }).strict().nullable(),
   /** Newest first. */
-  versions: z.array(videoVersionDtoSchema),
+  versions: z.array(videoVersionDtoSchema).min(1),
 }).strict();
 export type VideoDto = z.infer<typeof videoDtoSchema>;
 
