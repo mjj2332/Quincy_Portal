@@ -283,6 +283,22 @@ describe("PUT …/direct (dev only)", () => {
     expect(await database.MEDIA.head(key)).toBeNull(); expect(await reservationStatus(body.reservationId)).toBe("failed");
   });
 
+  it("leaves the bytes alone when a completion claims the reservation while they are being written", async () => {
+    const file = await GOOD_25();
+    const body = videoUploadReserveResponseSchema.parse(await (await reserve("member", { title: "Dev completing", filename: "cut.mp4", bytes: file.byteLength, contentType: "video/mp4" }, DEV_ENV)).json());
+    const key = (await reservation(body.reservationId))!.r2_key as string;
+    const racing: Env = { ...wrapMedia((target, property) => property === "put" ? async (putKey: string, ...rest: unknown[]) => {
+      const result = await (target.put as (...a: unknown[]) => Promise<unknown>).call(target, putKey, ...rest);
+      // A completion has claimed the reservation and is probing these bytes when the PUT re-checks.
+      await database.DB.prepare("UPDATE video_upload_reservations SET status = 'completing', completing_at = ? WHERE id = ?").bind(Date.now(), body.reservationId).run();
+      return result;
+    } : undefined), APP_ENV: "dev" };
+    const response = await appRequest(racing, `${base()}/${body.reservationId}/direct`, "member", "PUT", undefined, file);
+    expect(response.status).toBe(409);
+    expect(await database.MEDIA.head(key)).not.toBeNull();
+    expect(await reservationStatus(body.reservationId)).toBe("completing");
+  });
+
   it("is write-once: a second PUT to the same key answers 409 and leaves the first object's bytes alone", async () => {
     const file = await GOOD_25();
     const body = videoUploadReserveResponseSchema.parse(await (await reserve("member", { title: "Dev once", filename: "cut.mp4", bytes: file.byteLength, contentType: "video/mp4" }, DEV_ENV)).json());
