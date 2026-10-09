@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import type { Mp4Probe, Role, VideoDto, VideoReviewResponse } from "@quincy/shared";
 import { useSession } from "../../lib/auth";
 import { useOptionalProjectQueryClient, useProjectAccessTermination, useProjectVideosQuery } from "../../lib/project-data";
-import { VIDEO_CLIENT_MAX_ACTIVE, cancelVideoUpload, removeVideoUpload, retryVideoUpload, startVideoUpload, uploadIdentityGeneration, useVideoUploads } from "../../lib/video-upload-store";
+import { VIDEO_CLIENT_MAX_ACTIVE, cancelVideoUpload, removeVideoUpload, countsAgainstCap, retryVideoUpload, startVideoUpload, uploadIdentityGeneration, useVideoUploads } from "../../lib/video-upload-store";
 import { checkVideoFile } from "../../lib/video-upload";
 import { Button } from "../quincy/Button";
 import { EmbeddedUploadTray, type EmbeddedUpload } from "../quincy/EmbeddedUploadTray";
@@ -21,16 +21,16 @@ export function VideoCollectionPanel({ projectId, role, review }: { projectId: s
   const uploads = useVideoUploads(userId, projectId);
   const canUpload = review.parts.includes("upload");
   const running = uploads.filter((upload) => upload.phase === "reserving" || upload.phase === "uploading" || upload.phase === "finishing");
-  const atUploadCap = running.length >= VIDEO_CLIENT_MAX_ACTIVE;
+  const atUploadCap = uploads.filter(countsAgainstCap).length >= VIDEO_CLIENT_MAX_ACTIVE;
 
-  // A cancelled row is only waiting for the server to drop its reservation: it is gone from the screen already.
-  const rows = useMemo<EmbeddedUpload[]>(() => uploads.filter((upload) => upload.phase !== "cancelled").map((upload) => ({
+  // A cancelled row shows only while the server has not confirmed the cancel ("Cancelling…") or if it never did (the note that it will clear itself).
+  const rows = useMemo<EmbeddedUpload[]>(() => uploads.filter((upload) => upload.phase !== "cancelled" || upload.cleaning || upload.error).map((upload) => ({
     key: upload.id,
     name: upload.fileName,
     percent: upload.percent,
     kind: "video",
-    phase: upload.phase === "failed" ? "failed" : upload.phase === "done" ? "done" : upload.phase === "finishing" ? "finishing" : "uploading",
-    ...(upload.phase === "failed" ? { message: upload.error ?? "The upload failed.", noRetry: upload.retry === null, retryLabel: upload.retry === "finish" ? "Retry finishing" : "Retry" } : {}),
+    phase: upload.phase === "cancelled" ? (upload.cleaning ? "cancelling" : "failed") : upload.phase === "failed" ? "failed" : upload.phase === "done" ? "done" : upload.phase === "finishing" ? "finishing" : "uploading",
+    ...(upload.phase === "failed" || upload.phase === "cancelled" ? { message: upload.error ?? "The upload failed.", noRetry: upload.retry === null, retryLabel: upload.retry === "finish" ? "Retry finishing" : "Retry" } : {}),
     cautions: upload.cautions,
   })), [uploads]);
 

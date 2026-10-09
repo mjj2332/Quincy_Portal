@@ -5,7 +5,7 @@ import { Spinner } from "../reui/spinner";
 import { Notice } from "./Notice";
 
 /** Where an upload is: its bytes going up, its HEIC display copy being made by the server (#495), or that copy failing. */
-export type EmbeddedUploadPhase = "uploading" | "finishing" | "preparing" | "failed" | "done";
+export type EmbeddedUploadPhase = "uploading" | "finishing" | "preparing" | "failed" | "done" | "cancelling";
 /** One running upload as the tray shows it. `phase` is `uploading` when absent. */
 export type EmbeddedUpload = {
   key: number; name: string; percent: number; kind: "image" | "video"; phase?: EmbeddedUploadPhase;
@@ -63,6 +63,8 @@ export function EmbeddedUploadTray({ uploads, errors, onCancel, onRemove = onCan
         <span className="grid min-w-0 gap-[var(--space-1)] [overflow-wrap:anywhere]"><span>{entry.name} uploaded, with a warning.</span>{entry.cautions?.map((caution) => <span key={caution}>{caution}</span>)}</span>
         <Button type="button" variant="text" aria-label={`Dismiss warning for ${entry.name}`} onClick={() => onRemove(entry.key)}>Dismiss</Button>
       </Notice>;
+      // #741: Cancel pressed, the server not yet confirmed. The row stays so the person knows the reservation may still be held.
+      if (entry.phase === "cancelling") return <div key={entry.key} role="status" aria-live="polite" className={ROW_TEXT}>{`Cancelling ${entry.name}…`}</div>;
       if (entry.phase === "failed") return <Notice key={entry.key} tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-1)]">
         <span className="min-w-0 [overflow-wrap:anywhere]">{entry.message ?? `Couldn't prepare ${entry.name}`}</span>
         <span className="flex flex-wrap items-center gap-[var(--space-1)]">

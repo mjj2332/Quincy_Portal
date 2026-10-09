@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { Mp4Probe, Role } from "@quincy/shared";
 import { useSyncExternalStore } from "react";
 import { invalidateProjectSurfaces, terminatePrincipalOnUnauthorized } from "./project-data";
+import { onPrincipalTerminal } from "./principal-terminal";
 import { pushToast } from "./toast-store";
 import { VideoUpload, type VideoUploadState, type VideoUploadTarget } from "./video-upload";
 
@@ -29,6 +30,8 @@ function emit() { if (quiet) return; version += 1; for (const listener of listen
 function subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
 
 const isActive = (state: VideoUploadState) => state.phase === "reserving" || state.phase === "uploading" || state.phase === "finishing";
+/** Running, or cancelled with the server not yet confirmed to have dropped the reservation: the server still counts it. */
+export const countsAgainstCap = (state: VideoUploadState) => isActive(state) || (state.phase === "cancelled" && state.cleaning === true);
 const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
 let guarded = false;
 function updateUnloadGuard() {
@@ -55,6 +58,9 @@ export function syncUploadPrincipal(userId: string | null): void {
   // The subscribers are told after render, not during it.
   queueMicrotask(() => { version += 1; for (const listener of listeners) listener(); });
 }
+
+// The session is over (a 401 anywhere, an access loss): every upload stops now, whether or not a Films panel is mounted.
+onPrincipalTerminal(() => syncUploadPrincipal(null));
 
 export function startVideoUpload(input: {
   userId: string; queryClient: QueryClient | undefined; projectId: string; role: Role; file: File; target: VideoUploadTarget; probe: Mp4Probe; cautions: string[];
@@ -123,7 +129,7 @@ export function useVideoUploads(userId: string | null, projectId: string): reado
 
 /** Uploads this person has running in this Project (reserving, uploading, finishing). The server allows three. */
 export function activeUploadCount(userId: string, projectId: string): number {
-  return [...entries.values()].filter((entry) => entry.principalId === userId && entry.job.state.projectId === projectId && isActive(entry.job.state)).length;
+  return [...entries.values()].filter((entry) => entry.principalId === userId && entry.job.state.projectId === projectId && countsAgainstCap(entry.job.state)).length;
 }
 
 export const VIDEO_CLIENT_MAX_ACTIVE = 3;
