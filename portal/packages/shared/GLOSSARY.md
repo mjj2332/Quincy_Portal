@@ -241,6 +241,38 @@ choices at consent.
 The "via ‹client›" label on a comment, activity entry or audit record made by an AI client for the
 staff member.
 
+### Video review
+
+**Video**:
+A titled item in a Project's Video Collection. Its Versions are its cuts; reviewing it is separate
+from the photo Stages.
+_Avoid_: Asset (a Video is the group of its Versions)
+
+**Version**:
+One immutable uploaded Asset of a Video, numbered in upload order. A re-cut is a new Version, never
+an edit. Notes, approvals and Releases belong to one exact Version.
+_Avoid_: Revision, take
+
+**Note visibility**:
+Whether a note on a Video is public (a Guest reviewer can see it) or internal (studio only). A reply
+inherits its parent's visibility, and a guest's note is always public.
+_Avoid_: Private, hidden, staff-only
+
+**Review link**:
+A private link giving Guest reviewers access to one or more Videos from a single Project, with an
+expiry, an optional passcode and the Versions granted on it. Delivers released video only.
+_Avoid_: Client link, share link, delivery link (the delivery page is a different, unbuilt surface)
+
+**Guest reviewer**:
+A client with no Portal account who reviews through a Review link, identified by an email verified
+with a one-time code.
+_Avoid_: Client user, visitor, invitee
+
+**Release**:
+Staff's explicit act of making one specific approved Version downloadable on a Review link. A client's
+approval alone never releases anything.
+_Avoid_: Publish, deliver, approve (approval is the client's, informational decision)
+
 ### Notifications
 
 **Notification**:

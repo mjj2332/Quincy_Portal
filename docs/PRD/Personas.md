@@ -14,6 +14,7 @@
 | 2 | **Photographer** | Internal | Upload & annotate RAW | **RAW only** |
 | 3 | **Photo Editor / QA Officer** | Internal | Select RAW → edit → QA → publish | **RAW + Edited + Publish** |
 | 4 | **Client (Agent / Agency)** | External | Receive & download final media | **Delivery page only** |
+| 5 | **Guest reviewer** | External (no account) | Review, comment on and approve Videos via a Review link | **Review link only** |
 
 ---
 
@@ -108,6 +109,33 @@ Ray White, Sotheby's, The Agency). Not a Quincy employee.
 > the end client."* Does the **agent ever review/approve** media (a guest-reviewer step),
 > or do they **only receive** the final delivery? This decides whether we keep the
 > "guest reviewer link" concept that's in the prototype today.
+
+---
+
+## 5. Guest reviewer — external, no account  🔶 Planned (epic #741)
+
+**Who they are.** A client (typically the agent or agency in §4) acting as a reviewer of a
+cut. They hold a **Review link** and have **no Portal account**. Their identity is their email
+address, verified by a one-time code.
+
+**What they need to do**
+- Open a **Review link** covering one or more Videos from one Project; enter the **passcode** if the link has one.
+- Watch the shared Versions without verifying anything; **verify their email** (one-time code, once per link) before commenting.
+- Leave point and range comments, **draw on a frame**, reply to staff's public notes, edit or delete **their own** comments.
+- **Approve** a Version or **request changes** on it, per Video, tied to the exact Version watched.
+- Copy their own notes from one Version onto another Version of the same Video.
+- **Download** a released Version (and a "Download all" zip of released Videos) from the same link; a premium Video stays watermarked and locked until staff grant an unlock.
+
+**Explicitly restricted**
+- ❌ Never sees **internal** notes, internal replies, internal markup, or counts and markers derived from them.
+- ❌ No staff routes: a guest session is useless on staff routes, and a staff session is ignored on guest routes.
+- ❌ Only the Videos currently on the link, and only the Versions granted to it.
+- Their approval is **informational**: it never triggers delivery. A staff **Release** is the gate.
+
+**Success looks like:** they open one link on their phone, see where the whole package stands,
+and give precise feedback without an account or a second tool.
+
+> Decided (epic #741): guest review is in scope, as a Review link on Videos. See `PRD.md` §6.4, §6.7 and ADR 0021.
 
 ---
 
