@@ -56,3 +56,8 @@ export * from "./whiteboard-index";
 export * from "./whiteboard-protocol";
 export * from "./whiteboard-server-edits";
 export * from "./email-digest";
+export * from "./video-rational";
+export * from "./video-timecode";
+export * from "./video-frame-geometry";
+export * from "./video-compare";
+export * from "./video-note-paste";
