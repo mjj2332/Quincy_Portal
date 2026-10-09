@@ -11,6 +11,7 @@ import { issueTransformSource } from "../lib/transform-source";
 import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visibility";
 import { visibleProjectWhere } from "../lib/visible-project-scope";
 import { getEmbeddedMedia } from "../lib/embedded-media";
+import { videoReviewGate } from "../lib/video-review-gate";
 
 export const mediaRoutes = new Hono<AppEnv>();
 
@@ -224,6 +225,41 @@ async function readableEmbeddedMedia(c: Context<AppEnv>, mediaId: string): Promi
 
 const EMBEDDED_RESPONSE_HEADERS = { "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox", ...RENDITION_CACHE_HEADERS } as const;
 
+/**
+ * Serves one R2 object with a single byte range (#494, shared with video review #741). A browser plays a video by asking for pieces of it, and cannot seek
+ * without. `head` gives the size and ETag, then the parser decides; the body is a second, ranged read, so no behaviour depends on how R2 treats a range it
+ * cannot satisfy. A HEAD request is answered from `head` alone and never opens a body. `headers` are the fixed ones (type, security, cache); length, range and ETag are added here.
+ */
+async function serveR2Object(c: Context<AppEnv>, key: string, headers: Record<string, string>, missing: string): Promise<Response> {
+  const isHead = c.req.method === "HEAD";
+  let status = 200; let contentRange: string | undefined; let length: number | undefined; let range: { offset: number; length: number } | undefined;
+  const rangeHeader = c.req.header("range");
+  let meta: R2Object | null = null;
+  if (rangeHeader || isHead) {
+    meta = await c.env.MEDIA.head(key);
+    if (!meta) return c.json({ error: missing }, 404);
+    if (rangeHeader) {
+      const parsed = parseByteRange(rangeHeader, meta.size);
+      // If-Range comes first (RFC 9110 §13.1.5): a validator that does not match means the range is ignored, so the whole body is sent, even when the range could not have been satisfied.
+      const rangeApplies = ifRangeAllows(c.req.header("if-range"), meta.httpEtag);
+      if (parsed.kind === "unsatisfiable" && rangeApplies) return new Response(null, { status: 416, headers: { "content-range": `bytes */${meta.size}` } });
+      if (parsed.kind === "partial" && rangeApplies) {
+        range = { offset: parsed.offset, length: parsed.length };
+        status = 206; length = parsed.length; contentRange = `bytes ${parsed.offset}-${parsed.offset + parsed.length - 1}/${meta.size}`;
+      }
+    }
+  }
+  let object: R2Object | R2ObjectBody | null = meta;
+  if (!isHead) {
+    object = range ? await c.env.MEDIA.get(key, { range }) : await c.env.MEDIA.get(key);
+    if (!object) return c.json({ error: missing }, 404);
+  }
+  const responseHeaders: Record<string, string> = { ...headers, "content-length": String(length ?? object!.size), "accept-ranges": "bytes" };
+  if (contentRange) responseHeaders["content-range"] = contentRange;
+  if (object!.httpEtag) responseHeaders.etag = object!.httpEtag;
+  return new Response(isHead ? null : (object as R2ObjectBody).body, { status, headers: responseHeaders });
+}
+
 mediaRoutes.get("/embedded/:mediaId", terminalRoute("/embedded/:mediaId", async (c) => {
   const mediaId = c.req.param("mediaId");
   if (!z.string().uuid().safeParse(mediaId).success) return c.json({ error: "Invalid media id" }, 400);
@@ -237,34 +273,10 @@ mediaRoutes.get("/embedded/:mediaId", terminalRoute("/embedded/:mediaId", async 
     if (row.renditionStatus === "failed" || !row.displayKey || !row.displayContentType) return c.json({ error: "This image could not be prepared", code: "rendition_failed" }, 404);
     objectKey = row.displayKey; storedType = row.displayContentType;
   }
-  // A single byte range is served (#494): a browser plays a video by asking for pieces of it, and cannot seek without. `head` gives
-  // the size and ETag, then the parser decides; the body is a second, ranged read, so no behaviour depends on how R2 treats a range it cannot satisfy.
-  let object: R2ObjectBody | null; let status = 200; let contentRange: string | undefined; let length: number | undefined;
-  const rangeHeader = c.req.header("range");
-  if (rangeHeader) {
-    const meta = await c.env.MEDIA.head(objectKey);
-    if (!meta) return c.json({ error: "Media object not found" }, 404);
-    const parsed = parseByteRange(rangeHeader, meta.size);
-    // If-Range comes first (RFC 9110 §13.1.5): a validator that does not match means the range is ignored, so the whole body is sent, even when the range could not have been satisfied.
-    const rangeApplies = ifRangeAllows(c.req.header("if-range"), meta.httpEtag);
-    if (parsed.kind === "unsatisfiable" && rangeApplies) return new Response(null, { status: 416, headers: { "content-range": `bytes */${meta.size}` } });
-    if (parsed.kind === "partial" && rangeApplies) {
-      object = await c.env.MEDIA.get(objectKey, { range: { offset: parsed.offset, length: parsed.length } });
-      status = 206; length = parsed.length; contentRange = `bytes ${parsed.offset}-${parsed.offset + parsed.length - 1}/${meta.size}`;
-    } else object = await c.env.MEDIA.get(objectKey);
-  } else object = await c.env.MEDIA.get(objectKey);
-  if (!object) return c.json({ error: "Media object not found" }, 404);
-  const headers: Record<string, string> = {
-    "content-type": isEmbeddedMediaContentType(storedType) ? storedType : "application/octet-stream",
-    "content-length": String(length ?? object.size),
-    "accept-ranges": "bytes",
-    ...EMBEDDED_RESPONSE_HEADERS,
-  };
-  if (contentRange) headers["content-range"] = contentRange;
-  if (object.httpEtag) headers.etag = object.httpEtag;
   // The viewer's fallback when a video cannot play in its browser (#494): the file itself, named by its type.
-  if (c.req.query("download") === "1" && row.kind === "video") headers["content-disposition"] = `attachment; filename="video.${row.contentType === "video/quicktime" ? "mov" : "mp4"}"`;
-  return new Response(object.body, { status, headers });
+  const extra: Record<string, string> = {};
+  if (c.req.query("download") === "1" && row.kind === "video") extra["content-disposition"] = `attachment; filename="video.${row.contentType === "video/quicktime" ? "mov" : "mp4"}"`;
+  return serveR2Object(c, objectKey, { "content-type": isEmbeddedMediaContentType(storedType) ? storedType : "application/octet-stream", ...EMBEDDED_RESPONSE_HEADERS, ...extra }, "Media object not found");
 }));
 
 /** A video's poster frame (#494), under the video's own access rules. */
@@ -276,6 +288,45 @@ mediaRoutes.get("/embedded/:mediaId/poster", terminalRoute("/embedded/:mediaId/p
   const object = await c.env.MEDIA.get(row.posterKey);
   if (!object) return c.json({ error: "Poster not found" }, 404);
   const headers: Record<string, string> = { "content-type": "image/jpeg", "content-length": String(object.size), ...EMBEDDED_RESPONSE_HEADERS };
+  if (object.httpEtag) headers.etag = object.httpEtag;
+  return new Response(object.body, { headers });
+}));
+
+/**
+ * A staff video Version (#741). One read finds the Version and its Project; then, in this order: visibility (an External outside the Project
+ * 404, staff 403), the video review gate (closed 404 — the next request after the operator switches it off), the `viewVideo` capability (403).
+ * Any Version streams, a superseded one included, because compare needs it. A non-video or unknown id is 404, so a photo id cannot be probed through here. Inline, no `.use()`: router-wide middleware leaks across sibling mounts (docs/lessons.md).
+ */
+async function readableVideoVersion(c: Context<AppEnv>, assetId: string): Promise<{ r2Key: string; posterKey: string | null } | Response> {
+  if (!z.string().uuid().safeParse(assetId).success) return c.json({ error: "Invalid asset id" }, 400);
+  const row = await c.env.DB.prepare("SELECT a.r2_key AS r2Key, m.poster_key AS posterKey, v.project_id AS projectId FROM assets a JOIN video_version_meta m ON m.asset_id = a.id JOIN videos v ON v.id = m.video_id WHERE a.id = ?1 AND a.kind = 'video'")
+    .bind(assetId).first<{ r2Key: string; posterKey: string | null; projectId: string }>();
+  if (!row) return c.json({ error: "Video not found" }, 404);
+  const user = c.get("user");
+  if (!await hasProjectAccess(c, row.projectId)) return user.role === "external_editor" ? c.json({ error: "Video not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  if (!await videoReviewGate(c.env.DB, row.projectId, null)) return c.json({ error: "Video not found" }, 404);
+  if (!roleHasCapability(user.role, "viewVideo")) return c.json({ error: "Forbidden" }, 403);
+  return row;
+}
+
+/** Playback never offers a download: no content-disposition, whatever the query says, and the response is not cacheable (story 25). */
+const VIDEO_STREAM_HEADERS = {
+  "content-type": "video/mp4", "cache-control": "private, no-store", "x-content-type-options": "nosniff",
+  "content-security-policy": "default-src 'none'; sandbox", "cross-origin-resource-policy": "same-origin",
+} as const;
+
+mediaRoutes.get("/video/:assetId", terminalRoute("/video/:assetId", async (c) => {
+  const row = await readableVideoVersion(c, c.req.param("assetId")); if (row instanceof Response) return row;
+  return serveR2Object(c, row.r2Key, { ...VIDEO_STREAM_HEADERS }, "Video object not found");
+}));
+
+/** A Version's poster frame, under the same access rules. */
+mediaRoutes.get("/video/:assetId/poster", terminalRoute("/video/:assetId/poster", async (c) => {
+  const row = await readableVideoVersion(c, c.req.param("assetId")); if (row instanceof Response) return row;
+  if (!row.posterKey) return c.json({ error: "Poster not found" }, 404);
+  const object = await c.env.MEDIA.get(row.posterKey);
+  if (!object) return c.json({ error: "Poster not found" }, 404);
+  const headers: Record<string, string> = { "content-type": "image/jpeg", "content-length": String(object.size), ...EMBEDDED_RESPONSE_HEADERS, "cross-origin-resource-policy": "same-origin" };
   if (object.httpEtag) headers.etag = object.httpEtag;
   return new Response(object.body, { headers });
 }));

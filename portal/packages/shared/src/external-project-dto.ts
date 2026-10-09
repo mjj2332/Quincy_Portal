@@ -9,7 +9,7 @@ import { externalCalendarRangeSchema } from "./production-calendar";
 import { projectDefaultRangeSchema } from "./default-subtask-range";
 import { subtaskRemindersDtoSchema } from "./subtask-reminders";
 import { externalProductionGanttSchema } from "./production-gantt";
-import { videoReviewResponseSchema } from "./video-review";
+import { videoListResponseSchema, videoReviewResponseSchema } from "./video-review";
 import { externalProjectActivityFeedResponseSchema } from "./project-activity-feed";
 import { linkPreviewResponseSchema } from "./link-preview";
 export { externalCalendarRangeSchema } from "./production-calendar";
@@ -262,7 +262,7 @@ export type ExternalApiSurface =
   | "annotation-mutation" | "collection-links" | "ingest-status" | "stages" | "collaboration" | "checklist" | "comment-list"
   | "comment-mutation" | "comment-read-state" | "mentionable" | "notifications" | "notification-mutation"
   | "review-mutation" | "external-upload" | "external-upload-complete" | "access-snapshot" | "activity" | "calendar" | "gantt" | "export" | "subtask-assignee-options"
-  | "embedded-media-presign" | "embedded-media-complete" | "embedded-media-rendition" | "embedded-media-settings" | "link-preview" | "video-review";
+  | "embedded-media-presign" | "embedded-media-complete" | "embedded-media-rendition" | "embedded-media-settings" | "link-preview" | "video-review" | "video-list";
 
 export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, z.ZodTypeAny>> = {
   me: externalMeResponseSchema,
@@ -298,6 +298,7 @@ export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, 
   "embedded-media-settings": externalEmbeddedMediaSettingsSchema,
   "link-preview": linkPreviewResponseSchema,
   "video-review": videoReviewResponseSchema,
+  "video-list": videoListResponseSchema,
 };
 
 export function externalRoleLabel(): string {

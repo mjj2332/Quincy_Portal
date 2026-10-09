@@ -201,6 +201,10 @@ describe("terminal route manifest", () => {
           return parsed;
         },
       },
+      "video-list": {
+        path: `/api/projects/${manifestProjectId}/videos`,
+        parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS["video-list"].parse(body),
+      },
     } as const;
     // Each surface's honest scope: a project-child route resolves an assigned project;
     // /api/stages is a principal-global configuration read with no project in the path.
@@ -213,6 +217,7 @@ describe("terminal route manifest", () => {
       stage: "assigned-project",
       activity: "assigned-project",
       "video-review": "assigned-project",
+      "video-list": "assigned-project",
     };
     const declared = PROJECT_SECURITY_ROUTE_CLASSIFICATION.filter((route) => route.externalSurface);
     expect(new Set(declared.map((route) => route.externalSurface))).toEqual(new Set(Object.keys(probes)));
@@ -232,7 +237,7 @@ describe("terminal route manifest", () => {
         const headers = new Headers(init.headers); headers.set("content-type", "application/json"); headers.set("origin", baseEnv.APP_ORIGIN);
         init.headers = headers; init.body = body;
       }
-      const probePath = route.externalSurface === "stage" || route.externalSurface === "activity" || route.externalSurface === "video-review" ? concreteManifestPath(route.path) : probe.path;
+      const probePath = route.externalSurface === "stage" || route.externalSurface === "activity" || route.externalSurface === "video-review" || route.externalSurface === "video-list" ? concreteManifestPath(route.path) : probe.path;
       const response = await SELF.fetch(`https://portal.test${probePath}`, init);
       expect(response.status, `${route.method} ${route.path}`).toBeGreaterThanOrEqual(200);
       expect(response.status, `${route.method} ${route.path}`).toBeLessThan(300);

@@ -37,3 +37,53 @@ export const videoObjectKey = (projectId: string, videoId: string, assetId: stri
 /** A poster frame; the nonce makes every write a fresh key. */
 export const videoPosterKey = (projectId: string, videoId: string, assetId: string, nonce: string): string => `projects/${projectId}/video/${videoId}/${assetId}/poster-${nonce}.jpg`;
 export const VIDEO_KEY_PATTERN = /^projects\/[^/]+\/video\//;
+
+/**
+ * The people on a Video DTO. The same shape as `externalPersonSchema`; declared here because
+ * external-project-dto imports this file for its response-schema map and a back-import would be circular.
+ */
+const videoPersonSchema = z.object({ id: z.string().uuid(), name: z.string(), roleLabel: z.string(), isExternal: z.boolean(), active: z.boolean() }).strict();
+
+/** One Version of a Video as the list returns it (#741). Never carries an object key: playback addresses a Version by Asset id alone. */
+export const videoVersionDtoSchema = z.object({
+  assetId: z.string().uuid(),
+  version: z.number().int().positive(),
+  current: z.boolean(),
+  uploadedBy: videoPersonSchema,
+  createdAt: z.string().min(1),
+  originalFilename: z.string(),
+  bytes: z.number().int().nonnegative(),
+  fps: z.object({ num: z.number().int().positive(), den: z.number().int().positive() }).strict(),
+  frameCount: z.number().int().positive(),
+  durationMs: z.number().int().positive(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  codec: z.enum(["avc1", "avc3"]),
+  startTimecodeFrames: z.number().int().nonnegative().nullable(),
+  tcNominalFps: z.number().int().positive(),
+  tcDropFrame: z.boolean(),
+  fastStart: z.boolean(),
+  hasAudio: z.boolean(),
+  hasPoster: z.boolean(),
+  streamUrl: z.string().startsWith("/media/video/"),
+  posterUrl: z.string().startsWith("/media/video/").nullable(),
+}).strict();
+export type VideoVersionDto = z.infer<typeof videoVersionDtoSchema>;
+
+export const videoDtoSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string(),
+  premium: z.boolean(),
+  position: z.number().int().nonnegative(),
+  createdAt: z.string().min(1),
+  currentAssetId: z.string().uuid().nullable(),
+  /** The Version being uploaded now, if any: its number, who is uploading, and when the reservation lapses. */
+  uploading: z.object({ version: z.number().int().positive(), uploader: videoPersonSchema, expiresAt: z.string().min(1) }).strict().nullable(),
+  /** Newest first. */
+  versions: z.array(videoVersionDtoSchema),
+}).strict();
+export type VideoDto = z.infer<typeof videoDtoSchema>;
+
+/** `GET /api/projects/:id/videos`. */
+export const videoListResponseSchema = z.object({ videos: z.array(videoDtoSchema) }).strict();
+export type VideoListResponse = z.infer<typeof videoListResponseSchema>;
