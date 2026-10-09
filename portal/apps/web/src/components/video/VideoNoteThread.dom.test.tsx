@@ -253,6 +253,32 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(document.activeElement).toBe(replyMenu);
   });
 
+  it("Sol r13: switching the open edit from a reply straight to the root, then cancelling, returns focus to the root's menu", async () => {
+    const root0 = thread({});
+    const mine = reply(root0);
+    await render({ ...root0, replies: [mine] } as VideoNoteThreadDto);
+    const rootMenu = tid("video-note-header-row")!.querySelector<HTMLElement>('[data-testid="video-note-actions"]')!;
+    await act(async () => { store.openEdit("asset", mine, root0.id); });
+    await act(async () => { store.openEdit("asset", root0, root0.id); }); // no cancel in between
+    (document.activeElement as HTMLElement | null)?.blur();
+    await click(tid("video-note-edit-cancel")!);
+    await flush();
+    expect(document.activeElement).toBe(rootMenu);
+  });
+
+  it("Sol r12: Escape on a clean edit form of a reply closes it and returns focus to that reply's own menu", async () => {
+    const root0 = thread({});
+    const mine = reply(root0);
+    await render({ ...root0, replies: [mine] } as VideoNoteThreadDto);
+    const replyMenu = tids("video-note-reply")[0]!.querySelector<HTMLElement>('[data-testid="video-note-actions"]')!;
+    await act(async () => { store.openEdit("asset", mine, root0.id); });
+    (document.activeElement as HTMLElement | null)?.blur();
+    await act(async () => { expect(store.escape("asset", { focusInForm: true })).toEqual({ consumed: true, focus: "opener" }); });
+    await flush();
+    expect(host.querySelector('[data-notes-form="edit"]')).toBeNull();
+    expect(document.activeElement).toBe(replyMenu);
+  });
+
   it("17: Delete hands the note and its thread to the panel (it owns the confirm); the thread deletes nothing itself", async () => {
     const root0 = thread({ author: { kind: "staff", person: mia } });
     const mineReply = reply(root0);

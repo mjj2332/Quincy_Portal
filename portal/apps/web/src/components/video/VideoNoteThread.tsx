@@ -100,7 +100,7 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     const active = document.activeElement;
     if (previous === null || kind !== null || (active && active !== document.body && !articleRef.current?.contains(active))) return;
     (previous === "reply" ? q(articleRef.current, '[data-testid="video-note-reply-button"]') : (editedMenu(editedId) ?? q(articleRef.current, '[data-testid="video-note-anchor-button"]')))?.focus();
-  }, [form?.kind]);
+  }, [form?.kind, form?.noteId]);
   /** The "⋯" of the note that was edited (a reply's own, not the root's), keyed by note id. */
   function editedMenu(noteId: string | null): HTMLElement | null {
     if (noteId === null || noteId === thread.id) return q(articleRef.current, '[data-testid="video-note-header-row"] [data-testid="video-note-actions"]');
