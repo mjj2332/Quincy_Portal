@@ -81,8 +81,8 @@ export function writeFailure(error: unknown, fallback: string, noteId = ""): { p
   return { problem: { text: messageOf(error, fallback) } };
 }
 
-/** Whether leaving the form would lose something: an edit's text or frames changed, a reply or composer with text. */
-const isDirty = (slot: Slot) => (slot.open ? (slot.open.kind === "reply" ? slot.open.text !== "" : slot.open.text !== slot.open.base.body || slot.marks.touched) : slot.composer.body !== "");
+/** Whether leaving the form would lose something: an edit's text or frames changed, a reply or composer with text, or a composer with marks set. */
+const isDirty = (slot: Slot) => (slot.open ? (slot.open.kind === "reply" ? slot.open.text !== "" : slot.open.text !== slot.open.base.body || slot.marks.touched) : slot.composer.body !== "" || slot.marks.touched);
 
 export function createNoteFormStore(key: string) {
   const slots = new Map<string, Slot>();

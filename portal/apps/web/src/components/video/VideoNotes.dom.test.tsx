@@ -587,6 +587,19 @@ describe("Escape order (test 24, decision 2)", () => {
     expect(viewerOpen()).toBe(false);
   });
 
+  it("2. marks set with an empty composer keep the viewer open on the first Escape; the second closes it", async () => {
+    await openFilm({}, 12);
+    await dispatchKey(popup(), "i");
+    expect(tid("video-pending-band")).not.toBeNull();
+    await dispatchKey(popup(), "Escape");
+    await settle(200);
+    expect(viewerOpen()).toBe(true);
+    expect(tid("video-pending-band")).not.toBeNull();
+    await dispatchKey(popup(), "Escape");
+    await settle(200);
+    expect(viewerOpen()).toBe(false);
+  });
+
   it("2. a focused empty composer is spent by the first Escape too", async () => {
     await openFilm();
     composerText().focus();

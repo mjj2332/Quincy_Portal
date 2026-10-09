@@ -453,6 +453,14 @@ describe("Escape (#741 5b form store)", () => {
     expect(store.escape(V2, { focusInForm: false }).consumed).toBe(true);
   });
 
+  it("Sol r9: marks alone make the composer dirty: the first Escape is held, Clear marks makes it clean again", () => {
+    store.mark(V2, "in", 3, {} as NoteClock);
+    expect(store.escape(V2, { focusInForm: false })).toEqual({ consumed: true, focus: "textarea" });
+    expect(store.escape(V2, { focusInForm: false }).consumed).toBe(false);
+    store.clearMarks(V2);
+    expect(store.escape(V2, { focusInForm: false })).toEqual({ consumed: false, focus: null });
+  });
+
   it("a clean composer holds Escape only while focus is in it", () => {
     expect(store.escape(V2, { focusInForm: true })).toEqual({ consumed: true, focus: "dialog" });
     expect(store.escape(V2, { focusInForm: false })).toEqual({ consumed: false, focus: null });
