@@ -18,9 +18,38 @@ export function multipartSlices(bytes: number, partBytes: number) {
  * Byte-level progress and cancel (#494), opt-in: a caller that passes a control sends each part over XHR (fetch cannot report upload
  * bytes) and can stop it. A caller that passes none keeps the fetch path unchanged.
  */
-export type UploadControl = { signal?: AbortSignal; onBytes?: (loaded: number, total: number) => void };
+export type UploadControl = {
+  signal?: AbortSignal;
+  onBytes?: (loaded: number, total: number) => void;
+  /** Bounded per-part retry (#741), opt-in: a part that fails with status 0, 408, 429 or 5xx is sent again to the same URL, `attempts` more times. Never on 403. */
+  retry?: { attempts: number; /** Waits before each retry; defaults to 1 s / 3 s / 9 s. */ delaysMs?: readonly number[] };
+  /** Parts already stored (a manual retry resumes): they are skipped and their ETags returned as they were. */
+  doneParts?: readonly { partNumber: number; etag: string }[];
+  /** Called once per part as it is stored. */
+  onPart?: (part: { partNumber: number; etag: string }) => void;
+};
 
 const abortError = () => Object.assign(new Error("Upload cancelled"), { name: "AbortError" });
+
+/** A multipart part that could not be stored. `retryable` says whether sending the same part again can help (false for an expired link). */
+export class PartUploadError extends Error {
+  constructor(message: string, readonly partNumber: number, readonly status: number, readonly retryable: boolean) {
+    super(message);
+    this.name = "PartUploadError";
+  }
+}
+
+export const PART_RETRY_DELAYS_MS: readonly number[] = [1_000, 3_000, 9_000];
+const retryableStatus = (status: number) => status === 0 || status === 408 || status === 429 || status >= 500;
+
+function sleepUnlessAborted(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(abortError()); return; }
+    const onAbort = () => { clearTimeout(timer); reject(abortError()); };
+    const timer = setTimeout(() => { signal?.removeEventListener("abort", onAbort); resolve(); }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 /** One PUT over XHR. Resolves with the response status and ETag; rejects as an AbortError when the signal fires. */
 function putOverXhr(url: string, body: Blob, options: { headers?: Record<string, string>; credentials?: boolean; signal?: AbortSignal; onLoaded?: (loaded: number) => void }): Promise<{ status: number; etag: string | null }> {
@@ -81,13 +110,27 @@ async function uploadWithControl(file: File, presign: MultipartPresign, devDirec
   const slices = multipartSlices(file.size, presign.partBytes);
   if (slices.length !== presign.partUrls.length) throw new Error("Upload service returned an invalid multipart part count.");
   let finished = 0;
+  const done = new Map((control.doneParts ?? []).map((part) => [part.partNumber, part]));
   for (let index = 0; index < slices.length; index += 1) {
     const slice = slices[index]!;
+    const stored = done.get(index + 1);
+    if (stored) { parts.push(stored); finished += slice.end - slice.start; report(finished); continue; }
     if (control.signal?.aborted) throw abortError();
-    const response = await putOverXhr(presign.partUrls[index]!, file.slice(slice.start, slice.end), { signal: control.signal, onLoaded: (loaded) => report(finished + loaded) });
-    if (response.status < 200 || response.status >= 300) throw new Error(`Part ${index + 1} could not be uploaded.`);
+    const attempts = control.retry?.attempts ?? 0;
+    const delays = control.retry?.delaysMs ?? PART_RETRY_DELAYS_MS;
+    let response: { status: number; etag: string | null };
+    for (let attempt = 0; ; attempt += 1) {
+      response = await putOverXhr(presign.partUrls[index]!, file.slice(slice.start, slice.end), { signal: control.signal, onLoaded: (loaded) => report(finished + loaded) });
+      if (response.status >= 200 && response.status < 300) break;
+      report(finished);
+      if (control.retry && response.status === 403) throw new PartUploadError("This upload took too long and its upload link expired. Start it again.", index + 1, 403, false);
+      if (!control.retry || !retryableStatus(response.status) || attempt >= attempts) throw new PartUploadError(`Part ${index + 1} could not be uploaded.`, index + 1, response.status, Boolean(control.retry) && retryableStatus(response.status));
+      await sleepUnlessAborted(delays[Math.min(attempt, delays.length - 1)] ?? 0, control.signal);
+    }
     if (!response.etag) throw new Error(`Part ${index + 1} returned no ETag.`);
-    parts.push({ partNumber: index + 1, etag: response.etag });
+    const part = { partNumber: index + 1, etag: response.etag };
+    parts.push(part);
+    control.onPart?.(part);
     finished += slice.end - slice.start;
     report(finished);
   }

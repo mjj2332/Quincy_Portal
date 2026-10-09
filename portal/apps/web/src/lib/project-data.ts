@@ -4,7 +4,7 @@ import { useCallback, useContext, useEffect, useMemo, useState, useSyncExternalS
 import { ApiError, apiGet } from "./api";
 import { useNow } from "./use-now";
 import { externalApiGet, externalProjectDetailToWorkspace } from "./external-api-response";
-import type { ExternalProjectDetailDto } from "@quincy/shared";
+import { videoListResponseSchema, videoReviewResponseSchema, type ExternalProjectDetailDto, type VideoDto, type VideoReviewResponse } from "@quincy/shared";
 import { createActiveProjectDetailsInvalidatedMessage, createDashboardBoardInvalidatedMessage, createProductionCalendarInvalidatedMessage, createProductionGanttInvalidatedMessage, getProjectQueryRuntime, projectResourceKey, useProjectQueryRuntime, type ProjectDataResource, type ProjectQueryRuntime } from "./project-query-sync";
 import type { ReviewPatch, WorkspaceAsset, Review } from "../components/PhotoGrid";
 import type { ProjectStageKey } from "./stages";
@@ -44,6 +44,10 @@ export const projectDataKeys = {
   commentReadMarker: (projectId: string) => ["project-data", projectId, "comments", "read-marker"] as const,
   subtaskAssigneeOptions: (projectId: string) => ["project-data", projectId, "subtask-assignee-options"] as const,
   collaborationSummary: (projectId: string) => ["project-data", projectId, "collaboration-summary"] as const,
+  /** Which parts of video review this caller has on the Project (#741). */
+  videoReview: (projectId: string) => ["project-data", projectId, "video-review"] as const,
+  /** The Project's Videos with every Version (#741). */
+  videos: (projectId: string) => ["project-data", projectId, "videos"] as const,
 };
 
 export type AccessErrorScope = "principal" | "project" | "collection" | "collaboration";
@@ -107,6 +111,44 @@ export function projectAssetsQueryOptions(projectId: string, collectionKind: Col
       return response.assets;
     },
   } as const;
+}
+
+function videoReviewPath(projectId: string) { return `${detailPath(projectId)}/video-review`; }
+function videosPath(projectId: string) { return `${detailPath(projectId)}/videos`; }
+
+/** Which video-review parts this caller has on the Project (#741). A closed gate is 200 `{ open: false }`; a 403/404 reads as closed too (the Video tab then stays as it was). */
+export function useVideoReviewQuery(projectId: string, enabled: boolean, role: Role = "admin"): UseQueryResult<VideoReviewResponse, Error> {
+  return useQuery<VideoReviewResponse, Error>({
+    queryKey: projectDataKeys.videoReview(projectId), enabled, staleTime: 15_000, retry: projectQueryRetry,
+    queryFn: async ({ signal, client }: QueryFunctionContext) => {
+      try {
+        const response = role === "external_editor"
+          ? await externalApiGet("video-review", videoReviewPath(projectId), signal) as VideoReviewResponse
+          : videoReviewResponseSchema.parse(await apiGet<unknown>(videoReviewPath(projectId), { signal }));
+        if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
+        return response;
+      } catch (error) {
+        if (error instanceof ApiError && (error.status === 403 || error.status === 404)) return { open: false, parts: [] } satisfies VideoReviewResponse;
+        throw error;
+      }
+    },
+  });
+}
+
+/** The Project's Videos, newest Version first (#741). Polls every 15 s only while someone else's Version is uploading, so it appears when finished. */
+export function useProjectVideosQuery(projectId: string, enabled: boolean, role: Role = "admin", currentUserId?: string): UseQueryResult<VideoDto[], Error> {
+  return useQuery<VideoDto[], Error>({
+    queryKey: projectDataKeys.videos(projectId), enabled, staleTime: 15_000, retry: projectQueryRetry,
+    queryFn: async ({ signal, client }: QueryFunctionContext) => {
+      const response = role === "external_editor"
+        ? await externalApiGet("video-list", videosPath(projectId), signal) as { videos: VideoDto[] }
+        : videoListResponseSchema.parse(await apiGet<unknown>(videosPath(projectId), { signal }));
+      if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
+      return response.videos;
+    },
+    refetchInterval: (query) => (query.state.data?.some((video) => video.uploading && video.uploading.uploader.id !== currentUserId) ? 15_000 : false),
+    refetchIntervalInBackground: false,
+  });
 }
 
 export function projectCollaborationSummaryQueryOptions(projectId: string) {
