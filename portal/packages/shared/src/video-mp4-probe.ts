@@ -218,8 +218,10 @@ async function run(
 
   const mvhd = top.find((b) => b.type === "mvhd");
   if (!mvhd) throw reject("moov_missing", "mvhd");
-  need(mvhd, 20);
-  const movieTimescale = dv.getUint32(mvhd.start + (dv.getUint8(mvhd.start) === 1 ? 20 : 12));
+  need(mvhd, 4);
+  const mvhdV1 = dv.getUint8(mvhd.start) === 1;
+  need(mvhd, mvhdV1 ? 112 : 100);
+  const movieTimescale = dv.getUint32(mvhd.start + (mvhdV1 ? 20 : 12));
 
   const tracks: TrackLight[] = top
     .filter((b) => b.type === "trak")
@@ -230,7 +232,7 @@ async function run(
       if (!tkhd || !mdia) throw reject("moov_missing", "trak without tkhd/mdia");
       need(tkhd, 4);
       const v1 = dv.getUint8(tkhd.start) === 1;
-      need(tkhd, v1 ? 92 : 84);
+      need(tkhd, v1 ? 96 : 84);
       const enabled = (dv.getUint8(tkhd.start + 3) & 1) === 1;
       const id = dv.getUint32(tkhd.start + (v1 ? 20 : 12));
       const mkids = boxes(buf, dv, mdia.start, mdia.end, 3);
@@ -249,6 +251,7 @@ async function run(
   const media = parseMedia(buf, dv, video);
 
   // Codec
+  // The description the samples actually use (via stsc), not merely the first stsd entry.
   if (media.entryType === "hvc1" || media.entryType === "hev1" || media.entryType === "dvh1" || media.entryType === "dvhe") {
     throw reject("hevc");
   }
@@ -391,7 +394,7 @@ function stblOf(buf: Uint8Array, dv: DataView, t: TrackLight): { mdhd: MBox; stb
 function mdhdTimescale(dv: DataView, mdhd: MBox): number {
   need(mdhd, 4);
   const v1 = dv.getUint8(mdhd.start) === 1;
-  need(mdhd, v1 ? 24 : 16);
+  need(mdhd, v1 ? 36 : 24);
   const ts = dv.getUint32(mdhd.start + (v1 ? 20 : 12));
   if (ts === 0) throw reject("box_size_invalid", "mdhd timescale 0");
   return ts;
@@ -403,10 +406,36 @@ function parseMedia(buf: Uint8Array, dv: DataView, t: TrackLight): Media {
 
   const stsd = stbl.find((b) => b.type === "stsd");
   if (!stsd) throw reject("moov_missing", "stsd");
-  need(stsd, 16);
-  const entryStart = stsd.start + 8;
-  const entrySize = dv.getUint32(entryStart);
-  if (entrySize < 8 || entryStart + entrySize > stsd.end) throw reject("box_size_invalid", "sample entry");
+  need(stsd, 8);
+  const descCount = dv.getUint32(stsd.start + 4);
+  if (descCount > Math.floor((stsd.end - stsd.start - 8) / 8)) throw reject("box_size_invalid", "stsd entries");
+  const descs: Array<{ start: number; size: number }> = [];
+  for (let p = stsd.start + 8, i = 0; i < descCount; i++) {
+    if (stsd.end - p < 8) throw reject("box_size_invalid", "sample entry");
+    const size = dv.getUint32(p);
+    if (size < 8 || size > stsd.end - p) throw reject("box_size_invalid", "sample entry");
+    descs.push({ start: p, size });
+    p += size;
+  }
+
+  // Which descriptions do the samples reference? Each stsc entry names one (1-based).
+  const stscBox = stbl.find((b) => b.type === "stsc");
+  if (!stscBox) throw reject("moov_missing", "stsc");
+  need(stscBox, 8);
+  const stscCount = dv.getUint32(stscBox.start + 4);
+  if (stscCount > Math.floor((stscBox.end - stscBox.start - 8) / 12)) throw reject("box_size_invalid", "stsc entries");
+  const referenced = new Set<number>();
+  for (let i = 0; i < stscCount; i++) {
+    const idx = dv.getUint32(stscBox.start + 8 + i * 12 + 8);
+    if (idx < 1 || idx > descs.length) throw reject("box_size_invalid", `stsc description index ${idx}`);
+    referenced.add(idx);
+  }
+  if (referenced.size === 0) referenced.add(1);
+  if (referenced.size > 1) throw reject("unsupported_codec", "multiple sample descriptions");
+  const desc = descs[[...referenced][0]! - 1];
+  if (!desc) throw reject("box_size_invalid", "no sample description");
+  const entryStart = desc.start;
+  const entrySize = desc.size;
   const entryType = fourcc(buf, entryStart + 4);
   let avcC: Uint8Array | null = null;
   let sw = 0;
@@ -471,7 +500,7 @@ function parseTmcd(
   if (stsc) {
     need(stsc, 8);
     if (dv.getUint32(stsc.start + 4) >= 1) {
-      need(stsc, 12);
+      need(stsc, 20);
       firstChunk = dv.getUint32(stsc.start + 8);
     }
   }

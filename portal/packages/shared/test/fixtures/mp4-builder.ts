@@ -101,6 +101,14 @@ export type TrackSpec = {
   tref?: number[];
   tmcd?: { flags: number; timescale: number; frameDuration: number; numberOfFrames: number; startFrame: number };
   co64?: boolean;
+  /** Extra stsd entries after the main one (vide only), e.g. a second description. */
+  stsdExtra?: Array<{ codec: string; avcC?: { profile: number; compat: number; level: number } | false }>;
+  /** stsc sample_description_index (default 1). */
+  stscDesc?: number;
+  /** Whole-box overrides, for malformed-box tests. */
+  tkhdRaw?: Uint8Array;
+  mdhdRaw?: Uint8Array;
+  sttsRaw?: Uint8Array;
 };
 
 export type Mp4Spec = {
@@ -110,6 +118,8 @@ export type Mp4Spec = {
   mvex?: boolean;
   /** Extra declared bytes inside moov (a virtual `free` box), to make moov large. */
   moovPad?: number;
+  /** Whole-box mvhd override, for malformed-box tests. */
+  mvhdRaw?: Uint8Array;
   mdat?: { payload?: number; use64?: boolean; sizeZero?: boolean; tmcdAtEnd?: boolean };
   /** Raw top-level boxes placed after ftyp (before moov/mdat). */
   before?: Uint8Array[];
@@ -131,7 +141,7 @@ function trak(t: TrackSpec, i: number, chunkOffset: number): Uint8Array {
   const id = t.id ?? i + 1;
   const timescale = t.timescale ?? (t.handler === "soun" ? 48000 : 30000);
   const matrix = t.matrix ?? IDENTITY;
-  const tkhd = fullBox(
+  const tkhd = t.tkhdRaw ?? fullBox(
     "tkhd",
     0,
     t.enabled === false ? 0 : 3,
@@ -161,17 +171,20 @@ function trak(t: TrackSpec, i: number, chunkOffset: number): Uint8Array {
       )
     : new Uint8Array(0);
   const tref = t.tref ? box("tref", box("tmcd", ...t.tref.map((x) => u32(x)))) : new Uint8Array(0);
-  const mdhd = fullBox("mdhd", 0, 0, u32(0), u32(0), u32(timescale), u32(0), u16(0x55c4), u16(0));
+  const mdhd = t.mdhdRaw ?? fullBox("mdhd", 0, 0, u32(0), u32(0), u32(timescale), u32(0), u16(0x55c4), u16(0));
   const hdlr = fullBox("hdlr", 0, 0, u32(0), enc.encode(t.handler), zeros(12), u8(0));
-  let entry: Uint8Array;
-  if (t.handler === "vide") {
-    const a = t.avcC === undefined ? { profile: 0x64, compat: 0, level: 0x1f } : t.avcC;
-    entry = box(
-      t.codec ?? "avc1",
+  const vEntry = (codec: string, a: { profile: number; compat: number; level: number } | false) =>
+    box(
+      codec,
       zeros(6), u16(1), zeros(16), u16(t.width ?? 1920), u16(t.height ?? 1080),
       u32(0x480000), u32(0x480000), u32(0), u16(1), zeros(32), u16(0x18), u16(0xffff),
       a ? box("avcC", u8(1, a.profile, a.compat, a.level, 0xff, 0xe0, 0)) : new Uint8Array(0),
     );
+  let entry: Uint8Array;
+  let extraEntries: Uint8Array[] = [];
+  if (t.handler === "vide") {
+    entry = vEntry(t.codec ?? "avc1", t.avcC === undefined ? { profile: 0x64, compat: 0, level: 0x1f } : t.avcC);
+    extraEntries = (t.stsdExtra ?? []).map((x) => vEntry(x.codec, x.avcC === undefined ? { profile: 0x64, compat: 0, level: 0x1f } : x.avcC));
   } else if (t.handler === "tmcd") {
     const c = t.tmcd ?? { flags: 0, timescale: 30, frameDuration: 1, numberOfFrames: 30, startFrame: 0 };
     entry = box("tmcd", zeros(6), u16(1), u32(0), u32(c.flags), u32(c.timescale), u32(c.frameDuration), u8(c.numberOfFrames, 0));
@@ -181,9 +194,9 @@ function trak(t: TrackSpec, i: number, chunkOffset: number): Uint8Array {
   const stts = t.stts ?? (t.handler === "tmcd" ? [[1, 1]] : [[300, 1001]]);
   const stbl = box(
     "stbl",
-    fullBox("stsd", 0, 0, u32(1), entry),
-    fullBox("stts", 0, 0, u32(stts.length), ...stts.map(([c, d]) => concat(u32(c), u32(d)))),
-    fullBox("stsc", 0, 0, u32(1), u32(1), u32(1), u32(1)),
+    fullBox("stsd", 0, 0, u32(1 + extraEntries.length), entry, ...extraEntries),
+    t.sttsRaw ?? fullBox("stts", 0, 0, u32(stts.length), ...stts.map(([c, d]) => concat(u32(c), u32(d)))),
+    fullBox("stsc", 0, 0, u32(1), u32(1), u32(1), u32(t.stscDesc ?? 1)),
     fullBox("stsz", 0, 0, u32(4), u32(1)),
     t.co64 ? fullBox("co64", 0, 0, u32(1), u64(chunkOffset)) : fullBox("stco", 0, 0, u32(1), u32(chunkOffset)),
   );
@@ -192,7 +205,7 @@ function trak(t: TrackSpec, i: number, chunkOffset: number): Uint8Array {
 
 /** The moov body (everything after its 8-byte header). Chunk offsets are written as `tmcdOffset`. */
 export function moovBody(spec: Mp4Spec, mdatPayloadOffset: number, tmcdOffset: number): Uint8Array {
-  const mvhd = fullBox(
+  const mvhd = spec.mvhdRaw ?? fullBox(
     "mvhd", 0, 0,
     u32(0), u32(0), u32(spec.movieTimescale ?? 1000), u32(0), u32(0x10000), u16(0x100), zeros(10),
     ...IDENTITY.map((m) => u32(m)),

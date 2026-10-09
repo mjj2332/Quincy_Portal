@@ -21,6 +21,7 @@ import {
   rawBox,
   sourceFrom,
   u32,
+  u8,
   videoTrack,
   type Mp4Spec,
   type TrackSpec,
@@ -282,6 +283,75 @@ describe("probeMp4 timecode", () => {
   it("two tmcd tracks without a tref give no timecode", async () => {
     const p = await probeOf({ tracks: [videoTrack(), tmcd(), tmcd()] });
     expect(p.startTimecode).toBeNull();
+  });
+});
+
+describe("probeMp4 sample descriptions and short boxes", () => {
+  const avc = { profile: 0x4d, compat: 0x40, level: 0x28 };
+
+  it("an unused avc1 entry 1 with a referenced hvc1 entry 2 is hevc", async () => {
+    const t = videoTrack({ stsdExtra: [{ codec: "hvc1" }], stscDesc: 2 });
+    expect(await reasonOf(buildMp4(one(t)))).toBe("hevc");
+  });
+
+  it("an unused hvc1 entry 1 with a referenced avc1 entry 2 is accepted, codecString from entry 2", async () => {
+    const t = videoTrack({ codec: "hvc1", stsdExtra: [{ codec: "avc1", avcC: avc }], stscDesc: 2 });
+    const p = await probeOf(one(t));
+    expect(p.codecString).toBe("avc1.4D4028");
+  });
+
+  it("an stsc index past the stsd entry count is box_size_invalid", async () => {
+    expect(await reasonOf(buildMp4(one(videoTrack({ stscDesc: 3 }))))).toBe("box_size_invalid");
+  });
+
+  it("more than one referenced description is unsupported_codec", async () => {
+    // Two stsc entries referencing descriptions 1 and 2.
+    const t = videoTrack({ stsdExtra: [{ codec: "avc1" }] });
+    const src = buildMp4(one(t));
+    const bytes = await src.read(0, src.size);
+    // Rewrite the single stsc entry into two by patching: find "stsc" and rebuild is awkward, so build via raw moov.
+    const stsc = box("stsc", u8(0, 0, 0, 0), u32(2), u32(1), u32(1), u32(1), u32(2), u32(1), u32(2));
+    const idx = bytes.findIndex((_, i) => String.fromCharCode(...bytes.subarray(i, i + 4)) === "stsc") - 4;
+    expect(idx).toBeGreaterThan(0);
+    const oldLen = new DataView(bytes.buffer, bytes.byteOffset).getUint32(idx);
+    const patched = concat(bytes.subarray(0, idx), stsc, bytes.subarray(idx + oldLen));
+    // Fix up enclosing box sizes (stbl, minf, mdia, trak, moov) by growing each by the delta.
+    const delta = stsc.length - oldLen;
+    const dvp = new DataView(patched.buffer, patched.byteOffset);
+    for (const type of ["stbl", "minf", "mdia", "trak", "moov"]) {
+      const at = patched.findIndex((_, i) => String.fromCharCode(...patched.subarray(i, i + 4)) === type) - 4;
+      dvp.setUint32(at, dvp.getUint32(at) + delta);
+    }
+    const r = await probeMp4(sourceFrom([patched]));
+    expect(r).toMatchObject({ ok: false, reason: "unsupported_codec", detail: "multiple sample descriptions" });
+  });
+
+  const v1 = (type: string, len: number) => box(type, u8(1, 0, 0, type === "tkhd" ? 3 : 0), new Uint8Array(len - 4));
+  it("a 20-byte version 1 mvhd is box_size_invalid", async () => {
+    expect(await reasonOf(buildMp4(one(videoTrack(), { mvhdRaw: v1("mvhd", 20) })))).toBe("box_size_invalid");
+  });
+  it("a 92-byte version 1 tkhd is box_size_invalid", async () => {
+    expect(await reasonOf(buildMp4(one(videoTrack({ tkhdRaw: v1("tkhd", 92) }))))).toBe("box_size_invalid");
+  });
+  it("a short version 1 mdhd is box_size_invalid", async () => {
+    expect(await reasonOf(buildMp4(one(videoTrack({ mdhdRaw: v1("mdhd", 20) }))))).toBe("box_size_invalid");
+  });
+  it("an stts count larger than its payload is box_size_invalid", async () => {
+    const sttsRaw = box("stts", u8(0, 0, 0, 0), u32(1000), u32(300), u32(1001));
+    expect(await reasonOf(buildMp4(one(videoTrack({ sttsRaw }))))).toBe("box_size_invalid");
+  });
+
+  it("truncating a valid moov at every byte offset never throws", async () => {
+    const spec = { tracks: [videoTrack({ elst: [{ segmentDuration: 0, mediaTime: 2002 }] }), { handler: "tmcd" as const }] } as unknown as Mp4Spec;
+    const body = moovBody(spec, 100, 100);
+    const moov = concat(u32(8 + body.length), new TextEncoder().encode("moov"), body);
+    expect((await probeMp4(sourceFrom([ftyp(), moov]))).ok).toBe(true);
+    for (let n = 8; n <= moov.length; n++) {
+      const cut = moov.subarray(0, n);
+      // Keep the declared size consistent with the cut so the inner parser, not the top-level check, sees short boxes.
+      const fixed = concat(u32(cut.length), cut.subarray(4));
+      await expect(probeMp4(sourceFrom([ftyp(), fixed]))).resolves.toBeDefined();
+    }
   });
 });
 
