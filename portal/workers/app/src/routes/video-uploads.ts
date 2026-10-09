@@ -191,7 +191,9 @@ videoUploadsRoutes.put("/projects/:projectId/video-uploads/:reservationId/direct
   const keyInUse = () => c.env.DB.prepare("SELECT 1 AS used FROM assets WHERE r2_key = ?").bind(row.r2Key).first();
   // Never write over the object a completed Version plays.
   if (await keyInUse()) return unavailable(c);
-  await c.env.MEDIA.put(row.r2Key, c.req.raw.body, { httpMetadata: { contentType: VIDEO_UPLOAD_CONTENT_TYPE } });
+  // Write-once: the put succeeds only if the key holds no object, so a delayed or repeated PUT can never replace bytes already written (or completed).
+  const written = await c.env.MEDIA.put(row.r2Key, c.req.raw.body, { onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: VIDEO_UPLOAD_CONTENT_TYPE } });
+  if (!written) return unavailable(c);
   const stored = await c.env.MEDIA.head(row.r2Key);
   if (stored && stored.size > row.bytes) { await c.env.MEDIA.delete(row.r2Key); return c.json({ error: "The file is larger than the size that was reserved" }, 413); }
   // The write took time: if an abort or the sweep took the reservation meanwhile, what we wrote is an orphan (unless a Version has since adopted the key).
@@ -285,7 +287,7 @@ videoUploadsRoutes.post("/projects/:projectId/video-uploads/:reservationId/compl
     try { await completeMultipart(c.env, row.r2Key, row.uploadId, input.parts, row.bytes); }
     catch (error) {
       // A retry after a lost response finds the upload already completed: carry on if the object is there.
-      if (!await c.env.MEDIA.head(row.r2Key)) { await release(); return c.json({ error: error instanceof Error ? error.message : "Upload could not be completed" }, 502); }
+      if (!await c.env.MEDIA.head(row.r2Key)) { await release(); return c.json({ error: "The file has not finished uploading", code: "upload_missing" }, 400); }
     }
   }
   const head = await c.env.MEDIA.head(row.r2Key);

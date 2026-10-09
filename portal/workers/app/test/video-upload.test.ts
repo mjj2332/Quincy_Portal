@@ -283,6 +283,18 @@ describe("PUT …/direct (dev only)", () => {
     expect(await database.MEDIA.head(key)).toBeNull(); expect(await reservationStatus(body.reservationId)).toBe("failed");
   });
 
+  it("is write-once: a second PUT to the same key answers 409 and leaves the first object's bytes alone", async () => {
+    const file = await GOOD_25();
+    const body = videoUploadReserveResponseSchema.parse(await (await reserve("member", { title: "Dev once", filename: "cut.mp4", bytes: file.byteLength, contentType: "video/mp4" }, DEV_ENV)).json());
+    const key = (await reservation(body.reservationId))!.r2_key as string;
+    const direct = `${base()}/${body.reservationId}/direct`;
+    expect((await appRequest(DEV_ENV, direct, "member", "PUT", undefined, file)).status).toBe(204);
+    const other = new Uint8Array(file.byteLength).fill(7);
+    expect((await appRequest(DEV_ENV, direct, "member", "PUT", undefined, other)).status).toBe(409);
+    expect(new Uint8Array(await (await database.MEDIA.get(key))!.arrayBuffer())).toEqual(file);
+    expect(await reservationStatus(body.reservationId)).toBe("pending");
+  });
+
   it("refuses a write to a key a completed Version already uses, and leaves that object alone", async () => {
     const file = await GOOD_25();
     const body = videoUploadReserveResponseSchema.parse(await (await reserve("member", { title: "Dev overwrite", filename: "cut.mp4", bytes: file.byteLength, contentType: "video/mp4" }, DEV_ENV)).json());
@@ -421,6 +433,13 @@ describe("POST …/complete", () => {
   it("carries on when R2 refuses the multipart completion but the object is already there", async () => {
     stubS3({ completeStatus: 403 }); const reserved = await reserveAndStore("member", { title: "Completed twice" });
     expect((await complete("member", reserved.reservationId)).status).toBe(201);
+  });
+
+  it("answers 400 upload_missing and releases the claim when R2 refuses the multipart completion and no object exists", async () => {
+    stubS3({ completeStatus: 400 }); const reserved = await reserveAndStore("member", { title: "Parts not landed", store: false });
+    const response = await complete("member", reserved.reservationId);
+    expect(response.status).toBe(400); expect(await response.json()).toMatchObject({ code: "upload_missing" });
+    expect(await reservationStatus(reserved.reservationId)).toBe("pending");
   });
 
   it("answers 503 and creates nothing when the object changes, or goes missing, between the HEAD and the probe's reads (ETag-pinned)", async () => {
