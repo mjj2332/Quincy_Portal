@@ -256,12 +256,23 @@ describe("POST …/complete", () => {
     expect(await database.DB.prepare("SELECT title, position, project_id AS projectId, collection_id AS collectionId, created_by AS createdBy FROM videos WHERE id = ?").bind(reserved.videoId).first()).toMatchObject({ title: "First cut", projectId: ids.project, collectionId, createdBy: ids.member });
     expect(await database.DB.prepare("SELECT fps_num, fps_den, uploaded_by, probe_version, fast_start, has_audio FROM video_version_meta WHERE asset_id = ?").bind(reserved.assetId).first()).toEqual({ fps_num: 25, fps_den: 1, uploaded_by: ids.member, probe_version: 1, fast_start: 1, has_audio: 0 });
     expect(await reservationStatus(reserved.reservationId)).toBe("completed");
-    expect(await database.DB.prepare("SELECT received_count AS n FROM collections WHERE id = ?").bind(collectionId).first<{ n: number }>()).toBeTruthy();
+    expect(await database.DB.prepare("SELECT received_count AS n FROM collections WHERE id = ?").bind(collectionId).first<{ n: number }>()).toEqual({ n: await count("videos WHERE collection_id = ?", collectionId) });
     expect(await auditRow("video.version.upload", reserved.assetId)).toMatchObject({ actorId: ids.member, meta: { projectId: ids.project, videoId: reserved.videoId, version: 1, bytes: reserved.bytes, fps: { num: 25, den: 1 }, frameCount: 300, warnings: [], clientProbeDisagreed: [] } });
     const again = await complete("member", reserved.reservationId);
     expect(again.status).toBe(200); expect(await again.json()).toEqual(body);
     expect(await count("assets WHERE version_group_id = ?", reserved.videoId)).toBe(1);
     expect(await count("audit_log WHERE action = 'video.version.upload' AND target_id = ?", reserved.assetId)).toBe(1);
+  });
+
+  it("answers the Video exactly as the list route does: one builder for both", async () => {
+    stubS3(); const first = await reserveAndStore("member", { title: "Same shape" });
+    expect((await complete("member", first.reservationId)).status).toBe(201);
+    const second = await reserve("member", { videoId: first.videoId, filename: "v2.mp4", bytes: (await GOOD_25()).byteLength, contentType: "video/mp4" }).then((response) => response.json()) as { reservationId: string; assetId?: string };
+    await database.MEDIA.put((await reservation(second.reservationId))!.r2_key as string, await GOOD_25(), { httpMetadata: { contentType: "video/mp4" } });
+    const completed = await completeBody(await complete("member", second.reservationId));
+    const listed = await appRequest(S3_ENV, `/api/projects/${ids.project}/videos`, "member", "GET").then((response) => response.json()) as { videos: unknown[] };
+    expect(listed.videos.find((video) => (video as { id: string }).id === first.videoId)).toEqual(completed.video);
+    expect(completed.video.versions.map((version) => version.version)).toEqual([2, 1]);
   });
 
   it("supersedes the previous Version with Version 2 and keeps the Collection count at one Video", async () => {

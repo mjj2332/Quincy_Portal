@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { videoDtoSchema, videoVersionDtoSchema } from "./video-review";
 import { mp4RejectMessage, type Mp4RejectReason } from "./video-mp4-probe";
 
 /**
@@ -57,45 +58,6 @@ export const videoUploadReserveResponseSchema = z.object({
   expiresAt: isoTimestamp,
 }).strict();
 export type VideoUploadReserveResponse = z.infer<typeof videoUploadReserveResponseSchema>;
-
-const videoPersonSchema = z.object({ id: uuid, name: z.string(), roleLabel: z.string(), isExternal: z.boolean(), active: z.boolean() }).strict();
-
-export const videoVersionDtoSchema = z.object({
-  assetId: uuid,
-  version: z.number().int().min(1),
-  current: z.boolean(),
-  uploadedBy: videoPersonSchema,
-  createdAt: isoTimestamp,
-  originalFilename: z.string(),
-  bytes: z.number().int().positive(),
-  fps: z.object({ num: z.number().int().positive(), den: z.number().int().positive() }).strict(),
-  frameCount: z.number().int().positive(),
-  durationMs: z.number().int().positive(),
-  width: z.number().int().positive(),
-  height: z.number().int().positive(),
-  codec: z.enum(["avc1", "avc3"]),
-  startTimecodeFrames: z.number().int().min(0).nullable(),
-  tcNominalFps: z.number().int().positive(),
-  tcDropFrame: z.boolean(),
-  fastStart: z.boolean(),
-  hasAudio: z.boolean(),
-  hasPoster: z.boolean(),
-  streamUrl: z.string(),
-  posterUrl: z.string().nullable(),
-}).strict();
-export type VideoVersionDto = z.infer<typeof videoVersionDtoSchema>;
-
-export const videoDtoSchema = z.object({
-  id: uuid,
-  title: z.string(),
-  premium: z.boolean(),
-  position: z.number().int().min(0),
-  createdAt: isoTimestamp,
-  currentAssetId: uuid,
-  uploading: z.object({ version: z.number().int().min(1), uploader: videoPersonSchema, expiresAt: isoTimestamp }).strict().nullable(),
-  versions: z.array(videoVersionDtoSchema).min(1),
-}).strict();
-export type VideoDto = z.infer<typeof videoDtoSchema>;
 
 /** `POST …/complete`: 201 the first time, 200 with the same body on a repeat. `warnings` are the probe's non-fatal findings. */
 export const videoUploadCompleteResponseSchema = z.object({

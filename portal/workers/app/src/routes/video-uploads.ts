@@ -14,7 +14,7 @@ import { newId } from "../lib/ids";
 import { abortMultipart, completeMultipart, createMultipartPresign, PART_BYTES, validateMultipartParts } from "../lib/r2s3";
 import { discardUnreferencedObject, enqueueEmbeddedMediaCleanup, settleThrownAdoption } from "../lib/embedded-media";
 import { videoReviewGate } from "../lib/video-review-gate";
-import { loadVideoDto } from "../lib/video-upload-dto";
+import { loadVideoDtos } from "../lib/video-dto";
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
@@ -182,16 +182,16 @@ export function clientProbeDisagreement(json: string | null, probe: Mp4Probe): s
 }
 
 async function completedResponse(c: Context<AppEnv>, row: Reservation, status: 200 | 201, warnings?: Mp4ProbeWarning[]): Promise<Response> {
-  const loaded = await loadVideoDto(c.env.DB, row.projectId, row.videoId);
-  const version = loaded?.versions.get(row.assetId);
-  if (!loaded || !version) return notFound(c);
+  const video = (await loadVideoDtos(c.env.DB, row.projectId, row.videoId))[0];
+  const version = video?.versions.find((candidate) => candidate.assetId === row.assetId);
+  if (!video || !version) return notFound(c);
   let stored = warnings;
   if (!stored) {
     const meta = (await c.env.DB.prepare("SELECT meta_json AS meta FROM audit_log WHERE id = ?").bind(row.completionAuditId).first<{ meta: string | null }>())?.meta;
     try { const parsed = meta ? JSON.parse(meta) as { warnings?: unknown } : {}; stored = Array.isArray(parsed.warnings) ? parsed.warnings as Mp4ProbeWarning[] : []; } catch { stored = []; }
   }
   c.header("cache-control", "no-store");
-  return c.json(videoUploadCompleteResponseSchema.parse({ video: loaded.video, version, warnings: stored }), status);
+  return c.json(videoUploadCompleteResponseSchema.parse({ video, version, warnings: stored }), status);
 }
 
 videoUploadsRoutes.post("/projects/:projectId/video-uploads/:reservationId/complete", terminalRoute("/projects/:projectId/video-uploads/:reservationId/complete", async (c) => {
