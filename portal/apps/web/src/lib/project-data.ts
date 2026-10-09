@@ -1,4 +1,4 @@
-import { announcePrincipalTerminal, principalOfQueryClient } from "./principal-terminal";
+import { announcePrincipalTerminal } from "./principal-terminal";
 import { isStageKey, projectDefaultAsOf, subtaskAssigneeOptionsResponseSchema, type CalendarPerson, type ChecklistScheduleDto, type CollectionKind, type EditorFolderAttentionDto, type MonitoredRawFolder, type ProjectDeadlineSchedule, type ProjectDefaultRangeDto, type ProjectMembershipDto, type ProjectMemberRole, type Role, type SubtaskRemindersDto } from "@quincy/shared";
 import { QueryClient, QueryClientContext, useQuery, useQueryClient, type QueryFunctionContext, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
 import { useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
@@ -137,8 +137,11 @@ export function useVideoReviewQuery(projectId: string, enabled: boolean, role: R
   });
 }
 
-/** The Project's Videos, newest Version first (#741). Polls every 15 s only while someone else's Version is uploading, so it appears when finished. */
-export function useProjectVideosQuery(projectId: string, enabled: boolean, role: Role = "admin", currentUserId?: string): UseQueryResult<VideoDto[], Error> {
+/** Server truth drives polling: re-read every 15 s while the server reports any Version uploading (the current person's included, e.g. a cancel left pending). */
+export const videosRefetchInterval = (videos: readonly VideoDto[] | undefined): number | false => (videos?.some((video) => video.uploading) ? 15_000 : false);
+
+/** The Project's Videos, newest Version first (#741). */
+export function useProjectVideosQuery(projectId: string, enabled: boolean, role: Role = "admin"): UseQueryResult<VideoDto[], Error> {
   return useQuery<VideoDto[], Error>({
     queryKey: projectDataKeys.videos(projectId), enabled, staleTime: 15_000, retry: projectQueryRetry,
     queryFn: async ({ signal, client }: QueryFunctionContext) => {
@@ -148,7 +151,7 @@ export function useProjectVideosQuery(projectId: string, enabled: boolean, role:
       if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
       return response.videos;
     },
-    refetchInterval: (query) => (query.state.data?.some((video) => video.uploading && video.uploading.uploader.id !== currentUserId) ? 15_000 : false),
+    refetchInterval: (query) => videosRefetchInterval(query.state.data),
     refetchIntervalInBackground: false,
   });
 }
@@ -556,7 +559,7 @@ export async function removeProjectData(queryClient: QueryClient, projectId: str
 }
 
 export async function clearPrincipalProjectData(queryClient: QueryClient): Promise<void> {
-  announcePrincipalTerminal(principalOfQueryClient(queryClient)); // before any async cleanup: this person's running uploads stop now
+  announcePrincipalTerminal(queryClient); // before any async cleanup: the uploads started under this session stop now
   const runtime = getProjectQueryRuntime(queryClient);
   runtime?.markPrincipalTerminal();
   discardAllAssetLedgers(queryClient);

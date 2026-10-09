@@ -7,6 +7,7 @@ import {
   clearPrincipalProjectData, purgeProjectCollaborationData, removeProjectData, type ProjectDetail, type ProjectMember,
 } from "./project-data";
 import { ProjectQueryRuntime } from "./project-query-sync";
+import { videosRefetchInterval } from "./project-data";
 import { createQuincyQueryClient } from "./query-client";
 import type { WorkspaceAsset } from "../components/PhotoGrid";
 import { projectCommentsInfiniteQueryOptions } from "./project-comments";
@@ -462,5 +463,17 @@ describe("tombstone purge", () => {
     await expect(request).rejects.toMatchObject({ name: "AbortError" });
     expect(queryClient.getQueryData(key)).toBeUndefined();
     queryClient.clear();
+  });
+});
+
+describe("videosRefetchInterval (Sol round 4)", () => {
+  const video = (uploading: unknown) => ({ uploading }) as never;
+  it("polls whenever the server reports any upload in flight, the current person's included", () => {
+    expect(videosRefetchInterval([video({ uploader: { id: "me" } })])).toBe(15_000);
+    expect(videosRefetchInterval([video(null), video({ uploader: { id: "other" } })])).toBe(15_000);
+  });
+  it("stops once none is reported, and before the first answer", () => {
+    expect(videosRefetchInterval([video(null)])).toBe(false);
+    expect(videosRefetchInterval(undefined)).toBe(false);
   });
 });

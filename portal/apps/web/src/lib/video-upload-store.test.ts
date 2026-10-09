@@ -24,7 +24,7 @@ const toast = vi.hoisted(() => vi.fn());
 vi.mock("./toast-store", () => ({ pushToast: toast }));
 
 import { abortReservation } from "./video-upload";
-import { abortVideoReservation, cancelVideoUpload, resetVideoUploadStore, startVideoUpload } from "./video-upload-store";
+import { abortVideoReservation, cancelVideoUpload, removeVideoUpload, resetVideoUploadStore, startVideoUpload } from "./video-upload-store";
 
 const queryClient = {} as QueryClient;
 const start = () => startVideoUpload({ userId: "u1", queryClient, projectId: "p1", role: "editor", file: new File([], "a.mp4"), target: { kind: "new", title: "Film" }, probe: {} as never, cautions: [] })!;
@@ -73,6 +73,18 @@ describe("Cancel leaves the reservation to the server (#751)", () => {
     vi.mocked(abortReservation).mockResolvedValueOnce("Cancelling is pending. Try again in a moment.");
     await abortVideoReservation(queryClient, "p1", "r1");
     expect(abortReservation).toHaveBeenCalledWith("p1", "r1");
+    expect(resourcesOf().sort()).toEqual(["detail", "videos"]);
+    expect(toast).toHaveBeenCalledWith("Cancelling is pending. Try again in a moment.");
+  });
+});
+
+describe("Remove on a failed row (Sol round 4)", () => {
+  it("drops the row at once, aborts, then re-reads videos and detail like Cancel", async () => {
+    const { id } = start();
+    made.jobs[0]!.state = { phase: "failed", projectId: "p1" };
+    made.jobs[0]!.cancelAnswer = "Cancelling is pending. Try again in a moment.";
+    removeVideoUpload(id);
+    await vi.waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1));
     expect(resourcesOf().sort()).toEqual(["detail", "videos"]);
     expect(toast).toHaveBeenCalledWith("Cancelling is pending. Try again in a moment.");
   });

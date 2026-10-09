@@ -53,7 +53,7 @@ export function NewFilmUploader({ onStart }: {
   return <div className="grid gap-[var(--space-3)]" data-testid="new-film-uploader">
     <FileDropzone
       onFile={(file) => void receive(file)}
-      disabled={checking}
+      disabled={checking || starting}
       data-testid="new-film-dropzone"
       className="flex flex-wrap items-center gap-[var(--space-4)] p-[var(--space-4)] bg-card border-dashed border-[length:var(--border-width-hair)] border-border data-[dragging=true]:bg-secondary"
     >
@@ -62,7 +62,7 @@ export function NewFilmUploader({ onStart }: {
         <strong className="[font:var(--weight-medium)_var(--text-base)/var(--leading-normal)_var(--font-sans)]">Drop an MP4 to start a new film</strong>
         <span className={HINT}>H.264, constant frame rate, up to 2 GB. Frame rate and timecode are read from the file.</span>
       </div>
-      <FilePickButton accept={VIDEO_ACCEPT} variant="primary" className="min-h-[44px]" disabled={checking} onFile={(file) => void receive(file)}>{checking ? "Checking…" : "Upload new film"}</FilePickButton>
+      <FilePickButton accept={VIDEO_ACCEPT} variant="primary" className="min-h-[44px]" disabled={checking || starting} onFile={(file) => void receive(file)}>{checking ? "Checking…" : "Upload new film"}</FilePickButton>
     </FileDropzone>
     {problem && <Notice tone="critical" role="alert" data-testid="new-film-problem">{problem}</Notice>}
     {picked && <form
@@ -70,13 +70,13 @@ export function NewFilmUploader({ onStart }: {
       data-testid="new-film-form"
       onSubmit={(event) => { event.preventDefault(); if (!titleError) void submit(); }}
     >
-      <QuincyField id={titleId} label="Film title" value={title} maxLength={400} onChange={(event) => setTitle(event.target.value)} error={titleError} />
+      <QuincyField id={titleId} label="Film title" disabled={starting} value={title} maxLength={400} onChange={(event) => setTitle(event.target.value)} error={titleError} />
       <p className={HINT} data-testid="new-film-probe">{`${picked.file.name} · ${formatFps(picked.probe.fps)} fps · ${picked.probe.width}×${picked.probe.height} · ${formatDuration(picked.probe.durationMs)}`}</p>
       {picked.cautions.map((caution) => <Notice key={caution} tone="caution" role="status">{caution}</Notice>)}
       {refusal && <Notice tone="critical" role="alert" data-testid="new-film-refusal">{refusal}</Notice>}
       <div className="flex flex-wrap gap-[var(--space-2)]">
         <Button type="submit" className="min-h-[44px]" disabled={Boolean(titleError) || starting}>Upload</Button>
-        <Button type="button" variant="secondary" className="min-h-[44px]" onClick={() => { setPicked(null); setTitle(""); setRefusal(null); }}>Cancel</Button>
+        <Button type="button" variant="secondary" className="min-h-[44px]" disabled={starting} onClick={() => { setPicked(null); setTitle(""); setRefusal(null); }}>Cancel</Button>
       </div>
     </form>}
   </div>;

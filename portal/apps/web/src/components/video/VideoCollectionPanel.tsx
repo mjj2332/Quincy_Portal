@@ -17,7 +17,7 @@ export function VideoCollectionPanel({ projectId, role, review }: { projectId: s
   const userId = session.data?.user.id ?? null;
   const queryClient = useOptionalProjectQueryClient();
   const terminate = useProjectAccessTermination();
-  const videos = useProjectVideosQuery(projectId, true, role, userId ?? undefined);
+  const videos = useProjectVideosQuery(projectId, true, role);
   const uploads = useVideoUploads(userId, projectId);
   const canUpload = review.parts.includes("upload");
   const running = uploads.filter((upload) => upload.phase === "reserving" || upload.phase === "uploading" || upload.phase === "finishing");

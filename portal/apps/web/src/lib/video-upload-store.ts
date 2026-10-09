@@ -12,7 +12,7 @@ import { VideoUpload, abortReservation, type VideoUploadState, type VideoUploadT
  * changes the uploads are aborted and dropped at RENDER time (`syncUploadPrincipal`), not in an effect: an effect leaves one render
  * where the new person sees the old person's rows (docs/lessons.md, #217).
  */
-type Entry = { job: VideoUpload; principalId: string };
+type Entry = { job: VideoUpload; principalId: string; queryClient: QueryClient | undefined };
 
 const entries = new Map<number, Entry>();
 const listeners = new Set<() => void>();
@@ -55,9 +55,18 @@ export function syncUploadPrincipal(userId: string | null): void {
   queueMicrotask(() => { version += 1; for (const listener of listeners) listener(); });
 }
 
-// A person's session is over (a 401 anywhere, an access loss): their uploads stop now, whether or not a Films panel is mounted. The notice names
-// who it is for, so a retired person's late 401 cannot stop the current person's uploads.
-onPrincipalTerminal((terminated) => { if (terminated === undefined || terminated === principal) syncUploadPrincipal(null); });
+// A session is over (a 401 anywhere, an access loss): the uploads started under it stop now, whether or not a Films panel is mounted. The notice names
+// the session's query client, so a retired session's late 401 (even for the same account signed back in) cannot stop a fresh session's uploads.
+onPrincipalTerminal((terminated) => {
+  if (terminated === undefined) { syncUploadPrincipal(null); return; }
+  const mine = [...entries.entries()].filter(([, entry]) => entry.queryClient === terminated);
+  if (mine.length === 0) return;
+  generation += 1; // a probe still running under this session must not start
+  for (const [id, entry] of mine) { void entry.job.cancel(); entries.delete(id); }
+  snapshots.clear();
+  updateUnloadGuard();
+  queueMicrotask(() => { version += 1; for (const listener of listeners) listener(); });
+});
 
 export function startVideoUpload(input: {
   userId: string; queryClient: QueryClient | undefined; projectId: string; role: Role; file: File; target: VideoUploadTarget; probe: Mp4Probe; cautions: string[];
@@ -89,7 +98,7 @@ export function startVideoUpload(input: {
       emit();
     },
   });
-  entries.set(id, { job, principalId: input.userId });
+  entries.set(id, { job, principalId: input.userId, queryClient: input.queryClient });
   emit();
   job.start();
   // The server refused the reserve (a limit, a conflict): there is no upload to show, and the caller keeps the person's file and title.
@@ -108,9 +117,14 @@ function refreshVideos(queryClient: QueryClient | undefined, projectId: string) 
 export async function cancelVideoUpload(id: number, queryClient?: QueryClient): Promise<void> {
   const entry = entries.get(id);
   if (!entry) return;
+  await abortThenRefresh(entry, queryClient ?? entry.queryClient);
+  if (entries.get(id) === entry) { entries.delete(id); emit(); }
+}
+
+/** Send the abort, wait for whatever answer comes, re-read the list, and toast a pending or missing answer. */
+async function abortThenRefresh(entry: Entry, queryClient: QueryClient | undefined): Promise<void> {
   const message = await entry.job.cancel();
   refreshVideos(queryClient, entry.job.state.projectId);
-  if (entries.get(id) === entry) { entries.delete(id); emit(); }
   if (message) pushToast(message);
 }
 
@@ -122,11 +136,11 @@ export async function abortVideoReservation(queryClient: QueryClient | undefined
 }
 
 export const retryVideoUpload = (id: number) => { entries.get(id)?.job.retry(); };
-/** Drop a finished or failed row. A failed row that still holds a reservation asks the server to free it first (its answer is not waited on). */
+/** Drop a finished or failed row at once. A failed or running one also asks the server to free its reservation, then re-reads the list as Cancel does. */
 export function removeVideoUpload(id: number) {
   const entry = entries.get(id);
   if (!entry) return;
-  if (entry.job.state.phase === "failed" || isActive(entry.job.state)) void entry.job.cancel();
+  if (entry.job.state.phase === "failed" || isActive(entry.job.state)) void abortThenRefresh(entry, entry.queryClient);
   entries.delete(id);
   emit();
 }

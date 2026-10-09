@@ -250,6 +250,16 @@ describe("Uploader (#741 4d-i)", () => {
     expect(button(/^Upload v/)).toBeUndefined();
   });
 
+  it("while a submit is starting the picker and the title are locked, so a newer film cannot be replaced by the old one's success", async () => {
+    await mount([]);
+    await pick(await good(), host.querySelector('[data-testid="new-film-uploader"]')!);
+    apiPostMock.mockImplementation(() => new Promise(() => undefined));
+    await press(button("Upload"));
+    expect((host.querySelector('[data-testid="new-film-form"] input') as HTMLInputElement).disabled).toBe(true);
+    expect((button("Upload new film") as HTMLButtonElement).disabled).toBe(true);
+    expect((button("Upload") as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("a 429 on a card's new Version shows the server's words on the card and keeps its Upload button", async () => {
     const { ApiError } = await import("../../lib/api");
     await mount([videoOf()]);
