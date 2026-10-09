@@ -49,3 +49,26 @@ export async function seedReservation(input: ReservationInput = {}) {
   return { id, videoId, assetId, key, projectId, collectionId };
 }
 export const reservationStatus = async (id: string) => (await database.DB.prepare("SELECT status FROM video_upload_reservations WHERE id = ?").bind(id).first<{ status: string }>())?.status ?? null;
+
+export type NoteInput = {
+  assetId: string; author?: string; guest?: boolean; role?: "admin" | "editor" | "external_editor" | "photographer"; visibility?: "public" | "internal"; parentId?: string;
+  startFrame?: number; endFrame?: number | null; body?: string; deletedAt?: number | null; resolvedBy?: string | null; markup?: boolean; createdAt?: number; revision?: number; id?: string;
+};
+/** A note or reply straight into `video_notes`, scoped from its Version. A guest note is public and authored by a fresh `guest_reviewers` row. */
+export async function seedVideoNote(input: NoteInput) {
+  const id = input.id ?? crypto.randomUUID(); const now = input.createdAt ?? Date.now();
+  const scope = await database.DB.prepare("SELECT v.project_id AS projectId, v.id AS videoId FROM video_version_meta m JOIN videos v ON v.id = m.video_id WHERE m.asset_id = ?").bind(input.assetId).first<{ projectId: string; videoId: string }>();
+  if (!scope) throw new Error("seedVideoNote: unknown Version");
+  let guestId: string | null = null;
+  if (input.guest) { guestId = crypto.randomUUID(); await database.DB.prepare("INSERT INTO guest_reviewers (id, email_normalized, display_name, created_at) VALUES (?, ?, 'Client Person', ?)").bind(guestId, `${guestId}@guest.test`, now).run(); }
+  const reply = input.parentId !== undefined; const author = guestId ? null : input.author ?? ids.member;
+  const resolved = input.resolvedBy ?? null;
+  await database.DB.prepare("INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_guest_id, author_role, visibility, start_frame, end_frame, body, resolved_at, resolved_by, revision, deleted_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(id, scope.projectId, scope.videoId, input.assetId, input.parentId ?? null, author, guestId, guestId ? "guest" : input.role ?? "editor", guestId ? "public" : input.visibility ?? "public",
+      reply ? null : input.startFrame ?? 10, reply ? null : input.endFrame ?? null, input.body ?? "Seeded note", resolved ? now : null, resolved, input.revision ?? 1, input.deletedAt ?? null, now).run();
+  if (input.markup) await database.DB.prepare("INSERT INTO video_note_markup (note_id, strokes_json, created_at, updated_at) VALUES (?, '[]', ?, ?)").bind(id, now, now).run();
+  return { id, guestId, projectId: scope.projectId, videoId: scope.videoId };
+}
+export const clearVideoNotes = async () => { await database.DB.batch([database.DB.prepare("DELETE FROM video_note_markup"), database.DB.prepare("DELETE FROM video_notes"), database.DB.prepare("DELETE FROM audit_log WHERE action LIKE 'video_note.%'")]); };
+export const noteRow = (id: string) => database.DB.prepare("SELECT * FROM video_notes WHERE id = ?").bind(id).first<Record<string, unknown>>();
+export const noteAudit = async (action?: string) => (await database.DB.prepare(`SELECT actor_id, action, target_id, meta_json FROM audit_log WHERE action LIKE 'video_note.%'${action ? " AND action = ?" : ""} ORDER BY created_at, id`).bind(...(action ? [action] : [])).all<{ actor_id: string; action: string; target_id: string; meta_json: string | null }>()).results;
