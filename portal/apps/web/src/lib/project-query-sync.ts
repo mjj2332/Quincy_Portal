@@ -12,7 +12,9 @@ export type ProjectDataResource =
   | { kind: "subtasks" }
   | { kind: "comments" }
   | { kind: "comment-read-marker" }
-  | { kind: "collaboration-summary" };
+  | { kind: "collaboration-summary" }
+  | { kind: "video-review" }
+  | { kind: "videos" };
 
 export type ProjectDataSyncMessage =
   | {
@@ -77,7 +79,7 @@ function nonEmptyString(value: unknown): value is string {
 function isResource(value: unknown): value is ProjectDataResource {
   if (!value || typeof value !== "object") return false;
   const resource = value as Record<string, unknown>;
-  if (resource.kind === "detail" || resource.kind === "activity" || resource.kind === "subtasks" || resource.kind === "comments" || resource.kind === "comment-read-marker" || resource.kind === "collaboration-summary") return Object.keys(resource).length === 1;
+  if (resource.kind === "detail" || resource.kind === "activity" || resource.kind === "subtasks" || resource.kind === "comments" || resource.kind === "comment-read-marker" || resource.kind === "collaboration-summary" || resource.kind === "video-review" || resource.kind === "videos") return Object.keys(resource).length === 1;
   return resource.kind === "assets" && validCollections.has(resource.collectionKind as CollectionKind) && Object.keys(resource).length === 2;
 }
 
@@ -133,6 +135,8 @@ export function projectResourceKey(projectId: string, resource: ProjectDataResou
     case "comments": return projectDataKeys.comments(projectId);
     case "comment-read-marker": return projectDataKeys.commentReadMarker(projectId);
     case "collaboration-summary": return projectDataKeys.collaborationSummary(projectId);
+    case "video-review": return projectDataKeys.videoReview(projectId);
+    case "videos": return projectDataKeys.videos(projectId);
     default: return assertNever(resource);
   }
 }

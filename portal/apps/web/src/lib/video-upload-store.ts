@@ -1,0 +1,166 @@
+import type { QueryClient } from "@tanstack/react-query";
+import type { Mp4Probe, Role } from "@quincy/shared";
+import { useSyncExternalStore } from "react";
+import { invalidateProjectSurfaces, terminatePrincipalOnUnauthorized } from "./project-data";
+import { onPrincipalTerminal } from "./principal-terminal";
+import { pushToast } from "./toast-store";
+import { VideoUpload, abortReservation, type VideoUploadState, type VideoUploadTarget } from "./video-upload";
+
+/**
+ * Video uploads outlive the panel that started them (#741 4d-i, override 4): a 2 GB upload must survive switching Workspace tabs
+ * (the tab body remounts) and closing the Project sheet. A module store, keyed by person and Project. When the signed-in person
+ * changes the uploads are aborted and dropped at RENDER time (`syncUploadPrincipal`), not in an effect: an effect leaves one render
+ * where the new person sees the old person's rows (docs/lessons.md, #217).
+ */
+type Entry = { job: VideoUpload; principalId: string; queryClient: QueryClient | undefined };
+
+const entries = new Map<number, Entry>();
+const listeners = new Set<() => void>();
+let principal: string | null = null;
+/** Bumps whenever the owning person changes (sign-out included). An async step that began under one owner compares it before it acts. */
+let generation = 0;
+let version = 0;
+const snapshots = new Map<string, { version: number; rows: readonly VideoUploadState[] }>();
+let nextId = 1;
+
+let quiet = false;
+function emit() { if (quiet) return; version += 1; for (const listener of listeners) listener(); updateUnloadGuard(); }
+function subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
+
+const isActive = (state: VideoUploadState) => state.phase === "reserving" || state.phase === "uploading" || state.phase === "finishing";
+const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+let guarded = false;
+function updateUnloadGuard() {
+  if (typeof window === "undefined") return;
+  const any = [...entries.values()].some((entry) => isActive(entry.job.state));
+  if (any && !guarded) { window.addEventListener("beforeunload", beforeUnload); guarded = true; }
+  if (!any && guarded) { window.removeEventListener("beforeunload", beforeUnload); guarded = false; }
+}
+
+/** The identity generation a caller captures before an async step (a file probe) and hands back to `startVideoUpload`. */
+export const uploadIdentityGeneration = () => generation;
+
+/** Call during render, and from the app's identity boundary (`PrincipalFreshnessBoundary`), with the signed-in person's id. A different person (or a sign-out) aborts and clears every upload. */
+export function syncUploadPrincipal(userId: string | null): void {
+  if (principal === userId) return;
+  principal = userId;
+  generation += 1;
+  // Render-time: no subscriber may be told while React is rendering, so the cancels are silent and the subscribers are told after.
+  quiet = true;
+  try { for (const entry of [...entries.values()]) void entry.job.cancel(); } finally { quiet = false; }
+  entries.clear();
+  snapshots.clear();
+  updateUnloadGuard();
+  // The subscribers are told after render, not during it.
+  queueMicrotask(() => { version += 1; for (const listener of listeners) listener(); });
+}
+
+// A session is over (a 401 anywhere, an access loss): the uploads started under it stop now, whether or not a Films panel is mounted. The notice names
+// the session's query client, so a retired session's late 401 (even for the same account signed back in) cannot stop a fresh session's uploads.
+onPrincipalTerminal((terminated) => {
+  if (terminated === undefined) { syncUploadPrincipal(null); return; }
+  const mine = [...entries.entries()].filter(([, entry]) => entry.queryClient === terminated);
+  if (mine.length === 0) return;
+  generation += 1; // a probe still running under this session must not start
+  for (const [id, entry] of mine) { void entry.job.cancel(); entries.delete(id); }
+  snapshots.clear();
+  updateUnloadGuard();
+  queueMicrotask(() => { version += 1; for (const listener of listeners) listener(); });
+});
+
+export function startVideoUpload(input: {
+  userId: string; queryClient: QueryClient | undefined; projectId: string; role: Role; file: File; target: VideoUploadTarget; probe: Mp4Probe; cautions: string[];
+  /** The `uploadIdentityGeneration()` captured before the async work that led here. A different one means the person changed meanwhile. */
+  identityGeneration?: number;
+  /** Test seam: waits between retries. */
+  completeDelaysMs?: readonly number[]; partDelaysMs?: readonly number[];
+}): { id: number; /** The server's answer to the reserve: `null` when it holds the upload, else why it refused. A refusal removes the row. */ reserved: Promise<string | null> } | null {
+  // A stale owner (the person changed while a probe ran) must neither start an upload nor sync the store, which would cancel the new owner's.
+  if (input.identityGeneration !== undefined && input.identityGeneration !== generation) return null;
+  if (principal !== null && principal !== input.userId) return null;
+  syncUploadPrincipal(input.userId);
+  const id = nextId++;
+  const job = new VideoUpload(id, {
+    projectId: input.projectId, role: input.role, file: input.file, target: input.target, probe: input.probe, cautions: input.cautions,
+    completeDelaysMs: input.completeDelaysMs, partDelaysMs: input.partDelaysMs,
+    onChange: () => emit(),
+    onServerCleaned: () => refreshVideos(input.queryClient, input.projectId),
+    onUnauthorized: (error) => { if (input.queryClient) terminatePrincipalOnUnauthorized(input.queryClient, error); },
+    onDone: (result) => {
+      if (input.queryClient) void invalidateProjectSurfaces(input.queryClient, { projectId: input.projectId, resources: [{ kind: "videos" }, { kind: "detail" }, { kind: "activity" }], dashboard: false, calendar: false, gantt: false });
+      const entry = entries.get(id);
+      // Dropped already (the person changed or signed out): nothing to announce, and nothing of theirs to show the next person.
+      if (!entry) return;
+      pushToast(`${result.version ? `v${result.version} of ` : ""}${result.title} uploaded`);
+      // A success that carries a caution keeps its row (dismissible): a toast would be gone before it was read.
+      if ((entry.job.state.cautions?.length ?? 0) > 0) { emit(); return; }
+      entries.delete(id);
+      emit();
+    },
+  });
+  entries.set(id, { job, principalId: input.userId, queryClient: input.queryClient });
+  emit();
+  job.start();
+  // The server refused the reserve (a limit, a conflict): there is no upload to show, and the caller keeps the person's file and title.
+  const reserved = job.reserved.then((refusal) => { if (refusal !== null && entries.get(id)?.job === job) { entries.delete(id); emit(); } return refusal; });
+  return { id, reserved };
+}
+
+function refreshVideos(queryClient: QueryClient | undefined, projectId: string) {
+  if (queryClient) void invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "videos" }, { kind: "detail" }], dashboard: false, calendar: false, gantt: false });
+}
+
+/**
+ * Cancel: stop sending, send the abort and wait for its answer, whatever it is; then re-read the list (the server's DTO is the truth) and drop the row.
+ * A "pending" answer or none is shown as a toast; the server's sweep reclaims the reservation.
+ */
+export async function cancelVideoUpload(id: number, queryClient?: QueryClient): Promise<void> {
+  const entry = entries.get(id);
+  if (!entry) return;
+  await abortThenRefresh(entry, queryClient ?? entry.queryClient);
+  if (entries.get(id) === entry) { entries.delete(id); emit(); }
+}
+
+/** Send the abort, wait for whatever answer comes, re-read the list, and toast a pending or missing answer. */
+async function abortThenRefresh(entry: Entry, queryClient: QueryClient | undefined): Promise<void> {
+  const message = await entry.job.cancel();
+  refreshVideos(queryClient, entry.job.state.projectId);
+  if (message) pushToast(message);
+}
+
+/** The abort request for a reservation the server holds that this tab has no job for (a stuck one, or another tab's): same contract as `cancelVideoUpload`. */
+export async function abortVideoReservation(queryClient: QueryClient | undefined, projectId: string, reservationId: string): Promise<void> {
+  const message = await abortReservation(projectId, reservationId);
+  refreshVideos(queryClient, projectId);
+  if (message) pushToast(message);
+}
+
+export const retryVideoUpload = (id: number) => { entries.get(id)?.job.retry(); };
+/** Drop a finished or failed row at once. A failed or running one also asks the server to free its reservation, then re-reads the list as Cancel does. */
+export function removeVideoUpload(id: number) {
+  const entry = entries.get(id);
+  if (!entry) return;
+  if (entry.job.state.phase === "failed" || isActive(entry.job.state)) void abortThenRefresh(entry, entry.queryClient);
+  entries.delete(id);
+  emit();
+}
+
+function rowsFor(userId: string | null, projectId: string): readonly VideoUploadState[] {
+  const key = `${userId}:${projectId}`;
+  const cached = snapshots.get(key);
+  if (cached && cached.version === version) return cached.rows;
+  const rows = userId === principal ? [...entries.values()].filter((entry) => entry.principalId === userId && entry.job.state.projectId === projectId).map((entry) => entry.job.state) : [];
+  const previous = cached?.rows;
+  const stable = previous && previous.length === rows.length && previous.every((row, index) => row === rows[index]) ? previous : rows;
+  snapshots.set(key, { version, rows: stable });
+  return stable;
+}
+
+/** This person's uploads in this Project. A different person than the store's reads empty, and the store clears itself on that first render. */
+export function useVideoUploads(userId: string | null, projectId: string): readonly VideoUploadState[] {
+  syncUploadPrincipal(userId);
+  return useSyncExternalStore(subscribe, () => rowsFor(userId, projectId), () => rowsFor(userId, projectId));
+}
+
+/** Test seam. */
+export function resetVideoUploadStore() { for (const entry of entries.values()) void entry.job.cancel(); entries.clear(); snapshots.clear(); principal = null; version += 1; listeners.clear(); updateUnloadGuard(); }

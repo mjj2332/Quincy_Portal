@@ -78,8 +78,8 @@ export const videoDtoSchema = z.object({
   createdAt: z.string().datetime(),
   /** Non-null: a Video row exists only after a Version 1 completes. */
   currentAssetId: z.string().uuid(),
-  /** The Version being uploaded now, if any: its number, who is uploading, and when the reservation lapses. */
-  uploading: z.object({ version: z.number().int().positive(), uploader: videoPersonSchema, expiresAt: z.string().datetime() }).strict().nullable(),
+  /** The Version being uploaded now, if any: the reservation (its owner may abort it), its number, who is uploading, and when it lapses. */
+  uploading: z.object({ reservationId: z.string().uuid(), version: z.number().int().positive(), uploader: videoPersonSchema, expiresAt: z.string().datetime() }).strict().nullable(),
   /** Newest first. */
   versions: z.array(videoVersionDtoSchema).min(1),
 }).strict();

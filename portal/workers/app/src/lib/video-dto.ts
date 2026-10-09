@@ -12,7 +12,7 @@ type VersionRow = {
   start_tc_frames: number | null; tc_nominal_fps: number; tc_drop_frame: number; fast_start: number; has_audio: number; poster_key: string | null;
   user_id: string; user_name: string; user_role: Role; user_active: number;
 };
-type UploadingRow = { video_id: string; version: number; expires_at: number; user_id: string; user_name: string; user_role: Role; user_active: number };
+type UploadingRow = { reservation_id: string; video_id: string; version: number; expires_at: number; user_id: string; user_name: string; user_role: Role; user_active: number };
 const person = (id: string, name: string, role: Role, active: number) => ({ id, name, roleLabel: ROLE_LABELS[role], isExternal: role === "external_editor", active: Boolean(active) });
 
 /** Every Video of a Project (or only `videoId`), Versions newest first. */
@@ -29,7 +29,7 @@ export async function loadVideoDtos(db: D1Database, projectId: string, videoId?:
        FROM video_version_meta m JOIN assets a ON a.id = m.asset_id AND a.kind = 'video' JOIN videos v ON v.id = m.video_id JOIN user u ON u.id = m.uploaded_by
        WHERE v.project_id = ?1${only} ORDER BY a.version DESC`)),
     bindScoped(db.prepare(
-      `SELECT r.video_id, r.version, r.expires_at, u.id AS user_id, u.name AS user_name, u.role AS user_role, u.active AS user_active
+      `SELECT r.id AS reservation_id, r.video_id, r.version, r.expires_at, u.id AS user_id, u.name AS user_name, u.role AS user_role, u.active AS user_active
        FROM video_upload_reservations r JOIN user u ON u.id = r.created_by
        WHERE r.project_id = ?1${videoId === undefined ? "" : " AND r.video_id = ?2"} AND r.status IN ('pending', 'completing', 'aborting') AND r.expires_at > ?${videoId === undefined ? 2 : 3}`), Date.now()),
   ]);
@@ -49,7 +49,7 @@ export async function loadVideoDtos(db: D1Database, projectId: string, videoId?:
     return videoDtoSchema.parse({
       id: video.id, title: video.title, premium: video.premium === 1, position: video.position, createdAt: new Date(video.created_at).toISOString(),
       currentAssetId: versions.find((version) => version.current)?.assetId ?? null,
-      uploading: uploading ? { version: uploading.version, uploader: person(uploading.user_id, uploading.user_name, uploading.user_role, uploading.user_active), expiresAt: new Date(uploading.expires_at).toISOString() } : null,
+      uploading: uploading ? { reservationId: uploading.reservation_id, version: uploading.version, uploader: person(uploading.user_id, uploading.user_name, uploading.user_role, uploading.user_active), expiresAt: new Date(uploading.expires_at).toISOString() } : null,
       versions,
     });
   });

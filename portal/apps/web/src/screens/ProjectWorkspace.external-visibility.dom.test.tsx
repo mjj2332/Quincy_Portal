@@ -146,6 +146,7 @@ function installApiMocks() {
   apiDeleteMock.mockReset();
   apiGetMock.mockImplementation((path: string) => {
     const external = authState.role === "external_editor";
+    if (path.endsWith("/video-review")) return Promise.resolve({ open: false, parts: [] });
     if (path === `/api/projects/${PROJECT_ID}`) return Promise.resolve(external ? externalDetailFixture() : internalDetailFixture());
     if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
     if (path.includes("/assets?collection=raw")) {
