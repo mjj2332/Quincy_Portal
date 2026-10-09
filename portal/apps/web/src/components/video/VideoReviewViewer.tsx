@@ -56,13 +56,25 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes }: {
       const active = document.activeElement;
       // A composer waiting for its frame is spent first, wherever focus is: the Post button that was pressed is disabled by then and focus has left it.
       const confirming = !layer && popup !== null ? popup.querySelector<HTMLElement>('[data-notes-form="composer"][data-phase="confirming"]') : null;
-      const form = confirming ?? (!layer && popup !== null && active instanceof Element && popup.contains(active) ? active.closest<HTMLElement>("[data-notes-form]") : null);
-      escapeSnapshot.current = { layer, form: form !== null };
-      if (!form || !popup) return;
+      const focused = !layer && popup !== null && active instanceof Element && popup.contains(active) ? active.closest<HTMLElement>("[data-notes-form]") : null;
+      // An open edit or reply is the active form whatever has focus (the person may have clicked the player to adjust frames).
+      const open = !layer && popup !== null ? popup.querySelector<HTMLElement>('[data-notes-form="edit"], [data-notes-form="reply"]') : null;
+      const form = confirming ?? focused ?? open;
+      const kind = form?.dataset.notesForm;
+      const dirty = form?.dataset.dirty === "true";
+      const spent = form?.dataset.escapeSpent === "true";
+      // A dirty edit or reply whose first Escape is already spent no longer holds the viewer: this Escape closes it.
+      const consumed = form !== null && popup !== null && (kind === "composer" || !dirty || !spent);
+      escapeSnapshot.current = { layer, form: consumed };
+      if (!consumed || !form || !popup) return;
       // Rule B: Escape cancels a frame confirmation (the draft is kept); a request already sent is never cancelled.
       if (confirming) form.dispatchEvent(new Event("quincy-notes-escape"));
-      if (form.dataset.notesForm !== "composer" && form.dataset.dirty !== "true") form.querySelector<HTMLElement>("[data-notes-cancel]")?.click();
-      else popup.focus({ preventScroll: true });
+      if (kind !== "composer" && !dirty) form.querySelector<HTMLElement>("[data-notes-cancel]")?.click();
+      else if (kind !== "composer") {
+        // The first Escape of a dirty edit or reply keeps its text; the next one closes the viewer.
+        form.dispatchEvent(new Event("quincy-notes-escape", { bubbles: true }));
+        if (focused) popup.focus({ preventScroll: true }); else form.querySelector<HTMLElement>("textarea")?.focus({ preventScroll: true });
+      } else popup.focus({ preventScroll: true });
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => { window.removeEventListener("keydown", onKeyDown, true); escapeSnapshot.current = { layer: false, form: false }; };

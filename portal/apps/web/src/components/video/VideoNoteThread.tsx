@@ -18,7 +18,7 @@ import { Button as ReuiButton } from "../reui/button";
 import { Item } from "../reui/item";
 import { Kbd } from "../reui/kbd";
 import { Textarea } from "../reui/textarea";
-import { editKey, replyKey, type NoteForms } from "./use-note-forms";
+import type { NoteForms } from "./use-note-forms";
 
 /** What a thread asks of the panel. Every write rejects with the original error, which the thread classifies. */
 export type ThreadActions = {
@@ -31,7 +31,7 @@ export type ThreadActions = {
 };
 
 /** What an edit form was opened with: Save sends this revision, never the live cache value, until the person has reviewed a conflict. */
-type EditDraft = { id: string; text: string; base: { revision: number; body: string; startFrame: number | null; endFrame: number | null } };
+type EditDraft = { id: string; gen: number; text: string; base: { revision: number; body: string; startFrame: number | null; endFrame: number | null } };
 
 const MONO = "[font:var(--type-mono)] tabular-nums";
 const SMALL = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
@@ -91,19 +91,29 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
   const articleRef = useRef<HTMLElement>(null);
   const [replyText, setReplyText] = useState("");
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
+  const [replyGen, setReplyGen] = useState(0);
+  /** The first Escape of a dirty form was spent by the viewer (it kept the text); typing arms it again. */
+  const [escapeSpent, setEscapeSpent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Problem | null>(null);
   const [conflicted, setConflicted] = useState(false);
   const focusAfter = useRef<"reply-button" | "actions" | null>(null);
   const focusEditorOnClose = useRef(false);
   const deletePending = useRef(false);
-  const replying = forms.active.kind === "reply" && forms.active.rootId === thread.id;
-  const editing = editDraft && forms.active.kind === "edit" && forms.active.noteId === editDraft.id ? editDraft : null;
+  const replying = forms.active.kind === "reply" && forms.active.rootId === thread.id && forms.gen === replyGen;
+  const editing = editDraft && forms.active.kind === "edit" && forms.active.noteId === editDraft.id && forms.gen === editDraft.gen ? editDraft : null;
   const blocked = forms.phase === "posting";
   const editTarget = editing ? (editing.id === thread.id ? thread : thread.replies.find((reply) => reply.id === editing.id) ?? null) : null;
   const editingRoot = editing?.id === thread.id;
-  const closeEdit = editing ? editKey(editing.id) : undefined;
-  const finishEdit = useCallback(() => { setConflicted(false); forms.close(closeEdit); focusAfter.current = "actions"; }, [forms, closeEdit]);
+  const editGen = editing?.gen;
+  const finishEdit = useCallback(() => { setConflicted(false); forms.close(editGen); focusAfter.current = "actions"; }, [forms, editGen]);
+  // The viewer's Escape tells the form its first Escape was spent.
+  useEffect(() => {
+    const article = articleRef.current;
+    const spend = () => { setEscapeSpent(true); };
+    article?.addEventListener("quincy-notes-escape", spend);
+    return () => { article?.removeEventListener("quincy-notes-escape", spend); };
+  }, []);
 
   // A form that closes hands focus back to the control that opened it; a note edited or deleted elsewhere closes its form.
   useEffect(() => {
@@ -113,28 +123,28 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
       target?.focus();
     }
   }, [replying, editing]);
-  useEffect(() => { if (readOnly) forms.close(replying ? replyKey(thread.id) : closeEdit); }, [readOnly, forms, replying, closeEdit, thread.id]);
-  useEffect(() => { if (editing && !editTarget) forms.close(editKey(editing.id)); }, [editing, editTarget, forms]);
+  useEffect(() => { if (readOnly) forms.close(replying ? replyGen : editGen); }, [readOnly, forms, replying, replyGen, editGen]);
+  useEffect(() => { if (editing && !editTarget) forms.close(editing.gen); }, [editing, editTarget, forms]);
   useEffect(() => { if (!editing) setConflicted(false); }, [editing]);
 
   /** A form's request: the panel freezes the marks and (once sent) stops another form opening while it is out. */
-  async function guarded(run: () => Promise<unknown>, fallback: string, closeOnGone?: string): Promise<{ ok: boolean; gone: boolean }> {
+  async function guarded(run: () => Promise<unknown>, fallback: string, token?: number): Promise<{ ok: boolean; gone: boolean }> {
     setBusy(true); setNotice(null);
-    if (closeOnGone) forms.setPhase("posting");
+    if (token !== undefined) forms.setPhase("posting", token);
     try { await run(); return { ok: true, gone: false }; }
     catch (error) {
       const { problem, conflict, gone } = describe(error, fallback, actions);
       setNotice(problem); setConflicted(conflict);
-      if (gone && closeOnGone) forms.close(closeOnGone);
+      if (gone && token !== undefined) forms.close(token);
       return { ok: false, gone };
-    } finally { setBusy(false); if (closeOnGone) forms.setPhase("idle"); }
+    } finally { setBusy(false); if (token !== undefined) forms.setPhase("idle", token); }
   }
 
   async function postReply() {
     const text = replyText.trim();
     if (!text || busy) return;
-    const { ok } = await guarded(() => actions.reply(thread.id, text), "The reply could not be posted.", replyKey(thread.id));
-    if (ok) { forms.close(replyKey(thread.id)); setReplyText(""); focusAfter.current = "reply-button"; }
+    const { ok } = await guarded(() => actions.reply(thread.id, text), "The reply could not be posted.", replyGen);
+    if (ok) { forms.close(replyGen); setReplyText(""); focusAfter.current = "reply-button"; }
   }
 
   async function saveEdit() {
@@ -150,16 +160,17 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
       if (frames && (frames.startFrame !== against.startFrame || frames.endFrame !== against.endFrame)) { input.startFrame = frames.startFrame; input.endFrame = frames.endFrame; }
     }
     if (input.body === undefined && input.startFrame === undefined) { finishEdit(); return; }
-    const { ok } = await guarded(() => actions.edit(editTarget.id, input), "The note could not be saved.", editKey(editTarget.id));
+    const { ok } = await guarded(() => actions.edit(editTarget.id, input), "The note could not be saved.", editing.gen);
     if (ok) finishEdit();
   }
 
   async function toggleResolved() { await guarded(() => actions.resolve(thread.id, thread.resolved === null), "The note could not be updated."); }
 
   const startEdit = (note: VideoNoteDto) => {
-    setNotice(null); setConflicted(false);
-    setEditDraft({ id: note.id, text: note.body, base: { revision: note.revision, body: note.body, startFrame: note.startFrame, endFrame: note.endFrame } });
-    forms.openEdit(note, thread.id);
+    const gen = forms.openEdit(note, thread.id);
+    if (gen === 0) return; // a request is out: nothing else opens
+    setNotice(null); setConflicted(false); setEscapeSpent(false);
+    setEditDraft({ id: note.id, gen, text: note.body, base: { revision: note.revision, body: note.body, startFrame: note.startFrame, endFrame: note.endFrame } });
     focusEditorOnClose.current = true;
   };
   const focusEditor = useCallback((): HTMLElement | false | undefined => {
@@ -191,12 +202,12 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
   </header>;
 
   const editForm = (note: VideoNoteDto) => editing && editing.id === note.id && <form
-    data-notes-form="edit" data-dirty={editing.text !== editing.base.body || (editingRoot && frameChanged(editing.base, forms.marks, frameCount)) ? "true" : "false"}
+    data-notes-form="edit" data-escape-spent={escapeSpent ? "true" : "false"} data-dirty={editing.text !== editing.base.body || (editingRoot && frameChanged(editing.base, forms.marks, frameCount)) ? "true" : "false"}
     className="grid gap-[var(--space-2)]"
     onSubmit={(event) => { event.preventDefault(); void saveEdit(); }}
   >
     <label className="sr-only" htmlFor={`video-note-edit-${note.id}`}>Edit note</label>
-    <Textarea id={`video-note-edit-${note.id}`} data-testid="video-note-edit-body" value={editing.text} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) setEditDraft({ ...editing, text: event.target.value }); }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void saveEdit(); } }} />
+    <Textarea id={`video-note-edit-${note.id}`} data-testid="video-note-edit-body" value={editing.text} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) { setEscapeSpent(false); setEditDraft({ ...editing, text: event.target.value }); } }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void saveEdit(); } }} />
     {editingRoot && forms.active.kind === "edit" && forms.active.frames && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
       <span data-testid="video-note-edit-anchor" className={cn("text-foreground", MONO)}>{editAnchorLabel(forms.marks, timecode)}</span>
       <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-in" disabled={busy || forms.phase !== "idle"} onClick={() => { forms.markFromClock("in"); }}>Set in <Kbd>I</Kbd></Button>
@@ -217,7 +228,7 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     <div className="grid min-w-0 gap-[var(--space-2)]">
       {header(thread)}
       <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-        {thread.startFrame !== null && <ReuiButton type="button" variant="secondary" size="sm" data-testid="video-note-anchor-button" aria-label={`Go to ${label}`} className={cn("pointer-coarse:min-h-11", MONO)} onClick={() => { onSeek(thread); }}>{label}</ReuiButton>}
+        {thread.startFrame !== null && <ReuiButton type="button" variant="secondary" size="sm" data-testid="video-note-anchor-button" aria-label={`Go to ${label}`} className={cn("pointer-coarse:min-h-11 max-[721px]:min-h-11", MONO)} onClick={() => { onSeek(thread); }}>{label}</ReuiButton>}
         {resolvedLine && <span className={cn(META_TEXT, "!normal-case")}>{resolvedLine}</span>}
       </div>
       {editing?.id === thread.id ? editForm(thread) : <NoteText note={thread} />}
@@ -228,17 +239,17 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
         </div>)}
       </div>}
       {notice && <Notice tone="critical" role="alert" data-testid="video-note-notice" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{notice.text}</span>{notice.refresh && <Button type="button" variant="text" data-testid="video-note-notice-refresh" onClick={actions.refresh}>Refresh notes</Button>}</Notice>}
-      {replying && <form data-notes-form="reply" data-dirty={replyText !== "" ? "true" : "false"} className="grid gap-[var(--space-2)]" onSubmit={(event) => { event.preventDefault(); void postReply(); }}>
+      {replying && <form data-notes-form="reply" data-escape-spent={escapeSpent ? "true" : "false"} data-dirty={replyText !== "" ? "true" : "false"} className="grid gap-[var(--space-2)]" onSubmit={(event) => { event.preventDefault(); void postReply(); }}>
         <span className="flex items-center gap-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">{`Reply · ${thread.visibility === "internal" ? "Internal" : "Client-visible"}`}<VisibilityBadge visibility={thread.visibility} /></span>
         <label className="sr-only" htmlFor={`video-note-reply-${thread.id}`}>Write a reply</label>
-        <Textarea id={`video-note-reply-${thread.id}`} data-testid="video-note-reply-body" autoFocus value={replyText} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) setReplyText(event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void postReply(); } }} />
+        <Textarea id={`video-note-reply-${thread.id}`} data-testid="video-note-reply-body" autoFocus value={replyText} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) { setEscapeSpent(false); setReplyText(event.target.value); } }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void postReply(); } }} />
         <div className="flex justify-end gap-[var(--space-2)]">
-          <Button type="button" variant="secondary" data-notes-cancel="" data-testid="video-note-reply-cancel" disabled={busy} onClick={() => { forms.close(replyKey(thread.id)); setReplyText(""); focusAfter.current = "reply-button"; }}>Cancel</Button>
+          <Button type="button" variant="secondary" data-notes-cancel="" data-testid="video-note-reply-cancel" disabled={busy} onClick={() => { forms.close(replyGen); setReplyText(""); focusAfter.current = "reply-button"; }}>Cancel</Button>
           <Button type="submit" data-testid="video-note-reply-post" disabled={busy || replyText.trim() === ""}>{busy ? "Posting…" : "Post"}</Button>
         </div>
       </form>}
       {!readOnly && !replying && editing === null && <div className="flex flex-wrap items-center gap-[var(--space-3)]">
-        {!thread.deleted && <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-reply-button" disabled={busy || blocked} onClick={() => { setNotice(null); setReplyText(""); forms.openReply(thread.id); }}>Reply</Button>}
+        {!thread.deleted && <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-reply-button" disabled={busy || blocked} onClick={() => { const gen = forms.openReply(thread.id); if (gen === 0) return; setNotice(null); setReplyText(""); setEscapeSpent(false); setReplyGen(gen); }}>Reply</Button>}
         <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-resolve" disabled={busy} onClick={() => { void toggleResolved(); }}>{thread.resolved ? "Reopen" : "Resolve"}</Button>
       </div>}
     </div>

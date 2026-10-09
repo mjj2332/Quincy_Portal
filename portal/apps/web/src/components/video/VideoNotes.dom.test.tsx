@@ -319,6 +319,7 @@ describe("Composer through the player (tests 9-12, 25)", () => {
     api.apiPost.mockResolvedValue(commit(note({ startFrame: 12, endFrame: 21, body: "Range" })));
     await type(composerText(), "Range");
     await click(tid("video-note-post")!);
+    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 12 / 25); });
     await flush(4);
     expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 12, endFrame: 21, visibility: "internal", body: "Range" });
     expect(tid("video-pending-band")).toBeNull();
@@ -824,5 +825,104 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     expect((tid("video-note-post") as HTMLButtonElement).disabled).toBe(false);
     await click(tid("video-note-reply-button", threadOf(s.n2.id))!);
     expect(tid("video-note-other-form-hint")!.textContent).toBe("Finish or cancel the open reply first.");
+  });
+
+  const v1Note = () => served[ids.asset1]![0]!;
+  const gate = () => { let release: (value: unknown) => void = () => undefined; const promise = new Promise<unknown>((resolve) => { release = resolve; }); return { promise, release }; };
+
+  it("round 2 (1): a save that finishes after a Version switch touches neither the new Version's open edit nor its ability to open one", async () => {
+    const s = seed();
+    await openFilm({}, 20);
+    await pickVersion("v1");
+    const n = v1Note();
+    await chooseNoteAction(threadOf(n.id), "Terry", "Edit");
+    await type(threadOf(n.id).querySelector<HTMLTextAreaElement>("textarea")!, "v1 edit");
+    const pending = gate();
+    api.apiPatch.mockReturnValueOnce(pending.promise);
+    await click(tid("video-note-edit-save")!);
+    await pickVersion("v2");
+    await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit");
+    expect(editForms().length).toBe(1);
+    await act(async () => { pending.release(commit({ ...n, body: "v1 edit", revision: 2 } as VideoNoteThreadDto)); });
+    await flush(6);
+    expect(editForms().length).toBe(1);
+    expect(threadOf(s.n1.id).querySelector('[data-notes-form="edit"]')).not.toBeNull();
+  });
+
+  it("round 2 (5): a mark whose seek lands after Clear marks is not written", async () => {
+    await openFilm({}, 20);
+    await dispatchKey(popup(), "i"); await flush(2);
+    expect(composerAnchor()).toContain("In ");
+    await dispatchKey(popup(), "ArrowRight"); // a seek is now in flight
+    await dispatchKey(popup(), "o"); await flush(2);
+    await click(tid("video-note-clear-marks")!);
+    expect(composerAnchor()).not.toContain("In ");
+    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 21 / 25); });
+    await flush(4);
+    expect(composerAnchor()).not.toContain("Out");
+    expect(tid("video-pending-band")).toBeNull();
+  });
+
+  it("round 2 (2): a post that succeeds after the composer unmounted clears the draft it was sent from", async () => {
+    await openFilm({}, 12);
+    await type(composerText(), "Sent while away");
+    const pending = gate();
+    api.apiPost.mockReturnValueOnce(pending.promise);
+    await click(tid("video-note-post")!);
+    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 12 / 25); });
+    await flush(4);
+    await pickVersion("v1");
+    await act(async () => { pending.release(commit(note({ startFrame: 12, body: "Sent while away" }))); });
+    await flush(6);
+    await pickVersion("v2");
+    expect(composerText().value).toBe("");
+  });
+
+  it("round 2 (2): it never wipes a newer draft", async () => {
+    await openFilm({}, 12);
+    await type(composerText(), "First");
+    const pending = gate();
+    api.apiPost.mockReturnValueOnce(pending.promise);
+    await click(tid("video-note-post")!);
+    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 12 / 25); });
+    await flush(4);
+    await pickVersion("v1");
+    await pickVersion("v2"); // the unsent draft returns, request still out
+    await type(composerText(), "First and more");
+    await act(async () => { pending.release(commit(note({ startFrame: 12, body: "First" }))); });
+    await flush(6);
+    expect(composerText().value).toBe("First and more");
+  });
+
+  it("round 2 (3): Escape with a dirty edit and focus elsewhere in the viewer is spent by the form (text kept); only the next Escape closes the viewer", async () => {
+    const s = seed();
+    await openFilm({}, 20);
+    await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit");
+    const field = threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!;
+    await type(field, "Unsaved edit");
+    popup().focus(); // the person clicked the player
+    await dispatchKey(popup(), "Escape");
+    expect(dialog()).not.toBeNull();
+    expect(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("Unsaved edit");
+    expect(document.activeElement).toBe(field);
+    await dispatchKey(field, "Escape");
+    await settle(200);
+    expect(dialog()).toBeNull();
+  });
+
+  it("round 2 (3): typing again re-arms the first Escape of a dirty reply", async () => {
+    const s = seed();
+    await openFilm({}, 20);
+    await click(tid("video-note-reply-button", threadOf(s.n1.id))!);
+    const field = () => threadOf(s.n1.id).querySelector<HTMLTextAreaElement>('[data-notes-form="reply"] textarea')!;
+    await type(field(), "a");
+    popup().focus();
+    await dispatchKey(popup(), "Escape");
+    expect(dialog()).not.toBeNull();
+    await type(field(), "ab");
+    popup().focus();
+    await dispatchKey(popup(), "Escape");
+    expect(dialog()).not.toBeNull();
+    expect(field().value).toBe("ab");
   });
 });

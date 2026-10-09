@@ -31,7 +31,7 @@ const isAbort = (error: unknown) => error instanceof DOMException ? error.name =
  * (10 s at most) and only then sends. Nothing retries by itself: after a network failure the note may or may not have posted, so the draft
  * is kept and the person refreshes. Visibility starts Internal every time the composer is empty and is never sticky; it is immutable once posted.
  */
-export function VideoNoteComposer({ clock, frameCount, timecode, marks, active = true, otherForm = null, onActivate, onPhaseChange, onMark, onClearMarks, draft, onDraftChange, post, onRefresh, onWriteError }: {
+export function VideoNoteComposer({ clock, frameCount, timecode, marks, active = true, otherForm = null, formToken, onActivate, onPhaseChange, onSent, onMark, onClearMarks, draft, onDraftChange, post, onRefresh, onWriteError }: {
   clock: VideoFrameClock | null;
   frameCount: number;
   timecode: (frame: number) => string;
@@ -44,10 +44,14 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, active =
   /** Post and the mark buttons make the composer the active form. */
   onActivate?: () => void;
   /** "confirming" and "posting" freeze the active form's marks (I and O do nothing); "posting" also stops another form opening. */
-  onPhaseChange?: (phase: "idle" | "confirming" | "posting") => void;
+  onPhaseChange?: (phase: "idle" | "confirming" | "posting", token: number) => void;
+  /** The generation of the composer's current opening: phase reports and the marks clear after a post carry it, so a late one is ignored. */
+  formToken?: () => number;
+  /** The request succeeded (called even if the composer has unmounted since): the host clears the stored draft this text was sent from, unless it has changed. */
+  onSent?: (text: string) => void;
   /** Pause, confirm the frame on screen and mark it; the host does the confirming. */
   onMark: (kind: "in" | "out") => void;
-  onClearMarks: () => void;
+  onClearMarks: (token?: number) => void;
   draft: NoteDraft | undefined;
   onDraftChange: (draft: NoteDraft | null) => void;
   post: (input: VideoNoteCreateInput) => Promise<unknown>;
@@ -72,8 +76,9 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, active =
   // Rule B: while a frame is being confirmed or a request is out, the host freezes I and O and (once sent) the other forms.
   const onPhaseChangeRef = useRef(onPhaseChange);
   onPhaseChangeRef.current = onPhaseChange;
-  useEffect(() => { onPhaseChangeRef.current?.(phase); }, [phase]);
-  useEffect(() => () => { onPhaseChangeRef.current?.("idle"); }, []);
+  const tokenRef = useRef<number | null>(null);
+  useEffect(() => { if (tokenRef.current !== null) onPhaseChangeRef.current?.(phase, tokenRef.current); }, [phase]);
+  useEffect(() => () => { if (tokenRef.current !== null) onPhaseChangeRef.current?.("idle", tokenRef.current); }, []);
   /** Back to idle with the text kept. Only a frame confirmation is cancelled; a request already sent is never touched. */
   const cancelConfirmation = useCallback(() => {
     if (phaseRef.current !== "confirming") return;
@@ -122,9 +127,13 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, active =
     const text = body.trim();
     setProblem(null);
     onActivate?.();
+    tokenRef.current = formToken?.() ?? 0;
+    const token = tokenRef.current;
+    const sent = onSent;
+    // Marked or not, Post pauses and confirms the frame first: a range on its start, a point on the frame composing began at.
     let frames = marksToFrames(marks, frameCount);
-    if (!frames) {
-      const anchor = Math.min(Math.max(0, anchorFrame ?? currentFrame()), Math.max(0, frameCount - 1));
+    {
+      const anchor = frames ? frames.startFrame : Math.min(Math.max(0, anchorFrame ?? currentFrame()), Math.max(0, frameCount - 1));
       setPhase("confirming");
       clock.seekToFrame(anchor);
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -135,7 +144,7 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, active =
         if (confirmed === "timeout") { setPhase("idle"); setProblem({ text: "The frame took too long to show. Your draft is kept.", retry: true }); return; }
         // The frame on screen must be the one the note was composed at: a scrub or a step that landed first moved it.
         if (confirmed !== anchor) { setPhase("idle"); setProblem({ text: "Frame moved — Post again" }); return; }
-        frames = { startFrame: anchor, endFrame: null };
+        frames ??= { startFrame: anchor, endFrame: null };
       } catch (error) {
         if (mine !== attempt.current) return;
         setPhase("idle");
@@ -146,8 +155,9 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, active =
     setPhase("posting");
     try {
       await post({ startFrame: frames.startFrame, ...(frames.endFrame !== null ? { endFrame: frames.endFrame } : {}), visibility, body: text });
+      sent?.(text); // independent of this component's lifetime
       if (mine !== attempt.current) return;
-      setBody(""); setAnchorFrame(null); setVisibility("internal"); setPhase("idle"); onClearMarks();
+      setBody(""); setAnchorFrame(null); setVisibility("internal"); setPhase("idle"); onClearMarks(token);
     } catch (error) {
       if (mine !== attempt.current) return;
       setPhase("idle");
@@ -173,7 +183,7 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, active =
       <span data-testid="video-note-anchor" aria-live="off" className={`text-foreground ${MONO}`}>{anchorText}</span>
       <Button type="button" variant="secondary" data-testid="video-note-set-in" className={SMALL_BUTTON} disabled={clock === null || frozen || otherForm !== null} onClick={() => { onActivate?.(); onMark("in"); }}>Set in <Kbd>I</Kbd></Button>
       <Button type="button" variant="secondary" data-testid="video-note-set-out" className={SMALL_BUTTON} disabled={clock === null || frozen || otherForm !== null} onClick={() => { onActivate?.(); onMark("out"); }}>Set out <Kbd>O</Kbd></Button>
-      {pendingFrames && <Button type="button" variant="text" data-testid="video-note-clear-marks" disabled={frozen} onClick={onClearMarks}>Clear marks</Button>}
+      {pendingFrames && <Button type="button" variant="text" data-testid="video-note-clear-marks" disabled={frozen} onClick={() => { onClearMarks(); }}>Clear marks</Button>}
     </div>
     <label className="sr-only" htmlFor="video-note-body">Add a note</label>
     <Textarea

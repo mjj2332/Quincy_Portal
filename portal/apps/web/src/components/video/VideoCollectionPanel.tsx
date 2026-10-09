@@ -40,6 +40,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   const drafts = useMemo<DraftStore>(() => ({
     get: (assetId) => draftMap.current.get(`${userId ?? ""}:${projectId}:${assetId}`),
     set: (assetId, draft) => { const key = `${userId ?? ""}:${projectId}:${assetId}`; if (draft) draftMap.current.set(key, draft); else draftMap.current.delete(key); },
+    clearSent: (assetId, text) => { const key = `${userId ?? ""}:${projectId}:${assetId}`; if (draftMap.current.get(key)?.body.trim() === text) draftMap.current.delete(key); },
   }), [userId, projectId]);
   const running = uploads.filter((upload) => upload.phase === "reserving" || upload.phase === "uploading" || upload.phase === "finishing");
   // The component is chosen once per opening: swapping `lazy` for the loaded one mid-open would remount the viewer (playback, Version and frame lost).

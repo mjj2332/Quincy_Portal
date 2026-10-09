@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VideoPendingRangeBand, VideoTimelineMarkers, type TimelineMarker } from "./VideoTimelineMarkers";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -67,6 +67,53 @@ describe("VideoTimelineMarkers (#741 5b)", () => {
     lane().getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 12, right: 1000, bottom: 12, x: 0, y: 0, toJSON: () => ({}) });
     await act(async () => { lane().dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 6 })); });
     expect(host.querySelector("[data-testid=video-marker-lane]")).not.toBeNull();
+  });
+});
+
+class FakeResizeObserver {
+  static instances: FakeResizeObserver[] = [];
+  constructor(private readonly callback: (entries: Array<{ contentRect: { width: number } }>) => void) { FakeResizeObserver.instances.push(this); }
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  fire(width: number) { this.callback([{ contentRect: { width } }]); }
+}
+describe("VideoTimelineMarkers clustering (#741 5b, round 2)", () => {
+  beforeEach(() => { FakeResizeObserver.instances = []; vi.stubGlobal("ResizeObserver", FakeResizeObserver); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+  const close: TimelineMarker[] = [
+    { id: "a", startFrame: 100, endFrame: null, tone: "public", selected: false, createdAt: "2026-10-10T00:00:01.000Z" },
+    { id: "b", startFrame: 101, endFrame: null, tone: "internal", selected: false, createdAt: "2026-10-10T00:00:02.000Z" },
+    { id: "far", startFrame: 120, endFrame: null, tone: "public", selected: false, createdAt: "2026-10-10T00:00:03.000Z" },
+  ];
+  const resize = async (width: number) => { lane().getBoundingClientRect = () => ({ left: 0, top: 0, width, height: 12, right: width, bottom: 12, x: 0, y: 0, toJSON: () => ({}) }); await act(async () => { FakeResizeObserver.instances.forEach((o) => { o.fire(width); }); }); };
+
+  it("merges markers closer than one marker width into one cluster marker that shows a count, and recomputes on resize", async () => {
+    await render(<VideoTimelineMarkers markers={close} frameCount={300} />);
+    await resize(1000);
+    const cluster = host.querySelector<HTMLElement>("[data-cluster-count]")!;
+    expect(cluster.dataset.clusterCount).toBe("2");
+    expect(cluster.dataset.markerId).toBe("a");
+    expect(cluster.textContent).toBe("2");
+    expect(host.querySelector('[data-marker-id="b"]')).toBeNull();
+    expect(host.querySelector('[data-marker-id="far"]')).not.toBeNull();
+    await resize(60);
+    expect(host.querySelector<HTMLElement>("[data-cluster-count]")!.dataset.clusterCount).toBe("3");
+  });
+
+  it("a cluster shows as selected when any of its notes is, and a press on it selects its earliest note", async () => {
+    const onSelect = vi.fn();
+    await render(<VideoTimelineMarkers markers={close.map((m) => (m.id === "b" ? { ...m, selected: true } : m))} frameCount={300} onSelect={onSelect} />);
+    await resize(1000);
+    expect(host.querySelector<HTMLElement>("[data-cluster-count]")!.dataset.selected).toBe("true");
+    await act(async () => { lane().dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 6 + (988 * 100) / 299 + 2 })); });
+    expect(onSelect).toHaveBeenCalledWith("a");
+  });
+
+  it("unmeasured (no width yet) draws every marker as it is", async () => {
+    await render(<VideoTimelineMarkers markers={close} frameCount={300} />);
+    expect(host.querySelector("[data-cluster-count]")).toBeNull();
+    expect(host.querySelector('[data-marker-id="b"]')).not.toBeNull();
   });
 });
 

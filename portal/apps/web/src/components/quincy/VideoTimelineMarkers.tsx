@@ -1,9 +1,9 @@
-import type { CSSProperties } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { cn } from "@/lib/utils";
-import { frameFraction, nearestMarkerId, spanFractions } from "../../lib/video-timeline-geometry";
+import { clusterMarkers, frameFraction, nearestMarkerId, spanFractions } from "../../lib/video-timeline-geometry";
 
 /** One note on the timeline. Data, not a note DTO: the guest page (12b) and Compare (7) draw the same lane from their own notes. */
-export type TimelineMarker = { id: string; startFrame: number; endFrame: number | null; tone: "public" | "internal"; selected: boolean };
+export type TimelineMarker = { id: string; startFrame: number; endFrame: number | null; tone: "public" | "internal"; selected: boolean; /** Breaks ties between markers on one frame: the oldest note wins. */ createdAt?: string };
 
 /**
  * Where a fraction lands on the scrubber (#741 5b). With `thumbAlignment="edge"` the slider thumb's centre is
@@ -21,7 +21,8 @@ const fractionStyle = (from: number, to: number) => ({ "--f": from, "--f2": to }
  * The marker lane under the scrubber's track (#741 5b), drawn on the inverse stage. Public is a paper dot, internal an amber
  * diamond (shape and colour both differ, never colour alone); a range is a bar from its start to its last included frame. The lane is
  * `aria-hidden` (the note list is the accessible path), has no tooltips, and is inert on touch: a 12px target fails the 44px rule.
- * It is a plain `div` with a pointer handler, not buttons.
+ * It is a plain `div` with a pointer handler, not buttons. Markers that would overlap at the measured lane width merge into one cluster marker
+ * showing a count (recomputed as the lane resizes); a press on it picks its earliest note. The notes list is still the way to every note.
  */
 export function VideoTimelineMarkers({ markers, frameCount, onSelect, className }: {
   markers: readonly TimelineMarker[];
@@ -29,18 +30,55 @@ export function VideoTimelineMarkers({ markers, frameCount, onSelect, className 
   onSelect?: (id: string) => void;
   className?: string;
 }) {
+  const laneRef = useRef<HTMLDivElement>(null);
+  // The lane's measured width (and the thumb half it is laid out with): clustering depends on how many pixels a frame gets.
+  const [measure, setMeasure] = useState({ width: 0, half: 6 });
+  useLayoutEffect(() => {
+    const lane = laneRef.current;
+    if (!lane) return;
+    const read = (width: number) => {
+      const half = Number.parseFloat(getComputedStyle(lane).getPropertyValue("--thumb-half")) || 6;
+      setMeasure((held) => (held.width === width && held.half === half ? held : { width, half }));
+    };
+    read(lane.getBoundingClientRect().width);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => { read(entries[0]?.contentRect.width ?? lane.getBoundingClientRect().width); });
+    observer.observe(lane);
+    return () => { observer.disconnect(); };
+  }, []);
+  const clusters = useMemo(() => clusterMarkers(markers, frameCount, measure.width, measure.half), [markers, frameCount, measure]);
+
   return <div
+    ref={laneRef}
     data-testid="video-marker-lane"
     aria-hidden="true"
     onPointerDown={onSelect ? (event) => {
       const rect = event.currentTarget.getBoundingClientRect();
       const half = Number.parseFloat(getComputedStyle(event.currentTarget).getPropertyValue("--thumb-half")) || 6;
-      const id = nearestMarkerId(markers, frameCount, event.clientX - rect.left, rect.width, half);
+      const id = nearestMarkerId(clusters.map((cluster) => cluster.first), frameCount, event.clientX - rect.left, rect.width, half);
       if (id) onSelect(id);
     } : undefined}
     className={cn("relative h-3 w-full", THUMB_HALF, onSelect && "cursor-pointer", "pointer-coarse:pointer-events-none max-[721px]:pointer-events-none", className)}
   >
-    {markers.map((marker) => {
+    {clusters.map((cluster) => {
+      const marker = cluster.first;
+      if (cluster.members.length > 1) {
+        const f = frameFraction(marker.startFrame, frameCount);
+        const tones = new Set(cluster.members.map((member) => member.tone));
+        return <span
+          key={cluster.id}
+          data-marker-id={marker.id}
+          data-cluster-count={cluster.members.length}
+          data-tone={tones.size === 1 ? marker.tone : "mixed"}
+          data-selected={cluster.members.some((member) => member.selected) ? "true" : "false"}
+          style={fractionStyle(f, f)}
+          className={cn(
+            "absolute top-1/2 -translate-x-1/2 -translate-y-1/2", LEFT,
+            "inline-flex h-3 min-w-3 items-center justify-center rounded-full bg-foreground px-1 text-background font-mono tabular-nums text-[length:var(--text-xs)] leading-none",
+            "data-[selected=true]:outline data-[selected=true]:outline-2 data-[selected=true]:outline-offset-1 data-[selected=true]:outline-foreground",
+          )}
+        >{cluster.members.length}</span>;
+      }
       const range = marker.endFrame !== null;
       const [from, to] = range ? spanFractions(marker.startFrame, marker.endFrame!, frameCount) : [frameFraction(marker.startFrame, frameCount), frameFraction(marker.startFrame, frameCount)];
       const internal = marker.tone === "internal";

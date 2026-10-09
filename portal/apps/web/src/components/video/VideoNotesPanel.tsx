@@ -179,7 +179,9 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
           active={composerActive}
           otherForm={session.forms.active.kind === "edit" || session.forms.active.kind === "reply" ? session.forms.active.kind : null}
           onActivate={session.forms.openComposer}
+          formToken={session.forms.currentGen}
           onPhaseChange={session.forms.setPhase}
+          onSent={session.clearSentDraft}
           onMark={session.forms.markFromClock}
           onClearMarks={session.forms.clearComposerMarks}
           draft={session.draft}

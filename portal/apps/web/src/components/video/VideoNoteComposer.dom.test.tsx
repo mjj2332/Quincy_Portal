@@ -140,7 +140,7 @@ describe("VideoNoteComposer (#741 5b)", () => {
     expect(host.textContent).not.toContain("went wrong");
   });
 
-  it("with both marks it posts the range without seeking; Clear marks and Set in / Set out go through the host", async () => {
+  it("with both marks it pauses on the range start, confirms it, then posts the half-open range; Clear marks and Set in / Set out go through the host", async () => {
     const f = fakeClock({ frame: 33 });
     const marks: NoteMarks = { in: 10, out: 20 };
     const { props } = await render({ clock: f.clock, marks });
@@ -148,8 +148,8 @@ describe("VideoNoteComposer (#741 5b)", () => {
     expect(byTestId("video-note-anchor")!.textContent).toContain("TC20");
     await type("range");
     await click(postButton());
+    f.confirm(10);
     await flush();
-    expect(f.raw.seekToFrame).not.toHaveBeenCalled();
     expect(props.post).toHaveBeenCalledWith({ startFrame: 10, endFrame: 21, visibility: "internal", body: "range" });
     await click(byTestId("video-note-set-in")!);
     expect(props.onMark).toHaveBeenLastCalledWith("in");
@@ -369,5 +369,43 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     await rerender({ otherForm: null, active: true });
     expect(byTestId("video-note-other-form-hint")).toBeNull();
     expect(postButton().disabled).toBe(false);
+  });
+
+  it("round 2 (4): a marked note seeks to its range start and posts only once that frame is confirmed", async () => {
+    const f = fakeClock({ frame: 90, playing: true, rate: 1 });
+    const { props } = await render({ clock: f.clock, marks: { in: 10, out: 20 } });
+    await type("marked");
+    await click(postButton());
+    expect(f.raw.seekToFrame).toHaveBeenCalledWith(10);
+    expect(postButton().textContent).toBe("Confirming…");
+    expect(props.post).not.toHaveBeenCalled();
+    f.confirm(10); await flush();
+    expect(props.post).toHaveBeenCalledWith({ startFrame: 10, endFrame: 21, visibility: "internal", body: "marked" });
+  });
+
+  it("round 2 (4): a marked note whose confirmed frame is not its start shows 'Frame moved' and keeps the draft; the 10 s timeout and Escape cancel it too", async () => {
+    const f = fakeClock();
+    const { props } = await render({ clock: f.clock, marks: { in: 10, out: 20 } });
+    await type("marked"); await click(postButton());
+    f.confirm(55); await flush();
+    expect(props.post).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("Frame moved — Post again");
+    expect(textarea().value).toBe("marked");
+    await click(postButton());
+    const form = byTestId("video-note-composer")!;
+    await act(async () => { form.dispatchEvent(new Event("quincy-notes-escape")); });
+    expect(form.dataset.phase).toBe("idle");
+    f.confirm(10); await flush();
+    expect(props.post).not.toHaveBeenCalled();
+  });
+
+  it("round 2 (4): a marked note's confirmation times out after 10 seconds and offers Retry", async () => {
+    vi.useFakeTimers();
+    const f = fakeClock();
+    const { props } = await render({ clock: f.clock, marks: { in: 10, out: null } });
+    await type("slow marked"); await click(postButton());
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(props.post).not.toHaveBeenCalled();
+    expect(postButton().textContent).toBe("Retry");
   });
 });

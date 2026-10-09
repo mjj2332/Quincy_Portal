@@ -371,4 +371,11 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(host.querySelector('[data-notes-form="reply"]')).toBeNull();
     expect(host.querySelector('[data-notes-form="edit"]')).not.toBeNull();
   });
+
+  it("round 2 (7): the anchor button is a 44px target on phone widths with a fine pointer too", async () => {
+    await render(thread());
+    const cls = tid("video-note-anchor-button")!.className;
+    expect(cls).toContain("pointer-coarse:min-h-11");
+    expect(cls).toContain("max-[721px]:min-h-11");
+  });
 });

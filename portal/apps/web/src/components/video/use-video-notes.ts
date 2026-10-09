@@ -13,7 +13,12 @@ import type { ThreadActions } from "./VideoNoteThread";
 import { useNoteForms } from "./use-note-forms";
 
 /** Unsent notes, kept by the Video tab for as long as it is open (never in a module: a different person renders none). */
-export type DraftStore = { get(assetId: string): NoteDraft | undefined; set(assetId: string, draft: NoteDraft | null): void };
+export type DraftStore = {
+  get(assetId: string): NoteDraft | undefined;
+  set(assetId: string, draft: NoteDraft | null): void;
+  /** A post of `text` succeeded: drop the stored draft it was sent from, unless the person has since written something else. */
+  clearSent(assetId: string, text: string): void;
+};
 
 /** What belongs to one Version only: it starts empty when the Version on screen changes. (The active form and its marks reset the same way, in `useNoteForms`.) */
 type Local = { assetId: string; selectedId: string | null; scroll: { id: string; seq: number } | null };
@@ -61,7 +66,7 @@ export function useVideoNotes({ projectId, version, role, userId, archived, draf
   const visibleRootIds = useMemo<ReadonlySet<string>>(() => new Set(shown.map((thread) => thread.id)), [shown]);
   const forms = useNoteForms({ assetId, clock, visibleRootIds });
   const pendingRange = useMemo(() => marksToFrames(forms.marks, frameCount), [forms.marks, frameCount]);
-  const markers = useMemo<TimelineMarker[]>(() => shown.filter((thread) => thread.startFrame !== null).map((thread) => ({ id: thread.id, startFrame: thread.startFrame!, endFrame: thread.endFrame, tone: thread.visibility, selected: thread.id === live.selectedId })), [shown, live.selectedId]);
+  const markers = useMemo<TimelineMarker[]>(() => shown.filter((thread) => thread.startFrame !== null).map((thread) => ({ id: thread.id, startFrame: thread.startFrame!, endFrame: thread.endFrame, tone: thread.visibility, selected: thread.id === live.selectedId, createdAt: thread.createdAt })), [shown, live.selectedId]);
 
   const select = useCallback((id: string | null) => { update((current) => ({ ...current, selectedId: id })); }, [update]);
   const seekToNote = useCallback((thread: VideoNoteThreadDto) => {
@@ -104,7 +109,7 @@ export function useVideoNotes({ projectId, version, role, userId, archived, draf
     assetId, version, role, userId, readOnly, query, threads, shown, filters, setFilters, selectedId: live.selectedId, scroll: live.scroll,
     clock, frameCount, timecode, forms, pendingRange, markers,
     seekToNote, select, actions, post, remove, refresh, onWriteError,
-    draft: drafts.get(assetId), onDraftChange: (draft: NoteDraft | null) => { drafts.set(assetId, draft); },
+    draft: drafts.get(assetId), clearSentDraft: (text: string) => { drafts.clearSent(assetId, text); }, onDraftChange: (draft: NoteDraft | null) => { drafts.set(assetId, draft); },
     /** What the viewer hands the player. `onMark` exists only while the panel can take a mark, so I and O do nothing on an archived Project; it pauses and confirms the frame itself (the player's frame argument is not used). */
     playerProps: { markers, pendingRange, onMarkerSelect, onClockChange, ...(writable ? { onMark: forms.markFromClock } : {}) },
   };
