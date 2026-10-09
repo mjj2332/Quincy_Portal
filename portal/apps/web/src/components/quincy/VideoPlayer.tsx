@@ -1,4 +1,4 @@
-import { useCallback, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type Ref } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type Ref } from "react";
 import { Maximize, Pause, Play, StepBack, StepForward, Volume2, VolumeX } from "lucide-react";
 import { framesToTimecode, rationalToNumber, type VideoVersionDto } from "@quincy/shared";
 import { cn } from "@/lib/utils";
@@ -89,10 +89,21 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     }
   }, [clock, lastFrame]);
 
+  /** K is down: J / L step a frame (the NLE chord). Cleared by its keyup anywhere, and by losing focus. */
+  const kHeld = useRef(false);
+  useEffect(() => {
+    const release = () => { kHeld.current = false; };
+    const onKeyUp = (event: KeyboardEvent) => { if (event.key === "k" || event.key === "K") release(); };
+    document.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", release);
+    return () => { document.removeEventListener("keyup", onKeyUp); window.removeEventListener("blur", release); };
+  }, []);
+
   const handleKeyDown = useCallback((event: KeyboardEvent | ReactKeyboardEvent): boolean => {
     const native = "nativeEvent" in event ? event.nativeEvent : event;
-    const action = playerKeyAction(native);
+    const action = playerKeyAction(native, { k: kHeld.current });
     if (!action) return false;
+    if (native.key === "k" || native.key === "K") kHeld.current = true;
     event.preventDefault();
     apply(action);
     return true;

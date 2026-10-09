@@ -400,3 +400,41 @@ describe("VideoPlayer transport (#741 4d-ii)", () => {
     expect([...legend.querySelectorAll("kbd")].map((k) => k.textContent)).toEqual(expect.arrayContaining(["J", "K", "L", "←", "→", "Space"]));
   });
 });
+
+describe("VideoPlayer K chords (#741 4d-ii Sol final)", () => {
+  const keyup = (k: string) => act(async () => { document.dispatchEvent(new KeyboardEvent("keyup", { key: k, bubbles: true })); });
+
+  it("held K + L steps one frame forward and held K + J one frame back", async () => {
+    await mount(); await load();
+    await key("k");
+    await key("l");
+    expect(stub.writes).toEqual([frameSeekSeconds(1, FPS_25)]);
+    expect(video().paused).toBe(true);
+    await act(async () => { stub.finishSeek(video()); stub.presentFrame(video(), 1 / 25); });
+    await key("j");
+    expect(stub.writes.at(-1)).toBe(frameSeekSeconds(0, FPS_25));
+    expect(video().paused).toBe(true);
+  });
+
+  it("releasing K restores the normal J / L shuttle", async () => {
+    await mount(); await load();
+    await key("k"); await key("k", { repeat: true });
+    await keyup("k");
+    stub.writes.length = 0;
+    await key("l");
+    expect(stub.writes).toEqual([]);
+    expect(video().paused).toBe(false);
+    expect(video().playbackRate).toBe(2);
+  });
+
+  it("losing focus (window blur) releases K", async () => {
+    await mount(); await load();
+    await key("k");
+    await act(async () => { window.dispatchEvent(new Event("blur")); });
+    stub.writes.length = 0;
+    await key("l");
+    expect(stub.writes).toEqual([]);
+    expect(video().paused).toBe(false);
+    expect(video().playbackRate).toBe(2);
+  });
+});

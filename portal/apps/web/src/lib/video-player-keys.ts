@@ -28,10 +28,11 @@ function isEditable(target: Element): boolean {
 
 /**
  * Maps a keydown to a player action, or null when the key is not the player's: modified, mid-composition, already handled,
- * typed into a field, inside a composite that owns it, or a held key that must not walk the shuttle ladder. A focused slider keeps
+ * typed into a field, inside a composite that owns it, or a held key that must not walk the shuttle ladder. With `held.k` (K down)
+ * J and L step a frame instead of shuttling. A focused slider keeps
  * the arrows, Home and End (its step is one frame); a focused button keeps Space.
  */
-export function playerKeyAction(event: KeyLike): PlayerKeyAction | null {
+export function playerKeyAction(event: KeyLike, held: { k?: boolean } = {}): PlayerKeyAction | null {
   if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return null;
   if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return null;
   const target = isElement(event.target) ? event.target : null;
@@ -47,8 +48,9 @@ export function playerKeyAction(event: KeyLike): PlayerKeyAction | null {
       if (event.repeat || (target && target.closest(SPACE_ACTIVATES))) return null;
       return { type: "toggle" };
     case "k": case "K": return event.repeat ? null : { type: "toggle" };
-    case "l": case "L": return event.repeat ? null : { type: "forward" };
-    case "j": case "J": return event.repeat ? null : { type: "reverse" };
+    // Held K is the standard NLE chord: K + L steps one frame forward, K + J one frame back.
+    case "l": case "L": return held.k ? { type: "step", delta: 1 } : event.repeat ? null : { type: "forward" };
+    case "j": case "J": return held.k ? { type: "step", delta: -1 } : event.repeat ? null : { type: "reverse" };
     case "ArrowLeft": return { type: "step", delta: -1 };
     case "ArrowRight": return { type: "step", delta: 1 };
     case "Home": return { type: "home" };

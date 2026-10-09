@@ -68,11 +68,11 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo }: {
           <DialogTitle className="text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{video.title}</DialogTitle>
           <DialogDescription className="text-foreground-secondary [font:var(--type-label)]">{`${version.width}×${version.height} · ${formatFps(version.fps)} fps · `}<span data-testid="video-start-tc" className="whitespace-nowrap">{`start TC ${startLabel}`}</span></DialogDescription>
         </div>
-        <div className="flex items-center gap-[var(--space-2)]">
-          <label htmlFor={VERSION_SELECT_ID} className="text-foreground-secondary [font:var(--type-label)]">Version</label>
+        <div data-testid="video-version-group" className="flex min-w-0 max-w-full items-center gap-[var(--space-2)]">
+          <label htmlFor={VERSION_SELECT_ID} className="shrink-0 text-foreground-secondary [font:var(--type-label)]">Version</label>
           <Select value={version.assetId} onValueChange={(next) => { if (typeof next === "string") setAssetId(next); }}>
-            <SelectTrigger id={VERSION_SELECT_ID} className="pointer-coarse:min-h-11 max-[721px]:min-h-11 min-w-[200px]">
-              <SelectValue>{() => optionLabel(version)}</SelectValue>
+            <SelectTrigger id={VERSION_SELECT_ID} data-testid="video-version-trigger" className="pointer-coarse:min-h-11 max-[721px]:min-h-11 min-w-0 max-w-full">
+              <SelectValue>{() => <span data-testid="video-version-label" className="block truncate">{optionLabel(version)}</span>}</SelectValue>
             </SelectTrigger>
             <SelectContent className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
               {video.versions.map((candidate) => <SelectItem key={candidate.assetId} value={candidate.assetId} className="pointer-coarse:min-h-11 max-[721px]:min-h-11">{optionLabel(candidate)}</SelectItem>)}

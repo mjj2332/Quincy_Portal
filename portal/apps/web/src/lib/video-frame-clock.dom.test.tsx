@@ -333,3 +333,60 @@ describe("VideoFrameClock reverse shuttle (#741 4d-ii)", () => {
     expect(stub.writes.at(-1)).toBe(seekTo(48));
   });
 });
+
+describe("VideoFrameClock, Play inside the user's gesture (#741 4d-ii Sol final)", () => {
+  /** Chrome: pause() rejects every pending play() promise with AbortError. */
+  function chromePromises(video: HTMLVideoElement) {
+    const pending: Array<(reason: unknown) => void> = [];
+    const realPlay = video.play.bind(video); const realPause = video.pause.bind(video);
+    Object.defineProperty(video, "play", { configurable: true, value: () => { void realPlay(); return new Promise<void>((_resolve, reject) => { pending.push(reject); }); } });
+    Object.defineProperty(video, "pause", { configurable: true, value: () => { realPause(); for (const reject of pending.splice(0)) queueMicrotask(() => { reject(new DOMException("interrupted", "AbortError")); }); } });
+  }
+
+  it("calls video.play() synchronously in the setRate call, before any metadata, and the initial positioning never pauses", async () => {
+    const video = setup(); chromePromises(video);
+    clock!.setRate(2);
+    expect(stub.calls).toEqual(["play"]);
+    stub.loadMetadata(video, { duration: 4, videoWidth: 1920, videoHeight: 1080 });
+    await Promise.resolve(); await Promise.resolve();
+    expect(stub.calls).not.toContain("pause");
+    expect(clock!.getState()).toMatchObject({ playing: true, rate: 2 });
+    expect(video.paused).toBe(false);
+  });
+
+  it("when the playhead is not at 0 on metadata, it is moved to frame 0 without pausing", async () => {
+    const video = setup(); chromePromises(video);
+    clock!.play();
+    stub.advance(video, 1);
+    stub.loadMetadata(video, { duration: 4, videoWidth: 1920, videoHeight: 1080 });
+    await Promise.resolve(); await Promise.resolve();
+    expect(stub.writes).toEqual([seekTo(0)]);
+    expect(stub.calls).not.toContain("pause");
+    expect(clock!.getState()).toMatchObject({ playing: true, rate: 1 });
+  });
+
+  it("an AbortError from a play() that a newer load superseded does not flip the state", async () => {
+    const video = setup();
+    Object.defineProperty(video, "play", { configurable: true, value: () => Promise.reject(new DOMException("interrupted", "AbortError")) });
+    clock!.play();
+    await Promise.resolve(); await Promise.resolve();
+    expect(clock!.getState()).toMatchObject({ playing: true, rate: 1 });
+  });
+});
+
+describe("VideoFrameClock, seeks stay inside the element's real duration (#741 4d-ii Sol final)", () => {
+  it("seeking the last frame of a 3.01 s film at 25 fps targets a time strictly below the duration", () => {
+    const video = setup(); settleAtZero(video, 3.01);
+    clock!.seekToFrame(75);
+    expect(stub.writes).toHaveLength(1);
+    expect(stub.writes[0]!).toBeLessThan(3.01);
+    expect(stub.writes[0]!).toBeGreaterThan(3.0);
+  });
+
+  it("the restart-from-the-last-frame path is clamped too", () => {
+    const video = setup(); settleAtZero(video, 0.01);
+    clock!.play();
+    expect(stub.writes).toHaveLength(1);
+    expect(stub.writes[0]!).toBeLessThan(0.01);
+  });
+});

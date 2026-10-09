@@ -172,6 +172,18 @@ describe("VideoReviewViewer (#741 4d-ii)", () => {
     expect(aside.textContent).toContain("01:00:00:00");
   });
 
+  it("a long uploader name cannot push the Version control past the header: the group and trigger may shrink and the label truncates, at the 44px touch height", async () => {
+    await mount();
+    await openViewer();
+    const byId = (id: string) => dialog()!.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
+    expect(byId("video-version-group").className).toContain("min-w-0");
+    expect(byId("video-version-group").className).toContain("max-w-full");
+    expect(byId("video-version-trigger").className).toContain("min-w-0");
+    expect(byId("video-version-trigger").className).not.toContain("min-w-[200px]");
+    expect(byId("video-version-trigger").className).toContain("pointer-coarse:min-h-11");
+    expect(byId("video-version-label").className).toContain("truncate");
+  });
+
   it("lays the details column out like the Lightbox panel: heading aligned with the rows, label muted above, value in primary", async () => {
     await mount();
     await openViewer();

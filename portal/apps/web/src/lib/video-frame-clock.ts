@@ -98,12 +98,12 @@ export class VideoFrameClock {
     this.endReverse();
     if (this.state.frame >= this.lastFrame()) {
       this.target = 0; this.issued = 0; this.presented = false;
-      this.video.currentTime = frameSeekSeconds(0, this.fps);
+      this.video.currentTime = this.seekSeconds(0);
       this.state = { ...this.state, frame: 0, targetFrame: 0, confirmed: false };
     }
     this.video.playbackRate = rate;
-    // Before metadata the element cannot play, and the initial seek's pause() would abort this play() (AbortError) and flip the state back: `initialize` starts it.
-    if (this.video.readyState >= 1) this.startPlayback();
+    // play() must run inside the user's gesture (Safari / iOS refuse it later). Before metadata it stays pending; `initialize` positions frame 0 without pausing, so it is never aborted.
+    this.startPlayback();
     this.set({ playing: true, rate });
     this.startRaf();
   }
@@ -195,10 +195,10 @@ export class VideoFrameClock {
 
   private timeFrame(): number { return this.clamp(frameContainingTime(this.video.currentTime, this.fps)); }
 
-  private seek(frame: number, force: boolean): void {
+  private seek(frame: number, force: boolean, keepPlaying = false): void {
     const target = this.clamp(frame);
     const wasMoving = this.state.playing;
-    this.halt();
+    if (!keepPlaying) this.halt();
     if (!force && !wasMoving && target === this.state.frame && this.state.confirmed && this.target === null && !this.video.seeking) return;
     this.target = target;
     this.set({ targetFrame: target, confirmed: false });
@@ -206,15 +206,16 @@ export class VideoFrameClock {
     if (!this.video.seeking) this.issue();
   }
 
-  /** Metadata arrived: paint frame 0, keeping a Play (or rate) asked for before the element could seek. */
+  /**
+   * Metadata arrived: paint frame 0. A Play asked for before the element could seek is already pending on the element: it must not
+   * be paused (that aborts the play() promise), so frame 0 is reached without `halt()`, and not at all when the playhead is there.
+   */
   private initialize(): void {
     const { playing, rate } = this.state;
-    const resume = playing && rate > 0 && !this.reverseState;
-    this.seek(0, true);
-    if (!resume || this.disposed) return;
+    if (!(playing && rate > 0 && !this.reverseState)) { this.seek(0, true); return; }
+    if (this.disposed) return;
     this.video.playbackRate = rate;
-    this.startPlayback();
-    this.set({ playing: true, rate });
+    if (this.video.currentTime !== 0 || this.target !== null) this.seek(0, true, true);
     this.startRaf();
   }
 
@@ -223,7 +224,14 @@ export class VideoFrameClock {
     this.issued = this.target;
     // Presentation evidence belongs to one seek: a frame shown before this write says nothing about the one it asks for.
     this.presented = false;
-    this.video.currentTime = frameSeekSeconds(this.target, this.fps);
+    this.video.currentTime = this.seekSeconds(this.target);
+  }
+
+  /** The middle of `frame`, kept strictly inside a finite element duration (the last frame's midpoint can lie past it). */
+  private seekSeconds(frame: number): number {
+    const seconds = frameSeekSeconds(frame, this.fps);
+    const duration = this.video.duration;
+    return Number.isFinite(duration) && duration > 0 ? Math.min(seconds, duration - 0.001) : seconds;
   }
 
   /** Stops playback and any reverse, leaving no seek of its own behind. */

@@ -30,10 +30,15 @@ export function VideoCollectionPanel({ projectId, role, review }: { projectId: s
   const uploads = useVideoUploads(userId, projectId);
   const canUpload = review.parts.includes("upload");
   const running = uploads.filter((upload) => upload.phase === "reserving" || upload.phase === "uploading" || upload.phase === "finishing");
-  const [openVideoId, setOpenVideoId] = useState<string | null>(null);
+  // The component is chosen once per opening: swapping `lazy` for the loaded one mid-open would remount the viewer (playback, Version and frame lost).
+  const [opened, setOpened] = useState<{ id: string; Viewer: ViewerComponent | typeof LazyViewer } | null>(null);
+  const openVideoId = opened?.id ?? null;
+  const Viewer = opened?.Viewer ?? LazyViewer;
+  const setOpenVideoId = (id: string | null) => {
+    // Once preloaded the component renders directly: `lazy` would suspend for a task even with the module in hand.
+    setOpened(id ? { id, Viewer: loadedViewer ?? LazyViewer } : null);
+  };
   const opener = useRef<HTMLElement | null>(null);
-  // Once preloaded the component renders directly: `lazy` would suspend for a task even with the module in hand.
-  const Viewer = loadedViewer ?? LazyViewer;
   const openVideo = openVideoId ? videos.data?.find((video) => video.id === openVideoId) ?? null : null;
   useEffect(() => { if (openVideoId && videos.data && !openVideo) setOpenVideoId(null); }, [openVideoId, openVideo, videos.data]);
 
