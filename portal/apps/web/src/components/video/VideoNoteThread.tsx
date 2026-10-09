@@ -99,9 +99,9 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     (previous === "reply" ? q(articleRef.current, '[data-testid="video-note-reply-button"]') : q(articleRef.current, '[data-testid="video-note-actions"]') ?? q(articleRef.current, '[data-testid="video-note-anchor-button"]'))?.focus();
   }, [form?.kind]);
 
-  // An edit form that opens is brought into view inside the list's scroller (nearest: no jump when it is already visible).
+  // An edit form that opens is brought into view by moving the list's own scroller only: `scrollIntoView` would scroll every ancestor, the viewer dialog included.
   const editingHere = editing !== null && (editing.noteId === thread.id || thread.replies.some((reply) => reply.id === editing.noteId));
-  useEffect(() => { if (editingHere) q(articleRef.current, '[data-notes-form="edit"]')?.scrollIntoView?.({ block: "nearest" }); }, [editingHere, editing?.noteId]);
+  useEffect(() => { if (editingHere) revealInList(q(articleRef.current, '[data-notes-form="edit"]')); }, [editingHere, editing?.noteId]);
 
   async function toggleResolved() {
     setResolving(true); setResolveNotice(null);
@@ -201,6 +201,16 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
       </div>}
     </div>
   </Item>;
+}
+
+/** Scrolls the list's scroll-area viewport so the form's bottom (its buttons) is visible, or its top when it is taller than the viewport. Nothing else scrolls. */
+function revealInList(form: HTMLElement | null) {
+  const viewport = form?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+  if (!form || !viewport) return;
+  const pad = 8;
+  const f = form.getBoundingClientRect(); const v = viewport.getBoundingClientRect();
+  const delta = f.height > v.height ? f.top - v.top - pad : f.bottom > v.bottom ? f.bottom - v.bottom + pad : f.top < v.top ? f.top - v.top - pad : 0;
+  if (delta !== 0) viewport.scrollTop = Math.max(0, viewport.scrollTop + delta);
 }
 
 function q(scope: ParentNode | null, selector: string): HTMLElement | null { return scope?.querySelector<HTMLElement>(selector) ?? null; }

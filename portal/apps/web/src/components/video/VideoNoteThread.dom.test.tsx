@@ -87,6 +87,13 @@ describe("VideoNoteThread (#741 5b)", () => {
     const scroll = vi.fn();
     Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: scroll });
     await render(withReply);
+    // The list's own scroller is the host; the form sits 50px below its bottom edge.
+    const tops: number[] = [];
+    host.setAttribute("data-slot", "scroll-area-viewport");
+    Object.defineProperty(host, "scrollTop", { configurable: true, get: () => tops.at(-1) ?? 0, set: (value: number) => { tops.push(value); } });
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) });
+    const realRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) { return this === host ? rect(0, 100) : this.matches('[data-notes-form="edit"]') ? rect(120, 30) : realRect.call(this); };
     const row = tid("video-note-header-row")!;
     const menu = row.querySelector('[data-testid="video-note-actions"]')!;
     expect(menu.parentElement!.className).toContain("ms-auto");
@@ -94,7 +101,10 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(replyEl.querySelector('[data-testid="video-note-header-row"]')).toBeNull();
     expect(scroll).not.toHaveBeenCalled();
     await chooseAction("Terry", "Edit");
-    expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
+    expect(scroll).not.toHaveBeenCalled(); // scrollIntoView would scroll the dialog too
+    expect(tops).toEqual([58]); // the form's bottom (150) minus the viewport's (100), plus 8
+    expect(document.documentElement.scrollTop).toBe(0);
+    HTMLElement.prototype.getBoundingClientRect = realRect;
     expect(tid("video-note-edit-anchor") ?? host.querySelector('[data-notes-form="edit"]')).not.toBeNull();
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
   });

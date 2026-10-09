@@ -18,6 +18,7 @@ const MONO = "[font:var(--type-mono)] tabular-nums";
 // On a short window the list needs the height: two rows until the field is focused or holds text (the 800px query is the window's height).
 const SHORT_TEXTAREA = "[@media(max-height:800px)]:min-h-16 [@media(max-height:800px)]:focus:min-h-24 [@media(max-height:800px)]:[&:not(:placeholder-shown)]:min-h-24";
 /** The anchor chip, shared with the edit form. */
+export const ANCHOR_CHIP_ROW = "@max-[280px]:basis-full";
 export const ANCHOR_CHIP = "rounded-md bg-muted px-[var(--space-2)] py-[var(--space-1)] text-foreground [font:var(--type-mono)] tabular-nums";
 /** The key hint is visual only at panel widths from 280px (the form is a size container); below that it stays for assistive tech but takes no room. */
 const KBD_HINT = "@max-[280px]:sr-only";
@@ -71,7 +72,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     onSubmit={(event) => { event.preventDefault(); submit(); }}
   >
     <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-      <span data-testid="video-note-anchor" aria-live="off" className={ANCHOR_CHIP}>{!pendingFrames && <span className="sr-only">Note at </span>}{anchorText}</span>
+      <span data-testid="video-note-anchor" aria-live="off" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}>{!pendingFrames && <span className="sr-only">Note at </span>}{anchorText}</span>
       <Button type="button" variant="secondary" data-testid="video-note-set-in" className={SMALL_BUTTON} disabled={clock === null || frozen || otherForm !== null} aria-keyshortcuts="I" onClick={() => { mark("in"); }}>Set in <Kbd className={KBD_HINT}>I</Kbd></Button>
       <Button type="button" variant="secondary" data-testid="video-note-set-out" className={SMALL_BUTTON} disabled={clock === null || frozen || otherForm !== null} aria-keyshortcuts="O" onClick={() => { mark("out"); }}>Set out <Kbd className={KBD_HINT}>O</Kbd></Button>
       {pendingFrames && <Button type="button" variant="text" data-testid="video-note-clear-marks" disabled={frozen} onClick={() => { store.clearMarks(assetId); }}>Clear marks</Button>}
