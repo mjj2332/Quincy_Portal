@@ -24,6 +24,12 @@ const manifestArchivedProjectId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const manifestRawCollectionId = "77777777-7777-4777-8777-777777777777";
 const manifestEditedCollectionId = "88888888-8888-4888-8888-888888888888";
 const manifestMembershipId = "99999999-9999-4999-8999-999999999999";
+const manifestVideoCollectionId = "cccccccc-0000-4ccc-8ccc-cccccccccc01";
+const manifestVideoId = "cccccccc-0000-4ccc-8ccc-cccccccccc02";
+const manifestVideoAssetId = "cccccccc-0000-4ccc-8ccc-cccccccccc03";
+const manifestPublicNoteId = "cccccccc-0000-4ccc-8ccc-cccccccccc04";
+const manifestInternalNoteId = "cccccccc-0000-4ccc-8ccc-cccccccccc05";
+const manifestInternalReplyId = "cccccccc-0000-4ccc-8ccc-cccccccccc06";
 declare const __PORTAL_MIGRATION_SQL__: string;
 
 async function executeSql(source: string): Promise<void> {
@@ -68,13 +74,24 @@ beforeAll(async () => {
     database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?")
       .bind(now, manifestArchivedProjectId),
     database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?), (?, ?, 'edited', 'empty', 0, ?, ?), (?, ?, 'video', 'empty', 0, ?, ?)")
-      .bind(manifestRawCollectionId, manifestProjectId, now, now, manifestEditedCollectionId, manifestProjectId, now, now, crypto.randomUUID(), manifestProjectId, now, now),
+      .bind(manifestRawCollectionId, manifestProjectId, now, now, manifestEditedCollectionId, manifestProjectId, now, now, manifestVideoCollectionId, manifestProjectId, now, now),
     database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)")
       .bind(manifestMembershipId, manifestProjectId, externalUserId, now),
-    // Test-only flag rows (never a migration): the video review gate is open on the manifest Project with the upload part on, so the
+    // Test-only video rows: one Version with a public note, an internal note and a reply that inherited internal (never a migration).
+    database.DB.prepare("INSERT INTO videos (id, project_id, collection_id, title, premium, position, created_by, created_at, updated_at) VALUES (?, ?, ?, 'Manifest film', 0, 0, ?, ?, ?)")
+      .bind(manifestVideoId, manifestProjectId, manifestVideoCollectionId, externalUserId, now, now),
+    database.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, version_group_id, version, publish_status, created_at, updated_at) VALUES (?, ?, 'video', ?, 'film.mp4', 4096, 'upload', ?, 1, 'ready', ?, ?)")
+      .bind(manifestVideoAssetId, manifestVideoCollectionId, `projects/${manifestProjectId}/video/${manifestVideoId}/${manifestVideoAssetId}/original.mp4`, manifestVideoId, now, now),
+    database.DB.prepare("INSERT INTO video_version_meta (asset_id, video_id, fps_num, fps_den, media_timescale, frame_delta, frame_count, duration_ms, width, height, codec, codec_string, start_tc_frames, tc_nominal_fps, tc_drop_frame, fast_start, has_audio, probe_version, poster_key, uploaded_by, created_at) VALUES (?, ?, 25, 1, 25000, 1000, 250, 10000, 1920, 1080, 'avc1', 'avc1.640028', NULL, 25, 0, 1, 1, 1, NULL, ?, ?)")
+      .bind(manifestVideoAssetId, manifestVideoId, externalUserId, now),
+    database.DB.prepare("INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_role, visibility, start_frame, body, revision, created_at) VALUES (?, ?, ?, ?, NULL, ?, 'external_editor', 'public', 5, 'Public note', 1, ?), (?, ?, ?, ?, NULL, ?, 'external_editor', 'internal', 9, 'Internal note', 1, ?)")
+      .bind(manifestPublicNoteId, manifestProjectId, manifestVideoId, manifestVideoAssetId, externalUserId, now, manifestInternalNoteId, manifestProjectId, manifestVideoId, manifestVideoAssetId, externalUserId, now),
+    database.DB.prepare("INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_role, visibility, body, revision, created_at) VALUES (?, ?, ?, ?, ?, ?, 'external_editor', 'internal', 'Reply', 1, ?)")
+      .bind(manifestInternalReplyId, manifestProjectId, manifestVideoId, manifestVideoAssetId, manifestInternalNoteId, externalUserId, now),
+    // Test-only flag rows (never a migration): the video review gate is open on the manifest Project with the upload and notes parts on, so the
     // `video-review` probe parses a non-empty `parts` and not only the closed shape.
-    database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_at) VALUES ('video_review', 1, ?), ('video_review_upload', 1, ?), (?, 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1")
-      .bind(now, now, `video_review_pilot:${manifestProjectId}`, now),
+    database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_at) VALUES ('video_review', 1, ?), ('video_review_upload', 1, ?), ('video_review_notes', 1, ?), (?, 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1")
+      .bind(now, now, now, `video_review_pilot:${manifestProjectId}`, now),
   ]);
 });
 
@@ -86,6 +103,7 @@ function concreteManifestPath(path: string, projectId = manifestProjectId): stri
     .replaceAll(":assetId", crypto.randomUUID())
     .replaceAll(":annotationId", crypto.randomUUID())
     .replaceAll(":commentId", crypto.randomUUID())
+    .replaceAll(":noteId", crypto.randomUUID())
     .replaceAll(":subtaskId", crypto.randomUUID())
     .replaceAll(":linkId", crypto.randomUUID())
     .replaceAll(":sessionId", crypto.randomUUID())
@@ -198,13 +216,23 @@ describe("terminal route manifest", () => {
         path: `/api/projects/${manifestProjectId}/video-review`,
         parse: (body: unknown) => {
           const parsed = EXTERNAL_API_RESPONSE_SCHEMAS["video-review"].parse(body);
-          expect(parsed).toEqual({ open: true, parts: ["upload"] });
+          expect(parsed).toEqual({ open: true, parts: ["upload", "notes"] });
           return parsed;
         },
       },
       "video-list": {
         path: `/api/projects/${manifestProjectId}/videos`,
         parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS["video-list"].parse(body),
+      },
+      "video-note-list": {
+        path: `/api/projects/${manifestProjectId}/video-versions/${manifestVideoAssetId}/notes`,
+        parse: (body: unknown) => {
+          const parsed = EXTERNAL_API_RESPONSE_SCHEMAS["video-note-list"].parse(body) as { notes: Array<{ visibility: string; replies: Array<{ visibility: string }> }> };
+          // Staff and an assigned External read both visibilities: the public root, the internal root and the reply that inherited internal.
+          expect(parsed.notes.map((note) => note.visibility)).toEqual(["public", "internal"]);
+          expect(parsed.notes[1]!.replies.map((reply) => reply.visibility)).toEqual(["internal"]);
+          return parsed;
+        },
       },
     } as const;
     // Each surface's honest scope: a project-child route resolves an assigned project;
@@ -219,6 +247,7 @@ describe("terminal route manifest", () => {
       activity: "assigned-project",
       "video-review": "assigned-project",
       "video-list": "assigned-project",
+      "video-note-list": "assigned-project",
     };
     const declared = PROJECT_SECURITY_ROUTE_CLASSIFICATION.filter((route) => route.externalSurface);
     expect(new Set(declared.map((route) => route.externalSurface))).toEqual(new Set(Object.keys(probes)));
@@ -315,6 +344,26 @@ describe("terminal route manifest", () => {
     expect(unknownPoster.status).toBe(404);
     const directUpload = await SELF.fetch(`https://portal.test/api/projects/${manifestProjectId}/video-uploads/${crypto.randomUUID()}/direct`, { method: "PUT", headers: { cookie, origin: baseEnv.APP_ORIGIN }, body: new Uint8Array(4) });
     expect(directUpload.status).toBe(404);
+  });
+
+  it("reaches every video note mutation on a gate-open Project and answers an unknown id 404, then 201/200 for the real ones", async () => {
+    const cookie = await externalCookie();
+    const send = (method: string, path: string, body: unknown) => SELF.fetch(`https://portal.test${path}`, { method, headers: { cookie, "content-type": "application/json", origin: baseEnv.APP_ORIGIN }, body: JSON.stringify(body) });
+    const base = `/api/projects/${manifestProjectId}`;
+    expect((await send("POST", `${base}/video-versions/${crypto.randomUUID()}/notes`, { startFrame: 1, visibility: "internal", body: "x" })).status).toBe(404);
+    expect((await send("POST", `${base}/video-notes/${crypto.randomUUID()}/replies`, { body: "x" })).status).toBe(404);
+    expect((await send("PATCH", `${base}/video-notes/${crypto.randomUUID()}`, { expectedRevision: 1, body: "x" })).status).toBe(404);
+    expect((await send("DELETE", `${base}/video-notes/${crypto.randomUUID()}`, { expectedRevision: 1 })).status).toBe(404);
+    expect((await send("PUT", `${base}/video-notes/${crypto.randomUUID()}/resolution`, { resolved: true })).status).toBe(404);
+    const created = await send("POST", `${base}/video-versions/${manifestVideoAssetId}/notes`, { startFrame: 3, visibility: "internal", body: "Manifest note" });
+    expect(created.status).toBe(201);
+    const thread = EXTERNAL_API_RESPONSE_SCHEMAS["video-note-thread"].parse(await created.json()) as { id: string };
+    expect((EXTERNAL_API_RESPONSE_SCHEMAS["video-note-thread"].parse(await (await send("POST", `${base}/video-notes/${thread.id}/replies`, { body: "Manifest reply" })).json()) as { replies: unknown[] }).replies).toHaveLength(1);
+    expect((await send("PATCH", `${base}/video-notes/${thread.id}`, { expectedRevision: 1, body: "Manifest edit" })).status).toBe(200);
+    expect((await send("PUT", `${base}/video-notes/${thread.id}/resolution`, { resolved: true })).status).toBe(200);
+    const removed = await send("DELETE", `${base}/video-notes/${thread.id}`, { expectedRevision: 2 });
+    expect(removed.status).toBe(200);
+    EXTERNAL_API_RESPONSE_SCHEMAS["video-note-delete"].parse(await removed.json());
   });
 
   it("keeps assigned-project Stage misses generic for External Editors", async () => {

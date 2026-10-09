@@ -44,7 +44,7 @@ export type SecurityRouteRegistration = {
   scope: SecurityRouteScope;
   projection: SecurityRouteProjection;
   response: SecurityRouteResponse;
-  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar" | "gantt" | "video-review" | "video-list";
+  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar" | "gantt" | "video-review" | "video-list" | "video-note-list";
 };
 type LegacySecurityRouteClass = "bearer-protocol" | "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "terminal-fallback";
 type LegacySecurityRouteRegistrationSeed = { method: string; path: string; class: LegacySecurityRouteClass; externalSurface?: SecurityRouteRegistration["externalSurface"] };
@@ -218,6 +218,12 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "POST", path: "/api/projects/:projectId/video-uploads/:reservationId/complete", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/video-uploads/:reservationId/abort", class: "scoped" },
   { method: "PUT", path: "/api/projects/:projectId/video-versions/:assetId/poster", class: "scoped" },
+  { method: "GET", path: "/api/projects/:projectId/video-versions/:assetId/notes", class: "scoped", externalSurface: "video-note-list" },
+  { method: "POST", path: "/api/projects/:projectId/video-versions/:assetId/notes", class: "scoped" },
+  { method: "POST", path: "/api/projects/:projectId/video-notes/:noteId/replies", class: "scoped" },
+  { method: "PATCH", path: "/api/projects/:projectId/video-notes/:noteId", class: "scoped" },
+  { method: "DELETE", path: "/api/projects/:projectId/video-notes/:noteId", class: "scoped" },
+  { method: "PUT", path: "/api/projects/:projectId/video-notes/:noteId/resolution", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/link-previews", class: "scoped" },
   { method: "GET", path: "/api/projects/:projectId/activity", class: "scoped", externalSurface: "activity" },
   { method: "GET", path: "/api/projects/:projectId/activity/", class: "scoped", externalSurface: "activity" },
