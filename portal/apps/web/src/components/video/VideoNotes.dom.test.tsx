@@ -38,7 +38,7 @@ const T = (n: number) => `2026-10-10T00:00:${String(n).padStart(2, "0")}.000Z`;
 type NoteOver = Record<string, unknown>;
 const note = (over: NoteOver = {}): VideoNoteThreadDto => ({
   id: nid(), assetId: ids.asset2, parentId: null, author: { kind: "staff", person: me }, authorRole: "admin", visibility: "internal", startFrame: 10, endFrame: null, drawingFrame: null, hasMarkup: false,
-  body: "A note", deleted: false, resolved: null, revision: 1, createdAt: T(1), editedAt: null, copiedFrom: null, copiedFromNote: undefined, replies: [], ...over,
+  body: "A note", deleted: false, resolved: null, revision: 1, createdAt: T(1), editedAt: null, copiedFrom: null, replies: [], ...over,
 }) as unknown as VideoNoteThreadDto;
 const replyTo = (root: VideoNoteThreadDto, over: NoteOver = {}) => { const { replies: _r, ...rest } = note({ parentId: root.id, startFrame: null, visibility: root.visibility, ...over }); return rest; };
 
