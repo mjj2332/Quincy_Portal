@@ -105,6 +105,10 @@ export const NO_FK_ID_COLUMNS: readonly NoFkColumn[] = [
   { table: "link_previews", column: "owner_id", references: "*", evidence: "polymorphic by owner_kind (project_comment, notice_post) — workers/app/src/lib/link-previews.ts attaches rows to the comment / post id in the same batch as the post. The rows hang off projects by project_id (cascade), so a QA Project teardown clears them" },
   { table: "embedded_media_cleanup", column: "project_id", references: "projects", evidence: "workers/app/src/routes/projects.ts queues the key of every embedded_media row of a Project it hard-deletes, with that Project id" },
   { table: "link_preview_attempts", column: "context_id", references: "projects", evidence: "workers/app/src/lib/link-previews.ts writes the Project id (or the literal notice_board, which names no row) as the attempt context, with no foreign key because it is polymorphic. A Project teardown removes its attempts so none outlive it" },
+  { table: "video_upload_reservations", column: "video_id", references: "videos", evidence: "the Video row is created at completion, so the reservation holds its id with no FK. The reservation hangs off projects by project_id (cascade)" },
+  { table: "video_upload_reservations", column: "asset_id", references: "assets", evidence: "the Asset row is created at completion, so the reservation holds its id with no FK" },
+  { table: "video_upload_reservations", column: "supersedes_asset_id", references: "assets", evidence: "the Asset Version the uploaded video supersedes" },
+  { table: "video_upload_reservations", column: "completion_audit_id", references: "audit_log", evidence: "the audit_log row id written at completion, the same pattern as document_uploads.completion_audit_id" },
   { table: "notice_board_read_markers", column: "last_read_post_id", references: "notice_board_posts", evidence: "read marker's last-read notice-board post" },
 ];
 
@@ -124,6 +128,7 @@ export const SHARED_PARENT_TABLES: Readonly<Record<string, string>> = {
   agents: "global agent directory: projects.agent_id points at a shared agent row a browser pass may pick for a fixture project; teardown never deletes directory rows",
   integration_connections: "the one Dropbox/AutoHDR connection every project's AutoHDR handoffs, mappings and claims share; teardown never deletes it",
   notification_digests: "per-recipient digest send records (#489): digest items point at one with ON DELETE SET NULL, but a digest belongs to a recipient and a slot, never to a fixture project; teardown never deletes them",
+  guest_reviewers: "global directory of external video reviewers (#741): video_notes.author_guest_id points at one, but a guest belongs to an email and not to a fixture project; teardown never deletes them",
   pipeline_stages: "global stage lookup named in the round-3 review; no FK points at it today (projects.stage_key is a bare text key), so this entry is inert until one does",
 };
 
