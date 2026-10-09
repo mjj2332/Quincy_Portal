@@ -44,7 +44,7 @@ export type SecurityRouteRegistration = {
   scope: SecurityRouteScope;
   projection: SecurityRouteProjection;
   response: SecurityRouteResponse;
-  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar" | "gantt" | "video-review";
+  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar" | "gantt" | "video-review" | "video-list";
 };
 type LegacySecurityRouteClass = "bearer-protocol" | "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "terminal-fallback";
 type LegacySecurityRouteRegistrationSeed = { method: string; path: string; class: LegacySecurityRouteClass; externalSurface?: SecurityRouteRegistration["externalSurface"] };
@@ -212,6 +212,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "POST", path: "/api/projects/:projectId/embedded-media/:mediaId/rendition/retry", class: "scoped" },
   { method: "GET", path: "/api/embedded-media/settings", class: "global-self" },
   { method: "GET", path: "/api/projects/:projectId/video-review", class: "scoped", externalSurface: "video-review" },
+  { method: "GET", path: "/api/projects/:projectId/videos", class: "scoped", externalSurface: "video-list" },
   { method: "POST", path: "/api/projects/:projectId/link-previews", class: "scoped" },
   { method: "GET", path: "/api/projects/:projectId/activity", class: "scoped", externalSurface: "activity" },
   { method: "GET", path: "/api/projects/:projectId/activity/", class: "scoped", externalSurface: "activity" },
@@ -272,6 +273,8 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/media/asset/:assetId/:variant", class: "scoped" },
   { method: "GET", path: "/media/embedded/:mediaId", class: "scoped" },
   { method: "GET", path: "/media/embedded/:mediaId/poster", class: "scoped" },
+  { method: "GET", path: "/media/video/:assetId", class: "scoped" },
+  { method: "GET", path: "/media/video/:assetId/poster", class: "scoped" },
   { method: "ALL", path: "/media", class: "terminal-fallback" },
 ] as const satisfies readonly LegacySecurityRouteRegistrationSeed[];
 
