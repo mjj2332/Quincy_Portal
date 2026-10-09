@@ -39,8 +39,9 @@ this decision.
 
 ## Consequences
 
-- Editors export to the supported shape (H.264, constant frame rate, fast-start). Anything else is
-  re-exported by them; the Portal gives the reason.
+- Editors export to the supported shape (H.264, constant frame rate; fast-start recommended). A file
+  that is not H.264, has a variable frame rate or an unsupported edit list is re-exported by them; the
+  Portal gives the reason. A file without fast-start is accepted with a warning.
 - Playback quality is the uploaded file's quality. A 2 GB cap and a fast-start warning are the only
   levers, so seek and start-up speed depend on the export.
 - The pure frame, timecode and probe logic is shared and testable without a browser. jsdom cannot decode

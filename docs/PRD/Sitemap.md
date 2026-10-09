@@ -64,16 +64,16 @@ Quincy Portal
 │   └── Download released Video, "Download all" zip  ⬜
 │
 └── 🌐 CLIENT DELIVERY PAGE  ⬜ not built — /d and /d/* return 404 today  (C — no login, private link)
-    ├── Cover hero  ✅
-    ├── Collection tabs  ✅  (Web / Print / Floorplan today → ✏️ Images / Video / Floorplan / Copy)
-    ├── Gallery grid + lightbox  ✅
-    ├── Favourites  ✅
-    ├── Slideshow  ✅
-    ├── Download (web / full-res · single / zip)  ✅
-    ├── Share  ✅
-    ├── Video / Film section  ✅
-    ├── Description (copywriting) section  ✅
-    └── Premium content  ✅  (watermarked + paywalled — unlock to download)
+    ├── Cover hero  ⬜
+    ├── Collection tabs  ⬜  (Web / Print / Floorplan today → ✏️ Images / Video / Floorplan / Copy)
+    ├── Gallery grid + lightbox  ⬜
+    ├── Favourites  ⬜
+    ├── Slideshow  ⬜
+    ├── Download (web / full-res · single / zip)  ⬜
+    ├── Share  ⬜
+    ├── Video / Film section  ⬜
+    ├── Description (copywriting) section  ⬜
+    └── Premium content  ⬜  (watermarked + paywalled — unlock to download)
 ```
 
 ---
