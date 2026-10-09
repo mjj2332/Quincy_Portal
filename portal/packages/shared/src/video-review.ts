@@ -42,7 +42,7 @@ export const VIDEO_KEY_PATTERN = /^projects\/[^/]+\/video\//;
  * The people on a Video DTO. The same shape as `externalPersonSchema`; declared here because
  * external-project-dto imports this file for its response-schema map and a back-import would be circular.
  */
-const videoPersonSchema = z.object({ id: z.string().uuid(), name: z.string(), roleLabel: z.string(), isExternal: z.boolean(), active: z.boolean() }).strict();
+export const videoPersonSchema = z.object({ id: z.string().uuid(), name: z.string(), roleLabel: z.string(), isExternal: z.boolean(), active: z.boolean() }).strict();
 
 /** One Version of a Video as the list returns it (#741). Never carries an object key: playback addresses a Version by Asset id alone. */
 export const videoVersionDtoSchema = z.object({
