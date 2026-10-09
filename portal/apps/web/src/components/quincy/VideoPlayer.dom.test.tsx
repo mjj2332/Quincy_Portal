@@ -237,8 +237,11 @@ describe("VideoPlayer keyboard (#741 4d-ii)", () => {
     await mount(); await load();
     await key(" "); expect(video().paused).toBe(false); expect(button("Pause")).toBeDefined();
     await key(" "); expect(video().paused).toBe(true); expect(button("Play")).toBeDefined();
-    await key("k"); expect(video().paused).toBe(false);
+    await key("k"); await act(async () => { document.dispatchEvent(new KeyboardEvent("keyup", { key: "k", bubbles: true })); });
+    expect(video().paused).toBe(false);
     await key("K"); expect(video().paused).toBe(true);
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keyup", { key: "K", bubbles: true })); });
+    expect(video().paused).toBe(true);
   });
 
   it("L plays forward and climbs 1x, 2x, 4x, 8x", async () => {
@@ -416,6 +419,63 @@ describe("VideoPlayer K chords (#741 4d-ii Sol final)", () => {
     expect(video().paused).toBe(true);
   });
 
+  describe("K held from paused does not start playback before the chord", () => {
+    it("paused frame 0: K down, J, K up stays paused at frame 0 and never plays", async () => {
+      await mount(); await load();
+      await key("k"); await key("j"); await keyup("k");
+      expect(video().paused).toBe(true);
+      expect(stub.calls.filter((c) => c === "play")).toEqual([]);
+      expect(stub.writes).toEqual([]);
+      expect(button("Play")).toBeDefined();
+    });
+
+    it("paused at the last frame: K down, L, K up stays paused there, no restart from 0", async () => {
+      await mount(versionOf({ frameCount: 75 })); await load(75 / 25);
+      await key("End");
+      await act(async () => { stub.finishSeek(video()); stub.presentFrame(video(), 74 / 25); });
+      stub.writes.length = 0; stub.calls.length = 0;
+      await key("k"); await key("l"); await keyup("k");
+      expect(video().paused).toBe(true);
+      expect(stub.calls.filter((c) => c === "play")).toEqual([]);
+      expect(stub.writes).toEqual([]);
+    });
+
+    it("paused mid-file: K down, L, L, K up lands two frames later, still paused", async () => {
+      await mount(); await load();
+      await key("k"); await key("l");
+      await act(async () => { stub.finishSeek(video()); stub.presentFrame(video(), 1 / 25); });
+      await key("l");
+      await act(async () => { stub.finishSeek(video()); stub.presentFrame(video(), 2 / 25); });
+      await keyup("k");
+      expect(stub.writes.at(-1)).toBe(frameSeekSeconds(2, FPS_25));
+      expect(video().paused).toBe(true);
+      expect(stub.calls.filter((c) => c === "play")).toEqual([]);
+    });
+
+    it("a standalone K press from paused plays on keyup, not on keydown", async () => {
+      await mount(); await load();
+      await key("k");
+      expect(video().paused).toBe(true);
+      await keyup("k");
+      expect(video().paused).toBe(false);
+    });
+
+    it("K down while playing pauses at once, and its keyup does not resume", async () => {
+      await mount(); await load();
+      await key(" "); expect(video().paused).toBe(false);
+      await key("k"); expect(video().paused).toBe(true);
+      await keyup("k"); expect(video().paused).toBe(true);
+    });
+
+    it("window blur while K is held releases it without toggling", async () => {
+      await mount(); await load();
+      await key("k");
+      await act(async () => { window.dispatchEvent(new Event("blur")); });
+      await keyup("k");
+      expect(video().paused).toBe(true);
+    });
+  });
+
   it("releasing K restores the normal J / L shuttle", async () => {
     await mount(); await load();
     await key("k"); await key("k", { repeat: true });
@@ -435,6 +495,6 @@ describe("VideoPlayer K chords (#741 4d-ii Sol final)", () => {
     await key("l");
     expect(stub.writes).toEqual([]);
     expect(video().paused).toBe(false);
-    expect(video().playbackRate).toBe(2);
+    expect(video().playbackRate).toBe(1);
   });
 });

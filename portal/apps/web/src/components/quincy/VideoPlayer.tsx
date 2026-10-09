@@ -89,11 +89,21 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     }
   }, [clock, lastFrame]);
 
-  /** K is down: J / L step a frame (the NLE chord). Cleared by its keyup anywhere, and by losing focus. */
-  const kHeld = useRef(false);
+  /**
+   * K is down: J / L step a frame (the NLE chord). K pauses at once when playing; from paused it waits, so a K + J / K + L chord never
+   * starts playback, and a lone K press toggles on keyup. Cleared by its keyup anywhere, and by losing focus (which never toggles).
+   */
+  const kHeld = useRef<{ fromPaused: boolean; chord: boolean } | null>(null);
+  const applyRef = useRef(apply);
+  applyRef.current = apply;
   useEffect(() => {
-    const release = () => { kHeld.current = false; };
-    const onKeyUp = (event: KeyboardEvent) => { if (event.key === "k" || event.key === "K") release(); };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key !== "k" && event.key !== "K") return;
+      const held = kHeld.current;
+      kHeld.current = null;
+      if (held && held.fromPaused && !held.chord) applyRef.current({ type: "toggle" });
+    };
+    const release = () => { kHeld.current = null; };
     document.addEventListener("keyup", onKeyUp);
     window.addEventListener("blur", release);
     return () => { document.removeEventListener("keyup", onKeyUp); window.removeEventListener("blur", release); };
@@ -101,13 +111,23 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
 
   const handleKeyDown = useCallback((event: KeyboardEvent | ReactKeyboardEvent): boolean => {
     const native = "nativeEvent" in event ? event.nativeEvent : event;
-    const action = playerKeyAction(native, { k: kHeld.current });
+    const action = playerKeyAction(native, { k: kHeld.current !== null });
     if (!action) return false;
-    if (native.key === "k" || native.key === "K") kHeld.current = true;
     event.preventDefault();
+    const isK = native.key === "k" || native.key === "K";
+    if (isK) {
+      const playing = nextShuttleRate(clock.rate, "toggle") === 0;
+      kHeld.current = { fromPaused: !playing, chord: false };
+      if (playing) apply(action);
+      return true;
+    }
+    if (action.type === "step" && kHeld.current && (native.key === "j" || native.key === "J" || native.key === "l" || native.key === "L")) {
+      kHeld.current.chord = true;
+      clock.pause();
+    }
     apply(action);
     return true;
-  }, [apply]);
+  }, [apply, clock]);
   useImperativeHandle(controlRef, () => ({ handleKeyDown }), [handleKeyDown]);
 
   const toggleMuted = (next: boolean) => { setMutedState(next); clock.setMuted(next); };
