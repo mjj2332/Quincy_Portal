@@ -80,8 +80,9 @@ export function VideoNotePasteDialog({ open, onOpenChange, store, assetId, targe
   const left = useMemo(() => (preview?.rows ?? []).filter((row): row is Skipped => row.status === "skipped"), [preview]);
   const unticked = useMemo(() => new Set(draft.unticked), [draft.unticked]);
   const chosen = mapped.filter((row) => !unticked.has(row.noteId));
-  // With nothing to place there is nothing to shift: the offset field goes (its value and ticks stay in the store).
-  const nothingPastable = preview !== null && mapped.length === 0;
+  // With nothing to place there is nothing to shift, so the field goes: but never while it is the way out. An offset that is not 0, or a note
+  // left out for falling outside the Version, means the offset may be the cause, and it stays (its value and ticks stay in the store either way).
+  const nothingPastable = preview !== null && mapped.length === 0 && draft.offset === 0 && !left.some((row) => row.reason === "out_of_range");
   const settled = preview !== null && view.status === "ok" && preview.offsetFrames === draft.offset;
 
   const sourceTc = useMemo(() => (source ? timecodeOf(source) : (frame: number) => String(frame)), [source]);

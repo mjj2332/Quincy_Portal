@@ -1360,10 +1360,29 @@ describe("Copy and paste notes (#741 5c-ui)", () => {
 
   it("hides the offset field when nothing can be pasted (#741 5c-ui round 5)", async () => {
     const v1 = v1Notes();
-    await copyOnV1(v1, { [v1.a.id]: "out_of_range", [v1.b.id]: "out_of_range", [v1.c.id]: "out_of_range" });
+    await copyOnV1(v1, { [v1.a.id]: "already_copied", [v1.b.id]: "already_copied", [v1.c.id]: "already_copied" });
     await openPasteDialog();
     expect(tid("video-note-paste-none")).not.toBeNull();
     expect(tid("video-note-paste-offset")).toBeNull();
+  });
+
+  it("keeps the offset field while an offset is what put every note out of range, so it can be undone (#741 5c-ui round 6)", async () => {
+    const v1 = v1Notes();
+    await copyOnV1(v1);
+    const mapAt = (offsetFrames: number) => ({
+      sourceVersion: 1, targetVersion: 2, offsetFrames,
+      rows: v1.all.map((n) => offsetFrames !== 0
+        ? { noteId: n.id, status: "skipped", reason: "out_of_range", source: src(n) }
+        : { noteId: n.id, status: "mapped", source: src(n), to: { startFrame: n.startFrame!, endFrame: n.endFrame }, shortened: false }),
+    });
+    api.apiPost.mockImplementation(async (_path, body) => mapAt((body as { offsetFrames: number }).offsetFrames));
+    await openPasteDialog();
+    await setOffset("5000"); await settle(PASTE_DEBOUNCE); await flush(4);
+    expect(tid("video-note-paste-none")).not.toBeNull();
+    expect(tid("video-note-paste-offset")).not.toBeNull();
+    await setOffset("0"); await settle(PASTE_DEBOUNCE); await flush(4);
+    expect(rows()).toHaveLength(3);
+    expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("a stale refresh that fails keeps Paste disabled and offers 'Try again', which asks for the preview again (#741 5c-ui round 3)", async () => {
