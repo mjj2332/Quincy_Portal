@@ -90,14 +90,22 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
 
   // A form that closes hands focus back to the control that opened it, unless focus went somewhere else on purpose.
   const heldKind = useRef<"reply" | "edit" | null>(null);
+  const heldNoteId = useRef<string | null>(null);
   useEffect(() => {
     const kind = form?.kind ?? null;
     const previous = heldKind.current;
+    const editedId = heldNoteId.current;
     heldKind.current = kind;
+    heldNoteId.current = form?.noteId ?? null;
     const active = document.activeElement;
     if (previous === null || kind !== null || (active && active !== document.body && !articleRef.current?.contains(active))) return;
-    (previous === "reply" ? q(articleRef.current, '[data-testid="video-note-reply-button"]') : q(articleRef.current, '[data-testid="video-note-actions"]') ?? q(articleRef.current, '[data-testid="video-note-anchor-button"]'))?.focus();
+    (previous === "reply" ? q(articleRef.current, '[data-testid="video-note-reply-button"]') : (editedMenu(editedId) ?? q(articleRef.current, '[data-testid="video-note-anchor-button"]')))?.focus();
   }, [form?.kind]);
+  /** The "⋯" of the note that was edited (a reply's own, not the root's), keyed by note id. */
+  function editedMenu(noteId: string | null): HTMLElement | null {
+    if (noteId === null || noteId === thread.id) return q(articleRef.current, '[data-testid="video-note-header-row"] [data-testid="video-note-actions"]');
+    return q(articleRef.current, `[data-testid="video-note-reply"][data-note-id="${noteId}"] [data-testid="video-note-actions"]`);
+  }
 
   // An edit form that opens is brought into view by moving the list's own scroller only: `scrollIntoView` would scroll every ancestor, the viewer dialog included.
   const editingHere = editing !== null && (editing.noteId === thread.id || thread.replies.some((reply) => reply.id === editing.noteId));

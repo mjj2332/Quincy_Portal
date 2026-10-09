@@ -237,6 +237,22 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(store.takeFocusOnOpen("asset", (store.slot("asset").open as { noteId: string }).noteId)).toBe(false);
   });
 
+  it("Sol r12: cancelling the edit of a reply returns focus to that reply's own menu, not the root's", async () => {
+    const root0 = thread({});
+    const mine = reply(root0);
+    await render({ ...root0, replies: [mine] } as VideoNoteThreadDto);
+    const replyEl = tids("video-note-reply")[0]!;
+    const replyMenu = replyEl.querySelector<HTMLElement>('[data-testid="video-note-actions"]')!;
+    await chooseAction("Terry", "Edit"); // opens the root's; close it first
+    await click(tid("video-note-edit-cancel")!);
+    await act(async () => { store.openEdit("asset", mine, root0.id); });
+    expect(host.querySelector('[data-notes-form="edit"]')).not.toBeNull();
+    (document.activeElement as HTMLElement | null)?.blur();
+    await click(tid("video-note-edit-cancel")!);
+    await flush();
+    expect(document.activeElement).toBe(replyMenu);
+  });
+
   it("17: Delete hands the note and its thread to the panel (it owns the confirm); the thread deletes nothing itself", async () => {
     const root0 = thread({ author: { kind: "staff", person: mia } });
     const mineReply = reply(root0);
