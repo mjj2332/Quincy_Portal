@@ -113,7 +113,7 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
     data-surface="default"
     className="flex flex-[1_1_360px] flex-col gap-[var(--space-3)] border-l border-border bg-card p-[var(--space-4)] text-card-foreground min-[721px]:min-h-0 min-[721px]:flex-[0_0_clamp(240px,28vw,360px)] min-[721px]:overflow-hidden max-[721px]:border-t max-[721px]:border-l-0"
   >
-    <div className="flex flex-wrap items-baseline justify-between gap-x-[var(--space-3)] gap-y-[var(--space-1)] max-[720px]:order-0">
+    <div className="flex flex-wrap items-baseline justify-between gap-x-[var(--space-3)] gap-y-[var(--space-1)] max-[721px]:order-0">
       <div className="grid gap-[var(--space-1)]">
         <h3 data-testid="video-notes-title" className="m-0 text-[length:var(--text-lg)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{`Notes on v${version.version}`}</h3>
         <span data-testid="video-notes-counts" className="text-foreground-secondary [font:var(--type-label)]">{`${counts.totals.open} open · ${counts.totals.resolved} resolved`}</span>
@@ -124,7 +124,7 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
       </Popover>
     </div>
 
-    <div className="grid gap-[var(--space-2)] max-[720px]:order-2" data-testid="video-notes-filters">
+    <div className="grid gap-[var(--space-2)] max-[721px]:order-2" data-testid="video-notes-filters">
       {filterGroup<NoteStatusFilter>("Show notes that are", "status", filters.status, [
         { value: "open", label: "Open", count: counts.status.open }, { value: "resolved", label: "Resolved", count: counts.status.resolved }, { value: "all", label: "All", count: counts.status.all },
       ], (status) => { setFilters({ ...filters, status }); })}
@@ -133,7 +133,7 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
       ], (visibility) => { setFilters({ ...filters, visibility }); })}
     </div>
 
-    <div ref={listRef} className="flex flex-col min-[721px]:min-h-0 min-[721px]:flex-1 max-[720px]:order-3">
+    <div ref={listRef} className="flex flex-col min-[721px]:min-h-0 min-[721px]:flex-1 max-[721px]:order-3">
       <ScrollArea className="min-[721px]:min-h-0 min-[721px]:flex-1" data-testid="video-notes-list" viewportProps={{ tabIndex: -1 }}>
         <div className="grid gap-[var(--space-2)] pe-[var(--space-1)]">
           {loading && <span data-testid="video-notes-loading" role="status" className="text-foreground-secondary [font:var(--type-label)]">Loading notes…</span>}
@@ -157,7 +157,7 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
       </ScrollArea>
     </div>
 
-    <div className="min-[721px]:border-t min-[721px]:border-border min-[721px]:pt-[var(--space-3)] max-[720px]:order-1">
+    <div className="min-[721px]:border-t min-[721px]:border-border min-[721px]:pt-[var(--space-3)] max-[721px]:order-1">
       {readOnly
         ? <p data-testid="video-notes-archived" className={ARCHIVED_NOTICE_CLASS}>Read-only while archived. Restore the project before adding or changing notes.</p>
         : <VideoNoteComposer
