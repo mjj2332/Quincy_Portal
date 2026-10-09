@@ -61,6 +61,22 @@ const rejectedResponse = (c: Context<AppEnv>, reason: string | null) => {
   const message = videoUploadRejectMessage(known);
   return c.json({ error: message, code: "video_rejected", reason: known, message }, 422);
 };
+/** An upload R2 no longer knows is as good as aborted. */
+function isMissingMultipartUploadError(error: unknown): boolean {
+  for (let current: unknown = error; current; current = current instanceof Error ? current.cause : undefined) {
+    if (!current || typeof current !== "object") continue;
+    const value = current as { status?: unknown; code?: unknown; name?: unknown; message?: unknown };
+    if (value.status === 404 || value.code === "NoSuchUpload" || value.name === "NoSuchUpload") return true;
+    const text = [value.code, value.name, value.message].filter((item): item is string => typeof item === "string").join(" ");
+    if (/no such upload|multipart upload (?:was )?not found|upload (?:does not exist|has already been aborted)|already aborted/i.test(text)) return true;
+  }
+  return false;
+}
+/** Aborts a multipart upload through the R2 binding, as the background sweep does: the way to do it with no S3 credentials. */
+async function abortThroughBinding(env: AppEnv["Bindings"], key: string, uploadId: string) {
+  try { await env.MEDIA.resumeMultipartUpload(key, uploadId).abort(); }
+  catch (error) { if (!isMissingMultipartUploadError(error)) throw error; }
+}
 const errorText = (error: unknown) => (error instanceof Error ? `${error.message} ${String((error as { cause?: unknown }).cause ?? "")}` : String(error));
 /** The cleanup queue's upsert (the one `enqueueEmbeddedMediaCleanup` writes), selecting from a reservation. */
 const QUEUE_RESERVATION_SQL = `
@@ -119,11 +135,23 @@ videoUploadsRoutes.post("/projects/:projectId/video-uploads", terminalRoute("/pr
     return c.json({ error: "R2 S3 upload credentials are not configured" }, 503);
   }
   // The Project may have been archived or deleted while R2 was starting the upload: then no URLs go out.
-  const stored = await c.env.DB.prepare("UPDATE video_upload_reservations SET upload_id = ?, updated_at = ? WHERE id = ? AND status = 'pending' AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)")
-    .bind(multipart.uploadId, Date.now(), reservationId, projectId).run();
+  // An abort that fails leaves the upload completable, so the queue takes it over (the sweep aborts it, then deletes the key).
+  const releaseUpload = async () => {
+    try { if (!await abortMultipart(c.env, key, multipart.uploadId)) await abortThroughBinding(c.env, key, multipart.uploadId); }
+    catch { await enqueueEmbeddedMediaCleanup(c.env.DB, [{ key, uploadId: multipart.uploadId, projectId }]); }
+  };
+  let stored: D1Result;
+  try {
+    stored = await c.env.DB.prepare("UPDATE video_upload_reservations SET upload_id = ?, updated_at = ? WHERE id = ? AND status = 'pending' AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)")
+      .bind(multipart.uploadId, Date.now(), reservationId, projectId).run();
+  } catch (error) {
+    // The id may not have been stored, so no row points at the upload: end it here, and mark the reservation failed if D1 will let us.
+    try { await releaseUpload(); } catch (releaseError) { console.error("Video upload could not be released after a failed reserve", { reservationId, error: errorText(releaseError) }); }
+    await fail().catch(() => undefined);
+    throw error;
+  }
   if ((stored.meta.changes ?? 0) !== 1) {
-    // An abort that fails leaves the upload completable, so the queue takes it over (the sweep aborts it, then deletes the key).
-    try { await abortMultipart(c.env, key, multipart.uploadId); } catch { await enqueueEmbeddedMediaCleanup(c.env.DB, [{ key, uploadId: multipart.uploadId, projectId }]); }
+    await releaseUpload();
     await fail();
     return c.json({ error: "This project can no longer accept uploads", code: "project_unavailable" }, 409);
   }
@@ -160,9 +188,20 @@ videoUploadsRoutes.put("/projects/:projectId/video-uploads/:reservationId/direct
   const row = await loadReservation(c.env.DB, reservationId);
   if (!row || row.projectId !== projectId || row.createdBy !== c.get("user").id || row.status !== "pending" || row.expiresAt <= Date.now()) return notFound(c);
   if (Number(c.req.header("content-length") ?? "0") > row.bytes) return c.json({ error: "The file is larger than the size that was reserved" }, 413);
+  const keyInUse = () => c.env.DB.prepare("SELECT 1 AS used FROM assets WHERE r2_key = ?").bind(row.r2Key).first();
+  // Never write over the object a completed Version plays.
+  if (await keyInUse()) return unavailable(c);
   await c.env.MEDIA.put(row.r2Key, c.req.raw.body, { httpMetadata: { contentType: VIDEO_UPLOAD_CONTENT_TYPE } });
   const stored = await c.env.MEDIA.head(row.r2Key);
   if (stored && stored.size > row.bytes) { await c.env.MEDIA.delete(row.r2Key); return c.json({ error: "The file is larger than the size that was reserved" }, 413); }
+  // The write took time: if an abort or the sweep took the reservation meanwhile, what we wrote is an orphan (unless a Version has since adopted the key).
+  const current = await loadReservation(c.env.DB, reservationId);
+  if (current?.status !== "pending" || current.createdBy !== c.get("user").id || current.expiresAt <= Date.now()) {
+    if (!await keyInUse()) {
+      try { await c.env.MEDIA.delete(row.r2Key); } catch { await enqueueEmbeddedMediaCleanup(c.env.DB, [{ key: row.r2Key, projectId }]); }
+    }
+    return unavailable(c);
+  }
   return c.body(null, 204);
 }));
 
@@ -333,10 +372,17 @@ videoUploadsRoutes.post("/projects/:projectId/video-uploads/:reservationId/abort
     return c.body(null, 204);
   }
   try {
-    if (row.uploadId) await abortMultipart(c.env, row.r2Key, row.uploadId);
+    // With no S3 credentials the binding does it; a failure either way leaves the row `aborting` for the sweep, and the upload is never reported cancelled while it lives.
+    if (row.uploadId && !await abortMultipart(c.env, row.r2Key, row.uploadId)) await abortThroughBinding(c.env, row.r2Key, row.uploadId);
     await c.env.MEDIA.delete(row.r2Key);
   } catch { return c.json({ error: "Cancelling is pending. Try again in a moment.", code: "abort_pending" }, 503); }
-  await db.prepare("UPDATE video_upload_reservations SET status = 'failed', updated_at = ? WHERE id = ? AND status = 'aborting'").bind(Date.now(), row.id).run();
+  const at = Date.now();
+  // The audit row rides the state change and exists only if this call made it, so a retry or a race writes no second one.
+  await db.batch([
+    db.prepare("UPDATE video_upload_reservations SET status = 'failed', updated_at = ? WHERE id = ? AND status = 'aborting'").bind(at, row.id),
+    db.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'video.upload.abort', 'video_upload', ?, ?, ? WHERE changes() > 0")
+      .bind(newId(), c.get("user").id, row.id, auditMeta(c.get("user"), { projectId, videoId: row.videoId, version: row.version }), at),
+  ]);
   return c.body(null, 204);
 }));
 
@@ -373,6 +419,8 @@ videoUploadsRoutes.put("/projects/:projectId/video-versions/:assetId/poster", te
           AND EXISTS (SELECT 1 FROM videos v JOIN projects p ON p.id = v.project_id WHERE v.id = video_version_meta.video_id AND p.id = ? AND p.archived_at IS NULL)
           AND EXISTS (SELECT 1 FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ? AND claimed_until IS NULL)
       `).bind(posterKey, assetId, user.id, projectId, posterKey, queuedAt),
+      db.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'video.poster.set', 'asset', ?, ?, ? WHERE changes() > 0")
+        .bind(newId(), user.id, assetId, auditMeta(user, { projectId, videoId: row.videoId }), queuedAt),
       db.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ? AND claimed_until IS NULL AND (SELECT poster_key FROM video_version_meta WHERE asset_id = ?) = ?").bind(posterKey, queuedAt, assetId, posterKey),
     ]);
   } catch (error) {

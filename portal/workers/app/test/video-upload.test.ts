@@ -41,6 +41,12 @@ const wrapMedia = (override: (target: R2Bucket, property: string | symbol) => un
   const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
 } }) });
 
+/** An Env whose D1 throws on the statements `matches` selects (before they reach the database); everything else passes through. */
+const failingDb = (matches: RegExp): Env => ({ ...S3_ENV, DB: new Proxy(baseEnv.DB, { get: (target, property) => {
+  if (property === "prepare") return (sql: string) => matches.test(sql) ? { bind: () => ({ run: async () => { throw new Error("D1 down"); } }) } : target.prepare(sql);
+  const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+} }) });
+
 function stubS3(options: { abortStatus?: number; completeStatus?: number; onCreate?: () => Promise<void> } = {}) {
   const calls: Array<{ url: string; method: string }> = []; let created = 0;
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -217,6 +223,20 @@ describe("POST /video-uploads (reserve)", () => {
       expect(await count(`video_upload_reservations WHERE new_video_title = 'Late archive' AND status = 'failed'`)).toBe(1);
     } finally { await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run(); }
   });
+
+  it("aborts the new multipart upload when saving its id throws, and queues it when that abort fails too", async () => {
+    const body = (title: string) => ({ title, filename: "cut.mp4", bytes: 1000, contentType: "video/mp4" });
+    const row = (title: string) => database.DB.prepare("SELECT id, r2_key AS key, status, upload_id AS uploadId FROM video_upload_reservations WHERE new_video_title = ?").bind(title).first<{ id: string; key: string; status: string; uploadId: string | null }>();
+    const calls = stubS3();
+    expect((await reserve("member", body("Persist throws"), failingDb(/SET upload_id/))).status).toBe(500);
+    expect(calls.some((call) => call.method === "DELETE" && call.url.includes("uploadId=s3-upload-1"))).toBe(true);
+    const aborted = (await row("Persist throws"))!; expect(aborted.status).toBe("failed"); expect(await queued(aborted.key)).toBeNull();
+    stubS3({ abortStatus: 403 });
+    expect((await reserve("member", body("Persist throws twice"), failingDb(/SET upload_id/))).status).toBe(500);
+    const stuck = (await row("Persist throws twice"))!; expect(stuck.status).toBe("failed");
+    expect(await queued(stuck.key)).toMatchObject({ storageKey: stuck.key, uploadId: "s3-upload-1", projectId: ids.project });
+    await database.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(stuck.key).run(); // the poster cases below LIKE-scan this table, which D1 refuses over a non-empty one
+  });
 });
 
 describe("PUT …/direct (dev only)", () => {
@@ -247,6 +267,34 @@ describe("PUT …/direct (dev only)", () => {
     await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), ids.project).run();
     try { expect((await appRequest(DEV_ENV, `${base()}/${body.reservationId}/direct`, "admin", "PUT", undefined, file)).status).toBe(409); }
     finally { await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run(); }
+  });
+
+  it("deletes what it wrote and answers 409 when an abort wins while the bytes are being written", async () => {
+    const file = await GOOD_25();
+    const body = videoUploadReserveResponseSchema.parse(await (await reserve("member", { title: "Dev raced", filename: "cut.mp4", bytes: file.byteLength, contentType: "video/mp4" }, DEV_ENV)).json());
+    const key = (await reservation(body.reservationId))!.r2_key as string;
+    const racing: Env = { ...wrapMedia((target, property) => property === "put" ? async (putKey: string, ...rest: unknown[]) => {
+      const result = await (target.put as (...a: unknown[]) => Promise<unknown>).call(target, putKey, ...rest);
+      expect((await abort("member", body.reservationId, DEV_ENV)).status).toBe(204); // the abort deletes (nothing yet was there), then the write lands
+      await target.put(putKey, file); return result;
+    } : undefined), APP_ENV: "dev" };
+    const response = await appRequest(racing, `${base()}/${body.reservationId}/direct`, "member", "PUT", undefined, file);
+    expect(response.status).toBe(409);
+    expect(await database.MEDIA.head(key)).toBeNull(); expect(await reservationStatus(body.reservationId)).toBe("failed");
+  });
+
+  it("refuses a write to a key a completed Version already uses, and leaves that object alone", async () => {
+    const file = await GOOD_25();
+    const body = videoUploadReserveResponseSchema.parse(await (await reserve("member", { title: "Dev overwrite", filename: "cut.mp4", bytes: file.byteLength, contentType: "video/mp4" }, DEV_ENV)).json());
+    const row = (await reservation(body.reservationId))!; const key = row.r2_key as string;
+    const assetId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, publish_status, version, version_group_id, created_at, updated_at) VALUES (?, ?, 'video', ?, 'cut.mp4', 1, 'upload', 'ready', 1, ?, ?, ?)")
+      .bind(assetId, row.collection_id, key, crypto.randomUUID(), Date.now(), Date.now()).run();
+    try {
+      await database.MEDIA.put(key, new Uint8Array([1, 2, 3]));
+      expect((await appRequest(DEV_ENV, `${base()}/${body.reservationId}/direct`, "member", "PUT", undefined, file)).status).toBe(409);
+      expect((await (await database.MEDIA.get(key))!.arrayBuffer()).byteLength).toBe(3);
+    } finally { await database.DB.prepare("DELETE FROM assets WHERE id = ?").bind(assetId).run(); }
   });
 });
 
@@ -507,6 +555,43 @@ describe("POST …/abort", () => {
   });
 });
 
+describe("POST …/abort (no S3 credentials, audit)", () => {
+  const noCreds = (override: (target: R2Bucket, property: string | symbol) => unknown): Env => ({ ...wrapMedia(override), R2_ACCOUNT_ID: undefined, R2_S3_ACCESS_KEY_ID: undefined, R2_S3_SECRET_ACCESS_KEY: undefined });
+
+  it("aborts through the R2 binding when S3 credentials are absent, and counts a missing upload as done", async () => {
+    stubS3(); const reserved = await reserveAndStore("member", { title: "No creds abort" });
+    const seen: Array<[string, string]> = [];
+    const binding = noCreds((_target, property) => property === "resumeMultipartUpload" ? (key: string, uploadId: string) => ({ abort: async () => { seen.push([key, uploadId]); throw Object.assign(new Error("The specified multipart upload does not exist."), { code: "NoSuchUpload" }); } }) : undefined);
+    expect((await abort("member", reserved.reservationId, binding)).status).toBe(204);
+    expect(seen).toEqual([[reserved.key, "s3-upload-1"]]);
+    expect(await reservationStatus(reserved.reservationId)).toBe("failed"); expect(await database.MEDIA.head(reserved.key)).toBeNull();
+  });
+
+  it("answers 503 and leaves the row aborting for the sweep when the binding cannot abort either", async () => {
+    stubS3(); const reserved = await reserveAndStore("member", { title: "No creds stuck" });
+    const binding = noCreds((_target, property) => property === "resumeMultipartUpload" ? () => ({ abort: async () => { throw new Error("R2 down"); } }) : undefined);
+    expect((await abort("member", reserved.reservationId, binding)).status).toBe(503);
+    expect(await reservationStatus(reserved.reservationId)).toBe("aborting"); expect(await database.MEDIA.head(reserved.key)).not.toBeNull();
+  });
+
+  it("audits a successful abort once, with who was behind an impersonation, and writes no second row on a retry", async () => {
+    stubS3(); const reserved = await reserveAndStore("member", { title: "Audited abort" });
+    const url = `${base()}/${reserved.reservationId}/abort`;
+    expect((await tokenRequest(S3_ENV, url, IMPERSONATION_TOKEN, "POST", {})).status).toBe(204);
+    expect((await tokenRequest(S3_ENV, url, IMPERSONATION_TOKEN, "POST", {})).status).toBe(204);
+    expect(await auditRow("video.upload.abort", reserved.reservationId)).toMatchObject({ actorId: ids.member, meta: { projectId: ids.project, impersonatedBy: ids.admin } });
+    expect(await count("audit_log WHERE action = 'video.upload.abort' AND target_id = ?", reserved.reservationId)).toBe(1);
+  });
+
+  it("audits nothing while the abort is still pending (503), and once when the retry finishes", async () => {
+    stubS3({ abortStatus: 403 }); const reserved = await reserveAndStore("member", { title: "Audited retry" });
+    expect((await abort("member", reserved.reservationId)).status).toBe(503);
+    expect(await count("audit_log WHERE action = 'video.upload.abort' AND target_id = ?", reserved.reservationId)).toBe(0);
+    stubS3(); expect((await abort("member", reserved.reservationId)).status).toBe(204);
+    expect(await count("audit_log WHERE action = 'video.upload.abort' AND target_id = ?", reserved.reservationId)).toBe(1);
+  });
+});
+
 describe("PUT /video-versions/:assetId/poster", () => {
   const url = (assetId: string) => `/api/projects/${ids.project}/video-versions/${assetId}/poster`;
   async function committed(who: Who = "member", title = "Posters") {
@@ -525,6 +610,14 @@ describe("PUT /video-versions/:assetId/poster", () => {
     expect(await database.MEDIA.head(row!.key)).not.toBeNull(); expect((await queuedPoster(reserved.assetId, reserved.videoId)).results).toEqual([]);
     const second = await putPoster("member", reserved.assetId, jpegBytes(64)); expect(second.status).toBe(409); expect(await second.json()).toMatchObject({ code: "poster_unavailable" });
     expect(await database.MEDIA.list({ prefix: `projects/${ids.project}/video/${reserved.videoId}/${reserved.assetId}/poster-` }).then((list) => list.objects.length)).toBe(1);
+  });
+
+  it("audits the adopted poster once, with who was behind an impersonation, and a second PUT writes no second row", async () => {
+    const reserved = await committed("member", "Poster audit");
+    expect((await tokenRequest(baseEnv, url(reserved.assetId), IMPERSONATION_TOKEN, "PUT", undefined, jpegBytes(64))).status).toBe(204);
+    expect((await tokenRequest(baseEnv, url(reserved.assetId), IMPERSONATION_TOKEN, "PUT", undefined, jpegBytes(64))).status).toBe(409);
+    expect(await auditRow("video.poster.set", reserved.assetId)).toMatchObject({ actorId: ids.member, meta: { projectId: ids.project, videoId: reserved.videoId, impersonatedBy: ids.admin } });
+    expect(await count("audit_log WHERE action = 'video.poster.set' AND target_id = ?", reserved.assetId)).toBe(1);
   });
 
   it("refuses a body over 2 MB (413), a non-JPEG (400), an unknown or other-Project Version (404), a closed gate (404) and an archived Project (409)", async () => {

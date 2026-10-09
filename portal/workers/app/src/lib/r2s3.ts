@@ -57,10 +57,12 @@ export async function createMultipartPresign(env: Env, key: string, bytes: numbe
     throw error;
   }
 }
-export async function abortMultipart(env: Env, key: string, uploadId: string) {
-  const aws = client(env); if (!aws) return;
+/** True when the abort was sent to R2's S3 API; false when no S3 credentials are configured, so nothing was aborted and the caller must use the R2 binding. */
+export async function abortMultipart(env: Env, key: string, uploadId: string): Promise<boolean> {
+  const aws = client(env); if (!aws) return false;
   const response = await aws.fetch(`${endpoint(env, key)}?uploadId=${encodeURIComponent(uploadId)}`, { method: "DELETE" });
   if (!response.ok && response.status !== 404) throw new Error(`R2 multipart abort failed (${response.status})`);
+  return true;
 }
 export async function completeMultipart(env: Env, key: string, uploadId: string, parts: { partNumber: number; etag: string }[], bytes?: number, partBytes = PART_BYTES) {
   const aws = client(env); if (!aws) throw new Error("R2 S3 credentials are not configured");
