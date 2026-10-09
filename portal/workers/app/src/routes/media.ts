@@ -228,7 +228,7 @@ const EMBEDDED_RESPONSE_HEADERS = { "x-content-type-options": "nosniff", "conten
 /**
  * Serves one R2 object with a single byte range (#494, shared with video review #741). A browser plays a video by asking for pieces of it, and cannot seek
  * without. `head` gives the size and ETag, then the parser decides; the body is a second, ranged read, so no behaviour depends on how R2 treats a range it
- * cannot satisfy. A HEAD request is answered from `head` alone and never opens a body. `headers` are the fixed ones (type, security, cache); length, range and ETag are added here.
+ * cannot satisfy. A HEAD request is answered from `head` alone, ignores Range, and never opens a body. `headers` are the fixed ones (type, security, cache); length, range and ETag are added here.
  */
 async function serveR2Object(c: Context<AppEnv>, key: string, headers: Record<string, string>, missing: string): Promise<Response> {
   const isHead = c.req.method === "HEAD";
@@ -238,7 +238,8 @@ async function serveR2Object(c: Context<AppEnv>, key: string, headers: Record<st
   if (rangeHeader || isHead) {
     meta = await c.env.MEDIA.head(key);
     if (!meta) return c.json({ error: missing }, 404);
-    if (rangeHeader) {
+    // Range applies to GET only (RFC 9110 section 14.2): a HEAD always reports the whole object.
+    if (rangeHeader && !isHead) {
       const parsed = parseByteRange(rangeHeader, meta.size);
       // If-Range comes first (RFC 9110 §13.1.5): a validator that does not match means the range is ignored, so the whole body is sent, even when the range could not have been satisfied.
       const rangeApplies = ifRangeAllows(c.req.header("if-range"), meta.httpEtag);
@@ -293,8 +294,8 @@ mediaRoutes.get("/embedded/:mediaId/poster", terminalRoute("/embedded/:mediaId/p
 }));
 
 /**
- * A staff video Version (#741). One read finds the Version and its Project; then, in this order: visibility (an External outside the Project
- * 404, staff 403), the video review gate (closed 404 — the next request after the operator switches it off), the `viewVideo` capability (403).
+ * A staff video Version (#741). One read finds the Version and its Project; then, in this order: the video review gate (closed 404 — the next request after the operator switches it off, and a real Video is then
+ * indistinguishable from an unknown id for every caller), the `viewVideo` capability (403), Project visibility (an External outside the Project 404, staff 403).
  * Any Version streams, a superseded one included, because compare needs it. A non-video or unknown id is 404, so a photo id cannot be probed through here. Inline, no `.use()`: router-wide middleware leaks across sibling mounts (docs/lessons.md).
  */
 async function readableVideoVersion(c: Context<AppEnv>, assetId: string): Promise<{ r2Key: string; posterKey: string | null } | Response> {
@@ -303,9 +304,9 @@ async function readableVideoVersion(c: Context<AppEnv>, assetId: string): Promis
     .bind(assetId).first<{ r2Key: string; posterKey: string | null; projectId: string }>();
   if (!row) return c.json({ error: "Video not found" }, 404);
   const user = c.get("user");
-  if (!await hasProjectAccess(c, row.projectId)) return user.role === "external_editor" ? c.json({ error: "Video not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (!await videoReviewGate(c.env.DB, row.projectId, null)) return c.json({ error: "Video not found" }, 404);
   if (!roleHasCapability(user.role, "viewVideo")) return c.json({ error: "Forbidden" }, 403);
+  if (!await hasProjectAccess(c, row.projectId)) return user.role === "external_editor" ? c.json({ error: "Video not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   return row;
 }
 

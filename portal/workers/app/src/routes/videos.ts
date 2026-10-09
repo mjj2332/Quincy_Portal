@@ -9,9 +9,8 @@ import { readVideoReviewGate, videoReviewGate } from "../lib/video-review-gate";
 const uuid = z.string().uuid();
 
 /**
- * Staff video review (#741). Every route here is checked inline, in this order: malformed id 400, then
- * Project visibility (an External editor outside the Project 404, staff 403, as everywhere else), then the
- * gate, then the capability. No `.use(...)`: router-wide middleware leaks across sibling mounts (docs/lessons.md).
+ * Staff video review (#741). Every route here is checked inline, in this order: malformed id 400, then the
+ * gate (closed 404), then the capability (403), then Project visibility (an External editor outside the Project 404, staff 403, as everywhere else). No `.use(...)`: router-wide middleware leaks across sibling mounts (docs/lessons.md).
  */
 export const videosRoutes = new Hono<AppEnv>();
 
@@ -50,9 +49,9 @@ videosRoutes.get("/projects/:projectId/videos", terminalRoute("/projects/:projec
   const projectId = c.req.param("projectId");
   if (!uuid.safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
   const user = c.get("user");
-  if (!await hasProjectAccess(c, projectId)) return user.role === "external_editor" ? c.json({ error: "Project not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (!await videoReviewGate(c.env.DB, projectId, null)) return c.json({ error: "Not found" }, 404);
   if (!roleHasCapability(user.role, "viewVideo")) return c.json({ error: "Forbidden" }, 403);
+  if (!await hasProjectAccess(c, projectId)) return user.role === "external_editor" ? c.json({ error: "Project not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const [videoResult, versionResult, uploadingResult] = await c.env.DB.batch([
     c.env.DB.prepare("SELECT id, title, premium, position, created_at FROM videos WHERE project_id = ?1 ORDER BY position, created_at, id").bind(projectId),
     c.env.DB.prepare(

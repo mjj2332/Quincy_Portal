@@ -189,9 +189,36 @@ describe("GET /media/video/:assetId", () => {
     expect(response.headers.get("content-disposition")).toBeNull();
     expect((await consume(response)).byteLength).toBe(0);
     expect(calls).toContain("head"); expect(calls).not.toContain("get");
-    const ranged = await recorded(`/media/video/${assetId}`, "member", "HEAD", { range: "bytes=0-9" });
-    expect(ranged.response.status).toBe(206); expect(ranged.response.headers.get("content-length")).toBe("10");
-    expect(ranged.calls).not.toContain("get");
+  });
+
+  it("ignores Range on HEAD (RFC 9110 section 14.2): 200 with the full length, never 206 or 416, and no object read", async () => {
+    const { assetId } = await seedVideoVersion();
+    for (const range of ["bytes=0-9", `bytes=${SIZE}-`]) {
+      const { response, calls } = await recorded(`/media/video/${assetId}`, "member", "HEAD", { range });
+      expect(response.status, range).toBe(200);
+      expect(response.headers.get("content-length"), range).toBe(String(SIZE));
+      expect(response.headers.get("content-range"), range).toBeNull();
+      expect(response.headers.get("accept-ranges"), range).toBe("bytes");
+      expect(response.headers.get("etag"), range).toMatch(/^"/);
+      expect(response.headers.get("cache-control"), range).toBe("private, no-store");
+      expect((await consume(response)).byteLength).toBe(0);
+      expect(calls, range).toEqual(["head"]);
+    }
+  });
+
+  it("with the gate closed, an unassigned Photographer and an outsider External get the same 404 for a real Video as for an unknown id, on the list, stream and poster", async () => {
+    const { assetId } = await seedVideoVersion({ poster: true });
+    await clearVideoFlags();
+    for (const who of ["photographer", "externalOutsider"] as const) {
+      for (const suffix of ["", "/poster"]) {
+        const real = await get(`/media/video/${assetId}${suffix}`, who); const unknown = await get(`/media/video/${crypto.randomUUID()}${suffix}`, who);
+        expect(real.status, `${who} ${suffix}`).toBe(404); expect(unknown.status).toBe(404);
+        expect(await real.json(), `${who} ${suffix}`).toEqual(await unknown.json());
+      }
+      const realList = await get(`/api/projects/${ids.project}/videos`, who); const unknownList = await get(`/api/projects/${crypto.randomUUID()}/videos`, who);
+      expect(realList.status, `${who} list`).toBe(404);
+      expect(await realList.json(), `${who} list`).toEqual(await unknownList.json());
+    }
   });
 
   it("streams a superseded Version too (compare needs it)", async () => {
