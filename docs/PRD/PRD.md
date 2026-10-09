@@ -295,10 +295,19 @@ new source of truth.
 - ✅ **Compare** two frames side-by-side.
 - ✅ **Bulk** select → approve / flag / label (and photographer **recommend**).
 - ✅ "**Select for editing**" — a **separate state** from approve, gating RAW → autoHDR.
+- 🔶 **Video review is a separate tool, not part of this stage progression.** Review of Videos (§6.4) runs on its own tables and has no connection to RAW/Edited review, select-for-editing, or the pipeline Stages. Video notes are a **separate table** from photo annotations (annotations require a staff author and a RAW/Edited scope); they are not reused here.
 
-### 6.4 Videos ✅ Built (Vimeo)
-- ✅ Films delivered as **Vimeo links**, shown as tiles with poster + a player modal; publishable to the client page; can be flagged premium/paywalled.
-- _Planned:_ direct upload to Quincy Portal (Cloudflare backend), with **timestamped freehand annotation** and the same approve/comment review flow as photos.
+### 6.4 Videos 🔶 Planned / in progress (native video review, epic #741)
+Native video review inside the Portal replaces Frame.io for video. The earlier Vimeo-link tiles are retired; Vimeo is no longer used.
+- ⬜ **Upload & Versions:** staff (Admin, Editor/QA, and an External editor assigned to the Project) upload web-ready **H.264 MP4** cuts (constant frame rate, ≤ 2 GB) into the Project's Video Collection. Each re-cut is a new immutable **Version** of the same **Video**. The server re-reads the stored file and treats its values (frame rate, duration, dimensions, source timecode) as the source of truth. Uploads to an archived Project are refused.
+- ⬜ **Playback:** a frame-accurate player (frame stepping, J/K/L, SMPTE timecode with drop-frame where the source is drop-frame, note markers on the timeline). The MP4 is served **as-is with byte ranges**: no transcoding, no HLS, no server-side FFmpeg.
+- ⬜ **Notes:** point or time-range notes on integer presentation frames, optionally with **freehand markup** pinned to an exact frame, replies, resolve/reopen. Each note is **public** or **internal**; a reply inherits its parent's visibility.
+- ⬜ **Compare:** two Versions side by side or under a wipe, on a shared clock, with a frame offset and one audible side.
+- ⬜ **NLE export:** a Version's notes as timeline markers for DaVinci Resolve (**EDL**) and Final Cut Pro (**FCPXML**).
+- ⬜ **Copy notes between Versions:** copy notes (staff, or a client's own) and paste them onto another Version of the same Video, with a preview, a frame offset and skip reporting.
+- ⬜ **Review links:** staff send a client a **Review link** covering one or more Videos from the same Project (see §6.7). Approval and change requests are informational; a staff **Release** of a specific approved Version is what lets the client download it. Premium Videos stay watermarked and download-locked until staff grant an unlock.
+- **Independent of the photo pipeline:** video review does not depend on, and does not advance, the photo stage progression (§5). A Video can be reviewed at any Stage the Project is in.
+- Every slice ships **dark behind operator-set feature flags**, piloted on chosen Projects before the Frame.io cutover. Cutover moves video only; if Frame.io also delivers photos, it stays in use until a single delivery page exists.
 
 ### 6.5 Floorplans 🔶 Partial
 - ✅ Floorplan collection exists (schematic placeholder).
@@ -308,15 +317,18 @@ new source of truth.
 - ✅ A per-project **downloadable PDF**, uploaded by **Admin or Editor/QA**, surfaced on the internal Copy tab and the client "Description" tab.
 - _Planned:_ entering &amp; displaying copywriting directly in the Portal, plus delivering **social-media content** to the client alongside the copy.
 
-### 6.7 Client delivery page ✅ Built
-- ✅ Editorial cover hero, collection tabs (Gallery / Film / Floorplan / Description), favourites, slideshow, share, download (web/full-res, single + zip).
-- ✅ **Video** and **Copywriting** sections on the delivered page.
-- ✅ **Premium / paywalled content** — extra images & video shown **watermarked** behind a paywall; client unlocks to remove the watermark and download. _(replaces the former print store)_
-- ✅ No login — private link. Planned link contract: 30-day default expiry, optional passcode, revocation, and hashed tokens per D-04.
+### 6.7 Client delivery page ⬜ Not built
+> **Correction:** earlier drafts marked this section built. It is **not**. The `/d` and `/d/*` guest routes return **404** today, and `client_links` and `premium_unlocks` exist only as database tables with no route reading them.
+- ⬜ Editorial cover hero, collection tabs (Gallery / Film / Floorplan / Description), favourites, slideshow, share, download (web/full-res, single + zip).
+- ⬜ **Video** and **Copywriting** sections on the delivered page.
+- ⬜ **Premium / paywalled content** — extra images & video shown **watermarked** behind a paywall; client unlocks to remove the watermark and download. _(replaces the former print store)_
+- ⬜ No login — private link. Link contract: 30-day default expiry, optional passcode, revocation, and hashed tokens per D-04 (built out for Review links in ADR 0021).
+- 🔶 **Review link (first guest surface, planned under epic #741).** A client opens a Review link with no account, sees the Videos on it, verifies their email with a one-time code, comments, draws on a frame, and approves or requests changes per Version of each Video. The Review link delivers **released video only** for now; the single delivery page for photos, Video and Floorplan is **out of scope** of that epic and remains not built. A Review link is built so that page can reuse it later.
 
 ### 6.8 Annotations & comments ✅ Built
 - ✅ Threaded notes per image, freehand drawing, author + role + timestamp.
 - ⬜ Notes should be **role-aware** (photographer's RAW notes vs QA's edit notes) and scoped to RAW or Edited.
+- 🔶 **Video notes (planned, §6.4):** the video equivalent lives in its **own table**, not in photo annotations. A note is authored by exactly one of a staff member or a guest reviewer, is **public or internal** (guest notes are always public; a reply inherits its parent's visibility), and belongs to one exact Version. The **author-only rule** applies as for photo annotations and Project comments: edit and delete are author-only and **admins are not exempt**, every mutation is audit-logged, and the one **deliberate exception** is an Admin impersonating the author (audit-logged with `metaJson.impersonatedBy`). Internal notes, internal replies, internal markup and counts derived from them are never visible to a guest reviewer. Notes on an archived Project are read-only.
 
 #### Project discussion, activity, and notifications (current + planned outcomes)
 
@@ -494,7 +506,7 @@ Six npm workspaces — three deployable Workers, one SPA, two shared libraries:
 - **Tonomo** — booking webhooks auto-create pre-filled projects at *Awaiting RAW*
   (§4a); DO-serialized processing.
 - **AutoHDR** — internal, **Admin-only** editing workflow. The explicit RAW-review handoff sends the selected images through AutoHDR's API; the API integration is intentionally send-only and does not fetch edited photos. Non-admin API projections use the neutral **Editing** label and omit provider and handoff details; authorization and projection are enforced at the API boundary, independently of UI visibility.
-- **Vimeo** — films delivered as links/tiles (direct upload planned).
+- **Vimeo** — retired; no longer used. Films are reviewed natively (§6.4).
 
 ### 8.7 Environments & delivery
 
@@ -517,7 +529,7 @@ the sections above. Remaining product follow-ups are:
 
 1. **Edited QA:** continue validating the RAW-vs-Edited compare workflow in the current product.
 2. **Client delivery:** decide when optional client-link email delivery is worth implementing.
-The client/guest-reviewer step remains excluded from the current MVP. The Schedule half of D-13 is
+**Resolved (epic #741): guest review enters scope** as a Review link on Videos (§6.4, §6.7; ADR 0021), with email-code-verified Guest reviewers and no accounts. Guest review of photos remains excluded. The Schedule half of D-13 is
 resolved as the approved planned Production Calendar/checklist-scheduling program; the Clients half
 remains deferred and hidden.
 

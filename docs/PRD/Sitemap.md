@@ -42,7 +42,11 @@ Quincy Portal
 │   │   │     ├── Compare (Edited↔Edited, RAW↔Edited ✏️)  🔶
 │   │   │     └── Bulk actions  ✅
 │   │   │
-│   │   ├── ▸ Video  ⬜                                (A · E)
+│   │   ├── ▸ Video Collection  🔶                     (A · E · assigned External editor)
+│   │   │     ├── Upload MP4 / new Version  ⬜
+│   │   │     ├── Player (notes, markup, compare, EDL/FCPXML export)  ⬜
+│   │   │     ├── Select Videos → create / manage Review link  ⬜   (A · E)
+│   │   │     └── Approvals, Release, premium unlock  ⬜  (A · E; unlock A only)
 │   │   ├── ▸ Floorplan  🔶                            (A · E)
 │   │   ├── ▸ Copywriting  ⬜                          (A · E)
 │   │   │
@@ -53,17 +57,23 @@ Quincy Portal
 │   ├── Schedule  ✏️ (nav item exists, no screen yet)  (A)
 │   └── Settings / Users & roles  ⬜                   (A)
 │
-└── 🌐 CLIENT DELIVERY PAGE  ✅  (C — no login, private link)
-    ├── Cover hero  ✅
-    ├── Collection tabs  ✅  (Web / Print / Floorplan today → ✏️ Images / Video / Floorplan / Copy)
-    ├── Gallery grid + lightbox  ✅
-    ├── Favourites  ✅
-    ├── Slideshow  ✅
-    ├── Download (web / full-res · single / zip)  ✅
-    ├── Share  ✅
-    ├── Video / Film section  ✅
-    ├── Description (copywriting) section  ✅
-    └── Premium content  ✅  (watermarked + paywalled — unlock to download)
+├── 🌐 GUEST REVIEW (Review link)  ⬜  (Guest reviewer — no account, email-code verified)
+│   ├── Video Collection list on the link (poster, latest shared Version, decision, released)  ⬜
+│   ├── Guest player: watch, comment, markup, copy/paste own notes  ⬜
+│   ├── Approve / request changes per Version  ⬜
+│   └── Download released Video, "Download all" zip  ⬜
+│
+└── 🌐 CLIENT DELIVERY PAGE  ⬜ not built — /d and /d/* return 404 today  (C — no login, private link)
+    ├── Cover hero  ⬜
+    ├── Collection tabs  ⬜  (Web / Print / Floorplan today → ✏️ Images / Video / Floorplan / Copy)
+    ├── Gallery grid + lightbox  ⬜
+    ├── Favourites  ⬜
+    ├── Slideshow  ⬜
+    ├── Download (web / full-res · single / zip)  ⬜
+    ├── Share  ⬜
+    ├── Video / Film section  ⬜
+    ├── Description (copywriting) section  ⬜
+    └── Premium content  ⬜  (watermarked + paywalled — unlock to download)
 ```
 
 ---
@@ -77,7 +87,7 @@ This is a presentation convenience, **not** the real permission model. The targe
 | Demo view (today) | Maps to real role(s) | Notes |
 |---|---|---|
 | Team | Admin, Editor/QA | needs splitting into proper roles ⬜ |
-| Reviewer | Guest reviewer link | ✏️ keep or remove (see Personas §4) |
+| Reviewer | Guest reviewer link | Guest review is now in scope for Videos (Personas §5) |
 | Client | Client | ✅ matches |
 | — | **Photographer** | ⬜ not represented yet — new role to add |
 
@@ -97,12 +107,13 @@ This is a presentation convenience, **not** the real permission model. The targe
 | Project workspace | ✅ | A · E · P (RAW only) | dashboard card |
 | RAW collection | ⬜ | A · P · E | project tab |
 | Edited collection | 🔶 | A · E | project tab |
-| Video | ⬜ | A · E | project tab |
+| Video Collection / player | 🔶 | A · E · External editor (assigned) | project tab |
+| Review link (guest list + player) | ⬜ | Guest reviewer (+ A·E manage) | private Review link, token in the URL fragment |
 | Floorplan | 🔶 | A · E | project tab |
 | Copywriting | ⬜ | A · E | project tab |
 | autoHDR status | ⬜ | A (full details) · E (neutral **Editing** status only) | after "select for editing"; API projection/authorization enforces the boundary, not UI hiding |
 | Publish flow | ✅ | A · E | workspace toolbar |
-| Client delivery page | ✅ | C (+ A·E preview) | private link / "preview client" |
+| Client delivery page | ⬜ (routes return 404) | C (+ A·E preview) | private link / "preview client" |
 | Settings · Users | ⬜ | A | top nav |
 | Clients directory | ✏️ | A | top nav (stub) |
 | Schedule | ✏️ | A | top nav (stub) |
