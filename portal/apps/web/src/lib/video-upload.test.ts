@@ -268,3 +268,9 @@ describe("VideoUpload (#741 4d-i)", () => {
     expect(settled.map((s) => s.outcome)).toEqual(["cancelled", "done"]);
   });
 });
+
+describe("fast-start caution copy", () => {
+  it("names the setting with curly quotes", () => {
+    expect(NOT_FAST_START_CAUTION).toContain("Re-export with “Fast start” (or “Optimise for web”) turned on.");
+  });
+});

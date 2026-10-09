@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { VideoDto } from "@quincy/shared";
 import { Badge } from "../reui/badge";
+import { Button } from "../quincy/Button";
 import { Frame, FramePanel } from "../reui/frame";
 import { ItemGroup, Item, ItemContent, ItemDescription, ItemTitle } from "../reui/item";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "../reui/popover";
@@ -45,28 +46,28 @@ export function VideoCard({ video, canUpload, myUpload, atUploadCap, onVersionFi
           : <div data-testid="video-card-no-poster" className="flex h-full w-full items-center justify-center [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] opacity-70">No poster</div>}
         <Badge variant="secondary" className="absolute left-[var(--space-2)] top-[var(--space-2)]">{`v${newest.version}`}</Badge>
         {video.premium && <Badge variant="warning" className="absolute right-[var(--space-2)] top-[var(--space-2)]">Premium</Badge>}
-        <Badge variant="invert" className="absolute bottom-[var(--space-2)] right-[var(--space-2)] [font-family:var(--font-mono)]">{formatDuration(newest.durationMs)}</Badge>
+        <Badge variant="invert" className="absolute bottom-[var(--space-2)] right-[var(--space-2)] border border-invert-foreground/20 [font-family:var(--font-mono)]">{formatDuration(newest.durationMs)}</Badge>
       </div>
       <div className="grid gap-[var(--space-3)] px-[var(--space-4)] pb-[var(--space-4)]">
         <div className="grid gap-[var(--space-1)]">
           <h3 className="serif [font:var(--type-h3)]">{video.title}</h3>
-          <p className={META} data-testid="video-card-meta">
+          <div className="flex flex-wrap items-center gap-x-[var(--space-2)]">
             <Popover>
-              <PopoverTrigger className="underline underline-offset-2">{count === 1 ? "1 version" : `${count} versions`}</PopoverTrigger>
+              <PopoverTrigger render={<Button type="button" variant="text" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}>{count === 1 ? "1 version" : `${count} versions`}</PopoverTrigger>
               <PopoverContent align="start" aria-label={`Versions of ${video.title}`}>
                 <PopoverTitle>Versions</PopoverTitle>
                 <ItemGroup>
                   {video.versions.map((version) => <Item key={version.assetId} size="xs">
                     <ItemContent>
                       <ItemTitle>{`v${version.version}`}</ItemTitle>
-                      <ItemDescription>{`${version.uploadedBy.name} · ${formatVideoDate(version.createdAt)} · ${formatFps(version.fps)} fps`}</ItemDescription>
+                      <ItemDescription>{`${version.uploadedBy.name} · ${formatVideoDate(version.createdAt)} · ${formatFps(version.fps)}\u00a0fps`}</ItemDescription>
                     </ItemContent>
                   </Item>)}
                 </ItemGroup>
               </PopoverContent>
             </Popover>
-            {` · ${count > 1 ? `v${newest.version} by` : "by"} ${newest.uploadedBy.name} · ${formatVideoDate(newest.createdAt)} · ${formatFps(newest.fps)} fps`}
-          </p>
+            <p className={META} data-testid="video-card-meta">{`${count > 1 ? `v${newest.version} by` : "by"} ${newest.uploadedBy.name} · ${formatVideoDate(newest.createdAt)} · ${formatFps(newest.fps)}\u00a0fps`}</p>
+          </div>
         </div>
         {myUpload && <p role="status" className={`${META} flex items-center gap-[var(--space-2)]`} data-testid="video-card-uploading"><Spinner aria-hidden="true" role="presentation" className="size-3.5" />{`Uploading v${myUpload.version ?? nextNumber} · ${myUpload.percent}%`}</p>}
         {uploadingElsewhere && <p role="status" className={`${META} flex items-center gap-[var(--space-2)]`} data-testid="video-card-uploading-other"><Spinner aria-hidden="true" role="presentation" className="size-3.5" />{`${uploadingElsewhere.uploader.name} is uploading v${uploadingElsewhere.version}`}</p>}

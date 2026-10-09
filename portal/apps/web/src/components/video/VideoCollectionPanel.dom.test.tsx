@@ -70,7 +70,8 @@ describe("Video cards (#741 4d-i)", () => {
     await mount([videoOf()]);
     const card = host.querySelector('[data-testid="video-card"]')!;
     expect(card.querySelector("h3")?.textContent).toBe("Main walkthrough");
-    expect(card.querySelector('[data-testid="video-card-meta"]')?.textContent).toBe("2 versions · v2 by Mia Chen · 9 Oct 2026 · 25 fps");
+    expect(card.querySelector('[data-testid="video-card-meta"]')?.textContent).toBe("v2 by Mia Chen · 9 Oct 2026 · 25\u00a0fps");
+    expect(card.textContent).toContain("2 versions");
     expect(card.textContent).toContain("2:14");
     expect(card.textContent).toContain("v2");
     expect(card.querySelector("img")?.getAttribute("src")).toBe(`/media/video/${ids.asset}/poster`);
@@ -78,17 +79,31 @@ describe("Video cards (#741 4d-i)", () => {
     expect(card.textContent).not.toContain("Open review");
   });
 
-  it.each([[{ num: 30000, den: 1001 }, "29.97 fps"], [{ num: 24000, den: 1001 }, "23.976 fps"], [{ num: 25, den: 1 }, "25 fps"]])("reads %j as %s", async (fps, text) => {
+  it.each([[{ num: 30000, den: 1001 }, "29.97\u00a0fps"], [{ num: 24000, den: 1001 }, "23.976\u00a0fps"], [{ num: 25, den: 1 }, "25\u00a0fps"]])("reads %j as %s", async (fps, text) => {
     await mount([videoOf({}, { fps })]);
     expect(host.querySelector('[data-testid="video-card-meta"]')?.textContent).toContain(text);
   });
 
   it("a single version reads '1 version · by …'; a posterless card says so; a 9:16 film is flagged portrait; Premium shows", async () => {
     await mount([videoOf({ premium: true, versions: [versionOf({ version: 1, width: 1080, height: 1920, posterUrl: null, hasPoster: false })] })]);
-    expect(host.querySelector('[data-testid="video-card-meta"]')?.textContent).toMatch(/^1 version · by Mia Chen/);
+    expect(host.querySelector('[data-testid="video-card-meta"]')?.textContent).toMatch(/^by Mia Chen/);
+    expect(button("1 version")).toBeDefined();
     expect(host.querySelector('[data-testid="video-card-no-poster"]')?.textContent).toBe("No poster");
     expect(host.querySelector('[data-testid="video-card-poster"]')?.getAttribute("data-orientation")).toBe("portrait");
     expect(host.textContent).toContain("Premium");
+  });
+
+  it("the versions trigger is a real Button with the coarse tap-target idiom", async () => {
+    await mount([videoOf()]);
+    const trigger = button("2 versions")!;
+    expect(trigger.className).toContain("pointer-coarse:min-h-11");
+    expect(trigger.className).toContain("max-[721px]:min-h-11");
+    expect(trigger.closest('[data-testid="video-card-meta"]')).toBeNull();
+  });
+
+  it("the duration badge has a hairline border so it stays visible on pillarbox bars", async () => {
+    await mount([videoOf()]);
+    expect(host.querySelector('[data-testid="video-card-poster"]')!.innerHTML).toMatch(/border-invert-foreground\/20[^"]*"[^>]*>2:14/);
   });
 
   it("the versions list shows every version's number, uploader and date", async () => {

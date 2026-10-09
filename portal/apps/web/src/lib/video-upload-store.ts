@@ -63,7 +63,7 @@ export function startVideoUpload(input: {
     onChange: () => emit(),
     onUnauthorized: (error) => { if (input.queryClient) terminatePrincipalOnUnauthorized(input.queryClient, error); },
     onSettled: (result) => {
-      if (input.queryClient) void invalidateProjectSurfaces(input.queryClient, { projectId: input.projectId, resources: [{ kind: "videos" }, ...(result.outcome === "done" ? [{ kind: "activity" as const }] : [])], dashboard: false, calendar: false, gantt: false });
+      if (input.queryClient) void invalidateProjectSurfaces(input.queryClient, { projectId: input.projectId, resources: [{ kind: "videos" }, ...(result.outcome === "done" ? [{ kind: "detail" as const }, { kind: "activity" as const }] : [])], dashboard: false, calendar: false, gantt: false });
       if (result.outcome === "done") pushToast(`${result.version ? `v${result.version} of ` : ""}${result.title} uploaded`);
       entries.delete(id);
       emit();

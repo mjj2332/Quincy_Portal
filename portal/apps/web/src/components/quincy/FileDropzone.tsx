@@ -21,6 +21,7 @@ export function FilePickButton({ accept, onFile, variant = "secondary", disabled
     <input
       ref={input}
       type="file"
+      name="file"
       accept={accept}
       className="sr-only"
       tabIndex={-1}

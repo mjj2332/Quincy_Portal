@@ -18,7 +18,7 @@ import { captureVideoPoster } from "./video-poster";
 
 /** Staff video upload (#741 4d-i): the browser's checks, then reserve, bytes, complete, poster. The server re-checks and re-probes everything; the checks here only save a doomed 2 GB upload. */
 
-export const NOT_FAST_START_CAUTION = "This MP4 isn't fast-start, so playback may take a moment to begin. Re-export with 'fast start' / 'optimise for web' to fix it.";
+export const NOT_FAST_START_CAUTION = "This MP4 isn't fast-start, so playback may take a moment to begin. Re-export with “Fast start” (or “Optimise for web”) turned on.";
 export const TIMECODE_MISMATCH_CAUTION = "The file's timecode track doesn't match its frame rate, so it is ignored and timecode starts at 00:00:00:00.";
 export const NOT_MP4_NAME_MESSAGE = mp4RejectMessage("not_mp4");
 const UPLOADS_UNAVAILABLE = "Uploads aren't available right now.";
