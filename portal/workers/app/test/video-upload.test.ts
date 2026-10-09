@@ -122,6 +122,17 @@ describe("POST /video-uploads (reserve)", () => {
     expect(await count("video_upload_reservations")).toBe(before);
   });
 
+  it("with the gate closed, an outsider External and an unassigned Photographer get 404 on reserve for a real Project, the same as for an unknown one", async () => {
+    stubS3(); const body = { title: "Cut", filename: "cut.mp4", bytes: 1000, contentType: "video/mp4" }; const before = await count("video_upload_reservations");
+    await clearVideoFlags();
+    for (const who of ["externalOutsider", "photographer"] as const) {
+      const real = await reserve(who, body); const unknown = await reserve(who, body, S3_ENV, crypto.randomUUID());
+      expect(real.status, who).toBe(404); expect(unknown.status, who).toBe(404);
+      expect(await real.json(), who).toEqual(await unknown.json());
+    }
+    expect(await count("video_upload_reservations")).toBe(before);
+  });
+
   it("answers 409 project_archived for an archived Project and 409 video_service_missing for a Project without a Video Collection", async () => {
     stubS3(); const body = { title: "Cut", filename: "cut.mp4", bytes: 1000, contentType: "video/mp4" }; const before = await count("video_upload_reservations");
     const archived = await reserve("admin", body, S3_ENV, ids.archivedProject);

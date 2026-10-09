@@ -44,12 +44,12 @@ async function loadReservation(db: D1Database, id: string): Promise<Reservation 
   `).bind(id).first<Reservation>();
 }
 
-/** Visibility, gate and capability, in that order. Null means the caller may go on. */
+/** Gate (closed 404), capability (403), then Project visibility (External outside 404, staff 403), in that order; the archived 409 follows in each route. Null means the caller may go on. */
 async function access(c: Context<AppEnv>, projectId: string): Promise<Response | null> {
   const user = c.get("user");
-  if (!await hasProjectAccess(c, projectId)) return user.role === "external_editor" ? c.json({ error: "Project not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (!await videoReviewGate(c.env.DB, projectId, "upload")) return c.json({ error: "Not found" }, 404);
   if (!roleHasCapability(user.role, "uploadVideo")) return c.json({ error: "Forbidden", capability: "uploadVideo" }, 403);
+  if (!await hasProjectAccess(c, projectId)) return user.role === "external_editor" ? c.json({ error: "Project not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   return null;
 }
 const archivedResponse = (c: Context<AppEnv>) => c.json({ error: "Archived projects cannot accept uploads", code: "project_archived" }, 409);
