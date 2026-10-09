@@ -9,7 +9,7 @@ One line per new UI element. Searches: installed `components/reui/` and `compone
 | Version details button and popover | `reui/popover` (`Popover`, `PopoverTrigger render=`, `PopoverContent`) + `reui/item` rows | installed; same rows and test ids as the 4d-ii column |
 | Status filter Open / Resolved / All | `reui/toggle-group` (single value, `variant="outline"`) | installed; `c-toggle-group-5` composition; an empty value is refused |
 | Visibility filter All / Client-visible / Internal | `reui/toggle-group` | as above; both filter rows are hidden while the version has no notes. Selected state is the toggle-group's own `aria-pressed:bg-muted` token (no stronger variant is installed), left as is (design r3 item 8) |
-| Note list scroller | `reui/scroll-area` | installed; the only inner scroller, desktop only (on a phone the root has no height cap); `min-h-32`, the panel is `overflow-clip` so focus cannot scroll it; an opening edit form is `scrollIntoView({ block: "nearest" })` |
+| Note list scroller | `reui/scroll-area` | installed; the only inner scroller, desktop only (on a phone the root has no height cap); `min-h-32`, the panel is `overflow-clip` so focus cannot scroll it; an opening edit form scrolls only this viewport (its `scrollTop`; `scrollIntoView` also scrolled the dialog); in a composer narrower than 280px the timecode chip takes its own row |
 | Thread container | `reui/item` (`Item variant="outline"`) | sheet-5 composition; selected = `data-selected` border token |
 | Author avatar | `quincy/InitialsAvatar` | installed; Discussion precedent |
 | Timestamp | `quincy/CollaborationTimestamp` | installed |
