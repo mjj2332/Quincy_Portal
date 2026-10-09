@@ -114,15 +114,20 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     if (!store.openEdit(assetId, note, thread.id)) return; // a request is out: nothing else opens
     focusEditorOnClose.current = true;
   };
-  const focusEditor = useCallback((): HTMLElement | false | undefined => {
+  // The menu closes before the store's update has rendered the edit form, so there is no field to focus yet: while an edit is starting the menu
+  // moves no focus, and the form focuses its own field when it mounts (below). Delete moves none either; it has its own destination.
+  const focusEditor = useCallback((): false | undefined => {
     if (deletePending.current) return false;
     if (!focusEditorOnClose.current) return undefined;
-    const field = q(articleRef.current, '[data-testid="video-note-edit-body"]');
-    if (!field) return undefined;
     focusEditorOnClose.current = false;
-    field.focus();
-    return field;
+    return false;
   }, []);
+  // The edit form a person just opened takes focus once, when it mounts. A form that mounts again (pinned, filters or Version changed) does not.
+  const focusPending = editing?.focusOnOpen === true;
+  useEffect(() => {
+    if (!focusPending || !editing) return;
+    if (store.takeFocusOnOpen(assetId, editing.noteId)) q(articleRef.current, '[data-testid="video-note-edit-body"]')?.focus();
+  }, [focusPending, editing?.noteId, store, assetId]);
 
   function renderMenu(note: VideoNoteDto): ReactNode {
     if (readOnly || note.deleted || !isOwnNote(note, userId)) return null;

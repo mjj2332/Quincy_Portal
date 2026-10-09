@@ -33,6 +33,8 @@ export type OpenForm = {
   /** The server's note after a reviewed 409: "Save anyway" sends exactly its revision. */
   conflict: Opened | null;
   problem: Problem | null;
+  /** Set by a person opening an edit: the form focuses its text field once when it mounts (a re-mounted or pinned form never does). */
+  focusOnOpen?: boolean;
 };
 /** The marks belong to the clock they were made on (a Version or a viewer that is gone takes them with it); off that clock the form's baseline `seed` shows and no frame action has been taken. */
 export type StoredMarks = { clock: object | null; value: NoteMarks; touched: boolean; seed: NoteMarks };
@@ -163,7 +165,14 @@ export function createNoteFormStore(key: string) {
     openEdit(assetId: string, note: VideoNoteDto, rootId: string): boolean {
       const frames = note.id === rootId && !note.hasMarkup && note.startFrame !== null;
       const seed: NoteMarks = frames ? { in: note.startFrame, out: note.endFrame === null ? null : note.endFrame - 1 } : EMPTY_MARKS;
-      return open(assetId, { kind: "edit", noteId: note.id, rootId, text: note.body, base: { revision: note.revision, body: note.body, startFrame: note.startFrame, endFrame: note.endFrame }, frames }, seed);
+      return open(assetId, { kind: "edit", noteId: note.id, rootId, text: note.body, base: { revision: note.revision, body: note.body, startFrame: note.startFrame, endFrame: note.endFrame }, frames, focusOnOpen: true }, seed);
+    },
+    /** True once, to the edit form that mounted because a person opened it: it then focuses its text field. */
+    takeFocusOnOpen(assetId: string, noteId: string): boolean {
+      const form = slot(assetId).open;
+      if (!form || form.noteId !== noteId || !form.focusOnOpen) return false;
+      put(assetId, { open: { ...form, focusOnOpen: false } });
+      return true;
     },
     openReply: (assetId: string, rootId: string): boolean => open(assetId, { kind: "reply", noteId: rootId, rootId, text: "", base: { revision: 0, body: "", startFrame: null, endFrame: null }, frames: false }, EMPTY_MARKS),
     close,

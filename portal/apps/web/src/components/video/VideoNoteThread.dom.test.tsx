@@ -224,6 +224,19 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(host.querySelector('[data-notes-form="edit"]')!.getAttribute("data-size-container")).toBe("true");
   });
 
+  it("K1: the edit form renders after the menu has closed (a real keyboard run): focus still ends in its textarea, and a re-mounted form does not take focus", async () => {
+    await render(thread({ revision: 3 }));
+    const real = store.openEdit.bind(store);
+    (store as { openEdit: typeof store.openEdit }).openEdit = (...args) => { setTimeout(() => { real(...args); }, 300); return true; };
+    await chooseAction("Terry", "Edit");
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 500)); });
+    const field = host.querySelector<HTMLTextAreaElement>('[data-notes-form="edit"] textarea')!;
+    expect(field).not.toBeNull();
+    expect(document.activeElement).toBe(field);
+    // A form that is mounted again (pinned, filters changed) must not steal focus: the one-shot flag is spent.
+    expect(store.takeFocusOnOpen("asset", (store.slot("asset").open as { noteId: string }).noteId)).toBe(false);
+  });
+
   it("17: Delete hands the note and its thread to the panel (it owns the confirm); the thread deletes nothing itself", async () => {
     const root0 = thread({ author: { kind: "staff", person: mia } });
     const mineReply = reply(root0);
