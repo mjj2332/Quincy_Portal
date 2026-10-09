@@ -550,5 +550,18 @@ function parseTmcd(
       sampleOffset = wide ? exactSafe(dv.getBigUint64(at), "co64") : dv.getUint32(at);
     }
   }
+  // The first sample must exist and hold the 4-byte frame number.
+  const stsz = stbl.find((b) => b.type === "stsz");
+  if (!stsz) sampleOffset = null;
+  else {
+    need(stsz, 12);
+    const constant = dv.getUint32(stsz.start + 4);
+    const count = dv.getUint32(stsz.start + 8);
+    if (count < 1) sampleOffset = null;
+    else {
+      const first = constant !== 0 ? constant : dv.getUint32(stsz.start + 12);
+      if (first < 4) throw reject("box_size_invalid", "tmcd sample size");
+    }
+  }
   return { flags, numberOfFrames, sampleOffset };
 }

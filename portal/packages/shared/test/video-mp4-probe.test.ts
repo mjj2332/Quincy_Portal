@@ -381,6 +381,24 @@ describe("probeMp4 sample descriptions and short boxes", () => {
     const tc = tmcdT({ stscRaw: scDesc(3) });
     expect(await reasonOf(buildMp4({ tracks: [videoTrack(), tc] }))).toBe("box_size_invalid");
   });
+  it("a tmcd track with zero samples gives no timecode", async () => {
+    const p = await probeOf({ tracks: [videoTrack(), tmcdT({ stszRaw: box("stsz", z, u32(4), u32(0)) })] });
+    expect(p.startTimecode).toBeNull();
+  });
+  it("a tmcd track with no stsz at all is missing the table", async () => {
+    const p = await probeOf({ tracks: [videoTrack(), tmcdT({ stszRaw: box("free", z) })] });
+    expect(p.startTimecode).toBeNull();
+  });
+  it.each<[string, Uint8Array]>([
+    ["constant 1-byte sample", box("stsz", z, u32(1), u32(1))],
+    ["variable first size 3", box("stsz", z, u32(0), u32(1), u32(3))],
+  ])("a tmcd %s -> box_size_invalid", async (_n, stszRaw) => {
+    expect(await reasonOf(buildMp4({ tracks: [videoTrack(), tmcdT({ stszRaw })] }))).toBe("box_size_invalid");
+  });
+  it("a tmcd variable stsz with first size 4 reads the timecode", async () => {
+    const p = await probeOf({ tracks: [videoTrack(), tmcdT({ stszRaw: box("stsz", z, u32(0), u32(1), u32(4)) })] });
+    expect(p.startTimecode?.frames).toBe(5);
+  });
   it("a fixed-size stsz declaring 1000 samples is fine", async () => {
     const v = videoTrack({ stszRaw: box("stsz", z, u32(4), u32(1000)) });
     expect((await probeMp4(buildMp4(one(v)))).ok).toBe(true);
