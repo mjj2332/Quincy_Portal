@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Lock } from "lucide-react";
 import { VIDEO_NOTE_BODY_MAX, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto } from "@quincy/shared";
-import { ApiError } from "../../lib/api";
 import { cn } from "../../lib/utils";
 import { isOwnNote, noteAnchorLabel } from "../../lib/video-note-view";
-import { marksToFrames, type NoteMarks } from "../../lib/video-note-marks";
-import { classifyVideoNoteError } from "../../lib/video-notes-data";
+import { effectiveMarks, frameOnScreen, writeFailure, type NoteFormStore, type Problem } from "../../lib/video-note-form-store";
+import type { VideoFrameClock } from "../../lib/video-frame-clock";
+import type { NoteMarks } from "../../lib/video-note-marks";
 import { META_TEXT } from "../quincy/Eyebrow";
 import { Button } from "../quincy/Button";
 import { CollaborationTimestamp } from "../quincy/CollaborationTimestamp";
@@ -18,7 +18,6 @@ import { Button as ReuiButton } from "../reui/button";
 import { Item } from "../reui/item";
 import { Kbd } from "../reui/kbd";
 import { Textarea } from "../reui/textarea";
-import type { NoteForms } from "./use-note-forms";
 
 /** What a thread asks of the panel. Every write rejects with the original error, which the thread classifies. */
 export type ThreadActions = {
@@ -27,11 +26,7 @@ export type ThreadActions = {
   resolve: (rootId: string, resolved: boolean) => Promise<unknown>;
   requestDelete: (note: VideoNoteDto, root: VideoNoteThreadDto) => void;
   refresh: () => void;
-  onWriteError: (error: unknown) => void;
 };
-
-/** What an edit form was opened with: Save sends this revision, never the live cache value, until the person has reviewed a conflict. */
-type EditDraft = { id: string; gen: number; text: string; base: { revision: number; body: string; startFrame: number | null; endFrame: number | null } };
 
 const MONO = "[font:var(--type-mono)] tabular-nums";
 const SMALL = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
@@ -46,22 +41,6 @@ function VisibilityBadge({ visibility }: { visibility: VideoNoteDto["visibility"
 const authorName = (note: VideoNoteDto) => (note.author.kind === "staff" ? note.author.person.name : note.author.name);
 const roleLabel = (note: VideoNoteDto) => (note.author.kind === "staff" ? note.author.person.roleLabel : "Client");
 
-type Problem = { text: string; refresh?: boolean };
-function describe(error: unknown, fallback: string, actions: ThreadActions): { problem: Problem; conflict: boolean; gone: boolean } {
-  actions.onWriteError(error);
-  const classified = classifyVideoNoteError(error);
-  switch (classified.kind) {
-    case "conflict": return { problem: { text: "This note changed since you opened it. Its current text is shown below; Save anyway replaces it with your edit." }, conflict: true, gone: false };
-    case "deleted": actions.refresh(); return { problem: { text: "This note was deleted." }, conflict: false, gone: true };
-    case "gone": actions.refresh(); return { problem: { text: "This note no longer exists." }, conflict: false, gone: true };
-    case "network": return { problem: { text: "Couldn't reach the server. The change may or may not have gone through — refresh the notes to check.", refresh: true }, conflict: false, gone: false };
-    case "archived": return { problem: { text: "This Project was archived, so nothing was changed." }, conflict: false, gone: false };
-    case "access": return { problem: { text: error instanceof Error && error.message ? error.message : "You no longer have access to this Project." }, conflict: false, gone: false };
-    case "range": return { problem: { text: "Those frames are outside this film." }, conflict: false, gone: false };
-    default: return { problem: { text: error instanceof ApiError || error instanceof Error ? error.message || fallback : fallback }, conflict: false, gone: false };
-  }
-}
-
 /** The note's text, or a muted line for a deleted one. */
 function NoteText({ note }: { note: VideoNoteDto }) {
   return note.deleted
@@ -72,105 +51,62 @@ function NoteText({ note }: { note: VideoNoteDto }) {
 /**
  * One note thread (#741 5b): the root with its replies, the Reply / Resolve actions, the author's "⋯" (Edit, Delete) and the inline reply
  * and edit forms. Visibility is shown, never chosen: replies take the root's. Edit and Delete are author-only (`isOwn` is the session user,
- * which is the impersonated user while an Admin impersonates), and the server enforces it again.
+ * which is the impersonated user while an Admin impersonates), and the server enforces it again. The open form's text, baseline, conflict and
+ * marks live in the Video tab's form store: this component renders them and sends commands.
  */
-export function VideoNoteThread({ thread, selected, userId, readOnly, now, timecode, getFrame, frameCount, actions, onSeek, forms }: {
+export function VideoNoteThread({ thread, selected, userId, readOnly, now, timecode, frameCount, actions, onSeek, store, assetId, clock, pinned = false }: {
   thread: VideoNoteThreadDto;
   selected: boolean;
   userId: string | null;
   readOnly: boolean;
   now: number;
   timecode: (frame: number) => string;
-  getFrame: () => number;
   frameCount: number;
   actions: ThreadActions;
   onSeek: (thread: VideoNoteThreadDto) => void;
-  /** The panel's active-form state: this thread's reply or edit form is open only while it is the active one. */
-  forms: NoteForms;
+  store: NoteFormStore;
+  assetId: string;
+  clock: VideoFrameClock | null;
+  /** The filters exclude this thread but its form is open, so it stays listed. */
+  pinned?: boolean;
 }) {
   const articleRef = useRef<HTMLElement>(null);
-  const [replyText, setReplyText] = useState("");
-  const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
-  const [replyGen, setReplyGen] = useState(0);
-  /** The first Escape of a dirty form was spent by the viewer (it kept the text); typing arms it again. */
-  const [escapeSpent, setEscapeSpent] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<Problem | null>(null);
-  const [conflicted, setConflicted] = useState(false);
-  const focusAfter = useRef<"reply-button" | "actions" | null>(null);
+  const form = useSyncExternalStore(store.subscribe, () => { const open = store.slot(assetId).open; return open && open.rootId === thread.id ? open : null; });
+  const op = useSyncExternalStore(store.subscribe, () => store.slot(assetId).op);
+  const marksHeld = useSyncExternalStore(store.subscribe, () => store.slot(assetId).marks);
+  const closedNotice = useSyncExternalStore(store.subscribe, () => { const held = store.slot(assetId).notice; return held && held.rootId === thread.id ? held : null; });
+  const [resolving, setResolving] = useState(false);
+  const [resolveNotice, setResolveNotice] = useState<Problem | null>(null);
   const focusEditorOnClose = useRef(false);
   const deletePending = useRef(false);
-  const replying = forms.active.kind === "reply" && forms.active.rootId === thread.id && forms.gen === replyGen;
-  const editing = editDraft && forms.active.kind === "edit" && forms.active.noteId === editDraft.id && forms.gen === editDraft.gen ? editDraft : null;
-  const blocked = forms.phase === "posting";
-  const editTarget = editing ? (editing.id === thread.id ? thread : thread.replies.find((reply) => reply.id === editing.id) ?? null) : null;
-  const editingRoot = editing?.id === thread.id;
-  const editGen = editing?.gen;
-  const finishEdit = useCallback(() => { setConflicted(false); forms.close(editGen); focusAfter.current = "actions"; }, [forms, editGen]);
-  // The viewer's Escape tells the form its first Escape was spent.
+  const replying = form?.kind === "reply";
+  const editing = form?.kind === "edit" ? form : null;
+  const marks = effectiveMarks(marksHeld, clock).value;
+  const sending = op?.form === "open" && form !== null;
+  const busy = resolving || sending;
+  const blocked = op?.phase === "posting";
+  const notice = form?.problem ?? closedNotice ?? resolveNotice;
+
+  // A form that closes hands focus back to the control that opened it, unless focus went somewhere else on purpose.
+  const heldKind = useRef<"reply" | "edit" | null>(null);
   useEffect(() => {
-    const article = articleRef.current;
-    const spend = () => { setEscapeSpent(true); };
-    article?.addEventListener("quincy-notes-escape", spend);
-    return () => { article?.removeEventListener("quincy-notes-escape", spend); };
-  }, []);
+    const kind = form?.kind ?? null;
+    const previous = heldKind.current;
+    heldKind.current = kind;
+    const active = document.activeElement;
+    if (previous === null || kind !== null || (active && active !== document.body && !articleRef.current?.contains(active))) return;
+    (previous === "reply" ? q(articleRef.current, '[data-testid="video-note-reply-button"]') : q(articleRef.current, '[data-testid="video-note-actions"]') ?? q(articleRef.current, '[data-testid="video-note-anchor-button"]'))?.focus();
+  }, [form?.kind]);
 
-  // A form that closes hands focus back to the control that opened it; a note edited or deleted elsewhere closes its form.
-  useEffect(() => {
-    if (!replying && !editing && focusAfter.current) {
-      const target = focusAfter.current === "reply-button" ? q(articleRef.current, '[data-testid="video-note-reply-button"]') : q(articleRef.current, '[data-testid="video-note-actions"]') ?? q(articleRef.current, '[data-testid="video-note-anchor-button"]');
-      focusAfter.current = null;
-      target?.focus();
-    }
-  }, [replying, editing]);
-  useEffect(() => { if (readOnly) forms.close(replying ? replyGen : editGen); }, [readOnly, forms, replying, replyGen, editGen]);
-  useEffect(() => { if (editing && !editTarget) forms.close(editing.gen); }, [editing, editTarget, forms]);
-  useEffect(() => { if (!editing) setConflicted(false); }, [editing]);
-
-  /** A form's request: the panel freezes the marks and (once sent) stops another form opening while it is out. */
-  async function guarded(run: () => Promise<unknown>, fallback: string, token?: number): Promise<{ ok: boolean; gone: boolean }> {
-    setBusy(true); setNotice(null);
-    if (token !== undefined) forms.setPhase("posting", token);
-    try { await run(); return { ok: true, gone: false }; }
-    catch (error) {
-      const { problem, conflict, gone } = describe(error, fallback, actions);
-      setNotice(problem); setConflicted(conflict);
-      if (gone && token !== undefined) forms.close(token);
-      return { ok: false, gone };
-    } finally { setBusy(false); if (token !== undefined) forms.setPhase("idle", token); }
+  async function toggleResolved() {
+    setResolving(true); setResolveNotice(null);
+    try { await actions.resolve(thread.id, thread.resolved === null); }
+    catch (error) { setResolveNotice(writeFailure(error, "The note could not be updated.").problem); }
+    finally { setResolving(false); }
   }
-
-  async function postReply() {
-    const text = replyText.trim();
-    if (!text || busy) return;
-    const { ok } = await guarded(() => actions.reply(thread.id, text), "The reply could not be posted.", replyGen);
-    if (ok) { forms.close(replyGen); setReplyText(""); focusAfter.current = "reply-button"; }
-  }
-
-  async function saveEdit() {
-    if (!editing || !editTarget || busy) return;
-    const text = editing.text.trim();
-    if (!text) return;
-    // The revision the form was opened with, until the person has seen a conflict: then the note on the server is the baseline and Save is "Save anyway".
-    const against = conflicted ? { revision: editTarget.revision, body: editTarget.body, startFrame: editTarget.startFrame, endFrame: editTarget.endFrame } : editing.base;
-    const input: { expectedRevision: number; body?: string; startFrame?: number; endFrame?: number | null } = { expectedRevision: against.revision };
-    if (text !== against.body) input.body = text;
-    if (editingRoot && forms.active.kind === "edit" && forms.active.frames) {
-      const frames = marksToFrames(forms.marks, frameCount);
-      if (frames && (frames.startFrame !== against.startFrame || frames.endFrame !== against.endFrame)) { input.startFrame = frames.startFrame; input.endFrame = frames.endFrame; }
-    }
-    if (input.body === undefined && input.startFrame === undefined) { finishEdit(); return; }
-    const { ok } = await guarded(() => actions.edit(editTarget.id, input), "The note could not be saved.", editing.gen);
-    if (ok) finishEdit();
-  }
-
-  async function toggleResolved() { await guarded(() => actions.resolve(thread.id, thread.resolved === null), "The note could not be updated."); }
 
   const startEdit = (note: VideoNoteDto) => {
-    const gen = forms.openEdit(note, thread.id);
-    if (gen === 0) return; // a request is out: nothing else opens
-    setNotice(null); setConflicted(false); setEscapeSpent(false);
-    setEditDraft({ id: note.id, gen, text: note.body, base: { revision: note.revision, body: note.body, startFrame: note.startFrame, endFrame: note.endFrame } });
+    if (!store.openEdit(assetId, note, thread.id)) return; // a request is out: nothing else opens
     focusEditorOnClose.current = true;
   };
   const focusEditor = useCallback((): HTMLElement | false | undefined => {
@@ -201,23 +137,23 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     <span className="ms-auto">{renderMenu(note)}</span>
   </header>;
 
-  const editForm = (note: VideoNoteDto) => editing && editing.id === note.id && <form
-    data-notes-form="edit" data-escape-spent={escapeSpent ? "true" : "false"} data-dirty={editing.text !== editing.base.body || (editingRoot && frameChanged(editing.base, forms.marks, frameCount)) ? "true" : "false"}
+  const editForm = (note: VideoNoteDto) => editing && editing.noteId === note.id && <form
+    data-notes-form="edit"
     className="grid gap-[var(--space-2)]"
-    onSubmit={(event) => { event.preventDefault(); void saveEdit(); }}
+    onSubmit={(event) => { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit }); }}
   >
     <label className="sr-only" htmlFor={`video-note-edit-${note.id}`}>Edit note</label>
-    <Textarea id={`video-note-edit-${note.id}`} data-testid="video-note-edit-body" value={editing.text} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) { setEscapeSpent(false); setEditDraft({ ...editing, text: event.target.value }); } }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void saveEdit(); } }} />
-    {editingRoot && forms.active.kind === "edit" && forms.active.frames && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-      <span data-testid="video-note-edit-anchor" className={cn("text-foreground", MONO)}>{editAnchorLabel(forms.marks, timecode)}</span>
-      <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-in" disabled={busy || forms.phase !== "idle"} onClick={() => { forms.markFromClock("in"); }}>Set in <Kbd>I</Kbd></Button>
-      <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-out" disabled={busy || forms.phase !== "idle"} onClick={() => { forms.markFromClock("out"); }}>Set out <Kbd>O</Kbd></Button>
-      <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-make-point" disabled={busy || forms.phase !== "idle"} onClick={forms.makePoint}>Make point</Button>
+    <Textarea id={`video-note-edit-${note.id}`} data-testid="video-note-edit-body" value={editing.text} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) store.setOpenText(assetId, event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit }); } }} />
+    {editing.frames && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+      <span data-testid="video-note-edit-anchor" className={cn("text-foreground", MONO)}>{editAnchorLabel(marks, timecode)}</span>
+      <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-in" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "in", frameOnScreen(clock.getState()), clock); }}>Set in <Kbd>I</Kbd></Button>
+      <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-out" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "out", frameOnScreen(clock.getState()), clock); }}>Set out <Kbd>O</Kbd></Button>
+      <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-make-point" disabled={busy || !clock} onClick={() => { if (clock) store.makePoint(assetId, clock); }}>Make point</Button>
     </div>}
-    {conflicted && <Notice tone="caution" data-testid="video-note-conflict" className="grid gap-[var(--space-1)]"><span>Current note on the server:</span><span data-testid="video-note-conflict-body" className="whitespace-pre-wrap [overflow-wrap:anywhere] text-foreground">{note.body}</span></Notice>}
+    {editing.conflict && <Notice tone="caution" data-testid="video-note-conflict" className="grid gap-[var(--space-1)]"><span>Current note on the server:</span><span data-testid="video-note-conflict-body" className="whitespace-pre-wrap [overflow-wrap:anywhere] text-foreground">{editing.conflict.body}</span></Notice>}
     <div className="flex justify-end gap-[var(--space-2)]">
-      <Button type="button" variant="secondary" data-notes-cancel="" data-testid="video-note-edit-cancel" disabled={busy} onClick={finishEdit}>Cancel</Button>
-      <Button type="submit" data-testid="video-note-edit-save" disabled={busy || editing.text.trim() === ""}>{busy ? "Saving…" : conflicted ? "Save anyway" : "Save"}</Button>
+      <Button type="button" variant="secondary" data-testid="video-note-edit-cancel" disabled={busy} onClick={() => { store.close(assetId); }}>Cancel</Button>
+      <Button type="submit" data-testid="video-note-edit-save" disabled={busy || editing.text.trim() === ""}>{busy ? "Saving…" : editing.conflict ? "Save anyway" : "Save"}</Button>
     </div>
   </form>;
 
@@ -226,30 +162,31 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
 
   return <Item variant="outline" size="sm" className="block min-w-0 data-[selected=true]:border-foreground" data-testid="video-note-thread" data-note-id={thread.id} data-selected={selected ? "true" : "false"} data-resolved={thread.resolved ? "true" : "false"} ref={articleRef as never}>
     <div className="grid min-w-0 gap-[var(--space-2)]">
+      {pinned && <Notice tone="caution" data-testid="video-note-pinned">Outside current filters</Notice>}
       {header(thread)}
       <div className="flex flex-wrap items-center gap-[var(--space-2)]">
         {thread.startFrame !== null && <ReuiButton type="button" variant="secondary" size="sm" data-testid="video-note-anchor-button" aria-label={`Go to ${label}`} className={cn("pointer-coarse:min-h-11 max-[721px]:min-h-11", MONO)} onClick={() => { onSeek(thread); }}>{label}</ReuiButton>}
         {resolvedLine && <span className={cn(META_TEXT, "!normal-case")}>{resolvedLine}</span>}
       </div>
-      {editing?.id === thread.id ? editForm(thread) : <NoteText note={thread} />}
+      {editing?.noteId === thread.id ? editForm(thread) : <NoteText note={thread} />}
       {thread.replies.length > 0 && <div className="grid gap-[var(--space-2)] border-s border-border ps-[var(--space-3)]">
         {thread.replies.map((reply) => <div key={reply.id} data-testid="video-note-reply" data-note-id={reply.id} className="grid gap-[var(--space-1)]">
           {header(reply)}
-          {editing?.id === reply.id ? editForm(reply) : <NoteText note={reply} />}
+          {editing?.noteId === reply.id ? editForm(reply) : <NoteText note={reply} />}
         </div>)}
       </div>}
       {notice && <Notice tone="critical" role="alert" data-testid="video-note-notice" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{notice.text}</span>{notice.refresh && <Button type="button" variant="text" data-testid="video-note-notice-refresh" onClick={actions.refresh}>Refresh notes</Button>}</Notice>}
-      {replying && <form data-notes-form="reply" data-escape-spent={escapeSpent ? "true" : "false"} data-dirty={replyText !== "" ? "true" : "false"} className="grid gap-[var(--space-2)]" onSubmit={(event) => { event.preventDefault(); void postReply(); }}>
+      {form?.kind === "reply" && <form data-notes-form="reply" className="grid gap-[var(--space-2)]" onSubmit={(event) => { event.preventDefault(); void store.reply(assetId, { send: actions.reply }); }}>
         <span className="flex items-center gap-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">{`Reply · ${thread.visibility === "internal" ? "Internal" : "Client-visible"}`}<VisibilityBadge visibility={thread.visibility} /></span>
         <label className="sr-only" htmlFor={`video-note-reply-${thread.id}`}>Write a reply</label>
-        <Textarea id={`video-note-reply-${thread.id}`} data-testid="video-note-reply-body" autoFocus value={replyText} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) { setEscapeSpent(false); setReplyText(event.target.value); } }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void postReply(); } }} />
+        <Textarea id={`video-note-reply-${thread.id}`} data-testid="video-note-reply-body" autoFocus value={form.text} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) store.setOpenText(assetId, event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void store.reply(assetId, { send: actions.reply }); } }} />
         <div className="flex justify-end gap-[var(--space-2)]">
-          <Button type="button" variant="secondary" data-notes-cancel="" data-testid="video-note-reply-cancel" disabled={busy} onClick={() => { forms.close(replyGen); setReplyText(""); focusAfter.current = "reply-button"; }}>Cancel</Button>
-          <Button type="submit" data-testid="video-note-reply-post" disabled={busy || replyText.trim() === ""}>{busy ? "Posting…" : "Post"}</Button>
+          <Button type="button" variant="secondary" data-testid="video-note-reply-cancel" disabled={busy} onClick={() => { store.close(assetId); }}>Cancel</Button>
+          <Button type="submit" data-testid="video-note-reply-post" disabled={busy || form.text.trim() === ""}>{busy ? "Posting…" : "Post"}</Button>
         </div>
       </form>}
       {!readOnly && !replying && editing === null && <div className="flex flex-wrap items-center gap-[var(--space-3)]">
-        {!thread.deleted && <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-reply-button" disabled={busy || blocked} onClick={() => { const gen = forms.openReply(thread.id); if (gen === 0) return; setNotice(null); setReplyText(""); setEscapeSpent(false); setReplyGen(gen); }}>Reply</Button>}
+        {!thread.deleted && <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-reply-button" disabled={busy || blocked} onClick={() => { setResolveNotice(null); store.openReply(assetId, thread.id); }}>Reply</Button>}
         <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-resolve" disabled={busy} onClick={() => { void toggleResolved(); }}>{thread.resolved ? "Reopen" : "Resolve"}</Button>
       </div>}
     </div>
@@ -257,11 +194,6 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
 }
 
 function q(scope: ParentNode | null, selector: string): HTMLElement | null { return scope?.querySelector<HTMLElement>(selector) ?? null; }
-
-function frameChanged(note: { startFrame: number | null; endFrame: number | null }, marks: NoteMarks, frameCount: number): boolean {
-  const frames = marksToFrames(marks, frameCount);
-  return frames !== null && (frames.startFrame !== note.startFrame || frames.endFrame !== note.endFrame);
-}
 
 function editAnchorLabel(marks: NoteMarks, timecode: (frame: number) => string): string {
   if (marks.in !== null && marks.out !== null) return `${timecode(marks.in)} → ${timecode(marks.out)}`;

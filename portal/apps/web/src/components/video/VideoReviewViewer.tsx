@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { hasOpenFloatingPopup } from "../quincy/project-sheet-layers";
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
 import { formatBytes, formatDuration, formatFps, formatVideoDate } from "./video-format";
-import type { DraftStore, VideoNotesSession } from "./use-video-notes";
+import type { NoteFormStore } from "../../lib/video-note-form-store";
+import type { VideoNotesSession } from "./use-video-notes";
 
 /** The notes UI is its own chunk: a Project whose notes part is off never loads it. */
 const LazyNotesHost = lazy(() => import("./VideoNotesHost"));
@@ -31,7 +32,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes }: {
   /** The control that opened the viewer; focus goes back to it on close. */
   returnFocusTo?: () => HTMLElement | null;
   /** Present only when the notes part is on. */
-  notes?: { projectId: string; role: Role; userId: string | null; archived: boolean; drafts: DraftStore };
+  notes?: { projectId: string; role: Role; userId: string | null; archived: boolean; forms: NoteFormStore };
 }) {
   const [assetId, setAssetId] = useState(video.currentAssetId);
   const playerRef = useRef<VideoPlayerControl>(null);
@@ -44,41 +45,26 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes }: {
   const notesOn = notes !== undefined;
   // Escape order with the notes panel (#741 5b), decided from a snapshot taken at keydown, before any handler has run: Base UI reports one
   // Escape to `onOpenChange` more than once, so the answer cannot come from state the first call changed (the ProjectSheet note).
-  // 1. an open menu, popover, list or confirm owns it; 2. an active composer, reply or edit form is spent (a clean reply or edit closes,
-  // anything else keeps its text and focus moves to the dialog); 3. only then does it close the viewer.
+  // 1. an open menu, popover, list or confirm owns it; 2. the form store decides for the Version's form (a frame confirmation is cancelled, a
+  // clean edit or reply closes, a dirty form or the composer keeps its text on the first Escape); 3. only then does it close the viewer.
+  const forms = notes?.forms;
   const escapeSnapshot = useRef({ layer: false, form: false });
   useEffect(() => {
-    if (!notesOn) return;
+    if (!notesOn || !forms) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       const popup = popupRef.current;
       const layer = hasOpenAlertDialog() || hasOpenFloatingPopup(popup, slot);
+      if (layer || popup === null) { escapeSnapshot.current = { layer, form: false }; return; }
       const active = document.activeElement;
-      // A composer waiting for its frame is spent first, wherever focus is: the Post button that was pressed is disabled by then and focus has left it.
-      const confirming = !layer && popup !== null ? popup.querySelector<HTMLElement>('[data-notes-form="composer"][data-phase="confirming"]') : null;
-      const focused = !layer && popup !== null && active instanceof Element && popup.contains(active) ? active.closest<HTMLElement>("[data-notes-form]") : null;
-      // An open edit or reply is the active form whatever has focus (the person may have clicked the player to adjust frames).
-      const open = !layer && popup !== null ? popup.querySelector<HTMLElement>('[data-notes-form="edit"], [data-notes-form="reply"]') : null;
-      const form = confirming ?? focused ?? open;
-      const kind = form?.dataset.notesForm;
-      const dirty = form?.dataset.dirty === "true";
-      const spent = form?.dataset.escapeSpent === "true";
-      // A dirty edit or reply whose first Escape is already spent no longer holds the viewer: this Escape closes it.
-      const consumed = form !== null && popup !== null && (kind === "composer" || !dirty || !spent);
+      const { consumed, focus } = forms.escape(assetId, { focusInForm: active instanceof Element && popup.contains(active) && active.closest("[data-notes-form]") !== null });
       escapeSnapshot.current = { layer, form: consumed };
-      if (!consumed || !form || !popup) return;
-      // Rule B: Escape cancels a frame confirmation (the draft is kept); a request already sent is never cancelled.
-      if (confirming) form.dispatchEvent(new Event("quincy-notes-escape"));
-      if (kind !== "composer" && !dirty) form.querySelector<HTMLElement>("[data-notes-cancel]")?.click();
-      else if (kind !== "composer") {
-        // The first Escape of a dirty edit or reply keeps its text; the next one closes the viewer.
-        form.dispatchEvent(new Event("quincy-notes-escape", { bubbles: true }));
-        if (focused) popup.focus({ preventScroll: true }); else form.querySelector<HTMLElement>("textarea")?.focus({ preventScroll: true });
-      } else popup.focus({ preventScroll: true });
+      if (focus === "dialog") popup.focus({ preventScroll: true });
+      else if (focus === "textarea") (popup.querySelector<HTMLElement>('[data-notes-form="edit"] textarea, [data-notes-form="reply"] textarea') ?? popup.querySelector<HTMLElement>("#video-note-body"))?.focus({ preventScroll: true });
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => { window.removeEventListener("keydown", onKeyDown, true); escapeSnapshot.current = { layer: false, form: false }; };
-  }, [notesOn, slot]);
+  }, [notesOn, forms, assetId, slot]);
   const handleOpenChange = (open: boolean, details: { reason: string; cancel: () => void; allowPropagation: () => void }) => {
     if (open) return;
     if (notesOn && details.reason === "escape-key") {

@@ -2,6 +2,8 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { Mp4Probe, Role, VideoDto, VideoReviewResponse } from "@quincy/shared";
 import { useSession } from "../../lib/auth";
 import { useOptionalProjectQueryClient, useProjectAccessTermination, useProjectVideosQuery } from "../../lib/project-data";
+import { onPrincipalTerminal } from "../../lib/principal-terminal";
+import { createNoteFormStore, type NoteFormStore } from "../../lib/video-note-form-store";
 import { abortVideoReservation, cancelVideoUpload, removeVideoUpload, retryVideoUpload, startVideoUpload, uploadIdentityGeneration, useVideoUploads } from "../../lib/video-upload-store";
 import { checkVideoFile } from "../../lib/video-upload";
 import { ViewLoadBoundary } from "../ViewLoadBoundary";
@@ -10,8 +12,6 @@ import { EmbeddedUploadTray, type EmbeddedUpload } from "../quincy/EmbeddedUploa
 import { EmptyState } from "../quincy/EmptyState";
 import { Notice } from "../quincy/Notice";
 import { NewFilmUploader } from "./NewFilmUploader";
-import type { NoteDraft } from "./VideoNoteComposer";
-import type { DraftStore } from "./use-video-notes";
 import { VideoCard } from "./VideoCard";
 
 /** The player is a separate chunk: nobody who never opens a film pays for it (#292: every lazy view sits in a ViewLoadBoundary). */
@@ -34,14 +34,17 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   const uploads = useVideoUploads(userId, projectId);
   const canUpload = review.parts.includes("upload");
   const notesEnabled = review.parts.includes("notes");
-  // Unsent notes live here for as long as the Video tab is open (#741 5b, D3): per person and Version, never in a module, so a different
-  // person on this tab starts with none. Marks are not kept (frames of one Version); a ref, because nothing renders from it.
-  const draftMap = useRef(new Map<string, NoteDraft>());
-  const drafts = useMemo<DraftStore>(() => ({
-    get: (assetId) => draftMap.current.get(`${userId ?? ""}:${projectId}:${assetId}`),
-    set: (assetId, draft) => { const key = `${userId ?? ""}:${projectId}:${assetId}`; if (draft) draftMap.current.set(key, draft); else draftMap.current.delete(key); },
-    clearSent: (assetId, text) => { const key = `${userId ?? ""}:${projectId}:${assetId}`; if (draftMap.current.get(key)?.body.trim() === text) draftMap.current.delete(key); },
-  }), [userId, projectId]);
+  // Every unsent or open note form lives here for as long as the Video tab is open (#741 5b, D3): one store per person and Project, never a
+  // module, so a different person starts with none. Swapped during render (the person or Project changed) so nothing the old store started
+  // can send or write again; the viewer and the notes panel only subscribe to it.
+  const formsRef = useRef<NoteFormStore | null>(null);
+  const formsKey = `${userId ?? ""}:${projectId}`;
+  if (formsRef.current?.key !== formsKey) { formsRef.current?.retire(); formsRef.current = createNoteFormStore(formsKey); }
+  const forms = formsRef.current;
+  useEffect(() => {
+    const off = onPrincipalTerminal(() => { forms.cancelAll(); });
+    return () => { off(); forms.cancelAll(); };
+  }, [forms]);
   const running = uploads.filter((upload) => upload.phase === "reserving" || upload.phase === "uploading" || upload.phase === "finishing");
   // The component is chosen once per opening: swapping `lazy` for the loaded one mid-open would remount the viewer (playback, Version and frame lost).
   const [opened, setOpened] = useState<{ id: string; Viewer: ViewerComponent | typeof LazyViewer } | null>(null);
@@ -100,7 +103,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     </div>
     {openVideo && <ViewLoadBoundary viewLabel="video player">
       <Suspense fallback={null}>
-        <Viewer video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => opener.current} {...(notesEnabled ? { notes: { projectId, role, userId, archived, drafts } } : {})} />
+        <Viewer video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => opener.current} {...(notesEnabled ? { notes: { projectId, role, userId, archived, forms } } : {})} />
       </Suspense>
     </ViewLoadBoundary>}
   </section>;

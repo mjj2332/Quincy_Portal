@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { VideoNoteDto, VideoNoteThreadDto } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
 import type { VideoFrameClock } from "../../lib/video-frame-clock";
+import { createNoteFormStore, type NoteFormStore } from "../../lib/video-note-form-store";
 import { VideoNoteThread, type ThreadActions } from "./VideoNoteThread";
-import { useNoteForms } from "./use-note-forms";
 
 // Written AFTER VideoNoteThread.tsx (the component was committed untested): these tests were run against existing code and what
 // failed was fixed. They are not red-first evidence.
@@ -28,24 +28,20 @@ const reply = (root: VideoNoteDto, over: Record<string, unknown> = {}) => base({
 
 const tc = (frame: number) => `TC${frame}`;
 let root: Root | null = null; let host: HTMLElement;
-type Props = Omit<React.ComponentProps<typeof VideoNoteThread>, "forms">;
-/** The frame the fake clock confirms for the next Set in / Set out. */
+type Props = Omit<React.ComponentProps<typeof VideoNoteThread>, "store" | "assetId" | "clock">;
+/** The frame the fake clock shows for the next Set in / Set out. */
 let clockFrame = 20;
-const fakeClock = { awaitConfirmedFrame: () => Promise.resolve(clockFrame) } as unknown as VideoFrameClock;
-/** The thread inside the real active-form state, as the panel provides it. */
+const fakeClock = { getState: () => ({ frame: clockFrame, targetFrame: null, playing: false, confirmed: true, rate: 0 }) } as unknown as VideoFrameClock;
+/** The thread over the real form store the Video tab provides; `active` shows which form is open. */
+let store: NoteFormStore;
 function Harness(props: Props) {
-  const visible = new Set([props.thread.id]);
-  const forms = useNoteForms({ assetId: "asset", clock: fakeClock, visibleRootIds: visible });
-  return <>
-    <VideoNoteThread {...props} forms={forms} />
-    <span data-testid="harness-active">{forms.active.kind}</span>
-  </>;
+  return <VideoNoteThread {...props} store={store} assetId="asset" clock={fakeClock} />;
 }
 function actionsMock(): ThreadActions {
-  return { reply: vi.fn(async () => ({})), edit: vi.fn(async () => ({})), resolve: vi.fn(async () => ({})), requestDelete: vi.fn(), refresh: vi.fn(), onWriteError: vi.fn() };
+  return { reply: vi.fn(async () => ({})), edit: vi.fn(async () => ({})), resolve: vi.fn(async () => ({})), requestDelete: vi.fn(), refresh: vi.fn() };
 }
 async function render(t: VideoNoteThreadDto, over: Partial<Props> = {}) {
-  const props: Props = { thread: t, selected: false, userId: ME, readOnly: false, now: Date.parse(T(30)), timecode: tc, getFrame: () => 0, frameCount: 300, actions: actionsMock(), onSeek: vi.fn(), ...over };
+  const props: Props = { thread: t, selected: false, userId: ME, readOnly: false, now: Date.parse(T(30)), timecode: tc, frameCount: 300, actions: actionsMock(), onSeek: vi.fn(), ...over };
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   const rerender = async (next: Partial<Props>) => { Object.assign(props, next); await act(async () => { root!.render(<Harness {...props} />); }); };
   await act(async () => { root!.render(<Harness {...props} />); });
@@ -68,7 +64,7 @@ async function chooseAction(name: string, label: "Edit" | "Delete") {
   await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
 }
 
-beforeEach(() => { vi.useRealTimers(); clockFrame = 20; });
+beforeEach(() => { vi.useRealTimers(); clockFrame = 20; store = createNoteFormStore("test"); });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren(); });
 
 describe("VideoNoteThread (#741 5b)", () => {
@@ -91,7 +87,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(form.querySelector('[role="group"]')).toBeNull();
     expect((tid("video-note-reply-post", form) as HTMLButtonElement).disabled).toBe(true);
     await type(form.querySelector("textarea")!, "  On it  ");
-    expect(form.dataset.dirty).toBe("true");
+    expect(store.slot("asset").open?.text).toBe("  On it  ");
     await click(tid("video-note-reply-post", form)!);
     await flush();
     expect(props.actions.reply).toHaveBeenCalledWith(t.id, "On it");
@@ -110,7 +106,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     await flush();
     expect(tid("video-note-notice")!.textContent).toContain("Boom from server");
     expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("Hello");
-    expect(actions.onWriteError).toHaveBeenCalled();
+    expect(store.slot("asset").open?.problem?.text).toContain("Boom from");
   });
 
   it("14: a network failure on a reply is never retried; it offers Refresh notes", async () => {
@@ -193,15 +189,15 @@ describe("VideoNoteThread (#741 5b)", () => {
     await chooseAction("Terry", "Edit");
     const form = host.querySelector<HTMLElement>('[data-notes-form="edit"]')!;
     expect(form.querySelector("textarea")!.value).toBe("A note");
-    expect(form.dataset.dirty).toBe("false");
-    expect(tid("harness-active")!.textContent).toBe("edit");
+    expect(store.slot("asset").open?.text).toBe("A note");
+    expect(store.slot("asset").open?.kind).toBe("edit");
     await type(form.querySelector("textarea")!, "A better note");
-    expect(form.dataset.dirty).toBe("true");
+    expect(store.slot("asset").open?.text).toBe("A better note");
     await click(tid("video-note-edit-save", form)!);
     await flush();
     expect(props.actions.edit).toHaveBeenCalledWith(t.id, { expectedRevision: 3, body: "A better note" });
     expect(host.querySelector('[data-notes-form="edit"]')).toBeNull();
-    expect(tid("harness-active")!.textContent).toBe("composer");
+    expect(store.slot("asset").open).toBeNull();
   });
 
   it("18: with frames changed through Set in / Set out, Save sends the frames with the revision (a range as start and end + 1)", async () => {
@@ -289,7 +285,6 @@ describe("VideoNoteThread (#741 5b)", () => {
     await click(tid("video-note-edit-save")!);
     await flush();
     expect(tid("video-note-notice")!.textContent).toContain("This note was deleted.");
-    expect(actions.refresh).toHaveBeenCalled();
     expect(host.querySelector('[data-notes-form="edit"]')).toBeNull();
   });
 

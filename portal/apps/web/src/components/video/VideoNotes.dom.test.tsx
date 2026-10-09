@@ -724,17 +724,23 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     expect(composerAnchor()).toContain("In ");
   });
 
-  it("finding 8: filtering the edited note away closes its form and hands I and O to the composer", async () => {
+  it("finding 8 (reversed): filtering the edited note away keeps its form pinned and labelled, and I and O still go to it; counts and markers follow the filters", async () => {
     const s = seed();
     await openFilm({}, 20);
     await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit"); // n1 is Internal
+    await type(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!, "Typed before filtering");
     await click(tid("video-notes-filter-visibility-public")!);
-    expect(noteIds()).not.toContain(s.n1.id);
-    expect(editForms().length).toBe(0);
+    expect(noteIds()).toContain(s.n1.id);
+    expect(threadOf(s.n1.id).textContent).toContain("Outside current filters");
+    expect(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("Typed before filtering");
+    expect(editForms().length).toBe(1);
+    expect(document.querySelector(`[data-marker-id="${s.n1.id}"]`)).toBeNull();
     await dispatchKey(popup(), "i");
-    await flush(2);
-    expect(composerAnchor()).toContain("In ");
-    expect(tid("video-pending-band")).not.toBeNull();
+    expect(tid("video-note-edit-anchor")!.textContent).toContain("01:00:00:20");
+    expect(composerAnchor()).not.toContain("In ");
+    await click(tid("video-notes-filter-visibility-all")!);
+    expect(threadOf(s.n1.id).textContent).not.toContain("Outside current filters");
+    expect(editForms().length).toBe(1);
   });
 
   it("finding 5: Escape during frame confirmation returns the composer to idle with its text; the seek landing later posts nothing", async () => {
@@ -771,16 +777,15 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     expect(composerText().readOnly).toBe(false);
   });
 
-  it("finding 6: I pauses a playing film and marks the frame it confirms; nothing is marked until the frame is on screen", async () => {
+  it("finding 6 (reversed): I marks the frame on screen at once and does not pause or wait", async () => {
     await openFilm({}, 5);
     await click(dialog()!.querySelector<HTMLElement>('button[aria-label="Play"]')!);
     await present(30);
     stub.calls.length = 0;
     await dispatchKey(popup(), "i");
-    expect(stub.calls).toContain("pause");
-    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 30 / 25); });
-    await flush(4);
+    expect(stub.calls).not.toContain("pause");
     expect(composerAnchor()).toContain("In 01:00:01:05");
+    expect(tid("video-pending-band")).not.toBeNull();
   });
 
   it("finding 7: a Delete that hits a conflict shows the server's note; only 'Delete anyway' sends the new revision", async () => {
@@ -849,12 +854,13 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     expect(threadOf(s.n1.id).querySelector('[data-notes-form="edit"]')).not.toBeNull();
   });
 
-  it("round 2 (5): a mark whose seek lands after Clear marks is not written", async () => {
+  it("round 2 (5, reversed): a mark made while a seek is in flight is the frame it is bringing, at once; Clear marks leaves nothing for the landing to write", async () => {
     await openFilm({}, 20);
-    await dispatchKey(popup(), "i"); await flush(2);
+    await dispatchKey(popup(), "i");
     expect(composerAnchor()).toContain("In ");
-    await dispatchKey(popup(), "ArrowRight"); // a seek is now in flight
-    await dispatchKey(popup(), "o"); await flush(2);
+    await dispatchKey(popup(), "ArrowRight"); // a seek is now in flight, to 21
+    await dispatchKey(popup(), "o");
+    expect(composerAnchor()).toContain("Out 01:00:00:21");
     await click(tid("video-note-clear-marks")!);
     expect(composerAnchor()).not.toContain("In ");
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 21 / 25); });
@@ -878,7 +884,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     expect(composerText().value).toBe("");
   });
 
-  it("round 2 (2): it never wipes a newer draft", async () => {
+  it("form lifetime: Post on v2, switch to v1 and back while it is out: the remounted composer shows it pending and read-only, then empty when it lands", async () => {
     await openFilm({}, 12);
     await type(composerText(), "First");
     const pending = gate();
@@ -887,11 +893,64 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 12 / 25); });
     await flush(4);
     await pickVersion("v1");
-    await pickVersion("v2"); // the unsent draft returns, request still out
-    await type(composerText(), "First and more");
+    await pickVersion("v2");
+    expect(composerText().value).toBe("First");
+    expect(composerText().readOnly).toBe(true);
+    expect(tid("video-note-post")!.textContent).toBe("Posting…");
     await act(async () => { pending.release(commit(note({ startFrame: 12, body: "First" }))); });
     await flush(6);
-    expect(composerText().value).toBe("First and more");
+    expect(composerText().value).toBe("");
+    expect(composerText().readOnly).toBe(false);
+    expect((tid("video-note-post") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("form lifetime: a frame confirmation cancelled by a Version change posts nothing when the seek lands, and the text returns", async () => {
+    await openFilm({}, 12);
+    await type(composerText(), "Hold on");
+    await present(40);
+    await click(tid("video-note-post")!);
+    expect(tid("video-note-post")!.textContent).toBe("Confirming…");
+    await pickVersion("v1");
+    await pickVersion("v2");
+    await act(async () => { stub.finishSeek(playerVideo()!); });
+    await flush(4);
+    expect(api.apiPost).not.toHaveBeenCalled();
+    expect(composerText().value).toBe("Hold on");
+    expect(tid("video-note-post")!.textContent).toBe("Post");
+    expect(composerBox()!.textContent).not.toContain("Frame moved");
+  });
+
+  it("form lifetime: a conflict on a note the Open filter then hides keeps its draft and conflict pinned, and Save anyway sends the stored revision after another refetch", async () => {
+    const s = seed();
+    await openFilm({}, 20);
+    await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit");
+    await type(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!, "My edit");
+    const resolvedElsewhere = { ...s.n1, body: "Changed and resolved elsewhere", revision: 2, resolved: { at: T(30), by: me } } as VideoNoteThreadDto;
+    api.apiPatch.mockRejectedValueOnce(conflictOf(resolvedElsewhere));
+    await click(tid("video-note-edit-save")!);
+    await flush(6);
+    expect(noteIds()).toContain(s.n1.id); // resolved, so the Open filter hides it: the open form pins it
+    expect(threadOf(s.n1.id).textContent).toContain("Outside current filters");
+    expect(tid("video-note-conflict")!.textContent).toContain("Changed and resolved elsewhere");
+    expect(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("My edit");
+    await act(async () => { queryClient!.setQueryData(notesKey(), seed().all.map((n) => (n.id === s.n1.id ? { ...resolvedElsewhere, body: "And again", revision: 3 } as VideoNoteThreadDto : n))); });
+    api.apiPatch.mockResolvedValueOnce(commit({ ...resolvedElsewhere, body: "My edit", revision: 4 } as VideoNoteThreadDto));
+    await click(tid("video-note-edit-save")!);
+    await flush(6);
+    expect(api.apiPatch.mock.calls[1]![1]).toEqual({ expectedRevision: 2, body: "My edit" });
+  });
+
+  it("form lifetime: Escape with focus on the player holds a dirty composer's first Escape and focuses its text field; the second closes the viewer", async () => {
+    await openFilm({}, 12);
+    await type(composerText(), "Do not lose this");
+    popup().focus();
+    await dispatchKey(popup(), "Escape");
+    expect(dialog()).not.toBeNull();
+    expect(composerText().value).toBe("Do not lose this");
+    expect(document.activeElement).toBe(composerText());
+    await dispatchKey(composerText(), "Escape");
+    await settle(200);
+    expect(dialog()).toBeNull();
   });
 
   it("round 2 (3): Escape with a dirty edit and focus elsewhere in the viewer is spent by the form (text kept); only the next Escape closes the viewer", async () => {

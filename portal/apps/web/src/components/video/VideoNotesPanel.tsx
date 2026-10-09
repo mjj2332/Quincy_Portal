@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { VideoNoteDto, VideoNoteThreadDto } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
 import { useNow } from "../../lib/use-now";
-import { EMPTY_MARKS } from "../../lib/video-note-marks";
 import { noteCounts, type NoteStatusFilter, type NoteVisibilityFilter } from "../../lib/video-note-view";
 import { classifyVideoNoteError } from "../../lib/video-notes-data";
 import { ARCHIVED_NOTICE_CLASS } from "../archived-notice";
@@ -48,6 +47,13 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
   const focusIds = useRef<string[]>([]);
 
   const counts = useMemo(() => noteCounts(threads ?? [], filters), [threads, filters]);
+  // The thread holding the open edit or reply stays listed when the filters exclude it, so the form is never invisible. Counts and markers still follow the filters.
+  const openRootId = useSyncExternalStore(session.forms.subscribe, () => session.forms.slot(session.assetId).open?.rootId ?? null);
+  const listed = useMemo(() => {
+    if (openRootId === null || shown.some((thread) => thread.id === openRootId)) return shown;
+    const keep = new Set([...shown.map((thread) => thread.id), openRootId]);
+    return (threads ?? []).filter((thread) => keep.has(thread.id));
+  }, [shown, threads, openRootId]);
 
   // A marker press scrolls the list's own scroller by arithmetic: scrollIntoView would also scroll the phone's single-column dialog body.
   const scrollRequest = session.scroll;
@@ -60,8 +66,8 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
   }, [scrollRequest]);
 
   const requestDelete = (note: VideoNoteDto, root: VideoNoteThreadDto) => {
-    const index = shown.findIndex((thread) => thread.id === root.id);
-    const neighbours = [shown[index + 1]?.id, shown[index - 1]?.id].filter((id): id is string => id !== undefined);
+    const index = listed.findIndex((thread) => thread.id === root.id);
+    const neighbours = [listed[index + 1]?.id, listed[index - 1]?.id].filter((id): id is string => id !== undefined);
     focusIds.current = [root.id, ...neighbours];
     setDeleting({ note, root, revision: note.revision, conflicted: false, pending: false, error: null });
   };
@@ -75,10 +81,9 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
       await session.remove(note, revision);
       setDeleting(null);
     } catch (error) {
-      session.onWriteError(error);
       const classified = classifyVideoNoteError(error);
       const kind = classified.kind;
-      if (kind === "gone" || kind === "deleted") { session.refresh(); setDeleting(null); return; }
+      if (kind === "gone" || kind === "deleted") { setDeleting(null); return; }
       if (kind === "conflict" && classified.thread) {
         // The server's note beside the confirm; only an explicit "Delete anyway" sends its revision.
         const current = [classified.thread, ...classified.thread.replies].find((candidate) => candidate.id === note.id);
@@ -107,7 +112,6 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
     && deleting.root.replies.some((reply) => !reply.deleted && JSON.stringify(reply.author) !== JSON.stringify(deleting.note.author));
   const excerpt = deleting && !deleting.note.deleted ? deleting.note.body.replace(/\s+/g, " ").trim().slice(0, 60) : "";
 
-  const composerActive = session.forms.active.kind === "composer";
   const total = (counts.totals.open + counts.totals.resolved);
   const loading = query.isPending;
   const failed = query.isError && !query.data;
@@ -149,20 +153,22 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
         <div className="grid gap-[var(--space-2)] pe-[var(--space-1)]">
           {loading && <span data-testid="video-notes-loading" role="status" className="text-foreground-secondary [font:var(--type-label)]">Loading notes…</span>}
           {failed && <Notice tone="critical" role="alert" data-testid="video-notes-error" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>Notes could not be loaded.</span><Button type="button" variant="text" data-testid="video-notes-retry" onClick={session.refresh}>Retry</Button></Notice>}
-          {!loading && !failed && shown.length === 0 && <EmptyState size="compact" data-testid="video-notes-empty" title={total === 0 ? "No notes on this version yet." : "No notes match these filters."} />}
-          {shown.map((thread) => <VideoNoteThread
+          {!loading && !failed && listed.length === 0 && <EmptyState size="compact" data-testid="video-notes-empty" title={total === 0 ? "No notes on this version yet." : "No notes match these filters."} />}
+          {listed.map((thread) => <VideoNoteThread
             key={thread.id}
             thread={thread}
+            pinned={!shown.some((candidate) => candidate.id === thread.id)}
             selected={thread.id === selectedId}
             userId={session.userId}
             readOnly={readOnly}
             now={now}
             timecode={session.timecode}
-            getFrame={() => session.clock?.getState().frame ?? 0}
             frameCount={session.frameCount}
             actions={actions}
             onSeek={session.seekToNote}
-            forms={session.forms}
+            store={session.forms}
+            assetId={session.assetId}
+            clock={session.clock}
           />)}
         </div>
       </ScrollArea>
@@ -171,25 +177,7 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
     <div className="min-[721px]:border-t min-[721px]:border-border min-[721px]:pt-[var(--space-3)] max-[721px]:order-1">
       {readOnly
         ? <p data-testid="video-notes-archived" className={ARCHIVED_NOTICE_CLASS}>Read-only while archived. Restore the project before adding or changing notes.</p>
-        : <VideoNoteComposer
-          clock={session.clock}
-          frameCount={session.frameCount}
-          timecode={session.timecode}
-          marks={composerActive ? session.forms.marks : EMPTY_MARKS}
-          active={composerActive}
-          otherForm={session.forms.active.kind === "edit" || session.forms.active.kind === "reply" ? session.forms.active.kind : null}
-          onActivate={session.forms.openComposer}
-          formToken={session.forms.currentGen}
-          onPhaseChange={session.forms.setPhase}
-          onSent={session.clearSentDraft}
-          onMark={session.forms.markFromClock}
-          onClearMarks={session.forms.clearComposerMarks}
-          draft={session.draft}
-          onDraftChange={session.onDraftChange}
-          post={session.post}
-          onRefresh={session.refresh}
-          onWriteError={session.onWriteError}
-        />}
+        : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} />}
     </div>
 
     <ConfirmDeleteDialog
