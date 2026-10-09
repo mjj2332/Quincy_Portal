@@ -351,7 +351,7 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     expect(byTestId("video-note-other-form-hint")!.textContent).toBe("Finish or cancel the open edit first.");
     expect(byTestId("video-note-composer")!.dataset.locked).toBe("true");
     expect(byTestId("video-note-composer")!.className).toContain("opacity-60");
-    expect(byTestId("video-note-other-form-hint")!.nextElementSibling).toBe(postButton()); // the hint sits next to Post
+    expect(postButton().nextElementSibling).toBe(byTestId("video-note-other-form-hint")); // Post stays first (left); the hint follows it
     await act(async () => { store.openReply(A, "00000000-0000-4000-8000-000000000009"); });
     expect(byTestId("video-note-other-form-hint")!.textContent).toBe("Finish or cancel the open reply first.");
     await act(async () => { store.close(A); });
@@ -398,5 +398,22 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(props.post).not.toHaveBeenCalled();
     expect(postButton().textContent).toBe("Retry");
+  });
+
+  it("design r4: the form is a size container, the key hints collapse (sr-only, still readable) below 280px, and Post keeps its place in both states", async () => {
+    const f = fakeClock();
+    await render({ clock: f.clock });
+    expect(byTestId("video-note-composer")!.className).toContain("@container");
+    for (const id of ["video-note-set-in", "video-note-set-out"]) {
+      const kbd = byTestId(id)!.querySelector("kbd")!;
+      expect(kbd.className).toContain("@max-[280px]:sr-only");
+      expect(kbd.textContent).toMatch(/^[IO]$/);
+      expect(byTestId(id)!.getAttribute("aria-keyshortcuts")).toMatch(/^[IO]$/);
+    }
+    const before = postButton().parentElement!.firstElementChild;
+    expect(before).toBe(postButton());
+    await act(async () => { store.openEdit(A, aNote, (aNote as { id: string }).id); });
+    expect(postButton().parentElement!.firstElementChild).toBe(postButton());
+    expect(postButton().parentElement!.className).toContain("justify-start");
   });
 });

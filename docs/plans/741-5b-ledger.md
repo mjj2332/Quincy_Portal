@@ -9,21 +9,21 @@ One line per new UI element. Searches: installed `components/reui/` and `compone
 | Version details button and popover | `reui/popover` (`Popover`, `PopoverTrigger render=`, `PopoverContent`) + `reui/item` rows | installed; same rows and test ids as the 4d-ii column |
 | Status filter Open / Resolved / All | `reui/toggle-group` (single value, `variant="outline"`) | installed; `c-toggle-group-5` composition; an empty value is refused |
 | Visibility filter All / Client-visible / Internal | `reui/toggle-group` | as above; both filter rows are hidden while the version has no notes. Selected state is the toggle-group's own `aria-pressed:bg-muted` token (no stronger variant is installed), left as is (design r3 item 8) |
-| Note list scroller | `reui/scroll-area` | installed; the only inner scroller, desktop only (on a phone the root has no height cap) |
+| Note list scroller | `reui/scroll-area` | installed; the only inner scroller, desktop only (on a phone the root has no height cap); `min-h-32`, the panel is `overflow-clip` so focus cannot scroll it; an opening edit form is `scrollIntoView({ block: "nearest" })` |
 | Thread container | `reui/item` (`Item variant="outline"`) | sheet-5 composition; selected = `data-selected` border token |
 | Author avatar | `quincy/InitialsAvatar` | installed; Discussion precedent |
 | Timestamp | `quincy/CollaborationTimestamp` | installed |
-| Internal badge | `quincy/StatusPill tone="caution"` + lucide `Lock` | on paper; root header only, on its own row beside the "⋯" menu; replies inherit it and show none |
+| Internal badge | `quincy/StatusPill tone="caution"` + lucide `Lock` | on paper; root only, first item of the badge, timecode and "⋯" row (menu pushed right); replies inherit it and show none |
 | Client-visible badge | `quincy/StatusPill tone="info"` | design-reviewer may prefer `neutral` |
 | Timecode (anchor) button | `reui/button` `variant="secondary"` `size="sm"` + mono token, `pointer-coarse:min-h-11` | installed |
 | Reply / Resolve / Reopen / Retry / Refresh notes / Clear marks / Make point | `quincy/Button variant="text"` | Discussion precedent; always visible (no hover reveal) |
-| Own-note "⋯" (Edit, Delete) | `quincy/menu` (`Menu`, `MENU_ITEM`) + `quincy/icon-button` `ICON_BUTTON` | Discussion precedent (#376) |
+| Own-note "⋯" (Edit, Delete); on a root it ends the badge and timecode row, on a reply the author row | `quincy/menu` (`Menu`, `MENU_ITEM`) + `quincy/icon-button` `ICON_BUTTON` | Discussion precedent (#376) |
 | Delete confirm | `components/ConfirmDeleteDialog` with note copy (tombstone wording when others replied) | installed |
 | Composer, reply and edit text areas | `reui/textarea` with an `sr-only` label | installed |
 | Composer visibility switch | `reui/toggle-group` (two items, Internal pressed by default) | over `reui/switch` because both options stay labelled; over `c-tabs-9` because tabs mean panels |
-| Set in / Set out | `quincy/Button variant="secondary"` + `reui/kbd` hint | installed |
-| Post / Save / Cancel | `quincy/Button` primary / secondary | installed |
-| Anchor text in composer and edit form | mono text span as a `bg-muted` chip (as the 4d-ii timecode chip); composer shows only the timecode (or In / Out), Set in / Set out share its row | text |
+| Set in / Set out | `quincy/Button variant="secondary"` + `reui/kbd` hint, `aria-keyshortcuts`; the composer is an `@container` and the Kbd goes `@max-[280px]:sr-only` (still read by assistive tech) | installed |
+| Post / Save / Cancel | `quincy/Button` primary / secondary; Post stays left-aligned, the lock hint follows it | installed |
+| Anchor text in composer and edit form | mono text span as a `bg-muted` chip (as the 4d-ii timecode chip); composer shows only the timecode (or In / Out), Set in / Set out share its row; one `ANCHOR_CHIP` class set shared with the edit form | text |
 | Archived notice | `ARCHIVED_NOTICE_CLASS` paragraph (`components/archived-notice`) | #527 precedent |
 | Load, write and conflict errors | `quincy/Notice` (`critical`, `caution`) | installed |
 | Empty states | `quincy/EmptyState size="compact"` | installed |

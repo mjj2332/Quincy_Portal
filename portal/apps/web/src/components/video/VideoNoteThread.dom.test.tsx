@@ -73,10 +73,30 @@ describe("VideoNoteThread (#741 5b)", () => {
     await render(withReply);
     expect(tids("video-note-visibility-badge").map((b) => b.dataset.visibility)).toEqual(["internal"]);
     expect(tids("video-note-reply").every((r) => r.querySelector('[data-testid="video-note-visibility-badge"]') === null)).toBe(true);
-    expect(tid("video-note-header-row")!.querySelector('[data-testid="video-note-visibility-badge"]')).not.toBeNull();
+    const row = tid("video-note-header-row")!;
+    expect(row.querySelector('[data-testid="video-note-visibility-badge"]')).not.toBeNull();
+    expect(row.querySelector('[data-testid="video-note-anchor-button"]')).not.toBeNull(); // badge and timecode share one row
     await act(async () => { root!.unmount(); }); host.remove();
     await render(thread({ visibility: "public" }));
     expect(tid("video-note-visibility-badge")!.textContent).toContain("Client-visible");
+  });
+
+  it("design r4: the root's menu sits at the end of the badge and timecode row (ms-auto); a reply's menu stays on its author row; opening Edit scrolls the form into view", async () => {
+    const root = thread({ visibility: "internal" }, []);
+    const withReply = { ...root, replies: [reply(root)] } as VideoNoteThreadDto;
+    const scroll = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: scroll });
+    await render(withReply);
+    const row = tid("video-note-header-row")!;
+    const menu = row.querySelector('[data-testid="video-note-actions"]')!;
+    expect(menu.parentElement!.className).toContain("ms-auto");
+    const replyEl = tids("video-note-reply")[0]!;
+    expect(replyEl.querySelector('[data-testid="video-note-header-row"]')).toBeNull();
+    expect(scroll).not.toHaveBeenCalled();
+    await chooseAction("Terry", "Edit");
+    expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
+    expect(tid("video-note-edit-anchor") ?? host.querySelector('[data-notes-form="edit"]')).not.toBeNull();
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
   });
 
   it("every link-style thread control keeps the 44px phone target (LINK_BUTTON carries max-[721px]:min-h-11)", async () => {

@@ -136,7 +136,7 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
     aria-label="Notes"
     data-testid="video-notes-panel"
     data-surface="default"
-    className="flex flex-[1_1_360px] flex-col gap-[var(--space-3)] border-l border-border bg-card p-[var(--space-4)] text-card-foreground min-[721px]:min-h-0 min-[721px]:flex-[0_0_clamp(240px,28vw,360px)] min-[721px]:overflow-hidden max-[721px]:border-t max-[721px]:border-l-0"
+    className="flex flex-[1_1_360px] flex-col gap-[var(--space-3)] border-l border-border bg-card p-[var(--space-4)] text-card-foreground min-[721px]:min-h-0 min-[721px]:flex-[0_0_clamp(240px,28vw,360px)] min-[721px]:overflow-clip max-[721px]:border-t max-[721px]:border-l-0"
   >
     <div className="flex flex-wrap items-baseline justify-between gap-x-[var(--space-3)] gap-y-[var(--space-1)] max-[721px]:order-0">
       <div className="grid gap-[var(--space-1)]">
@@ -163,7 +163,7 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
       <Button type="button" variant="text" data-testid="video-notes-orphan-dismiss" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={() => { session.forms.dismissNotice(session.assetId); }}>Dismiss</Button>
     </Notice>}
 
-    <div ref={listRef} className="flex flex-col min-[721px]:min-h-[max(8rem,40%)] min-[721px]:flex-1 max-[721px]:order-3">
+    <div ref={listRef} className="flex flex-col min-[721px]:min-h-32 min-[721px]:flex-1 max-[721px]:order-3">
       <ScrollArea className="min-[721px]:min-h-0 min-[721px]:flex-1" data-testid="video-notes-list" viewportProps={{ tabIndex: -1 }}>
         <div className="grid gap-[var(--space-2)] pe-[var(--space-1)]">
           {loading && <span data-testid="video-notes-loading" role="status" className="text-foreground-secondary [font:var(--type-label)]">Loading notes…</span>}

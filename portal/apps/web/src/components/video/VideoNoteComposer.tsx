@@ -17,6 +17,10 @@ const HINT: Record<VideoNoteVisibility, string> = {
 const MONO = "[font:var(--type-mono)] tabular-nums";
 // On a short window the list needs the height: two rows until the field is focused or holds text (the 800px query is the window's height).
 const SHORT_TEXTAREA = "[@media(max-height:800px)]:min-h-16 [@media(max-height:800px)]:focus:min-h-24 [@media(max-height:800px)]:[&:not(:placeholder-shown)]:min-h-24";
+/** The anchor chip, shared with the edit form. */
+export const ANCHOR_CHIP = "rounded-md bg-muted px-[var(--space-2)] py-[var(--space-1)] text-foreground [font:var(--type-mono)] tabular-nums";
+/** The key hint is visual only at panel widths from 280px (the form is a size container); below that it stays for assistive tech but takes no room. */
+const KBD_HINT = "@max-[280px]:sr-only";
 const SMALL_BUTTON = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
 /**
@@ -61,14 +65,14 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   return <form
     data-testid="video-note-composer"
     data-notes-form="composer"
-    className={cn("grid gap-[var(--space-2)]", otherForm !== null && "opacity-60")}
+    className={cn("@container grid gap-[var(--space-2)]", otherForm !== null && "opacity-60")}
     data-locked={otherForm !== null ? "true" : "false"}
     onSubmit={(event) => { event.preventDefault(); submit(); }}
   >
     <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-      <span data-testid="video-note-anchor" aria-live="off" className={cn("rounded-md bg-muted px-[var(--space-2)] py-[var(--space-1)] text-foreground", MONO)}>{!pendingFrames && <span className="sr-only">Note at </span>}{anchorText}</span>
-      <Button type="button" variant="secondary" data-testid="video-note-set-in" className={SMALL_BUTTON} disabled={clock === null || frozen || otherForm !== null} onClick={() => { mark("in"); }}>Set in <Kbd>I</Kbd></Button>
-      <Button type="button" variant="secondary" data-testid="video-note-set-out" className={SMALL_BUTTON} disabled={clock === null || frozen || otherForm !== null} onClick={() => { mark("out"); }}>Set out <Kbd>O</Kbd></Button>
+      <span data-testid="video-note-anchor" aria-live="off" className={ANCHOR_CHIP}>{!pendingFrames && <span className="sr-only">Note at </span>}{anchorText}</span>
+      <Button type="button" variant="secondary" data-testid="video-note-set-in" className={SMALL_BUTTON} disabled={clock === null || frozen || otherForm !== null} aria-keyshortcuts="I" onClick={() => { mark("in"); }}>Set in <Kbd className={KBD_HINT}>I</Kbd></Button>
+      <Button type="button" variant="secondary" data-testid="video-note-set-out" className={SMALL_BUTTON} disabled={clock === null || frozen || otherForm !== null} aria-keyshortcuts="O" onClick={() => { mark("out"); }}>Set out <Kbd className={KBD_HINT}>O</Kbd></Button>
       {pendingFrames && <Button type="button" variant="text" data-testid="video-note-clear-marks" disabled={frozen} onClick={() => { store.clearMarks(assetId); }}>Clear marks</Button>}
     </div>
     <label className="sr-only" htmlFor="video-note-body">Add a note</label>
@@ -83,22 +87,21 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     />
     {tooLong && <Notice tone="critical" role="alert">{`Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.`}</Notice>}
     {problem && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{problem.text}</span>{problem.refresh && <Button type="button" variant="text" data-testid="video-note-refresh" onClick={onRefresh}>Refresh notes</Button>}</Notice>}
-    <div className="flex flex-wrap items-center justify-between gap-[var(--space-2)]">
-      <div className="grid gap-[var(--space-1)]">
-        <ToggleGroup
-          variant="outline" size="sm" spacing={0} aria-label="Who can see this note"
-          value={[visibility]} disabled={frozen}
-          onValueChange={(next) => { const picked = next[0]; if (!frozen && (picked === "internal" || picked === "public")) store.setVisibility(assetId, picked); }}
-        >
-          <ToggleGroupItem value="internal" data-testid="video-note-visibility-internal">Internal</ToggleGroupItem>
-          <ToggleGroupItem value="public" data-testid="video-note-visibility-public">Client-visible</ToggleGroupItem>
-        </ToggleGroup>
-        <span data-testid="video-note-visibility-hint" className="text-foreground-secondary [font:var(--type-label)]">{HINT[visibility]}</span>
-      </div>
-      <div className="flex flex-wrap items-center justify-end gap-[var(--space-2)]">
-        {otherForm !== null && <span data-testid="video-note-other-form-hint" className="text-foreground-secondary [font:var(--type-label)]">{`Finish or cancel the open ${otherForm} first.`}</span>}
-        <Button type="submit" data-testid="video-note-post" disabled={!canPost}>{label}</Button>
-      </div>
+    <div className="grid gap-[var(--space-1)]">
+      <ToggleGroup
+        variant="outline" size="sm" spacing={0} aria-label="Who can see this note"
+        value={[visibility]} disabled={frozen}
+        onValueChange={(next) => { const picked = next[0]; if (!frozen && (picked === "internal" || picked === "public")) store.setVisibility(assetId, picked); }}
+      >
+        <ToggleGroupItem value="internal" data-testid="video-note-visibility-internal">Internal</ToggleGroupItem>
+        <ToggleGroupItem value="public" data-testid="video-note-visibility-public">Client-visible</ToggleGroupItem>
+      </ToggleGroup>
+      <span data-testid="video-note-visibility-hint" className="text-foreground-secondary [font:var(--type-label)]">{HINT[visibility]}</span>
+    </div>
+    {/* Post stays at the left edge whether or not the composer is locked; the lock hint follows it. */}
+    <div className="flex flex-wrap items-center justify-start gap-[var(--space-2)]">
+      <Button type="submit" data-testid="video-note-post" disabled={!canPost}>{label}</Button>
+      {otherForm !== null && <span data-testid="video-note-other-form-hint" className="text-foreground-secondary [font:var(--type-label)]">{`Finish or cancel the open ${otherForm} first.`}</span>}
     </div>
     {clock === null && <span className="text-foreground-secondary [font:var(--type-label)]">Loading the film…</span>}
   </form>;

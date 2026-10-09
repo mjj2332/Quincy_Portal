@@ -1012,6 +1012,18 @@ describe("Delete confirm focus (#741 5b, Sol r7)", () => {
   });
 });
 
+describe("Panel layout classes (design r4)", () => {
+  it("the list keeps min-h-32 on desktop and the panel clips (not hides) its overflow, so focus cannot scroll it", async () => {
+    await openFilm();
+    const panelClass = tid("video-notes-panel")!.className;
+    expect(panelClass).toContain("min-[721px]:overflow-clip");
+    expect(panelClass).not.toContain("overflow-hidden");
+    const list = tid("video-notes-list")!.parentElement!;
+    expect(list.className).toContain("min-[721px]:min-h-32");
+    expect(list.className).not.toContain("40%");
+  });
+});
+
 describe("Orphan notices (#741 5b, Sol r6)", () => {
   it("a notice whose root thread is gone shows above the list and can be dismissed", async () => {
     await openFilm();

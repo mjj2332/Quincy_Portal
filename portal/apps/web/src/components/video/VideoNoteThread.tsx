@@ -18,6 +18,7 @@ import { Button as ReuiButton } from "../reui/button";
 import { Item } from "../reui/item";
 import { Kbd } from "../reui/kbd";
 import { Textarea } from "../reui/textarea";
+import { ANCHOR_CHIP } from "./VideoNoteComposer";
 
 /** What a thread asks of the panel. Every write rejects with the original error, which the thread classifies. */
 export type ThreadActions = {
@@ -98,6 +99,10 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     (previous === "reply" ? q(articleRef.current, '[data-testid="video-note-reply-button"]') : q(articleRef.current, '[data-testid="video-note-actions"]') ?? q(articleRef.current, '[data-testid="video-note-anchor-button"]'))?.focus();
   }, [form?.kind]);
 
+  // An edit form that opens is brought into view inside the list's scroller (nearest: no jump when it is already visible).
+  const editingHere = editing !== null && (editing.noteId === thread.id || thread.replies.some((reply) => reply.id === editing.noteId));
+  useEffect(() => { if (editingHere) q(articleRef.current, '[data-notes-form="edit"]')?.scrollIntoView?.({ block: "nearest" }); }, [editingHere, editing?.noteId]);
+
   async function toggleResolved() {
     setResolving(true); setResolveNotice(null);
     try { await actions.resolve(thread.id, thread.resolved === null); }
@@ -127,8 +132,8 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     </Menu>;
   }
 
-  // The root's header is two rows: who and when, then the visibility badge (left) and the "⋯" menu (right). A reply has no badge (it
-  // inherits the root's), so its menu sits at the end of the first row.
+  // The header is who and when. The root's badge, timecode chip and "⋯" menu share the row under it (menu pushed right); a reply has no
+  // badge (it inherits the root's), so its menu sits at the end of this row.
   const header = (note: VideoNoteDto, root: boolean) => <header className="grid min-w-0 gap-[var(--space-1)]">
     <div className="flex min-w-0 flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)]">
       <InitialsAvatar name={authorName(note)} className="size-6" />
@@ -138,10 +143,6 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
       {note.editedAt && !note.deleted && <span className={cn(META_TEXT, "!normal-case")}>· Edited</span>}
       {!root && <span className="ms-auto">{renderMenu(note)}</span>}
     </div>
-    {root && <div data-testid="video-note-header-row" className="flex min-w-0 items-center justify-between gap-[var(--space-2)]">
-      <VisibilityBadge visibility={note.visibility} />
-      <span className="ms-auto">{renderMenu(note)}</span>
-    </div>}
   </header>;
 
   const editForm = (note: VideoNoteDto) => editing && editing.noteId === note.id && <form
@@ -152,7 +153,7 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     <label className="sr-only" htmlFor={`video-note-edit-${note.id}`}>Edit note</label>
     <Textarea id={`video-note-edit-${note.id}`} data-testid="video-note-edit-body" value={editing.text} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) store.setOpenText(assetId, event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit }); } }} />
     {editing.frames && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-      <span data-testid="video-note-edit-anchor" className={cn("text-foreground", MONO)}>{editAnchorLabel(marks, timecode)}</span>
+      <span data-testid="video-note-edit-anchor" className={ANCHOR_CHIP}>{editAnchorLabel(marks, timecode)}</span>
       <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-in" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "in", frameOnScreen(clock.getState()), clock); }}>Set in <Kbd>I</Kbd></Button>
       <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-out" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "out", frameOnScreen(clock.getState()), clock); }}>Set out <Kbd>O</Kbd></Button>
       <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-make-point" disabled={busy || !clock} onClick={() => { if (clock) store.makePoint(assetId, clock); }}>Make point</Button>
@@ -171,9 +172,11 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     <div className="grid min-w-0 gap-[var(--space-2)]">
       {pinned && <Notice tone="caution" data-testid="video-note-pinned">Outside current filters</Notice>}
       {header(thread, true)}
-      <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+      <div data-testid="video-note-header-row" className="flex flex-wrap items-center gap-[var(--space-2)]">
+        <VisibilityBadge visibility={thread.visibility} />
         {thread.startFrame !== null && <ReuiButton type="button" variant="secondary" size="sm" data-testid="video-note-anchor-button" aria-label={`Go to ${label}`} className={cn("pointer-coarse:min-h-11 max-[721px]:min-h-11", MONO)} onClick={() => { onSeek(thread); }}>{label}</ReuiButton>}
         {resolvedLine && <span className={cn(META_TEXT, "!normal-case")}>{resolvedLine}</span>}
+        <span className="ms-auto">{renderMenu(thread)}</span>
       </div>
       {editing?.noteId === thread.id ? editForm(thread) : <NoteText note={thread} />}
       {thread.replies.length > 0 && <div className="grid gap-[var(--space-2)] border-s border-border ps-[var(--space-3)]">
