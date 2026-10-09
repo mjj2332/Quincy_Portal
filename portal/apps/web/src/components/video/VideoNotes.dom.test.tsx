@@ -18,6 +18,11 @@ import { VideoCollectionPanel } from "./VideoCollectionPanel";
 const auth = vi.hoisted(() => ({ userId: "44444444-4444-4444-8444-444444444444" }));
 vi.mock("../../lib/auth", () => ({ useSession: () => ({ data: { user: { id: auth.userId, role: "editor", name: "Terry" } }, isPending: false }) }));
 vi.mock("../LazyImage", () => ({ LazyImage: ({ src, alt, className }: { src: string; alt: string; className?: string }) => <img src={src} alt={alt} className={className} /> }));
+const stores = vi.hoisted(() => ({ made: [] as Array<import("../../lib/video-note-form-store").NoteFormStore> }));
+vi.mock("../../lib/video-note-form-store", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/video-note-form-store")>();
+  return { ...actual, createNoteFormStore: (key: string) => { const store = actual.createNoteFormStore(key); stores.made.push(store); return store; } };
+});
 vi.mock("../../lib/video-poster", () => ({ captureVideoPoster: () => Promise.resolve(null) }));
 
 const api = vi.hoisted(() => ({
@@ -986,5 +991,24 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await dispatchKey(popup(), "Escape");
     expect(dialog()).not.toBeNull();
     expect(field().value).toBe("ab");
+  });
+});
+
+describe("Orphan notices (#741 5b, Sol r6)", () => {
+  it("a notice whose root thread is gone shows above the list and can be dismissed", async () => {
+    await openFilm();
+    const store = stores.made.at(-1)!;
+    const s = seed();
+    const ghost = { ...s.n1, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", parentId: null };
+    for (const assetId of [ids.asset1, ids.asset2]) {
+      store.openEdit(assetId, ghost as never, ghost.id);
+      store.retireMissing(assetId, [{ ...ghost, deleted: true, replies: [] } as never]);
+    }
+    await flush(2);
+    const notice = tid("video-notes-orphan-notice");
+    expect(notice).not.toBeNull();
+    expect(notice!.textContent).toContain("This note was deleted.");
+    await click(tid("video-notes-orphan-dismiss")!);
+    expect(tid("video-notes-orphan-notice")).toBeNull();
   });
 });

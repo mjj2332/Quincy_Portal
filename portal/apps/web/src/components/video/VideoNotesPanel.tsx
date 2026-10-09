@@ -49,6 +49,9 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
   const counts = useMemo(() => noteCounts(threads ?? [], filters), [threads, filters]);
   // The thread holding the open edit or reply stays listed when the filters exclude it, so the form is never invisible. Counts and markers still follow the filters.
   const openRootId = useSyncExternalStore(session.forms.subscribe, () => session.forms.slot(session.assetId).open?.rootId ?? null);
+  // A notice left by a form whose root thread is no longer listed (hard-deleted elsewhere) has no thread to show it: the panel does.
+  const heldNotice = useSyncExternalStore(session.forms.subscribe, () => session.forms.slot(session.assetId).notice);
+  const orphanNotice = heldNotice && !(threads ?? []).some((thread) => thread.id === heldNotice.rootId) ? heldNotice : null;
   const listed = useMemo(() => {
     if (openRootId === null || shown.some((thread) => thread.id === openRootId)) return shown;
     const keep = new Set([...shown.map((thread) => thread.id), openRootId]);
@@ -147,6 +150,11 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
         { value: "all", label: "All", count: counts.visibility.all }, { value: "public", label: "Client-visible", count: counts.visibility.public }, { value: "internal", label: "Internal", count: counts.visibility.internal },
       ], (visibility) => { setFilters({ ...filters, visibility }); })}
     </div>}
+
+    {orphanNotice && <Notice tone="critical" role="alert" data-testid="video-notes-orphan-notice" className="flex flex-wrap items-center justify-between gap-[var(--space-2)] max-[721px]:order-3">
+      <span>{orphanNotice.text}</span>
+      <Button type="button" variant="text" data-testid="video-notes-orphan-dismiss" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={() => { session.forms.dismissNotice(session.assetId); }}>Dismiss</Button>
+    </Notice>}
 
     <div ref={listRef} className="flex flex-col min-[721px]:min-h-[max(8rem,40%)] min-[721px]:flex-1 max-[721px]:order-3">
       <ScrollArea className="min-[721px]:min-h-0 min-[721px]:flex-1" data-testid="video-notes-list" viewportProps={{ tabIndex: -1 }}>

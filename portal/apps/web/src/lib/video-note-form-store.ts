@@ -232,6 +232,8 @@ export function createNoteFormStore(key: string) {
       const held = slot(assetId);
       if (held.marks.clock !== null && held.marks.clock !== clock) put(assetId, { marks: { ...NO_MARKS, seed: held.marks.seed } });
     },
+    /** Dismisses the notice a closed form left behind. */
+    dismissNotice(assetId: string) { if (slot(assetId).notice) put(assetId, { notice: null }); },
     rearm(assetId: string) { if (slot(assetId).spent) put(assetId, { spent: false }); },
     /** The open form's note left the Version's full list (deleted elsewhere): the form goes, unless its own request is out. */
     retireMissing(assetId: string, threads: readonly VideoNoteThreadDto[]) {

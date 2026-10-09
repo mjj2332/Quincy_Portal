@@ -35,3 +35,4 @@ Not in 5b: the copy / paste menu (5c), markup (6b), Compare (7), export markers 
 | "Outside current filters" label on a pinned thread (#741 5b forms) | `quincy/Notice` (tone caution) | installed |
 | Cluster pill on the marker lane (design r3 item 6) | part of the hand-built lane in `quincy/VideoTimelineMarkers.tsx` (`h-4`, amber edge and a diamond glyph when it holds an internal note) | same searches and reasons as the lane row; shape (diamond) plus colour, never colour alone |
 | Composer lock hint (design r3 item 7) | text span beside Post, whole composer `opacity-60` while another form is open | text |
+| Orphan notice above the list (Sol r6) | `quincy/Notice` (critical) + `quincy/Button variant="text"` Dismiss | installed; shows a closed form's notice when its root thread is no longer listed |
