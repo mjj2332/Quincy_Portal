@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import {
-  roleHasCapability, videoNoteCreateInputSchema, videoNoteDeleteInputSchema, videoNoteDeleteResponseSchema, videoNoteEditInputSchema, videoNoteListResponseSchema,
+  roleHasCapability, videoNotePasteCommitInputSchema, videoNotePasteCommitResponseSchema, videoNotePastePreviewInputSchema, videoNotePastePreviewResponseSchema, videoNoteCreateInputSchema, videoNoteDeleteInputSchema, videoNoteDeleteResponseSchema, videoNoteEditInputSchema, videoNoteListResponseSchema,
   videoNoteReplyInputSchema, videoNoteResolutionInputSchema, videoNoteThreadDtoSchema,
 } from "@quincy/shared";
 import type { AppEnv } from "../env";
@@ -13,6 +13,7 @@ import {
   createVideoNote, createVideoNoteReply, deleteVideoNote, editVideoNote, findNoteHead, listVideoNotes, readThread, setVideoNoteResolution,
   versionFrameCount, type NoteHead,
 } from "../lib/video-notes";
+import { commitNotePaste, planNotePaste, type PlanOutcome } from "../lib/video-note-paste";
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
@@ -154,4 +155,41 @@ videoNotesRoutes.put("/projects/:projectId/video-notes/:noteId/resolution", term
   if (outcome.kind === "archived") return archivedResponse(c);
   if (outcome.kind === "gone") return notFound(c);
   return thread(c, outcome.value);
+}));
+
+/** The refusals both paste routes share: the target or source Version is not a Version in this Project, or the pair is not two Versions of one Video. */
+function pasteRefusal(c: Ctx, outcome: Exclude<PlanOutcome, { kind: "ok" }>): Response {
+  switch (outcome.kind) {
+    case "no_target": case "no_source": return c.json({ error: "Version not found" }, 404);
+    case "same_version": return c.json({ error: "Notes can only be pasted onto a different Version.", code: "same_version" }, 422);
+    case "not_same_video": return c.json({ error: "Both Versions must belong to the same Video.", code: "not_same_video" }, 422);
+  }
+}
+
+const PASTE_PREVIEW = "/projects/:projectId/video-versions/:assetId/note-paste/preview";
+const PASTE_COMMIT = "/projects/:projectId/video-versions/:assetId/note-paste";
+
+/** Preview: 200 and no write, no audit row. Archived is 409 here too, on purpose: an archived Project can never take the paste. */
+videoNotesRoutes.post(PASTE_PREVIEW, terminalRoute(PASTE_PREVIEW, async (c) => {
+  const projectId = c.req.param("projectId"); const assetId = c.req.param("assetId");
+  if (!uuid.safeParse(projectId).success || !uuid.safeParse(assetId).success) return c.json({ error: "Invalid id" }, 400);
+  const refused = await admit(c, projectId, true); if (refused) return refused;
+  const input = await jsonInput(c, videoNotePastePreviewInputSchema); if (input instanceof Response) return input;
+  const planned = await planNotePaste(c.env.DB, { projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, noteIds: input.noteIds, offsetFrames: input.offsetFrames });
+  return planned.kind === "ok" ? c.json(videoNotePastePreviewResponseSchema.parse(planned.plan.preview)) : pasteRefusal(c, planned);
+}));
+
+/** Commit: 200 with a receipt for every requested note (all-skipped included), 409 `paste_stale` with a fresh preview when a source changed, nothing written. */
+videoNotesRoutes.post(PASTE_COMMIT, terminalRoute(PASTE_COMMIT, async (c) => {
+  const projectId = c.req.param("projectId"); const assetId = c.req.param("assetId");
+  if (!uuid.safeParse(projectId).success || !uuid.safeParse(assetId).success) return c.json({ error: "Invalid id" }, 400);
+  const refused = await admit(c, projectId, true); if (refused) return refused;
+  const input = await jsonInput(c, videoNotePasteCommitInputSchema); if (input instanceof Response) return input;
+  const outcome = await commitNotePaste(c.env.DB, { projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, notes: input.notes, offsetFrames: input.offsetFrames, principal: principalOf(c), now: Date.now() });
+  switch (outcome.kind) {
+    case "ok": return c.json(videoNotePasteCommitResponseSchema.parse(outcome.value));
+    case "stale": return c.json({ error: "Some notes changed since the preview.", code: "paste_stale", preview: videoNotePastePreviewResponseSchema.parse(outcome.preview) }, 409);
+    case "archived": return archivedResponse(c);
+    default: return pasteRefusal(c, outcome);
+  }
 }));

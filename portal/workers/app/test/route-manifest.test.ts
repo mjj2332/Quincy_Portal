@@ -355,6 +355,9 @@ describe("terminal route manifest", () => {
     expect((await send("PATCH", `${base}/video-notes/${crypto.randomUUID()}`, { expectedRevision: 1, body: "x" })).status).toBe(404);
     expect((await send("DELETE", `${base}/video-notes/${crypto.randomUUID()}`, { expectedRevision: 1 })).status).toBe(404);
     expect((await send("PUT", `${base}/video-notes/${crypto.randomUUID()}/resolution`, { resolved: true })).status).toBe(404);
+    const unknownPaste = { sourceAssetId: crypto.randomUUID(), noteIds: [crypto.randomUUID()] };
+    expect((await send("POST", `${base}/video-versions/${crypto.randomUUID()}/note-paste/preview`, unknownPaste)).status).toBe(404);
+    expect((await send("POST", `${base}/video-versions/${crypto.randomUUID()}/note-paste`, { sourceAssetId: unknownPaste.sourceAssetId, notes: [{ noteId: unknownPaste.noteIds[0], revision: 1 }] })).status).toBe(404);
     const created = await send("POST", `${base}/video-versions/${manifestVideoAssetId}/notes`, { startFrame: 3, visibility: "internal", body: "Manifest note" });
     expect(created.status).toBe(201);
     const thread = EXTERNAL_API_RESPONSE_SCHEMAS["video-note-thread"].parse(await created.json()) as { id: string };
