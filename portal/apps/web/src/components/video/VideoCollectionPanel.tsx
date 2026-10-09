@@ -10,6 +10,8 @@ import { EmbeddedUploadTray, type EmbeddedUpload } from "../quincy/EmbeddedUploa
 import { EmptyState } from "../quincy/EmptyState";
 import { Notice } from "../quincy/Notice";
 import { NewFilmUploader } from "./NewFilmUploader";
+import type { NoteDraft } from "./VideoNoteComposer";
+import type { DraftStore } from "./use-video-notes";
 import { VideoCard } from "./VideoCard";
 
 /** The player is a separate chunk: nobody who never opens a film pays for it (#292: every lazy view sits in a ViewLoadBoundary). */
@@ -19,9 +21,11 @@ const loadViewer = () => import("./VideoReviewViewer").then((module) => { loaded
 const LazyViewer = lazy(loadViewer);
 /** Pointing at or focusing a film starts the chunk, so Enter opens the dialog (and moves focus into it) in its own tick: a Space typed straight after would otherwise land on the Open review button while the chunk loads. */
 const preloadViewer = () => { void loadViewer(); };
+/** With notes on, the notes chunk starts loading along with the viewer's. */
+const preloadNotes = () => { void import("./VideoNotesHost"); };
 
 /** The Films section of the Video tab (#741 4d-i): upload, my running uploads, and a card per Video. Rendered only when the gate is open. */
-export function VideoCollectionPanel({ projectId, role, review }: { projectId: string; role: Role; review: VideoReviewResponse }) {
+export function VideoCollectionPanel({ projectId, role, review, archived = false }: { projectId: string; role: Role; review: VideoReviewResponse; /** The Project is archived: notes are read-only. */ archived?: boolean }) {
   const session = useSession();
   const userId = session.data?.user.id ?? null;
   const queryClient = useOptionalProjectQueryClient();
@@ -29,6 +33,14 @@ export function VideoCollectionPanel({ projectId, role, review }: { projectId: s
   const videos = useProjectVideosQuery(projectId, true, role);
   const uploads = useVideoUploads(userId, projectId);
   const canUpload = review.parts.includes("upload");
+  const notesEnabled = review.parts.includes("notes");
+  // Unsent notes live here for as long as the Video tab is open (#741 5b, D3): per person and Version, never in a module, so a different
+  // person on this tab starts with none. Marks are not kept (frames of one Version); a ref, because nothing renders from it.
+  const draftMap = useRef(new Map<string, NoteDraft>());
+  const drafts = useMemo<DraftStore>(() => ({
+    get: (assetId) => draftMap.current.get(`${userId ?? ""}:${projectId}:${assetId}`),
+    set: (assetId, draft) => { const key = `${userId ?? ""}:${projectId}:${assetId}`; if (draft) draftMap.current.set(key, draft); else draftMap.current.delete(key); },
+  }), [userId, projectId]);
   const running = uploads.filter((upload) => upload.phase === "reserving" || upload.phase === "uploading" || upload.phase === "finishing");
   // The component is chosen once per opening: swapping `lazy` for the loaded one mid-open would remount the viewer (playback, Version and frame lost).
   const [opened, setOpened] = useState<{ id: string; Viewer: ViewerComponent | typeof LazyViewer } | null>(null);
@@ -81,13 +93,13 @@ export function VideoCollectionPanel({ projectId, role, review }: { projectId: s
       <EmbeddedUploadTray uploads={rows} errors={[]} onCancel={(key) => void cancelVideoUpload(key, queryClient)} onRemove={(key) => removeVideoUpload(key)} onRetry={(key) => retryVideoUpload(key)} testId="video-upload-tray" />
       {videos.isError && !videos.data && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{videos.error.message || "Films could not be loaded."}</span><Button type="button" variant="text" onClick={() => { terminate(videos.error); void videos.refetch(); }}>Retry</Button></Notice>}
       {videos.data && videos.data.length === 0 && <EmptyState title="No films yet.">{canUpload ? "Drop the first MP4 above to begin." : "Uploaded films will appear here."}</EmptyState>}
-      {videos.data && videos.data.length > 0 && <div className="grid gap-[var(--space-5)] [grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr))]" data-testid="video-card-grid" onFocusCapture={preloadViewer} onPointerOverCapture={preloadViewer}>
+      {videos.data && videos.data.length > 0 && <div className="grid gap-[var(--space-5)] [grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr))]" data-testid="video-card-grid" onFocusCapture={() => { preloadViewer(); if (notesEnabled) preloadNotes(); }} onPointerOverCapture={() => { preloadViewer(); if (notesEnabled) preloadNotes(); }}>
         {videos.data.map((video) => <VideoCard key={video.id} video={video} canUpload={canUpload} currentUserId={userId} myUpload={myVersionUpload(video)} onVersionFile={versionFile} onCancelReservation={(reservationId) => abortVideoReservation(queryClient, projectId, reservationId)} onOpen={(picked, trigger) => { opener.current = trigger; setOpenVideoId(picked.id); }} />)}
       </div>}
     </div>
     {openVideo && <ViewLoadBoundary viewLabel="video player">
       <Suspense fallback={null}>
-        <Viewer video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => opener.current} />
+        <Viewer video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => opener.current} {...(notesEnabled ? { notes: { projectId, role, userId, archived, drafts } } : {})} />
       </Suspense>
     </ViewLoadBoundary>}
   </section>;

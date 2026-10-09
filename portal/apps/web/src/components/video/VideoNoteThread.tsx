@@ -55,7 +55,7 @@ function describe(error: unknown, fallback: string, actions: ThreadActions): { p
     case "gone": actions.refresh(); return { problem: { text: "This note no longer exists." }, conflict: false, gone: true };
     case "network": return { problem: { text: "Couldn't reach the server. The change may or may not have gone through — refresh the notes to check.", refresh: true }, conflict: false, gone: false };
     case "archived": return { problem: { text: "This Project was archived, so nothing was changed." }, conflict: false, gone: false };
-    case "access": return { problem: { text: "You no longer have access to this Project." }, conflict: false, gone: false };
+    case "access": return { problem: { text: error instanceof Error && error.message ? error.message : "You no longer have access to this Project." }, conflict: false, gone: false };
     case "range": return { problem: { text: "Those frames are outside this film." }, conflict: false, gone: false };
     default: return { problem: { text: error instanceof ApiError || error instanceof Error ? error.message || fallback : fallback }, conflict: false, gone: false };
   }

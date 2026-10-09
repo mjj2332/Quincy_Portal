@@ -31,6 +31,20 @@ const OPEN_MENTION_LIST = '[role="combobox"][aria-expanded="true"]';
 /** #498: the Project whiteboard owns Esc (it cancels a tool or a selection), so Esc inside it never closes the sheet. */
 const OPEN_WHITEBOARD = "[data-quincy-whiteboard]";
 
+/**
+ * Is a floating popup (menu, popover, select list, Quincy anchored popover) open in `popup` or its overlay `slot`? Shared with the
+ * video review viewer (#741 5b), whose Escape must close such a popup before it does anything else.
+ */
+export function hasOpenFloatingPopup(popup: HTMLElement | null, slot: HTMLElement | null): boolean {
+  // Floating popups portal into the overlay slot (or stay inside the popup); the slot is a sibling
+  // of the popup's body, so both roots are searched.
+  if (slot?.querySelector(OPEN_POPUP) || popup?.querySelector(OPEN_POPUP)) return true;
+  // Select / Combobox: `data-open` sits on the Positioner and Popup (`role="presentation"`), while
+  // the `role="listbox"` inside carries none — so an open popup that CONTAINS a list counts too.
+  // Scoped to the overlay slot: the sheet's own popup is `data-open` and contains everything.
+  return Boolean(slot?.querySelector(OPEN_LIST_HOST));
+}
+
 export function hasOpenInnerLayer(popup: HTMLElement | null, slot: HTMLElement | null, doc: Document): boolean {
   if (!popup) return false;
   // In-place modal: the Lightbox lives inside the popup DOM. `querySelector` searches
@@ -44,13 +58,7 @@ export function hasOpenInnerLayer(popup: HTMLElement | null, slot: HTMLElement |
   }
   // The global confirm (`ConfirmModalHost`): an alert dialog, so Escape on it must not also close the sheet.
   if (doc.querySelector(ALERT_DIALOG)) return true;
-  // Floating popups portal into the overlay slot (or stay inside the popup); the slot is a sibling
-  // of the popup's body, so both roots are searched.
-  if (slot?.querySelector(OPEN_POPUP) || popup.querySelector(OPEN_POPUP)) return true;
-  // Select / Combobox: `data-open` sits on the Positioner and Popup (`role="presentation"`), while
-  // the `role="listbox"` inside carries none — so an open popup that CONTAINS a list counts too.
-  // Scoped to the overlay slot: the sheet's own popup is `data-open` and contains everything.
-  if (slot?.querySelector(OPEN_LIST_HOST)) return true;
+  if (hasOpenFloatingPopup(popup, slot)) return true;
   if (popup.querySelector(OPEN_MENTION_LIST)) return true;
   if (popup.querySelector(OPEN_WHITEBOARD)) return true;
   return false;

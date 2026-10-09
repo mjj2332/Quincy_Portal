@@ -78,7 +78,7 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, onMark, 
       case "network": setProblem({ text: "Couldn't reach the server. Your note may or may not have posted — refresh the notes to check, then post again if it isn't there.", refresh: true }); break;
       case "range": setProblem({ text: `That frame is outside this film${classified.frameCount ? ` (the last frame is ${classified.frameCount - 1})` : ""}.` }); break;
       case "archived": setProblem({ text: "This Project was archived, so the note was not posted. Your draft is kept." }); break;
-      case "access": setProblem({ text: "You no longer have access to this Project." }); break;
+      case "access": setProblem({ text: error instanceof Error && error.message ? error.message : "You no longer have access to this Project." }); break;
       default: setProblem({ text: error instanceof ApiError || error instanceof Error ? error.message || "The note could not be posted." : "The note could not be posted." });
     }
   }
