@@ -519,6 +519,33 @@ describe("Sol r5", () => {
   });
 });
 
+describe("Sol r7", () => {
+  it("a form whose root vanished during its pending request is retired when that request fails, with a notice", async () => {
+    const root = note();
+    store.openEdit(V2, root, root.id);
+    store.setOpenText(V2, "saving");
+    const sent = gate<unknown>();
+    const done = store.save(V2, { clock: {} as NoteClock, frameCount: 300, send: () => sent.promise });
+    store.retireMissing(V2, []); // the refetch dropped the root: skipped, a request is out
+    expect(store.slot(V2).open).not.toBeNull();
+    sent.reject(new Error("boom")); await done;
+    expect(store.slot(V2).open).toBeNull();
+    expect(store.slot(V2).op).toBeNull();
+    expect(store.slot(V2).notice).toMatchObject({ rootId: root.id });
+  });
+
+  it("the same reconcile runs after a pending request succeeds", async () => {
+    const root = note();
+    store.openReply(V2, root.id);
+    store.setOpenText(V2, "hello");
+    const sent = gate<unknown>();
+    const done = store.reply(V2, { send: () => sent.promise });
+    store.retireMissing(V2, []);
+    sent.resolve(root); await done;
+    expect(store.slot(V2).open).toBeNull();
+  });
+});
+
 describe("subscription (#741 5b form store)", () => {
   it("tells subscribers about a change, and stops after unsubscribe; retire silences everyone", () => {
     const listener = vi.fn();

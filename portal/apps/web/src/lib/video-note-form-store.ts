@@ -112,6 +112,19 @@ export function createNoteFormStore(key: string) {
     put(assetId, { marks: { clock, value: change(effectiveMarks(held.marks, clock).value), touched: true, seed: held.marks.seed }, spent: false });
   }
 
+  // The last thread list passed to retireMissing, per Version: a request that settles later is reconciled against it.
+  const latest = new Map<string, readonly VideoNoteThreadDto[]>();
+  function reconcile(assetId: string) {
+    const held = slot(assetId);
+    const form = held.open;
+    const threads = latest.get(assetId);
+    if (!form || held.op || !threads) return;
+    const root = threads.find((thread) => thread.id === form.rootId);
+    if (root?.deleted && (form.kind === "reply" || form.noteId === root.id)) { put(assetId, { open: null, marks: NO_MARKS, spent: false, notice: { text: "This note was deleted.", rootId: root.id } }); return; }
+    if (!root) { put(assetId, { open: null, marks: NO_MARKS, spent: false, notice: { text: "This note no longer exists.", rootId: form.rootId } }); return; }
+    if (form.kind === "edit" && form.noteId !== root.id && !root.replies.some((reply) => reply.id === form.noteId)) close(assetId);
+  }
+
   /** An edit or a reply goes out. It is never cancelled once sent; its result closes the form only if the same operation still owns it. */
   async function submitOpen(assetId: string, form: OpenForm, run: () => Promise<unknown>, fallback: string) {
     const op: Op = { id: ++seq, form: "open", phase: "posting", revision: form.revision };
@@ -121,12 +134,13 @@ export function createNoteFormStore(key: string) {
       const failure = writeFailure(error, fallback, form.noteId);
       const current = slot(assetId).open;
       if (failure.gone) put(assetId, { op: null, open: null, marks: NO_MARKS, spent: false, notice: { ...failure.problem, rootId: form.rootId } });
-      else put(assetId, { op: null, open: current && { ...current, problem: failure.problem, ...(failure.conflict ? { conflict: failure.conflict } : {}) } });
+      else { put(assetId, { op: null, open: current && { ...current, problem: failure.problem, ...(failure.conflict ? { conflict: failure.conflict } : {}) } }); reconcile(assetId); }
       return;
     }
     if (!owns(assetId, op)) return;
     const current = slot(assetId).open;
     put(assetId, { op: null, ...(current?.noteId === form.noteId && current.kind === form.kind ? { open: null, marks: NO_MARKS, spent: false } : {}) });
+    reconcile(assetId);
   }
 
   return {
@@ -235,15 +249,8 @@ export function createNoteFormStore(key: string) {
     /** Dismisses the notice a closed form left behind. */
     dismissNotice(assetId: string) { if (slot(assetId).notice) put(assetId, { notice: null }); },
     rearm(assetId: string) { if (slot(assetId).spent) put(assetId, { spent: false }); },
-    /** The open form's note left the Version's full list (deleted elsewhere): the form goes, unless its own request is out. */
-    retireMissing(assetId: string, threads: readonly VideoNoteThreadDto[]) {
-      const held = slot(assetId);
-      const form = held.open;
-      if (!form || held.op) return;
-      const root = threads.find((thread) => thread.id === form.rootId);
-      if (root?.deleted && (form.kind === "reply" || form.noteId === root.id)) { put(assetId, { open: null, marks: NO_MARKS, spent: false, notice: { text: "This note was deleted.", rootId: root.id } }); return; }
-      if (!root || (form.kind === "edit" && form.noteId !== root.id && !root.replies.some((reply) => reply.id === form.noteId))) close(assetId);
-    },
+    /** The open form's note left the Version's full list (deleted elsewhere): the form goes, unless its own request is out (it is reconciled again when that settles). */
+    retireMissing(assetId: string, threads: readonly VideoNoteThreadDto[]) { latest.set(assetId, threads); reconcile(assetId); },
 
     /** The person's session ended: every frame confirmation stops. A request already sent is never touched. */
     cancelAll() { for (const assetId of [...slots.keys()]) cancelConfirmation(assetId); },

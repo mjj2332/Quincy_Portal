@@ -45,6 +45,9 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
   const [deleting, setDeleting] = useState<Deleting | null>(null);
   /** Where focus may land once the confirm closes: kept in a ref because `deleting` is already null by then. */
   const focusIds = useRef<string[]>([]);
+  /** The ⋯ that opened the confirm, and how it closed: only a successful delete uses the current destination, Cancel and Escape go back to the trigger. */
+  const deleteTrigger = useRef<HTMLElement | null>(null);
+  const deleteDone = useRef(false);
 
   const counts = useMemo(() => noteCounts(threads ?? [], filters), [threads, filters]);
   // The thread holding the open edit or reply stays listed when the filters exclude it, so the form is never invisible. Counts and markers still follow the filters.
@@ -72,6 +75,8 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
     const index = listed.findIndex((thread) => thread.id === root.id);
     const neighbours = [listed[index + 1]?.id, listed[index - 1]?.id].filter((id): id is string => id !== undefined);
     focusIds.current = [root.id, ...neighbours];
+    deleteTrigger.current = listRef.current?.querySelector<HTMLElement>(`[data-note-id="${note.id}"] [data-testid="video-note-actions"]`) ?? null;
+    deleteDone.current = false;
     setDeleting({ note, root, revision: note.revision, conflicted: false, pending: false, error: null });
   };
   const actions = { ...session.actions, requestDelete };
@@ -82,11 +87,12 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
     setDeleting({ ...deleting, pending: true, error: null });
     try {
       await session.remove(note, revision);
+      deleteDone.current = true;
       setDeleting(null);
     } catch (error) {
       const classified = classifyVideoNoteError(error);
       const kind = classified.kind;
-      if (kind === "gone" || kind === "deleted") { setDeleting(null); return; }
+      if (kind === "gone" || kind === "deleted") { deleteDone.current = true; setDeleting(null); return; }
       if (kind === "conflict" && classified.thread) {
         // The server's note beside the confirm; only an explicit "Delete anyway" sends its revision.
         const current = [classified.thread, ...classified.thread.replies].find((candidate) => candidate.id === note.id);
@@ -104,6 +110,7 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
 
   // After a delete focus goes to the thread that is still there (a tombstone), else the next one's timecode, else the previous one's, else the composer.
   const deleteFinalFocus = (): HTMLElement | true => {
+    if (!deleteDone.current && deleteTrigger.current?.isConnected) return deleteTrigger.current;
     for (const id of focusIds.current) {
       const anchor = listRef.current?.querySelector<HTMLElement>(`[data-testid="video-note-thread"][data-note-id="${id}"] [data-testid="video-note-anchor-button"]`);
       if (anchor) return anchor;

@@ -994,6 +994,24 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
   });
 });
 
+describe("Delete confirm focus (#741 5b, Sol r7)", () => {
+  it("Cancel and Escape return focus to the ⋯ that opened Delete (a reply's own, not the root's anchor); a successful delete uses the current destination", async () => {
+    const mine = note({ body: "Mine", startFrame: 30 });
+    const withReply = { ...mine, replies: [replyTo(mine, { body: "My reply", createdAt: T(3) })] } as VideoNoteThreadDto;
+    await openFilm({ notes: { [ids.asset2]: [withReply], [ids.asset1]: [] } });
+    const replyEl = () => threadOf(mine.id).querySelector<HTMLElement>('[data-testid="video-note-reply"]')!;
+    const trigger = () => replyEl().querySelector<HTMLElement>('[data-testid="video-note-actions"]')!;
+    await chooseNoteAction(replyEl(), "Terry", "Delete");
+    await click(tid("video-note-delete-cancel")!);
+    await settle();
+    expect(document.activeElement).toBe(trigger());
+    await chooseNoteAction(replyEl(), "Terry", "Delete");
+    await dispatchKey(tid("video-note-delete-cancel")!, "Escape");
+    await settle();
+    expect(document.activeElement).toBe(trigger());
+  });
+});
+
 describe("Orphan notices (#741 5b, Sol r6)", () => {
   it("a notice whose root thread is gone shows above the list and can be dismissed", async () => {
     await openFilm();
