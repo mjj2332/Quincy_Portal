@@ -59,7 +59,7 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
   // A form whose note left the Version's list goes; an archived Project takes no forms; leaving the Version re-arms the first Escape.
   useEffect(() => { if (threads) forms.retireMissing(assetId, threads); }, [forms, assetId, threads]);
   useEffect(() => { if (clock) forms.observeClock(assetId, clock); }, [forms, assetId, clock]);
-  useEffect(() => { if (readOnly) forms.close(assetId); }, [forms, assetId, readOnly]);
+  useEffect(() => { if (readOnly) { forms.close(assetId); forms.cancelConfirmation(assetId); } }, [forms, assetId, readOnly]);
   useEffect(() => () => { forms.leave(assetId); }, [forms, assetId]);
   const markers = useMemo<TimelineMarker[]>(() => shown.filter((thread) => thread.startFrame !== null).map((thread) => ({ id: thread.id, startFrame: thread.startFrame!, endFrame: thread.endFrame, tone: thread.visibility, selected: thread.id === live.selectedId, createdAt: thread.createdAt })), [shown, live.selectedId]);
 

@@ -476,6 +476,24 @@ describe("Archived Project (test 21)", () => {
   });
 });
 
+describe("Archive during a Post confirmation (#741 5b, Sol r15)", () => {
+  it("an archive that lands while the frame is being confirmed cancels the Post: nothing is sent, and the draft is kept", async () => {
+    await openFilm({ latch: true }, 5);
+    await type(composerText(), "Almost sent"); // the anchor freezes at frame 5
+    await present(9); // playback moves on, so Post has to seek back before it can send
+    await click(tid("video-note-post")!); // the seek is now in flight
+    expect(stores.made.at(-1)!.slot(ids.asset2).op?.phase).toBe("confirming");
+    await act(async () => { queryClient!.setQueryData(projectDataKeys.detail(PROJECT), { archivedAt: "2026-10-10T00:00:00.000Z" }); });
+    await flush(2);
+    expect(tid("video-notes-archived")).not.toBeNull();
+    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 5 / 25); });
+    await flush(6);
+    expect(api.apiPost).not.toHaveBeenCalled();
+    expect(stores.made.at(-1)!.slot(ids.asset2).op).toBeNull();
+    expect(stores.made.at(-1)!.slot(ids.asset2).composer.body).toBe("Almost sent");
+  });
+});
+
 describe("External role (test 22)", () => {
   it("lists internal notes and posts through the External parser", async () => {
     const s = seed();
