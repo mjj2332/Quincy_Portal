@@ -20,25 +20,43 @@ export const MARKER_REACH_PX = 8;
 /** The width of one marker, in px: markers closer than this on the lane merge into a cluster. */
 export const MARKER_WIDTH_PX = 12;
 
-type Placed = { id: string; startFrame: number; endFrame: number | null; /** Ties between markers on the same frame go to the oldest note. */ createdAt?: string };
+/**
+ * The width a cluster is drawn at, in px (the renderer sets it and clustering measures with it): one note is a 12px marker; a pill is at least
+ * 16px, one digit of mono text is 7px, the padding is 8px, and an internal note adds its 6px diamond, a 2px gap and the 2px edge.
+ */
+export function clusterWidthPx(members: ReadonlyArray<{ tone?: string }>): number {
+  if (members.length <= 1) return MARKER_WIDTH_PX;
+  const internal = members.some((member) => member.tone === "internal");
+  return Math.max(16, String(members.length).length * 7 + 8 + (internal ? 10 : 0));
+}
+/** The clear space kept between two drawn markers. */
+export const MARKER_GAP_PX = 2;
+
+type Placed = { id: string; startFrame: number; endFrame: number | null; /** "internal" widens a cluster pill (its diamond). */ tone?: string; /** Ties between markers on the same frame go to the oldest note. */ createdAt?: string };
 type Target = Placed & { /** Drawn as a point (a dot, a diamond or a cluster), not a bar. */ point?: boolean };
 /** Earliest frame first, then the oldest note, then id (so the order is the same however the list was sorted). */
 const byPosition = (a: Placed, b: Placed) => a.startFrame - b.startFrame || (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.id.localeCompare(b.id);
 
 /**
- * Groups markers that would overlap at this lane width (#741 5b resize clustering). A marker joins the cluster it is within one marker width
- * of (measured from the cluster's first, earliest, marker); a lane not yet measured clusters nothing. The cluster stands at its earliest frame
- * and its `id` is that note's, so pressing it seeks there; every member stays in `members`.
+ * Groups markers that would overlap at this lane width (#741 5b resize clustering). Neighbouring clusters merge while the distance between their
+ * drawn centres is less than half the sum of their drawn widths (`clusterWidthPx`: a pill is wider than a dot, and wider still with a two-digit
+ * count or the internal diamond) plus a small gap; merging widens the pill, so it repeats until stable. A lane not yet measured clusters nothing.
+ * A cluster stands at its earliest frame and its `id` is that note's, so pressing it seeks there; every member stays in `members`.
  */
 export function clusterMarkers<T extends Placed>(markers: readonly T[], frameCount: number, width: number, thumbHalf: number): Array<{ id: string; first: T; members: T[] }> {
   const usable = Math.max(0, width - 2 * thumbHalf);
-  const sorted = [...markers].sort(byPosition);
-  const clusters: Array<{ id: string; first: T; members: T[] }> = [];
-  for (const marker of sorted) {
-    const last = clusters.at(-1);
-    const near = last !== undefined && usable > 0 && usable * (frameFraction(marker.startFrame, frameCount) - frameFraction(last.first.startFrame, frameCount)) < MARKER_WIDTH_PX;
-    if (near) last.members.push(marker);
-    else clusters.push({ id: marker.id, first: marker, members: [marker] });
+  let clusters: Array<{ id: string; first: T; members: T[] }> = [...markers].sort(byPosition).map((marker) => ({ id: marker.id, first: marker, members: [marker] }));
+  if (usable <= 0) return clusters;
+  const centre = (cluster: { first: T }) => usable * frameFraction(cluster.first.startFrame, frameCount);
+  for (let merged = true; merged;) {
+    merged = false;
+    const next: typeof clusters = [];
+    for (const cluster of clusters) {
+      const last = next.at(-1);
+      if (last !== undefined && centre(cluster) - centre(last) < (clusterWidthPx(last.members) + clusterWidthPx(cluster.members)) / 2 + MARKER_GAP_PX) { last.members.push(...cluster.members); merged = true; }
+      else next.push({ ...cluster, members: [...cluster.members] });
+    }
+    clusters = next;
   }
   return clusters;
 }

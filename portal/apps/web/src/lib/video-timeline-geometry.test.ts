@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clusterMarkers, markerHitTargets, frameFraction, nearestMarkerId, spanFractions } from "./video-timeline-geometry";
+import { clusterMarkers, clusterWidthPx, markerHitTargets, frameFraction, nearestMarkerId, spanFractions } from "./video-timeline-geometry";
 
 describe("video-timeline-geometry (#741 5b)", () => {
   it("frame 0 is 0 and the last frame is 1", () => {
@@ -107,5 +107,19 @@ describe("markerHitTargets (#741 5b, form-state re-plan)", () => {
   it("on a tie a point beats the interior of a range, then the earliest frame", () => {
     expect(hit([at("bar", 100, 200), at("dot", 150)], x(150))).toBe("dot");
     expect(hit([at("late", 152), at("early", 150)], (x(150) + x(152)) / 2)).toBe("early");
+  });
+});
+
+describe("cluster pills never overlap (#741 5b, Sol r16)", () => {
+  it("1012px lane, 1001 frames, notes at 100, 101, 113 and 114: the drawn pills do not overlap and a press at each centre picks that pill", () => {
+    const at = (id: string, startFrame: number, tone = "public") => ({ id, startFrame, endFrame: null, tone, createdAt: `2026-10-10T00:00:0${id}.000Z` });
+    for (const tones of [["public", "public", "public", "public"], ["internal", "public", "public", "internal"]]) {
+      const markers = [at("1", 100, tones[0]), at("2", 101, tones[1]), at("3", 113, tones[2]), at("4", 114, tones[3])];
+      const clusters = clusterMarkers(markers, 1001, 1012, 6);
+      const drawn = clusters.map((cluster) => ({ id: cluster.id, x: 6 + cluster.first.startFrame, width: clusterWidthPx(cluster.members) }));
+      for (let i = 1; i < drawn.length; i += 1) expect(drawn[i]!.x - drawn[i]!.width / 2).toBeGreaterThanOrEqual(drawn[i - 1]!.x + drawn[i - 1]!.width / 2);
+      const targets = markerHitTargets(clusters);
+      for (const pill of drawn) expect(nearestMarkerId(targets, 1001, pill.x, 1012, 6)).toBe(pill.id);
+    }
   });
 });
