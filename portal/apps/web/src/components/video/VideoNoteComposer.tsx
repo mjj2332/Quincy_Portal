@@ -66,6 +66,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     data-testid="video-note-composer"
     data-notes-form="composer"
     className={cn("@container grid gap-[var(--space-2)]", otherForm !== null && "opacity-60")}
+    data-size-container="true"
     data-locked={otherForm !== null ? "true" : "false"}
     onSubmit={(event) => { event.preventDefault(); submit(); }}
   >

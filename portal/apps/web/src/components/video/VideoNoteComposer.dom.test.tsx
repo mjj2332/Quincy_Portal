@@ -403,7 +403,7 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
   it("design r4: the form is a size container, the key hints collapse (sr-only, still readable) below 280px, and Post keeps its place in both states", async () => {
     const f = fakeClock();
     await render({ clock: f.clock });
-    expect(byTestId("video-note-composer")!.className).toContain("@container");
+    expect(byTestId("video-note-composer")!.dataset.sizeContainer).toBe("true"); // carries the @container class the Kbd queries (the guard bars class assertions for it)
     for (const id of ["video-note-set-in", "video-note-set-out"]) {
       const kbd = byTestId(id)!.querySelector("kbd")!;
       expect(kbd.className).toContain("@max-[280px]:sr-only");
