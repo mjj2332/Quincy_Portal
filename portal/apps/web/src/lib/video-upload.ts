@@ -51,7 +51,7 @@ export async function checkVideoFile(file: File): Promise<VideoFileCheck> {
 export function defaultFilmTitle(filename: string): string { return filename.replace(/\.mp4$/i, "").trim().slice(0, 200); }
 
 export type VideoUploadTarget = { kind: "new"; title: string } | { kind: "version"; videoId: string; title: string };
-export type VideoUploadPhase = "reserving" | "uploading" | "finishing" | "done" | "failed" | "cancelled";
+export type VideoUploadPhase = "reserving" | "uploading" | "finishing" | "done" | "failed";
 /** What a failed row offers: send the failed part again, or ask the server to finish again (no re-upload). */
 export type VideoUploadRetry = "upload" | "finish" | null;
 
@@ -68,11 +68,9 @@ export type VideoUploadState = {
   error: string | null;
   retry: VideoUploadRetry;
   cautions: string[];
-  /** Cancelled, but the server has not yet confirmed it dropped the reservation: the row stays ("Cancelling…") and still counts against the cap. */
-  cleaning: boolean;
 };
 
-export type VideoUploadSettled = { videoId: string | null; version: number | null; title: string; outcome: "done" | "cancelled" };
+export type VideoUploadDone = { videoId: string | null; version: number | null; title: string };
 
 export type VideoUploadOptions = {
   projectId: string;
@@ -82,20 +80,31 @@ export type VideoUploadOptions = {
   probe: Mp4Probe;
   cautions: string[];
   onChange: (state: VideoUploadState) => void;
-  /** The upload finished or was lost: refresh the list and tell the person. */
-  onSettled?: (result: VideoUploadSettled) => void;
-  /** The server has dropped the reservation after a failure (a Cancel settles through `onSettled` instead): refresh the list. */
+  /** The upload finished: refresh the list and tell the person. */
+  onDone?: (result: VideoUploadDone) => void;
+  /** The abort that follows a failure has been answered (whatever the answer): refresh the list. The server owns the reservation; this only re-reads it. */
   onServerCleaned?: () => void;
   /** A 401 anywhere: end the session's project data. */
   onUnauthorized?: (error: unknown) => void;
   completeDelaysMs?: readonly number[];
   partDelaysMs?: readonly number[];
-  /** Waits between attempts to drop the reservation on the server (the first attempt is immediate). */
-  abortDelaysMs?: readonly number[];
 };
 
-export const ABORT_RETRY_DELAYS_MS: readonly number[] = [1_000, 3_000, 9_000];
-export const CLEANUP_PENDING_MESSAGE = "The server hasn't confirmed this upload was cancelled. It will clear on its own shortly.";
+export const ABORT_PENDING_MESSAGE = "Cancelling is pending. The server will clear this upload shortly.";
+export const ABORT_UNREACHABLE_MESSAGE = "Couldn't reach the server to cancel. The server will clear this upload shortly.";
+
+/**
+ * Ask the server to drop a reservation, once. Resolves a message to show when the answer was "pending" (503) or never came, else null: any other
+ * answer (204, 404, 409 completed) leaves nothing for this tab to do but re-read the list. The server sweep reclaims what was left pending.
+ */
+export async function abortReservation(projectId: string, reservationId: string): Promise<string | null> {
+  try {
+    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/video-uploads/${encodeURIComponent(reservationId)}/abort`, { method: "POST", credentials: "include", keepalive: true, headers: { "content-type": "application/json" }, body: "{}" });
+    if (response.status !== 503) return null;
+    const body = await response.json().catch(() => undefined) as { error?: unknown } | undefined;
+    return typeof body?.error === "string" && body.error ? body.error : ABORT_PENDING_MESSAGE;
+  } catch { return ABORT_UNREACHABLE_MESSAGE; }
+}
 
 const abortError = () => Object.assign(new Error("Upload cancelled"), { name: "AbortError" });
 const isAbort = (error: unknown) => error instanceof Error && error.name === "AbortError";
@@ -117,88 +126,47 @@ export class VideoUpload {
   private reservation: VideoUploadReserveResponse | null = null;
   private doneParts: { partNumber: number; etag: string }[] = [];
   private poster: Promise<Blob | null> | null = null;
-  private abortPromise: Promise<boolean> | null = null;
-  private abortGaveUp = false;
-  private settled = false;
   private running = false;
-  private cancelRequested = false;
+  private cancelled = false;
   private reserveRequest: Promise<VideoUploadReserveResponse> | null = null;
+  private resolveReserved!: (refusal: string | null) => void;
+  /** Settles once the server has answered the reserve: `null` when it is held (or the upload was cancelled first), else the server's reason it was refused. */
+  readonly reserved: Promise<string | null> = new Promise((resolve) => { this.resolveReserved = resolve; });
 
   constructor(readonly id: number, private readonly options: VideoUploadOptions) {
-    this.state = { id, projectId: options.projectId, fileName: options.file.name, title: options.target.title, videoId: options.target.kind === "version" ? options.target.videoId : null, version: null, percent: 0, phase: "reserving", error: null, retry: null, cautions: options.cautions, cleaning: false };
+    this.state = { id, projectId: options.projectId, fileName: options.file.name, title: options.target.title, videoId: options.target.kind === "version" ? options.target.videoId : null, version: null, percent: 0, phase: "reserving", error: null, retry: null, cautions: options.cautions };
   }
 
   private get base() { return `/api/projects/${encodeURIComponent(this.options.projectId)}/video-uploads`; }
   private set(patch: Partial<VideoUploadState>) { this.state = { ...this.state, ...patch }; this.options.onChange(this.state); }
   private fail(error: string, retry: VideoUploadRetry) { this.set({ phase: "failed", error, retry }); }
-  private settle(outcome: "done" | "cancelled") {
-    if (this.settled && outcome !== "done") return;
-    this.settled = true;
-    this.options.onSettled?.({ videoId: this.reservation?.videoId ?? (this.options.target.kind === "version" ? this.options.target.videoId : null), version: this.state.version, title: this.state.title, outcome });
-  }
-
-  /** Cancel at any phase. Safe to call twice. */
-  cancel(): void {
-    if (this.state.phase === "done" || this.state.phase === "cancelled") return;
-    this.controller.abort();
-    this.cancelRequested = true;
-    const hadFailed = this.state.phase === "failed";
-    const wasRunning = this.running;
-    const needsCleanup = hadFailed || wasRunning;
-    this.set({ phase: "cancelled", error: null, retry: null, cleaning: needsCleanup });
-    // Settle (which refreshes the list) only once the server has CONFIRMED it dropped the reservation: a refresh before that reads it as still active.
-    const cleanup = needsCleanup ? this.cleanupAfterCancel() : Promise.resolve(true);
-    void cleanup.then((confirmed) => {
-      if (this.state.cleaning) this.set({ cleaning: false });
-      if (this.state.phase !== "cancelled") return;
-      if (!confirmed) this.set({ error: CLEANUP_PENDING_MESSAGE });
-      this.settle("cancelled");
-    });
-  }
-
-  /** Abort the reservation, including one whose reserve call is still in flight and will answer late. */
-  private async cleanupAfterCancel(): Promise<boolean> {
-    if (!this.reservation && this.reserveRequest) {
-      try { this.reservation = await this.reserveRequest; } catch { return true; }
-    }
-    return await this.abortOnServer();
-  }
 
   /**
-   * Tell the server to drop the reservation. One shared promise, so a Cancel that arrives while a failure's abort is in flight waits for that
-   * same abort. Resolves true once the reservation is confirmed gone; a 5xx, 429 or network failure is not that, and is retried with backoff.
-   * A 409 `upload_completed` while a Cancel is pending means the cancel lost the race.
+   * Stop sending and ask the server to drop the reservation. The server owns the reservation: whatever it answers, the caller refreshes the list
+   * and drops its row. Resolves a message to show when the answer was "pending" (503) or never came; the server sweep reclaims it then.
    */
-  private abortOnServer(): Promise<boolean> {
-    if (!this.reservation) return Promise.resolve(true);
-    if (this.abortPromise && !this.abortGaveUp) return this.abortPromise;
-    this.abortGaveUp = false;
-    const promise = this.abortWithRetries();
-    this.abortPromise = promise;
-    return promise;
+  cancel(): Promise<string | null> {
+    if (this.state.phase === "done" || this.cancelled) return Promise.resolve(null);
+    this.cancelled = true;
+    this.controller.abort();
+    this.resolveReserved(null);
+    return this.sendAbort();
   }
 
-  private async abortWithRetries(): Promise<boolean> {
-    const reservation = this.reservation!;
-    const delays = this.options.abortDelaysMs ?? ABORT_RETRY_DELAYS_MS;
-    let confirmed = false;
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        const response = await fetch(`${this.base}/${encodeURIComponent(reservation.reservationId)}/abort`, { method: "POST", credentials: "include", keepalive: true, headers: { "content-type": "application/json" }, body: "{}" });
-        if (response.status === 409) {
-          const body = await response.json().catch(() => undefined) as { code?: string } | undefined;
-          if (body?.code === "upload_completed" && this.cancelRequested) { this.set({ phase: "done", error: null }); this.settle("done"); }
-          confirmed = true; break;
-        }
-        // Retry only what may pass: the server is busy or unreachable. Any other answer (2xx, 404, 401/403) leaves nothing more to do from here.
-        if (response.status < 500 && response.status !== 429 && response.status !== 408) { confirmed = true; break; }
-      } catch { /* unreachable: retry */ }
-      if (attempt >= delays.length) break;
-      await new Promise<void>((resolve) => setTimeout(resolve, delays[attempt]));
+  /** One abort request, including for a reservation whose reserve call is still in flight and will answer late. No retries, no bookkeeping of the answer. */
+  private async sendAbort(): Promise<string | null> {
+    if (!this.reservation && this.reserveRequest) {
+      try { this.reservation = await this.reserveRequest; } catch { return null; }
     }
-    this.abortGaveUp = !confirmed;
-    if (!this.cancelRequested) this.options.onServerCleaned?.();
-    return confirmed;
+    const reservation = this.reservation;
+    if (!reservation) return null;
+    return await abortReservation(this.options.projectId, reservation.reservationId);
+  }
+
+  /** A failure's cleanup: one abort, then a refresh whatever it answered. */
+  private async abortAfterFailure(): Promise<void> {
+    await this.sendAbort();
+    this.options.onServerCleaned?.();
   }
 
   start(): void { void this.run(); }
@@ -222,7 +190,7 @@ export class VideoUpload {
       if (isAbort(error) || this.controller.signal.aborted) return;
       this.options.onUnauthorized?.(error);
       this.fail(error instanceof Error ? error.message : "The upload failed.", null);
-      await this.abortOnServer();
+      await this.abortAfterFailure();
     } finally { this.running = false; }
   }
 
@@ -249,10 +217,13 @@ export class VideoUpload {
     catch (error) {
       if (isAbort(error)) throw error; // a late reservation is aborted by `cleanupAfterCancel`
       this.options.onUnauthorized?.(error);
-      this.fail(reserveErrorMessage(error), null);
+      const refusal = reserveErrorMessage(error);
+      this.fail(refusal, null);
+      this.resolveReserved(refusal);
       throw abortError(); // nothing was reserved: stop quietly
     }
     this.reservation = reservation;
+    this.resolveReserved(null);
     this.set({ version: reservation.version, videoId: reservation.videoId, phase: "uploading", percent: 0 });
   }
 
@@ -282,7 +253,7 @@ export class VideoUpload {
         throw abortError(); // parked, waiting for the person: not a terminal failure
       }
       this.fail(error instanceof Error ? error.message : "The upload failed.", null);
-      await this.abortOnServer();
+      await this.abortAfterFailure();
       throw abortError();
     }
   }
@@ -305,11 +276,11 @@ export class VideoUpload {
         this.options.onUnauthorized?.(error);
         const code = codeOf(error);
         const status = error instanceof ApiError ? error.status : 0;
-        if (status === 422 && code === "video_rejected") { this.fail(rejectionMessage(error), null); await this.abortOnServer(); throw abortError(); }
-        if (status === 409 && code === "upload_unavailable") { this.fail(error instanceof Error ? error.message : "This upload has expired. Start a new one.", null); await this.abortOnServer(); throw abortError(); }
+        if (status === 422 && code === "video_rejected") { this.fail(rejectionMessage(error), null); await this.abortAfterFailure(); throw abortError(); }
+        if (status === 409 && code === "upload_unavailable") { this.fail(error instanceof Error ? error.message : "This upload has expired. Start a new one.", null); await this.abortAfterFailure(); throw abortError(); }
         // 400 upload_missing is the server's retryable answer: a part had not landed yet, and it released the claim back to pending.
         const transient = (status === 400 && code === "upload_missing") || status === 0 || (status === 503 && code === "probe_unavailable") || (status === 409 && code === "completion_failed") || status >= 500;
-        if (!transient) { this.fail(error instanceof Error ? error.message : "The upload could not be finished.", null); await this.abortOnServer(); throw abortError(); }
+        if (!transient) { this.fail(error instanceof Error ? error.message : "The upload could not be finished.", null); await this.abortAfterFailure(); throw abortError(); }
         if (attempt >= delays.length) { this.fail("The upload is stored, but finishing it did not work. Retry finishing; the file is not sent again.", "finish"); throw abortError(); }
         await sleep(delays[attempt]!, this.controller.signal);
       }
@@ -326,7 +297,7 @@ export class VideoUpload {
       } catch (error) { if (isAbort(error)) throw error; }
     }
     this.set({ phase: "done", percent: 100, error: null, retry: null });
-    this.settle("done");
+    this.options.onDone?.({ videoId: this.reservation?.videoId ?? (this.options.target.kind === "version" ? this.options.target.videoId : null), version: this.state.version, title: this.state.title });
   }
 }
 

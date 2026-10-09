@@ -114,9 +114,10 @@ describe("Video cards (#741 4d-i)", () => {
   });
 
   it("someone else's upload reads '{name} is uploading v3' and offers no Upload button", async () => {
-    await mount([videoOf({ uploading: { version: 3, uploader: mia, expiresAt: "2026-10-09T08:00:00.000Z" } })]);
+    await mount([videoOf({ uploading: { reservationId: ids.reservation, version: 3, uploader: mia, expiresAt: "2026-10-09T08:00:00.000Z" } })]);
     expect(host.querySelector('[data-testid="video-card-uploading-other"]')?.textContent).toBe("Mia Chen is uploading v3");
     expect(button(/^Upload v/)).toBeUndefined();
+    expect(button("Cancel upload")).toBeUndefined(); // only the owner may cancel
   });
 
   it("offers 'Upload v3' only when the upload part is on", async () => {
@@ -186,16 +187,31 @@ describe("Uploader (#741 4d-i)", () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/abort"))).toHaveLength(1);
   });
 
-  it("shows the server's copy for a 409 upload_in_progress and a 429, as a failed row with no Retry", async () => {
+  it("a 409 or 429 on reserve shows the server's words, keeps the file and the person's title, and leaves no row", async () => {
     const { ApiError } = await import("../../lib/api");
     await mount([]);
-    apiPostMock.mockRejectedValueOnce(new ApiError("Mia Chen is already uploading a new version of this video", 409, { code: "upload_in_progress" }));
-    await pick(await good()); await press(button("Upload"));
-    expect(host.querySelector('[data-testid="video-upload-tray"]')?.textContent).toContain("Mia Chen is already uploading a new version of this video");
-    expect(button(/^Retry/)).toBeUndefined();
-    apiPostMock.mockRejectedValueOnce(new ApiError("You already have three uploads in progress in this project. Finish or cancel one first.", 429, { code: "too_many_uploads" }));
-    await pick(await good()); await press(button("Upload"));
-    expect(host.querySelector('[data-testid="video-upload-tray"]')?.textContent).toContain("You already have three uploads in progress");
+    await pick(await good(), host.querySelector('[data-testid="new-film-uploader"]')!);
+    const input = host.querySelector<HTMLInputElement>('[data-testid="new-film-form"] input')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(input, "My title"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    const refusals = [
+      new ApiError("Mia Chen is already uploading a new version of this video", 409, { code: "upload_in_progress" }),
+      new ApiError("You already have three uploads in progress in this project. Finish or cancel one first.", 429, { code: "too_many_uploads" }),
+    ];
+    for (const refusal of refusals) {
+      apiPostMock.mockRejectedValueOnce(refusal);
+      await press(button("Upload"));
+      expect(host.querySelector('[data-testid="new-film-refusal"]')?.textContent).toBe(refusal.message);
+      expect(host.querySelector('[data-testid="video-upload-tray"]')).toBeNull();
+      expect((host.querySelector('[data-testid="new-film-form"] input') as HTMLInputElement).value).toBe("My title");
+      expect((button("Upload") as HTMLButtonElement).disabled).toBe(false);
+    }
+    // The same file and title go up once the server allows it.
+    apiPostMock.mockResolvedValueOnce(RESERVED());
+    await press(button("Upload"));
+    expect(apiPostMock.mock.calls.at(-1)![1]).toMatchObject({ title: "My title" });
+    expect(host.querySelector('[data-testid="new-film-form"]')).toBeNull();
+    expect(host.querySelector('[data-testid="video-upload-tray"]')?.textContent).toContain("Main cut.mp4");
   });
 
   it("an upload survives unmounting the panel (a tab switch) and the row is back on remount", async () => {
@@ -233,11 +249,21 @@ describe("Uploader (#741 4d-i)", () => {
     expect(host.querySelector('[data-testid="video-card-uploading"]')?.textContent).toBe("Uploading v3 · 0%");
     expect(button(/^Upload v/)).toBeUndefined();
   });
+
+  it("a 429 on a card's new Version shows the server's words on the card and keeps its Upload button", async () => {
+    const { ApiError } = await import("../../lib/api");
+    await mount([videoOf()]);
+    apiPostMock.mockRejectedValueOnce(new ApiError("You already have three uploads in progress in this project. Finish or cancel one first.", 429, { code: "too_many_uploads" }));
+    await pick(await good(), host.querySelector('[data-testid="video-card"]')!);
+    expect(host.querySelector('[data-testid="video-card"]')?.textContent).toContain("You already have three uploads in progress");
+    expect(button("Upload v3")).toBeDefined();
+    expect(host.querySelector('[data-testid="video-upload-tray"]')).toBeNull();
+  });
 });
 
 const RESERVED = () => ({ reservationId: ids.reservation, videoId: ids.video, version: 3, devDirect: true, expiresAt: "2026-10-09T08:00:00.000Z" });
 
-describe("Identity changes and the cap (#741 4d-i, Sol review)", () => {
+describe("Identity changes (#741 4d-i, Sol review)", () => {
   it("a Version probe still running when the person changes starts nothing and leaves the new person's upload alone", async () => {
     await mount([videoOf()]);
     let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -256,41 +282,14 @@ describe("Identity changes and the cap (#741 4d-i, Sol review)", () => {
     expect(mine.aborted).toBe(false);
     expect(host.querySelector('[data-testid="video-upload-tray"]')?.textContent).toContain("Main cut.mp4");
   });
-
-  it("at the cap the prepared film's Upload is disabled with a hint, a submit starts nothing, and the file and title stay", async () => {
-    await mount([]);
-    await pick(await good(), host.querySelector('[data-testid="new-film-uploader"]')!);
-    const input = host.querySelector<HTMLInputElement>('[data-testid="new-film-form"] input')!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    await act(async () => { setter.call(input, "My title"); input.dispatchEvent(new Event("input", { bubbles: true })); });
-    apiPostMock.mockImplementation(() => new Promise(() => undefined));
-    const check = await checkVideoFile(await good()); if (!check.ok) throw new Error("fixture");
-    for (let i = 0; i < 3; i += 1) startVideoUpload({ userId: auth.userId, queryClient: undefined, projectId: PROJECT, role: "editor", file: await good(), target: { kind: "new", title: `T${i}` }, probe: check.probe, cautions: [] });
-    await flush();
-    expect(apiPostMock).toHaveBeenCalledTimes(3);
-    const form = host.querySelector<HTMLFormElement>('[data-testid="new-film-form"]')!;
-    expect((button("Upload") as HTMLButtonElement).disabled).toBe(true);
-    expect(form.textContent).toContain("Three uploads are running. Finish or cancel one first.");
-    await act(async () => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
-    expect(apiPostMock).toHaveBeenCalledTimes(3);
-    expect(host.querySelector('[data-testid="new-film-form"] input') && (host.querySelector('[data-testid="new-film-form"] input') as HTMLInputElement).value).toBe("My title");
-  });
-
-  it("the store refuses a fourth start for the same person and Project", async () => {
-    const check = await checkVideoFile(await good()); if (!check.ok) throw new Error("fixture");
-    apiPostMock.mockImplementation(() => new Promise(() => undefined));
-    const go = async () => startVideoUpload({ userId: auth.userId, queryClient: undefined, projectId: PROJECT, role: "editor", file: await good(), target: { kind: "new", title: "T" }, probe: check.probe, cautions: [] });
-    expect([await go(), await go(), await go()].every((id) => typeof id === "number")).toBe(true);
-    expect(await go()).toBeNull();
-  });
 });
 
-describe("Cancel and the list (#741 4d-i, Sol review)", () => {
+describe("Cancel and the list (#741 4d-i, #751)", () => {
   it("the Videos list is refreshed only after the server has dropped the reservation, so the card gets its Upload button back", async () => {
     let serverUploading = false;
     const mia2 = { ...mia };
     await mount([videoOf()]);
-    apiGetMock.mockImplementation(async (path) => { if (path.endsWith("/videos")) return { videos: [videoOf({ uploading: serverUploading ? { version: 3, uploader: mia2, expiresAt: "2026-10-09T08:00:00.000Z" } : null })] }; throw new Error(`unrouted ${path}`); });
+    apiGetMock.mockImplementation(async (path) => { if (path.endsWith("/videos")) return { videos: [videoOf({ uploading: serverUploading ? { reservationId: ids.reservation, version: 3, uploader: mia2, expiresAt: "2026-10-09T08:00:00.000Z" } : null })] }; throw new Error(`unrouted ${path}`); });
     apiPostMock.mockImplementation(async () => { serverUploading = true; return RESERVED(); });
     let releaseAbort!: () => void;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => { if (String(url).endsWith("/abort")) { await new Promise<void>((resolve) => { releaseAbort = resolve; }); serverUploading = false; } return new Response("{}", { status: 200, headers: { "content-type": "application/json" } }); }));
@@ -302,6 +301,58 @@ describe("Cancel and the list (#741 4d-i, Sol review)", () => {
     expect(host.querySelector('[data-testid="video-card-uploading-other"]')).toBeNull();
     expect(host.querySelector('[data-testid="video-card-uploading"]')).toBeNull();
     expect(button("Upload v3")).toBeDefined();
+  });
+});
+
+describe("The server owns the reservation (#751)", () => {
+  const abortUrl = `/api/projects/${PROJECT}/video-uploads/${ids.reservation}/abort`;
+  const aborts = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/abort"));
+  const videosFetches = () => apiGetMock.mock.calls.filter(([path]) => path.endsWith("/videos")).length;
+
+  it.each([
+    ["204", () => new Response(null, { status: 204 })],
+    ["409 upload_completed", () => new Response(JSON.stringify({ error: "done", code: "upload_completed" }), { status: 409, headers: { "content-type": "application/json" } })],
+    ["503 abort_pending", () => new Response(JSON.stringify({ error: "Cancelling is pending. Try again in a moment.", code: "abort_pending" }), { status: 503, headers: { "content-type": "application/json" } })],
+    ["a network error", () => { throw new TypeError("offline"); }],
+  ])("Cancel then %s: the videos are re-read and the local row is gone", async (_label, answer) => {
+    await mount([]);
+    apiPostMock.mockResolvedValue(RESERVED());
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => { if (String(url).endsWith("/abort")) return answer(); return new Response("{}", { status: 200 }); }));
+    await pick(await good()); await press(button("Upload"));
+    const before = videosFetches();
+    await press(button(/Cancel upload of/));
+    await flush(12);
+    expect(aborts()).toHaveLength(1);
+    expect(host.querySelector('[data-testid="video-upload-tray"]')).toBeNull();
+    expect(videosFetches()).toBeGreaterThan(before);
+  });
+
+  it("the person who started an upload this tab no longer has a job for sees Cancel upload, and pressing it aborts that reservation and re-reads the list", async () => {
+    await mount([videoOf({ uploading: { reservationId: ids.reservation, version: 3, uploader: me, expiresAt: "2026-10-09T08:00:00.000Z" } })]);
+    expect(host.querySelector('[data-testid="video-card-uploading-other"]')?.textContent).toBe("Terry is uploading v3");
+    const cancel = button("Cancel upload")!;
+    expect(cancel).toBeDefined();
+    expect(cancel.className).toContain("pointer-coarse:min-h-11");
+    const before = videosFetches();
+    await press(cancel);
+    await flush(8);
+    expect(aborts().map(([url]) => String(url))).toEqual([abortUrl]);
+    expect(videosFetches()).toBeGreaterThan(before);
+  });
+
+  it("someone else's reservation offers no Cancel upload", async () => {
+    await mount([videoOf({ uploading: { reservationId: ids.reservation, version: 3, uploader: mia, expiresAt: "2026-10-09T08:00:00.000Z" } })]);
+    expect(button("Cancel upload")).toBeUndefined();
+    expect(aborts()).toHaveLength(0);
+  });
+
+  it("with a live upload in this tab the card shows its progress, not Cancel upload", async () => {
+    await mount([videoOf({ uploading: null })]);
+    apiPostMock.mockResolvedValue(RESERVED());
+    await pick(await good(), host.querySelector('[data-testid="video-card"]')!);
+    apiGetMock.mockImplementation(async (path) => { if (path.endsWith("/videos")) return { videos: [videoOf({ uploading: { reservationId: ids.reservation, version: 3, uploader: me, expiresAt: "2026-10-09T08:00:00.000Z" } })] }; throw new Error(`unrouted ${path}`); });
+    expect(host.querySelector('[data-testid="video-card-uploading"]')).not.toBeNull();
+    expect(button("Cancel upload")).toBeUndefined();
   });
 });
 

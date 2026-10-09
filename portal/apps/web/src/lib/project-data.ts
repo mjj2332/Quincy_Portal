@@ -1,4 +1,4 @@
-import { announcePrincipalTerminal } from "./principal-terminal";
+import { announcePrincipalTerminal, principalOfQueryClient } from "./principal-terminal";
 import { isStageKey, projectDefaultAsOf, subtaskAssigneeOptionsResponseSchema, type CalendarPerson, type ChecklistScheduleDto, type CollectionKind, type EditorFolderAttentionDto, type MonitoredRawFolder, type ProjectDeadlineSchedule, type ProjectDefaultRangeDto, type ProjectMembershipDto, type ProjectMemberRole, type Role, type SubtaskRemindersDto } from "@quincy/shared";
 import { QueryClient, QueryClientContext, useQuery, useQueryClient, type QueryFunctionContext, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
 import { useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
@@ -556,7 +556,7 @@ export async function removeProjectData(queryClient: QueryClient, projectId: str
 }
 
 export async function clearPrincipalProjectData(queryClient: QueryClient): Promise<void> {
-  announcePrincipalTerminal(); // before any async cleanup: running uploads stop now
+  announcePrincipalTerminal(principalOfQueryClient(queryClient)); // before any async cleanup: this person's running uploads stop now
   const runtime = getProjectQueryRuntime(queryClient);
   runtime?.markPrincipalTerminal();
   discardAllAssetLedgers(queryClient);

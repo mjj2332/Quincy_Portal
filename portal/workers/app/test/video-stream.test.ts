@@ -89,9 +89,9 @@ describe("GET /api/projects/:projectId/videos", () => {
     await database.DB.prepare("DELETE FROM video_upload_reservations WHERE id = ?").bind(expired).run();
     const lapsed = await reserve("pending", Date.now() - 1000, ids.admin); expect((await find()).uploading).toBeNull();
     await database.DB.prepare("DELETE FROM video_upload_reservations WHERE id = ?").bind(lapsed).run();
-    const expiresAt = Date.now() + 3_600_000; await reserve("pending", expiresAt, ids.admin);
+    const expiresAt = Date.now() + 3_600_000; const liveId = await reserve("pending", expiresAt, ids.admin);
     const live = (await find()).uploading!;
-    expect(live).toMatchObject({ version: 2, uploader: { id: ids.admin, name: "Admin Person" } });
+    expect(live).toMatchObject({ reservationId: liveId, version: 2, uploader: { id: ids.admin, name: "Admin Person" } });
     expect(Date.parse(live.expiresAt)).toBe(expiresAt);
   });
 

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mp4RejectMessage } from "@quincy/shared";
 import { buildMp4, videoTrack, type Mp4Spec } from "../../../../packages/shared/src/testing/mp4-builder";
-import { NOT_FAST_START_CAUTION, NOT_MP4_NAME_MESSAGE, TIMECODE_MISMATCH_CAUTION, VideoUpload, checkVideoFile, defaultFilmTitle, type VideoUploadSettled, type VideoUploadState } from "./video-upload";
+import { ABORT_UNREACHABLE_MESSAGE, NOT_FAST_START_CAUTION, NOT_MP4_NAME_MESSAGE, TIMECODE_MISMATCH_CAUTION, VideoUpload, checkVideoFile, defaultFilmTitle, type VideoUploadDone, type VideoUploadState } from "./video-upload";
 
 const poster = vi.hoisted(() => ({ blob: null as Blob | null }));
 vi.mock("./video-poster", () => ({ captureVideoPoster: () => Promise.resolve(poster.blob) }));
@@ -103,8 +103,8 @@ describe("VideoUpload (#741 4d-i)", () => {
     const file = new File([new Uint8Array(10)], "film.mp4", { type: "video/mp4" });
     const check = await checkVideoFile(await GOOD_25());
     if (!check.ok) throw new Error("fixture");
-    const states: VideoUploadState[] = []; const settled: VideoUploadSettled[] = [];
-    const job = new VideoUpload(1, { projectId: ids.video, role: over.role ?? "editor", file, target: over.target ?? { kind: "new", title: "Film" }, probe: check.probe, cautions: check.cautions, onChange: (s) => states.push(s), onSettled: (r) => settled.push(r), completeDelaysMs: over.completeDelaysMs ?? [0, 0, 0], partDelaysMs: [0, 0, 0] });
+    const states: VideoUploadState[] = []; const settled: VideoUploadDone[] = [];
+    const job = new VideoUpload(1, { projectId: ids.video, role: over.role ?? "editor", file, target: over.target ?? { kind: "new", title: "Film" }, probe: check.probe, cautions: check.cautions, onChange: (s) => states.push(s), onDone: (r) => settled.push(r), completeDelaysMs: over.completeDelaysMs ?? [0, 0, 0], partDelaysMs: [0, 0, 0] });
     return { job, states, settled };
   }
   const until = async (job: VideoUpload, phase: string) => { for (let i = 0; i < 200 && job.state.phase !== phase; i += 1) await new Promise((resolve) => setTimeout(resolve, 2)); expect(job.state.phase).toBe(phase); };
@@ -121,7 +121,7 @@ describe("VideoUpload (#741 4d-i)", () => {
     const reserve = calls.find((call) => call.url.endsWith("/video-uploads"))!;
     expect(reserve.body).toMatchObject({ title: "Film", filename: "film.mp4", bytes: 10, contentType: "video/mp4", clientProbe: { fps: { num: 25, den: 1 }, frameCount: 300, width: 1920, height: 1080, codec: "avc1" } });
     expect(calls.some((call) => call.method === "PUT" && call.url.includes("/poster"))).toBe(true);
-    expect(settled).toEqual([expect.objectContaining({ outcome: "done", version: 4, videoId: ids.video })]);
+    expect(settled).toEqual([expect.objectContaining({ version: 4, videoId: ids.video })]);
   });
 
   it("sends videoId (no title) for a new Version", async () => {
@@ -155,6 +155,7 @@ describe("VideoUpload (#741 4d-i)", () => {
     routes[RESERVE] = () => json(body, status);
     const { job } = await make(); job.start(); await until(job, "failed");
     expect(job.state.error).toBe(message); expect(job.state.retry).toBeNull();
+    expect(await job.reserved).toBe(message); // the caller gets the server's words and keeps the person's file and title
     expect(calls.filter((call) => call.url.endsWith("/abort"))).toHaveLength(0);
   });
 
@@ -219,14 +220,13 @@ describe("VideoUpload (#741 4d-i)", () => {
   it("cancel during the reserve call aborts the late reservation once and never PUTs", async () => {
     let release!: () => void;
     routes[RESERVE] = () => new Promise<Response>((resolve) => { release = () => resolve(json(devReserve, 201)); });
-    routes[ABORT] = () => json({ ok: true });
-    const { job, settled } = await make(); job.start();
+    routes[ABORT] = () => new Response(null, { status: 204 });
+    const { job } = await make(); job.start();
     await new Promise((resolve) => setTimeout(resolve, 5));
-    job.cancel(); expect(job.state.phase).toBe("cancelled");
-    release(); await new Promise((resolve) => setTimeout(resolve, 10));
+    const cancelled = job.cancel();
+    release(); expect(await cancelled).toBeNull();
     expect(calls.filter((call) => call.url.endsWith("/abort"))).toHaveLength(1);
     expect(FakeXhr.instances).toHaveLength(0);
-    expect(settled).toEqual([expect.objectContaining({ outcome: "cancelled" })]);
   });
 
   it("cancel during the PUT aborts the XHR and sends one keepalive abort", async () => {
@@ -234,12 +234,11 @@ describe("VideoUpload (#741 4d-i)", () => {
     FakeXhr.hold = true;
     const { job } = await make(); job.start();
     await until(job, "uploading"); await new Promise((resolve) => setTimeout(resolve, 5));
-    job.cancel();
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await job.cancel();
     expect(FakeXhr.instances[0]!.aborted).toBe(true);
     const aborts = calls.filter((call) => call.url.endsWith("/abort"));
     expect(aborts).toHaveLength(1); expect(aborts[0]!.keepalive).toBe(true);
-    job.cancel(); await new Promise((resolve) => setTimeout(resolve, 5));
+    await job.cancel();
     expect(calls.filter((call) => call.url.endsWith("/abort"))).toHaveLength(1);
   });
 
@@ -251,102 +250,50 @@ describe("VideoUpload (#741 4d-i)", () => {
     job.start();
     for (let i = 0; i < 100 && FakeXhr.instances.length < 1; i += 1) await new Promise((resolve) => setTimeout(resolve, 2));
     await new Promise((resolve) => setTimeout(resolve, 10));
-    job.cancel(); await new Promise((resolve) => setTimeout(resolve, 10));
+    await job.cancel();
     expect(FakeXhr.instances).toHaveLength(1);
     expect(calls.filter((call) => call.url.endsWith("/abort"))).toHaveLength(1);
   });
 
-  it("Cancel settles only after the server's abort has answered, including a late reservation's", async () => {
-    let release!: () => void; let answerAbort!: () => void;
-    routes[RESERVE] = () => new Promise<Response>((resolve) => { release = () => resolve(json(devReserve, 201)); });
-    routes[ABORT] = () => new Promise<Response>((resolve) => { answerAbort = () => resolve(json({ ok: true })); });
-    const { job, settled } = await make(); job.start();
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    job.cancel(); expect(job.state.phase).toBe("cancelled");
-    release(); await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(calls.filter((call) => call.url.endsWith("/abort"))).toHaveLength(1);
-    expect(settled).toEqual([]);
-    answerAbort(); await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(settled).toEqual([expect.objectContaining({ outcome: "cancelled" })]);
-  });
-
-  it("a terminal failure that sends an abort reports the server cleaned up only after it answered", async () => {
-    let answerAbort!: () => void;
+  it("a failure after the reservation sends one abort and then reports the server cleaned up, whatever it answered", async () => {
     routes[RESERVE] = () => json(devReserve, 201);
     routes["PUT /api/projects/:p/video-uploads/:r/direct"] = () => new Response(null, { status: 200 });
     routes[COMPLETE] = () => json({ error: "no", code: "video_rejected", reason: "hevc" }, 422);
-    routes[ABORT] = () => new Promise<Response>((resolve) => { answerAbort = () => resolve(json({ ok: true })); });
+    routes[ABORT] = () => json({ error: "pending", code: "abort_pending" }, 503);
     let cleaned = 0;
     const file = new File([new Uint8Array(10)], "film.mp4"); const check = await checkVideoFile(await GOOD_25()); if (!check.ok) throw new Error("fixture");
     const job = new VideoUpload(1, { projectId: ids.video, role: "editor", file, target: { kind: "new", title: "F" }, probe: check.probe, cautions: [], onChange: () => undefined, onServerCleaned: () => { cleaned += 1; }, completeDelaysMs: [0], partDelaysMs: [0] });
     job.start(); await until(job, "failed");
-    expect(cleaned).toBe(0);
-    answerAbort(); await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(calls.filter((call) => call.url.endsWith("/abort"))).toHaveLength(1); // no retry loop: the server sweep reclaims it
     expect(cleaned).toBe(1);
   });
 
-  it("Remove during a failure's pending abort waits for that same abort, sends no second one, and leaves the refresh to the cancel", async () => {
-    let answerAbort!: () => void;
-    routes[RESERVE] = () => json(devReserve, 201);
-    routes["PUT /api/projects/:p/video-uploads/:r/direct"] = () => new Response(null, { status: 200 });
-    routes[COMPLETE] = () => json({ error: "no", code: "video_rejected", reason: "hevc" }, 422);
-    routes[ABORT] = () => new Promise<Response>((resolve) => { answerAbort = () => resolve(json({ ok: true })); });
-    let cleaned = 0; const settled: VideoUploadSettled[] = [];
-    const file = new File([new Uint8Array(10)], "film.mp4"); const check = await checkVideoFile(await GOOD_25()); if (!check.ok) throw new Error("fixture");
-    const job = new VideoUpload(1, { projectId: ids.video, role: "editor", file, target: { kind: "new", title: "F" }, probe: check.probe, cautions: [], onChange: () => undefined, onServerCleaned: () => { cleaned += 1; }, onSettled: (r) => settled.push(r), completeDelaysMs: [0], partDelaysMs: [0] });
-    job.start(); await until(job, "failed");
-    job.cancel(); await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(settled).toEqual([]);
+  describe("cancel returns what the person should be told (#751: the server owns the reservation)", () => {
+    const cancelWith = async (answer: Route) => {
+      routes[RESERVE] = () => json(devReserve, 201);
+      routes["PUT /api/projects/:p/video-uploads/:r/direct"] = () => new Response(null, { status: 200 });
+      routes[COMPLETE] = () => new Promise<Response>(() => undefined);
+      routes[ABORT] = answer;
+      const { job } = await make(); job.start(); await until(job, "finishing");
+      const message = await job.cancel();
+      return { message, aborts: calls.filter((call) => call.url.endsWith("/abort")) };
+    };
+    it("204: nothing to say", async () => { const { message, aborts } = await cancelWith(() => new Response(null, { status: 204 })); expect(message).toBeNull(); expect(aborts).toHaveLength(1); expect(aborts[0]!.keepalive).toBe(true); });
+    it("409 upload_completed: nothing to say, the refreshed list shows the new Version", async () => { expect((await cancelWith(() => json({ error: "done", code: "upload_completed" }, 409))).message).toBeNull(); });
+    it("503 abort_pending: the server's own message, and no retry", async () => {
+      const { message, aborts } = await cancelWith(() => json({ error: "Cancelling is pending. Try again in a moment.", code: "abort_pending" }, 503));
+      expect(message).toBe("Cancelling is pending. Try again in a moment."); expect(aborts).toHaveLength(1);
+    });
+    it("a network failure: says the server will clear it", async () => { expect((await cancelWith(() => { throw new TypeError("offline"); })).message).toBe(ABORT_UNREACHABLE_MESSAGE); });
+  });
+
+  it("a second cancel sends no second abort", async () => {
+    routes[RESERVE] = () => json(devReserve, 201); routes[ABORT] = () => new Response(null, { status: 204 });
+    FakeXhr.hold = true;
+    const { job } = await make(); job.start(); await until(job, "uploading");
+    await job.cancel(); await job.cancel();
     expect(calls.filter((call) => call.url.endsWith("/abort"))).toHaveLength(1);
-    answerAbort(); await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(settled).toEqual([expect.objectContaining({ outcome: "cancelled" })]);
-    expect(cleaned).toBe(0);
-  });
-
-  it("a 503 abort_pending is not a cleanup: the row stays 'cleaning', the abort is retried, and the refresh waits for the confirmed one", async () => {
-    let tries = 0;
-    routes[RESERVE] = () => json(devReserve, 201);
-    routes["PUT /api/projects/:p/video-uploads/:r/direct"] = () => new Response(null, { status: 200 });
-    routes[COMPLETE] = () => new Promise<Response>(() => undefined);
-    routes[ABORT] = () => { tries += 1; return tries < 3 ? json({ error: "pending", code: "abort_pending" }, 503) : new Response(null, { status: 204 }); };
-    const settled: VideoUploadSettled[] = [];
-    const file = new File([new Uint8Array(10)], "film.mp4"); const check = await checkVideoFile(await GOOD_25()); if (!check.ok) throw new Error("fixture");
-    const job = new VideoUpload(1, { projectId: ids.video, role: "editor", file, target: { kind: "new", title: "F" }, probe: check.probe, cautions: [], onChange: () => undefined, onSettled: (r) => settled.push(r), abortDelaysMs: [20, 20, 20] });
-    job.start(); await until(job, "finishing");
-    job.cancel();
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(job.state).toMatchObject({ phase: "cancelled", cleaning: true }); expect(settled).toEqual([]);
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    expect(tries).toBe(3);
-    expect(job.state.cleaning).toBe(false); expect(job.state.error).toBeNull();
-    expect(settled).toEqual([expect.objectContaining({ outcome: "cancelled" })]);
-  });
-
-  it("when every abort attempt fails the row says the server will clear it, and only then does the refresh run", async () => {
-    routes[RESERVE] = () => json(devReserve, 201);
-    routes["PUT /api/projects/:p/video-uploads/:r/direct"] = () => new Response(null, { status: 200 });
-    routes[COMPLETE] = () => new Promise<Response>(() => undefined);
-    routes[ABORT] = () => json({ error: "pending", code: "abort_pending" }, 503);
-    const settled: VideoUploadSettled[] = [];
-    const file = new File([new Uint8Array(10)], "film.mp4"); const check = await checkVideoFile(await GOOD_25()); if (!check.ok) throw new Error("fixture");
-    const job = new VideoUpload(1, { projectId: ids.video, role: "editor", file, target: { kind: "new", title: "F" }, probe: check.probe, cautions: [], onChange: () => undefined, onSettled: (r) => settled.push(r), abortDelaysMs: [1, 1, 1] });
-    job.start(); await until(job, "finishing");
-    job.cancel(); await new Promise((resolve) => setTimeout(resolve, 60));
-    expect(calls.filter((call) => call.url.endsWith("/abort"))).toHaveLength(4);
-    expect(job.state.cleaning).toBe(false); expect(job.state.error).toMatch(/clear/i);
-    expect(settled).toHaveLength(1);
-  });
-
-  it("cancel during complete sends the abort; a 409 upload_completed is treated as done", async () => {
-    routes[RESERVE] = () => json(devReserve, 201);
-    routes["PUT /api/projects/:p/video-uploads/:r/direct"] = () => new Response(null, { status: 200 });
-    routes[COMPLETE] = () => new Promise<Response>(() => undefined);
-    routes[ABORT] = () => json({ error: "done", code: "upload_completed" }, 409);
-    const { job, settled } = await make(); job.start(); await until(job, "finishing");
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    job.cancel(); await new Promise((resolve) => setTimeout(resolve, 15));
-    expect(job.state.phase).toBe("done");
-    expect(settled.map((s) => s.outcome)).toEqual(["done"]); // one settle, after the abort answered
   });
 });
 

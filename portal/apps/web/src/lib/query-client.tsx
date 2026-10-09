@@ -3,6 +3,7 @@ import type { Role } from "@quincy/shared";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { clearPrincipalProjectData, isApiError, projectQueryRetry } from "./project-data";
+import { bindQueryClientPrincipal } from "./principal-terminal";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "./project-query-sync";
 
 export function createQuincyQueryClient() {
@@ -31,7 +32,8 @@ export function createQuincyQueryClient() {
 }
 
 export function QuincyQueryProvider({ principalId, role, children }: { principalId: string; role: Role; children: ReactNode }) {
-  const [queryClient] = useState(createQuincyQueryClient);
+  // The client belongs to this person for its whole life, so a terminal notice from it names them.
+  const [queryClient] = useState(() => { const client = createQuincyQueryClient(); bindQueryClientPrincipal(client, principalId); return client; });
   const runtimeRef = useRef<ProjectQueryRuntime | null>(null);
   if (runtimeRef.current === null) runtimeRef.current = new ProjectQueryRuntime(queryClient);
   const runtime = runtimeRef.current;

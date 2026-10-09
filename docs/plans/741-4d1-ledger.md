@@ -23,4 +23,5 @@ One line per new UI element. ReUI MCP queried (`search` "file upload dropzone vi
 No allowlist entry was added: the only raw `<input>` lives in `components/quincy/FileDropzone.tsx`; `ui-primitive-ratchet.guard.test.ts` passes unchanged.
 Not in 4d-i (later slices): Open review, selection checkboxes and Share bar, note/decision/link chips, premium actions, the player.
 - Upload tray "uploaded, with a warning" row (Sol review): `components/quincy/EmbeddedUploadTray.tsx` `phase: "done"` renders the existing `Notice` (tone caution, role status) with the existing text `Button` for Dismiss; same pattern as the tray's failed row and its cautions.
-- New film Upload-at-cap hint: plain `<p>` in the existing `HINT` text style, as the dropzone's own cap line.
+- New film refusal line (a reserve the server refused, e.g. 429): `quincy/Notice` (tone critical, role alert) inside the form, the same as the probe cautions. Replaces the removed Upload-at-cap hint (#751).
+- Card "Cancel upload" (shown to the reservation's owner when this tab has no job for it): `quincy/Button` variant `secondary` with the coarse tap-target classes (`pointer-coarse:min-h-11 max-[721px]:min-h-11`), as the versions trigger. **Searches:** `components/reui/` and `components/quincy/` (Button), ReUI MCP not needed for a plain button; no new primitive.

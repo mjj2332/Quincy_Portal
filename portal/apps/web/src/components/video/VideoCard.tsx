@@ -21,21 +21,26 @@ export const VIDEO_ACCEPT = ".mp4,video/mp4";
  * One Video as a card (#741 4d-i): poster, newest Version, duration, a Versions list, and who is uploading. The Open review action,
  * selection and note chips arrive in later slices. `onVersionFile` checks and starts the upload and returns a message when the file is refused.
  */
-export function VideoCard({ video, canUpload, myUpload, atUploadCap, onVersionFile }: {
+export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation }: {
   video: VideoDto;
   canUpload: boolean;
-  /** My running upload of a new Version of this Video, if any. */
+  currentUserId: string | null;
+  /** My running upload of a new Version of this Video in this tab, if any. */
   myUpload?: VideoUploadState;
-  /** Three uploads are already running (the server allows three): Upload is held back. */
-  atUploadCap?: boolean;
+  /** Resolves `null` once the server holds the upload, else the reason it was refused (or the file was). */
   onVersionFile: (video: VideoDto, file: File) => Promise<string | null>;
+  /** Asks the server to drop an upload this tab has no job for. */
+  onCancelReservation: (reservationId: string) => Promise<void>;
 }) {
+  const [cancelling, setCancelling] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const newest = video.versions.find((version) => version.current) ?? video.versions[0]!;
   const nextNumber = Math.max(...video.versions.map((version) => version.version)) + 1;
   const portrait = newest.height > newest.width;
+  // The server says an upload is in flight and this tab has no job for it: someone else's, or mine that this tab lost (a reload, another device). Only its owner may cancel it.
   const uploadingElsewhere = !myUpload && video.uploading;
+  const cancellable = uploadingElsewhere && currentUserId !== null && uploadingElsewhere.uploader.id === currentUserId ? uploadingElsewhere : null;
   const busy = Boolean(myUpload || video.uploading);
   const count = video.versions.length;
 
@@ -72,16 +77,18 @@ export function VideoCard({ video, canUpload, myUpload, atUploadCap, onVersionFi
         </div>
         {myUpload && <p role="status" className={`${META} flex items-center gap-[var(--space-2)]`} data-testid="video-card-uploading"><Spinner aria-hidden="true" role="presentation" className="size-3.5" />{`Uploading v${myUpload.version ?? nextNumber} · ${myUpload.percent}%`}</p>}
         {uploadingElsewhere && <p role="status" className={`${META} flex items-center gap-[var(--space-2)]`} data-testid="video-card-uploading-other"><Spinner aria-hidden="true" role="presentation" className="size-3.5" />{`${uploadingElsewhere.uploader.name} is uploading v${uploadingElsewhere.version}`}</p>}
+        {cancellable && <div className="flex flex-wrap gap-[var(--space-2)]">
+          <Button type="button" variant="secondary" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" disabled={cancelling} onClick={() => { setCancelling(true); void onCancelReservation(cancellable.reservationId).finally(() => setCancelling(false)); }}>Cancel upload</Button>
+        </div>}
         {message && <Notice tone="critical" role="alert">{message}</Notice>}
         {canUpload && !busy && <div className="flex flex-wrap gap-[var(--space-2)]">
           <FilePickButton
             accept={VIDEO_ACCEPT}
             variant="secondary"
             className="min-h-[44px]"
-            disabled={checking || atUploadCap}
+            disabled={checking}
             onFile={(file) => { setMessage(null); setChecking(true); void onVersionFile(video, file).then((refused) => setMessage(refused)).finally(() => setChecking(false)); }}
           >{checking ? "Checking…" : `Upload v${nextNumber}`}</FilePickButton>
-          {atUploadCap && <span className={META}>Three uploads are running. Finish or cancel one first.</span>}
         </div>}
       </div>
     </FramePanel>

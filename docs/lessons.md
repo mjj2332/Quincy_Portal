@@ -6092,3 +6092,15 @@ Tags: gantt-calendar, focus-overlays · #697, #698
   - Check with the page focused (`document.hasFocus()`), Tab to the first row, and read the computed outline offset.
 
 Guards: `reui/gantt/gantt-create-task.dom.test.tsx` (the x and `+` token pins), `design-system-guards.test.ts`, `config/phone-breakpoint.guard.test.ts`.
+
+## Don't mirror server reservation state on the client (#751)
+Tags: media-renditions, workers-runtime · #741, #751
+
+- **What went wrong.** The film uploader (#741 4d-i) kept its own copy of two things the server already decides: how many reservations a person holds (a client cap of three) and whether a cancel's cleanup had been confirmed (a `cleaning` phase, abort retries with backoff, "settle only after confirmed cleanup"). Three Sol review rounds each found another race between the copy and the server (a late 401, a 503 `abort_pending`, a cancel that lost to a complete, a second tab).
+- **Rule.** The cap and the cleanup state belong to the server's DTO and status codes. The client sends the request, reads the answer, re-reads the list, and shows the server's own message.
+  - Reserve: a refused reserve (429 `too_many_uploads`, 409 `upload_in_progress`, ...) keeps the person's file and title and shows the server's words. No client counter.
+  - Cancel: send the abort, await its response whatever it is (204, 409 `upload_completed`, 503 `abort_pending`, a network failure), invalidate `videos` and `detail`, drop the local row. A 503 or no answer is a toast; the server sweep reclaims the reservation.
+  - A reservation the tab has no job for (a reload, another device) is visible in the DTO (`uploading.reservationId`), and its owner can abort it from the card.
+- **A notice about a person names the person.** The terminal-principal broadcast carries the principal id of the query client that saw the 401 (`bindQueryClientPrincipal`), and the store clears only that person's uploads, so a retired person's late 401 clears nothing the current person owns.
+
+Guards: `apps/web/src/lib/video-upload-store.test.ts` ("Cancel leaves the reservation to the server"), `video-upload-terminal.test.ts` ("the terminal notice names its principal"), `components/video/VideoCollectionPanel.dom.test.tsx` ("The server owns the reservation").

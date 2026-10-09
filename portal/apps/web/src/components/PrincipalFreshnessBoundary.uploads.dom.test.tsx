@@ -8,7 +8,8 @@ import type { Mp4Probe } from "@quincy/shared";
 
 const jobs = vi.hoisted(() => ({ cancels: [] as string[] }));
 vi.mock("../lib/video-upload", () => ({
-  VideoUpload: class { state = { phase: "uploading", projectId: "p1" }; constructor(_id: number, private o: { file: File }) {} start() {} cancel() { jobs.cancels.push(this.o.file.name); } retry() {} },
+  abortReservation: vi.fn(),
+  VideoUpload: class { state = { phase: "uploading", projectId: "p1" }; reserved = new Promise<string | null>(() => undefined); constructor(_id: number, private o: { file: File }) {} start() {} cancel() { jobs.cancels.push(this.o.file.name); return Promise.resolve(null); } retry() {} },
 }));
 vi.mock("../lib/api", () => ({ apiGet: () => new Promise(() => undefined) }));
 vi.mock("../lib/auth", () => ({ useSession: () => ({ refetch: vi.fn() }) }));

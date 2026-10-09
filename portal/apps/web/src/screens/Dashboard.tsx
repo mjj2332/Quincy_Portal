@@ -1,4 +1,4 @@
-import { announcePrincipalTerminal } from "../lib/principal-terminal";
+import { announcePrincipalTerminal, principalOfQueryClient } from "../lib/principal-terminal";
 import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { DEFAULT_DASHBOARD_FILTER, STAGE_PRESENTATION_KEYS, dashboardFilterHasNonStageLeaf, dashboardFilterStageScope, dashboardFilterTreeOf, dashboardFilterOf, isEmptyDashboardFilterTree, dashboardFocusOf, withoutDashboardFocus, dashboardSearchOf, formatSydneyCivil, roleHasCapability, withDashboardFilter, type DashboardCalendarState, type DashboardFilter, type DashboardRoute, type DashboardTimelineRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
@@ -1484,7 +1484,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         toast("The project changed elsewhere; the Board was refreshed.", "error", { announcedElsewhere: true });
       } else {
         if (isAccessLoss && queryRuntime) {
-          announcePrincipalTerminal();
+          announcePrincipalTerminal(queryClient ? principalOfQueryClient(queryClient) : undefined);
           queryRuntime.markPrincipalTerminal();
           return;
         }
