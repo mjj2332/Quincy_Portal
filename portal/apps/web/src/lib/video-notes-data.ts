@@ -3,10 +3,12 @@ import {
   videoNoteDeleteResponseSchema, videoNoteListResponseSchema, videoNoteThreadDtoSchema,
   type Role, type VideoNoteCreateInput, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto,
 } from "@quincy/shared";
-import { ApiError, apiDeleteWithBody, apiGet, apiPatch, apiPost, apiPut } from "./api";
+import { apiDeleteWithBody, apiGet, apiPatch, apiPost, apiPut } from "./api";
 import { decodeExternalResponse, externalApiGet } from "./external-api-response";
 import { getProjectQueryRuntime } from "./project-query-sync";
-import { invalidateProjectSurfaces, projectDataKeys, projectQueryRetry, recordProjectArchivedRefusal, removedDataError } from "./project-data";
+import { invalidateProjectSurfaces, projectDataKeys, projectQueryRetry, recordProjectArchivedRefusal, removedDataError, terminatePrincipalOnUnauthorized } from "./project-data";
+import { onPrincipalTerminal } from "./principal-terminal";
+import { classifyVideoNoteError } from "./video-note-errors";
 import { removeThread, upsertThread } from "./video-note-view";
 
 /** Notes on one Video Version (#741 5b): the list query, the five writes, and the error classifier. No optimistic writes; every success patches the cache by root id. */
@@ -34,32 +36,19 @@ export function useVideoNotesQuery(projectId: string, assetId: string, enabled: 
   });
 }
 
-export type VideoNoteErrorKind = "archived" | "conflict" | "deleted" | "gone" | "access" | "range" | "network" | "other";
-export type ClassifiedVideoNoteError = { kind: VideoNoteErrorKind; thread?: VideoNoteThreadDto; frameCount?: number };
-
-const detailsOf = (error: ApiError): Record<string, unknown> => (error.details && typeof error.details === "object" ? error.details as Record<string, unknown> : {});
-
-/** Which of the 5a refusals this is. A transport failure (status 0) is `network`: the request may have been applied, so nothing retries it. */
-export function classifyVideoNoteError(error: unknown): ClassifiedVideoNoteError {
-  if (!(error instanceof ApiError)) return { kind: "other" };
-  const details = detailsOf(error);
-  if (error.status === 0) return { kind: "network" };
-  if (error.status === 409 && details.code === "project_archived") return { kind: "archived" };
-  if (error.status === 409 && details.code === "note_deleted") return { kind: "deleted" };
-  if (error.status === 409 && details.code === "note_conflict") {
-    const parsed = videoNoteThreadDtoSchema.safeParse(details.thread);
-    return parsed.success ? { kind: "conflict", thread: parsed.data } : { kind: "other" };
-  }
-  if (error.status === 404) return details.error === "Note not found" || error.message === "Note not found" ? { kind: "gone" } : { kind: "access" };
-  if (error.status === 422 && details.code === "frame_out_of_range") return { kind: "range", ...(typeof details.frameCount === "number" ? { frameCount: details.frameCount } : {}) };
-  return { kind: "other" };
-}
+export { classifyVideoNoteError };
+export type { ClassifiedVideoNoteError, VideoNoteErrorKind } from "./video-note-errors";
 
 const parseThread = (role: Role, value: unknown): VideoNoteThreadDto => (role === "external_editor" ? decodeExternalResponse("video-note-thread", value) as VideoNoteThreadDto : videoNoteThreadDtoSchema.parse(value));
 const parseDelete = (role: Role, value: unknown): { thread: VideoNoteThreadDto | null } => (role === "external_editor" ? decodeExternalResponse("video-note-delete", value) as { thread: VideoNoteThreadDto | null } : videoNoteDeleteResponseSchema.parse(value));
 
+/** Query clients whose person was signed out (a 401): a write that lands late must not put notes back into a session that is over, even while a screen still observes the key. */
+const retired = new WeakSet<object>();
+onPrincipalTerminal((queryClient) => { if (queryClient) retired.add(queryClient); });
+
 /** Writes `change` into the cached list for the call-time Version, after cancelling a read that could land over it. A list never loaded stays unloaded. */
 async function patch(ctx: NoteWriteContext, change: (list: VideoNoteThreadDto[]) => VideoNoteThreadDto[]): Promise<void> {
+  if (retired.has(ctx.queryClient)) return;
   const key = projectDataKeys.videoNotes(ctx.projectId, ctx.assetId);
   await ctx.queryClient.cancelQueries({ queryKey: key, exact: true });
   if (ctx.queryClient.getQueryData<VideoNoteThreadDto[]>(key) === undefined) return;
@@ -68,10 +57,20 @@ async function patch(ctx: NoteWriteContext, change: (list: VideoNoteThreadDto[])
 
 const converge = (ctx: NoteWriteContext) => invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "video-notes", assetId: ctx.assetId }], dashboard: false, calendar: false, gantt: false });
 
-/** What a refusal changes locally, before the caller sees the error: an archive is recorded (then the detail re-read), a conflict brings the server's thread into the cache. */
+/**
+ * What a refusal changes locally, before the caller sees the error, whichever screen is (or is no longer) mounted: a 401 ends the captured
+ * person's data; an access refusal (a 404 that is not "Note not found", a 403 that is not the authorship one) means the Project or the gate is
+ * gone, so both are asked again; an archive is recorded (then the detail re-read); a conflict brings the server's thread into the cache; a note
+ * gone or deleted elsewhere re-reads the list.
+ */
 async function onFailure(ctx: NoteWriteContext, error: unknown): Promise<void> {
+  terminatePrincipalOnUnauthorized(ctx.queryClient, error);
   const classified = classifyVideoNoteError(error);
-  if (classified.kind === "archived" && ctx.role !== "external_editor") {
+  if (classified.kind === "access") {
+    await invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "video-review" }, { kind: "detail" }], dashboard: false, calendar: false, gantt: false });
+  } else if (classified.kind === "gone" || classified.kind === "deleted") {
+    await converge(ctx);
+  } else if (classified.kind === "archived" && ctx.role !== "external_editor") {
     await recordProjectArchivedRefusal(ctx.queryClient, ctx.projectId);
     await invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "detail" }], dashboard: false, calendar: false, gantt: false });
   } else if (classified.kind === "conflict" && classified.thread) {

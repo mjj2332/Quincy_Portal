@@ -139,4 +139,71 @@ describe("video notes data (#741 5b)", () => {
     expect(classifyVideoNoteError(new ApiError("boom", 500)).kind).toBe("other");
     expect(classifyVideoNoteError(new Error("zod")).kind).toBe("other");
   });
+  it("classifies a 403 that is not the authorship refusal as access, and the authorship refusal as an ordinary error", () => {
+    expect(classifyVideoNoteError(new ApiError("Forbidden", 403)).kind).toBe("access");
+    expect(classifyVideoNoteError(new ApiError("Forbidden: you are not assigned to this Project", 403)).kind).toBe("access");
+    expect(classifyVideoNoteError(new ApiError("Forbidden: only the author can edit this note", 403)).kind).toBe("other");
+  });
+});
+
+describe("video notes data: access errors are handled where the write is made (#741 5b form-state re-plan)", () => {
+  const writes: Array<[string, (c: ReturnType<typeof ctx>) => Promise<unknown>, keyof typeof api]> = [
+    ["create", (c) => createVideoNote(c, { startFrame: 1, visibility: "internal", body: "x" }), "apiPost"],
+    ["reply", (c) => replyToVideoNote(c, "r", "x"), "apiPost"],
+    ["edit", (c) => editVideoNote(c, "r", { expectedRevision: 1, body: "x" }), "apiPatch"],
+    ["resolve", (c) => setVideoNoteResolution(c, "r", true), "apiPut"],
+    ["delete", (c) => deleteVideoNote(c, { id: "r", parentId: null }, 1), "apiDeleteWithBody"],
+  ];
+  it.each(writes)("a 401 on %s ends the originating principal's data with no component mounted", async (_name, write, method) => {
+    client.setQueryData(projectDataKeys.videoNotes(P, A), [thread()]);
+    api[method].mockRejectedValue(new ApiError("Unauthorized", 401));
+    await expect(write(ctx())).rejects.toBeInstanceOf(ApiError);
+    await vi.waitFor(() => { expect(client.getQueryData(projectDataKeys.videoNotes(P, A))).toBeUndefined(); });
+  });
+
+  it.each(writes)("a non-note 404 or an access 403 on %s re-asks the gate and the Project", async (_name, write, method) => {
+    api[method].mockRejectedValueOnce(new ApiError("Project not found", 404, { error: "Project not found" }));
+    await expect(write(ctx())).rejects.toBeInstanceOf(ApiError);
+    expect(order).toContain("invalidate:video-review,detail");
+    order.length = 0;
+    api[method].mockRejectedValueOnce(new ApiError("Forbidden", 403));
+    await expect(write(ctx())).rejects.toBeInstanceOf(ApiError);
+    expect(order).toContain("invalidate:video-review,detail");
+  });
+
+  it("a note gone or deleted elsewhere re-reads the Version's list before the caller sees the refusal", async () => {
+    api.apiPatch.mockRejectedValueOnce(new ApiError("This note was deleted.", 409, { code: "note_deleted" }));
+    await expect(editVideoNote(ctx(), "r", { expectedRevision: 1, body: "x" })).rejects.toBeInstanceOf(ApiError);
+    expect(order).toContain("invalidate:video-notes");
+    order.length = 0;
+    api.apiPatch.mockRejectedValueOnce(new ApiError("Note not found", 404, { error: "Note not found" }));
+    await expect(editVideoNote(ctx(), "r", { expectedRevision: 1, body: "x" })).rejects.toBeInstanceOf(ApiError);
+    expect(order).toEqual(["invalidate:video-notes"]);
+  });
+
+  it("an authorship 403 stays an ordinary error: it neither ends the data nor re-asks the gate", async () => {
+    client.setQueryData(projectDataKeys.videoNotes(P, A), [thread()]);
+    api.apiPatch.mockRejectedValue(new ApiError("Forbidden: only the author can edit this note", 403));
+    await expect(editVideoNote(ctx(), "r", { expectedRevision: 1, body: "x" })).rejects.toBeInstanceOf(ApiError);
+    expect(order).not.toContain("invalidate:video-review,detail");
+    expect(client.getQueryData(projectDataKeys.videoNotes(P, A))).toBeDefined();
+  });
+
+  it("a retired principal's late 401 or late success touches nothing a fresh client owns, and cannot repopulate its own cache", async () => {
+    const fresh = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    fresh.setQueryData(projectDataKeys.videoNotes(P, A), [thread({ body: "fresh" })]);
+    client.setQueryData(projectDataKeys.videoNotes(P, A), []);
+    let finish!: (value: unknown) => void;
+    api.apiPost.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    const late = createVideoNote(ctx(), { startFrame: 1, visibility: "internal", body: "x" });
+    api.apiPatch.mockRejectedValueOnce(new ApiError("Unauthorized", 401));
+    await expect(editVideoNote(ctx(), "r", { expectedRevision: 1, body: "x" })).rejects.toBeInstanceOf(ApiError); // the old session ends
+    await vi.waitFor(() => { expect(client.getQueryData(projectDataKeys.videoNotes(P, A))).toBeUndefined(); });
+    client.setQueryData(projectDataKeys.videoNotes(P, A), []); // a screen still mounted on the retired client re-creates the entry
+    finish(thread({ body: "late" }));
+    await late;
+    expect(client.getQueryData(projectDataKeys.videoNotes(P, A))).toEqual([]);
+    expect(fresh.getQueryData<VideoNoteThreadDto[]>(projectDataKeys.videoNotes(P, A))!.map((t) => t.body)).toEqual(["fresh"]);
+    fresh.clear();
+  });
 });

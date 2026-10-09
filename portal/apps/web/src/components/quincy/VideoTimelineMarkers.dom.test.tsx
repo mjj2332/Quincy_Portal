@@ -134,3 +134,22 @@ describe("VideoPendingRangeBand (#741 5b)", () => {
     expect(host.querySelector("[data-testid=video-pending-band]")).toBeNull();
   });
 });
+
+describe("VideoTimelineMarkers hit-testing follows the rendered clusters (#741 5b, form-state re-plan)", () => {
+  beforeEach(() => { FakeResizeObserver.instances = []; vi.stubGlobal("ResizeObserver", FakeResizeObserver); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+  it("a clustered full-length range does not take a press on a singleton at the middle of the film", async () => {
+    const onSelect = vi.fn();
+    const list: TimelineMarker[] = [
+      { id: "full", startFrame: 0, endFrame: 300, tone: "internal", selected: false, createdAt: "2026-10-10T00:00:01.000Z" },
+      { id: "next", startFrame: 1, endFrame: null, tone: "public", selected: false, createdAt: "2026-10-10T00:00:02.000Z" },
+      { id: "mid", startFrame: 150, endFrame: null, tone: "public", selected: false, createdAt: "2026-10-10T00:00:03.000Z" },
+    ];
+    await render(<VideoTimelineMarkers markers={list} frameCount={300} onSelect={onSelect} />);
+    lane().getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 12, right: 1000, bottom: 12, x: 0, y: 0, toJSON: () => ({}) });
+    await act(async () => { FakeResizeObserver.instances.forEach((o) => { o.fire(1000); }); });
+    expect(host.querySelector<HTMLElement>("[data-cluster-count]")!.dataset.clusterCount).toBe("2");
+    await act(async () => { lane().dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 6 + (988 * 150) / 299 })); });
+    expect(onSelect).toHaveBeenCalledWith("mid");
+  });
+});

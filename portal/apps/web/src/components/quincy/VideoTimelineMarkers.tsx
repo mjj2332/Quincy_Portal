@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { cn } from "@/lib/utils";
-import { clusterMarkers, frameFraction, nearestMarkerId, spanFractions } from "../../lib/video-timeline-geometry";
+import { clusterMarkers, frameFraction, markerHitTargets, nearestMarkerId, spanFractions } from "../../lib/video-timeline-geometry";
 
 /** One note on the timeline. Data, not a note DTO: the guest page (12b) and Compare (7) draw the same lane from their own notes. */
 export type TimelineMarker = { id: string; startFrame: number; endFrame: number | null; tone: "public" | "internal"; selected: boolean; /** Breaks ties between markers on one frame: the oldest note wins. */ createdAt?: string };
@@ -55,7 +55,7 @@ export function VideoTimelineMarkers({ markers, frameCount, onSelect, className 
     onPointerDown={onSelect ? (event) => {
       const rect = event.currentTarget.getBoundingClientRect();
       const half = Number.parseFloat(getComputedStyle(event.currentTarget).getPropertyValue("--thumb-half")) || 6;
-      const id = nearestMarkerId(clusters.map((cluster) => cluster.first), frameCount, event.clientX - rect.left, rect.width, half);
+      const id = nearestMarkerId(markerHitTargets(clusters), frameCount, event.clientX - rect.left, rect.width, half);
       if (id) onSelect(id);
     } : undefined}
     className={cn("relative h-3 w-full", THUMB_HALF, onSelect && "cursor-pointer", "pointer-coarse:pointer-events-none max-[721px]:pointer-events-none", className)}

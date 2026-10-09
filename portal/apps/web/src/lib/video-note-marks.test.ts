@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clearMarks, EMPTY_MARKS, markFrame, marksToFrames } from "./video-note-marks";
+import { EMPTY_MARKS, markFrame, marksToFrames } from "./video-note-marks";
 
 describe("video-note-marks (#741 5b)", () => {
   it("I only and O only are point notes at the marked frame", () => {
@@ -44,7 +44,4 @@ describe("video-note-marks (#741 5b)", () => {
     expect(marksToFrames({ in: 10, out: 999 }, 300)).toEqual({ startFrame: 10, endFrame: 300 });
   });
 
-  it("clearMarks empties both", () => {
-    expect(clearMarks()).toEqual(EMPTY_MARKS);
-  });
 });

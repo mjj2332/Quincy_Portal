@@ -21,6 +21,7 @@ export const MARKER_REACH_PX = 8;
 export const MARKER_WIDTH_PX = 12;
 
 type Placed = { id: string; startFrame: number; endFrame: number | null; /** Ties between markers on the same frame go to the oldest note. */ createdAt?: string };
+type Target = Placed & { /** Drawn as a point (a dot, a diamond or a cluster), not a bar. */ point?: boolean };
 /** Earliest frame first, then the oldest note, then id (so the order is the same however the list was sorted). */
 const byPosition = (a: Placed, b: Placed) => a.startFrame - b.startFrame || (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.id.localeCompare(b.id);
 
@@ -43,18 +44,28 @@ export function clusterMarkers<T extends Placed>(markers: readonly T[], frameCou
 }
 
 /**
+ * What a press can land on, taken from the clusters as drawn: a multi-member cluster is a point at its rendered position (its first member's
+ * start), its members' spans are not hittable; a single marker keeps its own geometry, a range through its last included frame.
+ */
+export function markerHitTargets<T extends Placed>(clusters: ReadonlyArray<{ first: T; members: readonly T[] }>): Target[] {
+  return clusters.map(({ first, members }) => (members.length > 1 ? { id: first.id, startFrame: first.startFrame, endFrame: null, ...(first.createdAt !== undefined ? { createdAt: first.createdAt } : {}), point: true } : { ...first, point: first.endFrame === null }));
+}
+
+/**
  * The marker a pointer at `x` (px from the lane's left edge) is on or nearest to, within `reach`, else null. A marker sits at its
  * thumb-centre coordinate, `thumbHalf + (width - 2 * thumbHalf) * fraction`; a range is the stretch between its start and its last frame.
  */
-export function nearestMarkerId(markers: ReadonlyArray<Placed>, frameCount: number, x: number, width: number, thumbHalf: number, reach = MARKER_REACH_PX): string | null {
+export function nearestMarkerId(markers: ReadonlyArray<Target>, frameCount: number, x: number, width: number, thumbHalf: number, reach = MARKER_REACH_PX): string | null {
   const usable = Math.max(0, width - 2 * thumbHalf);
-  let best: { marker: Placed; distance: number } | null = null;
+  let best: { marker: Target; distance: number } | null = null;
   for (const marker of markers) {
     const [from, to] = marker.endFrame === null ? [frameFraction(marker.startFrame, frameCount), frameFraction(marker.startFrame, frameCount)] : spanFractions(marker.startFrame, marker.endFrame, frameCount);
     const left = thumbHalf + usable * from; const right = thumbHalf + usable * to;
     const distance = x < left ? left - x : x > right ? x - right : 0;
-    // Equally near (to the pixel's rounding): the earliest frame, then the oldest note, whatever order the list came in.
-    if (distance <= reach && (best === null || distance < best.distance - 1e-6 || (Math.abs(distance - best.distance) <= 1e-6 && byPosition(marker, best.marker) < 0))) best = { marker, distance };
+    // Equally near (to the pixel's rounding): a point beats the inside of a bar drawn under it, then the earliest frame, then the oldest note, whatever order the list came in.
+    const tied = best !== null && Math.abs(distance - best.distance) <= 1e-6;
+    const gain = best === null ? 0 : Number(marker.point ?? marker.endFrame === null) - Number(best.marker.point ?? best.marker.endFrame === null);
+    if (distance <= reach && (best === null || distance < best.distance - 1e-6 || (tied && (gain > 0 || (gain === 0 && byPosition(marker, best.marker) < 0))))) best = { marker, distance };
   }
   return best?.marker.id ?? null;
 }

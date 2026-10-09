@@ -1,5 +1,3 @@
-import { useCallback, useState } from "react";
-
 /**
  * The in / out marks of a note being composed (#741 5b). Storage is half-open `[startFrame, endFrame)`: I marks the first included
  * frame, O the LAST included frame, so a range always covers at least one frame (I and O on the same frame is a one-frame range) and
@@ -15,8 +13,6 @@ export function markFrame(marks: NoteMarks, kind: "in" | "out", frame: number): 
   return { in: marks.in !== null && marks.in > frame ? null : marks.in, out: frame };
 }
 
-export function clearMarks(): NoteMarks { return EMPTY_MARKS; }
-
 /** The frames a post would send, or null with no marks. Both marks make a range; one mark is a point at that mark. Clamped into the film. */
 export function marksToFrames(marks: NoteMarks, frameCount: number): { startFrame: number; endFrame: number | null } | null {
   const last = Math.max(0, frameCount - 1);
@@ -27,11 +23,4 @@ export function marksToFrames(marks: NoteMarks, frameCount: number): { startFram
   }
   const only = marks.in ?? marks.out;
   return only === null ? null : { startFrame: clamp(only), endFrame: null };
-}
-
-export function useNoteMarks(initial: NoteMarks = EMPTY_MARKS) {
-  const [marks, setMarks] = useState<NoteMarks>(initial);
-  const mark = useCallback((kind: "in" | "out", frame: number) => { setMarks((current) => markFrame(current, kind, frame)); }, []);
-  const clear = useCallback(() => { setMarks(EMPTY_MARKS); }, []);
-  return { marks, mark, clear, set: setMarks };
 }

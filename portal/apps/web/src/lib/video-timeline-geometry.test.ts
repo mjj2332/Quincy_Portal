@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clusterMarkers, frameFraction, nearestMarkerId, spanFractions } from "./video-timeline-geometry";
+import { clusterMarkers, markerHitTargets, frameFraction, nearestMarkerId, spanFractions } from "./video-timeline-geometry";
 
 describe("video-timeline-geometry (#741 5b)", () => {
   it("frame 0 is 0 and the last frame is 1", () => {
@@ -76,5 +76,36 @@ describe("clusterMarkers (#741 5b, round 2)", () => {
     const list = [at("a", 100), at("b", 150)];
     expect(clusterMarkers(list, 300, 1000, 6).length).toBe(2);
     expect(clusterMarkers(list, 300, 60, 6).length).toBe(1);
+  });
+});
+
+describe("markerHitTargets (#741 5b, form-state re-plan)", () => {
+  const at = (id: string, startFrame: number, endFrame: number | null = null, createdAt = "2026-10-10T00:00:01.000Z") => ({ id, startFrame, endFrame, createdAt });
+  // 1000px lane, 6px thumb half: frame f sits at 6 + 988 * f / 299.
+  const x = (frame: number) => 6 + (988 * frame) / 299;
+  const hit = (list: ReturnType<typeof at>[], pointer: number) => nearestMarkerId(markerHitTargets(clusterMarkers(list, 300, 1000, 6)), 300, pointer, 1000, 6);
+
+  it("a multi-member cluster is a point at its rendered position; a singleton keeps its own range", () => {
+    const targets = markerHitTargets(clusterMarkers([at("full", 0, 300), at("near", 1), at("single", 100, 126)], 300, 1000, 6));
+    expect(targets).toEqual([
+      expect.objectContaining({ id: "full", startFrame: 0, endFrame: null }),
+      expect.objectContaining({ id: "single", startFrame: 100, endFrame: 126 }),
+    ]);
+  });
+
+  it("a clustered full-length range cannot steal a click on a singleton at the middle of the film", () => {
+    const list = [at("full", 0, 300), at("near", 1), at("mid", 150)];
+    expect(hit(list, x(150))).toBe("mid");
+    expect(hit(list, x(0))).toBe("full");
+  });
+
+  it("a singleton range still hits through its last included frame", () => {
+    expect(hit([at("r", 100, 126)], x(110))).toBe("r");
+    expect(hit([at("r", 100, 126)], x(125))).toBe("r");
+  });
+
+  it("on a tie a point beats the interior of a range, then the earliest frame", () => {
+    expect(hit([at("bar", 100, 200), at("dot", 150)], x(150))).toBe("dot");
+    expect(hit([at("late", 152), at("early", 150)], (x(150) + x(152)) / 2)).toBe("early");
   });
 });
