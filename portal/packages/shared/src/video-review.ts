@@ -80,6 +80,8 @@ export const videoDtoSchema = z.object({
   currentAssetId: z.string().uuid(),
   /** The Version being uploaded now, if any: the reservation (its owner may abort it), its number, who is uploading, and when it lapses. */
   uploading: z.object({ reservationId: z.string().uuid(), version: z.number().int().positive(), uploader: videoPersonSchema, expiresAt: z.string().datetime() }).strict().nullable(),
+  /** Open root notes on the current Version, both visibilities, under the panel's tombstone rule (a tombstone with replies counts, an empty one does not). `null` when the `notes` part is off: the count is not computed. */
+  latestNoteCount: z.number().int().nonnegative().nullable(),
   /** Newest first. */
   versions: z.array(videoVersionDtoSchema).min(1),
 }).strict();

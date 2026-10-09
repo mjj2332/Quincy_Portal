@@ -60,6 +60,7 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
       <div className="grid gap-[var(--space-3)] px-[var(--space-4)] pb-[var(--space-4)]">
         <div className="grid gap-[var(--space-1)]">
           <h3 className="serif [font:var(--type-h3)]">{video.title}</h3>
+          {video.latestNoteCount !== null && video.latestNoteCount > 0 && <Badge variant="secondary" data-testid="video-card-open-notes" className="justify-self-start">{video.latestNoteCount === 1 ? "1 open note" : `${video.latestNoteCount} open notes`}</Badge>}
           <div className="flex flex-col items-start gap-[var(--space-1)]">
             <Popover>
               <PopoverTrigger render={<Button type="button" variant="text" className="-ml-[var(--space-2)] px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11" />}>{count === 1 ? "1 version" : `${count} versions`}<ChevronDown aria-hidden="true" className="size-3" /></PopoverTrigger>

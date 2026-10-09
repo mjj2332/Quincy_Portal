@@ -13,7 +13,7 @@ import { audit, auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { abortMultipart, completeMultipart, createMultipartPresign, PART_BYTES, validateMultipartParts } from "../lib/r2s3";
 import { discardUnreferencedObject, enqueueEmbeddedMediaCleanup, settleThrownAdoption } from "../lib/embedded-media";
-import { videoReviewGate } from "../lib/video-review-gate";
+import { readVideoReviewGate, videoReviewGate } from "../lib/video-review-gate";
 import { loadVideoDtos } from "../lib/video-dto";
 import { jsonInput } from "./helpers";
 
@@ -225,7 +225,7 @@ export function clientProbeDisagreement(json: string | null, probe: Mp4Probe): s
 }
 
 async function completedResponse(c: Context<AppEnv>, row: Reservation, status: 200 | 201, warnings?: Mp4ProbeWarning[]): Promise<Response> {
-  const video = (await loadVideoDtos(c.env.DB, row.projectId, row.videoId))[0];
+  const video = (await loadVideoDtos(c.env.DB, row.projectId, row.videoId, (await readVideoReviewGate(c.env.DB, row.projectId)).parts.includes("notes")))[0];
   const version = video?.versions.find((candidate) => candidate.assetId === row.assetId);
   if (!video || !version) return notFound(c);
   let stored = warnings;
