@@ -1,0 +1,33 @@
+# #741 PR 5b reuse ledger
+
+One line per new UI element. Searches: installed `components/reui/` and `components/quincy/` first; ReUI MCP `search` run 2026-10-09 for "comment thread panel with replies, resolve, filter tabs open resolved" (best: premium block `sheet-5`, a right Sheet, with emoji reactions and premium adoption cost: its composition is adopted with installed items, the block is not), "segmented control radio two options visibility switch" (`c-toggle-group-5`, `c-tabs-9`) and "timeline markers range overlay on slider track" (only vertical event timelines). The local `tmp/ReUI_Full_Source_Code` copy was read for sheet-5's import list only.
+
+| Element | Item used | Notes |
+|---|---|---|
+| Notes aside surface | `data-surface="default"` panel inside the inverse dialog | precedent: the paper `Notice` in `VideoPlayer`; on the inverse surface `StatusPill`'s signal tones are not declared |
+| Panel heading "Notes on v3" and totals | heading with the display-font tokens, as the 4d-ii "Version n" heading | text |
+| Version details button and popover | `reui/popover` (`Popover`, `PopoverTrigger render=`, `PopoverContent`) + `reui/item` rows | installed; same rows and test ids as the 4d-ii column |
+| Status filter Open / Resolved / All | `reui/toggle-group` (single value, `variant="outline"`) | installed; `c-toggle-group-5` composition; an empty value is refused |
+| Visibility filter All / Client-visible / Internal | `reui/toggle-group` | as above |
+| Note list scroller | `reui/scroll-area` | installed; the only inner scroller, desktop only (on a phone the root has no height cap) |
+| Thread container | `reui/item` (`Item variant="outline"`) | sheet-5 composition; selected = `data-selected` border token |
+| Author avatar | `quincy/InitialsAvatar` | installed; Discussion precedent |
+| Timestamp | `quincy/CollaborationTimestamp` | installed |
+| Internal badge | `quincy/StatusPill tone="caution"` + lucide `Lock` | on paper |
+| Client-visible badge | `quincy/StatusPill tone="info"` | design-reviewer may prefer `neutral` |
+| Timecode (anchor) button | `reui/button` `variant="secondary"` `size="sm"` + mono token, `pointer-coarse:min-h-11` | installed |
+| Reply / Resolve / Reopen / Retry / Refresh notes / Clear marks / Make point | `quincy/Button variant="text"` | Discussion precedent; always visible (no hover reveal) |
+| Own-note "⋯" (Edit, Delete) | `quincy/menu` (`Menu`, `MENU_ITEM`) + `quincy/icon-button` `ICON_BUTTON` | Discussion precedent (#376) |
+| Delete confirm | `components/ConfirmDeleteDialog` with note copy (tombstone wording when others replied) | installed |
+| Composer, reply and edit text areas | `reui/textarea` with an `sr-only` label | installed |
+| Composer visibility switch | `reui/toggle-group` (two items, Internal pressed by default) | over `reui/switch` because both options stay labelled; over `c-tabs-9` because tabs mean panels |
+| Set in / Set out | `quincy/Button variant="secondary"` + `reui/kbd` hint | installed |
+| Post / Save / Cancel | `quincy/Button` primary / secondary | installed |
+| Anchor text in composer and edit form | mono text span (as the 4d-ii timecode chip) | text |
+| Archived notice | `ARCHIVED_NOTICE_CLASS` paragraph (`components/archived-notice`) | #527 precedent |
+| Load, write and conflict errors | `quincy/Notice` (`critical`, `caution`) | installed |
+| Empty states | `quincy/EmptyState size="compact"` | installed |
+| **Marker lane, range bars, pending band** | **hand-built** `div` / `span` in `quincy/VideoTimelineMarkers.tsx` | searches above plus installed `reui/slider` (single or multi thumb, no marks API), `reui/progress`, `reui/gantt` (wrong scale and contract). None draws frame-positioned, non-thumb marks aligned to an edge-aligned slider thumb. A `div` with a pointer handler, not buttons (the lane is `aria-hidden` and inert on touch), so no ratchet signature |
+
+No allowlist entry was added: every button, input, textarea and dialog is a `reui/` or `quincy/` primitive. `ui-primitive-ratchet.guard.test.ts`, `reui-skin.guard.test.ts` and `design-system-guards.test.ts` pass unchanged.
+Not in 5b: the copy / paste menu (5c), markup (6b), Compare (7), export markers (8/9), sharing (11b), card note counts (5b-counts), notifications (15a).

@@ -6114,3 +6114,12 @@ Tags: media-renditions, testing-guards · #741
 
 Guards: `lib/video-frame-clock.dom.test.tsx`, `components/quincy/VideoPlayer.dom.test.tsx`, `components/video/VideoReviewViewer.dom.test.tsx`.
 
+## Escape needs an order, decided before anything runs; per-Version state must not outlive its Version (#741 5b)
+Tags: focus-overlays, testing-guards · #741
+
+- **Escape has four owners, innermost first.** In the review viewer: an open menu, popover, list or confirm; then an active note composer, reply or edit form; then the viewer. Base UI reports one Escape to `onOpenChange` more than once per keydown, so the answer is a snapshot taken at window capture (`escapeSnapshot` in `VideoReviewViewer.tsx`, the `ProjectSheet` pattern), never state the first call changed. The form work (close a clean reply or edit, move focus to the dialog for anything dirty or for the composer) happens in that same capture handler, and `onOpenChange` only calls `cancel()`. `hasOpenInnerLayer` could not be reused: from inside a portalled dialog it sees the Project sheet beneath as an open modal and would never let the viewer close, so its floating-popup half is exported as `hasOpenFloatingPopup`.
+- **State keyed to a Version dies with the Version.** The notes hook kept marks in `{ assetId, marks }` and ignored them when `assetId` differed, but never cleared them, so switching v2 -> v1 -> v2 brought the old marks back. Reset in render (`if (local.assetId !== assetId) setLocal(fresh(assetId))`), not by reading around the stale value.
+- **A strict DTO schema rejects `key: undefined`.** `videoNoteThreadDtoSchema` is `.strict()`; a test fixture carrying `copiedFromNote: undefined` made every 409 conflict classify as `other`. Build fixtures with the real keys only.
+- **A heavier import graph can break a cold-chunk timing test.** Two existing viewer tests wait a fixed number of ticks for the lazy viewer chunk; statically importing the notes UI into it pushed them past it. The notes UI is its own lazy chunk (`VideoNotesHost.tsx`), loaded only when the notes part is on, so the notes-off viewer is unchanged.
+
+Guards: `components/video/VideoNotes.dom.test.tsx` ("Escape order"), `VideoNoteThread.dom.test.tsx`, `VideoReviewViewer.dom.test.tsx`.
