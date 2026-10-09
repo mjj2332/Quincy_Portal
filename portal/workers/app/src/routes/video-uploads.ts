@@ -196,12 +196,12 @@ videoUploadsRoutes.put("/projects/:projectId/video-uploads/:reservationId/direct
   if (!written) return unavailable(c);
   const stored = await c.env.MEDIA.head(row.r2Key);
   if (stored && stored.size > row.bytes) { await c.env.MEDIA.delete(row.r2Key); return c.json({ error: "The file is larger than the size that was reserved" }, 413); }
-  // The write took time. Only a reservation that an abort or the sweep has already finished (`failed`, `expired`: their delete ran before this
-  // write landed) leaves what we wrote orphaned, so only then is it ours to delete. `completing` or `completed` means a completion owns these
-  // bytes, and `aborting` means the abort or the sweep will still delete the key itself, so in every other state the object is left alone.
+  // The write took time. A reservation an abort or the sweep has taken (`aborting`, `failed`, `expired`) can never complete, so what we wrote
+  // is an orphan and ours to delete: the abort's own delete may already have run before this write landed. `completing` or `completed`
+  // means a completion owns these bytes, so then the object is left alone.
   const current = await loadReservation(c.env.DB, reservationId);
   if (current?.status !== "pending" || current.createdBy !== c.get("user").id || current.expiresAt <= Date.now()) {
-    if ((current?.status === "failed" || current?.status === "expired") && !await keyInUse()) {
+    if ((current?.status === "aborting" || current?.status === "failed" || current?.status === "expired") && !await keyInUse()) {
       try { await c.env.MEDIA.delete(row.r2Key); } catch { await enqueueEmbeddedMediaCleanup(c.env.DB, [{ key: row.r2Key, projectId }]); }
     }
     return unavailable(c);
