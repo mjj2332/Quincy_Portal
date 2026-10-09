@@ -75,7 +75,7 @@ export function NewFilmUploader({ onStart }: {
       {picked.cautions.map((caution) => <Notice key={caution} tone="caution" role="status">{caution}</Notice>)}
       {refusal && <Notice tone="critical" role="alert" data-testid="new-film-refusal">{refusal}</Notice>}
       <div className="flex flex-wrap gap-[var(--space-2)]">
-        <Button type="submit" className="min-h-[44px]" disabled={Boolean(titleError) || starting}>Upload</Button>
+        <Button type="submit" className="min-h-[44px]" disabled={Boolean(titleError) || starting}>{starting ? "Starting…" : "Upload"}</Button>
         <Button type="button" variant="secondary" className="min-h-[44px]" disabled={starting} onClick={() => { setPicked(null); setTitle(""); setRefusal(null); }}>Cancel</Button>
       </div>
     </form>}

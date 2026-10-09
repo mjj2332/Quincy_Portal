@@ -257,7 +257,7 @@ describe("Uploader (#741 4d-i)", () => {
     await press(button("Upload"));
     expect((host.querySelector('[data-testid="new-film-form"] input') as HTMLInputElement).disabled).toBe(true);
     expect((button("Upload new film") as HTMLButtonElement).disabled).toBe(true);
-    expect((button("Upload") as HTMLButtonElement).disabled).toBe(true);
+    expect((button("Starting…") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("a 429 on a card's new Version shows the server's words on the card and keeps its Upload button", async () => {
@@ -339,10 +339,11 @@ describe("The server owns the reservation (#751)", () => {
 
   it("the person who started an upload this tab no longer has a job for sees Cancel upload, and pressing it aborts that reservation and re-reads the list", async () => {
     await mount([videoOf({ uploading: { reservationId: ids.reservation, version: 3, uploader: me, expiresAt: "2026-10-09T08:00:00.000Z" } })]);
-    expect(host.querySelector('[data-testid="video-card-uploading-other"]')?.textContent).toBe("Terry is uploading v3");
+    expect(host.querySelector('[data-testid="video-card-uploading-other"]')?.textContent).toBe("Your upload of v3 is still open (another tab or device).");
+    expect(host.querySelector('[data-testid="video-card-uploading-other"] [role="presentation"]')).toBeNull();
     const cancel = button("Cancel upload")!;
     expect(cancel).toBeDefined();
-    expect(cancel.className).toContain("pointer-coarse:min-h-11");
+    expect(cancel.className).toContain("min-h-[44px]");
     const before = videosFetches();
     await press(cancel);
     await flush(8);

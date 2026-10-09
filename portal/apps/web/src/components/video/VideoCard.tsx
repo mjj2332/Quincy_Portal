@@ -76,9 +76,10 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
           </div>
         </div>
         {myUpload && <p role="status" className={`${META} flex items-center gap-[var(--space-2)]`} data-testid="video-card-uploading"><Spinner aria-hidden="true" role="presentation" className="size-3.5" />{`Uploading v${myUpload.version ?? nextNumber} · ${myUpload.percent}%`}</p>}
-        {uploadingElsewhere && <p role="status" className={`${META} flex items-center gap-[var(--space-2)]`} data-testid="video-card-uploading-other"><Spinner aria-hidden="true" role="presentation" className="size-3.5" />{`${uploadingElsewhere.uploader.name} is uploading v${uploadingElsewhere.version}`}</p>}
+        {uploadingElsewhere && !cancellable && <p role="status" className={`${META} flex items-center gap-[var(--space-2)]`} data-testid="video-card-uploading-other"><Spinner aria-hidden="true" role="presentation" className="size-3.5" />{`${uploadingElsewhere.uploader.name} is uploading v${uploadingElsewhere.version}`}</p>}
+        {cancellable && <p role="status" className={META} data-testid="video-card-uploading-other">{`Your upload of v${cancellable.version} is still open (another tab or device).`}</p>}
         {cancellable && <div className="flex flex-wrap gap-[var(--space-2)]">
-          <Button type="button" variant="secondary" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" disabled={cancelling} onClick={() => { setCancelling(true); void onCancelReservation(cancellable.reservationId).finally(() => setCancelling(false)); }}>Cancel upload</Button>
+          <Button type="button" variant="secondary" className="min-h-[44px]" disabled={cancelling} onClick={() => { setCancelling(true); void onCancelReservation(cancellable.reservationId).finally(() => setCancelling(false)); }}>{cancelling ? "Cancelling…" : "Cancel upload"}</Button>
         </div>}
         {message && <Notice tone="critical" role="alert">{message}</Notice>}
         {canUpload && !busy && <div className="flex flex-wrap gap-[var(--space-2)]">
