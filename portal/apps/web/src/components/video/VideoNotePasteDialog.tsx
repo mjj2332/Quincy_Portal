@@ -68,6 +68,8 @@ export function VideoNotePasteDialog({ open, onOpenChange, store, assetId, targe
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<{ text: string; retry: boolean } | null>(null);
   const latest = useRef(0);
+  // Set by a 409: the next plan to arrive is the fresh one, so ticks for notes it can no longer paste are dropped.
+  const pruneTicks = useRef(false);
   const noteIdsKey = clipboard.noteIds.join(",");
 
   useEffect(() => {
@@ -75,7 +77,15 @@ export function VideoNotePasteDialog({ open, onOpenChange, store, assetId, targe
     const mine = ++latest.current;
     setLoading(true); setLoadError(null);
     previewPaste({ sourceAssetId: clipboard.sourceAssetId, noteIds: clipboard.noteIds, offsetFrames: asked }).then(
-      (plan) => { if (mine === latest.current) { setPreview(plan); setLoading(false); } },
+      (plan) => {
+        if (mine !== latest.current) return;
+        if (pruneTicks.current) {
+          pruneTicks.current = false;
+          const pastable = new Set(plan.rows.filter((row) => row.status === "mapped").map((row) => row.noteId));
+          for (const noteId of store.pasteDraft(assetId).unticked) if (!pastable.has(noteId)) store.setPasteTicked(assetId, noteId, true);
+        }
+        setPreview(plan); setLoading(false);
+      },
       (error: unknown) => { if (mine === latest.current) { setLoading(false); setLoadError(classifyVideoNoteError(error).kind === "network" ? "Couldn't reach the server." : error instanceof Error && error.message ? error.message : "The notes could not be previewed."); } },
     );
     return () => { latest.current += 1; };
@@ -104,7 +114,9 @@ export function VideoNotePasteDialog({ open, onOpenChange, store, assetId, targe
     } catch (error) {
       const classified = classifyVideoNoteError(error);
       if (classified.kind === "stale" && classified.preview) {
-        setPreview(classified.preview);
+        // The 409's plan covers only the notes that were sent; ask again for the whole clipboard, at the offset on screen. Ticks and offset stay in the store.
+        pruneTicks.current = true;
+        setReload((n) => n + 1);
         setNotice("Some notes changed since the preview, so the list was refreshed. Check it, then paste again.");
       } else if (classified.kind === "network") {
         setFailure({ text: "Couldn't reach the server. Nothing is lost; try again — notes already pasted are not pasted twice.", retry: true });

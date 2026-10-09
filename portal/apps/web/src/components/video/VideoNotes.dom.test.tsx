@@ -1237,6 +1237,8 @@ describe("Copy and paste notes (#741 5c-ui)", () => {
     const fresh = planFor([v1.a.id, v1.b.id], 0);
     fresh.rows[1] = { ...fresh.rows[1]!, source: { ...(fresh.rows[1] as { source: object }).source, revision: 2, excerpt: "Hold the logo longer" } } as never;
     api.apiPost.mockRejectedValueOnce(new ApiError("Some notes changed since the preview.", 409, { code: "paste_stale", error: "x", preview: { ...fresh, rows: [...fresh.rows, { noteId: v1.c.id, status: "skipped", reason: "deleted", source: null }] } }));
+    const stalePlan = { ...fresh, rows: [...fresh.rows, { noteId: v1.c.id, status: "skipped", reason: "deleted", source: null }] };
+    api.apiPost.mockImplementationOnce(async () => stalePlan);
     await click(tid("video-note-paste-submit")!); await flush(6);
     expect(pasteDialog()).not.toBeNull();
     expect(tid("video-note-paste-notice")!.textContent).toContain("changed since");
@@ -1246,6 +1248,25 @@ describe("Copy and paste notes (#741 5c-ui)", () => {
     api.apiPost.mockImplementationOnce(async (_p, body) => ({ sourceVersion: 1, targetVersion: 2, offsetFrames: 0, copied: 2, skipped: 0, rows: (body as { notes: Array<{ noteId: string }> }).notes.map((n) => ({ ...fresh.rows.find((r) => r.noteId === n.noteId)!, status: "copied", copyId: nid() })) }));
     await click(tid("video-note-paste-submit")!); await flush(6);
     expect((api.apiPost.mock.calls.at(-1)![1] as { notes: unknown[] }).notes).toEqual([{ noteId: v1.a.id, revision: 1 }, { noteId: v1.b.id, revision: 2 }]);
+  });
+
+  it("a 409 paste_stale asks again for the whole clipboard: unticked and skipped notes stay, the ticks and the offset are kept", async () => {
+    const v1 = v1Notes();
+    await copyOnV1(v1, { [v1.c.id]: "out_of_range" });
+    await openPasteDialog();
+    await setOffset("3"); await settle(PASTE_DEBOUNCE); await flush(4);
+    await click(rows()[1]!.querySelector<HTMLElement>('[role="checkbox"]')!);
+    // The server's 409 only covers the submitted note.
+    api.apiPost.mockRejectedValueOnce(new ApiError("Some notes changed since the preview.", 409, { code: "paste_stale", error: "x", preview: { sourceVersion: 1, targetVersion: 2, offsetFrames: 3, rows: [] } }));
+    await click(tid("video-note-paste-submit")!); await flush(6);
+    expect(tid("video-note-paste-notice")!.textContent).toContain("changed since");
+    expect(api.apiPost.mock.calls.at(-1)![0]).toMatch(/note-paste\/preview$/);
+    expect(api.apiPost.mock.calls.at(-1)![1]).toEqual({ sourceAssetId: ids.asset1, noteIds: v1.all.map((n) => n.id), offsetFrames: 3 });
+    expect(rows().map((r) => r.dataset.noteId)).toEqual([v1.a.id, v1.b.id]);
+    expect(rows().map((r) => r.querySelector('[role="checkbox"]')!.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+    expect(skipped().map((r) => r.dataset.noteId)).toEqual([v1.c.id]);
+    expect(offsetInput().value).toBe("3");
+    expect(stores.made.at(-1)!.pasteDraft(ids.asset2)).toEqual({ offset: 3, unticked: [v1.b.id] });
   });
 
   it("a network failure keeps the dialog and offers 'Try again', which sends the same payload", async () => {
