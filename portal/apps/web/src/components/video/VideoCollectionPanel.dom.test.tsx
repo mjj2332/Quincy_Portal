@@ -90,6 +90,8 @@ describe("Video cards (#741 4d-i)", () => {
     await mount([videoOf({ latestNoteCount: 1 })], ["notes"]);
     const chip = () => host.querySelector('[data-testid="video-card-open-notes"]');
     expect(chip()?.textContent).toBe("1 open note");
+    // On the versions row, not a row of its own, so cards with and without notes keep the same height.
+    expect(chip()?.closest('[data-testid="video-card-versions-row"]')).not.toBeNull();
     await unmount();
     await mount([videoOf({ latestNoteCount: 3 })], ["notes"]);
     expect(chip()?.textContent).toBe("3 open notes");
