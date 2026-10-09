@@ -27,7 +27,7 @@ import {
   videoTrack,
   type Mp4Spec,
   type TrackSpec,
-} from "./fixtures/mp4-builder";
+} from "../src/testing/mp4-builder";
 
 const probeOf = async (spec: Mp4Spec) => {
   const r = await probeMp4(buildMp4(spec));

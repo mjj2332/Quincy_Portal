@@ -27,6 +27,7 @@ import { mentionableUsersRoutes } from "./routes/mentionable-users";
 import { projectCommentsRoutes } from "./routes/project-comments";
 import { embeddedMediaRoutes } from "./routes/embedded-media";
 import { videosRoutes } from "./routes/videos";
+import { videoUploadsRoutes } from "./routes/video-uploads";
 import { linkPreviewRoutes } from "./routes/link-previews";
 import { projectSubtasksRoutes } from "./routes/project-subtasks";
 import { projectDeadlineRoutes } from "./routes/project-deadline";
@@ -78,7 +79,7 @@ app.all("/api/auth/*", terminalRoute("/api/auth/*", (c) => getAuth(c.env).handle
 const api = new Hono<AppEnv>();
 api.use("/*", requireSession);
 api.get("/me", terminalRoute("/me", (c) => { const { via: _via, ...user } = c.get("user"); const response = { user, capabilities: [...(ROLE_CAPABILITIES[user.role] ?? [])] }; return c.json(user.role === "external_editor" ? externalMeResponseSchema.parse(response) : response); }));
-api.route("/", usersRoutes).route("/", projectsRoutes).route("/", projectDeadlineRoutes).route("/", notificationPreferencesRoutes).route("/", externalUploadsRoutes).route("/", uploadsRoutes).route("/", collectionsRoutes).route("/", integrationsRoutes).route("/", reviewRoutes).route("/", annotationsRoutes).route("/", stagesRoutes).route("/", adminRoutes).route("/", noticeBoardRoutes).route("/", mentionableUsersRoutes).route("/", projectCommentsRoutes).route("/", embeddedMediaRoutes).route("/", videosRoutes).route("/", linkPreviewRoutes).route("/", projectSubtasksRoutes).route("/", notificationsRoutes).route("/", assetsRoutes).route("/", projectAccessSnapshotRoutes).route("/", dashboardPeopleRoutes).route("/", productionCalendarRoutes).route("/", productionGanttRoutes).route("/", projectActivityRoutes).route("/", projectWhiteboardRoutes).route("/", connectedAppsRoutes).route("/", bootTimingRoutes);
+api.route("/", usersRoutes).route("/", projectsRoutes).route("/", projectDeadlineRoutes).route("/", notificationPreferencesRoutes).route("/", externalUploadsRoutes).route("/", uploadsRoutes).route("/", collectionsRoutes).route("/", integrationsRoutes).route("/", reviewRoutes).route("/", annotationsRoutes).route("/", stagesRoutes).route("/", adminRoutes).route("/", noticeBoardRoutes).route("/", mentionableUsersRoutes).route("/", projectCommentsRoutes).route("/", embeddedMediaRoutes).route("/", videosRoutes).route("/", videoUploadsRoutes).route("/", linkPreviewRoutes).route("/", projectSubtasksRoutes).route("/", notificationsRoutes).route("/", assetsRoutes).route("/", projectAccessSnapshotRoutes).route("/", dashboardPeopleRoutes).route("/", productionCalendarRoutes).route("/", productionGanttRoutes).route("/", projectActivityRoutes).route("/", projectWhiteboardRoutes).route("/", connectedAppsRoutes).route("/", bootTimingRoutes);
 app.route("/api", api);
 app.all("/api", terminalRoute("/api", (c) => c.json({ error: "Not found" }, 404)));
 app.all("/api/*", terminalRoute("/api/*", (c) => c.json({ error: "Not found" }, 404)));

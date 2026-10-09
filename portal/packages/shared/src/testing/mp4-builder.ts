@@ -1,4 +1,4 @@
-import type { ByteSource } from "../../src/video-mp4-probe";
+import type { ByteSource } from "../video-mp4-probe";
 
 /** Test-only MP4 builder. Nothing is checked in as a binary: files are assembled here, and `mdat` (and
  *  any padding) is a sparse virtual region whose reads return zeros, so multi-GB files cost nothing. */
@@ -71,9 +71,10 @@ export function sourceFrom(segments: Segment[]): BuiltSource {
       const out = new Uint8Array(Math.max(0, end - offset));
       segments.forEach((s, i) => {
         if (!(s instanceof Uint8Array)) return;
-        const a = Math.max(offset, starts[i]);
-        const b = Math.min(end, starts[i] + s.length);
-        if (a < b) out.set(s.subarray(a - starts[i], b - starts[i]), a - offset);
+        const start = starts[i]!;
+        const a = Math.max(offset, start);
+        const b = Math.min(end, start + s.length);
+        if (a < b) out.set(s.subarray(a - start, b - start), a - offset);
       });
       return out;
     },
