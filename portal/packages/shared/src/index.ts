@@ -61,3 +61,4 @@ export * from "./video-timecode";
 export * from "./video-frame-geometry";
 export * from "./video-compare";
 export * from "./video-note-paste";
+export * from "./video-nle-export";
