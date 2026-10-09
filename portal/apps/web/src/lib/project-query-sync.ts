@@ -14,7 +14,8 @@ export type ProjectDataResource =
   | { kind: "comment-read-marker" }
   | { kind: "collaboration-summary" }
   | { kind: "video-review" }
-  | { kind: "videos" };
+  | { kind: "videos" }
+  | { kind: "video-notes"; assetId: string };
 
 export type ProjectDataSyncMessage =
   | {
@@ -80,6 +81,7 @@ function isResource(value: unknown): value is ProjectDataResource {
   if (!value || typeof value !== "object") return false;
   const resource = value as Record<string, unknown>;
   if (resource.kind === "detail" || resource.kind === "activity" || resource.kind === "subtasks" || resource.kind === "comments" || resource.kind === "comment-read-marker" || resource.kind === "collaboration-summary" || resource.kind === "video-review" || resource.kind === "videos") return Object.keys(resource).length === 1;
+  if (resource.kind === "video-notes") return nonEmptyString(resource.assetId) && Object.keys(resource).length === 2;
   return resource.kind === "assets" && validCollections.has(resource.collectionKind as CollectionKind) && Object.keys(resource).length === 2;
 }
 
@@ -137,6 +139,7 @@ export function projectResourceKey(projectId: string, resource: ProjectDataResou
     case "collaboration-summary": return projectDataKeys.collaborationSummary(projectId);
     case "video-review": return projectDataKeys.videoReview(projectId);
     case "videos": return projectDataKeys.videos(projectId);
+    case "video-notes": return projectDataKeys.videoNotes(projectId, resource.assetId);
     default: return assertNever(resource);
   }
 }

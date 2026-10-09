@@ -6,6 +6,8 @@ import { buildMp4, videoTrack, type Mp4Spec } from "../../../../../packages/shar
 import { QuincyQueryProvider } from "../../lib/query-client";
 import { resetVideoUploadStore, startVideoUpload } from "../../lib/video-upload-store";
 import { NOT_FAST_START_CAUTION, TIMECODE_MISMATCH_CAUTION, checkVideoFile } from "../../lib/video-upload";
+import { announcePrincipalTerminal } from "../../lib/principal-terminal";
+import { useOptionalProjectQueryClient } from "../../lib/project-data";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -13,6 +15,11 @@ import { VideoCollectionPanel } from "./VideoCollectionPanel";
 const auth = vi.hoisted(() => ({ userId: "44444444-4444-4444-8444-444444444444" }));
 vi.mock("../../lib/auth", () => ({ useSession: () => ({ data: { user: { id: auth.userId, role: "editor" } }, isPending: false }) }));
 vi.mock("../LazyImage", () => ({ LazyImage: ({ src, alt, className }: { src: string; alt: string; className?: string }) => <img src={src} alt={alt} className={className} /> }));
+const stores = vi.hoisted(() => ({ made: [] as Array<{ cancelAll: () => void }> }));
+vi.mock("../../lib/video-note-form-store", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/video-note-form-store")>();
+  return { ...actual, createNoteFormStore: (key: string) => { const store = actual.createNoteFormStore(key); stores.made.push(store); return store; } };
+});
 vi.mock("../../lib/video-poster", () => ({ captureVideoPoster: () => Promise.resolve(null) }));
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
@@ -387,5 +394,25 @@ describe("Completion warnings (#741 4d-i, Sol review)", () => {
     await pick(await good(), host.querySelector('[data-testid="new-film-uploader"]')!); await press(button("Upload"));
     await act(async () => { const xhr = FakeXhr.instances[0]!; xhr.status = 200; xhr.onload?.(); }); await flush(16);
     expect(host.querySelector('[data-testid="video-upload-tray"]')).toBeNull();
+  });
+});
+
+describe("Session end and the note form store (#741 5b, Sol r4)", () => {
+  it("only this panel's own session (or a global announcement) cancels a pending Post confirmation", async () => {
+    let own: object | undefined;
+    const Probe = () => { own = useOptionalProjectQueryClient(); return null; };
+    apiGetMock.mockImplementation(async (path) => { if (path.endsWith("/videos")) return { videos: [videoOf()] }; throw new Error(`unrouted ${path}`); });
+    host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><Probe /><VideoCollectionPanel projectId={PROJECT} role="editor" review={{ open: true, parts: ["notes"] as never }} /></QuincyQueryProvider>); });
+    await flush();
+    const store = stores.made.at(-1)!;
+    const cancel = vi.spyOn(store, "cancelAll");
+    expect(own).toBeDefined();
+    announcePrincipalTerminal({}); // a retired session's late 401
+    expect(cancel).not.toHaveBeenCalled();
+    announcePrincipalTerminal(own);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    announcePrincipalTerminal();
+    expect(cancel).toHaveBeenCalledTimes(2);
   });
 });

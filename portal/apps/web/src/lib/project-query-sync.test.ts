@@ -422,3 +422,42 @@ describe("dashboard-board-invalidated carries the People flag across tabs (#429)
     vi.unstubAllGlobals();
   });
 });
+
+describe("video-notes resource (#741 5b)", () => {
+  const asset = "77777777-7777-4777-8777-777777777777";
+  it("resolves to the exact per-Version key and parses only with an asset id and nothing else", () => {
+    expect(projectResourceKey("a", { kind: "video-notes", assetId: asset })).toEqual(projectDataKeys.videoNotes("a", asset));
+    expect(projectDataKeys.videoNotes("a", asset)).toEqual(["project-data", "a", "video-notes", asset]);
+    const message = createProjectDataInvalidationMessage("a", [{ kind: "video-notes", assetId: asset }]);
+    const ok = parseProjectDataSyncMessage({ ...message, sourceTabId: "s" });
+    expect(ok && ok.type === "project-data-invalidated" ? ok.resources : []).toEqual([{ kind: "video-notes", assetId: asset }]);
+    const parse = (resources: unknown[]) => parseProjectDataSyncMessage({ ...message, sourceTabId: "s", resources });
+    expect(parse([{ kind: "video-notes", assetId: asset, extra: 1 }])).toBeNull();
+    expect(parse([{ kind: "video-notes", assetId: "" }])).toBeNull();
+    expect(parse([{ kind: "video-notes" }])).toBeNull();
+  });
+
+  it("a received invalidation reaches the exact Version key only", async () => {
+    class FakeChannel {
+      static channels: FakeChannel[] = [];
+      readonly listeners = new Set<(event: MessageEvent<unknown>) => void>();
+      constructor(readonly name: string) { FakeChannel.channels.push(this); }
+      addEventListener(_type: string, listener: (event: MessageEvent<unknown>) => void) { this.listeners.add(listener); }
+      postMessage(data: unknown) { for (const channel of FakeChannel.channels.filter((item) => item.name === this.name)) for (const listener of channel.listeners) listener({ data } as MessageEvent<unknown>); }
+      close() { FakeChannel.channels = FakeChannel.channels.filter((item) => item !== this); this.listeners.clear(); }
+    }
+    vi.stubGlobal("BroadcastChannel", FakeChannel);
+    const senderClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const receiverClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const sender = new ProjectQueryRuntime(senderClient, "sender"); const receiver = new ProjectQueryRuntime(receiverClient, "receiver");
+    sender.start(); receiver.start();
+    const other = "66666666-6666-4666-8666-666666666666";
+    receiverClient.setQueryData(projectDataKeys.videoNotes("p", asset), []); receiverClient.setQueryData(projectDataKeys.videoNotes("p", other), []);
+    sender.publish(createProjectDataInvalidationMessage("p", [{ kind: "video-notes", assetId: asset }]));
+    await Promise.resolve();
+    expect(receiverClient.getQueryCache().find({ queryKey: projectDataKeys.videoNotes("p", asset), exact: true })?.state.isInvalidated).toBe(true);
+    expect(receiverClient.getQueryCache().find({ queryKey: projectDataKeys.videoNotes("p", other), exact: true })?.state.isInvalidated).toBe(false);
+    sender.dispose(); receiver.dispose(); senderClient.clear(); receiverClient.clear();
+    vi.unstubAllGlobals();
+  });
+});
