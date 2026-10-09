@@ -20,6 +20,7 @@ vi.mock("./project-data", async (importOriginal) => {
     invalidateProjectSurfaces: vi.fn(async (client: QueryClient, input: Parameters<typeof actual.invalidateProjectSurfaces>[1]) => { order.push(`invalidate:${input.resources.map((r) => r.kind).join(",")}`); }),
   };
 });
+import { announcePrincipalTerminal } from "./principal-terminal";
 import { projectDataKeys } from "./project-data";
 import { classifyVideoNoteError, createVideoNote, deleteVideoNote, editVideoNote, listVideoNotes, replyToVideoNote, setVideoNoteResolution } from "./video-notes-data";
 
@@ -205,5 +206,14 @@ describe("video notes data: access errors are handled where the write is made (#
     expect(client.getQueryData(projectDataKeys.videoNotes(P, A))).toEqual([]);
     expect(fresh.getQueryData<VideoNoteThreadDto[]>(projectDataKeys.videoNotes(P, A))!.map((t) => t.body)).toEqual(["fresh"]);
     fresh.clear();
+  });
+
+  it("a success whose client is retired while its read is being cancelled writes nothing to that cache", async () => {
+    client.setQueryData(projectDataKeys.videoNotes(P, A), []);
+    const cancel = client.cancelQueries.bind(client);
+    vi.spyOn(client, "cancelQueries").mockImplementationOnce(async (...args) => { await cancel(...args); announcePrincipalTerminal(client); });
+    api.apiPost.mockResolvedValueOnce(thread({ body: "late" }));
+    await createVideoNote(ctx(), { startFrame: 1, visibility: "internal", body: "x" });
+    expect(client.getQueryData<VideoNoteThreadDto[]>(projectDataKeys.videoNotes(P, A))?.map((t) => t.body) ?? []).not.toContain("late");
   });
 });

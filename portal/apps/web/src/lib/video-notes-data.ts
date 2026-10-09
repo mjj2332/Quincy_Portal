@@ -51,6 +51,7 @@ async function patch(ctx: NoteWriteContext, change: (list: VideoNoteThreadDto[])
   if (retired.has(ctx.queryClient)) return;
   const key = projectDataKeys.videoNotes(ctx.projectId, ctx.assetId);
   await ctx.queryClient.cancelQueries({ queryKey: key, exact: true });
+  if (retired.has(ctx.queryClient)) return; // a 401 elsewhere can end the session while the read is being cancelled
   if (ctx.queryClient.getQueryData<VideoNoteThreadDto[]>(key) === undefined) return;
   ctx.queryClient.setQueryData<VideoNoteThreadDto[]>(key, (current) => change(current ?? []));
 }
