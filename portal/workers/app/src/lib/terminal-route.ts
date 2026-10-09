@@ -44,7 +44,7 @@ export type SecurityRouteRegistration = {
   scope: SecurityRouteScope;
   projection: SecurityRouteProjection;
   response: SecurityRouteResponse;
-  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar" | "gantt";
+  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar" | "gantt" | "video-review";
 };
 type LegacySecurityRouteClass = "bearer-protocol" | "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "terminal-fallback";
 type LegacySecurityRouteRegistrationSeed = { method: string; path: string; class: LegacySecurityRouteClass; externalSurface?: SecurityRouteRegistration["externalSurface"] };
@@ -211,6 +211,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/api/projects/:projectId/embedded-media/:mediaId/rendition", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/embedded-media/:mediaId/rendition/retry", class: "scoped" },
   { method: "GET", path: "/api/embedded-media/settings", class: "global-self" },
+  { method: "GET", path: "/api/projects/:projectId/video-review", class: "scoped", externalSurface: "video-review" },
   { method: "POST", path: "/api/projects/:projectId/link-previews", class: "scoped" },
   { method: "GET", path: "/api/projects/:projectId/activity", class: "scoped", externalSurface: "activity" },
   { method: "GET", path: "/api/projects/:projectId/activity/", class: "scoped", externalSurface: "activity" },

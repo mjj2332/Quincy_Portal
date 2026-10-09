@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from "vitest";
-import { embeddedMediaDisplayKey, embeddedMediaObjectKey, embeddedMediaPosterKey, noticeEmbeddedMediaObjectKey } from "@quincy/shared";
+import { embeddedMediaDisplayKey, embeddedMediaObjectKey, embeddedMediaPosterKey, noticeEmbeddedMediaObjectKey, videoObjectKey, videoPosterKey } from "@quincy/shared";
 import { sweepEmbeddedMedia } from "../src/embedded-media-sweep";
 import { sweepEmbeddedMediaOrphans } from "../src/embedded-media-orphan-sweep";
 
@@ -141,6 +141,15 @@ describe("embedded media orphan sweep (#549)", () => {
     expect(await sweepEmbeddedMediaOrphans(mode("reclaim", { env: media }), now)).toMatchObject({ reclaimed: 0 });
     expect(await queueSize()).toBe(0);
     for (const key of strangers) expect(await objectExists(key)).toBe(true);
+  });
+
+  it("never touches a staff Video original or poster (#741): those keys get the cleanup queue backstop, never age-based reclaim", async () => {
+    const video = [videoObjectKey(projectId, crypto.randomUUID(), crypto.randomUUID()), videoPosterKey(projectId, crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID())];
+    for (const key of video) await put(key);
+    const { env: media } = bucket();
+    expect(await sweepEmbeddedMediaOrphans(mode("reclaim", { env: media }), now)).toMatchObject({ reclaimed: 0 });
+    expect(await queueSize()).toBe(0);
+    for (const key of video) expect(await objectExists(key)).toBe(true);
   });
 
   it("covers the Notice board prefix, and a deleted Project's leftover folder", async () => {

@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { isEmbeddedHeicContentType, isEmbeddedMediaContentType, ifRangeAllows, parseByteRange, DNG_CONTENT_TYPE, RENDITION_SPECS, RENDITION_SPEC_VERSION, TRANSFORM_CACHE_VERSION, dngPreviewKey, rawMediaContentType } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
@@ -37,7 +37,7 @@ async function externalAsset(c: Context<AppEnv>, assetId: string) {
     .innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id))
     .innerJoin(schema.projects, eq(schema.collections.projectId, schema.projects.id))
     .leftJoin(schema.projectMembers, and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id)))
-    .where(and(eq(schema.assets.id, assetId), isNull(schema.assets.supersededAt), visibleProjectWhere(user)))
+    .where(and(eq(schema.assets.id, assetId), isNull(schema.assets.supersededAt), ne(schema.assets.kind, "video"), visibleProjectWhere(user)))
     .get();
 }
 
@@ -96,7 +96,7 @@ mediaRoutes.get("/asset/:assetId/:variant", terminalRoute("/asset/:assetId/:vari
     if (object.httpEtag) headers.etag = object.httpEtag;
     return new Response(object.body, { headers });
   }
-  const db = createDb(c.env.DB); const row = await db.select({ asset: schema.assets, projectId: schema.collections.projectId, collectionKind: schema.collections.kind }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(and(eq(schema.assets.id, assetId), isNull(schema.assets.supersededAt))).get(); if (!row) return c.json({ error: "Asset not found" }, 404);
+  const db = createDb(c.env.DB); const row = await db.select({ asset: schema.assets, projectId: schema.collections.projectId, collectionKind: schema.collections.kind }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(and(eq(schema.assets.id, assetId), isNull(schema.assets.supersededAt), ne(schema.assets.kind, "video"))).get(); if (!row) return c.json({ error: "Asset not found" }, 404);
   if (!isUserVisibleAsset(row.collectionKind, row.asset.publishStatus)) return unpublishedAssetResponse(c);
   if (!await hasProjectAccess(c, row.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   {

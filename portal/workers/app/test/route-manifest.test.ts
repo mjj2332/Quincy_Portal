@@ -71,6 +71,10 @@ beforeAll(async () => {
       .bind(manifestRawCollectionId, manifestProjectId, now, now, manifestEditedCollectionId, manifestProjectId, now, now),
     database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)")
       .bind(manifestMembershipId, manifestProjectId, externalUserId, now),
+    // Test-only flag rows (never a migration): the video review gate is open on the manifest Project with the upload part on, so the
+    // `video-review` probe parses a non-empty `parts` and not only the closed shape.
+    database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_at) VALUES ('video_review', 1, ?), ('video_review_upload', 1, ?), (?, 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1")
+      .bind(now, now, `video_review_pilot:${manifestProjectId}`, now),
   ]);
 });
 
@@ -189,6 +193,14 @@ describe("terminal route manifest", () => {
         path: `/api/projects/${manifestProjectId}/activity`,
         parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS.activity.parse(body),
       },
+      "video-review": {
+        path: `/api/projects/${manifestProjectId}/video-review`,
+        parse: (body: unknown) => {
+          const parsed = EXTERNAL_API_RESPONSE_SCHEMAS["video-review"].parse(body);
+          expect(parsed).toEqual({ open: true, parts: ["upload"] });
+          return parsed;
+        },
+      },
     } as const;
     // Each surface's honest scope: a project-child route resolves an assigned project;
     // /api/stages is a principal-global configuration read with no project in the path.
@@ -200,6 +212,7 @@ describe("terminal route manifest", () => {
       gantt: "assigned-project",
       stage: "assigned-project",
       activity: "assigned-project",
+      "video-review": "assigned-project",
     };
     const declared = PROJECT_SECURITY_ROUTE_CLASSIFICATION.filter((route) => route.externalSurface);
     expect(new Set(declared.map((route) => route.externalSurface))).toEqual(new Set(Object.keys(probes)));
@@ -219,7 +232,7 @@ describe("terminal route manifest", () => {
         const headers = new Headers(init.headers); headers.set("content-type", "application/json"); headers.set("origin", baseEnv.APP_ORIGIN);
         init.headers = headers; init.body = body;
       }
-      const probePath = route.externalSurface === "stage" || route.externalSurface === "activity" ? concreteManifestPath(route.path) : probe.path;
+      const probePath = route.externalSurface === "stage" || route.externalSurface === "activity" || route.externalSurface === "video-review" ? concreteManifestPath(route.path) : probe.path;
       const response = await SELF.fetch(`https://portal.test${probePath}`, init);
       expect(response.status, `${route.method} ${route.path}`).toBeGreaterThanOrEqual(200);
       expect(response.status, `${route.method} ${route.path}`).toBeLessThan(300);

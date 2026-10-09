@@ -351,9 +351,9 @@ describe("external-editor visibility inventory", () => {
     // Written against the shared source of truth, not the DOM, so it still holds the line if the
     // frozen inventories below are ever legitimately re-captured.
     expect([...EXTERNAL_EDITOR_CAPABILITIES].sort()).toEqual([
-      "annotateEdited", "annotateRaw", "collaborateOnProject", "compareFrames", "moveProjectStage",
-      "recommendRaw", "reviewEdited", "uploadEdited", "uploadExtras", "viewEdited",
-      "viewProductionCalendar", "viewRaw",
+      "annotateEdited", "annotateRaw", "annotateVideo", "collaborateOnProject", "compareFrames", "moveProjectStage",
+      "recommendRaw", "reviewEdited", "uploadEdited", "uploadExtras", "uploadVideo", "viewEdited",
+      "viewProductionCalendar", "viewRaw", "viewVideo",
     ]);
     for (const forbidden of ["adminBackend", "editProject", "uploadRaw", "selectForEditing", "viewNoticeBoard"]) {
       expect(ROLE_CAPABILITIES.external_editor as readonly string[]).not.toContain(forbidden);

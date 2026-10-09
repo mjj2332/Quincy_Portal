@@ -6,6 +6,10 @@ Answers: where an API route is registered, which guard gates it, how to list eve
 - `/media`: own sub-app with `mediaNoStoreByDefault` + `requireSession` portal/workers/app/src/index.ts:81.
 - Directly on `app`: `/api/health` portal/workers/app/src/index.ts:55, `/api/auth/admin/impersonate-user` portal/workers/app/src/index.ts:71, better-auth `/api/auth/*` portal/workers/app/src/index.ts:73, 404 terminal `/api/*` portal/workers/app/src/index.ts:80, SPA fallback `"*"` portal/workers/app/src/index.ts:115.
 
+## Staff video review (#741)
+- `portal/workers/app/src/routes/videos.ts` (`videosRoutes`, chained into `api` in `index.ts`): `GET /api/projects/:projectId/video-review` (External surface `video-review`). The gate is `lib/video-review-gate.ts` (feature-flag rows, `video_review*`); every route checks inline in the order 400 id, Project visibility, gate, capability, and never uses `.use(...)`.
+- Video-kind Assets are refused by every Asset-by-id door (`/media/asset`, `/projects/:id/assets`, `/assets/:id/review`, `DELETE /assets/:id`, `/__transform-source`, the two cover readers): they answer as an unknown id. The Video routes are the only way to a Version.
+
 ## Registrations a literal grep misses
 | Registration | Routes |
 |---|---|
