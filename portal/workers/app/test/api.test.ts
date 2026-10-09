@@ -935,10 +935,16 @@ describe("staff app API", () => {
         .bind(extraAssetId, collection!.id, assetKind, extraKey, filename, collectionKind.length, now, now).run();
       const extraList = await SELF.fetch(`https://portal.test/api/projects/${assigned}/assets?collection=${collectionKind}`, { headers: { cookie: externalCookie } });
       expect(extraList.status).toBe(200);
-      await expect(extraList.json()).resolves.toMatchObject({ assets: expect.arrayContaining([expect.objectContaining({ id: extraAssetId, kind: assetKind, originalFilename: filename })]) });
       const extraOriginal = await SELF.fetch(`https://portal.test/media/asset/${extraAssetId}/original`, { headers: { cookie: externalCookie } });
-      expect(extraOriginal.status).toBe(200);
-      expect(extraOriginal.headers.get("content-type")).toContain(contentType);
+      if (assetKind === "video") {
+        // #741: a video-kind Asset is a Video Version. The generic asset routes treat it as an unknown id; the Video routes are its only door.
+        await expect(extraList.json()).resolves.toEqual({ assets: [] });
+        expect(extraOriginal.status).toBe(403);
+      } else {
+        await expect(extraList.json()).resolves.toMatchObject({ assets: expect.arrayContaining([expect.objectContaining({ id: extraAssetId, kind: assetKind, originalFilename: filename })]) });
+        expect(extraOriginal.status).toBe(200);
+        expect(extraOriginal.headers.get("content-type")).toContain(contentType);
+      }
       expect((await SELF.fetch(`https://portal.test/api/projects/${unassigned}/assets?collection=${collectionKind}`, { headers: { cookie: externalCookie } })).status).toBe(404);
       const extraReview = await SELF.fetch(`https://portal.test/api/assets/${extraAssetId}/review`, { method: "POST", headers: { cookie: externalCookie, "content-type": "application/json" }, body: JSON.stringify({ recommended: true }) });
       expect(extraReview.status).toBe(404);

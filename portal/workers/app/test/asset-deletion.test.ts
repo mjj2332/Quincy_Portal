@@ -71,7 +71,8 @@ beforeAll(async () => {
 describe("admin asset deletion", () => {
   it("deletes every asset kind, exact original/rendition keys, cascades D1 children, deletes annotation R2 (#283), and reconciles count", async () => {
     const project = await seedProject(["edited", "video", "floorplan", "copy"]);
-    for (const kind of ["photo", "edited", "video", "copy_pdf"]) {
+    // A video-kind Asset is a Video Version and is not deletable here (#741); its 409 is pinned in video-side-doors.test.ts.
+    for (const kind of ["photo", "edited", "copy_pdf"]) {
       const asset = await seedAsset(project, kind); const key = `renditions/${asset.id}/web`; const annotationKey = `projects/${project.projectId}/annotations/${asset.id}.json`;
       // An earlier edit's stroke object, no longer referenced by any row, under a photo's own prefix.
       // Only photos can be annotated, so only their prefixes are walked.
