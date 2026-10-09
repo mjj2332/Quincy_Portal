@@ -74,12 +74,10 @@ beforeAll(async () => {
     database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?")
       .bind(now, manifestArchivedProjectId),
     database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?), (?, ?, 'edited', 'empty', 0, ?, ?), (?, ?, 'video', 'empty', 0, ?, ?)")
-      .bind(manifestRawCollectionId, manifestProjectId, now, now, manifestEditedCollectionId, manifestProjectId, now, now, crypto.randomUUID(), manifestProjectId, now, now),
+      .bind(manifestRawCollectionId, manifestProjectId, now, now, manifestEditedCollectionId, manifestProjectId, now, now, manifestVideoCollectionId, manifestProjectId, now, now),
     database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)")
       .bind(manifestMembershipId, manifestProjectId, externalUserId, now),
     // Test-only video rows: one Version with a public note, an internal note and a reply that inherited internal (never a migration).
-    database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'video', 'empty', 0, ?, ?)")
-      .bind(manifestVideoCollectionId, manifestProjectId, now, now),
     database.DB.prepare("INSERT INTO videos (id, project_id, collection_id, title, premium, position, created_by, created_at, updated_at) VALUES (?, ?, ?, 'Manifest film', 0, 0, ?, ?, ?)")
       .bind(manifestVideoId, manifestProjectId, manifestVideoCollectionId, externalUserId, now, now),
     database.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, version_group_id, version, publish_status, created_at, updated_at) VALUES (?, ?, 'video', ?, 'film.mp4', 4096, 'upload', ?, 1, 'ready', ?, ?)")
