@@ -50,6 +50,8 @@ export const projectDataKeys = {
   videoReview: (projectId: string) => ["project-data", projectId, "video-review"] as const,
   /** The Project's Videos with every Version (#741). */
   videos: (projectId: string) => ["project-data", projectId, "videos"] as const,
+  /** Every note thread on one Video Version (#741 5b). Under the Project root, so `project-data-removed` clears it; keyed by the Version's Asset id. */
+  videoNotes: (projectId: string, assetId: string) => ["project-data", projectId, "video-notes", assetId] as const,
 };
 
 export type AccessErrorScope = "principal" | "project" | "collection" | "collaboration";

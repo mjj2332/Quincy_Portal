@@ -27,7 +27,7 @@ describe("playerKeyAction (#741 4d-ii)", () => {
     expect(playerKeyAction(keydown(key))).toEqual(action);
   });
 
-  it("leaves every other key alone, I and O (reserved for in/out points) and Escape included", () => {
+  it("leaves every other key alone, I and O (unless the host takes marks) and Escape included", () => {
     for (const key of ["i", "o", "Escape", "x", "ArrowUp", "Enter", "Tab"]) expect(playerKeyAction(keydown(key))).toBeNull();
   });
 
@@ -84,5 +84,33 @@ describe("playerKeyAction (#741 4d-ii)", () => {
   it("a held Space / J / K / L does not walk the shuttle ladder, but a held arrow keeps stepping", () => {
     for (const key of [" ", "k", "l", "j"]) expect(playerKeyAction(keydown(key, { repeat: true }))).toBeNull();
     expect(playerKeyAction(keydown("ArrowRight", { repeat: true }))).toEqual({ type: "step", delta: 1 });
+  });
+
+  describe("in / out marks (#741 5b)", () => {
+    it("I and O map to a mark only when the host asks for marks", () => {
+      expect(playerKeyAction(keydown("i"), { marks: true })).toEqual({ type: "mark", kind: "in" });
+      expect(playerKeyAction(keydown("I"), { marks: true })).toEqual({ type: "mark", kind: "in" });
+      expect(playerKeyAction(keydown("o"), { marks: true })).toEqual({ type: "mark", kind: "out" });
+      expect(playerKeyAction(keydown("O"), { marks: true })).toEqual({ type: "mark", kind: "out" });
+      expect(playerKeyAction(keydown("i"), { marks: false })).toBeNull();
+      expect(playerKeyAction(keydown("o"))).toBeNull();
+    });
+
+    it("ignores marks under a modifier, on key repeat, and typed into a field", () => {
+      expect(playerKeyAction(keydown("i", { ctrlKey: true }), { marks: true })).toBeNull();
+      expect(playerKeyAction(keydown("o", { metaKey: true }), { marks: true })).toBeNull();
+      expect(playerKeyAction(keydown("i", { repeat: true }), { marks: true })).toBeNull();
+      const field = mount("<textarea></textarea>");
+      expect(playerKeyAction(keydown("i", { target: field }), { marks: true })).toBeNull();
+      expect(playerKeyAction(keydown("o", { target: field }), { marks: true })).toBeNull();
+    });
+
+    it("a toggle group owns ArrowLeft / ArrowRight / Home / End (a filter, not the film), but not the other keys", () => {
+      const group = mount('<div role="group" data-slot="toggle-group"><button data-pressed>Open</button></div>');
+      const target = group.querySelector("button")!;
+      for (const key of ["ArrowLeft", "ArrowRight", "Home", "End"]) expect(playerKeyAction(keydown(key, { target })), key).toBeNull();
+      expect(playerKeyAction(keydown("k", { target }))).toEqual({ type: "toggle" });
+      expect(playerKeyAction(keydown("i", { target }), { marks: true })).toEqual({ type: "mark", kind: "in" });
+    });
   });
 });
