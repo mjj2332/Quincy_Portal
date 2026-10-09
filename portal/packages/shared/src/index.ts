@@ -62,3 +62,4 @@ export * from "./video-frame-geometry";
 export * from "./video-compare";
 export * from "./video-note-paste";
 export * from "./video-nle-export";
+export * from "./video-mp4-probe";
