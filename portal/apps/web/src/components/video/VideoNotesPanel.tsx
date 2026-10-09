@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { VideoNoteDto, VideoNoteThreadDto } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
 import { useNow } from "../../lib/use-now";
+import { EMPTY_MARKS } from "../../lib/video-note-marks";
 import { noteCounts, type NoteStatusFilter, type NoteVisibilityFilter } from "../../lib/video-note-view";
 import { classifyVideoNoteError } from "../../lib/video-notes-data";
 import { ARCHIVED_NOTICE_CLASS } from "../archived-notice";
@@ -19,12 +20,13 @@ import type { VideoNotesSession } from "./use-video-notes";
 const FILTER_ITEM = "min-h-8 pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const COUNT = "ms-[var(--space-1)] text-foreground-secondary tabular-nums";
 
-type Deleting = { note: VideoNoteDto; root: VideoNoteThreadDto; pending: boolean; error: string | null };
+/** `revision` is the one the confirm was opened with; after a conflict the person reviewed it becomes the current note's ("Delete anyway"). */
+type Deleting = { note: VideoNoteDto; root: VideoNoteThreadDto; revision: number; conflicted: boolean; pending: boolean; error: string | null };
 
 /** The words the delete confirm uses: a root others replied to stays on as "Note deleted" with its replies; anything else is gone for everyone. */
-function deleteCopy(tombstone: boolean) {
+function deleteCopy(tombstone: boolean, conflicted: boolean) {
   return {
-    title: "Delete note?", action: "Delete", pending: "Deleting…", fallbackSubject: "This note",
+    title: "Delete note?", action: conflicted ? "Delete anyway" : "Delete", pending: "Deleting…", fallbackSubject: "This note",
     description: (subject: ReactNode) => tombstone
       ? <>{subject} will be replaced by “Note deleted” because others replied to it. Their replies stay. This can't be undone.</>
       : <>{subject} will be removed for everyone. This can't be undone.</>,
@@ -61,22 +63,30 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
     const index = shown.findIndex((thread) => thread.id === root.id);
     const neighbours = [shown[index + 1]?.id, shown[index - 1]?.id].filter((id): id is string => id !== undefined);
     focusIds.current = [root.id, ...neighbours];
-    setDeleting({ note, root, pending: false, error: null });
+    setDeleting({ note, root, revision: note.revision, conflicted: false, pending: false, error: null });
   };
   const actions = { ...session.actions, requestDelete };
 
   async function confirmDelete() {
     if (!deleting || deleting.pending) return;
-    const { note } = deleting;
+    const { note, revision } = deleting;
     setDeleting({ ...deleting, pending: true, error: null });
     try {
-      await session.remove(note);
+      await session.remove(note, revision);
       setDeleting(null);
     } catch (error) {
       session.onWriteError(error);
-      const kind = classifyVideoNoteError(error).kind;
+      const classified = classifyVideoNoteError(error);
+      const kind = classified.kind;
       if (kind === "gone" || kind === "deleted") { session.refresh(); setDeleting(null); return; }
-      const message = kind === "conflict" ? "This note changed since you loaded it. Review it and try again."
+      if (kind === "conflict" && classified.thread) {
+        // The server's note beside the confirm; only an explicit "Delete anyway" sends its revision.
+        const current = [classified.thread, ...classified.thread.replies].find((candidate) => candidate.id === note.id);
+        const currentText = current && !current.deleted ? ` Current note: “${current.body.replace(/\s+/g, " ").trim().slice(0, 200)}”` : "";
+        setDeleting((open) => (open ? { ...open, pending: false, conflicted: true, revision: current?.revision ?? open.revision, error: `This note changed since you opened Delete.${currentText} Delete anyway removes it as it is now.` } : open));
+        return;
+      }
+      const message = kind === "conflict" ? "This note changed since you opened Delete. Review it and try again."
         : kind === "archived" ? "This Project was archived, so nothing was deleted."
         : kind === "network" ? "Couldn't reach the server. The note may or may not be deleted — refresh the notes to check."
         : error instanceof ApiError || error instanceof Error ? error.message || "The note could not be deleted." : "The note could not be deleted.";
@@ -97,6 +107,7 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
     && deleting.root.replies.some((reply) => !reply.deleted && JSON.stringify(reply.author) !== JSON.stringify(deleting.note.author));
   const excerpt = deleting && !deleting.note.deleted ? deleting.note.body.replace(/\s+/g, " ").trim().slice(0, 60) : "";
 
+  const composerActive = session.forms.active.kind === "composer";
   const total = (counts.totals.open + counts.totals.resolved);
   const loading = query.isPending;
   const failed = query.isError && !query.data;
@@ -151,7 +162,7 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
             frameCount={session.frameCount}
             actions={actions}
             onSeek={session.seekToNote}
-            editFrames={session.editFrames}
+            forms={session.forms}
           />)}
         </div>
       </ScrollArea>
@@ -164,9 +175,13 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
           clock={session.clock}
           frameCount={session.frameCount}
           timecode={session.timecode}
-          marks={session.marks}
-          onMark={session.markComposer}
-          onClearMarks={session.clearMarks}
+          marks={composerActive ? session.forms.marks : EMPTY_MARKS}
+          active={composerActive}
+          blocked={session.forms.phase === "posting" && !composerActive}
+          onActivate={session.forms.openComposer}
+          onPhaseChange={session.forms.setPhase}
+          onMark={session.forms.markFromClock}
+          onClearMarks={session.forms.clearComposerMarks}
           draft={session.draft}
           onDraftChange={session.onDraftChange}
           post={session.post}
@@ -183,7 +198,7 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
       onConfirm={() => { void confirmDelete(); }}
       onCancel={() => { setDeleting(null); }}
       finalFocus={deleteFinalFocus}
-      copy={deleteCopy(tombstoneDelete)}
+      copy={deleteCopy(tombstoneDelete, deleting?.conflicted ?? false)}
       testIdPrefix="video-note-delete"
     />
   </aside>;

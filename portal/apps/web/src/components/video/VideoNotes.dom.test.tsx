@@ -661,3 +661,152 @@ describe("Marker lane (test 26)", () => {
     }
   });
 });
+
+describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", () => {
+  const notesKey = () => projectDataKeys.videoNotes(PROJECT, ids.asset2);
+  const composerAnchor = () => tid("video-note-anchor")!.textContent ?? "";
+  const editForms = () => [...document.querySelectorAll<HTMLElement>('[data-notes-form="edit"]')];
+  const conflictOf = (note: VideoNoteThreadDto) => new ApiError("Conflict", 409, { code: "note_conflict", thread: note });
+
+  it("finding 1: Save sends the revision the form was opened with, not the one a refetch brought in; after the conflict only 'Save anyway' sends the new one", async () => {
+    const s = seed();
+    await openFilm({}, 20);
+    await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit");
+    const elsewhere = { ...s.n1, body: "Changed in another tab", revision: 2 } as VideoNoteThreadDto;
+    await act(async () => { queryClient!.setQueryData(notesKey(), seed().all.map((n) => (n.id === s.n1.id ? elsewhere : n))); });
+    await type(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!, "My edit");
+    api.apiPatch.mockRejectedValueOnce(conflictOf(elsewhere));
+    await click(tid("video-note-edit-save")!);
+    await flush(4);
+    expect(api.apiPatch).toHaveBeenCalledTimes(1);
+    expect(api.apiPatch.mock.calls[0]![1]).toEqual({ expectedRevision: 1, body: "My edit" });
+    expect(tid("video-note-conflict")!.textContent).toContain("Changed in another tab");
+    expect(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("My edit");
+    expect(tid("video-note-edit-save")!.textContent).toBe("Save anyway");
+    api.apiPatch.mockResolvedValueOnce(commit({ ...elsewhere, body: "My edit", revision: 3 } as VideoNoteThreadDto));
+    await click(tid("video-note-edit-save")!);
+    await flush(4);
+    expect(api.apiPatch.mock.calls[1]![1]).toEqual({ expectedRevision: 2, body: "My edit" });
+  });
+
+  it("finding 2: opening a second edit closes the first; I and O then mark the second, and Save sends its frames", async () => {
+    const s = seed();
+    await openFilm({}, 20);
+    await click(tid("video-notes-filter-status-all")!);
+    await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit");
+    await chooseNoteAction(threadOf(s.n4.id), "Terry", "Edit");
+    expect(editForms().length).toBe(1);
+    expect(threadOf(s.n1.id).querySelector('[data-notes-form="edit"]')).toBeNull();
+    expect(threadOf(s.n4.id).querySelector('[data-notes-form="edit"]')).not.toBeNull();
+    await dispatchKey(popup(), "i");
+    await flush(2);
+    api.apiPatch.mockResolvedValue(commit({ ...s.n4, startFrame: 20, endFrame: 251, revision: 2 } as VideoNoteThreadDto));
+    await click(tid("video-note-edit-save")!);
+    await flush(4);
+    expect(api.apiPatch).toHaveBeenCalledTimes(1);
+    expect(api.apiPatch).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n4.id}`, { expectedRevision: 1, startFrame: 20, endFrame: 251 });
+  });
+
+  it("finding 2: opening a reply closes an open edit (and its marks); the composer takes I and O again", async () => {
+    const s = seed();
+    await openFilm({}, 20);
+    await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit");
+    await click(tid("video-note-reply-button", threadOf(s.n2.id))!);
+    expect(editForms().length).toBe(0);
+    expect(document.querySelectorAll('[data-notes-form="reply"]').length).toBe(1);
+    await dispatchKey(popup(), "i");
+    await flush(2);
+    expect(composerAnchor()).not.toContain("In ");
+    await click(tid("video-note-set-in")!);
+    await flush(2);
+    expect(composerAnchor()).toContain("In ");
+    expect(document.querySelectorAll('[data-notes-form="reply"]').length).toBe(0);
+  });
+
+  it("finding 8: filtering the edited note away closes its form and hands I and O to the composer", async () => {
+    const s = seed();
+    await openFilm({}, 20);
+    await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit"); // n1 is Internal
+    await click(tid("video-notes-filter-visibility-public")!);
+    expect(noteIds()).not.toContain(s.n1.id);
+    expect(editForms().length).toBe(0);
+    await dispatchKey(popup(), "i");
+    await flush(2);
+    expect(composerAnchor()).toContain("In ");
+    expect(tid("video-pending-band")).not.toBeNull();
+  });
+
+  it("finding 5: Escape during frame confirmation returns the composer to idle with its text; the seek landing later posts nothing", async () => {
+    await openFilm({}, 12);
+    composerText().focus();
+    await type(composerText(), "Hold this");
+    await present(40);
+    await click(tid("video-note-post")!);
+    expect(tid("video-note-post")!.textContent).toBe("Confirming…");
+    await dispatchKey(composerText(), "Escape");
+    expect(dialog()).not.toBeNull();
+    expect(tid("video-note-post")!.textContent).toBe("Post");
+    expect((tid("video-note-post") as HTMLButtonElement).disabled).toBe(false);
+    expect(composerText().value).toBe("Hold this");
+    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 12 / 25); });
+    await flush(4);
+    expect(api.apiPost).not.toHaveBeenCalled();
+    expect(composerText().value).toBe("Hold this");
+  });
+
+  it("findings 3 and 4: a scrub to another frame before the anchor lands cancels the post ('Frame moved'); Post again posts the anchor", async () => {
+    await openFilm({}, 12);
+    await type(composerText(), "Anchored at 12");
+    await present(40);
+    await click(tid("video-note-post")!);
+    expect(composerText().readOnly).toBe(true);
+    await dispatchKey(popup(), "ArrowRight"); // a step supersedes the seek back to the anchor: the frame that lands is 13
+    await act(async () => { stub.finishSeek(playerVideo()!); });
+    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 13 / 25); });
+    await flush(4);
+    expect(api.apiPost).not.toHaveBeenCalled();
+    expect(composerBox()!.textContent).toContain("Frame moved — Post again");
+    expect(composerText().value).toBe("Anchored at 12");
+    expect(composerText().readOnly).toBe(false);
+  });
+
+  it("finding 6: I pauses a playing film and marks the frame it confirms; nothing is marked until the frame is on screen", async () => {
+    await openFilm({}, 5);
+    await click(dialog()!.querySelector<HTMLElement>('button[aria-label="Play"]')!);
+    await present(30);
+    stub.calls.length = 0;
+    await dispatchKey(popup(), "i");
+    expect(stub.calls).toContain("pause");
+    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 30 / 25); });
+    await flush(4);
+    expect(composerAnchor()).toContain("In 01:00:01:05");
+  });
+
+  it("finding 7: a Delete that hits a conflict shows the server's note; only 'Delete anyway' sends the new revision", async () => {
+    const s = seed();
+    await openFilm();
+    await chooseNoteAction(threadOf(s.n1.id), "Terry", "Delete");
+    const elsewhere = { ...s.n1, body: "Edited elsewhere", revision: 2 } as VideoNoteThreadDto;
+    api.apiDeleteWithBody.mockRejectedValueOnce(conflictOf(elsewhere));
+    await click(tid("video-note-delete-confirm-action")!);
+    await settle(50);
+    expect(api.apiDeleteWithBody.mock.calls[0]![1]).toEqual({ expectedRevision: 1 });
+    expect(tid("video-note-delete-error")!.textContent).toContain("Edited elsewhere");
+    expect(tid("video-note-delete-confirm-action")!.textContent).toBe("Delete anyway");
+    api.apiDeleteWithBody.mockResolvedValueOnce({ thread: null });
+    await click(tid("video-note-delete-confirm-action")!);
+    await settle(50);
+    expect(api.apiDeleteWithBody.mock.calls[1]![1]).toEqual({ expectedRevision: 2 });
+  });
+
+  it("finding 7: Delete sends the revision the confirm was opened with, not what a refetch brought in meanwhile", async () => {
+    const s = seed();
+    await openFilm();
+    await chooseNoteAction(threadOf(s.n1.id), "Terry", "Delete");
+    await act(async () => { queryClient!.setQueryData(notesKey(), seed().all.map((n) => (n.id === s.n1.id ? { ...s.n1, revision: 5 } as VideoNoteThreadDto : n))); });
+    api.apiDeleteWithBody.mockRejectedValueOnce(new ApiError("Server said no", 500));
+    await click(tid("video-note-delete-confirm-action")!);
+    await settle(50);
+    expect(api.apiDeleteWithBody.mock.calls[0]![1]).toEqual({ expectedRevision: 1 });
+  });
+});

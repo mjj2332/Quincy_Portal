@@ -31,7 +31,7 @@ const tc = (frame: number) => `TC${frame}`;
 let root: Root | null = null; let host: HTMLElement;
 type Props = React.ComponentProps<typeof VideoNoteComposer>;
 async function render(over: Partial<Props> = {}) {
-  const props: Props = { clock: null, frameCount: 300, timecode: tc, marks: EMPTY_MARKS, onMark: vi.fn(), onClearMarks: vi.fn(), draft: undefined, onDraftChange: vi.fn(), post: vi.fn(async () => ({})), onRefresh: vi.fn(), ...over };
+  const props: Props = { clock: null, frameCount: 300, timecode: tc, marks: EMPTY_MARKS, active: true, onActivate: vi.fn(), onPhaseChange: vi.fn(), onMark: vi.fn(), onClearMarks: vi.fn(), draft: undefined, onDraftChange: vi.fn(), post: vi.fn(async () => ({})), onRefresh: vi.fn(), ...over };
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   const rerender = async (next: Partial<Props>) => { Object.assign(props, next); await act(async () => { root!.render(<VideoNoteComposer {...props} />); }); };
   await act(async () => { root!.render(<VideoNoteComposer {...props} />); });
@@ -152,9 +152,9 @@ describe("VideoNoteComposer (#741 5b)", () => {
     expect(f.raw.seekToFrame).not.toHaveBeenCalled();
     expect(props.post).toHaveBeenCalledWith({ startFrame: 10, endFrame: 21, visibility: "internal", body: "range" });
     await click(byTestId("video-note-set-in")!);
-    expect(props.onMark).toHaveBeenLastCalledWith("in", 33);
+    expect(props.onMark).toHaveBeenLastCalledWith("in");
     await click(byTestId("video-note-set-out")!);
-    expect(props.onMark).toHaveBeenLastCalledWith("out", 33);
+    expect(props.onMark).toHaveBeenLastCalledWith("out");
     await click(byTestId("video-note-clear-marks")!);
     expect(props.onClearMarks).toHaveBeenCalled();
   });
@@ -231,5 +231,127 @@ describe("VideoNoteComposer (#741 5b)", () => {
     expect(form.dataset.dirty).toBe("false");
     await type("x");
     expect(form.dataset.dirty).toBe("true");
+  });
+});
+
+describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
+  it("finding 3: from Post until the request settles, the text, the visibility and the marks are read-only", async () => {
+    const f = fakeClock();
+    const { props } = await render({ clock: f.clock });
+    await type("first");
+    await click(postButton());
+    expect(postButton().textContent).toBe("Confirming…");
+    expect(textarea().readOnly).toBe(true);
+    expect((visibilityItem("public") as HTMLButtonElement).disabled).toBe(true);
+    expect((byTestId("video-note-set-in") as HTMLButtonElement).disabled).toBe(true);
+    expect((byTestId("video-note-set-out") as HTMLButtonElement).disabled).toBe(true);
+    await type("first and a late correction");
+    await click(visibilityItem("public"));
+    expect(textarea().value).toBe("first");
+    f.confirm(12);
+    await flush();
+    expect(props.post).toHaveBeenCalledWith({ startFrame: 12, visibility: "internal", body: "first" });
+  });
+
+  it("finding 3: the text stays read-only while the request is out, and the form reopens when it settles", async () => {
+    const f = fakeClock();
+    let settle: (value: unknown) => void = () => undefined;
+    const post = vi.fn(() => new Promise<unknown>((resolve) => { settle = resolve; }));
+    await render({ clock: f.clock, post });
+    await type("sent"); await click(postButton()); f.confirm(12); await flush();
+    expect(postButton().textContent).toBe("Posting…");
+    expect(textarea().readOnly).toBe(true);
+    await act(async () => { settle({}); });
+    await flush();
+    expect(textarea().readOnly).toBe(false);
+    expect(textarea().value).toBe("");
+  });
+
+  it("finding 4: a seek that supersedes the confirmation cancels the post: 'Frame moved — Post again', the draft is kept", async () => {
+    const f = fakeClock({ frame: 20 });
+    const { props } = await render({ clock: f.clock });
+    await type("anchored at 20");
+    await click(postButton());
+    expect(f.raw.seekToFrame).toHaveBeenCalledWith(20);
+    f.confirm(35); // the person scrubbed to 35 before frame 20 landed
+    await flush();
+    expect(props.post).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("Frame moved — Post again");
+    expect(textarea().value).toBe("anchored at 20");
+    expect(postButton().disabled).toBe(false);
+    expect(postButton().textContent).toBe("Post");
+    await click(postButton());
+    f.confirm(20);
+    await flush();
+    expect(props.post).toHaveBeenCalledWith({ startFrame: 20, visibility: "internal", body: "anchored at 20" });
+  });
+
+  it("finding 5: the cancel signal the viewer's Escape sends during confirmation returns the form to idle with its text, and nothing posts", async () => {
+    const f = fakeClock();
+    const { props } = await render({ clock: f.clock });
+    await type("keep this");
+    await click(postButton());
+    const form = byTestId("video-note-composer")!;
+    expect(form.dataset.phase).toBe("confirming");
+    await act(async () => { form.dispatchEvent(new Event("quincy-notes-escape")); });
+    expect(form.dataset.phase).toBe("idle");
+    expect(textarea().value).toBe("keep this");
+    expect(postButton().disabled).toBe(false);
+    f.confirm(12);
+    await flush();
+    expect(props.post).not.toHaveBeenCalled();
+  });
+
+  it("finding 5: the cancel signal never touches a request already sent", async () => {
+    const f = fakeClock();
+    let settle: (value: unknown) => void = () => undefined;
+    const post = vi.fn(() => new Promise<unknown>((resolve) => { settle = resolve; }));
+    await render({ clock: f.clock, post });
+    await type("sent"); await click(postButton()); f.confirm(12); await flush();
+    const form = byTestId("video-note-composer")!;
+    await act(async () => { form.dispatchEvent(new Event("quincy-notes-escape")); });
+    expect(form.dataset.phase).toBe("posting");
+    expect(textarea().readOnly).toBe(true);
+    await act(async () => { settle({}); });
+    await flush();
+    expect(textarea().value).toBe("");
+  });
+
+  it("finding 2: a composer that stops being the active form cancels its confirmation and keeps its text", async () => {
+    const f = fakeClock();
+    const { props, rerender } = await render({ clock: f.clock });
+    await type("parked"); await click(postButton());
+    expect(byTestId("video-note-composer")!.dataset.phase).toBe("confirming");
+    await rerender({ active: false });
+    expect(byTestId("video-note-composer")!.dataset.phase).toBe("idle");
+    f.confirm(12); await flush();
+    expect(props.post).not.toHaveBeenCalled();
+    expect(textarea().value).toBe("parked");
+  });
+
+  it("finding 2: the buttons take the composer back (onActivate) before marking", async () => {
+    const f = fakeClock();
+    const { props } = await render({ clock: f.clock, active: false });
+    await click(byTestId("video-note-set-in")!);
+    expect(props.onActivate).toHaveBeenCalled();
+    expect(props.onMark).toHaveBeenLastCalledWith("in");
+  });
+
+  it("finding 9: erasing all the text resets Client-visible to Internal", async () => {
+    const f = fakeClock();
+    await render({ clock: f.clock });
+    await type("public draft");
+    await click(visibilityItem("public"));
+    expect(visibilityItem("public").getAttribute("aria-pressed")).toBe("true");
+    await type("");
+    expect(visibilityItem("internal").getAttribute("aria-pressed")).toBe("true");
+    expect(byTestId("video-note-visibility-hint")!.textContent).toBe("Studio only — never shown on the client link.");
+  });
+
+  it("finding 9: a choice made on an empty composer stays until text is typed and erased", async () => {
+    const f = fakeClock();
+    await render({ clock: f.clock });
+    await click(visibilityItem("public"));
+    expect(visibilityItem("public").getAttribute("aria-pressed")).toBe("true");
   });
 });

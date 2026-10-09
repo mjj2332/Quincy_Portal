@@ -3,8 +3,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { VideoNoteDto, VideoNoteThreadDto } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
-import { EMPTY_MARKS, type NoteMarks } from "../../lib/video-note-marks";
-import { VideoNoteThread, type EditFrames, type ThreadActions } from "./VideoNoteThread";
+import type { VideoFrameClock } from "../../lib/video-frame-clock";
+import { VideoNoteThread, type ThreadActions } from "./VideoNoteThread";
+import { useNoteForms } from "./use-note-forms";
 
 // Written AFTER VideoNoteThread.tsx (the component was committed untested): these tests were run against existing code and what
 // failed was fixed. They are not red-first evidence.
@@ -27,18 +28,27 @@ const reply = (root: VideoNoteDto, over: Record<string, unknown> = {}) => base({
 
 const tc = (frame: number) => `TC${frame}`;
 let root: Root | null = null; let host: HTMLElement;
-type Props = React.ComponentProps<typeof VideoNoteThread>;
+type Props = Omit<React.ComponentProps<typeof VideoNoteThread>, "forms">;
+/** The frame the fake clock confirms for the next Set in / Set out. */
+let clockFrame = 20;
+const fakeClock = { awaitConfirmedFrame: () => Promise.resolve(clockFrame) } as unknown as VideoFrameClock;
+/** The thread inside the real active-form state, as the panel provides it. */
+function Harness(props: Props) {
+  const visible = new Set([props.thread.id]);
+  const forms = useNoteForms({ assetId: "asset", clock: fakeClock, visibleRootIds: visible });
+  return <>
+    <VideoNoteThread {...props} forms={forms} />
+    <span data-testid="harness-active">{forms.active.kind}</span>
+  </>;
+}
 function actionsMock(): ThreadActions {
   return { reply: vi.fn(async () => ({})), edit: vi.fn(async () => ({})), resolve: vi.fn(async () => ({})), requestDelete: vi.fn(), refresh: vi.fn(), onWriteError: vi.fn() };
 }
-function editFramesMock(marks: NoteMarks = EMPTY_MARKS): EditFrames {
-  return { marks, onMark: vi.fn(), onMakePoint: vi.fn(), onBegin: vi.fn(), onEnd: vi.fn() };
-}
 async function render(t: VideoNoteThreadDto, over: Partial<Props> = {}) {
-  const props: Props = { thread: t, selected: false, userId: ME, readOnly: false, now: Date.parse(T(30)), timecode: tc, getFrame: () => 0, frameCount: 300, actions: actionsMock(), onSeek: vi.fn(), editFrames: editFramesMock(), ...over };
+  const props: Props = { thread: t, selected: false, userId: ME, readOnly: false, now: Date.parse(T(30)), timecode: tc, getFrame: () => 0, frameCount: 300, actions: actionsMock(), onSeek: vi.fn(), ...over };
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
-  const rerender = async (next: Partial<Props>) => { Object.assign(props, next); await act(async () => { root!.render(<VideoNoteThread {...props} />); }); };
-  await act(async () => { root!.render(<VideoNoteThread {...props} />); });
+  const rerender = async (next: Partial<Props>) => { Object.assign(props, next); await act(async () => { root!.render(<Harness {...props} />); }); };
+  await act(async () => { root!.render(<Harness {...props} />); });
   return { props, rerender };
 }
 const tid = (id: string, scope: ParentNode = host) => scope.querySelector<HTMLElement>(`[data-testid="${id}"]`);
@@ -58,7 +68,7 @@ async function chooseAction(name: string, label: "Edit" | "Delete") {
   await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
 }
 
-beforeEach(() => { vi.useRealTimers(); });
+beforeEach(() => { vi.useRealTimers(); clockFrame = 20; });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren(); });
 
 describe("VideoNoteThread (#741 5b)", () => {
@@ -184,46 +194,48 @@ describe("VideoNoteThread (#741 5b)", () => {
     const form = host.querySelector<HTMLElement>('[data-notes-form="edit"]')!;
     expect(form.querySelector("textarea")!.value).toBe("A note");
     expect(form.dataset.dirty).toBe("false");
-    expect(props.editFrames.onBegin).toHaveBeenCalledTimes(1);
+    expect(tid("harness-active")!.textContent).toBe("edit");
     await type(form.querySelector("textarea")!, "A better note");
     expect(form.dataset.dirty).toBe("true");
     await click(tid("video-note-edit-save", form)!);
     await flush();
     expect(props.actions.edit).toHaveBeenCalledWith(t.id, { expectedRevision: 3, body: "A better note" });
     expect(host.querySelector('[data-notes-form="edit"]')).toBeNull();
-    expect(props.editFrames.onEnd).toHaveBeenCalled();
+    expect(tid("harness-active")!.textContent).toBe("composer");
   });
 
-  it("18: with frames changed through the edit marks, Save sends the frames with the revision (a range as start and end + 1, collapsing sends endFrame: null)", async () => {
+  it("18: with frames changed through Set in / Set out, Save sends the frames with the revision (a range as start and end + 1)", async () => {
     const t = thread({ revision: 2, startFrame: 10, endFrame: null });
-    const editFrames = editFramesMock({ in: 20, out: 30 });
-    const { props } = await render(t, { editFrames });
+    const { props } = await render(t);
     await chooseAction("Terry", "Edit");
-    expect(host.querySelector('[data-testid="video-note-edit-anchor"]')!.textContent).toBe("TC20 → TC30");
+    expect(tid("video-note-edit-anchor")!.textContent).toBe("TC10");
+    clockFrame = 20; await click(tid("video-note-edit-set-in")!); await flush();
+    clockFrame = 30; await click(tid("video-note-edit-set-out")!); await flush();
+    expect(tid("video-note-edit-anchor")!.textContent).toBe("TC20 → TC30");
     await click(tid("video-note-edit-save")!);
     await flush();
     expect(props.actions.edit).toHaveBeenCalledWith(t.id, { expectedRevision: 2, startFrame: 20, endFrame: 31 });
   });
 
-  it("18: Set in, Set out and Make point drive the panel's marks", async () => {
-    const t = thread();
-    const editFrames = editFramesMock({ in: 10, out: null });
-    await render(t, { editFrames });
+  it("18: Set in, Set out and Make point drive the form's marks; Make point collapses a range to its first mark", async () => {
+    const t = thread({ startFrame: 10, endFrame: 21 });
+    await render(t);
     await chooseAction("Terry", "Edit");
-    await click(tid("video-note-edit-set-in")!); await click(tid("video-note-edit-set-out")!); await click(tid("video-note-edit-make-point")!);
-    expect(editFrames.onMark).toHaveBeenNthCalledWith(1, "in");
-    expect(editFrames.onMark).toHaveBeenNthCalledWith(2, "out");
-    expect(editFrames.onMakePoint).toHaveBeenCalledTimes(1);
+    expect(tid("video-note-edit-anchor")!.textContent).toBe("TC10 → TC20");
+    clockFrame = 15; await click(tid("video-note-edit-set-in")!); await flush();
+    expect(tid("video-note-edit-anchor")!.textContent).toBe("TC15 → TC20");
+    clockFrame = 18; await click(tid("video-note-edit-set-out")!); await flush();
+    expect(tid("video-note-edit-anchor")!.textContent).toBe("TC15 → TC18");
+    await click(tid("video-note-edit-make-point")!);
+    expect(tid("video-note-edit-anchor")!.textContent).toBe("TC15");
   });
 
   it("18: a note with markup has no frame controls and never sends frames", async () => {
     const t = thread({ hasMarkup: true, revision: 4 });
-    const editFrames = editFramesMock({ in: 20, out: 30 });
-    const { props } = await render(t, { editFrames });
+    const { props } = await render(t);
     await chooseAction("Terry", "Edit");
     expect(tid("video-note-edit-set-in")).toBeNull();
     expect(tid("video-note-edit-anchor")).toBeNull();
-    expect(editFrames.onBegin).not.toHaveBeenCalled();
     await type(host.querySelector("textarea")!, "Changed");
     await click(tid("video-note-edit-save")!);
     await flush();
@@ -242,7 +254,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(props.actions.edit).toHaveBeenCalledWith(r.id, { expectedRevision: 7, body: "Reply body 2" });
   });
 
-  it("19: a 409 note_conflict keeps the draft, shows the message and the server's current text, and Save then sends the NEW revision", async () => {
+  it("19: a 409 note_conflict keeps the draft, shows the message and the server's current text, and only Save anyway then sends the NEW revision", async () => {
     const t = thread({ revision: 1, body: "Original" });
     const serverThread = { ...t, revision: 2, body: "Changed by someone else" } as VideoNoteThreadDto;
     const actions = actionsMock();
@@ -254,12 +266,14 @@ describe("VideoNoteThread (#741 5b)", () => {
     await type(host.querySelector("textarea")!, "My edit");
     await click(tid("video-note-edit-save")!);
     await flush();
-    expect(tid("video-note-notice")!.textContent).toContain("This note changed since you loaded it. Review it and save again.");
+    expect(tid("video-note-notice")!.textContent).toContain("This note changed since you opened it.");
+    expect(actions.edit).toHaveBeenLastCalledWith(t.id, { expectedRevision: 1, body: "My edit" });
     expect(host.querySelector("textarea")!.value).toBe("My edit");
     // The panel has written the server's thread into the cache; the thread re-renders with it.
     await rerender({ thread: serverThread });
     expect(tid("video-note-conflict")!.textContent).toContain("Changed by someone else");
     expect(host.querySelector("textarea")!.value).toBe("My edit");
+    expect(tid("video-note-edit-save")!.textContent).toBe("Save anyway");
     await click(tid("video-note-edit-save")!);
     await flush();
     expect(actions.edit).toHaveBeenLastCalledWith(t.id, { expectedRevision: 2, body: "My edit" });
@@ -300,5 +314,61 @@ describe("VideoNoteThread (#741 5b)", () => {
     const { props } = await render(t);
     await click(tid("video-note-anchor-button")!);
     expect(props.onSeek).toHaveBeenCalledWith(t);
+  });
+
+  it("finding 1: Save sends the revision the form was opened with even when the thread has since been refreshed with a newer one", async () => {
+    const t = thread({ revision: 3, body: "Original" });
+    const actions = actionsMock();
+    const { rerender } = await render(t, { actions });
+    await chooseAction("Terry", "Edit");
+    await rerender({ thread: { ...t, revision: 5, body: "Edited in another tab" } as VideoNoteThreadDto });
+    await type(host.querySelector("textarea")!, "Mine");
+    await click(tid("video-note-edit-save")!);
+    await flush();
+    expect(actions.edit).toHaveBeenCalledWith(t.id, { expectedRevision: 3, body: "Mine" });
+  });
+
+  it("finding 1: an edit left unchanged is judged against the text it was opened with, so a refreshed thread does not turn it into a write", async () => {
+    const t = thread({ revision: 3, body: "Original" });
+    const actions = actionsMock();
+    const { rerender } = await render(t, { actions });
+    await chooseAction("Terry", "Edit");
+    await rerender({ thread: { ...t, revision: 5, body: "Edited in another tab" } as VideoNoteThreadDto });
+    await click(tid("video-note-edit-save")!);
+    await flush();
+    expect(actions.edit).not.toHaveBeenCalled();
+  });
+
+  it("finding 3: while a save is out, the edit text, the frame buttons and Cancel are read-only", async () => {
+    const t = thread();
+    const actions = actionsMock();
+    let settle: (value: unknown) => void = () => undefined;
+    actions.edit = vi.fn(() => new Promise<unknown>((resolve) => { settle = resolve; }));
+    await render(t, { actions });
+    await chooseAction("Terry", "Edit");
+    await type(host.querySelector("textarea")!, "Sent text");
+    await click(tid("video-note-edit-save")!);
+    expect(host.querySelector("textarea")!.readOnly).toBe(true);
+    await type(host.querySelector("textarea")!, "Late correction");
+    expect(host.querySelector("textarea")!.value).toBe("Sent text");
+    expect((tid("video-note-edit-set-in") as HTMLButtonElement).disabled).toBe(true);
+    expect((tid("video-note-edit-cancel") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { settle({}); });
+    await flush();
+    expect(host.querySelector('[data-notes-form="edit"]')).toBeNull();
+  });
+
+  it("finding 2: opening Reply closes an open edit; opening Edit closes an open reply", async () => {
+    const t = thread();
+    await render(t);
+    await chooseAction("Terry", "Edit");
+    expect(host.querySelector('[data-notes-form="edit"]')).not.toBeNull();
+    // The edit form hides Reply; close it the way another form's opening does (the composer taking over), then reply.
+    await click(tid("video-note-edit-cancel")!);
+    await click(tid("video-note-reply-button")!);
+    expect(host.querySelector('[data-notes-form="reply"]')).not.toBeNull();
+    await chooseAction("Terry", "Edit");
+    expect(host.querySelector('[data-notes-form="reply"]')).toBeNull();
+    expect(host.querySelector('[data-notes-form="edit"]')).not.toBeNull();
   });
 });

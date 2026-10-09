@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { VIDEO_NOTE_BODY_MAX, type VideoNoteCreateInput, type VideoNoteVisibility } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
 import { useFrameClockSelector, type VideoFrameClock } from "../../lib/video-frame-clock";
@@ -31,12 +31,22 @@ const isAbort = (error: unknown) => error instanceof DOMException ? error.name =
  * (10 s at most) and only then sends. Nothing retries by itself: after a network failure the note may or may not have posted, so the draft
  * is kept and the person refreshes. Visibility starts Internal every time the composer is empty and is never sticky; it is immutable once posted.
  */
-export function VideoNoteComposer({ clock, frameCount, timecode, marks, onMark, onClearMarks, draft, onDraftChange, post, onRefresh, onWriteError }: {
+export function VideoNoteComposer({ clock, frameCount, timecode, marks, active = true, blocked = false, onActivate, onPhaseChange, onMark, onClearMarks, draft, onDraftChange, post, onRefresh, onWriteError }: {
   clock: VideoFrameClock | null;
   frameCount: number;
   timecode: (frame: number) => string;
+  /** The marks of the composer: the panel hands over none while another form is the active one. */
   marks: NoteMarks;
-  onMark: (kind: "in" | "out", frame: number) => void;
+  /** Whether the composer is the one active form. When it stops being, a pending frame confirmation is cancelled and the text is kept. */
+  active?: boolean;
+  /** Another form's request is out: the composer cannot become the active form until it settles. */
+  blocked?: boolean;
+  /** Post and the mark buttons take the composer back as the active form (which closes any other form). */
+  onActivate?: () => void;
+  /** "confirming" and "posting" freeze the active form's marks (I and O do nothing); "posting" also stops another form opening. */
+  onPhaseChange?: (phase: "idle" | "confirming" | "posting") => void;
+  /** Pause, confirm the frame on screen and mark it; the host does the confirming. */
+  onMark: (kind: "in" | "out") => void;
   onClearMarks: () => void;
   draft: NoteDraft | undefined;
   onDraftChange: (draft: NoteDraft | null) => void;
@@ -51,23 +61,46 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, onMark, 
   const [phase, setPhase] = useState<"idle" | "confirming" | "posting">("idle");
   const [problem, setProblem] = useState<{ text: string; refresh?: boolean; retry?: boolean } | null>(null);
   const attempt = useRef(0);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  const formRef = useRef<HTMLFormElement>(null);
   const liveFrame = useFrameClockSelector(clock, (state) => state.targetFrame ?? state.frame, 0);
   const currentFrame = () => { const state = clock?.getState(); return state ? (state.targetFrame ?? state.frame) : 0; };
 
   // A pending post belongs to this clock: a Version change or an unmount cancels it so a late confirmation can never post.
   useEffect(() => () => { attempt.current += 1; }, [clock]);
+  // Rule B: while a frame is being confirmed or a request is out, the host freezes I and O and (once sent) the other forms.
+  const onPhaseChangeRef = useRef(onPhaseChange);
+  onPhaseChangeRef.current = onPhaseChange;
+  useEffect(() => { onPhaseChangeRef.current?.(phase); }, [phase]);
+  useEffect(() => () => { onPhaseChangeRef.current?.("idle"); }, []);
+  /** Back to idle with the text kept. Only a frame confirmation is cancelled; a request already sent is never touched. */
+  const cancelConfirmation = useCallback(() => {
+    if (phaseRef.current !== "confirming") return;
+    attempt.current += 1;
+    setPhase("idle");
+  }, []);
+  // The viewer's Escape sends this event (it cannot reach into the composer's state).
+  useEffect(() => {
+    const form = formRef.current;
+    form?.addEventListener("quincy-notes-escape", cancelConfirmation);
+    return () => { form?.removeEventListener("quincy-notes-escape", cancelConfirmation); };
+  }, [cancelConfirmation]);
+  useEffect(() => { if (!active) cancelConfirmation(); }, [active, cancelConfirmation]);
   const onDraftChangeRef = useRef(onDraftChange);
   onDraftChangeRef.current = onDraftChange;
   useEffect(() => { onDraftChangeRef.current(body === "" ? null : { body, visibility, anchorFrame }); }, [body, visibility, anchorFrame]);
 
   const pendingFrames = marksToFrames(marks, frameCount);
   const tooLong = body.length > VIDEO_NOTE_BODY_MAX;
-  const canPost = clock !== null && phase === "idle" && body.trim() !== "" && !tooLong;
+  const canPost = clock !== null && phase === "idle" && !blocked && body.trim() !== "" && !tooLong;
+  const frozen = phase !== "idle";
 
   function changeBody(next: string) {
+    if (phaseRef.current !== "idle") return; // read-only from Post until the request settles
     setBody(next);
     // Composing starts at the first character: the frame on screen then is the anchor, until the text is gone again.
-    if (next === "") setAnchorFrame(null);
+    if (next === "") { setAnchorFrame(null); setVisibility("internal"); }
     else if (body === "" && anchorFrame === null) setAnchorFrame(currentFrame());
   }
 
@@ -88,9 +121,10 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, onMark, 
     const mine = (attempt.current += 1);
     const text = body.trim();
     setProblem(null);
+    onActivate?.();
     let frames = marksToFrames(marks, frameCount);
     if (!frames) {
-      const anchor = anchorFrame ?? currentFrame();
+      const anchor = Math.min(Math.max(0, anchorFrame ?? currentFrame()), Math.max(0, frameCount - 1));
       setPhase("confirming");
       clock.seekToFrame(anchor);
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -99,7 +133,9 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, onMark, 
         const confirmed = await Promise.race([clock.awaitConfirmedFrame(), timedOut]);
         if (mine !== attempt.current) return;
         if (confirmed === "timeout") { setPhase("idle"); setProblem({ text: "The frame took too long to show. Your draft is kept.", retry: true }); return; }
-        frames = { startFrame: Math.min(Math.max(0, confirmed), Math.max(0, frameCount - 1)), endFrame: null };
+        // The frame on screen must be the one the note was composed at: a scrub or a step that landed first moved it.
+        if (confirmed !== anchor) { setPhase("idle"); setProblem({ text: "Frame moved — Post again" }); return; }
+        frames = { startFrame: anchor, endFrame: null };
       } catch (error) {
         if (mine !== attempt.current) return;
         setPhase("idle");
@@ -125,24 +161,26 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, onMark, 
   const label = phase === "confirming" ? "Confirming…" : phase === "posting" ? "Posting…" : problem?.retry ? "Retry" : "Post";
 
   return <form
+    ref={formRef}
     data-testid="video-note-composer"
     data-notes-form="composer"
+    data-phase={phase}
     data-dirty={body !== "" ? "true" : "false"}
     className="grid gap-[var(--space-2)]"
     onSubmit={(event) => { event.preventDefault(); void submit(); }}
   >
     <div className="flex flex-wrap items-center gap-[var(--space-2)]">
       <span data-testid="video-note-anchor" aria-live="off" className={`text-foreground ${MONO}`}>{anchorText}</span>
-      <Button type="button" variant="secondary" data-testid="video-note-set-in" className={SMALL_BUTTON} disabled={clock === null} onClick={() => { onMark("in", currentFrame()); }}>Set in <Kbd>I</Kbd></Button>
-      <Button type="button" variant="secondary" data-testid="video-note-set-out" className={SMALL_BUTTON} disabled={clock === null} onClick={() => { onMark("out", currentFrame()); }}>Set out <Kbd>O</Kbd></Button>
-      {pendingFrames && <Button type="button" variant="text" data-testid="video-note-clear-marks" onClick={onClearMarks}>Clear marks</Button>}
+      <Button type="button" variant="secondary" data-testid="video-note-set-in" className={SMALL_BUTTON} disabled={clock === null || frozen || blocked} onClick={() => { onActivate?.(); onMark("in"); }}>Set in <Kbd>I</Kbd></Button>
+      <Button type="button" variant="secondary" data-testid="video-note-set-out" className={SMALL_BUTTON} disabled={clock === null || frozen || blocked} onClick={() => { onActivate?.(); onMark("out"); }}>Set out <Kbd>O</Kbd></Button>
+      {pendingFrames && <Button type="button" variant="text" data-testid="video-note-clear-marks" disabled={frozen} onClick={onClearMarks}>Clear marks</Button>}
     </div>
     <label className="sr-only" htmlFor="video-note-body">Add a note</label>
     <Textarea
       id="video-note-body"
       value={body}
       placeholder="Add a note at this frame…"
-      disabled={phase === "posting"}
+      readOnly={frozen}
       onChange={(event) => { changeBody(event.target.value); }}
       onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }}
     />
@@ -152,8 +190,8 @@ export function VideoNoteComposer({ clock, frameCount, timecode, marks, onMark, 
       <div className="grid gap-[var(--space-1)]">
         <ToggleGroup
           variant="outline" size="sm" spacing={0} aria-label="Who can see this note"
-          value={[visibility]}
-          onValueChange={(next) => { const picked = next[0]; if (picked === "internal" || picked === "public") setVisibility(picked); }}
+          value={[visibility]} disabled={frozen}
+          onValueChange={(next) => { const picked = next[0]; if (phaseRef.current === "idle" && (picked === "internal" || picked === "public")) setVisibility(picked); }}
         >
           <ToggleGroupItem value="internal" data-testid="video-note-visibility-internal">Internal</ToggleGroupItem>
           <ToggleGroupItem value="public" data-testid="video-note-visibility-public">Client-visible</ToggleGroupItem>

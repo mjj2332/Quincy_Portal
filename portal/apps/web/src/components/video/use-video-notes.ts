@@ -4,23 +4,24 @@ import type { TimelineMarker } from "../quincy/VideoTimelineMarkers";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient, useProjectAccessTermination } from "../../lib/project-data";
 import type { VideoFrameClock } from "../../lib/video-frame-clock";
 import { DEFAULT_NOTE_FILTERS, visibleThreads, type NoteFilters } from "../../lib/video-note-view";
-import { EMPTY_MARKS, markFrame, marksToFrames, type NoteMarks } from "../../lib/video-note-marks";
+import { marksToFrames } from "../../lib/video-note-marks";
 import {
   classifyVideoNoteError, createVideoNote, deleteVideoNote, editVideoNote, replyToVideoNote, setVideoNoteResolution, useVideoNotesQuery, type NoteWriteContext,
 } from "../../lib/video-notes-data";
 import type { NoteDraft } from "./VideoNoteComposer";
-import type { EditFrames, ThreadActions } from "./VideoNoteThread";
+import type { ThreadActions } from "./VideoNoteThread";
+import { useNoteForms } from "./use-note-forms";
 
 /** Unsent notes, kept by the Video tab for as long as it is open (never in a module: a different person renders none). */
 export type DraftStore = { get(assetId: string): NoteDraft | undefined; set(assetId: string, draft: NoteDraft | null): void };
 
-/** What belongs to one Version only: it starts empty when the Version on screen changes (marks are frames of one film). */
-type Local = { assetId: string; marks: NoteMarks; editing: { marks: NoteMarks } | null; selectedId: string | null; scroll: { id: string; seq: number } | null };
-const fresh = (assetId: string): Local => ({ assetId, marks: EMPTY_MARKS, editing: null, selectedId: null, scroll: null });
+/** What belongs to one Version only: it starts empty when the Version on screen changes. (The active form and its marks reset the same way, in `useNoteForms`.) */
+type Local = { assetId: string; selectedId: string | null; scroll: { id: string; seq: number } | null };
+const fresh = (assetId: string): Local => ({ assetId, selectedId: null, scroll: null });
 
 /**
  * Everything the notes panel and the player share for one Version (#741 5b): the list query, the filters, selection, the in / out marks
- * (the composer's, or the edit form's while one is open), the clock handed up by the player, and the writes. The viewer calls this once
+ * (those of the one active form), the clock handed up by the player, and the writes. The viewer calls this once
  * and gives the panel `session` and the player `playerProps`.
  */
 export function useVideoNotes({ projectId, version, role, userId, archived, drafts }: {
@@ -57,17 +58,10 @@ export function useVideoNotes({ projectId, version, role, userId, archived, draf
 
   const threads = query.data;
   const shown = useMemo(() => (threads ? visibleThreads(threads, filters) : []), [threads, filters]);
-  const activeMarks = live.editing ? live.editing.marks : live.marks;
-  const pendingRange = useMemo(() => marksToFrames(activeMarks, frameCount), [activeMarks, frameCount]);
+  const visibleRootIds = useMemo<ReadonlySet<string>>(() => new Set(shown.map((thread) => thread.id)), [shown]);
+  const forms = useNoteForms({ assetId, clock, visibleRootIds });
+  const pendingRange = useMemo(() => marksToFrames(forms.marks, frameCount), [forms.marks, frameCount]);
   const markers = useMemo<TimelineMarker[]>(() => shown.filter((thread) => thread.startFrame !== null).map((thread) => ({ id: thread.id, startFrame: thread.startFrame!, endFrame: thread.endFrame, tone: thread.visibility, selected: thread.id === live.selectedId })), [shown, live.selectedId]);
-
-  const frameOnScreen = useCallback(() => { const state = clock?.getState(); return state ? (state.playing ? state.frame : (state.targetFrame ?? state.frame)) : 0; }, [clock]);
-  const mark = useCallback((kind: "in" | "out", frame: number) => {
-    update((current) => current.editing ? { ...current, editing: { marks: markFrame(current.editing.marks, kind, frame) } } : { ...current, marks: markFrame(current.marks, kind, frame) });
-  }, [update]);
-  /** The composer's own Set in / Set out buttons always mark the composer, whatever else is open. */
-  const markComposer = useCallback((kind: "in" | "out", frame: number) => { update((current) => ({ ...current, marks: markFrame(current.marks, kind, frame) })); }, [update]);
-  const clearMarks = useCallback(() => { update((current) => ({ ...current, marks: EMPTY_MARKS })); }, [update]);
 
   const select = useCallback((id: string | null) => { update((current) => ({ ...current, selectedId: id })); }, [update]);
   const seekToNote = useCallback((thread: VideoNoteThreadDto) => {
@@ -102,25 +96,17 @@ export function useVideoNotes({ projectId, version, role, userId, archived, draf
     refresh,
     onWriteError,
   }), [withCtx, refresh, onWriteError]);
-  const remove = useCallback((note: VideoNoteDto) => withCtx((context) => deleteVideoNote(context, note, note.revision)), [withCtx]);
-
-  const editFrames = useMemo<EditFrames>(() => ({
-    marks: live.editing?.marks ?? EMPTY_MARKS,
-    onMark: (kind) => { mark(kind, frameOnScreen()); },
-    onMakePoint: () => { update((current) => current.editing ? { ...current, editing: { marks: { in: current.editing.marks.in ?? current.editing.marks.out, out: null } } } : current); },
-    // An edit form seeds its marks from the note's stored frames: the end is exclusive in storage, so the last included frame is end - 1.
-    onBegin: (note) => { update((current) => ({ ...current, editing: { marks: note.startFrame === null ? EMPTY_MARKS : { in: note.startFrame, out: note.endFrame === null ? null : note.endFrame - 1 } } })); },
-    onEnd: () => { update((current) => (current.editing ? { ...current, editing: null } : current)); },
-  }), [live.editing, mark, frameOnScreen, update]);
+  /** Delete sends the revision the confirm was opened with (or, after a conflict the person reviewed, the current one): never the live cache value. */
+  const remove = useCallback((note: VideoNoteDto, revision: number) => withCtx((context) => deleteVideoNote(context, note, revision)), [withCtx]);
 
   const writable = !readOnly && clock !== null;
   return {
     assetId, version, role, userId, readOnly, query, threads, shown, filters, setFilters, selectedId: live.selectedId, scroll: live.scroll,
-    clock, frameCount, timecode, marks: live.marks, markComposer, clearMarks, editFrames, pendingRange, markers,
+    clock, frameCount, timecode, forms, pendingRange, markers,
     seekToNote, select, actions, post, remove, refresh, onWriteError,
     draft: drafts.get(assetId), onDraftChange: (draft: NoteDraft | null) => { drafts.set(assetId, draft); },
-    /** What the viewer hands the player. `onMark` exists only while the panel can take a mark, so I and O do nothing on an archived Project. */
-    playerProps: { markers, pendingRange, onMarkerSelect, onClockChange, ...(writable ? { onMark: mark } : {}) },
+    /** What the viewer hands the player. `onMark` exists only while the panel can take a mark, so I and O do nothing on an archived Project; it pauses and confirms the frame itself (the player's frame argument is not used). */
+    playerProps: { markers, pendingRange, onMarkerSelect, onClockChange, ...(writable ? { onMark: forms.markFromClock } : {}) },
   };
 }
 

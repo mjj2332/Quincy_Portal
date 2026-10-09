@@ -54,9 +54,13 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes }: {
       const popup = popupRef.current;
       const layer = hasOpenAlertDialog() || hasOpenFloatingPopup(popup, slot);
       const active = document.activeElement;
-      const form = !layer && popup !== null && active instanceof Element && popup.contains(active) ? active.closest<HTMLElement>("[data-notes-form]") : null;
+      // A composer waiting for its frame is spent first, wherever focus is: the Post button that was pressed is disabled by then and focus has left it.
+      const confirming = !layer && popup !== null ? popup.querySelector<HTMLElement>('[data-notes-form="composer"][data-phase="confirming"]') : null;
+      const form = confirming ?? (!layer && popup !== null && active instanceof Element && popup.contains(active) ? active.closest<HTMLElement>("[data-notes-form]") : null);
       escapeSnapshot.current = { layer, form: form !== null };
       if (!form || !popup) return;
+      // Rule B: Escape cancels a frame confirmation (the draft is kept); a request already sent is never cancelled.
+      if (confirming) form.dispatchEvent(new Event("quincy-notes-escape"));
       if (form.dataset.notesForm !== "composer" && form.dataset.dirty !== "true") form.querySelector<HTMLElement>("[data-notes-cancel]")?.click();
       else popup.focus({ preventScroll: true });
     };
