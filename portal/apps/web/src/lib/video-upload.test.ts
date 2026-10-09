@@ -131,6 +131,14 @@ describe("VideoUpload (#741 4d-i)", () => {
     expect(calls[0]!.body).toMatchObject({ videoId: ids.video }); expect(calls[0]!.body).not.toHaveProperty("title");
   });
 
+  it("an External editor's reserve and complete go through the strict External decoders", async () => {
+    routes[RESERVE] = () => json({ ...devReserve, surprise: 1 }, 201);
+    const { job } = await make({ role: "external_editor" }); job.start(); await until(job, "failed");
+    expect(job.state.error).toBeTruthy();
+    routes[RESERVE] = () => json(devReserve, 201); routes[COMPLETE] = () => json(completeBody(), 201);
+    const second = await make({ role: "external_editor" }); second.job.start(); await until(second.job, "done");
+  });
+
   it("a poster failure is not fatal", async () => {
     poster.blob = new Blob(["jpg"]);
     routes[RESERVE] = () => json(devReserve, 201); routes[COMPLETE] = () => json(completeBody(), 201); routes[POSTER] = () => new Response("no", { status: 500 });
