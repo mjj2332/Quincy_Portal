@@ -555,6 +555,20 @@ describe("VideoPlayer notes seams (#741 5b)", () => {
     expect(onMarkerSelect).toHaveBeenCalledWith("n1");
   });
 
+  it("finding 10: the pending band is laid out against the slider track alone, never the marker lane (it would sit 6px below the track)", async () => {
+    await mount(versionOf(), {
+      markers: [{ id: "n1", startFrame: 100, endFrame: null, tone: "internal", selected: false }],
+      pendingRange: { startFrame: 10, endFrame: 20 },
+    });
+    const band = byTestId("video-pending-band")!;
+    const slider = byTestId("video-scrubber")!.querySelector("input[type=range]")!;
+    const lane = byTestId("video-marker-lane")!;
+    const wrapper = band.parentElement!;
+    expect(wrapper.contains(slider)).toBe(true);
+    expect(wrapper.contains(lane)).toBe(false);
+    expect(wrapper).not.toBe(byTestId("video-scrubber"));
+  });
+
   it("hands the clock up once the element is ready, and null when the player goes away", async () => {
     const onClockChange = vi.fn();
     await mount(versionOf(), { onClockChange });

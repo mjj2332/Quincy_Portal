@@ -190,17 +190,20 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     </div>
 
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}
-    <div data-testid="video-scrubber" className="relative">
-      {pendingRange !== undefined && <VideoPendingRangeBand range={pendingRange} frameCount={version.frameCount} />}
-      <Slider
-        value={[Math.min(shownFrame, Math.max(1, lastFrame))]}
-        min={0}
-        max={Math.max(1, lastFrame)}
-        step={1}
-        largeStep={Math.max(1, Math.round(rationalToNumber(version.fps)))}
-        onValueChange={(value) => { clock.seekToFrame(Array.isArray(value) ? (value[0] ?? 0) : value); }}
-        thumbProps={{ getAriaLabel: () => "Timeline", getAriaValueText: (_formatted, value) => timecode(value) }}
-      />
+    <div data-testid="video-scrubber">
+      {/* The band is placed against the slider alone: inside the same box as the marker lane it would sit centred on the whole scrubber, 6px below the track. */}
+      <div className="relative">
+        {pendingRange !== undefined && <VideoPendingRangeBand range={pendingRange} frameCount={version.frameCount} />}
+        <Slider
+          value={[Math.min(shownFrame, Math.max(1, lastFrame))]}
+          min={0}
+          max={Math.max(1, lastFrame)}
+          step={1}
+          largeStep={Math.max(1, Math.round(rationalToNumber(version.fps)))}
+          onValueChange={(value) => { clock.seekToFrame(Array.isArray(value) ? (value[0] ?? 0) : value); }}
+          thumbProps={{ getAriaLabel: () => "Timeline", getAriaValueText: (_formatted, value) => timecode(value) }}
+        />
+      </div>
       {markers !== undefined && <VideoTimelineMarkers markers={markers} frameCount={version.frameCount} {...(onMarkerSelect ? { onSelect: onMarkerSelect } : {})} />}
     </div>
 
