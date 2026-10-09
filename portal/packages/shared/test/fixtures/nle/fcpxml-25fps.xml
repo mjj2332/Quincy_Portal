@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.9">
+  <resources>
+    <format id="r1" name="FFVideoFormat1080p25" frameDuration="1/25s" width="1920" height="1080"/>
+  </resources>
+  <library>
+    <event name="Quincy Review Notes">
+      <project name="Demo Asset">
+        <sequence format="r1" duration="1500/25s" tcStart="90000/25s" tcFormat="NDF">
+          <spine>
+            <gap name="Gap" offset="90000/25s" start="90000/25s" duration="1500/25s">
+              <marker start="90063/25s" duration="1/25s" value="Jane: Fix the logo"/>
+            </gap>
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>

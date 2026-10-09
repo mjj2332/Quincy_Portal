@@ -1,0 +1,5 @@
+TITLE: Demo Asset
+FCM: NON-DROP FRAME
+
+001  001      V     C        01:00:02:13 01:00:02:14 01:00:02:13 01:00:02:14
+ |C:ResolveColorBlue |M:Jane: Fix the logo |D:1
