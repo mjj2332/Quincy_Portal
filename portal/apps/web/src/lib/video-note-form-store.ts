@@ -227,6 +227,11 @@ export function createNoteFormStore(key: string) {
       if (!held.open && !dirty && focusInForm) return { consumed: true, focus: "dialog" };
       return { consumed: false, focus: null };
     },
+    /** The player handed this Version a clock. Marks made on another (an earlier opening of the Version) no longer show, so their "touched" goes too: Escape's dirty check then matches what Save would send. */
+    observeClock(assetId: string, clock: object) {
+      const held = slot(assetId);
+      if (held.marks.clock !== null && held.marks.clock !== clock) put(assetId, { marks: { ...NO_MARKS, seed: held.marks.seed } });
+    },
     rearm(assetId: string) { if (slot(assetId).spent) put(assetId, { spent: false }); },
     /** The open form's note left the Version's full list (deleted elsewhere): the form goes, unless its own request is out. */
     retireMissing(assetId: string, threads: readonly VideoNoteThreadDto[]) {
@@ -234,6 +239,7 @@ export function createNoteFormStore(key: string) {
       const form = held.open;
       if (!form || held.op) return;
       const root = threads.find((thread) => thread.id === form.rootId);
+      if (root?.deleted && (form.kind === "reply" || form.noteId === root.id)) { put(assetId, { open: null, marks: NO_MARKS, spent: false, notice: { text: "This note was deleted.", rootId: root.id } }); return; }
       if (!root || (form.kind === "edit" && form.noteId !== root.id && !root.replies.some((reply) => reply.id === form.noteId))) close(assetId);
     },
 

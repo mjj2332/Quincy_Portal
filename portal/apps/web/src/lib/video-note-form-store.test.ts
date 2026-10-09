@@ -487,6 +487,38 @@ describe("retireMissing (#741 5b form store)", () => {
   });
 });
 
+describe("Sol r5", () => {
+  it("a root that becomes a tombstone closes its edit and reply forms with a deletion notice; an edit of a surviving reply stays open", () => {
+    const root = note(); const reply = note({ parentId: root.id, startFrame: null });
+    const tomb = { ...root, deleted: true, replies: [reply] } as unknown as VideoNoteThreadDto;
+    store.openEdit(V2, root, root.id);
+    store.retireMissing(V2, [tomb]);
+    expect(store.slot(V2).open).toBeNull();
+    expect(store.slot(V2).notice).toMatchObject({ text: "This note was deleted.", rootId: root.id });
+    store.openReply(V2, root.id);
+    store.retireMissing(V2, [tomb]);
+    expect(store.slot(V2).open).toBeNull();
+    store.openEdit(V2, reply, root.id);
+    store.retireMissing(V2, [tomb]);
+    expect(store.slot(V2).open).not.toBeNull();
+  });
+
+  it("an edit whose frames were changed on a clock that has since been replaced is clean again (observeClock), so Escape closes it", () => {
+    const root = note();
+    const first = {} as NoteClock; const second = {} as NoteClock;
+    store.observeClock(V2, first);
+    store.openEdit(V2, root, root.id);
+    store.mark(V2, "in", 3, first);
+    expect(store.escape(V2, { focusInForm: false }).consumed).toBe(true); // dirty: held
+    store.observeClock(V2, first);
+    expect(store.slot(V2).marks.touched).toBe(true);
+    store.observeClock(V2, second); // the Version was left and came back with a new clock
+    expect(store.slot(V2).marks.touched).toBe(false);
+    expect(store.escape(V2, { focusInForm: false })).toEqual({ consumed: true, focus: "opener" });
+    expect(store.slot(V2).open).toBeNull();
+  });
+});
+
 describe("subscription (#741 5b form store)", () => {
   it("tells subscribers about a change, and stops after unsubscribe; retire silences everyone", () => {
     const listener = vi.fn();
