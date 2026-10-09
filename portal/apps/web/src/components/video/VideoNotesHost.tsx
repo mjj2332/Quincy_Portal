@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Role, VideoVersionDto } from "@quincy/shared";
+import type { Role, VideoDto, VideoVersionDto } from "@quincy/shared";
 import type { NoteFormStore } from "../../lib/video-note-form-store";
 import { useVideoNotes, type VideoNotesSession } from "./use-video-notes";
 import { VideoNotesPanel } from "./VideoNotesPanel";
@@ -9,13 +9,15 @@ import { VideoNotesPanel } from "./VideoNotesPanel";
  * the player share it. This module is the whole notes UI: the review viewer loads it lazily, only when the Project's notes part is on, so a
  * Project without notes never pays for it (and the notes-off viewer is exactly the 4d-ii viewer).
  */
-export default function VideoNotesHost({ notes, version, detailsRows, children }: {
+export default function VideoNotesHost({ notes, video, version, detailsRows, children }: {
   notes: { projectId: string; role: Role; userId: string | null; archived: boolean; forms: NoteFormStore };
+  /** The Video the Version belongs to: copy and paste work between its Versions. */
+  video: VideoDto;
   version: VideoVersionDto;
   /** The Version details rows, which the panel shows behind a button. */
   detailsRows: ReactNode;
   children: (slots: { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode }) => ReactNode;
 }) {
   const session = useVideoNotes({ projectId: notes.projectId, version, role: notes.role, userId: notes.userId, archived: notes.archived, forms: notes.forms });
-  return <>{children({ playerProps: session.playerProps, panel: <VideoNotesPanel key={version.assetId} session={session} detailsRows={detailsRows} /> })}</>;
+  return <>{children({ playerProps: session.playerProps, panel: <VideoNotesPanel key={version.assetId} session={session} video={video} detailsRows={detailsRows} /> })}</>;
 }

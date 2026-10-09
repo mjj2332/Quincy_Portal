@@ -7,7 +7,7 @@ import { DEFAULT_NOTE_FILTERS, visibleThreads, type NoteFilters } from "../../li
 import { effectiveMarks, type NoteFormStore } from "../../lib/video-note-form-store";
 import { marksToFrames } from "../../lib/video-note-marks";
 import {
-  createVideoNote, deleteVideoNote, editVideoNote, replyToVideoNote, setVideoNoteResolution, useVideoNotesQuery, type NoteWriteContext,
+  commitVideoNotePaste, createVideoNote, deleteVideoNote, previewVideoNotePaste, editVideoNote, replyToVideoNote, setVideoNoteResolution, useVideoNotesQuery, type NoteWriteContext,
 } from "../../lib/video-notes-data";
 import type { ThreadActions } from "./VideoNoteThread";
 
@@ -91,11 +91,14 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
   /** Delete sends the revision the confirm was opened with (or, after a conflict the person reviewed, the current one): never the live cache value. */
   const remove = useCallback((note: VideoNoteDto, revision: number) => withCtx((context) => deleteVideoNote(context, note, revision)), [withCtx]);
 
+  const previewPaste = useCallback((input: Parameters<typeof previewVideoNotePaste>[1]) => withCtx((context) => previewVideoNotePaste(context, input)), [withCtx]);
+  const commitPaste = useCallback((input: Parameters<typeof commitVideoNotePaste>[1]) => withCtx((context) => commitVideoNotePaste(context, input)), [withCtx]);
+
   const writable = !readOnly && clock !== null;
   return {
     assetId, version, role, userId, readOnly, query, threads, shown, filters, setFilters, selectedId: live.selectedId, scroll: live.scroll,
     clock, frameCount, timecode, forms, pendingRange, markers,
-    seekToNote, select, actions, post, remove, refresh,
+    seekToNote, select, actions, post, remove, refresh, previewPaste, commitPaste,
     /** What the viewer hands the player. `onMark` exists only while the panel can take a mark, so I and O do nothing on an archived Project; it marks the frame on screen at once, with no pause and nothing pending. */
     playerProps: { markers, pendingRange, onMarkerSelect, onClockChange, ...(writable && clock ? { onMark: (kind: "in" | "out", frame: number) => { forms.mark(assetId, kind, frame, clock); } } : {}) },
   };

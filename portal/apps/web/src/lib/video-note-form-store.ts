@@ -1,4 +1,4 @@
-import type { VideoNoteCreateInput, VideoNoteDto, VideoNoteEditInput, VideoNoteThreadDto, VideoNoteVisibility } from "@quincy/shared";
+import { VIDEO_NOTE_PASTE_MAX, VIDEO_NOTE_PASTE_OFFSET_MAX, type VideoNoteCreateInput, VideoNoteDto, VideoNoteEditInput, VideoNoteThreadDto, VideoNoteVisibility } from "@quincy/shared";
 import type { FrameClockState } from "./video-frame-clock";
 import { classifyVideoNoteError } from "./video-note-errors";
 import { EMPTY_MARKS, markFrame, marksToFrames, type NoteMarks } from "./video-note-marks";
@@ -39,11 +39,16 @@ export type OpenForm = {
 /** The marks belong to the clock they were made on (a Version or a viewer that is gone takes them with it); off that clock the form's baseline `seed` shows and no frame action has been taken. */
 export type StoredMarks = { clock: object | null; value: NoteMarks; touched: boolean; seed: NoteMarks };
 export type Op = { id: number; form: "composer" | "open"; phase: "confirming" | "posting"; revision: number };
-export type Slot = { composer: Composer; open: OpenForm | null; marks: StoredMarks; op: Op | null; spent: boolean; /** Why a form closed by itself (its note was deleted elsewhere). */ notice: (Problem & { rootId: string }) | null };
+/** What the paste dialog keeps for a target Version so closing and reopening it loses nothing: the frame offset and the notes the person unticked (everything is ticked by default, so a re-run preview never un-ticks a note). */
+export type PasteDraft = { offset: number; unticked: readonly string[] };
+/** The notes copied from one Version of a Video (#741 5c-ui): ids only, the paste dialog asks the server for the plan. */
+export type PasteClipboard = { sourceAssetId: string; sourceVersion: number; noteIds: readonly string[] };
+export type Slot = { composer: Composer; open: OpenForm | null; marks: StoredMarks; op: Op | null; spent: boolean; /** Why a form closed by itself (its note was deleted elsewhere). */ notice: (Problem & { rootId: string }) | null; paste: PasteDraft };
 
 const NO_MARKS: StoredMarks = { clock: null, value: EMPTY_MARKS, touched: false, seed: EMPTY_MARKS };
 const EMPTY_COMPOSER: Composer = { body: "", visibility: "internal", anchorFrame: null, revision: 0, problem: null };
-const EMPTY_SLOT: Slot = Object.freeze({ composer: EMPTY_COMPOSER, open: null, marks: NO_MARKS, op: null, spent: false, notice: null });
+const EMPTY_PASTE: PasteDraft = Object.freeze({ offset: 0, unticked: Object.freeze([]) as readonly string[] });
+const EMPTY_SLOT: Slot = Object.freeze({ composer: EMPTY_COMPOSER, open: null, marks: NO_MARKS, op: null, spent: false, notice: null, paste: EMPTY_PASTE });
 
 export function effectiveMarks(marks: StoredMarks, clock: object | null): { value: NoteMarks; touched: boolean } {
   return marks.clock !== null && marks.clock === clock ? marks : { value: marks.seed, touched: false };
@@ -88,6 +93,8 @@ const isDirty = (slot: Slot) => (slot.open ? (slot.open.kind === "reply" ? slot.
 
 export function createNoteFormStore(key: string) {
   const slots = new Map<string, Slot>();
+  // The clipboard is per Video, not per Version: it must outlive switching Versions, and no slot rewrite touches it.
+  const clipboards = new Map<string, PasteClipboard>();
   const listeners = new Set<() => void>();
   let seq = 0;
   let dead = false;
@@ -267,10 +274,30 @@ export function createNoteFormStore(key: string) {
     /** The open form's note left the Version's full list (deleted elsewhere): the form goes, unless its own request is out (it is reconciled again when that settles). */
     retireMissing(assetId: string, threads: readonly VideoNoteThreadDto[]) { latest.set(assetId, threads); reconcile(assetId); },
 
+    /** Copies the notes a person is looking at (at most the paste limit). An empty selection copies nothing and keeps the earlier clipboard. */
+    copyNotes(videoId: string, clip: PasteClipboard) {
+      if (dead || clip.noteIds.length === 0) return;
+      clipboards.set(videoId, { sourceAssetId: clip.sourceAssetId, sourceVersion: clip.sourceVersion, noteIds: clip.noteIds.slice(0, VIDEO_NOTE_PASTE_MAX) });
+      listeners.forEach((listener) => { listener(); });
+    },
+    clipboard: (videoId: string): PasteClipboard | null => clipboards.get(videoId) ?? null,
+    pasteDraft: (assetId: string): PasteDraft => slot(assetId).paste,
+    setPasteOffset(assetId: string, offset: number) {
+      const next = Number.isFinite(offset) ? Math.min(VIDEO_NOTE_PASTE_OFFSET_MAX, Math.max(-VIDEO_NOTE_PASTE_OFFSET_MAX, Math.round(offset))) : 0;
+      const held = slot(assetId).paste;
+      if (held.offset !== next) put(assetId, { paste: { ...held, offset: next } });
+    },
+    setPasteTicked(assetId: string, noteId: string, ticked: boolean) {
+      const held = slot(assetId).paste;
+      const has = held.unticked.includes(noteId);
+      if (ticked === has) put(assetId, { paste: { ...held, unticked: ticked ? held.unticked.filter((id) => id !== noteId) : [...held.unticked, noteId] } });
+    },
+    resetPaste(assetId: string) { if (slot(assetId).paste !== EMPTY_PASTE) put(assetId, { paste: EMPTY_PASTE }); },
+
     /** The person's session ended: every frame confirmation stops. A request already sent is never touched. */
     cancelAll() { for (const assetId of [...slots.keys()]) cancelConfirmation(assetId); },
     /** This store is being replaced (another person or Project): nothing it started may write or send again. */
-    retire() { dead = true; slots.clear(); listeners.clear(); },
+    retire() { dead = true; slots.clear(); clipboards.clear(); listeners.clear(); },
   };
 }
 

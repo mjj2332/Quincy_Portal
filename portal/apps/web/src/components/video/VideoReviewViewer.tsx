@@ -7,7 +7,7 @@ import { Button } from "../reui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "../reui/dialog";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
-import { hasOpenFloatingPopup } from "../quincy/project-sheet-layers";
+import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
 import { formatBytes, formatDuration, formatFps, formatVideoDate } from "./video-format";
 import type { NoteFormStore } from "../../lib/video-note-form-store";
@@ -45,7 +45,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes }: {
   const notesOn = notes !== undefined;
   // Escape order with the notes panel (#741 5b), decided from a snapshot taken at keydown, before any handler has run: Base UI reports one
   // Escape to `onOpenChange` more than once, so the answer cannot come from state the first call changed (the ProjectSheet note).
-  // 1. an open menu, popover, list or confirm owns it; 2. the form store decides for the Version's form (a frame confirmation is cancelled, a
+  // 1. an open menu, popover, list, confirm or modal dialog owns it; 2. the form store decides for the Version's form (a frame confirmation is cancelled, a
   // clean edit or reply closes, a dirty form or the composer keeps its text on the first Escape); 3. only then does it close the viewer.
   const forms = notes?.forms;
   const escapeSnapshot = useRef({ layer: false, form: false });
@@ -54,7 +54,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes }: {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       const popup = popupRef.current;
-      const layer = hasOpenAlertDialog() || hasOpenFloatingPopup(popup, slot);
+      // A modal dialog opened from the panel (the notes paste dialog) is not a floating popup but owns Escape just the same.
+      const layer = hasOpenAlertDialog() || hasOpenFloatingPopup(popup, slot) || hasOpenModalAbove(popup, document);
       if (layer || popup === null) { escapeSnapshot.current = { layer, form: false }; return; }
       const active = document.activeElement;
       const { consumed, focus } = forms.escape(assetId, { focusInForm: active instanceof Element && popup.contains(active) && active.closest("[data-notes-form]") !== null });
@@ -146,7 +147,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes }: {
       className="top-0 left-0 flex h-dvh w-dvw max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none bg-background p-0 text-foreground ring-0 focus-visible:!outline-none sm:max-w-none"
     >
       <OverlayContainerContext.Provider value={slot}>
-      {notes ? <Suspense fallback={null}><LazyNotesHost notes={notes} version={version} detailsRows={detailsRows}>{layout}</LazyNotesHost></Suspense> : layout(null)}
+      {notes ? <Suspense fallback={null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows}>{layout}</LazyNotesHost></Suspense> : layout(null)}
       </OverlayContainerContext.Provider>
       <div ref={setSlot} />
     </DialogContent>

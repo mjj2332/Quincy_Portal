@@ -1,6 +1,7 @@
 import { useQuery, type QueryClient, type QueryFunctionContext, type UseQueryResult } from "@tanstack/react-query";
 import {
-  videoNoteDeleteResponseSchema, videoNoteListResponseSchema, videoNoteThreadDtoSchema,
+  videoNoteDeleteResponseSchema, videoNotePasteCommitResponseSchema, videoNotePastePreviewResponseSchema,
+  type VideoNotePasteCommitResponse, type VideoNotePastePreviewResponse, videoNoteListResponseSchema, videoNoteThreadDtoSchema,
   type Role, type VideoNoteCreateInput, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto,
 } from "@quincy/shared";
 import { apiDeleteWithBody, apiGet, apiPatch, apiPost, apiPut } from "./api";
@@ -106,3 +107,24 @@ export const setVideoNoteResolution = (ctx: NoteWriteContext, rootId: string, re
 export const deleteVideoNote = (ctx: NoteWriteContext, note: Pick<VideoNoteDto, "id" | "parentId">, expectedRevision: number): Promise<{ thread: VideoNoteThreadDto | null }> =>
   run(ctx, async () => parseDelete(ctx.role, await apiDeleteWithBody<unknown, { expectedRevision: number }>(notePath(ctx.projectId, note.id), { expectedRevision })),
     ({ thread }) => patch(ctx, (list) => (thread ? upsertThread(list, thread) : removeThread(list, note.parentId ?? note.id))));
+
+
+const pastePath = (projectId: string, assetId: string) => `${notesPath(projectId, assetId).replace(/\/notes$/, "")}/note-paste`;
+
+/** What the paste would do onto `ctx.assetId`: no write and no audit row on the server. A 401 or an access refusal is handled like any write's. */
+export async function previewVideoNotePaste(ctx: NoteWriteContext, input: { sourceAssetId: string; noteIds: readonly string[]; offsetFrames: number }): Promise<VideoNotePastePreviewResponse> {
+  try {
+    const value = await apiPost<unknown, typeof input>(`${pastePath(ctx.projectId, ctx.assetId)}/preview`, input);
+    return (ctx.role === "external_editor" ? decodeExternalResponse("video-note-paste-preview", value) : videoNotePastePreviewResponseSchema.parse(value)) as VideoNotePastePreviewResponse;
+  } catch (error) { await onFailure(ctx, error); throw error; }
+}
+
+/**
+ * Copies the ticked notes onto `ctx.assetId`, each with the revision the preview showed. Idempotent on the server (a repeat copies nothing new), so a
+ * network failure may simply be sent again. On success the notes list of the target and the Videos list are re-read, like any note write.
+ */
+export const commitVideoNotePaste = (ctx: NoteWriteContext, input: { sourceAssetId: string; notes: ReadonlyArray<{ noteId: string; revision: number }>; offsetFrames: number }): Promise<VideoNotePasteCommitResponse> =>
+  run(ctx, async () => {
+    const value = await apiPost<unknown, typeof input>(pastePath(ctx.projectId, ctx.assetId), input);
+    return (ctx.role === "external_editor" ? decodeExternalResponse("video-note-paste", value) : videoNotePasteCommitResponseSchema.parse(value)) as VideoNotePasteCommitResponse;
+  }, () => Promise.resolve());

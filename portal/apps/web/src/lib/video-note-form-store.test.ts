@@ -583,3 +583,74 @@ describe("subscription (#741 5b form store)", () => {
     expect(other).not.toHaveBeenCalled();
   });
 });
+
+describe("paste clipboard and draft (#741 5c-ui)", () => {
+  const VIDEO = "88888888-8888-4888-8888-888888888888";
+  const OTHER_VIDEO = "88888888-8888-4888-8888-888888888889";
+  const clip = (over: Record<string, unknown> = {}) => ({ sourceAssetId: V1, sourceVersion: 1, noteIds: ["a", "b"], ...over });
+
+  it("holds one clipboard per Video, and copying again replaces it", () => {
+    expect(store.clipboard(VIDEO)).toBeNull();
+    store.copyNotes(VIDEO, clip());
+    store.copyNotes(OTHER_VIDEO, clip({ noteIds: ["z"] }));
+    expect(store.clipboard(VIDEO)).toEqual({ sourceAssetId: V1, sourceVersion: 1, noteIds: ["a", "b"] });
+    store.copyNotes(VIDEO, clip({ noteIds: ["c"] }));
+    expect(store.clipboard(VIDEO)?.noteIds).toEqual(["c"]);
+    expect(store.clipboard(OTHER_VIDEO)?.noteIds).toEqual(["z"]);
+  });
+
+  it("caps the clipboard at the paste limit and copies nothing for an empty selection", () => {
+    store.copyNotes(VIDEO, clip({ noteIds: Array.from({ length: 150 }, (_, i) => `n${i}`) }));
+    expect(store.clipboard(VIDEO)?.noteIds).toHaveLength(100);
+    store.copyNotes(VIDEO, clip({ noteIds: [] }));
+    expect(store.clipboard(VIDEO)?.noteIds).toHaveLength(100);
+  });
+
+  it("notifies subscribers when the clipboard changes and keeps a stable reference otherwise", () => {
+    const listener = vi.fn();
+    store.subscribe(listener);
+    store.copyNotes(VIDEO, clip());
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(store.clipboard(VIDEO)).toBe(store.clipboard(VIDEO));
+  });
+
+  it("keeps the offset and the unticked notes per target Version, and everything is ticked by default", () => {
+    expect(store.pasteDraft(V2)).toEqual({ offset: 0, unticked: [] });
+    store.setPasteOffset(V2, -3);
+    store.setPasteTicked(V2, "a", false);
+    store.setPasteTicked(V2, "b", false);
+    store.setPasteTicked(V2, "b", true);
+    expect(store.pasteDraft(V2)).toEqual({ offset: -3, unticked: ["a"] });
+    expect(store.pasteDraft(V1)).toEqual({ offset: 0, unticked: [] });
+  });
+
+  it("survives leaving the Version, closing a form and a thread list that no longer holds the notes", () => {
+    store.copyNotes(VIDEO, clip());
+    store.setPasteOffset(V2, 5);
+    store.setPasteTicked(V2, "a", false);
+    store.leave(V2);
+    store.openReply(V2, "root");
+    store.close(V2);
+    store.retireMissing(V2, []);
+    expect(store.pasteDraft(V2)).toEqual({ offset: 5, unticked: ["a"] });
+    expect(store.clipboard(VIDEO)?.noteIds).toEqual(["a", "b"]);
+  });
+
+  it("resetPaste puts the offset and ticks back, and retire clears the clipboard", () => {
+    store.copyNotes(VIDEO, clip());
+    store.setPasteOffset(V2, 5);
+    store.resetPaste(V2);
+    expect(store.pasteDraft(V2)).toEqual({ offset: 0, unticked: [] });
+    store.retire();
+    expect(store.clipboard(VIDEO)).toBeNull();
+  });
+
+  it("clamps the offset to the integers the server accepts", () => {
+    store.setPasteOffset(V2, 2_000_000);
+    expect(store.pasteDraft(V2).offset).toBe(1_000_000);
+    store.setPasteOffset(V2, 2.6);
+    expect(store.pasteDraft(V2).offset).toBe(3);
+    store.setPasteOffset(V2, Number.NaN);
+    expect(store.pasteDraft(V2).offset).toBe(0);
+  });
+});

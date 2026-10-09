@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { hasOpenInnerLayer } from "./project-sheet-layers";
+import { hasOpenInnerLayer, hasOpenModalAbove } from "./project-sheet-layers";
 
 /** Builds `<body><popup role=dialog aria-modal>…</popup>…</body>` fixtures by hand. */
 function fixture(html: string) {
@@ -96,5 +96,40 @@ describe("hasOpenInnerLayer (#366)", () => {
       const inPopup = wrap(html, "popup");
       expect(hasOpenInnerLayer(inPopup.popup, inPopup.slot, document)).toBe(false);
     });
+  });
+});
+
+describe("hasOpenModalAbove (#741 5c-ui)", () => {
+  it("is false with nothing else open, and does not count the popup itself or a dialog it sits inside", () => {
+    const { popup } = fixture(`<div role="dialog" aria-modal="true" data-open><div data-fixture="popup" role="dialog" aria-modal="true" data-open></div></div>`);
+    expect(hasOpenModalAbove(popup, document)).toBe(false);
+    expect(hasOpenModalAbove(null, document)).toBe(false);
+  });
+
+  it("is true for an open modal dialog portalled outside the popup (the paste dialog)", () => {
+    const { popup } = fixture(`<div data-fixture="popup" role="dialog" aria-modal="true" data-open></div><div role="dialog" aria-modal="true" data-open data-testid="paste-dialog"></div>`);
+    expect(hasOpenModalAbove(popup, document)).toBe(true);
+  });
+
+  it("is true for a registry dialog, whose Base UI popup sets no aria-modal (only data-slot)", () => {
+    const { popup } = fixture(`<div data-fixture="popup" data-slot="dialog-content" role="dialog" data-open></div><div data-slot="dialog-content" role="dialog" data-open data-testid="paste-dialog"></div>`);
+    expect(hasOpenModalAbove(popup, document)).toBe(true);
+    document.querySelector('[data-testid="paste-dialog"]')!.removeAttribute("data-open");
+    expect(hasOpenModalAbove(popup, document)).toBe(false);
+  });
+
+  it("is true for a modal rendered inside the popup", () => {
+    const { popup } = fixture(`<div data-fixture="popup" role="dialog" aria-modal="true" data-open><div role="dialog" aria-modal="true" data-open></div></div>`);
+    expect(hasOpenModalAbove(popup, document)).toBe(true);
+  });
+
+  it("is false for a modal that sits under the popup (the Project sheet the viewer opened from)", () => {
+    const { popup } = fixture(`<div role="dialog" aria-modal="true" data-open data-testid="sheet"></div><div data-fixture="popup" role="dialog" aria-modal="true" data-open></div>`);
+    expect(hasOpenModalAbove(popup, document)).toBe(false);
+  });
+
+  it("is false for a closing modal, a non-modal dialog and an alert dialog (which has its own arm)", () => {
+    const { popup } = fixture(`<div data-fixture="popup" role="dialog" aria-modal="true" data-open></div><div role="dialog" aria-modal="true"></div><div role="dialog" data-open></div><div role="alertdialog" data-open></div>`);
+    expect(hasOpenModalAbove(popup, document)).toBe(false);
   });
 });

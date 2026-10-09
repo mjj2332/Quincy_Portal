@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import type { VideoNoteDto, VideoNoteThreadDto } from "@quincy/shared";
+import { roleHasCapability, VIDEO_NOTE_PASTE_MAX, type VideoDto, type VideoNoteDto, type VideoNotePasteCommitResponse, type VideoNoteThreadDto } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
 import { useNow } from "../../lib/use-now";
 import { noteCounts, type NoteStatusFilter, type NoteVisibilityFilter } from "../../lib/video-note-view";
@@ -7,12 +7,15 @@ import { classifyVideoNoteError } from "../../lib/video-notes-data";
 import { ARCHIVED_NOTICE_CLASS } from "../archived-notice";
 import { ConfirmDeleteDialog } from "../ConfirmDeleteDialog";
 import { Button } from "../quincy/Button";
+import { ICON_BUTTON } from "../quincy/icon-button";
+import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
 import { EmptyState } from "../quincy/EmptyState";
 import { Notice } from "../quincy/Notice";
 import { Popover, PopoverContent, PopoverTrigger } from "../reui/popover";
 import { ScrollArea } from "../reui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
 import { VideoNoteComposer } from "./VideoNoteComposer";
+import { VideoNotePasteDialog } from "./VideoNotePasteDialog";
 import { VideoNoteThread } from "./VideoNoteThread";
 import type { VideoNotesSession } from "./use-video-notes";
 
@@ -38,7 +41,7 @@ function deleteCopy(tombstone: boolean, conflicted: boolean) {
  * 721px) nothing inside scrolls on its own: the whole dialog scrolls, with the composer directly under the player ahead of the list.
  * It holds no data of its own: `session` (from `useVideoNotes`) is shared with the player, which draws the markers and takes I and O.
  */
-export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesSession; detailsRows: ReactNode }) {
+export function VideoNotesPanel({ session, video, detailsRows }: { session: VideoNotesSession; video: VideoDto; detailsRows: ReactNode }) {
   const { query, threads, shown, filters, setFilters, selectedId, version, readOnly } = session;
   const now = useNow();
   const listRef = useRef<HTMLDivElement>(null);
@@ -48,6 +51,30 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
   /** The ⋯ that opened the confirm, and how it closed: only a successful delete uses the current destination, Cancel and Escape go back to the trigger. */
   const deleteTrigger = useRef<HTMLElement | null>(null);
   const deleteDone = useRef(false);
+
+  // Copy and paste (#741 5c-ui): the ⋯ menu exists only where the person can write notes. The clipboard is the form store's, per Video, so it
+  // outlives this panel (switching Version remounts it) and the paste dialog's offset and ticks outlive the dialog.
+  const canCopy = !readOnly && roleHasCapability(session.role, "annotateVideo");
+  const clipboard = useSyncExternalStore(session.forms.subscribe, () => session.forms.clipboard(video.id));
+  const pasteFrom = clipboard && clipboard.sourceAssetId !== session.assetId ? clipboard : null;
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasted, setPasted] = useState<string | null>(null);
+  useEffect(() => {
+    if (pasted === null) return;
+    const timer = setTimeout(() => { setPasted(null); }, 6000);
+    return () => { clearTimeout(timer); };
+  }, [pasted]);
+  const copyShown = () => {
+    const ids = shown.map((thread) => thread.id);
+    if (ids.length === 0) { setPasted("No notes to copy"); return; }
+    session.forms.copyNotes(video.id, { sourceAssetId: session.assetId, sourceVersion: version.version, noteIds: ids });
+    setPasted(ids.length > VIDEO_NOTE_PASTE_MAX ? `Copied the first ${VIDEO_NOTE_PASTE_MAX} of ${ids.length} notes` : `Copied ${ids.length} ${ids.length === 1 ? "note" : "notes"}`);
+  };
+  const onPasted = (result: VideoNotePasteCommitResponse) => {
+    session.forms.resetPaste(session.assetId);
+    setPasteOpen(false);
+    setPasted(`Pasted ${result.copied} ${result.copied === 1 ? "note" : "notes"}${result.skipped > 0 ? ` · ${result.skipped} left out` : ""}`);
+  };
 
   const counts = useMemo(() => noteCounts(threads ?? [], filters), [threads, filters]);
   // The thread holding the open edit or reply stays listed when the filters exclude it, so the form is never invisible. Counts and markers still follow the filters.
@@ -143,11 +170,19 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
         <h3 data-testid="video-notes-title" className="m-0 text-[length:var(--text-lg)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{`Notes on v${version.version}`}</h3>
         <span data-testid="video-notes-counts" className="text-foreground-secondary [font:var(--type-label)]">{`${counts.totals.open} open · ${counts.totals.resolved} resolved`}</span>
       </div>
-      <Popover>
-        <PopoverTrigger render={<Button type="button" variant="text" data-testid="video-details-button" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}>Version details</PopoverTrigger>
-        <PopoverContent align="end" className="w-[min(320px,calc(100vw-var(--space-5)))] max-h-[min(70dvh,520px)] overflow-y-auto" data-testid="video-details-popover">{detailsRows}</PopoverContent>
-      </Popover>
+      <div className="flex items-center gap-[var(--space-1)]">
+        <Popover>
+          <PopoverTrigger render={<Button type="button" variant="text" data-testid="video-details-button" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}>Version details</PopoverTrigger>
+          <PopoverContent align="end" className="w-[min(320px,calc(100vw-var(--space-5)))] max-h-[min(70dvh,520px)] overflow-y-auto" data-testid="video-details-popover">{detailsRows}</PopoverContent>
+        </Popover>
+        {canCopy && <Menu triggerLabel="Notes actions" label="Notes actions" triggerClassName={ICON_BUTTON} triggerTestId="video-notes-menu" trigger={<span aria-hidden="true">⋯</span>}>
+          <MenuPrimitive.Item className={MENU_ITEM} disabled={shown.length === 0} onClick={copyShown}>Copy shown notes</MenuPrimitive.Item>
+          {pasteFrom && <MenuPrimitive.Item className={MENU_ITEM} onClick={() => { setPasteOpen(true); }}>{`Paste ${pasteFrom.noteIds.length} ${pasteFrom.noteIds.length === 1 ? "note" : "notes"} from v${pasteFrom.sourceVersion}…`}</MenuPrimitive.Item>}
+        </Menu>}
+      </div>
     </div>
+
+    {pasted && <Notice tone="positive" role="status" data-testid="video-notes-paste-status" className="max-[721px]:order-2">{pasted}</Notice>}
 
     {total > 0 && <div className="grid gap-[var(--space-2)] max-[721px]:order-2" data-testid="video-notes-filters">
       {filterGroup<NoteStatusFilter>("Show notes that are", "status", filters.status, [
@@ -194,6 +229,19 @@ export function VideoNotesPanel({ session, detailsRows }: { session: VideoNotesS
         ? <p data-testid="video-notes-archived" className={ARCHIVED_NOTICE_CLASS}>Read-only while archived. Restore the project before adding or changing notes.</p>
         : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} />}
     </div>
+
+    {canCopy && pasteFrom && <VideoNotePasteDialog
+      open={pasteOpen}
+      onOpenChange={setPasteOpen}
+      store={session.forms}
+      assetId={session.assetId}
+      target={version}
+      source={video.versions.find((candidate) => candidate.assetId === pasteFrom.sourceAssetId)}
+      clipboard={pasteFrom}
+      previewPaste={session.previewPaste}
+      commitPaste={session.commitPaste}
+      onPasted={onPasted}
+    />}
 
     <ConfirmDeleteDialog
       open={deleting !== null}
