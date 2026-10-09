@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import type { Mp4Probe, Role, VideoDto, VideoReviewResponse } from "@quincy/shared";
 import { useSession } from "../../lib/auth";
 import { useOptionalProjectQueryClient, useProjectAccessTermination, useProjectVideosQuery } from "../../lib/project-data";
-import { VIDEO_CLIENT_MAX_ACTIVE, cancelVideoUpload, removeVideoUpload, retryVideoUpload, startVideoUpload, useVideoUploads } from "../../lib/video-upload-store";
+import { VIDEO_CLIENT_MAX_ACTIVE, cancelVideoUpload, removeVideoUpload, retryVideoUpload, startVideoUpload, uploadIdentityGeneration, useVideoUploads } from "../../lib/video-upload-store";
 import { checkVideoFile } from "../../lib/video-upload";
 import { Button } from "../quincy/Button";
 import { EmbeddedUploadTray, type EmbeddedUpload } from "../quincy/EmbeddedUploadTray";
@@ -23,27 +23,31 @@ export function VideoCollectionPanel({ projectId, role, review }: { projectId: s
   const running = uploads.filter((upload) => upload.phase === "reserving" || upload.phase === "uploading" || upload.phase === "finishing");
   const atUploadCap = running.length >= VIDEO_CLIENT_MAX_ACTIVE;
 
-  const rows = useMemo<EmbeddedUpload[]>(() => uploads.map((upload) => ({
+  // A cancelled row is only waiting for the server to drop its reservation: it is gone from the screen already.
+  const rows = useMemo<EmbeddedUpload[]>(() => uploads.filter((upload) => upload.phase !== "cancelled").map((upload) => ({
     key: upload.id,
     name: upload.fileName,
     percent: upload.percent,
     kind: "video",
-    phase: upload.phase === "failed" ? "failed" : upload.phase === "finishing" ? "finishing" : "uploading",
+    phase: upload.phase === "failed" ? "failed" : upload.phase === "done" ? "done" : upload.phase === "finishing" ? "finishing" : "uploading",
     ...(upload.phase === "failed" ? { message: upload.error ?? "The upload failed.", noRetry: upload.retry === null, retryLabel: upload.retry === "finish" ? "Retry finishing" : "Retry" } : {}),
     cautions: upload.cautions,
   })), [uploads]);
 
-  function start(input: { file: File; probe: Mp4Probe; cautions: string[]; target: Parameters<typeof startVideoUpload>[0]["target"] }) {
-    if (!userId) return;
-    startVideoUpload({ userId, queryClient, projectId, role, ...input });
+  /** `generation` is the identity generation from before any async step that led here; a person who changed meanwhile starts nothing. */
+  function start(input: { file: File; probe: Mp4Probe; cautions: string[]; target: Parameters<typeof startVideoUpload>[0]["target"] }, generation = uploadIdentityGeneration()): boolean {
+    if (!userId) return false;
+    return startVideoUpload({ userId, queryClient, projectId, role, identityGeneration: generation, ...input }) !== null;
   }
 
   async function versionFile(video: VideoDto, file: File): Promise<string | null> {
     if (!userId) return "Sign in again to upload.";
+    const generation = uploadIdentityGeneration();
     const result = await checkVideoFile(file);
     if (!result.ok) return result.message;
-    start({ file, probe: result.probe, cautions: result.cautions, target: { kind: "version", videoId: video.id, title: video.title } });
-    return null;
+    if (generation !== uploadIdentityGeneration()) return "Sign in again to upload.";
+    const started = start({ file, probe: result.probe, cautions: result.cautions, target: { kind: "version", videoId: video.id, title: video.title } }, generation);
+    return started ? null : "Three uploads are running. Finish or cancel one first.";
   }
 
   const myVersionUpload = (video: VideoDto) => running.find((upload) => upload.videoId === video.id);

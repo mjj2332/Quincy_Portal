@@ -6,6 +6,7 @@ import { FileDropzone, FilePickButton } from "../quincy/FileDropzone";
 import { Notice } from "../quincy/Notice";
 import { QuincyField } from "../quincy/QuincyField";
 import { checkVideoFile, defaultFilmTitle } from "../../lib/video-upload";
+import { uploadIdentityGeneration } from "../../lib/video-upload-store";
 import { VIDEO_ACCEPT } from "./VideoCard";
 import { formatDuration, formatFps } from "./video-format";
 
@@ -16,9 +17,11 @@ type Picked = { file: File; probe: Mp4Probe; cautions: string[] };
 /** The "new film" drop target and its title form (#741 4d-i). The file is checked in the browser first; nothing is requested from the server until Upload. */
 export function NewFilmUploader({ atUploadCap, onStart }: {
   atUploadCap: boolean;
-  onStart: (input: Picked & { title: string }) => void;
+  /** Returns whether the upload started; when it was refused the file and title stay so the person can try again. */
+  onStart: (input: Picked & { title: string }) => boolean;
 }) {
   const titleId = useId();
+  const capHintId = useId();
   const [checking, setChecking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [picked, setPicked] = useState<Picked | null>(null);
@@ -26,8 +29,11 @@ export function NewFilmUploader({ atUploadCap, onStart }: {
 
   async function receive(file: File) {
     setProblem(null); setPicked(null); setChecking(true);
+    const generation = uploadIdentityGeneration();
     const result = await checkVideoFile(file);
     setChecking(false);
+    // The person changed while the file was being read: it is not theirs to show.
+    if (generation !== uploadIdentityGeneration()) return;
     if (!result.ok) { setProblem(result.message); return; }
     setPicked({ file, probe: result.probe, cautions: result.cautions });
     setTitle(defaultFilmTitle(file.name));
@@ -55,13 +61,14 @@ export function NewFilmUploader({ atUploadCap, onStart }: {
     {picked && <form
       className="grid gap-[var(--space-3)] p-[var(--space-4)] bg-secondary border-solid border-[length:var(--border-width-hair)] border-border"
       data-testid="new-film-form"
-      onSubmit={(event) => { event.preventDefault(); if (titleError) return; onStart({ ...picked, title: trimmed }); setPicked(null); setTitle(""); }}
+      onSubmit={(event) => { event.preventDefault(); if (titleError || atUploadCap) return; if (onStart({ ...picked, title: trimmed })) { setPicked(null); setTitle(""); } }}
     >
       <QuincyField id={titleId} label="Film title" value={title} maxLength={400} onChange={(event) => setTitle(event.target.value)} error={titleError} />
       <p className={HINT} data-testid="new-film-probe">{`${picked.file.name} · ${formatFps(picked.probe.fps)} fps · ${picked.probe.width}×${picked.probe.height} · ${formatDuration(picked.probe.durationMs)}`}</p>
       {picked.cautions.map((caution) => <Notice key={caution} tone="caution" role="status">{caution}</Notice>)}
+      {atUploadCap && <p id={capHintId} className={HINT} data-testid="new-film-cap-hint">Three uploads are running. Finish or cancel one first.</p>}
       <div className="flex flex-wrap gap-[var(--space-2)]">
-        <Button type="submit" className="min-h-[44px]" disabled={Boolean(titleError)}>Upload</Button>
+        <Button type="submit" className="min-h-[44px]" disabled={Boolean(titleError) || atUploadCap} aria-describedby={atUploadCap ? capHintId : undefined}>Upload</Button>
         <Button type="button" variant="secondary" className="min-h-[44px]" onClick={() => { setPicked(null); setTitle(""); }}>Cancel</Button>
       </div>
     </form>}

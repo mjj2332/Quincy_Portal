@@ -5,7 +5,7 @@ import { Spinner } from "../reui/spinner";
 import { Notice } from "./Notice";
 
 /** Where an upload is: its bytes going up, its HEIC display copy being made by the server (#495), or that copy failing. */
-export type EmbeddedUploadPhase = "uploading" | "finishing" | "preparing" | "failed";
+export type EmbeddedUploadPhase = "uploading" | "finishing" | "preparing" | "failed" | "done";
 /** One running upload as the tray shows it. `phase` is `uploading` when absent. */
 export type EmbeddedUpload = {
   key: number; name: string; percent: number; kind: "image" | "video"; phase?: EmbeddedUploadPhase;
@@ -58,6 +58,11 @@ export function EmbeddedUploadTray({ uploads, errors, onCancel, onRemove = onCan
   return <div data-testid={testId} className={className ?? "grid gap-[var(--space-2)]"}>
     {uploads.map((entry) => {
       if (entry.phase === "preparing") return <PreparingRow key={entry.key} name={entry.name} onRemove={() => onRemove(entry.key)} focusRemove={retried.current === entry.key} />;
+      // #741: a film that went up with a caution the person has not seen yet (one only the server raised). It stays until dismissed.
+      if (entry.phase === "done") return <Notice key={entry.key} tone="caution" role="status" className="flex flex-wrap items-center justify-between gap-[var(--space-1)]">
+        <span className="grid min-w-0 gap-[var(--space-1)] [overflow-wrap:anywhere]"><span>{entry.name} uploaded, with a warning.</span>{entry.cautions?.map((caution) => <span key={caution}>{caution}</span>)}</span>
+        <Button type="button" variant="text" aria-label={`Dismiss warning for ${entry.name}`} onClick={() => onRemove(entry.key)}>Dismiss</Button>
+      </Notice>;
       if (entry.phase === "failed") return <Notice key={entry.key} tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-1)]">
         <span className="min-w-0 [overflow-wrap:anywhere]">{entry.message ?? `Couldn't prepare ${entry.name}`}</span>
         <span className="flex flex-wrap items-center gap-[var(--space-1)]">

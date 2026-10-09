@@ -22,3 +22,5 @@ One line per new UI element. ReUI MCP queried (`search` "file upload dropzone vi
 
 No allowlist entry was added: the only raw `<input>` lives in `components/quincy/FileDropzone.tsx`; `ui-primitive-ratchet.guard.test.ts` passes unchanged.
 Not in 4d-i (later slices): Open review, selection checkboxes and Share bar, note/decision/link chips, premium actions, the player.
+- Upload tray "uploaded, with a warning" row (Sol review): `components/quincy/EmbeddedUploadTray.tsx` `phase: "done"` renders the existing `Notice` (tone caution, role status) with the existing text `Button` for Dismiss; same pattern as the tray's failed row and its cautions.
+- New film Upload-at-cap hint: plain `<p>` in the existing `HINT` text style, as the dropzone's own cap line.

@@ -82,6 +82,8 @@ export type VideoUploadOptions = {
   onChange: (state: VideoUploadState) => void;
   /** The upload finished or was lost: refresh the list and tell the person. */
   onSettled?: (result: VideoUploadSettled) => void;
+  /** The server has dropped the reservation after a failure (a Cancel settles through `onSettled` instead): refresh the list. */
+  onServerCleaned?: () => void;
   /** A 401 anywhere: end the session's project data. */
   onUnauthorized?: (error: unknown) => void;
   completeDelaysMs?: readonly number[];
@@ -111,6 +113,8 @@ export class VideoUpload {
   private abortSent = false;
   private settled = false;
   private running = false;
+  private cancelRequested = false;
+  private reserveRequest: Promise<VideoUploadReserveResponse> | null = null;
 
   constructor(readonly id: number, private readonly options: VideoUploadOptions) {
     this.state = { id, projectId: options.projectId, fileName: options.file.name, title: options.target.title, videoId: options.target.kind === "version" ? options.target.videoId : null, version: null, percent: 0, phase: "reserving", error: null, retry: null, cautions: options.cautions };
@@ -129,10 +133,21 @@ export class VideoUpload {
   cancel(): void {
     if (this.state.phase === "done" || this.state.phase === "cancelled") return;
     this.controller.abort();
+    this.cancelRequested = true;
     const hadFailed = this.state.phase === "failed";
+    const wasRunning = this.running;
     this.set({ phase: "cancelled", error: null, retry: null });
-    if (hadFailed || this.running) void this.abortOnServer(true);
-    this.settle("cancelled");
+    // Settle (which refreshes the list) only once the server has dropped the reservation: a refresh before that reads it as still active.
+    const cleanup = hadFailed || wasRunning ? this.cleanupAfterCancel() : Promise.resolve();
+    void cleanup.then(() => { if (this.state.phase === "cancelled") this.settle("cancelled"); });
+  }
+
+  /** Abort the reservation, including one whose reserve call is still in flight and will answer late. */
+  private async cleanupAfterCancel(): Promise<void> {
+    if (!this.reservation && this.reserveRequest) {
+      try { this.reservation = await this.reserveRequest; } catch { return; }
+    }
+    await this.abortOnServer(true);
   }
 
   /** Tell the server to drop the reservation, at most once. A 409 `upload_completed` means the cancel lost the race. */
@@ -146,6 +161,7 @@ export class VideoUpload {
         if (body?.code === "upload_completed") { this.set({ phase: "done", error: null }); this.settle("done"); }
       }
     } catch { /* the sweep cleans up an abandoned reservation */ }
+    if (!this.cancelRequested) this.options.onServerCleaned?.();
   }
 
   start(): void { void this.run(); }
@@ -190,10 +206,11 @@ export class VideoUpload {
       clientProbe: { fps: options.probe.fps, frameCount: options.probe.frameCount, width: options.probe.width, height: options.probe.height, durationMs: options.probe.durationMs, codec: options.probe.codec },
     };
     const request = apiPost<unknown, typeof body>(this.base, body).then((raw) => (options.role === "external_editor" ? decodeExternalResponse("video-upload-reserve", raw) : videoUploadReserveResponseSchema.parse(raw)) as VideoUploadReserveResponse);
+    this.reserveRequest = request;
     let reservation: VideoUploadReserveResponse;
     try { reservation = await this.unlessCancelled(request); }
     catch (error) {
-      if (isAbort(error)) { void request.then((late) => { this.reservation = late; return this.abortOnServer(); }, () => undefined); throw error; }
+      if (isAbort(error)) throw error; // a late reservation is aborted by `cleanupAfterCancel`
       this.options.onUnauthorized?.(error);
       this.fail(reserveErrorMessage(error), null);
       throw abortError(); // nothing was reserved: stop quietly

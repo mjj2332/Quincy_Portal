@@ -9,6 +9,7 @@ import { removeProjectFromDashboardQueries } from "../lib/dashboard-projects";
 import { removeProductionCalendarQueries } from "../lib/production-calendar-query";
 import { removeProductionGanttQueries } from "../lib/production-gantt-query";
 import { locationStore } from "../lib/router";
+import { syncUploadPrincipal } from "../lib/video-upload-store";
 import { dropDashboardSearchOwnership, resetDashboardSearchForPrincipal } from "../lib/dashboard-search-store";
 
 type Snapshot = { principal: { id: string; role: Role; authorizationEpoch: number }; authorizationFingerprint: string; projects: Array<{ projectId: string; membershipCycleIds: string[] }> };
@@ -60,6 +61,12 @@ function PrincipalFreshnessBoundaryInner({ principalId, role, authorizationEpoch
     return () => {
       dropDashboardSearchOwnership();
     };
+  }, [principalId]);
+  // #741 4d-i: film uploads live in a module store that outlives the Films panel, so the panel cannot be what ends them. This boundary
+  // is unmounted by sign-out and remounted (key) by an impersonation switch, so it is where the uploads stop, panel mounted or not.
+  useEffect(() => {
+    syncUploadPrincipal(principalId);
+    return () => { syncUploadPrincipal(null); };
   }, [principalId]);
   const query = useQuery<Snapshot, Error>({
     queryKey: snapshotKey(principalId, role, authorizationEpoch),

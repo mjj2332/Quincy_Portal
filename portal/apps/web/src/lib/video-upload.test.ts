@@ -256,6 +256,35 @@ describe("VideoUpload (#741 4d-i)", () => {
     expect(calls.filter((call) => call.url.endsWith("/abort"))).toHaveLength(1);
   });
 
+  it("Cancel settles only after the server's abort has answered, including a late reservation's", async () => {
+    let release!: () => void; let answerAbort!: () => void;
+    routes[RESERVE] = () => new Promise<Response>((resolve) => { release = () => resolve(json(devReserve, 201)); });
+    routes[ABORT] = () => new Promise<Response>((resolve) => { answerAbort = () => resolve(json({ ok: true })); });
+    const { job, settled } = await make(); job.start();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    job.cancel(); expect(job.state.phase).toBe("cancelled");
+    release(); await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(calls.filter((call) => call.url.endsWith("/abort"))).toHaveLength(1);
+    expect(settled).toEqual([]);
+    answerAbort(); await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(settled).toEqual([expect.objectContaining({ outcome: "cancelled" })]);
+  });
+
+  it("a terminal failure that sends an abort reports the server cleaned up only after it answered", async () => {
+    let answerAbort!: () => void;
+    routes[RESERVE] = () => json(devReserve, 201);
+    routes["PUT /api/projects/:p/video-uploads/:r/direct"] = () => new Response(null, { status: 200 });
+    routes[COMPLETE] = () => json({ error: "no", code: "video_rejected", reason: "hevc" }, 422);
+    routes[ABORT] = () => new Promise<Response>((resolve) => { answerAbort = () => resolve(json({ ok: true })); });
+    let cleaned = 0;
+    const file = new File([new Uint8Array(10)], "film.mp4"); const check = await checkVideoFile(await GOOD_25()); if (!check.ok) throw new Error("fixture");
+    const job = new VideoUpload(1, { projectId: ids.video, role: "editor", file, target: { kind: "new", title: "F" }, probe: check.probe, cautions: [], onChange: () => undefined, onServerCleaned: () => { cleaned += 1; }, completeDelaysMs: [0], partDelaysMs: [0] });
+    job.start(); await until(job, "failed");
+    expect(cleaned).toBe(0);
+    answerAbort(); await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(cleaned).toBe(1);
+  });
+
   it("cancel during complete sends the abort; a 409 upload_completed is treated as done", async () => {
     routes[RESERVE] = () => json(devReserve, 201);
     routes["PUT /api/projects/:p/video-uploads/:r/direct"] = () => new Response(null, { status: 200 });
@@ -265,7 +294,7 @@ describe("VideoUpload (#741 4d-i)", () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     job.cancel(); await new Promise((resolve) => setTimeout(resolve, 15));
     expect(job.state.phase).toBe("done");
-    expect(settled.map((s) => s.outcome)).toEqual(["cancelled", "done"]);
+    expect(settled.map((s) => s.outcome)).toEqual(["done"]); // one settle, after the abort answered
   });
 });
 
