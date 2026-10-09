@@ -569,15 +569,15 @@ describe("Escape order (test 24, decision 2)", () => {
     expect(api.apiDeleteWithBody).not.toHaveBeenCalled();
   });
 
-  it("2. a focused composer with typed text keeps the text, the viewer stays and focus goes to the dialog; the next Escape closes the viewer", async () => {
+  it("2. a focused composer with typed text keeps the text, the viewer stays and focus stays in the text field; the next Escape closes the viewer", async () => {
     await openFilm();
     composerText().focus();
     await type(composerText(), "Do not lose this");
     await escape(composerText());
     expect(viewerOpen()).toBe(true);
     expect(composerText().value).toBe("Do not lose this");
-    expect(document.activeElement).toBe(popup());
-    await escape(popup());
+    expect(document.activeElement).toBe(composerText());
+    await escape(composerText());
     await settle(200);
     expect(viewerOpen()).toBe(false);
   });
@@ -606,7 +606,7 @@ describe("Escape order (test 24, decision 2)", () => {
     expect(viewerOpen()).toBe(false);
   });
 
-  it("2. a reply form with text keeps it on the first Escape (focus moves to the dialog), the viewer stays, and the second Escape closes it", async () => {
+  it("2. a reply form with text keeps it on the first Escape (focus stays in the field), the viewer stays, and the second Escape closes it", async () => {
     const s = seed();
     await openFilm();
     await click(tid("video-note-reply-button", threadOf(s.n1.id))!);
@@ -615,8 +615,8 @@ describe("Escape order (test 24, decision 2)", () => {
     await escape(field);
     expect(viewerOpen()).toBe(true);
     expect((threadOf(s.n1.id).querySelector<HTMLElement>('[data-notes-form="reply"] textarea') as HTMLTextAreaElement).value).toBe("Half a reply");
-    expect(document.activeElement).toBe(popup());
-    await escape(popup());
+    expect(document.activeElement).toBe(threadOf(s.n1.id).querySelector('[data-notes-form="reply"] textarea'));
+    await escape(document.activeElement!);
     await settle(200);
     expect(viewerOpen()).toBe(false);
   });

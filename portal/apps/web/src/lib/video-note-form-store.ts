@@ -160,7 +160,7 @@ export function createNoteFormStore(key: string) {
 
     mark: (assetId: string, kind: "in" | "out", frame: number, clock: object) => { takeMark(assetId, clock, (marks) => markFrame(marks, kind, frame)); },
     makePoint: (assetId: string, clock: object) => { takeMark(assetId, clock, (marks) => ({ in: marks.in ?? marks.out, out: null })); },
-    clearMarks(assetId: string) { const held = slot(assetId); if (!held.op) put(assetId, { marks: { ...NO_MARKS, seed: held.marks.seed } }); },
+    clearMarks(assetId: string) { const held = slot(assetId); if (!held.op) put(assetId, { marks: { ...NO_MARKS, seed: held.marks.seed }, spent: false }); },
 
     /** Pause, seek to the range start or the frozen anchor, confirm exactly that frame (10 s at most), then send. Cancelling the confirmation invalidates the operation before it can send. */
     async post(assetId: string, { clock, frameCount, send }: { clock: NoteClock; frameCount: number; send: (input: VideoNoteCreateInput) => Promise<unknown> }) {
@@ -220,10 +220,10 @@ export function createNoteFormStore(key: string) {
     /** The first Escape of a dirty form is held (the text stays); the next one is not. A clean edit or reply closes. Nothing here moves focus: the answer says where it should go. */
     escape(assetId: string, { focusInForm }: { focusInForm: boolean }): { consumed: boolean; focus: "dialog" | "textarea" | "opener" | null } {
       const held = slot(assetId);
-      if (held.op?.phase === "confirming") { cancelConfirmation(assetId); return { consumed: true, focus: "textarea" }; }
+      if (held.op?.phase === "confirming") { cancelConfirmation(assetId); put(assetId, { spent: true }); return { consumed: true, focus: "textarea" }; }
       const dirty = isDirty(held);
       if (held.open && !dirty) { close(assetId); return { consumed: true, focus: "opener" }; }
-      if (dirty && !held.spent) { put(assetId, { spent: true }); return { consumed: true, focus: focusInForm ? "dialog" : "textarea" }; }
+      if (dirty && !held.spent) { put(assetId, { spent: true }); return { consumed: true, focus: "textarea" }; }
       if (!held.open && !dirty && focusInForm) return { consumed: true, focus: "dialog" };
       return { consumed: false, focus: null };
     },

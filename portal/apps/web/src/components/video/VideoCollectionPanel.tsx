@@ -42,9 +42,10 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   if (formsRef.current?.key !== formsKey) { formsRef.current?.retire(); formsRef.current = createNoteFormStore(formsKey); }
   const forms = formsRef.current;
   useEffect(() => {
-    const off = onPrincipalTerminal(() => { forms.cancelAll(); });
+    // The notice names the session's query client: a retired session's late 401 must not cancel this session's confirmation (as in video-upload-store).
+    const off = onPrincipalTerminal((terminated) => { if (terminated === undefined || terminated === queryClient) forms.cancelAll(); });
     return () => { off(); forms.cancelAll(); };
-  }, [forms]);
+  }, [forms, queryClient]);
   const running = uploads.filter((upload) => upload.phase === "reserving" || upload.phase === "uploading" || upload.phase === "finishing");
   // The component is chosen once per opening: swapping `lazy` for the loaded one mid-open would remount the viewer (playback, Version and frame lost).
   const [opened, setOpened] = useState<{ id: string; Viewer: ViewerComponent | typeof LazyViewer } | null>(null);

@@ -412,13 +412,13 @@ describe("Escape (#741 5b form store)", () => {
     expect(store.slot(V2).open).toBeNull();
   });
 
-  it("a dirty form holds the first Escape wherever focus is: in the form it goes to the dialog, outside it to the text field; the next one is not held", () => {
+  it("a dirty form holds the first Escape wherever focus is, and focus returns to its text field; the next one is not held", () => {
     store.openReply(V2, note().id);
     store.setOpenText(V2, "half");
     expect(store.escape(V2, { focusInForm: false })).toEqual({ consumed: true, focus: "textarea" });
     expect(store.escape(V2, { focusInForm: false })).toEqual({ consumed: false, focus: null });
     store.setOpenText(V2, "half a");
-    expect(store.escape(V2, { focusInForm: true })).toEqual({ consumed: true, focus: "dialog" });
+    expect(store.escape(V2, { focusInForm: true })).toEqual({ consumed: true, focus: "textarea" });
   });
 
   it("a dirty composer holds the first Escape too, wherever focus is; typing or a mark re-arms it", () => {
@@ -429,6 +429,27 @@ describe("Escape (#741 5b form store)", () => {
     expect(store.escape(V2, { focusInForm: false }).consumed).toBe(true);
     expect(store.escape(V2, { focusInForm: false }).consumed).toBe(false);
     store.rearm(V2);
+    expect(store.escape(V2, { focusInForm: false }).consumed).toBe(true);
+  });
+
+  it("Sol r4: cancelling a confirmation spends the first Escape, so the next one is not held", async () => {
+    store.setBody(V2, "draft", 1);
+    await startPost(V2, "wait");
+    expect(store.escape(V2, { focusInForm: true })).toEqual({ consumed: true, focus: "textarea" });
+    expect(store.escape(V2, { focusInForm: true }).consumed).toBe(false);
+  });
+
+  it("Sol r4: the first Escape of a dirty form returns focus to the text field even when focus is already inside the form", () => {
+    store.setBody(V2, "draft", 1);
+    expect(store.escape(V2, { focusInForm: true })).toEqual({ consumed: true, focus: "textarea" });
+  });
+
+  it("Sol r4: Clear marks re-arms Escape", () => {
+    store.setBody(V2, "draft", 1);
+    store.mark(V2, "in", 3, {} as NoteClock);
+    expect(store.escape(V2, { focusInForm: false }).consumed).toBe(true);
+    expect(store.escape(V2, { focusInForm: false }).consumed).toBe(false);
+    store.clearMarks(V2);
     expect(store.escape(V2, { focusInForm: false }).consumed).toBe(true);
   });
 
