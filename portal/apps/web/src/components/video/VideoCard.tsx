@@ -61,6 +61,8 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
         <div className="grid gap-[var(--space-1)]">
           <h3 className="serif [font:var(--type-h3)]">{video.title}</h3>
           <div className="flex flex-col items-start gap-[var(--space-1)]">
+            {/* The count sits on the versions row, so a card's height is the same with or without open notes. */}
+            <div className="flex items-center gap-[var(--space-2)]" data-testid="video-card-versions-row">
             <Popover>
               <PopoverTrigger render={<Button type="button" variant="text" className="-ml-[var(--space-2)] px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11" />}>{count === 1 ? "1 version" : `${count} versions`}<ChevronDown aria-hidden="true" className="size-3" /></PopoverTrigger>
               <PopoverContent align="start" aria-label={`Versions of ${video.title}`}>
@@ -75,6 +77,8 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
                 </ItemGroup>
               </PopoverContent>
             </Popover>
+            {video.latestNoteCount !== null && video.latestNoteCount > 0 && <Badge variant="info-light" size="sm" data-testid="video-card-open-notes" className="tabular-nums">{video.latestNoteCount === 1 ? "1 open note" : `${video.latestNoteCount} open notes`}</Badge>}
+            </div>
             <p className={META} data-testid="video-card-meta">{`${count > 1 ? `v${newest.version} by` : "by"} ${newest.uploadedBy.name} · ${formatVideoDate(newest.createdAt)} · ${formatFps(newest.fps)}\u00a0fps`}</p>
           </div>
         </div>

@@ -74,7 +74,7 @@ class FakeXhr {
 const ids = { video: "11111111-1111-4111-8111-111111111111", reservation: "22222222-2222-4222-8222-222222222222", asset: "33333333-3333-4333-8333-333333333333", user: "44444444-4444-4444-8444-444444444444" };
 const person = { id: ids.user, name: "Mia Chen", roleLabel: "Editor", isExternal: false, active: true };
 const version = { assetId: ids.asset, version: 4, current: true, uploadedBy: person, createdAt: "2026-10-09T01:00:00.000Z", originalFilename: "film.mp4", bytes: 100, fps: { num: 25, den: 1 }, frameCount: 300, durationMs: 12000, width: 1920, height: 1080, codec: "avc1", startTimecodeFrames: null, tcNominalFps: 25, tcDropFrame: false, fastStart: true, hasAudio: false, hasPoster: false, streamUrl: `/media/video/${ids.asset}`, posterUrl: null };
-const completeBody = (warnings: string[] = []) => ({ video: { id: ids.video, title: "Film", premium: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ids.asset, uploading: null, versions: [version] }, version, warnings });
+const completeBody = (warnings: string[] = []) => ({ video: { id: ids.video, title: "Film", premium: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ids.asset, latestNoteCount: null, uploading: null, versions: [version] }, version, warnings });
 const multipartReserve = { reservationId: ids.reservation, videoId: ids.video, version: 4, uploadId: "u1", partUrls: ["https://r2.test/1", "https://r2.test/2", "https://r2.test/3"], partBytes: 4, expiresAt: "2026-10-09T08:00:00.000Z" };
 const devReserve = { reservationId: ids.reservation, videoId: ids.video, version: 4, devDirect: true, expiresAt: "2026-10-09T08:00:00.000Z" };
 

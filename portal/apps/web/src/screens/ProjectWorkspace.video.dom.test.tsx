@@ -187,7 +187,7 @@ function tabButton(host: HTMLElement, name: string): HTMLButtonElement {
 const person = { id: "99999999-9999-4999-8999-999999999999", name: "Mia Chen", roleLabel: "Editor", isExternal: false, active: true };
 const ASSET = "77777777-7777-4777-8777-777777777777";
 const version = { assetId: ASSET, version: 2, current: true, uploadedBy: person, createdAt: "2026-10-09T01:00:00.000Z", originalFilename: "film.mp4", bytes: 100, fps: { num: 30000, den: 1001 }, frameCount: 300, durationMs: 62000, width: 1080, height: 1920, codec: "avc1", startTimecodeFrames: null, tcNominalFps: 30, tcDropFrame: true, fastStart: true, hasAudio: false, hasPoster: false, streamUrl: `/media/video/${ASSET}`, posterUrl: null };
-const video = { id: "88888888-8888-4888-8888-888888888888", title: "Main walkthrough", premium: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ASSET, uploading: null, versions: [version, { ...version, assetId: "66666666-6666-4666-8666-666666666666", version: 1, current: false }] };
+const video = { id: "88888888-8888-4888-8888-888888888888", title: "Main walkthrough", premium: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ASSET, latestNoteCount: null, uploading: null, versions: [version, { ...version, assetId: "66666666-6666-4666-8666-666666666666", version: 1, current: false }] };
 
 let review: { open: boolean; parts: string[] } = { open: false, parts: [] };
 function install() {

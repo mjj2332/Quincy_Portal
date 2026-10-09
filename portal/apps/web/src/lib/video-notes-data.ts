@@ -56,7 +56,7 @@ async function patch(ctx: NoteWriteContext, change: (list: VideoNoteThreadDto[])
   ctx.queryClient.setQueryData<VideoNoteThreadDto[]>(key, (current) => change(current ?? []));
 }
 
-const converge = (ctx: NoteWriteContext) => invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "video-notes", assetId: ctx.assetId }], dashboard: false, calendar: false, gantt: false });
+const converge = (ctx: NoteWriteContext) => invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "video-notes", assetId: ctx.assetId }, { kind: "videos" }], dashboard: false, calendar: false, gantt: false });
 
 /**
  * What a refusal changes locally, before the caller sees the error, whichever screen is (or is no longer) mounted: a 401 ends the captured

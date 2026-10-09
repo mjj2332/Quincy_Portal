@@ -7,7 +7,7 @@ import { createAuth } from "../src/auth";
 import { app } from "../src/index";
 import type { Env } from "../src/env";
 import { baseEnv, database, ids, jpegBytes, seedFixture, tokens, type Who } from "./embedded-media-support";
-import { clearVideoFlags, ensureCollection, reservationStatus, seedReservation, seedVideoVersion, setVideoFlags } from "./video-review-support";
+import { clearVideoFlags, ensureCollection, reservationStatus, seedReservation, seedVideoNote, seedVideoVersion, setVideoFlags } from "./video-review-support";
 
 /** Staff video upload (#741 PR 4b): reserve, direct PUT (dev), complete with a server re-probe, abort and the poster. */
 const S3_ENV: Env = { ...baseEnv, R2_ACCOUNT_ID: "acct", R2_S3_ACCESS_KEY_ID: "key", R2_S3_SECRET_ACCESS_KEY: "secret" };
@@ -375,6 +375,20 @@ describe("POST …/complete", () => {
     const listed = await appRequest(S3_ENV, `/api/projects/${ids.project}/videos`, "member", "GET").then((response) => response.json()) as { videos: unknown[] };
     expect(listed.videos.find((video) => (video as { id: string }).id === first.videoId)).toEqual(completed.video);
     expect(completed.video.versions.map((version) => version.version)).toEqual([2, 1]);
+  });
+
+  it("carries latestNoteCount: null with the notes part off, and the same count as the list with it on", async () => {
+    stubS3(); const v1 = await reserveAndStore("member", { title: "Counted" });
+    const first = await completeBody(await complete("member", v1.reservationId));
+    expect(first.video.latestNoteCount).toBeNull();
+    await setVideoFlags("video_review_notes");
+    const again = await completeBody(await complete("member", v1.reservationId));
+    expect(again.video.latestNoteCount).toBe(0);
+    await seedVideoNote({ assetId: v1.assetId }); await seedVideoNote({ assetId: v1.assetId, visibility: "internal" });
+    const replay = await completeBody(await complete("member", v1.reservationId));
+    const listed = await appRequest(S3_ENV, `/api/projects/${ids.project}/videos`, "member", "GET").then((response) => response.json()) as { videos: Array<{ id: string; latestNoteCount: number | null }> };
+    expect(replay.video.latestNoteCount).toBe(2);
+    expect(listed.videos.find((video) => video.id === v1.videoId)!.latestNoteCount).toBe(2);
   });
 
   it("supersedes the previous Version with Version 2 and keeps the Collection count at one Video", async () => {
