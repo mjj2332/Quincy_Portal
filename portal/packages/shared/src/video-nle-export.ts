@@ -163,7 +163,7 @@ function formatName(ctx: ExportContext): string {
   const { fps, width, height } = ctx;
   const nominal = Math.round(fps.num / fps.den);
   const ntsc = isNtscRate(fps);
-  const rate = ntsc ? String(Math.round((nominal * 100000) / 1001 / 10)) : String(nominal);
+  const rate = ntsc ? String(Math.round((nominal * 100000) / 1001)) : String(nominal);
   const size = width === 1920 && height === 1080 ? "1080" : `${width}x${height}`;
   return `FFVideoFormat${size}p${rate}`;
 }

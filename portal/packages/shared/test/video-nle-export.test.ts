@@ -207,6 +207,15 @@ describe("toFcpxml19", () => {
     expect(xml).not.toContain("1920");
   });
 
+  it.each([
+    [24000, 2398],
+    [30000, 2997],
+    [60000, 5994],
+  ])("names the NTSC format %i/1001 as p%i", (num, label) => {
+    const xml = toFcpxml19([], ctx({ fps: rational(num, 1001), base: { nominalFps: Math.round(num / 1001), dropFrame: false } }));
+    expect(xml).toContain(`name="FFVideoFormat1080p${label}"`);
+  });
+
   it("writes the exact NTSC frameDuration, DF format and rational times", () => {
     const base = { nominalFps: 30, dropFrame: true };
     const xml = toFcpxml19([marker({ frame: 100, resolved: true, note: "— Bob: ok" })], ctx({ fps: rational(30000, 1001), base, startFrames: 0, frameCount: 3000 }));
