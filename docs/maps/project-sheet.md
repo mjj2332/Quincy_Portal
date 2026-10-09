@@ -39,9 +39,10 @@ ADR: `docs/adr/0013-the-project-route-is-layered-over-the-dashboard.md` — path
 
 ## Video notes (#741 5b)
 - Session: `useVideoNotes` portal/apps/web/src/components/video/use-video-notes.ts:26 is called once per open Version by the lazily loaded host (`LazyNotesHost` portal/apps/web/src/components/video/VideoReviewViewer.tsx:16); it hands the panel the session and the player `playerProps` (markers, pending range, `onMark`, `onClockChange`). The player passes its frame clock up (`onClockChange` portal/apps/web/src/components/quincy/VideoPlayer.tsx:64); a composer subscribes with `useFrameClockSelector` portal/apps/web/src/lib/video-frame-clock.ts:409 so playback does not re-render the list.
+- Forms: one `createNoteFormStore` portal/apps/web/src/lib/video-note-form-store.ts per person + Project, owned by `VideoCollectionPanel` (swapped at render, `cancelAll` on `onPrincipalTerminal` and unmount); drafts, the one open edit or reply, marks, the request that is out and the first-Escape latch live in a slot per Version. Components subscribe and send commands; completions address their slot and operation. `use-note-forms.ts` is gone.
 - Marks: `markFrame` portal/apps/web/src/lib/video-note-marks.ts:13 (O marks the last included frame, `endFrame = out + 1`; a crossing mark clears the other). While an edit form is open the I and O keys write to its marks, not the composer's.
 - Query key: `projectDataKeys.videoNotes` portal/apps/web/src/lib/project-data.ts:54 (under the Project root, so a Project removal clears it). Write errors: `classifyVideoNoteError` portal/apps/web/src/lib/video-notes-data.ts:43.
 - Escape order (menu or popover or confirm, then the active form, then the viewer): `escapeSnapshot` portal/apps/web/src/components/video/VideoReviewViewer.tsx:49 is taken at window capture; floating-popup test `hasOpenFloatingPopup` portal/apps/web/src/components/quincy/project-sheet-layers.ts:38.
-- Drafts: held by the Video tab's panel in a ref keyed person + Project + Version (`drafts` portal/apps/web/src/components/video/VideoCollectionPanel.tsx:40), never in a module; marks are not kept.
+- Drafts: in the form store above (a slot per Version), never in a module; marks are kept per slot and read as empty on another clock.
 
 Last verified against 495766e9

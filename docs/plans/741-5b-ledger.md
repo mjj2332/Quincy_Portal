@@ -31,3 +31,5 @@ One line per new UI element. Searches: installed `components/reui/` and `compone
 
 No allowlist entry was added: every button, input, textarea and dialog is a `reui/` or `quincy/` primitive. `ui-primitive-ratchet.guard.test.ts`, `reui-skin.guard.test.ts` and `design-system-guards.test.ts` pass unchanged.
 Not in 5b: the copy / paste menu (5c), markup (6b), Compare (7), export markers (8/9), sharing (11b), card note counts (5b-counts), notifications (15a).
+
+| "Outside current filters" label on a pinned thread (#741 5b forms) | `quincy/Notice` (tone caution) | installed |

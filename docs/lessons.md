@@ -6123,3 +6123,12 @@ Tags: focus-overlays, testing-guards · #741
 - **A heavier import graph can break a cold-chunk timing test.** Two existing viewer tests wait a fixed number of ticks for the lazy viewer chunk; statically importing the notes UI into it pushed them past it. The notes UI is its own lazy chunk (`VideoNotesHost.tsx`), loaded only when the notes part is on, so the notes-off viewer is unchanged.
 
 Guards: `components/video/VideoNotes.dom.test.tsx` ("Escape order"), `VideoNoteThread.dom.test.tsx`, `VideoReviewViewer.dom.test.tsx`.
+
+## Form lifetime is not component lifetime (#741 5b)
+Tags: focus-overlays, media-renditions · #741
+
+- **What broke, three review rounds running.** Note forms lived in React state and refs that remounted with the Version, the panel and the filters. So Post on v2, switch to v1 and back lost the pending state or double-posted; a success cleared the wrong form or a newer draft (compared by text); a frame confirmation outlived its form; a filter that hid the edited note discarded the edit; pausing for I/O raced the seek. Each fix patched one lifetime and exposed the next.
+- **Rule.** One store that outlives the components (created by the collection, one per person + Project, retired on a change of either). A completion addresses the slot (Version) and operation it started in, never "the form on screen", and acts only if that operation still owns the slot. Compare a draft revision captured at submit, not its text. Closing or hiding a view never discards a form; the filter pins the thread instead.
+- Related: "Don't mirror server reservation state on the client (#751)" is the same rule for uploads: state that outlives the view belongs to one owner, not the component.
+
+Guards: `lib/video-note-form-store.test.ts`, `components/video/VideoNotes.dom.test.tsx` ("form lifetime").
