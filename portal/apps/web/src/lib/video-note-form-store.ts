@@ -1,4 +1,4 @@
-import { VIDEO_NOTE_PASTE_MAX, VIDEO_NOTE_PASTE_OFFSET_MAX, type VideoNoteCreateInput, VideoNoteDto, VideoNoteEditInput, VideoNoteThreadDto, VideoNoteVisibility } from "@quincy/shared";
+import { VIDEO_NOTE_PASTE_MAX, VIDEO_NOTE_PASTE_OFFSET_MAX, type VideoNoteCreateInput, type VideoNotePasteCommitResponse, type VideoNotePastePreviewResponse, VideoNoteDto, VideoNoteEditInput, VideoNoteThreadDto, VideoNoteVisibility } from "@quincy/shared";
 import type { FrameClockState } from "./video-frame-clock";
 import { classifyVideoNoteError } from "./video-note-errors";
 import { EMPTY_MARKS, markFrame, marksToFrames, type NoteMarks } from "./video-note-marks";
@@ -43,20 +43,24 @@ export type Op = { id: number; form: "composer" | "open"; phase: "confirming" | 
 export type PasteDraft = { offset: number; unticked: readonly string[] };
 /** The notes copied from one Version of a Video (#741 5c-ui): ids only, the paste dialog asks the server for the plan. */
 export type PasteClipboard = { sourceAssetId: string; sourceVersion: number; noteIds: readonly string[] };
+/** The commit that owns a target Version's paste draft (#741 5c-ui): a completion acts only while its `opId` is still the current one. */
+export type PasteOp = { opId: number; status: "idle" | "committing" | "failed" };
 /**
- * The one paste operation per target Version (#741 5c-ui). `opId` names the commit that owns the draft: a completion acts only while it still
- * matches. `stale` means the last preview was invalidated by a 409 and no fresh one has succeeded yet, so Paste stays off. `previewRevision`
- * orders previews: only the latest one may write its plan back.
+ * Everything the paste dialog shows about the server's plan, owned here so no component's lifetime matters: the request is keyed by
+ * `generation` (only a result carrying the current one is applied), `invalid` means a 409 voided the plan and no fresh one has arrived,
+ * and `notice` / `failure` are what the person should read. Paste is allowed only at status `ok`.
  */
-export type PasteOp = { opId: number; status: "idle" | "previewing" | "committing" | "failed" | "stale"; previewRevision: number };
-export type PasteCommitOutcome = { kind: "success"; message: string } | { kind: "stale" } | { kind: "failed" };
-export type Slot = { composer: Composer; open: OpenForm | null; marks: StoredMarks; op: Op | null; spent: boolean; /** Why a form closed by itself (its note was deleted elsewhere). */ notice: (Problem & { rootId: string }) | null; paste: PasteDraft; pasteOp: PasteOp; /** Whether the paste dialog is open, and what the last paste said. */ pasteOpen: boolean; pasteResult: string | null };
+export type PastePreview = { generation: number; status: "idle" | "loading" | "ok" | "failed" | "invalid"; plan: VideoNotePastePreviewResponse | null; error: string | null; notice: string | null; failure: { text: string; retry: boolean } | null };
+export type PastePreviewRun = (offsetFrames: number) => Promise<VideoNotePastePreviewResponse>;
+export type Slot = { composer: Composer; open: OpenForm | null; marks: StoredMarks; op: Op | null; spent: boolean; /** Why a form closed by itself (its note was deleted elsewhere). */ notice: (Problem & { rootId: string }) | null; paste: PasteDraft; pasteOp: PasteOp; pasteView: PastePreview; /** Whether the paste dialog is open, and what the last paste said. */ pasteOpen: boolean; pasteResult: string | null };
 
 const NO_MARKS: StoredMarks = { clock: null, value: EMPTY_MARKS, touched: false, seed: EMPTY_MARKS };
 const EMPTY_COMPOSER: Composer = { body: "", visibility: "internal", anchorFrame: null, revision: 0, problem: null };
 const EMPTY_PASTE: PasteDraft = Object.freeze({ offset: 0, unticked: Object.freeze([]) as readonly string[] });
-const EMPTY_PASTE_OP: PasteOp = Object.freeze({ opId: 0, status: "idle", previewRevision: 0 });
-const EMPTY_SLOT: Slot = Object.freeze({ composer: EMPTY_COMPOSER, open: null, marks: NO_MARKS, op: null, spent: false, notice: null, paste: EMPTY_PASTE, pasteOp: EMPTY_PASTE_OP, pasteOpen: false, pasteResult: null });
+const EMPTY_PASTE_OP: PasteOp = Object.freeze({ opId: 0, status: "idle" });
+const EMPTY_PASTE_VIEW: PastePreview = Object.freeze({ generation: 0, status: "idle", plan: null, error: null, notice: null, failure: null });
+const PASTE_STALE_NOTICE = "Some notes changed since the preview, so the list was refreshed. Check it, then paste again.";
+const EMPTY_SLOT: Slot = Object.freeze({ composer: EMPTY_COMPOSER, open: null, marks: NO_MARKS, op: null, spent: false, notice: null, paste: EMPTY_PASTE, pasteOp: EMPTY_PASTE_OP, pasteView: EMPTY_PASTE_VIEW, pasteOpen: false, pasteResult: null });
 
 export function effectiveMarks(marks: StoredMarks, clock: object | null): { value: NoteMarks; touched: boolean } {
   return marks.clock !== null && marks.clock === clock ? marks : { value: marks.seed, touched: false };
@@ -103,6 +107,8 @@ export function createNoteFormStore(key: string) {
   const slots = new Map<string, Slot>();
   // The clipboard is per Video, not per Version: it must outlive switching Versions, and no slot rewrite touches it.
   const clipboards = new Map<string, PasteClipboard>();
+  // How to ask for the plan again, per target Version: lets a 409 refresh the preview with no dialog mounted.
+  const pasteRuns = new Map<string, PastePreviewRun>();
   const listeners = new Set<() => void>();
   let seq = 0;
   let dead = false;
@@ -112,6 +118,18 @@ export function createNoteFormStore(key: string) {
     slots.set(assetId, { ...slot(assetId), ...patch });
     listeners.forEach((listener) => { listener(); });
   };
+  function startPreview(assetId: string, run: PastePreviewRun, offset: number) {
+    if (dead) return;
+    pasteRuns.set(assetId, run);
+    const held = slot(assetId).pasteView;
+    const generation = held.generation + 1;
+    put(assetId, { pasteView: { ...held, generation, status: "loading", error: null } });
+    const current = () => slot(assetId).pasteView.generation === generation;
+    run(offset).then(
+      (plan) => { if (current()) put(assetId, { pasteView: { ...slot(assetId).pasteView, status: "ok", plan, error: null } }); },
+      (error: unknown) => { if (current()) put(assetId, { pasteView: { ...slot(assetId).pasteView, status: "failed", error: classifyVideoNoteError(error).kind === "network" ? "Couldn't reach the server." : messageOf(error, "The notes could not be previewed.") } }); },
+    );
+  }
   const owns = (assetId: string, op: Op) => slot(assetId).op?.id === op.id;
 
   const close = (assetId: string) => { if (slot(assetId).open) put(assetId, { open: null, marks: NO_MARKS, spent: false }); };
@@ -302,49 +320,48 @@ export function createNoteFormStore(key: string) {
     },
     resetPaste(assetId: string) { if (slot(assetId).paste !== EMPTY_PASTE) put(assetId, { paste: EMPTY_PASTE }); },
 
-    // Paste operation state (#741 5c-ui): the dialog renders it and never owns it, so a remount, an archive/restore or a late completion cannot disagree with it.
+    // Paste lifecycle (#741 5c-ui): the dialog renders this and dispatches into it; it keeps no request or result of its own.
     pasteOp: (assetId: string): PasteOp => slot(assetId).pasteOp,
+    pasteView: (assetId: string): PastePreview => slot(assetId).pasteView,
     pasteOpen: (assetId: string): boolean => slot(assetId).pasteOpen,
     pasteResult: (assetId: string): string | null => slot(assetId).pasteResult,
-    setPasteOpen(assetId: string, open: boolean) { if (slot(assetId).pasteOpen !== open) put(assetId, { pasteOpen: open, ...(open ? { pasteResult: null } : {}) }); },
-    clearPasteResult(assetId: string) { if (slot(assetId).pasteResult !== null) put(assetId, { pasteResult: null }); },
-    /** A commit starts and owns the draft. Null when one is already out. */
-    beginPasteCommit(assetId: string): number | null {
-      const held = slot(assetId).pasteOp;
-      if (dead || held.status === "committing") return null;
-      const opId = ++seq;
-      put(assetId, { pasteOp: { ...held, opId, status: "committing" } });
-      return opId;
-    },
-    /** A commit settles. Acts only if it still owns the Version's paste; success then clears the draft, closes the dialog and leaves the notice. Returns whether it acted. */
-    completePasteCommit(assetId: string, opId: number, outcome: PasteCommitOutcome): boolean {
+    setPasteOpen(assetId: string, open: boolean) {
       const held = slot(assetId);
-      if (dead || held.pasteOp.opId !== opId || held.pasteOp.status !== "committing") return false;
-      if (outcome.kind === "success") put(assetId, { paste: EMPTY_PASTE, pasteOpen: false, pasteResult: outcome.message, pasteOp: { ...held.pasteOp, status: "idle" } });
-      else put(assetId, { pasteOp: { ...held.pasteOp, status: outcome.kind } });
-      return true;
+      if (held.pasteOpen === open) return;
+      if (open) { put(assetId, { pasteOpen: true, pasteResult: null }); return; }
+      // Closing forgets what the server said (and voids any request out); the offset and the ticks stay.
+      pasteRuns.delete(assetId);
+      put(assetId, { pasteOpen: false, pasteView: { ...EMPTY_PASTE_VIEW, generation: held.pasteView.generation + 1 } });
     },
-    /** A preview is asked for. Returns its revision; a plan may be shown only while that is still the latest. A stale preview stays invalid until one succeeds. */
-    startPastePreview(assetId: string): number {
-      const held = slot(assetId).pasteOp;
-      const previewRevision = held.previewRevision + 1;
-      const status = held.status === "stale" || held.status === "committing" ? held.status : "previewing";
-      put(assetId, { pasteOp: { ...held, previewRevision, status } });
-      return previewRevision;
-    },
-    /** A preview settles. Returns whether it is still the latest (and so may be shown). */
-    settlePastePreview(assetId: string, previewRevision: number, ok: boolean): boolean {
-      const held = slot(assetId).pasteOp;
-      if (held.previewRevision !== previewRevision) return false;
-      const status = held.status === "previewing" || (ok && held.status === "stale") ? "idle" : held.status;
-      if (status !== held.status) put(assetId, { pasteOp: { ...held, status } });
-      return true;
-    },
-    /** The dialog stopped asking (closed, or about to ask again): whatever is out no longer counts. */
-    endPastePreview(assetId: string) {
-      const held = slot(assetId).pasteOp;
-      if (held.previewRevision === 0 && held.status === "idle") return;
-      put(assetId, { pasteOp: { ...held, previewRevision: held.previewRevision + 1, status: held.status === "previewing" ? "idle" : held.status } });
+    clearPasteResult(assetId: string) { if (slot(assetId).pasteResult !== null) put(assetId, { pasteResult: null }); },
+    /** Asks for the plan at `offset`. Starting bumps the generation, so anything asked earlier is discarded when it lands. */
+    requestPreview(assetId: string, run: PastePreviewRun, offset: number) { startPreview(assetId, run, offset); },
+    /** Sends the commit and owns what comes back. Success clears the draft, closes the dialog and leaves the notice; a 409 voids the plan and asks for a fresh one itself. */
+    async commitPaste(assetId: string, commit: () => Promise<VideoNotePasteCommitResponse>): Promise<void> {
+      const held = slot(assetId);
+      if (dead || held.pasteOp.status === "committing") return;
+      const opId = ++seq;
+      put(assetId, { pasteOp: { opId, status: "committing" }, pasteView: { ...held.pasteView, notice: null, failure: null } });
+      const mine = () => slot(assetId).pasteOp.opId === opId && slot(assetId).pasteOp.status === "committing";
+      try {
+        const result = await commit();
+        if (!mine()) return;
+        pasteRuns.delete(assetId);
+        put(assetId, { paste: EMPTY_PASTE, pasteOpen: false, pasteResult: `Pasted ${result.copied} ${result.copied === 1 ? "note" : "notes"}${result.skipped > 0 ? ` · ${result.skipped} left out` : ""}`, pasteOp: { opId, status: "idle" }, pasteView: { ...EMPTY_PASTE_VIEW, generation: slot(assetId).pasteView.generation + 1 } });
+      } catch (error) {
+        if (!mine()) return;
+        const classified = classifyVideoNoteError(error);
+        if (classified.kind === "stale" && classified.preview) {
+          put(assetId, { pasteOp: { opId, status: "idle" }, pasteView: { ...slot(assetId).pasteView, status: "invalid", notice: PASTE_STALE_NOTICE } });
+          const run = pasteRuns.get(assetId);
+          if (run) startPreview(assetId, run, slot(assetId).paste.offset);
+          return;
+        }
+        const failure = classified.kind === "network" ? { text: "Couldn't reach the server. Nothing is lost; try again — notes already pasted are not pasted twice.", retry: true }
+          : classified.kind === "archived" ? { text: "This Project was archived, so nothing was pasted.", retry: false }
+          : { text: messageOf(error, "The notes could not be pasted."), retry: false };
+        put(assetId, { pasteOp: { opId, status: "failed" }, pasteView: { ...slot(assetId).pasteView, failure } });
+      }
     },
 
     /** The person's session ended: every frame confirmation stops. A request already sent is never touched. */
@@ -357,7 +374,7 @@ export function createNoteFormStore(key: string) {
       }
     },
     /** This store is being replaced (another person or Project): nothing it started may write or send again. */
-    retire() { dead = true; slots.clear(); clipboards.clear(); listeners.clear(); },
+    retire() { dead = true; slots.clear(); clipboards.clear(); pasteRuns.clear(); listeners.clear(); },
   };
 }
 

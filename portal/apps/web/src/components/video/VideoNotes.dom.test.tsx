@@ -1315,6 +1315,27 @@ describe("Copy and paste notes (#741 5c-ui)", () => {
     expect(tid("video-notes-paste-status")).toBeNull();
   });
 
+  it("a 409 that returns after a remount refreshes the live dialog: the stale notice, a fresh preview, Paste enabled (#741 5c-ui round 4)", async () => {
+    const { v1, planFor } = await copyOnV1();
+    await openPasteDialog();
+    let fail!: (error: unknown) => void;
+    api.apiPost.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+    await click(tid("video-note-paste-submit")!); await flush(4);
+    // Archive/restore, or any remount: the old dialog instance is gone and a new one has asked for its own preview.
+    await pickVersion("v1"); await pickVersion("v2");
+    expect(pasteDialog()).not.toBeNull();
+    expect(rows()).toHaveLength(3);
+    expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(true);
+    const fresh = planFor(v1.all.map((n) => n.id), 0);
+    fresh.rows[1] = { ...fresh.rows[1]!, source: { ...(fresh.rows[1] as { source: object }).source, revision: 2, excerpt: "Hold the logo longer" } } as never;
+    api.apiPost.mockImplementationOnce(async () => fresh);
+    await act(async () => { fail(new ApiError("Some notes changed since the preview.", 409, { code: "paste_stale", error: "x", preview: { sourceVersion: 1, targetVersion: 2, offsetFrames: 0, rows: [] } })); await Promise.resolve(); });
+    await flush(6);
+    expect(tid("video-note-paste-notice")!.textContent).toContain("changed since");
+    expect(rows()[1]!.textContent).toContain("Hold the logo longer");
+    expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("a stale refresh that fails keeps Paste disabled and offers 'Try again', which asks for the preview again (#741 5c-ui round 3)", async () => {
     const { v1 } = await copyOnV1();
     await openPasteDialog();
@@ -1323,7 +1344,7 @@ describe("Copy and paste notes (#741 5c-ui)", () => {
     await click(tid("video-note-paste-submit")!); await flush(6);
     expect(tid("video-note-paste-load-error")).not.toBeNull();
     expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(true);
-    expect(stores.made.at(-1)!.pasteOp(ids.asset2).status).toBe("stale");
+    expect(stores.made.at(-1)!.pasteView(ids.asset2).status).toBe("failed");
     const retry = [...tid("video-note-paste-load-error")!.querySelectorAll("button")].find((b) => b.textContent === "Try again")!;
     await click(retry); await flush(6);
     expect(api.apiPost.mock.calls.at(-1)![0]).toMatch(/note-paste\/preview$/);

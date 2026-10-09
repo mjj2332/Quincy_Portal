@@ -655,54 +655,65 @@ describe("paste clipboard and draft (#741 5c-ui)", () => {
   });
 });
 
-describe("paste operation (#741 5c-ui round 3)", () => {
-  const ok = { kind: "success", message: "Pasted 1 note" } as const;
+describe("paste lifecycle (#741 5c-ui round 4)", () => {
+  const plan = (offsetFrames: number) => ({ sourceVersion: 1, targetVersion: 2, offsetFrames, rows: [] }) as never;
+  const done = { sourceVersion: 1, targetVersion: 2, offsetFrames: 0, copied: 1, skipped: 0, rows: [] } as never;
+  const deferred = <T,>() => { let resolve!: (v: T) => void; let reject!: (e: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+  const stale = () => new ApiError("changed", 409, { code: "paste_stale", error: "x", preview: { sourceVersion: 1, targetVersion: 2, offsetFrames: 0, rows: [] } });
+  const tick = () => new Promise((r) => setTimeout(r, 0));
 
-  it("a commit owns the draft: its completion clears the draft, closes the dialog and leaves the notice", () => {
-    store.setPasteOpen(V2, true);
-    store.setPasteOffset(V2, 4);
-    store.setPasteTicked(V2, "a", false);
-    const opId = store.beginPasteCommit(V2)!;
-    expect(store.pasteOp(V2).status).toBe("committing");
-    expect(store.beginPasteCommit(V2)).toBeNull();
-    expect(store.completePasteCommit(V2, opId, ok)).toBe(true);
+  it("only the preview with the current generation is applied", async () => {
+    const first = deferred<never>(); const second = deferred<never>();
+    store.requestPreview(V2, () => first.promise, 0);
+    store.requestPreview(V2, () => second.promise, 1);
+    second.resolve(plan(1)); first.resolve(plan(0)); await tick();
+    expect(store.pasteView(V2).plan?.offsetFrames).toBe(1);
+    expect(store.pasteView(V2).status).toBe("ok");
+  });
+
+  it("a commit's success clears the draft, closes the dialog and leaves the notice", async () => {
+    store.setPasteOpen(V2, true); store.setPasteOffset(V2, 4); store.setPasteTicked(V2, "a", false);
+    await store.commitPaste(V2, async () => done);
     expect(store.pasteDraft(V2)).toEqual({ offset: 0, unticked: [] });
     expect(store.pasteOpen(V2)).toBe(false);
     expect(store.pasteResult(V2)).toBe("Pasted 1 note");
-    expect(store.pasteOp(V2).status).toBe("idle");
   });
 
-  it("cancelAll supersedes a commit in flight: its late completion changes nothing", () => {
-    const opId = store.beginPasteCommit(V2)!;
-    store.cancelAll();
-    store.setPasteOffset(V2, 9);
-    store.setPasteOpen(V2, true);
-    expect(store.completePasteCommit(V2, opId, ok)).toBe(false);
+  it("a 409 for the current op voids the plan, sets the notice and asks again with no dialog; earlier previews are discarded", async () => {
+    const early = deferred<never>(); const fresh = deferred<never>();
+    const runs = [early, fresh]; let n = 0;
+    const run = () => runs[n++]!.promise;
+    store.setPasteOpen(V2, true); store.setPasteOffset(V2, 3);
+    store.requestPreview(V2, run, 3);
+    const commit = store.commitPaste(V2, async () => { throw stale(); });
+    await commit; await tick();
+    expect(store.pasteView(V2).status).toBe("loading");
+    expect(store.pasteView(V2).notice).toContain("changed since");
+    early.resolve(plan(99)); await tick();
+    expect(store.pasteView(V2).plan).toBeNull();
+    fresh.resolve(plan(3)); await tick();
+    expect(store.pasteView(V2).plan?.offsetFrames).toBe(3);
+    expect(store.pasteView(V2).status).toBe("ok");
+  });
+
+  it("cancelAll supersedes a commit in flight: its late completion changes nothing", async () => {
+    const out = deferred<never>();
+    const commit = store.commitPaste(V2, () => out.promise);
+    store.cancelAll(); store.setPasteOffset(V2, 9); store.setPasteOpen(V2, true);
+    out.resolve(done); await commit;
     expect(store.pasteDraft(V2).offset).toBe(9);
     expect(store.pasteOpen(V2)).toBe(true);
     expect(store.pasteResult(V2)).toBeNull();
   });
 
-  it("leave does not drop the op; a second completion of the same op is ignored", () => {
-    const opId = store.beginPasteCommit(V2)!;
-    store.leave(V2);
-    expect(store.pasteOp(V2).status).toBe("committing");
-    expect(store.completePasteCommit(V2, opId, { kind: "failed" })).toBe(true);
-    expect(store.completePasteCommit(V2, opId, ok)).toBe(false);
+  it("a network failure keeps the draft and offers retry; closing forgets the plan but not the draft", async () => {
+    store.setPasteOpen(V2, true); store.setPasteOffset(V2, 2);
+    store.requestPreview(V2, async () => plan(2), 2); await tick();
+    await store.commitPaste(V2, async () => { throw new ApiError("Network error", 0); });
+    expect(store.pasteView(V2).failure?.retry).toBe(true);
     expect(store.pasteOp(V2).status).toBe("failed");
-  });
-
-  it("a stale commit invalidates the preview until a fresh one succeeds; only the latest preview may settle", () => {
-    const opId = store.beginPasteCommit(V2)!;
-    store.completePasteCommit(V2, opId, { kind: "stale" });
-    const first = store.startPastePreview(V2);
-    expect(store.pasteOp(V2).status).toBe("stale");
-    const second = store.startPastePreview(V2);
-    expect(store.settlePastePreview(V2, first, true)).toBe(false);
-    expect(store.settlePastePreview(V2, second, false)).toBe(true);
-    expect(store.pasteOp(V2).status).toBe("stale");
-    const third = store.startPastePreview(V2);
-    expect(store.settlePastePreview(V2, third, true)).toBe(true);
-    expect(store.pasteOp(V2).status).toBe("idle");
+    store.setPasteOpen(V2, false);
+    expect(store.pasteView(V2)).toMatchObject({ status: "idle", plan: null, failure: null });
+    expect(store.pasteDraft(V2).offset).toBe(2);
   });
 });
