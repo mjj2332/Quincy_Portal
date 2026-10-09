@@ -360,6 +360,8 @@ export class VideoFrameClock {
 }
 
 export type FrameClock = FrameClockState & {
+  /** The clock object itself (null until the element mounts), for siblings that subscribe on their own: see `useFrameClockSelector`. */
+  instance: VideoFrameClock | null;
   seekToFrame(frame: number): void;
   step(delta: number): void;
   awaitConfirmedFrame(): Promise<number>;
@@ -396,5 +398,14 @@ export function useVideoFrameClock(video: HTMLVideoElement | null, version: Fram
   const setRate = useCallback((rate: number) => { clock?.setRate(rate); }, [clock]);
   const reverse = useCallback((speed: number) => { clock?.reverse(speed); }, [clock]);
   const setMuted = useCallback((muted: boolean) => { clock?.setMuted(muted); }, [clock]);
-  return useMemo(() => ({ ...state, seekToFrame, step, awaitConfirmedFrame, play, pause, setRate, reverse, setMuted }), [state, seekToFrame, step, awaitConfirmedFrame, play, pause, setRate, reverse, setMuted]);
+  return useMemo(() => ({ ...state, instance: clock, seekToFrame, step, awaitConfirmedFrame, play, pause, setRate, reverse, setMuted }), [state, clock, seekToFrame, step, awaitConfirmedFrame, play, pause, setRate, reverse, setMuted]);
+}
+
+/**
+ * One primitive out of a clock's state, for a component that is not the player (the notes composer's frame chip). It re-renders only
+ * when the selected value changes, so playback does not re-render the note list 25-60 times a second. `select` must return a
+ * primitive; `fallback` is what a null clock reads.
+ */
+export function useFrameClockSelector<T extends string | number | boolean | null>(clock: VideoFrameClock | null, select: (state: FrameClockState) => T, fallback: T): T {
+  return useSyncExternalStore(clock?.subscribe ?? noopSubscribe, () => (clock ? select(clock.getState()) : fallback), () => fallback);
 }

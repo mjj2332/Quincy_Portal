@@ -13,3 +13,22 @@ export function spanFractions(startFrame: number, endExclusive: number, frameCou
   const lastFrame = Math.max(0, frameCount - 1);
   return [frameFraction(startFrame, frameCount), frameFraction(Math.min(endExclusive - 1, lastFrame), frameCount)];
 }
+
+/** How far from a marker, in px, a pointer still picks it. */
+export const MARKER_REACH_PX = 8;
+
+/**
+ * The marker a pointer at `x` (px from the lane's left edge) is on or nearest to, within `reach`, else null. A marker sits at its
+ * thumb-centre coordinate, `thumbHalf + (width - 2 * thumbHalf) * fraction`; a range is the stretch between its start and its last frame.
+ */
+export function nearestMarkerId(markers: ReadonlyArray<{ id: string; startFrame: number; endFrame: number | null }>, frameCount: number, x: number, width: number, thumbHalf: number, reach = MARKER_REACH_PX): string | null {
+  const usable = Math.max(0, width - 2 * thumbHalf);
+  let best: { id: string; distance: number } | null = null;
+  for (const marker of markers) {
+    const [from, to] = marker.endFrame === null ? [frameFraction(marker.startFrame, frameCount), frameFraction(marker.startFrame, frameCount)] : spanFractions(marker.startFrame, marker.endFrame, frameCount);
+    const left = thumbHalf + usable * from; const right = thumbHalf + usable * to;
+    const distance = x < left ? left - x : x > right ? x - right : 0;
+    if (distance <= reach && (best === null || distance < best.distance)) best = { id: marker.id, distance };
+  }
+  return best?.id ?? null;
+}
