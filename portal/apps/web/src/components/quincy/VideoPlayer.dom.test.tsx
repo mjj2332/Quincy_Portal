@@ -546,7 +546,7 @@ describe("VideoPlayer notes seams (#741 5b)", () => {
     });
     const scrubber = byTestId("video-scrubber")!;
     const band = scrubber.querySelector("[data-testid=video-pending-band]")!;
-    const slider = scrubber.querySelector("[data-slot=slider]")!;
+    const slider = scrubber.querySelector("input[type=range]")!;
     const lane = scrubber.querySelector<HTMLElement>("[data-testid=video-marker-lane]")!;
     expect(band.compareDocumentPosition(slider) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(slider.compareDocumentPosition(lane) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
