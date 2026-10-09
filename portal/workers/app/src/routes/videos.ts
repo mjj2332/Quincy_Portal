@@ -5,7 +5,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
 import { loadVideoDtos } from "../lib/video-dto";
-import { readVideoReviewGate, videoReviewGate } from "../lib/video-review-gate";
+import { readVideoReviewGate } from "../lib/video-review-gate";
 
 const uuid = z.string().uuid();
 
@@ -40,8 +40,9 @@ videosRoutes.get("/projects/:projectId/videos", terminalRoute("/projects/:projec
   const projectId = c.req.param("projectId");
   if (!uuid.safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
   const user = c.get("user");
-  if (!await videoReviewGate(c.env.DB, projectId, null)) return c.json({ error: "Not found" }, 404);
+  const gate = await readVideoReviewGate(c.env.DB, projectId);
+  if (!gate.open) return c.json({ error: "Not found" }, 404);
   if (!roleHasCapability(user.role, "viewVideo")) return c.json({ error: "Forbidden" }, 403);
   if (!await hasProjectAccess(c, projectId)) return user.role === "external_editor" ? c.json({ error: "Project not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  return c.json(videoListResponseSchema.parse({ videos: await loadVideoDtos(c.env.DB, projectId) }));
+  return c.json(videoListResponseSchema.parse({ videos: await loadVideoDtos(c.env.DB, projectId, undefined, gate.parts.includes("notes")) }));
 }));

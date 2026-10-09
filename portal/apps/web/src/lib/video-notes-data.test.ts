@@ -67,7 +67,7 @@ describe("video notes data (#741 5b)", () => {
     await createVideoNote(ctx(), { startFrame: 5, endFrame: 9, visibility: "public", body: "note" });
     expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${P}/video-versions/${A}/notes`, { startFrame: 5, endFrame: 9, visibility: "public", body: "note" });
     expect(client.getQueryData<VideoNoteThreadDto[]>(projectDataKeys.videoNotes(P, A))!.map((t) => t.id)).toEqual([first.id, later.id]);
-    expect(order).toContain("invalidate:video-notes");
+    expect(order).toContain("invalidate:video-notes,videos");
   });
 
   it("a write that lands after a Version switch patches the Version it was made on", async () => {
@@ -175,11 +175,11 @@ describe("video notes data: access errors are handled where the write is made (#
   it("a note gone or deleted elsewhere re-reads the Version's list before the caller sees the refusal", async () => {
     api.apiPatch.mockRejectedValueOnce(new ApiError("This note was deleted.", 409, { code: "note_deleted" }));
     await expect(editVideoNote(ctx(), "r", { expectedRevision: 1, body: "x" })).rejects.toBeInstanceOf(ApiError);
-    expect(order).toContain("invalidate:video-notes");
+    expect(order).toContain("invalidate:video-notes,videos");
     order.length = 0;
     api.apiPatch.mockRejectedValueOnce(new ApiError("Note not found", 404, { error: "Note not found" }));
     await expect(editVideoNote(ctx(), "r", { expectedRevision: 1, body: "x" })).rejects.toBeInstanceOf(ApiError);
-    expect(order).toEqual(["invalidate:video-notes"]);
+    expect(order).toEqual(["invalidate:video-notes,videos"]);
   });
 
   it("an authorship 403 stays an ordinary error: it neither ends the data nor re-asks the gate", async () => {

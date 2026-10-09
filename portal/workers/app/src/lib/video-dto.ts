@@ -15,12 +15,22 @@ type VersionRow = {
 type UploadingRow = { reservation_id: string; video_id: string; version: number; expires_at: number; user_id: string; user_name: string; user_role: Role; user_active: number };
 const person = (id: string, name: string, role: Role, active: number) => ({ id, name, roleLabel: ROLE_LABELS[role], isExternal: role === "external_editor", active: Boolean(active) });
 
-/** Every Video of a Project (or only `videoId`), Versions newest first. */
-export async function loadVideoDtos(db: D1Database, projectId: string, videoId?: string): Promise<VideoDto[]> {
+/**
+ * Every Video of a Project (or only `videoId`), Versions newest first. `withNoteCounts` is the `notes` gate part: on, one grouped query counts the open
+ * root notes of each current Version (a tombstone that kept replies counts, an empty one does not: the panel's `noteCounts().totals.open`); off, the
+ * query is not run and every `latestNoteCount` is null.
+ */
+export async function loadVideoDtos(db: D1Database, projectId: string, videoId: string | undefined, withNoteCounts: boolean): Promise<VideoDto[]> {
   const only = videoId === undefined ? "" : " AND v.id = ?2";
   const bindScoped = <T extends D1PreparedStatement>(statement: T, ...rest: unknown[]) => (videoId === undefined ? statement.bind(projectId, ...rest) : statement.bind(projectId, videoId, ...rest));
   // With a Video the second parameter is its id and any later one shifts by one, so number them explicitly.
-  const [videoResult, versionResult, uploadingResult] = await db.batch([
+  const countStatement = withNoteCounts ? [bindScoped(db.prepare(
+    `SELECT n.asset_id, COUNT(*) AS open_count
+     FROM video_notes n JOIN videos v ON v.id = n.video_id AND v.project_id = n.project_id JOIN assets a ON a.id = n.asset_id AND a.kind = 'video'
+     WHERE n.project_id = ?1${only} AND a.superseded_at IS NULL AND n.parent_id IS NULL AND n.resolved_at IS NULL
+       AND (n.deleted_at IS NULL OR EXISTS (SELECT 1 FROM video_notes r WHERE r.parent_id = n.id))
+     GROUP BY n.asset_id`))] : [];
+  const [videoResult, versionResult, uploadingResult, countResult] = await db.batch([
     bindScoped(db.prepare(`SELECT v.id, v.title, v.premium, v.position, v.created_at FROM videos v WHERE v.project_id = ?1${only} ORDER BY v.position, v.created_at, v.id`)),
     bindScoped(db.prepare(
       `SELECT a.id AS asset_id, m.video_id, a.version, a.superseded_at, a.original_filename, a.bytes, m.created_at, m.fps_num, m.fps_den, m.frame_count, m.duration_ms,
@@ -32,7 +42,9 @@ export async function loadVideoDtos(db: D1Database, projectId: string, videoId?:
       `SELECT r.id AS reservation_id, r.video_id, r.version, r.expires_at, u.id AS user_id, u.name AS user_name, u.role AS user_role, u.active AS user_active
        FROM video_upload_reservations r JOIN user u ON u.id = r.created_by
        WHERE r.project_id = ?1${videoId === undefined ? "" : " AND r.video_id = ?2"} AND r.status IN ('pending', 'completing', 'aborting') AND r.expires_at > ?${videoId === undefined ? 2 : 3}`), Date.now()),
+    ...countStatement,
   ]);
+  const openByAsset = new Map((countResult?.results as Array<{ asset_id: string; open_count: number }> | undefined)?.map((row) => [row.asset_id, row.open_count] as const));
   const versionsByVideo = new Map<string, VersionRow[]>();
   for (const row of (versionResult!.results as VersionRow[])) versionsByVideo.set(row.video_id, [...(versionsByVideo.get(row.video_id) ?? []), row]);
   const uploadingByVideo = new Map((uploadingResult!.results as UploadingRow[]).map((row) => [row.video_id, row]));
@@ -49,6 +61,7 @@ export async function loadVideoDtos(db: D1Database, projectId: string, videoId?:
     return videoDtoSchema.parse({
       id: video.id, title: video.title, premium: video.premium === 1, position: video.position, createdAt: new Date(video.created_at).toISOString(),
       currentAssetId: versions.find((version) => version.current)?.assetId ?? null,
+      latestNoteCount: withNoteCounts ? openByAsset.get(versions.find((version) => version.current)?.assetId ?? "") ?? 0 : null,
       uploading: uploading ? { reservationId: uploading.reservation_id, version: uploading.version, uploader: person(uploading.user_id, uploading.user_name, uploading.user_role, uploading.user_active), expiresAt: new Date(uploading.expires_at).toISOString() } : null,
       versions,
     });

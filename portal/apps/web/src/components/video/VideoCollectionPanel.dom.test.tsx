@@ -47,7 +47,7 @@ const ids = { video: "88888888-8888-4888-8888-888888888888", asset: "77777777-77
 const mia = { id: "99999999-9999-4999-8999-999999999999", name: "Mia Chen", roleLabel: "Editor", isExternal: false, active: true };
 const me = { id: auth.userId, name: "Terry", roleLabel: "Admin", isExternal: false, active: true };
 const versionOf = (over: Record<string, unknown> = {}) => ({ assetId: ids.asset, version: 2, current: true, uploadedBy: mia, createdAt: "2026-10-09T01:00:00.000Z", originalFilename: "film.mp4", bytes: 100, fps: { num: 25, den: 1 }, frameCount: 300, durationMs: 134000, width: 1920, height: 1080, codec: "avc1", startTimecodeFrames: null, tcNominalFps: 25, tcDropFrame: false, fastStart: true, hasAudio: false, hasPoster: true, streamUrl: `/media/video/${ids.asset}`, posterUrl: `/media/video/${ids.asset}/poster`, ...over });
-const videoOf = (over: Record<string, unknown> = {}, v: Record<string, unknown> = {}): VideoDto => ({ id: ids.video, title: "Main walkthrough", premium: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ids.asset, uploading: null, versions: [versionOf(v), versionOf({ assetId: ids.asset1, version: 1, current: false, uploadedBy: me, posterUrl: null, hasPoster: false })], ...over }) as VideoDto;
+const videoOf = (over: Record<string, unknown> = {}, v: Record<string, unknown> = {}): VideoDto => ({ id: ids.video, title: "Main walkthrough", premium: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ids.asset, latestNoteCount: null, uploading: null, versions: [versionOf(v), versionOf({ assetId: ids.asset1, version: 1, current: false, uploadedBy: me, posterUrl: null, hasPoster: false })], ...over }) as VideoDto;
 
 let root: Root | null = null; let host: HTMLElement;
 async function flush(times = 8) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
@@ -84,6 +84,24 @@ describe("Video cards (#741 4d-i)", () => {
     expect(card.querySelector("img")?.getAttribute("src")).toBe(`/media/video/${ids.asset}/poster`);
     expect(card.querySelector('[data-testid="video-card-poster"]')?.getAttribute("data-orientation")).toBe("landscape");
     expect(card.textContent).toContain("Open review");
+  });
+
+  it("shows an 'N open note(s)' badge only when the count is above zero", async () => {
+    await mount([videoOf({ latestNoteCount: 1 })], ["notes"]);
+    const chip = () => host.querySelector('[data-testid="video-card-open-notes"]');
+    expect(chip()?.textContent).toBe("1 open note");
+    // On the versions row, not a row of its own, so cards with and without notes keep the same height.
+    expect(chip()?.closest('[data-testid="video-card-versions-row"]')).not.toBeNull();
+    await unmount();
+    await mount([videoOf({ latestNoteCount: 3 })], ["notes"]);
+    expect(chip()?.textContent).toBe("3 open notes");
+    await unmount();
+    await mount([videoOf({ latestNoteCount: 0 })], ["notes"]);
+    expect(chip()).toBeNull();
+    await unmount();
+    await mount([videoOf({ latestNoteCount: null })], ["notes"]);
+    expect(chip()).toBeNull();
+    expect(host.querySelector('[data-testid="video-card"]')!.textContent).not.toContain("open note");
   });
 
   it.each([[{ num: 30000, den: 1001 }, "29.97\u00a0fps"], [{ num: 24000, den: 1001 }, "23.976\u00a0fps"], [{ num: 25, den: 1 }, "25\u00a0fps"]])("reads %j as %s", async (fps, text) => {
