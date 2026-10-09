@@ -386,7 +386,7 @@ describe("an archived Project (story 43)", () => {
     const version = await seedVideoVersion({ projectId: project, uploader: ids.member }); const note = await seedVideoNote({ assetId: version.assetId, author: ids.member });
     const cases: Array<[string, string, Json]> = [
       ["POST", notesPath(version.assetId, project), { startFrame: 1, visibility: "public", body: "x" }], ["POST", `${notePath(note.id, project)}/replies`, { body: "x" }],
-      ["PATCH", notePath(note.id, project), { expectedRevision: 1, body: "raced" }], ["PUT", `${notePath(note.id, project)}/resolution`, { resolved: true }], ["DELETE", notePath(note.id, project), { expectedRevision: 1 }],
+      ["PATCH", notePath(note.id, project), { expectedRevision: 1, body: "raced" }], ["PATCH", notePath(note.id, project), { expectedRevision: 1, body: "Seeded note" }], ["PUT", `${notePath(note.id, project)}/resolution`, { resolved: true }], ["DELETE", notePath(note.id, project), { expectedRevision: 1 }],
     ];
     for (const [method, path, body] of cases) {
       await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(project).run();

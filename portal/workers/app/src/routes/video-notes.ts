@@ -105,7 +105,7 @@ videoNotesRoutes.patch("/projects/:projectId/video-notes/:noteId", terminalRoute
     const frameCount = await versionFrameCount(c.env.DB, projectId, note.asset_id);
     if (frameCount === null || startFrame! >= frameCount || (endFrame !== null && endFrame > frameCount)) return c.json({ error: "The frames are outside this Version.", code: "frame_out_of_range", frameCount }, 422);
   }
-  if (body === note.body && !framesChanged) return thread(c, current);
+  // A same-state edit still goes through the batch: an archive that lands first must win over the no-op (#527), and the lib answers 200 with no audit otherwise.
   const outcome = await editVideoNote(c.env.DB, { projectId, note, principal, expectedRevision: input.expectedRevision, body, startFrame, endFrame, now: Date.now() });
   switch (outcome.kind) {
     case "ok": case "noop": return thread(c, outcome.value);
