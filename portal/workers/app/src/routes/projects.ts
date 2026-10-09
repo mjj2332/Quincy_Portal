@@ -623,6 +623,8 @@ projectsRoutes.post("/projects/:id/priority", terminalRoute("/projects/:id/prior
 
 /** #455. An archived Project's details are read-only; Restore first. */
 const DETAILS_ARCHIVED_BODY = { error: "Archived projects are read-only; restore the project to edit its details.", code: "details_project_archived" } as const;
+/** #741. A document or video upload in flight blocks archiving, so no 2 GB upload is killed under its uploader; the reservation's own expiry releases a stale one. */
+const ARCHIVE_ACTIVE_UPLOAD_BODY = { error: "Active uploads must finish or be cancelled before archiving.", code: "active_upload" } as const;
 /** #455. Sync is refused on an archived Project (the consumer is fenced too). */
 const DROPBOX_SYNC_ARCHIVED_BODY = { error: "Archived projects can't sync from Dropbox. Restore the project first.", code: "dropbox_sync_project_archived" } as const;
 projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) => {
@@ -643,18 +645,20 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   const removedCollections = desiredServices ? existing.filter((collection) => collection.kind !== "raw" && !desiredServices.has(collection.kind as CollectionKind)) : [];
   const addedKinds = desiredServices ? [...desiredServices].filter((kind) => !existing.some((collection) => collection.kind === kind)) : [];
   const countsFor = async (collectionIds: string[]) => {
-    if (!collectionIds.length) return { assets: new Map<string, number>(), manifests: new Map<string, number>(), documents: new Map<string, number>(), links: new Map<string, number>() };
-    const [assetRows, manifestRows, documentRows, linkRows] = await Promise.all([
+    if (!collectionIds.length) return { assets: new Map<string, number>(), manifests: new Map<string, number>(), documents: new Map<string, number>(), links: new Map<string, number>(), videoUploads: new Map<string, number>() };
+    const [assetRows, manifestRows, documentRows, linkRows, videoUploadRows] = await Promise.all([
       db.select({ collectionId: schema.assets.collectionId, n: sql<number>`count(*)` }).from(schema.assets).where(inArray(schema.assets.collectionId, collectionIds)).groupBy(schema.assets.collectionId).all(),
       db.select({ collectionId: schema.uploadManifests.collectionId, n: sql<number>`count(*)` }).from(schema.uploadManifests).where(inArray(schema.uploadManifests.collectionId, collectionIds)).groupBy(schema.uploadManifests.collectionId).all(),
       db.select({ collectionId: schema.documentUploads.collectionId, n: sql<number>`count(*)` }).from(schema.documentUploads).where(and(inArray(schema.documentUploads.collectionId, collectionIds), sql`${schema.documentUploads.status} in ('pending', 'completing', 'aborting')`)).groupBy(schema.documentUploads.collectionId).all(),
       db.select({ collectionId: schema.collectionLinks.collectionId, n: sql<number>`count(*)` }).from(schema.collectionLinks).where(inArray(schema.collectionLinks.collectionId, collectionIds)).groupBy(schema.collectionLinks.collectionId).all(),
+      // An active video upload reservation cascades with its Collection, so it blocks removal like an active document session (#741).
+      db.select({ collectionId: schema.videoUploadReservations.collectionId, n: sql<number>`count(*)` }).from(schema.videoUploadReservations).where(and(inArray(schema.videoUploadReservations.collectionId, collectionIds), sql`${schema.videoUploadReservations.status} in ('pending', 'completing', 'aborting')`)).groupBy(schema.videoUploadReservations.collectionId).all(),
     ]);
-    return { assets: new Map(assetRows.map((row) => [row.collectionId, Number(row.n)])), manifests: new Map(manifestRows.map((row) => [row.collectionId, Number(row.n)])), documents: new Map(documentRows.map((row) => [row.collectionId, Number(row.n)])), links: new Map(linkRows.map((row) => [row.collectionId, Number(row.n)])) };
+    return { assets: new Map(assetRows.map((row) => [row.collectionId, Number(row.n)])), manifests: new Map(manifestRows.map((row) => [row.collectionId, Number(row.n)])), documents: new Map(documentRows.map((row) => [row.collectionId, Number(row.n)])), links: new Map(linkRows.map((row) => [row.collectionId, Number(row.n)])), videoUploads: new Map(videoUploadRows.map((row) => [row.collectionId, Number(row.n)])) };
   };
   const preCounts = await countsFor(removedCollections.map((collection) => collection.id));
-  const blocked = removedCollections.filter((collection) => collection.receivedCount > 0 || (preCounts.assets.get(collection.id) ?? 0) > 0 || (preCounts.manifests.get(collection.id) ?? 0) > 0 || (preCounts.documents.get(collection.id) ?? 0) > 0 || (preCounts.links.get(collection.id) ?? 0) > 0);
-  if (blocked.length) return c.json({ error: "Services with received media or active document uploads cannot be removed.", blocked: blocked.map((collection) => ({ kind: collection.kind, assetCount: preCounts.assets.get(collection.id) ?? 0, manifestCount: preCounts.manifests.get(collection.id) ?? 0, activeDocumentSessions: preCounts.documents.get(collection.id) ?? 0 })) }, 409);
+  const blocked = removedCollections.filter((collection) => collection.receivedCount > 0 || (preCounts.assets.get(collection.id) ?? 0) > 0 || (preCounts.manifests.get(collection.id) ?? 0) > 0 || (preCounts.documents.get(collection.id) ?? 0) > 0 || (preCounts.links.get(collection.id) ?? 0) > 0 || (preCounts.videoUploads.get(collection.id) ?? 0) > 0);
+  if (blocked.length) return c.json({ error: "Services with received media or active uploads cannot be removed.", blocked: blocked.map((collection) => ({ kind: collection.kind, assetCount: preCounts.assets.get(collection.id) ?? 0, manifestCount: preCounts.manifests.get(collection.id) ?? 0, activeDocumentSessions: preCounts.documents.get(collection.id) ?? 0, videoUploadCount: preCounts.videoUploads.get(collection.id) ?? 0 })) }, 409);
 
   const dbFieldMap: Record<string, string> = { street: "street", suburb: "suburb", postcode: "postcode", agencyName: "agency_name", agentName: "agent_name", agentEmail: "agent_email", agentPhone: "agent_phone", agencyId: "agency_id", agentId: "agent_id", shootDate: "shoot_date", timeWindow: "time_window", orderNo: "order_no", orderId: "order_id", invoiceAmount: "invoice_amount", paymentStatus: "payment_status", notes: "notes", productionNotes: "production_notes", rawFolderLink: "raw_folder_link", rawFolderPath: "raw_folder_path" };
   const updateParts: string[] = []; const updateBindings: unknown[] = []; const snapshotParts: string[] = []; const snapshotBindings: unknown[] = []; const changeParts: string[] = []; const changeBindings: unknown[] = [];
@@ -684,7 +688,7 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   const activityBundle = safeChangedFields.length ? buildProjectActivityStatements({ db: c.env.DB, intent: activity, winnerAuditId: auditId }) : null;
   const removalSafe = orderedServices === undefined
     ? "1 = 1"
-    : `NOT EXISTS (SELECT 1 FROM collections doomed WHERE doomed.project_id = projects.id AND doomed.kind <> 'raw' AND doomed.kind NOT IN (${desiredKinds.map(() => "?").join(",")}) AND (doomed.received_count > 0 OR EXISTS (SELECT 1 FROM assets WHERE collection_id = doomed.id) OR EXISTS (SELECT 1 FROM collection_links WHERE collection_id = doomed.id) OR EXISTS (SELECT 1 FROM upload_manifests WHERE collection_id = doomed.id) OR EXISTS (SELECT 1 FROM document_uploads WHERE collection_id = doomed.id AND status IN ('pending', 'completing', 'aborting'))))`;
+    : `NOT EXISTS (SELECT 1 FROM collections doomed WHERE doomed.project_id = projects.id AND doomed.kind <> 'raw' AND doomed.kind NOT IN (${desiredKinds.map(() => "?").join(",")}) AND (doomed.received_count > 0 OR EXISTS (SELECT 1 FROM assets WHERE collection_id = doomed.id) OR EXISTS (SELECT 1 FROM collection_links WHERE collection_id = doomed.id) OR EXISTS (SELECT 1 FROM upload_manifests WHERE collection_id = doomed.id) OR EXISTS (SELECT 1 FROM document_uploads WHERE collection_id = doomed.id AND status IN ('pending', 'completing', 'aborting')) OR EXISTS (SELECT 1 FROM video_upload_reservations WHERE collection_id = doomed.id AND status IN ('pending', 'completing', 'aborting'))))`;
   const snapshotPredicate = snapshotParts.length ? snapshotParts.join(" AND ") : "1 = 1";
   const changePredicate = changeParts.length ? changeParts.join(" OR ") : "0 = 1";
   const updateWhere = ["id = ?", "stage_key = ?", "archived_at IS NULL", `(${snapshotPredicate})`, `(${changePredicate})`, removalSafe].join(" AND ");
@@ -694,7 +698,7 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   if (orderedServices !== undefined) { projectAuditMeta.servicesAdded = addedKinds; projectAuditMeta.servicesRemoved = removedCollections.map((collection) => collection.kind); }
   const serviceStatements: D1PreparedStatement[] = [];
   if (orderedServices !== undefined) {
-    serviceStatements.push(c.env.DB.prepare(`DELETE FROM collections WHERE project_id = ? AND kind <> 'raw' AND kind NOT IN (${desiredKinds.map(() => "?").join(",")}) AND received_count = 0 AND NOT EXISTS (SELECT 1 FROM assets WHERE collection_id = collections.id) AND NOT EXISTS (SELECT 1 FROM collection_links WHERE collection_id = collections.id) AND NOT EXISTS (SELECT 1 FROM upload_manifests WHERE collection_id = collections.id) AND NOT EXISTS (SELECT 1 FROM document_uploads WHERE collection_id = collections.id AND status IN ('pending', 'completing', 'aborting')) AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?) RETURNING id`).bind(id, ...desiredKinds, auditId));
+    serviceStatements.push(c.env.DB.prepare(`DELETE FROM collections WHERE project_id = ? AND kind <> 'raw' AND kind NOT IN (${desiredKinds.map(() => "?").join(",")}) AND received_count = 0 AND NOT EXISTS (SELECT 1 FROM assets WHERE collection_id = collections.id) AND NOT EXISTS (SELECT 1 FROM collection_links WHERE collection_id = collections.id) AND NOT EXISTS (SELECT 1 FROM upload_manifests WHERE collection_id = collections.id) AND NOT EXISTS (SELECT 1 FROM document_uploads WHERE collection_id = collections.id AND status IN ('pending', 'completing', 'aborting')) AND NOT EXISTS (SELECT 1 FROM video_upload_reservations WHERE collection_id = collections.id AND status IN ('pending', 'completing', 'aborting')) AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?) RETURNING id`).bind(id, ...desiredKinds, auditId));
     for (const kind of desiredKinds) serviceStatements.push(c.env.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) SELECT ?, ?, ?, 'empty', 0, ?, ? WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?) AND NOT EXISTS (SELECT 1 FROM collections WHERE project_id = ? AND kind = ?)").bind(newId(), id, kind, Date.now(), Date.now(), auditId, id, kind));
   }
   const statements: D1PreparedStatement[] = [projectUpdate, c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project.update', 'project', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(auditId, c.get("user").id, id, auditMeta(c.get("user"), projectAuditMeta), Date.now())];
@@ -725,7 +729,7 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
     const servicesMatch = orderedServices === undefined || (currentCollections.length === desiredServices!.size && currentCollections.every((collection) => desiredServices!.has(collection.kind as CollectionKind)));
     if (projectMatches && servicesMatch) return c.json(await details(db, c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant), false, c.env));
     const currentCounts = await countsFor(removedCollections.map((collection) => collection.id));
-    return c.json({ error: "Services or project details changed while saving; reload and try again", blocked: removedCollections.filter((collection) => collection.receivedCount > 0 || (currentCounts.assets.get(collection.id) ?? 0) > 0 || (currentCounts.manifests.get(collection.id) ?? 0) > 0 || (currentCounts.documents.get(collection.id) ?? 0) > 0 || (currentCounts.links.get(collection.id) ?? 0) > 0).map((collection) => ({ kind: collection.kind, assetCount: currentCounts.assets.get(collection.id) ?? 0, manifestCount: currentCounts.manifests.get(collection.id) ?? 0, activeDocumentSessions: currentCounts.documents.get(collection.id) ?? 0 })) }, 409);
+    return c.json({ error: "Services or project details changed while saving; reload and try again", blocked: removedCollections.filter((collection) => collection.receivedCount > 0 || (currentCounts.assets.get(collection.id) ?? 0) > 0 || (currentCounts.manifests.get(collection.id) ?? 0) > 0 || (currentCounts.documents.get(collection.id) ?? 0) > 0 || (currentCounts.links.get(collection.id) ?? 0) > 0 || (currentCounts.videoUploads.get(collection.id) ?? 0) > 0).map((collection) => ({ kind: collection.kind, assetCount: currentCounts.assets.get(collection.id) ?? 0, manifestCount: currentCounts.manifests.get(collection.id) ?? 0, activeDocumentSessions: currentCounts.documents.get(collection.id) ?? 0, videoUploadCount: currentCounts.videoUploads.get(collection.id) ?? 0 })) }, 409);
   }
   if (activityBundle) {
     const publicationIds = rowsFromD1<{ id: string }>(result[2 + serviceStatements.length + activityBundle.broadOutboxIndex]).map((row) => row.id);
@@ -1202,11 +1206,11 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
   const classifyLoser = async (source: ProjectArchiveSource | null) => {
     const current = await c.env.DB.prepare("SELECT id, archived_at AS archivedAt, stage_key AS stageKey, board_revision AS boardRevision FROM projects WHERE id = ?")
       .bind(id).first<{ id: string; archivedAt: number | null; stageKey: StageKey; boardRevision: number }>();
-    const hasActiveUpload = archived && Boolean(await c.env.DB.prepare("SELECT id FROM document_uploads WHERE project_id = ? AND status IN ('pending', 'completing', 'aborting') LIMIT 1").bind(id).first<{ id: string }>());
+    const hasActiveUpload = archived && Boolean(await c.env.DB.prepare("SELECT 1 AS active FROM document_uploads WHERE project_id = ? AND status IN ('pending', 'completing', 'aborting') UNION ALL SELECT 1 FROM video_upload_reservations WHERE project_id = ? AND status IN ('pending', 'completing', 'aborting') LIMIT 1").bind(id, id).first<{ active: number }>());
     const outcome = classifyProjectArchiveLoser({ archived, source, current, hasActiveUpload });
     if (outcome.kind === "not_found") return c.json({ error: "Project not found" }, 404);
     if (outcome.kind === "already_done") { await refreshWhiteboardAccess(c.env, id); return c.json({ ok: true }); }
-    if (outcome.kind === "active_upload") return c.json({ error: "Active document uploads must be aborted before archiving." }, 409);
+    if (outcome.kind === "active_upload") return c.json(ARCHIVE_ACTIVE_UPLOAD_BODY, 409);
     return c.json({
       error: archived ? "Project changed while archiving." : "Project changed while restoring.",
       code: "project_stage_conflict",
@@ -1232,8 +1236,8 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
     const deadlineSuppression = buildDeadlineSuppressionBundle({ db: c.env.DB, projectId: id, now: archivedAt, reason: "project_archived", auditId: archiveAuditId });
     const archiveStatementStart = 8;
     const result = await c.env.DB.batch([
-        c.env.DB.prepare("UPDATE projects SET archived_at = ?, archived_by = ?, board_revision = board_revision + 1, updated_at = ? WHERE id = ? AND archived_at IS NULL AND stage_key = ? AND board_revision = ? AND NOT EXISTS (SELECT 1 FROM document_uploads WHERE project_id = ? AND status in ('pending', 'completing', 'aborting')) RETURNING id")
-        .bind(archivedAt, c.get("user").id, archivedAt, id, source.stageKey, source.boardRevision, id),
+        c.env.DB.prepare("UPDATE projects SET archived_at = ?, archived_by = ?, board_revision = board_revision + 1, updated_at = ? WHERE id = ? AND archived_at IS NULL AND stage_key = ? AND board_revision = ? AND NOT EXISTS (SELECT 1 FROM document_uploads WHERE project_id = ? AND status in ('pending', 'completing', 'aborting')) AND NOT EXISTS (SELECT 1 FROM video_upload_reservations WHERE project_id = ? AND status in ('pending', 'completing', 'aborting')) RETURNING id")
+        .bind(archivedAt, c.get("user").id, archivedAt, id, source.stageKey, source.boardRevision, id, id),
       c.env.DB.prepare(`
         INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?, ?, 'project.archive', 'project', ?, ?, ?
@@ -1313,6 +1317,16 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
     if (!row.upload_id) { unresolvedUploadKeys.push(row.original_key); return; }
     try { await abortMultipart(c.env, row.original_key, row.upload_id); } catch { unresolvedUploadKeys.push(row.original_key); }
   }));
+  // Staff video uploads (#741) in flight: the same fast path. A committed original or poster is already under the Project prefix purged
+  // below, so only an active reservation needs queueing (its multipart upload has no listed object). `abortedVideoKeys` are the ones whose
+  // abort the S3 API confirmed (it is a silent no-op without credentials), so their queue entries are dequeued with the rest.
+  const activeVideoUploads = (await c.env.DB.prepare("SELECT r2_key, upload_id FROM video_upload_reservations WHERE project_id = ? AND status IN ('pending', 'completing', 'aborting')").bind(id).all<{ r2_key: string; upload_id: string | null }>()).results;
+  const abortedVideoKeys: string[] = [];
+  const s3Configured = Boolean(c.env.R2_ACCOUNT_ID && c.env.R2_S3_ACCESS_KEY_ID && c.env.R2_S3_SECRET_ACCESS_KEY);
+  await Promise.all(activeVideoUploads.map(async (row) => {
+    if (!row.upload_id) { unresolvedUploadKeys.push(row.r2_key); return; }
+    try { await abortMultipart(c.env, row.r2_key, row.upload_id); if (s3Configured) abortedVideoKeys.push(row.r2_key); else unresolvedUploadKeys.push(row.r2_key); } catch { unresolvedUploadKeys.push(row.r2_key); }
+  }));
   const r2Prefix = `projects/${id}/`;
   const assetIds = (await db.select({ id: schema.assets.id }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(eq(schema.collections.projectId, id)).all()).map((asset) => asset.id);
   const assetCount = assetIds.length;
@@ -1359,12 +1373,14 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
     c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT original_key, CASE WHEN state = 'uploading' THEN upload_id END, project_id, ? FROM embedded_media WHERE project_id = ? ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
     c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT display_key, NULL, project_id, ? FROM embedded_media WHERE project_id = ? AND display_key IS NOT NULL ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
     c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT poster_key, NULL, project_id, ? FROM embedded_media WHERE project_id = ? AND poster_key IS NOT NULL ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
+    // The same for a staff video upload still in flight (#741): its reservation row, which carries the upload id, goes with the cascade.
+    c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT r2_key, upload_id, project_id, ? FROM video_upload_reservations WHERE project_id = ? AND status IN ('pending', 'completing', 'aborting') ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
     c.env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(id),
   ]);
   // Dequeue only what THIS request resolved: a key it queued in the batch above (queued_at = deletedAt), whose object the purge deleted,
   // and whose upload (if any) it aborted. Entries queued by anyone else (a sweep whose abort failed, a completion mid-purge) and uploads
   // whose abort failed here all stay for the drain. Never a Project-wide delete.
-  const deletedKeys = new Set(keys); const unresolved = new Set(unresolvedUploadKeys);
+  const deletedKeys = new Set([...keys, ...abortedVideoKeys]); const unresolved = new Set(unresolvedUploadKeys);
   const mine = (await c.env.DB.prepare("SELECT storage_key FROM embedded_media_cleanup WHERE project_id = ? AND queued_at = ?").bind(id, deletedAt).all<{ storage_key: string }>()).results
     .map((row) => row.storage_key).filter((key) => deletedKeys.has(key) && !unresolved.has(key));
   for (let index = 0; index < mine.length; index += 50) {
