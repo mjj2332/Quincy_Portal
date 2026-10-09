@@ -4,6 +4,7 @@ import { useCallback, useContext, useEffect, useMemo, useState, useSyncExternalS
 import { ApiError, apiGet } from "./api";
 import { useNow } from "./use-now";
 import { externalApiGet, externalProjectDetailToWorkspace } from "./external-api-response";
+import { ZodError } from "zod";
 import { videoListResponseSchema, videoReviewResponseSchema, type ExternalProjectDetailDto, type VideoDto, type VideoReviewResponse } from "@quincy/shared";
 import { createActiveProjectDetailsInvalidatedMessage, createDashboardBoardInvalidatedMessage, createProductionCalendarInvalidatedMessage, createProductionGanttInvalidatedMessage, getProjectQueryRuntime, projectResourceKey, useProjectQueryRuntime, type ProjectDataResource, type ProjectQueryRuntime } from "./project-query-sync";
 import type { ReviewPatch, WorkspaceAsset, Review } from "../components/PhotoGrid";
@@ -119,7 +120,7 @@ function videosPath(projectId: string) { return `${detailPath(projectId)}/videos
 /** Which video-review parts this caller has on the Project (#741). A closed gate is 200 `{ open: false }`; a 403/404 reads as closed too (the Video tab then stays as it was). */
 export function useVideoReviewQuery(projectId: string, enabled: boolean, role: Role = "admin"): UseQueryResult<VideoReviewResponse, Error> {
   return useQuery<VideoReviewResponse, Error>({
-    queryKey: projectDataKeys.videoReview(projectId), enabled, staleTime: 15_000, retry: projectQueryRetry,
+    queryKey: projectDataKeys.videoReview(projectId), enabled, staleTime: 15_000, retry: (count, error) => (error instanceof ZodError ? false : projectQueryRetry(count, error)),
     queryFn: async ({ signal, client }: QueryFunctionContext) => {
       try {
         const response = role === "external_editor"

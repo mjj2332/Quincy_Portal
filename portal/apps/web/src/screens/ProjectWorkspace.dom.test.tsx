@@ -310,6 +310,7 @@ afterEach(async () => {
 
   it("remembers every denied collection for the mounted route generation", async () => {
     apiGetMock.mockImplementation((path: string) => {
+      if (path.endsWith("/video-review")) return Promise.resolve({ open: false, parts: [] });
       if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
       if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
       if (path.includes("/assets?collection=edited") || path.includes("/assets?collection=video")) return Promise.reject(new ApiError("Collection forbidden", 403, { capability: "viewEdited" }));
@@ -2068,6 +2069,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
       collections: [service("raw", 1), service("edited", 0), service("video", 1), service("floorplan", 1), service("copy", 1)], members: [],
     };
     apiGetMock.mockImplementation((path: string) => {
+      if (path.endsWith("/video-review")) return Promise.resolve({ open: false, parts: [] });
       if (path === `/api/projects/${externalProjectId}`) return Promise.resolve(detail);
       if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [raw] });
       if (path.includes("/assets?collection=edited") || path.includes("/assets?collection=video")) return Promise.resolve({ assets: [] });

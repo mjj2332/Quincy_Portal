@@ -5,9 +5,15 @@ import { Spinner } from "../reui/spinner";
 import { Notice } from "./Notice";
 
 /** Where an upload is: its bytes going up, its HEIC display copy being made by the server (#495), or that copy failing. */
-export type EmbeddedUploadPhase = "uploading" | "preparing" | "failed";
+export type EmbeddedUploadPhase = "uploading" | "finishing" | "preparing" | "failed";
 /** One running upload as the tray shows it. `phase` is `uploading` when absent. */
-export type EmbeddedUpload = { key: number; name: string; percent: number; kind: "image" | "video"; phase?: EmbeddedUploadPhase };
+export type EmbeddedUpload = {
+  key: number; name: string; percent: number; kind: "image" | "video"; phase?: EmbeddedUploadPhase;
+  /** A failed row's own words (the default is the HEIC "Couldn't prepare" line) and its Retry button's name (#741: a film upload). */
+  message?: string; retryLabel?: string; /** A failed row with nothing to retry (the file itself was refused). */ noRetry?: boolean;
+  /** Non-blocking cautions shown under the row (#741: a film that is not fast-start). */
+  cautions?: readonly string[];
+};
 
 const ROW_TEXT = "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary [overflow-wrap:anywhere]";
 /** How long a HEIC may be preparing before the row admits it is slow. */
@@ -53,16 +59,17 @@ export function EmbeddedUploadTray({ uploads, errors, onCancel, onRemove = onCan
     {uploads.map((entry) => {
       if (entry.phase === "preparing") return <PreparingRow key={entry.key} name={entry.name} onRemove={() => onRemove(entry.key)} focusRemove={retried.current === entry.key} />;
       if (entry.phase === "failed") return <Notice key={entry.key} tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-1)]">
-        <span className="min-w-0 [overflow-wrap:anywhere]">{`Couldn't prepare ${entry.name}`}</span>
+        <span className="min-w-0 [overflow-wrap:anywhere]">{entry.message ?? `Couldn't prepare ${entry.name}`}</span>
         <span className="flex flex-wrap items-center gap-[var(--space-1)]">
-          {onRetry && <Button type="button" variant="text" aria-label={`Retry preparing ${entry.name}`} onClick={() => { retried.current = entry.key; onRetry(entry.key); }}>Retry</Button>}
+          {onRetry && !entry.noRetry && <Button type="button" variant="text" aria-label={entry.retryLabel ? `${entry.retryLabel} ${entry.name}` : `Retry preparing ${entry.name}`} onClick={() => { retried.current = entry.key; onRetry(entry.key); }}>{entry.retryLabel ?? "Retry"}</Button>}
           <Button type="button" variant="text" aria-label={`Remove ${entry.name}`} onClick={() => onRemove(entry.key)}>Remove</Button>
         </span>
       </Notice>;
-      return <div key={entry.key} className="flex flex-wrap items-center justify-between gap-[var(--space-1)]">
-        <Progress value={entry.percent} aria-label={`Uploading ${entry.name}`} className="flex min-w-0 flex-1 flex-wrap items-baseline gap-[var(--space-1)]"><span className={ROW_TEXT}>Uploading {entry.name}…</span><ProgressValue data-testid="upload-progress-value" className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" /></Progress>
+      const verb = entry.phase === "finishing" ? "Finishing" : "Uploading";
+      return <div key={entry.key} className="grid gap-[var(--space-1)]"><div className="flex flex-wrap items-center justify-between gap-[var(--space-1)]">
+        <Progress value={entry.percent} aria-label={`${verb} ${entry.name}`} className="flex min-w-0 flex-1 flex-wrap items-baseline gap-[var(--space-1)]"><span className={ROW_TEXT}>{verb} {entry.name}…</span><ProgressValue data-testid="upload-progress-value" className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" /></Progress>
         {entry.kind === "video" && <Button type="button" variant="text" aria-label={`Cancel upload of ${entry.name}`} onClick={() => onCancel(entry.key)}>Cancel</Button>}
-      </div>;
+      </div>{entry.cautions?.map((caution) => <Notice key={caution} tone="caution" role="status">{caution}</Notice>)}</div>;
     })}
     {errors.map((message, index) => <Notice key={index} tone="critical" role="alert">{message}</Notice>)}
   </div>;

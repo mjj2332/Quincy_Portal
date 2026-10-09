@@ -22,7 +22,8 @@ let nextId = 1;
 
 const TERMINAL: ReadonlySet<string> = new Set(["done", "cancelled"]);
 
-function emit() { version += 1; for (const listener of listeners) listener(); updateUnloadGuard(); }
+let quiet = false;
+function emit() { if (quiet) return; version += 1; for (const listener of listeners) listener(); updateUnloadGuard(); }
 function subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
 
 const isActive = (state: VideoUploadState) => state.phase === "reserving" || state.phase === "uploading" || state.phase === "finishing";
@@ -39,7 +40,9 @@ function updateUnloadGuard() {
 export function syncUploadPrincipal(userId: string | null): void {
   if (principal === userId) return;
   principal = userId;
-  for (const entry of entries.values()) entry.job.cancel();
+  // Render-time: no subscriber may be told while React is rendering, so the cancels are silent and the subscribers are told after.
+  quiet = true;
+  try { for (const entry of [...entries.values()]) entry.job.cancel(); } finally { quiet = false; }
   entries.clear();
   snapshots.clear();
   updateUnloadGuard();

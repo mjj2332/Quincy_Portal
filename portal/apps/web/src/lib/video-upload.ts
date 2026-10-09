@@ -60,6 +60,8 @@ export type VideoUploadState = {
   projectId: string;
   fileName: string;
   title: string;
+  /** The Video this upload belongs to: known at once for a new Version, after the reserve for a new film. */
+  videoId: string | null;
   version: number | null;
   percent: number;
   phase: VideoUploadPhase;
@@ -111,7 +113,7 @@ export class VideoUpload {
   private running = false;
 
   constructor(readonly id: number, private readonly options: VideoUploadOptions) {
-    this.state = { id, projectId: options.projectId, fileName: options.file.name, title: options.target.title, version: null, percent: 0, phase: "reserving", error: null, retry: null, cautions: options.cautions };
+    this.state = { id, projectId: options.projectId, fileName: options.file.name, title: options.target.title, videoId: options.target.kind === "version" ? options.target.videoId : null, version: null, percent: 0, phase: "reserving", error: null, retry: null, cautions: options.cautions };
   }
 
   private get base() { return `/api/projects/${encodeURIComponent(this.options.projectId)}/video-uploads`; }
@@ -197,7 +199,7 @@ export class VideoUpload {
       throw abortError(); // nothing was reserved: stop quietly
     }
     this.reservation = reservation;
-    this.set({ version: reservation.version, phase: "uploading", percent: 0 });
+    this.set({ version: reservation.version, videoId: reservation.videoId, phase: "uploading", percent: 0 });
   }
 
   private async sendBytes(): Promise<void> {
