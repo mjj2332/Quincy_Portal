@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { VideoNoteThreadDto } from "@quincy/shared";
+import type { VideoNoteDto, VideoNoteThreadDto } from "@quincy/shared";
 import { DEFAULT_NOTE_FILTERS, isHiddenTombstone, isOwnNote, noteAnchorLabel, noteCounts, removeThread, upsertThread, visibleThreads } from "./video-note-view";
 
 const person = (id: string) => ({ id, name: id, roleLabel: "Editor", isExternal: false, active: true });
@@ -9,7 +9,7 @@ const note = (over: Record<string, unknown> = {}): VideoNoteThreadDto => {
   const id = `00000000-0000-4000-8000-${String(seq).padStart(12, "0")}`;
   return { id, assetId: "a", parentId: null, author: { kind: "staff", person: person("u1") }, authorRole: "editor", visibility: "internal", startFrame: 10, endFrame: null, drawingFrame: null, hasMarkup: false, body: "hi", deleted: false, resolved: null, revision: 1, createdAt: "2026-10-10T00:00:00.000Z", editedAt: null, copiedFrom: null, replies: [], ...over } as VideoNoteThreadDto;
 };
-const reply = (over: Record<string, unknown> = {}) => ({ ...note({ startFrame: null, ...over }), replies: undefined } as never);
+const reply = (over: Record<string, unknown> = {}): VideoNoteDto => { const { replies: _replies, ...rest } = note({ startFrame: null, ...over }); return rest; };
 const resolvedBy = { at: "2026-10-10T01:00:00.000Z", by: person("u1") };
 const tc = (frame: number) => `TC${frame}`;
 
