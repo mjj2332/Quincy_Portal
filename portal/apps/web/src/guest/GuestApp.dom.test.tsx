@@ -278,3 +278,137 @@ describe("the video screen", () => {
     expect(document.body.textContent).toContain("Trim the opening");
   });
 });
+
+const sleep = (ms: number) => act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, ms)); });
+const drawn = (over: Partial<GuestNoteThreadDto> = {}) => note({ startFrame: 50, endFrame: 100, drawingFrame: 75, hasMarkup: true, ...over });
+
+describe("Sol round 1: a revoked link is noticed everywhere", () => {
+  it("a stream error rechecks the session and goes unavailable when access is gone", async () => {
+    videos = [videoOf(1)];
+    await open();
+    const video = host.querySelector("video")!;
+    extra = (url, init) => (url.endsWith("/session") && (init?.method ?? "GET") === "GET" ? stub404() : undefined);
+    await act(async () => { stub.fireError(video); });
+    await flush();
+    expect(byId("guest-unavailable")).not.toBeNull();
+  });
+
+  it("a stream error with access still fine keeps the player's own message", async () => {
+    videos = [videoOf(1)];
+    await open();
+    await act(async () => { stub.fireError(host.querySelector("video")!); });
+    await flush();
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(host.textContent).toContain("This version can't play in this browser.");
+  });
+
+  it("a markup read that returns 404 goes unavailable", async () => {
+    notes = [drawn()];
+    videos = [videoOf(1)];
+    await open();
+    extra = (url) => (url.includes("/markup") ? stub404() : undefined);
+    await click(host.querySelector<HTMLElement>('[data-testid="guest-note-anchor"]') ?? undefined);
+    expect(byId("guest-unavailable")).not.toBeNull();
+  });
+
+  it("a 401 on a later read is the same unavailable screen", async () => {
+    await open();
+    extra = (url) => (url.endsWith("/videos") || url.endsWith("/notes") ? new Response("no", { status: 401 }) : undefined);
+    await click(button("Open Film 1"));
+    expect(byId("guest-unavailable")).not.toBeNull();
+  });
+});
+
+describe("Sol round 1: selecting a drawing note seeks to the drawing frame", () => {
+  it("seeks to drawingFrame (75 at 25fps = 3s), not startFrame, when the note has markup", async () => {
+    notes = [drawn()];
+    videos = [videoOf(1)];
+    await open();
+    stub.writes.length = 0;
+    await click(host.querySelector<HTMLElement>('[data-testid="guest-note-anchor"]') ?? undefined);
+    expect(stub.writes.at(-1)).toBeCloseTo(3, 1);
+  });
+
+  it("still seeks to startFrame (50 = 2s) for a note without markup", async () => {
+    notes = [note({ startFrame: 50, endFrame: 100 })];
+    videos = [videoOf(1)];
+    await open();
+    stub.writes.length = 0;
+    await click(host.querySelector<HTMLElement>('[data-testid="guest-note-anchor"]') ?? undefined);
+    expect(stub.writes.at(-1)).toBeCloseTo(2, 1);
+  });
+});
+
+describe("Sol round 1: an initial rate limit on an unprotected link", () => {
+  it("shows a countdown and a token-only retry, never a passcode form", async () => {
+    const bodies: unknown[] = [];
+    let limited = true;
+    extra = (url, init) => {
+      if (!url.endsWith("/session") || init?.method !== "POST") return undefined;
+      bodies.push(JSON.parse(String(init.body)));
+      return limited ? json({ error: "too_many_attempts", retryAfterSeconds: 1 }, 429) : undefined;
+    };
+    videos = [videoOf(1), videoOf(2)];
+    await open();
+    expect(host.querySelector('input[type="password"]')).toBeNull();
+    expect(host.textContent).toMatch(/1 second/);
+    expect(button("Try again")!.disabled).toBe(true);
+    await sleep(1200);
+    expect(button("Try again")!.disabled).toBe(false);
+    limited = false;
+    await click(button("Try again"));
+    expect(byId("guest-list")).not.toBeNull();
+    expect(bodies).toEqual([{ token: "tok123" }, { token: "tok123" }]);
+  });
+});
+
+describe("Sol round 1: a transient failure is not 'unavailable'", () => {
+  const CALM = "Couldn't reach Quincy. Check your connection and try again.";
+
+  it("a 5xx on the exchange shows the calm retry and repeats the exchange", async () => {
+    let down = true;
+    extra = (url, init) => (down && url.endsWith("/session") && init?.method === "POST" ? new Response("boom", { status: 503 }) : undefined);
+    await open();
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(byId("guest-unreachable")?.textContent).toContain(CALM);
+    down = false;
+    await click(button("Try again"));
+    expect(byId("guest-unreachable")).toBeNull();
+    expect(byId("guest-list")).not.toBeNull();
+  });
+
+  it("a network error on the resumed session shows it and retries the session read", async () => {
+    let down = true;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => { if (down) throw new TypeError("network"); return route(String(input), init); });
+    await open(`?link=${LINK}`, "");
+    expect(byId("guest-unreachable")?.textContent).toContain(CALM);
+    down = false;
+    await click(button("Try again"));
+    expect(byId("guest-list")).not.toBeNull();
+  });
+
+  it("a 5xx on the video list shows it and retries the list", async () => {
+    let down = true;
+    extra = (url) => (down && url.endsWith("/videos") ? new Response("boom", { status: 502 }) : undefined);
+    await open();
+    expect(byId("guest-unreachable")?.textContent).toContain(CALM);
+    expect(byId("guest-unavailable")).toBeNull();
+    down = false;
+    await click(button("Try again"));
+    expect(byId("guest-list")).not.toBeNull();
+  });
+
+  it("a 5xx on the notes keeps the video screen, says so in the panel and retries the notes", async () => {
+    notes = [note()];
+    videos = [videoOf(1)];
+    let down = true;
+    extra = (url) => (down && url.endsWith("/notes") ? new Response("boom", { status: 500 }) : undefined);
+    await open();
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(title()).toBe("Film 1");
+    expect(byId("guest-notes-panel")?.textContent).toContain(CALM);
+    down = false;
+    await click(button("Try again"));
+    expect(allById("guest-note")).toHaveLength(1);
+  });
+});

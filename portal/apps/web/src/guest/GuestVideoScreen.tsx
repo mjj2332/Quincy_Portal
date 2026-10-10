@@ -51,6 +51,8 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
   const version = video.versions.find((candidate) => candidate.assetId === assetId) ?? video.versions[0]!;
 
   const [threads, setThreads] = useState<GuestNoteThreadDto[] | null>(null);
+  const [notesFailed, setNotesFailed] = useState(false);
+  const [notesAttempt, setNotesAttempt] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [clock, setClock] = useState<VideoFrameClock | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -58,10 +60,18 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
 
   useEffect(() => {
     let live = true;
-    setThreads(null); setSelectedId(null);
-    void api.notes(version.assetId).then((result) => { if (!live) return; if (result === null) onUnavailable(); else setThreads(result); });
+    setThreads(null); setSelectedId(null); setNotesFailed(false);
+    void api.notes(version.assetId).then((result) => {
+      if (!live) return;
+      if (result.kind === "gone") onUnavailable();
+      else if (result.kind === "transient") setNotesFailed(true);
+      else setThreads(result.value);
+    });
     return () => { live = false; };
-  }, [api, version.assetId, onUnavailable]);
+  }, [api, version.assetId, notesAttempt, onUnavailable]);
+
+  // A stream that fails mid-play (a seek needing another range request) may mean staff revoked the link. The player has already shown its own notice; recheck access, and leave only if it is gone.
+  const onMediaError = useCallback(() => { void api.session().then((result) => { if (result.kind === "gone") onUnavailable(); }); }, [api, onUnavailable]);
 
   const step = useCallback((delta: -1 | 1) => { const next = index + delta; if (next >= 0 && next < videos.length) onIndex(next); }, [index, videos.length, onIndex]);
   useVideoStepKeys(step);
@@ -73,17 +83,19 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
   const selected = threads?.find((thread) => thread.id === selectedId) ?? null;
   const select = useCallback((thread: GuestNoteThreadDto) => {
     setSelectedId(thread.id);
-    if (thread.startFrame !== null) clock?.seekToFrame(thread.startFrame);
+    // A drawing shows only on the exact frame it was drawn on, which can sit anywhere inside the note's range: seek there, else to the anchor.
+    const frame = thread.hasMarkup && thread.drawingFrame !== null ? thread.drawingFrame : thread.startFrame;
+    if (frame !== null) clock?.seekToFrame(frame);
     setDrawerOpen(false);
   }, [clock]);
-  const markupOverlay = useGuestMarkup(api, clock, selected);
+  const markupOverlay = useGuestMarkup(api, clock, selected, onUnavailable);
   const watermark = video.premium && !video.unlocked;
   const overlay = useCallback((box: Box | null) => <>{watermark && <PremiumWatermark />}{markupOverlay(box)}</>, [watermark, markupOverlay]);
 
   const newest = video.versions[0]!.version;
   const optionLabel = (candidate: GuestVideoDto["versions"][number]) => `v${candidate.version}${candidate.version === newest ? " · latest" : ""}`;
   const heading = <h2 className="m-0 text-foreground [font:var(--type-h3)]">Notes{threads !== null && <span className="ms-[var(--space-1)] text-foreground-secondary tabular-nums">{threads.length}</span>}</h2>;
-  const panel = <GuestNotesPanel threads={threads} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} />;
+  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} />;
 
   return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-dvh flex-col bg-background text-foreground">
     <header className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-2)] border-b border-border bg-card px-[var(--space-5)] py-[var(--space-3)] text-card-foreground">
@@ -109,7 +121,7 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
     </header>
     <div className="flex min-h-0 flex-1 flex-wrap min-[721px]:flex-nowrap">
       <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col p-[var(--space-5)] min-[721px]:flex-1">
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} overlay={overlay} />
+        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} overlay={overlay} onMediaError={onMediaError} />
       </div>
       {!phone && <aside data-surface="default" className="flex flex-[1_1_360px] flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:max-h-dvh min-[721px]:flex-[0_0_clamp(240px,28vw,360px)]">{panel}</aside>}
     </div>

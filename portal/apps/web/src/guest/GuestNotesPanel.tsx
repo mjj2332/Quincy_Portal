@@ -27,8 +27,11 @@ function NoteText({ note }: { note: GuestNoteDto }) {
  * writing (the composer, replies, resolve) arrives with 13. It reads no staff store and no staff DTO: `VideoNoteThread` is coupled to the form store and the staff person, so this is
  * built from the installed `item`, `badge` and `scroll-area`. `threads` is null while the first read is out.
  */
-export function GuestNotesPanel({ threads, selectedId, onSelect, timecode, header }: {
+export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect, timecode, header }: {
   threads: readonly GuestNoteThreadDto[] | null;
+  /** The notes read failed in transit (not a revoked link): say so in place and offer to repeat it. */
+  failed: boolean;
+  onRetry: () => void;
   selectedId: string | null;
   onSelect: (thread: GuestNoteThreadDto) => void;
   timecode: (frame: number) => string;
@@ -37,7 +40,9 @@ export function GuestNotesPanel({ threads, selectedId, onSelect, timecode, heade
 }) {
   return <section data-testid="guest-notes-panel" aria-label="Notes" className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-3)]">
     {header}
-    {threads === null
+    {failed
+      ? <EmptyState size="compact" tone="error" data-testid="guest-notes-unreachable" title="Couldn't reach Quincy. Check your connection and try again."><Button type="button" variant="outline" size="sm" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={onRetry}>Try again</Button></EmptyState>
+      : threads === null
       ? <p className="m-0 text-foreground-secondary [font:var(--type-body-sm)]">Loading notes…</p>
       : threads.length === 0
         ? <EmptyState size="compact" title="No notes yet" />

@@ -45,7 +45,7 @@ export function IconTip({ label, keys, children }: { label: string; keys?: strin
  * surface (`data-surface="inverse"`) around it, like the Lightbox. `keyboard="self"` listens on the player; `"host"` leaves the
  * scope to the caller, who forwards events to `controlRef.handleKeyDown`.
  */
-export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, markers, pendingRange, onMarkerSelect, onMark, onClockChange, overlay, transportLocked = false, transportActions, transportReplacement }: {
+export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, markers, pendingRange, onMarkerSelect, onMark, onClockChange, overlay, onMediaError, transportLocked = false, transportActions, transportReplacement }: {
   version: VideoPlayerVersion;
   title: string;
   controlRef?: Ref<VideoPlayerControl>;
@@ -63,6 +63,8 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   onClockChange?: (clock: VideoFrameClock | null) => void;
   /** Drawn over the stage (#741 6b-ui); a function is handed the picture box. Built by the host, so this module never imports it. */
   overlay?: ReactNode | ((box: Box | null) => ReactNode);
+  /** The `<video>` reported an error; the stage still shows its own "can't play" notice. */
+  onMediaError?: () => void;
   /** Drawing: the transport, the scrubber and the player's keys are inert, so nothing moves the frame under the pen. */
   transportLocked?: boolean;
   /** Extra transport buttons, in the right-hand group before volume and full screen (the notes host puts "Draw" here). Built by the host, so this module never imports markup code. */
@@ -122,7 +124,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     onKeyDown={keyboard === "self" ? (event) => { handleKeyDown(event); } : undefined}
     className={cn("flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", className)}
   >
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} onVideo={setVideo} overlay={overlay} />
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} onVideo={setVideo} overlay={overlay} onMediaError={onMediaError} />
 
     {transportReplacement != null ? <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div> : <div ref={transportRef} className="flex flex-col gap-[var(--space-3)]">
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}

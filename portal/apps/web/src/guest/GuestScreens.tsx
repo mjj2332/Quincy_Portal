@@ -18,18 +18,43 @@ export function UnavailableScreen() {
   </main>;
 }
 
-/** The passcode step. The token stays in the caller's memory, so a wrong passcode retries without the fragment. `retryAfterSeconds` starts a countdown that disables the form. */
-export function PasscodeScreen({ error, retryAfterSeconds, pending, onSubmit }: { error: string | null; retryAfterSeconds: number | null; pending: boolean; onSubmit: (passcode: string) => void }) {
-  const [value, setValue] = useState("");
+/** Seconds left on a rate-limit wait: 0 when there is none. `key` restarts it when the same wait arrives again. */
+function useCountdown(retryAfterSeconds: number | null, key: unknown): number {
   const [until, setUntil] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { if (retryAfterSeconds !== null) { setUntil(Date.now() + retryAfterSeconds * 1000); setNow(Date.now()); } }, [retryAfterSeconds, error]);
+  useEffect(() => { if (retryAfterSeconds !== null) { setUntil(Date.now() + retryAfterSeconds * 1000); setNow(Date.now()); } }, [retryAfterSeconds, key]);
   useEffect(() => {
     if (until === null) return;
     const timer = setInterval(() => { const current = Date.now(); setNow(current); if (current >= until) setUntil(null); }, 1000);
     return () => { clearInterval(timer); };
   }, [until]);
-  const secondsLeft = until === null ? 0 : Math.max(0, Math.ceil((until - now) / 1000));
+  return until === null ? 0 : Math.max(0, Math.ceil((until - now) / 1000));
+}
+const waitText = (seconds: number) => `Too many attempts. Try again in ${seconds} ${seconds === 1 ? "second" : "seconds"}.`;
+
+/** A network error or a 5xx: it says nothing about the link, so it is calm, leaks nothing, and offers to repeat the step that failed. */
+export function UnreachableScreen({ onRetry }: { onRetry: () => void }) {
+  return <main className="flex min-h-dvh items-center justify-center bg-background p-[var(--space-4)]">
+    <EmptyState data-testid="guest-unreachable" title="Couldn't reach Quincy. Check your connection and try again.">
+      <Button type="button" className={TOUCH} onClick={onRetry}>Try again</Button>
+    </EmptyState>
+  </main>;
+}
+
+/** An exchange rate limit on a link with no passcode: a countdown and a token-only retry. Mount it fresh for each wait. */
+export function LimitedScreen({ retryAfterSeconds, onRetry }: { retryAfterSeconds: number; onRetry: () => void }) {
+  const secondsLeft = useCountdown(retryAfterSeconds, null);
+  return <main className="flex min-h-dvh items-center justify-center bg-background p-[var(--space-4)]">
+    <EmptyState data-testid="guest-limited" title={secondsLeft > 0 ? waitText(secondsLeft) : "You can try again now."}>
+      <Button type="button" className={TOUCH} disabled={secondsLeft > 0} onClick={onRetry}>Try again</Button>
+    </EmptyState>
+  </main>;
+}
+
+/** The passcode step. The token stays in the caller's memory, so a wrong passcode retries without the fragment. `retryAfterSeconds` starts a countdown that disables the form. */
+export function PasscodeScreen({ error, retryAfterSeconds, pending, onSubmit }: { error: string | null; retryAfterSeconds: number | null; pending: boolean; onSubmit: (passcode: string) => void }) {
+  const [value, setValue] = useState("");
+  const secondsLeft = useCountdown(retryAfterSeconds, error);
   const submit = (event: FormEvent) => { event.preventDefault(); if (value !== "" && secondsLeft === 0 && !pending) onSubmit(value); };
   return <main className="flex min-h-dvh items-center justify-center bg-background p-[var(--space-4)]">
     <Frame data-testid="guest-passcode" className="w-full max-w-sm">
@@ -40,7 +65,7 @@ export function PasscodeScreen({ error, retryAfterSeconds, pending, onSubmit }: 
             <Field>
               <FieldLabel htmlFor="guest-passcode-input">Passcode</FieldLabel>
               <Input id="guest-passcode-input" type="password" autoComplete="off" value={value} className={TOUCH} onChange={(event) => { setValue(event.target.value); }} />
-              <FieldError>{secondsLeft > 0 ? `Too many attempts. Try again in ${secondsLeft} ${secondsLeft === 1 ? "second" : "seconds"}.` : error}</FieldError>
+              <FieldError>{secondsLeft > 0 ? waitText(secondsLeft) : error}</FieldError>
             </Field>
             <Button type="submit" className={TOUCH} disabled={value === "" || secondsLeft > 0 || pending}>Continue</Button>
           </FieldGroup>
