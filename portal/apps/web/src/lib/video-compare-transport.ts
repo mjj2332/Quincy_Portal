@@ -97,6 +97,7 @@ export class CompareTransport {
     const startState = options.a.clock.getState();
     this.a = options.initialA ?? options.a.clock.pendingInitialFrame() ?? startState.targetFrame ?? startState.frame;
     this.runtime = { a: this.newRuntime(), b: this.newRuntime() };
+    this.lastSeen = { a: this.lastFrame("a"), b: this.lastFrame("b") };
     for (const side of SIDES) this.attach(side);
     if (this.doc) {
       const onVisibility = () => { if (this.doc?.visibilityState === "hidden" && (this.playing || this.reverseRun)) this.pause(); };
@@ -233,6 +234,26 @@ export class CompareTransport {
       this.sides.b.clock.seekToFrame(this.parkedFrame("b", this.localFrame("b", this.a)));
     });
     this.refresh();
+    return true;
+  }
+
+  private lastSeen = { a: -1, b: -1 };
+
+  /**
+   * Metadata can shorten a side after the transport was built. When the effective lengths change and the stored offset is no longer inside
+   * the bounds, clamp it to the nearest bound through `setOffset` (which pauses and realigns). Returns true when it handled the update.
+   */
+  private lengthsChanged(): boolean {
+    const a = this.lastFrame("a");
+    const b = this.lastFrame("b");
+    if (a === this.lastSeen.a && b === this.lastSeen.b) return false;
+    const first = this.lastSeen.a < 0;
+    this.lastSeen = { a, b };
+    if (first) return false;
+    const bounds = this.bounds();
+    const offset = this.offset();
+    if (offset >= bounds.min && offset <= bounds.max) return false;
+    this.setOffset(Math.min(bounds.max, Math.max(bounds.min, offset)));
     return true;
   }
 
@@ -518,6 +539,7 @@ export class CompareTransport {
 
   private onClock(side: CompareSideId): void {
     if (this.disposed) return;
+    if (this.lengthsChanged()) return;
     const run = this.runtime[side];
     const state = this.sides[side].clock.getState();
     const wasPlaying = run.prevPlaying;

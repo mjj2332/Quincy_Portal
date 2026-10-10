@@ -1048,3 +1048,23 @@ describe("CompareTransport: round 7 (#741 7b)", () => {
     expect(t.getState().domain.end).toBe(99);
   });
 });
+
+describe("CompareTransport: round 8 (#741 7b)", () => {
+  it("metadata that shortens a side below the stored offset clamps the offset, pauses and realigns", () => {
+    stub = installVideoElementStub({ rvfc: true });
+    const va = document.createElement("video");
+    const vb = document.createElement("video");
+    const ca = new VideoFrameClock(va, { fps: F25, frameCount: 100 });
+    const cb = new VideoFrameClock(vb, { fps: F25, frameCount: 100 });
+    clocks = [ca, cb];
+    const store = createCompareStore("t");
+    store.setPair("A", "B", "a");
+    store.setOffset(99);
+    transport = new CompareTransport({ a: { clock: ca, video: va, fps: F25, frameCount: 100, hasAudio: true }, b: { clock: cb, video: vb, fps: F25, frameCount: 100, hasAudio: true }, store, now: () => Date.now(), document: Object.assign(new EventTarget(), { visibilityState: "visible" as const }) });
+    stub.loadMetadata(vb, { duration: 4 }); stub.setReadyState(vb, 4); stub.finishSeek(vb); stub.presentFrame(vb, 0);
+    stub.loadMetadata(va, { duration: 91 / 25 }); stub.setReadyState(va, 4); stub.finishSeek(va); stub.presentFrame(va, 0);
+    expect(transport.offsetBounds().max).toBe(90);
+    expect(store.getState().offsets["A:B"]).toBe(90);
+    expect(transport.getState()).toMatchObject({ offset: 90, playing: false });
+  });
+});

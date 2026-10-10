@@ -69,6 +69,8 @@ export class VideoFrameClock {
   private readonly confirmedListeners = new Set<(frame: number) => void>();
   /** An explicit seek or step has been issued: metadata arriving must not replace its target with `initialFrame` (or 0). */
   private commanded = false;
+  /** This load has been initialised (the first seek issued): a repeated `loadedmetadata` for it keeps the current target. Reset by `emptied`. */
+  private initialised = false;
 
   constructor(private readonly video: HTMLVideoElement, version: FrameClockVersion, options: { now?: () => number; initialFrame?: number } = {}) {
     this.initialFrame = options.initialFrame !== undefined && Number.isFinite(options.initialFrame) ? Math.max(0, Math.trunc(options.initialFrame)) : 0;
@@ -78,7 +80,7 @@ export class VideoFrameClock {
     this.hasRvfc = typeof (video as FrameVideo).requestVideoFrameCallback === "function";
     for (const [name, handler] of this.handlers) video.addEventListener(name, handler);
     if (this.hasRvfc) this.register();
-    if (video.readyState >= 1) this.seek(this.takeInitialFrame(), true);
+    if (video.readyState >= 1) { this.initialised = true; this.seek(this.takeInitialFrame(), true); }
   }
 
   getState = (): FrameClockState => this.state;
@@ -265,6 +267,7 @@ export class VideoFrameClock {
 
   private readonly handlers: ReadonlyArray<readonly [string, () => void]> = [
     ["loadedmetadata", () => { this.initialize(); }],
+    ["emptied", () => { this.initialised = false; }],
     ["seeked", () => { if (this.video.readyState >= 3) this.set({ stalled: false }); this.onSeeked(); }],
     ["waiting", () => { if (!this.disposed && !this.video.paused) this.set({ stalled: true }); }],
     ["playing", () => { if (this.video.readyState >= 3) this.set({ stalled: false }); }],
@@ -306,6 +309,8 @@ export class VideoFrameClock {
    * be paused (that aborts the play() promise), so frame 0 is reached without `halt()`, and not at all when the playhead is there.
    */
   private initialize(): void {
+    if (this.initialised) return;
+    this.initialised = true;
     const { playing, rate } = this.state;
     // A seek or step issued before metadata keeps its target; otherwise the first seek goes to the initial frame.
     const goal = (): number => (this.commanded ? (this.target ?? this.state.frame) : this.takeInitialFrame());

@@ -35,10 +35,11 @@ describe("VideoFrameClock compare API (#741 7b)", () => {
     expect(clock!.getState()).toMatchObject({ frame: 40, confirmed: true });
   });
 
-  it("initialFrame is read once: a later metadata event seeks to 0", () => {
+  it("initialFrame is read once: after a new load (emptied) metadata seeks to 0", () => {
     const video = setup({ initialFrame: 40 });
     stub.loadMetadata(video, { duration: 4 });
     stub.finishSeek(video); stub.presentFrame(video, 40 / 25);
+    video.dispatchEvent(new Event("emptied"));
     stub.loadMetadata(video, { duration: 4 });
     expect(stub.writes.at(-1)).toBe(frameSeekSeconds(0, FPS_25));
   });
@@ -223,5 +224,16 @@ describe("VideoFrameClock compare API (#741 7b)", () => {
     expect(clock!.getState().stalled).toBe(true);
     stub.presentFrame(video, 3 / 25);
     expect(clock!.getState().stalled).toBe(false);
+  });
+
+  it("constructed with readyState >= 1 and loadedmetadata still queued: initialFrame is not consumed twice", () => {
+    stub = installVideoElementStub({ rvfc: true });
+    const video = document.createElement("video");
+    stub.setReadyState(video, 1);
+    clock = new VideoFrameClock(video, { fps: FPS_25, frameCount: 100 }, { initialFrame: 40 });
+    expect(clock.getState().targetFrame).toBe(40);
+    stub.loadMetadata(video, { duration: 4 });
+    expect(clock.getState().targetFrame).toBe(40);
+    expect(stub.writes).not.toContain(frameSeekSeconds(0, FPS_25));
   });
 });

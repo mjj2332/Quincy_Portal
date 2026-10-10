@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { aOf, bOf, type Rational } from "@quincy/shared";
+import { aOf, bOf, offsetBounds, type Rational } from "@quincy/shared";
 import { installVideoElementStub, type VideoElementStub } from "../testing/video-element";
 import { VideoFrameClock } from "./video-frame-clock";
 import { CompareTransport, type CompareTransportState } from "./video-compare-transport";
-import { createCompareStore } from "./video-compare-store";
+import { createCompareStore, offsetOf } from "./video-compare-store";
 
 /** Seeded random event sequences against two stubbed elements (#741 7b): the invariants must hold after every event. */
 function prng(seed: number) {
@@ -45,6 +45,8 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
   const counts = { a: config.nA, b: config.nB };
   // Every third seed opens the clocks mid-film (initialFrame) and lets the reviewer act BEFORE the metadata arrives.
   const preMeta = seed % 3 === 0;
+  // Every fifth seed builds the clocks after readyState reached 1 but before the (queued) loadedmetadata event.
+  if (seed % 5 === 0) { stub.setReadyState(videos.a, 1); stub.setReadyState(videos.b, 1); }
   const clocks = {
     a: new VideoFrameClock(videos.a, { fps: config.fpsA, frameCount: config.nA }, preMeta ? { initialFrame: Math.floor(rand() * config.nA) } : {}),
     b: new VideoFrameClock(videos.b, { fps: config.fpsB, frameCount: config.nB }, preMeta ? { initialFrame: Math.floor(rand() * config.nB) } : {}),
@@ -67,6 +69,7 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
   // After a stop the transport did not choose (a post confirming a frame, an error, an end) the stopped side is not realigned to the
   // mapping, by design; a transport-driven stop is.
   let confirmSide: "a" | "b" | null = null; // set by a confirm event, cleared by anything else that stops or moves the pair
+  let everConfirmed = false;
   let aligned = false; // nothing has aligned the pair yet (the UI opens each side at its own initialFrame)
   if (preMeta) {
     for (let k = Math.floor(rand() * 5); k > 0; k--) {
@@ -96,15 +99,17 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
       const c = confirmSide;
       const m = c === "a" ? "b" : "a";
       const shown = clocks[c].getState().frame;
-      const mapped = c === "a" ? bOf(shown, config.offset, config.fpsA, config.fpsB) : aOf(shown, config.offset, config.fpsA, config.fpsB);
+      const mapped = c === "a" ? bOf(shown, offsetOf(store.getState()), config.fpsA, config.fpsB) : aOf(shown, offsetOf(store.getState()), config.fpsA, config.fpsB);
       const want = Math.min(clocks[m].lastFrame(), Math.max(0, mapped));
       expect(clocks[m].getState().frame, `${m} should follow ${c}'s confirmed frame ${shown} to ${want}: ${where}`).toBe(want);
     }
     if (confirmSide) return;
     for (const side of ["a", "b"] as const) {
-      const local = side === "a" ? state.frame : bOf(state.frame, config.offset, config.fpsA, config.fpsB);
+      const local = side === "a" ? state.frame : bOf(state.frame, offsetOf(store.getState()), config.fpsA, config.fpsB);
       const want = Math.min(clocks[side].lastFrame(), Math.max(0, local));
-      expect(clocks[side].getState().frame, `${side} shows ${clocks[side].getState().frame}, mapping says ${want}: ${where}`).toBe(want);
+      // A confirmation that resolved late moves the shared position from the confirming side, and the mapping round trip is only good to one frame.
+      if (everConfirmed) expect(Math.abs(clocks[side].getState().frame - want), `${side} within one frame: ${where}`).toBeLessThanOrEqual(1);
+      else expect(clocks[side].getState().frame, `${side} shows ${clocks[side].getState().frame}, mapping says ${want}: ${where}`).toBe(want);
     }
   };
   const present = (side: "a" | "b", frame: number) => stub.presentFrame(videos[side], (frame * fps[side].den) / fps[side].num);
@@ -153,8 +158,18 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
       stub.fireError(videos[side]);
       videos[side].pause();
     } },
-    { name: "confirm", passive: true, run: () => { const side = pick(["a", "b"] as const); clocks[side].awaitConfirmedFrame().catch(() => {}); aligned = false; confirmSide = side; } },
+    { name: "confirm", passive: true, run: () => { const side = pick(["a", "b"] as const); clocks[side].awaitConfirmedFrame().catch(() => {}); aligned = false; confirmSide = side; everConfirmed = true; } },
     { name: "settle", passive: true, run: () => { if (aligned) expectAligned(`mid-run settle after ${log.slice(-6).join(", ")} seed ${seed} ${config.name}`); } },
+    { name: "metaShort", passive: true, run: () => {
+      // Metadata arriving with a shorter effective length than the DTO, at any time (also while playing).
+      const side = pick(["a", "b"] as const);
+      // A real element whose duration drops below its playhead is simply ended; the model keeps the playhead inside the new length.
+      const seen = Math.max(clocks[side].getState().frame, clocks[side].getState().targetFrame ?? 0, Math.ceil(videos[side].currentTime * fps[side].num / fps[side].den));
+      const frames = Math.max(seen + 3, counts[side] - Math.floor(rand() * 20));
+      if (frames >= counts[side]) return;
+      stub.loadMetadata(videos[side], { duration: (frames * fps[side].den) / fps[side].num });
+      aligned = false;
+    } },
     { name: "reverse", passive: false, run: () => { t.reverse(pick([1, 2])); } },
     { name: "waiting", passive: true, run: () => { stub.fireWaiting(videos[pick(["a", "b"] as const)]); } },
     { name: "playing", passive: true, run: () => { const s = pick(["a", "b"] as const); stub.setReadyState(videos[s], 4); stub.firePlaying(videos[s]); } },
@@ -176,7 +191,7 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
     { name: "seekSide", passive: false, run: () => { const side = pick(["a", "b"] as const); t.seekSide(side, Math.floor(rand() * counts[side])); } },
     { name: "rejectPlay", passive: false, run: () => { stub.rejectNextPlay("NotAllowedError"); } },
   ];
-  const weights = [10, 6, 2, 4, 1, 1, 1, 2, 1, 1, 2, 3, 1, 2, 3, 1, 1, 3, 1, 1, 1, 1, 1];
+  const weights = [10, 6, 2, 4, 1, 1, 1, 2, 1, 1, 1, 2, 3, 1, 2, 3, 1, 1, 3, 1, 1, 1, 1, 1];
 
   let prev: CompareTransportState = t.getState();
   for (let i = 0; i < EVENTS; i++) {
@@ -186,7 +201,7 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
     log.push(kind.name);
     kind.run();
     if (["seekTo", "step", "pause"].includes(kind.name)) aligned = true;
-    else if (["error", "ended", "finishSide", "endNaturally", "confirm", "play", "reverse", "seekSide"].includes(kind.name)) aligned = false;
+    else if (["error", "ended", "finishSide", "endNaturally", "metaShort", "confirm", "play", "reverse", "seekSide"].includes(kind.name)) aligned = false;
     await vi.advanceTimersByTimeAsync(0);
     const now = t.getState();
     const where = `${config.name} seed ${seed} event ${i} (${log.slice(-8).join(", ")}) state ${JSON.stringify(now)}`;
@@ -203,6 +218,11 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
         if (clocks[side].getState().stalled && !videos[side].paused && now.phases[side] === "live") expect(now.stalled, `${side} is buffering but the transport is not stalled: ${where}`).not.toBeNull();
       }
     }
+    const eff = { a: { fps: config.fpsA, frameCount: clocks.a.lastFrame() + 1 }, b: { fps: config.fpsB, frameCount: clocks.b.lastFrame() + 1 } };
+    const bounds = offsetBounds(eff.a, eff.b);
+    // Metadata not yet seen by the transport (no clock update since) is the only allowed lag.
+    if (kind.name !== "metaShort") expect(offsetOf(store.getState()), `offset outside bounds ${JSON.stringify(bounds)}: ${where}`).toBeGreaterThanOrEqual(bounds.min);
+    if (kind.name !== "metaShort") expect(offsetOf(store.getState()), `offset outside bounds ${JSON.stringify(bounds)}: ${where}`).toBeLessThanOrEqual(bounds.max);
     if (!now.playing) expect(videos.a.paused && videos.b.paused, `not playing but an element runs: ${where}`).toBe(true);
     expect([videos.a, videos.b].filter((v) => !v.muted).length, `more than one unmuted: ${where}`).toBeLessThanOrEqual(1);
     if (!kind.passive || now.playing) confirmSide = kind.name === "confirm" ? confirmSide : null;
