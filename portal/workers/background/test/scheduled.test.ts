@@ -12,6 +12,8 @@ const scheduledJobs = vi.hoisted(() => ({
   prune: vi.fn().mockResolvedValue(undefined),
   embeddedMedia: vi.fn().mockResolvedValue({ scanned: 0, reclaimed: 0, failed: 0 }),
   digest: vi.fn().mockResolvedValue({ recipients: 0, sent: 0, empty: 0, released: 0, failed: 0, unknown: 0, skipped: 0 }),
+  guestDigest: vi.fn().mockResolvedValue({ candidates: 0, claimed: 0, sent: 0, dropped: 0, failed: 0, skipped: false }),
+  guestSweep: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../src/embedded-media-sweep", () => ({ sweepEmbeddedMedia: scheduledJobs.embeddedMedia }));
 
@@ -26,6 +28,7 @@ vi.mock("../src/notification-delivery", () => ({
   recoverNotificationOutbox: scheduledJobs.recovery,
 }));
 vi.mock("../src/email-digest", () => ({ runEmailDigests: scheduledJobs.digest }));
+vi.mock("../src/guest-digest", () => ({ runGuestDigests: scheduledJobs.guestDigest, sweepGuestDigests: scheduledJobs.guestSweep }));
 vi.mock("../src/manual-publish-recovery", () => ({ sweepStuckManualPublishes: scheduledJobs.manualPublish }));
 vi.mock("../src/reconcile-awaiting-raw", () => ({ reconcileAwaitingRawProjects: scheduledJobs.raw }));
 vi.mock("../src/edited-arrival", () => ({ reconcileEditedArrivals: scheduledJobs.editedArrival }));
@@ -57,6 +60,7 @@ beforeEach(() => {
   scheduledJobs.editedArrival.mockResolvedValue({ scanned: 0, moved: 0, kept: 0, cleared: 0, failures: 0 });
   scheduledJobs.embeddedMedia.mockResolvedValue({ scanned: 0, reclaimed: 0, failed: 0 });
   scheduledJobs.digest.mockResolvedValue({ recipients: 0, sent: 0, empty: 0, released: 0, failed: 0, unknown: 0, skipped: 0 });
+  scheduledJobs.guestDigest.mockResolvedValue({ candidates: 0, claimed: 0, sent: 0, dropped: 0, failed: 0, skipped: false });
   consoleError.mockClear();
   consoleWarn.mockClear();
 });
@@ -90,6 +94,10 @@ describe("background scheduled Cron dispatch", () => {
     expect(scheduledJobs.stalled).toHaveBeenCalledOnce();
     expect(scheduledJobs.subtasks).toHaveBeenCalledOnce();
     expect(scheduledJobs.digest).toHaveBeenCalledExactlyOnceWith(expect.anything(), 1_725_000_000_000);
+    // The client hourly digest (#741 15b): swept first so stale news is never mailed, then flushed, both at the scheduled instant.
+    expect(scheduledJobs.guestSweep).toHaveBeenCalledExactlyOnceWith(undefined, 1_725_000_000_000);
+    expect(scheduledJobs.guestDigest).toHaveBeenCalledExactlyOnceWith(expect.anything(), 1_725_000_000_000);
+    expect(scheduledJobs.guestSweep.mock.invocationCallOrder[0]).toBeLessThan(scheduledJobs.guestDigest.mock.invocationCallOrder[0]!);
     expect(scheduledJobs.prune).toHaveBeenCalledOnce();
   });
 
@@ -103,13 +111,15 @@ describe("background scheduled Cron dispatch", () => {
     ["stalled", "0 * * * *"],
     ["subtasks", "0 * * * *"],
     ["digest", "0 * * * *"],
+    ["guestSweep", "0 * * * *"],
+    ["guestDigest", "0 * * * *"],
     ["prune", "0 * * * *"],
   ] as const)("isolates a failure in the %s job from its siblings", async (name, cron) => {
     scheduledJobs[name].mockRejectedValueOnce(new Error(`${name} failed`));
     await expect(worker().scheduled(controller(cron))).resolves.toBeUndefined();
     const siblings = cron === "* * * * *"
       ? [scheduledJobs.deadline, scheduledJobs.subtaskScan, scheduledJobs.recovery, scheduledJobs.manualPublish, scheduledJobs.editedArrival]
-      : [scheduledJobs.raw, scheduledJobs.stalled, scheduledJobs.subtasks, scheduledJobs.digest, scheduledJobs.prune];
+      : [scheduledJobs.raw, scheduledJobs.stalled, scheduledJobs.subtasks, scheduledJobs.digest, scheduledJobs.guestSweep, scheduledJobs.guestDigest, scheduledJobs.prune];
     for (const job of siblings) expect(job).toHaveBeenCalledOnce();
     expect(consoleError).toHaveBeenCalled();
   });

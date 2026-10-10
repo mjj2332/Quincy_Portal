@@ -95,7 +95,7 @@ async function setSubscription(c: Put): Promise<Response> {
 
   const member = await c.env.DB.prepare("SELECT id FROM guest_link_members WHERE link_id = ?1 AND guest_id = ?2").bind(session.link.id, guestId).first<{ id: string }>();
   // A verified session always has its membership (the verify batch writes both); a miss is a state the guest cannot reach, so it is the stub.
-  if (!member) return done(stub());
+  if (!member) return done(await stub());
   const committedAt = Date.now();
   await c.env.DB.batch(flipStatements(c.env.DB, {
     memberId: member.id, subscribed: parsed.data.subscribed, now: committedAt,
