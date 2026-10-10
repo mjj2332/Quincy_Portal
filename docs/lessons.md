@@ -6143,3 +6143,12 @@ Tags: focus-overlays, media-renditions · #741
 - Related: "Don't mirror server reservation state on the client (#751)" is the same rule for uploads: state that outlives the view belongs to one owner, not the component.
 
 Guards: `lib/video-note-form-store.test.ts`, `components/video/VideoNotes.dom.test.tsx` ("form lifetime").
+
+## `node:zlib` is runtime-only in the app Worker (#741 14-0)
+Tags: workers-runtime · #741
+
+- **What bit.** Importing `crc32` from `node:zlib` passed every vitest run (the Workers pool provides it under `nodejs_compat`, compat date >= 2026-07-01) but failed `typecheck:worker-app` (TS2591): the Worker compiles against `@cloudflare/workers-types` only, with no `@types/node`.
+- **Rule.** Declare the one function used in `src/node-zlib.d.ts`, the same way `src/node-async-hooks.d.ts` does, instead of adding `@types/node` (which would leak Node globals into Worker code). Run `npm run verify`, not just the tests, after adding a `node:` import.
+- **Why `crc32`.** The JS table loop cost ~1.1 s CPU per 256 MiB against a 30000 ms `cpu_ms`; native is ~6 ms for the same bytes in Node.
+
+Guards: `workers/app/test/zip-stream-crc.test.ts`.
