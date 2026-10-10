@@ -14,7 +14,7 @@
    `data-surface="default"`, that restores every one of the same roles back
    to its normal `:root` value — otherwise a role the inverse block sets and
    the light panel doesn't re-set would inherit the dark value into the
-   light panel. The two blocks below therefore declare the same 22
+   light panel. The two blocks below therefore declare the same 23
    properties, one inverted, one restored. See
    docs/plans/TB8-09-Lightbox-Controls-Visual-Plan.md §2.3 and §2.3a for the
    full reasoning, including why both --ring and --focus-ring must be set
@@ -30,6 +30,7 @@
   --card-foreground:       var(--paper-050);
   --popover:               var(--ink-800);
   --popover-foreground:    var(--paper-050);
+  --muted:                 var(--ink-700);        /* ghost/outline hover and pressed fills: unbound, they painted paper-100 cream on the pill */
   --secondary:             var(--ink-700);        /* the hover lift */
   --secondary-foreground:  var(--paper-050);
   --border:                var(--greige-500);     /*  3.48:1 vs ink-900, 3.24:1 vs ink-800 */
@@ -58,6 +59,7 @@
   --card-foreground:       var(--text-primary);
   --popover:               var(--bg-surface);
   --popover-foreground:    var(--text-primary);
+  --muted:                 var(--bg-raised);
   --secondary:             var(--bg-raised);
   --secondary-foreground:  var(--text-primary);
   --border:                var(--border-hairline);

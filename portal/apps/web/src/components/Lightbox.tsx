@@ -15,8 +15,10 @@ import { Textarea } from "./reui/textarea";
 import { REVIEW_LABELS } from "./lightbox/review-labels";
 import { MarkupLayer, StrokeHitTarget, StrokeVisible } from "./quincy/freehand-strokes";
 import { cloneMarkupItem, readStoredMarkup } from "../lib/read-stored-markup";
-import { useFreehandMarkup, type PointerSample } from "../lib/use-freehand-markup";
-import type { FreehandPoint as Point, MarkupItem as Stroke } from "@quincy/shared";
+import { useMarkup, type MarkupTool, type PointerSample } from "../lib/use-markup";
+import { MarkupToolbar } from "./quincy/markup-toolbar";
+import { Button } from "./reui/button";
+import { STROKE_LIMITS, type FreehandPoint as Point, type MarkupItem as Stroke } from "@quincy/shared";
 
 // TB8-09 slice 2: the stage's keyboard-shortcut pill. Three sites of each,
 // pulled into constants so the `.viewer__shortcuts` variants below (with vs.
@@ -28,13 +30,14 @@ const SHORTCUT_KBD =
 const SHORTCUT_ITEM = "inline-flex items-center gap-[var(--space-1)]";
 const SHORTCUT_SEP = "not-italic text-on-inverse-muted";
 
-// TB8-09 slice 3: the markup toolbar's pen-colour swatches carried no accessible name at
-// all — this is the map that gives each of the six a real one. The hex values themselves
-// stay literals (§1.5): they are pen ink applied to the photograph, not interface chrome.
-export const PEN_COLOUR_NAMES = {
-  "#e64b3c": "Red", "#f0a020": "Amber", "#3f8f5a": "Green",
-  "#2f6df0": "Blue", "#ffffff": "White", "#0a0a0a": "Black",
-} as const;
+// The pen-colour names moved to the shared toolbar with the swatches (#741 slice 6s-ui); kept exported from here for importers.
+export { PEN_COLOUR_NAMES } from "./quincy/markup-toolbar";
+
+/** A 44px target on a touch tablet (a phone gets it from the button's own `max-[721px]` height). */
+const COARSE_TARGET = "min-[721px]:pointer-coarse:min-h-11";
+
+/** The photo markup caps a commit or restore must fit: the item cap, and the route's 2,000,000-byte body cap (`routes/annotations.ts`). */
+const MARKUP_LIMITS = { items: STROKE_LIMITS.strokes, bytes: 2_000_000 };
 
 // TB8-09 slice 4: every `.vpanel__sec` heading takes PANEL_SECTION on the <section> element.
 // Six of the seven become <Eyebrow>; "Markup & annotations" is a flex row holding a heading
@@ -123,7 +126,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   const [editingDrawingId, setEditingDrawingId] = useState<string | null>(null);
   const [strokeCache, setStrokeCache] = useState<Map<string, { key: string; strokes: Stroke[]; unsupported: boolean }>>(new Map());
   const [highlightedAnnotationId, setHighlightedAnnotationId] = useState<string | null>(null);
-  const [tool, setTool] = useState({ color: "#e64b3c", width: 4 });
+  const [tool, setTool] = useState<MarkupTool>({ kind: "freehand", color: "#e64b3c", width: 4 });
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [annotationNote, setAnnotationNote] = useState("");
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
@@ -159,6 +162,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   const mutationGenerationRef = useRef(0);
   const mutationAssetRef = useRef(asset.id);
   const strokesRef = useRef(strokes);
+  const markupActiveRef = useRef(false);
   const annotationNoteRef = useRef(annotationNote);
   const editingDrawingIdRef = useRef(editingDrawingId);
   // Increment during render so an A→B→A navigation invalidates old A completions before
@@ -167,8 +171,10 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   strokesRef.current = strokes;
   annotationNoteRef.current = annotationNote;
   editingDrawingIdRef.current = editingDrawingId;
-  const hasDraftMarkup = strokes.length > 0 || editingDrawingId !== null || annotationNote.trim().length > 0 || editingAnnotationId !== null;
-  const markup = useFreehandMarkup({ enabled: canAnnotate, tool, toPoint: pointerPoint, setStrokes, beforeStart: beforeStroke });
+  const markup = useMarkup({ enabled: canAnnotate, tool, toPoint: pointerPoint, strokes, setStrokes, beforeStart: beforeStroke, limits: MARKUP_LIMITS, onRefuse: () => onToast("That would be more markup than one annotation can hold.", "error") });
+  markupActiveRef.current = markup.active !== null;
+  // A stroke being drawn is a draft too (arrows and review keys stay inert); the redo stack alone is not.
+  const hasDraftMarkup = strokes.length > 0 || markup.active !== null || editingDrawingId !== null || annotationNote.trim().length > 0 || editingAnnotationId !== null;
   const rawCompareAsset = useMemo(() => asset.sourceRawAssetId ? rawAssets.find((item) => item.id === asset.sourceRawAssetId) ?? null : null, [asset.sourceRawAssetId, rawAssets]);
   const compareActive = band !== "phone" && showRawCompare && Boolean(rawCompareAsset);
   const stars = asset.review?.stars ?? asset.ratingFromMetadata ?? 0;
@@ -240,7 +246,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   };
   useEffect(() => {
     if (highlightTimeoutRef.current) window.clearTimeout(highlightTimeoutRef.current);
-    setShowRawCompare(false); setStrokes([]); setEditingDrawingId(null); setStrokeCache(new Map()); setMarkupVisible(true); setHighlightedAnnotationId(null); setAnnotationNote(""); setEditingAnnotationId(null); setEditingAnnotationNote(""); setIsSaving(false); setZoom(initialZoom());
+    markup.cancel(); setShowRawCompare(false); setStrokes([]); setEditingDrawingId(null); setStrokeCache(new Map()); setMarkupVisible(true); setHighlightedAnnotationId(null); setAnnotationNote(""); setEditingAnnotationId(null); setEditingAnnotationNote(""); setIsSaving(false); setZoom(initialZoom());
     const pending = refreshDiscussion();
     const gen = refreshGenRef.current; // refreshDiscussion's synchronous prefix has already run and assigned this
     void pending.catch(() => { if (refreshGenRef.current === gen) setAnnotations([]); });
@@ -289,9 +295,17 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
       // genuine text field (e.g. the comment box), where Escape/blur should behave natively
       // instead of yanking the user out of drawing mode mid-comment.
       if (event.key === "Escape" && hasDraftMarkup) { if (inEditableField) return; event.preventDefault(); exitDrawMode(); return; }
+      // Undo and redo run before the draft early-return below, so Cmd+Z after a Clear and redo after an undo-all still work.
+      // Shift is checked first (Shift+Cmd+Z is redo, not undo), and Cmd+Y is deliberately NOT redo: it is History in Safari and
+      // Chrome on macOS. Nothing is prevented when there is nothing to do, so the key stays the browser's.
+      if (!inEditableField && (event.metaKey || event.ctrlKey)) {
+        const letter = event.key.toLowerCase();
+        const wantsRedo = (letter === "z" && event.shiftKey) || (letter === "y" && event.ctrlKey && !event.metaKey);
+        if (wantsRedo) { if (markup.canRedo) { event.preventDefault(); markup.redo(); } return; }
+        if (letter === "z" && !event.shiftKey) { if (markup.canUndo) { event.preventDefault(); markup.undo(); } return; }
+      }
       // Markup owns the keyboard: never navigate or apply review shortcuts while a drawing
-      // draft is active. Escape above and undo below are the only supported keys.
-      if (hasDraftMarkup && !inEditableField && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); markup.undo(); return; }
+      // draft is active. Escape above and undo/redo are the only supported keys.
       if (hasDraftMarkup) return;
       // Sheet behavior is deliberately ahead of the legacy interactive-element branch:
       // the collapse button is itself a button, and the closed-state trigger must allow
@@ -315,7 +329,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     }
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
-  }, [asset, band, canReview, closePanel, hasDraftMarkup, markup.undo, onClose, onReview, panelOpen]);
+  }, [asset, band, canReview, closePanel, hasDraftMarkup, markup.canUndo, markup.canRedo, markup.undo, markup.redo, onClose, onReview, panelOpen]);
 
   function pointerPoint(event: PointerSample): Point {
     const rect = frameRef.current?.getBoundingClientRect();
@@ -335,7 +349,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     return true;
   }
   async function saveAnnotation() {
-    if (!canAnnotate || editingDrawingId || (!strokes.length && !annotationNote.trim())) return;
+    if (!canAnnotate || editingDrawingId || markupActiveRef.current || (!strokes.length && !annotationNote.trim())) return;
     const assetIdAtStart = asset.id;
     const mutation = ++mutationGenerationRef.current;
     const submittedStrokes = strokes;
@@ -357,7 +371,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     }
     finally { if (mutation === mutationGenerationRef.current && currentAssetIdRef.current === assetIdAtStart) setIsSaving(false); }
   }
-  function exitDrawMode() { setStrokes([]); setAnnotationNote(""); setEditingDrawingId(null); cancelInlineEdit(); }
+  function exitDrawMode() { markup.cancel(); setStrokes([]); setAnnotationNote(""); setEditingDrawingId(null); cancelInlineEdit(); }
   /** True once an annotation's CURRENT strokes are cached — gating drawing-edit on this prevents seeding the editor with [] and silently erasing the drawing on Save. */
   function strokesReady(annotation: Annotation) { return !annotation.strokeR2Key || strokeCache.get(annotation.id)?.key === annotation.strokeR2Key; }
   /** True when the saved markup holds something this build cannot draw (a newer `type`, or a malformed entry): an edit would save it away, so drawing edits are blocked and the data is kept. */
@@ -370,7 +384,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     setStrokes(preload); setEditingDrawingId(annotation.id); setZoom(initialZoom()); collapsePhonePanelForMarkup();
   }
   async function saveDrawingEdit() {
-    if (!editingDrawingId) return;
+    if (!editingDrawingId || markupActiveRef.current) return; // an unfinished stroke is not in `strokes` yet: saving now would drop it
     const assetIdAtStart = asset.id;
     const annotationId = editingDrawingId;
     setIsSaving(true);
@@ -438,7 +452,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     } catch (reason) {
       if (currentAssetIdRef.current === assetIdAtStart) {
         setAnnotations(before);
-        const anotherDraftStarted = strokesRef.current.length > 0 || editingDrawingIdRef.current !== null || annotationNoteRef.current.trim().length > 0;
+        const anotherDraftStarted = strokesRef.current.length > 0 || markupActiveRef.current || editingDrawingIdRef.current !== null || annotationNoteRef.current.trim().length > 0;
         if (!anotherDraftStarted) { setEditingAnnotationId(annotationId); setEditingAnnotationNote(noteText ?? ""); }
         onToast(anotherDraftStarted
           ? "The annotation note could not be updated, and your edit could not be restored because new unsaved markup was started."
@@ -523,6 +537,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
       </g>;
     })}
     {strokes.map((stroke, strokeIndex) => <StrokeVisible key={`draft-${strokeIndex}`} stroke={stroke} opacity={1} />)}
+    {markup.active && <StrokeVisible key="active" stroke={markup.active} opacity={1} />}
   </MarkupLayer>;
   async function closeViewer(event?: React.MouseEvent<HTMLButtonElement>) {
     event?.preventDefault();
@@ -539,8 +554,19 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     activeAssetIdRef.current = nextAsset.id;
     setIndex(index);
   }
-  const editedStage = <div className="viewer__stage row-start-1 row-end-2 relative grid place-items-center overflow-hidden min-w-0"><IconButton className="absolute top-[16px] left-[16px] z-[5] max-[721px]:top-[calc(16px+env(safe-area-inset-top))] max-[721px]:left-[max(16px,env(safe-area-inset-left))]" type="button" onClick={(event) => { void closeViewer(event); }} aria-label="Close">×</IconButton><button ref={reviewTriggerRef} className={buttonClasses("secondary", { className: "viewer__panel-trigger absolute top-[16px] right-[16px] z-[5] hidden max-[1081px]:inline-flex max-[721px]:!hidden" })} data-testid="lightbox-review-trigger" type="button" onClick={(event) => openPanel(event.currentTarget)} aria-expanded={panelOpen} aria-controls="lightbox-review-panel">Review</button><div className="absolute top-[16px] left-1/2 -translate-x-1/2 z-[4] text-center text-foreground max-[721px]:top-[calc(18px+env(safe-area-inset-top))] max-[721px]:max-w-[45vw]"><div className="[font:var(--type-h3)] [font-family:var(--font-display)] max-[721px]:hidden">{asset.originalFilename}</div><Eyebrow className="mt-[3px] text-on-inverse-muted max-[721px]:mt-0">{collectionKind === "edited" ? "Edited" : "RAW"} · Frame {displayIndex + 1} of {assets.length}</Eyebrow></div><IconButton className="absolute top-1/2 -translate-y-1/2 z-[3] left-[18px] max-[721px]:left-[10px]" type="button" onClick={(event) => { void move(-1, event); }} aria-label="Previous frame">←</IconButton><div className="relative w-full h-full grid place-items-center overflow-hidden p-[28px] pb-[84px] max-[721px]:pt-[calc(28px+env(safe-area-inset-top))] max-[721px]:pb-[118px]"><div className={`canvasframe canvasframe--zoomable ${zoom.scale > 1 && !canAnnotate ? "is-zoomed" : ""}`} ref={frameRef} data-testid="lightbox-canvas" style={zoomStyleFor(frameRef)} onPointerDown={(event) => { startPan(event); startSwipe(event); }} onPointerMove={(event) => { movePan(event); moveSwipe(event); }} onPointerUp={(event) => { endSwipe(event); endPan(event); }} onPointerCancel={(event) => { swipeRef.current = null; endPan(event); }} onWheel={wheelZoom} onTouchStart={touchStartZoom} onTouchMove={touchMoveZoom} onTouchEnd={touchEndZoom}><img className="viewer__img max-w-full max-h-full object-contain select-none" draggable={false} onDragStart={(event) => event.preventDefault()} src={`/media/asset/${encodeURIComponent(asset.id)}/web`} alt={asset.originalFilename} />{drawLayer}</div></div><IconButton className="absolute top-1/2 -translate-y-1/2 z-[3] right-[18px] max-[721px]:right-[10px]" type="button" onClick={(event) => { void move(1, event); }} aria-label="Next frame">→</IconButton><div className={cn("absolute inset-x-0 mx-auto w-max z-[4] flex items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-1)] rounded-[var(--radius-pill)] border border-solid border-[length:var(--border-width-hair)] border-border bg-[var(--scrim-overlay)] text-on-inverse-muted [font:var(--type-eyebrow)] tracking-[var(--tracking-wide)] whitespace-nowrap pointer-events-none max-[721px]:hidden", canAnnotate ? cn("bottom-[82px]") : "bottom-[18px]")} aria-hidden="true">{hasDraftMarkup ? <><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>⌘Z</kbd> undo</span><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>Esc</kbd> done</span></> : <><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>←</kbd><kbd className={SHORTCUT_KBD}>→</kbd> frames</span>{canReview && <><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>A</kbd> approve</span><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>X</kbd> flag</span><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>1–5</kbd> rate</span><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>0</kbd> clear</span></>}<i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>Esc</kbd> close</span></>}</div>
-    {canAnnotate && <div className="drawbar absolute inset-x-0 bottom-[18px] mx-auto w-max z-[6] flex items-center flex-wrap gap-[var(--space-3)] py-[var(--space-2)] pr-[var(--space-2)] pl-[var(--space-4)] bg-card border border-solid border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-pill)] shadow-[var(--shadow-lg)] text-foreground max-w-[calc(100%-32px)] max-[721px]:bottom-[calc(18px+env(safe-area-inset-bottom))] max-[721px]:max-w-[calc(100%-16px)] max-[721px]:gap-[var(--space-2)]" data-testid="lightbox-markup-toolbar"><Eyebrow className="text-on-inverse-muted">{editingDrawingId ? "Editing drawing" : "Markup"}</Eyebrow><div role="group" aria-label="Pen colour" className="inline-flex items-center gap-[var(--space-2)] px-[var(--space-1)]">{(Object.keys(PEN_COLOUR_NAMES) as (keyof typeof PEN_COLOUR_NAMES)[]).map((color) => <button key={color} type="button" className={cn(ICON_BUTTON, "rounded-full", tool.color === color && "outline outline-[length:var(--border-width-bold)] outline-solid outline-[var(--ring)] outline-offset-2")} aria-pressed={tool.color === color} aria-label={PEN_COLOUR_NAMES[color]} onClick={() => setTool((current) => ({ ...current, color }))}><span aria-hidden="true" style={{ background: color }} className="w-[19px] h-[19px] rounded-full border border-[length:var(--border-width-hair)] border-solid border-border" /></button>)}</div><div role="group" aria-label="Stroke width" className="inline-flex items-center gap-[var(--space-2)] px-[var(--space-1)]">{[2, 4, 7].map((width) => <button key={width} type="button" className={cn(ICON_BUTTON, tool.width === width && "bg-secondary")} aria-pressed={tool.width === width} aria-label={`${width} pixels`} onClick={() => setTool((current) => ({ ...current, width }))}><span aria-hidden="true" style={{ width: width + 3, height: width + 3 }} className="block rounded-full bg-foreground" /></button>)}</div><button type="button" className={buttonClasses("secondary")} disabled={!strokes.length} onClick={markup.undo}>Undo</button><button type="button" className={buttonClasses("secondary")} disabled={!strokes.length} onClick={markup.clear}>Clear</button>{editingDrawingId && <><button type="button" className={buttonClasses("secondary")} onClick={exitDrawMode}>Cancel</button><button type="button" className={buttonClasses("primary")} disabled={isSaving} onClick={() => void saveDrawingEdit()}>Save</button></>}</div>}
+  const editedStage = <div className="viewer__stage row-start-1 row-end-2 relative grid place-items-center overflow-hidden min-w-0"><IconButton className="absolute top-[16px] left-[16px] z-[5] max-[721px]:top-[calc(16px+env(safe-area-inset-top))] max-[721px]:left-[max(16px,env(safe-area-inset-left))]" type="button" onClick={(event) => { void closeViewer(event); }} aria-label="Close">×</IconButton><button ref={reviewTriggerRef} className={buttonClasses("secondary", { className: "viewer__panel-trigger absolute top-[16px] right-[16px] z-[5] hidden max-[1081px]:inline-flex max-[721px]:!hidden" })} data-testid="lightbox-review-trigger" type="button" onClick={(event) => openPanel(event.currentTarget)} aria-expanded={panelOpen} aria-controls="lightbox-review-panel">Review</button><div className="absolute top-[16px] left-1/2 -translate-x-1/2 z-[4] text-center text-foreground max-[721px]:top-[calc(18px+env(safe-area-inset-top))] max-[721px]:max-w-[45vw]"><div className="[font:var(--type-h3)] [font-family:var(--font-display)] max-[721px]:hidden">{asset.originalFilename}</div><Eyebrow className="mt-[3px] text-on-inverse-muted max-[721px]:mt-0">{collectionKind === "edited" ? "Edited" : "RAW"} · Frame {displayIndex + 1} of {assets.length}</Eyebrow></div><IconButton className="absolute top-1/2 -translate-y-1/2 z-[3] left-[18px] max-[721px]:left-[10px]" type="button" onClick={(event) => { void move(-1, event); }} aria-label="Previous frame">←</IconButton><div className="relative w-full h-full grid place-items-center overflow-hidden p-[28px] pb-[84px] max-[721px]:pt-[calc(28px+env(safe-area-inset-top))] max-[721px]:pb-[118px]"><div className={`canvasframe canvasframe--zoomable ${zoom.scale > 1 && !canAnnotate ? "is-zoomed" : ""}`} ref={frameRef} data-testid="lightbox-canvas" style={zoomStyleFor(frameRef)} onPointerDown={(event) => { startPan(event); startSwipe(event); }} onPointerMove={(event) => { movePan(event); moveSwipe(event); }} onPointerUp={(event) => { endSwipe(event); endPan(event); }} onPointerCancel={(event) => { swipeRef.current = null; endPan(event); }} onWheel={wheelZoom} onTouchStart={touchStartZoom} onTouchMove={touchMoveZoom} onTouchEnd={touchEndZoom}><img className="viewer__img max-w-full max-h-full object-contain select-none" draggable={false} onDragStart={(event) => event.preventDefault()} src={`/media/asset/${encodeURIComponent(asset.id)}/web`} alt={asset.originalFilename} />{drawLayer}</div></div><IconButton className="absolute top-1/2 -translate-y-1/2 z-[3] right-[18px] max-[721px]:right-[10px]" type="button" onClick={(event) => { void move(1, event); }} aria-label="Next frame">→</IconButton><div className="absolute inset-x-0 bottom-[18px] z-[6] flex flex-col items-center gap-[var(--space-2)] pointer-events-none max-[721px]:bottom-[calc(18px+env(safe-area-inset-bottom))]" data-testid="lightbox-markup-stack">
+      <div className="flex w-max items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-1)] rounded-[var(--radius-pill)] border border-solid border-[length:var(--border-width-hair)] border-border bg-[var(--scrim-overlay)] text-on-inverse-muted [font:var(--type-eyebrow)] tracking-[var(--tracking-wide)] whitespace-nowrap pointer-events-none max-[721px]:hidden" aria-hidden="true">{hasDraftMarkup ? <><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>⌘Z</kbd> undo</span><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>⇧⌘Z</kbd> redo</span><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>Esc</kbd> done</span></> : <><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>←</kbd><kbd className={SHORTCUT_KBD}>→</kbd> frames</span>{canReview && <><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>A</kbd> approve</span><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>X</kbd> flag</span><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>1–5</kbd> rate</span><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>0</kbd> clear</span></>}<i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>Esc</kbd> close</span></>}</div>
+      {canAnnotate && <MarkupToolbar
+        label={editingDrawingId ? "Editing drawing" : band === "phone" ? null : "Markup"}
+        tool={tool} compact={band === "phone"} testId="lightbox-markup-toolbar"
+        onToolChange={(kind) => setTool((current) => ({ ...current, kind }))}
+        onColorChange={(color) => setTool((current) => ({ ...current, color }))}
+        onWidthChange={(width) => setTool((current) => ({ ...current, width }))}
+        canUndo={markup.canUndo} canRedo={markup.canRedo} canClear={strokes.length > 0}
+        onUndo={markup.undo} onRedo={markup.redo} onClear={markup.clear}
+        trailing={editingDrawingId ? <><Button type="button" variant="outline" className={COARSE_TARGET} onClick={exitDrawMode}>Cancel</Button><Button type="button" className={COARSE_TARGET} disabled={isSaving || markup.active !== null} onClick={() => void saveDrawingEdit()}>Save</Button></> : undefined}
+      />}
+    </div>
   </div>;
 
   return <div className={cn(
@@ -566,7 +592,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
       {canRecommend && <section className={PANEL_SECTION}><Eyebrow className="mb-[var(--space-3)]">Recommendation</Eyebrow><button className={cn(buttonClasses(asset.review?.recommended ? "primary" : "secondary", { className: "w-full" }))} type="button" aria-pressed={Boolean(asset.review?.recommended)} onClick={() => void onReview(asset.id, { recommended: !asset.review?.recommended })}>{asset.review?.recommended ? "Recommended to QA" : "Recommend to QA"}</button></section>}
       {canReview && <section className={PANEL_SECTION}><Eyebrow className="mb-[var(--space-3)]">Rating</Eyebrow><div role="group" aria-label="Rating" className="flex gap-[var(--space-1)]">{[1, 2, 3, 4, 5].map((number) => <button key={number} type="button" aria-pressed={number === stars} aria-label={`${number} star${number === 1 ? "" : "s"}`} className={cn(RATING_BUTTON, number <= stars ? RATING_ON : RATING_OFF)} onClick={() => void onReview(asset.id, { stars: number === stars ? null : number })}>★</button>)}</div></section>}
       {canReview && <section className={PANEL_SECTION}><Eyebrow className="mb-[var(--space-3)]">Label</Eyebrow><div role="group" aria-label="Colour label" className="flex gap-[var(--space-3)]">{REVIEW_LABELS.map((label) => <button className={cn(ICON_BUTTON_BASE, "w-[28px] max-[721px]:w-[44px] rounded-full", asset.review?.colorLabel === label.value && "outline outline-[length:var(--border-width-bold)] outline-solid outline-[var(--ring)] outline-offset-2")} type="button" key={label.value} aria-pressed={asset.review?.colorLabel === label.value} aria-label={label.name} title={label.name} onClick={() => void onReview(asset.id, { colorLabel: asset.review?.colorLabel === label.value ? null : label.value })}><span aria-hidden="true" style={{ background: label.color }} className="w-[26px] h-[26px] rounded-full border border-[length:var(--border-width-hair)] border-solid border-border" /></button>)}</div></section>}
-      <section className={PANEL_SECTION}><div className={cn(SECTION_LABEL, "flex justify-between items-center")}><span>Markup & annotations</span><span style={{ display: "flex", gap: 6 }}><button className="chip" type="button" onClick={() => setMarkupVisible((current) => !current)}>{markupVisible ? "Hide markup" : "Show markup"}</button></span></div>{canAnnotate && <><Textarea className="mt-[var(--space-3)]" placeholder="Optional note for this markup…" value={annotationNote} disabled={editingDrawingId !== null || editingAnnotationId !== null} onChange={(event) => setAnnotationNote(event.target.value)} /><button className={cn(buttonClasses("primary", { className: "w-full mt-[var(--space-2)]" }))} type="button" disabled={isSaving || editingDrawingId !== null || (!strokes.length && !annotationNote.trim())} onClick={() => void saveAnnotation()}>Save annotation</button></>}<div className="flex flex-col gap-[var(--space-4)]" style={{ marginTop: 14 }}>{annotations.length === 0 ? <div className="muted" style={{ fontSize: 14 }}>No annotations yet.</div> : annotations.map((annotation) => <div className={cn("flex gap-[var(--space-3)] rounded-[var(--radius-sm)] transition-[background-color] duration-[1600ms] ease-[var(--ease-standard)]", highlightedAnnotationId === annotation.id && "bg-surface-sunken")} data-highlighted={highlightedAnnotationId === annotation.id ? "true" : undefined} key={annotation.id} ref={(el) => { if (el) annotationRefs.current.set(annotation.id, el); else annotationRefs.current.delete(annotation.id); }}><div aria-hidden="true" className={cn("flex-none w-[22px] h-[22px] rounded-full bg-primary text-primary-foreground grid place-items-center [font:var(--weight-regular)_var(--text-2xs)/1.4_var(--font-mono)] mt-[2px]")}>✎</div><div className="flex-1 min-w-0"><div className="[font:var(--type-label)]">{annotation.author.name}<span className={cn(META_TEXT, "ml-[var(--space-2)]")}>{annotation.author.role}</span></div>{editingAnnotationId === annotation.id ? <><Textarea className="mt-[var(--space-3)]" aria-label="Edit annotation note" value={editingAnnotationNote} disabled={isSaving} onChange={(event) => setEditingAnnotationNote(event.target.value)} /><div className="spread" style={{ marginTop: 6 }}><button className={cn(buttonClasses("text", { className: "underline min-w-[44px] max-[721px]:min-h-[44px] px-[var(--space-1)]" }))} data-testid="lightbox-annotation-action" type="button" disabled={isSaving} onClick={cancelInlineEdit}>Cancel</button><button className={cn(buttonClasses("text", { className: "underline min-w-[44px] max-[721px]:min-h-[44px] px-[var(--space-1)]" }))} data-testid="lightbox-annotation-action" type="button" disabled={isSaving} onClick={() => void saveAnnotationEdit()}>Save</button></div></> : <>{annotation.noteText && <div className="text-[length:var(--text-sm)] leading-[var(--leading-normal)] mt-[3px] text-foreground-secondary">{annotation.noteText}</div>}{strokesUnsupported(annotation) && <div className={cn(META_TEXT, "mt-[3px]")} data-testid="lightbox-markup-unsupported">Some markup can't be shown</div>}<div className="ey muted" style={{ marginTop: 6 }}>{time(annotation.createdAt)}{annotation.editedAt && " · (edited)"}{annotation.authorId === currentUserId && <> <span aria-hidden="true">·</span> <button className={cn(buttonClasses("text", { className: "underline min-w-[44px] max-[721px]:min-h-[44px] px-[var(--space-1)]" }))} data-testid="lightbox-annotation-action" type="button" disabled={hasDraftMarkup || isSaving} onClick={() => { setEditingAnnotationId(annotation.id); setEditingAnnotationNote(annotation.noteText ?? ""); }}>Edit note</button> <span aria-hidden="true">·</span> <button className={cn(buttonClasses("text", { className: "underline min-w-[44px] max-[721px]:min-h-[44px] px-[var(--space-1)]" }))} data-testid="lightbox-annotation-action" type="button" disabled={hasDraftMarkup || isSaving || !strokesReady(annotation) || strokesUnsupported(annotation)} title={!strokesReady(annotation) ? "Loading markup…" : strokesUnsupported(annotation) ? "This markup can't be edited here" : undefined} onClick={() => startDrawingEdit(annotation)}>{annotation.strokeR2Key ? "Edit drawing" : "Add drawing"}</button> <span aria-hidden="true">·</span> <button className={cn(buttonClasses("text", { className: "underline min-w-[44px] max-[721px]:min-h-[44px] px-[var(--space-1)]" }))} data-testid="lightbox-annotation-action" type="button" disabled={hasDraftMarkup || isSaving} onClick={() => void deleteAnnotation(annotation)}>Delete</button></>}</div></>}</div></div>)}</div></section>
+      <section className={PANEL_SECTION}><div className={cn(SECTION_LABEL, "flex justify-between items-center")}><span>Markup & annotations</span><span style={{ display: "flex", gap: 6 }}><button className="chip" type="button" onClick={() => setMarkupVisible((current) => !current)}>{markupVisible ? "Hide markup" : "Show markup"}</button></span></div>{canAnnotate && <><Textarea className="mt-[var(--space-3)]" placeholder="Optional note for this markup…" value={annotationNote} disabled={editingDrawingId !== null || editingAnnotationId !== null} onChange={(event) => setAnnotationNote(event.target.value)} /><button className={cn(buttonClasses("primary", { className: "w-full mt-[var(--space-2)]" }))} type="button" disabled={isSaving || editingDrawingId !== null || markup.active !== null || (!strokes.length && !annotationNote.trim())} onClick={() => void saveAnnotation()}>Save annotation</button></>}<div className="flex flex-col gap-[var(--space-4)]" style={{ marginTop: 14 }}>{annotations.length === 0 ? <div className="muted" style={{ fontSize: 14 }}>No annotations yet.</div> : annotations.map((annotation) => <div className={cn("flex gap-[var(--space-3)] rounded-[var(--radius-sm)] transition-[background-color] duration-[1600ms] ease-[var(--ease-standard)]", highlightedAnnotationId === annotation.id && "bg-surface-sunken")} data-highlighted={highlightedAnnotationId === annotation.id ? "true" : undefined} key={annotation.id} ref={(el) => { if (el) annotationRefs.current.set(annotation.id, el); else annotationRefs.current.delete(annotation.id); }}><div aria-hidden="true" className={cn("flex-none w-[22px] h-[22px] rounded-full bg-primary text-primary-foreground grid place-items-center [font:var(--weight-regular)_var(--text-2xs)/1.4_var(--font-mono)] mt-[2px]")}>✎</div><div className="flex-1 min-w-0"><div className="[font:var(--type-label)]">{annotation.author.name}<span className={cn(META_TEXT, "ml-[var(--space-2)]")}>{annotation.author.role}</span></div>{editingAnnotationId === annotation.id ? <><Textarea className="mt-[var(--space-3)]" aria-label="Edit annotation note" value={editingAnnotationNote} disabled={isSaving} onChange={(event) => setEditingAnnotationNote(event.target.value)} /><div className="spread" style={{ marginTop: 6 }}><button className={cn(buttonClasses("text", { className: "underline min-w-[44px] max-[721px]:min-h-[44px] px-[var(--space-1)]" }))} data-testid="lightbox-annotation-action" type="button" disabled={isSaving} onClick={cancelInlineEdit}>Cancel</button><button className={cn(buttonClasses("text", { className: "underline min-w-[44px] max-[721px]:min-h-[44px] px-[var(--space-1)]" }))} data-testid="lightbox-annotation-action" type="button" disabled={isSaving} onClick={() => void saveAnnotationEdit()}>Save</button></div></> : <>{annotation.noteText && <div className="text-[length:var(--text-sm)] leading-[var(--leading-normal)] mt-[3px] text-foreground-secondary">{annotation.noteText}</div>}{strokesUnsupported(annotation) && <div className={cn(META_TEXT, "mt-[3px]")} data-testid="lightbox-markup-unsupported">Some markup can't be shown</div>}<div className="ey muted" style={{ marginTop: 6 }}>{time(annotation.createdAt)}{annotation.editedAt && " · (edited)"}{annotation.authorId === currentUserId && <> <span aria-hidden="true">·</span> <button className={cn(buttonClasses("text", { className: "underline min-w-[44px] max-[721px]:min-h-[44px] px-[var(--space-1)]" }))} data-testid="lightbox-annotation-action" type="button" disabled={hasDraftMarkup || isSaving} onClick={() => { setEditingAnnotationId(annotation.id); setEditingAnnotationNote(annotation.noteText ?? ""); }}>Edit note</button> <span aria-hidden="true">·</span> <button className={cn(buttonClasses("text", { className: "underline min-w-[44px] max-[721px]:min-h-[44px] px-[var(--space-1)]" }))} data-testid="lightbox-annotation-action" type="button" disabled={hasDraftMarkup || isSaving || !strokesReady(annotation) || strokesUnsupported(annotation)} title={!strokesReady(annotation) ? "Loading markup…" : strokesUnsupported(annotation) ? "This markup can't be edited here" : undefined} onClick={() => startDrawingEdit(annotation)}>{annotation.strokeR2Key ? "Edit drawing" : "Add drawing"}</button> <span aria-hidden="true">·</span> <button className={cn(buttonClasses("text", { className: "underline min-w-[44px] max-[721px]:min-h-[44px] px-[var(--space-1)]" }))} data-testid="lightbox-annotation-action" type="button" disabled={hasDraftMarkup || isSaving} onClick={() => void deleteAnnotation(annotation)}>Delete</button></>}</div></>}</div></div>)}</div></section>
     </div></> : null}</aside>
     <div className={cn(
       "strip col-start-1 col-end-2 row-start-2 row-end-3 flex min-w-0 gap-[var(--space-2)] px-[var(--space-4)] py-[var(--space-3)] overflow-x-auto bg-[var(--scrim-overlay)] border-t border-solid border-[length:var(--border-width-hair)] border-border",

@@ -19,7 +19,7 @@ export const UI_PRIMITIVE_ALLOWLIST: Record<string, UiPrimitiveAllowance> = {
   "components/CollectionPanel.tsx": { count: 16, ledger: "baseline (#262)" },
   "components/ExternalEditedUpload.tsx": { count: 2, ledger: "baseline (#262)" },
   "components/ImpersonationBanner.tsx": { count: 1, ledger: "baseline (#262)" },
-  "components/Lightbox.tsx": { count: 28, ledger: "baseline (#262)" },
+  "components/Lightbox.tsx": { count: 22, ledger: "baseline (#262); #741 6s-ui moved the markup toolbar (swatches, widths, Undo, Clear, Cancel, Save) into quincy/markup-toolbar" },
   "components/MentionAutocomplete.tsx": { count: 3, ledger: "baseline (#262)" },
   "components/Modal.tsx": { count: 1, ledger: "baseline (#262)" },
   "components/NoticeBoard.tsx": { count: 3, ledger: "baseline (#262); #523 moved Edit/Delete into quincy/menu" },

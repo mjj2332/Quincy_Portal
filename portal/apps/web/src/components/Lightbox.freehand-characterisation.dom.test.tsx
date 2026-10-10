@@ -238,7 +238,10 @@ describe("Lightbox freehand markup, characterised before the #741 extraction", (
     expect(apiPatchMock).not.toHaveBeenCalled();
   });
 
-  it("4. saving with the pointer still down keeps the newer stroke; saving with nothing newer clears it", async () => {
+  // 6s: deliberate change, was "saving with the pointer still down": a stroke is now a draft only once the pointer is released
+  // (it lives in the hook's `active` until then), so Save is not reachable mid-gesture; the invariant under test, that a save
+  // never clears newer work, is unchanged.
+  it("4. a save in flight never clears newer work; saving with nothing newer clears it", async () => {
     const pending = deferredPromise<unknown>();
     apiPostMock.mockReturnValueOnce(pending.promise);
     const host = mount();
@@ -248,15 +251,17 @@ describe("Lightbox freehand markup, characterised before the #741 extraction", (
     const svg = svgOf(host);
     await pointer(svg, "pointerdown", 100, 50);
     await pointer(svg, "pointermove", 200, 100);
-    await click(button(host, "Save annotation"));            // mid-stroke: the gesture is still live
+    await pointer(svg, "pointerup", 200, 100);
+    await click(button(host, "Save annotation"));            // stroke A is a draft: the POST goes out and stays in flight
     expect(apiPostMock).toHaveBeenCalledTimes(1);
-    expect((apiPostMock.mock.calls[0]![1] as { strokes: Stroke[] }).strokes[0]!.points).toHaveLength(2);
-    await pointer(svg, "pointermove", 300, 150);              // the draft moves on while the POST is in flight
+    expect((apiPostMock.mock.calls[0]![1] as { strokes: Stroke[] }).strokes).toHaveLength(1);
+    await pointer(svg, "pointerdown", 300, 150);              // the draft moves on while the POST is in flight
+    await pointer(svg, "pointermove", 100, 150);
+    await pointer(svg, "pointerup", 100, 150);
     pending.resolve({ id: "created", authorId: "user-1", author: { id: "A", name: "A", role: "editor" }, scope: "edited", strokeR2Key: null, noteText: null, createdAt: new Date().toISOString(), editedAt: null });
     await flush(12);
-    expect(strokeCount(host)).toBe(1);                        // the newer draft survived the save
-    expect(draftPolylines(host)[0]!.getAttribute("points")).toBe("0,0 0.5,0.5 1,1");
-    await pointer(svg, "pointerup", 300, 150);
+    expect(strokeCount(host)).toBe(2);                        // the newer stroke B survived the save (A is still in the draft too)
+    expect(draftPolylines(host).map((node) => node.getAttribute("points"))).toEqual(["0,0 0.5,0.5", "1,1 0,1"]);
 
     await click(button(host, "Save annotation"));             // nothing newer this time
     await flush(12);
@@ -281,20 +286,22 @@ describe("Lightbox freehand markup, characterised before the #741 extraction", (
     expect(draftPolylines(host).map((node) => node.getAttribute("points"))).toEqual(["0,0 0.5,0.5", "1,1 0,1"]);
   });
 
-  it("6. two pointers interleave into the newest stroke today (pinned, not endorsed)", async () => {
+  // 6s: deliberate change, was "two pointers interleave into the newest stroke": a gesture now follows one pointer, so a second finger is ignored.
+  it("6. a second pointer is ignored for the whole gesture", async () => {
     const host = mount();
     await render(<Lightbox {...baseProps()} />);
     stubFrameRect(host, RECT);
     const svg = svgOf(host);
     await pointer(svg, "pointerdown", 100, 50, 1);
     await pointer(svg, "pointermove", 200, 100, 1);
-    await pointer(svg, "pointerdown", 300, 150, 2);           // a second finger starts a second stroke
-    await pointer(svg, "pointermove", 100, 150, 1);           // finger 1 now extends stroke 2
-    await pointer(svg, "pointermove", 200, 50, 2);
-    expect(draftPolylines(host).map((node) => node.getAttribute("points"))).toEqual(["0,0 0.5,0.5", "1,1 0,1 0.5,0"]);
-    await pointer(svg, "pointerup", 200, 50, 2);              // either finger lifting ends the gesture
+    await pointer(svg, "pointerdown", 300, 150, 2);           // a second finger does not start a second stroke
+    await pointer(svg, "pointermove", 100, 150, 1);           // finger 1 keeps extending its own stroke
+    await pointer(svg, "pointermove", 200, 50, 2);            // finger 2's moves add nothing
+    await pointer(svg, "pointerup", 200, 50, 2);              // and its lifting does not end finger 1's gesture
     await pointer(svg, "pointermove", 300, 50, 1);
-    expect(draftPolylines(host).map((node) => node.getAttribute("points"))).toEqual(["0,0 0.5,0.5", "1,1 0,1 0.5,0"]);
+    expect(draftPolylines(host).map((node) => node.getAttribute("points"))).toEqual(["0,0 0.5,0.5 0,1 1,0"]);
+    await pointer(svg, "pointerup", 300, 50, 1);
+    expect(draftPolylines(host).map((node) => node.getAttribute("points"))).toEqual(["0,0 0.5,0.5 0,1 1,0"]);
   });
 
   it("7. a zoomed drag normalises against the frame rect read at pointer time", async () => {
@@ -314,14 +321,15 @@ describe("Lightbox freehand markup, characterised before the #741 extraction", (
     expect(draftPolylines(host).map((node) => node.getAttribute("points"))).toEqual(["0.25,0.25 0.5,0.5 1,1"]);
   });
 
-  it("7b. a degenerate (zero-size) frame rect yields NaN for 0/0, which 6b must not inherit", async () => {
+  // 6s: deliberate change, was "yields NaN for 0/0": a non-finite sample is now ignored, so a zero-size frame rect draws nothing.
+  it("7b. a degenerate (zero-size) frame rect draws nothing", async () => {
     const host = mount();
     await render(<Lightbox {...baseProps()} />);
     const svg = svgOf(host);
     stubFrameRect(host, { left: 0, top: 0, width: 0, height: 0 });
     await pointer(svg, "pointerdown", 0, 0);
     await pointer(svg, "pointerup", 0, 0);
-    expect(draftPolylines(host)[0]!.getAttribute("cx")).toBe("NaN");
+    expect(strokeCount(host)).toBe(0);
   });
 
   it("an annotator's Escape still discards the strokes (the photo behaviour 6b deliberately does not copy)", async () => {
