@@ -1,6 +1,8 @@
 import type { Context, Hono } from "hono";
-import { guestDecisionInputSchema, guestDecisionResponseSchema, type VideoReviewPart } from "@quincy/shared";
+import { guestDecisionInputSchema, guestDecisionResponseSchema, guestOutboxActor, type VideoReviewPart } from "@quincy/shared";
 import { newId } from "../lib/ids";
+import { publishOutboxDetached } from "../lib/server-timing";
+import { videoReviewOutboxStatements } from "../lib/video-review-notifications";
 import type { AppEnv } from "../env";
 import { committableSql } from "../lib/guest-fence-sql";
 import { classifyRefusal } from "./fence";
@@ -50,7 +52,8 @@ async function decide(c: Handled): Promise<Response> {
   if (!session.link.allowApprove) return early(c.json({ error: "approve_disabled" }, 403));
   const guestId = session.guestId;
   const scope = { parts: PARTS, approve: true, assetId };
-  if (!await resolveGrantedVersion(c.env.DB, session.link.id, session.link.projectId, assetId)) return await classifyRefusal(plain(c), session, true, { ...scope, archived: false }) ?? stub();
+  const granted = await resolveGrantedVersion(c.env.DB, session.link.id, session.link.projectId, assetId);
+  if (!granted) return await classifyRefusal(plain(c), session, true, { ...scope, archived: false }) ?? stub();
   const answer = async (response: Response): Promise<Response> => await classifyRefusal(plain(c), session, true, scope) ?? response;
   const refused = await classifyRefusal(plain(c), session, true, scope); if (refused) return refused;
 
@@ -59,8 +62,10 @@ async function decide(c: Handled): Promise<Response> {
   const parsed = raw === INVALID ? null : guestDecisionInputSchema.safeParse(raw);
   if (!parsed?.success) return answer(c.json({ error: "invalid_request" }, 400));
 
-  const eventId = newId(); const committedAt = Date.now();
+  const eventId = newId(); const committedAt = Date.now(); const auditId = newId();
   const note = parsed.data.note ? parsed.data.note : null;
+  // 15a: staff are told of the decision, with no note text; appended to this batch and fenced on its audit row.
+  const notify = await videoReviewOutboxStatements(c.env.DB, { kind: "video_decision", projectId: session.link.projectId, videoId: granted.videoId, assetId, sourceId: eventId, actorId: guestOutboxActor(guestId), excludeUserId: null, auditId, occurredAt: committedAt });
   let results: D1Result[];
   try {
     results = await c.env.DB.batch([
@@ -76,8 +81,9 @@ async function decide(c: Handled): Promise<Response> {
       c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?1, NULL, 'video_version.decision', 'asset', e.asset_id, json_object('guest', json_object('guestId', e.actor_guest_id, 'sessionId', ?2), 'linkId', e.link_id, 'projectId', e.project_id,
           'videoId', e.video_id, 'decision', e.decision, 'revision', e.revision, 'hasNote', e.note IS NOT NULL), ?3 FROM video_approval_events e WHERE e.id = ?4`)
-        .bind(newId(), session.id, committedAt, eventId),
+        .bind(auditId, session.id, committedAt, eventId),
       c.env.DB.prepare("SELECT revision, decision, created_at FROM video_approval_events WHERE id = ?1").bind(eventId),
+      ...notify.statements,
     ]);
   } catch (error) {
     // The revision is allocated in the INSERT and D1 serialises writes, so this is a defence: a collision is retried by the client, never a partial write.
@@ -85,6 +91,7 @@ async function decide(c: Handled): Promise<Response> {
     throw error;
   }
   const stored = results[2]!.results[0] as { revision: number; decision: "approved" | "changes_requested"; created_at: number } | undefined;
+  if (stored && notify.outboxIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, notify.outboxIds));
   if (stored) return c.json(guestDecisionResponseSchema.parse({ decision: { value: stored.decision, revision: stored.revision, at: new Date(stored.created_at).toISOString(), self: true } }), 201);
   return refusedBecause(c, session, assetId);
 }

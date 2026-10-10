@@ -1,9 +1,11 @@
-import { ROLE_LABELS, VIDEO_MARKUP_MAX_BYTES, videoNoteListResponseSchema, videoNoteThreadDtoSchema, type Role, type VideoNoteDto, type VideoNoteThreadDto, type VideoNoteVisibility } from "@quincy/shared";
+import { ROLE_LABELS, VIDEO_MARKUP_MAX_BYTES, guestOutboxActor, videoNoteListResponseSchema, videoNoteThreadDtoSchema, type Role, type VideoNoteDto, type VideoNoteThreadDto, type VideoNoteVisibility } from "@quincy/shared";
 import { archivedInSnapshot, ARCHIVED_SNAPSHOT_SQL } from "./project-archive";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
 import { guestNoteGuard, reachSql, type GuestWriter } from "./guest-fence-sql";
 import { guestReplyInsertSql, projectFence, REPLY_INSERT_SQL, VERSION_FROM } from "./video-notes-sql";
+import { videoReviewOutboxStatements } from "./video-review-notifications";
+import type { VideoReviewGateState } from "./video-review-gate";
 
 /** Notes and replies on a Video Version (#741, 5a): scoped reads and the atomic writes. Routes decide who may call; every write repeats its fence in SQL. */
 
@@ -150,9 +152,12 @@ export async function readNoteMarkupSnapshot(db: D1Database, projectId: string, 
       FROM video_notes n LEFT JOIN video_note_markup k ON k.note_id = n.id WHERE n.id = ?1 AND n.project_id = ?2`).bind(noteId, projectId).first<{ revision: number; strokes_json: string | null }>() ?? null;
 }
 
-export type WriteOutcome<T> = { kind: "ok"; value: T } | { kind: "archived" } | { kind: "gone" };
+/** `outboxIds` are the staff notification rows this write appended (15a): the caller publishes them after the response is decided. Empty when `notify_staff` is off. */
+export type WriteOutcome<T> = { kind: "ok"; value: T; outboxIds?: string[] } | { kind: "archived" } | { kind: "gone" };
+const outboxActor = (author: NoteAuthor): { actorId: string; excludeUserId: string | null } =>
+  author.kind === "user" ? { actorId: author.principal.id, excludeUserId: author.principal.id } : { actorId: guestOutboxActor(author.guestId), excludeUserId: null };
 
-export async function createVideoNote<T = VideoNoteThreadDto>(db: D1Database, input: { projectId: string; assetId: string; author: NoteAuthor; visibility: VideoNoteVisibility; startFrame: number; endFrame: number | null; body: string; markup?: MarkupWrite; now: number; read?: ThreadReader<T> }): Promise<WriteOutcome<T>> {
+export async function createVideoNote<T = VideoNoteThreadDto>(db: D1Database, input: { projectId: string; assetId: string; author: NoteAuthor; visibility: VideoNoteVisibility; startFrame: number; endFrame: number | null; body: string; markup?: MarkupWrite; now: number; read?: ThreadReader<T>; gate?: VideoReviewGateState }): Promise<WriteOutcome<T>> {
   const noteId = newId(); const auditId = newId(); const { author } = input; const guest = author.kind === "guest";
   const video = await db.prepare(`SELECT v.id FROM ${VERSION_FROM} WHERE m.asset_id = ?1 AND v.project_id = ?2`).bind(input.assetId, input.projectId).first<{ id: string }>();
   if (!video) return { kind: "gone" };
@@ -164,6 +169,8 @@ export async function createVideoNote<T = VideoNoteThreadDto>(db: D1Database, in
   const drawingFrame = markup?.drawingFrame ?? null;
   // A guest's writes carry the guest fence (`guestNoteGuard`): the session, link, gate and Version are re-checked in THIS statement at `input.now`, so a revoke or an ungrant that lands after the route's checks writes nothing.
   const auditGuard = guardOf(author, 11, "?5", "?7"); const insertGuard = guardOf(author, 13, "?8", "?9");
+  // 15a: staff are told of a new root note (public or internal), with no text; appended to this batch and fenced on its audit row.
+  const notify = await videoReviewOutboxStatements(db, { kind: "video_note", projectId: input.projectId, videoId: video.id, assetId: input.assetId, sourceId: noteId, ...outboxActor(author), auditId, occurredAt: input.now, gate: input.gate });
   const results = await db.batch([
     // The drawing-frame rule rides the audit statement, so a drawing outside the note inserts nothing at all.
     db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.create', 'video_note', ?3, ?4, ?5
@@ -177,18 +184,21 @@ export async function createVideoNote<T = VideoNoteThreadDto>(db: D1Database, in
       .bind(noteId, authorId(author), author.kind === "user" ? author.principal.role : "guest", input.visibility, input.startFrame, input.endFrame, input.body, input.now, input.assetId, input.projectId, auditId, drawingFrame, ...insertGuard.binds),
     // Markup follows the note it belongs to: nothing lands unless the note row did (so an archived Project or a failed rule leaves no orphan).
     ...(markup ? [db.prepare("INSERT INTO video_note_markup (note_id, strokes_json, created_at, updated_at) SELECT ?1, ?2, ?3, ?3 FROM video_notes WHERE id = ?1 AND parent_id IS NULL AND drawing_frame IS NOT NULL").bind(noteId, markup.json, input.now)] : []),
+    ...notify.statements,
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
   ]);
   const thread = await readerOf(db, input.projectId, input.read)(noteId);
-  if (thread) return { kind: "ok", value: thread };
+  if (thread) return { kind: "ok", value: thread, outboxIds: notify.outboxIds };
   return archivedInSnapshot(results.at(-1)) ? { kind: "archived" } : { kind: "gone" };
 }
 
-export async function createVideoNoteReply<T = VideoNoteThreadDto>(db: D1Database, input: { projectId: string; parent: NoteHead; author: NoteAuthor; body: string; now: number; read?: ThreadReader<T> }): Promise<WriteOutcome<T>> {
+export async function createVideoNoteReply<T = VideoNoteThreadDto>(db: D1Database, input: { projectId: string; parent: NoteHead; author: NoteAuthor; body: string; now: number; read?: ThreadReader<T>; gate?: VideoReviewGateState }): Promise<WriteOutcome<T>> {
   const replyId = newId(); const auditId = newId(); const { author } = input;
   const meta = metaOf(author, { projectId: input.projectId, videoId: input.parent.video_id, assetId: input.parent.asset_id, parentId: input.parent.id, visibility: input.parent.visibility });
   const rootAsset = "(SELECT x.asset_id FROM video_notes x WHERE x.id = ?7)";
   const auditGuard = guardOf(author, 8, "?5", rootAsset); const insertGuard = guardOf(author, 9, "?5", "p.asset_id");
+  // 15a: the thread's authors and the Version's uploader are told of a reply (no text); read before the batch, fenced on its audit row.
+  const notify = await videoReviewOutboxStatements(db, { kind: "video_reply", projectId: input.projectId, videoId: input.parent.video_id, assetId: input.parent.asset_id, sourceId: replyId, threadRootId: input.parent.id, ...outboxActor(author), auditId, occurredAt: input.now, gate: input.gate });
   const results = await db.batch([
     db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.reply', 'video_note', ?3, ?4, ?5
       WHERE ${projectFence(6)} AND EXISTS (SELECT 1 FROM video_notes p WHERE p.id = ?7 AND p.project_id = ?6 AND p.parent_id IS NULL AND p.deleted_at IS NULL${author.kind === "guest" ? " AND p.visibility = 'public'" : ""})${auditGuard.sql}`)
@@ -196,10 +206,11 @@ export async function createVideoNoteReply<T = VideoNoteThreadDto>(db: D1Databas
     author.kind === "user"
       ? db.prepare(REPLY_INSERT_SQL).bind(replyId, author.principal.id, author.principal.role, input.body, input.now, input.parent.id, input.projectId, auditId)
       : db.prepare(guestReplyInsertSql(insertGuard.sql)).bind(replyId, author.guestId, "guest", input.body, input.now, input.parent.id, input.projectId, auditId, ...insertGuard.binds),
+    ...notify.statements,
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
   ]);
   const created = await db.prepare("SELECT id FROM video_notes WHERE id = ?1").bind(replyId).first();
-  if (created) { const thread = await readerOf(db, input.projectId, input.read)(input.parent.id); if (thread) return { kind: "ok", value: thread }; }
+  if (created) { const thread = await readerOf(db, input.projectId, input.read)(input.parent.id); if (thread) return { kind: "ok", value: thread, outboxIds: notify.outboxIds }; }
   return archivedInSnapshot(results.at(-1)) ? { kind: "archived" } : { kind: "gone" };
 }
 
