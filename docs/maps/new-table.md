@@ -6,15 +6,15 @@ Answers: everything a new D1 table or column must touch, in order, from picking 
 - Never put `;` or a trigger inside a comment: worker tests split the file on semicolons (`No trigger and no semicolon` portal/packages/db/migrations/0061_project_whiteboard_versions.sql:10).
 
 ## 2. Next free number — check open remote branches too
-From the repo root (at this rev the highest number on any branch was 0062):
+From the repo root (at this rev the highest number on any branch was 0068, so 0069 was free):
 
     git fetch -q origin && git for-each-ref --format='%(refname)' refs/remotes/origin | while read b; do git ls-tree --name-only "$b" portal/packages/db/migrations/; done | grep -o '[0-9]\{4\}_[a-z0-9_]*\.sql' | sort -u | tail -3
 
 Replace `tail -3` with `cut -c1-4 | uniq -d` to list numbers claimed by two different files (empty = no clash).
 
 ## 3. Journal and migration test (hand-maintained)
-- Append `{idx, version, when, tag, breakpoints}` to `portal/packages/db/migrations/meta/_journal.json` (last: `0062_project_whiteboard_version_media` portal/packages/db/migrations/meta/_journal.json:443). Snapshots stop at `0041_snapshot.json`, so `db:generate` output is not usable as-is.
-- Add `portal/packages/db/test/migration-<NNNN>.test.ts`, copying `migration-0062`: it bans `CREATE TRIGGER|DROP TABLE|__new_|PRAGMA` portal/packages/db/test/migration-0062.test.ts:38 and requires `when` above every earlier entry portal/packages/db/test/migration-0062.test.ts:49.
+- Append `{idx, version, when, tag, breakpoints}` to `portal/packages/db/migrations/meta/_journal.json` (last: `0069_video_review_guest` portal/packages/db/migrations/meta/_journal.json:489). Snapshots stop at `0041_snapshot.json`, so `db:generate` output is not usable as-is.
+- Add `portal/packages/db/test/migration-<NNNN>.test.ts`, copying `migration-0068` (additive) or `migration-0069` (column swap and `DROP COLUMN` under `foreign_keys=ON`): it bans `CREATE TRIGGER|DROP TABLE|__new_|PRAGMA` portal/packages/db/test/migration-0062.test.ts:38 and requires `when` above every earlier entry portal/packages/db/test/migration-0062.test.ts:49.
 
 ## 4. `portal/packages/db/src/schema.ts`
 - Times are epoch **ms**: `createdAt` portal/packages/db/src/schema.ts:10 → `timestamp_ms` portal/packages/db/src/schema.ts:11; `updatedAt` portal/packages/db/src/schema.ts:12. The SQL side adds `typeof(created_at) = 'integer'` portal/packages/db/migrations/0061_project_whiteboard_versions.sql:18.
@@ -33,4 +33,8 @@ One table in `docs/Guides/Local-QA-Fixtures.md` § "What a new table or column m
 ## 7. Production
 `docs/Guides/CI-Deploy.md` § "A PR that adds a D1 migration": CI never applies migrations, so the deploy job goes red at the migration guard until the owner (Time Travel bookmark first) runs `migrations apply DB --remote`. The code ships after the schema. Rollback: same doc § "Rolling back".
 
-Last verified against 495766e9
+## 8. Constraints the QA teardown graph imposes on a new table
+- A foreign key must be single-column and point at an `id` column: `buildTeardownGraph` throws on a composite FK (0069's `guest_unsubscribe_tokens` uses two single-column FKs for that reason) and on one targeting any other column. A table with no `id` column (a composite-PK link table such as `guest_link_members`) can be a leaf but never an FK parent.
+- A table with no FK into the fixture graph and no `*_id` column (`guest_rate_limits`) needs no registration at all.
+
+Last verified against 763523cc

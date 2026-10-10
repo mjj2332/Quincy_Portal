@@ -153,6 +153,25 @@ Migration 0065 (#611) adds two nullable columns, `embedded_media.width` and `emb
 3. Re-run the deploy (`gh run rerun <run-id> --failed`).
 4. Post-check: `PRAGMA table_info(embedded_media)` lists `width` and `height`, both nullable.
 
+### Video review guest schema (0069)
+
+Migration 0069 (#741 PR 10) is the guest-side schema for video review and ships no route. It is **not purely additive**:
+- `client_links` gains `kind`, `label`, `allow_comments`, `allow_approve`, `allow_download`, `created_by`, `token_generation`, `updated_at`, `revoked_at` and `revoked_by`.
+- `revoked` is replaced by `revoked_at` (existing revoked rows get `revoked_at = created_at`).
+- `publish_version` is made nullable by a column swap.
+- Exactly two `DROP COLUMN`s (`revoked`, `publish_version`) run, and nothing is dropped or rebuilt as a table. `premium_unlocks` and `client_links.id` are untouched.
+- Eleven new tables: `review_link_videos`, `review_link_version_grants`, `guest_sessions`, `guest_rate_limits`, `guest_email_codes`, `guest_link_members`, `guest_unsubscribe_tokens`, `video_approval_events`, `video_releases`, `video_premium_unlocks` and `guest_notification_digest`.
+
+No deployed Worker reads `revoked` or `publish_version` (only `schema.ts` and two tests touch them), so it is safe to apply before the code that uses it. Nothing writes the new tables until the 11a and 12a PRs merge. Apply checklist (from `portal/workers/app`, `--remote`, owner's go-ahead):
+
+1. Read-only pre-check: `SELECT COUNT(*) FROM client_links` (expected 0) and `SELECT type,name FROM sqlite_master WHERE type IN ('view','trigger')` (expected none).
+2. Take a Time Travel bookmark (`npx wrangler d1 time-travel info DB`) and record the id in the PR.
+3. `npx wrangler d1 migrations apply DB --remote`; the pending list must show only 0069.
+4. Re-run the deploy (`gh run rerun <run-id> --failed`).
+5. Post-check: `PRAGMA table_info(client_links)` has no `revoked`, `publish_version` is nullable, and `kind`, `token_generation` and `revoked_at` exist. The eleven tables exist and `PRAGMA foreign_key_check` is empty.
+
+Rollback: no Worker reads the dropped columns, so a code rollback is safe. Restoring the schema is a Time Travel restore to the bookmark, which loses every write since it. Before 11a or 12a merges, no row is written, so nothing is lost.
+
 ### Subtask presets (0052)
 
 0052 converts every date-only Subtask range to a 09:00 start and a 17:00 end (the presets, ADR 0016)

@@ -1377,13 +1377,36 @@ export const clientLinks = sqliteTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     /** Token hashed at rest; 30-day default expiry (D-04). */
     tokenHash: text("token_hash").notNull().unique(),
-    publishVersion: integer("publish_version").notNull(),
+    /** Null for a video_review link; set for a delivery link (route SQL enforces, migration 0069). */
+    publishVersion: integer("publish_version"),
     expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
     passcodeHash: text("passcode_hash"),
-    revoked: integer("revoked", { mode: "boolean" }).notNull().default(false),
     createdAt: createdAt(),
+    /* video review (#741, migration 0069). Cross-column invariants live in route SQL, not CHECKs. */
+    kind: text("kind", { enum: ["delivery", "video_review"] as const }).notNull().default("delivery"),
+    label: text("label"),
+    allowComments: integer("allow_comments").notNull().default(1),
+    allowApprove: integer("allow_approve").notNull().default(1),
+    allowDownload: integer("allow_download").notNull().default(1),
+    createdBy: text("created_by").references(() => user.id),
+    tokenGeneration: integer("token_generation").notNull().default(1),
+    updatedAt: integer("updated_at"),
+    revokedAt: integer("revoked_at"),
+    revokedBy: text("revoked_by").references(() => user.id),
   },
-  (t) => [index("client_links_project_idx").on(t.projectId)],
+  (t) => [
+    index("client_links_project_idx").on(t.projectId),
+    index("client_links_project_kind_idx").on(t.projectId, t.kind, t.createdAt),
+    check("client_links_kind_check", sql`${t.kind} IN ('delivery', 'video_review')`),
+    check("client_links_label_check", sql`${t.label} IS NULL OR length(trim(${t.label})) BETWEEN 1 AND 80`),
+    check("client_links_allow_comments_check", sql`${t.allowComments} IN (0, 1)`),
+    check("client_links_allow_approve_check", sql`${t.allowApprove} IN (0, 1)`),
+    check("client_links_allow_download_check", sql`${t.allowDownload} IN (0, 1)`),
+    check("client_links_token_generation_check", sql`${t.tokenGeneration} >= 1`),
+    check("client_links_updated_at_check", sql`${t.updatedAt} IS NULL OR typeof(${t.updatedAt}) = 'integer'`),
+    check("client_links_revoked_at_check", sql`${t.revokedAt} IS NULL OR typeof(${t.revokedAt}) = 'integer'`),
+    check("client_links_publish_version_check", sql`${t.publishVersion} IS NULL OR ${t.publishVersion} >= 1`),
+  ],
 );
 
 export const premiumUnlocks = sqliteTable("premium_unlocks", {
@@ -1917,5 +1940,239 @@ export const videoNoteMarkup = sqliteTable(
     check("video_note_markup_strokes_check", sql`length(CAST(${t.strokesJson} AS BLOB)) <= 524288`),
     check("video_note_markup_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
     check("video_note_markup_updated_at_check", sql`typeof(${t.updatedAt}) = 'integer'`),
+  ],
+);
+
+/* ------------------------------------------------- guest-side video review (#741, migration 0069) */
+const intTime = (name: string) => integer(name);
+
+export const reviewLinkVideos = sqliteTable(
+  "review_link_videos",
+  {
+    id: id(),
+    linkId: text("link_id").notNull().references(() => clientLinks.id, { onDelete: "cascade" }),
+    videoId: text("video_id").notNull().references(() => videos.id, { onDelete: "cascade" }),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    addedBy: text("added_by").notNull().references(() => user.id),
+    addedAt: intTime("added_at").notNull(),
+    removedAt: intTime("removed_at"),
+    removedBy: text("removed_by").references(() => user.id),
+  },
+  (t) => [
+    uniqueIndex("review_link_videos_live_unique").on(t.linkId, t.videoId).where(sql`${t.removedAt} IS NULL`),
+    index("review_link_videos_video_idx").on(t.videoId, t.removedAt),
+    check("review_link_videos_added_at_check", sql`typeof(${t.addedAt}) = 'integer'`),
+    check("review_link_videos_removed_at_check", sql`${t.removedAt} IS NULL OR typeof(${t.removedAt}) = 'integer'`),
+    check("review_link_videos_removed_pair_check", sql`(${t.removedAt} IS NULL) = (${t.removedBy} IS NULL)`),
+  ],
+);
+
+export const reviewLinkVersionGrants = sqliteTable(
+  "review_link_version_grants",
+  {
+    id: id(),
+    linkId: text("link_id").notNull().references(() => clientLinks.id, { onDelete: "cascade" }),
+    videoId: text("video_id").notNull().references(() => videos.id, { onDelete: "cascade" }),
+    assetId: text("asset_id").notNull().references(() => assets.id, { onDelete: "cascade" }),
+    grantedBy: text("granted_by").notNull().references(() => user.id),
+    grantedAt: intTime("granted_at").notNull(),
+    revokedAt: intTime("revoked_at"),
+    revokedBy: text("revoked_by").references(() => user.id),
+  },
+  (t) => [
+    uniqueIndex("review_link_version_grants_live_unique").on(t.linkId, t.assetId).where(sql`${t.revokedAt} IS NULL`),
+    index("review_link_version_grants_link_video_idx").on(t.linkId, t.videoId),
+    check("review_link_version_grants_granted_at_check", sql`typeof(${t.grantedAt}) = 'integer'`),
+    check("review_link_version_grants_revoked_at_check", sql`${t.revokedAt} IS NULL OR typeof(${t.revokedAt}) = 'integer'`),
+    check("review_link_version_grants_revoked_pair_check", sql`(${t.revokedAt} IS NULL) = (${t.revokedBy} IS NULL)`),
+  ],
+);
+
+export const guestSessions = sqliteTable(
+  "guest_sessions",
+  {
+    id: id(),
+    tokenHash: text("token_hash").notNull().unique(),
+    linkId: text("link_id").notNull().references(() => clientLinks.id, { onDelete: "cascade" }),
+    linkGeneration: integer("link_generation").notNull(),
+    guestId: text("guest_id").references(() => guestReviewers.id, { onDelete: "cascade" }),
+    verifiedAt: intTime("verified_at"),
+    createdAt: intTime("created_at").notNull(),
+    expiresAt: intTime("expires_at").notNull(),
+    lastSeenAt: intTime("last_seen_at").notNull(),
+  },
+  (t) => [
+    index("guest_sessions_link_idx").on(t.linkId),
+    index("guest_sessions_expires_idx").on(t.expiresAt),
+    check("guest_sessions_link_generation_check", sql`${t.linkGeneration} >= 1`),
+    check("guest_sessions_verified_at_check", sql`${t.verifiedAt} IS NULL OR typeof(${t.verifiedAt}) = 'integer'`),
+    check("guest_sessions_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
+    check("guest_sessions_expires_at_check", sql`typeof(${t.expiresAt}) = 'integer'`),
+    check("guest_sessions_last_seen_at_check", sql`typeof(${t.lastSeenAt}) = 'integer'`),
+    check("guest_sessions_verified_pair_check", sql`(${t.guestId} IS NULL) = (${t.verifiedAt} IS NULL)`),
+    check("guest_sessions_expiry_check", sql`${t.expiresAt} > ${t.createdAt}`),
+  ],
+);
+
+export const guestRateLimits = sqliteTable(
+  "guest_rate_limits",
+  {
+    bucket: text("bucket").notNull(),
+    windowStart: intTime("window_start").notNull(),
+    count: integer("count").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.bucket, t.windowStart] }),
+    index("guest_rate_limits_window_idx").on(t.windowStart),
+    check("guest_rate_limits_window_start_check", sql`typeof(${t.windowStart}) = 'integer'`),
+    check("guest_rate_limits_count_check", sql`${t.count} >= 1`),
+  ],
+);
+
+export const guestEmailCodes = sqliteTable(
+  "guest_email_codes",
+  {
+    id: id(),
+    linkId: text("link_id").notNull().references(() => clientLinks.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").notNull().references(() => guestSessions.id, { onDelete: "cascade" }),
+    emailNormalized: text("email_normalized").notNull(),
+    codeHash: text("code_hash").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    expiresAt: intTime("expires_at").notNull(),
+    consumedAt: intTime("consumed_at"),
+    createdAt: intTime("created_at").notNull(),
+  },
+  (t) => [
+    index("guest_email_codes_session_created_idx").on(t.sessionId, t.createdAt),
+    index("guest_email_codes_link_email_created_idx").on(t.linkId, t.emailNormalized, t.createdAt),
+    check("guest_email_codes_email_check", sql`length(${t.emailNormalized}) <= 254`),
+    check("guest_email_codes_attempts_check", sql`${t.attempts} BETWEEN 0 AND 5`),
+    check("guest_email_codes_expires_at_check", sql`typeof(${t.expiresAt}) = 'integer'`),
+    check("guest_email_codes_consumed_at_check", sql`${t.consumedAt} IS NULL OR typeof(${t.consumedAt}) = 'integer'`),
+    check("guest_email_codes_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
+  ],
+);
+
+export const guestLinkMembers = sqliteTable(
+  "guest_link_members",
+  {
+    linkId: text("link_id").notNull().references(() => clientLinks.id, { onDelete: "cascade" }),
+    guestId: text("guest_id").notNull().references(() => guestReviewers.id, { onDelete: "cascade" }),
+    firstVerifiedAt: intTime("first_verified_at").notNull(),
+    lastVerifiedAt: intTime("last_verified_at").notNull(),
+    lastSeenAt: intTime("last_seen_at").notNull(),
+    unsubscribedAt: intTime("unsubscribed_at"),
+    lastDigestSentAt: intTime("last_digest_sent_at"),
+  },
+  (t) => [
+    primaryKey({ columns: [t.linkId, t.guestId] }),
+    check("guest_link_members_first_verified_at_check", sql`typeof(${t.firstVerifiedAt}) = 'integer'`),
+    check("guest_link_members_last_verified_at_check", sql`typeof(${t.lastVerifiedAt}) = 'integer'`),
+    check("guest_link_members_last_seen_at_check", sql`typeof(${t.lastSeenAt}) = 'integer'`),
+    check("guest_link_members_unsubscribed_at_check", sql`${t.unsubscribedAt} IS NULL OR typeof(${t.unsubscribedAt}) = 'integer'`),
+    check("guest_link_members_last_digest_sent_at_check", sql`${t.lastDigestSentAt} IS NULL OR typeof(${t.lastDigestSentAt}) = 'integer'`),
+  ],
+);
+
+export const guestUnsubscribeTokens = sqliteTable(
+  "guest_unsubscribe_tokens",
+  {
+    tokenHash: text("token_hash").primaryKey(),
+    linkId: text("link_id").notNull().references(() => clientLinks.id, { onDelete: "cascade" }),
+    guestId: text("guest_id").notNull().references(() => guestReviewers.id, { onDelete: "cascade" }),
+    createdAt: intTime("created_at").notNull(),
+  },
+  (t) => [
+    index("guest_unsubscribe_tokens_created_idx").on(t.createdAt),
+    check("guest_unsubscribe_tokens_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
+  ],
+);
+
+export const videoApprovalEvents = sqliteTable(
+  "video_approval_events",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    videoId: text("video_id").notNull().references(() => videos.id, { onDelete: "cascade" }),
+    assetId: text("asset_id").notNull().references(() => assets.id, { onDelete: "cascade" }),
+    linkId: text("link_id").references(() => clientLinks.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    decision: text("decision", { enum: ["approved", "changes_requested"] as const }).notNull(),
+    note: text("note"),
+    actorGuestId: text("actor_guest_id").references(() => guestReviewers.id),
+    actorUserId: text("actor_user_id").references(() => user.id),
+    createdAt: intTime("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("video_approval_events_asset_revision_unique").on(t.assetId, t.revision),
+    index("video_approval_events_video_idx").on(t.videoId),
+    check("video_approval_events_revision_check", sql`${t.revision} >= 1`),
+    check("video_approval_events_decision_check", sql`${t.decision} IN ('approved', 'changes_requested')`),
+    check("video_approval_events_note_check", sql`${t.note} IS NULL OR length(${t.note}) <= 2000`),
+    check("video_approval_events_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
+    check("video_approval_events_one_actor_check", sql`(${t.actorGuestId} IS NULL) <> (${t.actorUserId} IS NULL)`),
+    check("video_approval_events_guest_link_check", sql`${t.actorGuestId} IS NULL OR ${t.linkId} IS NOT NULL`),
+  ],
+);
+
+export const videoReleases = sqliteTable(
+  "video_releases",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    videoId: text("video_id").notNull().references(() => videos.id, { onDelete: "cascade" }),
+    assetId: text("asset_id").notNull().references(() => assets.id, { onDelete: "cascade" }),
+    approvalEventId: text("approval_event_id").notNull().references(() => videoApprovalEvents.id, { onDelete: "cascade" }),
+    approvalRevision: integer("approval_revision").notNull(),
+    releasedBy: text("released_by").notNull().references(() => user.id),
+    releasedAt: intTime("released_at").notNull(),
+    withdrawnAt: intTime("withdrawn_at"),
+    withdrawnBy: text("withdrawn_by").references(() => user.id),
+  },
+  (t) => [
+    uniqueIndex("video_releases_live_unique").on(t.assetId).where(sql`${t.withdrawnAt} IS NULL`),
+    index("video_releases_video_idx").on(t.videoId),
+    check("video_releases_approval_revision_check", sql`${t.approvalRevision} >= 1`),
+    check("video_releases_released_at_check", sql`typeof(${t.releasedAt}) = 'integer'`),
+    check("video_releases_withdrawn_at_check", sql`${t.withdrawnAt} IS NULL OR typeof(${t.withdrawnAt}) = 'integer'`),
+    check("video_releases_withdrawn_pair_check", sql`(${t.withdrawnAt} IS NULL) = (${t.withdrawnBy} IS NULL)`),
+  ],
+);
+
+export const videoPremiumUnlocks = sqliteTable(
+  "video_premium_unlocks",
+  {
+    videoId: text("video_id").primaryKey().references(() => videos.id, { onDelete: "cascade" }),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    unlockedBy: text("unlocked_by").notNull().references(() => user.id),
+    unlockedAt: intTime("unlocked_at").notNull(),
+    paymentRef: text("payment_ref"),
+  },
+  (t) => [
+    index("video_premium_unlocks_project_idx").on(t.projectId),
+    check("video_premium_unlocks_unlocked_at_check", sql`typeof(${t.unlockedAt}) = 'integer'`),
+    check("video_premium_unlocks_payment_ref_check", sql`${t.paymentRef} IS NULL OR length(${t.paymentRef}) <= 200`),
+  ],
+);
+
+export const guestNotificationDigest = sqliteTable(
+  "guest_notification_digest",
+  {
+    id: id(),
+    guestId: text("guest_id").notNull().references(() => guestReviewers.id, { onDelete: "cascade" }),
+    linkId: text("link_id").notNull().references(() => clientLinks.id, { onDelete: "cascade" }),
+    eventType: text("event_type", { enum: ["video_added", "version_granted", "public_note", "staff_reply", "video_released"] as const }).notNull(),
+    videoId: text("video_id").notNull().references(() => videos.id, { onDelete: "cascade" }),
+    assetId: text("asset_id").references(() => assets.id, { onDelete: "cascade" }),
+    noteId: text("note_id").references(() => videoNotes.id, { onDelete: "cascade" }),
+    createdAt: intTime("created_at").notNull(),
+    sentAt: intTime("sent_at"),
+  },
+  (t) => [
+    index("guest_notification_digest_pending_guest_link_idx").on(t.guestId, t.linkId).where(sql`${t.sentAt} IS NULL`),
+    index("guest_notification_digest_pending_created_idx").on(t.createdAt).where(sql`${t.sentAt} IS NULL`),
+    check("guest_notification_digest_event_type_check", sql`${t.eventType} IN ('video_added', 'version_granted', 'public_note', 'staff_reply', 'video_released')`),
+    check("guest_notification_digest_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
+    check("guest_notification_digest_sent_at_check", sql`${t.sentAt} IS NULL OR typeof(${t.sentAt}) = 'integer'`),
   ],
 );
