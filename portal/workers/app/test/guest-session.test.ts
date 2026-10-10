@@ -333,3 +333,59 @@ describe("staff create and guest exchange together (11a + 12a)", () => {
     expect(JSON.stringify(await videos.json())).toContain(video.videoId);
   });
 });
+
+describe("Sol round 1 fixes", () => {
+  /** An env whose DB runs `before` ahead of the Nth two-statement batch (the rate-limit reservation or the session INSERT), standing in for staff acting mid-exchange. */
+  async function exchangeWithRace(link: { id: string; token: string }, passcode: string | undefined, nth: number, before: () => Promise<void>) {
+    let seen = 0;
+    const db = new Proxy(baseEnv.DB, { get: (target, property) => {
+      const value = Reflect.get(target, property);
+      if (property !== "batch") return typeof value === "function" ? value.bind(target) : value;
+      return async (statements: unknown[]) => { if (statements.length === 2 && (seen += 1) === nth) await before(); return target.batch(statements as D1PreparedStatement[]); };
+    } });
+    const environment: Env = { ...baseEnv, DB: db as D1Database };
+    return app.fetch(new Request(`https://portal.test${linkPath(link.id, "/session")}`, {
+      method: "POST", headers: { origin: baseEnv.APP_ORIGIN, "content-type": "application/json", "cf-connecting-ip": freshIp() }, body: JSON.stringify({ token: link.token, ...(passcode === undefined ? {} : { passcode }) }),
+    }), environment, createExecutionContext());
+  }
+
+  it("mints no session when staff add a passcode between the check and the insert", async () => {
+    const link = await seedGuestLink();
+    const response = await exchangeWithRace(link, undefined, 1, async () => { await database.DB.prepare("UPDATE client_links SET passcode_hash = ? WHERE id = ?").bind(await hashPasscode("brand-new-pass"), link.id).run(); });
+    expect(response.status).toBe(404); expect(response.headers.getSetCookie()).toEqual([]);
+    expect(await sessionRows(link.id)).toHaveLength(0);
+  });
+
+  it("mints no session when staff change the passcode between the verify and the insert", async () => {
+    const link = await seedGuestLink({ passcodeHash: await hashPasscode("old-passcode") });
+    const response = await exchangeWithRace(link, "old-passcode", 2, async () => { await database.DB.prepare("UPDATE client_links SET passcode_hash = ? WHERE id = ?").bind(await hashPasscode("changed-pass"), link.id).run(); });
+    expect(response.status).toBe(404);
+    expect(await sessionRows(link.id)).toHaveLength(0);
+  });
+
+  it("spends the address quota before it looks a link up: random UUIDs with an empty body hit 429 after 60", async () => {
+    const ip = "192.0.2.123";
+    let last = 0;
+    for (let attempt = 1; attempt <= 61; attempt += 1) last = (await guestFetch(linkPath(crypto.randomUUID(), "/session"), { method: "POST", body: {}, ip })).status;
+    expect(last).toBe(429);
+    const window = Math.floor(Date.now() / GUEST_WINDOW_MS) * GUEST_WINDOW_MS;
+    const used = await database.DB.prepare("SELECT SUM(count) AS n FROM guest_rate_limits WHERE bucket = ?").bind(`exchange:ip:${await sha256Hex(`${ip}|${window}`)}`).first<{ n: number | null }>();
+    expect(used!.n === null || used!.n >= 60).toBe(true);
+  });
+
+  it("leave resolves the session first: a missing, forged, expired or old-generation credential is the stub and clears nothing", async () => {
+    const reference = await stubOf(await guestFetch("/d/api/x"));
+    const leave = (id: string, cookie: string | null) => guestFetch(linkPath(id, "/session"), { method: "DELETE", cookie });
+    const live = await linkWithSession();
+    expect(await stubOf(await leave(live.id, null))).toEqual(reference);
+    expect(await stubOf(await leave(live.id, `${cookieName(live.id)}=forged`))).toEqual(reference);
+    expect(await sessionRows(live.id)).toHaveLength(1);
+    const lapsed = await linkWithSession();
+    await database.DB.prepare("UPDATE guest_sessions SET expires_at = ?, created_at = ? WHERE link_id = ?").bind(Date.now() - 1, Date.now() - 1000, lapsed.id).run();
+    expect(await stubOf(await leave(lapsed.id, lapsed.cookie))).toEqual(reference);
+    const replaced = await linkWithSession();
+    await database.DB.prepare("UPDATE client_links SET token_generation = token_generation + 1 WHERE id = ?").bind(replaced.id).run();
+    expect(await stubOf(await leave(replaced.id, replaced.cookie))).toEqual(reference);
+    expect((await leave(live.id, live.cookie)).status).toBe(204);
+  });
+});

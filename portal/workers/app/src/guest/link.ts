@@ -24,6 +24,12 @@ export async function guestGateOpen(db: D1Database, projectId: string): Promise<
   return state.open && state.parts.includes("guest");
 }
 
+/** `video_review` and `video_review_guest` both on: one flag read, before any link is looked up. Per-Project scope is checked after the link is known. */
+export async function guestGloballyOpen(db: D1Database): Promise<boolean> {
+  const rows = (await db.prepare("SELECT key FROM feature_flags WHERE enabled = 1 AND key IN ('video_review', 'video_review_guest')").all<{ key: string }>()).results;
+  return rows.length === 2;
+}
+
 /** An active Review link (kind `video_review`, not revoked, not expired) whose Project passes the gate. */
 export async function loadActiveLink(c: Context<AppEnv>, linkId: string, now: number): Promise<GuestLink | null> {
   if (!UUID.test(linkId)) return null;

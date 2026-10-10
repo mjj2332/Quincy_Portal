@@ -7,7 +7,7 @@ import { newId } from "../lib/ids";
 import { hashToken, randomToken } from "../lib/opaque-token";
 import type { AppEnv } from "../env";
 import { guestNotFound, guestRoute, originRejection, readSessionCookie, SESSION_MAX_MS, sessionCookieHeader, timingSafeEqualStrings, UUID, withHygiene } from "./http";
-import { loadActiveLink, resolveSession, sessionBody } from "./link";
+import { guestGloballyOpen, loadActiveLink, resolveSession, sessionBody } from "./link";
 import { clientAddress, GUEST_LIMITS, ipBucket, reserveAttempts, windowStart } from "./rate-limit";
 import { listGuestNotes, listGuestVideos, readGuestMarkup, resolveGrantedVersion } from "./read";
 
@@ -32,12 +32,14 @@ const tooMany = (retryAfterSeconds: number) => Response.json({ error: "too_many_
 /** `POST .../session`: exchange the link token (and the passcode, if the link has one) for a session. */
 async function startSession(c: Context<AppEnv, "/d/api/links/:linkId/session">): Promise<Response> {
   const linkId = c.req.param("linkId"); const now = Date.now();
-  const link = await loadActiveLink(c, linkId, now);
-  if (!link) return guestNotFound(c);
+  // Cheap checks first, so a flood of random ids costs one flag read and one counter write and never a link lookup: global gate, id shape, Origin, then the address quota.
+  if (!UUID.test(linkId) || !await guestGloballyOpen(c.env.DB)) return guestNotFound(c);
   const rejected = originRejection(c); if (rejected) return rejected;
   const start = windowStart(now); const ip = clientAddress(c.req.raw);
   const exchange = await reserveAttempts(c.env.DB, [{ bucket: await ipBucket("exchange", ip, start), limit: GUEST_LIMITS.exchangeIp }], now);
   if (exchange.limited) return tooMany(exchange.retryAfterSeconds);
+  const link = await loadActiveLink(c, linkId, now);
+  if (!link) return guestNotFound(c);
   const raw = await readJson(c); const parsed = raw === INVALID ? null : guestSessionInputSchema.safeParse(raw);
   if (!parsed?.success) return c.json({ error: "invalid_request" }, 400);
   // The token is compared as hashes in constant time; a wrong, malformed or other link's token falls through to the stub.
@@ -49,12 +51,12 @@ async function startSession(c: Context<AppEnv, "/d/api/links/:linkId/session">):
     if (!await verifyPasscode(link.passcodeHash, parsed.data.passcode)) return c.json({ error: "passcode_incorrect" }, 401);
   }
   const sessionToken = randomToken(); const sessionId = newId(); const expiresAt = Math.min(now + SESSION_MAX_MS, link.expiresAt);
-  // The INSERT repeats the link fence, so a revoke, replace or expiry between the read above and here mints nothing; the audit row follows only a session that landed.
+  // The INSERT repeats the link fence, so a revoke, replace, passcode change or expiry between the read above and here mints nothing; the audit row follows only a session that landed.
   const [inserted] = await c.env.DB.batch([
     c.env.DB.prepare(`INSERT INTO guest_sessions (id, token_hash, link_id, link_generation, guest_id, verified_at, created_at, expires_at, last_seen_at)
       SELECT ?1, ?2, l.id, l.token_generation, NULL, NULL, ?3, MIN(?4, l.expires_at), ?3 FROM client_links l
-      WHERE l.id = ?5 AND l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ?3 AND l.token_generation = ?6 AND l.token_hash = ?7`)
-      .bind(sessionId, await hashToken(sessionToken), now, now + SESSION_MAX_MS, link.id, link.tokenGeneration, link.tokenHash),
+      WHERE l.id = ?5 AND l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ?3 AND l.token_generation = ?6 AND l.token_hash = ?7 AND l.passcode_hash IS ?8`)
+      .bind(sessionId, await hashToken(sessionToken), now, now + SESSION_MAX_MS, link.id, link.tokenGeneration, link.tokenHash, link.passcodeHash),
     c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?1, NULL, 'review_link.session_start', 'review_link', ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM guest_sessions WHERE id = ?5)`)
       .bind(newId(), link.id, auditMeta(null, { guest: { sessionId }, linkId: link.id }), now, sessionId),
@@ -86,12 +88,12 @@ export function mountGuest(app: Hono<AppEnv>): void {
   app.post("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", startSession));
   app.get("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", (c) => withSession(c, (session) => c.json(sessionBody(session.link)))));
   app.delete("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", async (c) => {
-    const linkId = c.req.param("linkId");
-    const link = await loadActiveLink(c, linkId, Date.now());
-    if (!link) return guestNotFound(c);
+    // Resolve the session first: only a live credential for this link can leave, anything else is the stub.
+    const session = await resolveSession(c, c.req.param("linkId"), Date.now());
+    if (!session) return guestNotFound(c);
     const rejected = originRejection(c); if (rejected) return rejected;
-    const token = readSessionCookie(c, link.id);
-    if (token) await c.env.DB.prepare("DELETE FROM guest_sessions WHERE token_hash = ?1 AND link_id = ?2").bind(await hashToken(token), link.id).run();
+    const link = session.link;
+    await c.env.DB.prepare("DELETE FROM guest_sessions WHERE id = ?1").bind(session.id).run();
     return new Response(null, { status: 204, headers: { "set-cookie": sessionCookieHeader(c.env, link.id, "", 0) } });
   }));
 
