@@ -2056,6 +2056,7 @@ export const guestEmailCodes = sqliteTable(
 export const guestLinkMembers = sqliteTable(
   "guest_link_members",
   {
+    id: id(),
     linkId: text("link_id").notNull().references(() => clientLinks.id, { onDelete: "cascade" }),
     guestId: text("guest_id").notNull().references(() => guestReviewers.id, { onDelete: "cascade" }),
     firstVerifiedAt: intTime("first_verified_at").notNull(),
@@ -2065,7 +2066,7 @@ export const guestLinkMembers = sqliteTable(
     lastDigestSentAt: intTime("last_digest_sent_at"),
   },
   (t) => [
-    primaryKey({ columns: [t.linkId, t.guestId] }),
+    unique("guest_link_members_link_guest_unique").on(t.linkId, t.guestId),
     check("guest_link_members_first_verified_at_check", sql`typeof(${t.firstVerifiedAt}) = 'integer'`),
     check("guest_link_members_last_verified_at_check", sql`typeof(${t.lastVerifiedAt}) = 'integer'`),
     check("guest_link_members_last_seen_at_check", sql`typeof(${t.lastSeenAt}) = 'integer'`),
@@ -2078,8 +2079,7 @@ export const guestUnsubscribeTokens = sqliteTable(
   "guest_unsubscribe_tokens",
   {
     tokenHash: text("token_hash").primaryKey(),
-    linkId: text("link_id").notNull().references(() => clientLinks.id, { onDelete: "cascade" }),
-    guestId: text("guest_id").notNull().references(() => guestReviewers.id, { onDelete: "cascade" }),
+    memberId: text("member_id").notNull().references(() => guestLinkMembers.id, { onDelete: "cascade" }),
     createdAt: intTime("created_at").notNull(),
   },
   (t) => [

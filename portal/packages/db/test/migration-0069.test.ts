@@ -66,7 +66,7 @@ const member = (overrides: Fields = {}): Fields => ({ id: "m1", link_id: "l1", v
 const grant = (overrides: Fields = {}): Fields => ({ id: "gr1", link_id: "l1", video_id: "v1", asset_id: "a1", granted_by: "u1", granted_at: NOW, ...overrides });
 const session = (overrides: Fields = {}): Fields => ({ id: "s1", token_hash: "sh1", link_id: "l1", link_generation: 1, created_at: NOW, expires_at: NOW + 1000, last_seen_at: NOW, ...overrides });
 const code = (overrides: Fields = {}): Fields => ({ id: "ec1", link_id: "l1", session_id: "s1", email_normalized: "g@example.test", code_hash: "ch", expires_at: NOW + 1000, created_at: NOW, ...overrides });
-const lm = (overrides: Fields = {}): Fields => ({ link_id: "l1", guest_id: "g1", first_verified_at: NOW, last_verified_at: NOW, last_seen_at: NOW, ...overrides });
+const lm = (overrides: Fields = {}): Fields => ({ id: "gm1", link_id: "l1", guest_id: "g1", first_verified_at: NOW, last_verified_at: NOW, last_seen_at: NOW, ...overrides });
 const approval = (overrides: Fields = {}): Fields => ({
   id: "ev1", project_id: "p1", video_id: "v1", asset_id: "a1", link_id: "l1", revision: 1, decision: "approved", actor_guest_id: "g1", created_at: NOW, ...overrides,
 });
@@ -421,11 +421,12 @@ describe("migration 0069 adds the guest-side video review schema (#741)", () => 
       const db = seeded();
       insert(db, "guest_link_members", lm({ unsubscribed_at: NOW, last_digest_sent_at: NOW }));
       insert(db, "client_links", link({ id: "l2", token_hash: "th2" }));
-      insert(db, "guest_link_members", lm({ link_id: "l2" }));
+      insert(db, "guest_link_members", lm({ id: "gm2", link_id: "l2" }));
     });
-    it("rejects a duplicate (link, guest) and non-integer times", () => {
+    it("rejects a duplicate (link, guest) membership and non-integer times", () => {
       const db = seeded();
       insert(db, "guest_link_members", lm());
+      expect(() => insert(db, "guest_link_members", lm({ id: "gm2" }))).toThrow();
       expect(() => insert(db, "guest_link_members", lm())).toThrow();
       db.exec("DELETE FROM guest_link_members");
       for (const column of ["first_verified_at", "last_verified_at", "last_seen_at", "unsubscribed_at", "last_digest_sent_at"]) {
@@ -439,29 +440,34 @@ describe("migration 0069 adds the guest-side video review schema (#741)", () => 
       for (const parent of ["DELETE FROM client_links WHERE id = 'l1'", "DELETE FROM guest_reviewers WHERE id = 'g1'"]) {
         const fresh = seeded();
         insert(fresh, "guest_link_members", lm());
+        insert(fresh, "guest_unsubscribe_tokens", { token_hash: "t1", member_id: "gm1", created_at: NOW });
         fresh.exec(parent);
         expect(count(fresh, "SELECT count(*) AS n FROM guest_link_members"), parent).toBe(0);
+        expect(count(fresh, "SELECT count(*) AS n FROM guest_unsubscribe_tokens"), parent).toBe(0);
       }
     });
-    it("accepts an unsubscribe token for a known link and guest and rejects an unknown link or guest", () => {
+    it("accepts an unsubscribe token for an existing member and refuses one for a nonexistent member", () => {
       const db = seeded();
-      insert(db, "guest_unsubscribe_tokens", { token_hash: "t1", link_id: "l1", guest_id: "g1", created_at: NOW });
-      expect(() => insert(db, "guest_unsubscribe_tokens", { token_hash: "t2", link_id: "l1", guest_id: "ghost", created_at: NOW })).toThrow();
-      expect(() => insert(db, "guest_unsubscribe_tokens", { token_hash: "t3", link_id: "ghost", guest_id: "g1", created_at: NOW })).toThrow();
+      insert(db, "guest_link_members", lm());
+      insert(db, "guest_unsubscribe_tokens", { token_hash: "t1", member_id: "gm1", created_at: NOW });
+      expect(() => insert(db, "guest_unsubscribe_tokens", { token_hash: "t2", member_id: "ghost", created_at: NOW })).toThrow();
     });
     it("rejects a duplicate token hash and a non-integer created_at", () => {
       const db = seeded();
-      insert(db, "guest_unsubscribe_tokens", { token_hash: "t1", link_id: "l1", guest_id: "g1", created_at: NOW });
-      expect(() => insert(db, "guest_unsubscribe_tokens", { token_hash: "t1", link_id: "l1", guest_id: "g1", created_at: NOW })).toThrow();
-      expect(() => insert(db, "guest_unsubscribe_tokens", { token_hash: "t2", link_id: "l1", guest_id: "g1", created_at: "x" })).toThrow();
+      insert(db, "guest_link_members", lm());
+      insert(db, "guest_unsubscribe_tokens", { token_hash: "t1", member_id: "gm1", created_at: NOW });
+      expect(() => insert(db, "guest_unsubscribe_tokens", { token_hash: "t1", member_id: "gm1", created_at: NOW })).toThrow();
+      expect(() => insert(db, "guest_unsubscribe_tokens", { token_hash: "t2", member_id: "gm1", created_at: "x" })).toThrow();
     });
-    it("cascades a link delete and a guest delete to unsubscribe tokens", () => {
-      for (const parent of ["DELETE FROM client_links WHERE id = 'l1'", "DELETE FROM guest_reviewers WHERE id = 'g1'"]) {
-        const db = seeded();
-        insert(db, "guest_unsubscribe_tokens", { token_hash: "t1", link_id: "l1", guest_id: "g1", created_at: NOW });
-        db.exec(parent);
-        expect(count(db, "SELECT count(*) AS n FROM guest_unsubscribe_tokens"), parent).toBe(0);
-      }
+    it("cascades a member delete to its tokens, and a re-created membership does not inherit them", () => {
+      const db = seeded();
+      insert(db, "guest_link_members", lm());
+      insert(db, "guest_unsubscribe_tokens", { token_hash: "t1", member_id: "gm1", created_at: NOW });
+      db.exec("DELETE FROM guest_link_members WHERE id = 'gm1'");
+      expect(count(db, "SELECT count(*) AS n FROM guest_unsubscribe_tokens")).toBe(0);
+      insert(db, "guest_link_members", lm({ id: "gm2" }));
+      expect(count(db, "SELECT count(*) AS n FROM guest_unsubscribe_tokens WHERE member_id = 'gm2'")).toBe(0);
+      insert(db, "guest_unsubscribe_tokens", { token_hash: "t1", member_id: "gm2", created_at: NOW });
     });
   });
 
@@ -659,7 +665,7 @@ describe("migration 0069 adds the guest-side video review schema (#741)", () => 
     insert(db, "guest_sessions", session());
     insert(db, "guest_email_codes", code());
     insert(db, "guest_link_members", lm());
-    insert(db, "guest_unsubscribe_tokens", { token_hash: "t1", link_id: "l1", guest_id: "g1", created_at: NOW });
+    insert(db, "guest_unsubscribe_tokens", { token_hash: "t1", member_id: "gm1", created_at: NOW });
     insert(db, "video_approval_events", approval({ actor_guest_id: null, actor_user_id: "u1" }));
     insert(db, "video_releases", release());
     insert(db, "video_premium_unlocks", { video_id: "v1", project_id: "p1", unlocked_by: "u1", unlocked_at: NOW });

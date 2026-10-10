@@ -5,7 +5,7 @@
 -- revoked (a boolean) is replaced by revoked_at, and existing revoked rows get revoked_at = created_at as the best known time. publish_version becomes nullable by the same swap so a video_review link can leave it empty. These are the only two DROP COLUMN statements, and no deployed Worker reads either column. premium_unlocks is untouched and client_links.id never changes, so its foreign key is unaffected.
 -- review_link_videos is a link's Video membership and review_link_version_grants is the per-Version access a link has, both with removed or revoked history. A partial unique index allows one live row per pair, so a removed Video can be added again as a new row.
 -- guest_sessions is an anonymous watch session until slice 13 fills guest_id and verified_at. guest_rate_limits is keyed by a hashed bucket with no entity id. guest_email_codes holds single-use codes with a five-try cap. Hash columns are plain text so a versioned prefix can change the algorithm without a migration.
--- guest_link_members, guest_unsubscribe_tokens and guest_notification_digest back the verified-subscriber digest. An unsubscribe token has plain single-column keys to the link and the guest, not a composite key to guest_link_members, because the QA teardown graph supports only single-column keys to an id column. Route SQL resolves the member by (link_id, guest_id). video_approval_events is append-only and revision is the compare-and-set target per Version. video_releases is one live Release per Version. video_premium_unlocks is a per-Video unlock.
+-- guest_link_members, guest_unsubscribe_tokens and guest_notification_digest back the verified-subscriber digest. An unsubscribe token belongs to exactly one membership through guest_link_members.id (a surrogate key, because the QA teardown graph supports only single-column keys to an id column), so a re-created membership never inherits old tokens.
 -- Foreign keys to projects, assets, videos, client_links, guest_sessions and guest_link_members cascade, and so do the guest_reviewers keys of sessions, members and digest rows. Foreign keys to user and video_approval_events.actor_guest_id are NO ACTION as in 0068.
 -- Rollback: no Worker reads the dropped columns, so a code rollback is safe. Restoring the schema is a D1 Time Travel restore and loses every write since the bookmark.
 -- No trigger and no semicolon inside a comment: the worker test harness splits this file on semicolons.
@@ -119,6 +119,7 @@ CREATE INDEX guest_email_codes_session_created_idx ON guest_email_codes (session
 CREATE INDEX guest_email_codes_link_email_created_idx ON guest_email_codes (link_id, email_normalized, created_at);
 --> statement-breakpoint
 CREATE TABLE guest_link_members (
+  id text PRIMARY KEY NOT NULL,
   link_id text NOT NULL REFERENCES client_links(id) ON DELETE CASCADE,
   guest_id text NOT NULL REFERENCES guest_reviewers(id) ON DELETE CASCADE,
   first_verified_at integer NOT NULL CHECK (typeof(first_verified_at) = 'integer'),
@@ -126,13 +127,12 @@ CREATE TABLE guest_link_members (
   last_seen_at integer NOT NULL CHECK (typeof(last_seen_at) = 'integer'),
   unsubscribed_at integer CHECK (unsubscribed_at IS NULL OR typeof(unsubscribed_at) = 'integer'),
   last_digest_sent_at integer CHECK (last_digest_sent_at IS NULL OR typeof(last_digest_sent_at) = 'integer'),
-  PRIMARY KEY (link_id, guest_id)
+  UNIQUE (link_id, guest_id)
 );
 --> statement-breakpoint
 CREATE TABLE guest_unsubscribe_tokens (
   token_hash text PRIMARY KEY NOT NULL,
-  link_id text NOT NULL REFERENCES client_links(id) ON DELETE CASCADE,
-  guest_id text NOT NULL REFERENCES guest_reviewers(id) ON DELETE CASCADE,
+  member_id text NOT NULL REFERENCES guest_link_members(id) ON DELETE CASCADE,
   created_at integer NOT NULL CHECK (typeof(created_at) = 'integer')
 );
 --> statement-breakpoint

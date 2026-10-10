@@ -170,7 +170,7 @@ No deployed Worker reads `revoked` or `publish_version` (only `schema.ts` and tw
 4. Re-run the deploy (`gh run rerun <run-id> --failed`).
 5. Post-check: `PRAGMA table_info(client_links)` has no `revoked`, `publish_version` is nullable, and `kind`, `token_generation` and `revoked_at` exist. The eleven tables exist and `PRAGMA foreign_key_check` is empty.
 
-Rollback: no Worker reads the dropped columns, so a code rollback is safe. Restoring the schema is a Time Travel restore to the bookmark, which loses every write since it. Before 11a or 12a merges, no row is written, so nothing is lost.
+Rollback: no Worker reads the dropped columns, so a code rollback is safe. Restoring the schema is a Time Travel restore, and a Time Travel restore loses every database write since the bookmark, including writes to existing tables.
 
 ### Subtask presets (0052)
 

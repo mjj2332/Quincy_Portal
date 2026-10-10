@@ -34,7 +34,7 @@ One table in `docs/Guides/Local-QA-Fixtures.md` § "What a new table or column m
 `docs/Guides/CI-Deploy.md` § "A PR that adds a D1 migration": CI never applies migrations, so the deploy job goes red at the migration guard until the owner (Time Travel bookmark first) runs `migrations apply DB --remote`. The code ships after the schema. Rollback: same doc § "Rolling back".
 
 ## 8. Constraints the QA teardown graph imposes on a new table
-- A foreign key must be single-column and point at an `id` column: `buildTeardownGraph` throws on a composite FK (0069's `guest_unsubscribe_tokens` uses two single-column FKs for that reason) and on one targeting any other column. A table with no `id` column (a composite-PK link table such as `guest_link_members`) can be a leaf but never an FK parent.
+- A foreign key must be single-column and point at an `id` column: `buildTeardownGraph` throws on a composite FK and on one targeting any other column. A table that other tables reference therefore needs a surrogate `id` (0069's `guest_link_members` has `id` plus `UNIQUE (link_id, guest_id)`, and `guest_unsubscribe_tokens.member_id` points at it).
 - A table with no FK into the fixture graph and no `*_id` column (`guest_rate_limits`) needs no registration at all.
 
 Last verified against 763523cc
