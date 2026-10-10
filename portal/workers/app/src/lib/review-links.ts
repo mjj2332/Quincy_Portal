@@ -1,6 +1,7 @@
 import { ROLE_LABELS, REVIEW_LINK_STATUSES, type ReviewLinkDto, type Role } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
+import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO } from "./video-live-sql";
 
 /**
  * Review links (#741 11a). Every mutation is ONE `db.batch`, built the way `video-notes.ts` builds its writes: the audit row goes in first and
@@ -33,7 +34,7 @@ type VersionRef = { assetId: string; version: number };
 /** Every committed Version of each given Video that belongs to the Project, keyed by Video id (a Video of another Project, or unknown, is absent). Oldest first. */
 export async function versionsByVideo(db: D1Database, projectId: string, videoIds: string[]): Promise<Map<string, VersionRef[]>> {
   const rows = (await db.prepare(`SELECT m.video_id, m.asset_id, a.version FROM videos v JOIN video_version_meta m ON m.video_id = v.id JOIN assets a ON a.id = m.asset_id
-      WHERE v.project_id = ? AND v.id IN (SELECT value FROM json_each(?)) ORDER BY a.version`).bind(projectId, JSON.stringify(videoIds)).all<{ video_id: string; asset_id: string; version: number }>()).results;
+      WHERE v.project_id = ? AND ${LIVE_VIDEO("v")} AND ${LIVE_VERSION("m")} AND v.id IN (SELECT value FROM json_each(?)) ORDER BY a.version`).bind(projectId, JSON.stringify(videoIds)).all<{ video_id: string; asset_id: string; version: number }>()).results;
   const map = new Map<string, VersionRef[]>();
   for (const row of rows) { const list = map.get(row.video_id) ?? []; list.push({ assetId: row.asset_id, version: row.version }); map.set(row.video_id, list); }
   return map;
@@ -61,9 +62,10 @@ export async function loadReviewLinkDtos(db: D1Database, projectId: string, now:
         l.created_by, cu.name AS cu_name, cu.role AS cu_role, cu.active AS cu_active, l.revoked_by, ru.name AS ru_name, ru.role AS ru_role, ru.active AS ru_active
       FROM client_links l LEFT JOIN user cu ON cu.id = l.created_by LEFT JOIN user ru ON ru.id = l.revoked_by
       WHERE l.project_id = ?1 AND l.kind = 'video_review' AND (?2 IS NULL OR l.id = ?2) ORDER BY l.created_at DESC, l.rowid DESC`).bind(projectId, linkId ?? null),
-    db.prepare(`SELECT m.link_id, m.video_id, m.added_at, v.title FROM review_link_videos m JOIN videos v ON v.id = m.video_id
+    db.prepare(`SELECT m.link_id, m.video_id, m.added_at, v.title FROM review_link_videos m JOIN videos v ON v.id = m.video_id AND ${LIVE_VIDEO("v")}
       WHERE m.removed_at IS NULL AND m.link_id IN (${scope}) ORDER BY m.added_at, m.rowid`).bind(projectId, linkId ?? null),
     db.prepare(`SELECT g.link_id, g.video_id, g.asset_id, a.version FROM review_link_version_grants g JOIN assets a ON a.id = g.asset_id
+      JOIN video_version_meta gm ON gm.asset_id = g.asset_id AND gm.video_id = g.video_id AND ${LIVE_VERSION("gm")} JOIN videos gv ON gv.id = g.video_id AND ${LIVE_VIDEO("gv")}
       WHERE g.revoked_at IS NULL AND g.link_id IN (${scope}) ORDER BY a.version, g.rowid`).bind(projectId, linkId ?? null),
     db.prepare(`SELECT s.link_id, SUM(CASE WHEN s.expires_at > ?3 AND s.link_generation = l.token_generation AND l.revoked_at IS NULL AND l.expires_at > ?3 THEN 1 ELSE 0 END) AS open_sessions, MAX(s.created_at) AS last_opened
       FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE s.link_id IN (${scope}) GROUP BY s.link_id`).bind(projectId, linkId ?? null, now),
@@ -114,7 +116,7 @@ async function commit(db: D1Database, audit: Audit, statements: D1PreparedStatem
 
 export type GrantPair = { videoId: string; assetId: string };
 const COUNT_PAIRS = `(SELECT COUNT(*) FROM json_each(?) j JOIN video_version_meta m ON m.asset_id = json_extract(j.value, '$.a') AND m.video_id = json_extract(j.value, '$.v')
-  JOIN videos v ON v.id = m.video_id AND v.project_id = ?)`;
+  JOIN videos v ON v.id = m.video_id AND v.project_id = ? AND ${LIVE_VIDEO("v")} WHERE ${LIVE_VERSION("m")})`;
 
 export type CreateInput = {
   projectId: string; principal: Principal; videoIds: string[]; grants: GrantPair[]; label: string | null; allow: Allow; expiresAt: number; passcodeHash: string | null; tokenHash: string; now: number;
@@ -127,7 +129,7 @@ export async function createReviewLink(db: D1Database, input: CreateInput): Prom
   } };
   const pairs = JSON.stringify(input.grants.map((grant) => ({ id: newId(), v: grant.videoId, a: grant.assetId })));
   const members = JSON.stringify(input.videoIds.map((videoId) => ({ id: newId(), v: videoId })));
-  const guard = `${NOT_ARCHIVED} AND (SELECT COUNT(*) FROM videos WHERE project_id = ? AND id IN (SELECT value FROM json_each(?))) = ? AND ${COUNT_PAIRS} = ?`;
+  const guard = `${NOT_ARCHIVED} AND (SELECT COUNT(*) FROM videos WHERE project_id = ? AND removed_at IS NULL AND id IN (SELECT value FROM json_each(?))) = ? AND ${COUNT_PAIRS} = ?`;
   const ok = await commit(db, audit, [
     auditStatement(db, audit, guard, [input.projectId, input.projectId, JSON.stringify(input.videoIds), input.videoIds.length, pairs, input.projectId, input.grants.length]),
     db.prepare(`INSERT INTO client_links (id, project_id, token_hash, kind, label, passcode_hash, allow_comments, allow_approve, allow_download, expires_at, created_by, token_generation, updated_at, created_at)
@@ -166,7 +168,7 @@ export async function addLinkVideo(db: D1Database, input: { projectId: string; l
   const auditId = newId();
   const audit: Audit = { id: auditId, action: "review_link.video_add", linkId: input.linkId, principal: input.principal, now: input.now, meta: { projectId: input.projectId, linkId: input.linkId, videoId: input.videoId, assetIds: input.assetIds } };
   const pairs = JSON.stringify(input.assetIds.map((assetId) => ({ id: newId(), v: input.videoId, a: assetId })));
-  const guard = `${NOT_ARCHIVED} AND ${LINK_LIVE} AND NOT ${MEMBER_LIVE} AND EXISTS (SELECT 1 FROM videos WHERE id = ? AND project_id = ?) AND ${COUNT_PAIRS} = ?`;
+  const guard = `${NOT_ARCHIVED} AND ${LINK_LIVE} AND NOT ${MEMBER_LIVE} AND EXISTS (SELECT 1 FROM videos WHERE id = ? AND project_id = ? AND removed_at IS NULL) AND ${COUNT_PAIRS} = ?`;
   return commit(db, audit, [
     auditStatement(db, audit, guard, [input.projectId, input.linkId, input.projectId, input.linkId, input.videoId, input.videoId, input.projectId, pairs, input.projectId, input.assetIds.length]),
     db.prepare(`INSERT INTO review_link_videos (id, link_id, video_id, project_id, added_by, added_at) SELECT ?, ?, ?, ?, ?, ? WHERE ${AUDITED}`).bind(newId(), input.linkId, input.videoId, input.projectId, input.principal.id, input.now, auditId),
@@ -186,14 +188,18 @@ export async function removeLinkVideo(db: D1Database, input: { projectId: string
   ]);
 }
 
-/** Replaces the live grant set of one member Video by diff. The set is non-empty (the route refuses an empty one), so a member keeps at least one live grant. */
+/**
+ * Replaces the live grant set of one member Video by diff. The set is non-empty (the route refuses an empty one), so a member keeps at least one live grant.
+ * Only omitted grants on LIVE Versions are revoked: the picker cannot show a Version in Trash, so a grant on one is kept and comes back with its restore (#776).
+ */
 export async function setLinkGrants(db: D1Database, input: { projectId: string; linkId: string; principal: Principal; videoId: string; assetIds: string[]; now: number }): Promise<boolean> {
   const auditId = newId();
   const audit: Audit = { id: auditId, action: "review_link.grants_set", linkId: input.linkId, principal: input.principal, now: input.now, meta: { projectId: input.projectId, linkId: input.linkId, videoId: input.videoId, assetIds: input.assetIds } };
   const pairs = JSON.stringify(input.assetIds.map((assetId) => ({ id: newId(), v: input.videoId, a: assetId })));
   return commit(db, audit, [
     auditStatement(db, audit, `${NOT_ARCHIVED} AND ${LINK_LIVE} AND ${MEMBER_LIVE} AND ${COUNT_PAIRS} = ?`, [input.projectId, input.linkId, input.projectId, input.linkId, input.videoId, pairs, input.projectId, input.assetIds.length]),
-    db.prepare(`UPDATE review_link_version_grants SET revoked_at = ?, revoked_by = ? WHERE link_id = ? AND video_id = ? AND revoked_at IS NULL AND asset_id NOT IN (SELECT value FROM json_each(?)) AND ${AUDITED}`)
+    db.prepare(`UPDATE review_link_version_grants SET revoked_at = ?, revoked_by = ? WHERE link_id = ? AND video_id = ? AND revoked_at IS NULL AND asset_id NOT IN (SELECT value FROM json_each(?))
+      AND ${LIVE_VERSION_EXISTS("review_link_version_grants.asset_id")} AND ${AUDITED}`)
       .bind(input.now, input.principal.id, input.linkId, input.videoId, JSON.stringify(input.assetIds), auditId),
     db.prepare(`INSERT INTO review_link_version_grants (id, link_id, video_id, asset_id, granted_by, granted_at) SELECT json_extract(j.value, '$.id'), ?, json_extract(j.value, '$.v'), json_extract(j.value, '$.a'), ?, ? FROM json_each(?) j
       WHERE NOT EXISTS (SELECT 1 FROM review_link_version_grants g WHERE g.link_id = ? AND g.asset_id = json_extract(j.value, '$.a') AND g.revoked_at IS NULL) AND ${AUDITED} ORDER BY j.key`)

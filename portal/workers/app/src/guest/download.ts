@@ -2,6 +2,7 @@ import type { Context, Hono } from "hono";
 import { GUEST_ZIP_MAX_BYTES, GUEST_ZIP_MAX_ENTRIES, guestDownloadManifestSchema, type GuestDownloadManifest, type VideoReviewPart } from "@quincy/shared";
 import { auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
+import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO } from "../lib/video-live-sql";
 import { gateSql, liveSql, reachSql } from "../lib/guest-fence-sql";
 import { VIDEO_STREAM_HEADERS, serveR2Object } from "../lib/r2-serve";
 import { createZipStream, type ZipStreamEntry } from "../lib/zip-stream";
@@ -56,7 +57,7 @@ const entryName = (title: string, version: number): string => `${safeFileName(ti
 type Binds = { session: string; token: string; guest: string; now: string };
 const sessionFence = (b: Binds): string => `s.id = ${b.session} AND s.token_hash = ${b.token} AND s.guest_id = ${b.guest} AND s.verified_at IS NOT NULL AND l.allow_download = 1 AND ${liveSql(b.now)} AND ${gateSql(PARTS)}`;
 /** The Version has a live Release and its Video is not a locked premium one. `asset` is a SQL expression. */
-const deliverableSql = (asset: string): string => `EXISTS (SELECT 1 FROM video_releases dr JOIN videos dv ON dv.id = dr.video_id WHERE dr.asset_id = ${asset} AND dr.withdrawn_at IS NULL
+const deliverableSql = (asset: string): string => `EXISTS (SELECT 1 FROM video_releases dr JOIN videos dv ON dv.id = dr.video_id AND ${LIVE_VIDEO("dv")} WHERE dr.asset_id = ${asset} AND dr.withdrawn_at IS NULL AND ${LIVE_VERSION_EXISTS(asset)}
     AND (dv.premium = 0 OR EXISTS (SELECT 1 FROM video_premium_unlocks du WHERE du.video_id = dv.id)))`;
 
 /** Whether this session may still be handed `assetId` (or, with null, anything at all): the same predicate the audit INSERT carries, at a fresh time. */
@@ -94,7 +95,7 @@ async function readVersion(db: D1Database, linkId: string, projectId: string, as
   const row = await db.prepare(`SELECT a.r2_key, a.bytes, a.version, v.id AS video_id, v.title, v.premium,
       EXISTS (SELECT 1 FROM video_premium_unlocks u WHERE u.video_id = v.id) AS unlocked,
       EXISTS (SELECT 1 FROM video_releases r WHERE r.asset_id = a.id AND r.withdrawn_at IS NULL) AS released
-    FROM video_version_meta m JOIN assets a ON a.id = m.asset_id AND a.kind = 'video' JOIN videos v ON v.id = m.video_id AND v.project_id = ?2
+    FROM video_version_meta m JOIN assets a ON a.id = m.asset_id AND a.kind = 'video' AND ${LIVE_VERSION("m")} JOIN videos v ON v.id = m.video_id AND v.project_id = ?2 AND ${LIVE_VIDEO("v")}
     WHERE a.id = ?3 AND ${reachSql("?1", "?2", "a.id")}`).bind(linkId, projectId, assetId)
     .first<{ r2_key: string; bytes: number; version: number; video_id: string; title: string; premium: number; unlocked: number; released: number }>();
   return row ? { r2Key: row.r2_key, bytes: row.bytes, version: row.version, videoId: row.video_id, title: row.title, released: row.released === 1, locked: row.premium === 1 && row.unlocked !== 1 } : null;
@@ -135,7 +136,8 @@ async function downloadOne(c: Ctx): Promise<Response> {
   }
   // The last fence before any R2 read, for every method: HEAD and a resumed Range write no audit row, so the audit INSERT cannot be what stops them, and a revoke can land after `readVersion`.
   if (!await stillAllowed(c.env.DB, session, assetId)) return refusedBecause(c, session, assetId);
-  const served = await serveR2Object(c, state.r2Key, { ...VIDEO_STREAM_HEADERS, "content-disposition": attachment(entryName(state.title, state.version)) }, "Video object not found");
+  const served = await serveR2Object(c, state.r2Key, { ...VIDEO_STREAM_HEADERS, "content-disposition": attachment(entryName(state.title, state.version)) }, "Video object not found",
+    () => stillAllowed(c.env.DB, session, assetId));
   // A missing object after the access check is not an oracle, but it must still read as the stub.
   return served.status === 404 ? guestNotFound(c) : served;
 }
@@ -151,9 +153,9 @@ type LeftOut = { videoId: string; title: string; reason: "not_released" | "premi
 async function readDownloadSet(db: D1Database, linkId: string, projectId: string): Promise<{ included: Included[]; leftOut: LeftOut[] }> {
   const rows = (await db.prepare(`SELECT v.id AS video_id, v.title, v.premium, (u.video_id IS NOT NULL) AS unlocked, a.id AS asset_id, a.version, a.bytes, a.r2_key,
         EXISTS (SELECT 1 FROM video_releases r WHERE r.asset_id = a.id AND r.withdrawn_at IS NULL) AS released
-      FROM review_link_videos rv JOIN videos v ON v.id = rv.video_id AND v.project_id = ?2 LEFT JOIN video_premium_unlocks u ON u.video_id = v.id
+      FROM review_link_videos rv JOIN videos v ON v.id = rv.video_id AND v.project_id = ?2 AND ${LIVE_VIDEO("v")} LEFT JOIN video_premium_unlocks u ON u.video_id = v.id
         JOIN review_link_version_grants g ON g.link_id = rv.link_id AND g.video_id = rv.video_id AND g.revoked_at IS NULL
-        JOIN assets a ON a.id = g.asset_id AND a.kind = 'video' JOIN video_version_meta m ON m.asset_id = a.id AND m.video_id = g.video_id
+        JOIN assets a ON a.id = g.asset_id AND a.kind = 'video' JOIN video_version_meta m ON m.asset_id = a.id AND m.video_id = g.video_id AND ${LIVE_VERSION("m")}
       WHERE rv.link_id = ?1 AND rv.removed_at IS NULL ORDER BY v.position, v.created_at, v.id, a.version DESC`).bind(linkId, projectId).all<{
     video_id: string; title: string; premium: number; unlocked: number; asset_id: string; version: number; bytes: number; r2_key: string; released: number;
   }>()).results;

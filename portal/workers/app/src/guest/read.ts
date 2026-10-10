@@ -1,4 +1,5 @@
 import { reachSql } from "../lib/guest-fence-sql";
+import { LIVE_VERSION, LIVE_VIDEO } from "../lib/video-live-sql";
 import {
   guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNoteThreadDtoSchema, guestVideoListResponseSchema,
   type GuestNoteListResponse, type GuestNoteMarkupResponse, type GuestNoteThreadDto, type GuestNoteDto, type GuestVideoListResponse,
@@ -10,9 +11,9 @@ import {
  * Video or revoking a grant is the next request's miss with no cache to expire.
  */
 const LIVE_ACCESS = `JOIN review_link_videos rv ON rv.link_id = g.link_id AND rv.video_id = g.video_id AND rv.removed_at IS NULL
-  JOIN videos v ON v.id = g.video_id AND v.project_id = ?2
+  JOIN videos v ON v.id = g.video_id AND v.project_id = ?2 AND ${LIVE_VIDEO("v")}
   JOIN assets a ON a.id = g.asset_id AND a.kind = 'video'
-  JOIN video_version_meta m ON m.asset_id = a.id AND m.video_id = g.video_id`;
+  JOIN video_version_meta m ON m.asset_id = a.id AND m.video_id = g.video_id AND ${LIVE_VERSION("m")}`;
 
 const streamUrl = (linkId: string, assetId: string) => `/d/api/links/${linkId}/versions/${assetId}/stream`;
 const downloadUrl = (linkId: string, assetId: string) => `/d/api/links/${linkId}/versions/${assetId}/download`;
@@ -29,9 +30,9 @@ type VersionRow = {
 export async function listGuestVideos(db: D1Database, linkId: string, projectId: string, guestId: string | null = null, canDownload = false): Promise<GuestVideoListResponse> {
   const [videoResult, versionResult, decisionResult, releaseResult] = await db.batch([
     db.prepare(`SELECT v.id, v.title, v.premium, (p.video_id IS NOT NULL) AS unlocked
-      FROM review_link_videos rv JOIN videos v ON v.id = rv.video_id AND v.project_id = ?2 LEFT JOIN video_premium_unlocks p ON p.video_id = v.id
+      FROM review_link_videos rv JOIN videos v ON v.id = rv.video_id AND v.project_id = ?2 AND ${LIVE_VIDEO("v")} LEFT JOIN video_premium_unlocks p ON p.video_id = v.id
       WHERE rv.link_id = ?1 AND rv.removed_at IS NULL
-        AND EXISTS (SELECT 1 FROM review_link_version_grants g JOIN video_version_meta m ON m.asset_id = g.asset_id AND m.video_id = g.video_id JOIN assets a ON a.id = g.asset_id AND a.kind = 'video'
+        AND EXISTS (SELECT 1 FROM review_link_version_grants g JOIN video_version_meta m ON m.asset_id = g.asset_id AND m.video_id = g.video_id AND ${LIVE_VERSION("m")} JOIN assets a ON a.id = g.asset_id AND a.kind = 'video'
                     WHERE g.link_id = rv.link_id AND g.video_id = rv.video_id AND g.revoked_at IS NULL)
       ORDER BY v.position, v.created_at, v.id`).bind(linkId, projectId),
     db.prepare(`SELECT a.id AS asset_id, m.video_id, a.version, m.fps_num, m.fps_den, m.frame_count, m.duration_ms, m.width, m.height, m.start_tc_frames, m.tc_nominal_fps, m.tc_drop_frame, m.has_audio,
@@ -43,7 +44,8 @@ export async function listGuestVideos(db: D1Database, linkId: string, projectId:
     // The latest decision made ON THIS LINK per Version (14a): a staff-recorded event has no link and never matches. `self` is the viewing guest's own.
     db.prepare(`SELECT e.asset_id, e.decision, e.revision, e.created_at, e.actor_guest_id FROM video_approval_events e
       WHERE e.link_id = ?1 AND e.revision = (SELECT MAX(x.revision) FROM video_approval_events x WHERE x.asset_id = e.asset_id AND x.link_id = e.link_id)`).bind(linkId),
-    db.prepare(`SELECT r.asset_id FROM video_releases r WHERE r.withdrawn_at IS NULL AND r.asset_id IN (SELECT g.asset_id FROM review_link_version_grants g WHERE g.link_id = ?1 AND g.revoked_at IS NULL)`).bind(linkId),
+    db.prepare(`SELECT r.asset_id FROM video_releases r JOIN video_version_meta rm ON rm.asset_id = r.asset_id AND ${LIVE_VERSION("rm")} JOIN videos rvd ON rvd.id = r.video_id AND ${LIVE_VIDEO("rvd")}
+      WHERE r.withdrawn_at IS NULL AND r.asset_id IN (SELECT g.asset_id FROM review_link_version_grants g WHERE g.link_id = ?1 AND g.revoked_at IS NULL)`).bind(linkId),
   ]);
   const decisionByAsset = new Map((decisionResult!.results as Array<{ asset_id: string; decision: "approved" | "changes_requested"; revision: number; created_at: number; actor_guest_id: string | null }>)
     .map((row) => [row.asset_id, { value: row.decision, revision: row.revision, at: iso(row.created_at), self: guestId !== null && row.actor_guest_id === guestId }] as const));

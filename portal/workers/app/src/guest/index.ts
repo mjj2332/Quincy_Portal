@@ -105,7 +105,8 @@ export function mountGuest(app: Hono<AppEnv>): void {
   app.get("/d/api/links/:linkId/versions/:assetId/stream", guestRoute("/d/api/links/:linkId/versions/:assetId/stream", (c) => withSession(c, async (session) => {
     const version = await resolveGrantedVersion(c.env.DB, session.link.id, session.link.projectId, c.req.param("assetId"));
     if (!version) return guestNotFound(c);
-    const served = await serveR2Object(c, version.r2Key, { ...VIDEO_STREAM_HEADERS }, "Video object not found");
+    const served = await serveR2Object(c, version.r2Key, { ...VIDEO_STREAM_HEADERS }, "Video object not found",
+      async () => await resolveGrantedVersion(c.env.DB, session.link.id, session.link.projectId, c.req.param("assetId")) !== null);
     // A missing object after the access check is not an oracle, but it must still read as the stub.
     return served.status === 404 ? guestNotFound(c) : served;
   })));
@@ -114,7 +115,7 @@ export function mountGuest(app: Hono<AppEnv>): void {
     const version = await resolveGrantedVersion(c.env.DB, session.link.id, session.link.projectId, c.req.param("assetId"));
     if (!version?.posterKey) return guestNotFound(c);
     const object = await c.env.MEDIA.get(version.posterKey);
-    if (!object) return guestNotFound(c);
+    if (!object || !await resolveGrantedVersion(c.env.DB, session.link.id, session.link.projectId, c.req.param("assetId"))) return guestNotFound(c);
     return new Response(object.body, { headers: { ...POSTER_HEADERS, "content-length": String(object.size) } });
   })));
 
