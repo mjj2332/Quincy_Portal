@@ -32,6 +32,8 @@ export type CompareNotesProps = { projectId: string; role: Role; userId: string 
 export type CompareNotesSlots = { a: VideoNotesSession; b: VideoNotesSession; panel: ReactNode };
 
 const TOOL = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
+// Every toolbar control is one height (the select trigger's 32px) so the row reads as one band; coarse pointers get the 44px floor via TOOL.
+const BAR = cn(TOOL, "h-8");
 const other = (id: CompareSideId): CompareSideId => (id === "a" ? "b" : "a");
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
 const sameRate = (a: VideoVersionDto, b: VideoVersionDto) => a.fps.num * b.fps.den === b.fps.num * a.fps.den;
@@ -143,9 +145,11 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
   // --- the offset ---
   const [offsetProblem, setOffsetProblem] = useState<string | null>(null);
   useEffect(() => { setOffsetProblem(null); }, [versionA.assetId, versionB.assetId]);
+  // Committed on blur, Enter (Base UI commits on blur and the steppers only, so the input handles Enter itself) or a stepper, never per keystroke. An empty field is a retype in progress, not an error: nothing applies and
+  // the field falls back to the applied value on blur (the controlled `value` is unchanged, so Base UI restores it).
   const commitOffset = (next: number | null) => {
-    if (!transport) return;
-    const target = next === null ? Number.NaN : next;
+    if (!transport || next === null || next === offset) return;
+    const target = next;
     if (transport.setOffset(target)) { setOffsetProblem(null); return; }
     const bounds = transport.offsetBounds();
     setOffsetProblem(`Offset must be a whole number of frames between ${bounds.min} and ${bounds.max}.`);
@@ -199,10 +203,10 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
     const mine = versions[target];
     const theirs = versions[other(target)];
     const id = `video-compare-select-${target}`;
-    return <div className="flex min-w-0 max-w-full items-center gap-[var(--space-2)]">
-      <label htmlFor={id} className="shrink-0 text-foreground-secondary [font:var(--type-label)]">{target.toUpperCase()}</label>
+    return <div className="flex min-w-36 max-w-[22rem] flex-[1_1_0] items-center gap-[var(--space-2)]">
+      <Label htmlFor={id} className="shrink-0 text-foreground-secondary">{labels[target]}</Label>
       <Select value={mine.assetId} onValueChange={(next) => { if (typeof next === "string" && next !== mine.assetId) onChangeSide(target, next); }}>
-        <SelectTrigger id={id} data-testid={id} className={cn(TOOL, "min-w-0 max-w-full")}>
+        <SelectTrigger id={id} data-testid={id} className={cn(BAR, "min-w-0 max-w-full")}>
           <SelectValue>{() => <span className="block truncate">{versionLabel(mine, newest)}</span>}</SelectValue>
         </SelectTrigger>
         <SelectContent className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
@@ -225,10 +229,15 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
     timecode={(frame) => timecodeOf(versions[target], frame)}
     onHandle={target === "a" ? onHandleA : onHandleB}
     onClockChange={slots ? slots[target].playerProps.onClockChange : undefined}
+    labelCorner={wiping && target === "b" ? "top-right" : "top-left"}
     cellClassName={wiping ? "[grid-area:stack]" : undefined}
     cellStyle={wiping && target === "b" ? { clipPath: `inset(0 0 0 ${clipLeft})` } : undefined}
   />;
 
+  // The stages take the height their pictures need (the taller of the two shapes, side by side counting two of them), so the scrubber
+  // sits just under the pictures like the single player's, and the room left over falls below it. They still shrink to fit a short window.
+  const narrowest = Math.min(aspect(versionA), aspect(versionB));
+  const stagesRatio = wiping ? narrowest : narrowest * 2;
   const wipeSliderLabel = `Wipe between ${labels.a} and ${labels.b}`;
   return <div data-testid="video-compare" data-mode={compare.mode} className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-3)] p-[var(--space-5)]">
@@ -236,40 +245,47 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
         {sideSelect("a")}
         {sideSelect("b")}
         <ToggleGroup variant="outline" size="sm" spacing={0} aria-label="Layout" value={[compare.mode]} onValueChange={(next) => { const picked = next[0]; if (picked === "side-by-side" || picked === "wipe") store.setMode(picked); }}>
-          <ToggleGroupItem value="side-by-side" data-testid="video-compare-mode-side-by-side" className={TOOL}>Side by side</ToggleGroupItem>
-          <ToggleGroupItem value="wipe" data-testid="video-compare-mode-wipe" className={TOOL}>Wipe</ToggleGroupItem>
+          <ToggleGroupItem value="side-by-side" data-testid="video-compare-mode-side-by-side" className={BAR}>Side by side</ToggleGroupItem>
+          <ToggleGroupItem value="wipe" data-testid="video-compare-mode-wipe" className={BAR}>Wipe</ToggleGroupItem>
         </ToggleGroup>
-        <ToggleGroup variant="outline" size="sm" spacing={0} aria-label="Sound" value={[compare.audible]} onValueChange={(next) => { const picked = next[0]; if (picked === "a" || picked === "b") transport?.setAudible(picked); }}>
-          {(["a", "b"] as const).map((target) => <ToggleGroupItem key={target} value={target} disabled={!versions[target].hasAudio} data-testid={`video-compare-sound-${target}`} className={TOOL}>{labels[target]}{!versions[target].hasAudio && <span className="ms-[var(--space-1)] text-foreground-secondary">No audio</span>}</ToggleGroupItem>)}
+        <span className="flex items-center gap-[var(--space-2)]">
+        <span id="video-compare-sound-label" data-testid="video-compare-sound-label" className="shrink-0 text-foreground-secondary [font:var(--type-label)]">Sound</span>
+        <ToggleGroup variant="outline" size="sm" spacing={0} aria-labelledby="video-compare-sound-label" value={[compare.audible]} onValueChange={(next) => { const picked = next[0]; if (picked === "a" || picked === "b") transport?.setAudible(picked); }}>
+          {(["a", "b"] as const).map((target) => <ToggleGroupItem key={target} value={target} disabled={!versions[target].hasAudio} data-testid={`video-compare-sound-${target}`} className={BAR}>{labels[target]}{!versions[target].hasAudio && <span className="ms-[var(--space-1)] text-foreground-secondary">No audio</span>}</ToggleGroupItem>)}
         </ToggleGroup>
+        </span>
         <IconTip label={compare.muted ? "Unmute" : "Mute"}>
           <Toggle variant="default" size="default" pressed={compare.muted} onPressedChange={(next) => { transport?.setMuted(next); }} aria-label="Mute" className={cn("size-8", COARSE)}>{compare.muted ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}</Toggle>
         </IconTip>
-        {slots && <Toggle variant="outline" size="sm" pressed={compare.notesOpen} onPressedChange={(next) => { store.setNotesOpen(next); }} aria-label="Notes" data-testid="video-compare-notes-toggle" className={TOOL}>Notes</Toggle>}
+        {slots && <Toggle variant="outline" size="sm" pressed={compare.notesOpen} onPressedChange={(next) => { store.setNotesOpen(next); }} aria-label="Notes" data-testid="video-compare-notes-toggle" className={cn(BAR, "shrink-0")}>Notes</Toggle>}
       </div>
 
       <div className="flex flex-wrap items-end gap-x-[var(--space-4)] gap-y-[var(--space-2)]">
-        <NumberField value={offset} onValueChange={commitOffset} step={1} smallStep={1} largeStep={10} disabled={!ready} className="max-w-40">
+        <NumberField value={offset} onValueCommitted={commitOffset} step={1} smallStep={1} largeStep={10} disabled={!ready} className="max-w-40">
           <Label htmlFor="video-compare-offset" className="text-foreground-secondary">Offset (frames)</Label>
           <NumberFieldGroup>
             <NumberFieldDecrement aria-label="One frame earlier" />
-            <NumberFieldInput id="video-compare-offset" data-testid="video-compare-offset" />
+            <NumberFieldInput id="video-compare-offset" data-testid="video-compare-offset" onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              const typed = event.currentTarget.value.trim();
+              if (typed !== "") commitOffset(Number(typed));
+            }} />
             <NumberFieldIncrement aria-label="One frame later" />
           </NumberFieldGroup>
         </NumberField>
         <IconTip label="Reset offset">
           <UiButton type="button" variant="ghost" size="icon" aria-label="Reset offset" data-testid="video-compare-offset-reset" className={COARSE} disabled={!ready || offset === 0} onClick={() => { commitOffset(0); }}><RotateCcw aria-hidden="true" /></UiButton>
         </IconTip>
-        <span data-testid="video-compare-offset-help" className="text-foreground-secondary [font:var(--type-label)]">{`+12: ${labels.b} starts 12 frames after ${labels.a}`}</span>
+        <span data-testid="video-compare-offset-help" className="text-foreground-secondary [font:var(--type-label)]">{`e.g. +12: ${labels.b} starts 12 frames after ${labels.a}`}</span>
       </div>
 
-      {offsetProblem && <Notice tone="caution" role="status" data-testid="video-compare-offset-notice">{offsetProblem}</Notice>}
-      {rateDiffers && <Notice tone="caution" role="status" data-testid="video-compare-rate-notice">{`${labels.a} and ${labels.b} have different frame rates (${formatFps(versionA.fps)} and ${formatFps(versionB.fps)} fps). The sides are matched by time, so frames will not line up one for one.`}</Notice>}
-      {aspectDiffers && <Notice tone="caution" role="status" data-testid="video-compare-aspect-notice">{`${labels.a} and ${labels.b} have different aspect ratios. Each is shown whole, never stretched or cropped.`}</Notice>}
-      {state.blocked === "gesture" && <Notice tone="caution" role="status" data-testid="video-compare-blocked">Press Play to continue.</Notice>}
-      {state.blocked === "recovery" && <Notice tone="caution" role="status" data-testid="video-compare-blocked" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>Playback stopped because a video kept buffering.</span><Button type="button" variant="text" className={TOOL} onClick={() => { transport?.play(); }}>Resume</Button></Notice>}
+      {offsetProblem && <div data-surface="default"><Notice tone="caution" className="bg-card" role="status" data-testid="video-compare-offset-notice">{offsetProblem}</Notice></div>}
+      {rateDiffers && <div data-surface="default"><Notice tone="caution" className="bg-card" role="status" data-testid="video-compare-rate-notice">{`${labels.a} and ${labels.b} have different frame rates (${formatFps(versionA.fps)} and ${formatFps(versionB.fps)} fps). The sides are matched by time, so frames will not line up one for one.`}</Notice></div>}
+      {aspectDiffers && <div data-surface="default"><Notice tone="caution" className="bg-card" role="status" data-testid="video-compare-aspect-notice">{`${labels.a} and ${labels.b} have different aspect ratios. Each is shown whole, never stretched or cropped.`}</Notice></div>}
+      {state.blocked === "gesture" && <div data-surface="default"><Notice tone="caution" className="bg-card" role="status" data-testid="video-compare-blocked">Press Play to continue.</Notice></div>}
+      {state.blocked === "recovery" && <div data-surface="default"><Notice tone="caution" role="status" data-testid="video-compare-blocked" className="flex flex-wrap items-center justify-between gap-[var(--space-2)] bg-card"><span>Playback stopped because a video kept buffering.</span><Button type="button" variant="text" className={TOOL} onClick={() => { transport?.play(); }}>Resume</Button></Notice></div>}
 
-      <div data-testid="video-compare-stages" className={cn("relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-[var(--space-3)]", wiping ? "[grid-template-areas:'stack'] grid-cols-[minmax(0,1fr)] gap-0" : "grid-cols-2")}>
+      <div data-testid="video-compare-stages" style={{ aspectRatio: stagesRatio }} className={cn("relative grid min-h-0 flex-[0_1_auto] grid-rows-[minmax(0,1fr)] gap-[var(--space-3)]", wiping ? "[grid-template-areas:'stack'] grid-cols-[minmax(0,1fr)] gap-0" : "grid-cols-2")}>
         {stage("a")}
         {stage("b")}
         {wiping && <div
@@ -286,9 +302,9 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
           onPointerUp={(event) => { dragging.current = false; try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* as above */ } }}
           onPointerCancel={() => { dragging.current = false; }}
         >
-          <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 w-px -translate-x-1/2 bg-invert-foreground" style={{ left: `${wipePercent}%` }} />
+          <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 w-px -translate-x-1/2 bg-invert-foreground shadow-[0_0_0_1px_var(--background)]" style={{ left: `${Number((wipe * 100).toFixed(2))}%` }} />
           <Slider
-            className="absolute top-1/2 left-[calc(-1*var(--thumb-half))] right-[calc(-1*var(--thumb-half))] data-[orientation=horizontal]:w-auto -translate-y-1/2 [--thumb-half:6px] pointer-coarse:[--thumb-half:8px] [&_[data-slot=slider-track]]:opacity-0 pointer-coarse:[&_[data-slot=slider-thumb]]:after:-inset-3.5"
+            className="absolute top-1/2 left-[calc(-1*var(--thumb-half))] right-[calc(-1*var(--thumb-half))] data-[orientation=horizontal]:w-auto -translate-y-1/2 [--thumb-half:6px] pointer-coarse:[--thumb-half:8px] [&_[data-slot=slider-track]]:opacity-0 [&_[data-slot=slider-thumb]]:shadow-[0_0_0_2px_var(--background)] pointer-coarse:[&_[data-slot=slider-thumb]]:after:-inset-3.5"
             value={[wipePercent]}
             min={0}
             max={100}
@@ -343,7 +359,7 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
 }
 
 /** One side: its stage (own `<video>`, own clock), the version and phase badges, and the buffering line. Keyed by side and Version by the body. */
-function SideStage({ side: id, version, title, label, initialFrame, phase, startsIn, buffering, timecode, onHandle, onClockChange, cellClassName, cellStyle }: {
+function SideStage({ side: id, version, title, label, initialFrame, phase, startsIn, buffering, timecode, onHandle, onClockChange, labelCorner, cellClassName, cellStyle }: {
   side: CompareSideId;
   version: VideoVersionDto;
   title: string;
@@ -355,6 +371,7 @@ function SideStage({ side: id, version, title, label, initialFrame, phase, start
   timecode: (frame: number) => string;
   onHandle: (handle: CompareSideHandle | null) => void;
   onClockChange?: ((clock: VideoFrameClock | null) => void) | undefined;
+  labelCorner: "top-left" | "top-right";
   cellClassName?: string | undefined;
   cellStyle?: React.CSSProperties | undefined;
 }) {
@@ -375,12 +392,15 @@ function SideStage({ side: id, version, title, label, initialFrame, phase, start
   }, [instance]);
 
   return <div data-compare-cell={id} data-phase={phase} style={cellStyle} className={cn("relative flex h-full min-h-0 min-w-0 flex-col", cellClassName)}>
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} onVideo={setElement} />
-    <div className="pointer-events-none absolute top-[var(--space-2)] left-[var(--space-2)] flex flex-wrap items-center gap-[var(--space-1)]">
-      <Badge variant="invert">{label}</Badge>
-      {phase === "before" && <Badge variant="secondary">{`Starts in ${plural(startsIn, "frame")}`}</Badge>}
-      {phase === "after" && <Badge variant="secondary">Ended</Badge>}
-    </div>
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} onVideo={setElement} overlay={(box) => <>
+      <div data-testid="video-compare-side-labels" data-corner={labelCorner} className="pointer-events-none absolute" style={box ? { left: box.left, top: box.top, width: box.width, height: box.height } : { inset: 0 }}>
+        <div className={cn("absolute top-[var(--space-2)] flex flex-wrap items-center gap-[var(--space-1)]", labelCorner === "top-right" ? "right-[var(--space-2)] justify-end" : "left-[var(--space-2)]")}>
+          <Badge variant="invert">{label}</Badge>
+          {phase === "before" && <Badge variant="secondary">{`Starts in ${plural(startsIn, "frame")}`}</Badge>}
+          {phase === "after" && <Badge variant="secondary">Ended</Badge>}
+        </div>
+      </div>
+    </>} />
     <div aria-live="polite" className="pointer-events-none absolute right-[var(--space-2)] bottom-[var(--space-2)]">
       {buffering && <span className="inline-flex items-center gap-[var(--space-1)] border border-invert-foreground/20 bg-invert px-[var(--space-2)] py-[var(--space-1)] text-invert-foreground [font:var(--type-label)]"><Spinner className="size-3" />{`Buffering ${label}…`}</span>}
     </div>

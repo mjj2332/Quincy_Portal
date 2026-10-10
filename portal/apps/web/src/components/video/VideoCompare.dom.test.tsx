@@ -482,14 +482,15 @@ describe("Compare: the offset (#741 7c)", () => {
   const commit = async (value: string) => {
     offsetInput().focus();
     await type(offsetInput(), value);
-    await act(async () => { offsetInput().dispatchEvent(new Event("change", { bubbles: true })); });
+    await blurField();
     await flush(2);
   };
+  const blurField = () => act(async () => { offsetInput().blur(); });
 
   it("is labelled in frames with its help text, and starts at 0", async () => {
     await openCompare();
     expect(dialog()!.querySelector('label[for="video-compare-offset"]')!.textContent).toBe("Offset (frames)");
-    expect(tid("video-compare-offset-help")!.textContent).toContain("+12: v2 starts 12 frames after v3");
+    expect(tid("video-compare-offset-help")!.textContent).toBe("e.g. +12: v2 starts 12 frames after v3");
     expect(offsetInput().value).toBe("0");
   });
 
@@ -514,6 +515,52 @@ describe("Compare: the offset (#741 7c)", () => {
     expect(tid("video-compare-offset-notice")!.textContent).toMatch(/between .*299/);
     expect(stub.writes).toEqual([]);
     expect(cell("b").textContent).not.toContain("Starts in");
+  });
+
+  it("does not apply the offset while typing: only blur commits, and a half-typed value shows no error", async () => {
+    await openCompare({}, 5);
+    stub.writes.length = 0;
+    offsetInput().focus();
+    for (const partial of ["9", "99", "999", "9999", "99999"]) await type(offsetInput(), partial);
+    expect(tid("video-compare-offset-notice")).toBeNull();
+    expect(stub.writes).toEqual([]);
+    expect(stub.callsOf(vid("a"))).not.toContain("pause");
+    await blurField();
+    await flush(2);
+    expect(tid("video-compare-offset-notice")!.textContent).toMatch(/between .*299/);
+  });
+
+  it("Enter commits the typed offset", async () => {
+    await openCompare({}, 5);
+    offsetInput().focus();
+    await type(offsetInput(), "12");
+    expect(cell("b").textContent).not.toContain("Starts in");
+    await key("Enter", offsetInput());
+    await flush(2);
+    expect(cell("b").textContent).toContain("Starts in");
+  });
+
+  it("clearing the field to retype shows no error", async () => {
+    await openCompare({}, 5);
+    await commit("12");
+    offsetInput().focus();
+    await type(offsetInput(), "");
+    expect(tid("video-compare-offset-notice")).toBeNull();
+    await type(offsetInput(), "7");
+    await blurField();
+    await flush(2);
+    expect(tid("video-compare-offset-notice")).toBeNull();
+    expect(offsetInput().value).toBe("7");
+  });
+
+  it("an out-of-range value shows the bounds and keeps the offset that was applied", async () => {
+    await openCompare({}, 5);
+    await commit("12");
+    await commit("5000");
+    expect(tid("video-compare-offset-notice")!.textContent).toMatch(/between .*299/);
+    expect(cell("b").textContent).toContain("Starts in");
+    expect(cell("b").textContent).toContain("7");
+    expect(offsetInput().value).toBe("12");
   });
 
   it("Reset offset returns it to 0", async () => {
@@ -784,7 +831,7 @@ describe("Compare: notes, one column with a tab per side (#741 7c)", () => {
     const offset = tid("video-compare-offset") as HTMLInputElement;
     offset.focus();
     await type(offset, "10");
-    await act(async () => { offset.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { offset.blur(); });
     await flush(2);
     await land(5, 0);
     stub.writes.length = 0;
@@ -822,7 +869,7 @@ describe("Compare: notes, one column with a tab per side (#741 7c)", () => {
     const offset = tid("video-compare-offset") as HTMLInputElement;
     offset.focus();
     await type(offset, "12");
-    await act(async () => { offset.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { offset.blur(); });
     await flush(2);
     await key("i", dialog()!);
     expect(tid("video-pending-band")).toBeNull();
@@ -840,10 +887,52 @@ describe("Compare: notes, one column with a tab per side (#741 7c)", () => {
     const offset = tid("video-compare-offset") as HTMLInputElement;
     offset.focus();
     await type(offset, "10");
-    await act(async () => { offset.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { offset.blur(); });
     await flush(2);
     // Domain is now 0..309 (310 frames); B's frame 20 is shared frame 30.
     expect(fraction(lanes()[1]!, s.n2a.id)).toBeCloseTo(30 / 309, 4);
     expect(fraction(lanes()[0]!, s.n3a.id)).toBeCloseTo(50 / 309, 4);
+  });
+});
+
+
+describe("Compare: toolbar and stage furniture (#741 7c design review)", () => {
+  it("labels the selects with v-numbers, not A and B, and names the sound group", async () => {
+    await openCompare();
+    const labelFor = (side: string) => dialog()!.querySelector(`label[for="video-compare-select-${side}"]`)!.textContent;
+    expect(labelFor("a")).toBe("v3");
+    expect(labelFor("b")).toBe("v2");
+    expect(dialog()!.querySelector('[aria-labelledby="video-compare-sound-label"]')).not.toBeNull();
+    expect(tid("video-compare-sound-label")!.textContent).toBe("Sound");
+  });
+
+  it("draws each side's label through the stage overlay, B's at the top right in wipe", async () => {
+    await openCompare();
+    const labels = (side: "a" | "b") => cell(side).querySelector<HTMLElement>('[data-testid="video-compare-side-labels"]')!;
+    expect(labels("a").textContent).toContain("v3");
+    expect(labels("a").dataset.corner).toBe("top-left");
+    expect(labels("b").dataset.corner).toBe("top-left");
+    await click(tid("video-compare-mode-wipe")!);
+    await flush(2);
+    expect(labels("a").dataset.corner).toBe("top-left");
+    expect(labels("b").dataset.corner).toBe("top-right");
+    expect(labels("b").closest('[data-testid="video-stage"]')).not.toBeNull();
+  });
+
+  it("puts the caution notices on the light surface", async () => {
+    await openCompare({}, 5);
+    const input = tid("video-compare-offset") as HTMLInputElement;
+    input.focus();
+    await type(input, "5000");
+    await act(async () => { input.blur(); });
+    await flush(2);
+    expect(tid("video-compare-offset-notice")!.closest('[data-surface="default"]')).not.toBeNull();
+  });
+
+  it("keeps the notes column on the light surface, like the single viewer", async () => {
+    await openCompare({ parts: ["notes", "compare"] }, 5);
+    await click(tid("video-compare-notes-toggle")!);
+    await flush(4);
+    expect(tid("video-compare-notes")!.dataset.surface).toBe("default");
   });
 });

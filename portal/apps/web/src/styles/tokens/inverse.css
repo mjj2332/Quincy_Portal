@@ -14,7 +14,7 @@
    `data-surface="default"`, that restores every one of the same roles back
    to its normal `:root` value — otherwise a role the inverse block sets and
    the light panel doesn't re-set would inherit the dark value into the
-   light panel. The two blocks below therefore declare the same 23
+   light panel. The two blocks below therefore declare the same 24
    properties, one inverted, one restored. See
    docs/plans/TB8-09-Lightbox-Controls-Visual-Plan.md §2.3 and §2.3a for the
    full reasoning, including why both --ring and --focus-ring must be set
@@ -38,6 +38,7 @@
   --input:                 var(--greige-500);
   --control-off:           var(--greige-500);     /*  3.48:1 vs ink-900 — the switch track and its ink thumb (#724) */
   --surface-sunken:        var(--ink-700);
+  --field-bg:              var(--ink-800);        /* an input on the dark viewer: paper-000 left near-white text on white (#741 7c) */
   --primary:               var(--paper-050);      /* inverted: a solid button is paper on ink */
   --primary-foreground:    var(--ink-900);
   --primary-hover:         var(--greige-100);   /* only works because of §2.2 */
@@ -67,6 +68,7 @@
   --input:                 var(--border-hairline);
   --control-off:           var(--greige-500);
   --surface-sunken:        var(--bg-sunken);
+  --field-bg:              var(--paper-000);
   --primary:               var(--accent);
   --primary-foreground:    var(--accent-on);
   --primary-hover:         var(--ink-700);
