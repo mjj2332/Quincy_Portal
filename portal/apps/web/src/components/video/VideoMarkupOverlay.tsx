@@ -50,7 +50,8 @@ export function useVideoMarkup(session: VideoNotesSession): { overlay: ((box: Bo
   const svgRef = useRef<SVGSVGElement | null>(null);
   const drawButton = useRef<HTMLButtonElement | null>(null);
   const doneButton = useRef<HTMLButtonElement | null>(null);
-  const [refused, setRefused] = useState(false);
+  // The cap warning is tied to the stroke list it was raised for: any other list (undone, cleared, removed, replaced from outside, another note or Version) is not full.
+  const [refusedFor, setRefusedFor] = useState<readonly MarkupItem[] | null>(null);
 
   const playing = useFrameClockSelector(clock, (state) => state.playing, false);
   const frameNow = useFrameClockSelector(clock, (state) => (state.targetFrame === null ? state.frame : -1), -1);
@@ -71,15 +72,18 @@ export function useVideoMarkup(session: VideoNotesSession): { overlay: ((box: Bo
   const form: DrawForm = draw?.form ?? target ?? "composer";
   const items = useMemo<MarkupItem[]>(() => (form === "edit" ? open?.drawing.items ?? NO_ITEMS : slot.markup.items), [form, open?.drawing.items, slot.markup.items]);
 
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const refused = refusedFor !== null && refusedFor === items;
   const pen = slot.tool;
   const toPoint = useCallback((event: PointerSample): FreehandPoint => {
     const rect = svgRef.current?.getBoundingClientRect();
     return rect ? pointOf(rect, event) : { x: Number.NaN, y: Number.NaN };
   }, []);
-  const setItems = useCallback((next: MarkupItem[] | ((current: MarkupItem[]) => MarkupItem[])) => { setRefused(false); forms.setItems(assetId, form, next); }, [forms, assetId, form]);
+  const setItems = useCallback((next: MarkupItem[] | ((current: MarkupItem[]) => MarkupItem[])) => { forms.setItems(assetId, form, next); }, [forms, assetId, form]);
   const markup = useMarkup({
     enabled: drawing && canAnnotate, tool: pen, toPoint, strokes: items, setStrokes: setItems, limits: LIMITS,
-    onRefuse: () => { setRefused(true); },
+    onRefuse: () => { setRefusedFor(itemsRef.current); },
     history: { value: slot.history[form]?.steps ?? null, set: (next) => { forms.setHistory(assetId, form, next, forms.slot(assetId).draw?.frame ?? null); } },
   });
 

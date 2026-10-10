@@ -1108,3 +1108,20 @@ describe("Frames follow the drawing (#741 6b-ui)", () => {
     expect(tid("video-note-edit-set-in")).toBeNull();
   });
 });
+
+describe("The markup-is-full warning (#741 6b-ui)", () => {
+  const full = () => /as much markup as one note can hold/.test(dialog()!.textContent ?? "");
+  it("belongs to the drawing it was raised for: removing the drawing clears it, so drawing again starts clean", async () => {
+    await openFilm({ parts: ON }, 12);
+    const svg = await startDrawing(12);
+    await act(async () => { stores.made.at(-1)!.setItems(ids.asset2, "composer", Array.from({ length: 200 }, () => ({ ...STROKE }))); });
+    await stroke(svg, [500, 425], [900, 650]);
+    expect(full()).toBe(true);
+    await click(doneButton()!);
+    await click(tid("video-note-remove-drawing")!);
+    await click(drawButton()!);
+    await land(12);
+    await flush(2);
+    expect(full()).toBe(false);
+  });
+});
