@@ -38,7 +38,8 @@ afterEach(() => { stub?.dispose(); vi.useRealTimers(); });
 async function run(config: (typeof CONFIGS)[number], seed: number) {
   const rand = prng(seed);
   const pick = <T,>(items: readonly T[]): T => items[Math.floor(rand() * items.length)]!;
-  stub = installVideoElementStub({ rvfc: true });
+  // Odd seeds deliver the events play() / pause() / a seek cause later, interleaved with everything else, as a browser does.
+  stub = installVideoElementStub({ rvfc: true, asyncEvents: seed % 2 === 1 });
   const videos = { a: document.createElement("video"), b: document.createElement("video") };
   const fps = { a: config.fpsA, b: config.fpsB };
   const counts = { a: config.nA, b: config.nB };
@@ -77,6 +78,27 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
         if (v.seeking) { stub.finishSeek(v); present(side, clocks[side].getState().targetFrame ?? clocks[side].getState().frame); }
       }
     } },
+    { name: "oldFrame", passive: true, run: () => {
+      // A late presentation of the OLD position while a seek is still in flight.
+      const side = pick(["a", "b"] as const);
+      const v = videos[side];
+      if (!v.seeking) return;
+      present(side, Math.max(0, Math.min(clocks[side].lastFrame(), clocks[side].getState().frame + pick([-1, 0, 1, 2]))));
+    } },
+    { name: "deliver", passive: true, run: () => { stub.deliverEvents(pick([1, 2, 3, 100]), rand() < 0.5 ? videos[pick(["a", "b"] as const)] : undefined); } },
+    { name: "finishSide", passive: true, run: () => {
+      const side = pick(["a", "b"] as const);
+      const v = videos[side];
+      if (v.paused || v.seeking) return;
+      present(side, clocks[side].lastFrame());
+      stub.endPlayback(v);
+    } },
+    { name: "error", passive: true, run: () => {
+      const side = pick(["a", "b"] as const);
+      stub.fireError(videos[side]);
+      videos[side].pause();
+    } },
+    { name: "reverse", passive: false, run: () => { t.reverse(pick([1, 2])); } },
     { name: "waiting", passive: true, run: () => { stub.fireWaiting(videos[pick(["a", "b"] as const)]); } },
     { name: "playing", passive: true, run: () => { const s = pick(["a", "b"] as const); stub.setReadyState(videos[s], 4); stub.firePlaying(videos[s]); } },
     { name: "readyState", passive: true, run: () => { stub.setReadyState(videos[pick(["a", "b"] as const)], pick([1, 2, 4])); } },
@@ -97,7 +119,7 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
     { name: "seekSide", passive: false, run: () => { const side = pick(["a", "b"] as const); t.seekSide(side, Math.floor(rand() * counts[side])); } },
     { name: "rejectPlay", passive: false, run: () => { stub.rejectNextPlay("NotAllowedError"); } },
   ];
-  const weights = [10, 6, 2, 3, 1, 2, 3, 1, 1, 3, 1, 1, 1, 1, 1];
+  const weights = [10, 6, 2, 4, 1, 1, 1, 2, 3, 1, 2, 3, 1, 1, 3, 1, 1, 1, 1, 1];
 
   let prev: CompareTransportState = t.getState();
   for (let i = 0; i < EVENTS; i++) {
@@ -113,7 +135,8 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
       for (const side of ["a", "b"] as const) {
         if (now.phases[side] !== "live" && now.stalled !== side) expect(videos[side].paused, `${side} is ${now.phases[side]} but un-paused: ${where}`).toBe(true);
       }
-      expect(videos.a.paused && videos.b.paused && now.stalled === null, `playing with nothing running: ${where}`).toBe(false);
+      // A native stop whose event has not arrived yet cannot be known to the transport.
+      if (stub.pendingEvents() === 0) expect(videos.a.paused && videos.b.paused && now.stalled === null, `playing with nothing running: ${where}`).toBe(false);
     }
     if (!now.playing) expect(videos.a.paused && videos.b.paused, `not playing but an element runs: ${where}`).toBe(true);
     expect([videos.a, videos.b].filter((v) => !v.muted).length, `more than one unmuted: ${where}`).toBeLessThanOrEqual(1);

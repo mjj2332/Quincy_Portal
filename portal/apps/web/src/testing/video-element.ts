@@ -56,6 +56,10 @@ export type VideoElementStub = {
   rejectNextPlay(name: string, video?: HTMLVideoElement): void;
   /** Sets `video.error` and fires `error` (`code` 4 = source not supported). */
   fireError(video: HTMLVideoElement, code?: number, message?: string): void;
+  /** Delivers up to `count` queued media events (see `asyncEvents`), oldest first; only `video`'s when given. Returns how many ran. */
+  deliverEvents(count?: number, video?: HTMLVideoElement): number;
+  /** Events queued by `asyncEvents` and not yet delivered. */
+  pendingEvents(video?: HTMLVideoElement): number;
   /** Whether `requestVideoFrameCallback` is installed. */
   rvfc: boolean;
   dispose(): void;
@@ -63,7 +67,7 @@ export type VideoElementStub = {
 
 const MEMBERS = ["currentTime", "paused", "seeking", "duration", "videoWidth", "videoHeight", "muted", "playbackRate", "readyState", "error", "play", "pause", "requestVideoFrameCallback", "cancelVideoFrameCallback"] as const;
 
-export function installVideoElementStub(options: { rvfc?: boolean } = {}): VideoElementStub {
+export function installVideoElementStub(options: { rvfc?: boolean; asyncEvents?: boolean } = {}): VideoElementStub {
   const proto = HTMLVideoElement.prototype as unknown as Record<string, unknown>;
   const saved = new Map<string, PropertyDescriptor | undefined>();
   for (const name of MEMBERS) saved.set(name, Object.getOwnPropertyDescriptor(proto, name));
@@ -72,6 +76,12 @@ export function installVideoElementStub(options: { rvfc?: boolean } = {}): Video
   const calls: string[] = [];
   let nextHandle = 1;
   let nextRejection: string | null = null;
+  // With `asyncEvents` the events that `play()`, `pause()` and a `currentTime` write cause are queued, as in a browser, and arrive later.
+  const queue: Array<{ video: HTMLVideoElement; type: string }> = [];
+  const emit = (video: HTMLVideoElement, type: string) => {
+    if (options.asyncEvents) queue.push({ video, type });
+    else video.dispatchEvent(new Event(type));
+  };
 
   const slot = (element: object): Slot => {
     let found = slots.get(element);
@@ -88,7 +98,7 @@ export function installVideoElementStub(options: { rvfc?: boolean } = {}): Video
     set(this: HTMLVideoElement, value: number) {
       const s = slot(this);
       s.currentTime = value; s.seeking = true; s.writes.push(value); writes.push(value);
-      this.dispatchEvent(new Event("seeking"));
+      emit(this, "seeking");
     },
   });
   for (const name of ["paused", "seeking", "duration", "videoWidth", "videoHeight", "readyState", "error"] as const) define(name, { get(this: object) { return slot(this)[name]; } });
@@ -101,8 +111,8 @@ export function installVideoElementStub(options: { rvfc?: boolean } = {}): Video
       s.rejectPlay = null; nextRejection = null;
       return Promise.reject(new DOMException("play() refused", refusal));
     }
-    s.paused = false; this.dispatchEvent(new Event("play")); return Promise.resolve(); } });
-  define("pause", { value(this: HTMLVideoElement) { calls.push("pause"); const s = slot(this); s.calls.push("pause"); if (!s.paused) { s.paused = true; this.dispatchEvent(new Event("pause")); } } });
+    s.paused = false; emit(this, "play"); return Promise.resolve(); } });
+  define("pause", { value(this: HTMLVideoElement) { calls.push("pause"); const s = slot(this); s.calls.push("pause"); if (!s.paused) { s.paused = true; emit(this, "pause"); } } });
 
   const rvfc = options.rvfc ?? true;
   if (rvfc) {
@@ -130,6 +140,18 @@ export function installVideoElementStub(options: { rvfc?: boolean } = {}): Video
       s.duration = meta.duration; s.videoWidth = meta.videoWidth ?? s.videoWidth; s.videoHeight = meta.videoHeight ?? s.videoHeight; s.readyState = 1;
       video.dispatchEvent(new Event("loadedmetadata"));
     },
+    deliverEvents(count = Infinity, video) {
+      let done = 0;
+      for (let i = 0; i < queue.length && done < count;) {
+        const entry = queue[i]!;
+        if (video && entry.video !== video) { i++; continue; }
+        queue.splice(i, 1);
+        entry.video.dispatchEvent(new Event(entry.type));
+        done++;
+      }
+      return done;
+    },
+    pendingEvents: (video) => (video ? queue.filter((e) => e.video === video).length : queue.length),
     callsOf: (video) => slot(video).calls,
     fireWaiting(video) { video.dispatchEvent(new Event("waiting")); },
     firePlaying(video) { video.dispatchEvent(new Event("playing")); },
@@ -139,6 +161,7 @@ export function installVideoElementStub(options: { rvfc?: boolean } = {}): Video
     advance(video, seconds) { slot(video).currentTime += seconds; },
     endPlayback(video) { const s = slot(video); s.paused = true; video.dispatchEvent(new Event("ended")); },
     dispose() {
+      queue.length = 0;
       for (const name of MEMBERS) {
         const original = saved.get(name);
         if (original) Object.defineProperty(proto, name, original);

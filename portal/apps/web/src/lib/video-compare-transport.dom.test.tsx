@@ -16,12 +16,12 @@ type Rig = { va: HTMLVideoElement; vb: HTMLVideoElement; ca: VideoFrameClock; cb
 type FakeDoc = EventTarget & { visibilityState: "visible" | "hidden" };
 
 /** Two stubbed elements, each landed on frame 0, and a transport over them. */
-function rig(opts: { fpsA?: Rational; fpsB?: Rational; nA?: number; nB?: number; offset?: number; audible?: "a" | "b"; muted?: boolean } = {}): Rig {
+function rig(opts: { fpsA?: Rational; fpsB?: Rational; nA?: number; nB?: number; offset?: number; audible?: "a" | "b"; muted?: boolean; asyncEvents?: boolean } = {}): Rig {
   const fpsA = opts.fpsA ?? F25;
   const fpsB = opts.fpsB ?? F25;
   const nA = opts.nA ?? 100;
   const nB = opts.nB ?? 100;
-  stub = installVideoElementStub({ rvfc: true });
+  stub = installVideoElementStub({ rvfc: true, asyncEvents: opts.asyncEvents ?? false });
   const va = document.createElement("video");
   const vb = document.createElement("video");
   const ca = new VideoFrameClock(va, { fps: fpsA, frameCount: nA });
@@ -894,5 +894,71 @@ describe("CompareTransport: found by the random sequences (#741 7b)", () => {
     expect(r.va.paused).toBe(true);
     expect(r.t.getState().master).toBe("b");
     expect(r.vb.paused).toBe(false);
+  });
+});
+
+describe("CompareTransport: sol review round 5 (#741 7b)", () => {
+  it("queued pause events from self-issued stops do not stop playback that was restarted since", () => {
+    const r = rig({ asyncEvents: true });
+    r.t.play();
+    stub.deliverEvents();
+    show(r.va, 20); show(r.vb, 19);     // B trails A by one frame
+    r.t.play(2);                        // B: pause, seek to A's frame, play again, all inside one call
+    expect(r.vb.paused).toBe(false);
+    stub.deliverEvents();               // the queued pause arrives after the play
+    expect(r.t.getState()).toMatchObject({ playing: true, rate: 2 });
+    expect(r.cb.getState()).toMatchObject({ playing: true, rate: 2 });
+    expect(r.vb.paused).toBe(false);
+  });
+
+  it("an intermediate presentation of the old position while a seek is pending does not recover a stall", () => {
+    const r = rig();
+    r.t.play();
+    stub.presentFrame(r.vb, 71 / 25);                       // B runs far ahead
+    for (const f of [20, 21, 22]) show(r.va, f);            // drift correction seeks B back to A's frame
+    expect(r.cb.getState().targetFrame).toBe(22);
+    stub.fireWaiting(r.vb);
+    expect(r.t.getState().stalled).toBe("b");
+    const aAt = r.va.currentTime;
+    show(r.vb, 72);                                         // a late presentation of the OLD position
+    expect(r.t.getState()).toMatchObject({ stalled: "b", frame: 22 });
+    expect(r.va.currentTime).toBe(aAt);
+    land(r.vb, 22, F25);                                    // the seek lands: now it is progress
+    expect(r.t.getState().stalled).toBeNull();
+    expect(r.t.getState().frame).toBe(22);
+    expect(r.va.paused).toBe(false);
+  });
+
+  it("a stalled side that ends is a stall exit: the other side resumes", () => {
+    const r = rig({ nA: 100, nB: 50 });
+    r.t.play();
+    show(r.va, 48); show(r.vb, 48);
+    stub.fireWaiting(r.vb);
+    expect(r.t.getState().stalled).toBe("b");
+    expect(r.va.paused).toBe(true);
+    stub.endPlayback(r.vb);
+    expect(r.t.getState()).toMatchObject({ stalled: null, playing: true });
+    expect(r.vb.paused).toBe(true);
+    expect(r.va.paused).toBe(false);
+    expect(r.t.getState().phases.b).toBe("last");
+    land(r.va, 48, F25); land(r.va, 49, F25);   // the pause's confirmation seek, then the realignment
+    show(r.va, 55);
+    expect(r.t.getState().frame).toBe(55);
+  });
+});
+
+describe("CompareTransport: found by the extended random model (#741 7b)", () => {
+  it("both sides ending while the shared position still maps one of them live finishes instead of reporting playing", () => {
+    const r = rig({ audible: "b" });
+    r.t.play();
+    show(r.va, 27); show(r.vb, 27);
+    show(r.va, 99);
+    stub.endPlayback(r.va);               // A (the follower) ends far ahead of the shared position
+    expect(r.t.getState().phases.a).toBe("after");
+    expect(r.t.getState().playing).toBe(true);
+    show(r.vb, 99);
+    stub.endPlayback(r.vb);
+    expect(r.t.getState().playing).toBe(false);
+    expect(r.va.paused && r.vb.paused).toBe(true);
   });
 });

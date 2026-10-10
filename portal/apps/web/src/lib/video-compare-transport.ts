@@ -301,7 +301,11 @@ export class CompareTransport {
     return side === "a" ? a : bOf(a, this.offset(), this.sides.a.fps, this.sides.b.fps);
   }
 
-  private phaseOf(side: CompareSideId, a: number): SidePhase { return phase(this.localFrame(side, a), this.lastFrame(side)); }
+  /** The phase at shared position `a`. A side whose element has ended counts as `after` whatever the mapping says: it will not play again. */
+  private phaseOf(side: CompareSideId, a: number): SidePhase {
+    const mapped = phase(this.localFrame(side, a), this.lastFrame(side));
+    return this.runtime[side].ended && mapped === "live" ? "after" : mapped;
+  }
 
   /** The frame a side shows for a local frame that may lie outside its range: before it starts frame 0, after it ends its last. */
   private parkedFrame(side: CompareSideId, local: number): number { return Math.min(this.lastFrame(side), Math.max(0, local)); }
@@ -507,10 +511,10 @@ export class CompareTransport {
     if (wasPlaying && !state.playing && this.issuing === 0) { this.onUnexpectedStop(side); return; }
     if (state.stalled && state.playing && !this.stall && this.issuing === 0 && this.phaseOf(side, this.a) === "live") { this.enterStall(side); return; }
     // I3: a new presented frame on the stalled side is recovery, with or without a `playing` event.
-    if (this.stall === side && this.issuing === 0 && frameChanged && state.frame !== this.stallFrame) { this.recoverStall(side, state.frame); return; }
-    if (this.issuing > 0 || !frameChanged || this.master !== side || this.stall) return;
-    // A frame shown on the way to a seek's target is not progress.
-    if (state.targetFrame !== null && state.frame !== state.targetFrame) return;
+    // A frame shown on the way to a seek's target is not progress for anything: not recovery, not the position (one filter, here).
+    if (!frameChanged || (state.targetFrame !== null && state.frame !== state.targetFrame)) return;
+    if (this.stall === side && this.issuing === 0 && state.frame !== this.stallFrame) { this.recoverStall(side, state.frame); return; }
+    if (this.issuing > 0 || this.master !== side || this.stall) return;
     this.onMasterFrame(side, state.frame);
   }
 
@@ -523,6 +527,8 @@ export class CompareTransport {
     if (state.frame >= this.lastFrame(side) && state.targetFrame === null) {
       // The element ended: its terminal frame is the position now, and it is parked, never played again.
       this.runtime[side].ended = true;
+      // I3: the stalled side ending is a way out of the stall as well.
+      if (this.stall === side) { this.recoverStall(side, this.lastFrame(side)); this.refresh(); return; }
       if (this.master === side) this.a = this.sharedFrom(side, this.lastFrame(side));
       this.syncPhases();
       this.refresh();
