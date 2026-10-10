@@ -23,7 +23,7 @@ export type ActionOutcome = { ok: true } | { ok: false; message: string | null; 
 export type NoteActions = {
   reply: (root: GuestNoteThreadDto, body: string) => Promise<ActionOutcome>;
   edit: (root: GuestNoteThreadDto, note: GuestNoteDto, body: string, expectedRevision: number) => Promise<ActionOutcome>;
-  remove: (root: GuestNoteThreadDto, note: GuestNoteDto) => Promise<ActionOutcome>;
+  remove: (root: GuestNoteThreadDto, note: GuestNoteDto, expectedRevision: number) => Promise<ActionOutcome>;
 };
 export type Writing = {
   /** The link allows comments and the Project is not archived. */
@@ -74,7 +74,7 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
   const replyDraft = useNoteDraft(drafts, replyKey);
   const [editStatus, setEditStatus] = useState<Status>(IDLE);
   const [replyStatus, setReplyStatus] = useState<Status>(IDLE);
-  const [deleting, setDeleting] = useState<(Status & { noteId: string }) | null>(null);
+  const [deleting, setDeleting] = useState<(Status & { noteId: string; baseRevision: number; ackRevision: number | null }) | null>(null);
   const busy = (editDraft !== null && editStatus.pending) || (replyDraft !== null && replyStatus.pending) || (deleting?.pending ?? false);
 
   const own = (note: GuestNoteDto) => writing.canWrite && !note.deleted && note.author.kind === "guest" && note.author.self;
@@ -110,14 +110,17 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
   const confirmDelete = async () => {
     if (deleting === null || deletingNote === null || deleting.pending) return;
     setDeleting({ ...deleting, pending: true, problem: null });
-    const outcome = await writing.actions.remove(thread, deletingNote);
-    setDeleting((current) => (current === null ? null : outcome.ok ? null : { ...current, pending: false, problem: outcome.message }));
+    // The revision the confirm opened on (or the one a conflict then showed the guest), never the list's, which may have moved unseen.
+    const outcome = await writing.actions.remove(thread, deletingNote, deleting.ackRevision ?? deleting.baseRevision);
+    // A conflict showed the guest the latest version: confirming again is their acknowledgement, so the base moves to it (and only then).
+    const shown = outcome.ok || outcome.conflict === undefined ? undefined : [outcome.conflict, ...outcome.conflict.replies].find((candidate) => candidate.id === deletingNote.id);
+    setDeleting((current) => (current === null ? null : outcome.ok ? null : { ...current, pending: false, problem: outcome.message, ackRevision: shown?.revision ?? current.ackRevision }));
   };
 
   const menu = (note: GuestNoteDto) => own(note)
     ? <Menu triggerLabel="Actions for your note" label="Note actions" triggerClassName={cn(ICON_BUTTON, "ms-auto")} triggerTestId="guest-note-actions" trigger={<span aria-hidden="true">⋯</span>}>
       <MenuPrimitive.Item className={MENU_ITEM} disabled={busy || (note.id === thread.id && writing.composerOpen)} onClick={() => { if (note.id === thread.id) writing.editRoot(thread); else { setEditStatus(IDLE); drafts.set(editKey, { noteId: note.id, baseRevision: note.revision, baseText: note.body, ackRevision: null, text: note.body }); } }}>Edit</MenuPrimitive.Item>
-      <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={busy} onClick={() => { setDeleting({ noteId: note.id, problem: null, pending: false }); }}>Delete</MenuPrimitive.Item>
+      <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={busy} onClick={() => { setDeleting({ noteId: note.id, problem: null, pending: false, baseRevision: note.revision, ackRevision: null }); }}>Delete</MenuPrimitive.Item>
     </Menu>
     : null;
 

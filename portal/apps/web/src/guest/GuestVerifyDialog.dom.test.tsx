@@ -248,4 +248,25 @@ describe("GuestVerifyDialog: in-flight requests (#741 13c round 1)", () => {
     await flush();
     expect(onGone).not.toHaveBeenCalled();
   });
+  it("a reopen during the exit animation starts a fresh identity step, even when the cancelled request answers late", async () => {
+    // Hold the exit: the dialog stays mounted while closing, as it does in a browser.
+    const proto = Element.prototype as unknown as { getAnimations?: () => unknown[] };
+    const saved = proto.getAnimations;
+    proto.getAnimations = () => [{ finished: new Promise(() => undefined) }];
+    try {
+      let finish!: (result: SendCodeResult) => void;
+      sendCode.mockImplementationOnce(() => new Promise<SendCodeResult>((resolve) => { finish = resolve; }));
+      await mount();
+      await reachCodeStep();
+      await click(q("guest-verify-cancel"));
+      await setOpen(false);
+      await setOpen(true);
+      await act(async () => { finish({ ok: true, resendAfterSeconds: 60 }); });
+      await flush();
+      expect(q("guest-verify-identity-form")).not.toBeNull();
+      expect((q("guest-verify-send") as HTMLButtonElement).disabled).toBe(false);
+    } finally {
+      if (saved) proto.getAnimations = saved; else delete proto.getAnimations;
+    }
+  });
 });

@@ -33,9 +33,14 @@ export function GuestVerifyDialog({ api, open, onOpenChange, onVerified, onGone 
   // Every request the flow starts remembers this number; closing moves it on, so an answer that arrives after Cancel (and maybe a reopen) changes nothing.
   const generation = useRef(0);
   useEffect(() => { if (!open) generation.current += 1; }, [open]);
+  // Each opening gets its own flow, whether or not the previous one has finished its exit animation: a retained flow would keep a pending flag its cancelled request can never clear.
+  const [opening, setOpening] = useState(0);
+  const wasOpen = useRef(open);
+  if (open && !wasOpen.current) setOpening((n) => n + 1);
+  wasOpen.current = open;
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent data-testid="guest-verify-dialog" showCloseButton={false} className="max-w-sm">
-      <VerifyFlow api={api} generation={generation} onCancel={() => { generation.current += 1; onOpenChange(false); }} onVerified={onVerified} onGone={onGone} />
+      <VerifyFlow key={opening} api={api} generation={generation} onCancel={() => { generation.current += 1; onOpenChange(false); }} onVerified={onVerified} onGone={onGone} />
     </DialogContent>
   </Dialog>;
 }

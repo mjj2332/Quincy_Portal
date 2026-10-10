@@ -232,7 +232,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
   const actions = useMemo<NoteActions>(() => ({
     reply: async (root, body) => settle(await writer.run(root.id, () => api.replyToNote(root.id, body)), root.id),
     edit: async (root, note, body, expectedRevision) => settle(await writer.run(root.id, () => api.editNote(note.id, { expectedRevision, body })), root.id),
-    remove: async (root, note) => settle(await writer.run(root.id, () => api.deleteNote(note.id, note.revision)), note.id === root.id ? root.id : null),
+    remove: async (root, note, expectedRevision) => settle(await writer.run(root.id, () => api.deleteNote(note.id, expectedRevision)), note.id === root.id ? root.id : null),
   }), [api, writer, settle]);
 
   const onDrawingChange = useCallback((drawing: boolean) => { if (phone) setDrawerOpen(!drawing); }, [phone]);

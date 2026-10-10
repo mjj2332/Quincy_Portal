@@ -1051,3 +1051,36 @@ describe("the phone drawer", () => {
     expect(drawer()).not.toBeNull();
   });
 });
+
+describe("delete revision", () => {
+  const replyJson = (over: Partial<GuestNoteThreadDto>) => json({ ...mine(2, { revision: 5, ...over }), replies: [(({ replies: _replies, ...reply }) => reply)(mine(7, { parentId: noteId(2), startFrame: null, body: "Will do" }))] }, 201);
+
+  it("sends the revision the confirm opened on, even when the list moves meanwhile, and a conflict shows before the base moves", async () => {
+    notes = { [asset(10)]: [mine(2, { revision: 3 })] };
+    let deletes = 0;
+    extra = (url, init) => {
+      if (url === `${BASE}/notes/${noteId(2)}/replies` && init?.method === "POST") return replyJson({});
+      if (url === `${BASE}/notes/${noteId(2)}` && init?.method === "DELETE") {
+        deletes += 1;
+        return deletes === 1 ? json({ error: "note_conflict", thread: mine(2, { revision: 5, body: "Edited elsewhere" }) }, 409) : json({ thread: null });
+      }
+      return undefined;
+    };
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Delete"));
+    // The list moves on while the confirm is open (another session's change arrives through a write answer).
+    await click(byId("guest-note-reply-button"));
+    await typeInto(byId("guest-reply-body"), "Will do");
+    await submit("guest-reply-form");
+    expect(allById("guest-note-reply")).toHaveLength(1);
+    await click(byId("guest-delete-confirm"));
+    expect(requests("DELETE").at(-1)!.body).toEqual({ expectedRevision: 3 });
+    expect(byId("guest-delete-dialog")).not.toBeNull();
+    expect(byId("guest-delete-problem")).not.toBeNull();
+    // Having seen the conflict, confirming again is the acknowledgement: the base moves forward.
+    await click(byId("guest-delete-confirm"));
+    expect(requests("DELETE").at(-1)!.body).toEqual({ expectedRevision: 5 });
+    expect(byId("guest-delete-dialog")).toBeNull();
+  });
+});
