@@ -1,7 +1,7 @@
 import { useQuery, type QueryClient, type QueryFunctionContext, type UseQueryResult } from "@tanstack/react-query";
 import {
   videoDecisionRecordedResponseSchema, videoDecisionsResponseSchema, videoPremiumResponseSchema, videoReleaseResponseSchema, videoReleaseWithdrawnResponseSchema,
-  type VideoDecisionInput, type VideoDecisionsResponse, type VideoPremiumResponse, type VideoRelease, type VideoDecisionEvent,
+  type VideoDecisionInput, type VideoDecisionsResponse, type VideoDto, type VideoVersionDecisions, type VideoPremiumResponse, type VideoRelease, type VideoDecisionEvent,
 } from "@quincy/shared";
 import { apiDelete, apiGet, apiPost, apiPut } from "./api";
 import { getProjectQueryRuntime } from "./project-query-sync";
@@ -62,10 +62,22 @@ async function onFailure(ctx: ApprovalWriteContext, error: unknown): Promise<voi
   }
 }
 
-async function run<T>(ctx: ApprovalWriteContext, send: () => Promise<T>): Promise<T> {
+/**
+ * What a write's own answer settles, applied to the cache entries `ctx` names before `converge` asks the server again, so a failed refetch cannot leave the panel showing the old
+ * state. Each updater is a no-op when its entry is absent (nothing is created from a partial answer), and a Version's events are untouched except by a recorded decision.
+ */
+const patchVersion = (ctx: ApprovalWriteContext, change: (version: VideoVersionDecisions) => VideoVersionDecisions) =>
+  ctx.queryClient.setQueryData<VideoDecisionsResponse>(projectDataKeys.videoDecisions(ctx.projectId, ctx.videoId), (old) => old && { versions: old.versions.map((version) => (version.assetId === ctx.assetId ? change(version) : version)) });
+const patchVideo = (ctx: ApprovalWriteContext, response: VideoPremiumResponse) =>
+  ctx.queryClient.setQueryData<VideoDto[]>(projectDataKeys.videos(ctx.projectId), (old) => old?.map((video) => (video.id === ctx.videoId ? { ...video, premium: response.premium, premiumUnlocked: response.premiumUnlocked } : video)));
+const applyDecision = (ctx: ApprovalWriteContext, decision: VideoDecisionEvent) => patchVersion(ctx, (version) => (version.events.some((e) => e.id === decision.id) ? version : { ...version, events: [...version.events, decision] }));
+const applyRelease = (ctx: ApprovalWriteContext, release: VideoRelease) => patchVersion(ctx, (version) => ({ ...version, release }));
+const applyWithdrawn = (ctx: ApprovalWriteContext) => patchVersion(ctx, (version) => ({ ...version, release: null }));
+
+async function run<T>(ctx: ApprovalWriteContext, send: () => Promise<T>, apply?: (value: T) => void): Promise<T> {
   let value: T;
   try { value = await send(); } catch (error) { await onFailure(ctx, error); throw error; }
-  if (!retired.has(ctx.queryClient)) await converge(ctx);
+  if (!retired.has(ctx.queryClient)) { apply?.(value); await converge(ctx); }
   return value;
 }
 
@@ -73,18 +85,18 @@ const needVersion = (ctx: ApprovalWriteContext): string => { if (!ctx.assetId) t
 
 /** A client decision staff record themselves (the client approved by phone). Stored with no link. */
 export const recordClientDecision = (ctx: ApprovalWriteContext, input: VideoDecisionInput): Promise<VideoDecisionEvent> =>
-  run(ctx, async () => videoDecisionRecordedResponseSchema.parse(await apiPost<unknown, VideoDecisionInput>(`${versionPath(ctx.projectId, needVersion(ctx))}/decisions`, input)).decision);
+  run(ctx, async () => videoDecisionRecordedResponseSchema.parse(await apiPost<unknown, VideoDecisionInput>(`${versionPath(ctx.projectId, needVersion(ctx))}/decisions`, input)).decision, (decision) => applyDecision(ctx, decision));
 
 /** Releases the Version, citing the approval revision the person saw: the server refuses (409 `release_stale`) if a newer decision exists. */
 export const releaseVideoVersion = (ctx: ApprovalWriteContext, approvalRevision: number): Promise<VideoRelease> =>
-  run(ctx, async () => videoReleaseResponseSchema.parse(await apiPost<unknown, { approvalRevision: number }>(`${versionPath(ctx.projectId, needVersion(ctx))}/release`, { approvalRevision })).release);
+  run(ctx, async () => videoReleaseResponseSchema.parse(await apiPost<unknown, { approvalRevision: number }>(`${versionPath(ctx.projectId, needVersion(ctx))}/release`, { approvalRevision })).release, (release) => applyRelease(ctx, release));
 
 export const withdrawVideoRelease = (ctx: ApprovalWriteContext): Promise<void> =>
-  run(ctx, async () => { videoReleaseWithdrawnResponseSchema.parse(await apiDelete<unknown>(`${versionPath(ctx.projectId, needVersion(ctx))}/release`)); });
+  run(ctx, async () => { videoReleaseWithdrawnResponseSchema.parse(await apiDelete<unknown>(`${versionPath(ctx.projectId, needVersion(ctx))}/release`)); }, () => applyWithdrawn(ctx));
 
 export const setVideoPremium = (ctx: ApprovalWriteContext, premium: boolean): Promise<VideoPremiumResponse> =>
-  run(ctx, async () => videoPremiumResponseSchema.parse(await apiPut<unknown, { premium: boolean }>(`${videoPath(ctx.projectId, ctx.videoId)}/premium`, { premium })));
+  run(ctx, async () => videoPremiumResponseSchema.parse(await apiPut<unknown, { premium: boolean }>(`${videoPath(ctx.projectId, ctx.videoId)}/premium`, { premium })), (response) => patchVideo(ctx, response));
 
 /** Unlock (with an optional payment reference) or re-lock. */
 export const setVideoPremiumUnlock = (ctx: ApprovalWriteContext, input: { unlocked: boolean; paymentRef?: string }): Promise<VideoPremiumResponse> =>
-  run(ctx, async () => videoPremiumResponseSchema.parse(await apiPut<unknown, typeof input>(`${videoPath(ctx.projectId, ctx.videoId)}/premium-unlock`, input)));
+  run(ctx, async () => videoPremiumResponseSchema.parse(await apiPut<unknown, typeof input>(`${videoPath(ctx.projectId, ctx.videoId)}/premium-unlock`, input)), (response) => patchVideo(ctx, response));

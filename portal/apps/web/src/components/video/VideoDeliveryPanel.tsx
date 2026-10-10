@@ -71,13 +71,14 @@ export function VideoDeliveryPanel({ projectId, role, archived, video, version, 
       </FrameHeader>
 
       {decisions.isError && !decisions.data && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{decisions.error.message || "Decisions could not be loaded."}</span><Button type="button" variant="outline" className={TOUCH} onClick={() => { void decisions.refetch(); }}>Retry</Button></Notice>}
+      {decisions.isError && decisions.data && <Notice tone="caution" data-testid="delivery-stale" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>Couldn't refresh delivery status. What you see may be out of date.</span><Button type="button" variant="outline" data-testid="delivery-stale-retry" className={TOUCH} onClick={() => { void decisions.refetch(); }}>Retry</Button></Notice>}
       {loaded && events.length === 0 && <p data-testid="delivery-empty" className="m-0 text-foreground-secondary [font:var(--type-label)]">The client has not decided on this version.</p>}
       {ordered.length > 0 && <ItemGroup>
         {ordered.map((event) => <Item key={event.id} size="xs" className="px-0" data-testid="delivery-decision">
-          <ItemContent>
+          <ItemContent className="min-w-0">
             <ItemTitle>{`${actorName(event)} · ${decisionLabel(event)}`}</ItemTitle>
             <ItemDescription className="text-foreground-secondary">{`${formatWhen(event.at)} · ${event.link ? (event.link.label ? `Review link “${event.link.label}”` : "Review link") : "Recorded by staff"}`}</ItemDescription>
-            {event.note && <ItemDescription data-testid="delivery-decision-note" className="line-clamp-none whitespace-pre-wrap text-foreground">{event.note}</ItemDescription>}
+            {event.note && <ItemDescription data-testid="delivery-decision-note" className="line-clamp-none whitespace-pre-wrap text-foreground [overflow-wrap:anywhere]">{event.note}</ItemDescription>}
           </ItemContent>
         </Item>)}
       </ItemGroup>}

@@ -1,6 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
+import { projectDataKeys } from "./project-data";
 
 const order: string[] = [];
 const api = vi.hoisted(() => ({
@@ -100,5 +101,57 @@ describe("video approval data (#741 14-ui-staff)", () => {
     api.apiPost.mockRejectedValueOnce(new ApiError("offline", 0));
     await expect(releaseVideoVersion(ctx(), 2)).rejects.toBeInstanceOf(ApiError);
     expect(order).toEqual(["invalidate:video-decisions,videos"]);
+  });
+});
+
+describe("video approval data applies the write's answer to the cache before converging (#741 14-ui-staff)", () => {
+  const videosKey = () => projectDataKeys.videos(P);
+  const decisionsKey = () => projectDataKeys.videoDecisions(P, V);
+  const seedVideos = () => client.setQueryData(videosKey(), [{ id: V, premium: true, premiumUnlocked: true, title: "Main" }, { id: "other", premium: false, premiumUnlocked: false, title: "Other" }]);
+  const seedDecisions = (over: { events?: unknown[]; release?: unknown } = {}) => client.setQueryData(decisionsKey(), { versions: [{ assetId: A, version: 1, events: over.events ?? [], release: over.release ?? null }, { assetId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", version: 0, events: [], release: null }] });
+
+  it("a re-lock updates the Video in the Videos list even if the refetch never lands", async () => {
+    seedVideos();
+    api.apiPut.mockResolvedValueOnce({ premium: true, premiumUnlocked: false });
+    await setVideoPremiumUnlock(ctx(), { unlocked: false });
+    const videos = client.getQueryData<Array<{ id: string; premiumUnlocked: boolean }>>(videosKey())!;
+    expect(videos.find((v) => v.id === V)!.premiumUnlocked).toBe(false);
+    expect(videos.find((v) => v.id === "other")!.premiumUnlocked).toBe(false);
+  });
+
+  it("premium on and off merge into the Video too", async () => {
+    seedVideos();
+    api.apiPut.mockResolvedValueOnce({ premium: false, premiumUnlocked: false });
+    await setVideoPremium(ctx(), false);
+    expect(client.getQueryData<Array<{ id: string; premium: boolean }>>(videosKey())!.find((v) => v.id === V)!.premium).toBe(false);
+  });
+
+  it("release, withdraw and a recorded decision update the decisions entry", async () => {
+    seedDecisions({ events: [event] });
+    api.apiPost.mockResolvedValueOnce({ release });
+    await releaseVideoVersion(ctx(), 2);
+    const after = () => client.getQueryData<{ versions: Array<{ assetId: string; events: unknown[]; release: unknown }> }>(decisionsKey())!.versions;
+    expect(after().find((v) => v.assetId === A)!.release).toEqual(release);
+    api.apiDelete.mockResolvedValueOnce({ released: false });
+    await withdrawVideoRelease(ctx());
+    expect(after().find((v) => v.assetId === A)!.release).toBeNull();
+    expect(after().find((v) => v.assetId === A)!.events).toHaveLength(1);
+    const recorded = { ...event, id: "33333333-3333-4333-8333-333333333333", revision: 3, decision: "changes_requested" };
+    api.apiPost.mockResolvedValueOnce({ decision: recorded });
+    await recordClientDecision(ctx(), { decision: "changes_requested" });
+    expect(after().find((v) => v.assetId === A)!.events).toEqual([event, recorded]);
+  });
+
+  it("does not create cache entries that are absent, and leaves other Versions alone", async () => {
+    api.apiPut.mockResolvedValueOnce({ premium: true, premiumUnlocked: true });
+    await setVideoPremiumUnlock(ctx(), { unlocked: true });
+    api.apiPost.mockResolvedValueOnce({ release });
+    await releaseVideoVersion(ctx(), 2);
+    expect(client.getQueryData(videosKey())).toBeUndefined();
+    expect(client.getQueryData(decisionsKey())).toBeUndefined();
+    seedDecisions();
+    api.apiPost.mockResolvedValueOnce({ release });
+    await releaseVideoVersion(ctx(), 2);
+    expect(client.getQueryData<{ versions: Array<{ release: unknown }> }>(decisionsKey())!.versions[1]!.release).toBeNull();
   });
 });

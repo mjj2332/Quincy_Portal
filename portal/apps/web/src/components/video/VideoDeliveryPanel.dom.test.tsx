@@ -278,3 +278,22 @@ describe("VideoDeliveryPanel premium (#741 14-ui-staff)", () => {
     expect(enabled("delivery-unlock")).toBe(false);
   });
 });
+
+describe("VideoDeliveryPanel stale data (#741 14-ui-staff)", () => {
+  it("warns, and offers Retry, when a refresh fails while old decisions are still shown", async () => {
+    await mount();
+    expect(byId("delivery-stale")).toBeNull();
+    api.apiPost.mockResolvedValue({ decision: staffEvent(1, "approved") });
+    api.apiGet.mockRejectedValue(new ApiError("Bad request", 400));
+    await press("delivery-record-approved");
+    await press("delivery-record-confirm");
+    await flush();
+    const notice = byId("delivery-stale");
+    expect(notice).not.toBeNull();
+    expect(notice!.textContent).toContain("Couldn't refresh delivery status. What you see may be out of date.");
+    expect(byId("delivery-state")).not.toBeNull();
+    api.apiGet.mockImplementation(async () => decisions);
+    await press("delivery-stale-retry");
+    expect(byId("delivery-stale")).toBeNull();
+  });
+});
