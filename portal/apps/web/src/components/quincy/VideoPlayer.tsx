@@ -3,30 +3,29 @@ import { Maximize, Pause, Play, StepBack, StepForward, Volume2, VolumeX } from "
 import { framesToTimecode, rationalToNumber, type VideoVersionDto } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { useVideoFrameClock, type VideoFrameClock } from "../../lib/video-frame-clock";
-import { playerKeyAction, type PlayerKeyAction } from "../../lib/video-player-keys";
-import { nextShuttleRate } from "../../lib/video-shuttle";
-import { usePictureBox } from "../../lib/use-picture-box";
+import { usePlayerKeys } from "../../lib/use-player-keys";
 import { Button } from "../reui/button";
 import { Kbd, KbdGroup } from "../reui/kbd";
 import { Slider } from "../reui/slider";
 import { Toggle } from "../reui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
-import { Notice } from "./Notice";
+import { VideoStage } from "./VideoStage";
 import { VideoPendingRangeBand, VideoTimelineMarkers, type TimelineMarker } from "./VideoTimelineMarkers";
 
 /** What the player reads of a Version: where it streams, how it is timed, and how its timecode is labelled. */
 export type VideoPlayerVersion = Pick<VideoVersionDto, "streamUrl" | "fps" | "frameCount" | "width" | "height" | "tcNominalFps" | "tcDropFrame" | "startTimecodeFrames" | "hasAudio">;
 
 /** For a host that owns the keyboard scope (the review dialog): hands it the player's shortcut handler. True when the key was the player's. */
-export type VideoPlayerControl = { handleKeyDown(event: KeyboardEvent | ReactKeyboardEvent): boolean };
+export type VideoPlayerControl = {
+  handleKeyDown(event: KeyboardEvent | ReactKeyboardEvent): boolean;
+  /** The frame on screen: while playing the one last presented; paused, the one a seek in flight is bringing (what an I / O mark takes). */
+  currentFrame(): number;
+};
 
 const COARSE = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[721px]:min-h-11 max-[721px]:min-w-11";
 const MONO = "[font:var(--type-mono)] tabular-nums";
 // These chips keep the Lightbox's SHORTCUT_KBD skin (bordered, bg-secondary) rather than the Kbd primitive, to match the Lightbox legend.
 const LEGEND_KBD = "rounded-[var(--radius-xs)] border border-solid border-[length:var(--border-width-hair)] border-border bg-secondary px-[var(--space-1)] text-foreground [font:var(--weight-regular)_var(--text-2xs)/1.4_var(--font-mono)]";
-// What the timecode chip needs to show its frame part: mono glyph advance plus padding, border and the offset from the picture's edge.
-const CHIP_GLYPH_PX = 9;
-const CHIP_CHROME_PX = 40;
 const LEGEND = "flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)] text-foreground-secondary [font:var(--type-label)] pointer-coarse:hidden max-[721px]:hidden";
 
 function IconTip({ label, keys, children }: { label: string; keys?: string; children: React.ReactElement }) {
@@ -64,11 +63,9 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   onClockChange?: (clock: VideoFrameClock | null) => void;
 }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
-  const [failed, setFailed] = useState(false);
   const [muted, setMutedState] = useState(false);
   const playerRef = useRef<HTMLElement | null>(null);
   const clock = useVideoFrameClock(video, version);
-  const box = usePictureBox(video, { width: version.width, height: version.height });
 
   const base = useMemo(() => ({ nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame }), [version.tcNominalFps, version.tcDropFrame]);
   const start = version.startTimecodeFrames ?? 0;
@@ -76,10 +73,6 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const lastFrame = Math.max(0, version.frameCount - 1);
   const shownFrame = clock.targetFrame ?? clock.frame;
   const fullscreenAvailable = typeof document !== "undefined" && document.fullscreenEnabled === true;
-
-  const chipTimecode = timecode(clock.frame);
-  const chipFull = `${chipTimecode} · frame ${clock.frame}`;
-  const chip = box && box.width >= chipFull.length * CHIP_GLYPH_PX + CHIP_CHROME_PX ? chipFull : chipTimecode;
 
   const onClockChangeRef = useRef(onClockChange);
   onClockChangeRef.current = onClockChange;
@@ -89,70 +82,22 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     return () => { onClockChangeRef.current?.(null); };
   }, [instance]);
 
-  const apply = useCallback((action: PlayerKeyAction) => {
-    switch (action.type) {
-      case "toggle": if (nextShuttleRate(clock.rate, "toggle") === 0) clock.pause(); else clock.play(); break;
-      case "forward": {
-        const next = nextShuttleRate(clock.rate, "forward");
-        if (next === 0) clock.pause(); else if (next > 0) clock.setRate(next); else clock.reverse(-next);
-        break;
-      }
-      case "reverse": {
-        const next = nextShuttleRate(clock.rate, "reverse");
-        if (next === 0) clock.pause(); else if (next < 0) clock.reverse(-next); else clock.setRate(next);
-        break;
-      }
-      case "step": clock.step(action.delta); break;
-      case "home": clock.seekToFrame(0); break;
-      case "end": clock.seekToFrame(lastFrame); break;
-    }
-  }, [clock, lastFrame]);
-
-  /**
-   * K is down: J / L step a frame (the NLE chord). K pauses at once when playing; from paused it waits, so a K + J / K + L chord never
-   * starts playback, and a lone K press toggles on keyup. Cleared by its keyup anywhere, and by losing focus (which never toggles).
-   */
-  const kHeld = useRef<{ fromPaused: boolean; chord: boolean } | null>(null);
-  const applyRef = useRef(apply);
-  applyRef.current = apply;
-  useEffect(() => {
-    const onKeyUp = (event: KeyboardEvent) => {
-      if (event.key !== "k" && event.key !== "K") return;
-      const held = kHeld.current;
-      kHeld.current = null;
-      if (held && held.fromPaused && !held.chord) applyRef.current({ type: "toggle" });
-    };
-    const release = () => { kHeld.current = null; };
-    document.addEventListener("keyup", onKeyUp);
-    window.addEventListener("blur", release);
-    return () => { document.removeEventListener("keyup", onKeyUp); window.removeEventListener("blur", release); };
-  }, []);
-
-  const handleKeyDown = useCallback((event: KeyboardEvent | ReactKeyboardEvent): boolean => {
-    const native = "nativeEvent" in event ? event.nativeEvent : event;
-    const action = playerKeyAction(native, { k: kHeld.current !== null, marks: onMark !== undefined });
-    if (!action) return false;
-    event.preventDefault();
-    if (action.type === "mark") {
-      // The frame on screen: while playing, the one the browser last presented; paused, the one a seek in flight is bringing.
-      onMark?.(action.kind, clock.playing ? clock.frame : (clock.targetFrame ?? clock.frame));
-      return true;
-    }
-    const isK = native.key === "k" || native.key === "K";
-    if (isK) {
-      const playing = nextShuttleRate(clock.rate, "toggle") === 0;
-      kHeld.current = { fromPaused: !playing, chord: false };
-      if (playing) apply(action);
-      return true;
-    }
-    if (action.type === "step" && kHeld.current && (native.key === "j" || native.key === "J" || native.key === "l" || native.key === "L")) {
-      kHeld.current.chord = true;
-      clock.pause();
-    }
-    apply(action);
-    return true;
-  }, [apply, clock, onMark]);
-  useImperativeHandle(controlRef, () => ({ handleKeyDown }), [handleKeyDown]);
+  const markFrame = () => (clock.playing ? clock.frame : (clock.targetFrame ?? clock.frame));
+  const currentFrameRef = useRef(markFrame);
+  currentFrameRef.current = markFrame;
+  const handleKeyDown = usePlayerKeys({
+    rate: clock.rate,
+    play: clock.play,
+    pause: clock.pause,
+    setRate: clock.setRate,
+    reverse: clock.reverse,
+    step: clock.step,
+    home: () => { clock.seekToFrame(0); },
+    end: () => { clock.seekToFrame(lastFrame); },
+    markFrame,
+  }, onMark);
+  const currentFrame = useCallback(() => currentFrameRef.current(), []);
+  useImperativeHandle(controlRef, () => ({ handleKeyDown, currentFrame }), [handleKeyDown, currentFrame]);
 
   const toggleMuted = (next: boolean) => { setMutedState(next); clock.setMuted(next); };
   const playLabel = clock.playing ? "Pause" : "Play";
@@ -165,29 +110,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     onKeyDown={keyboard === "self" ? (event) => { handleKeyDown(event); } : undefined}
     className={cn("flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", className)}
   >
-    <div
-      data-testid="video-stage"
-      style={{ "--stage-ratio": `${version.width}/${version.height}` } as React.CSSProperties}
-      className="relative min-h-0 w-full flex-1 overflow-hidden bg-invert text-invert-foreground max-[721px]:mx-auto max-[721px]:max-h-[55dvh] max-[721px]:flex-none max-[721px]:[aspect-ratio:var(--stage-ratio)]"
-    >
-      <video
-        ref={setVideo}
-        src={version.streamUrl}
-        aria-label={title}
-        preload="auto"
-        playsInline
-        disablePictureInPicture
-        disableRemotePlayback
-        controlsList="nodownload noremoteplayback"
-        onContextMenu={(event) => { event.preventDefault(); }}
-        onError={() => { setFailed(true); }}
-        className="absolute inset-0 h-full w-full object-contain"
-      />
-      {box && <div data-testid="video-picture-box" className="pointer-events-none absolute" style={{ left: box.left, top: box.top, width: box.width, height: box.height }}>
-        <span data-testid="video-timecode-chip" aria-hidden="true" className={cn("absolute bottom-[var(--space-2)] left-[var(--space-2)] max-w-[calc(100%-var(--space-4))] overflow-hidden whitespace-nowrap border border-invert-foreground/20 bg-invert px-[var(--space-2)] py-[var(--space-1)] text-invert-foreground", MONO)}>{chip}</span>
-      </div>}
-      {failed && <div data-surface="default" className="absolute inset-x-[var(--space-3)] top-[var(--space-3)]"><Notice tone="caution" role="alert" className="bg-card">This version can't play in this browser.</Notice></div>}
-    </div>
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} onVideo={setVideo} />
 
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}
     <div data-testid="video-scrubber">
