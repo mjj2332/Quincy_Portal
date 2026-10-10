@@ -554,4 +554,33 @@ describe("review fixes (#741 6b-ui form store)", () => {
       expect(store.slot(V2).notice?.text).toMatch(/dropped/);
     });
   });
+
+  describe("the note moved on while its drawing was being read", () => {
+    const fresh = (over: Record<string, unknown> = {}) => note({ startFrame: 10, endFrame: null, drawingFrame: 40, hasMarkup: true, revision: 5, body: "Remote", ...over });
+    const opened = () => { const target = note({ startFrame: 10, endFrame: null, drawingFrame: 30, hasMarkup: true, revision: 4 }); store.openEdit(V2, target, target.id); return target; };
+
+    it("with no drawing change pending it adopts the current revision and drawing baseline, keeping typed text", () => {
+      const target = opened();
+      store.setOpenText(V2, "Mine");
+      expect(store.adoptCurrentNote(V2, fresh({ id: target.id }) as VideoNoteThreadDto)).toBe("adopted");
+      expect(store.slot(V2).open).toMatchObject({ text: "Mine", base: { revision: 5, body: "Remote" }, conflict: null, drawing: { hadDrawing: true, baseFrame: 40, touched: false } });
+    });
+
+    it("an untouched text follows the server's, so Save never sends the old text over a remote edit", () => {
+      const target = opened();
+      store.adoptCurrentNote(V2, fresh({ id: target.id }) as VideoNoteThreadDto);
+      expect(store.slot(V2).open?.text).toBe("Remote");
+    });
+
+    it("with a drawing change pending it takes the 5b conflict choice: the server's note is shown and Save anyway sends its revision", async () => {
+      const target = opened();
+      store.loadDrawing(V2, target.id, [stroke()], 30);
+      store.setItems(V2, "edit", [stroke(), arrow()]);
+      expect(store.adoptCurrentNote(V2, fresh({ id: target.id }) as VideoNoteThreadDto)).toBe("conflict");
+      expect(store.slot(V2).open?.conflict).toMatchObject({ revision: 5, body: "Remote" });
+      expect(store.slot(V2).open?.problem?.text).toMatch(/changed since you opened/i);
+      expect(store.slot(V2).open?.drawing.touched).toBe(true);
+      expect(store.adoptCurrentNote(V2, fresh({ id: target.id }) as VideoNoteThreadDto)).toBeNull(); // asked once
+    });
+  });
 });

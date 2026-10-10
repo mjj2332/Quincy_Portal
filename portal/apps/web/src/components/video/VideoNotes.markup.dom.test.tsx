@@ -936,4 +936,22 @@ describe("Code-review fixes (#741 6b-ui)", () => {
     await click(popup().querySelector<HTMLElement>('button[aria-label="Redo"]')!);
     expect(stores.made.at(-1)!.slot(ids.asset2).markup.items).toHaveLength(1);
   });
+
+  it("a drawing read refused for a newer revision: the open edit follows the refreshed note, keeps the typed text, and reads the drawing again", async () => {
+    const target = markNote({ author: { kind: "staff", person: me }, revision: 3 });
+    markups = { [target.id]: { revision: 4, markup: [STROKE] } };
+    await openFilm({ parts: ON, notes: { [ids.asset2]: [target], [ids.asset1]: [] } }, 45);
+    served[ids.asset2] = [{ ...target, revision: 4, body: "Remote words" } as VideoNoteThreadDto]; // another session saved
+    const prev = api.apiGet.getMockImplementation()!;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    api.apiGet.mockImplementation(async (path) => { if (/\/markup$/.test(path)) await gate; return prev(path); });
+    await chooseNoteAction(threadOf(target.id), "Terry", "Edit");
+    await type(threadOf(target.id).querySelector("textarea") as HTMLTextAreaElement, "My words");
+    release();
+    await flush(10);
+    expect(stores.made.at(-1)!.slot(ids.asset2).open).toMatchObject({ text: "My words", base: { revision: 4, body: "Remote words" } });
+    expect((tid("video-note-edit-draw") as HTMLButtonElement).disabled).toBe(false);
+    expect(threadOf(target.id).textContent).not.toMatch(/could not be loaded/i);
+  });
 });

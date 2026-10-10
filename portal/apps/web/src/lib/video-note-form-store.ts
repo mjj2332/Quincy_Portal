@@ -251,6 +251,31 @@ export function createNoteFormStore(key: string) {
       const drawing: EditDrawing = note.id === rootId && note.hasMarkup ? { ...NO_DRAWING, hadDrawing: true, baseFrame: note.drawingFrame, drawingFrame: note.drawingFrame } : NO_DRAWING;
       return open(assetId, { kind: "edit", noteId: note.id, rootId, text: note.body, base: { revision: note.revision, body: note.body, startFrame: note.startFrame, endFrame: note.endFrame }, frames, drawing, focusOnOpen: true }, seed);
     },
+    /**
+     * The note's drawing could not be read at the revision the edit was opened on, because the list now shows a newer one (another session saved in between). With no drawing change
+     * pending the edit simply moves to the current note: its revision and drawing baseline are adopted (an untouched text follows the server's, a typed one is kept) so the drawing can be
+     * read again. With a drawing change pending it takes the 5b editor's conflict choice instead (the server's note shown, "Save anyway" sending its revision). Null = nothing to do.
+     */
+    adoptCurrentNote(assetId: string, fresh: VideoNoteDto): "adopted" | "conflict" | null {
+      const held = slot(assetId);
+      const form = held.open;
+      if (!form || form.kind !== "edit" || form.noteId !== fresh.id || form.rootId !== fresh.id || held.op) return null;
+      if (fresh.revision === form.base.revision || form.conflict?.revision === fresh.revision) return null;
+      if (form.drawing.touched) {
+        const current: Opened = { revision: fresh.revision, body: fresh.body, startFrame: fresh.startFrame, endFrame: fresh.endFrame };
+        put(assetId, { open: { ...form, conflict: current, problem: { text: "This note changed since you opened it. Its current text is shown below; Save anyway replaces it with your edit." } } });
+        return "conflict";
+      }
+      const frames = !fresh.hasMarkup && fresh.startFrame !== null;
+      const seed: NoteMarks = frames ? { in: fresh.startFrame, out: fresh.endFrame === null ? null : fresh.endFrame - 1 } : EMPTY_MARKS;
+      const drawing: EditDrawing = fresh.hasMarkup ? { ...NO_DRAWING, hadDrawing: true, baseFrame: fresh.drawingFrame, drawingFrame: fresh.drawingFrame } : NO_DRAWING;
+      put(assetId, {
+        open: { ...form, text: form.text === form.base.body ? fresh.body : form.text, base: { revision: fresh.revision, body: fresh.body, startFrame: fresh.startFrame, endFrame: fresh.endFrame }, frames, drawing, conflict: null, problem: null },
+        history: { ...held.history, edit: null },
+        ...(held.marks.touched ? {} : { marks: { ...NO_MARKS, value: seed, seed } }),
+      });
+      return "adopted";
+    },
     /** True once, to the edit form that mounted because a person opened it: it then focuses its text field. */
     takeFocusOnOpen(assetId: string, noteId: string): boolean {
       const form = slot(assetId).open;

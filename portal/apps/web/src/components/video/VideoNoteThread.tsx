@@ -3,7 +3,7 @@ import { Lock, PencilIcon } from "lucide-react";
 import { VIDEO_NOTE_BODY_MAX, type Role, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto } from "@quincy/shared";
 import { cn } from "../../lib/utils";
 import { isOwnNote, noteAnchorLabel } from "../../lib/video-note-view";
-import { useVideoNoteMarkupQuery } from "../../lib/video-notes-data";
+import { MarkupRevisionMismatch, useVideoNoteMarkupQuery } from "../../lib/video-notes-data";
 import { effectiveMarks, frameOnScreen, preloadSavedDrawing, writeFailure, type NoteFormStore, type Problem } from "../../lib/video-note-form-store";
 import type { VideoFrameClock } from "../../lib/video-frame-clock";
 import type { NoteMarks } from "../../lib/video-note-marks";
@@ -253,6 +253,9 @@ function EditDrawingControls({ store, assetId, note, editing, clock, frameCount,
   const drawing = editing.drawing;
   const saved = drawing.hadDrawing && !drawing.remove && drawing.items === null;
   const query = useVideoNoteMarkupQuery(projectId, assetId, note.id, editing.base.revision, saved, role);
+  // The read was refused because the list moved on (another session saved): once the list shows the newer note, the edit follows it, or asks, as a 409 does.
+  const moved = query.error instanceof MarkupRevisionMismatch && note.revision !== editing.base.revision;
+  useEffect(() => { if (moved) store.adoptCurrentNote(assetId, note); }, [moved, store, assetId, note]);
   const framesChosen = useSyncExternalStore(store.subscribe, () => store.slot(assetId).marks.touched);
   const drawingNow = useSyncExternalStore(store.subscribe, () => store.slot(assetId).draw !== null);
   const loaded = query.data?.markup ?? null;
