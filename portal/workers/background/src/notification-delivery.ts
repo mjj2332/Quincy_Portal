@@ -1835,7 +1835,8 @@ async function deliverInApp(env: Env, outbox: OutboxRow, resolved: LegacyResolve
   if ((results[1]?.meta.changes ?? 0) !== 1) {
     const latest = await resolveRecipient(env, outbox);
     if (!latest.ok && latest.kind === "suppress") await suppressWholeOccurrence(env, outbox, token, latest.reason, now, latest.code);
-    else throw new Error("In-app ledger convergence lost ownership");
+    // #776 C: a removal suppressed this claimed row while the worker held it; it stays suppressed after an Undo, and nothing was inserted.
+    else if ((await env.DB.prepare("SELECT 1 AS one FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'in_app' AND status = 'suppressed' AND last_error_code = 'video_removed'").bind(outbox.id).first()) === null) throw new Error("In-app ledger convergence lost ownership");
     return;
   }
   await recordProjectDeadlineInAppLatency(env, outbox, now);
@@ -2148,7 +2149,10 @@ async function quotaReleaseAndRetry(env: Env, outbox: OutboxRow, token: string, 
     const results = await env.DB.batch([
       env.DB.prepare(`
         UPDATE notification_delivery_ledger
-        SET status = 'pending', last_error_code = ?, last_error = ?, updated_at = ?
+        SET status = CASE WHEN last_error_code = 'video_removed' THEN 'suppressed' ELSE 'pending' END,
+            last_error_code = CASE WHEN last_error_code = 'video_removed' THEN last_error_code ELSE ? END,
+            last_error = CASE WHEN last_error_code = 'video_removed' THEN last_error ELSE ? END,
+            updated_at = ?
         WHERE outbox_id = ? AND channel = 'email' AND status = 'processing'
           AND EXISTS (SELECT 1 FROM notification_outbox o WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ?)
       `).bind(classification.code, classification.message, retryAt, outbox.id, outbox.id, token),

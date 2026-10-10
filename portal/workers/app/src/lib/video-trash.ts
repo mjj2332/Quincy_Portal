@@ -1,6 +1,6 @@
-import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, SQL_UUID_V4 } from "@quincy/db";
+import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, SQL_UUID_V4, videoRemovalSuppressionStatements } from "@quincy/db";
 import {
-  NOTIFICATION_OUTBOX_EVENT_TYPES, ROLE_LABELS, VIDEO_TRASH_RETENTION_DAYS, VIDEO_TRASH_RETENTION_MS, VIDEO_UPLOAD_ACTIVE_STATUSES,
+  ROLE_LABELS, VIDEO_TRASH_RETENTION_DAYS, VIDEO_TRASH_RETENTION_MS, VIDEO_UPLOAD_ACTIVE_STATUSES,
   type Role, type VideoRemovalImpact, type VideoRemoveInput, type VideoTrashItem, type VideoTrashResponse,
 } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
@@ -78,26 +78,6 @@ const fencedCollectionCount = (db: D1Database, collectionId: string, now: number
 
 // ---- notifications -----------------------------------------------------------------------------------------------------------------------------------
 
-/**
- * Terminally suppresses what is outstanding for a removed subject, fenced on the removal's audit row. The subject is the Version (`$.video.assetId`) or, for a Video, the Video (`$.video.videoId`)
- * in the payload of a video-review outbox row. A pending or queued outbox row, a pending or deferred ledger row and a pending digest item go to `suppressed` WHATEVER the outbox row's lease state: a worker that
- * claimed the row before the removal and resumes after an Undo would pass the live re-check, but its send claim needs a `pending` ledger row, so it finds none. The outbox row itself is left to
- * its lease holder when `processing`. A ledger row that is `processing` is a send attempt already in flight and is kept, as is a delivery that already went out.
- */
-function suppressionStatements(db: D1Database, input: { projectId: string; path: "$.video.assetId" | "$.video.videoId"; subjectId: string; auditId: string; now: number }): D1PreparedStatement[] {
-  const binds = [input.now, NOTIFICATION_OUTBOX_EVENT_TYPES.projectVideoReview, input.projectId, input.path, input.subjectId, input.auditId] as const;
-  const fence = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?6)";
-  const subject = "o.event_type = ?2 AND o.project_id = ?3 AND json_extract(o.payload_json, ?4) = ?5";
-  return [
-    db.prepare(`UPDATE notification_digest_items SET state = 'suppressed', outcome_code = 'video_removed', updated_at = ?1
-      WHERE state = 'pending' AND ledger_id IN (SELECT l.id FROM notification_delivery_ledger l JOIN notification_outbox o ON o.id = l.outbox_id WHERE ${subject}) AND ${fence}`).bind(...binds),
-    db.prepare(`UPDATE notification_delivery_ledger SET status = 'suppressed', last_error_code = 'video_removed', last_error = 'The Video or Version was removed.', updated_at = ?1
-      WHERE status IN ('pending', 'deferred') AND outbox_id IN (SELECT o.id FROM notification_outbox o WHERE ${subject}) AND ${fence}`).bind(...binds),
-    db.prepare(`UPDATE notification_outbox SET status = 'suppressed', last_error_code = 'video_removed', last_error = 'The Video or Version was removed.', lease_token = NULL, lease_expires_at = NULL, completed_at = ?1, updated_at = ?1
-      WHERE event_type = ?2 AND project_id = ?3 AND status IN ('pending', 'queued') AND json_extract(payload_json, ?4) = ?5 AND ${fence}`).bind(...binds),
-  ];
-}
-
 // ---- remove ------------------------------------------------------------------------------------------------------------------------------------------
 
 export type RemoveOutcome = { kind: "removed" } | { kind: "archived" } | { kind: "not_found" } | { kind: RemovalRefusal; impact: VideoRemovalImpact };
@@ -127,7 +107,7 @@ export async function removeVersion(db: D1Database, input: { projectId: string; 
     bind("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?14, ?5, 'video.remove', 'video', ?13, ?15, ?2 WHERE changes() > 0", 15),
     ...fencedRecompute(db, videoId, now, versionAudit),
     fencedCollectionCount(db, collectionId, now, versionAudit),
-    ...suppressionStatements(db, { projectId, path: request.removeVideo ? "$.video.videoId" : "$.video.assetId", subjectId: request.removeVideo ? videoId : assetId, auditId: versionAudit, now }),
+    ...videoRemovalSuppressionStatements(db, { projectId, path: request.removeVideo ? "$.video.videoId" : "$.video.assetId", subjectId: request.removeVideo ? videoId : assetId, auditId: versionAudit, now }),
   ]);
   if (await db.prepare("SELECT 1 AS one FROM audit_log WHERE id = ?1").bind(versionAudit).first()) return { kind: "removed" };
   return await diagnoseRemoval(db, projectId, assetId, request, now);
