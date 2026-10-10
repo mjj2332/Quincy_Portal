@@ -883,4 +883,57 @@ describe("Code-review fixes (#741 6b-ui)", () => {
     await present(12);
     expect(strokesOnScreen()).toBe(1); // the draft again on its frame
   });
+
+  it("Remove drawing stays off while the saved drawing is loading and after a failed read (Save could otherwise delete what was never read)", async () => {
+    const target = markNote({ author: { kind: "staff", person: me } });
+    markups = { [target.id]: { revision: target.revision, markup: [STROKE] } };
+    await openFilm({ parts: ON, notes: { [ids.asset2]: [target], [ids.asset1]: [] } }, 45);
+    const prev = api.apiGet.getMockImplementation()!;
+    api.apiGet.mockImplementation((path) => (/\/markup$/.test(path) ? new Promise(() => {}) : prev(path)));
+    await chooseNoteAction(threadOf(target.id), "Terry", "Edit");
+    await flush(6);
+    expect((tid("video-note-edit-remove-drawing") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("Remove drawing stays off after a failed read", async () => {
+    const target = markNote({ author: { kind: "staff", person: me } });
+    await openFilm({ parts: ON, notes: { [ids.asset2]: [target], [ids.asset1]: [] } }, 45); // no markups entry: 404
+    await chooseNoteAction(threadOf(target.id), "Terry", "Edit");
+    await flush(6);
+    expect((tid("video-note-edit-remove-drawing") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("Remove drawing is on once the saved drawing has been read and every item is supported", async () => {
+    await editingSaved();
+    expect((tid("video-note-edit-remove-drawing") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("drawing on an edit selects its note, so the edited drawing stays on the picture after Done", async () => {
+    const target = await editingSaved();
+    expect(threadOf(target.id).dataset.selected).toBe("false");
+    await click(tid("video-note-edit-draw")!);
+    await land(30);
+    await flush(2);
+    const svg = layer(); sized(svg);
+    await stroke(svg, [500, 425], [900, 650]);
+    await click(doneButton()!);
+    expect(threadOf(target.id).dataset.selected).toBe("true");
+    expect(strokesOnScreen()).toBe(2);
+  });
+
+  it("undo and redo steps live in the form store: after a Version round trip Redo is still there", async () => {
+    await openFilm({ parts: ON }, 12);
+    const svg = await startDrawing(12);
+    await stroke(svg, [500, 425], [900, 650]);
+    await click(popup().querySelector<HTMLElement>('button[aria-label="Undo"]')!);
+    expect(popup().querySelector<HTMLButtonElement>('button[aria-label="Redo"]')!.disabled).toBe(false);
+    await click(doneButton()!);
+    await pickVersion("v1");
+    await pickVersion("v2");
+    await loadFilm(12);
+    await startDrawing(12);
+    expect(popup().querySelector<HTMLButtonElement>('button[aria-label="Redo"]')!.disabled).toBe(false);
+    await click(popup().querySelector<HTMLElement>('button[aria-label="Redo"]')!);
+    expect(stores.made.at(-1)!.slot(ids.asset2).markup.items).toHaveLength(1);
+  });
 });

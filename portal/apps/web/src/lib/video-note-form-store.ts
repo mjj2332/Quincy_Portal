@@ -1,6 +1,7 @@
 import { strokesJsonBytes, STROKE_LIMITS, VIDEO_MARKUP_MAX_BYTES, VIDEO_NOTE_PASTE_MAX, VIDEO_NOTE_PASTE_OFFSET_MAX, type MarkupItem, type VideoMarkup, type VideoNoteCreateInput, type VideoNotePasteCommitResponse, type VideoNotePastePreviewResponse, VideoNoteDto, VideoNoteEditInput, VideoNoteThreadDto, VideoNoteVisibility } from "@quincy/shared";
 import type { FrameClockState } from "./video-frame-clock";
 import type { MarkupTool } from "./use-markup";
+import type { MarkupHistory } from "./markup-history";
 import { classifyVideoNoteError, MARKUP_ERROR_TEXT } from "./video-note-errors";
 import { EMPTY_MARKS, markFrame, marksToFrames, type NoteMarks } from "./video-note-marks";
 
@@ -66,8 +67,14 @@ export type PasteOp = { opId: number; status: "idle" | "committing" | "failed" }
  */
 export type PastePreview = { generation: number; status: "idle" | "loading" | "ok" | "failed" | "invalid"; plan: VideoNotePastePreviewResponse | null; error: string | null; notice: string | null; failure: { text: string; retry: boolean } | null };
 export type PastePreviewRun = (offsetFrames: number) => Promise<VideoNotePastePreviewResponse>;
-export type Slot = { composer: Composer; /** The composer's drawing, the pen, and draw mode (#741 6b-ui). */ markup: ComposerMarkup; tool: MarkupTool; draw: DrawState | null; open: OpenForm | null; marks: StoredMarks; op: Op | null; spent: boolean; /** Why a form closed by itself (its note was deleted elsewhere). */ notice: (Problem & { rootId: string }) | null; paste: PasteDraft; pasteOp: PasteOp; pasteView: PastePreview; /** Whether the paste dialog is open, and what the last paste said. */ pasteOpen: boolean; pasteResult: string | null };
+export type Slot = { composer: Composer; /** The composer's drawing, the pen, and draw mode (#741 6b-ui). */ markup: ComposerMarkup; tool: MarkupTool; draw: DrawState | null; /** The undo and redo steps of each form's drawing (the hook's history, kept here so it outlives the player and a Version switch). Valid only for the very array it was last anchored to. */ history: DrawHistories; open: OpenForm | null; marks: StoredMarks; op: Op | null; spent: boolean; /** Why a form closed by itself (its note was deleted elsewhere). */ notice: (Problem & { rootId: string }) | null; paste: PasteDraft; pasteOp: PasteOp; pasteView: PastePreview; /** Whether the paste dialog is open, and what the last paste said. */ pasteOpen: boolean; pasteResult: string | null };
 
+/** A form's undo / redo steps and the frame they were made on (a drawing has exactly one frame, so steps never cross frames). */
+export type DrawHistory = { steps: MarkupHistory; frame: number | null };
+export type DrawHistories = { composer: DrawHistory | null; edit: DrawHistory | null };
+const NO_HISTORIES: DrawHistories = Object.freeze({ composer: null, edit: null });
+/** A fresh empty draft each time: the history anchors to an array by identity, so a reused empty array could revive another draft's steps. */
+const emptyMarkup = (revision: number): ComposerMarkup => ({ items: [], drawingFrame: null, revision });
 const NO_DRAWING: EditDrawing = Object.freeze({ hadDrawing: false, baseFrame: null, items: null, drawingFrame: null, remove: false, touched: false, revision: 0 });
 const EMPTY_MARKUP: ComposerMarkup = Object.freeze({ items: Object.freeze([]) as unknown as MarkupItem[], drawingFrame: null, revision: 0 });
 export const DEFAULT_PEN: MarkupTool = Object.freeze({ kind: "freehand", color: "#e64b3c", width: 4 });
@@ -77,7 +84,7 @@ const EMPTY_PASTE: PasteDraft = Object.freeze({ offset: 0, unticked: Object.free
 const EMPTY_PASTE_OP: PasteOp = Object.freeze({ opId: 0, status: "idle" });
 const EMPTY_PASTE_VIEW: PastePreview = Object.freeze({ generation: 0, status: "idle", plan: null, error: null, notice: null, failure: null });
 const PASTE_STALE_NOTICE = "Some notes changed since the preview, so the list was refreshed. Check it, then paste again.";
-const EMPTY_SLOT: Slot = Object.freeze({ composer: EMPTY_COMPOSER, markup: EMPTY_MARKUP, tool: DEFAULT_PEN, draw: null, open: null, marks: NO_MARKS, op: null, spent: false, notice: null, paste: EMPTY_PASTE, pasteOp: EMPTY_PASTE_OP, pasteView: EMPTY_PASTE_VIEW, pasteOpen: false, pasteResult: null });
+const EMPTY_SLOT: Slot = Object.freeze({ composer: EMPTY_COMPOSER, markup: EMPTY_MARKUP, tool: DEFAULT_PEN, draw: null, history: NO_HISTORIES, open: null, marks: NO_MARKS, op: null, spent: false, notice: null, paste: EMPTY_PASTE, pasteOp: EMPTY_PASTE_OP, pasteView: EMPTY_PASTE_VIEW, pasteOpen: false, pasteResult: null });
 
 export function effectiveMarks(marks: StoredMarks, clock: object | null): { value: NoteMarks; touched: boolean } {
   return marks.clock !== null && marks.clock === clock ? marks : { value: marks.seed, touched: false };
@@ -149,7 +156,10 @@ export function createNoteFormStore(key: string) {
   const slot = (assetId: string): Slot => slots.get(assetId) ?? EMPTY_SLOT;
   const put = (assetId: string, patch: Partial<Slot>) => {
     if (dead) return;
-    slots.set(assetId, { ...slot(assetId), ...patch });
+    const prev = slot(assetId);
+    // The edit's steps belong to the note being edited: another note, or none, starts clean.
+    const sameEdit = !("open" in patch) || prev.open?.noteId === patch.open?.noteId;
+    slots.set(assetId, { ...prev, ...patch, ...(sameEdit || "history" in patch ? {} : { history: { ...prev.history, edit: null } }) });
     listeners.forEach((listener) => { listener(); });
   };
   function startPreview(assetId: string, run: PastePreviewRun, offset: number) {
@@ -295,7 +305,8 @@ export function createNoteFormStore(key: string) {
       const nowMarkup = slot(assetId).markup;
       put(assetId, {
         op: null, marks: NO_MARKS, composer: now.revision === op.revision ? { ...EMPTY_COMPOSER, revision: now.revision + 1 } : now,
-        markup: nowMarkup.revision === markupRevision ? { ...EMPTY_MARKUP, revision: nowMarkup.revision + 1 } : nowMarkup,
+        markup: nowMarkup.revision === markupRevision ? emptyMarkup(nowMarkup.revision + 1) : nowMarkup,
+        ...(nowMarkup.revision === markupRevision ? { history: { ...slot(assetId).history, composer: null } } : {}),
       });
     },
 
@@ -307,7 +318,7 @@ export function createNoteFormStore(key: string) {
       if (!opened || opened.kind !== "edit" || held.op || !text) return;
       const dropped = !markupOn && opened.drawing.touched;
       const form: OpenForm = dropped ? { ...opened, drawing: { ...opened.drawing, items: null, remove: false, touched: false, drawingFrame: opened.drawing.baseFrame, revision: opened.drawing.revision + 1 } } : opened;
-      if (dropped) put(assetId, { open: form, ...endEditDraw(assetId) });
+      if (dropped) put(assetId, { open: form, history: { ...held.history, edit: null }, ...endEditDraw(assetId) });
       const say = () => { if (dropped && slot(assetId).open === null) put(assetId, { notice: { text: MARKUP_OFF_DROPPED, rootId: form.rootId } }); };
       const against = form.conflict ?? form.base;
       const input: { expectedRevision: number; body?: string; startFrame?: number; endFrame?: number | null; markup?: VideoMarkup | null; drawingFrame?: number } = { expectedRevision: against.revision };
@@ -426,13 +437,13 @@ export function createNoteFormStore(key: string) {
     loadDrawing(assetId: string, noteId: string, items: MarkupItem[], frame: number) {
       const open_ = slot(assetId).open;
       if (!open_ || open_.kind !== "edit" || open_.noteId !== noteId || open_.drawing.items !== null) return;
-      put(assetId, { open: { ...open_, drawing: { ...open_.drawing, items, drawingFrame: frame, baseFrame: open_.drawing.baseFrame ?? frame } } });
+      put(assetId, { open: { ...open_, drawing: { ...open_.drawing, items, drawingFrame: frame, baseFrame: open_.drawing.baseFrame ?? frame } }, history: { ...slot(assetId).history, edit: null } });
     },
     /** Takes the composer's drawing away (the chip's Remove). */
     clearMarkup(assetId: string) {
       const held = slot(assetId);
       if (held.markup.items.length === 0 && held.markup.drawingFrame === null) return;
-      put(assetId, { markup: { ...EMPTY_MARKUP, revision: held.markup.revision + 1 }, spent: false, ...(held.draw?.form === "composer" ? { draw: null } : {}) });
+      put(assetId, { markup: emptyMarkup(held.markup.revision + 1), history: { ...held.history, composer: null }, spent: false, ...(held.draw?.form === "composer" ? { draw: null } : {}) });
     },
     /** Marks the open edit's saved drawing for removal (Save sends `markup: null`). */
     removeDrawing(assetId: string) {
@@ -441,17 +452,19 @@ export function createNoteFormStore(key: string) {
       if (!open_.drawing.hadDrawing) {
         // A note that never had a drawing: Remove drops the unsaved additions and releases their frozen frame.
         if (!open_.drawing.touched && open_.drawing.items === null) return;
-        put(assetId, { open: { ...open_, drawing: { ...open_.drawing, items: null, remove: false, touched: false, drawingFrame: null, revision: open_.drawing.revision + 1 } }, spent: false, ...endEditDraw(assetId) });
+        put(assetId, { open: { ...open_, drawing: { ...open_.drawing, items: null, remove: false, touched: false, drawingFrame: null, revision: open_.drawing.revision + 1 } }, history: { ...slot(assetId).history, edit: null }, spent: false, ...endEditDraw(assetId) });
         return;
       }
-      put(assetId, { open: { ...open_, drawing: { ...open_.drawing, items: null, remove: true, touched: true, drawingFrame: open_.drawing.baseFrame, revision: open_.drawing.revision + 1 } }, spent: false, ...endEditDraw(assetId) });
+      put(assetId, { open: { ...open_, drawing: { ...open_.drawing, items: null, remove: true, touched: true, drawingFrame: open_.drawing.baseFrame, revision: open_.drawing.revision + 1 } }, history: { ...slot(assetId).history, edit: null }, spent: false, ...endEditDraw(assetId) });
     },
     /** Undoes a removal that has not been saved. */
     keepDrawing(assetId: string) {
       const open_ = slot(assetId).open;
       if (!open_ || open_.kind !== "edit" || !open_.drawing.remove) return;
-      put(assetId, { open: { ...open_, drawing: { ...open_.drawing, remove: false, touched: false, items: null, drawingFrame: open_.drawing.baseFrame, revision: open_.drawing.revision + 1 } } });
+      put(assetId, { open: { ...open_, drawing: { ...open_.drawing, remove: false, touched: false, items: null, drawingFrame: open_.drawing.baseFrame, revision: open_.drawing.revision + 1 } }, history: { ...slot(assetId).history, edit: null } });
     },
+    /** Stores a form's undo / redo steps (the drawing hook's, in controlled mode). */
+    setHistory(assetId: string, form: DrawForm, steps: MarkupHistory, frame: number | null) { put(assetId, { history: { ...slot(assetId).history, [form]: { steps, frame } } }); },
     setTool(assetId: string, patch: Partial<MarkupTool>) { put(assetId, { tool: { ...slot(assetId).tool, ...patch } }); },
 
     /** The first Escape of a dirty form is held (the text stays); the next one is not. A clean edit or reply closes. Nothing here moves focus: the answer says where it should go. */

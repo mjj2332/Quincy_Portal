@@ -43,6 +43,11 @@ export interface UseMarkupOptions {
   beforeStart?: (event: ReactPointerEvent<Element>) => boolean | Promise<boolean>;
   /** Caps a commit, undo or redo must fit. Defaults to the item cap and no byte cap. */
   limits?: MarkupLimits;
+  /**
+   * Controlled history: when given, the undo and redo steps live with the caller (a form store that outlives this component) instead of in the hook. `value` null = no steps yet.
+   * Omitted = the hook keeps its own, exactly as before (the photo Lightbox).
+   */
+  history?: { value: MarkupHistory | null; set: (next: MarkupHistory) => void };
   /** Called when a gesture or a restore was refused for the limits. */
   onRefuse?: () => void;
 }
@@ -67,9 +72,10 @@ function shapeLongEnough(item: MarkupItem, dx: number, dy: number): boolean {
   return Math.hypot(dx, dy) >= MIN_SHAPE_LENGTH_PX;
 }
 
-export function useMarkup({ enabled, tool, toPoint, strokes, setStrokes, beforeStart, limits = DEFAULT_LIMITS, onRefuse }: UseMarkupOptions) {
+export function useMarkup({ enabled, tool, toPoint, strokes, setStrokes, beforeStart, limits = DEFAULT_LIMITS, onRefuse, history: external }: UseMarkupOptions) {
   const [active, setActiveState] = useState<MarkupItem | null>(null);
-  const [history, setHistoryState] = useState<MarkupHistory>(() => createHistory(strokes));
+  const [ownHistory, setOwnHistory] = useState<MarkupHistory>(() => createHistory(strokes));
+  const history = external ? external.value ?? createHistory(strokes) : ownHistory;
   const gestureRef = useRef<Gesture | null>(null);
   // A start waiting on an async gate: live until its pointer ends, the hook is cancelled or disabled, or it unmounts.
   const pendingRef = useRef<{ token: number; pointerId: number } | null>(null);
@@ -78,7 +84,8 @@ export function useMarkup({ enabled, tool, toPoint, strokes, setStrokes, beforeS
   const strokesRef = useRef(strokes); strokesRef.current = strokes;
   const historyRef = useRef(history); historyRef.current = history;
   // `setStrokes` is read from here too: undo, redo and Clear are stable callbacks, and a caller that retargets the list (another form) must be obeyed by them.
-  const latest = useRef({ tool, toPoint, limits, onRefuse, enabled, setStrokes }); latest.current = { tool, toPoint, limits, onRefuse, enabled, setStrokes };
+  const latest = useRef({ tool, toPoint, limits, onRefuse, enabled, setStrokes, setExternal: external?.set }); latest.current = { tool, toPoint, limits, onRefuse, enabled, setStrokes, setExternal: external?.set };
+  const setHistoryState = (next: MarkupHistory) => { if (latest.current.setExternal) latest.current.setExternal(next); else setOwnHistory(next); };
 
   const setActive = (item: MarkupItem | null) => { setActiveState(item); };
   const apply = (result: MarkupStep) => {

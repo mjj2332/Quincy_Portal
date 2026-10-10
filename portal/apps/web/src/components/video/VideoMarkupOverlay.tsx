@@ -73,6 +73,7 @@ export function VideoMarkupOverlay({ session, box }: { session: VideoNotesSessio
   const markup = useMarkup({
     enabled: drawing && canAnnotate, tool: pen, toPoint, strokes: items, setStrokes: setItems, limits: LIMITS,
     onRefuse: () => { setRefused(true); },
+    history: { value: slot.history[form]?.steps ?? null, set: (next) => { forms.setHistory(assetId, form, next, forms.slot(assetId).draw?.frame ?? null); } },
   });
 
   // Only the primary pointer's main button draws (a right-click or a second finger never starts a stroke), and a captured pointer that wanders into a letterbox band ends the stroke
@@ -91,13 +92,18 @@ export function VideoMarkupOverlay({ session, box }: { session: VideoNotesSessio
 
   // A drawing has exactly one frame, and an undo step restores strokes without one: when drawing starts on a different frame than the history was built on, its steps are dropped.
   const { resetHistory } = markup;
-  const historyFrame = useRef<number | null>(null);
   const drawFrame = drawing ? draw.frame : null;
   useEffect(() => {
     if (drawFrame === null) return;
-    if (historyFrame.current !== null && historyFrame.current !== drawFrame) resetHistory();
-    historyFrame.current = drawFrame;
-  }, [drawFrame, resetHistory]);
+    const held = forms.slot(assetId).history[form];
+    if (held && held.frame !== null && held.frame !== drawFrame) resetHistory();
+  }, [drawFrame, resetHistory, forms, assetId, form]);
+
+  // An edited drawing is shown only for the selected note: drawing on an edit selects its note (the frame and filter checks still decide whether it shows).
+  const editingId = editing?.noteId ?? null;
+  const drawingEdit = draw !== null && draw.form === "edit";
+  const { selectedId, select } = session;
+  useEffect(() => { if (drawingEdit && editingId !== null && selectedId !== editingId) select(editingId); }, [drawingEdit, editingId, selectedId, select]);
 
   // Nothing may move the frame under the pen. If playback starts or the frame changes anyway (a seek that got through), drawing ends and the strokes stay.
   const offFrame = drawing && (playing || frameNow !== draw.frame);
