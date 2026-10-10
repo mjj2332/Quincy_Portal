@@ -11,6 +11,7 @@ import { mountGuestApproval } from "./approval";
 import { mountGuestDownloads } from "./download";
 import { mountGuestEmail } from "./email";
 import { mountGuestNotes } from "./notes-write";
+import { mountGuestSubscription } from "./subscription";
 import { guestGloballyOpen, identityOf, loadActiveLink, resolveSession, sessionBody } from "./link";
 import { clientAddress, GUEST_LIMITS, ipBucket, reserveAttempts, windowStart } from "./rate-limit";
 import { listGuestNotes, listGuestVideos, readGuestMarkup, resolveGrantedVersion } from "./read";
@@ -77,6 +78,7 @@ export function mountGuest(app: Hono<AppEnv>): void {
   mountGuestNotes(app);
   mountGuestApproval(app);
   mountGuestDownloads(app);
+  mountGuestSubscription(app);
   app.get("/d/review", guestRoute("/d/review", async (c) => {
     // Only `link` is accepted in the query, once, as a UUID: the token lives in the fragment, which never reaches the server, and anything else is not read.
     const params = [...new URL(c.req.url).searchParams];

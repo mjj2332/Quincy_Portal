@@ -71,6 +71,17 @@ export type GuestDecisionInput = z.infer<typeof guestDecisionInputSchema>;
 export const guestDecisionResponseSchema = z.object({ decision: guestDecisionSchema }).strict();
 export type GuestDecisionResponse = z.infer<typeof guestDecisionResponseSchema>;
 
+/**
+ * Client digest subscription (#741 15b). `POST /d/api/unsubscribe` carries the token from the digest email's fragment: `subscribed` omitted or false unsubscribes, true resubscribes.
+ * `PUT /d/api/links/:linkId/subscription` is the verified guest's own switch. Both answer the resulting state.
+ */
+export const guestUnsubscribeInputSchema = z.object({ token: z.string().min(1).max(256), subscribed: z.boolean().optional() }).strict();
+export type GuestUnsubscribeInput = z.infer<typeof guestUnsubscribeInputSchema>;
+export const guestSubscriptionInputSchema = z.object({ subscribed: z.boolean() }).strict();
+export type GuestSubscriptionInput = z.infer<typeof guestSubscriptionInputSchema>;
+export const guestSubscriptionResponseSchema = z.object({ subscribed: z.boolean() }).strict();
+export type GuestSubscriptionResponse = z.infer<typeof guestSubscriptionResponseSchema>;
+
 export const guestVersionDtoSchema = z.object({
   assetId: uuid,
   version: z.number().int().positive(),
