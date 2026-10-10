@@ -144,6 +144,21 @@ Tool names use Portal terms. There is no tool for uploads.
 | `request_project_link_preview` | write | `collaborateOnProject` | no |
 | `request_notice_link_preview` | write | `viewNoticeBoard` | no |
 
+#### Annotation markup (`strokes`) wire contract
+
+`create_annotation` and `edit_annotation` take `strokes`: a list of up to 200 items, each one of two kinds. Every point is a fraction (0 to 1) of the image width and height, and `width` is in screen pixels (1 to 100). Colour is a non-empty string of at most 32 characters.
+
+| Kind | Shape on the wire | Points |
+|---|---|---|
+| Freehand stroke | `{ "points": [...], "color": "#e64b3c", "width": 4 }` with **no `type` key** | 1 to 2000 (one point is a dot) |
+| Arrow, line, rectangle | `{ "type": "arrow" \| "line" \| "rectangle", "points": [start, end], "color": "#e64b3c", "width": 4 }` | exactly 2: `[start, end]` as dragged |
+
+- **A freehand stroke is typeless.** There is no `"freehand"` value; `type: "freehand"` is refused. Strokes saved before shapes existed are byte for byte this kind.
+- An **arrow** points from the first point to the second; the head is drawn at the second. A **rectangle** takes two opposite corners in either order. A shape whose two points are equal is accepted and draws as at most a dot.
+- The MCP tool is strict: an extra key on an item or a point is refused. The cookie route used by the web app is loose (an unknown key is stripped), but an unknown `type` is a 400 on both.
+- The same caps apply to both kinds: at most 200 items and 2,000,000 bytes of JSON per annotation.
+- `GET /media/annotation/:id` (the `markupUrl` on an annotation) returns this JSON as stored, so a reader should expect both kinds in one list. A reader that meets a `type` it does not know should skip that item and keep the data.
+
 ### Downloads (2)
 
 | Tool | Scope | Needs | Destructive |
