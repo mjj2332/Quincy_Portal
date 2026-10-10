@@ -50,7 +50,7 @@ function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
  * One Video on the guest page (#741 12b), read-only: the reused review player on the inverse surface, the granted-Versions select, previous / next Video, and the public notes (a
  * column beside the player, a bottom drawer below 721px). Moving between Videos never returns to the list. State is in memory; the URL does not change.
  */
-export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavailable }: {
+export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged }: {
   api: GuestApi;
   videos: readonly GuestVideoDto[];
   index: number;
@@ -58,6 +58,8 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
   /** Present only when there is a list to go back to (a single-Video link has none). */
   onBack: (() => void) | null;
   onUnavailable: () => void;
+  /** The displayed Version is no longer granted: the freshly read list, for the page to show instead. */
+  onGrantsChanged: (fresh: GuestVideoDto[]) => void;
 }) {
   const video = videos[index]!;
   const [assetId, setAssetId] = useState(video.versions[0]!.assetId);
@@ -86,8 +88,20 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
     return () => { live = false; };
   }, [api, version.assetId, notesAttempt, onUnavailable]);
 
-  // A stream that fails mid-play (a seek needing another range request) may mean staff revoked the link. The player has already shown its own notice; recheck access, and leave only if it is gone.
-  const onMediaError = useCallback(() => { void api.session().then((result) => { if (result.kind === "gone") onUnavailable(); }); }, [api, onUnavailable]);
+  // A stream that fails mid-play (a seek needing another range request) may mean staff revoked the link. The player has already shown its own notice; recheck access.
+  // If the session is fine, the Video or this Version may still have been taken off the link: re-read the granted list, and leave only when the displayed Version is no longer in it.
+  const shownAssetId = version.assetId;
+  const onMediaError = useCallback(() => {
+    void (async () => {
+      const session = await api.session();
+      if (session.kind === "gone") { onUnavailable(); return; }
+      if (session.kind !== "ok") return;
+      const list = await api.videos();
+      if (list.kind === "gone") { onUnavailable(); return; }
+      if (list.kind !== "ok") return;
+      if (!list.value.some((candidate) => candidate.versions.some((granted) => granted.assetId === shownAssetId))) onGrantsChanged(list.value);
+    })();
+  }, [api, onUnavailable, onGrantsChanged, shownAssetId]);
 
   const step = useCallback((delta: -1 | 1) => { const next = index + delta; if (next >= 0 && next < videos.length) onIndex(next); }, [index, videos.length, onIndex]);
   useVideoStepKeys(step);

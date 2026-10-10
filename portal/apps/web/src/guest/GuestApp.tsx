@@ -24,6 +24,7 @@ export function GuestApp() {
   const [screen, setScreen] = useState<Screen>({ name: "boot" });
   const [session, setSession] = useState<GuestSessionResponse | null>(null);
   const [videos, setVideos] = useState<GuestVideoDto[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
   const api = useMemo<GuestApi | null>(() => { const id = readLinkId(); return id === null ? null : createGuestApi(id); }, []);
   // The token lives here once the fragment is scrubbed, so a wrong passcode can retry. Never in the URL, storage or a log.
   const token = useRef<string | null>(null);
@@ -84,12 +85,21 @@ export function GuestApp() {
     void exchange(api, token.current, passcode);
   };
   const unavailable = useCallback(() => { setScreen({ name: "unavailable" }); }, []);
+  // Staff took the displayed Video or Version off the link while it was open: show what is still granted, calmly, or nothing if nothing is.
+  const grantsChanged = useCallback((fresh: GuestVideoDto[]) => {
+    if (fresh.length === 0) { setScreen({ name: "unavailable" }); return; }
+    setVideos(fresh);
+    setNotice("That video was updated by the studio. Here is what's available now.");
+    setScreen(fresh.length === 1 ? { name: "video", index: 0 } : { name: "list" });
+  }, []);
 
   if (api === null || screen.name === "unavailable") return <UnavailableScreen />;
   if (screen.name === "unreachable") return <UnreachableScreen onRetry={() => { retry.current(); }} />;
   if (screen.name === "limited") return <LimitedScreen retryAfterSeconds={screen.retryAfterSeconds} onRetry={() => { retry.current(); }} />;
   if (screen.name === "boot") return <main className="min-h-dvh bg-background" aria-busy="true" />;
   if (screen.name === "passcode") return <PasscodeScreen error={screen.error} retryAfterSeconds={screen.retryAfterSeconds} pending={screen.pending} onSubmit={submitPasscode} />;
-  if (screen.name === "list") return <VideoListScreen title={session?.link.label ?? null} videos={videos} onOpen={(index) => { setScreen({ name: "video", index }); }} />;
-  return <GuestVideoScreen api={api} videos={videos} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setScreen({ name: "list" }); } : null} onUnavailable={unavailable} />;
+  const shown = screen.name === "list"
+    ? <VideoListScreen title={session?.link.label ?? null} videos={videos} onOpen={(index) => { setNotice(null); setScreen({ name: "video", index }); }} />
+    : <GuestVideoScreen api={api} videos={videos} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} />;
+  return <>{notice !== null && <p role="status" data-testid="guest-notice" className="m-0 bg-card px-[var(--space-5)] py-[var(--space-3)] text-center text-card-foreground [font:var(--type-label)]">{notice}</p>}{shown}</>;
 }

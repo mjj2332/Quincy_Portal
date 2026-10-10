@@ -33,14 +33,20 @@ export function createGuestApi(linkId: string): GuestApi {
     const response = await send(path);
     if (transient(response)) return { kind: "transient" };
     if (!response?.ok) return { kind: "gone" };
-    try { return { kind: "ok", value: parse(await response.json()) }; } catch { return { kind: "gone" }; }
+    // A body that cannot be read (the connection dropped after the headers) says nothing about the link: transient. Only a body that parsed and failed the schema is `gone`.
+    let body: unknown;
+    try { body = await response.json(); } catch { return { kind: "transient" }; }
+    try { return { kind: "ok", value: parse(body) }; } catch { return { kind: "gone" }; }
   };
   return {
     async exchange(token, passcode) {
       const response = await send("/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(passcode === undefined ? { token } : { token, passcode }) });
       if (response === null) return { ok: false, reason: "unreachable" };
       if (response.ok) {
-        try { return { ok: true, session: guestSessionResponseSchema.parse(await response.json()) }; } catch { return { ok: false, reason: "unavailable" }; }
+        let body: unknown;
+        try { body = await response.json(); } catch { return { ok: false, reason: "unreachable" }; }
+        const parsed = guestSessionResponseSchema.safeParse(body);
+        return parsed.success ? { ok: true, session: parsed.data } : { ok: false, reason: "unavailable" };
       }
       if (response.status === 401 || response.status === 429) {
         const body = guestPasscodeErrorSchema.safeParse(await response.json().catch(() => null));

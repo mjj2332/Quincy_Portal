@@ -574,3 +574,97 @@ describe("Sol round 4", () => {
     expect(byId("guest-note-has-drawing")?.closest('[data-testid="guest-note"]')?.getAttribute("data-note-id")).toBe("22222222-2222-4222-8222-222222222222");
   });
 });
+
+describe("Sol round 6", () => {
+  const HINT = "Check your connection and try again.";
+  const brokenBody = () => { const response = json({}); Object.defineProperty(response, "json", { value: () => Promise.reject(new TypeError("connection dropped")) }); return response; };
+
+  it("a body-read rejection on the resumed session is a retry screen, not unavailable", async () => {
+    let broken = true;
+    extra = (url, init) => (broken && url.endsWith("/session") && (init?.method ?? "GET") === "GET" ? brokenBody() : undefined);
+    await open(`?link=${LINK}`, "");
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(byId("guest-unreachable")?.textContent).toContain(HINT);
+    broken = false;
+    await click(button("Try again"));
+    expect(byId("guest-list")).not.toBeNull();
+  });
+
+  it("a body-read rejection on the exchange is a retry screen, not unavailable", async () => {
+    extra = (url, init) => (url.endsWith("/session") && init?.method === "POST" ? brokenBody() : undefined);
+    await open();
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(byId("guest-unreachable")?.textContent).toContain(HINT);
+  });
+
+  it("a body-read rejection on the video list is a retry screen, not unavailable", async () => {
+    let broken = true;
+    extra = (url) => (broken && url.endsWith("/videos") ? brokenBody() : undefined);
+    await open();
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(byId("guest-unreachable")?.textContent).toContain(HINT);
+    broken = false;
+    await click(button("Try again"));
+    expect(byId("guest-list")).not.toBeNull();
+  });
+
+  it("control: a schema-invalid 200 on the video list is still unavailable", async () => {
+    extra = (url) => (url.endsWith("/videos") ? json({ videos: "nope" }) : undefined);
+    await open();
+    expect(byId("guest-unavailable")).not.toBeNull();
+  });
+
+  it("control: a schema-invalid 200 on the exchange is still unavailable", async () => {
+    extra = (url, init) => (url.endsWith("/session") && init?.method === "POST" ? json({ nope: true }) : undefined);
+    await open();
+    expect(byId("guest-unavailable")).not.toBeNull();
+  });
+
+  it("a media error when the displayed Version is no longer granted leaves it, with a calm notice", async () => {
+    videos = [videoOf(1), videoOf(2), videoOf(3)];
+    await open();
+    await click(allById("guest-video-row")[0]!.querySelector("button") ?? undefined);
+    expect(title()).toBe("Film 1");
+    videos = [videoOf(2), videoOf(3)];
+    await act(async () => { stub.fireError(host.querySelector("video")!); });
+    await flush();
+    expect(byId("guest-video-screen")).toBeNull();
+    expect(byId("guest-list")).not.toBeNull();
+    expect(allById("guest-row-title").map((row) => row.textContent)).toEqual(["Film 2", "Film 3"]);
+    expect(byId("guest-notice")).not.toBeNull();
+    expect(byId("guest-unavailable")).toBeNull();
+  });
+
+  it("a media error when one Video remains goes to it with a notice", async () => {
+    videos = [videoOf(1), videoOf(2)];
+    await open();
+    await click(allById("guest-video-row")[0]!.querySelector("button") ?? undefined);
+    videos = [videoOf(2)];
+    await act(async () => { stub.fireError(host.querySelector("video")!); });
+    await flush();
+    expect(title()).toBe("Film 2");
+    expect(byId("guest-notice")).not.toBeNull();
+  });
+
+  it("a media error when nothing is granted any more is unavailable", async () => {
+    videos = [videoOf(1)];
+    await open();
+    videos = [];
+    await act(async () => { stub.fireError(host.querySelector("video")!); });
+    await flush();
+    expect(byId("guest-unavailable")).not.toBeNull();
+  });
+
+  it("control: a media error with the Version still granted keeps the player's error and the screen", async () => {
+    videos = [videoOf(1)];
+    notes = [note()];
+    await open();
+    await act(async () => { stub.fireError(host.querySelector("video")!); });
+    await flush();
+    expect(byId("guest-video-screen")).not.toBeNull();
+    expect(title()).toBe("Film 1");
+    expect(byId("guest-notice")).toBeNull();
+    expect(allById("guest-note")).toHaveLength(1);
+    expect(host.textContent).toContain("This version can't play in this browser.");
+  });
+});
