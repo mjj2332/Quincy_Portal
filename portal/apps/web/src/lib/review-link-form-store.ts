@@ -126,7 +126,9 @@ export function createReviewLinkStore(key: string) {
         const grants: Record<string, readonly string[]> = {};
         for (const [videoId, ids] of Object.entries(now.grants)) {
           const was = sent.grants[videoId];
-          if (!(submitted.videoIds.includes(videoId) && was && sameList(was, ids))) grants[videoId] = ids;
+          // A Video whose tick changed since the submit is a new selection: its grant draft stays whatever it holds.
+          const reselected = submitted.selectionRevs !== undefined && (tickRevs.get(videoId) ?? 0) !== submitted.selectionRevs[videoId];
+          if (!(submitted.videoIds.includes(videoId) && was && sameList(was, ids) && !reselected)) grants[videoId] = ids;
         }
         const create: CreateDraft = {
           label: now.label === sent.label ? "" : now.label,

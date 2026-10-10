@@ -4,7 +4,7 @@ import { Switch } from "../reui/switch";
 const ROWS: Array<{ key: keyof Allow; label: string; hint: string }> = [
   { key: "comments", label: "Comments", hint: "Guests can add notes to a film." },
   { key: "approve", label: "Approve", hint: "Guests can approve or request changes." },
-  { key: "download", label: "Download", hint: "Guests can download the Versions they can see." },
+  { key: "download", label: "Download", hint: "Clients can download a film after they verify their email, approve it, and you Release it. Premium films also need unlocking." },
 ];
 
 /** The three permissions as `reui/switch` rows (#741 11b). Used by the create form and a link's settings. */

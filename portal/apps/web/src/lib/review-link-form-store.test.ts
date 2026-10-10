@@ -170,6 +170,17 @@ describe("review link form store (#741 11b)", () => {
     expect(s.create.grants[A]).toEqual(["old-version"]);
   });
 
+  it("a late create success keeps the grants of a film reselected since the submit, even when they match what was sent", () => {
+    const store = createReviewLinkStore("u:p");
+    store.toggleSelect(A); store.openCreate(); store.setGrant(A, ["v1"]);
+    const submitted = { videoIds: [A], draft: store.getState().create, selectionRevs: store.selectionRevisions([A]) };
+    store.closeDialog();
+    store.clearSelection(); store.toggleSelect(A); // reselected; its grant draft is still v1
+    store.showReveal({ url: "https://x.test/d/review?link=a#t=tok", linkId: A, label: null, origin: "create" }, submitted);
+    expect([...store.getState().selection]).toEqual([A]);
+    expect(store.getState().create.grants[A]).toEqual(["v1"]);
+  });
+
   it("control: a create success with the selection untouched since the submit clears it", () => {
     const store = createReviewLinkStore("u:p");
     store.toggleSelect(A); store.toggleSelect(B); store.openCreate();
