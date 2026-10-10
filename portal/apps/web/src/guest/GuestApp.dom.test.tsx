@@ -356,11 +356,11 @@ describe("Sol round 1: a revoked link is noticed everywhere", () => {
     expect(host.textContent).toContain("This version can't play in this browser.");
   });
 
-  it("a markup read that returns 404 goes unavailable", async () => {
+  it("a markup read that returns 404 with the session gone goes unavailable", async () => {
     notes = [drawn()];
     videos = [videoOf(1)];
     await open();
-    extra = (url) => (url.includes("/markup") ? stub404() : undefined);
+    extra = (url, init) => (url.includes("/markup") || (url.endsWith("/session") && (init?.method ?? "GET") === "GET") ? stub404() : undefined);
     await click(host.querySelector<HTMLElement>('[data-testid="guest-note-anchor"]') ?? undefined);
     expect(byId("guest-unavailable")).not.toBeNull();
   });
@@ -752,5 +752,61 @@ describe("Sol round 7", () => {
     expect(onGrantsChanged).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe("Sol round 9: a deleted drawing note does not take the link down", () => {
+  const anchor = () => host.querySelector<HTMLElement>('[data-testid="guest-note-anchor"]') ?? undefined;
+  const noteReads = () => requests().filter((url) => url.endsWith("/notes")).length;
+  it("markup 404 with the session and grant still valid stays on the video, clears the overlay and refetches the notes", async () => {
+    notes = [drawn()];
+    videos = [videoOf(1)];
+    await withLayout(async () => {
+      await open();
+      expect(allById("guest-note")).toHaveLength(1);
+      const before = noteReads();
+      notes = [];
+      extra = (url) => (url.includes("/markup") ? stub404() : undefined);
+      await click(anchor());
+      expect(byId("guest-unavailable")).toBeNull();
+      expect(byId("guest-video-screen")).not.toBeNull();
+      expect(byId("guest-markup")).toBeNull();
+      expect(noteReads()).toBe(before + 1);
+      expect(allById("guest-note")).toHaveLength(0);
+    });
+  });
+
+  it("markup 404 when the displayed Version is no longer granted takes the grants-changed path", async () => {
+    notes = [drawn()];
+    videos = [videoOf(1), videoOf(2)];
+    await open();
+    await click(allById("guest-video-row")[0]!.querySelector("button") ?? undefined);
+    videos = [videoOf(2)];
+    extra = (url) => (url.includes("/markup") ? stub404() : undefined);
+    await click(anchor());
+    expect(title()).toBe("Film 2");
+    expect(byId("guest-notice")).not.toBeNull();
+    expect(byId("guest-unavailable")).toBeNull();
+  });
+
+  it("a markup 404 that resolves after the guest switched Version is ignored", async () => {
+    notes = [drawn()];
+    videos = [videoOf(1, { versions: [versionOf(30), versionOf(10)] })];
+    await open();
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/markup")) { await gate; return stub404(); }
+      return route(String(input), init);
+    });
+    await click(anchor());
+    await click(byId("guest-version-trigger") ?? undefined);
+    await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.startsWith("v10")));
+    // Were the late answer acted on, the gone session would end the page.
+    extra = (url, init) => (url.endsWith("/session") && (init?.method ?? "GET") === "GET" ? stub404() : undefined);
+    await act(async () => { release(); });
+    await flush();
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(byId("guest-video-screen")).not.toBeNull();
   });
 });

@@ -98,21 +98,31 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
     selectionToken.current += 1;
     return () => { selectionToken.current += 1; };
   }, [shownAssetId]);
-  const onMediaError = useCallback(() => {
+  /** Rechecks access on the Version this call started on: the session, then the granted list. Resolves "valid" only when both are fine and the displayed Version is still granted; an
+   * unavailable or grants-changed outcome has already been handed to the page ("handled"), and a late completion is "stale" and does nothing. */
+  const recheckAccess = useCallback(async (): Promise<"valid" | "handled" | "stale" | "unknown"> => {
     const token = selectionToken.current;
     const stale = () => selectionToken.current !== token;
-    void (async () => {
-      const session = await api.session();
-      if (stale()) return;
-      if (session.kind === "gone") { onUnavailable(); return; }
-      if (session.kind !== "ok") return;
-      const list = await api.videos();
-      if (stale()) return;
-      if (list.kind === "gone") { onUnavailable(); return; }
-      if (list.kind !== "ok") return;
-      if (!list.value.some((candidate) => candidate.versions.some((granted) => granted.assetId === shownAssetId))) onGrantsChanged(list.value);
-    })();
+    const session = await api.session();
+    if (stale()) return "stale";
+    if (session.kind === "gone") { onUnavailable(); return "handled"; }
+    if (session.kind !== "ok") return "unknown";
+    const list = await api.videos();
+    if (stale()) return "stale";
+    if (list.kind === "gone") { onUnavailable(); return "handled"; }
+    if (list.kind !== "ok") return "unknown";
+    if (!list.value.some((candidate) => candidate.versions.some((granted) => granted.assetId === shownAssetId))) { onGrantsChanged(list.value); return "handled"; }
+    return "valid";
   }, [api, onUnavailable, onGrantsChanged, shownAssetId]);
+  const onMediaError = useCallback(() => { void recheckAccess(); }, [recheckAccess]);
+  // A markup read answered with the stub is not proof the link is gone: the drawing note may just have been deleted. Recheck access; if it is fine, drop the stale note and re-read the list.
+  const onMarkupGone = useCallback(() => {
+    void recheckAccess().then((outcome) => {
+      if (outcome !== "valid") return;
+      setSelectedId(null);
+      setNotesAttempt((n) => n + 1);
+    });
+  }, [recheckAccess]);
 
   const step = useCallback((delta: -1 | 1) => { const next = index + delta; if (next >= 0 && next < videos.length) onIndex(next); }, [index, videos.length, onIndex]);
   useVideoStepKeys(step);
@@ -132,7 +142,7 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
     if (frame !== null) clock?.seekToFrame(frame);
     setDrawerOpen(false);
   }, [clock]);
-  const markupOverlay = useGuestMarkup(api, clock, selected, onUnavailable, selectionCount);
+  const markupOverlay = useGuestMarkup(api, clock, selected, onMarkupGone, selectionCount);
   const watermark = video.premium && !video.unlocked;
   const overlay = useCallback((box: Box | null) => <>{watermark && box && <PremiumWatermark box={box} />}{markupOverlay(box)}</>, [watermark, markupOverlay]);
 

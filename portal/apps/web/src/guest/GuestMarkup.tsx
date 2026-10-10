@@ -8,9 +8,9 @@ import type { GuestApi } from "./guest-api";
 /**
  * The selected note's drawing on the guest page (#741 12b), read-only. The staff overlay (`useVideoMarkup`) is a drawing tool bound to the staff form store and `lib/api`, so this is
  * its read half only: the tolerant `readStoredMarkup` reader and the shared stroke renderer, on the same picture box, shown only while the film is paused on the frame it was drawn on.
- * Items this build cannot render are skipped (never guessed at). A markup read the server answers with the stub means the link is gone: `onUnavailable`.
+ * Items this build cannot render are skipped (never guessed at). A markup read the server answers with the stub calls `onGone`; the caller decides whether that is the link or only the note.
  */
-export function useGuestMarkup(api: GuestApi, clock: VideoFrameClock | null, thread: GuestNoteThreadDto | null, onUnavailable: () => void, selectionCount: number): (box: Box | null) => ReactNode {
+export function useGuestMarkup(api: GuestApi, clock: VideoFrameClock | null, thread: GuestNoteThreadDto | null, onGone: () => void, selectionCount: number): (box: Box | null) => ReactNode {
   const wanted = thread !== null && !thread.deleted && thread.hasMarkup && thread.drawingFrame !== null ? thread : null;
   const [loaded, setLoaded] = useState<{ noteId: string; items: MarkupItem[] } | null>(null);
   useEffect(() => {
@@ -18,12 +18,12 @@ export function useGuestMarkup(api: GuestApi, clock: VideoFrameClock | null, thr
     let live = true;
     void api.markup(wanted.id).then((response) => {
       if (!live) return;
-      // A revoked link answers the stub: leave for the unavailable screen. A transient failure draws nothing; selecting the note again retries.
-      if (response.kind === "gone") onUnavailable();
+      // The stub: the link may be revoked or just this note deleted, so the caller rechecks access (and drops the note) rather than leaving. A transient failure draws nothing; selecting the note again retries.
+      if (response.kind === "gone") { setLoaded(null); onGone(); }
       else if (response.kind === "ok") setLoaded(response.value.markup ? { noteId: wanted.id, items: readStoredMarkup(response.value.markup).items } : null); // null: the drawing was removed, so the old strokes go
     });
     return () => { live = false; };
-  }, [api, wanted?.id, onUnavailable, selectionCount]); // selectionCount: selecting the same note again retries a failed read // eslint-disable-line react-hooks/exhaustive-deps
+  }, [api, wanted?.id, onGone, selectionCount]); // selectionCount: selecting the same note again retries a failed read // eslint-disable-line react-hooks/exhaustive-deps
   const playing = useFrameClockSelector(clock, (state) => state.playing, false);
   const frame = useFrameClockSelector(clock, (state) => (state.targetFrame === null ? state.frame : -1), -1);
   const items = wanted !== null && loaded?.noteId === wanted.id && !playing && frame === wanted.drawingFrame ? loaded.items : null;
