@@ -140,6 +140,14 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
       present(side, clocks[side].lastFrame());
       stub.endPlayback(v);
     } },
+    { name: "endNaturally", passive: true, run: () => {
+      // A browser dispatches `pause` before `ended`, and the last presentation can be a frame or two short.
+      const side = pick(["a", "b"] as const);
+      const v = videos[side];
+      if (v.paused || v.seeking) return;
+      present(side, Math.max(0, clocks[side].lastFrame() - pick([0, 1, 2])));
+      stub.endNaturally(v);
+    } },
     { name: "error", passive: true, run: () => {
       const side = pick(["a", "b"] as const);
       stub.fireError(videos[side]);
@@ -168,7 +176,7 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
     { name: "seekSide", passive: false, run: () => { const side = pick(["a", "b"] as const); t.seekSide(side, Math.floor(rand() * counts[side])); } },
     { name: "rejectPlay", passive: false, run: () => { stub.rejectNextPlay("NotAllowedError"); } },
   ];
-  const weights = [10, 6, 2, 4, 1, 1, 2, 1, 1, 2, 3, 1, 2, 3, 1, 1, 3, 1, 1, 1, 1, 1];
+  const weights = [10, 6, 2, 4, 1, 1, 1, 2, 1, 1, 2, 3, 1, 2, 3, 1, 1, 3, 1, 1, 1, 1, 1];
 
   let prev: CompareTransportState = t.getState();
   for (let i = 0; i < EVENTS; i++) {
@@ -178,7 +186,7 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
     log.push(kind.name);
     kind.run();
     if (["seekTo", "step", "pause"].includes(kind.name)) aligned = true;
-    else if (["error", "ended", "finishSide", "confirm", "play", "reverse", "seekSide"].includes(kind.name)) aligned = false;
+    else if (["error", "ended", "finishSide", "endNaturally", "confirm", "play", "reverse", "seekSide"].includes(kind.name)) aligned = false;
     await vi.advanceTimersByTimeAsync(0);
     const now = t.getState();
     const where = `${config.name} seed ${seed} event ${i} (${log.slice(-8).join(", ")}) state ${JSON.stringify(now)}`;

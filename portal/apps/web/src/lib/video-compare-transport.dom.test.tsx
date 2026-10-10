@@ -1008,3 +1008,43 @@ describe("CompareTransport: sol review round 6 (#741 7b)", () => {
     expect(r.vb.paused).toBe(false);
   });
 });
+
+describe("CompareTransport: round 7 (#741 7b)", () => {
+  it("a natural end that dispatches pause before ended, after a stale last presentation, parks that side and keeps the other playing", () => {
+    const r = rig({ nA: 100, nB: 200 });
+    r.t.play();
+    show(r.va, 98);
+    stub.endNaturally(r.va);
+    expect(r.t.getState().playing).toBe(true);
+    expect(r.vb.paused).toBe(false);
+    expect(r.va.paused).toBe(true);
+    expect(r.t.getState().phases.a).not.toBe("live");
+    expect(r.t.getState().master).toBe("b");
+    expect(r.t.getState().frame).toBeGreaterThanOrEqual(99);
+  });
+
+  it("reverse at the domain start stops forward playback and lands both sides on the start", () => {
+    const r = rig();
+    r.t.play();
+    r.t.reverse(1);
+    expect(r.t.getState().playing).toBe(false);
+    expect(r.va.paused).toBe(true);
+    expect(r.vb.paused).toBe(true);
+  });
+
+  it("paused metadata updates refresh the domain and clamp the position", () => {
+    stub = installVideoElementStub({ rvfc: true });
+    const va = document.createElement("video");
+    const vb = document.createElement("video");
+    const ca = new VideoFrameClock(va, { fps: F25, frameCount: 100 });
+    const cb = new VideoFrameClock(vb, { fps: F25, frameCount: 200 });
+    clocks = [ca, cb];
+    const store = createCompareStore("t");
+    store.setPair("A", "B", "a");
+    const t = new CompareTransport({ a: { clock: ca, video: va, fps: F25, frameCount: 100, hasAudio: true }, b: { clock: cb, video: vb, fps: F25, frameCount: 200, hasAudio: true }, store, now: () => Date.now(), document: Object.assign(new EventTarget(), { visibilityState: "visible" as const }) });
+    transport = t;
+    expect(t.getState().domain.end).toBe(199);
+    for (const v of [va, vb]) { stub.loadMetadata(v, { duration: 4, videoWidth: 1920, videoHeight: 1080 }); stub.setReadyState(v, 4); stub.finishSeek(v); stub.presentFrame(v, 0); }
+    expect(t.getState().domain.end).toBe(99);
+  });
+});

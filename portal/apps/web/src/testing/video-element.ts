@@ -20,6 +20,7 @@ type Slot = {
   muted: boolean;
   playbackRate: number;
   readyState: number;
+  ended: boolean;
   error: { code: number; message: string } | null;
   rejectPlay: string | null;
   calls: string[];
@@ -46,6 +47,8 @@ export type VideoElementStub = {
   endPlayback(video: HTMLVideoElement): void;
   /** `play()` / `pause()` calls on `video` alone, oldest first. */
   callsOf(video: HTMLVideoElement): string[];
+  /** A natural end as a browser reports it: `ended` becomes true, the element is paused, `pause` is dispatched and `ended` follows it. */
+  endNaturally(video: HTMLVideoElement): void;
   /** Fires `waiting` (the element ran out of data). */
   fireWaiting(video: HTMLVideoElement): void;
   /** Fires `playing` (it has data again and advances). */
@@ -65,7 +68,7 @@ export type VideoElementStub = {
   dispose(): void;
 };
 
-const MEMBERS = ["currentTime", "paused", "seeking", "duration", "videoWidth", "videoHeight", "muted", "playbackRate", "readyState", "error", "play", "pause", "requestVideoFrameCallback", "cancelVideoFrameCallback"] as const;
+const MEMBERS = ["currentTime", "paused", "seeking", "duration", "videoWidth", "videoHeight", "muted", "playbackRate", "readyState", "ended", "error", "play", "pause", "requestVideoFrameCallback", "cancelVideoFrameCallback"] as const;
 
 export function installVideoElementStub(options: { rvfc?: boolean; asyncEvents?: boolean } = {}): VideoElementStub {
   const proto = HTMLVideoElement.prototype as unknown as Record<string, unknown>;
@@ -86,7 +89,7 @@ export function installVideoElementStub(options: { rvfc?: boolean; asyncEvents?:
   const slot = (element: object): Slot => {
     let found = slots.get(element);
     if (!found) {
-      found = { currentTime: 0, paused: true, seeking: false, duration: NaN, videoWidth: 0, videoHeight: 0, muted: false, playbackRate: 1, readyState: 0, error: null, rejectPlay: null, calls: [], writes: [], callbacks: new Map() };
+      found = { currentTime: 0, paused: true, seeking: false, duration: NaN, videoWidth: 0, videoHeight: 0, muted: false, playbackRate: 1, readyState: 0, ended: false, error: null, rejectPlay: null, calls: [], writes: [], callbacks: new Map() };
       slots.set(element, found);
     }
     return found;
@@ -102,6 +105,8 @@ export function installVideoElementStub(options: { rvfc?: boolean; asyncEvents?:
     },
   });
   for (const name of ["paused", "seeking", "duration", "videoWidth", "videoHeight", "readyState", "error"] as const) define(name, { get(this: object) { return slot(this)[name]; } });
+  // As in a browser: ended is a paused playhead at the end of the media.
+  define("ended", { get(this: object) { const s = slot(this); return s.paused && Number.isFinite(s.duration) && s.duration > 0 && s.currentTime >= s.duration; } });
   for (const name of ["muted", "playbackRate"] as const) define(name, { get(this: object) { return slot(this)[name]; }, set(this: object, value: never) { (slot(this) as Record<string, unknown>)[name] = value; } });
   define("play", { value(this: HTMLVideoElement) {
     const s = slot(this);
@@ -159,7 +164,8 @@ export function installVideoElementStub(options: { rvfc?: boolean; asyncEvents?:
     rejectNextPlay(name, video) { if (video) slot(video).rejectPlay = name; else nextRejection = name; },
     fireError(video, code = 4, message = "MEDIA_ERR_SRC_NOT_SUPPORTED") { slot(video).error = { code, message }; video.dispatchEvent(new Event("error")); },
     advance(video, seconds) { slot(video).currentTime += seconds; },
-    endPlayback(video) { const s = slot(video); s.paused = true; video.dispatchEvent(new Event("ended")); },
+    endPlayback(video) { const s = slot(video); s.paused = true; s.seeking = false; s.currentTime = s.duration; video.dispatchEvent(new Event("ended")); },
+    endNaturally(video) { const s = slot(video); s.paused = true; s.seeking = false; s.currentTime = s.duration; emit(video, "pause"); emit(video, "ended"); },
     dispose() {
       queue.length = 0;
       for (const name of MEMBERS) {

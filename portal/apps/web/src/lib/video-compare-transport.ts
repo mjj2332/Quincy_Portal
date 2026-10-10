@@ -264,7 +264,11 @@ export class CompareTransport {
     if (this.disposed) return;
     const domain = this.domain();
     const base = this.a;
-    if (base <= domain.start) return;
+    if (base <= domain.start) {
+      // Nothing to reverse into: a forward play in progress still stops, both sides landing on the start.
+      if (this.playing) this.seekTo(domain.start);
+      return;
+    }
     if (!this.reverseRun) {
       this.halt();
       this.land(base);
@@ -521,7 +525,13 @@ export class CompareTransport {
     run.prevPlaying = state.playing;
     run.prevFrame = state.frame;
     if (this.reverseRun) { if (this.issuing === 0) this.reverseStep(); return; }
-    if (!this.playing) return;
+    if (!this.playing) {
+      // Metadata can land while paused and change a side's length: the domain follows, and the position is clamped into it.
+      const domain = this.domain();
+      if (this.a > domain.end || this.a < domain.start) this.a = Math.min(domain.end, Math.max(domain.start, this.a));
+      this.refresh();
+      return;
+    }
     if (wasPlaying && !state.playing && this.issuing === 0) { this.onUnexpectedStop(side); return; }
     if (state.stalled && state.playing && !this.stall && this.issuing === 0 && this.phaseOf(side, this.a) === "live") { this.enterStall(side); return; }
     // I3: a new presented frame on the stalled side is recovery, with or without a `playing` event.
@@ -538,12 +548,14 @@ export class CompareTransport {
    */
   private onUnexpectedStop(side: CompareSideId): void {
     const state = this.sides[side].clock.getState();
-    if (state.frame >= this.lastFrame(side) && state.targetFrame === null) {
+    // A browser reports the end as `pause` and then `ended`, and the last presentation may be a frame or two short of the end.
+    if ((state.frame >= this.lastFrame(side) && state.targetFrame === null) || this.reachedEnd(side)) {
       // The element ended: its terminal frame is the position now, and it is parked, never played again.
       this.runtime[side].ended = true;
       // I3: the stalled side ending is a way out of the stall as well.
       if (this.stall === side) { this.recoverStall(side, this.lastFrame(side)); this.refresh(); return; }
-      if (this.master === side) this.a = this.sharedFrom(side, this.lastFrame(side));
+      // Normalised to the effective last frame, wherever the last presentation stopped.
+      if (this.master === side) this.a = Math.max(this.a, this.sharedFrom(side, this.lastFrame(side)));
       this.syncPhases();
       this.refresh();
       return;
@@ -555,6 +567,14 @@ export class CompareTransport {
     const mate = other(side);
     this.act(() => { this.sides[mate].clock.seekToFrame(this.parkedFrame(mate, this.localFrame(mate, shared))); });
     this.refresh();
+  }
+
+  /** The element has played out: `ended`, or its playhead is within half a frame of its duration. */
+  private reachedEnd(side: CompareSideId): boolean {
+    const { video, fps } = this.sides[side];
+    if (video.ended) return true;
+    const duration = video.duration;
+    return Number.isFinite(duration) && duration > 0 && video.currentTime >= duration - (0.5 * fps.den) / fps.num && this.sides[side].clock.getState().targetFrame === null;
   }
 
   /**

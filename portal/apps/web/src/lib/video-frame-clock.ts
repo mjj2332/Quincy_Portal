@@ -269,7 +269,7 @@ export class VideoFrameClock {
     ["waiting", () => { if (!this.disposed && !this.video.paused) this.set({ stalled: true }); }],
     ["playing", () => { if (this.video.readyState >= 3) this.set({ stalled: false }); }],
     ["timeupdate", () => { if (!this.hasRvfc && this.target === null && !this.video.seeking && !this.reverseState) this.set({ frame: this.timeFrame() }); }],
-    ["ended", () => { this.onEnded(); }],
+    ["ended", () => { if (this.video.ended && !this.video.seeking) this.onEnded(); }],
     // Media events arrive after the call that caused them: read the element as it is NOW. A `pause` from a stop that has since been
     // followed by a play() (or a `play` after a later pause) is history, not news.
     ["pause", () => { if (this.disposed) return; if (this.video.paused && this.state.playing && !this.reverseState) this.set({ playing: false, rate: 0 }); if (this.video.readyState >= 3) this.set({ stalled: false }); }],
