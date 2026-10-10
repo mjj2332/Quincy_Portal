@@ -19,6 +19,7 @@ export const PASTE_PREVIEW_DEBOUNCE_MS = 300;
 export const PASTE_SKIP_COPY: Record<VideoNotePasteSkipReason, string> = {
   already_copied: "Already copied to this version",
   out_of_range: "Falls outside this version",
+  drawing_outside: "Drawing would fall outside the note",
   deleted: "Deleted on the source version",
   reply: "Replies are not copied on their own",
 };

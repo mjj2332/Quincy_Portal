@@ -75,32 +75,56 @@ export async function readThread(db: D1Database, projectId: string, rootId: stri
 
 export type NoteHead = {
   id: string; project_id: string; video_id: string; asset_id: string; parent_id: string | null; author_user_id: string | null; visibility: VideoNoteVisibility;
-  body: string; start_frame: number | null; end_frame: number | null; revision: number; deleted_at: number | null; resolved_at: number | null; has_markup: number;
+  body: string; start_frame: number | null; end_frame: number | null; drawing_frame: number | null; revision: number; deleted_at: number | null; resolved_at: number | null; has_markup: number;
 };
 /** The columns the routes decide on, for a note scoped to the Project. */
 export async function findNoteHead(db: D1Database, projectId: string, noteId: string): Promise<NoteHead | null> {
-  return await db.prepare(`SELECT n.id, n.project_id, n.video_id, n.asset_id, n.parent_id, n.author_user_id, n.visibility, n.body, n.start_frame, n.end_frame, n.revision, n.deleted_at, n.resolved_at,
+  return await db.prepare(`SELECT n.id, n.project_id, n.video_id, n.asset_id, n.parent_id, n.author_user_id, n.visibility, n.body, n.start_frame, n.end_frame, n.drawing_frame, n.revision, n.deleted_at, n.resolved_at,
       (EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = n.id)) AS has_markup FROM video_notes n WHERE n.id = ?1 AND n.project_id = ?2`).bind(noteId, projectId).first<NoteHead>() ?? null;
 }
 
 type Principal = NonNullable<AuditPrincipal> & { role: Role };
 const AUDIT_INSERT = "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)";
 
+/** The drawing-frame rule, in SQL: a point note's drawing is on its start frame, a range note's inside [start, end). Arguments are SQL expressions. */
+export const drawingFrameRule = (drawing: string, start: string, end: string): string =>
+  `(${drawing} >= ${start} AND (CASE WHEN ${end} IS NULL THEN ${drawing} = ${start} ELSE ${drawing} < ${end} END))`;
+/** The same rule in the route, before the batch repeats it. */
+export const drawingFrameFits = (drawing: number, start: number, end: number | null): boolean => end === null ? drawing === start : drawing >= start && drawing < end;
+
+/** A validated markup envelope ready to store: the canonical JSON (the one string compared and stored), item and byte counts for the audit row, and the frame it is drawn on. */
+export type MarkupWrite = { json: string; items: number; bytes: number; drawingFrame: number };
+export type MarkupEdit = ({ kind: "set" } & MarkupWrite) | { kind: "remove" };
+
+/** The stored JSON and drawing frame of a root's markup, or null. For the route's no-op decision and the lazy read. */
+export async function readNoteMarkup(db: D1Database, projectId: string, noteId: string): Promise<{ strokes_json: string } | null> {
+  return await db.prepare("SELECT k.strokes_json FROM video_note_markup k JOIN video_notes n ON n.id = k.note_id WHERE k.note_id = ?1 AND n.project_id = ?2").bind(noteId, projectId).first<{ strokes_json: string }>() ?? null;
+}
+
 export type WriteOutcome<T> = { kind: "ok"; value: T } | { kind: "archived" } | { kind: "gone" };
 
-export async function createVideoNote(db: D1Database, input: { projectId: string; assetId: string; principal: Principal; visibility: VideoNoteVisibility; startFrame: number; endFrame: number | null; body: string; now: number }): Promise<WriteOutcome<VideoNoteThreadDto>> {
+export async function createVideoNote(db: D1Database, input: { projectId: string; assetId: string; principal: Principal; visibility: VideoNoteVisibility; startFrame: number; endFrame: number | null; body: string; markup?: MarkupWrite; now: number }): Promise<WriteOutcome<VideoNoteThreadDto>> {
   const noteId = newId(); const auditId = newId();
   const video = await db.prepare(`SELECT v.id FROM ${VERSION_FROM} WHERE m.asset_id = ?1 AND v.project_id = ?2`).bind(input.assetId, input.projectId).first<{ id: string }>();
   if (!video) return { kind: "gone" };
-  const meta = auditMeta(input.principal, { projectId: input.projectId, videoId: video.id, assetId: input.assetId, visibility: input.visibility, startFrame: input.startFrame, endFrame: input.endFrame });
+  const { markup } = input;
+  const meta = auditMeta(input.principal, {
+    projectId: input.projectId, videoId: video.id, assetId: input.assetId, visibility: input.visibility, startFrame: input.startFrame, endFrame: input.endFrame,
+    ...(markup ? { markup: "add", strokeCount: markup.items, markupBytes: markup.bytes, drawingFrame: markup.drawingFrame } : {}),
+  });
+  const drawingFrame = markup?.drawingFrame ?? null;
   const results = await db.batch([
+    // The drawing-frame rule rides the audit statement, so a drawing outside the note inserts nothing at all.
     db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.create', 'video_note', ?3, ?4, ?5
-      WHERE ${projectFence(6)} AND EXISTS (SELECT 1 FROM ${VERSION_FROM} WHERE m.asset_id = ?7 AND v.project_id = ?6 AND m.frame_count > ?8 AND (?9 IS NULL OR ?9 <= m.frame_count))`)
-      .bind(auditId, input.principal.id, noteId, meta, input.now, input.projectId, input.assetId, input.startFrame, input.endFrame),
+      WHERE ${projectFence(6)} AND EXISTS (SELECT 1 FROM ${VERSION_FROM} WHERE m.asset_id = ?7 AND v.project_id = ?6 AND m.frame_count > ?8 AND (?9 IS NULL OR ?9 <= m.frame_count))
+        AND (?10 IS NULL OR ${drawingFrameRule("?10", "?8", "?9")})`)
+      .bind(auditId, input.principal.id, noteId, meta, input.now, input.projectId, input.assetId, input.startFrame, input.endFrame, drawingFrame),
     db.prepare(`INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_guest_id, author_role, visibility, start_frame, end_frame, drawing_frame, body, revision, created_at)
-      SELECT ?1, v.project_id, v.id, m.asset_id, NULL, ?2, NULL, ?3, ?4, ?5, ?6, NULL, ?7, 1, ?8
+      SELECT ?1, v.project_id, v.id, m.asset_id, NULL, ?2, NULL, ?3, ?4, ?5, ?6, ?12, ?7, 1, ?8
       FROM ${VERSION_FROM} WHERE m.asset_id = ?9 AND v.project_id = ?10 AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?11)`)
-      .bind(noteId, input.principal.id, input.principal.role, input.visibility, input.startFrame, input.endFrame, input.body, input.now, input.assetId, input.projectId, auditId),
+      .bind(noteId, input.principal.id, input.principal.role, input.visibility, input.startFrame, input.endFrame, input.body, input.now, input.assetId, input.projectId, auditId, drawingFrame),
+    // Markup follows the note it belongs to: nothing lands unless the note row did (so an archived Project or a failed rule leaves no orphan).
+    ...(markup ? [db.prepare("INSERT INTO video_note_markup (note_id, strokes_json, created_at, updated_at) SELECT ?1, ?2, ?3, ?3 FROM video_notes WHERE id = ?1 AND parent_id IS NULL AND drawing_frame IS NOT NULL").bind(noteId, markup.json, input.now)] : []),
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
   ]);
   const thread = await readThread(db, input.projectId, noteId);
@@ -125,21 +149,46 @@ export async function createVideoNoteReply(db: D1Database, input: { projectId: s
 
 export type EditOutcome =
   | { kind: "ok"; value: VideoNoteThreadDto } | { kind: "noop"; value: VideoNoteThreadDto } | { kind: "archived" } | { kind: "gone" }
-  | { kind: "forbidden" } | { kind: "deleted" } | { kind: "conflict"; value: VideoNoteThreadDto } | { kind: "markup" } | { kind: "out_of_range" };
+  | { kind: "forbidden" } | { kind: "deleted" } | { kind: "conflict"; value: VideoNoteThreadDto } | { kind: "markup" } | { kind: "out_of_range" } | { kind: "drawing_outside" };
 
-/** Edit body and/or frames of the author's own note. Author, revision, frame bounds and the markup rule are all in the UPDATE. */
-export async function editVideoNote(db: D1Database, input: { projectId: string; note: NoteHead; principal: Principal; expectedRevision: number; body: string; startFrame: number | null; endFrame: number | null; now: number }): Promise<EditOutcome> {
-  const auditId = newId(); const { note } = input;
-  const meta = auditMeta(input.principal, { projectId: input.projectId, assetId: note.asset_id, revision: input.expectedRevision + 1 });
+/**
+ * Edit body, frames and/or markup of the author's own note. Author, revision, frame bounds, the drawing-frame rule and the markup lock are all in the UPDATE, which bumps the
+ * revision ONCE however many of body/markup changed. `markup` is only passed when the route found a real change; the UPDATE's change predicate still repeats it, so a write that
+ * bypasses the route cannot bump the revision for nothing. The markup row follows the audit row, which exists only if the UPDATE landed.
+ */
+export async function editVideoNote(db: D1Database, input: { projectId: string; note: NoteHead; principal: Principal; expectedRevision: number; body: string; startFrame: number | null; endFrame: number | null; markup?: MarkupEdit; now: number }): Promise<EditOutcome> {
+  const auditId = newId(); const { note, markup } = input;
+  const meta = auditMeta(input.principal, {
+    projectId: input.projectId, assetId: note.asset_id, revision: input.expectedRevision + 1,
+    ...(markup?.kind === "set" ? { markup: note.has_markup === 1 ? "replace" : "add", strokeCount: markup.items, markupBytes: markup.bytes, drawingFrame: markup.drawingFrame } : {}),
+    ...(markup?.kind === "remove" ? { markup: "remove" } : {}),
+  });
+  const binds: unknown[] = [input.body, input.startFrame, input.endFrame, input.now, note.id, input.projectId, input.principal.id, input.expectedRevision];
+  let set = ""; let changed = ""; let guard = "";
+  if (markup) {
+    binds.push(markup.kind === "set" ? markup.drawingFrame : null);
+    set = ", drawing_frame = ?9";
+    guard = " AND parent_id IS NULL";
+    if (markup.kind === "set") {
+      binds.push(markup.json);
+      changed = " OR drawing_frame IS NOT ?9 OR NOT EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = video_notes.id AND k.strokes_json = ?10)";
+      guard += ` AND ${drawingFrameRule("?9", "start_frame", "end_frame")}`;
+    } else changed = " OR EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = video_notes.id)";
+  }
+  const write = markup?.kind === "set"
+    ? [db.prepare(`INSERT INTO video_note_markup (note_id, strokes_json, created_at, updated_at) SELECT ?1, ?2, ?3, ?3 WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?4)
+        ON CONFLICT (note_id) DO UPDATE SET strokes_json = excluded.strokes_json, updated_at = excluded.updated_at`).bind(note.id, markup.json, input.now, auditId)]
+    : markup ? [db.prepare("DELETE FROM video_note_markup WHERE note_id = ?1 AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?2)").bind(note.id, auditId)] : [];
   const results = await db.batch([
-    db.prepare(`UPDATE video_notes SET body = ?1, start_frame = ?2, end_frame = ?3, revision = revision + 1, edited_at = ?4
+    db.prepare(`UPDATE video_notes SET body = ?1, start_frame = ?2, end_frame = ?3, revision = revision + 1, edited_at = ?4${set}
       WHERE id = ?5 AND project_id = ?6 AND author_user_id = ?7 AND deleted_at IS NULL AND revision = ?8
-        AND (body IS NOT ?1 OR start_frame IS NOT ?2 OR end_frame IS NOT ?3)
+        AND (body IS NOT ?1 OR start_frame IS NOT ?2 OR end_frame IS NOT ?3${changed})
         AND ((start_frame IS ?2 AND end_frame IS ?3) OR NOT EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = video_notes.id))
         AND (parent_id IS NOT NULL OR EXISTS (SELECT 1 FROM ${VERSION_FROM} WHERE m.asset_id = video_notes.asset_id AND m.frame_count > ?2 AND (?3 IS NULL OR ?3 <= m.frame_count)))
-        AND ${projectFence(6)}`)
-      .bind(input.body, input.startFrame, input.endFrame, input.now, note.id, input.projectId, input.principal.id, input.expectedRevision),
+        AND ${projectFence(6)}${guard}`)
+      .bind(...binds),
     db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.edit', 'video_note', ?3, ?4, ?5 WHERE changes() = 1`).bind(auditId, input.principal.id, note.id, meta, input.now),
+    ...write,
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
   ]);
   const rootId = note.parent_id ?? note.id;
@@ -151,7 +200,10 @@ export async function editVideoNote(db: D1Database, input: { projectId: string; 
   if (current.deleted_at !== null) return { kind: "deleted" };
   const thread = await readThread(db, input.projectId, rootId); if (!thread) return { kind: "gone" };
   if (current.revision !== input.expectedRevision) return { kind: "conflict", value: thread };
-  if (current.body === input.body && current.start_frame === input.startFrame && current.end_frame === input.endFrame) return { kind: "noop", value: thread };
+  const stored = markup ? await readNoteMarkup(db, input.projectId, note.id) : null;
+  const markupSame = !markup || (markup.kind === "remove" ? current.has_markup === 0 : stored?.strokes_json === markup.json && current.drawing_frame === markup.drawingFrame);
+  if (current.body === input.body && current.start_frame === input.startFrame && current.end_frame === input.endFrame && markupSame) return { kind: "noop", value: thread };
+  if (markup) return { kind: "drawing_outside" };
   return current.has_markup === 1 ? { kind: "markup" } : { kind: "out_of_range" };
 }
 
@@ -171,7 +223,7 @@ export async function deleteVideoNote(db: D1Database, input: { projectId: string
       AND NOT EXISTS (SELECT 1 FROM video_notes c WHERE c.parent_id = ?1 AND (c.author_user_id IS NULL OR c.author_user_id <> ?3))`;
   const results = await db.batch([
     // The audit goes first so the author's replies are counted before the DELETE cascades them: the winning audit records what was actually removed.
-    db.prepare(`${AUDIT_INSERT} SELECT ?5, ?3, 'video_note.delete', 'video_note', ?1, json_set(?6, '$.ownRepliesRemoved', (SELECT COUNT(*) FROM video_notes r WHERE r.parent_id = ?1 AND r.author_user_id = ?3)), ?7 ${hardWhere}`)
+    db.prepare(`${AUDIT_INSERT} SELECT ?5, ?3, 'video_note.delete', 'video_note', ?1, json_set(?6, '$.ownRepliesRemoved', (SELECT COUNT(*) FROM video_notes r WHERE r.parent_id = ?1 AND r.author_user_id = ?3), '$.hadMarkup', json(CASE WHEN EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = ?1) THEN 'true' ELSE 'false' END)), ?7 ${hardWhere}`)
       .bind(note.id, input.projectId, principal.id, input.expectedRevision, hardAudit, auditMeta(principal, { ...base, mode: "removed" }), input.now),
     db.prepare(`DELETE FROM video_notes WHERE id = ?1 AND project_id = ?2 AND author_user_id = ?3 AND revision = ?4 AND deleted_at IS NULL AND ${projectFence(2)}
       AND NOT EXISTS (SELECT 1 FROM video_notes c WHERE c.parent_id = ?1 AND (c.author_user_id IS NULL OR c.author_user_id <> ?3)) AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?5)`)
@@ -179,7 +231,8 @@ export async function deleteVideoNote(db: D1Database, input: { projectId: string
     db.prepare(`UPDATE video_notes SET deleted_at = ?1, body = '', drawing_frame = NULL, revision = revision + 1
       WHERE id = ?2 AND project_id = ?3 AND author_user_id = ?4 AND revision = ?5 AND deleted_at IS NULL AND ${projectFence(3)}`)
       .bind(input.now, note.id, input.projectId, principal.id, input.expectedRevision),
-    db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.delete', 'video_note', ?3, ?4, ?5 WHERE changes() = 1`)
+    // The markup row is still there (it is deleted by the statement after this one), so the audit can say whether the tombstoned note had a drawing.
+    db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.delete', 'video_note', ?3, json_set(?4, '$.hadMarkup', json(CASE WHEN EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = ?3) THEN 'true' ELSE 'false' END)), ?5 WHERE changes() = 1`)
       .bind(tombAudit, principal.id, note.id, auditMeta(principal, { ...base, mode: "tombstone", ownRepliesRemoved: 0 }), input.now),
     db.prepare("DELETE FROM video_note_markup WHERE note_id = ?1 AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?2)").bind(note.id, tombAudit),
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),

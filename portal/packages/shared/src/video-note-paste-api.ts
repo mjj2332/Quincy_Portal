@@ -12,7 +12,7 @@ const revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 export const VIDEO_NOTE_PASTE_MAX = 100;
 export const VIDEO_NOTE_PASTE_OFFSET_MAX = 1_000_000;
 /** Why a requested note was not copied. A reply, a deleted note or an already-copied note is never an error; every request row gets an answer. */
-export const VIDEO_NOTE_PASTE_SKIP_REASONS = ["already_copied", "out_of_range", "deleted", "reply"] as const;
+export const VIDEO_NOTE_PASTE_SKIP_REASONS = ["already_copied", "out_of_range", "drawing_outside", "deleted", "reply"] as const;
 export type VideoNotePasteSkipReason = (typeof VIDEO_NOTE_PASTE_SKIP_REASONS)[number];
 
 /** Target frames, applied after the exact middle-moment mapping between the two Versions' rates. */

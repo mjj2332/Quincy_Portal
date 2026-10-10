@@ -40,28 +40,44 @@ export const pasteFence = (p: PasteFenceParams): string => `${projectFence(p.pro
          WHERE tm.asset_id = ?${p.target} AND tv.project_id = ?${p.project})`;
 
 /**
- * Binds: ?1 copies JSON `[{ id, src, start, end }]` (mapped rows only), ?2 target Version, ?3 Project, ?4 source Version, ?5 user id, ?6 role,
+ * Binds: ?1 copies JSON `[{ id, src, start, end, draw }]` (mapped rows only; `draw` is the mapped drawing frame, null for a note without a drawing), ?2 target Version, ?3 Project, ?4 source Version, ?5 user id, ?6 role,
  * ?7 source Version number, ?8 now, ?9 expected JSON `[{ id, rev }]`, ?10 its length. Body and visibility come from the source ROW, never from a bind.
  * The conflict target's WHERE repeats the partial index's predicate exactly, or SQLite refuses the upsert. A lost race inserts nothing.
  */
 export const PASTE_INSERT_SQL = `INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_guest_id, author_role, visibility, start_frame, end_frame, drawing_frame, body, revision,
     copied_from_note_id, copied_from_version, original_author_name, original_author_role, created_at)
-  SELECT json_extract(r.value, '$.id'), s.project_id, s.video_id, ?2, NULL, ?5, NULL, ?6, s.visibility, json_extract(r.value, '$.start'), json_extract(r.value, '$.end'), NULL, s.body, 1,
+  SELECT json_extract(r.value, '$.id'), s.project_id, s.video_id, ?2, NULL, ?5, NULL, ?6, s.visibility, json_extract(r.value, '$.start'), json_extract(r.value, '$.end'), json_extract(r.value, '$.draw'), s.body, 1,
     s.id, ?7, COALESCE(s.original_author_name, su.name, g.display_name, 'Unknown'), COALESCE(s.original_author_role, s.author_role), ?8
   FROM json_each(?1) r JOIN video_notes s ON s.id = json_extract(r.value, '$.src')
   LEFT JOIN user su ON su.id = s.author_user_id LEFT JOIN guest_reviewers g ON g.id = s.author_guest_id
   WHERE s.project_id = ?3 AND s.asset_id = ?4 AND s.parent_id IS NULL AND s.deleted_at IS NULL AND s.revision = (SELECT json_extract(x.value, '$.rev') FROM json_each(?9) x WHERE json_extract(x.value, '$.id') = s.id)
     AND ${pasteFence({ target: 2, project: 3, source: 4, expected: 9, count: 10 })}
     AND EXISTS (SELECT 1 FROM video_version_meta tm WHERE tm.asset_id = ?2 AND tm.frame_count > json_extract(r.value, '$.start') AND (json_extract(r.value, '$.end') IS NULL OR json_extract(r.value, '$.end') <= tm.frame_count))
+    AND (json_extract(r.value, '$.draw') IS NULL OR (json_extract(r.value, '$.draw') >= json_extract(r.value, '$.start')
+         AND CASE WHEN json_extract(r.value, '$.end') IS NULL THEN json_extract(r.value, '$.draw') = json_extract(r.value, '$.start') ELSE json_extract(r.value, '$.draw') < json_extract(r.value, '$.end') END))
     AND NOT ${alreadyOnTarget("s", "?2")}
   ON CONFLICT (asset_id, copied_from_note_id) WHERE copied_from_note_id IS NOT NULL DO NOTHING`;
 
 /**
  * Binds: ?1 audit id, ?2 actor, ?3 target Version, ?4 meta JSON, ?5 now, ?6 Project, ?7 source Version, ?8 expected JSON, ?9 its length, ?10 requested count,
- * ?11 planned copies, ?12 planned already_copied. Runs straight after the INSERT: `changes()` is that INSERT's count, so `copied` is what landed and a mapped row
+ * ?11 planned copies, ?12 planned already_copied, ?13 the copies JSON. Runs straight after the INSERT: `changes()` is that INSERT's count, so `copied` is what landed and a mapped row
  * that lost a race is counted as already_copied. It carries the same fence, so a commit that wrote nothing because the fence failed writes no audit row either.
  */
 export const PASTE_AUDIT_SQL = `INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
   SELECT ?1, ?2, 'video_note.paste', 'asset', ?3,
-    json_set(?4, '$.copied', changes(), '$.skipped', ?10 - changes(), '$.skippedByReason.already_copied', ?12 + (?11 - changes())), ?5
+    json_set(?4, '$.copied', changes(), '$.skipped', ?10 - changes(), '$.skippedByReason.already_copied', ?12 + (?11 - changes()),
+      '$.markupCopied', (SELECT COUNT(*) FROM json_each(?13) r JOIN video_notes c ON c.id = json_extract(r.value, '$.id') AND c.asset_id = ?3 AND c.drawing_frame IS NOT NULL
+        JOIN video_note_markup k ON k.note_id = json_extract(r.value, '$.src'))), ?5
   WHERE ${pasteFence({ target: 3, project: 6, source: 7, expected: 8, count: 9 })}`;
+
+
+/**
+ * Binds: ?1 the same copies JSON as the INSERT, ?2 target Version, ?3 now. Copies each source note's markup row to the copy that LANDED (the join to `video_notes` on the fresh id and the
+ * target Version means a lost race or a skipped note copies nothing), and only for a copy that carries a drawing frame. The batch places it AFTER `PASTE_AUDIT_SQL`, which reads `changes()` from the note INSERT.
+ */
+export const PASTE_MARKUP_SQL = `INSERT INTO video_note_markup (note_id, strokes_json, created_at, updated_at)
+  SELECT c.id, k.strokes_json, ?3, ?3
+  FROM json_each(?1) r JOIN video_notes c ON c.id = json_extract(r.value, '$.id') AND c.asset_id = ?2 AND c.parent_id IS NULL AND c.drawing_frame IS NOT NULL
+  JOIN video_note_markup k ON k.note_id = json_extract(r.value, '$.src')
+  WHERE true
+  ON CONFLICT (note_id) DO NOTHING`;
