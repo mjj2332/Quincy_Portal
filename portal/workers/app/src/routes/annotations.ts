@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import { and, asc, eq, isNull } from "drizzle-orm";
-import { externalAnnotationListResponseSchema, externalAnnotationSchema, ROLE_LABELS, roleHasCapability, type Role } from "@quincy/shared";
+import { externalAnnotationListResponseSchema, externalAnnotationSchema, ROLE_LABELS, roleHasCapability, strokesSchema, type Role } from "@quincy/shared";
 import { z } from "zod";
 import type { Context } from "hono";
 import type { AppEnv } from "../env";
@@ -14,16 +14,11 @@ import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visib
 import { notifyProject } from "../lib/notifications";
 import { visibleProjectWhere } from "../lib/visible-project-scope";
 
-const strokeInput = z.object({
-  points: z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(2000),
-  color: z.string().trim().min(1).max(32),
-  width: z.number().positive().max(100),
-});
 // Creation intentionally uses the same stroke contract as PATCH. A note-only
 // annotation remains valid, but an empty/absent markup plus empty note does not.
-const annotationInput = z.object({ strokes: z.array(strokeInput).max(200).optional(), noteText: z.string().trim().max(10_000).optional() })
+const annotationInput = z.object({ strokes: strokesSchema.optional(), noteText: z.string().trim().max(10_000).optional() })
   .refine((value) => (value.strokes?.length ?? 0) > 0 || Boolean(value.noteText), { message: "A markup or note is required" });
-const annotationEditInput = z.object({ noteText: z.string().trim().max(10_000).nullable().optional(), strokes: z.array(strokeInput).max(200).optional() })
+const annotationEditInput = z.object({ noteText: z.string().trim().max(10_000).nullable().optional(), strokes: strokesSchema.optional() })
   .refine((value) => value.noteText !== undefined || value.strokes !== undefined, { message: "A note or markup change is required" });
 
 // .length counts UTF-16 code units, not bytes — a JSON string full of multibyte

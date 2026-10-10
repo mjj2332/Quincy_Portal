@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { LINK_PREVIEW_URL_MAX, NOTICE_BODY_MAX_LENGTH } from "@quincy/shared";
+import { LINK_PREVIEW_URL_MAX, NOTICE_BODY_MAX_LENGTH, STROKE_LIMITS, strokePointSchema, strokeSchema } from "@quincy/shared";
 import { jsonResult, writeTool, type McpTool } from "./define";
 import { plainTextDoc } from "./writes";
 
@@ -15,13 +15,9 @@ const annotationId = z.string().uuid().describe("The annotation's id, from list_
 const postId = z.string().uuid().describe("The Notice board post's id, from list_notice_board.");
 const projectId = z.string().uuid().describe("The Project's id.");
 
-// The same stroke contract as the route: coordinates are fractions of the image (0 to 1).
-const stroke = z.object({
-  points: z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict()).min(1).max(2000),
-  color: z.string().trim().min(1).max(32),
-  width: z.number().positive().max(100),
-}).strict();
-const strokes = z.array(stroke).max(200);
+// The same stroke contract as the route (the shared pieces), refusing unknown keys: coordinates are fractions of the image (0 to 1).
+const stroke = strokeSchema.extend({ points: z.array(strokePointSchema.strict()).min(1).max(STROKE_LIMITS.points) }).strict();
+const strokes = z.array(stroke).max(STROKE_LIMITS.strokes);
 
 const annotationTools: McpTool[] = [
   writeTool({
