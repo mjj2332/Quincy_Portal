@@ -28,28 +28,33 @@ export function createGuestApi(linkId: string): GuestApi {
   const send = async (path: string, init?: RequestInit): Promise<Response | null> => {
     try { return await fetch(`${base}${path}`, { credentials: "same-origin", ...init }); } catch { return null; }
   };
+  /** The one place a body is read. A rejection (the connection dropped after the headers) says nothing about the link, so callers treat `null` as transient; only a body that read and then failed its schema is `gone`. */
+  const readJson = async (response: Response): Promise<{ body: unknown } | null> => {
+    try { return { body: await response.json() }; } catch { return null; }
+  };
   const transient = (response: Response | null) => response === null || response.status >= 500 || response.status === 429;
   const read = async <T>(path: string, parse: (body: unknown) => T): Promise<Read<T>> => {
     const response = await send(path);
     if (transient(response)) return { kind: "transient" };
     if (!response?.ok) return { kind: "gone" };
-    // A body that cannot be read (the connection dropped after the headers) says nothing about the link: transient. Only a body that parsed and failed the schema is `gone`.
-    let body: unknown;
-    try { body = await response.json(); } catch { return { kind: "transient" }; }
-    try { return { kind: "ok", value: parse(body) }; } catch { return { kind: "gone" }; }
+    const read = await readJson(response);
+    if (read === null) return { kind: "transient" };
+    try { return { kind: "ok", value: parse(read.body) }; } catch { return { kind: "gone" }; }
   };
   return {
     async exchange(token, passcode) {
       const response = await send("/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(passcode === undefined ? { token } : { token, passcode }) });
       if (response === null) return { ok: false, reason: "unreachable" };
       if (response.ok) {
-        let body: unknown;
-        try { body = await response.json(); } catch { return { ok: false, reason: "unreachable" }; }
-        const parsed = guestSessionResponseSchema.safeParse(body);
+        const read = await readJson(response);
+        if (read === null) return { ok: false, reason: "unreachable" };
+        const parsed = guestSessionResponseSchema.safeParse(read.body);
         return parsed.success ? { ok: true, session: parsed.data } : { ok: false, reason: "unavailable" };
       }
       if (response.status === 401 || response.status === 429) {
-        const body = guestPasscodeErrorSchema.safeParse(await response.json().catch(() => null));
+        const read = await readJson(response);
+        if (read === null) return { ok: false, reason: "unreachable" };
+        const body = guestPasscodeErrorSchema.safeParse(read.body);
         if (body.success) return body.data.error === "too_many_attempts" ? { ok: false, reason: "limited", retryAfterSeconds: body.data.retryAfterSeconds } : { ok: false, reason: body.data.error };
       }
       if (response.status === 400 && passcode !== undefined) return { ok: false, reason: "invalid_input" };

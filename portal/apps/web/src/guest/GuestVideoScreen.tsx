@@ -90,13 +90,23 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
 
   // A stream that fails mid-play (a seek needing another range request) may mean staff revoked the link. The player has already shown its own notice; recheck access.
   // If the session is fine, the Video or this Version may still have been taken off the link: re-read the granted list, and leave only when the displayed Version is no longer in it.
+  // Each recheck is bound to the Version it started on: a token that moves on every selection change and on unmount makes a late completion a no-op.
   const shownAssetId = version.assetId;
+  const selectionToken = useRef(0);
+  useEffect(() => {
+    selectionToken.current += 1;
+    return () => { selectionToken.current += 1; };
+  }, [shownAssetId]);
   const onMediaError = useCallback(() => {
+    const token = selectionToken.current;
+    const stale = () => selectionToken.current !== token;
     void (async () => {
       const session = await api.session();
+      if (stale()) return;
       if (session.kind === "gone") { onUnavailable(); return; }
       if (session.kind !== "ok") return;
       const list = await api.videos();
+      if (stale()) return;
       if (list.kind === "gone") { onUnavailable(); return; }
       if (list.kind !== "ok") return;
       if (!list.value.some((candidate) => candidate.versions.some((granted) => granted.assetId === shownAssetId))) onGrantsChanged(list.value);

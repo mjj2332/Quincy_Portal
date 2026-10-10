@@ -5,6 +5,8 @@ import type { GuestNoteThreadDto, GuestVideoDto } from "@quincy/shared";
 import { installVideoElementStub, type VideoElementStub } from "../testing/video-element";
 import { mockViewport, type MockViewport } from "../testing/viewport";
 import { GuestApp } from "./GuestApp";
+import type { GuestApi } from "./guest-api";
+import { GuestVideoScreen } from "./GuestVideoScreen";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea reads (same stub as App-project-sheet.dom.test.tsx).
@@ -666,5 +668,84 @@ describe("Sol round 6", () => {
     expect(byId("guest-notice")).toBeNull();
     expect(allById("guest-note")).toHaveLength(1);
     expect(host.textContent).toContain("This version can't play in this browser.");
+  });
+});
+
+describe("Sol round 7", () => {
+  const broken = (status: number) => { const response = json({}, status); Object.defineProperty(response, "json", { value: () => Promise.reject(new TypeError("connection dropped")) }); return response; };
+  const pickVersion = async (prefix: string) => {
+    await click(byId("guest-version-trigger") ?? undefined);
+    await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.startsWith(prefix)));
+  };
+  /** Holds every GET /videos until `release()`, then answers it from `videos`. */
+  const gateVideos = () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/videos")) await gate;
+      return route(String(input), init);
+    });
+    return release;
+  };
+
+  it("a 401 whose body cannot be read is a retry screen, not unavailable", async () => {
+    extra = (url, init) => (url.endsWith("/session") && init?.method === "POST" ? broken(401) : undefined);
+    await open();
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(byId("guest-unreachable")).not.toBeNull();
+  });
+
+  it("a 429 whose body cannot be read is a retry screen, not unavailable", async () => {
+    extra = (url, init) => (url.endsWith("/session") && init?.method === "POST" ? broken(429) : undefined);
+    await open();
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(byId("guest-unreachable")).not.toBeNull();
+  });
+
+  it("a media error on a removed Version A, then switching to granted B before the recheck resolves, keeps B playing", async () => {
+    videos = [videoOf(1, { versions: [versionOf(30), versionOf(10)] })];
+    await open();
+    await pickVersion("v10");
+    const release = gateVideos();
+    await act(async () => { stub.fireError(host.querySelector("video")!); });
+    await flush();
+    await pickVersion("v30");
+    videos = [videoOf(1, { versions: [versionOf(30)] })];
+    await act(async () => { release(); });
+    await flush();
+    expect(byId("guest-video-screen")).not.toBeNull();
+    expect(byId("guest-list")).toBeNull();
+    expect(byId("guest-notice")).toBeNull();
+    expect(byId("guest-version-trigger")?.textContent).toMatch(/^v30/);
+  });
+
+  it("a recheck that resolves after the screen unmounted changes nothing and warns nothing", async () => {
+    videos = [videoOf(1)];
+    const onGrantsChanged = vi.fn();
+    const onUnavailable = vi.fn();
+    const warn = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const api: GuestApi = {
+      exchange: async () => ({ ok: false, reason: "unavailable" }),
+      session: async () => { await gate; return { kind: "gone" }; },
+      videos: async () => { await gate; return { kind: "ok", value: [] }; },
+      notes: async () => ({ kind: "ok", value: [] }),
+      markup: async () => ({ kind: "gone" }),
+    };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(<GuestVideoScreen api={api} videos={videos} index={0} onIndex={() => undefined} onBack={null} onUnavailable={onUnavailable} onGrantsChanged={onGrantsChanged} />); });
+    await flush();
+    await act(async () => { stub.fireError(host.querySelector("video")!); });
+    await act(async () => { root!.unmount(); });
+    root = null;
+    await act(async () => { release(); });
+    await flush();
+    expect(onUnavailable).not.toHaveBeenCalled();
+    expect(onGrantsChanged).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
