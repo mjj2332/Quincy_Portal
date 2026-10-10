@@ -41,7 +41,7 @@ const BASE_PARTS = noteWriteParts(false);
 /** Whether a parsed body names `markup` or `drawingFrame`: only then does the write need the `markup` part (the staff routes read it the same way). */
 const touchesMarkup = (raw: unknown): boolean => typeof raw === "object" && raw !== null && ("markup" in raw || "drawingFrame" in raw);
 
-type Verified = { session: GuestSession; guestId: string; link: GuestSession["link"] };
+export type Verified = { session: GuestSession; guestId: string; link: GuestSession["link"] };
 type Target = { assetId?: string };
 
 /** What every note write shares once it is admitted. */
@@ -54,13 +54,13 @@ function context<P extends string>(c: Handled<P>, v: Verified, markup: boolean, 
 }
 type Ctx = ReturnType<typeof context>;
 type Body = unknown | typeof INVALID | typeof TOO_LARGE;
-type Entered<T> = { v: Verified; target: T; raw: Body; markup: boolean; ctx: Ctx };
+export type Entered<T> = { v: Verified; target: T; raw: Body; markup: boolean; ctx: Ctx };
 
 /**
  * Steps 1 to 7 of the order above. `locate` is step 6: the Version or note the request names, as far as this guest may see it, or null (the stub). The body is read here and judged
  * by the caller at step 9, after `reserve`.
  */
-async function enter<P extends string, T extends { assetId: string }>(c: Handled<P>, input: { cap: number; ids: string[]; locate: (v: Verified) => Promise<T | null> }): Promise<{ response: Response } | Entered<T>> {
+export async function enter<P extends string, T extends { assetId: string }>(c: Handled<P>, input: { cap: number; ids: string[]; locate: (v: Verified) => Promise<T | null> }): Promise<{ response: Response } | Entered<T>> {
   const stub = async () => ({ response: await guestNotFound(asApp(c)) });
   if (input.ids.some((id) => !UUID.test(id))) return stub();
   const linkId = c.req.param("linkId" as never) as string;
@@ -86,7 +86,7 @@ async function enter<P extends string, T extends { assetId: string }>(c: Handled
 }
 
 /** Step 9: a body over the cap is 413, one that is not JSON or not the schema is 400. Only reached once the attempt is reserved. */
-function judge<T, P extends string>(c: Handled<P>, entered: Entered<unknown>, schema: { safeParse: (raw: unknown) => { success: true; data: T } | { success: false } }): { data: T } | { response: Promise<Response> } {
+export function judge<T, P extends string>(c: Handled<P>, entered: Entered<unknown>, schema: { safeParse: (raw: unknown) => { success: true; data: T } | { success: false } }): { data: T } | { response: Promise<Response> } {
   if (entered.raw === TOO_LARGE) return { response: entered.ctx.answer(c.json({ error: "payload_too_large" }, 413)) };
   const parsed = entered.raw === INVALID ? null : schema.safeParse(entered.raw);
   if (!parsed?.success) return { response: entered.ctx.answer(c.json({ error: "invalid_request" }, 400)) };
@@ -98,12 +98,12 @@ const publish = <P extends string>(c: Handled<P>, outboxIds: string[] | undefine
   if (outboxIds?.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, outboxIds));
 };
 
-const writerOf = (v: Verified, markup: boolean): NoteAuthor & GuestWriter => ({ kind: "guest", guestId: v.guestId, sessionId: v.session.id, linkId: v.link.id, tokenHash: v.session.tokenHash, markup });
+export const writerOf = (v: Verified, markup: boolean): NoteAuthor & GuestWriter => ({ kind: "guest", guestId: v.guestId, sessionId: v.session.id, linkId: v.link.id, tokenHash: v.session.tokenHash, markup });
 
-/** One attempt in each bucket, charged to the window the request completes in. */
-async function reserve<P extends string>(c: Handled<P>, v: Verified): Promise<Response | null> {
+/** `amount` attempts (one by default; a paste spends its note count) in each bucket, charged to the window the request completes in. */
+export async function reserve<P extends string>(c: Handled<P>, v: Verified, amount = 1): Promise<Response | null> {
   const decidedAt = Date.now();
-  const attempt = await reserveAttempts(c.env.DB, [{ bucket: `note:guest:${v.guestId}`, limit: GUEST_LIMITS.noteGuest }, { bucket: `note:link:${v.link.id}`, limit: GUEST_LIMITS.noteLink }], decidedAt);
+  const attempt = await reserveAttempts(c.env.DB, [{ bucket: `note:guest:${v.guestId}`, limit: GUEST_LIMITS.noteGuest, amount }, { bucket: `note:link:${v.link.id}`, limit: GUEST_LIMITS.noteLink, amount }], decidedAt);
   return attempt.limited ? tooMany(attempt.retryAfterSeconds) : null;
 }
 

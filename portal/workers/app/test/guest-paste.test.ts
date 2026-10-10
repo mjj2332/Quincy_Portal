@@ -416,9 +416,12 @@ describe("the commit repeats what the entry checked", () => {
 
 describe("the SQL fence on its own (a paste that bypasses the route inserts and audits nothing)", () => {
   const writerOf = async (w: World) => ({ guestId: w.guest!.guestId, sessionId: w.guest!.sessionId, linkId: w.link.id, tokenHash: await hashToken(w.link.cookie.split("=")[1]!), markup: false });
-  const run = async (w: World, note: string, writer: Awaited<ReturnType<typeof writerOf>>) => (await commitNotePaste(database.DB, {
-    projectId: w.a.projectId, targetAssetId: w.a2.assetId, sourceAssetId: w.a.assetId, notes: revisions([note]), offsetFrames: 0, principal: null, guest: writer, now: Date.now(),
-  })).kind;
+  /** `between` runs after the plan was read and before the write batch, the window the SQL fence exists for (the planner would otherwise refuse a state that was already broken). */
+  const run = async (w: World, note: string, writer: Awaited<ReturnType<typeof writerOf>>, between?: () => Promise<unknown>) => {
+    let batches = 0;
+    const db = { prepare: (sql: string) => database.DB.prepare(sql), batch: async (statements: D1PreparedStatement[]) => { batches += 1; if (batches === 2 && between) await between(); return database.DB.batch(statements); } } as unknown as D1Database;
+    return (await commitNotePaste(db, { projectId: w.a.projectId, targetAssetId: w.a2.assetId, sourceAssetId: w.a.assetId, notes: revisions([note]), offsetFrames: 0, principal: null, guest: writer, now: Date.now() })).kind;
+  };
   const breaks: Array<[string, (w: World) => Promise<unknown>]> = [
     ["revoked", (w) => database.DB.prepare("UPDATE client_links SET revoked_at = ? WHERE id = ?").bind(Date.now(), w.link.id).run()],
     ["expired", (w) => database.DB.prepare("UPDATE client_links SET expires_at = ? WHERE id = ?").bind(Date.now() - 1, w.link.id).run()],
@@ -441,8 +444,8 @@ describe("the SQL fence on its own (a paste that bypasses the route inserts and 
     expect(await run(control, controlNote, await writerOf(control))).toBe("ok"); expect(await copyCount()).toBe(1); expect(await pasteAudits()).toHaveLength(1);
     await clearVideoNotes(); await clearGuestRows(); await openGuestGate();
     for (const [label, change] of breaks) {
-      const w = await world(); const note = await ownNote(w); await change(w);
-      expect(await run(w, note, await writerOf(w)), label).not.toBe("ok");
+      const w = await world(); const note = await ownNote(w);
+      expect(await run(w, note, await writerOf(w), () => change(w)), label).not.toBe("ok");
       expect(await copyCount(), label).toBe(0); expect(await pasteAudits(), label).toEqual([]); expect(await markupCount(), label).toBe(0);
       await clearVideoNotes(); await clearGuestRows(); await openGuestGate();
       await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run();

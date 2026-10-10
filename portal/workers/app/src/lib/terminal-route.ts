@@ -314,6 +314,8 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "PATCH", path: "/d/api/links/:linkId/notes/:noteId", class: "guest-link" },
   { method: "DELETE", path: "/d/api/links/:linkId/notes/:noteId", class: "guest-link" },
   { method: "POST", path: "/d/api/links/:linkId/versions/:assetId/decision", class: "guest-link" },
+  { method: "POST", path: "/d/api/links/:linkId/versions/:assetId/note-paste", class: "guest-link" },
+  { method: "POST", path: "/d/api/links/:linkId/versions/:assetId/note-paste/preview", class: "guest-link" },
   { method: "GET", path: "/d/api/links/:linkId/versions/:assetId/download", class: "guest-link" },
   { method: "GET", path: "/d/api/links/:linkId/downloads", class: "guest-link" },
   { method: "GET", path: "/d/api/links/:linkId/downloads/all.zip", class: "guest-link" },
