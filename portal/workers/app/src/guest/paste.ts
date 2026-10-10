@@ -4,9 +4,9 @@ import {
 } from "@quincy/shared";
 import { commitNotePaste, planDrawn, planNotePaste, type PlanOutcome } from "../lib/video-note-paste";
 import type { AppEnv } from "../env";
-import { guestNotFound, guestRoute, type INVALID, type TOO_LARGE } from "./http";
+import { guestNotFound, guestRoute, UUID, type INVALID, type TOO_LARGE } from "./http";
 import { classifyRefusal } from "./fence";
-import { enter, judge, reserve, writerOf, type Verified } from "./notes-write";
+import { enter, judge, reserve, writerOf, type Entered, type Verified } from "./notes-write";
 import { noteWriteParts } from "../lib/guest-fence-sql";
 import { resolveGrantedVersion } from "./read";
 
@@ -28,6 +28,21 @@ type Body = unknown | typeof INVALID | typeof TOO_LARGE;
 function requested(raw: Body, key: "noteIds" | "notes"): number {
   const list = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>)[key] : undefined;
   return Array.isArray(list) && list.length >= 1 && list.length <= GUEST_NOTE_PASTE_MAX ? list.length : 1;
+}
+
+/** The source Version the body names, when it is a plausible id: the quota and validation answers must already be sure the link still reaches it. */
+function sourceOf(raw: Body): string | null {
+  const id = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>).sourceAssetId : undefined;
+  return typeof id === "string" && UUID.test(id) ? id : null;
+}
+
+/** The entry with its refusal check widened to the named source: every answer after the credential (the 429, the 400 and 413) is the stub if EITHER Version is no longer reachable. */
+function withSource<P extends string>(c: Handled<P>, entered: Entered<{ assetId: string }>): Entered<{ assetId: string }> {
+  const source = sourceOf(entered.raw); if (source === null) return entered;
+  const { v, target, markup } = entered;
+  const answer = async (response: Response | Promise<Response>): Promise<Response> =>
+    await classifyRefusal(asApp(c), v.session, true, { parts: noteWriteParts(markup), comments: true, assetId: target.assetId, alsoAssetIds: [source] }) ?? await response;
+  return { ...entered, ctx: { ...entered.ctx, answer } };
 }
 
 /** The plan outcomes that are not a plan: an unreachable Version is the stub, the pair rules are 422. */
@@ -63,9 +78,9 @@ async function previewPaste(c: Handled<typeof PREVIEW>): Promise<Response> {
   const assetId = c.req.param("assetId");
   const entered = await enter(c, { cap: GUEST_PASTE_BODY_MAX_BYTES, ids: [assetId], locate: async (v) => await resolveGrantedVersion(c.env.DB, v.link.id, v.link.projectId, assetId) ? { assetId } : null });
   if ("response" in entered) return entered.response;
-  const { v, ctx } = entered;
+  const { v } = entered; const widened = withSource(c, entered); const { ctx } = widened;
   const limited = await reserve(c, v); if (limited) return ctx.answer(limited);
-  const judged = judge(c, entered, guestNotePastePreviewInputSchema); if ("response" in judged) return judged.response;
+  const judged = judge(c, widened, guestNotePastePreviewInputSchema); if ("response" in judged) return judged.response;
   const input = judged.data;
   const planned = await planNotePaste(c.env.DB, { projectId: v.link.projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, noteIds: input.noteIds, offsetFrames: input.offsetFrames, guest: { guestId: v.guestId, linkId: v.link.id } });
   if (planned.kind !== "ok") return answerOutcome(c, ctx, v, assetId, input.sourceAssetId, planned);
@@ -76,9 +91,9 @@ async function commitPaste(c: Handled<typeof COMMIT>): Promise<Response> {
   const assetId = c.req.param("assetId");
   const entered = await enter(c, { cap: GUEST_PASTE_BODY_MAX_BYTES, ids: [assetId], locate: async (v) => await resolveGrantedVersion(c.env.DB, v.link.id, v.link.projectId, assetId) ? { assetId } : null });
   if ("response" in entered) return entered.response;
-  const { v, ctx } = entered;
+  const { v } = entered; const widened = withSource(c, entered); const { ctx } = widened;
   const limited = await reserve(c, v, requested(entered.raw, "notes")); if (limited) return ctx.answer(limited);
-  const judged = judge(c, entered, guestNotePasteCommitInputSchema); if ("response" in judged) return judged.response;
+  const judged = judge(c, widened, guestNotePasteCommitInputSchema); if ("response" in judged) return judged.response;
   const input = judged.data;
   const outcome = await commitNotePaste(c.env.DB, { projectId: v.link.projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, notes: input.notes, offsetFrames: input.offsetFrames, principal: null, guest: writerOf(v, false) });
   if (outcome.kind === "ok") return settle(c, v, assetId, input.sourceAssetId, outcome.drawn, () => c.json(guestNotePasteCommitResponseSchema.parse(outcome.value)));

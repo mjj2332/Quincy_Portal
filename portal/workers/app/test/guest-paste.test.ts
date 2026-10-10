@@ -226,6 +226,29 @@ describe("committing a paste", () => {
   });
 });
 
+describe("quota refusal comes after source authorization (#741 13d)", () => {
+  const revokeSource = (w: World) => database.DB.prepare("UPDATE review_link_version_grants SET revoked_at = ?, revoked_by = ? WHERE link_id = ? AND asset_id = ?").bind(Date.now(), ids.member, w.link.id, w.a.assetId).run();
+
+  it("is the stub, not 429, when the source grant is revoked and the quota is exhausted (preview and commit)", async () => {
+    const w = await world(); const note = await ownNote(w); const stub = await stubBody();
+    await revokeSource(w); await seedBucket(`note:guest:${w.guest!.guestId}`, 60);
+    expect(await plain(await preview(w, [note]))).toEqual(stub);
+    expect(await plain(await commit(w, revisions([note])))).toEqual(stub);
+  });
+
+  it("is the stub, not 400, when the source grant is revoked and the body is otherwise invalid", async () => {
+    const w = await world(); const note = await ownNote(w); const stub = await stubBody();
+    await revokeSource(w);
+    expect(await plain(await preview(w, [note], {}, { visibility: "internal" }))).toEqual(stub);
+    expect(await plain(await commit(w, revisions([note]), {}, { visibility: "internal" }))).toEqual(stub);
+  });
+
+  it("still 429s when both Versions are reachable and the quota is exhausted", async () => {
+    const w = await world(); const note = await ownNote(w); await seedBucket(`note:guest:${w.guest!.guestId}`, 60);
+    expect((await preview(w, [note])).status).toBe(429); expect((await commit(w, revisions([note]))).status).toBe(429);
+  });
+});
+
 describe("which Versions a paste may touch", () => {
   it("is the stub, writing nothing, when the source Version is not granted to the link (preview and commit)", async () => {
     const w = await world({ grantSource: false }); const note = await ownNote(w); const stub = await stubBody();
