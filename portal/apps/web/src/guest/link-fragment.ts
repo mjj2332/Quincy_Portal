@@ -20,3 +20,14 @@ export function takeLinkToken(): string | null {
   window.history.replaceState(window.history.state, "", pathname + search);
   return token !== null && token !== "" ? token : null;
 }
+
+/**
+ * The full reload behind the chunk-failure screen's Reload. `takeLinkToken` already scrubbed the fragment, so a plain `location.reload()` would arrive without the credential. This puts
+ * the address back exactly as the visitor opened it (`?link=<id>#t=<token>`) with `location.replace`, so no history entry is added, and the fresh page scrubs it again on boot. A retry of
+ * the dynamic import in place would not do: the browser caches a rejected import by URL, and after a deploy the old hashed chunk is gone for good.
+ */
+export function reopenWithToken(token: string | null): void {
+  if (token === null) { window.location.reload(); return; }
+  const { pathname, search } = window.location;
+  window.location.replace(`${pathname}${search}#t=${encodeURIComponent(token)}`);
+}
