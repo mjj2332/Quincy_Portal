@@ -36,7 +36,7 @@ export default function CompareNotesHost({ notes, video, versionA, versionB, sto
         <TabsTrigger value="b" className="min-h-8 pointer-coarse:min-h-11">{`v${versionB.version}`}</TabsTrigger>
       </TabsList>
       <TabsContent value={active} className="grid min-h-0">
-        <VideoNotesPanel key={`${active}:${session.assetId}`} session={session} video={video} detailsRows={detailsFor(session.version)} />
+        <VideoNotesPanel key={`${active}:${session.assetId}`} session={session} video={video} detailsRows={detailsFor(session.version)} exportEnabled={false} />
       </TabsContent>
     </Tabs>
   </div>;

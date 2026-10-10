@@ -839,6 +839,19 @@ describe("Compare: notes, one column with a tab per side (#741 7c)", () => {
     expect(tid("video-notes-panel")).toBeNull();
   });
 
+  it("never offers the marker export menu inside Compare, even with the export part on (#741 9)", async () => {
+    const s = seed();
+    await openCompare({ parts: ["notes", "compare", "export"], notes: s.notes }, 5);
+    await openNotes();
+    expect(tid("video-notes-menu")).not.toBeNull(); // the copy menu is still there: the assertion below is not vacuous
+    await act(async () => { tid("video-notes-menu")!.click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush(2);
+    expect(document.querySelectorAll('[role="menuitem"]').length).toBeGreaterThan(0);
+    expect(tid("video-export-group")).toBeNull();
+    expect(tid("video-export-edl")).toBeNull();
+    expect(tid("video-export-fcpxml")).toBeNull();
+  });
+
   it("the Notes toggle opens a column with exactly one panel and a tab per side", async () => {
     const s = seed();
     await openCompare({ parts: ["notes", "compare"], notes: s.notes }, 5);
