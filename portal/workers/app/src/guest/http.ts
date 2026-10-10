@@ -82,3 +82,15 @@ export async function readBoundedText(request: Request, max: number = BODY_MAX_B
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   return new TextDecoder().decode(bytes);
 }
+
+export const INVALID = Symbol("invalid");
+export const TOO_LARGE = Symbol("too_large");
+/** The parsed JSON body, `TOO_LARGE` over `max` bytes (413 for the caller) or `INVALID` when it is not JSON (400). */
+export async function readJson(c: Context<AppEnv>, max: number = BODY_MAX_BYTES): Promise<unknown | typeof INVALID | typeof TOO_LARGE> {
+  const text = await readBoundedText(c.req.raw, max);
+  if (text === null) return TOO_LARGE;
+  try { return JSON.parse(text) as unknown; } catch { return INVALID; }
+}
+
+/** 429 with `Retry-After`: the one answer to every rate limit on the guest surface. */
+export const tooMany = (retryAfterSeconds: number): Response => Response.json({ error: "too_many_attempts", retryAfterSeconds }, { status: 429, headers: { "retry-after": String(retryAfterSeconds) } });
