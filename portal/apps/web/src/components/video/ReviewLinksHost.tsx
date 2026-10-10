@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import type { VideoDto } from "@quincy/shared";
 import { Button } from "../quincy/Button";
-import { SHEET_CLOSE_SCROLL_MARGIN } from "../quincy/SheetCloseButton";
+import { PROJECT_SHEET_CLOSE_SCROLL_MARGIN } from "../quincy/ProjectSheet";
 import { ReviewLinkSelectionBar } from "./ReviewLinkSelectionBar";
 import { useReviewLinkState, type ReviewLinksUi } from "./use-review-links-ui";
 
@@ -23,5 +23,5 @@ export function ReviewLinksHost({ ui, videos, onBarHeight }: { ui: ReviewLinksUi
 /** The "Review links" button, in the Films header (`VideoCollectionPanel`); renders nothing unless Review links are on. */
 export function ReviewLinksOpenButton({ ui }: { ui: ReviewLinksUi }) {
   if (!ui.enabled) return null;
-  return <Button type="button" variant="secondary" className={`min-h-11 ${SHEET_CLOSE_SCROLL_MARGIN}`} data-testid="review-links-open" onClick={ui.store.openList}>Review links</Button>;
+  return <Button type="button" variant="secondary" className={`min-h-11 ${PROJECT_SHEET_CLOSE_SCROLL_MARGIN}`} data-testid="review-links-open" onClick={ui.store.openList}>Review links</Button>;
 }

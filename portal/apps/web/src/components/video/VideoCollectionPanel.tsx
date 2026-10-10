@@ -98,7 +98,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   const myVersionUpload = (video: VideoDto) => running.find((upload) => upload.videoId === video.id);
 
   return <section aria-labelledby="video-films-heading" data-testid="video-films">
-    <div className="workspace-intro" data-testid="video-films-header">
+    <div className="workspace-intro workspace-intro--stack" data-testid="video-films-header">
       <div><div className="ey">Video review</div><h1 className="serif" id="video-films-heading">Films</h1></div>
       <div className="muted">Upload web-ready H.264 MP4 cuts. A re-cut becomes a new version of the same film; notes stay with the version they were made on.</div>
       <ReviewLinksOpenButton ui={reviewLinks} />

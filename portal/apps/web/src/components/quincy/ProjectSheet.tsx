@@ -54,6 +54,11 @@ const ProjectSheetContext = createContext<ProjectSheetContextValue | null>(null)
  * modified click still opens natively (`shouldInterceptInternalLink`).
  */
 /** True inside a Project sheet, where the sheet's own close button is the way out. */
+/** The sheet's own close: 44px at `--space-4` on desktop, `--space-3` at <=721px. Its scroll margin is the same sum plus `--space-2`, so a control focused under it (the Review links button) rests below the close with its ring clear. */
+const PROJECT_SHEET_CLOSE_SIZE = "44px";
+export const PROJECT_SHEET_CLOSE_SCROLL_MARGIN =
+  `scroll-mt-[calc(var(--space-4)+${PROJECT_SHEET_CLOSE_SIZE}+var(--space-2))] max-[721px]:scroll-mt-[calc(var(--space-3)+${PROJECT_SHEET_CLOSE_SIZE}+var(--space-2))]`;
+
 export function useInProjectSheet(): boolean { return useContext(ProjectSheetContext) !== null; }
 
 export function useDashboardReturnLink(): { to: string; onClick?: (event: MouseEvent<HTMLAnchorElement>) => void } {
