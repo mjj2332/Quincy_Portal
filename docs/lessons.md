@@ -6152,3 +6152,11 @@ Tags: workers-runtime · #741
 - **Why `crc32`.** The JS table loop cost ~1.1 s CPU per 256 MiB against a 30000 ms `cpu_ms`; native is ~6 ms for the same bytes in Node.
 
 Guards: `workers/app/test/zip-stream-crc.test.ts`.
+
+## Tailwind never generates an interpolated arbitrary value (#741 11b)
+Tags: css-tokens · #741
+
+- **What bit.** A scroll margin written as `` `scroll-mt-[calc(var(--space-4)+${SIZE}+var(--space-2))]` `` passed every unit test, Sol and a design review, then measured `0px` in the browser: Tailwind scans source text for whole class names and never sees the interpolated one, so no CSS rule exists.
+- **Rule.** Write arbitrary values out literally. To share one with another file, export the whole literal class string, not the pieces. Only a real browser (computed style) proves a class-only fix; jsdom has no Tailwind CSS.
+
+Guards: `apps/web/src/styles/tailwind-literal-class.guard.test.ts`.
