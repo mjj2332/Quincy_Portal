@@ -14,7 +14,7 @@ import { Notice } from "../quincy/Notice";
 import { Popover, PopoverContent, PopoverTrigger } from "../reui/popover";
 import { ScrollArea } from "../reui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
-import { MarkerExportMenuItems, MarkerExportNotices, useMarkerExport } from "./VideoMarkerExportMenu";
+import { EXPORT_PANEL_WIDTH, MarkerExportMenuItems, MarkerExportNotices, useMarkerExport } from "./VideoMarkerExportMenu";
 import { VideoNoteComposer } from "./VideoNoteComposer";
 import { VideoNotePasteDialog } from "./VideoNotePasteDialog";
 import { VideoNoteThread } from "./VideoNoteThread";
@@ -182,10 +182,10 @@ export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = f
           <PopoverTrigger render={<Button type="button" variant="text" data-testid="video-details-button" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}>Version details</PopoverTrigger>
           <PopoverContent align="end" className="w-[min(320px,calc(100vw-var(--space-5)))] max-h-[min(70dvh,520px)] overflow-y-auto" data-testid="video-details-popover">{detailsRows}</PopoverContent>
         </Popover>
-        {(canCopy || canExport) && <Menu triggerLabel="Notes actions" label="Notes actions" triggerClassName={ICON_BUTTON} triggerTestId="video-notes-menu" trigger={<span aria-hidden="true">⋯</span>}>
+        {(canCopy || canExport) && <Menu triggerLabel="Notes actions" label="Notes actions" triggerClassName={ICON_BUTTON} panelClassName={canExport ? EXPORT_PANEL_WIDTH : undefined} triggerTestId="video-notes-menu" trigger={<span aria-hidden="true">⋯</span>}>
           {canCopy && <MenuPrimitive.Item className={MENU_ITEM} disabled={shown.length === 0} onClick={copyShown}>Copy shown notes</MenuPrimitive.Item>}
           {canCopy && pasteFrom && <MenuPrimitive.Item className={MENU_ITEM} onClick={() => { setPasteOpen(true); }}>{`Paste ${pasteFrom.noteIds.length} ${pasteFrom.noteIds.length === 1 ? "note" : "notes"} from v${pasteFrom.sourceVersion}…`}</MenuPrimitive.Item>}
-          {canExport && <MarkerExportMenuItems exp={exp} />}
+          {canExport && <MarkerExportMenuItems exp={exp} separated={canCopy} />}
         </Menu>}
       </div>
     </div>

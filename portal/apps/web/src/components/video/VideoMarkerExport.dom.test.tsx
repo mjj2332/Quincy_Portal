@@ -216,6 +216,21 @@ describe("Marker export menu (#741 9)", () => {
     }
   });
 
+  it("separates the copy items from the export group, and the popup keeps one fixed width", async () => {
+    await openFilm(); await openMenu();
+    expect(tid("video-export-separator")).not.toBeNull();
+    const popupEl = tid("video-export-group")!.closest('[role="menu"]') as HTMLElement;
+    expect(popupEl.className).toContain("w-[min(320px,calc(100vw-var(--space-4)))]");
+    const before = popupEl.className;
+    await exportOpts({ internal: true });
+    expect(popupEl.className).toBe(before);
+  });
+
+  it("has no hairline when there are no copy items above the group (archived)", async () => {
+    await openFilm({ archivedProject: true }); await openMenu();
+    expect(tid("video-export-separator")).toBeNull();
+  });
+
   it("defaults: internal unchecked, All selected, previews and a client-side count from the shared selection", async () => {
     await openFilm(); await openMenu();
     expect(tid("video-export-internal")!.getAttribute("aria-checked")).toBe("false");

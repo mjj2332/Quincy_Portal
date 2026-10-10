@@ -31,10 +31,14 @@ function sourceRow(note: VideoNoteDto): ExportSourceNote {
 }
 
 /** How many markers the server would write for these options: the shared selection, then the shared same-frame merge. `buildMarkers` reads only `includeInternal` from its context. */
-export function markerExportCount(threads: readonly VideoNoteThreadDto[], options: MarkerExportOptions): number {
+export function markerExportCount(threads: readonly VideoNoteThreadDto[], options: MarkerExportOptions): number { return markerExportSummary(threads, options).markers; }
+
+/** The markers the file would hold and the notes (roots on a frame) behind them: fewer markers than notes means some merged onto one frame. */
+export function markerExportSummary(threads: readonly VideoNoteThreadDto[], options: MarkerExportOptions): { markers: number; notes: number } {
   const rows = threads.flatMap((thread) => { const { replies, ...root } = thread; return [sourceRow(root), ...replies.map(sourceRow)]; });
   const notes = exportNotesFromThreads(rows, options);
-  return buildMarkers(notes, { includeInternal: options.includeInternal } as ExportContext).length;
+  const markers = buildMarkers(notes, { includeInternal: options.includeInternal } as ExportContext).length;
+  return { markers, notes: notes.filter((note) => note.parentId === null && note.startFrame !== null).length };
 }
 
 export function markerExportPreviewName(title: string, version: number, format: MarkerExportFormat, options: MarkerExportOptions): string {

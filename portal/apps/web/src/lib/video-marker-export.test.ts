@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { VideoNoteThreadDto } from "@quincy/shared";
 import {
-  filenameFromContentDisposition, markerExportCount, markerExportFailureMessage, markerExportUrl, requestMarkerExport, DEFAULT_MARKER_EXPORT_OPTIONS,
+  filenameFromContentDisposition, markerExportCount, markerExportSummary, markerExportFailureMessage, markerExportUrl, requestMarkerExport, DEFAULT_MARKER_EXPORT_OPTIONS,
 } from "./video-marker-export";
 
 const P = "11111111-1111-4111-8111-111111111111";
@@ -26,6 +26,10 @@ describe("markerExportUrl", () => {
 });
 
 describe("markerExportCount", () => {
+  it("reports the notes behind the markers: two notes on one frame are one marker", () => {
+    const summary = markerExportSummary([note({ startFrame: 10 }), note({ startFrame: 10 }), note({ startFrame: 20 })], DEFAULT_MARKER_EXPORT_OPTIONS);
+    expect(summary).toEqual({ markers: 2, notes: 3 });
+  });
   it("uses the shared selection: internal off by default, same-frame merge, tombstone with live replies kept", () => {
     const internal = note({ visibility: "internal", startFrame: 30 });
     const a = note({ startFrame: 10 }); const b = note({ startFrame: 10 });

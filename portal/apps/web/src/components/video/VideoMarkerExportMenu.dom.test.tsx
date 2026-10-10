@@ -12,11 +12,12 @@ let root: Root | null = null;
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren(); });
 
 const exportOf = (over: Partial<MarkerExport> = {}): MarkerExport => ({
-  enabled: true, options: DEFAULT_MARKER_EXPORT_OPTIONS, setOptions: vi.fn(), phase: { kind: "idle" }, pending: false, count: 3, title: "Film", version: 1, start: vi.fn(async () => undefined), ...over,
+  enabled: true, options: DEFAULT_MARKER_EXPORT_OPTIONS, setOptions: vi.fn(), phase: { kind: "idle" }, pending: false, count: 3, noteCount: 3, title: "Film", version: 1, start: vi.fn(async () => undefined), ...over,
 });
-async function render(exp: MarkerExport) {
+async function render(exp: MarkerExport, separated = false) {
+  if (root) { await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren(); }
   const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
-  await act(async () => { root!.render(<><Menu triggerLabel="Notes actions" label="Notes actions" defaultOpen trigger={<span>⋯</span>}><MarkerExportMenuItems exp={exp} /></Menu><MarkerExportNotices exp={exp} /></>); });
+  await act(async () => { root!.render(<><Menu triggerLabel="Notes actions" label="Notes actions" defaultOpen trigger={<span>⋯</span>}><MarkerExportMenuItems exp={exp} separated={separated} /></Menu><MarkerExportNotices exp={exp} /></>); });
   await act(async () => { await Promise.resolve(); });
 }
 const tid = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
@@ -45,3 +46,41 @@ describe("EDL marker limit in the menu (#741 9)", () => {
     expect(tid("video-export-edl")!.getAttribute("aria-disabled")).not.toBe("true");
   });
 });
+
+describe("Menu content (#741 9 design review)", () => {
+  it("says so when notes merged onto one frame, and is plain otherwise", async () => {
+    await render(exportOf({ count: 2, noteCount: 3 }));
+    expect(tid("video-export-count")!.textContent).toBe("2 markers · 3 notes");
+  });
+  it("is just the marker count when every note has its own", async () => {
+    await render(exportOf({ count: 3, noteCount: 3 }));
+    expect(tid("video-export-count")!.textContent).toBe("3 markers");
+  });
+  it("singular forms", async () => {
+    await render(exportOf({ count: 1, noteCount: 2 }));
+    expect(tid("video-export-count")!.textContent).toBe("1 marker · 2 notes");
+  });
+  it("draws a hairline above the group only when asked (copy items present)", async () => {
+    await render(exportOf({}));
+    expect(tid("video-export-separator")).toBeNull();
+    expect(document.querySelectorAll('[role="separator"]')).toHaveLength(0);
+  });
+  it("labels the group and the radios, and a filename preview carries its full name as a title", async () => {
+    await render(exportOf({}), true);
+    expect(tid("video-export-separator")).not.toBeNull();
+    const eyebrow = [...document.querySelectorAll<HTMLElement>('[role="group"]')].find((g) => g.textContent?.startsWith("Export markers"))!;
+    const label = eyebrow.firstElementChild as HTMLElement;
+    expect(label.textContent).toBe("Export markers");
+    expect(tid("video-export-status-label")!.textContent).toBe("Status");
+    expect(tid("video-export-edl-name")!.getAttribute("title")).toBe("Film-v1-notes-all-public.edl");
+  });
+  it("shows an empty outlined box when the internal checkbox is unticked, and the check when ticked", async () => {
+    await render(exportOf({}));
+    const box = tid("video-export-internal-box")!;
+    expect(box.getAttribute("aria-hidden")).toBe("true");
+    expect(box.querySelector("svg")).toBeNull();
+    await render(exportOf({ options: { includeInternal: true, status: "all" } }));
+    expect(tid("video-export-internal-box")!.querySelector("svg")).not.toBeNull();
+  });
+});
+
