@@ -726,3 +726,33 @@ describe("PUT /video-versions/:assetId/poster", () => {
     expect(await queued(written)).toMatchObject({ storageKey: written, projectId });
   });
 });
+
+describe("staff notifications on completion (15a)", () => {
+  const events = async (assetId: string) => (await database.DB.prepare("SELECT recipient_id AS recipient, actor_id AS actor, payload_json AS payload FROM notification_outbox WHERE event_type = 'project.video_review.notification' AND source_key = ? ORDER BY recipient_id").bind(`video_version:${assetId}`).all<{ recipient: string; actor: string; payload: string }>()).results;
+  const clear = () => database.DB.batch([database.DB.prepare("DELETE FROM notification_delivery_ledger"), database.DB.prepare("DELETE FROM notification_outbox")]);
+  beforeEach(async () => { await clear(); await setVideoFlags("video_review_notify_staff"); });
+  afterEach(clear);
+
+  it("tells the other members of the Project, never the uploader, and an Admin outside the Project is not a recipient", async () => {
+    stubS3(); const reserved = await reserveAndStore("admin", { title: "Notify cut" });
+    expect((await complete("admin", reserved.reservationId)).status).toBe(201);
+    const rows = await events(reserved.assetId);
+    expect(rows.map((row) => row.recipient)).toEqual([ids.member, ids.external].sort());
+    expect(rows[0]!.actor).toBe(ids.admin);
+    expect(JSON.parse(rows[0]!.payload).video).toEqual({ kind: "video_version_uploaded", projectId: ids.project, videoId: reserved.videoId, assetId: reserved.assetId, sourceId: reserved.assetId });
+  });
+
+  it("a repeated completion adds no second row, and a member's upload tells only the External", async () => {
+    stubS3(); const reserved = await reserveAndStore("member", { title: "Notify twice" });
+    expect((await complete("member", reserved.reservationId)).status).toBe(201);
+    expect((await complete("member", reserved.reservationId)).status).toBe(200);
+    expect((await events(reserved.assetId)).map((row) => row.recipient)).toEqual([ids.external]);
+  });
+
+  it("emits nothing while notify_staff is off, and the upload still completes", async () => {
+    await database.DB.prepare("DELETE FROM feature_flags WHERE key = 'video_review_notify_staff'").run();
+    stubS3(); const reserved = await reserveAndStore("member", { title: "Quiet cut" });
+    expect((await complete("member", reserved.reservationId)).status).toBe(201);
+    expect(await events(reserved.assetId)).toEqual([]);
+  });
+});

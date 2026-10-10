@@ -24,6 +24,14 @@ import {
   parseExternalNotificationOutboxPayload,
   projectExternalActivityPayload,
   roleHasCapability,
+  ROLES,
+  VIDEO_REVIEW_ALL_PROJECTS_FLAG,
+  VIDEO_REVIEW_MASTER_FLAG,
+  videoReviewPartFlag,
+  videoReviewPilotFlag,
+  guestIdOfOutboxActor,
+  parseVideoReviewNotificationPayload,
+  videoReviewNotificationSourceKey,
   isProjectAssignmentEligible,
   staffPathFor,
   projectNotificationRoute,
@@ -36,6 +44,7 @@ import {
   type SubtaskReminderOutboxPayload,
   type ExternalNotificationOutboxPayload,
   type NotificationType,
+  type VideoReviewNotificationPayload,
 } from "@quincy/shared";
 import type { Env } from "./env";
 
@@ -245,7 +254,7 @@ type LegacyResolvedRecipient = {
   ok: true;
   kind: "legacy";
   row: ResolverRow | ReminderResolverRow;
-  payload: ProjectCommentMentionPayload | ProjectAssignmentCreatedPayload | ProjectDeadlineReminderOutboxPayload | ExternalNotificationOutboxPayload | StaffSubtaskAssignedPayload | SubtaskReminderOutboxPayload;
+  payload: ProjectCommentMentionPayload | ProjectAssignmentCreatedPayload | ProjectDeadlineReminderOutboxPayload | ExternalNotificationOutboxPayload | StaffSubtaskAssignedPayload | SubtaskReminderOutboxPayload | VideoReviewNotificationPayload;
   commentPath: string;
   delivery: ResolvedDelivery;
 };
@@ -512,6 +521,152 @@ async function resolveStaffSubtaskAssignedRecipient(env: Env, outbox: OutboxRow)
       emailSubject: copy.title,
       emailText: `${copy.body}\n\n${collaborationPath}`,
       emailHtml: `<p>${htmlEscape(copy.body)}</p><p><a href="${htmlEscape(collaborationPath)}">View project</a></p>`,
+    },
+  };
+}
+
+/**
+ * #741 15a: staff video-review notifications. The payload names the source row and nothing else, so the title is composed HERE from the Video, the Version and the actor, and a note's text never
+ * reaches `notifications.title`, `notifications.body` or the email (docs/plans/741-13-15.md section 1.7). Everything the emitter checked is checked again at delivery: the recipient is active,
+ * holds `viewVideo`, is an Admin or still a member (an External only ever hears about a Project they are assigned to, where they see every Video), the Project is live, video review is open with
+ * `notify_staff` on, and the source row is still there (a deleted note stops being news).
+ */
+const AUTHORIZATION_EPOCH_MATCH = `(o.recipient_authorization_epoch = recipient.authorization_epoch OR (o.recipient_authorization_epoch IS NULL AND recipient.role <> 'external_editor'))`;
+const VIDEO_VIEWER_ROLES = ROLES.filter((role) => roleHasCapability(role, "viewVideo"));
+const VIDEO_VIEWER_ROLES_SQL = VIDEO_VIEWER_ROLES.map((role) => `'${role}'`).join(", ");
+const NOTIFY_STAFF_FLAG = videoReviewPartFlag("notify_staff");
+/** The gate as SQL over the outbox row `o`: master on, scope on (all Projects or this Project's pilot), and the `notify_staff` part on. A missing row is off. */
+const VIDEO_REVIEW_GATE_SQL = `(
+  EXISTS (SELECT 1 FROM feature_flags WHERE key = '${VIDEO_REVIEW_MASTER_FLAG}' AND enabled = 1)
+  AND (EXISTS (SELECT 1 FROM feature_flags WHERE key = '${VIDEO_REVIEW_ALL_PROJECTS_FLAG}' AND enabled = 1)
+    OR EXISTS (SELECT 1 FROM feature_flags WHERE key = '${videoReviewPilotFlag("")}' || o.project_id AND enabled = 1))
+  AND EXISTS (SELECT 1 FROM feature_flags WHERE key = '${NOTIFY_STAFF_FLAG}' AND enabled = 1)
+)`;
+/** The source row, as SQL over the outbox row `o`, by the payload's kind. */
+const VIDEO_REVIEW_SOURCE_SQL = `(CASE json_extract(o.payload_json, '$.video.kind')
+  WHEN 'video_note' THEN EXISTS (SELECT 1 FROM video_notes n WHERE n.id = json_extract(o.payload_json, '$.video.sourceId') AND n.project_id = o.project_id AND n.parent_id IS NULL AND n.deleted_at IS NULL)
+  WHEN 'video_reply' THEN EXISTS (SELECT 1 FROM video_notes n WHERE n.id = json_extract(o.payload_json, '$.video.sourceId') AND n.project_id = o.project_id AND n.parent_id IS NOT NULL AND n.deleted_at IS NULL)
+  WHEN 'video_decision' THEN EXISTS (SELECT 1 FROM video_approval_events e WHERE e.id = json_extract(o.payload_json, '$.video.sourceId') AND e.project_id = o.project_id)
+  WHEN 'video_version_uploaded' THEN EXISTS (SELECT 1 FROM video_version_meta m JOIN videos v ON v.id = m.video_id WHERE m.asset_id = json_extract(o.payload_json, '$.video.assetId') AND v.project_id = o.project_id)
+  ELSE 0 END)`;
+/** The Admin-or-member test as SQL over `o` and `recipient`: an Admin, or someone holding a membership the occurrence snapshotted. */
+const VIDEO_REVIEW_MEMBER_SQL = `(recipient.role = 'admin' OR EXISTS (
+  SELECT 1 FROM project_members member WHERE member.project_id = o.project_id AND member.user_id = o.recipient_id
+    AND EXISTS (SELECT 1 FROM json_each(o.payload_json, '$.authorizationAtOccurrence.membershipIds') cycle WHERE cycle.value = member.id)
+))`;
+
+/**
+ * The whole video-review authorization as one SQL predicate over `o` (the outbox row), `recipient` (its user) and `p` (its Project): the recipient is active and holds `viewVideo`, the epoch matches,
+ * Admin-or-snapshotted-member, the Project is unarchived, the gate is open with `notify_staff`, and the source row is live. Channel admission and the digest (email-digest.ts) both use this one text.
+ */
+export const VIDEO_REVIEW_AUTHORIZED_SQL = `(
+  p.archived_at IS NULL AND recipient.active = 1 AND recipient.role IN (${VIDEO_VIEWER_ROLES_SQL})
+  AND ${AUTHORIZATION_EPOCH_MATCH}
+  AND ${VIDEO_REVIEW_MEMBER_SQL}
+  AND ${VIDEO_REVIEW_GATE_SQL}
+  AND ${VIDEO_REVIEW_SOURCE_SQL}
+)`;
+
+function videoReviewPayload(outbox: OutboxRow): VideoReviewNotificationPayload | null {
+  if (outbox.schema_version !== 1 || outbox.event_type !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectVideoReview) return null;
+  let decoded: unknown;
+  try { decoded = JSON.parse(outbox.payload_json); } catch { return null; }
+  const payload = parseVideoReviewNotificationPayload(decoded);
+  if (!payload) return null;
+  if (payload.event.sourceKey !== outbox.source_key || payload.event.recipientId !== outbox.recipient_id || payload.video.projectId !== outbox.project_id) return null;
+  if (outbox.source_key !== videoReviewNotificationSourceKey(payload.video.kind, payload.video.sourceId)) return null;
+  return payload;
+}
+
+async function videoReviewGateOpen(env: Env, projectId: string): Promise<boolean> {
+  const keys = [VIDEO_REVIEW_MASTER_FLAG, VIDEO_REVIEW_ALL_PROJECTS_FLAG, videoReviewPilotFlag(projectId), NOTIFY_STAFF_FLAG];
+  const rows = (await env.DB.prepare(`SELECT key FROM feature_flags WHERE enabled = 1 AND key IN (${keys.map(() => "?").join(", ")})`).bind(...keys).all<{ key: string }>()).results;
+  const on = new Set(rows.map((row) => row.key));
+  return on.has(VIDEO_REVIEW_MASTER_FLAG) && (on.has(VIDEO_REVIEW_ALL_PROJECTS_FLAG) || on.has(videoReviewPilotFlag(projectId))) && on.has(NOTIFY_STAFF_FLAG);
+}
+
+type VideoReviewFacts = { title: string; version: number; actorName: string | null; decision: string | null; sourceOk: number };
+
+/** The Video, the Version, the actor's name and whether the source row is still live, in one read. A guest actor is named from `guest_reviewers` and never looked up as a user. */
+async function videoReviewFacts(env: Env, outbox: OutboxRow, payload: VideoReviewNotificationPayload): Promise<VideoReviewFacts | null> {
+  const guestId = guestIdOfOutboxActor(outbox.actor_id);
+  const { kind, sourceId, assetId, videoId, projectId } = payload.video;
+  return await env.DB.prepare(`
+    SELECT v.title AS title, a.version AS version,
+      CASE WHEN ?1 IS NOT NULL THEN (SELECT g.display_name FROM guest_reviewers g WHERE g.id = ?1) ELSE (SELECT u.name FROM user u WHERE u.id = ?2) END AS actorName,
+      CASE WHEN ?3 = 'video_decision' THEN (SELECT e.decision FROM video_approval_events e WHERE e.id = ?4 AND e.project_id = ?5 AND e.asset_id = ?6) END AS decision,
+      CASE ?3
+        WHEN 'video_note' THEN EXISTS (SELECT 1 FROM video_notes n WHERE n.id = ?4 AND n.project_id = ?5 AND n.asset_id = ?6 AND n.parent_id IS NULL AND n.deleted_at IS NULL)
+        WHEN 'video_reply' THEN EXISTS (SELECT 1 FROM video_notes n WHERE n.id = ?4 AND n.project_id = ?5 AND n.asset_id = ?6 AND n.parent_id IS NOT NULL AND n.deleted_at IS NULL)
+        WHEN 'video_decision' THEN EXISTS (SELECT 1 FROM video_approval_events e WHERE e.id = ?4 AND e.project_id = ?5 AND e.asset_id = ?6)
+        ELSE 1 END AS sourceOk
+    FROM videos v JOIN assets a ON a.id = ?6 AND a.version_group_id = v.id AND a.kind = 'video' JOIN video_version_meta m ON m.asset_id = a.id AND m.video_id = v.id
+    WHERE v.id = ?7 AND v.project_id = ?5
+  `).bind(guestId, outbox.actor_id, kind, sourceId, projectId, assetId, videoId).first<VideoReviewFacts>();
+}
+
+function videoReviewCopy(kind: VideoReviewNotificationPayload["video"]["kind"], facts: VideoReviewFacts, guestActor: boolean): { title: string; body: string } {
+  const who = facts.actorName ? (guestActor ? `${facts.actorName} (client)` : facts.actorName) : (guestActor ? "A client" : "Someone");
+  const video = `“${facts.title}” v${facts.version}`;
+  switch (kind) {
+    case "video_version_uploaded": return { title: `New Version ${facts.version} of “${facts.title}”`, body: "A new Version is ready to review." };
+    case "video_note": return { title: `${who} left a note on ${video}`, body: "Open the Project's Video tab to read it." };
+    case "video_reply": return { title: `${who} replied on ${video}`, body: "Open the Project's Video tab to read it." };
+    case "video_decision": return { title: `${who} ${facts.decision === "approved" ? "approved" : "requested changes on"} ${video}`, body: "Open the Project's Video tab to see it." };
+  }
+}
+
+async function resolveVideoReviewRecipient(env: Env, outbox: OutboxRow): Promise<LegacyResolvedRecipient | Extract<ResolvedRecipient, { ok: false }>> {
+  const payload = videoReviewPayload(outbox);
+  if (!payload) return suppressed("payload_invalid");
+  const row = await env.DB.prepare(`
+    SELECT o.id AS outboxId, o.schema_version AS schemaVersion, o.event_type AS eventType,
+      o.source_key AS sourceKey, o.project_id AS projectId, o.actor_id AS actorId,
+      o.recipient_id AS recipientId, o.payload_json AS payloadJson,
+      o.recipient_authorization_epoch AS recipientAuthorizationEpoch,
+      o.recipient_membership_cycle_id AS recipientMembershipCycleId,
+      recipient.authorization_epoch AS currentAuthorizationEpoch,
+      recipient.active AS recipientActive, recipient.role AS recipientRole,
+      recipient.name AS recipientName, recipient.email AS recipientEmail,
+      project.street AS projectStreet, project.archived_at AS projectArchivedAt
+    FROM notification_outbox o
+    INNER JOIN user recipient ON recipient.id = o.recipient_id
+    LEFT JOIN projects project ON project.id = o.project_id
+    WHERE o.id = ?
+  `).bind(outbox.id).first<ResolverRow>();
+  if (!row) return suppressed("outbox_missing");
+  if (row.projectStreet === null) return suppressed("project_missing");
+  if (row.projectArchivedAt !== null) return suppressed("project_no_longer_visible");
+  const role = row.recipientRole as Role;
+  if (row.recipientActive !== 1 || !roleHasCapability(role, "viewVideo")) return suppressed("recipient_ineligible");
+  if (role === "external_editor" && row.recipientAuthorizationEpoch === null) return suppressed("authorization_epoch_missing");
+  if (authorizationEpochMismatch(row)) return suppressed("authorization_epoch_changed");
+  if (payload.authorizationAtOccurrence.kind === "admin") {
+    if (role !== "admin") return suppressed("admin_authorization_changed");
+  } else if (role !== "admin") {
+    const memberships = (await env.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ?").bind(row.projectId, row.recipientId).all<{ id: string }>()).results.map((member) => member.id);
+    if (!memberships.length) return suppressed("membership_removed");
+    if (!payload.authorizationAtOccurrence.membershipIds.some((id) => memberships.includes(id))) return suppressed("membership_cycle_changed");
+  }
+  if (!await videoReviewGateOpen(env, row.projectId)) return suppressed("video_review_closed");
+  const facts = await videoReviewFacts(env, outbox, payload);
+  if (!facts) return suppressed("source_missing");
+  if (facts.sourceOk !== 1) return suppressed("source_removed");
+  const copy = videoReviewCopy(payload.video.kind, facts, guestIdOfOutboxActor(outbox.actor_id) !== null);
+  const projectPath = projectNotificationUrl(env, row.projectId, payload.video.kind);
+  return {
+    ok: true,
+    kind: "legacy",
+    row,
+    payload,
+    commentPath: projectPath,
+    delivery: {
+      notificationType: payload.video.kind,
+      title: copy.title,
+      body: copy.body,
+      emailSubject: copy.title,
+      emailText: `${copy.title}\n\n${projectPath}`,
+      emailHtml: `<p>${htmlEscape(copy.title)}</p><p><a href="${htmlEscape(projectPath)}">View project</a></p>`,
     },
   };
 }
@@ -975,6 +1130,7 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
   if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskReminder) return resolveSubtaskReminderRecipient(env, outbox);
   // #424: the 08:00 due-today pass is retired. A job already queued when 0053 applied is refused rather than sent beside the new reminder.
   if (outbox.event_type === "project.subtask.due_today") return suppressed("legacy_due_today_retired");
+  if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectVideoReview) return resolveVideoReviewRecipient(env, outbox);
   if (outbox.event_type === "project.external_safe.direct") return resolveExternalSafeDirectRecipient(env, outbox);
   if (outbox.event_type === "project.subtask.assigned" && outbox.recipient_membership_cycle_id === null) return resolveStaffSubtaskAssignedRecipient(env, outbox);
   if (outbox.event_type === "project.subtask.assigned" || outbox.event_type === "project.subtask.due_today") return resolveExternalSubtaskRecipient(env, outbox);
@@ -1259,7 +1415,6 @@ type ReminderAdmission = { sql: string; values: unknown[] };
 
 // Legacy rows created before TB4E (and internal-editor rows) may not carry an
 // authorization epoch. External rows must match the current epoch exactly.
-const AUTHORIZATION_EPOCH_MATCH = `(o.recipient_authorization_epoch = recipient.authorization_epoch OR (o.recipient_authorization_epoch IS NULL AND recipient.role <> 'external_editor'))`;
 
 function reminderAuthorization(
   outbox: OutboxRow,
@@ -1474,6 +1629,19 @@ function legacyAdmission(outbox: OutboxRow, resolved: LegacyResolvedRecipient, t
         JOIN project_subtasks subtask ON subtask.id = json_extract(o.payload_json, '$.assignment.subtaskId')
         WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ? AND o.recipient_id = ?
           AND o.recipient_membership_cycle_id IS NULL AND ${STAFF_SUBTASK_ASSIGNED_ELIGIBILITY}
+      )`,
+      values: [outbox.id, token, outbox.recipient_id],
+    };
+  }
+  // #741 15a: staff video-review notifications re-check the whole authorization at every channel admission, for staff and External alike: a member removed between in-app and email stops the email.
+  if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectVideoReview) {
+    return {
+      sql: `EXISTS (
+        SELECT 1 FROM notification_outbox o
+        JOIN user recipient ON recipient.id = o.recipient_id
+        JOIN projects p ON p.id = o.project_id
+        WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ? AND o.recipient_id = ?
+          AND ${VIDEO_REVIEW_AUTHORIZED_SQL}
       )`,
       values: [outbox.id, token, outbox.recipient_id],
     };

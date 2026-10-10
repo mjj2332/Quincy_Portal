@@ -90,7 +90,7 @@ export function scannedAuditTargetTypes(): string[] {
 export const PROJECT_DESCENDANT_AUDIT_TYPES = [
   "annotation", "asset", "autohdr_mapping", "collection_link", "document_upload", "embedded_media", "job", "link_preview", "notification",
   "notification_outbox", "project", "project_comment", "project_deadline_occurrence", "project_member",
-  "project_subtask", "project_subtask_reminder_occurrence", "raw_reconciliation_claim", "rendition_dlq_event", "upload_manifest", "video_upload",
+  "project_subtask", "project_subtask_reminder_occurrence", "raw_reconciliation_claim", "rendition_dlq_event", "review_link", "upload_manifest", "video", "video_upload",
 ] as const;
 
 /** Target types whose target is never a project's descendant (a user, a flag, an integration, a
@@ -155,6 +155,7 @@ export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): Pla
     job: id("job"), handoff: id("handoff"), mapping: id("mapping"), assetV1: id("asset-v1"), assetV2: id("asset-v2"), assetV3: id("asset-v3"),
     rendition: id("rendition"), dlq: id("dlq"), claim: id("claim"), outbox: id("outbox"), notification: id("notification"), ledger: id("ledger"),
     annotation: id("annotation"), link: id("link"), manifest: id("manifest"), rawClaim: id("raw-claim"), subtaskOcc: id("subtask-reminder-occurrence"), document: id("document"), documentAudit: id("document-audit"), videoUpload: id("video-upload"), videoUploadAudit: id("video-upload-audit"),
+    reviewLink: id("review-link"), reviewVideo: id("review-video"), reviewMember: id("review-member"), reviewGrant: id("review-grant"), guestSession: id("guest-session"),
   };
   const rows: PlantRow[] = [];
   const needsAssets = want("assets") || want("dlq") || want("autohdr") || want("documents");
@@ -263,6 +264,16 @@ export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): Pla
       },
     );
   }
+  if (want("documents")) {
+    // A Review link (#741 11a) with one member Video and its live grant, the shape the staff routes write. No FK-less column: all three hang off the project.
+    rows.push(
+      { table: "videos", values: { id: ids.reviewVideo, project_id: ctx.projectId, collection_id: ctx.collectionId, title: "QA", premium: 0, position: 0, created_by: ctx.userId, created_at: T0, updated_at: T0 } },
+      { table: "client_links", values: { id: ids.reviewLink, project_id: ctx.projectId, token_hash: `qa-token-hash:${ctx.tag}`, kind: "video_review", expires_at: T0 + 86_400_000, created_by: ctx.userId, updated_at: T0, created_at: T0 } },
+      { table: "review_link_videos", values: { id: ids.reviewMember, link_id: ids.reviewLink, video_id: ids.reviewVideo, project_id: ctx.projectId, added_by: ctx.userId, added_at: T0 } },
+      { table: "review_link_version_grants", values: { id: ids.reviewGrant, link_id: ids.reviewLink, video_id: ids.reviewVideo, asset_id: ids.assetV1, granted_by: ctx.userId, granted_at: T0 } },
+      { table: "guest_sessions", values: { id: ids.guestSession, token_hash: `qa-session-hash:${ctx.tag}`, link_id: ids.reviewLink, link_generation: 1, created_at: T0, expires_at: T0 + 86_400_000, last_seen_at: T0 } },
+    );
+  }
   if (want("jobs") && want("documents")) {
     rows.push({ table: "raw_reconciliation_claims", values: { id: ids.rawClaim, project_id: ctx.projectId, owner_job_id: ids.job, state: "completed", lease_expires_at: T0, trigger: "manual", created_at: T0, updated_at: T0 } });
   }
@@ -276,7 +287,7 @@ export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): Pla
       annotation: ids.annotation, asset: ids.assetV1, autohdr_mapping: ids.mapping, collection_link: ids.link, document_upload: ids.document, video_upload: ids.videoUpload, embedded_media: ids.embeddedMedia, job: ids.job, link_preview: ids.linkPreview,
       notification: ids.notification, notification_outbox: ids.outbox, project: ctx.projectId, project_comment: ids.comment,
       project_deadline_occurrence: ctx.occurrenceId, project_member: ids.member, project_subtask: ctx.subtaskId, project_subtask_reminder_occurrence: ids.subtaskOcc, raw_reconciliation_claim: ids.rawClaim,
-      rendition_dlq_event: ids.dlq, upload_manifest: ids.manifest,
+      rendition_dlq_event: ids.dlq, review_link: ids.reviewLink, upload_manifest: ids.manifest, video: ids.reviewVideo,
     };
     const types = groups ? PROJECT_DESCENDANT_AUDIT_TYPES.filter((type) => type === "project_comment") : PROJECT_DESCENDANT_AUDIT_TYPES;
     for (const type of types) {

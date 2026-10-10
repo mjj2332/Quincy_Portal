@@ -3,7 +3,7 @@ import { act } from "react";
 /**
  * #734: one fake viewport for `matchMedia`, evaluated from a width and a pointer, so a test says
  * "at 800px" instead of hard-coding the one query string a component happened to use. Evaluates
- * `(max-width: Npx)`, `(min-width: Npx)` and `(pointer: coarse|fine)`; any other query is false.
+ * `(width < Npx)` (what Tailwind's `max-[Npx]` compiles to), `(max-width: Npx)`, `(min-width: Npx)` and `(pointer: coarse|fine)`; any other query is false.
  * `set` re-evaluates and notifies every subscriber, as a real resize would.
  */
 export interface MockViewport {
@@ -20,6 +20,8 @@ export function mockViewport(initial: { width: number; coarse?: boolean }): Mock
   const subscribers = new Set<() => void>();
 
   const evaluate = (query: string): boolean => {
+    const lt = /^\(width\s*<\s*([\d.]+)px\)$/.exec(query);
+    if (lt) return width < Number(lt[1]);
     const max = /^\(max-width:\s*([\d.]+)px\)$/.exec(query);
     if (max) return width <= Number(max[1]);
     const min = /^\(min-width:\s*([\d.]+)px\)$/.exec(query);

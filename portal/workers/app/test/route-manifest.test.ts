@@ -166,6 +166,22 @@ describe("terminal route manifest", () => {
     }
   });
 
+  it("classifies every /d registration as a guest-link route or one of the two fallbacks (#741 12a)", () => {
+    const registered = app.routes.filter((route) => route.path === "/d" || route.path.startsWith("/d/"));
+    const guest = PROJECT_SECURITY_ROUTE_CLASSIFICATION.filter((route) => route.class === "guest-link");
+    expect(guest.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
+      "DELETE /d/api/links/:linkId/notes/:noteId", "DELETE /d/api/links/:linkId/session", "GET /d/api/links/:linkId/downloads", "GET /d/api/links/:linkId/downloads/all.zip", "GET /d/api/links/:linkId/notes/:noteId/markup", "GET /d/api/links/:linkId/session", "GET /d/api/links/:linkId/versions/:assetId/download", "GET /d/api/links/:linkId/versions/:assetId/notes",
+      "GET /d/api/links/:linkId/versions/:assetId/poster", "GET /d/api/links/:linkId/versions/:assetId/stream", "GET /d/api/links/:linkId/videos", "GET /d/review", "PATCH /d/api/links/:linkId/notes/:noteId", "POST /d/api/links/:linkId/email/code", "POST /d/api/links/:linkId/email/verify", "POST /d/api/links/:linkId/notes/:noteId/replies", "POST /d/api/links/:linkId/session", "POST /d/api/links/:linkId/versions/:assetId/decision", "POST /d/api/links/:linkId/versions/:assetId/notes",
+    ]);
+    for (const route of guest) expect(route, `${route.method} ${route.path}`).toMatchObject({ scope: "none", projection: "guest-public", response: "protocol-404" });
+    expect(registered.length).toBeGreaterThan(0);
+    for (const route of registered) {
+      const entry = PROJECT_SECURITY_ROUTE_CLASSIFICATION.find((candidate) => candidate.method === route.method && candidate.path === route.path);
+      const fallback = entry?.class === "terminal-fallback" && (route.path === "/d" || route.path === "/d/*");
+      expect(entry?.class === "guest-link" || fallback, `${route.method} ${route.path}`).toBe(true);
+    }
+  });
+
   it("classifies GET /api/production-gantt as scoped-project / external-safe", () => {
     for (const path of ["/api/production-gantt", "/api/production-gantt/"]) {
       const route = PROJECT_SECURITY_ROUTE_CLASSIFICATION.find((entry) => entry.method === "GET" && entry.path === path);
@@ -379,6 +395,25 @@ describe("terminal route manifest", () => {
     const removed = await send("DELETE", `${base}/video-notes/${thread.id}`, { expectedRevision: 2 });
     expect(removed.status).toBe(200);
     EXTERNAL_API_RESPONSE_SCHEMAS["video-note-delete"].parse(await removed.json());
+  });
+
+  it("reaches every Review link route (#741 11a): a gate-open Project answers an External 403 on the capability, not the fallback 404", async () => {
+    const cookie = await externalCookie();
+    const flag = "video_review_links"; const now = Date.now();
+    await database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_at) VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1").bind(flag, now).run();
+    try {
+      const base = `/api/projects/${manifestProjectId}/review-links`; const link = crypto.randomUUID(); const video = crypto.randomUUID();
+      const calls: Array<[string, string, unknown?]> = [
+        ["GET", base], ["POST", base, { videoIds: [video] }], ["PATCH", `${base}/${link}`, { label: "x" }], ["POST", `${base}/${link}/videos`, { videoId: video, assetIds: [] }],
+        ["DELETE", `${base}/${link}/videos/${video}`], ["PUT", `${base}/${link}/videos/${video}/grants`, { assetIds: [] }], ["POST", `${base}/${link}/revoke`, {}], ["POST", `${base}/${link}/replace`, {}],
+      ];
+      for (const [method, path, body] of calls) {
+        const response = await SELF.fetch(`https://portal.test${path}`, { method, headers: { cookie, "content-type": "application/json", origin: baseEnv.APP_ORIGIN }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+        expect(response.status, `${method} ${path}`).toBe(403);
+      }
+    } finally {
+      await database.DB.prepare("DELETE FROM feature_flags WHERE key = ?").bind(flag).run();
+    }
   });
 
   it("keeps assigned-project Stage misses generic for External Editors", async () => {

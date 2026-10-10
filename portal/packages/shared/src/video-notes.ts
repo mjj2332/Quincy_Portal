@@ -18,6 +18,10 @@ export type VideoNoteVisibility = (typeof VIDEO_NOTE_VISIBILITIES)[number];
 const body = z.string().trim().min(1).max(VIDEO_NOTE_BODY_MAX);
 const frame = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+/** The field schemas the guest write inputs (guest-review.ts) share with the staff ones, so a rule changed here changes both. */
+export const videoNoteBodySchema = body;
+export const videoNoteFrameSchema = frame;
+export const videoNoteRevisionSchema = revision;
 
 /**
  * The video markup envelope (#741 6b-api): a non-empty list of freehand strokes and shapes, built from the 6a/6s pieces and STRICT (an unknown
@@ -34,17 +38,21 @@ const videoMarkupShape = shapeSchema.extend({ points: z.tuple([videoMarkupPoint,
 export const videoMarkupSchema = z.array(z.union([videoMarkupShape, videoMarkupStroke])).min(1).max(STROKE_LIMITS.strokes);
 export type VideoMarkup = z.infer<typeof videoMarkupSchema>;
 
-/** `visibility` is required: there is no default, and it is immutable after posting. `endFrame` is exclusive: the note covers [startFrame, endFrame). `markup` and `drawingFrame` travel together. */
-export const videoNoteCreateInputSchema = z.object({
+/** The create fields every author shares (`visibility` is the staff one's alone: a guest note is always public). */
+export const videoNoteCreateFields = {
   startFrame: frame,
   endFrame: frame.nullable().optional(),
-  visibility: z.enum(VIDEO_NOTE_VISIBILITIES),
   body,
   markup: videoMarkupSchema.optional(),
   drawingFrame: frame.optional(),
-}).strict()
+} as const;
+/** The cross-field rules of a create, as one function so the staff and guest inputs cannot drift: a range is non-empty, and `markup` and `drawingFrame` travel together. */
+export const withVideoNoteCreateRules = <T extends z.ZodType<{ startFrame: number; endFrame?: number | null; markup?: unknown; drawingFrame?: number }>>(schema: T) => schema
   .refine((value) => value.endFrame == null || value.endFrame > value.startFrame, { message: "endFrame must be greater than startFrame", path: ["endFrame"] })
-  .refine((value) => (value.markup === undefined) === (value.drawingFrame === undefined), { message: "markup and drawingFrame go together", path: ["drawingFrame"] });
+  .refine((value) => (value.markup === undefined) === (value.drawingFrame === undefined), { message: "markup and drawingFrame go together", path: ["drawingFrame"] }) as unknown as z.ZodEffects<z.ZodEffects<T, z.output<T>, z.input<T>>, z.output<T>, z.input<T>>;
+
+/** `visibility` is required: there is no default, and it is immutable after posting. `endFrame` is exclusive: the note covers [startFrame, endFrame). `markup` and `drawingFrame` travel together. */
+export const videoNoteCreateInputSchema = withVideoNoteCreateRules(z.object({ ...videoNoteCreateFields, visibility: z.enum(VIDEO_NOTE_VISIBILITIES) }).strict());
 export type VideoNoteCreateInput = z.infer<typeof videoNoteCreateInputSchema>;
 
 /** A reply takes its visibility from the thread's root in SQL, so it carries nothing but the body. */
@@ -80,7 +88,8 @@ export type VideoNoteResolutionInput = z.infer<typeof videoNoteResolutionInputSc
 
 const videoNoteAuthorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("staff"), person: videoPersonSchema }).strict(),
-  z.object({ kind: z.literal("guest"), id: uuid, name: z.string() }).strict(),
+  /** `email` is present only for a viewer who holds `shareVideo` (Admin, Editor); an External editor sees the name alone (#741 13b). */
+  z.object({ kind: z.literal("guest"), id: uuid, name: z.string(), email: z.string().optional() }).strict(),
 ]);
 
 export const videoNoteDtoSchema = z.object({

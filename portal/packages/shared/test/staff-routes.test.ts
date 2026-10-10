@@ -174,6 +174,10 @@ describe("shared staff route contract", () => {
       project_deadline_reminder: `/projects/${projectId}?collaboration=open`,
       project_activity: `/projects/${projectId}?collaboration=open`,
       project_collaboration_activity: `/projects/${projectId}?collaboration=open`,
+      video_version_uploaded: `/projects/${projectId}?tab=video`,
+      video_note: `/projects/${projectId}?tab=video`,
+      video_reply: `/projects/${projectId}?tab=video`,
+      video_decision: `/projects/${projectId}?tab=video`,
     };
     for (const type of NOTIFICATION_TYPES) {
       const route = projectNotificationRoute(projectId, type);

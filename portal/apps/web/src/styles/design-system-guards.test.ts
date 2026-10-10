@@ -1585,3 +1585,18 @@ describe("guard: Admin inline editors keep their focus outline and value clear (
     expect(line).toMatch(/(?<![-\w:])relative(?![-\w])/);
   });
 });
+
+
+// #741 7c: the offset field sat white-on-white on the dark viewer because `--field-bg` (paper-000) was never re-scoped for the inverse
+// surface. The inverse and default blocks must mirror each other, and a field background must not stay paper on ink.
+describe("guard: inverse.css re-scopes --field-bg in both blocks", () => {
+  const css = stripCssComments(readFileSync(join(stylesDir, "tokens/inverse.css"), "utf8"));
+  const block = (name: string) => new RegExp(`\\[data-surface="${name}"\\]\\s*\\{([^}]*)\\}`).exec(css)?.[1] ?? "";
+  it("declares --field-bg in the inverse and the default block, dark in the first", () => {
+    const inverse = /--field-bg\s*:\s*([^;]+);/.exec(block("inverse"))?.[1]?.trim();
+    const restored = /--field-bg\s*:\s*([^;]+);/.exec(block("default"))?.[1]?.trim();
+    expect(inverse, "inverse block must set --field-bg").toBeDefined();
+    expect(restored, "default block must restore --field-bg").toBeDefined();
+    expect(inverse).toMatch(/--ink-/);
+  });
+});

@@ -74,6 +74,8 @@ export const videoDtoSchema = z.object({
   id: z.string().uuid(),
   title: z.string(),
   premium: z.boolean(),
+  /** An unlock row exists for this Video (#741 14a). Independent of `premium`: the unlock only matters while the Video is premium. */
+  premiumUnlocked: z.boolean(),
   position: z.number().int().nonnegative(),
   createdAt: z.string().datetime(),
   /** Non-null: a Video row exists only after a Version 1 completes. */
