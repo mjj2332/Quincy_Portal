@@ -423,6 +423,21 @@ describe("dashboard-board-invalidated carries the People flag across tabs (#429)
   });
 });
 
+describe("video-decisions resource (#741 14-ui-staff)", () => {
+  const video = "88888888-8888-4888-8888-888888888888";
+  it("resolves to the exact per-Video key and parses only with a video id and nothing else", () => {
+    expect(projectResourceKey("a", { kind: "video-decisions", videoId: video })).toEqual(projectDataKeys.videoDecisions("a", video));
+    expect(projectDataKeys.videoDecisions("a", video)).toEqual(["project-data", "a", "video-decisions", video]);
+    const message = createProjectDataInvalidationMessage("a", [{ kind: "video-decisions", videoId: video }]);
+    const ok = parseProjectDataSyncMessage({ ...message, sourceTabId: "s" });
+    expect(ok && ok.type === "project-data-invalidated" ? ok.resources : []).toEqual([{ kind: "video-decisions", videoId: video }]);
+    const parse = (resources: unknown[]) => parseProjectDataSyncMessage({ ...message, sourceTabId: "s", resources });
+    expect(parse([{ kind: "video-decisions", videoId: video, extra: 1 }])).toBeNull();
+    expect(parse([{ kind: "video-decisions", videoId: "" }])).toBeNull();
+    expect(parse([{ kind: "video-decisions" }])).toBeNull();
+  });
+});
+
 describe("video-notes resource (#741 5b)", () => {
   const asset = "77777777-7777-4777-8777-777777777777";
   it("resolves to the exact per-Version key and parses only with an asset id and nothing else", () => {
