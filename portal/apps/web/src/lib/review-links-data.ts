@@ -41,11 +41,13 @@ export function createReviewLinkActions(client: QueryClient, projectId: string):
    * control unlocks), and an older fetch still in flight is cancelled so it cannot put the pre-write list back. The next grant set, label
    * or member list is therefore always built from this, never from a list that predates the write.
    */
-  async function remember(change: (links: ReviewLinkDto[]) => ReviewLinkDto[]) {
+  async function remember(change: (links: ReviewLinkDto[]) => ReviewLinkDto[], seedIfAbsent = false) {
     await client.cancelQueries({ queryKey: key });
-    client.setQueryData<ReviewLinkDto[]>(key, (old) => (old ? change(old) : old));
+    client.setQueryData<ReviewLinkDto[]>(key, (old) => (old ? change(old) : seedIfAbsent ? change([]) : old));
   }
-  const upsert = (link: ReviewLinkDto) => remember((links) => (links.some((existing) => existing.id === link.id) ? links.map((existing) => (existing.id === link.id ? link : existing)) : [link, ...links]));
+  // A link the server just returned is seeded even into a list that never loaded (initial GET pending or failed), so Done can still open it;
+  // the refetch that follows every write fills in the rest. A removal never invents a list.
+  const upsert = (link: ReviewLinkDto) => remember((links) => (links.some((existing) => existing.id === link.id) ? links.map((existing) => (existing.id === link.id ? link : existing)) : [link, ...links]), true);
   async function settled<T>(task: () => Promise<T>): Promise<T> {
     try { return await task(); }
     catch (error) { if (classifyReviewLinkError(error).action === "gateClosed") void client.invalidateQueries({ queryKey: projectDataKeys.videoReview(projectId) }); throw error; }
