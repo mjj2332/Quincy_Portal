@@ -1,7 +1,7 @@
 import { VIDEO_NOTE_BODY_MAX, type GuestNoteCreateInput, type GuestNoteEditInput, type GuestNoteThreadDto, type MarkupItem } from "@quincy/shared";
 import { marksToFrames, type NoteMarks } from "../lib/video-note-marks";
 import { waitPhrase } from "./GuestVerifyDialog";
-import type { WriteResult } from "./guest-api";
+import type { DecisionResult, WriteResult } from "./guest-api";
 
 /** Everything a create sends, built from the composer's draft; or the one thing wrong with it, in words for the guest. */
 export function composeInput({ body, marks, frameCount, items, drawingFrame }: {
@@ -81,4 +81,16 @@ export function editPatch({ body, marks, frameCount, items, drawingFrame, drawin
     patch.drawingFrame = drawingFrame;
   } else if (drawingRemoved && baseline.hadDrawing) patch.markup = null;
   return { ok: true, patch: Object.keys(patch).length === 0 ? null : patch };
+}
+
+/** What to tell the guest about a decision that did not land. Null for a success and for the refusals that change the page instead of saying something in the dialog (unverified, archived, gone, disabled). */
+export function decisionFailureText(result: DecisionResult): string | null {
+  switch (result.kind) {
+    case "ok": case "unverified": case "archived": case "gone": case "disabled": return null;
+    case "conflict": return "Another decision was recorded at the same moment. Try again.";
+    case "limited": return `You're sending decisions too quickly. Try again in ${waitPhrase(result.retryAfterSeconds)}.`;
+    // A dropped connection, a 5xx or an unreadable answer says nothing about whether the decision landed: the page re-reads the videos, and the guest checks before sending again.
+    case "unreachable": return "Couldn't reach Quincy, so your decision may or may not have been recorded. The page is being refreshed: check it before you try again.";
+    case "rejected": return result.error === "payload_too_large" ? "That note is too long." : "That couldn't be sent. Check your note and try again.";
+  }
 }

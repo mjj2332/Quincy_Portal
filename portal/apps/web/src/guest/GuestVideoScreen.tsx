@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { ChevronLeft, ChevronRight, MessageSquare } from "lucide-react";
-import { framesToTimecode, type Box, type GuestNoteThreadDto, type GuestSessionResponse, type GuestVideoDto } from "@quincy/shared";
+import { Check, ChevronLeft, ChevronRight, MessageSquare, MessageSquareWarning } from "lucide-react";
+import { framesToTimecode, type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestVideoDto } from "@quincy/shared";
 import { useMediaQuery } from "../lib/use-media-query";
 import type { VideoFrameClock } from "../lib/video-frame-clock";
 import { Button } from "../components/reui/button";
@@ -10,10 +10,14 @@ import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "../components/quincy/Sh
 import { VideoPlayer, type VideoPlayerControl } from "../components/quincy/VideoPlayer";
 import type { TimelineMarker } from "../components/quincy/VideoTimelineMarkers";
 import type { GuestApi, WriteResult } from "./guest-api";
-import { failureText, removeThread, upsertThread, type EditPatch } from "./guest-compose";
+import { decisionFailureText, failureText, removeThread, upsertThread, type EditPatch } from "./guest-compose";
 import type { ActionOutcome, NoteActions, Writing } from "./GuestNoteItem";
 import { GuestNotesPanel } from "./GuestNotesPanel";
 import { GuestVerifyDialog } from "./GuestVerifyDialog";
+import { GuestDecisionDialog, decisionDraftKey, type DecisionOutcome, type DecisionValue } from "./GuestDecisionDialog";
+import { GuestDeliveryChips } from "./GuestDeliveryChips";
+import { GuestDownload } from "./GuestDownload";
+import { GuestDownloadAll } from "./GuestDownloadAll";
 import type { GuestDrafts } from "./guest-drafts";
 import { useGuestCompose } from "./use-guest-compose";
 import type { GuestWriter, Skipped, WriterBinding } from "./use-guest-writer";
@@ -58,7 +62,7 @@ function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
  * One Video on the guest page (#741 12b), read-only: the reused review player on the inverse surface, the granted-Versions select, previous / next Video, and the public notes (a
  * column beside the player, a bottom drawer below 721px). Moving between Videos never returns to the list. State is in memory; the URL does not change.
  */
-export function GuestVideoScreen({ api, writer, drafts, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged }: {
+export function GuestVideoScreen({ api, writer, drafts, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged, onDecided, onResyncDelivery }: {
   api: GuestApi;
   /** Owned by `GuestApp`, so a write still out survives this screen being left and opened again. */
   writer: GuestWriter;
@@ -77,11 +81,16 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
   onUnavailable: () => void;
   /** The displayed Version is no longer granted: the freshly read list, for the page to show instead. */
   onGrantsChanged: (fresh: GuestVideoDto[]) => void;
+  /** A decision landed on the Version `assetId` (the one it was sent for, which may no longer be the one on screen). */
+  onDecided: (assetId: string, decision: GuestDecision) => void;
+  /** A decision may or may not have landed: read the delivery state of the listed Versions again. */
+  onResyncDelivery: () => void;
 }) {
   const video = videos[index]!;
   const [assetId, setAssetId] = useState(video.versions[0]!.assetId);
   // A different Video starts on its latest granted Version.
-  useEffect(() => { setAssetId(video.versions[0]!.assetId); }, [video]);
+  // Keyed on the Video's id, not the object: a decision landing replaces the Video object, and must not throw the guest back to the latest Version.
+  useEffect(() => { setAssetId(video.versions[0]!.assetId); }, [video.id]); // eslint-disable-line react-hooks/exhaustive-deps -- only a different Video resets the Version
   const version = video.versions.find((candidate) => candidate.assetId === assetId) ?? video.versions[0]!;
 
   const [threads, setThreads] = useState<GuestNoteThreadDto[] | null>(null);
@@ -95,7 +104,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
 
   const [verifyOpen, setVerifyOpen] = useState(false);
   // What the verify dialog was opened for, so a successful code lands the guest where they were going.
-  const afterVerify = useRef<"compose" | "none">("none");
+  const afterVerify = useRef<"compose" | "none" | DecisionValue>("none");
   const reopenDrawer = useRef(false);
   const resyncRef = useRef<() => void>(() => undefined);
   const binding = useRef<WriterBinding>({ scope: version.assetId, effects: { onUnverified: () => undefined, onGone: () => undefined, onArchived: () => undefined }, onLostSettle: () => undefined });
@@ -256,7 +265,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
     wasComposing.current = compose.isOpen;
   }, [compose.isOpen, phone]);
 
-  const requestVerify = useCallback((then: "compose" | "none") => {
+  const requestVerify = useCallback((then: "compose" | "none" | DecisionValue) => {
     afterVerify.current = then;
     reopenDrawer.current = phone && drawerOpen;
     if (reopenDrawer.current) setDrawerOpen(false);
@@ -274,6 +283,43 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
   const addNote = canWrite
     ? compose.isOpen ? compose.form : <Button type="button" variant="outline" data-testid="guest-add-note" className={TOUCH} onClick={() => { if (session.verified) startDraft(compose.begin); else requestVerify("compose"); }}>Add a note</Button>
     : null;
+
+  // Approve / Request changes (#741 14-ui-guest). The note draft is in `drafts` and the write is the writer's, so both outlive this screen; the dialog is per Version and decision.
+  const [decideFor, setDecideFor] = useState<DecisionValue | null>(null);
+  const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
+  useEffect(() => { setDecideFor(null); setDecisionNotice(null); }, [version.assetId]);
+  const canDecide = session.link.allow.approve && !archived;
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const confirmDecision = useCallback(async (value: DecisionValue, note: string | undefined): Promise<DecisionOutcome> => {
+    // Everything below is about the Version the decision was sent for, however far the guest has moved on by the time it settles.
+    const sentFor = version.assetId;
+    const key = decisionDraftKey(sentFor, value);
+    const rev = drafts.get(key)?.rev ?? null;
+    const result = await writer.run(`decision:${sentFor}`, () => api.decide(sentFor, value, note));
+    if (result.kind === "busy") return { ok: false, message: "Your last answer is still being sent." };
+    const stale = result.kind === "stale";
+    const settled = result.kind === "stale" ? result.result : result;
+    if (settled.kind === "ok") {
+      onDecided(sentFor, settled.decision);
+      if (rev !== null) drafts.clearIf(key, rev);
+      if (stale) return { ok: false, message: null };
+      setDecideFor(null);
+      return { ok: true };
+    }
+    if (settled.kind === "conflict" || settled.kind === "unreachable") onResyncDelivery(); // the decision may exist: look before the guest sends it again
+    if (stale) return { ok: false, message: null };
+    if (settled.kind === "unverified") { afterVerify.current = value; setDecideFor(null); }
+    else if (settled.kind === "archived" || settled.kind === "gone") setDecideFor(null);
+    else if (settled.kind === "disabled") {
+      setDecideFor(null); setDecisionNotice("Approving is no longer available on this link.");
+      const now = sessionRef.current;
+      onSession({ ...now, link: { ...now.link, allow: { ...now.link.allow, approve: false } } });
+    }
+    return { ok: false, message: decisionFailureText(settled) };
+  }, [api, writer, drafts, version.assetId, onDecided, onResyncDelivery, onSession]);
+  const startDecision = (value: DecisionValue) => { if (session.verified) setDecideFor(value); else requestVerify(value); };
+  const allowDownload = session.link.allow.download;
 
   const savedHidden = compose.replacesSavedDrawing(selectedId);
   const overlay = useCallback((box: Box | null) => <>{watermark && box && <PremiumWatermark box={box} />}{!savedHidden && markupOverlay(box)}{compose.overlay(box)}</>, [watermark, savedHidden, markupOverlay, compose.overlay]); // eslint-disable-line react-hooks/exhaustive-deps -- compose.overlay is the dependency that matters
@@ -307,6 +353,16 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
       </div>
       {phone && <Button type="button" variant="outline" aria-label={threads === null ? "Notes" : `Notes, ${threads.length}`} className={`${TOUCH} shrink-0`} onClick={() => { setDrawerOpen(true); }}><MessageSquare aria-hidden="true" />{threads !== null && <span className="[font:var(--type-label)]">{threads.length}</span>}</Button>}
       </div>
+      <div data-testid="guest-delivery" className="flex flex-wrap items-center gap-[var(--space-2)] empty:hidden max-[721px]:basis-full">
+        <GuestDeliveryChips version={version} />
+        {canDecide && <>
+          <Button type="button" data-testid="guest-approve" className={TOUCH} onClick={() => { startDecision("approved"); }}><Check aria-hidden="true" />Approve</Button>
+          <Button type="button" variant="outline" data-testid="guest-request-changes" className={TOUCH} onClick={() => { startDecision("changes_requested"); }}><MessageSquareWarning aria-hidden="true" />Request changes</Button>
+        </>}
+        <GuestDownload video={video} version={version} allowDownload={allowDownload} />
+        {allowDownload && videos.length > 1 && <GuestDownloadAll api={api} onUnavailable={onUnavailable} />}
+        {decisionNotice !== null && <p role="status" data-testid="guest-decision-notice" className="m-0 text-foreground-secondary [font:var(--type-label)]">{decisionNotice}</p>}
+      </div>
     </header>
     <div className="flex min-h-0 flex-1 flex-wrap min-[721px]:flex-nowrap min-[721px]:overflow-hidden">
       <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col p-[var(--space-5)] min-[721px]:flex-1">
@@ -321,6 +377,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
         <SheetCloseButton label="Close notes" data-testid="guest-notes-close" />
       </SheetContent>
     </Sheet>}
+    {decideFor !== null && canDecide && <GuestDecisionDialog key={`${version.assetId}:${decideFor}`} value={decideFor} assetId={version.assetId} film={video.title} version={version.version} drafts={drafts} open onClose={() => { setDecideFor(null); }} onConfirm={(note) => confirmDecision(decideFor, note)} />}
     <GuestVerifyDialog api={api} open={verifyOpen} onOpenChange={(next) => { if (next) setVerifyOpen(true); else finishVerify(); }} onGone={() => { setVerifyOpen(false); onUnavailable(); }}
       onVerified={(next) => {
         onSession(next);
@@ -328,6 +385,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
         setNotesAttempt((n) => n + 1);
         const then = afterVerify.current; afterVerify.current = "none"; finishVerify();
         if (then === "compose") startDraft(compose.begin);
+        else if (then === "approved" || then === "changes_requested") setDecideFor(then);
       }} />
   </div>;
 }

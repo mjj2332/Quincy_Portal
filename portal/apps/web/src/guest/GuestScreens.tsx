@@ -8,6 +8,9 @@ import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "..
 import { Input } from "../components/reui/input";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "../components/reui/item";
 import { EmptyState } from "../components/quincy/EmptyState";
+import type { GuestApi } from "./guest-api";
+import { GuestDeliveryChips } from "./GuestDeliveryChips";
+import { GuestDownloadAll } from "./GuestDownloadAll";
 
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
@@ -82,12 +85,15 @@ export function PasscodeScreen({ error, retryAfterSeconds, pending, onSubmit }: 
 const noteCount = (count: number) => (count === 0 ? "No notes" : `${count} ${count === 1 ? "note" : "notes"}`);
 
 /**
- * The Video list (69a). Each row: poster, title, the latest granted Version, a premium badge and the public note count. `guest-row-slot` is where the decision and released state land
- * with 14; it is empty until then.
+ * The Video list (69a). Each row: poster, title, the latest granted Version, a premium badge and the public note count; `guest-row-slot` holds that Version's decision and Release chips
+ * (#741 14-ui-guest). When the link allows downloads and has several Videos, Download all sits beside the title.
  */
-export function VideoListScreen({ title, videos, onOpen }: { title: string | null; videos: readonly GuestVideoDto[]; onOpen: (index: number) => void }) {
+export function VideoListScreen({ api, title, videos, allowDownload, onOpen, onUnavailable }: { api: GuestApi; title: string | null; videos: readonly GuestVideoDto[]; allowDownload: boolean; onOpen: (index: number) => void; onUnavailable: () => void }) {
   return <main data-testid="guest-list" className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-[var(--space-4)] bg-background px-[var(--space-4)] py-[var(--space-6)] text-foreground">
-    <h1 className="m-0 text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{title ?? "Review"}</h1>
+    <div className="flex flex-wrap items-center justify-between gap-[var(--space-3)]">
+      <h1 className="m-0 min-w-0 text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{title ?? "Review"}</h1>
+      {allowDownload && videos.length > 1 && <GuestDownloadAll api={api} onUnavailable={onUnavailable} />}
+    </div>
     {videos.length === 0
       ? <EmptyState title="Nothing to review yet.">The studio hasn't shared any videos on this link.</EmptyState>
       : <Frame><FramePanel><ItemGroup className="gap-[var(--space-2)]">
@@ -100,7 +106,7 @@ export function VideoListScreen({ title, videos, onOpen }: { title: string | nul
               <ItemDescription>{`Version ${latest.version} · ${noteCount(latest.publicNoteCount)}`}</ItemDescription>
             </ItemContent>
             <ItemActions>
-              <span data-testid="guest-row-slot" />
+              <span data-testid="guest-row-slot" className="inline-flex flex-wrap items-center gap-[var(--space-1)]"><GuestDeliveryChips version={latest} /></span>
               <Button type="button" variant="outline" aria-label={`Open ${video.title}`} className={TOUCH} onClick={() => { onOpen(index); }}>Open</Button>
             </ItemActions>
           </Item>;

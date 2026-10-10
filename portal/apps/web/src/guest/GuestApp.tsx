@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { GuestSessionResponse, GuestVideoDto } from "@quincy/shared";
+import type { GuestDecision, GuestSessionResponse, GuestVideoDto } from "@quincy/shared";
 import { createGuestApi, type GuestApi } from "./guest-api";
 import { readLinkId } from "./link-fragment";
 import { GuestVideoScreen } from "./GuestVideoScreen";
@@ -92,6 +92,20 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
     void exchange(api, token.current, passcode);
   };
   const unavailable = useCallback(() => { setScreen({ name: "unavailable" }); }, []);
+  // A decision lands on the Version it was sent for, by id: whichever Version the guest is looking at now is untouched.
+  const decided = useCallback((assetId: string, decision: GuestDecision) => {
+    setVideos((list) => list.map((video) => (video.versions.some((version) => version.assetId === assetId)
+      ? { ...video, versions: video.versions.map((version) => (version.assetId === assetId ? { ...version, decision } : version)) } : video)));
+  }, []);
+  // A decision that may or may not have landed: read the list again, and take only the delivery fields (decision, Release, download link) of Versions already on the page, never its shape.
+  const resyncDelivery = useCallback(() => {
+    if (api === null) return;
+    void api.videos().then((fresh) => {
+      if (fresh.kind !== "ok") return;
+      const byAsset = new Map(fresh.value.flatMap((video) => video.versions).map((version) => [version.assetId, version] as const));
+      setVideos((list) => list.map((video) => ({ ...video, versions: video.versions.map((version) => { const next = byAsset.get(version.assetId); return next ? { ...version, decision: next.decision, released: next.released, downloadUrl: next.downloadUrl } : version; }) })));
+    });
+  }, [api]);
   // Staff took the displayed Video or Version off the link while it was open: show what is still granted, calmly, or nothing if nothing is.
   const grantsChanged = useCallback((fresh: GuestVideoDto[]) => {
     if (fresh.length === 0) { setScreen({ name: "unavailable" }); return; }
@@ -107,7 +121,7 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
   if (screen.name === "passcode") return <PasscodeScreen error={screen.error} retryAfterSeconds={screen.retryAfterSeconds} pending={screen.pending} onSubmit={submitPasscode} />;
   if (session === null) return <UnavailableScreen />;
   const shown = screen.name === "list"
-    ? <VideoListScreen title={session?.link.label ?? null} videos={videos} onOpen={(index) => { setNotice(null); setScreen({ name: "video", index }); }} />
-    : <GuestVideoScreen api={api} writer={writer} drafts={drafts} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} />;
+    ? <VideoListScreen api={api} title={session?.link.label ?? null} videos={videos} allowDownload={session.link.allow.download} onOpen={(index) => { setNotice(null); setScreen({ name: "video", index }); }} onUnavailable={unavailable} />
+    : <GuestVideoScreen api={api} writer={writer} drafts={drafts} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} onDecided={decided} onResyncDelivery={resyncDelivery} />;
   return <>{archived && <p role="status" data-testid="guest-archived-notice" className="m-0 bg-card px-[var(--space-5)] py-[var(--space-3)] text-center text-card-foreground [font:var(--type-label)]">This project was archived, so notes are read-only.</p>}{notice !== null && <p role="status" data-testid="guest-notice" className="m-0 bg-card px-[var(--space-5)] py-[var(--space-3)] text-center text-card-foreground [font:var(--type-label)]">{notice}</p>}{shown}</>;
 }

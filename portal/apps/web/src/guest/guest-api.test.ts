@@ -120,3 +120,54 @@ describe("guest-api: note writes", () => {
     expect(await api().createNote(ASSET, { startFrame: 1, body: "x" })).toEqual({ kind: "unreachable" });
   });
 });
+
+describe("guest-api: decisions and downloads (#741 14-ui-guest)", () => {
+  const DECISION = { value: "approved", revision: 2, at: "2026-10-10T01:00:00.000Z", self: true };
+  const run = () => api().decide(ASSET, "approved");
+  it("posts the decision JSON to the Version's decision route, with the note only when given", async () => {
+    answer(json({ decision: DECISION }, 201));
+    expect(await run()).toEqual({ kind: "ok", decision: DECISION });
+    expect(lastCall().url).toBe(`/d/api/links/${LINK}/versions/${ASSET}/decision`);
+    expect(lastCall().init.method).toBe("POST");
+    expect(JSON.parse(String(lastCall().init.body))).toEqual({ decision: "approved" });
+    await api().decide(ASSET, "changes_requested", "Shorten it");
+    expect(JSON.parse(String(lastCall().init.body))).toEqual({ decision: "changes_requested", note: "Shorten it" });
+  });
+  it("maps every refusal the route can give", async () => {
+    answer(json({ error: "verification_required" }, 401));
+    expect(await run()).toEqual({ kind: "unverified" });
+    answer(json({ error: "approve_disabled" }, 403));
+    expect(await run()).toEqual({ kind: "disabled" });
+    answer(json({ error: "something_else" }, 403));
+    expect(await run()).toEqual({ kind: "gone" });
+    answer(new Response("Not found", { status: 404 }));
+    expect(await run()).toEqual({ kind: "gone" });
+    answer(json({ error: "project_archived" }, 409));
+    expect(await run()).toEqual({ kind: "archived" });
+    answer(json({ error: "decision_conflict" }, 409));
+    expect(await run()).toEqual({ kind: "conflict" });
+    answer(json({ error: "too_many_attempts", retryAfterSeconds: 30 }, 429, { "retry-after": "30" }));
+    expect(await run()).toEqual({ kind: "limited", retryAfterSeconds: 30 });
+    answer(json({ error: "invalid_request" }, 400));
+    expect(await run()).toEqual({ kind: "rejected", error: "invalid_request" });
+    answer(new Response("", { status: 502 }));
+    expect(await run()).toEqual({ kind: "unreachable" });
+    fetchMock.mockRejectedValue(new TypeError("offline"));
+    expect(await run()).toEqual({ kind: "unreachable" });
+  });
+  it("treats a success body that fails the schema as unreachable, never as a recorded decision", async () => {
+    answer(json({ decision: { value: "maybe" } }, 201));
+    expect(await run()).toEqual({ kind: "unreachable" });
+  });
+  it("reads the Download all manifest through the strict schema and exposes the zip route", async () => {
+    const manifest = { included: [{ videoId: "11111111-1111-4111-8111-111111111111", title: "Film", version: 2, bytes: 10 }], leftOut: [{ title: "Other", reason: "not_released" }], totalBytes: 10, tooLarge: false };
+    answer(json(manifest));
+    expect(await api().downloads()).toEqual({ kind: "ok", value: manifest });
+    expect(lastCall().url).toBe(`/d/api/links/${LINK}/downloads`);
+    expect(api().downloadAllUrl).toBe(`/d/api/links/${LINK}/downloads/all.zip`);
+    answer(json({ ...manifest, extra: 1 }));
+    expect(await api().downloads()).toEqual({ kind: "gone" });
+    answer(new Response("", { status: 503 }));
+    expect(await api().downloads()).toEqual({ kind: "transient" });
+  });
+});
