@@ -155,7 +155,7 @@ export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): Pla
     job: id("job"), handoff: id("handoff"), mapping: id("mapping"), assetV1: id("asset-v1"), assetV2: id("asset-v2"), assetV3: id("asset-v3"),
     rendition: id("rendition"), dlq: id("dlq"), claim: id("claim"), outbox: id("outbox"), notification: id("notification"), ledger: id("ledger"),
     annotation: id("annotation"), link: id("link"), manifest: id("manifest"), rawClaim: id("raw-claim"), subtaskOcc: id("subtask-reminder-occurrence"), document: id("document"), documentAudit: id("document-audit"), videoUpload: id("video-upload"), videoUploadAudit: id("video-upload-audit"),
-    reviewLink: id("review-link"), reviewVideo: id("review-video"), reviewMember: id("review-member"), reviewGrant: id("review-grant"),
+    reviewLink: id("review-link"), reviewVideo: id("review-video"), reviewMember: id("review-member"), reviewGrant: id("review-grant"), guestSession: id("guest-session"),
   };
   const rows: PlantRow[] = [];
   const needsAssets = want("assets") || want("dlq") || want("autohdr") || want("documents");
@@ -271,6 +271,7 @@ export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): Pla
       { table: "client_links", values: { id: ids.reviewLink, project_id: ctx.projectId, token_hash: `qa-token-hash:${ctx.tag}`, kind: "video_review", expires_at: T0 + 86_400_000, created_by: ctx.userId, updated_at: T0, created_at: T0 } },
       { table: "review_link_videos", values: { id: ids.reviewMember, link_id: ids.reviewLink, video_id: ids.reviewVideo, project_id: ctx.projectId, added_by: ctx.userId, added_at: T0 } },
       { table: "review_link_version_grants", values: { id: ids.reviewGrant, link_id: ids.reviewLink, video_id: ids.reviewVideo, asset_id: ids.assetV1, granted_by: ctx.userId, granted_at: T0 } },
+      { table: "guest_sessions", values: { id: ids.guestSession, token_hash: `qa-session-hash:${ctx.tag}`, link_id: ids.reviewLink, link_generation: 1, created_at: T0, expires_at: T0 + 86_400_000, last_seen_at: T0 } },
     );
   }
   if (want("jobs") && want("documents")) {

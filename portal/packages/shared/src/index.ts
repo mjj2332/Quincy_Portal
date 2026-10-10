@@ -69,4 +69,5 @@ export * from "./video-review";
 export * from "./review-links";
 export * from "./video-upload";
 export * from "./video-notes";
+export * from "./guest-review";
 export * from "./freehand-strokes";

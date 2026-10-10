@@ -45,6 +45,7 @@ import { projectWhiteboardRoutes } from "./routes/project-whiteboard";
 import { connectedAppsRoutes } from "./routes/connected-apps";
 import { mountMcp } from "./mcp";
 import { mountMcpDownloads } from "./mcp/downloads";
+import { guestNotFound, mountGuest } from "./guest";
 import { verifyTransformSource } from "./lib/transform-source";
 import { requireAppOrigin } from "./middleware/origin";
 import { safeStaffDestination } from "@quincy/shared";
@@ -119,8 +120,10 @@ mountMcp(app, (request, env, ctx) => app.fetch(request, env, ctx));
 mountMcpDownloads(app, (request, env, ctx) => app.fetch(request, env, ctx));
 // `/d` is reserved for the future client-delivery Worker. It is intentionally
 // unauthenticated and must run before the static-asset SPA fallback.
-app.all("/d", terminalRoute("/d", (c) => c.notFound()));
-app.all("/d/*", terminalRoute("/d/*", (c) => c.notFound()));
+// The guest surface (#741 12a) mounts first; everything it does not answer falls through to the stub below (same bytes, hygiene headers included).
+mountGuest(app);
+app.all("/d", terminalRoute("/d", (c) => guestNotFound(c)));
+app.all("/d/*", terminalRoute("/d/*", (c) => guestNotFound(c)));
 // #359: `/assets/*` is content-hashed and served `immutable` for a year (`apps/web/public/_headers`).
 // `/assets/*` is in `run_worker_first` (wrangler.jsonc) so a MISS reaches this Worker instead of the
 // asset layer's `single-page-application` fallback answering it with index.html, which the immutable

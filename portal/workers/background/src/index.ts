@@ -236,6 +236,15 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     } catch (error) {
       console.error("Email digest run failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
+    // Guest review (#741 12a): expired guest sessions and rate-limit windows older than a day. A revoked link already deleted its sessions; this is the lapse path.
+    try {
+      await this.env.DB.batch([
+        this.env.DB.prepare("DELETE FROM guest_sessions WHERE expires_at < ?1").bind(controller.scheduledTime),
+        this.env.DB.prepare("DELETE FROM guest_rate_limits WHERE window_start < ?1").bind(controller.scheduledTime - 86_400_000),
+      ]);
+    } catch (error) {
+      console.error("Guest session sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+    }
     try {
       await pruneNotifications(this.env, controller.scheduledTime);
       console.log("Notification pruning complete");
