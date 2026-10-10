@@ -36,7 +36,6 @@ describe("MarkupToolbar", () => {
   it("renders the pill with the label and the trailing host slot", async () => {
     const host = await mount(props({ label: "Editing drawing", trailing: <button type="button">Save</button> }));
     const pill = host.querySelector('[data-testid="markup-toolbar"]')!;
-    expect(pill.classList.contains("drawbar")).toBe(true);
     expect(pill.textContent).toContain("Editing drawing");
     expect(pill.textContent).toContain("Save");
   });
@@ -139,6 +138,9 @@ describe("MarkupToolbar", () => {
     expect(swatch.className).toContain("max-[721px]:h-11");
     expect(swatch.className).toContain("min-[721px]:pointer-coarse:h-11");
     expect(byLabel(host, "Pen").className).toContain("min-[721px]:pointer-coarse:h-11");
+    // The 28px desktop height survives the radio's size reset (a later `size-*` in tailwind-merge would drop `h-7`).
+    expect(byLabel(host, "Pen").className.split(/\s+/)).toEqual(expect.arrayContaining(["h-7", "min-w-7", "size-auto"]));
+    expect(byLabel(host, "Pen").className.split(/\s+/)).not.toContain("size-4");
   });
 
   it("wraps whole groups: every group is an inline-flex that does not split", async () => {

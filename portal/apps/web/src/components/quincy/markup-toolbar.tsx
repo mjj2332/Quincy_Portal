@@ -72,7 +72,8 @@ export function MarkupToolbar({ label, tool, onToolChange, onColorChange, onWidt
         <RadioGroupItem
           key={kind} value={kind} aria-label={name} title={name} render={<button type="button" />} nativeButton
           className={cn(
-            TARGET, "aspect-auto size-auto items-center justify-center rounded-[var(--radius-sm)] border-0 bg-transparent text-foreground-secondary",
+            // size-auto first: tailwind-merge lets a later `size-*` drop an earlier `h-*`, and TARGET must keep its h-7.
+            "aspect-auto size-auto", TARGET, "items-center justify-center rounded-[var(--radius-sm)] border-0 bg-transparent text-foreground-secondary",
             "cursor-pointer hover:bg-secondary data-checked:border-0 data-checked:bg-secondary data-checked:text-foreground",
           )}
         ><Icon aria-hidden="true" className="size-4" /></RadioGroupItem>
