@@ -93,8 +93,11 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
   const drawing = phase === "drawing";
   const here = useCallback(() => (clock ? frameOnScreen(clock.getState()) : 0), [clock]);
 
+  // `useMarkup` is called below (it needs `items`), so `reset` reaches its history through a ref.
+  const resetHistoryRef = useRef<() => void>(() => undefined);
   const reset = useCallback(() => {
     opId.current += 1;
+    resetHistoryRef.current(); // a new draft starts with no undo / redo steps from the last one
     setBody(""); setMarks(EMPTY_MARKS); setItems(NO_ITEMS); setDrawFrame(null); setPhase("off"); setProblem(null); setPending(false); setRefusedFor(null); setTarget(null); setRemoved(false); drawingFor.current = null;
   }, []);
   const begin = useCallback(() => { reset(); setMarks({ in: here(), out: null }); setOpen(true); }, [reset, here]);
@@ -128,6 +131,7 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
 
   // A drawing has exactly one frame, and an undo step restores strokes without one: starting on a different frame than the history was built on drops its steps.
   const { resetHistory } = markup;
+  resetHistoryRef.current = resetHistory;
   useEffect(() => {
     if (!drawing || drawFrame === null) return;
     if (drawingFor.current !== null && drawingFor.current !== drawFrame) resetHistory();

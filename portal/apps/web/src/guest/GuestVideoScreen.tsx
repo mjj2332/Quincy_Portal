@@ -197,8 +197,10 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
   const resync = useCallback(() => {
     const asked = assetRef.current;
     const epoch = writer.epoch();
+    const token = selectionToken.current;
     void api.notes(asked).then((result) => {
-      if (assetRef.current !== asked) return;
+      // The token moves on every selection change and on unmount: a late answer for a Version the guest has left is a no-op.
+      if (assetRef.current !== asked || selectionToken.current !== token) return;
       if (result.kind === "gone") onUnavailable();
       else if (result.kind !== "ok") return;
       else if (writer.epoch() !== epoch) resync();

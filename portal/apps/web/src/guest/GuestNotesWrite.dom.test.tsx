@@ -406,6 +406,27 @@ describe("drawing", () => {
         expect(allById("guest-draft-stroke")).toHaveLength(0);
       });
     });
+    it("a drawing history never crosses drafts: draw, undo all, Cancel, start a new draft on another frame, press Draw, and Redo is disabled", async () => {
+      await withLayout(async () => {
+        await open();
+        await atSeconds(2);
+        await click(byId("guest-add-note"));
+        await click(byId("guest-composer-draw"));
+        await atSeconds(2);
+        await draw(byId("guest-draft-layer")!);
+        await click(button("Undo"));
+        expect(allById("guest-draft-stroke")).toHaveLength(0);
+        await click(byId("guest-markup-done"));
+        await click(byId("guest-composer-cancel"));
+        await atSeconds(4);
+        await click(byId("guest-add-note"));
+        await click(byId("guest-composer-draw"));
+        await atSeconds(4);
+        expect((button("Redo") as HTMLButtonElement).disabled).toBe(true);
+        await click(button("Redo"));
+        expect(allById("guest-draft-stroke")).toHaveLength(0);
+      });
+    });
     it("after saving a redraw, the note's drawing is read again by its new revision", async () => {
       notes = { [asset(10)]: [drawnNote()] };
       let saved = false;
@@ -749,6 +770,30 @@ describe("round 1 findings", () => {
     expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("keep me");
     // The re-read found the note the failed answer hid.
     expect(allById("guest-note")).toHaveLength(1);
+  });
+
+  it("the re-read after an ambiguous post on Video A cannot throw the guest out of Video B when A's 404 arrives late", async () => {
+    videos = [videoOf(1), videoOf(2)];
+    let ambiguous = false;
+    let answerA: () => void = () => undefined;
+    extra = (url, init) => {
+      if (url === `${BASE}/versions/${asset(10)}/notes` && init?.method === "POST") { ambiguous = true; throw new TypeError("offline"); }
+      if (ambiguous && url === `${BASE}/versions/${asset(10)}/notes` && (init?.method ?? "GET") === "GET") return new Promise<Response>((resolve) => { answerA = () => { resolve(stub404()); }; });
+      return undefined;
+    };
+    await open();
+    await click(button("Open Film 1"));
+    await click(byId("guest-add-note"));
+    await typeInto(byId("guest-composer-body"), "maybe sent");
+    await submit("guest-composer");
+    await click(button("All videos"));
+    await click(button("Open Film 2"));
+    expect(byId("guest-video-screen")).not.toBeNull();
+    // Staff removed A's access; its delayed 404 stub arrives while B is showing.
+    await act(async () => { answerA(); });
+    await flush();
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(byId("guest-video-screen")).not.toBeNull();
   });
 
   it("a 4xx refusal keeps the definite wording and does not read the notes again", async () => {
