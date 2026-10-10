@@ -32,7 +32,9 @@ const SECURITY_HEADERS = { "cache-control": "private, no-store", "x-content-type
 
 /** A file name with nothing in it that a path, a header or an archive could read as structure. */
 export function safeFileName(title: string): string {
-  return title.replace(/[\u0000-\u001f\u007f\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 120) || "Video";
+  // Lone surrogates (a stored title can hold one) become U+FFFD, and the cut is by code point, so `encodeURIComponent` never throws.
+  const cleaned = title.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD").replace(/[\u0000-\u001f\u007f\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
+  return [...cleaned].slice(0, 120).join("").trim() || "Video";
 }
 /** `attachment` with a quoted ASCII fallback and the RFC 5987 UTF-8 name. Never interpolates an unsanitised title. */
 export function attachment(filename: string): string {

@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { guestVideoListResponseSchema } from "@quincy/shared";
 import { GUEST_WINDOW_MS } from "../src/guest/rate-limit";
+import { attachment, safeFileName } from "../src/guest/download";
 import { hashToken } from "../src/lib/opaque-token";
 import { database, ids, mp4Bytes, seedFixture } from "./embedded-media-support";
 import { addMember, clearGuestRows, grant, guestFetch, HYGIENE, linkPath, openGuestGate, seedGuestLink, startSession, type LinkInput } from "./guest-support";
@@ -431,5 +432,19 @@ describe("guestVersionDto.downloadUrl", () => {
     const { link, version } = await setup(); const v2 = await seedVideoVersion({ videoId: version.videoId, version: 2 }); await grant(link.id, version.videoId, v2.assetId);
     const versions = (await listed(link)).videos[0]!.versions;
     expect(versions.map((entry) => [entry.version, entry.downloadUrl !== null])).toEqual([[2, false], [1, true]]);
+  });
+});
+
+describe("safeFileName and attachment with astral characters", () => {
+  it("cuts by code point, never splitting a surrogate pair, so the header always encodes", () => {
+    const name = safeFileName(`${"a".repeat(119)}😀tail`);
+    expect([...name]).toHaveLength(120);
+    expect(name.endsWith("😀")).toBe(true);
+    expect(() => attachment(`${name} v1.mp4`)).not.toThrow();
+  });
+
+  it("replaces a lone surrogate in a stored title instead of throwing", () => {
+    expect(() => attachment(`${safeFileName("bad \ud800 title")} v1.mp4`)).not.toThrow();
+    expect(safeFileName("bad \ud800 title")).toBe("bad � title");
   });
 });
