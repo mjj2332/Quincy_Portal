@@ -1,7 +1,8 @@
 import {
-  guestEmailCodeErrorSchema, guestEmailCodeResponseSchema, guestNoteConflictSchema, guestNoteDeleteResponseSchema, guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNoteWriteResponseSchema,
-  guestPasscodeErrorSchema, guestSessionResponseSchema, guestVideoListResponseSchema,
-  type GuestNoteCreateInput, type GuestNoteEditInput, type GuestNoteMarkupResponse, type GuestNoteThreadDto, type GuestSessionResponse, type GuestVideoDto,
+  guestEmailCodeErrorSchema, guestEmailCodeResponseSchema, guestNoteConflictSchema, guestNoteDeleteResponseSchema, guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNotePasteCommitResponseSchema,
+  guestNotePastePreviewResponseSchema, guestNotePasteStaleSchema, guestNoteWriteResponseSchema, guestPasscodeErrorSchema, guestSessionResponseSchema, guestVideoListResponseSchema,
+  type GuestNoteCreateInput, type GuestNoteEditInput, type GuestNoteMarkupResponse, type GuestNotePasteCommitInput, type GuestNotePasteCommitResponse, type GuestNotePastePreviewInput, type GuestNotePastePreviewResponse,
+  type GuestNoteThreadDto, type GuestSessionResponse, type GuestVideoDto,
 } from "@quincy/shared";
 
 /**
@@ -45,6 +46,20 @@ export type WriteResult =
   | { kind: "rejected"; error: string }
   | { kind: "unreachable" };
 
+/**
+ * A guest note paste (#741 13d), preview or commit. `changed` is 409 `paste_stale`: a source note changed since the preview, nothing was written, and `preview` is the current plan. (Not `stale`: that is
+ * the writer's word for an answer that arrived after the screen moved on.) The other refusals are the ones a note write has.
+ */
+export type PasteResult<T> =
+  | { kind: "ok"; value: T }
+  | { kind: "changed"; preview: GuestNotePastePreviewResponse }
+  | { kind: "unverified" }
+  | { kind: "gone" }
+  | { kind: "archived" }
+  | { kind: "limited"; retryAfterSeconds: number }
+  | { kind: "rejected"; error: string }
+  | { kind: "unreachable" };
+
 export type GuestApi = {
   exchange(token: string, passcode?: string): Promise<ExchangeResult>;
   session(): Promise<Read<GuestSessionResponse>>;
@@ -57,6 +72,8 @@ export type GuestApi = {
   replyToNote(noteId: string, body: string): Promise<WriteResult>;
   editNote(noteId: string, input: GuestNoteEditInput): Promise<WriteResult>;
   deleteNote(noteId: string, expectedRevision: number): Promise<WriteResult>;
+  previewPaste(targetAssetId: string, input: GuestNotePastePreviewInput): Promise<PasteResult<GuestNotePastePreviewResponse>>;
+  commitPaste(targetAssetId: string, input: GuestNotePasteCommitInput): Promise<PasteResult<GuestNotePasteCommitResponse>>;
 };
 
 export function createGuestApi(linkId: string): GuestApi {
@@ -108,6 +125,27 @@ export function createGuestApi(linkId: string): GuestApi {
     }
     return { kind: "rejected", error };
   };
+  /** A paste call: the same reading of a refusal as `write`, with 409 `paste_stale` carrying the fresh plan. */
+  const paste = async <T,>(path: string, body: unknown, parseOk: (body: unknown) => T): Promise<PasteResult<T>> => {
+    const response = await send(path, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
+    if (response === null) return { kind: "unreachable" };
+    const read = await readJson(response);
+    if (response.ok) {
+      if (read === null) return { kind: "unreachable" };
+      try { return { kind: "ok", value: parseOk(read.body) }; } catch { return { kind: "unreachable" }; }
+    }
+    const parsedBody = read === null ? undefined : read.body;
+    if (response.status >= 500) return { kind: "unreachable" };
+    if (response.status === 429) return { kind: "limited", retryAfterSeconds: retryAfter(response, parsedBody) };
+    if (response.status === 401) return { kind: "unverified" };
+    if (response.status === 404 || response.status === 403) return { kind: "gone" };
+    if (response.status === 409) {
+      if (errorOf(parsedBody) === "project_archived") return { kind: "archived" };
+      const stale = guestNotePasteStaleSchema.safeParse(parsedBody);
+      if (stale.success) return { kind: "changed", preview: stale.data.preview };
+    }
+    return { kind: "rejected", error: errorOf(parsedBody) };
+  };
   return {
     async sendCode(email) {
       const response = await send("/email/code", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ email }) });
@@ -147,6 +185,8 @@ export function createGuestApi(linkId: string): GuestApi {
     replyToNote: (noteId, body) => write(`/notes/${noteId}/replies`, "POST", { body }, (parsed) => guestNoteWriteResponseSchema.parse(parsed)),
     editNote: (noteId, input) => write(`/notes/${noteId}`, "PATCH", input, (body) => guestNoteWriteResponseSchema.parse(body)),
     deleteNote: (noteId, expectedRevision) => write(`/notes/${noteId}`, "DELETE", { expectedRevision }, (body) => guestNoteDeleteResponseSchema.parse(body).thread),
+    previewPaste: (targetAssetId, input) => paste(`/versions/${targetAssetId}/note-paste/preview`, input, (body) => guestNotePastePreviewResponseSchema.parse(body)),
+    commitPaste: (targetAssetId, input) => paste(`/versions/${targetAssetId}/note-paste`, input, (body) => guestNotePasteCommitResponseSchema.parse(body)),
     async exchange(token, passcode) {
       const response = await send("/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(passcode === undefined ? { token } : { token, passcode }) });
       if (response === null) return { ok: false, reason: "unreachable" };
