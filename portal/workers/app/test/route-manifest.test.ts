@@ -88,10 +88,10 @@ beforeAll(async () => {
       .bind(manifestPublicNoteId, manifestProjectId, manifestVideoId, manifestVideoAssetId, externalUserId, now, manifestInternalNoteId, manifestProjectId, manifestVideoId, manifestVideoAssetId, externalUserId, now),
     database.DB.prepare("INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_role, visibility, body, revision, created_at) VALUES (?, ?, ?, ?, ?, ?, 'external_editor', 'internal', 'Reply', 1, ?)")
       .bind(manifestInternalReplyId, manifestProjectId, manifestVideoId, manifestVideoAssetId, manifestInternalNoteId, externalUserId, now),
-    // Test-only flag rows (never a migration): the video review gate is open on the manifest Project with the upload and notes parts on, so the
+    // Test-only flag rows (never a migration): the video review gate is open on the manifest Project with the upload, notes and export parts on, so the
     // `video-review` probe parses a non-empty `parts` and not only the closed shape.
-    database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_at) VALUES ('video_review', 1, ?), ('video_review_upload', 1, ?), ('video_review_notes', 1, ?), (?, 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1")
-      .bind(now, now, now, `video_review_pilot:${manifestProjectId}`, now),
+    database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_at) VALUES ('video_review', 1, ?), ('video_review_upload', 1, ?), ('video_review_notes', 1, ?), ('video_review_export', 1, ?), (?, 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1")
+      .bind(now, now, now, now, `video_review_pilot:${manifestProjectId}`, now),
   ]);
 });
 
@@ -216,7 +216,7 @@ describe("terminal route manifest", () => {
         path: `/api/projects/${manifestProjectId}/video-review`,
         parse: (body: unknown) => {
           const parsed = EXTERNAL_API_RESPONSE_SCHEMAS["video-review"].parse(body);
-          expect(parsed).toEqual({ open: true, parts: ["upload", "notes"] });
+          expect(parsed).toEqual({ open: true, parts: ["upload", "notes", "export"] });
           return parsed;
         },
       },
@@ -366,6 +366,13 @@ describe("terminal route manifest", () => {
     const thread = EXTERNAL_API_RESPONSE_SCHEMAS["video-note-thread"].parse(await created.json()) as { id: string };
     expect((EXTERNAL_API_RESPONSE_SCHEMAS["video-note-thread"].parse(await (await send("POST", `${base}/video-notes/${thread.id}/replies`, { body: "Manifest reply" })).json()) as { replies: unknown[] }).replies).toHaveLength(1);
     expect((await readMarkup(thread.id)).status).toBe(404);
+    // The marker export (#741 8) is a scoped file response with no JSON External surface: an unknown Version is 404, a real one downloads for the assigned External.
+    const exportBase = `${base}/video-versions`;
+    expect((await SELF.fetch(`https://portal.test${exportBase}/${crypto.randomUUID()}/marker-export?format=edl`, { headers: { cookie } })).status).toBe(404);
+    const exported = await SELF.fetch(`https://portal.test${exportBase}/${manifestVideoAssetId}/marker-export?format=fcpxml&includeInternal=true`, { headers: { cookie } });
+    expect(exported.status).toBe(200);
+    expect(exported.headers.get("content-disposition")).toContain("attachment");
+    expect(await exported.text()).toContain("Manifest note");
     expect((await send("PATCH", `${base}/video-notes/${thread.id}`, { expectedRevision: 1, markup: [{ points: [{ x: 0.1, y: 0.1 }], color: "#e64b3c", width: 4 }], drawingFrame: 3 })).status).toBe(404);
     expect((await send("PATCH", `${base}/video-notes/${thread.id}`, { expectedRevision: 1, body: "Manifest edit" })).status).toBe(200);
     expect((await send("PUT", `${base}/video-notes/${thread.id}/resolution`, { resolved: true })).status).toBe(200);

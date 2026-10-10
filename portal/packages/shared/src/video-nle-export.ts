@@ -39,6 +39,8 @@ export type ExportNote = {
   resolved: boolean;
   visibility: "public" | "internal";
   createdAt: number;
+  /** A deleted root kept only because live replies hang off it (#741 8): it exports as a marker named "Note deleted". */
+  deleted?: boolean;
 };
 
 export type ExportContext = {
@@ -93,7 +95,7 @@ export function buildMarkers(notes: ExportNote[], ctx: ExportContext): Marker[] 
       return {
         frame,
         durationFrames: Math.max(...durations),
-        name: group.map((r) => `${r.authorName}: ${r.body}`).join(" — "),
+        name: group.map((r) => (r.deleted ? "Note deleted" : `${r.authorName}: ${r.body}`)).join(" — "),
         note: replies.map((r) => `— ${r.authorName}: ${r.body}`).join("\n"),
         resolved: group.every((r) => r.resolved),
       };

@@ -281,6 +281,12 @@ Whether a note on a Video is public (a Guest reviewer can see it) or internal (s
 inherits its parent's visibility, and a guest's note is always public.
 _Avoid_: Private, hidden, staff-only
 
+**Marker export**:
+A file of one Version's notes for an editing program, as DaVinci Resolve markers (an EDL) or Final Cut Pro
+markers (FCPXML). Staff choose whether internal notes and which status (all, open, resolved) go in; internal
+notes are left out unless ticked. Notes on one frame become one marker, and the file is a copy, not a sync.
+_Avoid_: Notes export, NLE export (in staff-facing copy)
+
 **Review link**:
 A private link giving Guest reviewers access to one or more Videos from a single Project, with an
 expiry, an optional passcode and the Versions granted on it. Delivers released video only.
