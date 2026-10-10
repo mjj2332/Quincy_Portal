@@ -10,7 +10,7 @@ import type { GuestApi } from "./guest-api";
  * its read half only: the tolerant `readStoredMarkup` reader and the shared stroke renderer, on the same picture box, shown only while the film is paused on the frame it was drawn on.
  * Items this build cannot render are skipped (never guessed at). A markup read the server answers with the stub means the link is gone: `onUnavailable`.
  */
-export function useGuestMarkup(api: GuestApi, clock: VideoFrameClock | null, thread: GuestNoteThreadDto | null, onUnavailable: () => void): (box: Box | null) => ReactNode {
+export function useGuestMarkup(api: GuestApi, clock: VideoFrameClock | null, thread: GuestNoteThreadDto | null, onUnavailable: () => void, selectionCount: number): (box: Box | null) => ReactNode {
   const wanted = thread !== null && !thread.deleted && thread.hasMarkup && thread.drawingFrame !== null ? thread : null;
   const [loaded, setLoaded] = useState<{ noteId: string; items: MarkupItem[] } | null>(null);
   useEffect(() => {
@@ -23,7 +23,7 @@ export function useGuestMarkup(api: GuestApi, clock: VideoFrameClock | null, thr
       else if (response.kind === "ok" && response.value.markup) setLoaded({ noteId: wanted.id, items: readStoredMarkup(response.value.markup).items });
     });
     return () => { live = false; };
-  }, [api, wanted?.id, onUnavailable]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [api, wanted?.id, onUnavailable, selectionCount]); // selectionCount: selecting the same note again retries a failed read // eslint-disable-line react-hooks/exhaustive-deps
   const playing = useFrameClockSelector(clock, (state) => state.playing, false);
   const frame = useFrameClockSelector(clock, (state) => (state.targetFrame === null ? state.frame : -1), -1);
   const items = wanted !== null && loaded?.noteId === wanted.id && !playing && frame === wanted.drawingFrame ? loaded.items : null;

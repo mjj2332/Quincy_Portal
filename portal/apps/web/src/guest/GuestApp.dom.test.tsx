@@ -412,3 +412,47 @@ describe("Sol round 1: a transient failure is not 'unavailable'", () => {
     expect(allById("guest-note")).toHaveLength(1);
   });
 });
+
+describe("Sol round 2", () => {
+  it("selecting the same drawing note again retries a markup read that failed in transit", async () => {
+    notes = [drawn()];
+    videos = [videoOf(1)];
+    let down = true;
+    let markupReads = 0;
+    extra = (url) => { if (!url.includes("/markup")) return undefined; markupReads += 1; return down ? new Response("boom", { status: 503 }) : json({ markup: { items: [] } }); };
+    await open();
+    const anchor = () => host.querySelector<HTMLElement>('[data-testid="guest-note-anchor"]') ?? undefined;
+    await click(anchor());
+    expect(markupReads).toBe(1);
+    down = false;
+    await click(anchor());
+    expect(markupReads).toBe(2);
+  });
+
+  const withPasscode = () => {
+    extra = (url, init) => {
+      if (!url.endsWith("/session") || init?.method !== "POST") return undefined;
+      const body = JSON.parse(String(init.body)) as { passcode?: string };
+      if (body.passcode === undefined) return json({ error: "passcode_required" }, 401);
+      return body.passcode.length > 64 ? json({ error: "invalid" }, 400) : undefined;
+    };
+  };
+  const typeIn = async (input: HTMLInputElement, value: string) => { await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); }); };
+
+  it("limits the passcode field to GUEST_PASSCODE_MAX (64)", async () => {
+    withPasscode();
+    await open();
+    expect(host.querySelector<HTMLInputElement>('input[type="password"]')!.maxLength).toBe(64);
+  });
+
+  it("keeps a 400 from the passcode exchange on the form with an inline error", async () => {
+    withPasscode();
+    await open();
+    const input = host.querySelector<HTMLInputElement>('input[type="password"]')!;
+    await typeIn(input, "x".repeat(65));
+    await click(button("Continue"));
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/passcode/i);
+    expect(host.querySelector('input[type="password"]')).not.toBeNull();
+  });
+});

@@ -12,7 +12,7 @@ export type Read<T> = { kind: "ok"; value: T } | { kind: "gone" } | { kind: "tra
 
 export type ExchangeResult =
   | { ok: true; session: GuestSessionResponse }
-  | { ok: false; reason: "passcode_required" | "passcode_incorrect" | "unavailable" | "unreachable" }
+  | { ok: false; reason: "passcode_required" | "passcode_incorrect" | "invalid_input" | "unavailable" | "unreachable" }
   | { ok: false; reason: "limited"; retryAfterSeconds: number };
 
 export type GuestApi = {
@@ -46,6 +46,7 @@ export function createGuestApi(linkId: string): GuestApi {
         const body = guestPasscodeErrorSchema.safeParse(await response.json().catch(() => null));
         if (body.success) return body.data.error === "too_many_attempts" ? { ok: false, reason: "limited", retryAfterSeconds: body.data.retryAfterSeconds } : { ok: false, reason: body.data.error };
       }
+      if (response.status === 400 && passcode !== undefined) return { ok: false, reason: "invalid_input" };
       if (response.status >= 500 || response.status === 429) return { ok: false, reason: "unreachable" };
       return { ok: false, reason: "unavailable" };
     },

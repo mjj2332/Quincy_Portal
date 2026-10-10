@@ -52,6 +52,7 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
 
   const [threads, setThreads] = useState<GuestNoteThreadDto[] | null>(null);
   const [notesFailed, setNotesFailed] = useState(false);
+  const [selectionCount, setSelectionCount] = useState(0);
   const [notesAttempt, setNotesAttempt] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [clock, setClock] = useState<VideoFrameClock | null>(null);
@@ -83,12 +84,13 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
   const selected = threads?.find((thread) => thread.id === selectedId) ?? null;
   const select = useCallback((thread: GuestNoteThreadDto) => {
     setSelectedId(thread.id);
+    setSelectionCount((n) => n + 1);
     // A drawing shows only on the exact frame it was drawn on, which can sit anywhere inside the note's range: seek there, else to the anchor.
     const frame = thread.hasMarkup && thread.drawingFrame !== null ? thread.drawingFrame : thread.startFrame;
     if (frame !== null) clock?.seekToFrame(frame);
     setDrawerOpen(false);
   }, [clock]);
-  const markupOverlay = useGuestMarkup(api, clock, selected, onUnavailable);
+  const markupOverlay = useGuestMarkup(api, clock, selected, onUnavailable, selectionCount);
   const watermark = video.premium && !video.unlocked;
   const overlay = useCallback((box: Box | null) => <>{watermark && <PremiumWatermark />}{markupOverlay(box)}</>, [watermark, markupOverlay]);
 

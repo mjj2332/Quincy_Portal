@@ -52,6 +52,7 @@ export function GuestApp() {
     if (result.ok) { token.current = null; await enter(opened, result.session); return; }
     if (result.reason === "passcode_required") { asked.current = true; setScreen({ name: "passcode", error: null, retryAfterSeconds: null, pending: false }); }
     else if (result.reason === "passcode_incorrect") { asked.current = true; setScreen({ name: "passcode", error: "That passcode isn't right. Check it and try again.", retryAfterSeconds: null, pending: false }); }
+    else if (result.reason === "invalid_input") setScreen({ name: "passcode", error: "That passcode isn't valid. Check it and try again.", retryAfterSeconds: null, pending: false });
     else if (result.reason === "limited") {
       if (asked.current || passcode !== undefined) setScreen({ name: "passcode", error: null, retryAfterSeconds: result.retryAfterSeconds, pending: false });
       else { retry.current = () => { setScreen({ name: "boot" }); void exchange(opened, tokenValue); }; setScreen({ name: "limited", retryAfterSeconds: result.retryAfterSeconds }); }

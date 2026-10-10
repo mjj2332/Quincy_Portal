@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import type { GuestVideoDto } from "@quincy/shared";
+import { GUEST_PASSCODE_MAX, type GuestVideoDto } from "@quincy/shared";
 import { LazyImage } from "../components/LazyImage";
 import { Badge } from "../components/reui/badge";
 import { Button } from "../components/reui/button";
@@ -64,7 +64,7 @@ export function PasscodeScreen({ error, retryAfterSeconds, pending, onSubmit }: 
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="guest-passcode-input">Passcode</FieldLabel>
-              <Input id="guest-passcode-input" type="password" autoComplete="off" value={value} className={TOUCH} onChange={(event) => { setValue(event.target.value); }} />
+              <Input id="guest-passcode-input" type="password" autoComplete="off" maxLength={GUEST_PASSCODE_MAX} value={value} className={TOUCH} onChange={(event) => { setValue(event.target.value); }} />
               <FieldError>{secondsLeft > 0 ? waitText(secondsLeft) : error}</FieldError>
             </Field>
             <Button type="submit" className={TOUCH} disabled={value === "" || secondsLeft > 0 || pending}>Continue</Button>
