@@ -33,9 +33,10 @@ export type SecurityRouteClass =
   | "auth-protocol"
   | "bearer-protocol"
   | "withheld"
+  | "guest-link"
   | "terminal-fallback";
 export type SecurityRouteScope = "assigned-project" | "global-self" | "capability" | "none";
-export type SecurityRouteProjection = "external-safe" | "internal" | "none";
+export type SecurityRouteProjection = "external-safe" | "internal" | "guest-public" | "none";
 export type SecurityRouteResponse = "scoped" | "constant-403" | "protocol-404" | "fallback";
 export type SecurityRouteRegistration = {
   method: string;
@@ -46,7 +47,7 @@ export type SecurityRouteRegistration = {
   response: SecurityRouteResponse;
   externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar" | "gantt" | "video-review" | "video-list" | "video-note-list";
 };
-type LegacySecurityRouteClass = "bearer-protocol" | "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "terminal-fallback";
+type LegacySecurityRouteClass = "bearer-protocol" | "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "guest-link" | "terminal-fallback";
 type LegacySecurityRouteRegistrationSeed = { method: string; path: string; class: LegacySecurityRouteClass; externalSurface?: SecurityRouteRegistration["externalSurface"] };
 
 function securityContractForClass(routeClass: SecurityRouteClass): Omit<SecurityRouteRegistration, "method" | "path" | "class"> {
@@ -58,6 +59,8 @@ function securityContractForClass(routeClass: SecurityRouteClass): Omit<Security
     case "auth-protocol": return { scope: "none", projection: "none", response: "protocol-404" };
     case "bearer-protocol": return { scope: "none", projection: "none", response: "protocol-404" };
     case "withheld": return { scope: "none", projection: "internal", response: "constant-403" };
+    // A Review link guest (#741 12a): no staff principal and no Project scope; the link, its live members and live grants are the scope, and every miss is the one stub.
+    case "guest-link": return { scope: "none", projection: "guest-public", response: "protocol-404" };
     case "terminal-fallback": return { scope: "none", projection: "none", response: "fallback" };
   }
 }
@@ -228,6 +231,20 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "PATCH", path: "/api/projects/:projectId/video-notes/:noteId", class: "scoped" },
   { method: "DELETE", path: "/api/projects/:projectId/video-notes/:noteId", class: "scoped" },
   { method: "PUT", path: "/api/projects/:projectId/video-notes/:noteId/resolution", class: "scoped" },
+  { method: "GET", path: "/api/projects/:projectId/review-links", class: "scoped" },
+  { method: "POST", path: "/api/projects/:projectId/review-links", class: "scoped" },
+  { method: "PATCH", path: "/api/projects/:projectId/review-links/:linkId", class: "scoped" },
+  { method: "POST", path: "/api/projects/:projectId/review-links/:linkId/videos", class: "scoped" },
+  { method: "DELETE", path: "/api/projects/:projectId/review-links/:linkId/videos/:videoId", class: "scoped" },
+  { method: "PUT", path: "/api/projects/:projectId/review-links/:linkId/videos/:videoId/grants", class: "scoped" },
+  { method: "POST", path: "/api/projects/:projectId/review-links/:linkId/revoke", class: "scoped" },
+  { method: "POST", path: "/api/projects/:projectId/review-links/:linkId/replace", class: "scoped" },
+  { method: "GET", path: "/api/projects/:projectId/videos/:videoId/decisions", class: "scoped" },
+  { method: "POST", path: "/api/projects/:projectId/video-versions/:assetId/decisions", class: "scoped" },
+  { method: "POST", path: "/api/projects/:projectId/video-versions/:assetId/release", class: "scoped" },
+  { method: "DELETE", path: "/api/projects/:projectId/video-versions/:assetId/release", class: "scoped" },
+  { method: "PUT", path: "/api/projects/:projectId/videos/:videoId/premium", class: "scoped" },
+  { method: "PUT", path: "/api/projects/:projectId/videos/:videoId/premium-unlock", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/link-previews", class: "scoped" },
   { method: "GET", path: "/api/projects/:projectId/activity", class: "scoped", externalSurface: "activity" },
   { method: "GET", path: "/api/projects/:projectId/activity/", class: "scoped", externalSurface: "activity" },
@@ -281,6 +298,25 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "ALL", path: "/dl", class: "terminal-fallback" },
   { method: "ALL", path: "/dl/*", class: "terminal-fallback" },
   { method: "ALL", path: "/api", class: "terminal-fallback" },
+  { method: "GET", path: "/d/review", class: "guest-link" },
+  { method: "POST", path: "/d/api/links/:linkId/session", class: "guest-link" },
+  { method: "GET", path: "/d/api/links/:linkId/session", class: "guest-link" },
+  { method: "DELETE", path: "/d/api/links/:linkId/session", class: "guest-link" },
+  { method: "GET", path: "/d/api/links/:linkId/videos", class: "guest-link" },
+  { method: "GET", path: "/d/api/links/:linkId/versions/:assetId/stream", class: "guest-link" },
+  { method: "GET", path: "/d/api/links/:linkId/versions/:assetId/poster", class: "guest-link" },
+  { method: "GET", path: "/d/api/links/:linkId/versions/:assetId/notes", class: "guest-link" },
+  { method: "GET", path: "/d/api/links/:linkId/notes/:noteId/markup", class: "guest-link" },
+  { method: "POST", path: "/d/api/links/:linkId/email/code", class: "guest-link" },
+  { method: "POST", path: "/d/api/links/:linkId/email/verify", class: "guest-link" },
+  { method: "POST", path: "/d/api/links/:linkId/versions/:assetId/notes", class: "guest-link" },
+  { method: "POST", path: "/d/api/links/:linkId/notes/:noteId/replies", class: "guest-link" },
+  { method: "PATCH", path: "/d/api/links/:linkId/notes/:noteId", class: "guest-link" },
+  { method: "DELETE", path: "/d/api/links/:linkId/notes/:noteId", class: "guest-link" },
+  { method: "POST", path: "/d/api/links/:linkId/versions/:assetId/decision", class: "guest-link" },
+  { method: "GET", path: "/d/api/links/:linkId/versions/:assetId/download", class: "guest-link" },
+  { method: "GET", path: "/d/api/links/:linkId/downloads", class: "guest-link" },
+  { method: "GET", path: "/d/api/links/:linkId/downloads/all.zip", class: "guest-link" },
   { method: "ALL", path: "/d/*", class: "terminal-fallback" },
   { method: "ALL", path: "/d", class: "terminal-fallback" },
   { method: "ALL", path: "/media/*", class: "terminal-fallback" },
@@ -319,6 +355,7 @@ function securityClassForSeed(route: LegacySecurityRouteRegistrationSeed): Secur
       : "scoped-child-resource";
   }
   if (route.class === "bearer-protocol") return "bearer-protocol";
+  if (route.class === "guest-link") return "guest-link";
   if (route.class === "global-self") return "principal-global";
   if (route.class === "terminal-fallback") return "terminal-fallback";
   return "withheld";

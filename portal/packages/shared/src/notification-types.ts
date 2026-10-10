@@ -15,6 +15,10 @@ export const NOTIFICATION_TYPES = [
   "project_deadline_reminder",
   "project_activity",
   "project_collaboration_activity",
+  "video_version_uploaded",
+  "video_note",
+  "video_reply",
+  "video_decision",
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
@@ -39,6 +43,10 @@ export const NOTIFICATION_WORKSPACE_TAB: Readonly<Record<NotificationType, Works
   project_deadline_reminder: "collaboration",
   project_activity: "collaboration",
   project_collaboration_activity: "collaboration",
+  video_version_uploaded: "video",
+  video_note: "video",
+  video_reply: "video",
+  video_decision: "video",
 });
 
 /** The mapped tab for a stored notification type, or undefined for one the app no longer declares

@@ -21,6 +21,7 @@ import { safeFilename } from "../lib/ids";
 import { visibleProjectWhere } from "../lib/visible-project-scope";
 import { jsonInput } from "./helpers";
 import { editorFolderAvailability } from "../lib/editor-folders";
+import { hashToken, randomToken } from "../lib/opaque-token";
 
 const SESSION_TTL_MS = 60 * 60 * 1000;
 const LEASE_MS = 5 * 60 * 1000;
@@ -57,16 +58,6 @@ type UploadSession = {
   completionLeaseExpiresAt: number | null;
   expiresAt: number;
 };
-
-function hashToken(token: string): Promise<string> {
-  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)).then((digest) => [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join(""));
-}
-
-function randomToken(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
 
 function errorResponse(c: Context<AppEnv>, code: Parameters<typeof externalUploadError>[0], status: 400 | 404 | 409 | 503) {
   return c.json(externalUploadError(code), status);
