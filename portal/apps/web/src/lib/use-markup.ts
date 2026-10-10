@@ -77,12 +77,13 @@ export function useMarkup({ enabled, tool, toPoint, strokes, setStrokes, beforeS
   // Latest-value refs so two events dispatched before a re-render still see each other's result.
   const strokesRef = useRef(strokes); strokesRef.current = strokes;
   const historyRef = useRef(history); historyRef.current = history;
-  const latest = useRef({ tool, toPoint, limits, onRefuse, enabled }); latest.current = { tool, toPoint, limits, onRefuse, enabled };
+  // `setStrokes` is read from here too: undo, redo and Clear are stable callbacks, and a caller that retargets the list (another form) must be obeyed by them.
+  const latest = useRef({ tool, toPoint, limits, onRefuse, enabled, setStrokes }); latest.current = { tool, toPoint, limits, onRefuse, enabled, setStrokes };
 
   const setActive = (item: MarkupItem | null) => { setActiveState(item); };
   const apply = (result: MarkupStep) => {
     strokesRef.current = result.strokes; historyRef.current = result.history;
-    setStrokes(result.strokes); setHistoryState(result.history);
+    latest.current.setStrokes(result.strokes); setHistoryState(result.history);
   };
   const discard = useCallback(() => { gestureRef.current = null; pendingRef.current = null; setActiveState(null); }, []);
 

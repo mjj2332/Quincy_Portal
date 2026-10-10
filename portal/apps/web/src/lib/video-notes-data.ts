@@ -52,17 +52,27 @@ export async function readVideoNoteMarkup(projectId: string, noteId: string, rol
   return { noteId: response.noteId, revision: response.revision, markup: items, unsupported };
 }
 
+/** The drawing read answered for a different revision than the list row it was asked for: another session changed the note in between. Never displayed; the list is read again. */
+export class MarkupRevisionMismatch extends Error {
+  constructor() { super("The drawing changed while it was loading."); this.name = "MarkupRevisionMismatch"; }
+}
+
 /**
  * The drawing of a note at the revision the list shows (#741 6b-ui), fetched only when `enabled`. The entry is keyed by note and revision, so it is fetched once per revision and an
- * edit (a new revision) is a fresh entry. A response of a newer revision than the list showed is still the note's current drawing; saving over it sends the list's revision and meets the
- * ordinary 409, so nothing is overwritten unseen.
+ * edit (a new revision) is a fresh entry. A response for any other revision than the list row's is refused (the strokes and the row's drawing frame would disagree): nothing is shown,
+ * the notes list of `assetId` is read again, and the row's new revision is a new key that fetches the matching drawing.
  */
-export function useVideoNoteMarkupQuery(projectId: string, noteId: string, revision: number, enabled: boolean, role: Role): UseQueryResult<VideoNoteMarkupRead, Error> {
+export function useVideoNoteMarkupQuery(projectId: string, assetId: string, noteId: string, revision: number, enabled: boolean, role: Role): UseQueryResult<VideoNoteMarkupRead, Error> {
   return useQuery<VideoNoteMarkupRead, Error>({
-    queryKey: projectDataKeys.videoNoteMarkup(projectId, noteId, revision), enabled, staleTime: Number.POSITIVE_INFINITY, gcTime: 5 * 60_000, retry: projectQueryRetry,
+    queryKey: projectDataKeys.videoNoteMarkup(projectId, noteId, revision), enabled, staleTime: Number.POSITIVE_INFINITY, gcTime: 5 * 60_000,
+    retry: (count, error) => !(error instanceof MarkupRevisionMismatch) && projectQueryRetry(count, error),
     queryFn: async ({ signal, client }: QueryFunctionContext) => {
       const response = await readVideoNoteMarkup(projectId, noteId, role, signal);
       if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
+      if (response.revision !== revision) {
+        void client.invalidateQueries({ queryKey: projectDataKeys.videoNotes(projectId, assetId), exact: true });
+        throw new MarkupRevisionMismatch();
+      }
       return response;
     },
   });

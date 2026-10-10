@@ -4,7 +4,7 @@ import { useFrameClockSelector } from "../../lib/video-frame-clock";
 import { useMediaQuery } from "../../lib/use-media-query";
 import { useMarkup, type PointerSample } from "../../lib/use-markup";
 import { useVideoNoteMarkupQuery } from "../../lib/video-notes-data";
-import type { DrawForm } from "../../lib/video-note-form-store";
+import { preloadSavedDrawing, type DrawForm } from "../../lib/video-note-form-store";
 import { Button } from "../reui/button";
 import { Kbd } from "../reui/kbd";
 import { MarkupToolbar } from "../quincy/markup-toolbar";
@@ -26,6 +26,9 @@ const pointOf = (rect: DOMRect, event: PointerSample): FreehandPoint => ({
   x: Math.max(0, Math.min(1, Number(((event.clientX - rect.left) / rect.width).toFixed(4)))),
   y: Math.max(0, Math.min(1, Number(((event.clientY - rect.top) / rect.height).toFixed(4)))),
 });
+
+/** Whether a sample is over the picture itself (a captured pointer keeps reporting after it leaves, into the letterbox bands). */
+const overPicture = (rect: DOMRect, event: PointerSample): boolean => event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
 
 /**
  * The markup surface and floating pill of the review player (#741 6b-ui), drawn through `VideoStage`'s overlay slot. The SVG sits exactly on the picture box (so a stroke
@@ -49,10 +52,10 @@ export function VideoMarkupOverlay({ session, box }: { session: VideoNotesSessio
   const open = slot.open;
   const editing = open?.kind === "edit" ? open : null;
   const savedNote = selectedThread !== null && !selectedThread.deleted && selectedThread.hasMarkup && selectedThread.drawingFrame !== null ? selectedThread : null;
-  const savedQuery = useVideoNoteMarkupQuery(projectId, savedNote?.id ?? "", savedNote?.revision ?? 1, savedNote !== null, role);
+  const savedQuery = useVideoNoteMarkupQuery(projectId, assetId, savedNote?.id ?? "", savedNote?.revision ?? 1, savedNote !== null, role);
   // The edit form reads the same entry (note + revision), so this adds no fetch. A drawing with an unreadable item is never edited here.
   const editingSaved = editing !== null && editing.noteId === editing.rootId && editing.drawing.hadDrawing && editing.drawing.items === null && !editing.drawing.remove;
-  const editedQuery = useVideoNoteMarkupQuery(projectId, editing?.noteId ?? "", editing?.base.revision ?? 1, editingSaved, role);
+  const editedQuery = useVideoNoteMarkupQuery(projectId, assetId, editing?.noteId ?? "", editing?.base.revision ?? 1, editingSaved, role);
   const savedBlocked = editingSaved && editedQuery.data?.unsupported === true;
   const target = session.readOnly || !canAnnotate || savedBlocked ? null : drawTarget(slot.open);
   const draw = slot.draw;
@@ -71,6 +74,16 @@ export function VideoMarkupOverlay({ session, box }: { session: VideoNotesSessio
     enabled: drawing && canAnnotate, tool: pen, toPoint, strokes: items, setStrokes: setItems, limits: LIMITS,
     onRefuse: () => { setRefused(true); },
   });
+
+  // Only the primary pointer's main button draws (a right-click or a second finger never starts a stroke), and a captured pointer that wanders into a letterbox band ends the stroke
+  // at the last point inside the picture, as leaving the picture does.
+  const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave } = markup.handlers;
+  const handlers = {
+    ...markup.handlers,
+    onPointerDown: (event: ReactPointerEvent<Element>) => { if (!event.isPrimary || event.button !== 0) return; return onPointerDown(event); },
+    onPointerMove: (event: ReactPointerEvent<Element>) => { const rect = svgRef.current?.getBoundingClientRect(); if (rect && !overPicture(rect, event)) onPointerLeave(event); else onPointerMove(event); },
+    onPointerUp: (event: ReactPointerEvent<Element>) => { const rect = svgRef.current?.getBoundingClientRect(); if (rect && !overPicture(rect, event)) onPointerLeave(event); else onPointerUp(event); },
+  };
 
   // A gesture never outlives draw mode or the picture it started on: leaving, or a resize, drops the stroke in progress and keeps the finished ones.
   const { cancel } = markup;
@@ -126,7 +139,7 @@ export function VideoMarkupOverlay({ session, box }: { session: VideoNotesSessio
       <MarkupLayer
         ref={svgRef} aria-hidden="true" data-testid="video-markup-layer" viewBox="0 0 1 1" preserveAspectRatio="none" className="absolute inset-0 size-full overflow-hidden"
         style={{ pointerEvents: drawing ? "auto" : "none", cursor: drawing ? "crosshair" : "default", touchAction: drawing ? "none" : "auto" }}
-        {...markup.handlers}
+        {...handlers}
       >
         {visible && shownItems.map((item, index) => <StrokeVisible key={index} stroke={item} opacity={1} testId="video-markup-stroke" />)}
         {drawing && markup.active && <StrokeVisible stroke={markup.active} opacity={1} testId="video-markup-stroke" />}
@@ -140,7 +153,7 @@ export function VideoMarkupOverlay({ session, box }: { session: VideoNotesSessio
         label={compact ? null : form === "edit" ? "Editing drawing" : "Markup"}
         tool={pen} compact={compact} testId="video-markup-toolbar" drawRef={drawButton}
         collapsed={!drawing} expanding={confirming}
-        onExpand={() => { if (clock && target) void forms.enterDraw(assetId, { clock, form: target, frameCount: session.frameCount }); }}
+        onExpand={() => { if (clock && target) { if (target === "edit") preloadSavedDrawing(forms, assetId, editedQuery.data); void forms.enterDraw(assetId, { clock, form: target, frameCount: session.frameCount }); } }}
         onToolChange={(kind) => { forms.setTool(assetId, { kind }); }}
         onColorChange={(color) => { forms.setTool(assetId, { color }); }}
         onWidthChange={(width) => { forms.setTool(assetId, { width }); }}

@@ -4,7 +4,7 @@ import { VIDEO_NOTE_BODY_MAX, type Role, type VideoNoteDto, type VideoNoteEditIn
 import { cn } from "../../lib/utils";
 import { isOwnNote, noteAnchorLabel } from "../../lib/video-note-view";
 import { useVideoNoteMarkupQuery } from "../../lib/video-notes-data";
-import { effectiveMarks, frameOnScreen, writeFailure, type NoteFormStore, type Problem } from "../../lib/video-note-form-store";
+import { effectiveMarks, frameOnScreen, preloadSavedDrawing, writeFailure, type NoteFormStore, type Problem } from "../../lib/video-note-form-store";
 import type { VideoFrameClock } from "../../lib/video-frame-clock";
 import type { NoteMarks } from "../../lib/video-note-marks";
 import { META_TEXT } from "../quincy/Eyebrow";
@@ -252,7 +252,7 @@ function EditDrawingControls({ store, assetId, note, editing, clock, frameCount,
 }) {
   const drawing = editing.drawing;
   const saved = drawing.hadDrawing && !drawing.remove && drawing.items === null;
-  const query = useVideoNoteMarkupQuery(projectId, note.id, editing.base.revision, saved, role);
+  const query = useVideoNoteMarkupQuery(projectId, assetId, note.id, editing.base.revision, saved, role);
   const framesChosen = useSyncExternalStore(store.subscribe, () => store.slot(assetId).marks.touched);
   const drawingNow = useSyncExternalStore(store.subscribe, () => store.slot(assetId).draw !== null);
   const loaded = query.data?.markup ?? null;
@@ -261,7 +261,7 @@ function EditDrawingControls({ store, assetId, note, editing, clock, frameCount,
   const frame = drawing.drawingFrame ?? drawing.baseFrame;
   const enter = () => {
     if (!clock) return;
-    if (saved && loaded !== null) store.loadDrawing(assetId, note.id, loaded, drawing.baseFrame ?? note.drawingFrame ?? note.startFrame ?? 0);
+    preloadSavedDrawing(store, assetId, query.data);
     void store.enterDraw(assetId, { clock, form: "edit", frameCount });
   };
   // A drawing with an item this build cannot read is kept as it is: Edit and Remove would save back a copy without that item.

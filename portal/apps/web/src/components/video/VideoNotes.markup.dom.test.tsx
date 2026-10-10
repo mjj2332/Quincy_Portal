@@ -685,3 +685,139 @@ describe("A drawing with an item this build cannot read (#741 6b-ui, 6s override
     expect("drawingFrame" in body).toBe(false);
   });
 });
+
+describe("Code-review fixes (#741 6b-ui)", () => {
+  const notesReads = () => api.apiGet.mock.calls.filter(([path]) => /\/notes$/.test(String(path))).length;
+  const sized = (svg: Element) => {
+    svg.getBoundingClientRect = () => ({ ...RECT, right: 900, bottom: 650, x: 100, y: 200, toJSON: () => ({}) }) as DOMRect;
+    (svg as unknown as { setPointerCapture: () => void }).setPointerCapture = () => {};
+  };
+  async function editingSaved(over: NoteOver = {}) {
+    const target = markNote({ author: { kind: "staff", person: me }, ...over });
+    markups = { [target.id]: { revision: target.revision, markup: [STROKE] } };
+    await openFilm({ parts: ON, notes: { [ids.asset2]: [target], [ids.asset1]: [] } }, 45);
+    await chooseNoteAction(threadOf(target.id), "Terry", "Edit");
+    await flush(6);
+    return target;
+  }
+  const editItems = () => stores.made.at(-1)!.slot(ids.asset2).open?.drawing.items ?? null;
+
+  it("Clear in the pill clears the drawing being edited, not the composer's draft", async () => {
+    await editingSaved();
+    await click(tid("video-note-edit-draw")!);
+    await land(30);
+    await flush(2);
+    const svg = layer(); sized(svg);
+    await stroke(svg, [500, 425], [900, 650]);
+    expect(editItems()).toHaveLength(2);
+    await click(popup().querySelector<HTMLElement>('button[aria-label="Clear"]')!);
+    expect(editItems()).toEqual([]);
+  });
+
+  it("new strokes after the saved drawing was removed save on their own frame", async () => {
+    const target = await editingSaved({ endFrame: 60 });
+    await click(tid("video-note-edit-remove-drawing")!);
+    await click(drawButton()!);
+    await land(45);
+    await flush(2);
+    const svg = layer(); sized(svg);
+    await stroke(svg, [500, 425], [900, 650]);
+    expect(stores.made.at(-1)!.slot(ids.asset2).open?.drawing.drawingFrame).toBe(45);
+    await click(doneButton()!);
+    api.apiPatch.mockResolvedValue(commit({ ...target, revision: 4 } as VideoNoteThreadDto));
+    await click(tid("video-note-edit-save")!);
+    await land(45);
+    await flush(4);
+    expect(api.apiPatch.mock.calls.at(-1)![1]).toMatchObject({ drawingFrame: 45 });
+  });
+
+  it("a drawing whose revision differs from the list's is not shown, and the notes list is read again", async () => {
+    const drawn = markNote({ revision: 4 });
+    markups = { [drawn.id]: { revision: 5, markup: [STROKE] } };
+    await openFilm({ parts: ON, notes: { [ids.asset2]: [drawn], [ids.asset1]: [] } }, 5);
+    const before = notesReads();
+    await click(tid("video-note-anchor-button", threadOf(drawn.id))!);
+    await land(30);
+    await flush(6);
+    expect(strokesOnScreen()).toBe(0);
+    expect(notesReads()).toBeGreaterThan(before);
+  });
+
+  it("once the list shows the new revision, the new drawing shows on its new frame", async () => {
+    const drawn = markNote({ revision: 4 });
+    markups = { [drawn.id]: { revision: 5, markup: [STROKE] } };
+    await openFilm({ parts: ON, notes: { [ids.asset2]: [drawn], [ids.asset1]: [] } }, 5);
+    served[ids.asset2] = [{ ...drawn, revision: 5, drawingFrame: 40, startFrame: 40 } as VideoNoteThreadDto];
+    await click(tid("video-note-anchor-button", threadOf(drawn.id))!);
+    await land(30);
+    await flush(6);
+    await present(40);
+    expect(strokesOnScreen()).toBe(1);
+    await present(30);
+    expect(strokesOnScreen()).toBe(0);
+  });
+
+  it("dragging out of the picture finishes the stroke at the last point inside it", async () => {
+    await openFilm({ parts: ON }, 12);
+    const svg = await startDrawing();
+    await pointer(svg, "pointerdown", 500, 425);
+    await pointer(svg, "pointermove", 600, 500);
+    await pointer(svg, "pointermove", 950, 500); // right of the picture: a letterbox band
+    await pointer(svg, "pointermove", 700, 600); // back inside: the stroke is over
+    await pointer(svg, "pointerup", 700, 600);
+    const items = stores.made.at(-1)!.slot(ids.asset2).markup.items;
+    expect(items).toHaveLength(1);
+    expect(items[0]!.points).toHaveLength(2);
+    expect(items[0]!.points.at(-1)!.x).toBeLessThan(1);
+  });
+
+  it("only the primary pointer's left button draws: right-click and a non-primary pointer do not", async () => {
+    await openFilm({ parts: ON }, 12);
+    const svg = await startDrawing();
+    for (const over of [{ button: 2 }, { isPrimary: false }] as PointerEventInit[]) {
+      await pointer(svg, "pointerdown", 500, 425, over);
+      await pointer(svg, "pointermove", 600, 500, over);
+      await pointer(svg, "pointerup", 600, 500, over);
+    }
+    expect(stores.made.at(-1)!.slot(ids.asset2).markup.items).toHaveLength(0);
+    await stroke(svg, [500, 425], [600, 500]);
+    expect(stores.made.at(-1)!.slot(ids.asset2).markup.items).toHaveLength(1);
+  });
+
+  it("the floating Draw of an edit loads the saved drawing first, like Edit drawing", async () => {
+    await editingSaved();
+    await click(drawButton()!);
+    await land(30);
+    await flush(2);
+    expect(tid("video-markup")!.dataset.drawing).toBe("true");
+    expect(editItems()).toHaveLength(1);
+    expect(stores.made.at(-1)!.slot(ids.asset2).draw).toMatchObject({ form: "edit", frame: 30 });
+  });
+
+  it("Remove drawing on a plain note drops the drawing just added to it", async () => {
+    const plain = note({ author: { kind: "staff", person: me }, body: "Plain", startFrame: 40, endFrame: 60 });
+    await openFilm({ parts: ON, notes: { [ids.asset2]: [plain], [ids.asset1]: [] } }, 45);
+    await chooseNoteAction(threadOf(plain.id), "Terry", "Edit");
+    await flush(4);
+    await click(tid("video-note-edit-draw")!);
+    await land(45);
+    await flush(2);
+    const svg = layer(); sized(svg);
+    await stroke(svg, [500, 425], [900, 650]);
+    await click(doneButton()!);
+    await click(tid("video-note-edit-remove-drawing")!);
+    expect(stores.made.at(-1)!.slot(ids.asset2).open?.drawing).toMatchObject({ items: null, touched: false, drawingFrame: null });
+    expect(tid("video-note-edit-set-in")).not.toBeNull(); // the frame controls are back
+  });
+
+  it("Clear marks is off while drawing", async () => {
+    await openFilm({ parts: ON }, 12);
+    await click(tid("video-note-set-in")!);
+    await present(40);
+    await click(tid("video-note-set-out")!);
+    await present(20);
+    expect((tid("video-note-clear-marks") as HTMLButtonElement).disabled).toBe(false);
+    await startDrawing(20);
+    expect((tid("video-note-clear-marks") as HTMLButtonElement).disabled).toBe(true);
+  });
+});

@@ -458,3 +458,60 @@ describe("editing a drawing (#741 6b-ui form store)", () => {
     expect(store.slot(V2).draw).toBeNull();
   });
 });
+
+describe("review fixes (#741 6b-ui form store)", () => {
+  it("strokes drawn after the old drawing was removed freeze their own confirmed frame, and Save sends it", async () => {
+    const target = note({ startFrame: 10, endFrame: 60, drawingFrame: 30, hasMarkup: true, revision: 4 });
+    store.openEdit(V2, target, target.id);
+    store.loadDrawing(V2, target.id, [stroke()], 30);
+    store.removeDrawing(V2);
+    const fc = fakeClock(45);
+    const entered = store.enterDraw(V2, { clock: fc.clock, form: "edit", frameCount: 300 });
+    fc.confirm(45); await entered;
+    store.setItems(V2, "edit", [arrow()]);
+    expect(store.slot(V2).open?.drawing.drawingFrame).toBe(45);
+    store.exitDraw(V2);
+    const send = vi.fn(() => Promise.resolve({}));
+    const done = store.save(V2, { clock: fc.clock, frameCount: 300, send });
+    fc.confirm(45); await done;
+    expect(send).toHaveBeenCalledWith(target.id, expect.objectContaining({ drawingFrame: 45 }));
+  });
+
+  it("strokes drawn after every stroke was cleared also take the new frame", async () => {
+    const target = note({ startFrame: 10, endFrame: 60, drawingFrame: 30, hasMarkup: true, revision: 4 });
+    store.openEdit(V2, target, target.id);
+    store.loadDrawing(V2, target.id, [stroke()], 30);
+    store.setItems(V2, "edit", []);
+    await (async () => { const fc = fakeClock(45); const e = store.enterDraw(V2, { clock: fc.clock, form: "edit", frameCount: 300 }); fc.confirm(45); await e; })();
+    store.setItems(V2, "edit", [arrow()]);
+    expect(store.slot(V2).open?.drawing.drawingFrame).toBe(45);
+  });
+
+  it("Remove drawing on a plain note drops its unsaved additions and releases their frame", async () => {
+    const plain = note({ startFrame: 10, endFrame: 60 });
+    store.openEdit(V2, plain, plain.id);
+    const fc = fakeClock(20);
+    const entered = store.enterDraw(V2, { clock: fc.clock, form: "edit", frameCount: 300 });
+    fc.confirm(20); await entered;
+    store.setItems(V2, "edit", [stroke()]);
+    store.exitDraw(V2);
+    store.removeDrawing(V2);
+    expect(store.slot(V2).open?.drawing).toMatchObject({ items: null, drawingFrame: null, touched: false });
+    const send = vi.fn(() => Promise.resolve({}));
+    await store.save(V2, { clock: null, frameCount: 300, send });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("Clear marks is refused while drawing", async () => {
+    const fc = fakeClock(12);
+    store.mark(V2, "in", 5, fc.clock); store.mark(V2, "out", 30, fc.clock);
+    const entered = store.enterDraw(V2, { clock: fc.clock, form: "composer", frameCount: 300 });
+    fc.confirm(12); await entered;
+    expect(store.slot(V2).draw?.phase).toBe("drawing");
+    store.clearMarks(V2);
+    expect(store.slot(V2).marks.touched).toBe(true);
+    store.exitDraw(V2);
+    store.clearMarks(V2);
+    expect(store.slot(V2).marks.touched).toBe(false);
+  });
+});

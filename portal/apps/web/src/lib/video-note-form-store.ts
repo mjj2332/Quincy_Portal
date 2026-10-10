@@ -255,7 +255,7 @@ export function createNoteFormStore(key: string) {
 
     mark: (assetId: string, kind: "in" | "out", frame: number, clock: object) => { takeMark(assetId, clock, (marks) => markFrame(marks, kind, frame)); },
     makePoint: (assetId: string, clock: object) => { takeMark(assetId, clock, (marks) => ({ in: marks.in ?? marks.out, out: null })); },
-    clearMarks(assetId: string) { const held = slot(assetId); if (!held.op) put(assetId, { marks: { ...NO_MARKS, seed: held.marks.seed }, spent: false }); },
+    clearMarks(assetId: string) { const held = slot(assetId); if (!held.op && !held.draw) put(assetId, { marks: { ...NO_MARKS, seed: held.marks.seed }, spent: false }); },
 
     /** Pause, seek to the range start, the drawing frame or the frozen anchor, confirm exactly that frame (10 s at most), then send. Cancelling the confirmation invalidates the operation before it can send. */
     async post(assetId: string, { clock, frameCount, send, markup: markupOn = true }: { clock: NoteClock; frameCount: number; send: (input: VideoNoteCreateInput) => Promise<unknown>; /** False when the Project's markup part is off: the note posts without its drawing. */ markup?: boolean }) {
@@ -410,8 +410,11 @@ export function createNoteFormStore(key: string) {
       const open_ = held.open;
       if (!open_ || open_.kind !== "edit") return;
       const d = open_.drawing;
-      const items = typeof next === "function" ? next(d.items ?? []) : next;
-      put(assetId, { open: { ...open_, drawing: { ...d, items, remove: false, touched: true, drawingFrame: items.length === 0 ? d.baseFrame : d.drawingFrame ?? frame, revision: d.revision + 1 } }, spent: false });
+      const prior = d.remove ? [] : d.items ?? [];
+      const items = typeof next === "function" ? next(prior) : next;
+      // Strokes added to a drawing that is gone (removed, or every stroke cleared) are a new drawing: they freeze the frame they were drawn on, not the old one.
+      const drawingFrame = items.length === 0 ? d.baseFrame : prior.length > 0 ? d.drawingFrame ?? frame : frame;
+      put(assetId, { open: { ...open_, drawing: { ...d, items, remove: false, touched: true, drawingFrame, revision: d.revision + 1 } }, spent: false });
     },
     /** The saved drawing of the note being edited, fetched by the form's owner. It seeds the editor once and is not a change; nothing replaces strokes already being edited. */
     loadDrawing(assetId: string, noteId: string, items: MarkupItem[], frame: number) {
@@ -428,7 +431,13 @@ export function createNoteFormStore(key: string) {
     /** Marks the open edit's saved drawing for removal (Save sends `markup: null`). */
     removeDrawing(assetId: string) {
       const open_ = slot(assetId).open;
-      if (!open_ || open_.kind !== "edit" || !open_.drawing.hadDrawing) return;
+      if (!open_ || open_.kind !== "edit") return;
+      if (!open_.drawing.hadDrawing) {
+        // A note that never had a drawing: Remove drops the unsaved additions and releases their frozen frame.
+        if (!open_.drawing.touched && open_.drawing.items === null) return;
+        put(assetId, { open: { ...open_, drawing: { ...open_.drawing, items: null, remove: false, touched: false, drawingFrame: null, revision: open_.drawing.revision + 1 } }, spent: false, ...endEditDraw(assetId) });
+        return;
+      }
       put(assetId, { open: { ...open_, drawing: { ...open_.drawing, items: null, remove: true, touched: true, drawingFrame: open_.drawing.baseFrame, revision: open_.drawing.revision + 1 } }, spent: false, ...endEditDraw(assetId) });
     },
     /** Undoes a removal that has not been saved. */
@@ -549,3 +558,16 @@ export function createNoteFormStore(key: string) {
 }
 
 export type NoteFormStore = ReturnType<typeof createNoteFormStore>;
+
+/**
+ * Seeds the open edit with the note's saved drawing before the editor opens (the panel's "Edit drawing" and the floating Draw both go through here). Only a read for this very note
+ * and the revision the edit was opened on is taken, only while the edit still holds the saved drawing unloaded, and an empty read seeds nothing: the editor is never seeded with a
+ * list that was not the note's.
+ */
+export function preloadSavedDrawing(store: Pick<NoteFormStore, "slot" | "loadDrawing">, assetId: string, read: { noteId: string; revision: number; markup: MarkupItem[] | null } | undefined): void {
+  const form = store.slot(assetId).open;
+  if (!form || form.kind !== "edit" || !read || read.markup === null) return;
+  const d = form.drawing;
+  if (!d.hadDrawing || d.remove || d.items !== null || read.noteId !== form.noteId || read.revision !== form.base.revision) return;
+  store.loadDrawing(assetId, form.noteId, read.markup, d.baseFrame ?? form.base.startFrame ?? 0);
+}
