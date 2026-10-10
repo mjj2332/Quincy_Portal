@@ -1068,3 +1068,31 @@ describe("Keyboard focus in the drawing pill (#741 6b-ui)", () => {
     }
   });
 });
+
+describe("A Post that completes after the Version changed (#741 6b-ui)", () => {
+  it("does not clear the selection the person made on the other Version", async () => {
+    const other = markNote({ assetId: ids.asset1, startFrame: 20, drawingFrame: 20, author: { kind: "staff", person: me } });
+    markups = { [other.id]: { revision: other.revision, markup: [STROKE] } };
+    await openFilm({ parts: ON, notes: { [ids.asset2]: [], [ids.asset1]: [other] } }, 12);
+    const svg = await startDrawing(12);
+    await stroke(svg, [500, 425], [900, 650]);
+    await click(doneButton()!);
+    await type(composerText(), "Slow post");
+    let finish: (value: unknown) => void = () => {};
+    api.apiPost.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    await click(tid("video-note-post")!);
+    await land(12);
+    await flush(2);
+    await pickVersion("v1");
+    await loadFilm(20);
+    await click(tid("video-note-anchor-button", threadOf(other.id))!);
+    await land(20);
+    await flush(4);
+    expect(threadOf(other.id).dataset.selected).toBe("true");
+    expect(strokesOnScreen()).toBe(1);
+    finish(commit(note({ startFrame: 12, drawingFrame: 12, hasMarkup: true, body: "Slow post", revision: 1 })));
+    await flush(6);
+    expect(threadOf(other.id).dataset.selected).toBe("true");
+    expect(strokesOnScreen()).toBe(1);
+  });
+});

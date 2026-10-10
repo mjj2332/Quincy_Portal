@@ -39,7 +39,8 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
   // The Version on screen changed: the selection belongs to the one just left, and must not come back with it.
   if (local.assetId !== assetId) setLocal(fresh(assetId));
   const live = local.assetId === assetId ? local : fresh(assetId);
-  const update = useCallback((change: (current: Local) => Local) => { setLocal((current) => change(current.assetId === assetId ? current : fresh(assetId))); }, [assetId]);
+  // An update from a render of a Version already left (a Post that completes late) is dropped: applied, it would reset the Version now on screen to the old one's blank state.
+  const update = useCallback((change: (current: Local) => Local) => { if (assetIdRef.current !== assetId) return; setLocal((current) => change(current.assetId === assetId ? current : fresh(assetId))); }, [assetId]);
 
   // The player's clock, tagged with the Version it was built for: a clock of the Version just left is never handed to the new one.
   const assetIdRef = useRef(assetId);
