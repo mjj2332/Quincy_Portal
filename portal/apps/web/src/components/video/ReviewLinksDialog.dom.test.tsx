@@ -4,6 +4,12 @@ import { resetVideoUploadStore } from "../../lib/video-upload-store";
 import { L1, NOW, PROJECT, TEASER, WALK, all, button, buttonIn, checkbox, dialog, linkOf, mount, openDetailOf, openList, press, q, selectFilms, state, text, unmount } from "@/testing/review-links-harness";
 import "@/testing/dom-polyfills";
 
+/** The dialog's accessible name element, found through aria-labelledby rather than a vendor data-slot. */
+function dialogTitle(): HTMLElement | null {
+  const id = dialog()?.getAttribute("aria-labelledby");
+  return id ? document.getElementById(id) : null;
+}
+
 /**
  * #741 11b design-review fixes: the dialog's chrome (Escape, focus return, the close control, the scrolling body), the passcode hint's
  * wiring, the locked passcode line and the film/films copy. The API is mocked at `lib/api`.
@@ -121,7 +127,7 @@ describe("the dialog's chrome", () => {
   });
   it("titles its steps in the display font", async () => {
     await mount(); await openList();
-    expect(q('[data-slot="dialog-title"]', dialog())!.className).toContain("font-[family-name:var(--font-display)]");
+    expect(dialogTitle()!.className).toContain("font-[family-name:var(--font-display)]");
   });
 });
 
@@ -175,12 +181,12 @@ describe("one reveal title", () => {
     apiPostMock.mockResolvedValue({ link: linkOf(), url: `https://quincy.test/d/review?link=${L1}#t=tok123` });
     await mount(); await openCreate();
     await press(buttonIn(dialog(), "Create link"));
-    expect(text(q('[data-slot="dialog-title"]', dialog()))).toBe("Review link ready");
+    expect(text(dialogTitle())).toBe("Review link ready");
     expect(text(q('[data-testid="review-link-reveal"]'))).not.toContain("This replaces the old link.");
     await press(buttonIn(dialog(), "Done"));
     await press(buttonIn(q('[data-testid="review-link-detail"]'), "Replace link"));
     await press(buttonIn(q('[data-testid="review-link-confirm"]'), "Replace"));
-    expect(text(q('[data-slot="dialog-title"]', dialog()))).toBe("Review link ready");
+    expect(text(dialogTitle())).toBe("Review link ready");
     expect(text(q('[data-testid="review-link-reveal"]'))).toContain("This replaces the old link.");
   });
 });
