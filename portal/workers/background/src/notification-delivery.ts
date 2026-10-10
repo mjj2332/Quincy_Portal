@@ -531,6 +531,7 @@ async function resolveStaffSubtaskAssignedRecipient(env: Env, outbox: OutboxRow)
  * holds `viewVideo`, is an Admin or still a member (an External only ever hears about a Project they are assigned to, where they see every Video), the Project is live, video review is open with
  * `notify_staff` on, and the source row is still there (a deleted note stops being news).
  */
+const AUTHORIZATION_EPOCH_MATCH = `(o.recipient_authorization_epoch = recipient.authorization_epoch OR (o.recipient_authorization_epoch IS NULL AND recipient.role <> 'external_editor'))`;
 const VIDEO_VIEWER_ROLES = ROLES.filter((role) => roleHasCapability(role, "viewVideo"));
 const VIDEO_VIEWER_ROLES_SQL = VIDEO_VIEWER_ROLES.map((role) => `'${role}'`).join(", ");
 const NOTIFY_STAFF_FLAG = videoReviewPartFlag("notify_staff");
@@ -553,6 +554,18 @@ const VIDEO_REVIEW_MEMBER_SQL = `(recipient.role = 'admin' OR EXISTS (
   SELECT 1 FROM project_members member WHERE member.project_id = o.project_id AND member.user_id = o.recipient_id
     AND EXISTS (SELECT 1 FROM json_each(o.payload_json, '$.authorizationAtOccurrence.membershipIds') cycle WHERE cycle.value = member.id)
 ))`;
+
+/**
+ * The whole video-review authorization as one SQL predicate over `o` (the outbox row), `recipient` (its user) and `p` (its Project): the recipient is active and holds `viewVideo`, the epoch matches,
+ * Admin-or-snapshotted-member, the Project is unarchived, the gate is open with `notify_staff`, and the source row is live. Channel admission and the digest (email-digest.ts) both use this one text.
+ */
+export const VIDEO_REVIEW_AUTHORIZED_SQL = `(
+  p.archived_at IS NULL AND recipient.active = 1 AND recipient.role IN (${VIDEO_VIEWER_ROLES_SQL})
+  AND ${AUTHORIZATION_EPOCH_MATCH}
+  AND ${VIDEO_REVIEW_MEMBER_SQL}
+  AND ${VIDEO_REVIEW_GATE_SQL}
+  AND ${VIDEO_REVIEW_SOURCE_SQL}
+)`;
 
 function videoReviewPayload(outbox: OutboxRow): VideoReviewNotificationPayload | null {
   if (outbox.schema_version !== 1 || outbox.event_type !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectVideoReview) return null;
@@ -1402,7 +1415,6 @@ type ReminderAdmission = { sql: string; values: unknown[] };
 
 // Legacy rows created before TB4E (and internal-editor rows) may not carry an
 // authorization epoch. External rows must match the current epoch exactly.
-const AUTHORIZATION_EPOCH_MATCH = `(o.recipient_authorization_epoch = recipient.authorization_epoch OR (o.recipient_authorization_epoch IS NULL AND recipient.role <> 'external_editor'))`;
 
 function reminderAuthorization(
   outbox: OutboxRow,
@@ -1627,13 +1639,9 @@ function legacyAdmission(outbox: OutboxRow, resolved: LegacyResolvedRecipient, t
       sql: `EXISTS (
         SELECT 1 FROM notification_outbox o
         JOIN user recipient ON recipient.id = o.recipient_id
-        JOIN projects p ON p.id = o.project_id AND p.archived_at IS NULL
+        JOIN projects p ON p.id = o.project_id
         WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ? AND o.recipient_id = ?
-          AND recipient.active = 1 AND recipient.role IN (${VIDEO_VIEWER_ROLES_SQL})
-          AND ${AUTHORIZATION_EPOCH_MATCH}
-          AND ${VIDEO_REVIEW_MEMBER_SQL}
-          AND ${VIDEO_REVIEW_GATE_SQL}
-          AND ${VIDEO_REVIEW_SOURCE_SQL}
+          AND ${VIDEO_REVIEW_AUTHORIZED_SQL}
       )`,
       values: [outbox.id, token, outbox.recipient_id],
     };

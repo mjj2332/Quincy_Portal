@@ -4,6 +4,7 @@ import { VIDEO_REVIEW_NOTIFICATION_EVENT, type NotificationOutboxMessage, type V
 import { externalVisibleNotificationCte } from "@quincy/db";
 import type { Env } from "../src/env";
 import { processNotificationMessage } from "../src/notification-delivery";
+import { runEmailDigests } from "../src/email-digest";
 
 /** The staff video-review notification resolver and delivery (#741 15a). */
 const database = env as unknown as { DB: D1Database };
@@ -214,5 +215,45 @@ describe("delivery: who still gets it", () => {
     await processNotificationMessage(deliveryEnv(send), message(fixture.outboxId));
     expect(await stored(fixture.recipientId)).toHaveLength(1);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** Sol finding on 15a: a deferred email is re-authorized when the digest composes and sends it, not only when it was deferred. */
+describe("digest: a deferred video-review email is re-authorized before it is sent", () => {
+  const EIGHT_AM = Date.UTC(2026, 6, 1, 22);
+  const digestDefer = async (options: Options) => {
+    const fixture = await seed({ cadence: "twice_daily", ...options });
+    const send = vi.fn().mockResolvedValue({ messageId: "digest-1" });
+    await processNotificationMessage(deliveryEnv(vi.fn()), message(fixture.outboxId));
+    expect(await ledger(fixture.outboxId)).toMatchObject({ in_app: "sent", email: "deferred" });
+    return { fixture, send };
+  };
+  const flush = async (send: ReturnType<typeof vi.fn>) => { await runEmailDigests(deliveryEnv(send), EIGHT_AM); };
+  const exec = (sql: string, ...binds: unknown[]) => database.DB.prepare(sql).bind(...binds).run();
+
+  it("control: nothing changed, the digest sends it", async () => {
+    const { fixture, send } = await digestDefer({});
+    await flush(send);
+    // Items deferred by earlier tests in this file go out in the same run, so count only this recipient's email.
+    expect(send.mock.calls.filter(([mail]) => mail.to === `${fixture.recipientId}@example.test`)).toHaveLength(1);
+    expect(await ledger(fixture.outboxId)).toMatchObject({ email: "sent" });
+  });
+
+  it.each([
+    ["membership removed", { role: "editor" }, (f: { membershipId: string }) => exec("DELETE FROM project_members WHERE id = ?", f.membershipId)],
+    ["the role loses viewVideo", { role: "editor" }, (f: { recipientId: string }) => exec("UPDATE user SET role = 'photographer' WHERE id = ?", f.recipientId)],
+    ["the epoch is bumped", { role: "editor" }, (f: { recipientId: string }) => exec("UPDATE user SET authorization_epoch = authorization_epoch + 1 WHERE id = ?", f.recipientId)],
+    ["notify_staff is turned off", { role: "editor" }, () => exec("DELETE FROM feature_flags WHERE key = 'video_review_notify_staff'")],
+    ["the note is deleted", { kind: "video_note" }, (f: { sourceKey: string }) => exec("UPDATE video_notes SET deleted_at = ? WHERE id = ?", Date.now(), f.sourceKey.split(":")[1])],
+    ["the decision row is removed", { kind: "video_decision", actor: "guest" }, (f: { sourceKey: string }) => exec("DELETE FROM video_approval_events WHERE id = ?", f.sourceKey.split(":")[1])],
+    ["an assigned External is unassigned", { role: "external_editor", kind: "video_note", actor: "guest" }, (f: { membershipId: string }) => exec("DELETE FROM project_members WHERE id = ?", f.membershipId)],
+    ["notify_staff is turned off for an External", { role: "external_editor", kind: "video_note", actor: "guest" }, () => exec("DELETE FROM feature_flags WHERE key = 'video_review_notify_staff'")],
+    ["the note is deleted for an External", { role: "external_editor", kind: "video_note", actor: "guest" }, (f: { sourceKey: string }) => exec("UPDATE video_notes SET deleted_at = ? WHERE id = ?", Date.now(), f.sourceKey.split(":")[1])],
+  ] as Array<[string, Options, (fixture: any) => Promise<unknown>]>)("%s: no email", async (_name, options, change) => {
+    const { fixture, send } = await digestDefer(options);
+    await change(fixture);
+    await flush(send);
+    expect(send.mock.calls.filter(([mail]) => mail.to === `${fixture.recipientId}@example.test`)).toEqual([]);
+    expect((await ledger(fixture.outboxId)).email).toBe("suppressed");
   });
 });
