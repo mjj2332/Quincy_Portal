@@ -50,6 +50,7 @@ export const CAPABILITIES = [
   "shareVideo",
   "releaseVideo",
   "manageVideoPremium",
+  "manageVideoTrash",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -118,6 +119,7 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "shareVideo",
     "releaseVideo",
     "manageVideoPremium",
+    "manageVideoTrash",
   ],
   editor: [
     "viewAllProjects",
@@ -144,6 +146,7 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "annotateVideo",
     "shareVideo",
     "releaseVideo",
+    "manageVideoTrash",
   ],
   external_editor: EXTERNAL_EDITOR_CAPABILITIES,
   photographer: [
