@@ -450,8 +450,8 @@ describe("audit (story 41)", () => {
     expect(meta("video_note.reply")).toEqual({ projectId: ids.project, videoId: version.videoId, assetId: version.assetId, parentId: note.id, visibility: "internal" });
     expect(meta("video_note.edit")).toEqual({ projectId: ids.project, assetId: version.assetId, revision: 2 });
     expect(meta("video_note.resolve")).toEqual({ projectId: ids.project, assetId: version.assetId });
-    expect(meta("video_note.delete", 0)).toEqual({ projectId: ids.project, assetId: version.assetId, parentId: note.id, mode: "removed", ownRepliesRemoved: 0 });
-    expect(meta("video_note.delete", 1)).toEqual({ projectId: ids.project, assetId: version.assetId, parentId: null, mode: "removed", ownRepliesRemoved: 0 });
+    expect(meta("video_note.delete", 0)).toEqual({ projectId: ids.project, assetId: version.assetId, parentId: note.id, mode: "removed", ownRepliesRemoved: 0, hadMarkup: false });
+    expect(meta("video_note.delete", 1)).toEqual({ projectId: ids.project, assetId: version.assetId, parentId: null, mode: "removed", ownRepliesRemoved: 0, hadMarkup: false });
     expect(rows.map((row) => row.actor_id)).toEqual([ids.member, ids.external, ids.member, ids.admin, ids.admin, ids.external, ids.member]);
     for (const row of rows) { expect(row.meta_json).not.toMatch(/SECRET/); expect(Object.keys(JSON.parse(row.meta_json!))).not.toContain("body"); expect(row.meta_json).not.toContain("impersonatedBy"); }
     expect(rows.every((row) => row.target_id === note.id || row.target_id === reply)).toBe(true);

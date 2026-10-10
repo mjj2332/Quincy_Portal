@@ -12,7 +12,7 @@ import { externalProductionGanttSchema } from "./production-gantt";
 import { videoListResponseSchema, videoReviewResponseSchema } from "./video-review";
 import { videoUploadCompleteResponseSchema, videoUploadReserveResponseSchema } from "./video-upload";
 import { videoNotePasteCommitResponseSchema, videoNotePastePreviewResponseSchema } from "./video-note-paste-api";
-import { videoNoteDeleteResponseSchema, videoNoteListResponseSchema, videoNoteThreadDtoSchema } from "./video-notes";
+import { videoNoteDeleteResponseSchema, videoNoteListResponseSchema, videoNoteMarkupResponseSchema, videoNoteThreadDtoSchema } from "./video-notes";
 import { externalProjectActivityFeedResponseSchema } from "./project-activity-feed";
 import { linkPreviewResponseSchema } from "./link-preview";
 export { externalCalendarRangeSchema } from "./production-calendar";
@@ -266,7 +266,7 @@ export type ExternalApiSurface =
   | "comment-mutation" | "comment-read-state" | "mentionable" | "notifications" | "notification-mutation"
   | "review-mutation" | "external-upload" | "external-upload-complete" | "access-snapshot" | "activity" | "calendar" | "gantt" | "export" | "subtask-assignee-options"
   | "embedded-media-presign" | "embedded-media-complete" | "embedded-media-rendition" | "embedded-media-settings" | "link-preview" | "video-review" | "video-list" | "video-upload-reserve" | "video-upload-complete"
-  | "video-note-list" | "video-note-thread" | "video-note-delete" | "video-note-paste-preview" | "video-note-paste";
+  | "video-note-list" | "video-note-thread" | "video-note-delete" | "video-note-paste-preview" | "video-note-paste" | "video-note-markup";
 
 export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, z.ZodTypeAny>> = {
   me: externalMeResponseSchema,
@@ -310,6 +310,7 @@ export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, 
   "video-note-delete": videoNoteDeleteResponseSchema,
   "video-note-paste-preview": videoNotePastePreviewResponseSchema,
   "video-note-paste": videoNotePasteCommitResponseSchema,
+  "video-note-markup": videoNoteMarkupResponseSchema,
 };
 
 export function externalRoleLabel(): string {

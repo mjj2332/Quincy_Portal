@@ -5739,6 +5739,16 @@ Tags: permissions, d1-migrations · #741
 - **Archived is checked before the note lookup and before authorship** (a non-author's PATCH on an archived Project is 409, not 403), and repeated in every batch, so a write that loses the race writes no audit row either.
 - **External editors on an assigned Project read and write internal notes (story 42).** The staff and External list are the same strict response; the internal filter belongs to the guest surface only, in SQL.
 
+## Video note markup: one revision per change, the gate before the body, and a batch that repeats the rule (#741 6b-api)
+Tags: permissions, d1-migrations · #741
+
+- **A request that "touches markup" is only known from its body, but the gate runs before the body.** `touchesMarkup` peeks the JSON for a `markup` or `drawingFrame` key BEFORE `admit`, so the `markup` part is checked in the same place and with the same 404 body as `notes`. Hono caches the body, so `jsonInput` reads it again for free. `readVideoReviewGate` is called once and both parts are checked from that one read.
+- **The frame rule lives in three places on purpose**: the route (422 `drawing_frame_outside`), the audit `WHERE` of the create batch (the note insert already waits on the audit row, so a bad frame inserts nothing) and the edit `UPDATE`. A test calls the lib directly to prove the SQL stands alone.
+- **A byte-identical markup is decided in the route, not by the UPDATE alone**: the route compares the canonical JSON it would store with the stored string and passes `markup` to the lib only for a real change. The UPDATE still repeats the change predicate, so a caller that bypasses the route cannot bump a revision for nothing, and the fall-through classification re-checks the markup before it answers `noop`.
+- **Audit `meta.markup` says what changed, not what was sent**: a body edit that re-sends identical markup is audited as a body edit.
+- **Paste's markup copy goes AFTER the paste audit statement.** `PASTE_AUDIT_SQL` reads `changes()` from the note INSERT, and any statement in between would reset it. The audit's `markupCopied` therefore counts landed copies by joining the copies JSON to `video_notes` and the source markup rows, not by reading the markup copy's own `changes()`.
+- **`json_set(..., json(CASE WHEN ... THEN 'true' ELSE 'false' END))`** is how a boolean lands in an audit meta from SQL; a bare `EXISTS(...)` becomes `1`/`0`.
+
 ## Notice board "⋯" menu and Delete confirmation (#523)
 Tags: focus-overlays, css-tokens · #523
 

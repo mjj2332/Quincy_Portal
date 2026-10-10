@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ROLES } from "./capabilities";
+import { shapeSchema, strokePointSchema, strokeSchema, strokesSchema, STROKE_LIMITS } from "./freehand-strokes";
 import { videoPersonSchema } from "./video-review";
 
 /**
@@ -18,27 +19,58 @@ const body = z.string().trim().min(1).max(VIDEO_NOTE_BODY_MAX);
 const frame = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 
-/** `visibility` is required: there is no default, and it is immutable after posting. `endFrame` is exclusive: the note covers [startFrame, endFrame). */
+/**
+ * The video markup envelope (#741 6b-api): a non-empty list of freehand strokes and shapes, built from the 6a/6s pieces and STRICT (an unknown
+ * key is a 400, not stripped, so what is stored is exactly what was validated). Colours are hex only; width is 1 to 24 CSS pixels. A freehand
+ * stroke has no `type` key, and `.strict()` without one already refuses `type: "freehand"`. The byte cap is checked by the route, before the batch.
+ */
+export const VIDEO_MARKUP_MAX_BYTES = 524_288;
+export const VIDEO_MARKUP_WIDTH = { min: 1, max: 24 } as const;
+const videoMarkupColor = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "Colour must be hex, like #e64b3c");
+const videoMarkupWidth = z.number().min(VIDEO_MARKUP_WIDTH.min).max(VIDEO_MARKUP_WIDTH.max);
+const videoMarkupPoint = strokePointSchema.strict();
+const videoMarkupStroke = strokeSchema.extend({ points: z.array(videoMarkupPoint).min(1).max(STROKE_LIMITS.points), color: videoMarkupColor, width: videoMarkupWidth }).strict();
+const videoMarkupShape = shapeSchema.extend({ points: z.tuple([videoMarkupPoint, videoMarkupPoint]), color: videoMarkupColor, width: videoMarkupWidth }).strict();
+export const videoMarkupSchema = z.array(z.union([videoMarkupShape, videoMarkupStroke])).min(1).max(STROKE_LIMITS.strokes);
+export type VideoMarkup = z.infer<typeof videoMarkupSchema>;
+
+/** `visibility` is required: there is no default, and it is immutable after posting. `endFrame` is exclusive: the note covers [startFrame, endFrame). `markup` and `drawingFrame` travel together. */
 export const videoNoteCreateInputSchema = z.object({
   startFrame: frame,
   endFrame: frame.nullable().optional(),
   visibility: z.enum(VIDEO_NOTE_VISIBILITIES),
   body,
-}).strict().refine((value) => value.endFrame == null || value.endFrame > value.startFrame, { message: "endFrame must be greater than startFrame", path: ["endFrame"] });
+  markup: videoMarkupSchema.optional(),
+  drawingFrame: frame.optional(),
+}).strict()
+  .refine((value) => value.endFrame == null || value.endFrame > value.startFrame, { message: "endFrame must be greater than startFrame", path: ["endFrame"] })
+  .refine((value) => (value.markup === undefined) === (value.drawingFrame === undefined), { message: "markup and drawingFrame go together", path: ["drawingFrame"] });
 export type VideoNoteCreateInput = z.infer<typeof videoNoteCreateInputSchema>;
 
 /** A reply takes its visibility from the thread's root in SQL, so it carries nothing but the body. */
 export const videoNoteReplyInputSchema = z.object({ body }).strict();
 export type VideoNoteReplyInput = z.infer<typeof videoNoteReplyInputSchema>;
 
-/** Body and/or frames, guarded by `expectedRevision`. `endFrame: null` turns a range into a point. A reply accepts the body only (the route answers 422 otherwise). */
+/**
+ * Body, frames and/or markup, guarded by `expectedRevision`. `endFrame: null` turns a range into a point. A reply accepts the body only (the route answers 422 otherwise).
+ * `markup` is an envelope to add or replace, or `null` to remove it. `drawingFrame` is required when adding to a note with no drawing and optional on a replace; it never travels
+ * with `null`. Frames and markup are refused together by the route (422), so a drawing never moves under its note.
+ */
 export const videoNoteEditInputSchema = z.object({
   expectedRevision: revision,
   body: body.optional(),
   startFrame: frame.optional(),
   endFrame: frame.nullable().optional(),
-}).strict().refine((value) => value.body !== undefined || value.startFrame !== undefined || value.endFrame !== undefined, { message: "Nothing to change" });
+  markup: videoMarkupSchema.nullable().optional(),
+  drawingFrame: frame.optional(),
+}).strict()
+  .refine((value) => value.body !== undefined || value.startFrame !== undefined || value.endFrame !== undefined || value.markup !== undefined, { message: "Nothing to change" })
+  .refine((value) => value.drawingFrame === undefined || (value.markup !== undefined && value.markup !== null), { message: "drawingFrame goes with a markup envelope", path: ["drawingFrame"] });
 export type VideoNoteEditInput = z.infer<typeof videoNoteEditInputSchema>;
+
+/** `GET .../video-notes/:noteId/markup`: the lazy read. `markup` is null for a note without a drawing, a reply or a tombstone; `revision` keys a client cache. Loose items: an old row is read, not re-validated. */
+export const videoNoteMarkupResponseSchema = z.object({ noteId: uuid, revision: z.number().int().positive(), markup: strokesSchema.nullable() }).strict();
+export type VideoNoteMarkupResponse = z.infer<typeof videoNoteMarkupResponseSchema>;
 
 export const videoNoteDeleteInputSchema = z.object({ expectedRevision: revision }).strict();
 export type VideoNoteDeleteInput = z.infer<typeof videoNoteDeleteInputSchema>;
@@ -60,7 +92,7 @@ export const videoNoteDtoSchema = z.object({
   visibility: z.enum(VIDEO_NOTE_VISIBILITIES),
   startFrame: z.number().int().nonnegative().nullable(),
   endFrame: z.number().int().positive().nullable(),
-  /** Always null until markup lands (6b). */
+  /** The frame the drawing was made on; null when the note has no drawing. */
   drawingFrame: z.number().int().nonnegative().nullable(),
   hasMarkup: z.boolean(),
   /** A tombstone reads as `deleted: true` with an empty body. */

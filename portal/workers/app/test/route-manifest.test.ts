@@ -355,6 +355,9 @@ describe("terminal route manifest", () => {
     expect((await send("PATCH", `${base}/video-notes/${crypto.randomUUID()}`, { expectedRevision: 1, body: "x" })).status).toBe(404);
     expect((await send("DELETE", `${base}/video-notes/${crypto.randomUUID()}`, { expectedRevision: 1 })).status).toBe(404);
     expect((await send("PUT", `${base}/video-notes/${crypto.randomUUID()}/resolution`, { resolved: true })).status).toBe(404);
+    // The lazy markup read (6b-api) is a registered scoped route; an unknown id is a 404 and so is any id while the Project's `markup` part is off (the manifest Project has notes and upload only).
+    const readMarkup = (noteId: string) => SELF.fetch(`https://portal.test${base}/video-notes/${noteId}/markup`, { headers: { cookie } });
+    expect((await readMarkup(crypto.randomUUID())).status).toBe(404);
     const unknownPaste = { sourceAssetId: crypto.randomUUID(), noteIds: [crypto.randomUUID()] };
     expect((await send("POST", `${base}/video-versions/${crypto.randomUUID()}/note-paste/preview`, unknownPaste)).status).toBe(404);
     expect((await send("POST", `${base}/video-versions/${crypto.randomUUID()}/note-paste`, { sourceAssetId: unknownPaste.sourceAssetId, notes: [{ noteId: unknownPaste.noteIds[0], revision: 1 }] })).status).toBe(404);
@@ -362,6 +365,8 @@ describe("terminal route manifest", () => {
     expect(created.status).toBe(201);
     const thread = EXTERNAL_API_RESPONSE_SCHEMAS["video-note-thread"].parse(await created.json()) as { id: string };
     expect((EXTERNAL_API_RESPONSE_SCHEMAS["video-note-thread"].parse(await (await send("POST", `${base}/video-notes/${thread.id}/replies`, { body: "Manifest reply" })).json()) as { replies: unknown[] }).replies).toHaveLength(1);
+    expect((await readMarkup(thread.id)).status).toBe(404);
+    expect((await send("PATCH", `${base}/video-notes/${thread.id}`, { expectedRevision: 1, markup: [{ points: [{ x: 0.1, y: 0.1 }], color: "#e64b3c", width: 4 }], drawingFrame: 3 })).status).toBe(404);
     expect((await send("PATCH", `${base}/video-notes/${thread.id}`, { expectedRevision: 1, body: "Manifest edit" })).status).toBe(200);
     expect((await send("PUT", `${base}/video-notes/${thread.id}/resolution`, { resolved: true })).status).toBe(200);
     const removed = await send("DELETE", `${base}/video-notes/${thread.id}`, { expectedRevision: 2 });
