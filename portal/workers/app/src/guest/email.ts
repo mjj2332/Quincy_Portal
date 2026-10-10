@@ -114,17 +114,19 @@ async function sendCode(c: Handled<"/d/api/links/:linkId/email/code">): Promise<
   const email = normaliseEmail(parsed.data.email);
   if (session.email !== null && session.email !== email) return c.json({ error: "already_verified" }, 409);
 
+  // One time for every limit decision, taken now that the body is in: a body held across a window boundary is charged to the window it completes in, and the minute is judged at completion.
+  const decidedAt = Date.now();
   // One send a minute per session, exactly: the counter below guards a race, this read is what makes the minute a minute and not a fixed window that may reset a second later.
   const recent = await c.env.DB.prepare("SELECT created_at FROM guest_email_codes WHERE session_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT 1").bind(session.id).first<{ created_at: number }>();
-  if (recent && now - recent.created_at < GUEST_CODE_RESEND_MS) return tooMany(Math.max(1, Math.ceil((recent.created_at + GUEST_CODE_RESEND_MS - now) / 1000)));
-  const start = windowStart(now);
+  if (recent && decidedAt - recent.created_at < GUEST_CODE_RESEND_MS) return tooMany(Math.max(1, Math.ceil((recent.created_at + GUEST_CODE_RESEND_MS - decidedAt) / 1000)));
+  const start = windowStart(decidedAt);
   const attempt = await reserveAttempts(c.env.DB, [
     { bucket: `codesend:session:${session.id}`, limit: GUEST_LIMITS.codeSendSession, windowMs: GUEST_CODE_RESEND_MS },
     { bucket: await emailBucket("codesend", email, start), limit: GUEST_LIMITS.codeSendEmail },
-    { bucket: await emailBucket("codesend24h", email, windowStart(now, GUEST_DAY_MS)), limit: GUEST_LIMITS.codeSendEmailDay, windowMs: GUEST_DAY_MS },
+    { bucket: await emailBucket("codesend24h", email, windowStart(decidedAt, GUEST_DAY_MS)), limit: GUEST_LIMITS.codeSendEmailDay, windowMs: GUEST_DAY_MS },
     { bucket: `codesend:link:${link.id}`, limit: GUEST_LIMITS.codeSendLink },
     { bucket: await ipBucket("codesend", clientAddress(c.req.raw), start), limit: GUEST_LIMITS.codeSendIp },
-  ], now);
+  ], decidedAt);
   if (attempt.limited) return tooMany(attempt.retryAfterSeconds);
 
   const code = newCode(); const codeId = newId(); const codeHash = await hashPasscode(code);
@@ -165,17 +167,19 @@ async function sendCode(c: Handled<"/d/api/links/:linkId/email/code">): Promise<
 async function verifyCode(c: Handled<"/d/api/links/:linkId/email/verify">): Promise<Response> {
   const now = Date.now(); const auth = await authenticate(c, now);
   if ("response" in auth) return auth.response;
-  const { session } = auth; const link = session.link; const start = windowStart(now);
+  const { session } = auth; const link = session.link;
   const archived = await archivedResponse(c as unknown as Context<AppEnv>, link.projectId); if (archived) return archived;
-  const attempt = await reserveAttempts(c.env.DB, [
-    { bucket: `codeverify:link:${link.id}`, limit: GUEST_LIMITS.codeVerifyLink },
-    { bucket: await ipBucket("codeverify", clientAddress(c.req.raw), start), limit: GUEST_LIMITS.codeVerifyIp },
-  ], now);
-  if (attempt.limited) return tooMany(attempt.retryAfterSeconds);
   const raw = await readJson(c, VERIFY_BODY_MAX);
   if (raw === TOO_LARGE) return c.json({ error: "payload_too_large" }, 413);
   const parsed = raw === INVALID ? null : guestEmailVerifyInputSchema.safeParse(raw);
   if (!parsed?.success) return c.json({ error: "invalid_request" }, 400);
+  // Reserved after the body is read, at a fresh time: the attempt is charged to the window it is made in, however slowly the body arrived.
+  const decidedAt = Date.now(); const start = windowStart(decidedAt);
+  const attempt = await reserveAttempts(c.env.DB, [
+    { bucket: `codeverify:link:${link.id}`, limit: GUEST_LIMITS.codeVerifyLink },
+    { bucket: await ipBucket("codeverify", clientAddress(c.req.raw), start), limit: GUEST_LIMITS.codeVerifyIp },
+  ], decidedAt);
+  if (attempt.limited) return tooMany(attempt.retryAfterSeconds);
 
   // Refusal first, before any answer about the code: a revoke or replace has deleted the session's codes, and "no code" must not be what the guest hears.
   const refused = await classifyRefusal(c as unknown as Context<AppEnv>, session, false); if (refused) return refused;

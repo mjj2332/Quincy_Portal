@@ -700,3 +700,38 @@ describe("refusal is classified before every non-success outcome in verify (Sol 
     expect(await plain(await wrong.response)).toEqual(await stubBody());
   });
 });
+
+describe("limits are charged to the window the request completes in (Sol round 4)", () => {
+  /** A clock that can be pushed forward while a body is held; timers are not affected. */
+  function skewClock() { const real = Date.now.bind(Date); let offset = 0; vi.spyOn(Date, "now").mockImplementation(() => real() + offset); return { jump: (ms: number) => { offset += ms; } }; }
+  const windows = async (like: string) => (await database.DB.prepare("SELECT window_start FROM guest_rate_limits WHERE bucket LIKE ?").bind(like).all<{ window_start: number }>()).results.map((row) => row.window_start);
+
+  it("a send whose body is held across a window boundary is charged to the next window, in every bucket", async () => {
+    const link = await seedGuestLink(); const session = await sessionOf(link); const clock = skewClock();
+    const entry = Date.now(); const nextWindow = (Math.floor(entry / GUEST_WINDOW_MS) + 1) * GUEST_WINDOW_MS;
+    const pending = slowPost(linkPath(link.id, "/email/code"), session.cookie, { email: EMAIL }, 300);
+    await sleep(80); clock.jump(nextWindow - entry + 1000);
+    expect((await pending.response).status).toBe(202);
+    for (const like of ["codesend:email:%", "codesend:link:%", "codesend:ip:%"]) expect(await windows(like), like).toEqual([nextWindow]);
+    const day = (Math.floor(Date.now() / DAY)) * DAY;
+    expect(await windows("codesend24h:email:%")).toEqual([day]);
+    expect((await codeRows(session.id))[0]!.created_at).toBeGreaterThanOrEqual(nextWindow);
+  });
+
+  it("a verify whose body is held across a window boundary is charged to the next window", async () => {
+    const { link, session, code } = await sent(); const clock = skewClock();
+    const entry = Date.now(); const nextWindow = (Math.floor(entry / GUEST_WINDOW_MS) + 1) * GUEST_WINDOW_MS;
+    const pending = slowPost(linkPath(link.id, "/email/verify"), session.cookie, { code: wrongCode(code), name: NAME }, 300);
+    await sleep(80); clock.jump(nextWindow - entry + 1000);
+    expect((await pending.response).status).toBe(401);
+    for (const like of ["codeverify:link:%", "codeverify:ip:%"]) expect(await windows(like), like).toEqual([nextWindow]);
+  });
+
+  it("a held send judges the 60-second wait at the time it completes", async () => {
+    const { link, session } = await sent(); const clock = skewClock();
+    await database.DB.prepare("DELETE FROM guest_rate_limits WHERE bucket LIKE 'codesend:session:%'").run();
+    const pending = slowPost(linkPath(link.id, "/email/code"), session.cookie, { email: EMAIL }, 300);
+    await sleep(80); clock.jump(2 * MINUTE);
+    expect((await pending.response).status).toBe(202);
+  });
+});
