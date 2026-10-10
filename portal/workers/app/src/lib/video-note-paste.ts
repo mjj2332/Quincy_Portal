@@ -93,9 +93,12 @@ export async function planNotePaste(db: D1Database, input: { projectId: string; 
   return { kind: "ok", plan: { preview: { sourceVersion: source.version, targetVersion: target.version, offsetFrames: input.offsetFrames, rows }, videoId: source.video_id, copies, revisions } };
 }
 
+/** Whether any planned copy carries a drawing: a guest paste of one needs the `markup` part, like every guest write that carries a drawing. */
+export const planDrawn = (plan: PastePlan): boolean => plan.copies.some((copy) => copy.drawing !== null);
+
 export type CommitOutcome =
-  | { kind: "ok"; value: { sourceVersion: number; targetVersion: number; offsetFrames: number; copied: number; skipped: number; rows: GuestNotePasteRow[] } }
-  | { kind: "stale"; preview: GuestNotePastePreviewResponse } | { kind: "archived" }
+  | { kind: "ok"; drawn: boolean; value: { sourceVersion: number; targetVersion: number; offsetFrames: number; copied: number; skipped: number; rows: GuestNotePasteRow[] } }
+  | { kind: "stale"; preview: GuestNotePastePreviewResponse; drawn: boolean } | { kind: "archived"; drawn: boolean }
   | Exclude<PlanOutcome, { kind: "ok" }>;
 
 /**
@@ -112,7 +115,8 @@ export async function commitNotePaste(db: D1Database, input: {
   const planned = await planNotePaste(db, { projectId: input.projectId, targetAssetId: input.targetAssetId, sourceAssetId: input.sourceAssetId, offsetFrames: input.offsetFrames, noteIds, ...(who ? { guest: who } : {}) });
   if (planned.kind !== "ok") return planned;
   const { plan } = planned;
-  if (input.notes.some((note) => plan.revisions.get(note.noteId) !== note.revision)) return { kind: "stale", preview: plan.preview };
+  const drawn = planDrawn(plan);
+  if (input.notes.some((note) => plan.revisions.get(note.noteId) !== note.revision)) return { kind: "stale", preview: plan.preview, drawn };
 
   const copyIds = new Map(plan.copies.map((copy) => [copy.noteId, newId()]));
   const auditId = newId();
@@ -127,8 +131,10 @@ export async function commitNotePaste(db: D1Database, input: {
   const copiesJson = JSON.stringify(plan.copies.map((copy) => ({ id: copyIds.get(copy.noteId), src: copy.noteId, start: copy.start, end: copy.end, draw: copy.drawing })));
   const expectedJson = JSON.stringify(input.notes.map((note) => ({ id: note.noteId, rev: note.revision })));
   // The guest fence is repeated by BOTH statements, with the source Version reached as well as the target (the audit row exists only if the copies' fence held).
-  const insertGuard = guest ? guestNoteGuard(guest, 11, "?8", "?2", ["?4"]) : { sql: "", binds: [] as unknown[] };
-  const auditGuard = guest ? guestNoteGuard(guest, 14, "?5", "?3", ["?7"]) : { sql: "", binds: [] as unknown[] };
+  // A plan that copies a drawing needs the `markup` part in BOTH fences, whatever the entry admitted.
+  const fenced = guest ? { ...guest, markup: guest.markup || drawn } : undefined;
+  const insertGuard = fenced ? guestNoteGuard(fenced, 11, "?8", "?2", ["?4"]) : { sql: "", binds: [] as unknown[] };
+  const auditGuard = fenced ? guestNoteGuard(fenced, 14, "?5", "?3", ["?7"]) : { sql: "", binds: [] as unknown[] };
   const results = await db.batch([
     db.prepare(pasteInsertSql(insertGuard.sql)).bind(copiesJson, input.targetAssetId, input.projectId, input.sourceAssetId, guest ? guest.guestId : input.principal!.id, guest ? "guest" : input.principal!.role, plan.preview.sourceVersion, input.now, expectedJson, noteIds.length, ...insertGuard.binds),
     db.prepare(pasteAuditSql(auditGuard.sql)).bind(auditId, guest ? null : input.principal!.id, input.targetAssetId, meta, input.now, input.projectId, input.sourceAssetId, expectedJson, noteIds.length, noteIds.length, plan.copies.length, reasonCount("already_copied"), copiesJson, ...auditGuard.binds),
@@ -139,9 +145,9 @@ export async function commitNotePaste(db: D1Database, input: {
     db.prepare("SELECT id FROM video_notes WHERE id IN (SELECT value FROM json_each(?1))").bind(JSON.stringify([...copyIds.values()])),
   ]);
   if ((results[4]!.results as unknown[]).length === 0) {
-    if (archivedInSnapshot(results[3])) return { kind: "archived" };
+    if (archivedInSnapshot(results[3])) return { kind: "archived", drawn };
     const fresh = await planNotePaste(db, { projectId: input.projectId, targetAssetId: input.targetAssetId, sourceAssetId: input.sourceAssetId, offsetFrames: input.offsetFrames, noteIds, ...(who ? { guest: who } : {}) });
-    return fresh.kind === "ok" ? { kind: "stale", preview: fresh.plan.preview } : fresh;
+    return fresh.kind === "ok" ? { kind: "stale", preview: fresh.plan.preview, drawn: drawn || planDrawn(fresh.plan) } : fresh;
   }
   const landed = new Set((results[5]!.results as Array<{ id: string }>).map((row) => row.id));
   const rows = plan.preview.rows.map((row): GuestNotePasteRow => {
@@ -150,5 +156,5 @@ export async function commitNotePaste(db: D1Database, input: {
     return landed.has(copyId) ? { ...row, status: "copied", copyId } : { noteId: row.noteId, status: "skipped", reason: "already_copied", source: row.source };
   });
   const copied = rows.filter((row) => row.status === "copied").length;
-  return { kind: "ok", value: { sourceVersion: plan.preview.sourceVersion, targetVersion: plan.preview.targetVersion, offsetFrames: input.offsetFrames, copied, skipped: rows.length - copied, rows } };
+  return { kind: "ok", drawn, value: { sourceVersion: plan.preview.sourceVersion, targetVersion: plan.preview.targetVersion, offsetFrames: input.offsetFrames, copied, skipped: rows.length - copied, rows } };
 }

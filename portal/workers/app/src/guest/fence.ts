@@ -35,6 +35,8 @@ export async function archivedRefusal(c: Context<AppEnv>, projectId: string): Pr
 /** What a refusal check additionally covers: the parts the write needs, a Version it must still reach, and whether comments must still be on. */
 export type RefusalScope = {
   parts?: readonly VideoReviewPart[]; assetId?: string; comments?: boolean;
+  /** Further Versions the link must still reach (a paste's source, 13d): any one unreachable is the same stub as `assetId`. */
+  alsoAssetIds?: readonly string[];
   /** Whether approving must still be on for the link (403 `approve_disabled`, the same slot as `comments`). */
   approve?: boolean;
   /** Whether downloading must still be on for the link (403 `download_disabled`, the same slot as `approve`). */
@@ -51,9 +53,10 @@ export type RefusalScope = {
  * false lets the caller go on (13a's verify); true answers the stub.
  */
 export async function classifyRefusal(c: Context<AppEnv>, session: GuestSession, rotatedIsRefusal = true, scope: RefusalScope = {}): Promise<Response | null> {
-  const reach = scope.assetId === undefined ? "1" : reachSql("l.id", "l.project_id", "?3");
+  const assets = scope.assetId === undefined ? [] : [scope.assetId, ...(scope.alsoAssetIds ?? [])];
+  const reach = assets.length === 0 ? "1" : `CASE WHEN ${assets.map((_, index) => reachSql("l.id", "l.project_id", `?${index + 3}`)).join(" AND ")} THEN 1 ELSE 0 END`;
   const row = await c.env.DB.prepare(`SELECT s.token_hash, p.archived_at, l.allow_comments, l.allow_approve, l.allow_download, ${reach} AS reachable FROM guest_sessions s JOIN client_links l ON l.id = s.link_id JOIN projects p ON p.id = l.project_id
-    WHERE s.id = ?1 AND ${liveSql("?2")} AND ${gateSql(scope.parts ?? ["guest"])}`).bind(session.id, Date.now(), ...(scope.assetId === undefined ? [] : [scope.assetId]))
+    WHERE s.id = ?1 AND ${liveSql("?2")} AND ${gateSql(scope.parts ?? ["guest"])}`).bind(session.id, Date.now(), ...assets)
     .first<{ token_hash: string; archived_at: number | null; allow_comments: number; allow_approve: number; allow_download: number; reachable: number }>();
   if (!row) return guestNotFound(c);
   if (row.token_hash !== session.tokenHash && rotatedIsRefusal) return guestNotFound(c);

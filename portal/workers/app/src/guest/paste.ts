@@ -2,10 +2,12 @@ import type { Context, Hono } from "hono";
 import {
   GUEST_NOTE_PASTE_MAX, GUEST_PASTE_BODY_MAX_BYTES, guestNotePasteCommitInputSchema, guestNotePasteCommitResponseSchema, guestNotePastePreviewInputSchema, guestNotePastePreviewResponseSchema, guestNotePasteStaleSchema,
 } from "@quincy/shared";
-import { commitNotePaste, planNotePaste, type PlanOutcome } from "../lib/video-note-paste";
+import { commitNotePaste, planDrawn, planNotePaste, type PlanOutcome } from "../lib/video-note-paste";
 import type { AppEnv } from "../env";
 import { guestNotFound, guestRoute, type INVALID, type TOO_LARGE } from "./http";
-import { enter, judge, reserve, writerOf } from "./notes-write";
+import { classifyRefusal } from "./fence";
+import { enter, judge, reserve, writerOf, type Verified } from "./notes-write";
+import { noteWriteParts } from "../lib/guest-fence-sql";
 import { resolveGrantedVersion } from "./read";
 
 /**
@@ -37,6 +39,14 @@ function refusal(c: Handled<string>, outcome: Exclude<PlanOutcome, { kind: "ok" 
   }
 }
 
+/**
+ * The only way a response that can carry source content (or a paste conflict) leaves a handler once the body is judged: the refusal check over BOTH Versions, and the `markup` part when the
+ * plan copies a drawing, else `response`. Lost access to either Version, or the markup part going off under a drawn paste, is the stub and never an excerpt.
+ */
+async function settle(c: Handled<string>, v: Verified, assetId: string, sourceAssetId: string, drawn: boolean, response: () => Response | Promise<Response>): Promise<Response> {
+  return await classifyRefusal(asApp(c), v.session, true, { parts: noteWriteParts(drawn), comments: true, assetId, alsoAssetIds: [sourceAssetId] }) ?? await response();
+}
+
 const PREVIEW = "/d/api/links/:linkId/versions/:assetId/note-paste/preview";
 const COMMIT = "/d/api/links/:linkId/versions/:assetId/note-paste";
 
@@ -50,7 +60,7 @@ async function previewPaste(c: Handled<typeof PREVIEW>): Promise<Response> {
   const input = judged.data;
   const planned = await planNotePaste(c.env.DB, { projectId: v.link.projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, noteIds: input.noteIds, offsetFrames: input.offsetFrames, guest: { guestId: v.guestId, linkId: v.link.id } });
   if (planned.kind !== "ok") return ctx.answer(refusal(c, planned));
-  return c.json(guestNotePastePreviewResponseSchema.parse(planned.plan.preview));
+  return settle(c, v, assetId, input.sourceAssetId, planDrawn(planned.plan), () => c.json(guestNotePastePreviewResponseSchema.parse(planned.plan.preview)));
 }
 
 async function commitPaste(c: Handled<typeof COMMIT>): Promise<Response> {
@@ -62,11 +72,11 @@ async function commitPaste(c: Handled<typeof COMMIT>): Promise<Response> {
   const judged = judge(c, entered, guestNotePasteCommitInputSchema); if ("response" in judged) return judged.response;
   const input = judged.data;
   const outcome = await commitNotePaste(c.env.DB, { projectId: v.link.projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, notes: input.notes, offsetFrames: input.offsetFrames, principal: null, guest: writerOf(v, false), now: Date.now() });
-  if (outcome.kind === "ok") return c.json(guestNotePasteCommitResponseSchema.parse(outcome.value));
+  if (outcome.kind === "ok") return settle(c, v, assetId, input.sourceAssetId, outcome.drawn, () => c.json(guestNotePasteCommitResponseSchema.parse(outcome.value)));
   // Anything but a landed paste is classified first: a fence that failed mid-request must not be mistaken for a stale preview.
   switch (outcome.kind) {
-    case "stale": return ctx.answer(c.json(guestNotePasteStaleSchema.parse({ error: "paste_stale", preview: outcome.preview }), 409));
-    case "archived": return ctx.answer(c.json({ error: "project_archived" }, 409));
+    case "stale": return settle(c, v, assetId, input.sourceAssetId, outcome.drawn, () => c.json(guestNotePasteStaleSchema.parse({ error: "paste_stale", preview: outcome.preview }), 409));
+    case "archived": return settle(c, v, assetId, input.sourceAssetId, outcome.drawn, () => c.json({ error: "project_archived" }, 409));
     default: return ctx.answer(refusal(c, outcome));
   }
 }

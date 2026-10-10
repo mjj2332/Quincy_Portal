@@ -2,6 +2,7 @@ import { SELF as workerSelf } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { guestNotePasteCommitResponseSchema, guestNotePastePreviewResponseSchema, guestNotePasteStaleSchema, type GuestNotePasteRow } from "@quincy/shared";
 import { hashToken } from "../src/lib/opaque-token";
+import * as pasteLib from "../src/lib/video-note-paste";
 import { commitNotePaste } from "../src/lib/video-note-paste";
 import { cookie as staffCookie, database, ids, seedFixture } from "./embedded-media-support";
 import { addMember, clearGuestRows, GUEST_WINDOW_MS, grant, guestFetch, guestOrigin, linkPath, linkWithSession, openGuestGate, slowRequest, verifySession, type LinkInput } from "./guest-support";
@@ -456,6 +457,58 @@ describe("the SQL fence on its own (a paste that bypasses the route inserts and 
     const w = await world(); const theirs = await seedVideoNote({ assetId: w.a.assetId, guest: true }); const studio = await seedVideoNote({ assetId: w.a.assetId });
     for (const note of [theirs.id, studio.id]) expect(await run(w, note, await writerOf(w)), note).toBe("stale");
     expect(await copyCount()).toBe(0); expect(await pasteAudits()).toEqual([]);
+  });
+});
+
+describe("a drawn note needs the markup part (paste cannot bypass the markup gate)", () => {
+  const markupOff = () => database.DB.prepare("DELETE FROM feature_flags WHERE key = 'video_review_markup'").run();
+  const drawnWorld = async () => { await setVideoFlags("video_review_markup"); const w = await world(); const drawn = await ownNote(w, { startFrame: 30, markup: true }); return { w, drawn }; };
+
+  it("is the exact stub for preview and commit, writing nothing, when markup is off and a source note carries a drawing", async () => {
+    const stub = await stubBody();
+    const { w, drawn } = await drawnWorld(); await markupOff();
+    expect(await plain(await preview(w, [drawn]))).toEqual(stub);
+    expect(await plain(await commit(w, revisions([drawn])))).toEqual(stub);
+    expect(await copyCount()).toBe(0); expect(await pasteAudits()).toEqual([]); expect(await markupCount()).toBe(1);
+  });
+
+  it("writes nothing when markup goes off between the plan read and the batch", async () => {
+    const { w, drawn } = await drawnWorld();
+    const real = pasteLib.commitNotePaste;
+    const writer = { guestId: w.guest!.guestId, sessionId: w.guest!.sessionId, linkId: w.link.id, tokenHash: await hashToken(w.link.cookie.split("=")[1]!), markup: false };
+    let batches = 0;
+    const db = { prepare: (sql: string) => database.DB.prepare(sql), batch: async (statements: D1PreparedStatement[]) => { batches += 1; if (batches === 2) await markupOff(); return database.DB.batch(statements); } } as unknown as D1Database;
+    const outcome = await real(db, { projectId: w.a.projectId, targetAssetId: w.a2.assetId, sourceAssetId: w.a.assetId, notes: revisions([drawn]), offsetFrames: 0, principal: null, guest: writer, now: Date.now() });
+    expect(outcome.kind).not.toBe("ok");
+    expect(await copyCount()).toBe(0); expect(await pasteAudits()).toEqual([]); expect(await markupCount()).toBe(1);
+  });
+
+  it("copies the drawing when markup is on", async () => {
+    const { w, drawn } = await drawnWorld();
+    expect((await parsePreview(await preview(w, [drawn]))).rows[0]).toMatchObject({ status: "mapped" });
+    expect((await parseCommit(await commit(w, revisions([drawn])))).copied).toBe(1);
+    expect(await markupCount()).toBe(2);
+  });
+
+  it("pastes plain text with markup off", async () => {
+    const w = await world(); const note = await ownNote(w);
+    expect((await parseCommit(await commit(w, revisions([note])))).copied).toBe(1);
+  });
+});
+
+describe("a stale or conflicting paste still checks the source Version", () => {
+  it("answers the stub, with no source text, when the source grant is revoked after the plan is read and before the answer", async () => {
+    const stub = await stubBody();
+    const w = await world(); const note = await ownNote(w, { body: "SOURCE-EXCERPT-secret" });
+    await database.DB.prepare("UPDATE video_notes SET revision = 2 WHERE id = ?").bind(note).run();
+    const real = pasteLib.commitNotePaste;
+    vi.spyOn(pasteLib, "commitNotePaste").mockImplementation(async (...args) => {
+      const outcome = await real(...args);
+      await database.DB.prepare("UPDATE review_link_version_grants SET revoked_at = ?, revoked_by = ? WHERE link_id = ? AND asset_id = ?").bind(Date.now(), ids.member, w.link.id, w.a.assetId).run();
+      return outcome;
+    });
+    const response = await plain(await commit(w, revisions([note])));
+    expect(response).toEqual(stub); expect(response.body).not.toContain("SOURCE-EXCERPT-secret");
   });
 });
 
