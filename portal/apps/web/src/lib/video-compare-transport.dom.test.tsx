@@ -807,3 +807,92 @@ describe("CompareTransport: sol review round 3 (#741 7b)", () => {
     expect(r.va.muted).toBe(false);
   });
 });
+
+describe("CompareTransport: sol review round 4 (#741 7b)", () => {
+  it("a watchdog stall recovers from resumed presentation alone (no playing event)", () => {
+    const r = rig();
+    r.t.play();
+    show(r.va, 10); show(r.vb, 10);
+    vi.advanceTimersByTime(800);
+    expect(r.t.getState().stalled).toBe("a");
+    expect(r.vb.paused).toBe(true);
+    show(r.va, 11);
+    expect(r.t.getState().stalled).toBeNull();
+    expect(r.vb.paused).toBe(false);
+    show(r.va, 12);
+    expect(r.t.getState()).toMatchObject({ playing: true, frame: 12 });
+  });
+
+  it("a waiting stall recovers from presentation alone as well", () => {
+    const r = rig();
+    r.t.play();
+    show(r.va, 10); show(r.vb, 10);
+    stub.fireWaiting(r.vb);
+    expect(r.t.getState().stalled).toBe("b");
+    show(r.vb, 11);
+    expect(r.t.getState().stalled).toBeNull();
+    expect(r.va.paused).toBe(false);
+  });
+
+  it("resuming a held side that sits on its last frame realigns it first; it is not restarted from 0", () => {
+    const r = rig({ audible: "b" });
+    r.t.play();
+    land(r.va, 99, F25);               // A has run ahead to its last frame
+    show(r.vb, 98);
+    expect(r.t.getState()).toMatchObject({ master: "b", frame: 98 });
+    stub.fireWaiting(r.vb);
+    expect(r.va.paused).toBe(true);
+    land(r.va, 99, F25);                // the pause confirmed A on its last frame
+    stub.writes.length = 0;
+    stub.firePlaying(r.vb);
+    expect(stub.writes).not.toContain(seekAt(0));
+    expect(r.va.currentTime).toBe(seekAt(98));
+    expect(r.va.paused).toBe(false);
+  });
+
+  it("a handoff never rewinds the shared position or replays the parked side", () => {
+    const r = rig({ nA: 100, nB: 200 });
+    r.t.play();
+    show(r.vb, 97);
+    show(r.va, 98);
+    show(r.va, 99);
+    expect(r.t.getState()).toMatchObject({ master: "b", frame: 99 });
+    expect(r.va.paused).toBe(true);
+    const plays = stub.callsOf(r.va).filter((c) => c === "play").length;
+    show(r.vb, 98);                     // the new master's lagging presentation
+    expect(r.t.getState().frame).toBe(99);
+    expect(stub.callsOf(r.va).filter((c) => c === "play")).toHaveLength(plays);
+    expect(r.va.paused).toBe(true);
+    show(r.vb, 100);
+    expect(r.t.getState().frame).toBe(100);
+  });
+});
+
+describe("CompareTransport: found by the random sequences (#741 7b)", () => {
+  it("a recovery block raised while a side is entering its window leaves the other side paused", () => {
+    const r = rig({ offset: -3 });             // B is ahead; A joins at shared position 0
+    r.t.home();
+    land(r.va, 0, F25); land(r.vb, 0, F25);
+    r.t.play();
+    show(r.vb, 1);
+    stub.fireWaiting(r.vb); stub.firePlaying(r.vb);   // a stall that recovers
+    stub.fireWaiting(r.vb); stub.firePlaying(r.vb);   // failure 1: a stall right after a resume
+    stub.setReadyState(r.va, 2);
+    show(r.vb, 3);                             // A's window opens with too little data: failure 2
+    expect(r.t.getState()).toMatchObject({ playing: false, blocked: "recovery" });
+    expect(r.va.paused).toBe(true);
+    expect(r.vb.paused).toBe(true);
+  });
+
+  it("a stalled side that buffers past its own end is parked on recovery, not left running", () => {
+    const r = rig({ nA: 100, nB: 200 });
+    r.t.play();
+    show(r.va, 97);
+    stub.fireWaiting(r.va);
+    show(r.va, 99);
+    expect(r.t.getState().stalled).toBeNull();
+    expect(r.va.paused).toBe(true);
+    expect(r.t.getState().master).toBe("b");
+    expect(r.vb.paused).toBe(false);
+  });
+});

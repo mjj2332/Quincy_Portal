@@ -2,7 +2,19 @@ import { aOf, bOf, compareDomain, driftDecision, medianOfLastThree, offsetBounds
 import type { VideoFrameClock } from "./video-frame-clock";
 import { offsetOf, type CompareSideId, type CompareStore } from "./video-compare-store";
 
-/** Two frame clocks driven as one (#741 7b): the shared position, paired seeks, drift correction, stalls and the gesture rules. */
+/**
+ * Two frame clocks driven as one (#741 7b): the shared position, paired seeks, drift correction, stalls and the gesture rules.
+ *
+ * Invariants. Each is enforced at one choke point; a new code path that needs the thing goes through it, not around it.
+ *  I1. A side is started only by `startSide(side)`: it refuses an ended side and one that is not `live` at the shared position, and it
+ *      seeks the side to its mapped frame BEFORE starting it, so the clock's restart-at-end can never fire. Play, phase entry and every
+ *      stall recovery start sides this way.
+ *  I2. While playing forward the shared position never decreases (`onMasterFrame`): a presentation that maps earlier, such as a new
+ *      master lagging after a handoff, is ignored until it catches up. A handoff never rewinds and never replays a parked side.
+ *  I3. A stall has two exits, whatever its kind: the stalled side's `playing` event or a new presented frame on it (`recoverStall`). The
+ *      held side is realigned through I1.
+ *  I4. Every master change goes through `reselectMaster`, which clears drift history and both trims (`resetSamples`).
+ */
 
 export type CompareTransportSide = {
   clock: VideoFrameClock;
@@ -70,6 +82,8 @@ export class CompareTransport {
   /** >0 while this class is the one stopping or moving a clock, so the clock's own state change is not read as an unexpected stop. */
   private issuing = 0;
   private lastResumeAt: number | null = null;
+  /** The frame the stalled side showed when it stalled: a different presented frame is progress. */
+  private stallFrame = -1;
   private failures: number[] = [];
   private watchdog: ReturnType<typeof setTimeout> | null = null;
   private reverseRun: Reverse | null = null;
@@ -131,15 +145,10 @@ export class CompareTransport {
     this.applyAudio();
     this.act(() => {
       for (const side of SIDES) {
+        if (this.startSide(side)) continue;
         const { clock } = this.sides[side];
-        const local = this.localFrame(side, this.a);
-        if (this.phaseOf(side, this.a) === "live") {
-          if (this.shownFrame(side) !== local) clock.seekToFrame(local);
-          clock.setRate(rate);
-        } else {
-          const parked = this.parkedFrame(side, local);
-          if (this.shownFrame(side) !== parked || clock.getState().playing) clock.seekToFrame(parked);
-        }
+        const parked = this.parkedFrame(side, this.localFrame(side, this.a));
+        if (this.shownFrame(side) !== parked || clock.getState().playing) clock.seekToFrame(parked);
       }
     });
     this.armWatchdog();
@@ -390,9 +399,24 @@ export class CompareTransport {
     this.resetSamples();
   }
 
+  /** I1: the only way a side is started. Returns false (and does nothing) for a side that must not play now. */
+  private startSide(side: CompareSideId): boolean {
+    if (!this.playing || this.runtime[side].ended || this.phaseOf(side, this.a) !== "live") return false;
+    const { clock } = this.sides[side];
+    const local = this.localFrame(side, this.a);
+    this.act(() => {
+      if (this.shownFrame(side) !== local) clock.seekToFrame(local);
+      clock.setRate(this.rate);
+    });
+    return true;
+  }
+
   private onMasterFrame(master: CompareSideId, frame: number): void {
-    this.a = this.sharedFrom(master, frame);
     this.armWatchdog();
+    const next = this.sharedFrom(master, frame);
+    // I2: a presentation that maps behind the position already reached (a master that lags after a handoff) is not progress.
+    if (next < this.a) return;
+    this.a = next;
     this.syncPhases();
     if (this.playing && !this.stall) this.sampleDrift();
     this.refresh();
@@ -405,18 +429,15 @@ export class CompareTransport {
       const { clock, video } = this.sides[side];
       const ph = this.phaseOf(side, this.a);
       if (ph === "live") {
-        if (!clock.getState().playing && !this.stall && !this.runtime[side].ended) {
-          const local = this.localFrame(side, this.a);
-          this.act(() => {
-            if (this.shownFrame(side) !== local) clock.seekToFrame(local);
-            clock.setRate(this.rate);
-          });
-          if (video.readyState < 3) this.enterStall(side);
+        if (!clock.getState().playing && !this.stall) {
+          if (this.startSide(side) && video.readyState < 3) this.enterStall(side);
         }
       } else if (ph !== "before" && (clock.getState().playing || this.runtime[side].ended)) {
         this.act(() => { clock.seekToFrame(this.lastFrame(side)); });
       }
     }
+    // Starting a side can stop everything (a refused play, a failed recovery): nothing more to reconcile then.
+    if (!this.playing) return;
     const phases = SIDES.map((side) => this.phaseOf(side, this.a));
     const running = phases.some((ph) => ph === "live" || ph === "before");
     if (this.a >= this.domain().end || !running) { this.finish(); return; }
@@ -485,6 +506,8 @@ export class CompareTransport {
     if (!this.playing) return;
     if (wasPlaying && !state.playing && this.issuing === 0) { this.onUnexpectedStop(side); return; }
     if (state.stalled && state.playing && !this.stall && this.issuing === 0 && this.phaseOf(side, this.a) === "live") { this.enterStall(side); return; }
+    // I3: a new presented frame on the stalled side is recovery, with or without a `playing` event.
+    if (this.stall === side && this.issuing === 0 && frameChanged && state.frame !== this.stallFrame) { this.recoverStall(side, state.frame); return; }
     if (this.issuing > 0 || !frameChanged || this.master !== side || this.stall) return;
     // A frame shown on the way to a seek's target is not progress.
     if (state.targetFrame !== null && state.frame !== state.targetFrame) return;
@@ -551,6 +574,7 @@ export class CompareTransport {
     if (this.stall || !this.playing || this.reverseRun) return;
     if (!counted && this.lastResumeAt !== null && this.now() - this.lastResumeAt < RECOVERY_GRACE_MS && this.recordFailure()) return;
     this.stall = side;
+    this.stallFrame = this.sides[side].clock.getState().frame;
     this.clearWatchdog();
     this.resetSamples();
     const mate = this.sides[other(side)].clock;
@@ -560,14 +584,18 @@ export class CompareTransport {
 
   private onVideoPlaying(side: CompareSideId): void {
     if (this.disposed || this.stall !== side || !this.playing) return;
+    this.recoverStall(side, null);
+  }
+
+  /** I3: leaves a stall. The held side is started again through I1 (realigned to the shared position first). */
+  private recoverStall(side: CompareSideId, frame: number | null): void {
     this.stall = null;
     this.lastResumeAt = this.now();
-    const mate = other(side);
-    if (this.phaseOf(mate, this.a) === "live") {
-      // Not a gesture: a refusal comes back through onPlayRejected and blocks.
-      this.act(() => { this.sides[mate].clock.setRate(this.rate); });
-    }
-    this.reselectMaster();
+    if (frame !== null) this.a = Math.max(this.a, this.sharedFrom(side, frame));
+    // Not a gesture: a refusal comes back through onPlayRejected and blocks.
+    this.startSide(other(side));
+    // The stalled side may have moved past its end while it buffered: park it, hand over the master, or finish.
+    this.syncPhases();
     this.armWatchdog();
     this.refresh();
   }
