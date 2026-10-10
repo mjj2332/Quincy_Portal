@@ -64,6 +64,7 @@ export class VideoFrameClock {
   /** The frame the first seek goes to (compare opens a side mid-film); consumed once. */
   private initialFrame: number;
   private readonly rejectListeners = new Set<(error: unknown) => void>();
+  private readonly confirmListeners = new Set<() => void>();
 
   constructor(private readonly video: HTMLVideoElement, version: FrameClockVersion, options: { now?: () => number; initialFrame?: number } = {}) {
     this.initialFrame = options.initialFrame !== undefined && Number.isFinite(options.initialFrame) ? Math.max(0, Math.trunc(options.initialFrame)) : 0;
@@ -115,6 +116,12 @@ export class VideoFrameClock {
   /** Seeks without stopping: the element keeps playing and lands on `frame` (a hard drift correction). */
   seekWhilePlaying(frame: number): void { this.seek(frame, true, true); }
 
+  /** Tells `listener` whenever `awaitConfirmedFrame()` is asked for, after any playback it stops: a note post is about to anchor to this clock's frame. */
+  onConfirmRequest(listener: () => void): () => void {
+    this.confirmListeners.add(listener);
+    return () => { this.confirmListeners.delete(listener); };
+  }
+
   /** Tells `listener` when the browser refused or failed a `play()` (anything but the AbortError a pause causes). Returns the remover. */
   onPlayRejected(listener: (error: unknown) => void): () => void {
     this.rejectListeners.add(listener);
@@ -140,6 +147,7 @@ export class VideoFrameClock {
   /** Pauses (if playing) and resolves with the frame once the browser has shown it: what a note or a drawing must anchor to. */
   awaitConfirmedFrame(): Promise<number> {
     if (this.state.playing) this.pause();
+    for (const listener of [...this.confirmListeners]) listener();
     if (this.state.confirmed && this.target === null && !this.video.seeking) return Promise.resolve(this.state.frame);
     return new Promise((resolve, reject) => { this.waiters.push({ resolve, reject }); });
   }

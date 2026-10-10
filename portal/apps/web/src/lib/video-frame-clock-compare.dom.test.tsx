@@ -157,4 +157,16 @@ describe("VideoFrameClock compare API (#741 7b)", () => {
     expect(heard).toEqual([{ name: "NotAllowedError", playing: true }]);
     expect(clock!.getState().playing).toBe(false);
   });
+
+  it("onConfirmRequest hears awaitConfirmedFrame, after the clock has stopped playing", () => {
+    const video = setup(); settle(video);
+    clock!.play();
+    const seen: boolean[] = [];
+    const off = clock!.onConfirmRequest(() => { seen.push(clock!.getState().playing); });
+    clock!.awaitConfirmedFrame().catch(() => {});
+    expect(seen).toEqual([false]);
+    off();
+    clock!.awaitConfirmedFrame().catch(() => {});
+    expect(seen).toHaveLength(1);
+  });
 });

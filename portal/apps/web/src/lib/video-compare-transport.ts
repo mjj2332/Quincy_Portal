@@ -48,7 +48,7 @@ export const RECOVERY_GRACE_MS = 2_000;
 const SIDES: readonly CompareSideId[] = ["a", "b"];
 const other = (side: CompareSideId): CompareSideId => (side === "a" ? "b" : "a");
 
-type Runtime = { prevPlaying: boolean; prevFrame: number; samples: number[]; trimmed: number; detach: Array<() => void> };
+type Runtime = { ended: boolean; prevPlaying: boolean; prevFrame: number; samples: number[]; trimmed: number; detach: Array<() => void> };
 type Reverse = { base: number; startedAt: number; speed: number; final: boolean; timer: ReturnType<typeof setTimeout> | null };
 
 export class CompareTransport {
@@ -297,7 +297,7 @@ export class CompareTransport {
 
   // --- state ---
 
-  private newRuntime(): Runtime { return { prevPlaying: false, prevFrame: -1, samples: [], trimmed: 1, detach: [] }; }
+  private newRuntime(): Runtime { return { ended: false, prevPlaying: false, prevFrame: -1, samples: [], trimmed: 1, detach: [] }; }
 
   private build(): CompareTransportState {
     return {
@@ -334,7 +334,7 @@ export class CompareTransport {
     this.stall = null;
     this.clearWatchdog();
     this.resetSamples();
-    this.act(() => { for (const side of SIDES) this.sides[side].clock.clearRateTrim(); });
+    for (const side of SIDES) this.runtime[side].ended = false;
   }
 
   /** Seeks both sides to the frames `a` maps to (each clamped to its own range). A seek halts a playing clock. */
@@ -344,8 +344,10 @@ export class CompareTransport {
     });
   }
 
+  /** Forgets drift history and releases any trim actually applied to the elements. */
   private resetSamples(): void {
     for (const side of SIDES) { this.runtime[side].samples = []; this.runtime[side].trimmed = 1; }
+    this.act(() => { for (const side of SIDES) this.sides[side].clock.clearRateTrim(); });
   }
 
   // --- audio ---
@@ -383,7 +385,7 @@ export class CompareTransport {
       const { clock, video } = this.sides[side];
       const ph = this.phaseOf(side, this.a);
       if (ph === "live") {
-        if (!clock.getState().playing && !this.stall) {
+        if (!clock.getState().playing && !this.stall && !this.runtime[side].ended) {
           const local = this.localFrame(side, this.a);
           this.act(() => {
             if (this.shownFrame(side) !== local) clock.seekToFrame(local);
@@ -391,7 +393,7 @@ export class CompareTransport {
           });
           if (video.readyState < 3) this.enterStall(side);
         }
-      } else if (ph !== "before" && clock.getState().playing) {
+      } else if (ph !== "before" && (clock.getState().playing || this.runtime[side].ended)) {
         this.act(() => { clock.seekToFrame(this.lastFrame(side)); });
       }
     }
@@ -448,6 +450,7 @@ export class CompareTransport {
     const onPlaying = () => { this.onVideoPlaying(side); };
     video.addEventListener("playing", onPlaying);
     run.detach.push(() => { video.removeEventListener("playing", onPlaying); });
+    run.detach.push(clock.onConfirmRequest(() => { this.onConfirmRequest(side); }));
     run.detach.push(clock.onPlayRejected((error) => { this.onPlayRejected(error); }));
   }
 
@@ -475,9 +478,32 @@ export class CompareTransport {
    */
   private onUnexpectedStop(side: CompareSideId): void {
     const state = this.sides[side].clock.getState();
-    if (state.frame >= this.lastFrame(side) && state.targetFrame === null) { this.syncPhases(); this.refresh(); return; }
+    if (state.frame >= this.lastFrame(side) && state.targetFrame === null) {
+      // The element ended: its terminal frame is the position now, and it is parked, never played again.
+      this.runtime[side].ended = true;
+      if (this.master === side) this.a = this.sharedFrom(side, this.lastFrame(side));
+      this.syncPhases();
+      this.refresh();
+      return;
+    }
     const shown = state.targetFrame ?? state.frame;
     const shared = this.sharedFrom(side, shown);
+    this.halt();
+    this.a = shared;
+    const mate = other(side);
+    this.act(() => { this.sides[mate].clock.seekToFrame(this.parkedFrame(mate, this.localFrame(mate, shared))); });
+    this.refresh();
+  }
+
+  /**
+   * A note post asked `side` to confirm its frame. Whatever the transport is doing (playing, reversing, buffering with a resume pending)
+   * ends; the other side is paused and aligned to the confirming side, which is never seeked.
+   */
+  private onConfirmRequest(side: CompareSideId): void {
+    if (this.disposed || (!this.playing && !this.reverseRun)) return;
+    const state = this.sides[side].clock.getState();
+    const shared = this.sharedFrom(side, state.targetFrame ?? state.frame);
+    this.endReverse();
     this.halt();
     this.a = shared;
     const mate = other(side);
@@ -502,9 +528,9 @@ export class CompareTransport {
   // --- buffering ---
 
   /** Freezes the shared position, pauses the other side and leaves `side` un-paused so the browser keeps fetching for it. */
-  private enterStall(side: CompareSideId): void {
+  private enterStall(side: CompareSideId, counted = false): void {
     if (this.stall || !this.playing || this.reverseRun) return;
-    if (this.lastResumeAt !== null && this.now() - this.lastResumeAt < RECOVERY_GRACE_MS && this.recordFailure()) return;
+    if (!counted && this.lastResumeAt !== null && this.now() - this.lastResumeAt < RECOVERY_GRACE_MS && this.recordFailure()) return;
     this.stall = side;
     this.clearWatchdog();
     this.resetSamples();
@@ -557,7 +583,7 @@ export class CompareTransport {
     const master = this.master;
     if (this.sides[master].video.paused) return;
     if (this.recordFailure()) return;
-    this.enterStall(master);
+    this.enterStall(master, true);
   }
 
   // --- reverse ---

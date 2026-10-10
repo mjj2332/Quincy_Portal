@@ -614,3 +614,85 @@ describe("CompareTransport: lifetime (#741 7b)", () => {
     off();
   });
 });
+
+describe("CompareTransport: sol review round 1 (#741 7b)", () => {
+  it("an ended master finishes or hands off from its terminal frame; it is never replayed", () => {
+    const r = rig({ nA: 100, nB: 150 });
+    r.t.play();
+    show(r.va, 98);
+    stub.endPlayback(r.va); // the element ends before the last frame is ever reported by rVFC
+    expect(stub.callsOf(r.va).filter((c) => c === "play")).toHaveLength(1);
+    expect(r.va.paused).toBe(true);
+    expect(r.t.getState()).toMatchObject({ playing: true, master: "b", frame: 99 });
+    expect(r.t.getState().phases.a).toBe("last");
+    show(r.vb, 100);
+    expect(stub.callsOf(r.va).filter((c) => c === "play")).toHaveLength(1);
+  });
+
+  it("an ended master that is also the shared end stops the transport", () => {
+    const r = rig();
+    r.t.play();
+    show(r.va, 98);
+    stub.endPlayback(r.va);
+    expect(r.t.getState()).toMatchObject({ playing: false, frame: 99 });
+    expect(r.vb.paused).toBe(true);
+  });
+
+  it("a master change releases the actual rate trim, not only the bookkeeping", () => {
+    const r = rig();
+    r.t.play();
+    for (const f of [1, 2, 3]) { stub.presentFrame(r.vb, 0.2); show(r.va, f); }
+    expect(r.vb.playbackRate).toBeCloseTo(0.95);
+    r.t.setAudible("b");
+    expect(r.t.getState().master).toBe("b");
+    expect(r.vb.playbackRate).toBe(1);
+    expect(r.va.playbackRate).toBe(1);
+  });
+
+  it("a frame confirmation during reverse stops the reverse and never seeks the confirming side", () => {
+    const r = rig({ offset: 5 });
+    r.t.seekTo(10);
+    land(r.va, 10, F25); land(r.vb, 5, F25);
+    r.t.reverse(1);
+    stub.writes.length = 0;
+    r.ca.awaitConfirmedFrame().catch(() => {});
+    expect(r.t.getState()).toMatchObject({ playing: false, rate: 0, frame: 10 });
+    expect(r.va.muted).toBe(false);
+    vi.advanceTimersByTime(2000);
+    expect(stub.writes).toEqual([]);
+    expect(r.t.getState().frame).toBe(10);
+  });
+
+  it("confirming an already paused side during the other side's stall cancels the auto-resume and aligns only the other side", () => {
+    const r = rig({ offset: 5 });
+    r.t.play();
+    show(r.va, 10);
+    land(r.vb, 5, F25);
+    stub.fireWaiting(r.vb);
+    expect(r.t.getState().stalled).toBe("b");
+    land(r.va, 10, F25);
+    stub.writes.length = 0;
+    r.ca.awaitConfirmedFrame().catch(() => {});
+    expect(r.t.getState()).toMatchObject({ playing: false, stalled: null, frame: 10 });
+    expect(stub.writes.filter((w) => w === seekAt(10))).toEqual([]);
+    expect(r.vb.paused).toBe(true);
+    const plays = stub.callsOf(r.va).filter((c) => c === "play").length;
+    stub.firePlaying(r.vb);
+    expect(stub.callsOf(r.va).filter((c) => c === "play")).toHaveLength(plays);
+    expect(r.va.paused).toBe(true);
+    expect(r.t.getState().playing).toBe(false);
+  });
+
+  it("one watchdog trip after a recovery counts once: it does not block; two within 10 s do", () => {
+    const r = rig();
+    r.t.play();
+    show(r.va, 3);
+    stub.fireWaiting(r.va);        // a stall that is not yet a failure
+    stub.firePlaying(r.va);        // recovered
+    vi.advanceTimersByTime(800);   // one watchdog trip, inside the resume grace window
+    expect(r.t.getState()).toMatchObject({ blocked: null, stalled: "a", playing: true });
+    stub.firePlaying(r.va);
+    vi.advanceTimersByTime(800);   // a second failed recovery inside 10 s
+    expect(r.t.getState()).toMatchObject({ blocked: "recovery", playing: false });
+  });
+});
