@@ -108,12 +108,19 @@ export function aOf(b: number, d: number, fpsA: Rational, fpsB: Rational): numbe
   return Number(floorDiv(BigInt(2 * (b + d) + 1) * BigInt(fpsB.den) * BigInt(fpsA.num), 2n * BigInt(fpsB.num) * BigInt(fpsA.den)));
 }
 
-/** The span of shared positions (A's local frame indices, which may lie outside A's own range) in which either side has a frame. */
+/**
+ * The span of shared positions (A's local frame indices, which may lie outside A's own range) in which at least one side has a frame.
+ * It is tight: the mapping rounds, so the ends are found by stepping from the mapped estimate until B's frame is exactly the first or
+ * last one, and a position beyond either end shows no frame on either side.
+ */
 export function compareDomain(a: CompareSide, b: CompareSide, d: number): { start: number; end: number } {
-  return {
-    start: Math.min(0, aOf(0, d, a.fps, b.fps)),
-    end: Math.max(a.frameCount - 1, aOf(b.frameCount - 1, d, a.fps, b.fps)),
-  };
+  let lo = aOf(0, d, a.fps, b.fps);
+  for (let i = 0; i < 1000 && bOf(lo - 1, d, a.fps, b.fps) >= 0; i++) lo--;
+  for (let i = 0; i < 1000 && bOf(lo, d, a.fps, b.fps) < 0; i++) lo++;
+  let hi = aOf(b.frameCount - 1, d, a.fps, b.fps);
+  for (let i = 0; i < 1000 && bOf(hi + 1, d, a.fps, b.fps) <= b.frameCount - 1; i++) hi++;
+  for (let i = 0; i < 1000 && bOf(hi, d, a.fps, b.fps) > b.frameCount - 1; i++) hi--;
+  return { start: Math.min(0, lo), end: Math.max(a.frameCount - 1, hi) };
 }
 
 /** Offsets (B frames) that leave at least one frame of overlap between the two sides. */

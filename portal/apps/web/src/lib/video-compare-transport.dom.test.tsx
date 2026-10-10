@@ -760,3 +760,50 @@ describe("CompareTransport: sol review round 2 (#741 7b)", () => {
     expect(r.vb.playbackRate).toBe(2);
   });
 });
+
+describe("CompareTransport: sol review round 3 (#741 7b)", () => {
+  it("Home then Play with a 25 fps A, a 60 fps B and offset -1 starts something", () => {
+    const F60: Rational = { num: 60, den: 1 };
+    const r = rig({ fpsB: F60, nB: 240, offset: -1 });
+    r.t.home();
+    land(r.va, 0, F25); land(r.vb, 0, F60);
+    expect(Object.values(r.t.getState().phases)).toContain("live");
+    r.t.play();
+    expect(r.t.getState().playing).toBe(true);
+    expect(r.va.paused && r.vb.paused).toBe(false);
+  });
+
+  it("play() with no live side stays paused instead of reporting playing", () => {
+    const r = rig({ nA: 1, nB: 1 });
+    r.t.play();
+    expect(r.t.getState().playing).toBe(false);
+    expect(r.va.paused && r.vb.paused).toBe(true);
+  });
+
+  it("reverse keeps advancing when a paired seek is a no-op (50 fps A, 25 fps B, offset -10)", () => {
+    const F50b: Rational = { num: 50, den: 1 };
+    const r = rig({ fpsA: F50b, fpsB: F25, nA: 100, nB: 50, offset: -10 });
+    r.t.seekTo(-17);
+    land(r.va, 0, F50b); land(r.vb, 1, F25);
+    expect(r.t.getState().frame).toBe(-17);
+    r.t.reverse(1);
+    vi.advanceTimersByTime(60); // -18 maps to the same frames: nothing to land
+    expect(r.t.getState().frame).toBeLessThan(-17);
+    vi.advanceTimersByTime(60);
+    expect(r.t.getState().frame).toBeLessThan(-18);
+  });
+
+  it("reverse ends at once when the final landing at the domain start is a no-op", () => {
+    const F50b: Rational = { num: 50, den: 1 };
+    const r = rig({ fpsA: F50b, fpsB: F25, nA: 100, nB: 50, offset: -10 });
+    const start = r.t.getState().domain.start;
+    r.t.seekTo(start + 1);
+    land(r.va, 0, F50b); land(r.vb, 0, F25);
+    stub.writes.length = 0;
+    r.t.reverse(1);
+    vi.advanceTimersByTime(100);
+    expect(stub.writes).toEqual([]);
+    expect(r.t.getState()).toMatchObject({ playing: false, rate: 0, frame: start });
+    expect(r.va.muted).toBe(false);
+  });
+});

@@ -112,9 +112,18 @@ export class CompareTransport {
     if (this.disposed) return;
     this.endReverse();
     const domain = this.domain();
-    if (this.a >= domain.end || this.a < domain.start) this.a = domain.start;
+    // From the end, or from a tail where every side is on its last frame or past it (nothing left to play): start over.
+    if (this.a >= domain.end || this.a < domain.start || !SIDES.some((side) => this.phaseOf(side, this.a) === "live")) this.a = domain.start;
+    const startable = SIDES.some((side) => this.phaseOf(side, this.a) === "live");
     this.blocked = null;
     this.stall = null;
+    if (!startable) {
+      // Nothing can play (a one-frame pair): report paused rather than a playing state no element backs.
+      this.halt();
+      this.land(this.a);
+      this.refresh();
+      return;
+    }
     this.playing = true;
     this.rate = rate;
     this.resetSamples();
@@ -615,6 +624,8 @@ export class CompareTransport {
       run.final = true;
       this.a = start;
       this.land(start);
+      // A landing that moved nothing sends no notification: finish here rather than wait for one.
+      if (this.bothLanded()) this.endReverse();
       this.refresh();
       return;
     }
@@ -622,7 +633,8 @@ export class CompareTransport {
       this.a = want;
       this.land(want);
       this.refresh();
-      return;
+      // Likewise a no-op seek: keep the ticks going.
+      if (!this.bothLanded()) return;
     }
     run.timer = setTimeout(() => { run.timer = null; this.reverseStep(); }, (1000 * fps.den) / fps.num);
   }

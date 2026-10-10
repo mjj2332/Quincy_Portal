@@ -145,3 +145,41 @@ describe("medianOfLastThree", () => {
     expect(medianOfLastThree([])).toBe(0);
   });
 });
+
+describe("compareDomain is tight (every position has a frame on at least one side)", () => {
+  const rates = [f25, f50, f2997, f23976, f5994, rational(60, 1), rational(24, 1), rational(15, 1)];
+  const has = (frame: number, n: number) => frame >= 0 && frame < n;
+  it("holds across many rate pairs and offsets over the full bounds", () => {
+    for (const fa of rates) for (const fb of rates) for (const [na, nb] of [[100, 60], [60, 100], [7, 40], [1, 9], [48, 48]] as const) {
+      const A = { fps: fa, frameCount: na };
+      const B = { fps: fb, frameCount: nb };
+      const { min, max } = offsetBounds(A, B);
+      const step = Math.max(1, Math.floor((max - min) / 23));
+      const offsets = new Set<number>([min, max, 0, ...Array.from({ length: 24 }, (_, i) => min + i * step).filter((d) => d <= max)]);
+      for (const d of offsets) {
+        const { start, end } = compareDomain(A, B, d);
+        const anyFrame = (a: number) => has(a, na) || has(bOf(a, d, fa, fb), nb);
+        expect(anyFrame(start), `${fa.num}/${fa.den} ${fb.num}/${fb.den} d=${d} start ${start}`).toBe(true);
+        expect(anyFrame(end), `end ${end}`).toBe(true);
+        // tight: one step beyond either end has no frame at all
+        expect(anyFrame(start - 1), `start-1 ${start - 1}`).toBe(false);
+        expect(anyFrame(end + 1), `end+1 ${end + 1}`).toBe(false);
+        for (let a = start; a <= end; a++) {
+          expect(anyFrame(a), `a=${a}`).toBe(true);
+          // Nothing is ever waiting to start while nothing plays: where no side is live, neither is before its start. (The tail where
+          // the longer side shows its last frame for several positions has no live side; playback has finished there.)
+          const phases = [phase(a, na - 1), phase(bOf(a, d, fa, fb), nb - 1)];
+          if (!phases.includes("live")) expect(phases, `a=${a}`).not.toContain("before");
+          if (a === start && na + nb > 2) expect(phases, `playable at start`).toContain("live");
+        }
+      }
+    }
+  });
+  it("25 fps A, 60 fps B, offset -1", () => {
+    const A = { fps: f25, frameCount: 100 };
+    const B = { fps: rational(60, 1), frameCount: 240 };
+    const { start } = compareDomain(A, B, -1);
+    expect(bOf(start, -1, f25, rational(60, 1))).toBeGreaterThanOrEqual(0);
+    expect(bOf(start - 1, -1, f25, rational(60, 1))).toBeLessThan(0);
+  });
+});
