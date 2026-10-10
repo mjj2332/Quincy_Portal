@@ -178,4 +178,10 @@ describe("guest-api: decisions and downloads (#741 14-ui-guest)", () => {
     answer(new Response("Not found", { status: 404 }));
     expect(await api().downloads()).toEqual({ kind: "gone" });
   });
+  it("maps 403 download_disabled on the manifest to disabled (staff turned downloads off), never to gone; any other 403 stays gone", async () => {
+    answer(json({ error: "download_disabled" }, 403));
+    expect(await api().downloads()).toEqual({ kind: "disabled" });
+    answer(json({ error: "something_else" }, 403));
+    expect(await api().downloads()).toEqual({ kind: "gone" });
+  });
 });

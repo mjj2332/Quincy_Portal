@@ -92,7 +92,7 @@ export function VideoListScreen({ api, title, videos, session, onSession, onOpen
   return <main data-testid="guest-list" className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-[var(--space-4)] bg-background px-[var(--space-4)] py-[var(--space-6)] text-foreground">
     <div className="flex flex-wrap items-center justify-between gap-[var(--space-3)]">
       <h1 className="m-0 min-w-0 text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{title ?? "Review"}</h1>
-      {session.link.allow.download && videos.length > 1 && <GuestDownloadAll api={api} session={session} onSession={onSession} onUnavailable={onUnavailable} />}
+      {videos.length > 1 && <GuestDownloadAll api={api} session={session} onSession={onSession} onUnavailable={onUnavailable} />}
     </div>
     {videos.length === 0
       ? <EmptyState title="Nothing to review yet.">The studio hasn't shared any videos on this link.</EmptyState>

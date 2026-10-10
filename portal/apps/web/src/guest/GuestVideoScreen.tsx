@@ -367,7 +367,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
           <Button type="button" variant="outline" data-testid="guest-request-changes" className={TOUCH} onClick={() => { startDecision("changes_requested"); }}><MessageSquareWarning aria-hidden="true" />Request changes</Button>
         </>}
         <GuestDownload video={video} version={version} allowDownload={allowDownload} verified={session.verified} onNeedVerify={() => { requestVerify("download"); }} />
-        {allowDownload && videos.length > 1 && <GuestDownloadAll api={api} session={session} onSession={onSession} onVerified={() => { setNotesAttempt((n) => n + 1); }} onUnavailable={onUnavailable} />}
+        {videos.length > 1 && <GuestDownloadAll api={api} session={session} onSession={onSession} onVerified={() => { setNotesAttempt((n) => n + 1); }} onUnavailable={onUnavailable} />}
         {downloadHint && session.verified && version.downloadUrl !== null && <p role="status" data-testid="guest-download-hint" className="m-0 text-foreground-secondary [font:var(--type-label)]">You're verified. Press Download to start it.</p>}
         {decisionNotice !== null && <p role="status" data-testid="guest-decision-notice" className="m-0 text-foreground-secondary [font:var(--type-label)]">{decisionNotice}</p>}
       </div>

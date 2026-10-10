@@ -544,6 +544,22 @@ describe("Download all", () => {
     expect(gets(`${BASE}/downloads`)).toBe(2);
   });
 
+  it("403 download_disabled closes the dialog, removes every download control and keeps the review with a notice", async () => {
+    manifest = json({ error: "download_disabled" }, 403);
+    videos = [videoOf(1, [versionOf(10, { released: true, downloadUrl: downloadUrl(asset(10)) })]), videoOf(2)];
+    await open();
+    await click(allById("guest-video-row")[0]!.querySelector("button"));
+    expect(byId("guest-video-screen")).not.toBeNull();
+    expect(byId("guest-download")).not.toBeNull();
+    await click(byId("guest-download-all"));
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(byId("guest-video-screen")).not.toBeNull();
+    expect(byId("guest-download-all-dialog")).toBeNull();
+    expect(byId("guest-download-all")).toBeNull();
+    expect(byId("guest-download")).toBeNull();
+    expect(byId("guest-download-all-disabled")?.textContent).toBe("Downloads are turned off for this review.");
+  });
+
   it("a failed manifest read offers to try again, and a stub answer is the unavailable page", async () => {
     manifest = new Response("x", { status: 503 });
     await open();

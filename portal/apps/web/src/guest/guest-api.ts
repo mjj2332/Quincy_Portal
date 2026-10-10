@@ -11,8 +11,8 @@ import {
  */
 export type Read<T> = { kind: "ok"; value: T } | { kind: "gone" } | { kind: "transient" };
 
-/** The Download all manifest read: a 401 is `verify` (the guest has to confirm an email first; the link is fine), never `gone`. Only a 404 or the stub is `gone`. */
-export type DownloadsRead = Read<GuestDownloadManifest> | { kind: "verify" };
+/** The Download all manifest read: a 401 is `verify` (the guest has to confirm an email first; the link is fine), never `gone`. A 403 `download_disabled` is `disabled` (staff turned downloads off while the page was open; the review itself is fine). Only a 404 or the stub is `gone`. */
+export type DownloadsRead = Read<GuestDownloadManifest> | { kind: "verify" } | { kind: "disabled" };
 
 export type ExchangeResult =
   | { ok: true; session: GuestSessionResponse }
@@ -159,6 +159,7 @@ export function createGuestApi(linkId: string): GuestApi {
     async downloads() {
       const response = await send("/downloads");
       if (response?.status === 401) return { kind: "verify" };
+      if (response?.status === 403 && errorOf((await readJson(response.clone()))?.body) === "download_disabled") return { kind: "disabled" };
       return readResponse(response, (body) => guestDownloadManifestSchema.parse(body));
     },
     async sendCode(email) {
