@@ -184,6 +184,27 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(tid("video-note-anchor-button")).not.toBeNull();
   });
 
+  it("a guest's notes carry a Client badge, and their email in a tooltip only where the DTO has it", async () => {
+    const withEmail = thread({ author: { kind: "guest", id: "55555555-5555-4555-8555-555555555555", name: "Gina Client", email: "gina@example.com" }, authorRole: "guest" });
+    const nameOnly = thread({ author: { kind: "guest", id: "55555555-5555-4555-8555-555555555555", name: "Gina Client" }, authorRole: "guest" });
+    const staff = thread();
+    await render(withEmail);
+    expect(tid("video-note-client-badge")?.textContent).toBe("Client");
+    const trigger = tid("video-note-client-trigger");
+    expect(trigger).not.toBeNull();
+    expect(document.body.textContent).not.toContain("gina@example.com");
+    await act(async () => { trigger!.focus(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(document.body.textContent).toContain("gina@example.com");
+    await act(async () => { root!.unmount(); }); host.remove();
+    await render(nameOnly);
+    expect(tid("video-note-client-badge")?.textContent).toBe("Client");
+    expect(tid("video-note-client-trigger")).toBeNull();
+    await act(async () => { root!.unmount(); }); host.remove();
+    await render(staff);
+    expect(tid("video-note-client-badge")).toBeNull();
+  });
+
   it("17: the actions menu is on the session user's own notes and replies only: not another staff note, not a guest's, not a tombstone", async () => {
     const mine = thread();
     const others = thread({ author: { kind: "staff", person: mia } });
