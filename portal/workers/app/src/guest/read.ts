@@ -25,8 +25,8 @@ type VersionRow = {
 };
 
 /** Current members with at least one live grant, in Video position order, each with its granted Versions newest first. */
-export async function listGuestVideos(db: D1Database, linkId: string, projectId: string): Promise<GuestVideoListResponse> {
-  const [videoResult, versionResult] = await db.batch([
+export async function listGuestVideos(db: D1Database, linkId: string, projectId: string, guestId: string | null = null): Promise<GuestVideoListResponse> {
+  const [videoResult, versionResult, decisionResult, releaseResult] = await db.batch([
     db.prepare(`SELECT v.id, v.title, v.premium, (p.video_id IS NOT NULL) AS unlocked
       FROM review_link_videos rv JOIN videos v ON v.id = rv.video_id AND v.project_id = ?2 LEFT JOIN video_premium_unlocks p ON p.video_id = v.id
       WHERE rv.link_id = ?1 AND rv.removed_at IS NULL
@@ -39,7 +39,14 @@ export async function listGuestVideos(db: D1Database, linkId: string, projectId:
            AND (n.deleted_at IS NULL OR EXISTS (SELECT 1 FROM video_notes r WHERE r.parent_id = n.id))) AS note_count
       FROM review_link_version_grants g ${LIVE_ACCESS}
       WHERE g.link_id = ?1 AND g.revoked_at IS NULL ORDER BY a.version DESC`).bind(linkId, projectId),
+    // The latest decision made ON THIS LINK per Version (14a): a staff-recorded event has no link and never matches. `self` is the viewing guest's own.
+    db.prepare(`SELECT e.asset_id, e.decision, e.revision, e.created_at, e.actor_guest_id FROM video_approval_events e
+      WHERE e.link_id = ?1 AND e.revision = (SELECT MAX(x.revision) FROM video_approval_events x WHERE x.asset_id = e.asset_id AND x.link_id = e.link_id)`).bind(linkId),
+    db.prepare(`SELECT r.asset_id FROM video_releases r WHERE r.withdrawn_at IS NULL AND r.asset_id IN (SELECT g.asset_id FROM review_link_version_grants g WHERE g.link_id = ?1 AND g.revoked_at IS NULL)`).bind(linkId),
   ]);
+  const decisionByAsset = new Map((decisionResult!.results as Array<{ asset_id: string; decision: "approved" | "changes_requested"; revision: number; created_at: number; actor_guest_id: string | null }>)
+    .map((row) => [row.asset_id, { value: row.decision, revision: row.revision, at: iso(row.created_at), self: guestId !== null && row.actor_guest_id === guestId }] as const));
+  const releasedAssets = new Set((releaseResult!.results as Array<{ asset_id: string }>).map((row) => row.asset_id));
   const versionsByVideo = new Map<string, VersionRow[]>();
   for (const row of versionResult!.results as VersionRow[]) versionsByVideo.set(row.video_id, [...(versionsByVideo.get(row.video_id) ?? []), row]);
   return guestVideoListResponseSchema.parse({
@@ -49,6 +56,9 @@ export async function listGuestVideos(db: D1Database, linkId: string, projectId:
         assetId: row.asset_id, version: row.version, fps: { num: row.fps_num, den: row.fps_den }, frameCount: row.frame_count, durationMs: row.duration_ms, width: row.width, height: row.height,
         startTimecodeFrames: row.start_tc_frames, tcNominalFps: row.tc_nominal_fps, tcDropFrame: row.tc_drop_frame === 1, hasAudio: row.has_audio === 1,
         posterUrl: row.has_poster === 1 ? posterUrl(linkId, row.asset_id) : null, streamUrl: streamUrl(linkId, row.asset_id), publicNoteCount: row.note_count,
+        decision: decisionByAsset.get(row.asset_id) ?? null, released: releasedAssets.has(row.asset_id),
+        // 14b adds the download route and fills this; until then no Version offers a download.
+        downloadUrl: null,
       })),
     })).filter((video) => video.versions.length > 0),
   });

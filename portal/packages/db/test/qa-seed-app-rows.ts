@@ -90,7 +90,7 @@ export function scannedAuditTargetTypes(): string[] {
 export const PROJECT_DESCENDANT_AUDIT_TYPES = [
   "annotation", "asset", "autohdr_mapping", "collection_link", "document_upload", "embedded_media", "job", "link_preview", "notification",
   "notification_outbox", "project", "project_comment", "project_deadline_occurrence", "project_member",
-  "project_subtask", "project_subtask_reminder_occurrence", "raw_reconciliation_claim", "rendition_dlq_event", "review_link", "upload_manifest", "video_upload",
+  "project_subtask", "project_subtask_reminder_occurrence", "raw_reconciliation_claim", "rendition_dlq_event", "review_link", "upload_manifest", "video", "video_upload",
 ] as const;
 
 /** Target types whose target is never a project's descendant (a user, a flag, an integration, a
@@ -287,7 +287,7 @@ export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): Pla
       annotation: ids.annotation, asset: ids.assetV1, autohdr_mapping: ids.mapping, collection_link: ids.link, document_upload: ids.document, video_upload: ids.videoUpload, embedded_media: ids.embeddedMedia, job: ids.job, link_preview: ids.linkPreview,
       notification: ids.notification, notification_outbox: ids.outbox, project: ctx.projectId, project_comment: ids.comment,
       project_deadline_occurrence: ctx.occurrenceId, project_member: ids.member, project_subtask: ctx.subtaskId, project_subtask_reminder_occurrence: ids.subtaskOcc, raw_reconciliation_claim: ids.rawClaim,
-      rendition_dlq_event: ids.dlq, review_link: ids.reviewLink, upload_manifest: ids.manifest,
+      rendition_dlq_event: ids.dlq, review_link: ids.reviewLink, upload_manifest: ids.manifest, video: ids.reviewVideo,
     };
     const types = groups ? PROJECT_DESCENDANT_AUDIT_TYPES.filter((type) => type === "project_comment") : PROJECT_DESCENDANT_AUDIT_TYPES;
     for (const type of types) {

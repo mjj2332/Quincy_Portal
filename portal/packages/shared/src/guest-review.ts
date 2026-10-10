@@ -56,6 +56,21 @@ export const guestPasscodeErrorSchema = z.discriminatedUnion("error", [
   z.object({ error: z.literal("too_many_attempts"), retryAfterSeconds: z.number().int().positive() }).strict(),
 ]);
 
+/**
+ * The client decision on a Version (#741 14a). `decision` is informational, never a state machine (ADR 0021 section 5): the latest event recorded on THIS link, and `self` says
+ * whether the viewing guest made it. A staff-recorded event has no link and never reaches a guest.
+ */
+export const GUEST_DECISION_NOTE_MAX = 2000;
+export const guestDecisionValueSchema = z.enum(["approved", "changes_requested"]);
+export const guestDecisionSchema = z.object({ value: guestDecisionValueSchema, revision: z.number().int().positive(), at: iso, self: z.boolean() }).strict();
+export type GuestDecision = z.infer<typeof guestDecisionSchema>;
+/** `POST /d/api/links/:linkId/versions/:assetId/decision`. The note is optional text of at most 2000 characters. */
+export const guestDecisionInputSchema = z.object({ decision: guestDecisionValueSchema, note: z.string().trim().max(GUEST_DECISION_NOTE_MAX).optional() }).strict();
+export type GuestDecisionInput = z.infer<typeof guestDecisionInputSchema>;
+/** 201 answer to the decision POST: the event just recorded, `self` always true. */
+export const guestDecisionResponseSchema = z.object({ decision: guestDecisionSchema }).strict();
+export type GuestDecisionResponse = z.infer<typeof guestDecisionResponseSchema>;
+
 export const guestVersionDtoSchema = z.object({
   assetId: uuid,
   version: z.number().int().positive(),
@@ -72,6 +87,12 @@ export const guestVersionDtoSchema = z.object({
   streamUrl: z.string(),
   /** Public root threads on this Version (a tombstone that kept replies included). */
   publicNoteCount: z.number().int().nonnegative(),
+  /** The latest decision made on this link for this Version, or null. */
+  decision: guestDecisionSchema.nullable(),
+  /** A live Release of this exact Version: staff approved it for delivery. Withdrawn means false. */
+  released: z.boolean(),
+  /** Non-null only when released, the link allows download and the Video is not locked premium. 14b adds the route; until then it is always null. */
+  downloadUrl: z.string().nullable(),
 }).strict();
 export type GuestVersionDto = z.infer<typeof guestVersionDtoSchema>;
 

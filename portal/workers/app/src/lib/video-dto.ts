@@ -5,7 +5,7 @@ import { ROLE_LABELS, videoDtoSchema, type Role, type VideoDto } from "@quincy/s
  * just finished, and both get the same bytes. Three reads in one batch: the Videos, their Versions joined to the probed meta and the uploader, and the
  * upload in flight. The DTO never carries an object key, only the `/media/video/:assetId` addresses a Version is played from.
  */
-type VideoRow = { id: string; title: string; premium: number; position: number; created_at: number };
+type VideoRow = { id: string; title: string; premium: number; premium_unlocked: number; position: number; created_at: number };
 type VersionRow = {
   asset_id: string; video_id: string; version: number; superseded_at: number | null; original_filename: string; bytes: number; created_at: number;
   fps_num: number; fps_den: number; frame_count: number; duration_ms: number; width: number; height: number; codec: "avc1" | "avc3";
@@ -31,7 +31,7 @@ export async function loadVideoDtos(db: D1Database, projectId: string, videoId: 
        AND (n.deleted_at IS NULL OR EXISTS (SELECT 1 FROM video_notes r WHERE r.parent_id = n.id))
      GROUP BY n.asset_id`))] : [];
   const [videoResult, versionResult, uploadingResult, countResult] = await db.batch([
-    bindScoped(db.prepare(`SELECT v.id, v.title, v.premium, v.position, v.created_at FROM videos v WHERE v.project_id = ?1${only} ORDER BY v.position, v.created_at, v.id`)),
+    bindScoped(db.prepare(`SELECT v.id, v.title, v.premium, (p.video_id IS NOT NULL) AS premium_unlocked, v.position, v.created_at FROM videos v LEFT JOIN video_premium_unlocks p ON p.video_id = v.id WHERE v.project_id = ?1${only} ORDER BY v.position, v.created_at, v.id`)),
     bindScoped(db.prepare(
       `SELECT a.id AS asset_id, m.video_id, a.version, a.superseded_at, a.original_filename, a.bytes, m.created_at, m.fps_num, m.fps_den, m.frame_count, m.duration_ms,
               m.width, m.height, m.codec, m.start_tc_frames, m.tc_nominal_fps, m.tc_drop_frame, m.fast_start, m.has_audio, m.poster_key,
@@ -59,7 +59,7 @@ export async function loadVideoDtos(db: D1Database, projectId: string, videoId: 
     const uploading = uploadingByVideo.get(video.id);
     // A Video row exists only after a Version 1 completes, so a Video without a current Version is corrupt: parse throws rather than serving it.
     return videoDtoSchema.parse({
-      id: video.id, title: video.title, premium: video.premium === 1, position: video.position, createdAt: new Date(video.created_at).toISOString(),
+      id: video.id, title: video.title, premium: video.premium === 1, premiumUnlocked: video.premium_unlocked === 1, position: video.position, createdAt: new Date(video.created_at).toISOString(),
       currentAssetId: versions.find((version) => version.current)?.assetId ?? null,
       latestNoteCount: withNoteCounts ? openByAsset.get(versions.find((version) => version.current)?.assetId ?? "") ?? 0 : null,
       uploading: uploading ? { reservationId: uploading.reservation_id, version: uploading.version, uploader: person(uploading.user_id, uploading.user_name, uploading.user_role, uploading.user_active), expiresAt: new Date(uploading.expires_at).toISOString() } : null,

@@ -7,6 +7,7 @@ import { newId } from "../lib/ids";
 import { hashToken, randomToken } from "../lib/opaque-token";
 import type { AppEnv } from "../env";
 import { guestNotFound, guestRoute, INVALID, originRejection, readJson, SESSION_MAX_MS, sessionCookieHeader, timingSafeEqualStrings, TOO_LARGE, tooMany, UUID, withHygiene } from "./http";
+import { mountGuestApproval } from "./approval";
 import { mountGuestEmail } from "./email";
 import { mountGuestNotes } from "./notes-write";
 import { guestGloballyOpen, identityOf, loadActiveLink, resolveSession, sessionBody } from "./link";
@@ -73,6 +74,7 @@ async function withSession(c: Context<AppEnv, string>, handler: (session: NonNul
 export function mountGuest(app: Hono<AppEnv>): void {
   mountGuestEmail(app);
   mountGuestNotes(app);
+  mountGuestApproval(app);
   app.get("/d/review", guestRoute("/d/review", async (c) => {
     // Only `link` is accepted in the query, once, as a UUID: the token lives in the fragment, which never reaches the server, and anything else is not read.
     const params = [...new URL(c.req.url).searchParams];
@@ -96,7 +98,7 @@ export function mountGuest(app: Hono<AppEnv>): void {
     return new Response(null, { status: 204, headers: { "set-cookie": sessionCookieHeader(c.env, link.id, "", 0) } });
   }));
 
-  app.get("/d/api/links/:linkId/videos", guestRoute("/d/api/links/:linkId/videos", (c) => withSession(c, async (session) => c.json(await listGuestVideos(c.env.DB, session.link.id, session.link.projectId)))));
+  app.get("/d/api/links/:linkId/videos", guestRoute("/d/api/links/:linkId/videos", (c) => withSession(c, async (session) => c.json(await listGuestVideos(c.env.DB, session.link.id, session.link.projectId, session.guestId)))));
 
   app.get("/d/api/links/:linkId/versions/:assetId/stream", guestRoute("/d/api/links/:linkId/versions/:assetId/stream", (c) => withSession(c, async (session) => {
     const version = await resolveGrantedVersion(c.env.DB, session.link.id, session.link.projectId, c.req.param("assetId"));

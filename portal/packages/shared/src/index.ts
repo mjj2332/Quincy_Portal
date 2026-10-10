@@ -70,5 +70,6 @@ export * from "./review-links";
 export * from "./video-upload";
 export * from "./video-notes";
 export * from "./guest-review";
+export * from "./video-approval";
 export * from "./email-send-errors";
 export * from "./freehand-strokes";
