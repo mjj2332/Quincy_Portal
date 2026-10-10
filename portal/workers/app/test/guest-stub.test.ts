@@ -17,7 +17,7 @@ describe("the /d stub", () => {
     for (const [name, value] of Object.entries(HYGIENE)) expect(Object.fromEntries(reference.headers)[name], name).toBe(value);
     const unknown = crypto.randomUUID();
     const probes: Array<[string, Parameters<typeof guestFetch>[1]?]> = [
-      ["/d/"], ["/d/review"], [`/d/review?link=${unknown}`], ["/d/api/session"], ["/d/api/x"], ["/d/api"], [linkPath(unknown, "/session")], [linkPath(unknown, "/videos")],
+      ["/d/"], ["/d/review"], ["/d/api/session"], ["/d/api/x"], ["/d/api"], [linkPath(unknown, "/session")], [linkPath(unknown, "/videos")],
       [linkPath(unknown, "/session"), { method: "POST", body: { token: "A".repeat(43) } }], [linkPath(unknown, "/session"), { method: "DELETE" }], [`/d/api/links/${unknown}`], ["/d/api/links/not-a-uuid/session"],
       [`/d/api/links/${unknown}/versions/${unknown}/stream`], [`/d/api/links/${unknown}/notes/${unknown}/markup`], ["/d/something/else"],
     ];

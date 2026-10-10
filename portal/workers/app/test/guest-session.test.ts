@@ -282,16 +282,29 @@ describe("GET /d/review", () => {
     expect(await response.text()).toContain("<div id=\"root\"");
   });
 
-  it("answers the stub for a missing, repeated, extra or malformed query, an unknown, expired, revoked or non-video link, and a closed gate", async () => {
-    const link = await seedGuestLink(); const reference = await stubOf(await guestFetch("/d/api/x"));
+  it("serves byte-identical shells for a live, unknown, expired, revoked and non-video link, with the hygiene headers", async () => {
+    const live = await seedGuestLink();
     const expired = await seedGuestLink({ expiresAt: Date.now() - 1000 }); const revoked = await seedGuestLink({ revoked: true }); const delivery = await seedGuestLink({ kind: "delivery" });
+    const shellOf = async (response: Response) => ({ status: response.status, body: await response.text(), headers: [...response.headers].filter(([name]) => name !== "server-timing").sort() });
+    const reference = await shellOf(await guestFetch(`/d/review?link=${live.id}`));
+    expect(reference.status).toBe(200);
+    for (const id of [crypto.randomUUID(), expired.id, revoked.id, delivery.id]) {
+      const other = await shellOf(await guestFetch(`/d/review?link=${id}`));
+      expect(other, id).toEqual(reference);
+    }
+    const headers = Object.fromEntries(reference.headers);
+    for (const [name, value] of Object.entries(HYGIENE)) expect(headers[name], name).toBe(value);
+    expect(headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+  });
+
+  it("answers the stub for a missing, repeated, extra or malformed query, a wrong path, and a closed gate", async () => {
+    const link = await seedGuestLink(); const reference = await stubOf(await guestFetch("/d/api/x"));
     const paths = [
-      "/d/review", `/d/review?link=${link.id}&link=${link.id}`, `/d/review?link=${link.id}&t=${link.token}`, `/d/review?link=${link.id}&x=1`, `/d/review?t=${link.token}`, "/d/review?link=not-a-uuid", `/d/review?link=${crypto.randomUUID()}`,
-      `/d/review?link=${expired.id}`, `/d/review?link=${revoked.id}`, `/d/review?link=${delivery.id}`, `/d/review/extra?link=${link.id}`,
+      "/d/review", `/d/review?link=${link.id}&link=${link.id}`, `/d/review?link=${link.id}&t=${link.token}`, `/d/review?link=${link.id}&x=1`, `/d/review?t=${link.token}`, "/d/review?link=not-a-uuid", `/d/review/extra?link=${link.id}`,
     ];
     for (const path of paths) expect(await stubOf(await guestFetch(path)), path).toEqual(reference);
-    await clearVideoFlags(); await setVideoFlags("video_review", "video_review_guest");
-    expect(await stubOf(await guestFetch(`/d/review?link=${link.id}`)), "not piloted").toEqual(reference);
+    await clearVideoFlags(); await setVideoFlags("video_review");
+    expect(await stubOf(await guestFetch(`/d/review?link=${link.id}`)), "guest flag off").toEqual(reference);
   });
 });
 

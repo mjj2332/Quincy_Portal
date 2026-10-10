@@ -19,12 +19,12 @@ const SESSION = { link: { label: "Smith house", expiresAt: "2026-11-01T00:00:00.
 
 const versionOf = (n: number, over: Record<string, unknown> = {}) => ({
   assetId: asset(n), version: n, fps: { num: 25, den: 1 }, frameCount: 3000, durationMs: 120000, width: 1920, height: 1080, startTimecodeFrames: null, tcNominalFps: 25, tcDropFrame: false,
-  hasAudio: true, posterUrl: `/d/api/links/${LINK}/versions/${asset(n)}/poster`, streamUrl: `/d/api/links/${LINK}/versions/${asset(n)}/stream`, publicNoteCount: 0, ...over,
+  hasAudio: true, posterUrl: `/d/api/links/${LINK}/versions/${asset(n)}/poster`, streamUrl: `/d/api/links/${LINK}/versions/${asset(n)}/stream`, publicNoteCount: 0, decision: null, released: false, downloadUrl: null, ...over,
 });
 const videoOf = (n: number, over: Partial<GuestVideoDto> = {}): GuestVideoDto => ({ id: vid(n), title: `Film ${n}`, premium: false, unlocked: true, versions: [versionOf(n * 10)], ...over });
 const note = (over: Partial<GuestNoteThreadDto> = {}): GuestNoteThreadDto => ({
   id: "22222222-2222-4222-8222-222222222222", parentId: null, author: { kind: "studio", name: "Mia Chen" }, startFrame: 50, endFrame: null, drawingFrame: null, hasMarkup: false,
-  body: "Trim the opening", deleted: false, resolved: false, createdAt: "2026-10-09T01:00:00.000Z", editedAt: null, replies: [], ...over,
+  body: "Trim the opening", deleted: false, resolved: false, revision: 1, createdAt: "2026-10-09T01:00:00.000Z", editedAt: null, replies: [], ...over,
 });
 
 type Handler = (url: string, init: RequestInit | undefined) => Response | undefined;
@@ -313,7 +313,7 @@ describe("the video screen", () => {
     expect(drawer).not.toBeNull();
     expect(document.body.textContent).toContain("Trim the opening");
     const heading = drawer.querySelector<HTMLElement>('[data-testid="guest-notes-heading"]')!;
-    expect(heading.textContent).toBe("Notes1");
+    expect(heading.textContent).toBe("Notes 1");
   });
 
   it("shows the notes count beside the desktop heading", async () => {
@@ -469,7 +469,7 @@ describe("Sol round 2", () => {
     videos = [videoOf(1)];
     let down = true;
     let markupReads = 0;
-    extra = (url) => { if (!url.includes("/markup")) return undefined; markupReads += 1; return down ? new Response("boom", { status: 503 }) : json({ markup: { items: [] } }); };
+    extra = (url) => { if (!url.includes("/markup")) return undefined; markupReads += 1; return down ? new Response("boom", { status: 503 }) : json({ noteId: "22222222-2222-4222-8222-222222222222", revision: 1, markup: [] }); };
     await open();
     const anchor = () => host.querySelector<HTMLElement>('[data-testid="guest-note-anchor"]') ?? undefined;
     await click(anchor());
@@ -504,5 +504,73 @@ describe("Sol round 2", () => {
     expect(byId("guest-unavailable")).toBeNull();
     expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/passcode/i);
     expect(host.querySelector('input[type="password"]')).not.toBeNull();
+  });
+});
+
+describe("Sol round 4", () => {
+  const STROKE = { color: "#ff0000", width: 3, points: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 }] };
+  const anchor = () => host.querySelector<HTMLElement>('[data-testid="guest-note-anchor"]') ?? undefined;
+
+  it("clears the drawing when a reselect is answered with markup: null", async () => {
+    notes = [drawn()];
+    videos = [videoOf(1)];
+    let answer: unknown = [STROKE];
+    extra = (url) => (url.includes("/markup") ? json({ noteId: "22222222-2222-4222-8222-222222222222", revision: 1, markup: answer }) : undefined);
+    await withLayout(async () => {
+      await open();
+      await click(anchor());
+      const video = host.querySelector("video")!;
+      stub.finishSeek(video);
+      stub.presentFrame(video, 3);
+      await flush();
+      expect(allById("guest-markup-stroke")).toHaveLength(1);
+      answer = null;
+      await click(anchor());
+      stub.finishSeek(video);
+      stub.presentFrame(video, 3);
+      await flush();
+      expect(allById("guest-markup-stroke")).toHaveLength(0);
+    });
+  });
+
+  it("K toggles play after a note is selected and focus sits on its anchor", async () => {
+    notes = [note({ startFrame: 50, endFrame: 100 })];
+    videos = [videoOf(1)];
+    await open();
+    await click(anchor());
+    const target = anchor()!;
+    target.focus();
+    stub.calls.length = 0;
+    await keyDown("k", target);
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keyup", { key: "k", bubbles: true })); });
+    await flush();
+    expect(stub.calls).toContain("play");
+  });
+
+  it("leaves J / K / L to a text field", async () => {
+    notes = [note({ startFrame: 50, endFrame: 100 })];
+    videos = [videoOf(1)];
+    await open();
+    const field = document.createElement("input");
+    host.appendChild(field);
+    stub.calls.length = 0;
+    await keyDown("k", field);
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keyup", { key: "k", bubbles: true })); });
+    expect(stub.calls).toHaveLength(0);
+  });
+
+  it("separates the Notes heading from its count for a screen reader", async () => {
+    notes = [note(), note({ id: "33333333-3333-4333-8333-333333333333" })];
+    videos = [videoOf(1)];
+    await open();
+    expect(byId("guest-notes-heading")?.textContent).toMatch(/^Notes\s+2$/);
+  });
+
+  it("marks a note that carries a drawing, and no other", async () => {
+    notes = [drawn(), note({ id: "33333333-3333-4333-8333-333333333333" })];
+    videos = [videoOf(1)];
+    await open();
+    expect(allById("guest-note-has-drawing")).toHaveLength(1);
+    expect(byId("guest-note-has-drawing")?.closest('[data-testid="guest-note"]')?.getAttribute("data-note-id")).toBe("22222222-2222-4222-8222-222222222222");
   });
 });

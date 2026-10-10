@@ -20,7 +20,7 @@ export function useGuestMarkup(api: GuestApi, clock: VideoFrameClock | null, thr
       if (!live) return;
       // A revoked link answers the stub: leave for the unavailable screen. A transient failure draws nothing; selecting the note again retries.
       if (response.kind === "gone") onUnavailable();
-      else if (response.kind === "ok" && response.value.markup) setLoaded({ noteId: wanted.id, items: readStoredMarkup(response.value.markup).items });
+      else if (response.kind === "ok") setLoaded(response.value.markup ? { noteId: wanted.id, items: readStoredMarkup(response.value.markup).items } : null); // null: the drawing was removed, so the old strokes go
     });
     return () => { live = false; };
   }, [api, wanted?.id, onUnavailable, selectionCount]); // selectionCount: selecting the same note again retries a failed read // eslint-disable-line react-hooks/exhaustive-deps

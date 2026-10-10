@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { ChevronLeft, ChevronRight, MessageSquare } from "lucide-react";
 import { framesToTimecode, type Box, type GuestNoteThreadDto, type GuestVideoDto } from "@quincy/shared";
 import { useMediaQuery } from "../lib/use-media-query";
@@ -6,7 +6,7 @@ import type { VideoFrameClock } from "../lib/video-frame-clock";
 import { Button } from "../components/reui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/reui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../components/reui/sheet";
-import { VideoPlayer } from "../components/quincy/VideoPlayer";
+import { VideoPlayer, type VideoPlayerControl } from "../components/quincy/VideoPlayer";
 import type { TimelineMarker } from "../components/quincy/VideoTimelineMarkers";
 import type { GuestApi } from "./guest-api";
 import { GuestNotesPanel } from "./GuestNotesPanel";
@@ -16,6 +16,7 @@ import { PremiumWatermark } from "./PremiumWatermark";
 const VERSION_SELECT_ID = "guest-version";
 const FIELD = "input, textarea, select, [contenteditable], [role=listbox], [role=combobox]";
 const NOTES_HEADING = "m-0 text-foreground [font:var(--type-h3)]";
+const POPUP = "[role=dialog], [role=menu], [role=listbox], [role=combobox]";
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
 /** `[` and `]` step through the videos unless a field, list or modifier owns the key. */
@@ -30,6 +31,19 @@ function useVideoStepKeys(onStep: (delta: -1 | 1) => void) {
     window.addEventListener("keydown", onKeyDown);
     return () => { window.removeEventListener("keydown", onKeyDown); };
   }, [onStep]);
+}
+
+/** The player's keys (J / K / L, Space, arrows, Home / End) from anywhere on the screen, so they keep working once focus has moved to a note's anchor. Fields and popups keep their own keys. */
+function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+      if (event.target instanceof Element && event.target.closest(`${FIELD}, ${POPUP}`)) return;
+      player.current?.handleKeyDown(event);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => { window.removeEventListener("keydown", onKeyDown); };
+  }, [player]);
 }
 
 /**
@@ -77,6 +91,8 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
 
   const step = useCallback((delta: -1 | 1) => { const next = index + delta; if (next >= 0 && next < videos.length) onIndex(next); }, [index, videos.length, onIndex]);
   useVideoStepKeys(step);
+  const playerRef = useRef<VideoPlayerControl>(null);
+  usePlayerKeysFromScreen(playerRef);
 
   const base = useMemo(() => ({ nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame }), [version.tcNominalFps, version.tcDropFrame]);
   const timecode = useCallback((frame: number) => framesToTimecode(frame, base, version.startTimecodeFrames ?? 0), [base, version.startTimecodeFrames]);
@@ -97,7 +113,7 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
 
   const newest = video.versions[0]!.version;
   const optionLabel = (candidate: GuestVideoDto["versions"][number]) => `v${candidate.version}${candidate.version === newest ? " · latest" : ""}`;
-  const headingContent = <>Notes{threads !== null && <span data-testid="guest-notes-count" className="ms-[var(--space-1)] text-foreground-secondary [font-variant-numeric:lining-nums_tabular-nums]">{threads.length}</span>}</>;
+  const headingContent = <>Notes{threads !== null && <><span className="sr-only"> </span><span data-testid="guest-notes-count" className="ms-[var(--space-1)] text-foreground-secondary [font:var(--type-label)]">{threads.length}</span></>}</>;
   const heading = <h2 data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</h2>;
   const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} />;
 
@@ -122,12 +138,12 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
           </SelectContent>
         </Select>
       </div>
-      {phone && <Button type="button" variant="outline" aria-label={threads === null ? "Notes" : `Notes, ${threads.length}`} className={`${TOUCH} shrink-0`} onClick={() => { setDrawerOpen(true); }}><MessageSquare aria-hidden="true" />{threads !== null && <span className="[font-variant-numeric:lining-nums_tabular-nums]">{threads.length}</span>}</Button>}
+      {phone && <Button type="button" variant="outline" aria-label={threads === null ? "Notes" : `Notes, ${threads.length}`} className={`${TOUCH} shrink-0`} onClick={() => { setDrawerOpen(true); }}><MessageSquare aria-hidden="true" />{threads !== null && <span className="[font:var(--type-label)]">{threads.length}</span>}</Button>}
       </div>
     </header>
     <div className="flex min-h-0 flex-1 flex-wrap min-[721px]:flex-nowrap">
       <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col p-[var(--space-5)] min-[721px]:flex-1">
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} overlay={overlay} onMediaError={onMediaError} />
+        <VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} overlay={overlay} onMediaError={onMediaError} />
       </div>
       {!phone && <aside data-surface="default" className="flex flex-[1_1_360px] flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:max-h-dvh min-[721px]:flex-[0_0_clamp(240px,28vw,360px)]">{panel}</aside>}
     </div>

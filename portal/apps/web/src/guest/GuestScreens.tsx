@@ -68,7 +68,7 @@ export function PasscodeScreen({ error, retryAfterSeconds, pending, onSubmit }: 
           <FieldGroup>
             <Field data-invalid={error !== null}>
               <FieldLabel htmlFor="guest-passcode-input">Passcode</FieldLabel>
-              <Input id="guest-passcode-input" type="password" autoComplete="off" aria-invalid={error !== null} maxLength={GUEST_PASSCODE_MAX} value={value} className={TOUCH} onChange={(event) => { setValue(event.target.value); }} />
+              <Input id="guest-passcode-input" type="password" autoComplete="off" aria-invalid={error !== null} maxLength={GUEST_PASSCODE_MAX} value={value} className={`${TOUCH} text-foreground`} onChange={(event) => { setValue(event.target.value); }} />
               <FieldError>{secondsLeft > 0 ? waitText(secondsLeft) : error}</FieldError>
             </Field>
             <Button type="submit" className={TOUCH} disabled={value === "" || secondsLeft > 0 || pending}>Continue</Button>

@@ -1,3 +1,4 @@
+import { PencilIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import type { GuestNoteDto, GuestNoteThreadDto } from "@quincy/shared";
 import { noteAnchorLabel } from "../lib/video-note-view";
@@ -6,6 +7,7 @@ import { Button } from "../components/reui/button";
 import { Item, ItemContent, ItemGroup } from "../components/reui/item";
 import { ScrollArea } from "../components/reui/scroll-area";
 import { EmptyState } from "../components/quincy/EmptyState";
+import { IconTip } from "../components/quincy/VideoPlayer";
 
 const BODY = "m-0 whitespace-pre-wrap text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [overflow-wrap:anywhere]";
 
@@ -48,11 +50,12 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
         ? <EmptyState size="compact" title="No notes yet" />
         : <ScrollArea className="min-h-0 flex-1">
           <ItemGroup className="gap-[var(--space-2)]">
-            {threads.map((thread) => <Item key={thread.id} variant="outline" size="sm" data-testid="guest-note" data-note-id={thread.id} data-selected={thread.id === selectedId ? "true" : "false"} className="flex-col items-stretch data-[selected=true]:bg-muted">
+            {threads.map((thread) => <Item key={thread.id} variant="outline" size="sm" data-testid="guest-note" data-note-id={thread.id} data-selected={thread.id === selectedId ? "true" : "false"} className="flex-col items-stretch data-[selected=true]:border-foreground">
               <ItemContent className="gap-[var(--space-2)]">
-                <div className="flex flex-wrap items-center justify-between gap-[var(--space-2)]">
-                  <Author note={thread} />
-                  {thread.startFrame !== null && <Button type="button" variant="ghost" size="sm" data-testid="guest-note-anchor" aria-label={`Go to ${noteAnchorLabel(thread, timecode)}`} className="pointer-coarse:min-h-11 max-[721px]:min-h-11 [font:var(--type-mono)] tabular-nums" onClick={() => { onSelect(thread); }}>{noteAnchorLabel(thread, timecode)}</Button>}
+                <Author note={thread} />
+                <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+                  {thread.startFrame !== null && <Button type="button" variant="secondary" size="sm" data-testid="guest-note-anchor" aria-label={`Go to ${noteAnchorLabel(thread, timecode)}`} className="pointer-coarse:min-h-11 max-[721px]:min-h-11 [font:var(--type-mono)] tabular-nums" onClick={() => { onSelect(thread); }}>{noteAnchorLabel(thread, timecode)}</Button>}
+                  {thread.hasMarkup && !thread.deleted && <IconTip label="Has a drawing"><span data-testid="guest-note-has-drawing" className="inline-flex items-center text-foreground-secondary"><PencilIcon aria-hidden="true" className="size-3" /><span className="sr-only">Has a drawing</span></span></IconTip>}
                 </div>
                 <NoteText note={thread} />
                 {thread.resolved && <Badge variant="success" size="xs" data-testid="guest-note-resolved">Resolved</Badge>}
