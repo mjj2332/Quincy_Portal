@@ -12,7 +12,7 @@ import type { GuestApi } from "./guest-api";
  */
 export function useGuestMarkup(api: GuestApi, clock: VideoFrameClock | null, thread: GuestNoteThreadDto | null, onGone: () => void, selectionCount: number): (box: Box | null) => ReactNode {
   const wanted = thread !== null && !thread.deleted && thread.hasMarkup && thread.drawingFrame !== null ? thread : null;
-  const [loaded, setLoaded] = useState<{ noteId: string; items: MarkupItem[] } | null>(null);
+  const [loaded, setLoaded] = useState<{ noteId: string; revision: number; items: MarkupItem[] } | null>(null);
   useEffect(() => {
     if (wanted === null) return;
     let live = true;
@@ -20,13 +20,13 @@ export function useGuestMarkup(api: GuestApi, clock: VideoFrameClock | null, thr
       if (!live) return;
       // The stub: the link may be revoked or just this note deleted, so the caller rechecks access (and drops the note) rather than leaving. A transient failure draws nothing; selecting the note again retries.
       if (response.kind === "gone") { setLoaded(null); onGone(); }
-      else if (response.kind === "ok") setLoaded(response.value.markup ? { noteId: wanted.id, items: readStoredMarkup(response.value.markup).items } : null); // null: the drawing was removed, so the old strokes go
+      else if (response.kind === "ok") setLoaded(response.value.markup ? { noteId: wanted.id, revision: wanted.revision, items: readStoredMarkup(response.value.markup).items } : null); // null: the drawing was removed, so the old strokes go
     });
     return () => { live = false; };
-  }, [api, wanted?.id, onGone, selectionCount]); // selectionCount: selecting the same note again retries a failed read // eslint-disable-line react-hooks/exhaustive-deps
+  }, [api, wanted?.id, wanted?.revision, onGone, selectionCount]); // revision: a saved edit (a redraw) changes the drawing under the same id; selectionCount: selecting the same note again retries a failed read // eslint-disable-line react-hooks/exhaustive-deps
   const playing = useFrameClockSelector(clock, (state) => state.playing, false);
   const frame = useFrameClockSelector(clock, (state) => (state.targetFrame === null ? state.frame : -1), -1);
-  const items = wanted !== null && loaded?.noteId === wanted.id && !playing && frame === wanted.drawingFrame ? loaded.items : null;
+  const items = wanted !== null && loaded?.noteId === wanted.id && loaded.revision === wanted.revision && !playing && frame === wanted.drawingFrame ? loaded.items : null;
   return (box) => {
     if (box === null || items === null) return null;
     return <div data-testid="guest-markup" className="pointer-events-none absolute" style={{ left: box.left, top: box.top, width: box.width, height: box.height }}>

@@ -76,7 +76,7 @@ export async function resolveSession(c: Context<AppEnv>, linkId: string, now: nu
 export const sessionBody = (link: GuestLink, identity: { email: string; name: string | null } | null = null): GuestSessionResponse => ({
   link: {
     label: link.label, expiresAt: new Date(link.expiresAt).toISOString(),
-    allow: { comments: link.allowComments && link.parts.includes("guest_comments"), approve: link.allowApprove && link.parts.includes("delivery"), download: link.allowDownload && link.parts.includes("delivery") },
+    allow: { comments: link.allowComments && link.parts.includes("guest_comments"), approve: link.allowApprove && link.parts.includes("delivery"), download: link.allowDownload && link.parts.includes("delivery"), markup: link.parts.includes("markup") },
   },
   verified: identity !== null, email: identity?.email ?? null, name: identity?.name ?? null,
 });

@@ -15,10 +15,12 @@ import { InitialsAvatar } from "../quincy/InitialsAvatar";
 import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
 import { Notice } from "../quincy/Notice";
 import { StatusPill } from "../quincy/StatusPill";
+import { Badge } from "../reui/badge";
 import { Button as ReuiButton } from "../reui/button";
 import { Item } from "../reui/item";
 import { Kbd } from "../reui/kbd";
 import { Textarea } from "../reui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
 import { IconTip } from "../quincy/VideoPlayer";
 import { ANCHOR_CHIP, ANCHOR_CHIP_ROW } from "./VideoNoteComposer";
 
@@ -44,6 +46,21 @@ export function VisibilityBadge({ visibility }: { visibility: VideoNoteDto["visi
 
 const authorName = (note: VideoNoteDto) => (note.author.kind === "staff" ? note.author.person.name : note.author.name);
 const roleLabel = (note: VideoNoteDto) => (note.author.kind === "staff" ? note.author.person.roleLabel : "Client");
+
+/**
+ * A staff author's role, or a guest's "Client" badge (#741 13c). A guest's email is on the DTO only for a viewer who holds `shareVideo`; where it is, the badge is a focusable tooltip
+ * trigger that shows it, and where it is not, the badge is plain.
+ */
+function AuthorTag({ note }: { note: VideoNoteDto }) {
+  if (note.author.kind !== "guest") return <span className={cn(META_TEXT, "!normal-case")}>{roleLabel(note)}</span>;
+  const badge = <Badge variant="outline" size="xs" data-testid="video-note-client-badge">Client</Badge>;
+  const email = note.author.email;
+  if (email === undefined) return badge;
+  return <Tooltip>
+    <TooltipTrigger render={<span tabIndex={0} data-testid="video-note-client-trigger" className="inline-flex rounded-[var(--radius-xs)]" />}>{badge}</TooltipTrigger>
+    <TooltipContent>{email}</TooltipContent>
+  </Tooltip>;
+}
 
 /** The note's text, or a muted line for a deleted one. */
 function NoteText({ note }: { note: VideoNoteDto }) {
@@ -156,7 +173,7 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     <div className="flex min-w-0 flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)]">
       <InitialsAvatar name={authorName(note)} className="size-6" />
       <strong className="min-w-0 text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-snug)_var(--font-sans)] [overflow-wrap:anywhere]">{authorName(note)}</strong>
-      <span className={cn(META_TEXT, "!normal-case")}>{roleLabel(note)}</span>
+      <AuthorTag note={note} />
       <CollaborationTimestamp instant={note.createdAt} now={now} mode="relative" />
       {note.editedAt && !note.deleted && <span className={cn(META_TEXT, "!normal-case")}>· Edited</span>}
       {!root && <span className="ms-auto">{renderMenu(note)}</span>}
