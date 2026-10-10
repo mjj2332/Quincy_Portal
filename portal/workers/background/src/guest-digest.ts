@@ -150,9 +150,11 @@ const SAFE_SEND_ERRORS = new Set<string>([
  * delivered and a retry cannot duplicate. Deliberately a subset of SAFE_SEND_ERRORS: `E_DELIVERY_FAILED` is excluded because delivery may have been attempted or partly happened. Anything not listed here,
  * or thrown without a code, is ambiguous and stays marked sent.
  */
+// Released for retry only when the message was not sent AND a later run could succeed: a limit, or a sender-side setup the owner can fix.
+// A rejection tied to this recipient or this message (suppressed, invalid address, too large, bad headers) would repeat every hour until
+// the 7-day sweep, so it stays marked sent like an ambiguous outcome.
 const DEFINITE_REJECTIONS = new Set<string>([
-  "E_RATE_LIMIT_EXCEEDED", "E_DAILY_LIMIT_EXCEEDED", "E_INVALID_FROM", "E_INVALID_TO", "E_INVALID_EMAIL", "E_DOMAIN_NOT_VERIFIED", "E_SENDER_NOT_ALLOWED",
-  "E_RECIPIENT_SUPPRESSED", "E_MESSAGE_TOO_LARGE", "E_INVALID_HEADERS",
+  "E_RATE_LIMIT_EXCEEDED", "E_DAILY_LIMIT_EXCEEDED", "E_INVALID_FROM", "E_DOMAIN_NOT_VERIFIED", "E_SENDER_NOT_ALLOWED",
 ]);
 /** A known Email Service code, else the constant "send_failed". The message is never logged, because it can carry the address. */
 function rawErrorCode(error: unknown): string { return typeof error === "object" && error !== null && "code" in error ? String((error as { code: unknown }).code) : ""; }

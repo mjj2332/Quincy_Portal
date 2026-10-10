@@ -442,6 +442,14 @@ describe("a proven rejection is released for retry (#741 15b)", () => {
     expect((await rowOf(id))!.sent_at).toBeNull(); expect(await lastDigest(t.member.memberId)).toBe(prior);
   });
 
+  it("a rejection that would repeat on every retry (recipient or message specific) stays marked sent", async () => {
+    for (const code of ["E_RECIPIENT_SUPPRESSED", "E_INVALID_TO", "E_INVALID_EMAIL", "E_MESSAGE_TOO_LARGE", "E_INVALID_HEADERS"]) {
+      const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
+      await runAt(mailer({ fail: rejection(code) }).env, T0);
+      expect((await rowOf(id))!.sent_at, code).toBe(T0); expect(await lastDigest(t.member.memberId), code).toBe(T0);
+    }
+  });
+
   it("an ambiguous outcome stays marked sent: no code, an unknown code, E_DELIVERY_FAILED", async () => {
     for (const fail of [new Error("socket closed"), "timeout", rejection("E_SOMETHING_NEW"), rejection("E_DELIVERY_FAILED")]) {
       const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
