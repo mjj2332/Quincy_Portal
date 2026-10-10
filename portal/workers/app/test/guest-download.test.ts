@@ -1,9 +1,11 @@
+import { Hono } from "hono";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { guestVideoListResponseSchema } from "@quincy/shared";
 import { GUEST_WINDOW_MS } from "../src/guest/rate-limit";
-import { attachment, safeFileName } from "../src/guest/download";
+import { attachment, mountGuestDownloads, safeFileName } from "../src/guest/download";
+import type { AppEnv } from "../src/env";
 import { hashToken } from "../src/lib/opaque-token";
-import { database, ids, mp4Bytes, seedFixture } from "./embedded-media-support";
+import { baseEnv, database, ids, mp4Bytes, seedFixture } from "./embedded-media-support";
 import { addMember, clearGuestRows, grant, guestFetch, HYGIENE, linkPath, openGuestGate, seedGuestLink, startSession, type LinkInput } from "./guest-support";
 import { clearVideoFlags, seedVideoVersion, setVideoFlags } from "./video-review-support";
 
@@ -446,5 +448,81 @@ describe("safeFileName and attachment with astral characters", () => {
   it("replaces a lone surrogate in a stored title instead of throwing", () => {
     expect(() => attachment(`${safeFileName("bad \ud800 title")} v1.mp4`)).not.toThrow();
     expect(safeFileName("bad \ud800 title")).toBe("bad � title");
+  });
+});
+
+/**
+ * Interposed storage: the real database and bucket, with a hook that runs `before` or `after` a statement whose SQL matches, so a revoke can land BETWEEN two steps of one request (the
+ * Worker under test is mounted in-process, because nothing across the SELF boundary can be paused). `reads` counts every R2 read.
+ */
+function interposed(hooks: { before?: Array<[RegExp, () => Promise<unknown>]>; after?: Array<[RegExp, () => Promise<unknown>]> }) {
+  const unwrap = new WeakMap<object, D1PreparedStatement>(); const fired = new Set<RegExp>(); const reads: string[] = [];
+  const fire = async (list: Array<[RegExp, () => Promise<unknown>]> | undefined, sql: string) => { for (const [pattern, action] of list ?? []) if (!fired.has(pattern) && pattern.test(sql)) { fired.add(pattern); await action(); } };
+  const wrap = (sql: string, statement: D1PreparedStatement): D1PreparedStatement => {
+    const proxy: D1PreparedStatement = new Proxy(statement, {
+      get(target, prop) {
+        if (prop === "bind") return (...args: unknown[]) => wrap(sql, target.bind(...args));
+        if (prop === "first" || prop === "all" || prop === "run" || prop === "raw") return async (...args: unknown[]) => { await fire(hooks.before, sql); const result = await (target as any)[prop](...args); await fire(hooks.after, sql); return result; };
+        return (target as any)[prop];
+      },
+    });
+    unwrap.set(proxy, statement); return proxy;
+  };
+  const DB = new Proxy(database.DB, {
+    get(target, prop) {
+      if (prop === "prepare") return (sql: string) => wrap(sql, target.prepare(sql));
+      if (prop === "batch") return (statements: D1PreparedStatement[]) => target.batch(statements.map((statement) => unwrap.get(statement) ?? statement));
+      return (target as any)[prop]?.bind(target);
+    },
+  });
+  const MEDIA = new Proxy(database.MEDIA, { get(target, prop) { return (...args: unknown[]) => { if (prop === "get" || prop === "head") reads.push(String(prop)); return (target as any)[prop](...args); }; } });
+  const app = new Hono<AppEnv>(); mountGuestDownloads(app);
+  const call = (path: string, cookie: string, method: string, headers: Record<string, string> = {}) =>
+    app.fetch(new Request(`https://portal.test${path}`, { method, headers: { cookie, ...headers } }), { ...baseEnv, DB, MEDIA } as never, { waitUntil() {}, passThroughOnException() {} } as never);
+  return { call, reads };
+}
+const resolveSessionRead = /LEFT JOIN guest_reviewers g ON g\.id = s\.guest_id/;
+const versionRead = /FROM video_version_meta m JOIN assets a/;
+
+describe("the resolved session's gate and a revoke between the gates and the R2 read (Sol round 2)", () => {
+  for (const [method, headers, label] of requests2()) {
+    it(`${label}: delivery turned off between the link load and the session resolve is the stub, and no bytes are read`, async () => {
+      const { link, version } = await setup(); const stub = await stubBody();
+      const { call, reads } = interposed({ before: [[resolveSessionRead, () => setVideoFlags(["video_review_delivery", false])]] });
+      const response = await call(downloadPath(link.id, version.assetId), link.cookie, method, headers);
+      expect(response.status).toBe(404); if (method !== "HEAD") expect(await response.text()).toBe(stub.body);
+      expect(reads).toEqual([]); expect(await allAudits()).toHaveLength(0);
+    });
+    if (label !== "GET") it(`${label}: a revoke that lands between the gates and the read is the stub, and R2 is never read`, async () => {
+      const { link, version } = await setup();
+      const { call, reads } = interposed({ after: [[versionRead, () => revokeGrant(version.assetId)]] });
+      const response = await call(downloadPath(link.id, version.assetId), link.cookie, method, headers);
+      expect(response.status).toBe(404); expect(reads).toEqual([]);
+    });
+  }
+  it("GET (whole file): the same revoke lands before the audit row, so nothing is read or audited", async () => {
+    const { link, version } = await setup();
+    const { call, reads } = interposed({ after: [[versionRead, () => revokeGrant(version.assetId)]] });
+    const response = await call(downloadPath(link.id, version.assetId), link.cookie, "GET");
+    expect(response.status).toBeGreaterThanOrEqual(404); expect(reads).toEqual([]); expect(await allAudits()).toHaveLength(0);
+  });
+  it("a served HEAD and Range still pass the final check when nothing changes", async () => {
+    const { link, version } = await setup(); const { call, reads } = interposed({});
+    expect((await call(downloadPath(link.id, version.assetId), link.cookie, "HEAD")).status).toBe(200);
+    const ranged = await call(downloadPath(link.id, version.assetId), link.cookie, "GET", { range: "bytes=100-" }); expect(ranged.status).toBe(206); await dispose(ranged);
+    expect(reads.length).toBeGreaterThan(0);
+  });
+});
+const revokeGrant = (assetId: string) => database.DB.prepare("UPDATE review_link_version_grants SET revoked_at = ?, revoked_by = ? WHERE asset_id = ?").bind(Date.now(), ids.member, assetId).run();
+function requests2(): Array<[string, Record<string, string>, string]> { return [["GET", {}, "GET"], ["HEAD", {}, "HEAD"], ["GET", { range: "bytes=100-" }, "Range"]]; }
+
+describe("a long CJK title stays inside the 255-byte filename limit", () => {
+  it("cuts a 120-character CJK title by UTF-8 bytes, leaving room for the version, extension and dedupe suffix", async () => {
+    const title = "漢".repeat(120);
+    const { link } = await setup({}, title); await another(link.id, title);
+    const names = [...(await unzip(await guestFetch(zipPath(link.id), { cookie: link.cookie }))).keys()].sort();
+    expect(names).toHaveLength(2); expect(names.some((name) => / v1\.mp4$/.test(name))).toBe(true); expect(names.some((name) => / v1 \(2\)\.mp4$/.test(name))).toBe(true);
+    for (const name of names) { expect(new TextEncoder().encode(name).length, name).toBeLessThanOrEqual(255); expect(name).not.toContain("\uFFFD"); }
+    expect(safeFileName(title)).toMatch(/^漢+$/);
   });
 });

@@ -34,7 +34,15 @@ const SECURITY_HEADERS = { "cache-control": "private, no-store", "x-content-type
 export function safeFileName(title: string): string {
   // Lone surrogates (a stored title can hold one) become U+FFFD, and the cut is by code point, so `encodeURIComponent` never throws.
   const cleaned = title.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD").replace(/[\u0000-\u001f\u007f\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
-  return [...cleaned].slice(0, 120).join("").trim() || "Video";
+  return cutUtf8([...cleaned].slice(0, 120), TITLE_MAX_BYTES).trim() || "Video";
+}
+/** Most filesystems cap a name at 255 UTF-8 bytes. The title gets 200, which leaves room for ` v` + a version, `.mp4` and a ` (n)` dedupe suffix (the marker export's `boundedTitle` makes the same cut at 120, but it is private to that builder and rewrites more than a download should). */
+const TITLE_MAX_BYTES = 200;
+/** The code points that fit in `max` UTF-8 bytes, never splitting one. */
+function cutUtf8(points: string[], max: number): string {
+  const encoder = new TextEncoder(); let out = ""; let bytes = 0;
+  for (const ch of points) { const size = encoder.encode(ch).length; if (bytes + size > max) break; out += ch; bytes += size; }
+  return out;
 }
 /** `attachment` with a quoted ASCII fallback and the RFC 5987 UTF-8 name. Never interpolates an unsanitised title. */
 export function attachment(filename: string): string {
@@ -69,6 +77,8 @@ async function enter(c: Ctx, assetId?: string): Promise<Entered | Response> {
   if (!open(await loadActiveLink(c, linkId, Date.now()))) return stub();
   const rejected = originRejection(c); if (rejected) return rejected;
   const session = await resolveSession(c, linkId, Date.now()); if (!session) return stub();
+  // The gate is read again inside `resolveSession`; it may have closed since `loadActiveLink`, so the session's own parts must still carry both.
+  if (!open(session.link)) return stub();
   const early = (response: Response) => classifyRefusal(c, session, true, { parts: PARTS, archived: false }).then((refused) => refused ?? response);
   // The capability is not a stub on purpose: the session body already tells the page whether it is verified and what the link allows.
   if (session.guestId === null) return early(c.json({ error: "verification_required" }, 401));
@@ -123,6 +133,8 @@ async function downloadOne(c: Ctx): Promise<Response> {
       .bind(newId(), auditMeta(null, { guest: { guestId, sessionId: session.id }, linkId: session.link.id, projectId: session.link.projectId, videoId: state.videoId, assetId, version: state.version, bytes: state.bytes }), at, session.id, session.tokenHash, guestId, assetId).run();
     if (written.meta.changes === 0) return refusedBecause(c, session, assetId);
   }
+  // The last fence before any R2 read, for every method: HEAD and a resumed Range write no audit row, so the audit INSERT cannot be what stops them, and a revoke can land after `readVersion`.
+  if (!await stillAllowed(c.env.DB, session, assetId)) return refusedBecause(c, session, assetId);
   const served = await serveR2Object(c, state.r2Key, { ...VIDEO_STREAM_HEADERS, "content-disposition": attachment(entryName(state.title, state.version)) }, "Video object not found");
   // A missing object after the access check is not an oracle, but it must still read as the stub.
   return served.status === 404 ? guestNotFound(c) : served;
