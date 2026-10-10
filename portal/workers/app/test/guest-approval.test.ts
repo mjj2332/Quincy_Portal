@@ -287,12 +287,12 @@ describe("the guest Version DTO: decision, released, downloadUrl", () => {
     expect((await videos(link, link.cookie)).videos[0]!.versions[0]!.decision).toMatchObject({ value: "approved", revision: 3, self: true });
   });
 
-  it("is released while a Release is live and not once it is withdrawn; the URL stays null until the download route exists", async () => {
+  it("is released while a Release is live and not once it is withdrawn; the download URL follows the Release (14b)", async () => {
     const { link, version } = await setup();
     await decide(link, link.cookie, version.assetId);
     const [approval] = await events(version.assetId); const releaseId = crypto.randomUUID();
     await database.DB.prepare("INSERT INTO video_releases (id, project_id, video_id, asset_id, approval_event_id, approval_revision, released_by, released_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)").bind(releaseId, ids.project, version.videoId, version.assetId, approval!.id, ids.admin, Date.now()).run();
-    expect((await videos(link, link.cookie)).videos[0]!.versions[0]).toMatchObject({ released: true, downloadUrl: null });
+    expect((await videos(link, link.cookie)).videos[0]!.versions[0]).toMatchObject({ released: true, downloadUrl: `/d/api/links/${link.id}/versions/${version.assetId}/download` });
     await database.DB.prepare("UPDATE video_releases SET withdrawn_at = ?, withdrawn_by = ? WHERE id = ?").bind(Date.now(), ids.admin, releaseId).run();
     expect((await videos(link, link.cookie)).videos[0]!.versions[0]).toMatchObject({ released: false, downloadUrl: null });
   });

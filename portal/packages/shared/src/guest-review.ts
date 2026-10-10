@@ -91,10 +91,25 @@ export const guestVersionDtoSchema = z.object({
   decision: guestDecisionSchema.nullable(),
   /** A live Release of this exact Version: staff approved it for delivery. Withdrawn means false. */
   released: z.boolean(),
-  /** Non-null only when released, the link allows download and the Video is not locked premium. 14b adds the route; until then it is always null. */
+  /** Non-null only when released, the link allows download (flag and `delivery` part) and the Video is not locked premium. It is the 14b download route. */
   downloadUrl: z.string().nullable(),
 }).strict();
 export type GuestVersionDto = z.infer<typeof guestVersionDtoSchema>;
+
+/**
+ * `GET /d/api/links/:linkId/downloads` (#741 14b): what Download all would contain and what it leaves out, before the click. `included` is the newest Version of each member Video that is
+ * live-granted AND live-released (a locked premium Video is left out); `leftOut` names the Videos that are not in it, by title only. `totalBytes` and `tooLarge` say whether the zip is
+ * within the cap (20 entries, 8 GB); a too-large zip is refused with 422 `zip_too_large`.
+ */
+export const GUEST_ZIP_MAX_ENTRIES = 20;
+export const GUEST_ZIP_MAX_BYTES = 8 * 1024 ** 3;
+export const guestDownloadManifestSchema = z.object({
+  included: z.array(z.object({ videoId: uuid, title: z.string(), version: z.number().int().positive(), bytes: z.number().int().nonnegative() }).strict()),
+  leftOut: z.array(z.object({ title: z.string(), reason: z.enum(["not_released", "premium_locked"]) }).strict()),
+  totalBytes: z.number().int().nonnegative(),
+  tooLarge: z.boolean(),
+}).strict();
+export type GuestDownloadManifest = z.infer<typeof guestDownloadManifestSchema>;
 
 export const guestVideoDtoSchema = z.object({
   id: uuid,
