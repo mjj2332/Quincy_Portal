@@ -135,6 +135,17 @@ export function composeGuestDigest(rows: Survivor[], label: string | null, unsub
   return { subject, text, html };
 }
 
+/** Mirrors EMAIL_SEND_ERROR_CODES in packages/shared/src/email-send-errors.ts, as used by `sendFailureCode` in workers/app/src/guest/email.ts (this Worker cannot import app code). Keep the lists in step. */
+const SAFE_SEND_ERRORS = new Set<string>([
+  "E_RATE_LIMIT_EXCEEDED", "E_DAILY_LIMIT_EXCEEDED", "E_DELIVERY_FAILED", "E_INVALID_FROM", "E_INVALID_TO", "E_INVALID_EMAIL", "E_DOMAIN_NOT_VERIFIED", "E_SENDER_NOT_ALLOWED",
+  "E_RECIPIENT_SUPPRESSED", "E_MESSAGE_TOO_LARGE", "E_INVALID_HEADERS",
+]);
+/** A known Email Service code, else the constant "send_failed". The message is never logged, because it can carry the address. */
+function sendFailureCode(error: unknown): string {
+  const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code: unknown }).code) : "";
+  return SAFE_SEND_ERRORS.has(code) ? code : "send_failed";
+}
+
 export type GuestDigestSummary = { candidates: number; claimed: number; sent: number; dropped: number; failed: number; skipped: boolean };
 type Candidate = { member_id: string; guest_id: string; link_id: string; last_digest_sent_at: number | null };
 
@@ -170,8 +181,8 @@ async function flushMember(env: Env, candidate: Candidate, now: number): Promise
     try {
       await env.EMAIL!.send({ from: env.NOTIFICATIONS_FROM_ADDRESS!, to: survivors[0]!.email, subject: message.subject, text: message.text, html: message.html, headers: { "List-Unsubscribe": `<${url}>` } });
     } catch (error) {
-      // The rows stay marked whatever happened: a definite failure loses this hour's items, an ambiguous one may have delivered, and neither is resent. A bounded reason, never an address.
-      console.error("Guest digest send threw; the rows stay marked sent", { error: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
+      // The rows stay marked whatever happened: a definite failure loses this hour's items, an ambiguous one may have delivered, and neither is resent. Only a whitelisted code is logged, never the message: it can carry the address.
+      console.error("Guest digest send failed; the rows stay marked sent", { code: sendFailureCode(error) });
     }
     return "sent";
   } catch (error) {

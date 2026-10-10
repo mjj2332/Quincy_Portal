@@ -293,6 +293,27 @@ describe("sending", () => {
     expect(healthy.sent).toHaveLength(0);
   });
 
+  it("logs no address from a failed send: only a whitelisted Email Service code, else send_failed", async () => {
+    const LEAK = "leak-sentinel@example.com";
+    const CODES = ["E_RATE_LIMIT_EXCEEDED", "E_DAILY_LIMIT_EXCEEDED", "E_DELIVERY_FAILED", "E_INVALID_FROM", "E_INVALID_TO", "E_INVALID_EMAIL", "E_DOMAIN_NOT_VERIFIED", "E_SENDER_NOT_ALLOWED", "E_RECIPIENT_SUPPRESSED", "E_MESSAGE_TOO_LARGE", "E_INVALID_HEADERS"];
+    for (const [thrown, expected] of [
+      [new Error(`recipient ${LEAK} rejected`), "send_failed"],
+      [Object.assign(new Error(`recipient ${LEAK} rejected`), { code: "E_RECIPIENT_SUPPRESSED" }), "E_RECIPIENT_SUPPRESSED"],
+      [Object.assign(new Error(`recipient ${LEAK} rejected`), { code: LEAK }), "send_failed"],
+    ] as const) {
+      const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) => vi.spyOn(console, level).mockImplementation(() => undefined));
+      try {
+        const t = await basic(); await pend(t.member, t.link.id, "version_granted", t.version);
+        await runGuestDigests(mailer({ fail: thrown }).env, T0);
+        const logged = spies.flatMap((spy) => spy.mock.calls);
+        expect(logged.length).toBeGreaterThan(0);
+        expect(JSON.stringify(logged)).not.toContain(LEAK);
+        const code = (logged.flat().find((arg) => typeof arg === "object" && arg !== null && "code" in arg) as { code: string } | undefined)?.code;
+        expect(code).toBe(expected); expect([...CODES, "send_failed"]).toContain(code);
+      } finally { spies.forEach((spy) => spy.mockRestore()); }
+    }
+  });
+
   it("a send that throws does not stop the other members", async () => {
     const t = await basic(); const other = await seedMember(t.link.id); await pend(t.member, t.link.id, "version_granted", t.version); await pend(other, t.link.id, "version_granted", t.version);
     let calls = 0; const sent: Sent[] = [];
