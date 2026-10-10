@@ -74,7 +74,9 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
   const replyDraft = useNoteDraft(drafts, replyKey);
   const [editStatus, setEditStatus] = useState<Status>(IDLE);
   const [replyStatus, setReplyStatus] = useState<Status>(IDLE);
-  const [deleting, setDeleting] = useState<(Status & { noteId: string; baseRevision: number; ackRevision: number | null }) | null>(null);
+  const [deleting, setDeleting] = useState<(Status & { noteId: string; baseRevision: number }) | null>(null);
+  /** A delete that hit a conflict: the confirm closed and the note row shows the latest text, with this line above it. */
+  const [deleteConflict, setDeleteConflict] = useState<string | null>(null);
   const busy = (editDraft !== null && editStatus.pending) || (replyDraft !== null && replyStatus.pending) || (deleting?.pending ?? false);
 
   const own = (note: GuestNoteDto) => writing.canWrite && !note.deleted && note.author.kind === "guest" && note.author.self;
@@ -110,17 +112,18 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
   const confirmDelete = async () => {
     if (!writing.canWrite || deleting === null || deletingNote === null || deleting.pending) return;
     setDeleting({ ...deleting, pending: true, problem: null });
-    // The revision the confirm opened on (or the one a conflict then showed the guest), never the list's, which may have moved unseen.
-    const outcome = await writing.actions.remove(thread, deletingNote, deleting.ackRevision ?? deleting.baseRevision);
-    // A conflict showed the guest the latest version: confirming again is their acknowledgement, so the base moves to it (and only then).
-    const shown = outcome.ok || outcome.conflict === undefined ? undefined : [outcome.conflict, ...outcome.conflict.replies].find((candidate) => candidate.id === deletingNote.id);
-    setDeleting((current) => (current === null ? null : outcome.ok ? null : { ...current, pending: false, problem: outcome.message, ackRevision: shown?.revision ?? current.ackRevision }));
+    // The revision the confirm opened on, never the list's, which may have moved unseen.
+    const outcome = await writing.actions.remove(thread, deletingNote, deleting.baseRevision);
+    if (outcome.ok) { setDeleting(null); return; }
+    // A conflict closes the confirm without acknowledging anything: the note row shows the latest text, and deleting again snapshots that revision.
+    if (outcome.conflict !== undefined) { setDeleteConflict(outcome.message); setDeleting(null); return; }
+    setDeleting((current) => (current === null ? null : { ...current, pending: false, problem: outcome.message }));
   };
 
   const menu = (note: GuestNoteDto) => own(note)
     ? <Menu triggerLabel="Actions for your note" label="Note actions" triggerClassName={cn(ICON_BUTTON, "ms-auto")} triggerTestId="guest-note-actions" trigger={<span aria-hidden="true">⋯</span>}>
       <MenuPrimitive.Item className={MENU_ITEM} disabled={busy || (note.id === thread.id && writing.composerOpen)} onClick={() => { if (note.id === thread.id) writing.editRoot(thread); else { setEditStatus(IDLE); drafts.set(editKey, { noteId: note.id, baseRevision: note.revision, baseText: note.body, ackRevision: null, text: note.body }); } }}>Edit</MenuPrimitive.Item>
-      <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={busy} onClick={() => { setDeleting({ noteId: note.id, problem: null, pending: false, baseRevision: note.revision, ackRevision: null }); }}>Delete</MenuPrimitive.Item>
+      <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={busy} onClick={() => { setDeleteConflict(null); setDeleting({ noteId: note.id, problem: null, pending: false, baseRevision: note.revision }); }}>Delete</MenuPrimitive.Item>
     </Menu>
     : null;
 
@@ -144,6 +147,7 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
         {thread.hasMarkup && !thread.deleted && <IconTip label="Has a drawing"><span data-testid="guest-note-has-drawing" className="inline-flex items-center text-foreground-secondary"><PencilIcon aria-hidden="true" className="size-3" /><span className="sr-only">Has a drawing</span></span></IconTip>}
       </div>
       {body(thread)}
+      {deleteConflict !== null && <p role="alert" data-testid="guest-note-problem" className={PROBLEM}>{deleteConflict}</p>}
       {thread.resolved && <Badge variant="success" size="xs" data-testid="guest-note-resolved">Resolved</Badge>}
       {thread.replies.map((reply) => <div key={reply.id} data-testid="guest-note-reply" className="flex flex-col gap-[var(--space-1)] border-l border-border ps-[var(--space-3)]">
         <div className="flex min-w-0 items-center gap-[var(--space-2)]"><Author note={reply} />{menu(reply)}</div>
