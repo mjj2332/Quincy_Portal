@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import { useNow } from "../../lib/use-now";
 import type { ReviewLinkCreateInput, VideoDto } from "@quincy/shared";
 import { REVIEW_LINK_LABEL_MAX, REVIEW_LINK_MAX_VIDEOS, REVIEW_LINK_PASSCODE_MAX, REVIEW_LINK_PASSCODE_MIN } from "@quincy/shared";
@@ -12,7 +12,7 @@ import { Checkbox } from "../quincy/Checkbox";
 import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../reui/dialog";
 import { FieldDescription, FieldError } from "../reui/field";
 import { DIALOG_TITLE, ReviewLinkDialogFrame } from "./ReviewLinkDialogFrame";
-import { ReviewLinkAllowFields } from "./ReviewLinkAllowFields";
+import { LEGEND, ReviewLinkAllowFields } from "./ReviewLinkAllowFields";
 import { useReviewLinkState, type ReviewLinksUi } from "./use-review-links-ui";
 
 export const DIALOG_FIELD_LAYER = "z-[calc(var(--z-dialog)+1)]";
@@ -28,6 +28,7 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
   const draft = state.create;
   const selected = useMemo(() => videos.filter((video) => state.selection.has(video.id)), [videos, state.selection]);
   const now = useNow();
+  const versionsLegend = useId();
   const expiryDay = draft.expiryDay ?? defaultExpiryDay(now);
   const expiry = expiryDayToIso(expiryDay, now);
   const passcodeError = passcodeProblem(draft.passcode);
@@ -61,7 +62,7 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
   return <ReviewLinkDialogFrame
     header={<DialogHeader>
       <DialogTitle className={DIALOG_TITLE}>Create Review link</DialogTitle>
-      <DialogDescription>{selected.length === 1 ? "A private link to watch 1 film." : `A private link to watch ${selected.length} films.`} Choose which Versions guests can see.</DialogDescription>
+      <DialogDescription className="text-foreground-secondary">{selected.length === 1 ? "A private link to watch 1 film." : `A private link to watch ${selected.length} films.`} Choose which Versions guests can see.</DialogDescription>
     </DialogHeader>}
     footer={<DialogFooter>
       <Button type="button" variant="secondary" className="min-h-11" onClick={store.closeDialog}>Cancel</Button>
@@ -81,17 +82,23 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
         <FieldDescription id="review-link-passcode-hint">Guests are asked for it before they can watch. Share it separately; it can't be shown again.</FieldDescription>
       </div>
       <ReviewLinkAllowFields value={draft.allow} onChange={(key, next) => store.patchCreate({ allow: { ...draft.allow, [key]: next } })} />
-      <div className="grid gap-[var(--space-3)]">
-        {selected.map((video) => <div key={video.id} role="group" aria-label={video.title} className="grid gap-[var(--space-1)]" data-testid="review-link-create-video">
-          <span className="[font:var(--weight-medium)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">{video.title}</span>
-          {video.versions.map((version) => {
-            const on = chosen(video).includes(version.assetId);
-            return <label key={version.assetId} className="flex min-h-11 cursor-pointer items-center gap-[var(--space-3)] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">
-              <Checkbox aria-label={`${video.title} v${version.version}`} checked={on} disabled={on && chosen(video).length === 1} onChange={() => toggleVersion(video, version.assetId)} />
-              <span>{`v${version.version}${version.current ? " (current)" : ""} · ${version.uploadedBy.name} · ${formatVideoDate(version.createdAt)}`}</span>
-            </label>;
-          })}
-        </div>)}
+      <div role="group" aria-labelledby={versionsLegend} className="grid gap-[var(--space-3)]">
+        <span id={versionsLegend} className={LEGEND}>Versions</span>
+        {selected.map((video) => {
+          const locked = chosen(video).length === 1;
+          const hintId = `review-link-lock-hint-${video.id}`;
+          return <div key={video.id} role="group" aria-label={video.title} className="grid gap-[var(--space-1)]" data-testid="review-link-create-video">
+            <span className="[font:var(--weight-medium)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">{video.title}</span>
+            {video.versions.map((version) => {
+              const on = chosen(video).includes(version.assetId);
+              return <label key={version.assetId} className="flex min-h-11 cursor-pointer items-center gap-[var(--space-3)] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">
+                <Checkbox aria-label={`${video.title} v${version.version}`} checked={on} disabled={on && locked} {...(on && locked ? { "aria-describedby": hintId } : {})} onChange={() => toggleVersion(video, version.assetId)} />
+                <span>{`v${version.version}${version.current ? " (current)" : ""} · ${version.uploadedBy.name} · ${formatVideoDate(version.createdAt)}`}</span>
+              </label>;
+            })}
+            {locked && <FieldDescription id={hintId} className="text-foreground-secondary">A film needs at least one Version. Remove the film to stop sharing it.</FieldDescription>}
+          </div>;
+        })}
       </div>
       {problem && <Notice tone="critical" role="alert">{problem.text}</Notice>}
     </div>

@@ -14,7 +14,7 @@ export function ReviewLinkReveal({ reveal, queued = 1, onDone }: { reveal: Revea
   return <div data-testid="review-link-reveal" className="contents"><ReviewLinkDialogFrame
     header={<DialogHeader>
       <DialogTitle className={DIALOG_TITLE}>Review link ready</DialogTitle>
-      <DialogDescription>{`${reveal.origin === "replace" ? "This replaces the old link. " : ""}This is the only time the full link is shown. Lost it? Use Replace link.`}</DialogDescription>
+      <DialogDescription className="text-foreground-secondary">{`${reveal.origin === "replace" ? "This replaces the old link. " : ""}This is the only time the full link is shown. Lost it? Use Replace link.`}</DialogDescription>
       <p className="[font:var(--weight-medium)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">{`${reveal.label ?? "Untitled link"}${queued > 1 ? ` · 1 of ${queued}` : ""}`}</p>
     </DialogHeader>}
     footer={<DialogFooter>

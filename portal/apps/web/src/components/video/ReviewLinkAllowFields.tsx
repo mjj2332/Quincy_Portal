@@ -1,3 +1,4 @@
+import { useId } from "react";
 import type { Allow } from "../../lib/review-link-form-store";
 import { Switch } from "../reui/switch";
 
@@ -8,8 +9,12 @@ const ROWS: Array<{ key: keyof Allow; label: string; hint: string }> = [
 ];
 
 /** The three permissions as `reui/switch` rows (#741 11b). Used by the create form and a link's settings. */
+export const LEGEND = "[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-[var(--text-secondary)]";
+
 export function ReviewLinkAllowFields({ value, onChange, disabled = false }: { value: Allow; onChange: (key: keyof Allow, next: boolean) => void; disabled?: boolean }) {
-  return <div role="group" aria-label="What guests can do" className="grid gap-[var(--space-2)]">
+  const legendId = useId();
+  return <div role="group" aria-labelledby={legendId} className="grid gap-[var(--space-2)]">
+    <span id={legendId} className={LEGEND}>What guests can do</span>
     {ROWS.map((row) => <div key={row.key} className="flex min-h-11 items-center justify-between gap-[var(--space-3)]">
       <div className="grid gap-0.5">
         <span className="[font:var(--weight-medium)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">{row.label}</span>

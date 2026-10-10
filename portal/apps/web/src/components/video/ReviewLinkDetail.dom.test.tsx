@@ -101,7 +101,7 @@ describe("detail: Versions and Videos", () => {
     await mount(); await openDetailOf("Smith family");
     expect(text(detail())).not.toContain("Verified guests");
     await unmount();
-    state.links = [linkOf({ activity: { openSessions: 1, lastOpenedAt: "2026-10-10T02:00:00.000Z", verifiedGuests: [{ email: "client@example.com", lastSeenAt: "2026-10-10T02:30:00.000Z", unsubscribed: false }, { email: "quiet@example.com", lastSeenAt: "2026-10-09T02:30:00.000Z", unsubscribed: true }] } })];
+    state.links = [linkOf({ activity: { openSessions: 1, lastOpenedAt: "2026-10-10T02:00:00.000Z", verifiedGuests: [{ email: "client@example.com", name: null, lastSeenAt: "2026-10-10T02:30:00.000Z", unsubscribed: false }, { email: "quiet@example.com", name: null, lastSeenAt: "2026-10-09T02:30:00.000Z", unsubscribed: true }] } })];
     await mount(); await openDetailOf("Smith family");
     expect(text(detail())).toContain("Verified guests"); expect(text(detail())).toContain("client@example.com"); expect(text(detail())).toContain("Unsubscribed");
   });

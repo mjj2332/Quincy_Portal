@@ -45,7 +45,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
   const back = <Button type="button" variant="text" className={`${TARGET} -ml-[var(--space-1)] justify-start`} onClick={store.openList}><ChevronLeft aria-hidden="true" className="size-4" />All links</Button>;
   if (!link) {
     return <div data-testid="review-link-detail" className="contents">
-      <ReviewLinkDialogFrame header={<DialogHeader><DialogTitle className={DIALOG_TITLE}>Review link</DialogTitle><DialogDescription>{links.isPending ? "Loading…" : "This Review link no longer exists."}</DialogDescription></DialogHeader>}>
+      <ReviewLinkDialogFrame header={<DialogHeader><DialogTitle className={DIALOG_TITLE}>Review link</DialogTitle><DialogDescription className="text-foreground-secondary">{links.isPending ? "Loading…" : "This Review link no longer exists."}</DialogDescription></DialogHeader>}>
         {back}
       </ReviewLinkDialogFrame>
     </div>;
@@ -111,7 +111,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
         {back}
         <DialogHeader>
           <DialogTitle className={`${DIALOG_TITLE} flex flex-wrap items-center gap-[var(--space-2)]`}>{linkName(link)}<ReviewLinkStatusBadge status={link.status} /></DialogTitle>
-          <DialogDescription>{`${expiryLine(link)} · ${activityLine(link, now)}`}</DialogDescription>
+          <DialogDescription className="text-foreground-secondary">{`${expiryLine(link)} · ${activityLine(link, now)}`}</DialogDescription>
         </DialogHeader>
       </div>}
     >
@@ -151,7 +151,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
           return <Item key={member.videoId} variant="outline" data-testid="review-link-member" className="flex-wrap items-start">
             <ItemContent>
               <ItemTitle>{member.title}</ItemTitle>
-              <ItemDescription className="line-clamp-none">Versions guests can watch</ItemDescription>
+              <ItemDescription className="line-clamp-none text-foreground-secondary">Versions guests can watch</ItemDescription>
               <div className="grid gap-[var(--space-1)]">
                 {versions.map((version) => {
                   const on = granted.has(version.assetId);
@@ -187,7 +187,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
       <h3 className={HEADING}>Verified guests</h3>
       <ItemGroup className="gap-[var(--space-1)]">
         {link.activity.verifiedGuests.map((guest) => <Item key={guest.email} size="xs" className="flex-wrap">
-          <ItemContent><ItemTitle className="break-all">{guest.email}</ItemTitle><ItemDescription>{`Last seen ${formatRelativeTime(guest.lastSeenAt, now)}`}</ItemDescription></ItemContent>
+          <ItemContent><ItemTitle className="break-all">{guest.email}</ItemTitle><ItemDescription className="text-foreground-secondary">{`Last seen ${formatRelativeTime(guest.lastSeenAt, now)}`}</ItemDescription></ItemContent>
           {guest.unsubscribed && <ItemActions><Badge variant="secondary" size="sm">Unsubscribed</Badge></ItemActions>}
         </Item>)}
       </ItemGroup>

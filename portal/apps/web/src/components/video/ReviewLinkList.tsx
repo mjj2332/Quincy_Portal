@@ -28,7 +28,7 @@ export function ReviewLinkList({ ui }: { ui: ReviewLinksUi }) {
   const now = useNow();
   return <ReviewLinkDialogFrame header={<DialogHeader>
     <DialogTitle className={DIALOG_TITLE}>Review links</DialogTitle>
-    <DialogDescription>Private links that let a client watch chosen Versions of chosen films.</DialogDescription>
+    <DialogDescription className="text-foreground-secondary">Private links that let a client watch chosen Versions of chosen films.</DialogDescription>
   </DialogHeader>}>
     {links.isPending && <p role="status" className="flex items-center gap-[var(--space-2)] text-foreground-secondary"><Spinner aria-hidden="true" role="presentation" className="size-3.5" />Loading Review links…</p>}
     {links.isError && !links.data && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{links.error.message || "Review links could not be loaded."}</span><Button type="button" variant="text" className="min-h-11" onClick={() => void links.refetch()}>Retry</Button></Notice>}
@@ -36,8 +36,8 @@ export function ReviewLinkList({ ui }: { ui: ReviewLinksUi }) {
     {links.data && links.data.length > 0 && <ItemGroup className="gap-[var(--space-2)]">
       {links.data.map((link) => <Item key={link.id} variant="outline" data-testid="review-link-row" className="max-[721px]:flex-wrap">
         <ItemContent>
-          <ItemTitle>{linkName(link)}<ReviewLinkStatusBadge status={link.status} /></ItemTitle>
-          <ItemDescription>{`${expiryLine(link)} · ${plural(link.videos.length, "film")} · ${activityLine(link, now)}`}</ItemDescription>
+          <ItemTitle className={link.status === "revoked" ? "text-foreground-secondary" : undefined}>{linkName(link)}<ReviewLinkStatusBadge status={link.status} /></ItemTitle>
+          <ItemDescription className="text-foreground-secondary">{`${expiryLine(link)} · ${plural(link.videos.length, "film")} · ${activityLine(link, now)}`}</ItemDescription>
         </ItemContent>
         <ItemActions>
           <Button type="button" variant="secondary" className="min-h-11" aria-label={`Manage ${linkName(link)}`} onClick={() => store.openDetail(link.id)}>Manage</Button>
