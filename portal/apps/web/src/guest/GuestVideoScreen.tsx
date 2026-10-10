@@ -15,7 +15,7 @@ import type { ActionOutcome, NoteActions, Writing } from "./GuestNoteItem";
 import { GuestNotesPanel } from "./GuestNotesPanel";
 import { GuestVerifyDialog } from "./GuestVerifyDialog";
 import { useGuestCompose } from "./use-guest-compose";
-import { useGuestWriter, type Skipped } from "./use-guest-writer";
+import type { GuestWriter, Skipped, WriterBinding } from "./use-guest-writer";
 import { useGuestMarkup } from "./GuestMarkup";
 import { PremiumWatermark } from "./PremiumWatermark";
 
@@ -56,8 +56,10 @@ function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
  * One Video on the guest page (#741 12b), read-only: the reused review player on the inverse surface, the granted-Versions select, previous / next Video, and the public notes (a
  * column beside the player, a bottom drawer below 721px). Moving between Videos never returns to the list. State is in memory; the URL does not change.
  */
-export function GuestVideoScreen({ api, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged }: {
+export function GuestVideoScreen({ api, writer, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged }: {
   api: GuestApi;
+  /** Owned by `GuestApp`, so a write still out survives this screen being left and opened again. */
+  writer: GuestWriter;
   session: GuestSessionResponse;
   /** The session changed: verified (the verify route's body), or verification lost (a 401 on a write). */
   onSession: (next: GuestSessionResponse) => void;
@@ -92,11 +94,20 @@ export function GuestVideoScreen({ api, session, onSession, archived, onArchived
   // What the verify dialog was opened for, so a successful code lands the guest where they were going.
   const afterVerify = useRef<"compose" | "none">("none");
   const reopenDrawer = useRef(false);
-  const writer = useGuestWriter(version.assetId, {
+  const resyncRef = useRef<() => void>(() => undefined);
+  const binding = useRef<WriterBinding>({ scope: version.assetId, effects: { onUnverified: () => undefined, onGone: () => undefined, onArchived: () => undefined }, onLostSettle: () => undefined });
+  binding.current.scope = version.assetId;
+  binding.current.effects = {
     onUnverified: () => { afterVerify.current = "none"; setVerifyOpen(true); onSession({ ...session, verified: false, email: null, name: null }); },
     onGone: onUnavailable,
     onArchived,
-  });
+  };
+  binding.current.onLostSettle = () => { resyncRef.current(); };
+  useEffect(() => {
+    const mine = binding.current;
+    writer.attach(mine);
+    return () => { writer.detach(mine); };
+  }, [writer]);
 
   useEffect(() => {
     let live = true;
@@ -192,6 +203,7 @@ export function GuestVideoScreen({ api, session, onSession, archived, onArchived
       else setThreads(result.value);
     });
   }, [api, writer, onUnavailable]);
+  resyncRef.current = resync;
   const settle = useCallback((result: WriteResult | Skipped, rootId: string | null): ActionOutcome => {
     if (result.kind === "stale") return { ok: false, message: null };
     if (result.kind === "busy") return { ok: false, message: "Another change to this note is still saving." };
@@ -224,7 +236,8 @@ export function GuestVideoScreen({ api, session, onSession, archived, onArchived
   useEffect(() => { closeComposer(); }, [version.assetId, closeComposer]);
   useEffect(() => { if (archived) closeComposer(); }, [archived, closeComposer]);
   // An edit of a note that has since been deleted (here or elsewhere) has nothing left to save to.
-  const editedGone = editingId !== null && (latestOf(editingId)?.deleted ?? true);
+  // Only a notes read that has completed can say so: while a re-read is out (after re-verifying) `threads` is null, which is "not known yet", not "gone".
+  const editedGone = editingId !== null && threads !== null && (latestOf(editingId)?.deleted ?? true);
   useEffect(() => { if (editedGone) closeComposer(); }, [editedGone, closeComposer]);
 
   // On a phone the composer lives in the notes drawer, which covers the picture the guest is marking: opening a draft closes the drawer, and it comes back when the draft ends.
@@ -255,7 +268,8 @@ export function GuestVideoScreen({ api, session, onSession, archived, onArchived
     ? compose.isOpen ? compose.form : <Button type="button" variant="outline" data-testid="guest-add-note" className={TOUCH} onClick={() => { if (session.verified) startDraft(compose.begin); else requestVerify("compose"); }}>Add a note</Button>
     : null;
 
-  const overlay = useCallback((box: Box | null) => <>{watermark && box && <PremiumWatermark box={box} />}{markupOverlay(box)}{compose.overlay(box)}</>, [watermark, markupOverlay, compose.overlay]); // eslint-disable-line react-hooks/exhaustive-deps -- compose.overlay is the dependency that matters
+  const savedHidden = compose.replacesSavedDrawing(selectedId);
+  const overlay = useCallback((box: Box | null) => <>{watermark && box && <PremiumWatermark box={box} />}{!savedHidden && markupOverlay(box)}{compose.overlay(box)}</>, [watermark, savedHidden, markupOverlay, compose.overlay]); // eslint-disable-line react-hooks/exhaustive-deps -- compose.overlay is the dependency that matters
 
   const newest = video.versions[0]!.version;
   const optionLabel = (candidate: GuestVideoDto["versions"][number]) => `v${candidate.version}${candidate.version === newest ? " · latest" : ""}`;

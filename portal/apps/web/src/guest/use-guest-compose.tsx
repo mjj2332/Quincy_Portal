@@ -62,7 +62,10 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
   /** True while the pen is on the picture (the phone drawer must get out of its way), false when it is put down. */
   onDrawingChange?: (drawing: boolean) => void;
 }): {
-  isOpen: boolean; editingId: string | null; begin: () => void; beginEdit: (thread: GuestNoteThreadDto) => void; close: () => void; form: ReactNode; overlay: (box: Box | null) => ReactNode; transportReplacement: ReactNode;
+  isOpen: boolean; editingId: string | null;
+  /** True while the draft of an edit stands in for the saved drawing of the note `id` (a redraw is under way, drawn, or the drawing is being removed), so the saved strokes must not show under it. */
+  replacesSavedDrawing: (id: string | null) => boolean;
+  begin: () => void; beginEdit: (thread: GuestNoteThreadDto) => void; close: () => void; form: ReactNode; overlay: (box: Box | null) => ReactNode; transportReplacement: ReactNode;
   /** The player's I / O marks, or undefined while the marks cannot change (no draft, locked by a drawing, drawing in progress, or posting). */
   onMark: ((kind: "in" | "out", frame: number) => void) | undefined;
 } {
@@ -259,7 +262,9 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
   </form>;
 
   const editingId = isOpen && target !== null ? target.id : null;
-  return useMemo(() => ({ isOpen, editingId, begin, beginEdit, close, form, overlay, transportReplacement, onMark }), [isOpen, editingId, begin, beginEdit, close, form, overlay, transportReplacement, onMark]);
+  const replacing = editingId !== null && (items.length > 0 || phase !== "off" || removed);
+  const replacesSavedDrawing = useCallback((id: string | null) => replacing && id === editingId, [replacing, editingId]);
+  return useMemo(() => ({ isOpen, editingId, replacesSavedDrawing, begin, beginEdit, close, form, overlay, transportReplacement, onMark }), [isOpen, editingId, replacesSavedDrawing, begin, beginEdit, close, form, overlay, transportReplacement, onMark]);
 }
 
 /** The SVG on the picture box. A gesture never outlives draw mode or the picture it started on: leaving, or a resize, drops the stroke in progress and keeps the finished ones. */

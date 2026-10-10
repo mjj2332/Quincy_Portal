@@ -331,6 +331,67 @@ describe("drawing", () => {
     expect(body.markup).toHaveLength(1);
     expect(Object.keys(body).sort()).toEqual(["drawingFrame", "expectedRevision", "markup"]);
   });
+  describe("a note that already has a drawing", () => {
+    const OLD = { color: "#00aa00", width: 3, points: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }] };
+    const NEW = { color: "#0000aa", width: 3, points: [{ x: 0.1, y: 0.9 }, { x: 0.9, y: 0.9 }] };
+    const drawnNote = (over: Partial<GuestNoteThreadDto> = {}) => mine(2, { revision: 3, startFrame: 50, hasMarkup: true, drawingFrame: 50, ...over });
+    let markupReads: number;
+    const serve = (patched: () => boolean) => {
+      markupReads = 0;
+      extra = (url, init) => {
+        if (url === `${BASE}/notes/${noteId(2)}/markup`) { markupReads += 1; return json({ noteId: noteId(2), revision: patched() ? 4 : 3, markup: patched() ? [NEW] : [OLD] }); }
+        if (url === `${BASE}/notes/${noteId(2)}` && init?.method === "PATCH") return json(drawnNote({ revision: 4 }));
+        return undefined;
+      };
+    };
+    const selectDrawn = async () => {
+      await click(byId("guest-note-anchor"));
+      await atSeconds(2);
+    };
+    it("while a redraw is in progress or finished, the saved strokes are replaced by the draft, not shown under it", async () => {
+      notes = { [asset(10)]: [drawnNote()] };
+      serve(() => false);
+      await withLayout(async () => {
+        await open();
+        await selectDrawn();
+        expect(allById("guest-markup-stroke")).toHaveLength(1);
+        await click(byId("guest-note-actions"));
+        await click(menuItem("Edit"));
+        await click(byId("guest-composer-draw"));
+        await atSeconds(2);
+        expect(allById("guest-markup-stroke")).toHaveLength(0);
+        await draw(byId("guest-draft-layer")!);
+        await click(byId("guest-markup-done"));
+        await atSeconds(2);
+        expect(allById("guest-draft-stroke").length).toBeGreaterThan(0);
+        expect(allById("guest-markup-stroke")).toHaveLength(0);
+      });
+    });
+    it("after saving a redraw, the note's drawing is read again by its new revision", async () => {
+      notes = { [asset(10)]: [drawnNote()] };
+      let saved = false;
+      serve(() => saved);
+      const inner = extra!;
+      extra = (url, init) => { if (init?.method === "PATCH") saved = true; return inner(url, init); };
+      await withLayout(async () => {
+        await open();
+        await selectDrawn();
+        expect(markupReads).toBe(1);
+        await click(byId("guest-note-actions"));
+        await click(menuItem("Edit"));
+        await click(byId("guest-composer-draw"));
+        await atSeconds(2);
+        await draw(byId("guest-draft-layer")!);
+        await click(byId("guest-markup-done"));
+        await submit("guest-composer");
+        await atSeconds(2);
+        expect(byId("guest-composer")).toBeNull();
+        expect(markupReads).toBe(2);
+        expect(allById("guest-markup-stroke")).toHaveLength(1);
+        expect(byId("guest-markup")?.innerHTML).toContain("0.9");
+      });
+    });
+  });
   it("does not offer Draw when the link's markup part is off, and the composer still posts text", async () => {
     session = { ...VERIFIED, link: { ...VERIFIED.link, allow: { ...VERIFIED.link.allow, markup: false } } };
     await open();
@@ -646,6 +707,58 @@ describe("round 1 findings", () => {
     await keyDown("i");
     expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:06:00");
     expect(byId("guest-composer-anchor")?.textContent).not.toMatch(/00:00:04:00/);
+  });
+});
+
+describe("round 2 findings", () => {
+  it("a 401 on an edit keeps the edit open, with its text, through the re-verification and the notes read after it", async () => {
+    notes = { [asset(10)]: [mine(2, { revision: 3 })] };
+    extra = (url, init) => {
+      if (url === `${BASE}/notes/${noteId(2)}` && init?.method === "PATCH") return json({ error: "verification_required" }, 401);
+      if (url === `${BASE}/email/code` && init?.method === "POST") return json({ sent: true, resendAfterSeconds: 60 }, 202);
+      if (url === `${BASE}/email/verify` && init?.method === "POST") { session = VERIFIED; return json(VERIFIED); }
+      return undefined;
+    };
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    await typeInto(byId("guest-composer-body"), "Reworded");
+    await submit("guest-composer");
+    expect(byId("guest-verify-dialog")).not.toBeNull();
+    await typeInto(byId("guest-verify-email"), "sam@example.com");
+    await typeInto(byId("guest-verify-name"), "Sam");
+    await submit("guest-verify-identity-form");
+    await typeInto(byId("guest-verify-code"), "123456");
+    await flush();
+    expect(byId("guest-verify-dialog")).toBeNull();
+    expect(byId("guest-composer")).not.toBeNull();
+    expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("Reworded");
+  });
+
+  it("a write still out when the guest goes to All videos and back is still pending: submitting again sends nothing, and the answer lands in the list", async () => {
+    videos = [videoOf(1), videoOf(2)];
+    notes = { [asset(10)]: [] };
+    let release: () => void = () => undefined;
+    extra = (url, init) => {
+      if (url === `${BASE}/versions/${asset(10)}/notes` && init?.method === "POST") return new Promise<Response>((resolve) => { release = () => { notes[asset(10)] = [mine(5, { body: "slow" })]; resolve(json(mine(5, { body: "slow" }), 201)); }; });
+      return undefined;
+    };
+    await open();
+    await click(button("Open Film 1"));
+    await click(byId("guest-add-note"));
+    await typeInto(byId("guest-composer-body"), "slow");
+    await submit("guest-composer");
+    expect(requests("POST")).toHaveLength(1);
+    await click(button("All videos"));
+    await click(button("Open Film 1"));
+    await click(byId("guest-add-note"));
+    await typeInto(byId("guest-composer-body"), "slow");
+    await submit("guest-composer");
+    expect(requests("POST")).toHaveLength(1);
+    await act(async () => { release(); });
+    await flush();
+    expect(requests("POST")).toHaveLength(1);
+    expect(allById("guest-note")).toHaveLength(1);
   });
 });
 

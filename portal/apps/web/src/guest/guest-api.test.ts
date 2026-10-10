@@ -44,6 +44,10 @@ describe("guest-api: email code", () => {
     fetchMock.mockRejectedValue(new TypeError("offline"));
     expect(await api().sendCode("a@b.co")).toEqual({ ok: false, reason: "unreachable" });
   });
+  it("maps 409 already_verified to its own outcome, not to gone", async () => {
+    answer(json({ error: "already_verified" }, 409));
+    expect(await api().sendCode("a@b.co")).toEqual({ ok: false, reason: "already_verified" });
+  });
   it("verify returns the new session body, and names each refusal", async () => {
     answer(json(SESSION));
     expect(await api().verifyCode("123456", "Sam")).toEqual({ ok: true, session: SESSION });

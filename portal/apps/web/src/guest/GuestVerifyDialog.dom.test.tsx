@@ -157,6 +157,15 @@ describe("GuestVerifyDialog: code step", () => {
     expect(onVerified).not.toHaveBeenCalled();
     expect(q("guest-verify-error")?.textContent).toMatch(/expired|used/i);
   });
+  it("a code send answered already_verified reads the session and closes as verified", async () => {
+    sendCode.mockResolvedValueOnce({ ok: false, reason: "already_verified" });
+    session.mockResolvedValueOnce({ kind: "ok", value: SESSION });
+    await mount();
+    await reachCodeStep();
+    expect(session).toHaveBeenCalledTimes(1);
+    expect(onVerified).toHaveBeenCalledWith(SESSION);
+    expect(onGone).not.toHaveBeenCalled();
+  });
   it("treats already_verified the same way", async () => {
     verifyCode.mockResolvedValueOnce({ ok: false, reason: "already_verified" });
     session.mockResolvedValueOnce({ kind: "ok", value: SESSION });

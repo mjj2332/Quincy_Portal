@@ -61,7 +61,14 @@ function VerifyFlow({ api, generation, onCancel, onVerified, onGone }: { api: Gu
     if (generation.current !== mine) return false;
     setPending(false);
     if (result.ok) { setSentTo(address); startWait(result.resendAfterSeconds); return true; }
-    if (result.reason === "gone") onGone();
+    if (result.reason === "already_verified") {
+      // An earlier verification landed after the guest cancelled it: the session is verified now, so read it and carry on as verified.
+      const current = await api.session();
+      if (generation.current !== mine) return false;
+      if (current.kind === "ok" && current.value.verified) onVerified(current.value);
+      else if (current.kind === "gone") onGone();
+      else setError("This session is already verified. Close this and reload the page.");
+    } else if (result.reason === "gone") onGone();
     else if (result.reason === "limited") { startWait(result.retryAfterSeconds); setError(`Too many codes requested. Try again in ${waitPhrase(result.retryAfterSeconds)}.`); }
     else if (result.reason === "archived") setError("This project was archived, so notes are read-only.");
     else if (result.reason === "invalid") setError("Check the email address and try again.");

@@ -19,7 +19,7 @@ export type ExchangeResult =
 /** `POST .../email/code`. A well-formed address is always 202 (no oracle); `limited` carries the server's retry time. */
 export type SendCodeResult =
   | { ok: true; resendAfterSeconds: number }
-  | { ok: false; reason: "invalid" | "gone" | "archived" | "unreachable" }
+  | { ok: false; reason: "invalid" | "gone" | "archived" | "unreachable" | "already_verified" }
   | { ok: false; reason: "limited"; retryAfterSeconds: number };
 
 /** `POST .../email/verify`. The 200 body is the new session (the cookie rotated server-side); `code_incorrect` says how many tries are left. */
@@ -121,6 +121,7 @@ export function createGuestApi(linkId: string): GuestApi {
       if (response.status >= 500) return { ok: false, reason: "unreachable" };
       if (response.status === 400) return { ok: false, reason: "invalid" };
       if (response.status === 409 && errorOf(read?.body) === "project_archived") return { ok: false, reason: "archived" };
+      if (response.status === 409 && errorOf(read?.body) === "already_verified") return { ok: false, reason: "already_verified" };
       return { ok: false, reason: "gone" };
     },
     async verifyCode(code, name) {

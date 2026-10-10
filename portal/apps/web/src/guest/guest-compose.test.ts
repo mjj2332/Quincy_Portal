@@ -41,6 +41,10 @@ describe("thread list helpers", () => {
     expect(upsertThread(list, thread("b", 50)).map((t) => t.id)).toEqual(["a", "b", "c"]);
     expect(upsertThread(list, thread("z", 10, { createdAt: "2026-10-09T02:00:00.000Z" })).map((t) => t.id)).toEqual(["a", "z", "c"]);
   });
+  it("re-sorts after an update that moves a note's start frame", () => {
+    const list = [thread("a", 50), thread("b", 100)];
+    expect(upsertThread(list, thread("a", 150, { revision: 2 })).map((t) => t.id)).toEqual(["b", "a"]);
+  });
   it("remove drops the thread and leaves the rest", () => {
     expect(removeThread([thread("a", 1), thread("b", 2)], "a").map((t) => t.id)).toEqual(["b"]);
     expect(removeThread([thread("a", 1)], "missing").map((t) => t.id)).toEqual(["a"]);

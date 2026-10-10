@@ -25,7 +25,7 @@ const before = (a: GuestNoteThreadDto, b: GuestNoteThreadDto): number =>
   (a.startFrame ?? -1) - (b.startFrame ?? -1) || (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 export function upsertThread(list: readonly GuestNoteThreadDto[], next: GuestNoteThreadDto): GuestNoteThreadDto[] {
-  if (list.some((thread) => thread.id === next.id)) return list.map((thread) => (thread.id === next.id ? next : thread));
+  if (list.some((thread) => thread.id === next.id)) return list.map((thread) => (thread.id === next.id ? next : thread)).sort(before);
   return [...list, next].sort(before);
 }
 export const removeThread = (list: readonly GuestNoteThreadDto[], id: string): GuestNoteThreadDto[] => list.filter((thread) => thread.id !== id);
