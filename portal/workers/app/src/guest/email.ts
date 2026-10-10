@@ -19,6 +19,8 @@ import { clientAddress, emailBucket, GUEST_CODE_RESEND_MS, GUEST_DAY_MS, GUEST_L
  * `guest` part) and an unarchived Project. EVERY write on these two routes either carries it (the attempt counter, the code INSERT, the token swap) or runs in the same atomic batch
  * only after a statement that carried it landed (the rest of the verify batch, keyed on the fresh token hash). `classifyRefusal` then runs BEFORE any code-specific answer
  * (`code_expired`, `code_incorrect`, 429): a refused write is the guest stub, or 409 `project_archived` when only the archive landed, and never says anything about the code.
+ * Structurally: once the body is read, `classifyRefusal` runs ONCE right away (before the 413/400 answers too), and again before every later non-success answer: each 429 (quota and
+ * cooldown), 409 `already_verified`, and each code error. So no limit, validation or code outcome is ever the answer to a request whose link, gate or Project has changed under it.
  */
 export const CODE_TTL_MS = 10 * 60_000;
 export const CODE_TRIES = 5;
@@ -108,17 +110,20 @@ async function sendCode(c: Handled<"/d/api/links/:linkId/email/code">): Promise<
   const archived = await archivedResponse(c as unknown as Context<AppEnv>, link.projectId); if (archived) return archived;
   // The body comes before the limits: the address buckets are keyed by it, so they cannot be reserved without it.
   const raw = await readJson(c, SEND_BODY_MAX);
+  // Refusal first, once the body is in: every answer below (413, 400, 409, 429) is given only to a request whose link, gate and Project still stand.
+  const answer = async (response: Response): Promise<Response> => await classifyRefusal(c as unknown as Context<AppEnv>, session) ?? response;
+  const early = await classifyRefusal(c as unknown as Context<AppEnv>, session); if (early) return early;
   if (raw === TOO_LARGE) return c.json({ error: "payload_too_large" }, 413);
   const parsed = raw === INVALID ? null : guestEmailCodeInputSchema.safeParse(raw);
   if (!parsed?.success) return c.json({ error: "invalid_request" }, 400);
   const email = normaliseEmail(parsed.data.email);
-  if (session.email !== null && session.email !== email) return c.json({ error: "already_verified" }, 409);
+  if (session.email !== null && session.email !== email) return answer(c.json({ error: "already_verified" }, 409));
 
   // One time for every limit decision, taken now that the body is in: a body held across a window boundary is charged to the window it completes in, and the minute is judged at completion.
   const decidedAt = Date.now();
   // One send a minute per session, exactly: the counter below guards a race, this read is what makes the minute a minute and not a fixed window that may reset a second later.
   const recent = await c.env.DB.prepare("SELECT created_at FROM guest_email_codes WHERE session_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT 1").bind(session.id).first<{ created_at: number }>();
-  if (recent && decidedAt - recent.created_at < GUEST_CODE_RESEND_MS) return tooMany(Math.max(1, Math.ceil((recent.created_at + GUEST_CODE_RESEND_MS - decidedAt) / 1000)));
+  if (recent && decidedAt - recent.created_at < GUEST_CODE_RESEND_MS) return answer(tooMany(Math.max(1, Math.ceil((recent.created_at + GUEST_CODE_RESEND_MS - decidedAt) / 1000))));
   const start = windowStart(decidedAt);
   const attempt = await reserveAttempts(c.env.DB, [
     { bucket: `codesend:session:${session.id}`, limit: GUEST_LIMITS.codeSendSession, windowMs: GUEST_CODE_RESEND_MS },
@@ -127,7 +132,7 @@ async function sendCode(c: Handled<"/d/api/links/:linkId/email/code">): Promise<
     { bucket: `codesend:link:${link.id}`, limit: GUEST_LIMITS.codeSendLink },
     { bucket: await ipBucket("codesend", clientAddress(c.req.raw), start), limit: GUEST_LIMITS.codeSendIp },
   ], decidedAt);
-  if (attempt.limited) return tooMany(attempt.retryAfterSeconds);
+  if (attempt.limited) return answer(tooMany(attempt.retryAfterSeconds));
 
   const code = newCode(); const codeId = newId(); const codeHash = await hashPasscode(code);
   // The time is taken again here, after the body was read and the code hashed: a slow body must not stretch the session, link or minute it is checked against.
@@ -170,6 +175,9 @@ async function verifyCode(c: Handled<"/d/api/links/:linkId/email/verify">): Prom
   const { session } = auth; const link = session.link;
   const archived = await archivedResponse(c as unknown as Context<AppEnv>, link.projectId); if (archived) return archived;
   const raw = await readJson(c, VERIFY_BODY_MAX);
+  // Refusal first, once the body is in (a rotated token is not a refusal here: the code decides, see classifyRefusal). Every answer below is given only to a request that still stands.
+  const answer = async (response: Response): Promise<Response> => await classifyRefusal(c as unknown as Context<AppEnv>, session, false) ?? response;
+  const refused = await classifyRefusal(c as unknown as Context<AppEnv>, session, false); if (refused) return refused;
   if (raw === TOO_LARGE) return c.json({ error: "payload_too_large" }, 413);
   const parsed = raw === INVALID ? null : guestEmailVerifyInputSchema.safeParse(raw);
   if (!parsed?.success) return c.json({ error: "invalid_request" }, 400);
@@ -179,14 +187,12 @@ async function verifyCode(c: Handled<"/d/api/links/:linkId/email/verify">): Prom
     { bucket: `codeverify:link:${link.id}`, limit: GUEST_LIMITS.codeVerifyLink },
     { bucket: await ipBucket("codeverify", clientAddress(c.req.raw), start), limit: GUEST_LIMITS.codeVerifyIp },
   ], decidedAt);
-  if (attempt.limited) return tooMany(attempt.retryAfterSeconds);
+  if (attempt.limited) return answer(tooMany(attempt.retryAfterSeconds));
 
-  // Refusal first, before any answer about the code: a revoke or replace has deleted the session's codes, and "no code" must not be what the guest hears.
-  const refused = await classifyRefusal(c as unknown as Context<AppEnv>, session, false); if (refused) return refused;
   // Only the newest code of this session counts, so asking for a new one kills the old.
   const newest = await c.env.DB.prepare("SELECT id, email_normalized FROM guest_email_codes WHERE session_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT 1").bind(session.id).first<{ id: string; email_normalized: string }>();
-  if (session.email !== null && (!newest || newest.email_normalized !== session.email)) return c.json({ error: "already_verified" }, 409);
-  if (!newest) return c.json({ error: "code_expired" }, 401);
+  if (session.email !== null && (!newest || newest.email_normalized !== session.email)) return answer(c.json({ error: "already_verified" }, 409));
+  if (!newest) return answer(c.json({ error: "code_expired" }, 401));
   // One statement counts the try and says whether the code can still be tried: expired, consumed, burned (5 tries) or superseded all return no row, so the sixth try finds nothing even with the right code.
   const tried = await c.env.DB.prepare(`UPDATE guest_email_codes SET attempts = attempts + 1
     WHERE id = ?1 AND consumed_at IS NULL AND expires_at > ?2 AND attempts < ?3 AND NOT EXISTS (SELECT 1 FROM guest_email_codes n WHERE n.session_id = guest_email_codes.session_id AND n.created_at > guest_email_codes.created_at)

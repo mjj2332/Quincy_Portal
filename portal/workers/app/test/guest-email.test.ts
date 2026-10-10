@@ -735,3 +735,62 @@ describe("limits are charged to the window the request completes in (Sol round 4
     expect((await pending.response).status).toBe(202);
   });
 });
+
+describe("quota and cooldown answers are classified like every other non-success (Sol round 5)", () => {
+  const transitions: Array<[string, (linkId: string) => Promise<unknown>, "stub" | "archived"]> = [
+    ["revoke", (id) => database.DB.batch([database.DB.prepare("UPDATE client_links SET revoked_at = ? WHERE id = ?").bind(Date.now(), id), database.DB.prepare("DELETE FROM guest_sessions WHERE link_id = ?").bind(id)]), "stub"],
+    ["expiry", (id) => database.DB.prepare("UPDATE client_links SET expires_at = ? WHERE id = ?").bind(Date.now() - 1, id).run(), "stub"],
+    ["gate close", () => clearVideoFlags(), "stub"],
+    ["archive", () => archive(), "archived"],
+  ];
+  const expectRefusal = async (response: Response, kind: "stub" | "archived", label: string) => {
+    if (kind === "stub") expect(await plain(response), label).toEqual(await stubBody());
+    else { expect(response.status, label).toBe(409); expect(await response.json(), label).toEqual({ error: "project_archived" }); }
+  };
+  const reset = async () => { await openGuestGate(); await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run(); };
+
+  it("send with a full bucket and a body held across a transition is the refusal, not 429", async () => {
+    for (const [label, change, kind] of transitions) {
+      await reset(); const link = await seedGuestLink(); const session = await sessionOf(link);
+      await seedBucket(`codesend:link:${link.id}`, 30);
+      const pending = slowPost(linkPath(link.id, "/email/code"), session.cookie, { email: `${label.replace(" ", "")}@guest-13a.test` }, 250);
+      await sleep(80); await change(link.id);
+      await expectRefusal(await pending.response, kind, label);
+    }
+  });
+
+  it("send inside the 60-second cooldown and a body held across an archive is 409 project_archived, not 429", async () => {
+    await reset(); const { link, session } = await sent();
+    const pending = slowPost(linkPath(link.id, "/email/code"), session.cookie, { email: EMAIL }, 250);
+    await sleep(80); await archive();
+    await expectRefusal(await pending.response, "archived", "cooldown");
+  });
+
+  it("send as another address on a verified session and a body held across a transition is the refusal, not 409 already_verified", async () => {
+    for (const [label, change, kind] of transitions) {
+      await reset(); const { link, cookie } = await verifiedGuest({ link: await seedGuestLink(), email: `v${label.replace(" ", "")}@guest-13a.test` });
+      const pending = slowPost(linkPath(link.id, "/email/code"), cookie, { email: "other-address@guest-13a.test" }, 250);
+      await sleep(80); await change(link.id);
+      await expectRefusal(await pending.response, kind, label);
+    }
+  });
+
+  it("verify with a full bucket and a body held across a transition is the refusal, not 429", async () => {
+    for (const [label, change, kind] of transitions) {
+      await reset(); const { link, session, code } = await sent({ link: await seedGuestLink(), email: `${label.replace(" ", "")}@guest-13a.test` });
+      await seedBucket(`codeverify:link:${link.id}`, 100);
+      const pending = slowPost(linkPath(link.id, "/email/verify"), session.cookie, { code, name: NAME }, 250);
+      await sleep(80); await change(link.id);
+      await expectRefusal(await pending.response, kind, label);
+    }
+  });
+
+  it("a malformed body held across a transition is the refusal, not 400, on both routes", async () => {
+    for (const path of ["/email/code", "/email/verify"]) for (const [label, change, kind] of transitions) {
+      await reset(); const link = await seedGuestLink(); const session = await sessionOf(link);
+      const pending = slowPost(linkPath(link.id, path), session.cookie, { nonsense: true }, 250);
+      await sleep(80); await change(link.id);
+      await expectRefusal(await pending.response, kind, `${label} ${path}`);
+    }
+  });
+});
