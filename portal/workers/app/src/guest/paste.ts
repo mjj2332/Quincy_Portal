@@ -6,7 +6,7 @@ import { commitNotePaste, planDrawn, planNotePaste, type PlanOutcome } from "../
 import type { AppEnv } from "../env";
 import { guestNotFound, guestRoute, UUID, type INVALID, type TOO_LARGE } from "./http";
 import { classifyRefusal } from "./fence";
-import { enter, judge, reserve, writerOf, type Verified } from "./notes-write";
+import { enter, judge, reserve, reservePreview, writerOf, type Verified } from "./notes-write";
 import { noteWriteParts } from "../lib/guest-fence-sql";
 import { resolveGrantedVersion } from "./read";
 
@@ -17,7 +17,7 @@ import { resolveGrantedVersion } from "./read";
  * access is the byte-identical stub and an archived Project is 409 before any limit, validation error or state conflict.
  *
  *  - The SOURCE Version is named in the body. When the body names a plausible id, `enter` admits it with the target, so a source the link does not reach is the stub before the archive refusal and the quota; later checks (`settle`, the plan's `no_source`, the SQL fences) stay.
- *  - QUOTA. A commit spends its note count in `note:guest` and `note:link` (docs/plans/741-13-15.md §2.4), a preview spends one attempt. The list is capped at the guest quota, so a paste is never a permanent 429.
+ *  - QUOTA. A commit spends its note count in `note:guest` and `note:link` (docs/plans/741-13-15.md §2.4), a preview spends one attempt of its own `paste_preview` buckets (60 a guest, 300 a link), never the note quota. The list is capped at the guest quota, so a paste is never a permanent 429.
  *  - AUDIT. One `video_note.paste` row per commit that passes the fence, in the same batch as the copies (actor NULL; the guest, session and link are in the meta).
  */
 type Handled<P extends string> = Context<AppEnv, P>;
@@ -70,7 +70,7 @@ async function previewPaste(c: Handled<typeof PREVIEW>): Promise<Response> {
   const entered = await enter(c, { cap: GUEST_PASTE_BODY_MAX_BYTES, ids: [assetId], locate: async (v) => await resolveGrantedVersion(c.env.DB, v.link.id, v.link.projectId, assetId) ? { assetId } : null, also: (raw) => { const source = sourceOf(raw); return source === null ? [] : [source]; } });
   if ("response" in entered) return entered.response;
   const { v, ctx } = entered;
-  const limited = await reserve(c, v); if (limited) return ctx.answer(limited);
+  const limited = await reservePreview(c, v); if (limited) return ctx.answer(limited);
   const judged = judge(c, entered, guestNotePastePreviewInputSchema); if ("response" in judged) return judged.response;
   const input = judged.data;
   const planned = await planNotePaste(c.env.DB, { projectId: v.link.projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, noteIds: input.noteIds, offsetFrames: input.offsetFrames, guest: { guestId: v.guestId, linkId: v.link.id } });

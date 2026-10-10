@@ -108,6 +108,12 @@ export async function reserve<P extends string>(c: Handled<P>, v: Verified, amou
   return attempt.limited ? tooMany(attempt.retryAfterSeconds) : null;
 }
 
+/** A paste preview writes nothing, so it is throttled in its own per-guest and per-link buckets and never spends the note quota the commit that follows needs. */
+export async function reservePreview<P extends string>(c: Handled<P>, v: Verified): Promise<Response | null> {
+  const attempt = await reserveAttempts(c.env.DB, [{ bucket: `paste_preview:guest:${v.guestId}`, limit: GUEST_LIMITS.pastePreviewGuest }, { bucket: `paste_preview:link:${v.link.id}`, limit: GUEST_LIMITS.pastePreviewLink }], Date.now());
+  return attempt.limited ? tooMany(attempt.retryAfterSeconds) : null;
+}
+
 const tooLarge = <P extends string>(c: Handled<P>) => c.json({ error: "markup_too_large", maxBytes: VIDEO_MARKUP_MAX_BYTES }, 413);
 const drawingOutside = <P extends string>(c: Handled<P>) => c.json({ error: "drawing_frame_outside" }, 422);
 

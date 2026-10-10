@@ -104,10 +104,11 @@ describe("previewing a paste", () => {
     expect(result.rows).toMatchObject([{ status: "skipped", reason: "reply" }, { status: "skipped", reason: "deleted", source: { excerpt: "" } }, { status: "skipped", reason: "already_copied" }]);
   });
 
-  it("charges one attempt to each note bucket", async () => {
+  it("charges one attempt to each paste_preview bucket and none to the note buckets", async () => {
     const w = await world(); const note = await ownNote(w);
     await parsePreview(await preview(w, [note]));
-    expect(await bucketCount(`note:guest:${w.guest!.guestId}`)).toBe(1); expect(await bucketCount(`note:link:${w.link.id}`)).toBe(1);
+    expect(await bucketCount(`paste_preview:guest:${w.guest!.guestId}`)).toBe(1); expect(await bucketCount(`paste_preview:link:${w.link.id}`)).toBe(1);
+    expect(await bucketCount(`note:guest:${w.guest!.guestId}`)).toBeNull(); expect(await bucketCount(`note:link:${w.link.id}`)).toBeNull();
   });
 });
 
@@ -221,8 +222,30 @@ describe("committing a paste", () => {
 
   it("is counted against the link's note quota as well", async () => {
     const w = await world(); const note = await ownNote(w); await seedBucket(`note:link:${w.link.id}`, 300);
-    expect((await commit(w, revisions([note]))).status).toBe(429); expect((await preview(w, [note])).status).toBe(429);
+    expect((await commit(w, revisions([note]))).status).toBe(429);
     expect(await copyOf(note, w.a2.assetId)).toBeNull();
+  });
+
+  it("previews 60 notes and then commits those 60 from a fresh quota, since a preview spends its own bucket and not the notes'", async () => {
+    const w = await world(); const notes: string[] = []; for (let n = 0; n < 60; n += 1) notes.push(await ownNote(w, { startFrame: 10 + n }));
+    expect((await preview(w, notes)).status).toBe(200);
+    expect(await bucketCount(`note:guest:${w.guest!.guestId}`)).toBeNull(); expect(await bucketCount(`note:link:${w.link.id}`)).toBeNull();
+    expect((await commit(w, revisions(notes))).status).toBe(200);
+    expect(await bucketCount(`note:guest:${w.guest!.guestId}`)).toBe(60);
+  });
+
+  it("429s previews beyond their own limit (per guest, per link) without touching the note buckets", async () => {
+    const w = await world(); const note = await ownNote(w);
+    await seedBucket(`paste_preview:guest:${w.guest!.guestId}`, 60);
+    const limited = await preview(w, [note]); expect(limited.status).toBe(429); expect(limited.headers.get("retry-after")).toBeTruthy();
+    expect(await bucketCount(`note:guest:${w.guest!.guestId}`)).toBeNull(); expect(await bucketCount(`note:link:${w.link.id}`)).toBeNull();
+    expect((await commit(w, revisions([note]))).status).toBe(200);
+  });
+
+  it("429s previews once the link's preview bucket is full", async () => {
+    const w = await world(); const note = await ownNote(w); await seedBucket(`paste_preview:link:${w.link.id}`, 300);
+    expect((await preview(w, [note])).status).toBe(429);
+    expect(await bucketCount(`note:guest:${w.guest!.guestId}`)).toBeNull(); expect(await bucketCount(`note:link:${w.link.id}`)).toBeNull();
   });
 });
 
@@ -231,7 +254,7 @@ describe("quota refusal comes after source authorization (#741 13d)", () => {
 
   it("is the stub, not 429, when the source grant is revoked and the quota is exhausted (preview and commit)", async () => {
     const w = await world(); const note = await ownNote(w); const stub = await stubBody();
-    await revokeSource(w); await seedBucket(`note:guest:${w.guest!.guestId}`, 60);
+    await revokeSource(w); await seedBucket(`note:guest:${w.guest!.guestId}`, 60); await seedBucket(`paste_preview:guest:${w.guest!.guestId}`, 60);
     expect(await plain(await preview(w, [note]))).toEqual(stub);
     expect(await plain(await commit(w, revisions([note])))).toEqual(stub);
   });
@@ -262,7 +285,9 @@ describe("quota refusal comes after source authorization (#741 13d)", () => {
 
   it("still 429s when both Versions are reachable and the quota is exhausted", async () => {
     const w = await world(); const note = await ownNote(w); await seedBucket(`note:guest:${w.guest!.guestId}`, 60);
-    expect((await preview(w, [note])).status).toBe(429); expect((await commit(w, revisions([note]))).status).toBe(429);
+    expect((await commit(w, revisions([note]))).status).toBe(429);
+    await seedBucket(`paste_preview:guest:${w.guest!.guestId}`, 60);
+    expect((await preview(w, [note])).status).toBe(429);
   });
 });
 
@@ -323,7 +348,7 @@ describe("the body", () => {
   it("charges an invalid body one attempt in each bucket", async () => {
     const w = await world(); const note = await ownNote(w);
     expect((await preview(w, [note], {}, { visibility: "x" })).status).toBe(400);
-    expect(await bucketCount(`note:guest:${w.guest!.guestId}`)).toBe(1); expect(await bucketCount(`note:link:${w.link.id}`)).toBe(1);
+    expect(await bucketCount(`paste_preview:guest:${w.guest!.guestId}`)).toBe(1); expect(await bucketCount(`paste_preview:link:${w.link.id}`)).toBe(1);
   });
 });
 

@@ -15,6 +15,8 @@ export const GUEST_LIMITS = {
   decisionGuest: 20, decisionLink: 100,
   // Download all (#741 14b): a zip start costs the most, so a guest may start 10 in 15 minutes and a link 30. Single and Range downloads have no limit.
   zipGuest: 10, zipLink: 30,
+  // Paste previews (#741 13d): a preview writes nothing, so it has its own buckets and never spends the note quota a commit needs; a guest may preview 60 times in 15 minutes and a link 300.
+  pastePreviewGuest: 60, pastePreviewLink: 300,
 } as const;
 export const GUEST_CODE_RESEND_MS = 60_000;
 
