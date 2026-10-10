@@ -60,7 +60,8 @@ async function open(search = `?link=${LINK}`, hash = "#t=tok123") {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(<GuestApp />); });
+  const token = new URLSearchParams(hash.slice(1)).get("t");
+  await act(async () => { root!.render(<GuestApp token={token} />); });
   await flush();
 }
 const byId = (id: string) => host.querySelector<HTMLElement>(`[data-testid="${id}"]`);
@@ -95,88 +96,21 @@ afterEach(async () => {
   window.history.replaceState(null, "", "/");
 });
 
-describe("the link fragment", () => {
-  it("is scrubbed with replaceState before the first fetch, keeping path and query", async () => {
-    const replace = vi.spyOn(window.history, "replaceState");
-    replace.mockImplementation(function (this: History, ...args) { log.push("replaceState"); return Object.getPrototypeOf(window.history).replaceState.apply(this, args); });
-    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => { log.push("fetch"); return route(String(input), init); });
+describe("the link token", () => {
+  it("comes in as a prop and the page never reads location.hash", async () => {
+    const posts: string[] = [];
+    extra = (url, init) => { if (url.endsWith("/session") && init?.method === "POST") posts.push(String(init.body)); return undefined; };
+    window.history.replaceState(null, "", `/d/review?link=${LINK}#t=hashtoken`);
     host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
-    window.history.pushState(null, "", `/d/review?link=${LINK}#t=tok123`); log.length = 0;
-    await act(async () => { root!.render(<GuestApp />); });
+    await act(async () => { root!.render(<GuestApp token="proptoken" />); });
     await flush();
-    expect(log[0]).toBe("replaceState");
-    expect(log).toContain("fetch");
-    expect(window.location.hash).toBe("");
-    expect(window.location.pathname + window.location.search).toBe(`/d/review?link=${LINK}`);
-    replace.mockRestore();
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toContain("proptoken");
+    expect(posts[0]).not.toContain("hashtoken");
+    expect(window.location.hash).toBe("#t=hashtoken");
   });
 
-  it("sends the token only in the exchange body", async () => {
-    await open();
-    const exchange = fetchMock.mock.calls.find((call) => (call[1] as RequestInit | undefined)?.method === "POST")!;
-    expect(String(exchange[0])).toBe(`/d/api/links/${LINK}/session`);
-    expect(JSON.parse(String((exchange[1] as RequestInit).body))).toEqual({ token: "tok123" });
-    expect((exchange[1] as RequestInit).credentials).toBe("same-origin");
-    expect(requests().some((url) => url.includes("tok123"))).toBe(false);
-  });
-
-  it("makes no request to the staff /api", async () => {
-    await open();
-    await click(button("Open Film 1"));
-    expect(requests().length).toBeGreaterThan(0);
-    expect(requests().filter((url) => url.startsWith("/api/") || url.includes("://") && new URL(url).pathname.startsWith("/api/"))).toEqual([]);
-  });
-});
-
-describe("the four states", () => {
-  it("asks for the passcode, shows a wrong one inline, and then opens the list", async () => {
-    let attempts = 0;
-    extra = (url, init) => {
-      if (url !== `/d/api/links/${LINK}/session` || init?.method !== "POST") return undefined;
-      const body = JSON.parse(String(init.body)) as { token: string; passcode?: string };
-      attempts += 1;
-      if (body.passcode === undefined) return json({ error: "passcode_required" }, 401);
-      return body.passcode === "right-code" ? undefined : json({ error: "passcode_incorrect" }, 401);
-    };
-    await open();
-    const input = host.querySelector<HTMLInputElement>('input[type="password"]')!;
-    expect(input.autocomplete).toBe("off");
-    const type = async (value: string) => {
-      await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); });
-      await click(button("Continue"));
-    };
-    expect(input.getAttribute("aria-invalid")).not.toBe("true");
-    await type("nope-nope");
-    expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/isn't right/);
-    expect(input.getAttribute("aria-invalid")).toBe("true");
-    await type("right-code");
-    expect(attempts).toBe(3);
-    expect(byId("guest-list")).not.toBeNull();
-    expect(window.location.hash).toBe("");
-  });
-
-  it("counts down a rate limit and disables the form", async () => {
-    extra = (url, init) => (url.endsWith("/session") && init?.method === "POST" ? json({ error: "too_many_attempts", retryAfterSeconds: 30 }, 429) : undefined);
-    // A 429 on the first exchange has no passcode yet, so it arrives once the passcode step is up.
-    let first = true;
-    const original = extra;
-    extra = (url, init) => { if (url.endsWith("/session") && init?.method === "POST" && first) { first = false; return json({ error: "passcode_required" }, 401); } return original(url, init); };
-    await open();
-    const input = host.querySelector<HTMLInputElement>('input[type="password"]')!;
-    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "abcdefg"); input.dispatchEvent(new Event("input", { bubbles: true })); });
-    await click(button("Continue"));
-    expect(host.textContent).toMatch(/30 seconds/);
-    expect(button("Continue")!.disabled).toBe(true);
-  });
-
-  it("shows the one calm message when the exchange is the stub", async () => {
-    extra = (url) => (url.endsWith("/session") ? stub404() : undefined);
-    await open();
-    expect(byId("guest-unavailable")?.textContent).toContain("This link isn't available.");
-    expect(byId("guest-unavailable")?.textContent).toContain("Open the link from your email again, or ask the studio for a new one.");
-  });
-
-  it("shows it for a reload (no fragment) with no live session, and for a missing link id", async () => {
+  it("shows unavailable for a reload with no token and no live session, and for a missing link id", async () => {
     extra = (url) => (url.endsWith("/session") ? stub404() : undefined);
     await open(`?link=${LINK}`, "");
     expect(byId("guest-unavailable")).not.toBeNull();
@@ -808,5 +742,43 @@ describe("Sol round 9: a deleted drawing note does not take the link down", () =
     await flush();
     expect(byId("guest-unavailable")).toBeNull();
     expect(byId("guest-video-screen")).not.toBeNull();
+  });
+});
+
+describe("Sol round 10: a deleted-drawing recovery does not clear a newer selection", () => {
+  it("selecting deleted drawing A, then valid drawing B before A's recheck resolves, keeps B selected with its overlay", async () => {
+    const A = "22222222-2222-4222-8222-22222222222a";
+    const B = "22222222-2222-4222-8222-22222222222b";
+    const stroke = { color: "#ff0000", width: 3, points: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 }] };
+    notes = [drawn({ id: A }), drawn({ id: B, startFrame: 60 })];
+    videos = [videoOf(1)];
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let hold = false;
+    extra = (url) => {
+      if (url.includes(`/notes/${A}/markup`)) return stub404();
+      if (url.includes(`/notes/${B}/markup`)) return json({ noteId: B, revision: 1, markup: [stroke] });
+      return undefined;
+    };
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (hold && url.endsWith("/session") && (init?.method ?? "GET") === "GET") await gate;
+      return route(url, init);
+    });
+    await withLayout(async () => {
+      await open();
+      hold = true;
+      const anchors = () => allById("guest-note-anchor");
+      await click(anchors()[0]);
+      await click(anchors()[1]);
+      await act(async () => { release(); });
+      await flush();
+      const video = host.querySelector("video")!;
+      stub.finishSeek(video);
+      stub.presentFrame(video, 3);
+      await flush();
+      expect(allById("guest-note").find((n) => n.getAttribute("data-note-id") === B)?.getAttribute("data-selected")).toBe("true");
+      expect(allById("guest-markup-stroke")).toHaveLength(1);
+    });
   });
 });

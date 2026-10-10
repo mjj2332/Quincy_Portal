@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GuestSessionResponse, GuestVideoDto } from "@quincy/shared";
 import { createGuestApi, type GuestApi } from "./guest-api";
-import { readLinkId, takeLinkToken } from "./link-fragment";
+import { readLinkId } from "./link-fragment";
 import { GuestVideoScreen } from "./GuestVideoScreen";
 import { LimitedScreen, PasscodeScreen, UnavailableScreen, UnreachableScreen, VideoListScreen } from "./GuestScreens";
 
@@ -15,19 +15,19 @@ type Screen =
   | { name: "video"; index: number };
 
 /**
- * The guest review page (#741 12b), read-only, mounted by `main.tsx` on `/d/review` instead of the staff `App`. It talks to `/d/api/links/<linkId>/...` through `guest-api` and to
+ * The guest review page (#741 12b), read-only, mounted by `mount-guest.tsx` (called from `main.tsx`) on `/d/review` instead of the staff `App`. It talks to `/d/api/links/<linkId>/...` through `guest-api` and to
  * nothing else; `guest-boundary.guard.test.ts` keeps the staff router, auth and API out of this tree. The state is in memory and the URL never changes after the fragment scrub:
- * boot (scrub, then exchange the token, or resume the session on a reload) -> passcode | limited | unreachable | unavailable | list -> video(index). A single-Video link skips the list.
+ * boot (exchange the token handed in as a prop, or resume the session on a reload) -> passcode | limited | unreachable | unavailable | list -> video(index). A single-Video link skips the list.
  * A 404 or a lost 401 is `unavailable` (no oracle); a network error or 5xx is `unreachable`, a calm retry of the step that failed.
  */
-export function GuestApp() {
+export function GuestApp({ token: initialToken }: { token: string | null }) {
   const [screen, setScreen] = useState<Screen>({ name: "boot" });
   const [session, setSession] = useState<GuestSessionResponse | null>(null);
   const [videos, setVideos] = useState<GuestVideoDto[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const api = useMemo<GuestApi | null>(() => { const id = readLinkId(); return id === null ? null : createGuestApi(id); }, []);
   // The token lives here once the fragment is scrubbed, so a wrong passcode can retry. Never in the URL, storage or a log.
-  const token = useRef<string | null>(null);
+  const token = useRef<string | null>(initialToken);
   const started = useRef(false);
   // Whether this link has asked for a passcode: an initial rate limit on a link that has not is a token-only retry, not a passcode form.
   const asked = useRef(false);
@@ -72,10 +72,9 @@ export function GuestApp() {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    // The scrub comes first and is synchronous: no request below can be made while the token is still in the address bar.
-    const scrubbed = takeLinkToken();
+    // `main.tsx` already scrubbed the fragment and passed the token in; this page never reads the address.
     if (api === null) { setScreen({ name: "unavailable" }); return; }
-    if (scrubbed !== null) { token.current = scrubbed; void exchange(api, scrubbed); return; }
+    if (token.current !== null) { void exchange(api, token.current); return; }
     void resume(api);
   }, [api, exchange, resume]);
 

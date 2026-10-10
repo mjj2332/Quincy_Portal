@@ -79,6 +79,7 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
 
   useEffect(() => {
     let live = true;
+    noteGeneration.current += 1;
     setThreads(null); setSelectedId(null); setNotesFailed(false);
     void api.notes(version.assetId).then((result) => {
       if (!live) return;
@@ -116,9 +117,12 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
   }, [api, onUnavailable, onGrantsChanged, shownAssetId]);
   const onMediaError = useCallback(() => { void recheckAccess(); }, [recheckAccess]);
   // A markup read answered with the stub is not proof the link is gone: the drawing note may just have been deleted. Recheck access; if it is fine, drop the stale note and re-read the list.
+  // The recovery also ends if the guest picks another note while it is in flight (`noteGeneration` moves on every selection), so it never deselects or refetches over a newer choice.
+  const noteGeneration = useRef(0);
   const onMarkupGone = useCallback(() => {
+    const generation = noteGeneration.current;
     void recheckAccess().then((outcome) => {
-      if (outcome !== "valid") return;
+      if (outcome !== "valid" || noteGeneration.current !== generation) return;
       setSelectedId(null);
       setNotesAttempt((n) => n + 1);
     });
@@ -135,6 +139,7 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
     .map((thread) => ({ id: thread.id, startFrame: thread.startFrame!, endFrame: thread.endFrame, tone: "public" as const, selected: thread.id === selectedId, createdAt: thread.createdAt })), [threads, selectedId]);
   const selected = threads?.find((thread) => thread.id === selectedId) ?? null;
   const select = useCallback((thread: GuestNoteThreadDto) => {
+    noteGeneration.current += 1;
     setSelectedId(thread.id);
     setSelectionCount((n) => n + 1);
     // A drawing shows only on the exact frame it was drawn on, which can sit anywhere inside the note's range: seek there, else to the anchor.
