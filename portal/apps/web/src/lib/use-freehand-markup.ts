@@ -1,5 +1,5 @@
 import { useCallback, useRef, type Dispatch, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
-import type { FreehandPoint, FreehandStroke } from "@quincy/shared";
+import type { FreehandPoint, MarkupItem } from "@quincy/shared";
 
 /**
  * Pointer-to-stroke capture for freehand markup (#741 slice 6a, extracted from the photo Lightbox with no change in
@@ -24,7 +24,7 @@ export interface UseFreehandMarkupOptions {
   enabled: boolean;
   tool: { color: string; width: number };
   toPoint: (event: PointerSample) => FreehandPoint;
-  setStrokes: Dispatch<SetStateAction<FreehandStroke[]>>;
+  setStrokes: Dispatch<SetStateAction<MarkupItem[]>>;
   /** Return true to start the stroke now, or a promise of whether to start it once a confirmation settles. */
   beforeStart?: (event: ReactPointerEvent<Element>) => boolean | Promise<boolean>;
 }
@@ -65,6 +65,7 @@ export function useFreehandMarkup({ enabled, tool, toPoint, setStrokes, beforeSt
       if (!current.length) return current;
       const next = current.slice();
       const last = next[next.length - 1]!;
+      if (last.type !== undefined) return current; // only the freehand stroke this hook began is extended; a preloaded shape is left alone
       next[next.length - 1] = { ...last, points: [...last.points, point] };
       return next;
     });

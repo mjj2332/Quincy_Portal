@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { LINK_PREVIEW_URL_MAX, NOTICE_BODY_MAX_LENGTH, STROKE_LIMITS, strokePointSchema, strokeSchema } from "@quincy/shared";
+import { LINK_PREVIEW_URL_MAX, NOTICE_BODY_MAX_LENGTH, STROKE_LIMITS, shapeSchema, strokePointSchema, strokeSchema } from "@quincy/shared";
 import { jsonResult, writeTool, type McpTool } from "./define";
 import { plainTextDoc } from "./writes";
 
@@ -16,8 +16,12 @@ const postId = z.string().uuid().describe("The Notice board post's id, from list
 const projectId = z.string().uuid().describe("The Project's id.");
 
 // The same stroke contract as the route (the shared pieces), refusing unknown keys: coordinates are fractions of the image (0 to 1).
+// Markup is a union: a freehand stroke (no `type` key; `.strict()` refuses any `type`, so no `z.never()` is needed here) or a shape
+// ({ type: arrow | line | rectangle, points: [start, end] }). The strict shape comes first, as in the shared loose union.
 const stroke = strokeSchema.extend({ points: z.array(strokePointSchema.strict()).min(1).max(STROKE_LIMITS.points) }).strict();
-const strokes = z.array(stroke).max(STROKE_LIMITS.strokes);
+const shape = shapeSchema.extend({ points: z.tuple([strokePointSchema.strict(), strokePointSchema.strict()]) }).strict();
+const strokes = z.array(z.union([shape, stroke])).max(STROKE_LIMITS.strokes);
+const MARKUP_DESCRIPTION = "Each item is a freehand stroke (no type; points is a list of 1 to 2000 points) or a shape (type arrow, line or rectangle; points is exactly [start, end], as dragged). Every point is a fraction of the image width and height (0 to 1); width is in screen pixels.";
 
 const annotationTools: McpTool[] = [
   writeTool({
@@ -27,7 +31,7 @@ const annotationTools: McpTool[] = [
     inputSchema: {
       assetId,
       noteText: z.string().trim().max(10_000).optional().describe("The note text."),
-      strokes: strokes.optional().describe("Markup as strokes over the image; each point is a fraction of the image width and height (0 to 1)."),
+      strokes: strokes.optional().describe(`Markup drawn over the image. ${MARKUP_DESCRIPTION}`),
     },
   }),
   writeTool({
@@ -37,7 +41,7 @@ const annotationTools: McpTool[] = [
     inputSchema: {
       annotationId,
       noteText: z.string().trim().max(10_000).nullable().optional().describe("The new note. Null clears it; omit to leave it as it is."),
-      strokes: strokes.optional().describe("The new markup, replacing the old. An empty list removes the markup; omit to leave it as it is."),
+      strokes: strokes.optional().describe(`The new markup, replacing the old. An empty list removes the markup; omit to leave it as it is. ${MARKUP_DESCRIPTION}`),
     },
   }),
   writeTool({
