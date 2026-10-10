@@ -7,7 +7,7 @@ The staff flow is `components/video/VideoNotePasteDialog.tsx`. It cannot be reus
 | Element | Where | Uses |
 |---|---|---|
 | "Copy my notes from another version" entry | `guest/GuestVideoScreen.tsx` | `components/reui/button.tsx` (`variant="ghost"`), under "Add a note" |
-| Paste dialog frame, title, description, footer | `guest/GuestPasteDialog.tsx` | `components/reui/dialog.tsx` (`Dialog`, `DialogContent` at `sm:max-w-xl`, `DialogHeader`, `DialogTitle`, `DialogDescription`, `DialogFooter`) |
+| Paste dialog frame, title, description, footer | `guest/GuestPasteDialog.tsx` | `components/reui/dialog.tsx` (`Dialog`, `DialogContent` at `sm:max-w-3xl`, the staff paste dialog's width; `max-w-sm`…`max-w-xl` are page widths here, `DialogHeader`, `DialogTitle`, `DialogDescription`, `DialogFooter`) |
 | "Copy from" Version picker | `guest/GuestPasteDialog.tsx` | `components/reui/select.tsx` (`Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`) with `components/reui/label.tsx`, the same composition as the Version picker on the video screen |
 | Frame offset | `guest/GuestPasteDialog.tsx` | `components/reui/number-field.tsx` (`NumberField`, `NumberFieldGroup`, `NumberFieldDecrement`, `NumberFieldIncrement`, `NumberFieldInput`) with `components/reui/label.tsx`, as the staff dialog |
 | Note rows with a tick | `guest/GuestPasteDialog.tsx` | `components/reui/item.tsx` (`ItemGroup`, `Item variant="outline"`, `ItemContent`, `ItemTitle`, `ItemDescription`) and `components/reui/checkbox.tsx`. The staff dialog uses `reui/table`; `item` rows (plan section 8) stack on a phone with no layout switch. |

@@ -10,6 +10,7 @@ import { Label } from "../components/reui/label";
 import { NumberField, NumberFieldDecrement, NumberFieldGroup, NumberFieldIncrement, NumberFieldInput } from "../components/reui/number-field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/reui/select";
 import { Notice } from "../components/quincy/Notice";
+import { DIALOG_TITLE } from "../components/video/ReviewLinkDialogFrame";
 import type { GuestApi, PasteResult } from "./guest-api";
 import { defaultSource, pastableNotes, type PastableNote, pasteFailureText, PASTE_SKIP_COPY } from "./guest-paste";
 import type { GuestWriter, Skipped as WriterSkipped } from "./use-guest-writer";
@@ -72,7 +73,7 @@ export function GuestPasteDialog({ api, writer, open, onOpenChange, video, targe
   if (open && !wasOpen.current) setOpening((n) => n + 1);
   wasOpen.current = open;
   return <Dialog open={open} onOpenChange={(next) => { if (!committing.current || next) onOpenChange(next); }}>
-    <DialogContent data-testid="guest-paste-dialog" showCloseButton={false} onKeyDown={(event) => { if (event.key !== "Escape") event.stopPropagation(); }} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col gap-[var(--space-3)] sm:max-w-xl">
+    <DialogContent data-testid="guest-paste-dialog" showCloseButton={false} onKeyDown={(event) => { if (event.key !== "Escape") event.stopPropagation(); }} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col gap-[var(--space-3)] sm:max-w-3xl">
       <PasteFlow key={opening} opening={opening} api={api} writer={writer} video={video} target={target} markupAllowed={markupAllowed} generation={generation} committing={committing} onClose={() => { onOpenChange(false); }} onPasted={onPasted} onGone={onGone} />
     </DialogContent>
   </Dialog>;
@@ -219,15 +220,15 @@ function PasteFlow({ opening, api, writer, video, target, markupAllowed, generat
   const loading = own.status === "loading" || view.status === "loading";
   return <>
     <DialogHeader>
-      <DialogTitle className="text-[length:var(--text-lg)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{`Copy my notes onto v${target.version}`}</DialogTitle>
+      <DialogTitle className={DIALOG_TITLE}>{`Copy my notes onto v${target.version}`}</DialogTitle>
       <DialogDescription className="text-foreground-secondary">Your notes keep their text. Replies stay behind.</DialogDescription>
     </DialogHeader>
 
-    <div className="flex flex-wrap items-end gap-[var(--space-3)]">
-      <div className="flex min-w-0 flex-col gap-[var(--space-1)]">
+    <div className="flex flex-wrap items-start gap-[var(--space-3)]">
+      <div className="flex min-w-0 flex-col gap-[var(--space-2)]">
         <Label htmlFor={SOURCE_SELECT_ID} className="text-foreground-secondary">Copy from</Label>
         <Select value={sourceId} onValueChange={(next) => { if (typeof next === "string") setSourceId(next); }} disabled={pending}>
-          <SelectTrigger id={SOURCE_SELECT_ID} data-testid="guest-paste-source" className={cn(TOUCH, "min-w-32")}>
+          <SelectTrigger id={SOURCE_SELECT_ID} data-testid="guest-paste-source" className={cn(TOUCH, "min-w-32 data-[size=default]:h-[38px]")}>
             <SelectValue>{() => <span className="block truncate">{sourceLabel}</span>}</SelectValue>
           </SelectTrigger>
           <SelectContent className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
@@ -261,7 +262,7 @@ function PasteFlow({ opening, api, writer, video, target, markupAllowed, generat
               // A tick on a note the plan on show never covered (a stale answer left it out) needs a plan of its own; past the cap the changed selection asks for it.
               if (checked && !overflow && !covered(view.ids, [id], new Set())) setPreviewAttempt((n) => n + 1);
               setUnticked((current) => { const next = new Set(current); if (checked) next.delete(id); else next.add(id); return next; }); }} />
-          <ItemContent>
+          <ItemContent className={cn(unticked.has(id) && "text-foreground-secondary")}>
             <ItemTitle className="line-clamp-3 w-full [overflow-wrap:anywhere]">{row?.source.excerpt ?? note?.excerpt}</ItemTitle>
             <ItemDescription className="[font:var(--type-mono)] tabular-nums">{row ? `${sourceLabel} ${noteAnchorLabel(row.source.from as { startFrame: number; endFrame: number | null }, sourceTc)} → v${target.version} ${noteAnchorLabel(row.to, targetTc)}` : `${sourceLabel} ${noteAnchorLabel(note!, sourceTc)}`}</ItemDescription>
             {row?.shortened && <ItemDescription>Shortened to fit</ItemDescription>}
