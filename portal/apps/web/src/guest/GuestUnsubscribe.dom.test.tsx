@@ -64,9 +64,40 @@ describe("GuestUnsubscribe (#741 15b)", () => {
     expect(button("Resubscribe")).toBeUndefined();
   });
 
-  it("a network error on the first POST shows the unavailable state; no fragment makes no request", async () => {
+  it("a 503 on the first POST offers Retry; Retry re-POSTs the same token and a 200 shows the unsubscribed state", async () => {
+    await open("#t=tok-123", (call) => (call === 0 ? reply(503, { error: "unavailable" }) : reply(200, { subscribed: false })));
+    expect(host!.querySelector('[data-testid="guest-unavailable"]')).toBeNull();
+    expect(host!.querySelector('[role="alert"]')?.textContent).toContain("We couldn't unsubscribe you just now. Try again.");
+    await act(async () => { button("Retry")!.click(); });
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(bodyOf(1)).toEqual({ token: "tok-123" });
+    expect(text()).toContain("You won't get emails about this review");
+    expect(button("Retry")).toBeUndefined();
+  });
+
+  it("a 429 shows Retry, not the unavailable state", async () => {
+    await open("#t=tok-123", () => reply(429, { error: "rate_limited" }));
+    expect(host!.querySelector('[data-testid="guest-unavailable"]')).toBeNull();
+    expect(button("Retry")).toBeDefined();
+  });
+
+  it("keeps one request in flight: Retry is disabled while the retry is pending", async () => {
+    let release: (r: Response) => void = () => {};
+    await open("#t=tok-123", (call) => (call === 0 ? reply(500, {}) : new Promise<Response>((resolve) => { release = resolve; })));
+    await act(async () => { button("Retry")!.click(); });
+    expect((button("Retry") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { button("Retry")!.click(); });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await act(async () => { release(reply(200, { subscribed: false })); });
+    await flush();
+    expect(text()).toContain("You won't get emails about this review");
+  });
+
+  it("a network error on the first POST offers Retry; no fragment makes no request", async () => {
     await open("#t=tok", () => { throw new Error("offline"); });
-    expect(host!.querySelector('[data-testid="guest-unavailable"]')).not.toBeNull();
+    expect(host!.querySelector('[data-testid="guest-unavailable"]')).toBeNull();
+    expect(button("Retry")).toBeDefined();
     host!.remove(); host = null;
     await open("");
     expect(fetchMock).not.toHaveBeenCalled();
