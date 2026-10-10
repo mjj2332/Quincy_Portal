@@ -937,7 +937,7 @@ describe("Code-review fixes (#741 6b-ui)", () => {
     expect(stores.made.at(-1)!.slot(ids.asset2).markup.items).toHaveLength(1);
   });
 
-  it("a drawing read refused for a newer revision: the open edit follows the refreshed note, keeps the typed text, and reads the drawing again", async () => {
+  async function movedOn() {
     const target = markNote({ author: { kind: "staff", person: me }, revision: 3 });
     markups = { [target.id]: { revision: 4, markup: [STROKE] } };
     await openFilm({ parts: ON, notes: { [ids.asset2]: [target], [ids.asset1]: [] } }, 45);
@@ -947,11 +947,26 @@ describe("Code-review fixes (#741 6b-ui)", () => {
     const gate = new Promise<void>((resolve) => { release = resolve; });
     api.apiGet.mockImplementation(async (path) => { if (/\/markup$/.test(path)) await gate; return prev(path); });
     await chooseNoteAction(threadOf(target.id), "Terry", "Edit");
+    return { target, release };
+  }
+
+  it("a drawing read refused for a newer revision: an untouched edit follows the refreshed note and reads the drawing again", async () => {
+    const { target, release } = await movedOn();
+    release();
+    await flush(10);
+    expect(stores.made.at(-1)!.slot(ids.asset2).open).toMatchObject({ text: "Remote words", base: { revision: 4, body: "Remote words" }, conflict: null });
+    expect((tid("video-note-edit-draw") as HTMLButtonElement).disabled).toBe(false);
+    expect(threadOf(target.id).textContent).not.toMatch(/could not be loaded/i);
+  });
+
+  it("a dirty edit is not moved silently: the 5b conflict choice is shown, and nothing is sent at the old or new revision on its own", async () => {
+    const { target, release } = await movedOn();
     await type(threadOf(target.id).querySelector("textarea") as HTMLTextAreaElement, "My words");
     release();
     await flush(10);
-    expect(stores.made.at(-1)!.slot(ids.asset2).open).toMatchObject({ text: "My words", base: { revision: 4, body: "Remote words" } });
-    expect((tid("video-note-edit-draw") as HTMLButtonElement).disabled).toBe(false);
-    expect(threadOf(target.id).textContent).not.toMatch(/could not be loaded/i);
+    expect(stores.made.at(-1)!.slot(ids.asset2).open).toMatchObject({ text: "My words", base: { revision: 3 }, conflict: { revision: 4, body: "Remote words" } });
+    expect(tid("video-note-conflict-body", threadOf(target.id))!.textContent).toBe("Remote words");
+    expect(tid("video-note-edit-save")!.textContent).toBe("Save anyway");
+    expect(api.apiPatch).not.toHaveBeenCalled();
   });
 });

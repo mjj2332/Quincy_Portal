@@ -559,17 +559,25 @@ describe("review fixes (#741 6b-ui form store)", () => {
     const fresh = (over: Record<string, unknown> = {}) => note({ startFrame: 10, endFrame: null, drawingFrame: 40, hasMarkup: true, revision: 5, body: "Remote", ...over });
     const opened = () => { const target = note({ startFrame: 10, endFrame: null, drawingFrame: 30, hasMarkup: true, revision: 4 }); store.openEdit(V2, target, target.id); return target; };
 
-    it("with no drawing change pending it adopts the current revision and drawing baseline, keeping typed text", () => {
+    it("an untouched form adopts the current revision, text and drawing baseline", () => {
       const target = opened();
-      store.setOpenText(V2, "Mine");
       expect(store.adoptCurrentNote(V2, fresh({ id: target.id }) as VideoNoteThreadDto)).toBe("adopted");
-      expect(store.slot(V2).open).toMatchObject({ text: "Mine", base: { revision: 5, body: "Remote" }, conflict: null, drawing: { hadDrawing: true, baseFrame: 40, touched: false } });
+      expect(store.slot(V2).open).toMatchObject({ text: "Remote", base: { revision: 5, body: "Remote" }, conflict: null, drawing: { hadDrawing: true, baseFrame: 40, touched: false } });
     });
 
-    it("an untouched text follows the server's, so Save never sends the old text over a remote edit", () => {
+    it("typed text is a change: the conflict choice is shown, the baseline stays, and Save sends nothing until the person chooses", async () => {
       const target = opened();
-      store.adoptCurrentNote(V2, fresh({ id: target.id }) as VideoNoteThreadDto);
-      expect(store.slot(V2).open?.text).toBe("Remote");
+      store.setOpenText(V2, "Mine");
+      expect(store.adoptCurrentNote(V2, fresh({ id: target.id }) as VideoNoteThreadDto)).toBe("conflict");
+      expect(store.slot(V2).open).toMatchObject({ text: "Mine", base: { revision: 4 }, conflict: { revision: 5, body: "Remote" } });
+      expect(store.slot(V2).open?.problem?.text).toMatch(/changed since you opened/i);
+    });
+
+    it("a changed frame is a change too", () => {
+      const plain = note({ startFrame: 10, endFrame: 60, revision: 4 });
+      store.openEdit(V2, plain, plain.id);
+      store.mark(V2, "in", 20, fakeClock(20).clock);
+      expect(store.adoptCurrentNote(V2, note({ id: plain.id, startFrame: 10, endFrame: 60, revision: 5, body: "Remote" }))).toBe("conflict");
     });
 
     it("with a drawing change pending it takes the 5b conflict choice: the server's note is shown and Save anyway sends its revision", async () => {
