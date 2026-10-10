@@ -1,4 +1,4 @@
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
 import { projectDataKeys } from "./project-data";
@@ -20,6 +20,7 @@ vi.mock("./project-data", async (importOriginal) => {
   };
 });
 import { onPrincipalTerminal } from "./principal-terminal";
+import * as projectData from "./project-data";
 import { listVideoDecisions, recordClientDecision, releaseVideoVersion, setVideoPremium, setVideoPremiumUnlock, withdrawVideoRelease } from "./video-approval-data";
 
 const P = "11111111-1111-4111-8111-111111111111";
@@ -153,5 +154,30 @@ describe("video approval data applies the write's answer to the cache before con
     api.apiPost.mockResolvedValueOnce({ release });
     await releaseVideoVersion(ctx(), 2);
     expect(client.getQueryData<{ versions: Array<{ release: unknown }> }>(decisionsKey())!.versions[1]!.release).toBeNull();
+  });
+});
+
+describe("a write that lands while the first decisions read is in flight (#741 14-ui-staff)", () => {
+  it("the stale first read cannot become the cache: the approval survives and the query is not stuck", async () => {
+    const actual = await vi.importActual<typeof import("./project-data")>("./project-data");
+    vi.mocked(projectData.invalidateProjectSurfaces).mockImplementation(actual.invalidateProjectSurfaces);
+    const key = projectDataKeys.videoDecisions(P, V);
+    const pre = { versions: [{ assetId: A, version: 1, events: [], release: null }] };
+    const post = { versions: [{ assetId: A, version: 1, events: [event], release: null }] };
+    let resolveOld!: (value: unknown) => void;
+    api.apiGet.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+    api.apiGet.mockResolvedValueOnce(post);
+    const observer = new QueryObserver(client, { queryKey: key, queryFn: () => listVideoDecisions(P, V), staleTime: 15_000 });
+    const unsubscribe = observer.subscribe(() => {});
+    api.apiPost.mockResolvedValueOnce({ decision: event });
+    const write = recordClientDecision(ctx(), { decision: "approved" });
+    await vi.waitFor(() => expect(api.apiPost).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveOld(pre);
+    await write;
+    await vi.waitFor(() => expect(observer.getCurrentResult().fetchStatus).toBe("idle"));
+    unsubscribe();
+    expect(client.getQueryData<typeof post>(key)!.versions[0]!.events).toHaveLength(1);
+    expect(observer.getCurrentResult().status).toBe("success");
   });
 });

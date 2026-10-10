@@ -74,10 +74,20 @@ const applyDecision = (ctx: ApprovalWriteContext, decision: VideoDecisionEvent) 
 const applyRelease = (ctx: ApprovalWriteContext, release: VideoRelease) => patchVersion(ctx, (version) => ({ ...version, release }));
 const applyWithdrawn = (ctx: ApprovalWriteContext) => patchVersion(ctx, (version) => ({ ...version, release: null }));
 
-async function run<T>(ctx: ApprovalWriteContext, send: () => Promise<T>, apply?: (value: T) => void): Promise<T> {
+/**
+ * A read already in flight when the write lands predates it. TanStack only supersedes an in-flight fetch on refetch when data exists, so with no entry yet the converge below would
+ * dedupe onto that older read and its answer would become the cache. Cancelling the exact keys the write touches (`revert` puts the query back to its idle, pending state; an
+ * observer's refetch then starts a fresh read) makes the converge fetch new.
+ */
+const cancelStaleReads = (ctx: ApprovalWriteContext, keys: ReadonlyArray<readonly unknown[]>) => Promise.all(keys.map((queryKey) => ctx.queryClient.cancelQueries({ queryKey, exact: true }, { revert: true })));
+
+async function run<T>(ctx: ApprovalWriteContext, send: () => Promise<T>, apply?: (value: T) => void, touches: "decisions" | "videos" = "decisions"): Promise<T> {
   let value: T;
   try { value = await send(); } catch (error) { await onFailure(ctx, error); throw error; }
-  if (!retired.has(ctx.queryClient)) { apply?.(value); await converge(ctx); }
+  if (!retired.has(ctx.queryClient)) {
+    await cancelStaleReads(ctx, touches === "videos" ? [projectDataKeys.videos(ctx.projectId)] : [projectDataKeys.videoDecisions(ctx.projectId, ctx.videoId)]);
+    if (!retired.has(ctx.queryClient)) { apply?.(value); await converge(ctx); }
+  }
   return value;
 }
 
@@ -95,8 +105,8 @@ export const withdrawVideoRelease = (ctx: ApprovalWriteContext): Promise<void> =
   run(ctx, async () => { videoReleaseWithdrawnResponseSchema.parse(await apiDelete<unknown>(`${versionPath(ctx.projectId, needVersion(ctx))}/release`)); }, () => applyWithdrawn(ctx));
 
 export const setVideoPremium = (ctx: ApprovalWriteContext, premium: boolean): Promise<VideoPremiumResponse> =>
-  run(ctx, async () => videoPremiumResponseSchema.parse(await apiPut<unknown, { premium: boolean }>(`${videoPath(ctx.projectId, ctx.videoId)}/premium`, { premium })), (response) => patchVideo(ctx, response));
+  run(ctx, async () => videoPremiumResponseSchema.parse(await apiPut<unknown, { premium: boolean }>(`${videoPath(ctx.projectId, ctx.videoId)}/premium`, { premium })), (response) => patchVideo(ctx, response), "videos");
 
 /** Unlock (with an optional payment reference) or re-lock. */
 export const setVideoPremiumUnlock = (ctx: ApprovalWriteContext, input: { unlocked: boolean; paymentRef?: string }): Promise<VideoPremiumResponse> =>
-  run(ctx, async () => videoPremiumResponseSchema.parse(await apiPut<unknown, typeof input>(`${videoPath(ctx.projectId, ctx.videoId)}/premium-unlock`, input)), (response) => patchVideo(ctx, response));
+  run(ctx, async () => videoPremiumResponseSchema.parse(await apiPut<unknown, typeof input>(`${videoPath(ctx.projectId, ctx.videoId)}/premium-unlock`, input)), (response) => patchVideo(ctx, response), "videos");
