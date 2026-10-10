@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExter
 import { useQueryClient } from "@tanstack/react-query";
 import type { CollectionKind, MoveProjectStageRequest, MoveProjectStageResponse, Role, VideoReviewResponse } from "@quincy/shared";
 import { VideoCollectionPanel } from "../components/video/VideoCollectionPanel";
+import { ReviewLinksScope } from "../components/video/ReviewLinksScope";
 import { type ProjectStageKey, useStages } from "../lib/stages";
 import { Lightbox } from "../components/Lightbox";
 import { PhotoGrid, type ReviewPatch, type WorkspaceAsset } from "../components/PhotoGrid";
@@ -575,10 +576,13 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
     <div className={props.whiteboardOpen ? "hidden" : "contents"} data-whiteboard-hidden={String(props.whiteboardOpen)}>
     <ProjectHeader whiteboardOpen={props.whiteboardOpen} onOpenWhiteboard={props.collaborationUnavailable ? undefined : props.onOpenWhiteboard} project={project} activeTab={activeTab} availableTabs={availableTabs} canUpload={canUpload} canAdminBackend={props.canAdminBackend} canEdit={canEdit} hasRawFolder={hasRawFolder} autohdrBlocked={autohdrBlocked} isSyncing={props.isSyncing} onSyncDropbox={props.onSyncDropbox} onActiveTabChange={props.activeTabChange} collaborationUnread={props.collaborationUnavailable ? 0 : collaborationUnread} workspaceTabRefs={props.workspaceTabRefs} onStageMove={(targetStageKey) => moveStage(targetStageKey)} stageMovePending={stageMovePending} stageMoveDisabledReason={stageMoveDisabledReason} />
     <section className="workmain" data-testid="workspace-main">
+      {/* Review links (#741 11b): the store and the reveal dialog sit above the Collection tab switch, so a create answered after a tab change still shows its URL. */}
+      <ReviewLinksScope projectId={project.id} role={props.role} archived={Boolean(project.archivedAt)}>
       {collection !== null && <CollectionTabBody key={collection} {...props} collection={collection} hasRawFolder={hasRawFolder} autohdrBlocked={autohdrBlocked} />}
       <div role="tabpanel" id="project-workspace-panel-collaboration" aria-labelledby="project-workspace-tab-collaboration" hidden={activeTab !== "collaboration"} className="workgrid">
         {props.collaborationUnavailable ? <CollaborationUnavailableSection /> : <ProjectCollaborationPanel projectId={project.id} archived={Boolean(project.archivedAt)} presented={activeTab === "collaboration"} jobs={props.canAdminBackend ? props.jobs : undefined} onRetryJob={props.onRetryAutoHdr} view={props.collaborationView} onViewChange={props.onCollaborationViewChange} showUnreadBadge={false} onUnreadCountChange={setCollaborationUnread} onAccessFailure={props.onAccessFailure} embedded />}
       </div>
+      </ReviewLinksScope>
     </section>
     </div>
   </main>;
