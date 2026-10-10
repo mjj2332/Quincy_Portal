@@ -149,6 +149,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     const partner = sameFilm ? video.versions.find((candidate) => candidate.assetId === stored.b)! : below;
     const heard: CompareSideId = compareStore.getState().pair && sameFilm ? compareStore.getState().audible : here.hasAudio ? "a" : "b";
     compareStore.setPair(here.assetId, partner.assetId, heard);
+    // The store may be stale (the capability can turn on while the viewer is open and the single player was muted meanwhile): the viewer's choice wins on entry.
+    compareStore.setMuted(muted);
     setStartFrame(frame);
     startFrameRef.current = frame;
     setResume(null);

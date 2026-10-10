@@ -264,6 +264,21 @@ describe("Compare: mute is one choice across both views (#741 7c)", () => {
     expect(playerVideo()!.muted).toBe(true);
   });
 
+  it("a mute made while the compare capability was off carries into compare once it turns on", async () => {
+    await mount({ parts: [] });
+    await openViewer();
+    await loadFilm(0);
+    await click(muteButton());
+    expect(playerVideo()!.muted).toBe(true);
+    const role = "editor" as const;
+    await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role={role}><VideoCollectionPanel projectId={PROJECT} role={role} review={{ open: true, parts: ["compare"] as never }} /></QuincyQueryProvider>); });
+    await flush(4);
+    await enterCompare(0);
+    expect(vid("a").muted).toBe(true);
+    expect(vid("b").muted).toBe(true);
+    expect(muteButton().getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("muting in the single player carries into compare, silencing both sides", async () => {
     await mount({ parts: ["compare"] });
     await openViewer();
