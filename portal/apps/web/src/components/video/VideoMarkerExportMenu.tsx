@@ -32,13 +32,14 @@ const FORMATS: Array<{ format: MarkerExportFormat; label: string; testId: string
 const COARSE = "pointer-coarse:min-h-11";
 const OPTION_ITEM = `relative pe-[var(--space-6)] ${COARSE}`;
 const LABEL_TEXT = "[font:var(--type-label)]";
-const SECONDARY = `text-foreground-secondary ${LABEL_TEXT}`;
-/** The popup keeps one width whatever the previews say (the PANEL cap), so toggling an option never moves the edges. */
+// Captions, not items: xs muted sentence-case text (the registry's DropdownMenuLabel look), so they do not read as menu rows.
+const SECONDARY = "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-[color:var(--muted-foreground)]";
+/** The popup keeps one width whatever the previews say (the PANEL cap), so toggling an option never changes its width (the height still follows the content). */
 export const EXPORT_PANEL_WIDTH = "w-[min(320px,calc(100vw-var(--space-4)))]";
-const EYEBROW = "[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-[color:var(--text-muted)]";
+const EYEBROW = "[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-[color:var(--muted-foreground)]";
 // `--type-mono`'s family and weight at `--text-xs` in one shorthand (a separate `text-[length:]` would be dead beside `[font:]`).
 const FILENAME = "[font:var(--weight-regular)_var(--text-xs)/1.4_var(--font-mono)] text-foreground-secondary [overflow-wrap:anywhere]";
-const BOX = "absolute end-[var(--space-3)] grid size-4 place-items-center border border-solid border-[color:var(--text-muted)]";
+const BOX = "absolute end-[var(--space-3)] grid size-4 place-items-center border border-solid border-[color:var(--muted-foreground)]";
 
 export type MarkerExport = ReturnType<typeof useMarkerExport>;
 
@@ -111,7 +112,7 @@ export function MarkerExportMenuItems({ exp, separated = false }: { exp: MarkerE
       >
         Include internal notes
         <span data-testid="video-export-internal-box" aria-hidden="true" className={BOX}>
-          <MenuPrimitive.CheckboxItemIndicator><CheckIcon className="size-3.5" /></MenuPrimitive.CheckboxItemIndicator>
+          <MenuPrimitive.CheckboxItemIndicator><CheckIcon className="size-3" /></MenuPrimitive.CheckboxItemIndicator>
         </span>
       </MenuPrimitive.CheckboxItem>
       <MenuPrimitive.Group>
@@ -123,7 +124,7 @@ export function MarkerExportMenuItems({ exp, separated = false }: { exp: MarkerE
           </MenuPrimitive.RadioItem>)}
         </MenuPrimitive.RadioGroup>
       </MenuPrimitive.Group>
-      <div data-testid="video-export-count" className={`px-[var(--space-3)] pt-[var(--space-2)] pb-[var(--space-1)] ${SECONDARY}`}>{countText}</div>
+      <div data-testid="video-export-count" className={`px-[var(--space-3)] pt-[var(--space-1)] pb-[var(--space-2)] ${SECONDARY}`}>{countText}</div>
       {FORMATS.map(({ format, label, testId }) => {
         const blocked = format === "edl" && overflow;
         const hintId = `${testId}-hint`;
@@ -138,7 +139,7 @@ export function MarkerExportMenuItems({ exp, separated = false }: { exp: MarkerE
         >
           <span>{label}</span>
           <span data-testid={`${testId}-name`} title={name} className={FILENAME}>{name}</span>
-          {blocked && <span id={hintId} data-testid="video-export-edl-hint" className={`text-signal-critical ${LABEL_TEXT}`}>{`Resolve EDL supports up to ${EDL_LIMIT} markers (${count} selected). Use FCPXML or choose fewer notes.`}</span>}
+          {blocked && <span id={hintId} data-testid="video-export-edl-hint" className={`text-foreground-secondary ${LABEL_TEXT}`}>{`Resolve EDL supports up to ${EDL_LIMIT} markers (${count} selected). Use FCPXML or choose fewer notes.`}</span>}
         </MenuPrimitive.Item>;
       })}
     </MenuPrimitive.Group>

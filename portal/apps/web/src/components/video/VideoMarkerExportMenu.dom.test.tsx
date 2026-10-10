@@ -30,6 +30,11 @@ describe("EDL marker limit in the menu (#741 9)", () => {
     expect(tid("video-export-edl-hint")!.textContent).toContain("up to 999 markers (1000 selected)");
     expect(tid("video-export-edl")!.getAttribute("aria-describedby")).toBe("video-export-edl-hint");
     expect(tid("video-export-fcpxml")!.getAttribute("aria-disabled")).not.toBe("true");
+    // The hint must stay legible on the dark menu (not the 1.8:1 critical red), and a disabled row must look disabled.
+    expect(tid("video-export-edl-hint")!.className).toContain("text-foreground-secondary");
+    expect(tid("video-export-edl-hint")!.className).not.toContain("text-signal-critical");
+    expect(tid("video-export-edl")!.className).toContain("data-[disabled]:opacity-60");
+    expect(tid("video-export-edl")!.className).toContain("data-[disabled]:cursor-not-allowed");
     await act(async () => { tid("video-export-edl")!.click(); });
     expect(exp.start).not.toHaveBeenCalled();
     await act(async () => { tid("video-export-fcpxml")!.click(); });
@@ -72,15 +77,26 @@ describe("Menu content (#741 9 design review)", () => {
     const label = eyebrow.firstElementChild as HTMLElement;
     expect(label.textContent).toBe("Export markers");
     expect(tid("video-export-status-label")!.textContent).toBe("Status");
+    // Captions, not items: the sub-label and count are xs muted text, and the count sits tight under the options.
+    for (const id of ["video-export-status-label", "video-export-count"]) {
+      expect(tid(id)!.className).toContain("text-[color:var(--muted-foreground)]");
+    }
+    expect(tid("video-export-count")!.className).toContain("pt-[var(--space-1)] pb-[var(--space-2)]");
+    expect(label.className).toContain("text-[color:var(--muted-foreground)]");
+    expect(label.className).not.toContain("--text-muted");
     expect(tid("video-export-edl-name")!.getAttribute("title")).toBe("Film-v1-notes-all-public.edl");
   });
   it("shows an empty outlined box when the internal checkbox is unticked, and the check when ticked", async () => {
     await render(exportOf({}));
     const box = tid("video-export-internal-box")!;
     expect(box.getAttribute("aria-hidden")).toBe("true");
+    expect(box.className).toContain("border-[color:var(--muted-foreground)]");
+    expect(box.className).not.toContain("--text-muted");
     expect(box.querySelector("svg")).toBeNull();
     await render(exportOf({ options: { includeInternal: true, status: "all" } }));
     expect(tid("video-export-internal-box")!.querySelector("svg")).not.toBeNull();
+    expect(tid("video-export-internal-box")!.querySelector("svg")!.getAttribute("class")).toContain("size-3");
+    expect(tid("video-export-internal-box")!.querySelector("svg")!.getAttribute("class")).not.toContain("size-3.5");
   });
 });
 
