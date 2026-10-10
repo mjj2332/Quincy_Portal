@@ -6,7 +6,7 @@ import type { Capability } from "./capabilities";
  * `video_review_<part>` and is guarded by the capability below, so a part is only offered to a
  * caller who both has the flag on and holds the capability.
  */
-export const VIDEO_REVIEW_PARTS = ["upload", "notes", "markup", "compare", "export", "links", "guest", "guest_comments", "delivery", "notify_staff", "notify_client"] as const;
+export const VIDEO_REVIEW_PARTS = ["upload", "notes", "markup", "compare", "export", "links", "guest", "guest_comments", "delivery", "notify_staff", "notify_client", "trash"] as const;
 export type VideoReviewPart = (typeof VIDEO_REVIEW_PARTS)[number];
 
 export const VIDEO_REVIEW_PART_CAPABILITY = {
@@ -21,6 +21,7 @@ export const VIDEO_REVIEW_PART_CAPABILITY = {
   guest_comments: "shareVideo",
   notify_client: "shareVideo",
   delivery: "releaseVideo",
+  trash: "manageVideoTrash",
 } as const satisfies Record<VideoReviewPart, Capability>;
 
 export const VIDEO_REVIEW_MASTER_FLAG = "video_review";

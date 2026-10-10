@@ -344,7 +344,7 @@ async function sendDigestForRecipient(env: Env, recipient: DueRecipient, slotAt:
         UPDATE notifications SET email_sent_at = ?, email_message_id = ?, email_error = NULL
         WHERE id IN (SELECT notification_id FROM notification_digest_items WHERE digest_id = ? AND state = 'pending' AND notification_id IS NOT NULL)
       `).bind(now, result.messageId, digestId),
-      env.DB.prepare("UPDATE notification_digest_items SET state = 'sent', updated_at = ? WHERE digest_id = ? AND state = 'pending'").bind(now, digestId),
+      env.DB.prepare("UPDATE notification_digest_items SET state = 'sent', outcome_code = NULL, updated_at = ? WHERE digest_id = ? AND state = 'pending'").bind(now, digestId),
       env.DB.prepare("UPDATE notification_digests SET status = 'sent', email_message_id = ?, updated_at = ? WHERE id = ? AND status = 'sending'").bind(result.messageId, now, digestId),
     ]);
     return "sent";
@@ -352,7 +352,14 @@ async function sendDigestForRecipient(env: Env, recipient: DueRecipient, slotAt:
     const classification = classifyEmailError(error);
     if (classification.kind === "quota_transient") {
       // Proven rejected before acceptance: the items return to pending for the recipient's next slot.
+      // An item a removal marked while the digest was sending (#776 C) is suppressed, never rearmed.
       await env.DB.batch([
+        env.DB.prepare(`
+          UPDATE notification_delivery_ledger
+          SET status = 'suppressed', last_error_code = 'video_removed', last_error = 'The Video or Version was removed.', updated_at = ?
+          WHERE status = 'deferred' AND id IN (SELECT ledger_id FROM notification_digest_items WHERE digest_id = ? AND state = 'pending' AND outcome_code = 'video_removed' AND ledger_id IS NOT NULL)
+        `).bind(now, digestId),
+        env.DB.prepare("UPDATE notification_digest_items SET state = 'suppressed', updated_at = ? WHERE digest_id = ? AND state = 'pending' AND outcome_code = 'video_removed'").bind(now, digestId),
         env.DB.prepare("UPDATE notification_digest_items SET digest_id = NULL, updated_at = ? WHERE digest_id = ? AND state = 'pending'").bind(now, digestId),
         env.DB.prepare("UPDATE notification_digests SET status = 'released', last_error_code = ?, last_error = ?, updated_at = ? WHERE id = ? AND status = 'sending'").bind(classification.code, classification.message, now, digestId),
       ]);

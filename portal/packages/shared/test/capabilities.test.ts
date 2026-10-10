@@ -110,13 +110,13 @@ describe("PRD §4 capability matrix", () => {
 });
 
 describe("video review capabilities (#741)", () => {
-  const VIDEO = ["viewVideo", "uploadVideo", "annotateVideo", "shareVideo", "releaseVideo", "manageVideoPremium"] as const;
+  const VIDEO = ["viewVideo", "uploadVideo", "annotateVideo", "shareVideo", "releaseVideo", "manageVideoPremium", "manageVideoTrash"] as const;
 
-  it("declares all six", () => {
+  it("declares all seven", () => {
     for (const capability of VIDEO) expect(CAPABILITIES).toContain(capability);
   });
 
-  it("grants view, upload and annotate to admin, editor and External; share and release to admin and editor; premium to admin only", () => {
+  it("grants view, upload and annotate to admin, editor and External; share and release to admin and editor; premium to admin only, and Trash to admin and editor", () => {
     const grants: Record<(typeof VIDEO)[number], readonly string[]> = {
       viewVideo: ["admin", "editor", "external_editor"],
       uploadVideo: ["admin", "editor", "external_editor"],
@@ -124,15 +124,16 @@ describe("video review capabilities (#741)", () => {
       shareVideo: ["admin", "editor"],
       releaseVideo: ["admin", "editor"],
       manageVideoPremium: ["admin"],
+      manageVideoTrash: ["admin", "editor"],
     };
     for (const capability of VIDEO) {
       for (const role of ROLES) expect(roleHasCapability(role, capability), `${role} ${capability}`).toBe(grants[capability].includes(role));
     }
   });
 
-  it("gives photographers none of the six and Externals never share, release or premium", () => {
+  it("gives photographers none of the seven and Externals never share, release, premium or Trash", () => {
     for (const capability of VIDEO) expect(roleHasCapability("photographer", capability)).toBe(false);
-    for (const capability of ["shareVideo", "releaseVideo", "manageVideoPremium"] as const) expect(EXTERNAL_EDITOR_CAPABILITIES as readonly string[]).not.toContain(capability);
+    for (const capability of ["shareVideo", "releaseVideo", "manageVideoPremium", "manageVideoTrash"] as const) expect(EXTERNAL_EDITOR_CAPABILITIES as readonly string[]).not.toContain(capability);
   });
 });
 
