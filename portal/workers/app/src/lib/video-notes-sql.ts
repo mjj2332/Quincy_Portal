@@ -17,6 +17,16 @@ export const REPLY_INSERT_SQL = `INSERT INTO video_notes (id, project_id, video_
     AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?8)`;
 
 /**
+ * A guest's reply (#741 13b). Same shape as `REPLY_INSERT_SQL`, with the guest as author (`author_user_id` NULL, `author_role` the literal 'guest') and the extra rule that the root must be
+ * PUBLIC: visibility is still read off the root row, never a bind, and a guest can only attach to what a guest can see. `guard` is the guest fence (`guestNoteGuard`), appended to the WHERE.
+ * Binds: ?1 reply id, ?2 guest id, ?3 unused (the role), ?4 body, ?5 now, ?6 parent id, ?7 Project id, ?8 audit id, then the guard's.
+ */
+export const guestReplyInsertSql = (guard: string): string => `INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_guest_id, author_role, visibility, start_frame, end_frame, drawing_frame, body, revision, created_at)
+  SELECT ?1, p.project_id, p.video_id, p.asset_id, p.id, NULL, ?2, 'guest', p.visibility, NULL, NULL, NULL, ?4, 1, ?5
+  FROM video_notes p WHERE p.id = ?6 AND p.project_id = ?7 AND p.parent_id IS NULL AND p.deleted_at IS NULL AND p.visibility = 'public'
+    AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?8)${guard}`;
+
+/**
  * A source note is already on the target Version (#741, 5c): the target holds a copy of it, holds its original, or holds a sibling copy of
  * the same original. One step of lineage, on purpose: a deeper chain (v1 to v2 to v3, then v1 to v3 again) can still duplicate. A tombstoned
  * target copy still counts (the row exists); a hard-deleted one does not. The planner's read and the INSERT both use this, so they cannot drift.

@@ -5,8 +5,10 @@ import { newId } from "../lib/ids";
 import { hashToken, randomToken } from "../lib/opaque-token";
 import { hashPasscode, verifyPasscode } from "../lib/review-passcode";
 import type { AppEnv } from "../env";
-import { guestNotFound, guestRoute, INVALID, originRejection, readJson, sessionCookieHeader, TOO_LARGE, tooMany } from "./http";
-import { identityOf, loadActiveLink, resolveSession, sessionBody, type GuestSession } from "./link";
+import { committableSql } from "../lib/guest-fence-sql";
+import { guestNotFound, guestRoute, INVALID, readJson, sessionCookieHeader, TOO_LARGE, tooMany } from "./http";
+import { archivedRefusal, authenticateGuest, classifyRefusal as classifyFence } from "./fence";
+import { identityOf, sessionBody, type GuestSession } from "./link";
 import { clientAddress, emailBucket, GUEST_CODE_RESEND_MS, GUEST_DAY_MS, GUEST_LIMITS, ipBucket, reserveAttempts, windowStart } from "./rate-limit";
 
 /**
@@ -59,49 +61,15 @@ function sendFailureCode(error: unknown): string {
   return SAFE_SEND_ERRORS.has(code) ? code : "send_failed";
 }
 
-/** The session and link are still the ones a request resolved: the fence every write here repeats, so a revoke, replace or expiry landing mid-request writes nothing. */
-const LIVE_SESSION_SQL = `s.expires_at > ?NOW AND l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ?NOW AND s.link_generation = l.token_generation`;
-const live = (now: string) => LIVE_SESSION_SQL.replaceAll("?NOW", now);
-/** The feature gate as rows, for the link alias `l`: `video_review` on, `video_review_all_projects` or this Project's pilot row on, and the `guest` part on. Mirrors `readVideoReviewGate`. */
-const GATE_SQL = `EXISTS (SELECT 1 FROM feature_flags f WHERE f.enabled = 1 AND f.key = 'video_review')
-  AND EXISTS (SELECT 1 FROM feature_flags f WHERE f.enabled = 1 AND f.key IN ('video_review_all_projects', 'video_review_pilot:' || l.project_id))
-  AND EXISTS (SELECT 1 FROM feature_flags f WHERE f.enabled = 1 AND f.key = 'video_review_guest')`;
-const UNARCHIVED_SQL = "EXISTS (SELECT 1 FROM projects p WHERE p.id = l.project_id AND p.archived_at IS NULL)";
-/** Everything a committing statement re-checks, for aliases `s` and `l`: live session and link at `now`, the gate, and an unarchived Project. */
-const committable = (now: string) => `${live(now)} AND ${GATE_SQL} AND ${UNARCHIVED_SQL}`;
+const committable = (now: string) => committableSql(now, ["guest"]);
 
 /** The fence for aliases `s` (guest_sessions) and `l` (client_links), as SQL over the placeholders `now` (a time), `token` (hash) and `guest` (the guest id the request saw, or NULL). */
 const guestEmailFence = (bind: { now: string; token: string; guest: string }): string => `s.token_hash = ${bind.token} AND s.guest_id IS ${bind.guest} AND ${committable(bind.now)}`;
 
-/**
- * Whether a request was refused by the fence, and how. Runs at its own fresh time and BEFORE every non-success outcome of verify (no code row, `already_verified`, `code_expired`,
- * `code_incorrect`): the stub when the session, link or gate is gone (a revoke or replace deletes the session and its codes), `project_archived` (409) when only the Project is archived,
- * else null. One more case is not a refusal: the session row is still live but its token was rotated, which only a competing verify on this same session does. `rotatedIsRefusal` false
- * lets the caller go on (its code is spent, so it answers 401 `code_expired` and the client refetches the now-verified session); true answers the stub.
- */
-async function classifyRefusal(c: Context<AppEnv>, session: GuestSession, rotatedIsRefusal = true): Promise<Response | null> {
-  const row = await c.env.DB.prepare(`SELECT s.token_hash, p.archived_at FROM guest_sessions s JOIN client_links l ON l.id = s.link_id JOIN projects p ON p.id = l.project_id
-    WHERE s.id = ?1 AND ${live("?2")} AND ${GATE_SQL}`).bind(session.id, Date.now()).first<{ token_hash: string; archived_at: number | null }>();
-  if (!row) return guestNotFound(c);
-  if (row.archived_at !== null) return c.json({ error: "project_archived" }, 409);
-  return row.token_hash !== session.tokenHash && rotatedIsRefusal ? guestNotFound(c) : null;
-}
-/** An archived Project takes no writes: 409 before any limit is spent or body read. */
-async function archivedResponse(c: Context<AppEnv>, projectId: string): Promise<Response | null> {
-  const row = await c.env.DB.prepare("SELECT archived_at FROM projects WHERE id = ?1").bind(projectId).first<{ archived_at: number | null }>();
-  return row?.archived_at != null ? c.json({ error: "project_archived" }, 409) : null;
-}
-
 type Handled<P extends string> = Context<AppEnv, P>;
-
-/** Link, gate, Origin and session, in the guest order, or the response that ends the request. */
-async function authenticate<P extends string>(c: Handled<P>, now: number): Promise<{ session: GuestSession } | { response: Response }> {
-  const linkId = c.req.param("linkId" as never) as string;
-  if (!await loadActiveLink(c as unknown as Context<AppEnv>, linkId, now)) return { response: await guestNotFound(c as unknown as Context<AppEnv>) };
-  const rejected = originRejection(c as unknown as Context<AppEnv>); if (rejected) return { response: rejected };
-  const session = await resolveSession(c as unknown as Context<AppEnv>, linkId, now);
-  return session ? { session } : { response: await guestNotFound(c as unknown as Context<AppEnv>) };
-}
+const classifyRefusal = (c: Context<AppEnv>, session: GuestSession, rotatedIsRefusal = true) => classifyFence(c, session, rotatedIsRefusal);
+const authenticate = <P extends string>(c: Handled<P>, now: number) => authenticateGuest(c, now);
+const archivedResponse = archivedRefusal;
 
 async function sendCode(c: Handled<"/d/api/links/:linkId/email/code">): Promise<Response> {
   const now = Date.now(); const auth = await authenticate(c, now);
