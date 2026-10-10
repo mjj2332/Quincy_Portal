@@ -299,6 +299,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "ALL", path: "/dl/*", class: "terminal-fallback" },
   { method: "ALL", path: "/api", class: "terminal-fallback" },
   { method: "GET", path: "/d/review", class: "guest-link" },
+  { method: "GET", path: "/d/unsubscribe", class: "guest-link" },
   { method: "POST", path: "/d/api/links/:linkId/session", class: "guest-link" },
   { method: "GET", path: "/d/api/links/:linkId/session", class: "guest-link" },
   { method: "DELETE", path: "/d/api/links/:linkId/session", class: "guest-link" },

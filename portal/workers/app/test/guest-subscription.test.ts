@@ -269,3 +269,20 @@ describe("PUT /d/api/links/:linkId/subscription", () => {
     expect((await put(link, link.cookie)).status).toBe(200);
   });
 });
+
+describe("GET /d/unsubscribe (#741 15b): the SPA shell with no gate", () => {
+  it("serves the shell with every flag off, with the hygiene headers and frame-ancestors, for any query", async () => {
+    await clearVideoFlags();
+    for (const path of ["/d/unsubscribe", "/d/unsubscribe?x=1"]) {
+      const response = await guestFetch(path);
+      expect(response.status, path).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/html");
+      for (const [name, value] of Object.entries(HYGIENE)) expect(response.headers.get(name), name).toBe(value);
+      expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+      expect(await response.text()).toContain("<div id=\"root\"");
+    }
+  });
+  it("does not serve a sub-path: /d/unsubscribe/x is the stub", async () => {
+    expect((await guestFetch("/d/unsubscribe/x")).status).toBe(404);
+  });
+});

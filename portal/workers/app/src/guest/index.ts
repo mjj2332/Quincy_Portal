@@ -73,6 +73,13 @@ async function withSession(c: Context<AppEnv, string>, handler: (session: NonNul
   return session ? handler(session) : guestNotFound(c);
 }
 
+/** The SPA shell for a guest page, re-wrapped with its own framing policy (the Worker answers first, so `_headers` never applies). A missing shell is the stub. */
+async function guestShell(c: Context<AppEnv, string>): Promise<Response> {
+  const shell = await c.env.ASSETS.fetch(new Request(new URL("/", c.req.url), { method: "GET" }));
+  if (!shell.ok) { await shell.body?.cancel(); return guestNotFound(c); }
+  return new Response(shell.body, { status: 200, headers: { "content-type": shell.headers.get("content-type") ?? "text/html; charset=utf-8", "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" } });
+}
+
 export function mountGuest(app: Hono<AppEnv>): void {
   mountGuestEmail(app);
   mountGuestNotes(app);
@@ -85,11 +92,10 @@ export function mountGuest(app: Hono<AppEnv>): void {
     if (params.length !== 1 || params[0]![0] !== "link" || !UUID.test(params[0]![1])) return guestNotFound(c);
     if (!await guestGloballyOpen(c.env.DB)) return guestNotFound(c);
     // Any well-formed link id gets the same shell, live or not: the bytes reveal nothing, and the session API's stub is what tells the page the link is gone (it then shows the unavailable screen).
-    const shell = await c.env.ASSETS.fetch(new Request(new URL("/", c.req.url), { method: "GET" }));
-    if (!shell.ok) { await shell.body?.cancel(); return guestNotFound(c); }
-    // The Worker answers first, so `_headers` never applies here: the shell is re-wrapped with its own framing policy.
-    return new Response(shell.body, { status: 200, headers: { "content-type": shell.headers.get("content-type") ?? "text/html; charset=utf-8", "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" } });
+    return guestShell(c);
   }));
+  // #741 15b: the unsubscribe page. NO gate (settled decision 11): the digest email's link keeps working with every flag off. The token is in the fragment, so nothing in the query is read.
+  app.get("/d/unsubscribe", guestRoute("/d/unsubscribe", (c) => guestShell(c)));
 
   app.post("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", startSession));
   app.get("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", (c) => withSession(c, (session) => c.json(sessionBody(session.link, identityOf(session))))));
