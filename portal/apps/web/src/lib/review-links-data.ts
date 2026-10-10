@@ -2,13 +2,13 @@ import { useQuery, useQueryClient, type QueryClient, type UseQueryResult } from 
 import { reviewLinkListResponseSchema, reviewLinkRevealResponseSchema, reviewLinkResponseSchema, type ReviewLinkCreateInput, type ReviewLinkDto, type ReviewLinkPatchInput, type ReviewLinkRevealResponse } from "@quincy/shared";
 import { ZodError } from "zod";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./api";
-import { projectDataKeys, projectQueryRetry } from "./project-data";
+import { invalidateProjectSurfaces, projectQueryRetry, recordProjectArchivedRefusal, terminatePrincipalOnUnauthorized } from "./project-data";
 import { classifyReviewLinkError } from "./review-link-errors";
 
 /**
  * Review links (#741 11b): the Project's list and the seven writes. The list lives under the Project root so the project-removed sweep
  * clears it. Every write, success or failure, invalidates it afterwards (a refused write usually means the list is stale), and a write the
- * server answered "gate closed" also invalidates the Project's video-review parts so the UI hides itself. The URL a create or replace
+ * server answered "gate closed" also invalidates the Project's video-review parts and detail so the UI hides itself, a 401 ends the session, and an archive refusal is recorded. The URL a create or replace
  * returns is handed to the caller and never touches the cache.
  */
 export const reviewLinksKey = (projectId: string) => ["project-data", projectId, "review-links"] as const;
@@ -48,9 +48,17 @@ export function createReviewLinkActions(client: QueryClient, projectId: string):
   // A link the server just returned is seeded even into a list that never loaded (initial GET pending or failed), so Done can still open it;
   // the refetch that follows every write fills in the rest. A removal never invents a list.
   const upsert = (link: ReviewLinkDto) => remember((links) => (links.some((existing) => existing.id === link.id) ? links.map((existing) => (existing.id === link.id ? link : existing)) : [link, ...links]), true);
+  const surfaces = (resources: Array<{ kind: "video-review" } | { kind: "detail" }>) => invalidateProjectSurfaces(client, { projectId, resources, dashboard: false, calendar: false, gantt: false });
+  /** What a refusal changes before the caller sees it, whichever screen is mounted: a 401 ends the session; a closed gate or lost access asks the gate and the Project again; an archive is recorded, then the Project re-read. */
+  async function onRefusal(error: unknown) {
+    terminatePrincipalOnUnauthorized(client, error);
+    const classified = classifyReviewLinkError(error);
+    if (classified.action === "gateClosed") void surfaces([{ kind: "video-review" }, { kind: "detail" }]);
+    else if (classified.code === "project_archived") { await recordProjectArchivedRefusal(client, projectId); void surfaces([{ kind: "detail" }]); }
+  }
   async function settled<T>(task: () => Promise<T>): Promise<T> {
     try { return await task(); }
-    catch (error) { if (classifyReviewLinkError(error).action === "gateClosed") void client.invalidateQueries({ queryKey: projectDataKeys.videoReview(projectId) }); throw error; }
+    catch (error) { await onRefusal(error); throw error; }
     finally { void client.invalidateQueries({ queryKey: key }); }
   }
   const one = async (request: Promise<unknown>) => { const link = reviewLinkResponseSchema.parse(await request).link; await upsert(link); return link; };
