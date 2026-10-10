@@ -14,6 +14,7 @@ import { Notice } from "../quincy/Notice";
 import { Popover, PopoverContent, PopoverTrigger } from "../reui/popover";
 import { ScrollArea } from "../reui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
+import { EXPORT_PANEL_WIDTH, MarkerExportMenuItems, MarkerExportNotices, useMarkerExport } from "./VideoMarkerExportMenu";
 import { VideoNoteComposer } from "./VideoNoteComposer";
 import { VideoNotePasteDialog } from "./VideoNotePasteDialog";
 import { VideoNoteThread } from "./VideoNoteThread";
@@ -41,7 +42,7 @@ function deleteCopy(tombstone: boolean, conflicted: boolean) {
  * 721px) nothing inside scrolls on its own: the whole dialog scrolls, with the composer directly under the player ahead of the list.
  * It holds no data of its own: `session` (from `useVideoNotes`) is shared with the player, which draws the markers and takes I and O.
  */
-export function VideoNotesPanel({ session, video, detailsRows }: { session: VideoNotesSession; video: VideoDto; detailsRows: ReactNode }) {
+export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = false }: { session: VideoNotesSession; video: VideoDto; detailsRows: ReactNode; /** The Project's `export` part is on (#741 9): the ⋯ menu gains the marker export. */ exportEnabled?: boolean }) {
   const { query, threads, shown, filters, setFilters, selectedId, version, readOnly } = session;
   const now = useNow();
   const listRef = useRef<HTMLDivElement>(null);
@@ -77,6 +78,10 @@ export function VideoNotesPanel({ session, video, detailsRows }: { session: Vide
     session.forms.copyNotes(video.id, { sourceAssetId: session.assetId, sourceVersion: version.version, noteIds: ids });
     setPasted(ids.length > VIDEO_NOTE_PASTE_MAX ? `Copied the first ${VIDEO_NOTE_PASTE_MAX} of ${ids.length} notes` : `Copied ${ids.length} ${ids.length === 1 ? "note" : "notes"}`);
   };
+
+  // NLE marker export (#741 9): its options and request live in the hook, keyed by this Version; the ⋯ menu shows for anyone who can copy or export.
+  const canExport = exportEnabled && roleHasCapability(session.role, "viewVideo");
+  const exp = useMarkerExport({ enabled: canExport, projectId: session.projectId, assetId: session.assetId, userId: session.userId, title: video.title, version: version.version, threads });
 
   const counts = useMemo(() => noteCounts(threads ?? [], filters), [threads, filters]);
   // The thread holding the open edit or reply stays listed when the filters exclude it, so the form is never invisible. Counts and markers still follow the filters.
@@ -177,12 +182,15 @@ export function VideoNotesPanel({ session, video, detailsRows }: { session: Vide
           <PopoverTrigger render={<Button type="button" variant="text" data-testid="video-details-button" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}>Version details</PopoverTrigger>
           <PopoverContent align="end" className="w-[min(320px,calc(100vw-var(--space-5)))] max-h-[min(70dvh,520px)] overflow-y-auto" data-testid="video-details-popover">{detailsRows}</PopoverContent>
         </Popover>
-        {canCopy && <Menu triggerLabel="Notes actions" label="Notes actions" triggerClassName={ICON_BUTTON} triggerTestId="video-notes-menu" trigger={<span aria-hidden="true">⋯</span>}>
-          <MenuPrimitive.Item className={MENU_ITEM} disabled={shown.length === 0} onClick={copyShown}>Copy shown notes</MenuPrimitive.Item>
-          {pasteFrom && <MenuPrimitive.Item className={MENU_ITEM} onClick={() => { setPasteOpen(true); }}>{`Paste ${pasteFrom.noteIds.length} ${pasteFrom.noteIds.length === 1 ? "note" : "notes"} from v${pasteFrom.sourceVersion}…`}</MenuPrimitive.Item>}
+        {(canCopy || canExport) && <Menu triggerLabel="Notes actions" label="Notes actions" triggerClassName={ICON_BUTTON} panelClassName={canExport ? EXPORT_PANEL_WIDTH : undefined} triggerTestId="video-notes-menu" trigger={<span aria-hidden="true">⋯</span>}>
+          {canCopy && <MenuPrimitive.Item className={MENU_ITEM} disabled={shown.length === 0} onClick={copyShown}>Copy shown notes</MenuPrimitive.Item>}
+          {canCopy && pasteFrom && <MenuPrimitive.Item className={MENU_ITEM} onClick={() => { setPasteOpen(true); }}>{`Paste ${pasteFrom.noteIds.length} ${pasteFrom.noteIds.length === 1 ? "note" : "notes"} from v${pasteFrom.sourceVersion}…`}</MenuPrimitive.Item>}
+          {canExport && <MarkerExportMenuItems exp={exp} separated={canCopy} />}
         </Menu>}
       </div>
     </div>
+
+    <MarkerExportNotices exp={exp} className="max-[721px]:order-2" />
 
     {(pasteResult ?? pasted) && <Notice tone="positive" role="status" data-testid="video-notes-paste-status" className="max-[721px]:order-2">{pasteResult ?? pasted}</Notice>}
 
