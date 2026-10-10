@@ -6,6 +6,7 @@ import { useOptionalProjectQueryClient, useProjectAccessTermination, useProjectV
 import { onPrincipalTerminal } from "../../lib/principal-terminal";
 import { createCompareStore, type CompareStore } from "../../lib/video-compare-store";
 import { createNoteFormStore, type NoteFormStore } from "../../lib/video-note-form-store";
+import { createVideoApprovalStore, type VideoApprovalStore } from "../../lib/video-approval-store";
 import { abortVideoReservation, cancelVideoUpload, removeVideoUpload, retryVideoUpload, startVideoUpload, uploadIdentityGeneration, useVideoUploads } from "../../lib/video-upload-store";
 import { checkVideoFile } from "../../lib/video-upload";
 import { ViewLoadBoundary } from "../ViewLoadBoundary";
@@ -54,6 +55,11 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   if (compareRef.current?.key !== formsKey) { compareRef.current?.retire(); compareRef.current = createCompareStore(formsKey); }
   const compareStore = compareRef.current;
   const compareEnabled = review.parts.includes("compare");
+  // Decisions, Release and premium (#741 14-ui-staff): their writes and unsent note live and die with the forms, same key, same retirement.
+  const deliveryRef = useRef<VideoApprovalStore | null>(null);
+  if (deliveryRef.current?.key !== formsKey) { deliveryRef.current?.retire(); deliveryRef.current = createVideoApprovalStore(formsKey); }
+  const deliveryStore = deliveryRef.current;
+  const deliveryEnabled = review.parts.includes("delivery");
   useEffect(() => {
     // The notice names the session's query client: a retired session's late 401 must not cancel this session's confirmation (as in video-upload-store).
     const off = onPrincipalTerminal((terminated) => { if (terminated === undefined || terminated === queryClient) forms.cancelAll(); });
@@ -123,7 +129,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     </div>
     {openVideo && <ViewLoadBoundary viewLabel="video player">
       <Suspense fallback={null}>
-        <Viewer video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => opener.current} {...(notesEnabled ? { notes: { projectId, role, userId, archived, forms, markup: markupEnabled, exportEnabled } } : {})} {...(compareEnabled ? { compare: { store: compareStore } } : {})} />
+        <Viewer video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => opener.current} {...(notesEnabled ? { notes: { projectId, role, userId, archived, forms, markup: markupEnabled, exportEnabled } } : {})} {...(compareEnabled ? { compare: { store: compareStore } } : {})} {...(deliveryEnabled ? { delivery: { projectId, role, archived, store: deliveryStore } } : {})} />
       </Suspense>
     </ViewLoadBoundary>}
   </section>;

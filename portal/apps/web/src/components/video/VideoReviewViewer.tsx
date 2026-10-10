@@ -13,10 +13,13 @@ import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
 import { formatBytes, formatDuration, formatFps, formatVideoDate } from "./video-format";
 import type { NoteFormStore } from "../../lib/video-note-form-store";
+import type { VideoApprovalStore } from "../../lib/video-approval-store";
 import type { VideoNotesSession } from "./use-video-notes";
 
 /** The notes UI is its own chunk: a Project whose notes part is off never loads it. */
 const LazyNotesHost = lazy(() => import("./VideoNotesHost"));
+/** Decisions, Release and premium (#741 14-ui-staff) are their own chunk: a Project whose `delivery` part is off never loads it. */
+const LazyDeliveryPanel = lazy(() => import("./VideoDeliveryPanel").then((module) => ({ default: module.VideoDeliveryPanel })));
 /** Compare (#741 7c) is its own chunk too, and the viewer never imports the transport: only a Project whose `compare` part is on, and only when a reviewer opens it. */
 const loadCompare = () => import("./CompareView");
 const LazyCompareView = lazy(loadCompare);
@@ -34,7 +37,7 @@ const VERSION_SELECT_ID = "video-review-version";
  * With `notes` (the Project's `notes` part is on, #741 5b) the Version details column becomes the notes panel, and the Version details
  * move behind a button in its header; without it the viewer is exactly the 4d-ii viewer.
  */
-export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare }: {
+export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery }: {
   video: VideoDto;
   onClose: () => void;
   /** The control that opened the viewer; focus goes back to it on close. */
@@ -43,6 +46,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   notes?: { projectId: string; role: Role; userId: string | null; archived: boolean; forms: NoteFormStore; /** The Project's `markup` part is on (#741 6b-ui). */ markup?: boolean; /** The Project's `export` part is on (#741 9). */ exportEnabled?: boolean };
   /** Present only when the Project's `compare` part is on (#741 7c). */
   compare?: { store: CompareStore };
+  /** Present only when the Project's `delivery` part is on (#741 14-ui-staff): decisions, Release and premium under the player. */
+  delivery?: { projectId: string; role: Role; archived: boolean; store: VideoApprovalStore };
 }) {
   const [assetId, setAssetId] = useState(video.currentAssetId);
   const playerRef = useRef<VideoPlayerControl>(null);
@@ -234,8 +239,9 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     </header>;
   const layout = (slots: { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode } | null): ReactNode => <>
     <div className="flex min-h-0 flex-1 flex-wrap overflow-y-auto min-[721px]:flex-nowrap min-[721px]:overflow-hidden">
-      <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col min-[721px]:flex-1 p-[var(--space-5)]">
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" initialMuted={muted} onMutedChange={setMuted} className="flex-1" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...slots?.playerProps} />
+      <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col overflow-y-auto min-[721px]:flex-1 p-[var(--space-5)]">
+        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...slots?.playerProps} />
+        {delivery && <div className="mt-[var(--space-4)] shrink-0"><Suspense fallback={null}><LazyDeliveryPanel projectId={delivery.projectId} role={delivery.role} archived={delivery.archived} video={video} version={version} store={delivery.store} /></Suspense></div>}
       </div>
       {slots
         ? slots.panel
@@ -254,7 +260,12 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       initialFocus={popupRef}
       showCloseButton={false}
       finalFocus={() => { const opener = returnFocusTo?.(); return opener && opener.isConnected ? opener : true; }}
-      onKeyDown={(event) => { (modeRef.current === "compare" ? compareRef.current : playerRef.current)?.handleKeyDown(event); }}
+      onKeyDown={(event) => {
+        // A dialog portalled out of the viewer (a confirm, a note-delete) still bubbles its keys here through React: leave them to that dialog.
+        const host = (event.target as Element).closest?.('[role=dialog],[role=alertdialog]');
+        if (host && host !== event.currentTarget) return;
+        (modeRef.current === "compare" ? compareRef.current : playerRef.current)?.handleKeyDown(event);
+      }}
       className="top-0 left-0 flex h-dvh w-dvw max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none bg-background p-0 text-foreground ring-0 focus-visible:!outline-none sm:max-w-none"
     >
       <OverlayContainerContext.Provider value={slot}>
