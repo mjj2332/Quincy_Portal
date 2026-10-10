@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { ChevronLeft, ChevronRight, MessageSquare } from "lucide-react";
-import { framesToTimecode, type Box, type GuestNoteThreadDto, type GuestVideoDto } from "@quincy/shared";
+import { framesToTimecode, type Box, type GuestNoteThreadDto, type GuestSessionResponse, type GuestVideoDto } from "@quincy/shared";
 import { useMediaQuery } from "../lib/use-media-query";
 import type { VideoFrameClock } from "../lib/video-frame-clock";
 import { Button } from "../components/reui/button";
@@ -9,8 +9,13 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../components/reui
 import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "../components/quincy/SheetCloseButton";
 import { VideoPlayer, type VideoPlayerControl } from "../components/quincy/VideoPlayer";
 import type { TimelineMarker } from "../components/quincy/VideoTimelineMarkers";
-import type { GuestApi } from "./guest-api";
+import type { GuestApi, WriteResult } from "./guest-api";
+import { failureText, removeThread, upsertThread } from "./guest-compose";
+import type { ActionOutcome, NoteActions, Writing } from "./GuestNoteItem";
 import { GuestNotesPanel } from "./GuestNotesPanel";
+import { GuestVerifyDialog } from "./GuestVerifyDialog";
+import { useGuestCompose } from "./use-guest-compose";
+import { useGuestWriter, type Skipped } from "./use-guest-writer";
 import { useGuestMarkup } from "./GuestMarkup";
 import { PremiumWatermark } from "./PremiumWatermark";
 
@@ -51,8 +56,14 @@ function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
  * One Video on the guest page (#741 12b), read-only: the reused review player on the inverse surface, the granted-Versions select, previous / next Video, and the public notes (a
  * column beside the player, a bottom drawer below 721px). Moving between Videos never returns to the list. State is in memory; the URL does not change.
  */
-export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged }: {
+export function GuestVideoScreen({ api, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged }: {
   api: GuestApi;
+  session: GuestSessionResponse;
+  /** The session changed: verified (the verify route's body), or verification lost (a 401 on a write). */
+  onSession: (next: GuestSessionResponse) => void;
+  /** A write found the Project archived: notes are read-only from here. */
+  archived: boolean;
+  onArchived: () => void;
   videos: readonly GuestVideoDto[];
   index: number;
   onIndex: (next: number) => void;
@@ -77,18 +88,31 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
   const [drawerOpen, setDrawerOpen] = useState(false);
   const phone = useMediaQuery("(max-width: 720px)");
 
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  // What the verify dialog was opened for, so a successful code lands the guest where they were going.
+  const afterVerify = useRef<"compose" | "none">("none");
+  const reopenDrawer = useRef(false);
+  const writer = useGuestWriter(version.assetId, {
+    onUnverified: () => { afterVerify.current = "none"; setVerifyOpen(true); onSession({ ...session, verified: false, email: null, name: null }); },
+    onGone: onUnavailable,
+    onArchived,
+  });
+
   useEffect(() => {
     let live = true;
     noteGeneration.current += 1;
     setThreads(null); setSelectedId(null); setNotesFailed(false);
+    // A write that started or settled while this read was out has already applied its own, newer answer: drop the read and read again, so it can never overwrite that answer.
+    const epoch = writer.epoch();
     void api.notes(version.assetId).then((result) => {
       if (!live) return;
+      if (result.kind === "ok" && writer.epoch() !== epoch) { setNotesAttempt((n) => n + 1); return; }
       if (result.kind === "gone") onUnavailable();
       else if (result.kind === "transient") setNotesFailed(true);
       else setThreads(result.value);
     });
     return () => { live = false; };
-  }, [api, version.assetId, notesAttempt, onUnavailable]);
+  }, [api, version.assetId, notesAttempt, onUnavailable, writer]);
 
   // A stream that fails mid-play (a seek needing another range request) may mean staff revoked the link. The player has already shown its own notice; recheck access.
   // If the session is fine, the Video or this Version may still have been taken off the link: re-read the granted list, and leave only when the displayed Version is no longer in it.
@@ -149,13 +173,56 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
   }, [clock]);
   const markupOverlay = useGuestMarkup(api, clock, selected, onMarkupGone, selectionCount);
   const watermark = video.premium && !video.unlocked;
-  const overlay = useCallback((box: Box | null) => <>{watermark && box && <PremiumWatermark box={box} />}{markupOverlay(box)}</>, [watermark, markupOverlay]);
+
+  // Writes (#741 13c). Every answer is applied to the thread list by id, and only if it is not stale; the settle below is the one place a WriteResult becomes list state and words.
+  const canWrite = session.link.allow.comments && !archived;
+  const settle = useCallback((result: WriteResult | Skipped, rootId: string | null): ActionOutcome => {
+    if (result.kind === "stale") return { ok: false, message: null };
+    if (result.kind === "busy") return { ok: false, message: "Another change to this note is still saving." };
+    if (result.kind === "ok" || result.kind === "conflict") {
+      if (result.thread !== null) { const fresh = result.thread; setThreads((list) => (list === null ? list : upsertThread(list, fresh))); }
+      else if (rootId !== null) { setThreads((list) => (list === null ? list : removeThread(list, rootId))); setSelectedId((current) => (current === rootId ? null : current)); }
+    } else if (result.kind === "deleted") setNotesAttempt((n) => n + 1);
+    const message = failureText(result);
+    return message === null ? { ok: true } : { ok: false, message };
+  }, []);
+  const assetForWrites = version.assetId;
+  const post = useCallback(async (input: Parameters<GuestApi["createNote"]>[1]) => settle(await writer.run(`new:${assetForWrites}`, () => api.createNote(assetForWrites, input)), null), [api, writer, settle, assetForWrites]);
+  const actions = useMemo<NoteActions>(() => ({
+    reply: async (root, body) => settle(await writer.run(root.id, () => api.replyToNote(root.id, body)), root.id),
+    edit: async (root, note, body) => settle(await writer.run(root.id, () => api.editNote(note.id, { expectedRevision: note.revision, body })), root.id),
+    remove: async (root, note) => settle(await writer.run(root.id, () => api.deleteNote(note.id, note.revision)), note.id === root.id ? root.id : null),
+  }), [api, writer, settle]);
+
+  const onDrawingChange = useCallback((drawing: boolean) => { if (phone) setDrawerOpen(!drawing); }, [phone]);
+  const compose = useGuestCompose({ clock, frameCount: version.frameCount, timecode, post, onDrawingChange });
+  // A draft belongs to the Version it was made on; an archived Project takes it away.
+  const { close: closeComposer } = compose;
+  useEffect(() => { closeComposer(); }, [version.assetId, closeComposer]);
+  useEffect(() => { if (archived) closeComposer(); }, [archived, closeComposer]);
+
+  const requestVerify = useCallback((then: "compose" | "none") => {
+    afterVerify.current = then;
+    reopenDrawer.current = phone && drawerOpen;
+    if (reopenDrawer.current) setDrawerOpen(false);
+    setVerifyOpen(true);
+  }, [phone, drawerOpen]);
+  const finishVerify = useCallback(() => {
+    setVerifyOpen(false);
+    if (reopenDrawer.current) { reopenDrawer.current = false; setDrawerOpen(true); }
+  }, []);
+  const writing = useMemo<Writing>(() => ({ canWrite, verified: session.verified, actions, onNeedVerify: () => { requestVerify("none"); } }), [canWrite, session.verified, actions, requestVerify]);
+  const addNote = canWrite
+    ? compose.isOpen ? compose.form : <Button type="button" variant="outline" data-testid="guest-add-note" className={TOUCH} onClick={() => { if (session.verified) compose.begin(); else requestVerify("compose"); }}>Add a note</Button>
+    : null;
+
+  const overlay = useCallback((box: Box | null) => <>{watermark && box && <PremiumWatermark box={box} />}{markupOverlay(box)}{compose.overlay(box)}</>, [watermark, markupOverlay, compose.overlay]); // eslint-disable-line react-hooks/exhaustive-deps -- compose.overlay is the dependency that matters
 
   const newest = video.versions[0]!.version;
   const optionLabel = (candidate: GuestVideoDto["versions"][number]) => `v${candidate.version}${candidate.version === newest ? " · latest" : ""}`;
   const headingContent = <>Notes{threads !== null && <><span className="sr-only"> </span><span data-testid="guest-notes-count" className="ms-[var(--space-1)] text-foreground-secondary [font:var(--type-label)]">{threads.length}</span></>}</>;
   const heading = <h2 data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</h2>;
-  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} />;
+  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} top={addNote} writing={writing} />;
 
   return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-dvh flex-col bg-background text-foreground">
     <header className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-2)] border-b border-border bg-card px-[var(--space-5)] py-[var(--space-3)] text-card-foreground">
@@ -183,7 +250,7 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
     </header>
     <div className="flex min-h-0 flex-1 flex-wrap min-[721px]:flex-nowrap">
       <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col p-[var(--space-5)] min-[721px]:flex-1">
-        <VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} overlay={overlay} onMediaError={onMediaError} />
+        <VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} overlay={overlay} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} />
       </div>
       {!phone && <aside data-surface="default" className="flex flex-[1_1_360px] flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:max-h-dvh min-[721px]:flex-[0_0_clamp(240px,28vw,360px)]">{panel}</aside>}
     </div>
@@ -194,5 +261,7 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
         <SheetCloseButton label="Close notes" data-testid="guest-notes-close" />
       </SheetContent>
     </Sheet>}
+    <GuestVerifyDialog api={api} open={verifyOpen} onOpenChange={(next) => { if (next) setVerifyOpen(true); else finishVerify(); }} onGone={() => { setVerifyOpen(false); onUnavailable(); }}
+      onVerified={(next) => { onSession(next); const then = afterVerify.current; afterVerify.current = "none"; finishVerify(); if (then === "compose") compose.begin(); }} />
   </div>;
 }

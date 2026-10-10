@@ -671,11 +671,17 @@ describe("Sol round 7", () => {
       videos: async () => { await gate; return { kind: "ok", value: [] }; },
       notes: async () => ({ kind: "ok", value: [] }),
       markup: async () => ({ kind: "gone" }),
+      sendCode: async () => ({ ok: false, reason: "gone" }),
+      verifyCode: async () => ({ ok: false, reason: "gone" }),
+      createNote: async () => ({ kind: "gone" }),
+      replyToNote: async () => ({ kind: "gone" }),
+      editNote: async () => ({ kind: "gone" }),
+      deleteNote: async () => ({ kind: "gone" }),
     };
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
-    await act(async () => { root!.render(<GuestVideoScreen api={api} videos={videos} index={0} onIndex={() => undefined} onBack={null} onUnavailable={onUnavailable} onGrantsChanged={onGrantsChanged} />); });
+    await act(async () => { root!.render(<GuestVideoScreen api={api} session={SESSION} onSession={() => undefined} archived={false} onArchived={() => undefined} videos={videos} index={0} onIndex={() => undefined} onBack={null} onUnavailable={onUnavailable} onGrantsChanged={onGrantsChanged} />); });
     await flush();
     await act(async () => { stub.fireError(host.querySelector("video")!); });
     await act(async () => { root!.unmount(); });
