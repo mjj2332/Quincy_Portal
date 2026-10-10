@@ -339,6 +339,7 @@ describe("committing a paste", () => {
     expect((pasteCalls(COMMIT_URL)[0]!.body as { offsetFrames: number }).offsetFrames).toBe(1);
   });
   it("refreshes the preview on paste_stale, tells the guest, and sends the new revision next", async () => {
+    notes = { [SOURCE]: [mine(1, { startFrame: 50 })] }; // one own note, so the canned plan covers every ticked note like the server's does
     withPlan([mapped(1)]);
     const base = extra!;
     let commits = 0;
@@ -463,5 +464,53 @@ describe("a paste that settles after the guest moved on", () => {
     await openDialog();
     expect(byId("guest-paste-dialog")).not.toBeNull();
     expect(rowIds()).toEqual([]);
+  });
+  it("shows its own preview, with Paste enabled, when the dialog is reopened while the cancelled one is still pending", async () => {
+    let release: (response: Response) => void = () => undefined;
+    const held = new Promise<Response>((resolve) => { release = resolve; });
+    let previews = 0;
+    extra = (url, init) => {
+      if (url !== PREVIEW_URL || init?.method !== "POST") return undefined;
+      previews += 1;
+      return previews === 1 ? held : json(plan([mapped(1), mapped(2)]));
+    };
+    await open();
+    await openDialog();
+    await click(byId("guest-paste-cancel"));
+    await openDialog();
+    await act(async () => { release(json(plan([mapped(1), mapped(2)]))); });
+    await flush();
+    expect(rowIds()).toEqual([noteId(1), noteId(2)]);
+    expect(byId("guest-paste-submit")?.hasAttribute("disabled")).toBe(false);
+  });
+});
+
+describe("a stale answer for part of the selection", () => {
+  it("lets a note that was unticked before the stale answer be ticked again and pasted", async () => {
+    const planFor = (init: RequestInit | undefined, edited: boolean) => plan((JSON.parse(String(init?.body)) as { noteIds: string[] }).noteIds.map((id) => { const n = Number(id.slice(-12)); return mapped(n, n === 1 && edited ? { source: sourceRow(1, { revision: 2 }) } : {}); }));
+    let commits = 0;
+    extra = (url, init) => {
+      if (url === PREVIEW_URL && init?.method === "POST") return json(planFor(init, commits > 0));
+      if (url === COMMIT_URL && init?.method === "POST") {
+        commits += 1;
+        const sent = (JSON.parse(String(init.body)) as { notes: Array<{ noteId: string }> }).notes.map((entry) => entry.noteId);
+        return commits === 1 ? json({ error: "paste_stale", preview: plan(sent.map((id) => mapped(Number(id.slice(-12)), Number(id.slice(-12)) === 1 ? { source: sourceRow(1, { revision: 2 }) } : {}))) }, 409) : json(receipt([copied(1, 11), copied(2, 12)], 2));
+      }
+      return undefined;
+    };
+    await open();
+    await openDialog();
+    await click(allById("guest-paste-tick")[1]);
+    await click(byId("guest-paste-submit"));
+    expect((pasteCalls(COMMIT_URL)[0]!.body as { notes: Array<{ noteId: string }> }).notes.map((entry) => entry.noteId)).toEqual([noteId(1)]);
+    expect(byId("guest-paste-notice")).not.toBeNull();
+    const before = pasteCalls(PREVIEW_URL).length;
+    await click(allById("guest-paste-tick")[1]);
+    await wait(400);
+    expect(pasteCalls(PREVIEW_URL).length).toBeGreaterThan(before);
+    expect(rowIds()).toEqual([noteId(1), noteId(2)]);
+    expect(byId("guest-paste-submit")?.hasAttribute("disabled")).toBe(false);
+    await click(byId("guest-paste-submit"));
+    expect((pasteCalls(COMMIT_URL)[1]!.body as { notes: Array<{ noteId: string }> }).notes.map((entry) => entry.noteId)).toEqual([noteId(1), noteId(2)]);
   });
 });

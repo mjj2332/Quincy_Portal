@@ -29,6 +29,12 @@ type Own = { status: "loading" } | { status: "failed" } | { status: "ready"; sou
 /** `key` is the `{source, target}` pair the plan was made for: a plan is only used while the pair on screen is the same. */
 type View = { plan: GuestNotePastePreviewResponse | null; status: "idle" | "loading" | "ok" | "failed"; error: string | null; key: string | null; ids: string | null };
 
+/** Whether a plan whose real membership is `planIds` answers for every note that is ticked (an unticked one is not asked for, so its absence is no gap). */
+const covered = (planIds: string | null, ticked: readonly string[], unticked: ReadonlySet<string>): boolean => {
+  const inPlan = new Set(planIds === null ? [] : planIds.split(","));
+  return ticked.every((id) => unticked.has(id) || inPlan.has(id));
+};
+
 const timecodeOf = (version: Version) => (frame: number) => framesToTimecode(frame, { nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame }, version.startTimecodeFrames ?? 0);
 
 /**
@@ -67,13 +73,14 @@ export function GuestPasteDialog({ api, writer, open, onOpenChange, video, targe
   wasOpen.current = open;
   return <Dialog open={open} onOpenChange={(next) => { if (!committing.current || next) onOpenChange(next); }}>
     <DialogContent data-testid="guest-paste-dialog" showCloseButton={false} onKeyDown={(event) => { if (event.key !== "Escape") event.stopPropagation(); }} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col gap-[var(--space-3)] sm:max-w-xl">
-      <PasteFlow key={opening} api={api} writer={writer} video={video} target={target} markupAllowed={markupAllowed} generation={generation} committing={committing} onClose={() => { onOpenChange(false); }} onPasted={onPasted} onGone={onGone} />
+      <PasteFlow key={opening} opening={opening} api={api} writer={writer} video={video} target={target} markupAllowed={markupAllowed} generation={generation} committing={committing} onClose={() => { onOpenChange(false); }} onPasted={onPasted} onGone={onGone} />
     </DialogContent>
   </Dialog>;
 }
 
-function PasteFlow({ api, writer, video, target, markupAllowed, generation, committing, onClose, onPasted, onGone }: {
-  api: GuestApi; writer: GuestWriter; video: GuestVideoDto; target: Version; markupAllowed: boolean;
+function PasteFlow({ opening, api, writer, video, target, markupAllowed, generation, committing, onClose, onPasted, onGone }: {
+  /** Which opening of the dialog this flow is: the writer outlives the flow, so a preview key must say which opening asked. */
+  opening: number; api: GuestApi; writer: GuestWriter; video: GuestVideoDto; target: Version; markupAllowed: boolean;
   generation: MutableRefObject<number>; committing: MutableRefObject<boolean>;
   onClose: () => void; onPasted: (landed: { copied: number; sourceVersion: number } | null) => void; onGone: () => void;
 }) {
@@ -94,6 +101,8 @@ function PasteFlow({ api, writer, video, target, markupAllowed, generation, comm
   const [pending, setPending] = useState(false);
   /** Names each preview call to the writer, so two in flight never share a key. */
   const previewCalls = useRef(0);
+  /** How many times in a row the writer answered `busy` for a preview (it should not, since each key is its own). */
+  const busyRetries = useRef(0);
   const pairKey = `${source?.assetId ?? ""}|${target.assetId}`;
 
   // The offset field is always live; the plan follows it once it has rested.
@@ -144,17 +153,24 @@ function PasteFlow({ api, writer, video, target, markupAllowed, generation, comm
     const key = `${source.assetId}|${target.assetId}`;
     const call = ++previewCalls.current;
     let live = true;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     setView((current) => ({ ...current, status: "loading", error: null }));
-    void writer.run(`paste-preview:${target.assetId}:${call}`, () => api.previewPaste(target.assetId, { sourceAssetId: source.assetId, noteIds, offsetFrames: asked })).then((result) => {
+    void writer.run(`paste-preview:${target.assetId}:${opening}:${call}`, () => api.previewPaste(target.assetId, { sourceAssetId: source.assetId, noteIds, offsetFrames: asked })).then((result) => {
       if (!live || generation.current !== started) return;
-      if (result.kind === "stale" || result.kind === "busy") return;
-      if (result.kind === "ok" || result.kind === "changed") { setView({ plan: result.kind === "ok" ? result.value : result.preview, status: "ok", error: null, key, ids: askedKey }); return; }
+      if (result.kind === "stale") return;
+      if (result.kind === "busy") {
+        // Another request holds the key: ask again shortly rather than stay loading for ever.
+        if (busyRetries.current < 3) { busyRetries.current += 1; retry = setTimeout(() => { setPreviewAttempt((n) => n + 1); }, GUEST_PASTE_PREVIEW_DEBOUNCE_MS); return; }
+        busyRetries.current = 0; setView((current) => ({ ...current, status: "failed", error: "Couldn't load the preview. Try again." })); return;
+      }
+      busyRetries.current = 0;
+      if (result.kind === "ok" || result.kind === "changed") { setView({ plan: result.kind === "ok" ? result.value : result.preview, status: "ok", error: null, key, ids: result.kind === "ok" ? askedKey : result.preview.rows.map((row) => row.noteId).join(",") }); return; }
       const text = pasteFailureText(result, "preview");
       if (text === null) { onClose(); return; } // verification lost, link gone or archived: the page has already been told
       setView((current) => ({ ...current, status: "failed", error: text }));
     });
     // Whatever changes the question (notes, source, target, offset, a retry) or closes the flow makes this answer a stale one.
-    return () => { live = false; };
+    return () => { live = false; clearTimeout(retry); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the plan depends on which notes, from where, to where and the offset
   }, [askedKey, asked, source?.assetId, target.assetId, previewAttempt]);
 
@@ -162,7 +178,7 @@ function PasteFlow({ api, writer, video, target, markupAllowed, generation, comm
   const mapped = useMemo(() => (plan?.rows ?? []).filter((row): row is Mapped => row.status === "mapped"), [plan]);
   const left = useMemo(() => (plan?.rows ?? []).filter((row): row is Skipped => row.status === "skipped"), [plan]);
   const chosen = mapped.filter((row) => !unticked.has(row.noteId));
-  const settled = plan !== null && view.status === "ok" && plan.offsetFrames === offset && previewKey !== null && view.ids === previewKey;
+  const settled = plan !== null && view.status === "ok" && plan.offsetFrames === offset && previewKey !== null && covered(view.ids, tickedIds, unticked);
   // The rows follow the guest's own order. A note the plan was not asked about (unticked past the cap) is a row too, so it can be ticked; one the plan left out is under "Left out".
   const rows = useMemo(() => {
     if (plan === null) return [] as Entry[];
@@ -192,7 +208,7 @@ function PasteFlow({ api, writer, video, target, markupAllowed, generation, comm
     switch (result.kind) {
       case "busy": setFailure("Still pasting. Wait a moment, then try again."); return;
       case "ok": onPasted({ copied: result.value.copied, sourceVersion: result.value.sourceVersion }); onClose(); return;
-      case "changed": setView({ plan: result.preview, status: "ok", error: null, key: pairKey, ids: previewKey }); setNotice("Some of your notes changed since you looked. Check the list, then paste again."); return;
+      case "changed": setView({ plan: result.preview, status: "ok", error: null, key: pairKey, ids: result.preview.rows.map((row) => row.noteId).join(",") }); setNotice("Some of your notes changed since you looked. Check the list, then paste again."); return;
       case "unverified": case "gone": case "archived": onClose(); return;
       case "unreachable": onPasted(null); setFailure(pasteFailureText(result, "commit")); return;
       default: setFailure(pasteFailureText(result, "commit"));
@@ -241,7 +257,10 @@ function PasteFlow({ api, writer, video, target, markupAllowed, generation, comm
       {plan !== null && rows.length > 0 && <ItemGroup aria-label="Notes to copy" className={cn("gap-[var(--space-2)]", !settled && "opacity-60")}>
         {rows.map(({ id, mapped: row, note }) => <Item key={id} variant="outline" size="xs" data-testid="guest-paste-row" data-note-id={id} className={cn(TOUCH, "flex-nowrap items-start")}>
           <Checkbox aria-label={`Copy note: ${row?.source.excerpt ?? note?.excerpt ?? ""}`} data-testid="guest-paste-tick" className="mt-0.5 pointer-coarse:after:-inset-3.5 max-[721px]:after:-inset-3.5 data-unchecked:border-[var(--control-off)]" checked={!unticked.has(id)} disabled={pending}
-            onCheckedChange={(checked) => { setUnticked((current) => { const next = new Set(current); if (checked) next.delete(id); else next.add(id); return next; }); }} />
+            onCheckedChange={(checked) => {
+              // A tick on a note the plan on show never covered (a stale answer left it out) needs a plan of its own; past the cap the changed selection asks for it.
+              if (checked && !overflow && !covered(view.ids, [id], new Set())) setPreviewAttempt((n) => n + 1);
+              setUnticked((current) => { const next = new Set(current); if (checked) next.delete(id); else next.add(id); return next; }); }} />
           <ItemContent>
             <ItemTitle className="line-clamp-3 w-full [overflow-wrap:anywhere]">{row?.source.excerpt ?? note?.excerpt}</ItemTitle>
             <ItemDescription className="[font:var(--type-mono)] tabular-nums">{row ? `${sourceLabel} ${noteAnchorLabel(row.source.from as { startFrame: number; endFrame: number | null }, sourceTc)} → v${target.version} ${noteAnchorLabel(row.to, targetTc)}` : `${sourceLabel} ${noteAnchorLabel(note!, sourceTc)}`}</ItemDescription>
