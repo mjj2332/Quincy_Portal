@@ -1,5 +1,6 @@
+import { reachSql } from "../lib/guest-fence-sql";
 import {
-  guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestVideoListResponseSchema,
+  guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNoteThreadDtoSchema, guestVideoListResponseSchema,
   type GuestNoteListResponse, type GuestNoteMarkupResponse, type GuestNoteThreadDto, type GuestNoteDto, type GuestVideoListResponse,
 } from "@quincy/shared";
 
@@ -62,17 +63,18 @@ export async function resolveGrantedVersion(db: D1Database, linkId: string, proj
 }
 
 type NoteRow = {
-  id: string; parent_id: string | null; author_guest_id: string | null; start_frame: number | null; end_frame: number | null; drawing_frame: number | null; body: string;
+  id: string; parent_id: string | null; author_guest_id: string | null; start_frame: number | null; end_frame: number | null; drawing_frame: number | null; body: string; revision: number;
   resolved_at: number | null; deleted_at: number | null; created_at: number; edited_at: number | null; u_name: string | null; g_name: string | null; has_markup: number;
 };
 
-function noteDto(row: NoteRow): GuestNoteDto {
+/** `viewer` is the guest id of the session reading (null while unverified): `self` is true only for the viewer's own notes, and no guest is ever shown another's email or id. */
+function noteDto(row: NoteRow, viewer: string | null): GuestNoteDto {
   const deleted = row.deleted_at !== null;
   return {
     id: row.id, parentId: row.parent_id,
-    author: row.author_guest_id !== null ? { kind: "guest", name: row.g_name ?? "Client reviewer", self: false } : { kind: "studio", name: row.u_name ?? "Studio" },
+    author: row.author_guest_id !== null ? { kind: "guest", name: row.g_name ?? "Client reviewer", self: viewer !== null && row.author_guest_id === viewer } : { kind: "studio", name: row.u_name ?? "Studio" },
     startFrame: row.start_frame, endFrame: row.end_frame, drawingFrame: deleted ? null : row.drawing_frame, hasMarkup: deleted ? false : row.has_markup === 1,
-    body: deleted ? "" : row.body, deleted, resolved: row.resolved_at !== null, createdAt: iso(row.created_at), editedAt: row.edited_at === null ? null : iso(row.edited_at),
+    body: deleted ? "" : row.body, deleted, revision: row.revision, resolved: row.resolved_at !== null, createdAt: iso(row.created_at), editedAt: row.edited_at === null ? null : iso(row.edited_at),
   };
 }
 
@@ -80,14 +82,14 @@ function noteDto(row: NoteRow): GuestNoteDto {
  * Public roots with their replies for one Version. `visibility = 'public'` is in the WHERE of the single query: visibility is immutable and a reply inherits its root's, so roots and
  * replies are both covered, and `has_markup` is read off the public rows alone. A root deleted with no reply left is not shown (a tombstone is shown only while it holds a thread).
  */
-export async function listGuestNotes(db: D1Database, projectId: string, assetId: string): Promise<GuestNoteListResponse> {
-  const rows = (await db.prepare(`SELECT n.id, n.parent_id, n.author_guest_id, n.start_frame, n.end_frame, n.drawing_frame, n.body, n.resolved_at, n.deleted_at, n.created_at, n.edited_at,
+export async function listGuestNotes(db: D1Database, projectId: string, assetId: string, viewer: string | null): Promise<GuestNoteListResponse> {
+  const rows = (await db.prepare(`SELECT n.id, n.parent_id, n.author_guest_id, n.start_frame, n.end_frame, n.drawing_frame, n.body, n.revision, n.resolved_at, n.deleted_at, n.created_at, n.edited_at,
       u.name AS u_name, g.display_name AS g_name, (k.note_id IS NOT NULL) AS has_markup
     FROM video_notes n LEFT JOIN user u ON u.id = n.author_user_id LEFT JOIN guest_reviewers g ON g.id = n.author_guest_id LEFT JOIN video_note_markup k ON k.note_id = n.id
     WHERE n.asset_id = ?1 AND n.project_id = ?2 AND n.visibility = 'public' ORDER BY (n.parent_id IS NOT NULL), n.start_frame, n.created_at, n.id`).bind(assetId, projectId).all<NoteRow>()).results;
   const threads = new Map<string, GuestNoteThreadDto>(); const order: GuestNoteThreadDto[] = [];
-  for (const row of rows) if (row.parent_id === null) { const thread = { ...noteDto(row), replies: [] as GuestNoteDto[] }; threads.set(row.id, thread); order.push(thread); }
-  for (const row of rows) if (row.parent_id !== null) threads.get(row.parent_id)?.replies.push(noteDto(row));
+  for (const row of rows) if (row.parent_id === null) { const thread = { ...noteDto(row, viewer), replies: [] as GuestNoteDto[] }; threads.set(row.id, thread); order.push(thread); }
+  for (const row of rows) if (row.parent_id !== null) threads.get(row.parent_id)?.replies.push(noteDto(row, viewer));
   return guestNoteListResponseSchema.parse({ notes: order.filter((thread) => !thread.deleted || thread.replies.length > 0) });
 }
 
@@ -104,4 +106,20 @@ export async function readGuestMarkup(db: D1Database, linkId: string, projectId:
   let markup: unknown[] | null = null;
   if (row.strokes_json !== null) { try { const parsed: unknown = JSON.parse(row.strokes_json); markup = Array.isArray(parsed) ? parsed : null; } catch { markup = null; } }
   return guestNoteMarkupResponseSchema.parse({ noteId, revision: row.revision, markup });
+}
+
+/**
+ * One public root with its replies, in the guest projection, or null: the answer of every guest note write and the thread of a 409. Its own statement, like `listGuestNotes`, with
+ * `visibility = 'public'` in the WHERE and the Version REACHED through the link in the same query, so nothing here can carry an internal note, a staff id or an email, and a link
+ * that lost the Version between the write and this read gets null (the caller answers the stub).
+ */
+export async function readGuestThread(db: D1Database, link: { id: string; projectId: string }, rootId: string, viewer: string | null): Promise<GuestNoteThreadDto | null> {
+  const rows = (await db.prepare(`SELECT n.id, n.parent_id, n.author_guest_id, n.start_frame, n.end_frame, n.drawing_frame, n.body, n.revision, n.resolved_at, n.deleted_at, n.created_at, n.edited_at,
+      u.name AS u_name, g.display_name AS g_name, (k.note_id IS NOT NULL) AS has_markup
+    FROM video_notes n LEFT JOIN user u ON u.id = n.author_user_id LEFT JOIN guest_reviewers g ON g.id = n.author_guest_id LEFT JOIN video_note_markup k ON k.note_id = n.id
+    WHERE n.project_id = ?2 AND (n.id = ?3 OR n.parent_id = ?3) AND n.visibility = 'public' AND ${reachSql("?1", "?2", "n.asset_id")}
+    ORDER BY (n.parent_id IS NOT NULL), n.created_at, n.id`).bind(link.id, link.projectId, rootId).all<NoteRow>()).results;
+  const root = rows.find((row) => row.parent_id === null);
+  if (!root) return null;
+  return guestNoteThreadDtoSchema.parse({ ...noteDto(root, viewer), replies: rows.filter((row) => row.parent_id !== null).map((row) => noteDto(row, viewer)) });
 }

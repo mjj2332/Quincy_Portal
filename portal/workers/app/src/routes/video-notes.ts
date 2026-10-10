@@ -10,8 +10,8 @@ import { projectIsArchived } from "../lib/project-archive";
 import { terminalRoute } from "../lib/terminal-route";
 import { readVideoReviewGate } from "../lib/video-review-gate";
 import {
-  createVideoNote, createVideoNoteReply, deleteVideoNote, drawingFrameFits, editVideoNote, findNoteHead, listVideoNotes, readNoteMarkup, readNoteMarkupSnapshot, readThread, setVideoNoteResolution,
-  versionFrameCount, type MarkupEdit, type MarkupWrite, type NoteHead,
+  canonicalMarkup, createVideoNote, createVideoNoteReply, deleteVideoNote, drawingFrameFits, editVideoNote, findNoteHead, listVideoNotes, readNoteMarkup, readNoteMarkupSnapshot, readThread, setVideoNoteResolution,
+  userAuthor, versionFrameCount, type MarkupEdit, type MarkupWrite, type NoteHead, type NoteAuthor,
 } from "../lib/video-notes";
 import { commitNotePaste, planNotePaste, type PlanOutcome } from "../lib/video-note-paste";
 import { jsonInput } from "./helpers";
@@ -41,11 +41,6 @@ async function touchesMarkup(c: Ctx): Promise<boolean> {
   try { const body: unknown = await c.req.json(); return typeof body === "object" && body !== null && ("markup" in body || "drawingFrame" in body); } catch { return false; }
 }
 
-/** The envelope as it will be stored: ONE canonical string (what the byte cap, the no-op compare and the INSERT all use). Null above the cap. */
-function canonicalMarkup(markup: unknown[]): Pick<MarkupWrite, "json" | "items" | "bytes"> | null {
-  const json = JSON.stringify(markup); const bytes = new TextEncoder().encode(json).length;
-  return bytes > VIDEO_MARKUP_MAX_BYTES ? null : { json, items: markup.length, bytes };
-}
 const tooLarge = (c: Ctx) => c.json({ error: `Markup is limited to ${VIDEO_MARKUP_MAX_BYTES} bytes.`, code: "markup_too_large", maxBytes: VIDEO_MARKUP_MAX_BYTES }, 413);
 const drawingOutside = (c: Ctx) => c.json({ error: "The drawing frame must be the note's frame, or inside its range.", code: "drawing_frame_outside" }, 422);
 
@@ -65,12 +60,17 @@ const thread = (c: Ctx, value: unknown, status: 200 | 201 = 200) => c.json(video
 const conflict = (c: Ctx, value: unknown) => c.json({ error: "This note changed since you loaded it.", code: "note_conflict", thread: videoNoteThreadDtoSchema.parse(value) }, 409);
 
 function principalOf(c: Ctx) { const user = c.get("user"); return { id: user.id, role: user.role, impersonatedBy: user.impersonatedBy, via: user.via }; }
+const authorOf = (c: Ctx): NoteAuthor => userAuthor(principalOf(c));
+/** A guest author's email is shown to a viewer who holds `shareVideo` (Admin, Editor) and to nobody else: an External editor sees the name alone (#741 13b). */
+const showsGuestEmail = (c: Ctx): boolean => roleHasCapability(c.get("user").role, "shareVideo");
+/** Every staff write answers with the thread read through the viewer's own projection. */
+const readerOf = (c: Ctx, projectId: string) => (rootId: string) => readThread(c.env.DB, projectId, rootId, showsGuestEmail(c));
 
 videoNotesRoutes.get("/projects/:projectId/video-versions/:assetId/notes", terminalRoute("/projects/:projectId/video-versions/:assetId/notes", async (c) => {
   const projectId = c.req.param("projectId"); const assetId = c.req.param("assetId");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(assetId).success) return c.json({ error: "Invalid id" }, 400);
   const refused = await admit(c, projectId, false); if (refused) return refused;
-  const notes = await listVideoNotes(c.env.DB, projectId, assetId);
+  const notes = await listVideoNotes(c.env.DB, projectId, assetId, showsGuestEmail(c));
   return notes ? c.json(videoNoteListResponseSchema.parse({ notes })) : c.json({ error: "Version not found" }, 404);
 }));
 
@@ -86,7 +86,7 @@ videoNotesRoutes.post("/projects/:projectId/video-versions/:assetId/notes", term
   if (input.startFrame >= frameCount || (endFrame !== null && endFrame > frameCount)) return c.json({ error: "The frames are outside this Version.", code: "frame_out_of_range", frameCount }, 422);
   if (stored && !drawingFrameFits(input.drawingFrame!, input.startFrame, endFrame)) return drawingOutside(c);
   const markup: MarkupWrite | undefined = stored ? { ...stored, drawingFrame: input.drawingFrame! } : undefined;
-  const outcome = await createVideoNote(c.env.DB, { projectId, assetId, principal: principalOf(c), visibility: input.visibility, startFrame: input.startFrame, endFrame, body: input.body, markup, now: Date.now() });
+  const outcome = await createVideoNote(c.env.DB, { projectId, assetId, author: authorOf(c), read: readerOf(c, projectId), visibility: input.visibility, startFrame: input.startFrame, endFrame, body: input.body, markup, now: Date.now() });
   if (outcome.kind === "archived") return archivedResponse(c);
   if (outcome.kind === "gone") return c.json({ error: "Version not found" }, 404);
   return thread(c, outcome.value, 201);
@@ -100,7 +100,7 @@ videoNotesRoutes.post("/projects/:projectId/video-notes/:noteId/replies", termin
   const parent = await findNoteHead(c.env.DB, projectId, noteId); if (!parent) return notFound(c);
   if (parent.parent_id !== null) return c.json({ error: "Replies attach to a note, not to another reply.", code: "not_a_thread" }, 422);
   if (parent.deleted_at !== null) return deletedResponse(c);
-  const outcome = await createVideoNoteReply(c.env.DB, { projectId, parent, principal: principalOf(c), body: input.body, now: Date.now() });
+  const outcome = await createVideoNoteReply(c.env.DB, { projectId, parent, author: authorOf(c), read: readerOf(c, projectId), body: input.body, now: Date.now() });
   if (outcome.kind === "archived") return archivedResponse(c);
   if (outcome.kind === "gone") return deletedResponse(c);
   return thread(c, outcome.value, 201);
@@ -117,7 +117,7 @@ videoNotesRoutes.patch("/projects/:projectId/video-notes/:noteId", terminalRoute
   const principal = principalOf(c);
   if (note.author_user_id !== principal.id) return c.json({ error: "Forbidden: only the author can edit this note." }, 403);
   if (note.deleted_at !== null) return deletedResponse(c);
-  const current = await readThread(c.env.DB, projectId, note.parent_id ?? note.id); if (!current) return notFound(c);
+  const current = await readerOf(c, projectId)(note.parent_id ?? note.id); if (!current) return notFound(c);
   if (note.revision !== input.expectedRevision) return conflict(c, current);
   const isReply = note.parent_id !== null;
   if (isReply && input.markup !== undefined) return c.json({ error: "Only a note can carry a drawing, not a reply.", code: "markup_on_reply" }, 422);
@@ -143,7 +143,7 @@ videoNotesRoutes.patch("/projects/:projectId/video-notes/:noteId", terminalRoute
     if (current?.strokes_json !== stored.json || note.drawing_frame !== drawingFrame) markup = { kind: "set", ...stored, drawingFrame };
   }
   // A same-state edit still goes through the batch: an archive that lands first must win over the no-op (#527), and the lib answers 200 with no audit otherwise.
-  const outcome = await editVideoNote(c.env.DB, { projectId, note, principal, expectedRevision: input.expectedRevision, body, startFrame, endFrame, markup, now: Date.now() });
+  const outcome = await editVideoNote(c.env.DB, { projectId, note, author: userAuthor(principal), read: readerOf(c, projectId), expectedRevision: input.expectedRevision, body, startFrame, endFrame, markup, now: Date.now() });
   switch (outcome.kind) {
     case "ok": case "noop": return thread(c, outcome.value);
     case "archived": return archivedResponse(c);
@@ -177,8 +177,8 @@ videoNotesRoutes.delete("/projects/:projectId/video-notes/:noteId", terminalRout
   const principal = principalOf(c);
   if (note.author_user_id !== principal.id) return c.json({ error: "Forbidden: only the author can delete this note." }, 403);
   if (note.deleted_at !== null) return deletedResponse(c);
-  if (note.revision !== input.expectedRevision) { const current = await readThread(c.env.DB, projectId, note.parent_id ?? note.id); return current ? conflict(c, current) : notFound(c); }
-  const outcome = await deleteVideoNote(c.env.DB, { projectId, note, principal, expectedRevision: input.expectedRevision, now: Date.now() });
+  if (note.revision !== input.expectedRevision) { const current = await readerOf(c, projectId)(note.parent_id ?? note.id); return current ? conflict(c, current) : notFound(c); }
+  const outcome = await deleteVideoNote(c.env.DB, { projectId, note, author: userAuthor(principal), read: readerOf(c, projectId), expectedRevision: input.expectedRevision, now: Date.now() });
   switch (outcome.kind) {
     case "ok": return c.json(videoNoteDeleteResponseSchema.parse({ thread: outcome.value }));
     case "archived": return archivedResponse(c);
@@ -196,7 +196,7 @@ videoNotesRoutes.put("/projects/:projectId/video-notes/:noteId/resolution", term
   const input = await jsonInput(c, videoNoteResolutionInputSchema); if (input instanceof Response) return input;
   const note: NoteHead | null = await findNoteHead(c.env.DB, projectId, noteId); if (!note) return notFound(c);
   if (note.parent_id !== null) return c.json({ error: "Only a note can be resolved, not a reply.", code: "not_a_thread" }, 422);
-  const outcome = await setVideoNoteResolution(c.env.DB, { projectId, note, principal: principalOf(c), resolved: input.resolved, now: Date.now() });
+  const outcome = await setVideoNoteResolution(c.env.DB, { projectId, note, principal: principalOf(c), resolved: input.resolved, now: Date.now(), read: readerOf(c, projectId) });
   if (outcome.kind === "archived") return archivedResponse(c);
   if (outcome.kind === "gone") return notFound(c);
   return thread(c, outcome.value);
