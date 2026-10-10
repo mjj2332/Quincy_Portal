@@ -105,42 +105,39 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
     setScreen(fresh.length === 1 ? { name: "video", index: 0 } : { name: "list" });
   }, [commitVideos]);
 
-  // Delivery re-reads race decision writes. `rereadSeq` moves on every re-read, so only the newest one may apply; `decisionGen` moves per Version when a decision write lands, so a re-read that
-  // started before that write cannot put the older decision back over it.
-  const rereadSeq = useRef(0);
-  const decisionGen = useRef(new Map<string, number>());
   // A decision lands on the Version it was sent for, by id: whichever Version the guest is looking at now is untouched.
   // A response older than what the page already holds (a refresh showed a newer revision first) is dropped: revisions only move forward.
   const decided = useCallback((assetId: string, decision: GuestDecision) => {
-    decisionGen.current.set(assetId, (decisionGen.current.get(assetId) ?? 0) + 1);
     commitVideos(videosRef.current.map((video) => (video.versions.some((version) => version.assetId === assetId)
       ? { ...video, versions: video.versions.map((version) => (version.assetId === assetId && decision.revision >= (version.decision?.revision ?? 0) ? { ...version, decision } : version)) } : video)));
   }, [commitVideos]);
-  // A decision that may or may not have landed: read the list again, and take only the delivery fields (decision, Release, download link, and the Video's premium and unlock state) of what is already on the page, never its shape.
-  const resyncDelivery = useCallback((shown: () => string) => {
+  // The Version the video screen shows now, published by that screen. Read at apply time, never captured when a request starts.
+  const shownVersion = useRef<string | null>(null);
+  const onShownVersion = useCallback((assetId: string | null) => { shownVersion.current = assetId; }, []);
+  // A decision that may or may not have landed: read the list again. Only the newest re-read applies. The fresh list is authoritative for which Videos and Versions exist and their delivery fields; a local decision
+  // survives only where its revision is newer than the fresh one's. The screen is then reconciled against the screen as it is when the answer arrives.
+  const rereadSeq = useRef(0);
+  const resyncDelivery = useCallback(() => {
     if (api === null) return;
     rereadSeq.current += 1;
     const mine = rereadSeq.current;
-    const startedAt = new Map(decisionGen.current);
     void api.videos().then((fresh) => {
       if (rereadSeq.current !== mine) return;
       if (fresh.kind === "gone") { setScreen({ name: "unavailable" }); return; }
       if (fresh.kind !== "ok") return;
-      const byAsset = new Map(fresh.value.flatMap((video) => video.versions).map((version) => [version.assetId, version] as const));
-      const current = (assetId: string) => (decisionGen.current.get(assetId) ?? 0) === (startedAt.get(assetId) ?? 0);
-      const byVideo = new Map(fresh.value.map((video) => [video.id, video] as const));
-      // Versions and Videos the studio took off the link are dropped; what remains takes the fresh delivery fields.
-      const merged = videosRef.current.flatMap((video) => {
-        const freshVideo = byVideo.get(video.id);
-        const versions = video.versions.filter((version) => byAsset.has(version.assetId));
-        if (!freshVideo || versions.length === 0) return [];
-        return [{ ...video, premium: freshVideo.premium, unlocked: freshVideo.unlocked, versions: versions.map((version) => { const next = byAsset.get(version.assetId)!; return current(version.assetId) ? { ...version, decision: next.decision, released: next.released, downloadUrl: next.downloadUrl } : version; }) }];
-      });
-      if (merged.length === 0) { setScreen({ name: "unavailable" }); return; }
-      const onScreen = screenRef.current.name === "video" ? videosRef.current[screenRef.current.index] : undefined;
+      if (fresh.value.length === 0) { setScreen({ name: "unavailable" }); return; }
+      const local = new Map(videosRef.current.flatMap((video) => video.versions).map((version) => [version.assetId, version] as const));
+      const merged = fresh.value.map((video) => ({ ...video, versions: video.versions.map((version) => {
+        const kept = local.get(version.assetId)?.decision;
+        return kept && kept.revision > (version.decision?.revision ?? 0) ? { ...version, decision: kept } : version;
+      }) }));
+      const now = screenRef.current;
+      if (now.name !== "list" && now.name !== "video") return;
+      const onScreen = now.name === "video" ? videosRef.current[now.index] : undefined;
+      const index = onScreen ? merged.findIndex((video) => video.id === onScreen.id) : -1;
+      if (now.name === "video" && (index < 0 || (shownVersion.current !== null && !merged[index]!.versions.some((version) => version.assetId === shownVersion.current)))) { grantsChanged(merged); return; }
       commitVideos(merged);
-      if (!byAsset.has(shown())) { grantsChanged(merged); return; }
-      if (onScreen) { const index = merged.findIndex((video) => video.id === onScreen.id); if (index >= 0) setScreen({ name: "video", index }); }
+      if (now.name === "video") setScreen({ name: "video", index });
     });
   }, [api, commitVideos, grantsChanged]);
   if (api === null || screen.name === "unavailable") return <UnavailableScreen />;
@@ -149,8 +146,10 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
   if (screen.name === "boot") return <main className="min-h-dvh bg-background" aria-busy="true" />;
   if (screen.name === "passcode") return <PasscodeScreen error={screen.error} retryAfterSeconds={screen.retryAfterSeconds} pending={screen.pending} onSubmit={submitPasscode} />;
   if (session === null) return <UnavailableScreen />;
+  // Invariant: the video screen never renders without its Video. Reconciling keeps the index valid; this is the net under it.
+  if (screen.name === "video" && videos[screen.index] === undefined) return <UnavailableScreen />;
   const shown = screen.name === "list"
     ? <VideoListScreen api={api} title={session?.link.label ?? null} videos={videos} session={session} onSession={setSession} onOpen={(index) => { setNotice(null); setScreen({ name: "video", index }); }} onUnavailable={unavailable} />
-    : <GuestVideoScreen api={api} writer={writer} drafts={drafts} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} onDecided={decided} onResyncDelivery={resyncDelivery} />;
+    : <GuestVideoScreen api={api} writer={writer} drafts={drafts} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} onDecided={decided} onResyncDelivery={resyncDelivery} onShownVersion={onShownVersion} />;
   return <>{archived && <p role="status" data-testid="guest-archived-notice" className="m-0 bg-card px-[var(--space-5)] py-[var(--space-3)] text-center text-card-foreground [font:var(--type-label)]">This project was archived, so notes are read-only.</p>}{notice !== null && <p role="status" data-testid="guest-notice" className="m-0 bg-card px-[var(--space-5)] py-[var(--space-3)] text-center text-card-foreground [font:var(--type-label)]">{notice}</p>}{shown}</>;
 }

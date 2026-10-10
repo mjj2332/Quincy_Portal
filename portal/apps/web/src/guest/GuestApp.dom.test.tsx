@@ -686,7 +686,7 @@ describe("Sol round 7", () => {
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
-    await act(async () => { root!.render(<GuestVideoScreen api={api} writer={createGuestWriter()} drafts={createGuestDrafts()} session={SESSION} onSession={() => undefined} archived={false} onArchived={() => undefined} videos={videos} index={0} onIndex={() => undefined} onBack={null} onUnavailable={onUnavailable} onGrantsChanged={onGrantsChanged} onDecided={() => undefined} onResyncDelivery={() => undefined} />); });
+    await act(async () => { root!.render(<GuestVideoScreen api={api} writer={createGuestWriter()} drafts={createGuestDrafts()} session={SESSION} onSession={() => undefined} archived={false} onArchived={() => undefined} videos={videos} index={0} onIndex={() => undefined} onBack={null} onUnavailable={onUnavailable} onGrantsChanged={onGrantsChanged} onDecided={() => undefined} onResyncDelivery={() => undefined} onShownVersion={() => undefined} />); });
     await flush();
     await act(async () => { stub.fireError(host.querySelector("video")!); });
     await act(async () => { root!.unmount(); });

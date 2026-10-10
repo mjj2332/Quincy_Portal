@@ -62,7 +62,7 @@ function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
  * One Video on the guest page (#741 12b), read-only: the reused review player on the inverse surface, the granted-Versions select, previous / next Video, and the public notes (a
  * column beside the player, a bottom drawer below 721px). Moving between Videos never returns to the list. State is in memory; the URL does not change.
  */
-export function GuestVideoScreen({ api, writer, drafts, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged, onDecided, onResyncDelivery }: {
+export function GuestVideoScreen({ api, writer, drafts, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged, onDecided, onResyncDelivery, onShownVersion }: {
   api: GuestApi;
   /** Owned by `GuestApp`, so a write still out survives this screen being left and opened again. */
   writer: GuestWriter;
@@ -83,8 +83,10 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
   onGrantsChanged: (fresh: GuestVideoDto[]) => void;
   /** A decision landed on the Version `assetId` (the one it was sent for, which may no longer be the one on screen). */
   onDecided: (assetId: string, decision: GuestDecision) => void;
-  /** A decision may or may not have landed: read the delivery state of the listed Versions again. */
-  onResyncDelivery: (shown: () => string) => void;
+  /** A decision may or may not have landed: read the delivery list again. The page reconciles the result against the screen as it is when the answer arrives. */
+  onResyncDelivery: () => void;
+  /** The Version on screen now (null once this screen is left), so the page can reconcile against it whenever an answer arrives. */
+  onShownVersion: (assetId: string | null) => void;
 }) {
   const video = videos[index]!;
   const [assetId, setAssetId] = useState(video.versions[0]!.assetId);
@@ -141,8 +143,8 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
   // If the session is fine, the Video or this Version may still have been taken off the link: re-read the granted list, and leave only when the displayed Version is no longer in it.
   // Each recheck is bound to the Version it started on: a token that moves on every selection change and on unmount makes a late completion a no-op.
   const shownAssetId = version.assetId;
-  const shownRef = useRef(shownAssetId);
-  shownRef.current = shownAssetId;
+  useEffect(() => { onShownVersion(shownAssetId); }, [shownAssetId, onShownVersion]);
+  useEffect(() => () => { onShownVersion(null); }, [onShownVersion]);
   const selectionToken = useRef(0);
   useEffect(() => {
     selectionToken.current += 1;
@@ -316,7 +318,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
       closeIfShowing();
       return { ok: true };
     }
-    if (settled.kind === "conflict" || settled.kind === "unreachable") onResyncDelivery(() => shownRef.current); // the decision may exist: look before the guest sends it again
+    if (settled.kind === "conflict" || settled.kind === "unreachable") onResyncDelivery(); // the decision may exist: look before the guest sends it again
     if (stale) return { ok: false, message: null };
     // An older request that needs verification has already marked the session unverified; it only decides the dialog and what verifying leads to while it is still the opening showing.
     if (settled.kind === "unverified") { if (opening.current === mine) { afterVerify.current = value; closeIfShowing(); } }

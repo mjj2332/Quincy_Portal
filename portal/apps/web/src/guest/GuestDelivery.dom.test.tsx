@@ -458,6 +458,46 @@ describe("a delivery refresh that finds access changed", () => {
     expect(byId("guest-notice")).not.toBeNull();
     expect(byId("guest-video-screen")).not.toBeNull();
   });
+
+  it("a re-read that arrives after the guest moved to a Video staff since removed does not crash, and shows the fallback with the notice", async () => {
+    videos = [videoOf(1), videoOf(2)];
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    extra = async (url, init) => {
+      if (url === decisionUrl(asset(10)) && init?.method === "POST") { await gate; return json({ error: "x" }, 503); }
+      return undefined;
+    };
+    await open();
+    const openFilm = (title: string) => click(document.body.querySelector(`button[aria-label="Open ${title}"]`));
+    await openFilm("Film 1");
+    await decide();
+    await click(byId("guest-decision-cancel"));
+    await click([...document.body.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim().startsWith("All videos")));
+    await openFilm("Film 2");
+    expect(byId("guest-video-title")?.textContent).toBe("Film 2");
+    videos = [videoOf(1)];
+    await act(async () => { release(); });
+    await flush();
+    expect(byId("guest-notice")).not.toBeNull();
+    expect(byId("guest-video-title")?.textContent).toBe("Film 1");
+  });
+
+  it("shows the Video with its new Version, not Unavailable, when staff revoked the Version a pending decision was for and granted another", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    extra = async (url, init) => {
+      if (url === decisionUrl(asset(10)) && init?.method === "POST") { await gate; return json({ error: "x" }, 503); }
+      return undefined;
+    };
+    await open();
+    await decide();
+    videos = [videoOf(1, [versionOf(20)])];
+    await act(async () => { release(); });
+    await flush();
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(byId("guest-video-screen")).not.toBeNull();
+    expect(byId("guest-version-trigger")?.textContent).toMatch(/v20/);
+  });
 });
 
 describe("the decision and Release chips", () => {
