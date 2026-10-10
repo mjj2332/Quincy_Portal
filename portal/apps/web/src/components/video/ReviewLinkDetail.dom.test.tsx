@@ -127,6 +127,20 @@ describe("detail: settings", () => {
     await press(save());
     expect(apiPatchMock).toHaveBeenCalledWith(base, { expiresAt: "2026-10-11T12:59:00.000Z" });
   });
+  it("an untouched expiry states the stored time exactly, not the end of the day", async () => {
+    state.links = [linkOf({ expiresAt: "2026-11-09T23:00:00.000Z" })]; // 10:00 on 10 Nov, Sydney
+    await mount(); await openDetailOf("Smith family");
+    expect(text(detail())).toContain("The link stops working on 10 Nov 2026 at 10:00 AM.");
+    expect(text(detail())).not.toContain("end of this day");
+  });
+  it("once a new day is picked the hint says the link stops at the end of that day", async () => {
+    state.links = [linkOf({ expiresAt: "2026-11-09T23:00:00.000Z" })];
+    await mount(); await openDetailOf("Smith family");
+    await press(q("button#review-link-detail-expiry", detail()));
+    await press(all<HTMLButtonElement>("button", document).find((b) => b.textContent?.startsWith("Tomorrow")));
+    await press(all<HTMLButtonElement>("button", document).find((b) => b.textContent === "Apply"));
+    expect(text(detail())).toContain("The link stops working at the end of this day.");
+  });
   it("clearing the label sends null; a passcode set is never shown, only that one exists, and Remove passcode sends null", async () => {
     state.links = [linkOf({ hasPasscode: true })];
     apiPatchMock.mockResolvedValue({ link: linkOf() });
