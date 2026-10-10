@@ -58,7 +58,6 @@ export function VideoDeliveryPanel({ projectId, role, archived, video, version, 
     : latest === null ? { label: "No client decision", variant: "outline" }
     : latest.decision === "approved" ? { label: "Approved, ready to release", variant: "info-light" }
     : { label: "Changes requested", variant: "warning-light" };
-  const problem = versionState.problem ?? videoState.problem;
   const ordered = [...events].reverse();
 
   return <Frame data-testid="video-delivery" data-surface="default" aria-label={`Delivery of version ${version.version}`} role="group" className="shrink-0 text-foreground">
@@ -84,7 +83,7 @@ export function VideoDeliveryPanel({ projectId, role, archived, video, version, 
       </ItemGroup>}
 
       {archived && <p data-testid="delivery-readonly" className="m-0 text-foreground-secondary [font:var(--type-label)]">This project is archived, so approvals, releases and premium are read-only.</p>}
-      {problem && <Notice tone="critical" role="alert" data-testid="delivery-problem">{problem}</Notice>}
+      {versionState.problem && <Notice tone="critical" role="alert" data-testid="delivery-version-problem">{versionState.problem}</Notice>}
 
       {canRelease && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
         {live
@@ -104,6 +103,7 @@ export function VideoDeliveryPanel({ projectId, role, archived, video, version, 
             ? <Button type="button" variant="outline" data-testid="delivery-relock" className={TOUCH} disabled={archived || premiumBusy} onClick={() => { store.clearProblem(fSlot); setPending({ kind: "relock" }); }}>Re-lock</Button>
             : <Button type="button" variant="outline" data-testid="delivery-unlock" className={TOUCH} disabled={archived || premiumBusy} onClick={() => { store.clearProblem(fSlot); setPending({ kind: "unlock" }); }}>Unlock</Button>)}
         </div>
+        {videoState.problem && <Notice tone="critical" role="alert" data-testid="delivery-premium-problem">{videoState.problem}</Notice>}
         <p className="m-0 text-foreground-secondary [font:var(--type-label)]">{video.premium ? (video.premiumUnlocked ? "The client can download released versions of this film." : "The client sees a watermark and can't download until you unlock it.") : "Turn on to watermark this film for the client until it is unlocked."}</p>
         {!canPremium && <p data-testid="delivery-premium-reason" className="m-0 text-foreground-secondary [font:var(--type-label)]">Only an Admin can change premium or unlock it.</p>}
       </div>

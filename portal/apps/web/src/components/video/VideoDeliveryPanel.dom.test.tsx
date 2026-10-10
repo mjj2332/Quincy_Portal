@@ -126,7 +126,7 @@ describe("VideoDeliveryPanel decisions (#741 14-ui-staff)", () => {
     const reads = api.apiGet.mock.calls.length;
     await press("delivery-release-confirm");
     await flush();
-    expect(byId("delivery-problem")!.textContent).toMatch(/newer decision/i);
+    expect(byId("delivery-version-problem")!.textContent).toMatch(/newer decision/i);
     expect(api.apiGet.mock.calls.length).toBeGreaterThan(reads);
     expect(byId("delivery-state")!.textContent).toMatch(/changes requested/i);
     expect(enabled("delivery-release")).toBe(false);
@@ -138,7 +138,7 @@ describe("VideoDeliveryPanel decisions (#741 14-ui-staff)", () => {
     await press("delivery-release");
     api.apiPost.mockRejectedValue(new ApiError("no", 422, { code: "not_approved" }));
     await press("delivery-release-confirm");
-    expect(byId("delivery-problem")!.textContent).toMatch(/not an approval/i);
+    expect(byId("delivery-version-problem")!.textContent).toMatch(/not an approval/i);
   });
 
   it("an archived Project reads as read-only after the server refuses, and the controls are off", async () => {
@@ -147,7 +147,7 @@ describe("VideoDeliveryPanel decisions (#741 14-ui-staff)", () => {
     await press("delivery-release");
     api.apiPost.mockRejectedValue(new ApiError("Archived", 409, { code: "project_archived" }));
     await press("delivery-release-confirm");
-    expect(byId("delivery-problem")!.textContent).toMatch(/archived/i);
+    expect(byId("delivery-version-problem")!.textContent).toMatch(/archived/i);
   });
 
   it("an archived Project shows everything read-only with the reason", async () => {
@@ -176,7 +176,7 @@ describe("VideoDeliveryPanel decisions (#741 14-ui-staff)", () => {
     await press("delivery-withdraw");
     api.apiDelete.mockRejectedValue(new ApiError("none", 404, { code: "no_live_release" }));
     await press("delivery-withdraw-confirm");
-    expect(byId("delivery-problem")!.textContent).toMatch(/no live release/i);
+    expect(byId("delivery-version-problem")!.textContent).toMatch(/no live release/i);
   });
 
   it("records a client decision with an optional note, kept in the store while the dialog is closed", async () => {
@@ -251,7 +251,25 @@ describe("VideoDeliveryPanel premium (#741 14-ui-staff)", () => {
     await mount({ role: "admin" });
     api.apiPut.mockRejectedValue(new ApiError("Forbidden", 403));
     await press("delivery-premium-switch");
-    expect(byId("delivery-problem")!.textContent).toMatch(/no longer have access/i);
+    expect(byId("delivery-premium-problem")!.textContent).toMatch(/no longer have access/i);
+  });
+
+  it("keeps a Version error and a premium error apart, each beside its own controls", async () => {
+    decide([{ assetId: A2, version: 2, events: [guestEvent(1, "approved")], release: null }]);
+    await mount({ role: "admin", video: videoOf({ premium: true }) });
+    await press("delivery-release");
+    api.apiPost.mockRejectedValue(new ApiError("stale", 409, { code: "release_stale", current: 2 }));
+    await press("delivery-release-confirm");
+    await press("delivery-unlock");
+    api.apiPut.mockRejectedValue(new ApiError("offline", 0));
+    await press("delivery-unlock-confirm");
+    expect(byId("delivery-version-problem")!.textContent).toMatch(/newer decision/i);
+    expect(byId("delivery-premium-problem")!.textContent).toMatch(/couldn't reach the server/i);
+    expect(byId("delivery-premium")!.contains(byId("delivery-premium-problem"))).toBe(true);
+    expect(byId("delivery-premium")!.contains(byId("delivery-version-problem"))).toBe(false);
+    await press("delivery-unlock");
+    expect(byId("delivery-premium-problem")).toBeNull();
+    expect(byId("delivery-version-problem")).not.toBeNull();
   });
 
   it("an archived Project turns the premium controls off", async () => {
