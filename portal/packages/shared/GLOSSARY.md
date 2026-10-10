@@ -253,6 +253,29 @@ One immutable uploaded Asset of a Video, numbered in upload order. A re-cut is a
 an edit. Notes, approvals and Releases belong to one exact Version.
 _Avoid_: Revision, take
 
+**Compare**:
+Two Versions of one Video played as one: stepped, scrubbed and played together, side by side or
+wiped. The shared position is A's frame number, so it may lie outside A's own range while A has not
+started or has ended.
+_Avoid_: Diff, A/B view
+
+**Offset**:
+How many B frames later Version B starts than Version A (negative: earlier), set per pair of Versions
+to line up two cuts. Always a whole number of B frames, and bounded to leave at least one frame in
+common.
+_Avoid_: Sync, delay, shift
+
+**Audible side**:
+The one side of a Compare whose sound is heard; the other is always muted. The reviewer chooses it,
+and a side with no audio cannot be chosen.
+_Avoid_: Active side, solo
+
+**Master side**:
+The side whose presented frames set the shared position while playing: the audible side while it is
+playing, else the other playing side. The other side follows it, corrected for drift. A browser
+detail, never shown to the reviewer.
+_Avoid_: Leader, primary
+
 **Note visibility**:
 Whether a note on a Video is public (a Guest reviewer can see it) or internal (studio only). A reply
 inherits its parent's visibility, and a guest's note is always public.

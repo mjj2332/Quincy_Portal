@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { frameAtPresentationTime, frameContainingTime, frameSeekSeconds, type Rational } from "@quincy/shared";
 
 /** How long a settled seek waits for the browser to present the frame before the playhead is trusted instead. */
@@ -16,6 +16,8 @@ export type FrameClockState = Readonly<{
   confirmed: boolean;
   playing: boolean;
   rate: number;
+  /** True while the element is un-paused but starved of data (`waiting`), until it plays again. */
+  stalled: boolean;
 }>;
 
 type FrameMetadata = { mediaTime: number };
@@ -36,7 +38,7 @@ type Reverse = { base: number; startedAt: number; speed: number; final: boolean 
  * clock and tests drive it without React.
  */
 export class VideoFrameClock {
-  private state: FrameClockState = { frame: 0, targetFrame: null, confirmed: false, playing: false, rate: 0 };
+  private state: FrameClockState = { frame: 0, targetFrame: null, confirmed: false, playing: false, rate: 0, stalled: false };
   private readonly listeners = new Set<() => void>();
   private readonly hasRvfc: boolean;
   private readonly now: () => number;
@@ -54,18 +56,70 @@ export class VideoFrameClock {
   private rvfcHandle: number | null = null;
   private rafHandle: number | null = null;
   private disposed = false;
+  /** The rate the caller last asked for: the element's `playbackRate` may be trimmed by compare and is never read back. */
+  private requestedRate = 1;
+  private trim = 1;
+  /** The presentation time of the last frame the browser composited, or null before one (or when `requestVideoFrameCallback` is missing). */
+  private presentedTime: number | null = null;
+  /** The frame the first seek goes to (compare opens a side mid-film); consumed once. */
+  private initialFrame: number;
+  private readonly rejectListeners = new Set<(error: unknown) => void>();
 
-  constructor(private readonly video: HTMLVideoElement, version: FrameClockVersion, options: { now?: () => number } = {}) {
+  constructor(private readonly video: HTMLVideoElement, version: FrameClockVersion, options: { now?: () => number; initialFrame?: number } = {}) {
+    this.initialFrame = options.initialFrame !== undefined && Number.isFinite(options.initialFrame) ? Math.max(0, Math.trunc(options.initialFrame)) : 0;
     this.fps = version.fps;
     this.frameCount = version.frameCount;
     this.now = options.now ?? (() => performance.now());
     this.hasRvfc = typeof (video as FrameVideo).requestVideoFrameCallback === "function";
     for (const [name, handler] of this.handlers) video.addEventListener(name, handler);
     if (this.hasRvfc) this.register();
-    if (video.readyState >= 1) this.seek(0, true);
+    if (video.readyState >= 1) this.seek(this.takeInitialFrame(), true);
   }
 
   getState = (): FrameClockState => this.state;
+
+  private takeInitialFrame(): number {
+    const frame = this.initialFrame;
+    this.initialFrame = 0;
+    return frame;
+  }
+
+  /** The last frame this clock can show: the film's length, cut to what the element says it has. */
+  lastFrame(): number {
+    let last = this.frameCount - 1;
+    const duration = this.video.duration;
+    // Audio and video lengths can differ: never seek past what the element says it has.
+    if (Number.isFinite(duration) && duration > 0) last = Math.min(last, Math.ceil((duration * this.fps.num) / this.fps.den - 1e-6) - 1);
+    return Math.max(0, last);
+  }
+
+  /** Seconds of the last frame the browser presented (drift is measured on these), else the playhead. */
+  mediaTime(): number { return this.presentedTime ?? this.video.currentTime; }
+
+  /** True while the element is advancing forward on its own: un-paused, playing, not in the emulated reverse. */
+  isLive(): boolean { return this.state.playing && this.state.rate > 0 && !this.reverseState && !this.video.paused; }
+
+  /** Nudges the forward rate to `requested rate x factor` without touching the requested rate (compare's drift correction). */
+  setRateTrim(factor: number): void {
+    this.trim = factor;
+    this.applyTrim();
+  }
+
+  clearRateTrim(): void { this.setRateTrim(1); }
+
+  private applyTrim(): void {
+    if (this.disposed || !this.state.playing || this.state.rate <= 0 || this.reverseState) return;
+    this.video.playbackRate = this.state.rate * this.trim;
+  }
+
+  /** Seeks without stopping: the element keeps playing and lands on `frame` (a hard drift correction). */
+  seekWhilePlaying(frame: number): void { this.seek(frame, true, true); }
+
+  /** Tells `listener` when the browser refused or failed a `play()` (anything but the AbortError a pause causes). Returns the remover. */
+  onPlayRejected(listener: (error: unknown) => void): () => void {
+    this.rejectListeners.add(listener);
+    return () => { this.rejectListeners.delete(listener); };
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -96,7 +150,10 @@ export class VideoFrameClock {
   /** Plays forward at `rate` (1, 2, 4, 8). */
   setRate(rate: number): void {
     this.endReverse();
-    if (this.state.frame >= this.lastFrame()) {
+    this.requestedRate = rate;
+    this.trim = 1;
+    // Judge the restart by the frame a pending seek is bringing, not the one still on screen.
+    if ((this.state.targetFrame ?? this.state.frame) >= this.lastFrame()) {
       this.target = 0; this.issued = 0; this.presented = false;
       this.video.currentTime = this.seekSeconds(0);
       this.state = { ...this.state, frame: 0, targetFrame: 0, confirmed: false };
@@ -111,7 +168,12 @@ export class VideoFrameClock {
   private startPlayback(): void {
     const started = this.video.play() as Promise<void> | undefined;
     // An AbortError means a pause or a newer load superseded this play(): the state already says so. Anything else (NotAllowedError) means it never started.
-    if (started && typeof started.catch === "function") started.catch((error: unknown) => { if (!this.disposed && (error as { name?: string } | null)?.name !== "AbortError") this.set({ playing: false, rate: 0 }); });
+    if (started && typeof started.catch === "function") started.catch((error: unknown) => {
+      if (this.disposed || (error as { name?: string } | null)?.name === "AbortError") return;
+      // Listeners first: a compare transport must see a refused play() as that, before the clock's own stop reads as an unexpected one.
+      for (const listener of [...this.rejectListeners]) listener(error);
+      this.set({ playing: false, rate: 0 });
+    });
   }
 
   /** Pauses and confirms the frame left on screen. */
@@ -166,26 +228,20 @@ export class VideoFrameClock {
 
   private readonly handlers: ReadonlyArray<readonly [string, () => void]> = [
     ["loadedmetadata", () => { this.initialize(); }],
-    ["seeked", () => { this.onSeeked(); }],
+    ["seeked", () => { if (this.video.readyState >= 3) this.set({ stalled: false }); this.onSeeked(); }],
+    ["waiting", () => { if (!this.disposed && !this.video.paused) this.set({ stalled: true }); }],
+    ["playing", () => { if (this.video.readyState >= 3) this.set({ stalled: false }); }],
     ["timeupdate", () => { if (!this.hasRvfc && this.target === null && !this.video.seeking && !this.reverseState) this.set({ frame: this.timeFrame() }); }],
     ["ended", () => { this.onEnded(); }],
-    ["pause", () => { if (this.state.playing && !this.reverseState && !this.disposed) this.set({ playing: false, rate: 0 }); }],
-    ["play", () => { if (!this.state.playing && !this.reverseState && !this.disposed) { this.set({ playing: true, rate: this.video.playbackRate || 1 }); this.startRaf(); } }],
+    ["pause", () => { if (this.disposed) return; if (this.state.playing && !this.reverseState) this.set({ playing: false, rate: 0 }); if (this.video.readyState >= 3) this.set({ stalled: false }); }],
+    ["play", () => { if (!this.state.playing && !this.reverseState && !this.disposed) { this.set({ playing: true, rate: this.requestedRate || 1 }); this.startRaf(); } }],
   ];
 
   private set(next: Partial<FrameClockState>): void {
     const merged = { ...this.state, ...next };
-    if (merged.frame === this.state.frame && merged.targetFrame === this.state.targetFrame && merged.confirmed === this.state.confirmed && merged.playing === this.state.playing && merged.rate === this.state.rate) return;
+    if (merged.frame === this.state.frame && merged.targetFrame === this.state.targetFrame && merged.confirmed === this.state.confirmed && merged.playing === this.state.playing && merged.rate === this.state.rate && merged.stalled === this.state.stalled) return;
     this.state = merged;
     for (const listener of [...this.listeners]) listener();
-  }
-
-  private lastFrame(): number {
-    let last = this.frameCount - 1;
-    const duration = this.video.duration;
-    // Audio and video lengths can differ: never seek past what the element says it has.
-    if (Number.isFinite(duration) && duration > 0) last = Math.min(last, Math.ceil((duration * this.fps.num) / this.fps.den - 1e-6) - 1);
-    return Math.max(0, last);
   }
 
   private clamp(frame: number): number {
@@ -212,10 +268,11 @@ export class VideoFrameClock {
    */
   private initialize(): void {
     const { playing, rate } = this.state;
-    if (!(playing && rate > 0 && !this.reverseState)) { this.seek(0, true); return; }
+    if (!(playing && rate > 0 && !this.reverseState)) { this.seek(this.takeInitialFrame(), true); return; }
     if (this.disposed) return;
-    this.video.playbackRate = rate;
-    if (this.video.currentTime !== 0 || this.target !== null) this.seek(0, true, true);
+    this.video.playbackRate = rate * this.trim;
+    const initial = this.takeInitialFrame();
+    if (this.video.currentTime !== 0 || this.target !== null || initial !== 0) this.seek(initial, true, true);
     this.startRaf();
   }
 
@@ -238,7 +295,8 @@ export class VideoFrameClock {
   private halt(): void {
     if (this.state.playing && !this.video.paused) this.video.pause();
     this.endReverse();
-    this.set({ playing: false, rate: 0 });
+    this.trim = 1;
+    this.set({ playing: false, rate: 0, stalled: false });
   }
 
   private onSeeked(): void {
@@ -290,6 +348,7 @@ export class VideoFrameClock {
     if (this.disposed) return;
     this.register();
     this.presented = true;
+    this.presentedTime = metadata.mediaTime;
     const frame = this.clamp(frameAtPresentationTime(metadata.mediaTime, this.fps));
     // Only the frame the seek asked for settles it; a late callback from an intermediate seek just reports what is on screen.
     if (this.target !== null && this.issued === this.target && !this.video.seeking && !this.reverseState && frame === this.target) {
@@ -372,7 +431,7 @@ export type FrameClock = FrameClockState & {
   setMuted(muted: boolean): void;
 };
 
-const IDLE: FrameClockState = { frame: 0, targetFrame: null, confirmed: false, playing: false, rate: 0 };
+const IDLE: FrameClockState = { frame: 0, targetFrame: null, confirmed: false, playing: false, rate: 0, stalled: false };
 const noopSubscribe = () => () => {};
 const getIdle = () => IDLE;
 
@@ -380,12 +439,14 @@ const getIdle = () => IDLE;
  * The frame clock of `video` for one Version (the interface notes, markup and compare compose on). Pass the element as STATE
  * (a callback ref) so the clock is built when it mounts. Key the player by Version: a new Version is a new clock.
  */
-export function useVideoFrameClock(video: HTMLVideoElement | null, version: FrameClockVersion): FrameClock {
+export function useVideoFrameClock(video: HTMLVideoElement | null, version: FrameClockVersion, options: { initialFrame?: number } = {}): FrameClock {
   const { fps, frameCount } = version;
+  // Read once, when the clock is built: a later change of the option must not rebuild the clock.
+  const initialFrame = useRef(options.initialFrame);
   const [clock, setClock] = useState<VideoFrameClock | null>(null);
   useEffect(() => {
     if (!video) { setClock(null); return; }
-    const created = new VideoFrameClock(video, { fps: { num: fps.num, den: fps.den }, frameCount });
+    const created = new VideoFrameClock(video, { fps: { num: fps.num, den: fps.den }, frameCount }, initialFrame.current === undefined ? {} : { initialFrame: initialFrame.current });
     setClock(created);
     return () => { created.dispose(); };
   }, [video, fps.num, fps.den, frameCount]);
