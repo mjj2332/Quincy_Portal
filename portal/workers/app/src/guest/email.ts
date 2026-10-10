@@ -72,14 +72,17 @@ const committable = (now: string) => `${live(now)} AND ${GATE_SQL} AND ${UNARCHI
 const guestEmailFence = (bind: { now: string; token: string; guest: string }): string => `s.token_hash = ${bind.token} AND s.guest_id IS ${bind.guest} AND ${committable(bind.now)}`;
 
 /**
- * Whether a refused write was refused by the fence, and how. Runs at its own fresh time before any code-specific answer: the stub when the session (token, identity), link or gate is no
- * longer what the request authenticated, `project_archived` (409) when only the Project is archived, else null (the fence held and the code decides).
+ * Whether a request was refused by the fence, and how. Runs at its own fresh time and BEFORE every non-success outcome of verify (no code row, `already_verified`, `code_expired`,
+ * `code_incorrect`): the stub when the session, link or gate is gone (a revoke or replace deletes the session and its codes), `project_archived` (409) when only the Project is archived,
+ * else null. One more case is not a refusal: the session row is still live but its token was rotated, which only a competing verify on this same session does. `rotatedIsRefusal` false
+ * lets the caller go on (its code is spent, so it answers 401 `code_expired` and the client refetches the now-verified session); true answers the stub.
  */
-async function classifyRefusal(c: Context<AppEnv>, session: GuestSession): Promise<Response | null> {
-  const row = await c.env.DB.prepare(`SELECT p.archived_at FROM guest_sessions s JOIN client_links l ON l.id = s.link_id JOIN projects p ON p.id = l.project_id
-    WHERE s.id = ?1 AND s.token_hash = ?2 AND s.guest_id IS ?3 AND ${live("?4")} AND ${GATE_SQL}`).bind(session.id, session.tokenHash, session.guestId, Date.now()).first<{ archived_at: number | null }>();
+async function classifyRefusal(c: Context<AppEnv>, session: GuestSession, rotatedIsRefusal = true): Promise<Response | null> {
+  const row = await c.env.DB.prepare(`SELECT s.token_hash, p.archived_at FROM guest_sessions s JOIN client_links l ON l.id = s.link_id JOIN projects p ON p.id = l.project_id
+    WHERE s.id = ?1 AND ${live("?2")} AND ${GATE_SQL}`).bind(session.id, Date.now()).first<{ token_hash: string; archived_at: number | null }>();
   if (!row) return guestNotFound(c);
-  return row.archived_at !== null ? c.json({ error: "project_archived" }, 409) : null;
+  if (row.archived_at !== null) return c.json({ error: "project_archived" }, 409);
+  return row.token_hash !== session.tokenHash && rotatedIsRefusal ? guestNotFound(c) : null;
 }
 /** An archived Project takes no writes: 409 before any limit is spent or body read. */
 async function archivedResponse(c: Context<AppEnv>, projectId: string): Promise<Response | null> {
@@ -174,6 +177,8 @@ async function verifyCode(c: Handled<"/d/api/links/:linkId/email/verify">): Prom
   const parsed = raw === INVALID ? null : guestEmailVerifyInputSchema.safeParse(raw);
   if (!parsed?.success) return c.json({ error: "invalid_request" }, 400);
 
+  // Refusal first, before any answer about the code: a revoke or replace has deleted the session's codes, and "no code" must not be what the guest hears.
+  const refused = await classifyRefusal(c as unknown as Context<AppEnv>, session, false); if (refused) return refused;
   // Only the newest code of this session counts, so asking for a new one kills the old.
   const newest = await c.env.DB.prepare("SELECT id, email_normalized FROM guest_email_codes WHERE session_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT 1").bind(session.id).first<{ id: string; email_normalized: string }>();
   if (session.email !== null && (!newest || newest.email_normalized !== session.email)) return c.json({ error: "already_verified" }, 409);
@@ -184,7 +189,7 @@ async function verifyCode(c: Handled<"/d/api/links/:linkId/email/verify">): Prom
       AND EXISTS (SELECT 1 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE s.id = guest_email_codes.session_id AND ${guestEmailFence({ now: "?2", token: "?4", guest: "?5" })})
     RETURNING attempts, code_hash`).bind(newest.id, Date.now(), CODE_TRIES, session.tokenHash, session.guestId).first<{ attempts: number; code_hash: string }>();
   // Refusal first: a code answer must never come from a request the fence would have refused.
-  if (!tried) return await classifyRefusal(c as unknown as Context<AppEnv>, session) ?? c.json({ error: "code_expired" }, 401);
+  if (!tried) return await classifyRefusal(c as unknown as Context<AppEnv>, session, false) ?? c.json({ error: "code_expired" }, 401);
   const correct = await verifyPasscode(tried.code_hash, parsed.data.code);
   if (!correct) return await classifyRefusal(c as unknown as Context<AppEnv>, session) ?? c.json({ error: "code_incorrect", attemptsLeft: CODE_TRIES - tried.attempts }, 401);
 
@@ -219,7 +224,7 @@ async function verifyCode(c: Handled<"/d/api/links/:linkId/email/verify">): Prom
   const stored = results[results.length - 1]!.results[0] as { expires_at: number; email_normalized: string; display_name: string | null } | undefined;
   if (!stored) {
     // Nothing landed. A gone session, link or gate is the stub and an archived Project is 409; a session that is still live lost the race to a double-click, a newer code or an expiry: the code is spent.
-    return await classifyRefusal(c as unknown as Context<AppEnv>, session) ?? c.json({ error: "code_expired" }, 401);
+    return await classifyRefusal(c as unknown as Context<AppEnv>, session, false) ?? c.json({ error: "code_expired" }, 401);
   }
   const response = c.json(sessionBody(link, identityOf({ email: stored.email_normalized, name: stored.display_name })));
   response.headers.append("set-cookie", sessionCookieHeader(c.env, link.id, token, (stored.expires_at - committedAt) / 1000));

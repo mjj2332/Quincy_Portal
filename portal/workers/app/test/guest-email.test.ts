@@ -313,11 +313,14 @@ describe("POST .../email/verify", () => {
     expect(again.status).toBe(401); expect(await again.json()).toEqual({ error: "code_expired" });
   });
 
-  it("admits one of two concurrent verifies of the right code", async () => {
+  it("admits one of two concurrent verifies of the right code, and the loser gets 401 code_expired", async () => {
     const { link, session, code } = await sent();
-    const responses = await Promise.all([verify(link, session.cookie, code), verify(link, session.cookie, code)]);
-    const statuses = responses.map((response) => response.status).sort();
-    expect(statuses[0]).toBe(200); expect([401, 404]).toContain(statuses[1]);
+    // Both authenticate before either commits: the bodies arrive together after the headers.
+    const pair = [slowPost(linkPath(link.id, "/email/verify"), session.cookie, { code, name: NAME }, 250), slowPost(linkPath(link.id, "/email/verify"), session.cookie, { code, name: NAME }, 250)];
+    const responses = await Promise.all(pair.map((entry) => entry.response));
+    const results = await Promise.all(responses.map(async (response) => ({ status: response.status, body: response.status === 200 ? null : await response.json() })));
+    expect(results.map((result) => result.status).sort()).toEqual([200, 401]);
+    expect(results.find((result) => result.status === 401)!.body).toEqual({ error: "code_expired" });
     expect(await audits("review_link.email_verify", link.id)).toHaveLength(1);
     expect((await database.DB.prepare("SELECT COUNT(*) AS n FROM guest_link_members WHERE link_id = ?").bind(link.id).first<{ n: number }>())!.n).toBe(1);
   });
@@ -657,5 +660,43 @@ describe("one fence for every write on the email routes (Sol round 2)", () => {
     expect((await sendCode(link, session.cookie)).status).toBe(202);
     const rows = await audits("review_link.email_code_send", link.id);
     expect(rows).toHaveLength(1); expect(JSON.parse(rows[0]!.meta_json)).toMatchObject({ delivered: false, errorCode: "E_DELIVERY_FAILED" });
+  });
+});
+
+describe("refusal is classified before every non-success outcome in verify (Sol round 3)", () => {
+  const revokeNow = (linkId: string) => database.DB.batch([database.DB.prepare("UPDATE client_links SET revoked_at = ? WHERE id = ?").bind(Date.now(), linkId), database.DB.prepare("DELETE FROM guest_sessions WHERE link_id = ?").bind(linkId)]);
+  const replaceNow = (linkId: string) => database.DB.batch([database.DB.prepare("UPDATE client_links SET token_generation = token_generation + 1 WHERE id = ?").bind(linkId), database.DB.prepare("DELETE FROM guest_sessions WHERE link_id = ?").bind(linkId)]);
+
+  it("a revoke or a replace while the body is pending is the exact stub, not code_expired", async () => {
+    for (const kill of [revokeNow, replaceNow]) {
+      const { link, session, code } = await sent({ link: await seedGuestLink(), email: `kill${Math.random().toString(36).slice(2, 8)}@guest-13a.test` });
+      const pending = slowPost(linkPath(link.id, "/email/verify"), session.cookie, { code, name: NAME }, 250);
+      await sleep(80); await kill(link.id);
+      expect(await plain(await pending.response)).toEqual(await stubBody());
+      expect(await memberCount(link.id)).toBe(0);
+    }
+  });
+
+  it("a revoke while the body of a verified guest's verify is pending is the stub, not already_verified", async () => {
+    const { link, cookie } = await verifiedGuest();
+    const pending = slowPost(linkPath(link.id, "/email/verify"), cookie, { code: "123456", name: NAME }, 250);
+    await sleep(80); await revokeNow(link.id);
+    expect(await plain(await pending.response)).toEqual(await stubBody());
+  });
+
+  it("a revoke during the window in which two correct verifies race is the stub for both", async () => {
+    const { link, session, code } = await sent();
+    const pair = [slowPost(linkPath(link.id, "/email/verify"), session.cookie, { code, name: NAME }, 250), slowPost(linkPath(link.id, "/email/verify"), session.cookie, { code, name: NAME }, 250)];
+    await sleep(80); await revokeNow(link.id);
+    const stub = await stubBody();
+    for (const entry of pair) expect(await plain(await entry.response)).toEqual(stub);
+    expect(await memberCount(link.id)).toBe(0);
+  });
+
+  it("a wrong code and a missing code are the stub too once the link is revoked mid-request", async () => {
+    const { link, session, code } = await sent();
+    const wrong = slowPost(linkPath(link.id, "/email/verify"), session.cookie, { code: wrongCode(code), name: NAME }, 250);
+    await sleep(80); await revokeNow(link.id);
+    expect(await plain(await wrong.response)).toEqual(await stubBody());
   });
 });
