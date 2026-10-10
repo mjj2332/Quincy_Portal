@@ -110,7 +110,13 @@ async function openViewer() {
   const open = [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === "Open review")!;
   open.focus();
   await click(open);
-  for (let i = 0; i < 200 && !playerVideo(); i += 1) await flush(1);
+  // The viewer is a lazy chunk: under a loaded verify run its import can outlast a fixed number of
+  // ticks, so wait on the clock and fail loudly instead of handing a null <video> to the stub.
+  const deadline = Date.now() + 10_000;
+  while (!playerVideo()) {
+    if (Date.now() > deadline) throw new Error("openViewer: the review player never mounted");
+    await flush(1);
+  }
   await flush(4);
 }
 /** Lands frame 0 the way a real load does, then presents `frame`. */

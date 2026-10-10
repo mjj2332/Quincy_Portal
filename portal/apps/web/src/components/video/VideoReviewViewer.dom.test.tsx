@@ -55,7 +55,8 @@ async function openViewer() {
   openButton().focus();
   await act(async () => { openButton().click(); });
   // The first open loads the lazy chunk.
-  for (let i = 0; i < 60 && !dialog(); i += 1) await flush(1);
+  const deadline = Date.now() + 10_000; // lazy viewer chunk: wait on the clock, not a tick count
+  while (!dialog()) { if (Date.now() > deadline) throw new Error("the review viewer never mounted"); await flush(1); }
   await flush(4);
 }
 async function key(k: string, target: Element, init: KeyboardEventInit = {}) {
