@@ -33,10 +33,11 @@ const videoOf = (): VideoDto => ({ id: ids.video, title: "Main walkthrough", pre
 let stub: VideoElementStub;
 let root: Root | null = null; let host: HTMLElement;
 async function flush(times = 8) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
-async function mount(parts: Array<"delivery" | "notes">, role: Role = "editor") {
+const approvedEvent = { id: "55555555-5555-4555-8555-555555555555", revision: 1, decision: "approved", note: null, at: "2026-10-10T01:00:00.000Z", actor: { kind: "guest", name: "Sam Client" }, link: { id: "44444444-4444-4444-8444-444444444441", label: "Owner link" } };
+async function mount(parts: Array<"delivery" | "notes">, role: Role = "editor", approved = false) {
   apiGetMock.mockImplementation(async (path) => {
     if (path.endsWith("/videos")) return { videos: [videoOf()] };
-    if (path.endsWith("/decisions")) return { versions: [{ assetId: ids.asset2, version: 2, events: [], release: null }, { assetId: ids.asset1, version: 1, events: [], release: null }] };
+    if (path.endsWith("/decisions")) return { versions: [{ assetId: ids.asset2, version: 2, events: approved ? [approvedEvent] : [], release: null }, { assetId: ids.asset1, version: 1, events: [], release: null }] };
     if (path.includes("/notes")) return { notes: [] };
     throw new Error(`unrouted ${path}`);
   });
@@ -82,5 +83,35 @@ describe("VideoReviewViewer delivery panel (#741 14-ui-staff)", () => {
     await panelLoaded();
     expect(panel()).not.toBeNull();
     expect(document.querySelector('[data-testid="video-details-button"]')).not.toBeNull();
+  });
+
+  describe("player shortcuts and nested dialogs", () => {
+    const key = async (target: Element, k: string) => { await act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); }); };
+    const player = () => document.querySelector<HTMLElement>('[data-testid="video-review-viewer"]')!;
+    const cancelOfConfirm = () => [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find((b) => b.textContent === "Cancel")!;
+
+    it("L on the viewer still plays the film", async () => {
+      await mount(["delivery"], "admin", true);
+      await openViewer();
+      await panelLoaded();
+      stub.calls.length = 0;
+      await key(player(), "l");
+      expect(stub.calls).toContain("play");
+    });
+
+    it("L and K pressed on the Cancel of an open Release confirm do not reach the player", async () => {
+      await mount(["delivery"], "admin", true);
+      await openViewer();
+      await panelLoaded();
+      await act(async () => { document.querySelector<HTMLElement>('[data-testid="delivery-release"]')!.click(); });
+      await flush(4);
+      expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
+      const cancel = cancelOfConfirm();
+      cancel.focus();
+      stub.calls.length = 0;
+      await key(cancel, "l");
+      await key(cancel, "k");
+      expect(stub.calls).toEqual([]);
+    });
   });
 });

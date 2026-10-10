@@ -260,7 +260,12 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       initialFocus={popupRef}
       showCloseButton={false}
       finalFocus={() => { const opener = returnFocusTo?.(); return opener && opener.isConnected ? opener : true; }}
-      onKeyDown={(event) => { (modeRef.current === "compare" ? compareRef.current : playerRef.current)?.handleKeyDown(event); }}
+      onKeyDown={(event) => {
+        // A dialog portalled out of the viewer (a confirm, a note-delete) still bubbles its keys here through React: leave them to that dialog.
+        const host = (event.target as Element).closest?.('[role=dialog],[role=alertdialog]');
+        if (host && host !== event.currentTarget) return;
+        (modeRef.current === "compare" ? compareRef.current : playerRef.current)?.handleKeyDown(event);
+      }}
       className="top-0 left-0 flex h-dvh w-dvw max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none bg-background p-0 text-foreground ring-0 focus-visible:!outline-none sm:max-w-none"
     >
       <OverlayContainerContext.Provider value={slot}>
