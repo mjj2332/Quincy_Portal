@@ -4,6 +4,7 @@ import { createGuestApi, type GuestApi } from "./guest-api";
 import { readLinkId } from "./link-fragment";
 import { GuestVideoScreen } from "./GuestVideoScreen";
 import { createGuestWriter } from "./use-guest-writer";
+import { createGuestDrafts } from "./guest-drafts";
 import { LimitedScreen, PasscodeScreen, UnavailableScreen, UnreachableScreen, VideoListScreen } from "./GuestScreens";
 
 type Screen =
@@ -30,6 +31,8 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
   const [archived, setArchived] = useState(false);
   // Owns the pending writes for the life of the link's session, so leaving the video screen mid-write and coming back cannot send the same note twice.
   const [writer] = useState(createGuestWriter);
+  // Owns the inline reply and reply-edit drafts for the link, so closing the phone drawer or re-verifying (which unmount the notes list) keeps what the guest typed.
+  const [drafts] = useState(createGuestDrafts);
   const api = useMemo<GuestApi | null>(() => { const id = readLinkId(); return id === null ? null : createGuestApi(id); }, []);
   // The token lives here once the fragment is scrubbed, so a wrong passcode can retry. Never in the URL, storage or a log.
   const token = useRef<string | null>(initialToken);
@@ -105,6 +108,6 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
   if (session === null) return <UnavailableScreen />;
   const shown = screen.name === "list"
     ? <VideoListScreen title={session?.link.label ?? null} videos={videos} onOpen={(index) => { setNotice(null); setScreen({ name: "video", index }); }} />
-    : <GuestVideoScreen api={api} writer={writer} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} />;
+    : <GuestVideoScreen api={api} writer={writer} drafts={drafts} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} />;
   return <>{archived && <p role="status" data-testid="guest-archived-notice" className="m-0 bg-card px-[var(--space-5)] py-[var(--space-3)] text-center text-card-foreground [font:var(--type-label)]">This project was archived, so notes are read-only.</p>}{notice !== null && <p role="status" data-testid="guest-notice" className="m-0 bg-card px-[var(--space-5)] py-[var(--space-3)] text-center text-card-foreground [font:var(--type-label)]">{notice}</p>}{shown}</>;
 }

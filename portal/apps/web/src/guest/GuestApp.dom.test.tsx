@@ -8,6 +8,7 @@ import { GuestApp } from "./GuestApp";
 import type { GuestApi } from "./guest-api";
 import { GuestVideoScreen } from "./GuestVideoScreen";
 import { createGuestWriter } from "./use-guest-writer";
+import { createGuestDrafts } from "./guest-drafts";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea reads (same stub as App-project-sheet.dom.test.tsx).
@@ -682,7 +683,7 @@ describe("Sol round 7", () => {
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
-    await act(async () => { root!.render(<GuestVideoScreen api={api} writer={createGuestWriter()} session={SESSION} onSession={() => undefined} archived={false} onArchived={() => undefined} videos={videos} index={0} onIndex={() => undefined} onBack={null} onUnavailable={onUnavailable} onGrantsChanged={onGrantsChanged} />); });
+    await act(async () => { root!.render(<GuestVideoScreen api={api} writer={createGuestWriter()} drafts={createGuestDrafts()} session={SESSION} onSession={() => undefined} archived={false} onArchived={() => undefined} videos={videos} index={0} onIndex={() => undefined} onBack={null} onUnavailable={onUnavailable} onGrantsChanged={onGrantsChanged} />); });
     await flush();
     await act(async () => { stub.fireError(host.querySelector("video")!); });
     await act(async () => { root!.unmount(); });

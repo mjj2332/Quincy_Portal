@@ -85,6 +85,8 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
   const svgRef = useRef<SVGSVGElement | null>(null);
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
   const opId = useRef(0);
+  // The frame the drawing history was built on; it survives the off / confirming phases so a later start on another frame can tell.
+  const drawingFor = useRef<number | null>(null);
 
   const playing = useFrameClockSelector(clock, (state) => state.playing, false);
   const frameNow = useFrameClockSelector(clock, (state) => (state.targetFrame === null ? state.frame : -1), -1);
@@ -93,7 +95,7 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
 
   const reset = useCallback(() => {
     opId.current += 1;
-    setBody(""); setMarks(EMPTY_MARKS); setItems(NO_ITEMS); setDrawFrame(null); setPhase("off"); setProblem(null); setPending(false); setRefusedFor(null); setTarget(null); setRemoved(false);
+    setBody(""); setMarks(EMPTY_MARKS); setItems(NO_ITEMS); setDrawFrame(null); setPhase("off"); setProblem(null); setPending(false); setRefusedFor(null); setTarget(null); setRemoved(false); drawingFor.current = null;
   }, []);
   const begin = useCallback(() => { reset(); setMarks({ in: here(), out: null }); setOpen(true); }, [reset, here]);
   const beginEdit = useCallback((thread: GuestNoteThreadDto) => {
@@ -126,8 +128,11 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
 
   // A drawing has exactly one frame, and an undo step restores strokes without one: starting on a different frame than the history was built on drops its steps.
   const { resetHistory } = markup;
-  const drawingFor = useRef<number | null>(null);
-  useEffect(() => { if (drawing && drawingFor.current !== null && drawingFor.current !== drawFrame) resetHistory(); drawingFor.current = drawing ? drawFrame : null; }, [drawing, drawFrame, resetHistory]);
+  useEffect(() => {
+    if (!drawing || drawFrame === null) return;
+    if (drawingFor.current !== null && drawingFor.current !== drawFrame) resetHistory();
+    drawingFor.current = drawFrame;
+  }, [drawing, drawFrame, resetHistory]);
 
   // Nothing may move the frame under the pen: if playback starts or the frame changes anyway, drawing ends and the strokes stay.
   const offFrame = drawing && (playing || frameNow !== drawFrame);
@@ -243,8 +248,8 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
   const form = !isOpen ? null : <form data-testid="guest-composer" aria-label={target === null ? "New note" : "Edit note"} onSubmit={(event) => { void submit(event); }} noValidate className="flex flex-col gap-[var(--space-2)]">
     <p data-testid="guest-composer-anchor" className="m-0 text-foreground [font:var(--type-mono)] tabular-nums">{anchor}</p>
     <div className="flex flex-wrap gap-[var(--space-2)]">
-      <Button type="button" variant="outline" size="sm" data-testid="guest-composer-mark-in" className={TOUCH} disabled={clock === null || marksLocked} onClick={() => { setMarks((current) => markFrame(current, "in", here())); }}>Mark in</Button>
-      <Button type="button" variant="outline" size="sm" data-testid="guest-composer-mark-out" className={TOUCH} disabled={clock === null || marksLocked} onClick={() => { setMarks((current) => markFrame(current, "out", here())); }}>Mark out</Button>
+      <Button type="button" variant="outline" size="sm" data-testid="guest-composer-mark-in" className={TOUCH} disabled={clock === null || marksLocked || pending} onClick={() => { if (!pending) setMarks((current) => markFrame(current, "in", here())); }}>Mark in</Button>
+      <Button type="button" variant="outline" size="sm" data-testid="guest-composer-mark-out" className={TOUCH} disabled={clock === null || marksLocked || pending} onClick={() => { if (!pending) setMarks((current) => markFrame(current, "out", here())); }}>Mark out</Button>
       {markupAllowed && <Button type="button" variant="outline" size="sm" data-testid="guest-composer-draw" className={TOUCH} disabled={clock === null || pending || phase !== "off" || framesChanged} onClick={() => { void startDrawing(); }}><PencilIcon aria-hidden="true" />{drawLabel}</Button>}
     </div>
     {hint !== null && <p data-testid="guest-composer-hint" className="m-0 text-foreground-secondary [font:var(--type-label)]">{hint}</p>}

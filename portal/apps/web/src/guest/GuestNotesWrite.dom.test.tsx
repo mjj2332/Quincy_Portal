@@ -219,6 +219,25 @@ describe("the composer", () => {
     await flush();
     expect(allById("guest-note")).toHaveLength(1);
   });
+  it("disables Mark in and Mark out while the post is pending, so a seek cannot change what the success clears", async () => {
+    let release: () => void = () => undefined;
+    extra = (url, init) => {
+      if (url.endsWith("/notes") && init?.method === "POST") return new Promise<Response>((resolve) => { release = () => { resolve(json(mine(5), 201)); }; });
+      return undefined;
+    };
+    await open();
+    await atSeconds(2);
+    await click(byId("guest-add-note"));
+    await typeInto(byId("guest-composer-body"), "once");
+    await submit("guest-composer");
+    await atSeconds(4);
+    expect((byId("guest-composer-mark-in") as HTMLButtonElement).disabled).toBe(true);
+    expect((byId("guest-composer-mark-out") as HTMLButtonElement).disabled).toBe(true);
+    await click(byId("guest-composer-mark-in"));
+    expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:02:00");
+    await act(async () => { release(); });
+    await flush();
+  });
   it("drops a response that arrives after the guest moved to another Version", async () => {
     videos = [videoOf(1, [versionOf(11), versionOf(10)].sort((a, b) => b.version - a.version))];
     notes = { [asset(11)]: [], [asset(10)]: [note(1)] };
@@ -365,6 +384,26 @@ describe("drawing", () => {
         await atSeconds(2);
         expect(allById("guest-draft-stroke").length).toBeGreaterThan(0);
         expect(allById("guest-markup-stroke")).toHaveLength(0);
+      });
+    });
+    it("a drawing history never crosses frames: draw at A, undo all, Done, draw at B, and Redo has nothing to bring back", async () => {
+      await withLayout(async () => {
+        await open();
+        await atSeconds(2);
+        await click(byId("guest-add-note"));
+        await click(byId("guest-composer-draw"));
+        await atSeconds(2);
+        await draw(byId("guest-draft-layer")!);
+        expect(allById("guest-draft-stroke").length).toBeGreaterThan(0);
+        await click(button("Undo"));
+        expect(allById("guest-draft-stroke")).toHaveLength(0);
+        await click(byId("guest-markup-done"));
+        await atSeconds(4);
+        await click(byId("guest-composer-draw"));
+        await atSeconds(4);
+        expect((button("Redo") as HTMLButtonElement).disabled).toBe(true);
+        await click(button("Redo"));
+        expect(allById("guest-draft-stroke")).toHaveLength(0);
       });
     });
     it("after saving a redraw, the note's drawing is read again by its new revision", async () => {
@@ -596,6 +635,36 @@ describe("replies", () => {
     expect(requests("POST").at(-1)).toEqual({ url: `${BASE}/notes/${noteId(1)}/replies`, body: { body: "Will do" } });
     expect(allById("guest-note-reply")).toHaveLength(1);
     expect(byId("guest-reply-form")).toBeNull();
+  });
+  it("keeps a reply draft when the phone drawer closes and opens again", async () => {
+    await viewport.set({ width: 390, coarse: true });
+    notes = { [asset(10)]: [note(1)] };
+    await open();
+    await click(button("Notes"));
+    await click(byId("guest-note-reply-button"));
+    await typeInto(byId("guest-reply-body"), "half written");
+    await click(byId("guest-notes-close"));
+    expect(byId("guest-reply-form")).toBeNull();
+    await click(button("Notes"));
+    expect((byId("guest-reply-body") as HTMLTextAreaElement | null)?.value).toBe("half written");
+  });
+  it("keeps a reply edit draft across the list unmounting, and drops it on cancel", async () => {
+    await viewport.set({ width: 390, coarse: true });
+    const reply = (({ replies: _replies, ...rest }) => rest)(mine(7, { parentId: noteId(1), startFrame: null, body: "Will do", revision: 2 }));
+    notes = { [asset(10)]: [{ ...note(1), replies: [reply] }] };
+    await open();
+    await click(button("Notes"));
+    const menus = allById("guest-note-actions");
+    await click(menus[0]);
+    await click(menuItem("Edit"));
+    await typeInto(byId("guest-note-edit-body"), "Will do it");
+    await click(byId("guest-notes-close"));
+    await click(button("Notes"));
+    expect((byId("guest-note-edit-body") as HTMLTextAreaElement | null)?.value).toBe("Will do it");
+    await click(byId("guest-note-edit-cancel"));
+    await click(byId("guest-notes-close"));
+    await click(button("Notes"));
+    expect(byId("guest-note-edit-form")).toBeNull();
   });
   it("asks an unverified guest to verify first", async () => {
     session = ANON;

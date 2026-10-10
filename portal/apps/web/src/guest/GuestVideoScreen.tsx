@@ -14,6 +14,7 @@ import { failureText, removeThread, upsertThread, type EditPatch } from "./guest
 import type { ActionOutcome, NoteActions, Writing } from "./GuestNoteItem";
 import { GuestNotesPanel } from "./GuestNotesPanel";
 import { GuestVerifyDialog } from "./GuestVerifyDialog";
+import type { GuestDrafts } from "./guest-drafts";
 import { useGuestCompose } from "./use-guest-compose";
 import type { GuestWriter, Skipped, WriterBinding } from "./use-guest-writer";
 import { useGuestMarkup } from "./GuestMarkup";
@@ -56,10 +57,11 @@ function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
  * One Video on the guest page (#741 12b), read-only: the reused review player on the inverse surface, the granted-Versions select, previous / next Video, and the public notes (a
  * column beside the player, a bottom drawer below 721px). Moving between Videos never returns to the list. State is in memory; the URL does not change.
  */
-export function GuestVideoScreen({ api, writer, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged }: {
+export function GuestVideoScreen({ api, writer, drafts, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged }: {
   api: GuestApi;
   /** Owned by `GuestApp`, so a write still out survives this screen being left and opened again. */
   writer: GuestWriter;
+  drafts: GuestDrafts;
   session: GuestSessionResponse;
   /** The session changed: verified (the verify route's body), or verification lost (a 401 on a write). */
   onSession: (next: GuestSessionResponse) => void;
@@ -261,9 +263,9 @@ export function GuestVideoScreen({ api, writer, session, onSession, archived, on
   }, []);
   const { beginEdit } = compose;
   const writing = useMemo<Writing>(() => ({
-    canWrite, verified: session.verified, actions, onNeedVerify: () => { requestVerify("none"); },
+    canWrite, verified: session.verified, actions, drafts, onNeedVerify: () => { requestVerify("none"); },
     composerOpen: compose.isOpen, editRoot: (thread) => { startDraft(() => { beginEdit(thread); }); },
-  }), [canWrite, session.verified, actions, requestVerify, compose.isOpen, startDraft, beginEdit]);
+  }), [canWrite, session.verified, actions, drafts, requestVerify, compose.isOpen, startDraft, beginEdit]);
   const addNote = canWrite
     ? compose.isOpen ? compose.form : <Button type="button" variant="outline" data-testid="guest-add-note" className={TOUCH} onClick={() => { if (session.verified) startDraft(compose.begin); else requestVerify("compose"); }}>Add a note</Button>
     : null;
