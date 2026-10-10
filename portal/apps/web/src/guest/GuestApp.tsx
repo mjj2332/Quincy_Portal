@@ -27,6 +27,11 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
   const [session, setSession] = useState<GuestSessionResponse | null>(null);
   const [videos, setVideos] = useState<GuestVideoDto[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  // The latest list and screen for async completions; `commitVideos` is the only writer of the list, so the ref is never behind a queued update.
+  const videosRef = useRef<GuestVideoDto[]>([]);
+  const screenRef = useRef<Screen>({ name: "boot" });
+  screenRef.current = screen;
+  const commitVideos = useCallback((next: GuestVideoDto[]) => { videosRef.current = next; setVideos(next); }, []);
   // A write found the Project archived: notes are read-only for the rest of this visit.
   const [archived, setArchived] = useState(false);
   // Owns the pending writes for the life of the link's session, so leaving the video screen mid-write and coming back cannot send the same note twice.
@@ -52,9 +57,9 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
     const list = await opened.videos();
     if (list.kind === "gone") { setScreen({ name: "unavailable" }); return; }
     if (list.kind === "transient") { fail(() => { void enter(opened, next); }); return; }
-    setVideos(list.value);
+    commitVideos(list.value);
     setScreen(list.value.length === 1 ? { name: "video", index: 0 } : { name: "list" });
-  }, [fail]);
+  }, [fail, commitVideos]);
 
   const exchange = useCallback(async (opened: GuestApi, tokenValue: string, passcode?: string) => {
     const result = await opened.exchange(tokenValue, passcode);
@@ -92,6 +97,14 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
     void exchange(api, token.current, passcode);
   };
   const unavailable = useCallback(() => { setScreen({ name: "unavailable" }); }, []);
+  // Staff took the displayed Video or Version off the link while it was open: show what is still granted, calmly, or nothing if nothing is.
+  const grantsChanged = useCallback((fresh: GuestVideoDto[]) => {
+    if (fresh.length === 0) { setScreen({ name: "unavailable" }); return; }
+    commitVideos(fresh);
+    setNotice("That video was updated by the studio. Here is what's available now.");
+    setScreen(fresh.length === 1 ? { name: "video", index: 0 } : { name: "list" });
+  }, [commitVideos]);
+
   // Delivery re-reads race decision writes. `rereadSeq` moves on every re-read, so only the newest one may apply; `decisionGen` moves per Version when a decision write lands, so a re-read that
   // started before that write cannot put the older decision back over it.
   const rereadSeq = useRef(0);
@@ -100,34 +113,36 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
   // A response older than what the page already holds (a refresh showed a newer revision first) is dropped: revisions only move forward.
   const decided = useCallback((assetId: string, decision: GuestDecision) => {
     decisionGen.current.set(assetId, (decisionGen.current.get(assetId) ?? 0) + 1);
-    setVideos((list) => list.map((video) => (video.versions.some((version) => version.assetId === assetId)
+    commitVideos(videosRef.current.map((video) => (video.versions.some((version) => version.assetId === assetId)
       ? { ...video, versions: video.versions.map((version) => (version.assetId === assetId && decision.revision >= (version.decision?.revision ?? 0) ? { ...version, decision } : version)) } : video)));
-  }, []);
+  }, [commitVideos]);
   // A decision that may or may not have landed: read the list again, and take only the delivery fields (decision, Release, download link, and the Video's premium and unlock state) of what is already on the page, never its shape.
-  const resyncDelivery = useCallback(() => {
+  const resyncDelivery = useCallback((shown: () => string) => {
     if (api === null) return;
     rereadSeq.current += 1;
     const mine = rereadSeq.current;
     const startedAt = new Map(decisionGen.current);
     void api.videos().then((fresh) => {
-      if (fresh.kind !== "ok" || rereadSeq.current !== mine) return;
+      if (rereadSeq.current !== mine) return;
+      if (fresh.kind === "gone") { setScreen({ name: "unavailable" }); return; }
+      if (fresh.kind !== "ok") return;
       const byAsset = new Map(fresh.value.flatMap((video) => video.versions).map((version) => [version.assetId, version] as const));
       const current = (assetId: string) => (decisionGen.current.get(assetId) ?? 0) === (startedAt.get(assetId) ?? 0);
       const byVideo = new Map(fresh.value.map((video) => [video.id, video] as const));
-      setVideos((list) => list.map((video) => {
+      // Versions and Videos the studio took off the link are dropped; what remains takes the fresh delivery fields.
+      const merged = videosRef.current.flatMap((video) => {
         const freshVideo = byVideo.get(video.id);
-        return { ...video, premium: freshVideo?.premium ?? video.premium, unlocked: freshVideo?.unlocked ?? video.unlocked, versions: video.versions.map((version) => { const next = byAsset.get(version.assetId); return next && current(version.assetId) ? { ...version, decision: next.decision, released: next.released, downloadUrl: next.downloadUrl } : version; }) };
-      }));
+        const versions = video.versions.filter((version) => byAsset.has(version.assetId));
+        if (!freshVideo || versions.length === 0) return [];
+        return [{ ...video, premium: freshVideo.premium, unlocked: freshVideo.unlocked, versions: versions.map((version) => { const next = byAsset.get(version.assetId)!; return current(version.assetId) ? { ...version, decision: next.decision, released: next.released, downloadUrl: next.downloadUrl } : version; }) }];
+      });
+      if (merged.length === 0) { setScreen({ name: "unavailable" }); return; }
+      const onScreen = screenRef.current.name === "video" ? videosRef.current[screenRef.current.index] : undefined;
+      commitVideos(merged);
+      if (!byAsset.has(shown())) { grantsChanged(merged); return; }
+      if (onScreen) { const index = merged.findIndex((video) => video.id === onScreen.id); if (index >= 0) setScreen({ name: "video", index }); }
     });
-  }, [api]);
-  // Staff took the displayed Video or Version off the link while it was open: show what is still granted, calmly, or nothing if nothing is.
-  const grantsChanged = useCallback((fresh: GuestVideoDto[]) => {
-    if (fresh.length === 0) { setScreen({ name: "unavailable" }); return; }
-    setVideos(fresh);
-    setNotice("That video was updated by the studio. Here is what's available now.");
-    setScreen(fresh.length === 1 ? { name: "video", index: 0 } : { name: "list" });
-  }, []);
-
+  }, [api, commitVideos, grantsChanged]);
   if (api === null || screen.name === "unavailable") return <UnavailableScreen />;
   if (screen.name === "unreachable") return <UnreachableScreen onRetry={() => { retry.current(); }} />;
   if (screen.name === "limited") return <LimitedScreen retryAfterSeconds={screen.retryAfterSeconds} onRetry={() => { retry.current(); }} />;

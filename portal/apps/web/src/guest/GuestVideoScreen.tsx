@@ -84,7 +84,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
   /** A decision landed on the Version `assetId` (the one it was sent for, which may no longer be the one on screen). */
   onDecided: (assetId: string, decision: GuestDecision) => void;
   /** A decision may or may not have landed: read the delivery state of the listed Versions again. */
-  onResyncDelivery: () => void;
+  onResyncDelivery: (shown: () => string) => void;
 }) {
   const video = videos[index]!;
   const [assetId, setAssetId] = useState(video.versions[0]!.assetId);
@@ -141,6 +141,8 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
   // If the session is fine, the Video or this Version may still have been taken off the link: re-read the granted list, and leave only when the displayed Version is no longer in it.
   // Each recheck is bound to the Version it started on: a token that moves on every selection change and on unmount makes a late completion a no-op.
   const shownAssetId = version.assetId;
+  const shownRef = useRef(shownAssetId);
+  shownRef.current = shownAssetId;
   const selectionToken = useRef(0);
   useEffect(() => {
     selectionToken.current += 1;
@@ -314,9 +316,10 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
       closeIfShowing();
       return { ok: true };
     }
-    if (settled.kind === "conflict" || settled.kind === "unreachable") onResyncDelivery(); // the decision may exist: look before the guest sends it again
+    if (settled.kind === "conflict" || settled.kind === "unreachable") onResyncDelivery(() => shownRef.current); // the decision may exist: look before the guest sends it again
     if (stale) return { ok: false, message: null };
-    if (settled.kind === "unverified") { afterVerify.current = value; closeIfShowing(); }
+    // An older request that needs verification has already marked the session unverified; it only decides the dialog and what verifying leads to while it is still the opening showing.
+    if (settled.kind === "unverified") { if (opening.current === mine) { afterVerify.current = value; closeIfShowing(); } }
     else if (settled.kind === "archived" || settled.kind === "gone") closeIfShowing();
     else if (settled.kind === "disabled") {
       closeIfShowing(); setDecisionNotice("Approving is no longer available on this link.");

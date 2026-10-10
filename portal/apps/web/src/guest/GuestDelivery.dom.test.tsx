@@ -291,6 +291,25 @@ describe("Approve and Request changes", () => {
     expect(chipText()).toEqual(["Approved"]);
   });
 
+  it("a late 401 for an abandoned Approve does not replace the Request changes dialog the guest opened since, once they verify", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    extra = async (url, init) => { if (url === decisionUrl(asset(10)) && init?.method === "POST") { await gate; return json({ error: "verification_required" }, 401); } return undefined; };
+    await open();
+    await click(byId("guest-approve"));
+    await click(byId("guest-decision-confirm"));
+    await click(byId("guest-decision-cancel"));
+    await click(byId("guest-request-changes"));
+    await typeInto(byId("guest-decision-note"), "Keep this note");
+    await act(async () => { release(); });
+    await flush();
+    expect(byId("guest-verify-dialog")).not.toBeNull();
+    await completeVerify();
+    expect(byId("guest-verify-dialog")).toBeNull();
+    expect(byId("guest-decision-dialog")).not.toBeNull();
+    expect((byId("guest-decision-note") as HTMLTextAreaElement).value).toBe("Keep this note");
+  });
+
   it("a delayed delivery re-read from an ambiguous Approve cannot put the Approved chip back over a newer Request changes", async () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -405,6 +424,39 @@ describe("a delivery refresh after an ambiguous decision", () => {
     await decide();
     expect(byId("guest-download")).toBeNull();
     expect(byId("guest-download-locked")?.textContent).toMatch(/premium/i);
+  });
+});
+
+describe("a delivery refresh that finds access changed", () => {
+  const ambiguous = (change: () => void): Handler => (url, init) => {
+    if (url !== decisionUrl(asset(10)) || init?.method !== "POST") return undefined;
+    change();
+    return json({ error: "x" }, 503);
+  };
+  const decide = async () => { await click(byId("guest-approve")); await click(byId("guest-decision-confirm")); };
+
+  it("shows Unavailable when the re-read finds the link gone", async () => {
+    let revoked = false;
+    extra = (url, init) => {
+      if (url === decisionUrl(asset(10)) && init?.method === "POST") { revoked = true; return json({ error: "x" }, 503); }
+      if (url === `${BASE}/videos` && revoked) return stub404();
+      return undefined;
+    };
+    await open();
+    await decide();
+    expect(byId("guest-unavailable")).not.toBeNull();
+  });
+
+  it("drops a Version staff removed, so it has no Download, and follows the removal handling when it was the one on screen", async () => {
+    videos = [videoOf(1, [versionOf(20), versionOf(10, { released: true, downloadUrl: downloadUrl(asset(10)) })])];
+    extra = ambiguous(() => { videos = [videoOf(1, [versionOf(20)])]; });
+    await open();
+    await chooseVersion("v10");
+    expect(byId("guest-download")?.getAttribute("href")).toBe(downloadUrl(asset(10)));
+    await decide();
+    expect(byId("guest-download")).toBeNull();
+    expect(byId("guest-notice")).not.toBeNull();
+    expect(byId("guest-video-screen")).not.toBeNull();
   });
 });
 
