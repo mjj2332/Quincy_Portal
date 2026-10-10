@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../components/reui/item";
 import type { GuestApi } from "./guest-api";
 import { formatBytes } from "./guest-format";
-import { GuestVerifyDialog } from "./GuestVerifyDialog";
+import type { GuestVerify } from "./use-guest-verify";
 
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const PROBLEM = "m-0 text-foreground-secondary [font:var(--type-body-sm)]";
@@ -20,13 +20,12 @@ type Loaded = { kind: "loading" } | { kind: "failed" } | { kind: "ok"; manifest:
  * reason for each, before anything is requested. Its action is a plain anchor to the zip route, so the browser streams the archive to disk; the page cannot see that request's status (a refusal
  * such as the zip rate limit is the browser's failed download), so what it CAN know is checked first: nothing to download, or over the cap (20 films, 8 GB), has no action at all, and the hint
  * under the action says what to do if the download does not start. Each read is bound to the opening it started in, so an answer that arrives after Close, or after a newer open, changes nothing.
- * The routes need a verified guest: an unverified guest's button opens the verify dialog first (this component owns one, so the list screen needs no other), and lands on this dialog once verified.
+ * The routes need a verified guest: an unverified guest's button opens the verify dialog first (through the page's one verify dialog, so a second action cannot open another), and lands on this dialog once verified.
  * A manifest 401 (verification lost) does the same, and is never the Unavailable page. A manifest 403 `download_disabled` (staff turned downloads off while the page was open) closes the dialog, sets
  * the session's `allow.download` false so every download control goes, and leaves a short notice where this button was; the review stays.
  */
-export function GuestDownloadAll({ api, session, onSession, onVerified, onUnavailable }: { api: GuestApi; session: GuestSessionResponse; onSession: (next: GuestSessionResponse) => void; onVerified?: () => void; onUnavailable: () => void }) {
+export function GuestDownloadAll({ api, verify, session, onSession, onUnavailable }: { api: GuestApi; verify: GuestVerify; session: GuestSessionResponse; onSession: (next: GuestSessionResponse) => void; onUnavailable: () => void }) {
   const [open, setOpen] = useState(false);
-  const [verifyOpen, setVerifyOpen] = useState(false);
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
@@ -40,7 +39,8 @@ export function GuestDownloadAll({ api, session, onSession, onVerified, onUnavai
       if (generation.current !== mine) return;
       if (result.kind === "gone") { setOpen(false); onUnavailable(); }
       else if (result.kind === "verify") {
-        setOpen(false); setVerifyOpen(true);
+        setOpen(false);
+        verify.request({ active: () => generation.current === mine, done: (verified) => { if (verified) openAndLoad.current(); } });
         onSession({ ...sessionRef.current, verified: false, email: null, name: null });
       }
       else if (result.kind === "disabled") {
@@ -51,13 +51,15 @@ export function GuestDownloadAll({ api, session, onSession, onVerified, onUnavai
       else if (result.kind === "transient") setLoaded({ kind: "failed" });
       else setLoaded({ kind: "ok", manifest: result.value });
     });
-  }, [api, onUnavailable, onSession]);
+  }, [api, verify, onUnavailable, onSession]);
+  const openAndLoad = useRef<() => void>(() => undefined);
+  openAndLoad.current = () => { setOpen(true); load(); };
   useEffect(() => () => { generation.current += 1; }, []);
   const close = () => { generation.current += 1; setOpen(false); };
   if (!session.link.allow.download && !turnedOff) return null;
   if (!session.link.allow.download) return <p role="status" data-testid="guest-download-all-disabled" className="m-0 text-foreground-secondary [font:var(--type-label)]">Downloads are turned off for this review.</p>;
   return <>
-    <Button type="button" variant="outline" data-testid="guest-download-all" className={TOUCH} onClick={() => { if (session.verified) { setOpen(true); load(); } else setVerifyOpen(true); }}><DownloadIcon aria-hidden="true" />Download all</Button>
+    <Button type="button" variant="outline" data-testid="guest-download-all" className={TOUCH} onClick={() => { if (session.verified) { setOpen(true); load(); } else verify.request({ active: () => true, done: (verified) => { if (verified) openAndLoad.current(); } }); }}><DownloadIcon aria-hidden="true" />Download all</Button>
     <Dialog open={open} onOpenChange={(next) => { if (next) setOpen(true); else close(); }}>
       <DialogContent data-testid="guest-download-all-dialog" showCloseButton={false} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col sm:max-w-[520px]">
         <DialogHeader className="shrink-0">
@@ -72,8 +74,6 @@ export function GuestDownloadAll({ api, session, onSession, onVerified, onUnavai
         </DialogFooter>
       </DialogContent>
     </Dialog>
-    <GuestVerifyDialog api={api} open={verifyOpen} onOpenChange={setVerifyOpen} onGone={() => { setVerifyOpen(false); onUnavailable(); }}
-      onVerified={(next) => { onSession(next); setVerifyOpen(false); onVerified?.(); setOpen(true); load(); }} />
   </>;
 }
 

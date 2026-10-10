@@ -310,6 +310,61 @@ describe("Approve and Request changes", () => {
     expect((byId("guest-decision-note") as HTMLTextAreaElement).value).toBe("Keep this note");
   });
 
+  const holdDecision401 = () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    extra = async (url, init) => { if (url === decisionUrl(asset(10)) && init?.method === "POST") { await gate; return json({ error: "verification_required" }, 401); } return undefined; };
+    return async () => { await act(async () => { release(); }); await flush(); };
+  };
+  const pressEscape = async () => { await act(async () => { (byId("guest-decision-dialog") ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); }); await flush(); };
+
+  it("Approve, Cancel, a late 401, then verifying does not reopen the cancelled Approve", async () => {
+    const lateAnswer = holdDecision401();
+    await open();
+    await click(byId("guest-approve"));
+    await click(byId("guest-decision-confirm"));
+    await click(byId("guest-decision-cancel"));
+    await lateAnswer();
+    await completeVerify();
+    expect(byId("guest-verify-dialog")).toBeNull();
+    expect(byId("guest-decision-dialog")).toBeNull();
+  });
+
+  it("Approve, Escape, a late 401, then verifying does not reopen the cancelled Approve", async () => {
+    const lateAnswer = holdDecision401();
+    await open();
+    await click(byId("guest-approve"));
+    await click(byId("guest-decision-confirm"));
+    await pressEscape();
+    expect(byId("guest-decision-dialog")).toBeNull();
+    await lateAnswer();
+    await completeVerify();
+    expect(byId("guest-verify-dialog")).toBeNull();
+    expect(byId("guest-decision-dialog")).toBeNull();
+  });
+
+  it("a Download all manifest 401 and a late decision 401 share one verify dialog, and verifying runs only the Download all continuation", async () => {
+    videos = [videoOf(1), videoOf(2)];
+    const lateAnswer = holdDecision401();
+    manifest = json({ error: "verification_required" }, 401);
+    await open();
+    await click(allById("guest-video-row")[0]!.querySelector("button"));
+    await click(byId("guest-approve"));
+    await click(byId("guest-decision-confirm"));
+    await click(byId("guest-decision-cancel"));
+    await click(byId("guest-download-all"));
+    expect(allById("guest-verify-dialog")).toHaveLength(1);
+    await lateAnswer();
+    expect(allById("guest-verify-dialog")).toHaveLength(1);
+    manifest = { included: [{ videoId: vid(1), title: "Film 1", version: 1, bytes: 5 }], leftOut: [], totalBytes: 5, tooLarge: false };
+    const before = gets(`${BASE}/downloads`);
+    await completeVerify();
+    expect(allById("guest-verify-dialog")).toHaveLength(0);
+    expect(byId("guest-decision-dialog")).toBeNull();
+    expect(byId("guest-download-all-dialog")).not.toBeNull();
+    expect(gets(`${BASE}/downloads`)).toBe(before + 1);
+  });
+
   it("a delayed delivery re-read from an ambiguous Approve cannot put the Approved chip back over a newer Request changes", async () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => { release = resolve; });

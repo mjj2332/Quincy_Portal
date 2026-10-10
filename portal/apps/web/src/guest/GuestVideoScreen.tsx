@@ -13,13 +13,13 @@ import type { GuestApi, WriteResult } from "./guest-api";
 import { decisionFailureText, failureText, removeThread, upsertThread, type EditPatch } from "./guest-compose";
 import type { ActionOutcome, NoteActions, Writing } from "./GuestNoteItem";
 import { GuestNotesPanel } from "./GuestNotesPanel";
-import { GuestVerifyDialog } from "./GuestVerifyDialog";
 import { GuestDecisionDialog, decisionDraftKey, type DecisionOutcome, type DecisionValue } from "./GuestDecisionDialog";
 import { GuestDeliveryChips } from "./GuestDeliveryChips";
 import { GuestDownload } from "./GuestDownload";
 import { GuestDownloadAll } from "./GuestDownloadAll";
 import type { GuestDrafts } from "./guest-drafts";
 import { useGuestCompose } from "./use-guest-compose";
+import type { GuestVerify } from "./use-guest-verify";
 import type { GuestWriter, Skipped, WriterBinding } from "./use-guest-writer";
 import { useGuestMarkup } from "./GuestMarkup";
 import { PremiumWatermark } from "./PremiumWatermark";
@@ -62,8 +62,10 @@ function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
  * One Video on the guest page (#741 12b), read-only: the reused review player on the inverse surface, the granted-Versions select, previous / next Video, and the public notes (a
  * column beside the player, a bottom drawer below 721px). Moving between Videos never returns to the list. State is in memory; the URL does not change.
  */
-export function GuestVideoScreen({ api, writer, drafts, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged, onDecided, onResyncDelivery, onShownVersion }: {
+export function GuestVideoScreen({ api, verify, writer, drafts, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged, onDecided, onResyncDelivery, onShownVersion }: {
   api: GuestApi;
+  /** The page's one verify dialog and continuation slot, owned by `GuestApp`. */
+  verify: GuestVerify;
   /** Owned by `GuestApp`, so a write still out survives this screen being left and opened again. */
   writer: GuestWriter;
   drafts: GuestDrafts;
@@ -104,15 +106,11 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
   const [drawerOpen, setDrawerOpen] = useState(false);
   const phone = useMediaQuery("(max-width: 720px)");
 
-  const [verifyOpen, setVerifyOpen] = useState(false);
-  // What the verify dialog was opened for, so a successful code lands the guest where they were going.
-  const afterVerify = useRef<"compose" | "download" | "none" | DecisionValue>("none");
-  const reopenDrawer = useRef(false);
   const resyncRef = useRef<() => void>(() => undefined);
   const binding = useRef<WriterBinding>({ scope: version.assetId, effects: { onUnverified: () => undefined, onGone: () => undefined, onArchived: () => undefined }, onLostSettle: () => undefined });
   binding.current.scope = version.assetId;
   binding.current.effects = {
-    onUnverified: () => { afterVerify.current = "none"; setVerifyOpen(true); onSession({ ...session, verified: false, email: null, name: null }); },
+    onUnverified: () => { verify.request(); onSession({ ...session, verified: false, email: null, name: null }); },
     onGone: onUnavailable,
     onArchived,
   };
@@ -269,16 +267,19 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
     wasComposing.current = compose.isOpen;
   }, [compose.isOpen, phone]);
 
-  const requestVerify = useCallback((then: "compose" | "download" | "none" | DecisionValue) => {
-    afterVerify.current = then;
-    reopenDrawer.current = phone && drawerOpen;
-    if (reopenDrawer.current) setDrawerOpen(false);
-    setVerifyOpen(true);
-  }, [phone, drawerOpen]);
-  const finishVerify = useCallback(() => {
-    setVerifyOpen(false);
-    if (reopenDrawer.current) { reopenDrawer.current = false; setDrawerOpen(true); }
-  }, []);
+  // What the guest was doing when verification was asked for, so a successful code lands them where they were going. Each request carries its own, and the page's verify owner keeps only the newest active one.
+  const afterVerify = useRef<(then: "compose" | "download" | DecisionValue) => void>(() => undefined);
+  const requestVerify = useCallback((then: "compose" | "download" | "none" | DecisionValue, active: () => boolean = () => true) => {
+    const reopen = phone && drawerOpen;
+    if (reopen) setDrawerOpen(false);
+    verify.request({ active, done: (verified) => {
+      if (reopen) setDrawerOpen(true);
+      if (verified && then !== "none") afterVerify.current(then);
+    } });
+  }, [phone, drawerOpen, verify]);
+  // The notes read before verifying carried no 'self' marks: whoever caused the verification (this screen's actions or Download all), read them again as the verified guest.
+  const wasVerified = useRef(session.verified);
+  useEffect(() => { if (session.verified && !wasVerified.current) setNotesAttempt((n) => n + 1); wasVerified.current = session.verified; }, [session.verified]);
   const { beginEdit } = compose;
   const writing = useMemo<Writing>(() => ({
     canWrite, verified: session.verified, actions, drafts, onNeedVerify: () => { requestVerify("none"); },
@@ -296,7 +297,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
   const openDecision = useCallback((value: DecisionValue) => { opening.current += 1; setDecideFor(value); }, []);
   // After verifying for Download, the Download button becomes the anchor and the guest presses it again (a click made after the async verification would be blocked as a popup).
   const [downloadHint, setDownloadHint] = useState(false);
-  useEffect(() => { setDecideFor(null); setDecisionNotice(null); setDownloadHint(false); }, [version.assetId]);
+  useEffect(() => { opening.current += 1; setDecideFor(null); setDecisionNotice(null); setDownloadHint(false); }, [version.assetId]);
   const canDecide = session.link.allow.approve && !archived;
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -321,7 +322,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
     if (settled.kind === "conflict" || settled.kind === "unreachable") onResyncDelivery(); // the decision may exist: look before the guest sends it again
     if (stale) return { ok: false, message: null };
     // An older request that needs verification has already marked the session unverified; it only decides the dialog and what verifying leads to while it is still the opening showing.
-    if (settled.kind === "unverified") { if (opening.current === mine) { afterVerify.current = value; closeIfShowing(); } }
+    if (settled.kind === "unverified") { if (opening.current === mine) { closeIfShowing(); requestVerify(value, () => opening.current === mine); } }
     else if (settled.kind === "archived" || settled.kind === "gone") closeIfShowing();
     else if (settled.kind === "disabled") {
       closeIfShowing(); setDecisionNotice("Approving is no longer available on this link.");
@@ -329,7 +330,12 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
       onSession({ ...now, link: { ...now.link, allow: { ...now.link.allow, approve: false } } });
     }
     return { ok: false, message: decisionFailureText(settled) };
-  }, [api, writer, drafts, version.assetId, onDecided, onResyncDelivery, onSession]);
+  }, [api, writer, drafts, version.assetId, onDecided, onResyncDelivery, onSession, requestVerify]);
+  afterVerify.current = (then) => {
+    if (then === "compose") startDraft(compose.begin);
+    else if (then === "download") setDownloadHint(true);
+    else openDecision(then);
+  };
   const startDecision = (value: DecisionValue) => { if (session.verified) openDecision(value); else requestVerify(value); };
   const allowDownload = session.link.allow.download;
 
@@ -372,7 +378,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
           <Button type="button" variant="outline" data-testid="guest-request-changes" className={TOUCH} onClick={() => { startDecision("changes_requested"); }}><MessageSquareWarning aria-hidden="true" />Request changes</Button>
         </>}
         <GuestDownload video={video} version={version} allowDownload={allowDownload} verified={session.verified} onNeedVerify={() => { requestVerify("download"); }} />
-        {videos.length > 1 && <GuestDownloadAll api={api} session={session} onSession={onSession} onVerified={() => { setNotesAttempt((n) => n + 1); }} onUnavailable={onUnavailable} />}
+        {videos.length > 1 && <GuestDownloadAll api={api} verify={verify} session={session} onSession={onSession} onUnavailable={onUnavailable} />}
         {downloadHint && session.verified && version.downloadUrl !== null && <p role="status" data-testid="guest-download-hint" className="m-0 text-foreground-secondary [font:var(--type-label)]">You're verified. Press Download to start it.</p>}
         {decisionNotice !== null && <p role="status" data-testid="guest-decision-notice" className="m-0 text-foreground-secondary [font:var(--type-label)]">{decisionNotice}</p>}
       </div>
@@ -390,16 +396,6 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
         <SheetCloseButton label="Close notes" data-testid="guest-notes-close" />
       </SheetContent>
     </Sheet>}
-    {decideFor !== null && canDecide && <GuestDecisionDialog key={`${version.assetId}:${decideFor}`} value={decideFor} assetId={version.assetId} film={video.title} version={version.version} drafts={drafts} open onClose={() => { setDecideFor(null); }} onConfirm={(note) => confirmDecision(decideFor, note)} />}
-    <GuestVerifyDialog api={api} open={verifyOpen} onOpenChange={(next) => { if (next) setVerifyOpen(true); else finishVerify(); }} onGone={() => { setVerifyOpen(false); onUnavailable(); }}
-      onVerified={(next) => {
-        onSession(next);
-        // The notes read before verifying carried no 'self' marks: drop that read (bumping the attempt cancels it) and read again as the verified guest.
-        setNotesAttempt((n) => n + 1);
-        const then = afterVerify.current; afterVerify.current = "none"; finishVerify();
-        if (then === "compose") startDraft(compose.begin);
-        else if (then === "download") setDownloadHint(true);
-        else if (then === "approved" || then === "changes_requested") openDecision(then);
-      }} />
+    {decideFor !== null && canDecide && <GuestDecisionDialog key={`${version.assetId}:${decideFor}`} value={decideFor} assetId={version.assetId} film={video.title} version={version.version} drafts={drafts} open onClose={() => { opening.current += 1; setDecideFor(null); }} onConfirm={(note) => confirmDecision(decideFor, note)} />}
   </div>;
 }

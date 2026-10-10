@@ -11,6 +11,7 @@ import { EmptyState } from "../components/quincy/EmptyState";
 import type { GuestApi } from "./guest-api";
 import { GuestDeliveryChips } from "./GuestDeliveryChips";
 import { GuestDownloadAll } from "./GuestDownloadAll";
+import type { GuestVerify } from "./use-guest-verify";
 
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
@@ -88,11 +89,11 @@ const noteCount = (count: number) => (count === 0 ? "No notes" : `${count} ${cou
  * The Video list (69a). Each row: poster, title, the latest granted Version, a premium badge and the public note count; `guest-row-slot` holds that Version's decision and Release chips
  * (#741 14-ui-guest). When the link allows downloads and has several Videos, Download all sits beside the title.
  */
-export function VideoListScreen({ api, title, videos, session, onSession, onOpen, onUnavailable }: { api: GuestApi; title: string | null; videos: readonly GuestVideoDto[]; session: GuestSessionResponse; onSession: (next: GuestSessionResponse) => void; onOpen: (index: number) => void; onUnavailable: () => void }) {
+export function VideoListScreen({ api, verify, title, videos, session, onSession, onOpen, onUnavailable }: { api: GuestApi; verify: GuestVerify; title: string | null; videos: readonly GuestVideoDto[]; session: GuestSessionResponse; onSession: (next: GuestSessionResponse) => void; onOpen: (index: number) => void; onUnavailable: () => void }) {
   return <main data-testid="guest-list" className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-[var(--space-4)] bg-background px-[var(--space-4)] py-[var(--space-6)] text-foreground">
     <div className="flex flex-wrap items-center justify-between gap-[var(--space-3)]">
       <h1 className="m-0 min-w-0 text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{title ?? "Review"}</h1>
-      {videos.length > 1 && <GuestDownloadAll api={api} session={session} onSession={onSession} onUnavailable={onUnavailable} />}
+      {videos.length > 1 && <GuestDownloadAll api={api} verify={verify} session={session} onSession={onSession} onUnavailable={onUnavailable} />}
     </div>
     {videos.length === 0
       ? <EmptyState title="Nothing to review yet.">The studio hasn't shared any videos on this link.</EmptyState>
