@@ -15,6 +15,7 @@ const LIVE_ACCESS = `JOIN review_link_videos rv ON rv.link_id = g.link_id AND rv
   JOIN video_version_meta m ON m.asset_id = a.id AND m.video_id = g.video_id`;
 
 const streamUrl = (linkId: string, assetId: string) => `/d/api/links/${linkId}/versions/${assetId}/stream`;
+const downloadUrl = (linkId: string, assetId: string) => `/d/api/links/${linkId}/versions/${assetId}/download`;
 const posterUrl = (linkId: string, assetId: string) => `/d/api/links/${linkId}/versions/${assetId}/poster`;
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -25,7 +26,7 @@ type VersionRow = {
 };
 
 /** Current members with at least one live grant, in Video position order, each with its granted Versions newest first. */
-export async function listGuestVideos(db: D1Database, linkId: string, projectId: string, guestId: string | null = null): Promise<GuestVideoListResponse> {
+export async function listGuestVideos(db: D1Database, linkId: string, projectId: string, guestId: string | null = null, canDownload = false): Promise<GuestVideoListResponse> {
   const [videoResult, versionResult, decisionResult, releaseResult] = await db.batch([
     db.prepare(`SELECT v.id, v.title, v.premium, (p.video_id IS NOT NULL) AS unlocked
       FROM review_link_videos rv JOIN videos v ON v.id = rv.video_id AND v.project_id = ?2 LEFT JOIN video_premium_unlocks p ON p.video_id = v.id
@@ -57,8 +58,8 @@ export async function listGuestVideos(db: D1Database, linkId: string, projectId:
         startTimecodeFrames: row.start_tc_frames, tcNominalFps: row.tc_nominal_fps, tcDropFrame: row.tc_drop_frame === 1, hasAudio: row.has_audio === 1,
         posterUrl: row.has_poster === 1 ? posterUrl(linkId, row.asset_id) : null, streamUrl: streamUrl(linkId, row.asset_id), publicNoteCount: row.note_count,
         decision: decisionByAsset.get(row.asset_id) ?? null, released: releasedAssets.has(row.asset_id),
-        // 14b adds the download route and fills this; until then no Version offers a download.
-        downloadUrl: null,
+        // Only a live-released Version of an unlocked Video on a link that allows downloads (`canDownload` is the link flag AND the `delivery` part) names the route.
+        downloadUrl: canDownload && releasedAssets.has(row.asset_id) && !(video.premium === 1 && video.unlocked !== 1) ? downloadUrl(linkId, row.asset_id) : null,
       })),
     })).filter((video) => video.versions.length > 0),
   });
