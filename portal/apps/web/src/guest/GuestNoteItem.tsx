@@ -114,10 +114,30 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
     setDeleting({ ...deleting, pending: true, problem: null });
     // The revision the confirm opened on, never the list's, which may have moved unseen.
     const outcome = await writing.actions.remove(thread, deletingNote, deleting.baseRevision);
-    if (outcome.ok) { setDeleting(null); return; }
+    if (outcome.ok) {
+      setDeleting(null);
+      // A hard-deleted root unmounts this whole thread, the confirm with it, so `finalFocus` never runs: park focus on the survivor once the DOM has settled.
+      const fallback = deleteFallbackFocus();
+      window.setTimeout(() => { const active = document.activeElement; if (active === null || active === document.body || !active.isConnected) fallback()?.focus(); }, 0);
+      return;
+    }
     // A conflict closes the confirm without acknowledging anything: the note row shows the latest text, and deleting again snapshots that revision.
     if (outcome.conflict !== undefined) { setDeleteConflict(outcome.message); setDeleting(null); return; }
     setDeleting((current) => (current === null ? null : { ...current, pending: false, problem: outcome.message }));
+  };
+
+  /**
+   * Where focus lands when the delete confirm closes. Base UI would restore it to the "..." trigger that opened the menu, but a hard-deleted
+   * root takes its thread (and that trigger) with it, so focus would fall to `body`. If the same menu triggers are still there (a reply
+   * deleted, or a delete refused), return to the one that opened the confirm; otherwise to "Add a note", else the notes panel itself.
+   */
+  const deleteFallbackFocus = () => () => document.querySelector<HTMLElement>('[data-testid="guest-add-note"]') ?? document.querySelector<HTMLElement>('[data-testid="guest-notes-panel"]');
+  const deleteFinalFocus = () => {
+    const triggers = [...(document.querySelector(`[data-note-id="${thread.id}"]`)?.querySelectorAll<HTMLElement>('[data-testid="guest-note-actions"]') ?? [])];
+    const ownBefore = all.filter(own);
+    const index = deletingNote === null ? -1 : ownBefore.findIndex((note) => note.id === deletingNote.id);
+    if (index >= 0 && triggers.length === ownBefore.length && triggers[index]?.isConnected) return triggers[index];
+    return deleteFallbackFocus()();
   };
 
   const menu = (note: GuestNoteDto) => own(note)
@@ -165,7 +185,7 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
         </form>)}
     </ItemContent>
     <AlertDialog open={deleting !== null && deletingNote !== null} onOpenChange={(next) => { if (!next && !busy) setDeleting(null); }}>
-      <AlertDialogContent size="default" data-testid="guest-delete-dialog">
+      <AlertDialogContent size="default" data-testid="guest-delete-dialog" finalFocus={deleteFinalFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>Delete this note?</AlertDialogTitle>
           <AlertDialogDescription className="text-foreground-secondary">This can't be undone.</AlertDialogDescription>

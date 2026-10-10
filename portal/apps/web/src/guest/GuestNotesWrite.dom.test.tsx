@@ -664,6 +664,20 @@ describe("own notes", () => {
     expect(allById("guest-note")).toHaveLength(0);
     expect(byId("guest-delete-dialog")).toBeNull();
   });
+  it("returns focus to the Add a note button after the guest deletes their own root note from the keyboard", async () => {
+    notes = { [asset(10)]: [mine(2, { revision: 3 })] };
+    extra = (url, init) => (url === `${BASE}/notes/${noteId(2)}` && init?.method === "DELETE" ? json({ thread: null }) : undefined);
+    await open();
+    const trigger = byId("guest-note-actions")!;
+    await act(async () => { trigger.focus(); });
+    await click(trigger);
+    await click(menuItem("Delete"));
+    await click(byId("guest-delete-confirm"));
+    await flush();
+    expect(allById("guest-note")).toHaveLength(0);
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(byId("guest-add-note"));
+  });
   it("shows a tombstone when the server keeps the thread", async () => {
     notes = { [asset(10)]: [mine(2, { revision: 3 })] };
     extra = (url, init) => (url === `${BASE}/notes/${noteId(2)}` && init?.method === "DELETE" ? json({ thread: mine(2, { revision: 4, deleted: true, body: "" }) }) : undefined);
