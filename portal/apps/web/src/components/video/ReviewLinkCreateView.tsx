@@ -11,6 +11,7 @@ import { QuincyField } from "../quincy/QuincyField";
 import { Checkbox } from "../quincy/Checkbox";
 import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../reui/dialog";
 import { FieldDescription, FieldError } from "../reui/field";
+import { DIALOG_TITLE, ReviewLinkDialogFrame } from "./ReviewLinkDialogFrame";
 import { ReviewLinkAllowFields } from "./ReviewLinkAllowFields";
 import { useReviewLinkState, type ReviewLinksUi } from "./use-review-links-ui";
 
@@ -57,11 +58,16 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
     void store.run("create", () => actions.create(body), (result) => store.showReveal({ url: result.url, linkId: result.link.id, label: result.link.label, origin: "create" }, sent));
   }
 
-  return <>
-    <DialogHeader>
-      <DialogTitle>Create Review link</DialogTitle>
+  return <ReviewLinkDialogFrame
+    header={<DialogHeader>
+      <DialogTitle className={DIALOG_TITLE}>Create Review link</DialogTitle>
       <DialogDescription>{selected.length === 1 ? "A private link to watch 1 film." : `A private link to watch ${selected.length} films.`} Choose which Versions guests can see.</DialogDescription>
-    </DialogHeader>
+    </DialogHeader>}
+    footer={<DialogFooter>
+      <Button type="button" variant="secondary" className="min-h-11" onClick={store.closeDialog}>Cancel</Button>
+      <Button type="button" variant="primary" className="min-h-11" disabled={!ready} onClick={submit}>{pending ? "Creating…" : "Create link"}</Button>
+    </DialogFooter>}
+  >
     <div className="grid gap-[var(--space-4)]">
       {tooMany && <Notice tone="caution" role="status">{`A link can hold at most ${REVIEW_LINK_MAX_VIDEOS} films. Untick ${selected.length - REVIEW_LINK_MAX_VIDEOS} to continue.`}</Notice>}
       {selected.length === 0 && <Notice tone="caution" role="status">Tick at least one film on the page first.</Notice>}
@@ -70,8 +76,10 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
         <DateTimeField variant="date" id="review-link-expiry" label="Expires" value={expiryDay} popupAlign="start" positionerClassName={DIALOG_FIELD_LAYER} onApply={(next) => { if (next) store.patchCreate({ expiryDay: next === defaultExpiryDay(now) ? null : next }); }} description="The link stops working at the end of this day." />
         {!expiry.ok && <FieldError>{expiry.message}</FieldError>}
       </div>
-      <QuincyField id="review-link-passcode" label="Passcode (optional)" autoComplete="off" spellCheck={false} value={draft.passcode} error={passcodeError} onChange={(event) => store.patchCreate({ passcode: event.target.value })} />
-      <FieldDescription>Guests are asked for it before they can watch. Share it separately; it can't be shown again.</FieldDescription>
+      <div className="grid gap-[var(--space-1)]">
+        <QuincyField id="review-link-passcode" label="Passcode (optional)" autoComplete="off" spellCheck={false} aria-describedby="review-link-passcode-hint" value={draft.passcode} error={passcodeError} onChange={(event) => store.patchCreate({ passcode: event.target.value })} />
+        <FieldDescription id="review-link-passcode-hint">Guests are asked for it before they can watch. Share it separately; it can't be shown again.</FieldDescription>
+      </div>
       <ReviewLinkAllowFields value={draft.allow} onChange={(key, next) => store.patchCreate({ allow: { ...draft.allow, [key]: next } })} />
       <div className="grid gap-[var(--space-3)]">
         {selected.map((video) => <div key={video.id} role="group" aria-label={video.title} className="grid gap-[var(--space-1)]" data-testid="review-link-create-video">
@@ -87,9 +95,5 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
       </div>
       {problem && <Notice tone="critical" role="alert">{problem.text}</Notice>}
     </div>
-    <DialogFooter>
-      <Button type="button" variant="secondary" className="min-h-11" onClick={store.closeDialog}>Cancel</Button>
-      <Button type="button" variant="primary" className="min-h-11" disabled={!ready} onClick={submit}>{pending ? "Creating…" : "Create link"}</Button>
-    </DialogFooter>
-  </>;
+  </ReviewLinkDialogFrame>;
 }

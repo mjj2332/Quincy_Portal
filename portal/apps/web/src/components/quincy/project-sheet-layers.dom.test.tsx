@@ -32,6 +32,16 @@ describe("hasOpenInnerLayer (#366)", () => {
     expect(hasOpenInnerLayer(popup, slot, document)).toBe(true);
   });
 
+  it("is true for an open registry dialog (Base UI sets no aria-modal) portalled outside the popup, e.g. the Review links dialog", () => {
+    const { popup, slot } = fixture(`<div data-fixture="popup" role="dialog" aria-modal="true" data-open><div data-fixture="slot"></div></div><div role="dialog" data-slot="dialog-content" data-open data-testid="review-links-dialog"></div>`);
+    expect(hasOpenInnerLayer(popup, slot, document)).toBe(true);
+  });
+
+  it("is false for a closing registry dialog, which no longer carries data-open", () => {
+    const { popup, slot } = fixture(`<div data-fixture="popup" role="dialog" aria-modal="true" data-open><div data-fixture="slot"></div></div><div role="dialog" data-slot="dialog-content" data-testid="review-links-dialog"></div>`);
+    expect(hasOpenInnerLayer(popup, slot, document)).toBe(false);
+  });
+
   it("is false for a closing alert dialog, which no longer carries data-open", () => {
     const { popup, slot } = fixture(`<div data-fixture="popup" role="dialog" aria-modal="true" data-open><div data-fixture="slot"></div></div><div role="alertdialog" data-testid="confirm-modal"></div>`);
     expect(hasOpenInnerLayer(popup, slot, document)).toBe(false);

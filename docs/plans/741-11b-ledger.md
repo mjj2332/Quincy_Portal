@@ -24,6 +24,12 @@ Searches run: `mcp__ReUI__search` "share link dialog with copy URL input group a
 | Empty state, errors, notices | installed `quincy/EmptyState`, `quincy/Notice` |
 | Loading | installed `reui/spinner` |
 | Back to list | installed `quincy/Button` (`text`) + lucide `ChevronLeft` |
+| Detail action buttons (Save changes, Remove passcode / Keep passcode, Remove, Replace link, Revoke link) | installed `quincy/Button` (`primary` / `secondary` / `text` / `danger`), `min-h-11` targets; no raw `<button>` |
+| Detail section headings ("Films on this link", "Verified guests") | plain `<h3>` in the Quincy `--weight-medium` / `--text-sm` type, inside `<section aria-label>`: searched `reui/item` (`ItemGroup` has no heading), `reui/field` (`FieldLegend` needs a `FieldSet`, these are not form fields) and `reui/card` (`CardTitle`, rejected by ADR 0014: the Portal's surface is `frame`); nothing in ReUI is a bare section heading |
+| Standalone `FieldDescription` (passcode hints) | installed `reui/field` `FieldDescription`, wrapped with its input in a `gap-[var(--space-1)]` grid like the Expires field and linked by `aria-describedby`; `QuincyField` has no description slot, so the hint sits beside it |
+| Dialog close control | installed `quincy/SheetCloseButton` (its `SheetClose` is Base UI's `Dialog.Close`, so it works in `reui/dialog`): 28px on desktop, `max-[721px]:size-11`; `showCloseButton={false}` on the `DialogContent`; the header reserves `SHEET_CLOSE_CLEARANCE` |
+| Dialog frame (`ReviewLinkDialogFrame`) | the `Modal` / `VideoNotePasteDialog` structure: `DialogContent` is `flex flex-col`, header and footer outside an inner `min-h-0 flex-1 overflow-y-auto` body; no new element, only layout |
+| Dialog width | `sm:max-w-[560px]`, Modal's "wide" step (not `max-w-xl`, which is 1320px here) |
 
 No raw `<button>`, `<input>`, `<select>`, `<textarea>`, `<dialog>` or widget role was added outside `components/reui/` and `components/quincy/`; `ui-primitive-allowlist.ts` is unchanged.
 

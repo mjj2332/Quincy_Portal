@@ -70,7 +70,7 @@ describe("detail: Versions and Videos", () => {
     state.links = [linkOf({ videos: [member(V1, "Main walkthrough", [[A1, 1]])] })];
     await mount(); await openDetailOf("Smith family");
     expect(checkbox("Main walkthrough v1", detail())!.disabled).toBe(true);
-    expect(text(detail())).toContain("Remove the Video to stop sharing it");
+    expect(text(detail())).toContain("Remove the film to stop sharing it");
   });
   it("Remove asks first: Cancel sends nothing, Remove Video deletes the membership", async () => {
     apiDeleteMock.mockResolvedValue(undefined);
@@ -79,13 +79,13 @@ describe("detail: Versions and Videos", () => {
     expect(text(q('[data-testid="review-link-confirm"]'))).toContain("Notes and decisions stay");
     await press(buttonIn(q('[data-testid="review-link-confirm"]'), "Cancel"));
     expect(apiDeleteMock).not.toHaveBeenCalled();
-    await confirm("Remove Main walkthrough from link", "Remove Video");
+    await confirm("Remove Main walkthrough from link", "Remove film");
     expect(apiDeleteMock).toHaveBeenCalledWith(`${base}/videos/${V1}`);
   });
   it("Add a Video offers only Videos not on the link, adds the current Version, and refetches", async () => {
     apiPostMock.mockResolvedValue({ link: linkOf() });
     await mount(); await openDetailOf("Smith family");
-    await press(button("Add a Video"));
+    await press(button("Add a film"));
     const options = all('[role="option"]');
     expect(options.map((o) => o.textContent)).toEqual(["Teaser"]);
     await press(options[0]);
@@ -94,7 +94,7 @@ describe("detail: Versions and Videos", () => {
   it("says every film is on the link when there is nothing to add", async () => {
     state.links = [linkOf({ videos: [member(V1, "Main walkthrough", [[A2, 2]]), member(V2, "Teaser", [[B1, 1]])] })];
     await mount(); await openDetailOf("Smith family");
-    expect(button("Add a Video")).toBeUndefined();
+    expect(button("Add a film")).toBeUndefined();
     expect(text(detail())).toContain("Every film is on this link.");
   });
   it("lists verified guests when there are some, and nothing when there are none", async () => {
@@ -215,8 +215,8 @@ describe("detail: refusals", () => {
     ["PUT grant_required", () => apiPutMock.mockRejectedValue(refused(422, { error: "x", code: "grant_required" })), async () => { await press(checkbox("Main walkthrough v1", detail())); }, /at least one Version/],
     ["PUT grant_not_version", () => apiPutMock.mockRejectedValue(refused(422, { error: "x", code: "grant_not_version" })), async () => { await press(checkbox("Main walkthrough v1", detail())); }, /no longer belongs/],
     ["replace link_expired", () => apiPostMock.mockRejectedValue(refused(409, { error: "x", code: "link_expired" })), async () => { await confirm("Replace link", "Replace"); }, /has expired/],
-    ["POST already_on_link", () => apiPostMock.mockRejectedValue(refused(409, { error: "x", code: "already_on_link" })), async () => { await press(button("Add a Video")); await press(all('[role="option"]')[0]); }, /already on this link/],
-    ["DELETE link gone", () => apiDeleteMock.mockRejectedValue(refused(404, { error: "Review link not found" })), async () => { await confirm("Remove Main walkthrough from link", "Remove Video"); }, /no longer exists/],
+    ["POST already_on_link", () => apiPostMock.mockRejectedValue(refused(409, { error: "x", code: "already_on_link" })), async () => { await press(button("Add a film")); await press(all('[role="option"]')[0]); }, /already on this link/],
+    ["DELETE link gone", () => apiDeleteMock.mockRejectedValue(refused(404, { error: "Review link not found" })), async () => { await confirm("Remove Main walkthrough from link", "Remove film"); }, /no longer exists/],
     ["PATCH project_archived", () => apiPatchMock.mockRejectedValue(refused(409, { error: "x", code: "project_archived" })), async () => { await type(q<HTMLInputElement>("#review-link-detail-label", detail()), "x"); await press(save()); }, /Archived projects are read-only/],
     ["PATCH expiry_out_of_range", () => apiPatchMock.mockRejectedValue(refused(422, { error: "x", code: "expiry_out_of_range" })), async () => { await type(q<HTMLInputElement>("#review-link-detail-label", detail()), "x"); await press(save()); }, /between one hour/],
   ])("%s is shown in the detail and the list is refetched", async (_name, arrange, act_, copy) => {
@@ -246,7 +246,7 @@ describe("archived Project", () => {
     expect(checkbox("Main walkthrough v2", detail())!.disabled).toBe(true);
     expect(buttonIn(detail(), "Replace link")!.disabled).toBe(true);
     expect(buttonIn(detail(), "Remove Main walkthrough from link")).toBeUndefined();
-    expect(button("Add a Video")).toBeUndefined();
+    expect(button("Add a film")).toBeUndefined();
     expect(buttonIn(detail(), "Revoke link")!.disabled).toBe(false);
     await confirm("Revoke link", "Revoke");
     expect(apiPostMock).toHaveBeenCalledWith(`${base}/revoke`, {});
@@ -258,8 +258,8 @@ describe("phone width (390px): the responsive hooks", () => {
   it("the dialog scrolls inside the viewport and every action is a tall, wrapping target", async () => {
     await mount(); await openList();
     const content = dialog()!;
-    expect(content.className).toContain("max-h-[calc(100dvh-2rem)]");
-    expect(content.className).toContain("overflow-y-auto");
+    expect(content.className).toContain("max-h-[calc(100dvh-var(--space-5))]");
+    expect(q('[data-testid="review-links-dialog-body"]', content)!.className).toContain("overflow-y-auto");
     await press(button("Manage Smith family"));
     expect(q('[data-testid="review-link-actions"]', detail())!.className).toContain("flex-wrap");
     for (const name of ["Replace link", "Revoke link", "All links"]) expect(buttonIn(detail(), name)!.className, name).toMatch(/min-h-11|min-h-\[44px\]/);
@@ -328,7 +328,7 @@ describe("a write's own answer is the truth until the refetch lands", () => {
     apiDeleteMock.mockResolvedValue(undefined);
     await mount(); await openDetailOf("Smith family");
     hangList();
-    await confirm("Remove Teaser from link", "Remove Video");
+    await confirm("Remove Teaser from link", "Remove film");
     expect(all('[data-testid="review-link-member"]')).toHaveLength(1);
     expect(text(detail())).not.toContain("Teaser");
   });
@@ -336,7 +336,7 @@ describe("a write's own answer is the truth until the refetch lands", () => {
     apiPostMock.mockResolvedValue({ link: linkOf({ videos: [member(V1, "Main walkthrough", [[A2, 2]]), member(V2, "Teaser", [[B1, 1]])] }) });
     await mount(); await openDetailOf("Smith family");
     hangList();
-    await press(button("Add a Video")); await press(all('[role="option"]')[0]);
+    await press(button("Add a film")); await press(all('[role="option"]')[0]);
     expect(all('[data-testid="review-link-member"]')).toHaveLength(2);
   });
   it("Save shows the new label at once; Revoke shows Revoked at once", async () => {
@@ -411,7 +411,7 @@ describe("one write in flight per link", () => {
     await act(async () => { state.links = [twoMembers([[A2, 2], [A1, 1]], [[B2, 2]])]; grant.resolve({ link: state.links[0] }); });
     await flush();
     apiDeleteMock.mockImplementation(async () => { state.links = [linkOf({ videos: [member(V1, "Main walkthrough", [[A2, 2], [A1, 1]])] })]; });
-    await confirm("Remove Teaser from link", "Remove Video");
+    await confirm("Remove Teaser from link", "Remove film");
     expect(apiDeleteMock).toHaveBeenCalledWith(`${base}/videos/${V2}`);
     await flush();
     expect(all('[data-testid="review-link-member"]')).toHaveLength(1);

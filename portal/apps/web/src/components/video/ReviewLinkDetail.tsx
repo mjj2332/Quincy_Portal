@@ -18,6 +18,7 @@ import { FieldDescription } from "../reui/field";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
 import { formatVideoDate } from "./video-format";
 import { DIALOG_FIELD_LAYER, passcodeProblem } from "./ReviewLinkCreateView";
+import { DIALOG_TITLE, ReviewLinkDialogFrame } from "./ReviewLinkDialogFrame";
 import { ReviewLinkAllowFields } from "./ReviewLinkAllowFields";
 import { activityLine, expiryLine, linkName } from "./ReviewLinkList";
 import { ReviewLinkStatusBadge } from "./ReviewLinkStatusBadge";
@@ -43,9 +44,10 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
 
   const back = <Button type="button" variant="text" className={`${TARGET} -ml-[var(--space-1)] justify-start`} onClick={store.openList}><ChevronLeft aria-hidden="true" className="size-4" />All links</Button>;
   if (!link) {
-    return <div data-testid="review-link-detail" className="grid gap-[var(--space-3)]">
-      <DialogHeader><DialogTitle>Review link</DialogTitle><DialogDescription>{links.isPending ? "Loading…" : "This Review link no longer exists."}</DialogDescription></DialogHeader>
-      {back}
+    return <div data-testid="review-link-detail" className="contents">
+      <ReviewLinkDialogFrame header={<DialogHeader><DialogTitle className={DIALOG_TITLE}>Review link</DialogTitle><DialogDescription>{links.isPending ? "Loading…" : "This Review link no longer exists."}</DialogDescription></DialogHeader>}>
+        {back}
+      </ReviewLinkDialogFrame>
     </div>;
   }
 
@@ -102,14 +104,17 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
     else void store.run(`replace:${linkId}`, () => actions.replace(linkId), (result) => store.showReveal({ url: result.url, linkId, label: result.link.label, origin: "replace" }), undefined, linkId);
   }
 
-  return <div data-testid="review-link-detail" className="grid gap-[var(--space-5)]">
-    <div className="grid gap-[var(--space-1)]">
-      {back}
-      <DialogHeader>
-        <DialogTitle className="flex flex-wrap items-center gap-[var(--space-2)]">{linkName(link)}<ReviewLinkStatusBadge status={link.status} /></DialogTitle>
-        <DialogDescription>{`${expiryLine(link)} · ${activityLine(link, now)}`}</DialogDescription>
-      </DialogHeader>
-    </div>
+  return <div data-testid="review-link-detail" className="contents">
+    <ReviewLinkDialogFrame
+      className="gap-[var(--space-5)]"
+      header={<div className="grid gap-[var(--space-1)]">
+        {back}
+        <DialogHeader>
+          <DialogTitle className={`${DIALOG_TITLE} flex flex-wrap items-center gap-[var(--space-2)]`}>{linkName(link)}<ReviewLinkStatusBadge status={link.status} /></DialogTitle>
+          <DialogDescription>{`${expiryLine(link)} · ${activityLine(link, now)}`}</DialogDescription>
+        </DialogHeader>
+      </div>}
+    >
 
     {revoked && <Notice tone="caution" role="status">This link was revoked. Guests can no longer open it.</Notice>}
     {!revoked && ui.archived && <Notice tone="caution" role="status">Archived projects are read-only, so this link can't be changed. You can still revoke it.</Notice>}
@@ -118,14 +123,14 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
     <section aria-label="Settings" className="grid gap-[var(--space-4)]">
       <QuincyField id="review-link-detail-label" label="Label" maxLength={REVIEW_LINK_LABEL_MAX} autoComplete="off" disabled={locked} value={labelValue} onChange={(event) => store.patchDetail(linkId, { label: event.target.value })} />
       <DateTimeField variant="date" id="review-link-detail-expiry" label="Expires" value={expiryValue} disabled={locked} positionerClassName={DIALOG_FIELD_LAYER} onApply={(next) => { if (next) store.patchDetail(linkId, { expiryDay: next === currentDay ? null : next }); }} description={expiry && !expiry.ok ? expiry.message : "The link stops working at the end of this day."} {...(expiry && !expiry.ok ? { descriptionRole: "status" as const } : {})} />
-      <div className="grid gap-[var(--space-2)]">
-        <QuincyField id="review-link-detail-passcode" label={link.hasPasscode ? "New passcode" : "Passcode"} autoComplete="off" spellCheck={false} disabled={locked || draft.removePasscode} value={draft.passcode} error={passcodeError} onChange={(event) => store.patchDetail(linkId, { passcode: event.target.value })} />
+      <div className="grid gap-[var(--space-1)]">
+        <QuincyField id="review-link-detail-passcode" label={link.hasPasscode ? "New passcode" : "Passcode"} autoComplete="off" spellCheck={false} disabled={locked || draft.removePasscode} aria-describedby="review-link-detail-passcode-hint" value={draft.passcode} error={passcodeError} onChange={(event) => store.patchDetail(linkId, { passcode: event.target.value })} />
         {link.hasPasscode
           ? <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-            <FieldDescription>{draft.removePasscode ? "The passcode will be removed when you save." : "A passcode is set. Type a new one to replace it."}</FieldDescription>
+            <FieldDescription id="review-link-detail-passcode-hint">{locked ? "A passcode is set." : draft.removePasscode ? "The passcode will be removed when you save." : "A passcode is set. Type a new one to replace it."}</FieldDescription>
             {!locked && <Button type="button" variant="text" className={TARGET} onClick={() => store.patchDetail(linkId, { removePasscode: !draft.removePasscode, passcode: "" })}>{draft.removePasscode ? "Keep passcode" : "Remove passcode"}</Button>}
           </div>
-          : <FieldDescription>No passcode: anyone with the link can watch.</FieldDescription>}
+          : <FieldDescription id="review-link-detail-passcode-hint">No passcode: anyone with the link can watch.</FieldDescription>}
       </div>
       <ReviewLinkAllowFields value={allowValue} disabled={locked} onChange={(key, next) => store.patchDetail(linkId, { allow: { ...draft.allow, [key]: next } })} />
       {!locked && <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
@@ -156,7 +161,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
                   </label>;
                 })}
               </div>
-              {!locked && granted.size === 1 && <p className={MUTED}>Remove the Video to stop sharing it.</p>}
+              {!locked && granted.size === 1 && <p className={MUTED}>Remove the film to stop sharing it.</p>}
             </ItemContent>
             {!locked && <ItemActions>
               <Button type="button" variant="secondary" className="min-h-11" disabled={busy} aria-label={`Remove ${member.title} from link`} onClick={() => setConfirm({ kind: "remove", videoId: member.videoId, title: member.title })}>Remove</Button>
@@ -166,7 +171,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
       </ItemGroup>
       {!locked && (available.length > 0
         ? <Combobox<VideoDto> items={available} value={null} onValueChange={(video) => { if (video) void store.run(`add:${linkId}`, () => actions.addVideo(linkId, video.id, [video.currentAssetId]), () => undefined, undefined, linkId); }} itemToStringLabel={(video) => video.title} itemToStringValue={(video) => video.id} isItemEqualToValue={(a, b) => a.id === b.id}>
-          <ComboboxTrigger aria-label="Add a Video" disabled={busyLink} className={buttonClasses("secondary", { className: "min-h-11 justify-between self-start" })}>{state.pending.has(`add:${linkId}`) ? "Adding…" : "Add a Video"}</ComboboxTrigger>
+          <ComboboxTrigger aria-label="Add a film" disabled={busyLink} className={buttonClasses("secondary", { className: "min-h-11 justify-between self-start" })}>{state.pending.has(`add:${linkId}`) ? "Adding…" : "Add a film"}</ComboboxTrigger>
           <ComboboxContent className="min-w-[max(var(--anchor-width),240px)] max-w-[calc(100vw-2*var(--space-4))]">
             <ComboboxInput showTrigger={false} placeholder="Search films…" aria-label="Search films" />
             <ComboboxEmpty>No matching film</ComboboxEmpty>
@@ -208,9 +213,10 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction variant={confirm?.kind === "replace" ? "default" : "destructive"} onClick={() => { if (confirm) run(confirm); }}>{confirm?.kind === "remove" ? "Remove Video" : confirm?.kind === "revoke" ? "Revoke" : "Replace"}</AlertDialogAction>
+          <AlertDialogAction variant={confirm?.kind === "replace" ? "default" : "destructive"} onClick={() => { if (confirm) run(confirm); }}>{confirm?.kind === "remove" ? "Remove film" : confirm?.kind === "revoke" ? "Revoke" : "Replace"}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+    </ReviewLinkDialogFrame>
   </div>;
 }

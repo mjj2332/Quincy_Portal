@@ -78,8 +78,8 @@ describe("the list", () => {
     await mount(); await openList();
     const rows = all('[data-testid="review-link-row"]');
     expect(rows).toHaveLength(3);
-    expect(text(rows[0])).toContain("Smith family"); expect(text(rows[0])).toContain("Active"); expect(text(rows[0])).toContain("1 Video"); expect(text(rows[0])).toContain("9 Nov 2026"); expect(text(rows[0])).toContain("2h ago"); expect(text(rows[0])).toContain("2 open now");
-    expect(text(rows[1])).toContain("Expired"); expect(text(rows[1])).toContain("2 Videos"); expect(text(rows[1])).toContain("Not opened yet");
+    expect(text(rows[0])).toContain("Smith family"); expect(text(rows[0])).toContain("Active"); expect(text(rows[0])).toContain("1 film"); expect(text(rows[0])).toContain("9 Nov 2026"); expect(text(rows[0])).toContain("2h ago"); expect(text(rows[0])).toContain("2 open now");
+    expect(text(rows[1])).toContain("Expired"); expect(text(rows[1])).toContain("2 films"); expect(text(rows[1])).toContain("Not opened yet");
     expect(text(rows[2])).toContain("Revoked"); expect(text(rows[2])).toContain("Untitled link");
   });
   it("says so when there are none, and points at the checkboxes", async () => {
