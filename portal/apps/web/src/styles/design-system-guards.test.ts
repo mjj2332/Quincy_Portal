@@ -1600,3 +1600,70 @@ describe("guard: inverse.css re-scopes --field-bg in both blocks", () => {
     expect(inverse).toMatch(/--ink-/);
   });
 });
+
+/**
+ * Guard — a dialog or sheet never takes Quincy's page-container widths.
+ *
+ * `styles/tokens/spacing.css` redefines `--container-sm` … `--container-xl` as PAGE widths
+ * (`--container-sm` is 640px, `--container-xl` is 1320px), so Tailwind's `max-w-sm`…`max-w-xl`
+ * do not mean what they do in stock Tailwind. A dialog that reaches for them gets a page-sized
+ * surface: 13c's verify dialog came out at 640px and 13d's paste dialog at 1320px. Use an
+ * explicit width (`sm:max-w-[460px]`) or a size whose container token is not redefined
+ * (`max-w-3xl` is 48rem).
+ */
+describe("guard: dialog and sheet content never uses a page-width max-w-{sm..xl}", () => {
+  const CONTENT_OPEN = /<(?:AlertDialogContent|DialogContent|SheetContent)\b/g;
+  const PAGE_WIDTH = /(?<![\w[:-])(?:[a-z0-9]+:)?max-w-(?:sm|md|lg|xl)(?![\w-])/;
+
+  /** The opening tag of each matching element, read to its closing `>` (braces and strings respected). */
+  function openingTags(text: string): string[] {
+    const tags: string[] = [];
+    for (const match of text.matchAll(CONTENT_OPEN)) {
+      let depth = 0;
+      let quote = "";
+      let i = match.index!;
+      for (; i < text.length; i++) {
+        const ch = text[i]!;
+        if (quote) { if (ch === quote) quote = ""; continue; }
+        if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+        else if (ch === "{") depth++;
+        else if (ch === "}") depth--;
+        else if (ch === ">" && depth === 0) break;
+      }
+      tags.push(text.slice(match.index!, i + 1));
+    }
+    return tags;
+  }
+
+  function offences(text: string): string[] {
+    return openingTags(stripComments(text)).filter((tag) => PAGE_WIDTH.test(tag));
+  }
+
+  it("has no page-width max-w class on DialogContent, AlertDialogContent or SheetContent", () => {
+    const found: string[] = [];
+    for (const file of sourceFiles()) {
+      const path = rel(file);
+      if (path.startsWith("components/reui/")) continue;
+      const text = readFileSync(file, "utf8");
+      for (const tag of offences(text)) {
+        const line = text.slice(0, text.indexOf(tag)).split("\n").length;
+        found.push(`  ${path}:${line}`);
+      }
+    }
+    expect(found, [
+      "Quincy's --container-sm..xl are PAGE widths, not dialog widths. Use an explicit",
+      "`sm:max-w-[460px]` or `max-w-3xl` instead (docs/lessons.md).",
+      ...found,
+    ].join("\n")).toEqual([]);
+  });
+
+  it("proves the matcher on planted fixtures", () => {
+    expect(offences('<DialogContent className="flex sm:max-w-xl">').length).toBe(1);
+    expect(offences('<AlertDialogContent className="max-w-md" />').length).toBe(1);
+    expect(offences('<SheetContent\n  className="max-w-lg"\n>').length).toBe(1);
+    expect(offences('<DialogContent className="sm:max-w-3xl">').length).toBe(0);
+    expect(offences('<DialogContent className="sm:max-w-[460px]">').length).toBe(0);
+    expect(offences('<DialogContent className="sm:max-w-2xl">').length).toBe(0);
+    expect(offences('<div className="max-w-xl"><DialogContent className="x">').length).toBe(0);
+  });
+});
