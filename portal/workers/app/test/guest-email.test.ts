@@ -1,3 +1,4 @@
+import { SELF as workerSelf } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { guestSessionResponseSchema, reviewLinkListResponseSchema } from "@quincy/shared";
 import { hashToken } from "../src/lib/opaque-token";
@@ -21,6 +22,7 @@ afterEach(async () => {
   mail.restore(); vi.restoreAllMocks();
   await database.DB.prepare("DELETE FROM audit_log WHERE action LIKE 'review_link.email_%'").run();
   await database.DB.prepare("DELETE FROM guest_reviewers WHERE email_normalized LIKE '%@guest-13a.test' OR email_normalized LIKE '%.invalid'").run();
+  await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run();
   await clearGuestRows(); await clearVideoFlags();
 });
 
@@ -512,5 +514,95 @@ describe("leak sweep", () => {
     expect(auditDump).not.toContain(rawCookie);
     expect(await sha256Hex(code)).not.toContain(code);
     expect(guestOrigin).toBeTruthy();
+  });
+});
+
+/** A POST whose body arrives `delayMs` after the headers, so the Worker has already passed its entry checks when the state changes under it. */
+function slowPost(path: string, cookie: string, body: unknown, delayMs: number): { response: Promise<Response>; } {
+  const bytes = new TextEncoder().encode(JSON.stringify(body));
+  const stream = new ReadableStream<Uint8Array>({ async start(controller) { await new Promise((resolve) => setTimeout(resolve, delayMs)); controller.enqueue(bytes); controller.close(); } });
+  const headers = new Headers({ "cf-connecting-ip": freshIp(), cookie, origin: guestOrigin, "content-type": "application/json" });
+  return { response: workerSelf.fetch(`https://portal.test${path}`, { method: "POST", headers, body: stream, duplex: "half" } as RequestInit) };
+}
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const stubBody = async () => { const stub = await guestFetch("/d"); return { status: stub.status, body: await stub.text() }; };
+const plain = async (response: Response) => ({ status: response.status, body: await response.text() });
+const archive = () => database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), ids.project).run();
+const codeCount = async () => (await database.DB.prepare("SELECT COUNT(*) AS n FROM guest_email_codes").first<{ n: number }>())!.n;
+const memberCount = async (linkId: string) => (await database.DB.prepare("SELECT COUNT(*) AS n FROM guest_link_members WHERE link_id = ?").bind(linkId).first<{ n: number }>())!.n;
+
+describe("the committing SQL repeats what the entry checked (Sol round 1)", () => {
+  it("gate: a gate that closes mid-request issues no code and verifies nothing, and answers the stub", async () => {
+    const link = await seedGuestLink();
+    let round = 0;
+    for (const close of [() => clearVideoFlags(), () => database.DB.prepare("DELETE FROM feature_flags WHERE key = 'video_review_guest'").run(), () => database.DB.prepare("DELETE FROM feature_flags WHERE key LIKE 'video_review_pilot:%'").run()]) {
+      await openGuestGate(); const address = `round${round += 1}@guest-13a.test`;
+      const session = await sessionOf(link); const before = mail.sent.length;
+      const pending = slowPost(linkPath(link.id, "/email/code"), session.cookie, { email: address }, 250);
+      await sleep(80); await close();
+      expect(await plain(await pending.response)).toEqual(await stubBody());
+      expect(mail.sent.length).toBe(before); expect(await codeRows(session.id)).toHaveLength(0);
+      await openGuestGate();
+      const ready = await sent({ link, email: address }); const verifying = slowPost(linkPath(link.id, "/email/verify"), ready.session.cookie, { code: ready.code, name: NAME }, 250);
+      await sleep(80); await close();
+      expect(await plain(await verifying.response)).toEqual(await stubBody());
+      expect(await sessionRow(ready.session.id)).toMatchObject({ guest_id: null, verified_at: null }); expect((await codeRows(ready.session.id))[0]!.consumed_at).toBeNull();
+      expect(await memberCount(link.id)).toBe(0);
+      await database.DB.prepare("DELETE FROM guest_email_codes").run();
+    }
+  });
+
+  it("clock: a code that expires while the body is on its way is refused", async () => {
+    const { link, session, code } = await sent();
+    await database.DB.prepare("UPDATE guest_email_codes SET expires_at = ? WHERE session_id = ?").bind(Date.now() + 300, session.id).run();
+    const pending = slowPost(linkPath(link.id, "/email/verify"), session.cookie, { code, name: NAME }, 600);
+    const response = await pending.response;
+    expect(response.status).toBe(401); expect(await response.json()).toEqual({ error: "code_expired" });
+    expect(await sessionRow(session.id)).toMatchObject({ guest_id: null }); expect(await memberCount(link.id)).toBe(0);
+  });
+
+  it("clock: a link (and so its session) that expires while the body is on its way is the stub and upgrades nothing", async () => {
+    const { link, session, code } = await sent();
+    await database.DB.prepare("UPDATE client_links SET expires_at = ? WHERE id = ?").bind(Date.now() + 300, link.id).run();
+    await database.DB.prepare("UPDATE guest_sessions SET expires_at = ? WHERE id = ?").bind(Date.now() + 300, session.id).run();
+    const response = await (slowPost(linkPath(link.id, "/email/verify"), session.cookie, { code, name: NAME }, 600)).response;
+    expect(await plain(response)).toEqual(await stubBody());
+    expect(await sessionRow(session.id)).toMatchObject({ guest_id: null }); expect(await memberCount(link.id)).toBe(0);
+  });
+
+  it("clock: a link that expires while a send is on its way issues no code", async () => {
+    const link = await seedGuestLink(); const session = await sessionOf(link);
+    await database.DB.prepare("UPDATE client_links SET expires_at = ? WHERE id = ?").bind(Date.now() + 300, link.id).run();
+    const response = await (slowPost(linkPath(link.id, "/email/code"), session.cookie, { email: EMAIL }, 600)).response;
+    expect(await plain(response)).toEqual(await stubBody());
+    expect(await codeRows(session.id)).toHaveLength(0); expect(mail.sent).toHaveLength(0);
+  });
+
+  it("archived: verify after the Project is archived is 409 project_archived and creates no membership; send is 409 too and mails nothing", async () => {
+    const { link, session, code } = await sent();
+    await archive();
+    const verifying = await verify(link, session.cookie, code);
+    expect(verifying.status).toBe(409); expect(await verifying.json()).toEqual({ error: "project_archived" });
+    expect(await sessionRow(session.id)).toMatchObject({ guest_id: null }); expect(await memberCount(link.id)).toBe(0);
+    expect((await codeRows(session.id))[0]).toMatchObject({ attempts: 0, consumed_at: null });
+    await pastResendWait(session.id); const mailed = mail.sent.length;
+    const resend = await sendCode(link, session.cookie);
+    expect(resend.status).toBe(409); expect(await resend.json()).toEqual({ error: "project_archived" });
+    expect(mail.sent.length).toBe(mailed); expect(await codeRows(session.id)).toHaveLength(1);
+  });
+
+  it("archived: an archive that lands mid-request is 409 project_archived (not the stub) and writes nothing", async () => {
+    const { link, session, code } = await sent();
+    const pending = slowPost(linkPath(link.id, "/email/verify"), session.cookie, { code, name: NAME }, 300);
+    await sleep(80); await archive();
+    const response = await pending.response;
+    expect(response.status).toBe(409); expect(await response.json()).toEqual({ error: "project_archived" });
+    expect(await sessionRow(session.id)).toMatchObject({ guest_id: null }); expect(await memberCount(link.id)).toBe(0);
+    await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run();
+    await pastResendWait(session.id); const codes = await codeCount();
+    const sending = slowPost(linkPath(link.id, "/email/code"), session.cookie, { email: EMAIL }, 300);
+    await sleep(80); await archive();
+    const sendResponse = await sending.response;
+    expect(sendResponse.status).toBe(409); expect(await codeCount()).toBe(codes);
   });
 });
