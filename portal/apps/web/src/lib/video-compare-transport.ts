@@ -664,6 +664,9 @@ export class CompareTransport {
 
   private onVideoPlaying(side: CompareSideId): void {
     if (this.disposed || this.stall !== side || !this.playing) return;
+    // The event is a hint: the element must be un-paused and have data NOW.
+    const { video } = this.sides[side];
+    if (video.paused || video.readyState < 3) return;
     this.recoverStall(side, null);
   }
 

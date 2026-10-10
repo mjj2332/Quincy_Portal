@@ -173,6 +173,12 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
     { name: "reverse", passive: false, run: () => { t.reverse(pick([1, 2])); } },
     { name: "waiting", passive: true, run: () => { stub.fireWaiting(videos[pick(["a", "b"] as const)]); } },
     { name: "playing", passive: true, run: () => { const s = pick(["a", "b"] as const); stub.setReadyState(videos[s], 4); stub.firePlaying(videos[s]); } },
+    { name: "stalePlaying", passive: true, run: () => {
+      // A `playing` that was queued while data was there, delivered after readyState dropped back below 3.
+      const s2 = pick(["a", "b"] as const);
+      stub.setReadyState(videos[s2], pick([1, 2]));
+      stub.firePlaying(videos[s2]);
+    } },
     { name: "readyState", passive: true, run: () => { stub.setReadyState(videos[pick(["a", "b"] as const)], pick([1, 2, 4])); } },
     { name: "ended", passive: true, run: () => {
       const side = pick(["a", "b"] as const);
@@ -191,7 +197,7 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
     { name: "seekSide", passive: false, run: () => { const side = pick(["a", "b"] as const); t.seekSide(side, Math.floor(rand() * counts[side])); } },
     { name: "rejectPlay", passive: false, run: () => { stub.rejectNextPlay("NotAllowedError"); } },
   ];
-  const weights = [10, 6, 2, 4, 1, 1, 1, 2, 1, 1, 1, 2, 3, 1, 2, 3, 1, 1, 3, 1, 1, 1, 1, 1];
+  const weights = [10, 6, 2, 4, 1, 1, 1, 2, 1, 1, 1, 2, 3, 2, 1, 2, 3, 1, 1, 3, 1, 1, 1, 1, 1];
 
   let prev: CompareTransportState = t.getState();
   for (let i = 0; i < EVENTS; i++) {

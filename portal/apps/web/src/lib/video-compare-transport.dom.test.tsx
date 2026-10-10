@@ -1068,3 +1068,32 @@ describe("CompareTransport: round 8 (#741 7b)", () => {
     expect(transport.getState()).toMatchObject({ offset: 90, playing: false });
   });
 });
+
+describe("CompareTransport: round 9 (#741 7b)", () => {
+  it("a stale playing event delivered after the data is gone does not end the stall", () => {
+    const r = rig();
+    r.t.play();
+    show(r.va, 10); show(r.vb, 10);
+    stub.setReadyState(r.vb, 2);
+    stub.fireWaiting(r.vb);
+    expect(r.t.getState().stalled).toBe("b");
+    stub.firePlaying(r.vb);                 // queued while data was briefly there; readyState is 2 again now
+    expect(r.t.getState().stalled).toBe("b");
+    expect(r.va.paused).toBe(true);
+    stub.setReadyState(r.vb, 4);
+    stub.firePlaying(r.vb);
+    expect(r.t.getState().stalled).toBeNull();
+    expect(r.va.paused).toBe(false);
+  });
+
+  it("a repeated waiting is re-announced by the clock so a re-stall is never missed", () => {
+    const r = rig();
+    r.t.play();
+    stub.setReadyState(r.vb, 2);
+    stub.fireWaiting(r.vb);
+    const seen = vi.fn();
+    r.cb.subscribe(seen);
+    stub.fireWaiting(r.vb);
+    expect(seen).toHaveBeenCalled();
+  });
+});

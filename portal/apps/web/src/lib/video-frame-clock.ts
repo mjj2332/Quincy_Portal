@@ -269,7 +269,12 @@ export class VideoFrameClock {
     ["loadedmetadata", () => { this.initialize(); }],
     ["emptied", () => { this.initialised = false; }],
     ["seeked", () => { if (this.video.readyState >= 3) this.set({ stalled: false }); this.onSeeked(); }],
-    ["waiting", () => { if (!this.disposed && !this.video.paused) this.set({ stalled: true }); }],
+    ["waiting", () => {
+      if (this.disposed || this.video.paused) return;
+      // Re-announced even when already stalled, so a listener that moved on (stale `playing`) can never miss a re-stall.
+      if (this.state.stalled) { for (const listener of [...this.listeners]) listener(); return; }
+      this.set({ stalled: true });
+    }],
     ["playing", () => { if (this.video.readyState >= 3) this.set({ stalled: false }); }],
     ["timeupdate", () => { if (!this.hasRvfc && this.target === null && !this.video.seeking && !this.reverseState) this.set({ frame: this.timeFrame() }); }],
     ["ended", () => { if (this.video.ended && !this.video.seeking) this.onEnded(); }],
