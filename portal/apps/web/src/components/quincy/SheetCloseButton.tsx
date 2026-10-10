@@ -20,6 +20,13 @@ import { SheetClose } from "@/components/reui/sheet";
 export const SHEET_CLOSE_CLEARANCE =
   "pe-[calc(var(--space-3)+28px+var(--space-2))] max-[721px]:pe-[calc(var(--space-3)+44px+var(--space-2))]";
 
+/**
+ * The same sum as a scroll margin: a control focused inside the sheet (the Review links button on focus return) scrolls to rest below the
+ * absolutely positioned close, not flush under it with its ring clipped.
+ */
+export const SHEET_CLOSE_SCROLL_MARGIN =
+  "scroll-mt-[calc(var(--space-3)+28px+var(--space-2)+var(--space-2))] max-[721px]:scroll-mt-[calc(var(--space-3)+44px+var(--space-2)+var(--space-2))]";
+
 /** `buttonRef` lets a sheet name this button as its `initialFocus` target (#652). */
 export function SheetCloseButton({ label, "data-testid": testId, buttonRef }: { label: string; "data-testid"?: string; buttonRef?: Ref<HTMLButtonElement> }) {
   return (

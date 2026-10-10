@@ -1,4 +1,5 @@
-import { type CSSProperties, lazy, Suspense, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useReportBarHeight } from "./ReviewBarClearance";
 import type { Mp4Probe, Role, VideoDto, VideoReviewResponse } from "@quincy/shared";
 import { useSession } from "../../lib/auth";
 import { useOptionalProjectQueryClient, useProjectAccessTermination, useProjectVideosQuery } from "../../lib/project-data";
@@ -53,7 +54,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   // Review links (#741 11b): the store and the dialog live in `ReviewLinksScope`, above the tab switch; this reads them. Shipped dark behind the `links` part and `shareVideo`.
   const reviewLinks = useReviewLinksUi({ projectId, role, review, archived, store: useContext(ReviewLinkStoreContext) });
   // The fixed selection bar's measured height (0 while it is not shown), kept clear at the end of the collection.
-  const [barHeight, setBarHeight] = useState(0);
+  const setBarHeight = useReportBarHeight() ?? undefined;
   const running = uploads.filter((upload) => upload.phase === "reserving" || upload.phase === "uploading" || upload.phase === "finishing");
   // The component is chosen once per opening: swapping `lazy` for the loaded one mid-open would remount the viewer (playback, Version and frame lost).
   const [opened, setOpened] = useState<{ id: string; Viewer: ViewerComponent | typeof LazyViewer } | null>(null);
@@ -102,8 +103,8 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
       <div className="muted">Upload web-ready H.264 MP4 cuts. A re-cut becomes a new version of the same film; notes stay with the version they were made on.</div>
       <ReviewLinksOpenButton ui={reviewLinks} />
     </div>
-    <div className="grid gap-[var(--space-5)] p-[var(--space-6)] pb-[calc(var(--space-6)+var(--review-bar-clearance,0px))]" data-testid="video-collection-body" {...(barHeight > 0 ? { style: { "--review-bar-clearance": `calc(${barHeight}px + var(--space-4))` } as CSSProperties } : {})}>
-      <ReviewLinksHost ui={reviewLinks} videos={videos.data ?? []} onBarHeight={setBarHeight} />
+    <div className="grid gap-[var(--space-5)] p-[var(--space-6)]" data-testid="video-collection-body">
+      <ReviewLinksHost ui={reviewLinks} videos={videos.data ?? []} {...(setBarHeight ? { onBarHeight: setBarHeight } : {})} />
       {canUpload && <NewFilmUploader onStart={({ title, ...picked }) => start({ ...picked, target: { kind: "new", title } })} />}
       <EmbeddedUploadTray uploads={rows} errors={[]} onCancel={(key) => void cancelVideoUpload(key, queryClient)} onRemove={(key) => removeVideoUpload(key)} onRetry={(key) => retryVideoUpload(key)} testId="video-upload-tray" />
       {videos.isError && !videos.data && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{videos.error.message || "Films could not be loaded."}</span><Button type="button" variant="text" onClick={() => { terminate(videos.error); void videos.refetch(); }}>Retry</Button></Notice>}

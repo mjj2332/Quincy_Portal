@@ -5,6 +5,7 @@ import { ApiError } from "../lib/api";
 import { useQuery } from "@tanstack/react-query";
 import { QuincyQueryProvider } from "../lib/query-client";
 import { projectDataKeys } from "../lib/project-data";
+import { CollectionPanel } from "../components/CollectionPanel";
 import { VideoCollectionPanel } from "../components/video/VideoCollectionPanel";
 import { ReviewLinksScope } from "../components/video/ReviewLinksScope";
 
@@ -30,7 +31,7 @@ export async function flush(times = 8) { for (let i = 0; i < times; i += 1) awai
 /** The Video tab as `ProjectWorkspace` mounts it: the gate answer is read into the query cache by the tab body, the panel gets it as a prop. */
 function VideoTab({ role, archived, parts }: { role: Role; archived: boolean; parts: string[] }) {
   const gate = useQuery({ queryKey: projectDataKeys.videoReview(PROJECT), queryFn: async (): Promise<{ open: boolean; parts: string[] }> => ({ open: true, parts }), staleTime: Infinity });
-  return gate.data ? <VideoCollectionPanel projectId={PROJECT} role={role} archived={archived} review={gate.data as never} /> : null;
+  return gate.data ? <CollectionPanel projectId={PROJECT} collection="video" assets={[]} canManage={false} canApprove={false} onReview={async () => {}} onToast={() => {}} videoFilms={<VideoCollectionPanel projectId={PROJECT} role={role} archived={archived} review={gate.data as never} />} /> : null;
 }
 const shown: { parts: string[]; role: Role; archived: boolean; tab: "video" | "floorplan" } = { parts: ["upload", "links"], role: "editor", archived: false, tab: "video" };
 async function render() {

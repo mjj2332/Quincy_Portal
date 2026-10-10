@@ -49,13 +49,15 @@ describe("focus after a create", () => {
 });
 
 describe("the selection bar's clearance", () => {
-  it("pads the end of the collection by the measured bar height plus a space-4 while the bar shows", async () => {
+  it("pads the end of the Video tab (the wrapper holding the Films AND the Video links section) by the measured bar height plus a space-4 while the bar shows", async () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
       const height = this.dataset["testid"] === "review-link-selection-bar" ? 80 : 0;
       return { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: height, width: 0, height, toJSON: () => ({}) };
     });
     await mount();
-    const body = q('[data-testid="video-collection-body"]')!;
+    const body = q('[data-testid="video-links-section"]')!.parentElement!;
+    expect(body.contains(q('[data-testid="video-collection-body"]'))).toBe(true);
+    expect(q('[data-testid="video-collection-body"]')!.className).not.toContain("review-bar-clearance");
     const clearance = () => body.style.getPropertyValue("--review-bar-clearance");
     expect(clearance()).toBe("");
     await selectFilms("Main walkthrough");
@@ -105,5 +107,14 @@ describe("the Review links button", () => {
     await mount();
     expect(q('[data-testid="video-films-header"]')!.contains(q('[data-testid="review-links-open"]'))).toBe(true);
     expect(button("Review links")).toBeDefined();
+  });
+});
+
+describe("Create's permission copy", () => {
+  it("calls the people on a link Guests on every row, Download included", async () => {
+    await mount(); await openCreate();
+    const hints = text(dialog());
+    expect(hints).toContain("Guests can download a film");
+    expect(hints).not.toContain("Clients can");
   });
 });

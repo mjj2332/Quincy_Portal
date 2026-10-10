@@ -35,6 +35,8 @@ Searches run: `mcp__ReUI__search` "share link dialog with copy URL input group a
 | Grant-limit hint ("A film can share up to 100 Versions on a link.") | installed `reui/field` `FieldDescription` in the create step, a muted `<p>` in the detail beside the "Remove the film" line; linked to each disabled Version by `aria-describedby`; the limit is `REVIEW_LINK_MAX_GRANTS_PER_VIDEO` in shared |
 | Locked-Version hint ("A film needs at least one Version...") | installed `reui/field` `FieldDescription`, linked to the disabled checkbox with `aria-describedby` |
 | Review links button in the Films header | still installed `quincy/Button` (`secondary`), moved into `.workspace-intro` (`ReviewLinksOpenButton`) |
+| Selection-bar clearance (design review 3) | no new element: `ReviewBarClearanceRoot` (plain `div`, `components/video/ReviewBarClearance.tsx`) wraps the Films and the Video links section in `CollectionPanel` and carries the padding; the Films body no longer does |
+| Legend typography, scroll margin, revoked muting, per-film heading | class-only: `FIELD_LEGEND_TEXT` (quincy/Eyebrow, mirrors `reui/field` FieldLabel), `SHEET_CLOSE_SCROLL_MARGIN` (quincy/SheetCloseButton), `opacity-60` on the revoked `ItemContent`, `--text-base`/`--weight-medium` heading |
 | Dialog width | `sm:max-w-[560px]`, Modal's "wide" step (not `max-w-xl`, which is 1320px here) |
 
 No raw `<button>`, `<input>`, `<select>`, `<textarea>`, `<dialog>` or widget role was added outside `components/reui/` and `components/quincy/`; `ui-primitive-allowlist.ts` is unchanged.

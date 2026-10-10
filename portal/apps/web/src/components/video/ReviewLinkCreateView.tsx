@@ -94,7 +94,7 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
           const limitId = `review-link-limit-hint-${video.id}`;
           const full = chosen(video).length >= REVIEW_LINK_MAX_GRANTS_PER_VIDEO;
           return <div key={video.id} role="group" aria-label={video.title} className="grid gap-[var(--space-1)]" data-testid="review-link-create-video">
-            <span className="[font:var(--weight-medium)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">{video.title}</span>
+            <span className="mt-[var(--space-2)] [font:var(--weight-medium)_var(--text-base)/var(--leading-snug)_var(--font-sans)]">{video.title}</span>
             {video.versions.map((version) => {
               const on = chosen(video).includes(version.assetId);
               return <label key={version.assetId} className="flex min-h-11 cursor-pointer items-center gap-[var(--space-3)] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">
