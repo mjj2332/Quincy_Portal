@@ -71,7 +71,9 @@ export function useMarkup({ enabled, tool, toPoint, strokes, setStrokes, beforeS
   const [active, setActiveState] = useState<MarkupItem | null>(null);
   const [history, setHistoryState] = useState<MarkupHistory>(() => createHistory(strokes));
   const gestureRef = useRef<Gesture | null>(null);
-  const pendingRef = useRef(false);
+  // A start waiting on an async gate: live until its pointer ends, the hook is cancelled or disabled, or it unmounts.
+  const pendingRef = useRef<{ token: number; pointerId: number } | null>(null);
+  const tokenRef = useRef(0);
   // Latest-value refs so two events dispatched before a re-render still see each other's result.
   const strokesRef = useRef(strokes); strokesRef.current = strokes;
   const historyRef = useRef(history); historyRef.current = history;
@@ -82,10 +84,11 @@ export function useMarkup({ enabled, tool, toPoint, strokes, setStrokes, beforeS
     strokesRef.current = result.strokes; historyRef.current = result.history;
     setStrokes(result.strokes); setHistoryState(result.history);
   };
-  const discard = useCallback(() => { gestureRef.current = null; setActiveState(null); }, []);
+  const discard = useCallback(() => { gestureRef.current = null; pendingRef.current = null; setActiveState(null); }, []);
 
   // Turning drawing off (a role change) abandons a gesture in flight.
   useEffect(() => { if (!enabled) discard(); }, [enabled, discard]);
+  useEffect(() => discard, [discard]);
 
   const begin = (event: ReactPointerEvent<Element>, target: Element) => {
     const { tool: current, toPoint: mapPoint, limits: caps, onRefuse: refuse } = latest.current;
@@ -98,7 +101,8 @@ export function useMarkup({ enabled, tool, toPoint, strokes, setStrokes, beforeS
       : { type: current.kind, color: current.color, width: current.width, points: pair };
     gestureRef.current = { pointerId: event.pointerId, item, startX: event.clientX, startY: event.clientY, lastX: event.clientX, lastY: event.clientY };
     setActive(item);
-    target.setPointerCapture(event.pointerId);
+    try { target.setPointerCapture(event.pointerId); }
+    catch { discard(); } // the pointer is already gone (released while a gate was open): abandon rather than wedge drawing
   };
 
   const onPointerDown = (event: ReactPointerEvent<Element>): void | Promise<void> => {
@@ -110,8 +114,10 @@ export function useMarkup({ enabled, tool, toPoint, strokes, setStrokes, beforeS
     const gate = beforeStart ? beforeStart(event) : true;
     if (gate === true) { begin(event, target); return; }
     if (gate === false) return;
-    pendingRef.current = true;
-    return gate.then((proceed) => { pendingRef.current = false; if (proceed && !gestureRef.current) begin(event, target); }, (reason) => { pendingRef.current = false; throw reason; });
+    const token = ++tokenRef.current;
+    pendingRef.current = { token, pointerId: event.pointerId };
+    const settle = () => { const live = pendingRef.current?.token === token && latest.current.enabled; if (live) pendingRef.current = null; return live; };
+    return gate.then((proceed) => { if (settle() && proceed && !gestureRef.current) begin(event, target); }, (reason) => { settle(); throw reason; });
   };
 
   const onPointerMove = (event: ReactPointerEvent<Element>) => {
@@ -143,7 +149,10 @@ export function useMarkup({ enabled, tool, toPoint, strokes, setStrokes, beforeS
     apply(result);
   };
 
+  const endPending = (event: ReactPointerEvent<Element>) => { if (pendingRef.current?.pointerId === event.pointerId) pendingRef.current = null; };
+
   const onPointerUp = (event: ReactPointerEvent<Element>) => {
+    endPending(event);
     const gesture = gestureRef.current;
     if (!latest.current.enabled || !gesture || event.pointerId !== gesture.pointerId) return;
     if (gesture.item.type !== undefined) {
@@ -160,6 +169,7 @@ export function useMarkup({ enabled, tool, toPoint, strokes, setStrokes, beforeS
   };
 
   const onPointerCancel = (event: ReactPointerEvent<Element>) => {
+    endPending(event);
     const gesture = gestureRef.current;
     if (gesture && event.pointerId === gesture.pointerId) discard();
   };

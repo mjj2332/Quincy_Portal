@@ -42,7 +42,9 @@ const TOOLS: { kind: MarkupToolKind; label: string; Icon: LucideIcon }[] = [
 const TARGET = "h-7 min-w-7 max-[721px]:h-11 max-[721px]:min-w-11 min-[721px]:pointer-coarse:h-11 min-[721px]:pointer-coarse:min-w-11";
 const GROUP = "inline-flex w-auto items-center gap-[var(--space-1)]";
 const PRESSED_RING = "aria-pressed:outline aria-pressed:outline-[length:var(--border-width-bold)] aria-pressed:outline-solid aria-pressed:outline-[var(--ring)] aria-pressed:outline-offset-2";
-const COMPACT_BUTTON = "w-11 min-w-11 px-0";
+const COMPACT_BUTTON = "w-11 min-w-11 px-0 min-[721px]:pointer-coarse:min-w-11";
+/** The default button is 38px; a touch tablet gets 44px. */
+const COARSE_BUTTON = "min-[721px]:pointer-coarse:min-h-11";
 
 export interface MarkupToolbarProps {
   /** The eyebrow ("Markup", "Editing drawing"); null leaves it out. */
@@ -94,7 +96,7 @@ export function MarkupToolbar({ label, tool, onToolChange, onColorChange, onWidt
   const nextWidth = MARKUP_WIDTHS[(MARKUP_WIDTHS.indexOf(tool.width as (typeof MARKUP_WIDTHS)[number]) + 1) % MARKUP_WIDTHS.length]!;
   const widths = compact
     ? (
-      <Button key="widths" type="button" variant="outline" className={COMPACT_BUTTON} aria-label={`Stroke width, ${tool.width} pixels`} title="Stroke width" onClick={() => onWidthChange(nextWidth)}>
+      <Button key="widths" type="button" variant="outline" className={cn(COARSE_BUTTON, COMPACT_BUTTON)} aria-label={`Stroke width, ${tool.width} pixels`} title="Stroke width" onClick={() => onWidthChange(nextWidth)}>
         <span aria-hidden="true" style={{ width: tool.width + 3, height: tool.width + 3 }} className="block rounded-full bg-foreground" />
       </Button>
     )
@@ -109,7 +111,7 @@ export function MarkupToolbar({ label, tool, onToolChange, onColorChange, onWidt
     );
 
   const historyButton = (name: string, Icon: LucideIcon, disabled: boolean, onClick: () => void, extra: { shortcuts?: string; title: string }) => (
-    <Button key={name} type="button" variant="outline" className={cn(compact && COMPACT_BUTTON)} aria-label={name} title={extra.title} aria-keyshortcuts={extra.shortcuts} disabled={disabled} onClick={onClick}>
+    <Button key={name} type="button" variant="outline" className={cn(COARSE_BUTTON, compact && COMPACT_BUTTON)} aria-label={name} title={extra.title} aria-keyshortcuts={extra.shortcuts} disabled={disabled} onClick={onClick}>
       <Icon aria-hidden="true" className="size-4" />{!compact && name}
     </Button>
   );
