@@ -178,6 +178,8 @@ describe("Approve and Request changes", () => {
     await open();
     await click(byId("guest-approve"));
     expect(byId("guest-verify-dialog")).not.toBeNull();
+    // One dialog serves every action, so its title names the step, not "Add a note".
+    expect(byId("guest-verify-dialog")!.querySelector("h2")?.textContent).toBe("Verify your email");
     expect(byId("guest-decision-dialog")).toBeNull();
     await typeInto(byId("guest-verify-email"), "sam@example.com");
     await typeInto(byId("guest-verify-name"), "Sam");
