@@ -15,12 +15,13 @@ import { useReviewLinksUi, useReviewLinkState } from "./use-review-links-ui";
 
 /**
  * The one Review links dialog (#741 11b), whose step (list, create, detail, one-time reveal) is the form store's `view`. Mounted by
- * `ReviewLinksScope` above the Collection tabs. The gate answer and the Videos are read from the query cache the Video tab fills (disabled
- * observers: this never fetches them), and the link list is fetched only while the dialog is open. Reuse ledger: docs/plans/741-11b-ledger.md.
+ * `ReviewLinksScope` above the Collection tabs. The Videos are read from the query cache the Video tab fills (a disabled observer: this never fetches them). The gate observer is
+ * enabled only while the dialog is open, so a refusal's invalidation re-reads it even off the Video tab (a retained dialog whose late reveal
+ * lands on another tab); closed, it never fetches. The link list is likewise fetched only while the dialog is open. Reuse ledger: docs/plans/741-11b-ledger.md.
  */
 export function ReviewLinksDialogHost({ store, projectId, role, archived }: { store: ReviewLinkStore; projectId: string; role: Role; archived: boolean }) {
   const state = useReviewLinkState(store);
-  const review = useVideoReviewQuery(projectId, false, role).data;
+  const review = useVideoReviewQuery(projectId, state.view.kind !== "closed", role).data;
   const videos = useProjectVideosQuery(projectId, false, role).data ?? [];
   const ui = useReviewLinksUi({ projectId, role, review, archived, store, fetchLinks: state.view.kind !== "closed" });
   const [slot, setSlot] = useState<HTMLElement | null>(null);

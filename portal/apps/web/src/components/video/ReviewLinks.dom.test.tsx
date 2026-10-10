@@ -399,3 +399,48 @@ describe("a Video can share at most 100 Versions on a link (#741 11b round 13)",
     expect(q('[data-testid="review-link-grant-limit-hint"]', q('[data-testid="review-link-detail"]'))).toBeNull();
   });
 });
+
+describe("the retained dialog re-reads the gate off the Video tab (#741 11b round 14)", () => {
+  const serveGate = () => {
+    const gate = { reads: 0, parts: ["upload", "links"] };
+    apiGetMock.mockImplementation(async (path) => {
+      if (path.endsWith("/review-links")) return { links: state.links };
+      if (path.endsWith("/video-review")) { gate.reads += 1; return { open: true, parts: gate.parts }; }
+      if (path.endsWith("/videos")) return { videos: state.videos };
+      throw new Error(`unrouted ${path}`);
+    });
+    return gate;
+  };
+  it("a refusal after a late reveal, off the Video tab, re-reads the gate and the management controls disappear", async () => {
+    const gate = serveGate();
+    state.links = [linkOf()];
+    let finish!: (value: unknown) => void;
+    apiPostMock.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    await mount(); await selectFilms("Teaser");
+    await press(buttonIn(q('[data-testid="review-link-selection-bar"]'), "Create Review link"));
+    await press(buttonIn(dialog(), "Create link"));
+    await press(buttonIn(dialog(), "Close"));
+    await showTab("floorplan");
+    await act(async () => { finish({ link: linkOf(), url: `https://quincy.test/d/review?link=${L1}#t=elsewhere` }); });
+    await flush();
+    await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
+    expect(q('[data-testid="review-link-detail"]')).not.toBeNull();
+    gate.parts = ["upload"]; // the links part has closed on the server
+    apiPostMock.mockReset(); apiPostMock.mockRejectedValue(refused(404, { error: "Not found" }));
+    const reads = gate.reads;
+    await press(buttonIn(q('[data-testid="review-link-detail"]'), "Replace link"));
+    await press(buttonIn(q('[data-testid="review-link-confirm"]'), "Replace"));
+    await flush(12);
+    expect(gate.reads).toBeGreaterThan(reads);
+    expect(q('[data-testid="review-links-dialog"]')).toBeNull();
+    expect(q('[data-testid="review-links-open"]')).toBeNull();
+  });
+  it("control: with the dialog closed on another tab the gate is not fetched", async () => {
+    const gate = serveGate();
+    await mount();
+    await showTab("floorplan");
+    const reads = gate.reads;
+    await flush(12);
+    expect(gate.reads).toBe(reads);
+  });
+});
