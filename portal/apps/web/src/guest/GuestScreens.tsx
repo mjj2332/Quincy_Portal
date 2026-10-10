@@ -30,12 +30,15 @@ function useCountdown(retryAfterSeconds: number | null, key: unknown): number {
   }, [until]);
   return until === null ? 0 : Math.max(0, Math.ceil((until - now) / 1000));
 }
-const waitText = (seconds: number) => `Too many attempts. Try again in ${seconds} ${seconds === 1 ? "second" : "seconds"}.`;
+const TOO_MANY = "Too many attempts.";
+const waitHint = (seconds: number) => `Try again in ${seconds} ${seconds === 1 ? "second" : "seconds"}.`;
+const waitText = (seconds: number) => `${TOO_MANY} ${waitHint(seconds)}`;
 
 /** A network error or a 5xx: it says nothing about the link, so it is calm, leaks nothing, and offers to repeat the step that failed. */
 export function UnreachableScreen({ onRetry }: { onRetry: () => void }) {
   return <main className="flex min-h-dvh items-center justify-center bg-background p-[var(--space-4)]">
-    <EmptyState data-testid="guest-unreachable" title="Couldn't reach Quincy. Check your connection and try again.">
+    <EmptyState data-testid="guest-unreachable" title="Couldn't reach Quincy.">
+      <p className="m-0 mb-[var(--space-3)]">Check your connection and try again.</p>
       <Button type="button" className={TOUCH} onClick={onRetry}>Try again</Button>
     </EmptyState>
   </main>;
@@ -45,7 +48,8 @@ export function UnreachableScreen({ onRetry }: { onRetry: () => void }) {
 export function LimitedScreen({ retryAfterSeconds, onRetry }: { retryAfterSeconds: number; onRetry: () => void }) {
   const secondsLeft = useCountdown(retryAfterSeconds, null);
   return <main className="flex min-h-dvh items-center justify-center bg-background p-[var(--space-4)]">
-    <EmptyState data-testid="guest-limited" title={secondsLeft > 0 ? waitText(secondsLeft) : "You can try again now."}>
+    <EmptyState data-testid="guest-limited" title={secondsLeft > 0 ? TOO_MANY : "You can try again now."}>
+      {secondsLeft > 0 && <p className="m-0 mb-[var(--space-3)]">{waitHint(secondsLeft)}</p>}
       <Button type="button" className={TOUCH} disabled={secondsLeft > 0} onClick={onRetry}>Try again</Button>
     </EmptyState>
   </main>;
@@ -58,13 +62,13 @@ export function PasscodeScreen({ error, retryAfterSeconds, pending, onSubmit }: 
   const submit = (event: FormEvent) => { event.preventDefault(); if (value !== "" && secondsLeft === 0 && !pending) onSubmit(value); };
   return <main className="flex min-h-dvh items-center justify-center bg-background p-[var(--space-4)]">
     <Frame data-testid="guest-passcode" className="w-full max-w-sm">
-      <FrameHeader><FrameTitle>Enter the passcode</FrameTitle><FrameDescription>This review link is protected. The studio will have sent you the passcode separately.</FrameDescription></FrameHeader>
+      <FrameHeader><FrameTitle data-testid="guest-passcode-title" className="[font:var(--type-h3)]">Enter the passcode</FrameTitle><FrameDescription>This review link is protected. The studio will have sent you the passcode separately.</FrameDescription></FrameHeader>
       <FramePanel>
         <form onSubmit={submit} noValidate>
           <FieldGroup>
-            <Field>
+            <Field data-invalid={error !== null}>
               <FieldLabel htmlFor="guest-passcode-input">Passcode</FieldLabel>
-              <Input id="guest-passcode-input" type="password" autoComplete="off" maxLength={GUEST_PASSCODE_MAX} value={value} className={TOUCH} onChange={(event) => { setValue(event.target.value); }} />
+              <Input id="guest-passcode-input" type="password" autoComplete="off" aria-invalid={error !== null} maxLength={GUEST_PASSCODE_MAX} value={value} className={TOUCH} onChange={(event) => { setValue(event.target.value); }} />
               <FieldError>{secondsLeft > 0 ? waitText(secondsLeft) : error}</FieldError>
             </Field>
             <Button type="submit" className={TOUCH} disabled={value === "" || secondsLeft > 0 || pending}>Continue</Button>

@@ -63,10 +63,21 @@ async function open(search = `?link=${LINK}`, hash = "#t=tok123") {
 }
 const byId = (id: string) => host.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const allById = (id: string) => [...host.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`)];
-const button = (name: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.getAttribute("aria-label") === name || b.textContent?.trim().startsWith(name) === true);
+const button = (name: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.getAttribute("aria-label") === name || b.getAttribute("aria-label")?.startsWith(`${name},`) === true || b.textContent?.trim().startsWith(name) === true);
 const click = async (element: Element | undefined) => { await act(async () => { (element as HTMLElement).click(); }); await flush(); };
 const keyDown = async (key: string, target: Element = document.body) => { await act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); }); await flush(); };
 const title = () => byId("guest-video-title")?.textContent;
+/** Gives every element a layout size so the player can place its picture box (happy-dom has none). */
+async function withLayout(run: () => Promise<void>) {
+  const original = Object.getOwnPropertyDescriptors(HTMLElement.prototype);
+  for (const [prop, value] of [["offsetWidth", 800], ["offsetHeight", 800], ["offsetLeft", 0], ["offsetTop", 0]] as const) Object.defineProperty(HTMLElement.prototype, prop, { configurable: true, get: () => value });
+  try { await run(); } finally {
+    for (const prop of ["offsetWidth", "offsetHeight", "offsetLeft", "offsetTop"] as const) {
+      const d = original[prop];
+      if (d) Object.defineProperty(HTMLElement.prototype, prop, d); else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[prop];
+    }
+  }
+}
 const requests = () => fetchMock.mock.calls.map((call) => String(call[0]));
 
 beforeEach(() => {
@@ -132,8 +143,10 @@ describe("the four states", () => {
       await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); });
       await click(button("Continue"));
     };
+    expect(input.getAttribute("aria-invalid")).not.toBe("true");
     await type("nope-nope");
     expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/isn't right/);
+    expect(input.getAttribute("aria-invalid")).toBe("true");
     await type("right-code");
     expect(attempts).toBe(3);
     expect(byId("guest-list")).not.toBeNull();
@@ -237,19 +250,38 @@ describe("the video screen", () => {
   });
 
   it("draws the watermark only on a premium video that is not unlocked", async () => {
-    videos = [videoOf(1, { premium: true, unlocked: false })];
-    await open();
-    expect(byId("guest-watermark")).not.toBeNull();
-    expect(byId("guest-watermark")!.className).toContain("pointer-events-none");
-    expect(byId("guest-watermark")!.getAttribute("aria-hidden")).toBe("true");
-    await act(async () => { root!.unmount(); }); host.remove(); root = null;
-    videos = [videoOf(1, { premium: true, unlocked: true })];
-    await open();
-    expect(byId("guest-watermark")).toBeNull();
-    await act(async () => { root!.unmount(); }); host.remove(); root = null;
-    videos = [videoOf(1)];
-    await open();
-    expect(byId("guest-watermark")).toBeNull();
+    await withLayout(async () => {
+      videos = [videoOf(1, { premium: true, unlocked: false })];
+      await open();
+      expect(byId("guest-watermark")).not.toBeNull();
+      expect(byId("guest-watermark")!.className).toContain("pointer-events-none");
+      expect(byId("guest-watermark")!.getAttribute("aria-hidden")).toBe("true");
+      await act(async () => { root!.unmount(); }); host.remove(); root = null;
+      videos = [videoOf(1, { premium: true, unlocked: true })];
+      await open();
+      expect(byId("guest-watermark")).toBeNull();
+      await act(async () => { root!.unmount(); }); host.remove(); root = null;
+      videos = [videoOf(1)];
+      await open();
+      expect(byId("guest-watermark")).toBeNull();
+    });
+  });
+
+  it("keeps the watermark inside the picture, not across the letterbox bands", async () => {
+    await withLayout(async () => {
+      videos = [videoOf(1, { premium: true, unlocked: false })];
+      await open();
+      const picture = byId("video-picture-box")!;
+      const mark = byId("guest-watermark")!;
+      const clip = mark.parentElement!;
+      expect(clip.style.left).toBe(picture.style.left);
+      expect(clip.style.top).toBe(picture.style.top);
+      expect(clip.style.width).toBe(picture.style.width);
+      expect(clip.style.height).toBe(picture.style.height);
+      expect(clip.style.height).toBe("450px");
+      expect(clip.className).toContain("overflow-hidden");
+      expect(byId("video-stage")!.contains(clip)).toBe(true);
+    });
   });
 
   it("shows the public notes read-only on a desktop", async () => {
@@ -273,9 +305,24 @@ describe("the video screen", () => {
     videos = [videoOf(1)];
     await open();
     expect(byId("guest-notes-panel")).toBeNull();
-    await click(button("Notes"));
-    expect(document.querySelector('[data-testid="guest-notes-drawer"][data-side="bottom"]')).not.toBeNull();
+    const trigger = button("Notes")!;
+    expect(trigger.getAttribute("aria-label")).toBe("Notes, 1");
+    expect(trigger.textContent?.trim()).toBe("1");
+    await click(trigger);
+    const drawer = document.querySelector('[data-testid="guest-notes-drawer"][data-side="bottom"]')!;
+    expect(drawer).not.toBeNull();
     expect(document.body.textContent).toContain("Trim the opening");
+    const heading = drawer.querySelector<HTMLElement>('[data-testid="guest-notes-heading"]')!;
+    expect(heading.textContent).toBe("Notes1");
+  });
+
+  it("shows the notes count beside the desktop heading", async () => {
+    notes = [note()];
+    videos = [videoOf(1)];
+    await open();
+    const count = byId("guest-notes-count")!;
+    expect(count.textContent).toBe("1");
+    expect(byId("guest-notes-heading")!.contains(count)).toBe(true);
   });
 });
 
@@ -351,7 +398,8 @@ describe("Sol round 1: an initial rate limit on an unprotected link", () => {
     videos = [videoOf(1), videoOf(2)];
     await open();
     expect(host.querySelector('input[type="password"]')).toBeNull();
-    expect(host.textContent).toMatch(/1 second/);
+    expect(byId("guest-limited")?.querySelector("strong")?.textContent).toBe("Too many attempts.");
+    expect(byId("guest-limited")?.textContent).toMatch(/Try again in 1 second/);
     expect(button("Try again")!.disabled).toBe(true);
     await sleep(1200);
     expect(button("Try again")!.disabled).toBe(false);
@@ -364,13 +412,15 @@ describe("Sol round 1: an initial rate limit on an unprotected link", () => {
 
 describe("Sol round 1: a transient failure is not 'unavailable'", () => {
   const CALM = "Couldn't reach Quincy. Check your connection and try again.";
+  const HINT = "Check your connection and try again.";
 
   it("a 5xx on the exchange shows the calm retry and repeats the exchange", async () => {
     let down = true;
     extra = (url, init) => (down && url.endsWith("/session") && init?.method === "POST" ? new Response("boom", { status: 503 }) : undefined);
     await open();
     expect(byId("guest-unavailable")).toBeNull();
-    expect(byId("guest-unreachable")?.textContent).toContain(CALM);
+    expect(byId("guest-unreachable")?.querySelector("strong")?.textContent).toBe("Couldn't reach Quincy.");
+    expect(byId("guest-unreachable")?.textContent).toContain(HINT);
     down = false;
     await click(button("Try again"));
     expect(byId("guest-unreachable")).toBeNull();
@@ -381,7 +431,7 @@ describe("Sol round 1: a transient failure is not 'unavailable'", () => {
     let down = true;
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => { if (down) throw new TypeError("network"); return route(String(input), init); });
     await open(`?link=${LINK}`, "");
-    expect(byId("guest-unreachable")?.textContent).toContain(CALM);
+    expect(byId("guest-unreachable")?.textContent).toContain(HINT);
     down = false;
     await click(button("Try again"));
     expect(byId("guest-list")).not.toBeNull();
@@ -391,7 +441,7 @@ describe("Sol round 1: a transient failure is not 'unavailable'", () => {
     let down = true;
     extra = (url) => (down && url.endsWith("/videos") ? new Response("boom", { status: 502 }) : undefined);
     await open();
-    expect(byId("guest-unreachable")?.textContent).toContain(CALM);
+    expect(byId("guest-unreachable")?.textContent).toContain(HINT);
     expect(byId("guest-unavailable")).toBeNull();
     down = false;
     await click(button("Try again"));

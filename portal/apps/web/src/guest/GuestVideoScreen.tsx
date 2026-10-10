@@ -15,6 +15,7 @@ import { PremiumWatermark } from "./PremiumWatermark";
 
 const VERSION_SELECT_ID = "guest-version";
 const FIELD = "input, textarea, select, [contenteditable], [role=listbox], [role=combobox]";
+const NOTES_HEADING = "m-0 text-foreground [font:var(--type-h3)]";
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
 /** `[` and `]` step through the videos unless a field, list or modifier owns the key. */
@@ -92,24 +93,26 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
   }, [clock]);
   const markupOverlay = useGuestMarkup(api, clock, selected, onUnavailable, selectionCount);
   const watermark = video.premium && !video.unlocked;
-  const overlay = useCallback((box: Box | null) => <>{watermark && <PremiumWatermark />}{markupOverlay(box)}</>, [watermark, markupOverlay]);
+  const overlay = useCallback((box: Box | null) => <>{watermark && box && <PremiumWatermark box={box} />}{markupOverlay(box)}</>, [watermark, markupOverlay]);
 
   const newest = video.versions[0]!.version;
   const optionLabel = (candidate: GuestVideoDto["versions"][number]) => `v${candidate.version}${candidate.version === newest ? " · latest" : ""}`;
-  const heading = <h2 className="m-0 text-foreground [font:var(--type-h3)]">Notes{threads !== null && <span className="ms-[var(--space-1)] text-foreground-secondary tabular-nums">{threads.length}</span>}</h2>;
+  const headingContent = <>Notes{threads !== null && <span data-testid="guest-notes-count" className="ms-[var(--space-1)] text-foreground-secondary [font-variant-numeric:lining-nums_tabular-nums]">{threads.length}</span>}</>;
+  const heading = <h2 data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</h2>;
   const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} />;
 
   return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-dvh flex-col bg-background text-foreground">
     <header className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-2)] border-b border-border bg-card px-[var(--space-5)] py-[var(--space-3)] text-card-foreground">
       {onBack && <Button type="button" variant="ghost" className={TOUCH} onClick={onBack}><ChevronLeft aria-hidden="true" />All videos</Button>}
       <h1 data-testid="guest-video-title" className="m-0 min-w-[160px] flex-1 truncate text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{video.title}</h1>
+      <div className="flex min-w-0 items-center gap-[var(--space-4)] max-[721px]:basis-full max-[721px]:gap-[var(--space-2)] min-[721px]:contents">
       {videos.length > 1 && <div className="flex items-center gap-[var(--space-2)]">
         <Button type="button" variant="outline" size="icon" aria-label="Previous video" className={TOUCH} disabled={index === 0} onClick={() => { step(-1); }}><ChevronLeft aria-hidden="true" /></Button>
         <span data-testid="guest-video-position" className="text-foreground-secondary tabular-nums [font:var(--type-label)]">{`${index + 1} of ${videos.length}`}</span>
         <Button type="button" variant="outline" size="icon" aria-label="Next video" className={TOUCH} disabled={index === videos.length - 1} onClick={() => { step(1); }}><ChevronRight aria-hidden="true" /></Button>
       </div>}
-      <div className="flex min-w-0 max-w-full items-center gap-[var(--space-2)]">
-        <label htmlFor={VERSION_SELECT_ID} className="shrink-0 text-foreground-secondary [font:var(--type-label)]">Version</label>
+      <div className="flex min-w-0 max-w-full items-center gap-[var(--space-2)] max-[721px]:flex-1">
+        <label htmlFor={VERSION_SELECT_ID} className="shrink-0 text-foreground-secondary [font:var(--type-label)] max-[721px]:sr-only">Version</label>
         <Select value={version.assetId} onValueChange={(next) => { if (typeof next === "string") setAssetId(next); }}>
           <SelectTrigger id={VERSION_SELECT_ID} data-testid="guest-version-trigger" className={`${TOUCH} min-w-0 max-w-full`}>
             <SelectValue>{() => <span className="block truncate">{optionLabel(version)}</span>}</SelectValue>
@@ -119,7 +122,8 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
           </SelectContent>
         </Select>
       </div>
-      {phone && <Button type="button" variant="outline" className={TOUCH} onClick={() => { setDrawerOpen(true); }}><MessageSquare aria-hidden="true" />Notes{threads !== null && ` (${threads.length})`}</Button>}
+      {phone && <Button type="button" variant="outline" aria-label={threads === null ? "Notes" : `Notes, ${threads.length}`} className={`${TOUCH} shrink-0`} onClick={() => { setDrawerOpen(true); }}><MessageSquare aria-hidden="true" />{threads !== null && <span className="[font-variant-numeric:lining-nums_tabular-nums]">{threads.length}</span>}</Button>}
+      </div>
     </header>
     <div className="flex min-h-0 flex-1 flex-wrap min-[721px]:flex-nowrap">
       <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col p-[var(--space-5)] min-[721px]:flex-1">
@@ -129,7 +133,7 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
     </div>
     {phone && <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
       <SheetContent side="bottom" data-testid="guest-notes-drawer" className="max-h-[80dvh] p-[var(--space-4)]">
-        <SheetHeader className="p-0"><SheetTitle>Notes</SheetTitle></SheetHeader>
+        <SheetHeader className="p-0"><SheetTitle data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</SheetTitle></SheetHeader>
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">{panel}</div>
       </SheetContent>
     </Sheet>}
