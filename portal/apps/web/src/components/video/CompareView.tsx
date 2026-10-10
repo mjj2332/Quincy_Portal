@@ -145,10 +145,11 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
   // --- the offset ---
   const [offsetProblem, setOffsetProblem] = useState<string | null>(null);
   useEffect(() => { setOffsetProblem(null); }, [versionA.assetId, versionB.assetId]);
-  // Committed on blur, Enter (Base UI commits on blur and the steppers only, so the input handles Enter itself) or a stepper, never per keystroke. An empty field is a retype in progress, not an error: nothing applies and
+  // Committed on blur, Enter (Base UI commits on blur and the steppers only, so Enter re-enters through blur) or a stepper, never per keystroke. An empty field is a retype in progress, not an error: nothing applies and
   // the field falls back to the applied value on blur (the controlled `value` is unchanged, so Base UI restores it).
   const commitOffset = (next: number | null) => {
-    if (!transport || next === null || next === offset) return;
+    if (!transport || next === null) return;
+    if (next === offset) { setOffsetProblem(null); return; }
     const target = next;
     if (transport.setOffset(target)) { setOffsetProblem(null); return; }
     const bounds = transport.offsetBounds();
@@ -266,9 +267,11 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
           <NumberFieldGroup>
             <NumberFieldDecrement aria-label="One frame earlier" />
             <NumberFieldInput id="video-compare-offset" data-testid="video-compare-offset" onKeyDown={(event) => {
+              // Enter takes the field's own blur path (its parser, formatting and commit), then gives focus back.
               if (event.key !== "Enter") return;
-              const typed = event.currentTarget.value.trim();
-              if (typed !== "") commitOffset(Number(typed));
+              const input = event.currentTarget;
+              input.blur();
+              input.focus();
             }} />
             <NumberFieldIncrement aria-label="One frame later" />
           </NumberFieldGroup>

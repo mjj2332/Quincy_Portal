@@ -48,8 +48,13 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const playerRef = useRef<VideoPlayerControl>(null);
   const compareRef = useRef<VideoPlayerControl>(null);
   const compareButtonRef = useRef<HTMLButtonElement | null>(null);
-  const compareStore = compare?.store;
+  const liveStore = compare?.store;
   const [mode, setMode] = useState<"single" | "compare">("single");
+  // The capability can go away while comparing (the flag turns off and the gate refreshes). The store is kept for that one render so the
+  // mounted compare view can hand A's frame and the mute choice over (the normal exit) before it unmounts.
+  const lastStore = useRef(liveStore);
+  if (liveStore) lastStore.current = liveStore;
+  const compareStore = liveStore ?? (mode === "compare" ? lastStore.current : undefined);
   const modeRef = useRef(mode);
   modeRef.current = mode;
   // Where the compare view opens A (the single player's frame), and where the single player reopens after it (A's frame).
@@ -61,7 +66,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   // The compare store owns the preference (it outlives the viewer): the viewer reads it on open and writes every single-player change back.
   const [muted, setMutedState] = useState(() => compareStore?.getState().muted ?? false);
   const setMuted = useCallback((next: boolean) => { setMutedState(next); compareStore?.setMuted(next); }, [compareStore]);
-  const canCompare = compareStore !== undefined && video.versions.length >= 2 && !phone;
+  const canCompare = liveStore !== undefined && video.versions.length >= 2 && !phone;
   // Focus opens on the dialog itself, not its first button: Space on the Video button would close it (and the player leaves Space to a focused button).
   const popupRef = useRef<HTMLDivElement | null>(null);
   // Base UI moves focus a frame after mount; a key typed in that gap (Enter, then Space) would still hit the opener. Take focus in the commit itself.
@@ -129,6 +134,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     onClose();
   };
 
+  useEffect(() => { if (mode === "compare" && liveStore === undefined) exitCompare("dialog"); }, [mode, liveStore, exitCompare]);
   // Compare is not offered below 721px: crossing it leaves for the single view on A, with focus on the dialog (the button is gone).
   useEffect(() => { if (phone && mode === "compare") exitCompare("dialog"); }, [phone, mode, exitCompare]);
 

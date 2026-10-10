@@ -540,6 +540,32 @@ describe("Compare: the offset (#741 7c)", () => {
     expect(cell("b").textContent).toContain("Starts in");
   });
 
+  it("Enter commits a formatted value the way blur does (1,000 on a long pair)", async () => {
+    patch = { 2: { frameCount: 5000, durationMs: 200000 }, 3: { frameCount: 5000, durationMs: 200000 } };
+    await openCompare({}, 5);
+    for (const side of ["a", "b"] as const) await act(async () => { stub.loadMetadata(vid(side), { duration: 200, videoWidth: 1920, videoHeight: 1080 }); stub.finishSeek(vid(side)); stub.presentFrame(vid(side), 5 / 25); });
+    await flush(2);
+    const input = offsetInput();
+    input.focus();
+    await type(input, "1,000");
+    await key("Enter", input);
+    await flush(2);
+    expect(tid("video-compare-offset-notice")).toBeNull();
+    expect(input.value).toBe("1,000");
+  });
+
+  it("correcting an out-of-range value back to the applied one clears the error", async () => {
+    await openCompare({}, 5);
+    await commit("5000");
+    expect(tid("video-compare-offset-notice")).not.toBeNull();
+    const input = offsetInput();
+    input.focus();
+    await type(input, "00");
+    await key("Enter", input);
+    await flush(2);
+    expect(tid("video-compare-offset-notice")).toBeNull();
+  });
+
   it("clearing the field to retype shows no error", async () => {
     await openCompare({}, 5);
     await commit("12");
@@ -934,5 +960,30 @@ describe("Compare: toolbar and stage furniture (#741 7c design review)", () => {
     await click(tid("video-compare-notes-toggle")!);
     await flush(4);
     expect(tid("video-compare-notes")!.dataset.surface).toBe("default");
+  });
+});
+
+
+describe("Compare: the capability going away while comparing (#741 7c Sol round 4)", () => {
+  it("hands A's frame and the mute choice to the single player, and routes keys to it", async () => {
+    await openCompare({}, 5);
+    await key("ArrowRight", dialog()!);
+    await land(6);
+    await click(dialog()!.querySelector<HTMLElement>('button[aria-label="Mute"]')!);
+    const role = "editor" as const;
+    await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role={role}><VideoCollectionPanel projectId={PROJECT} role={role} review={{ open: true, parts: [] as never }} /></QuincyQueryProvider>); });
+    await flush(4);
+    expect(compareRoot()).toBeNull();
+    expect(dialog()!.querySelectorAll("video").length).toBe(1);
+    stub.writes.length = 0;
+    await act(async () => { stub.loadMetadata(playerVideo()!, { duration: 12, videoWidth: 1920, videoHeight: 1080 }); });
+    expect(stub.writes).toEqual([frameSeekSeconds(6, F25)]);
+    expect(playerVideo()!.muted).toBe(true);
+    // The keys now drive the single player, not the disposed compare ref.
+    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 6 / 25); });
+    await flush(2);
+    stub.writes.length = 0;
+    await key("ArrowRight", dialog()!);
+    expect(stub.writes).toEqual([frameSeekSeconds(7, F25)]);
   });
 });
