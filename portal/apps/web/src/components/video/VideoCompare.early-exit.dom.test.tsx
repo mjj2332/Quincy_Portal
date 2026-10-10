@@ -21,7 +21,7 @@ vi.mock("../../lib/api", async (importOriginal) => ({ ...(await importOriginal<t
 const ids = { video: "88888888-8888-4888-8888-888888888888", a: "77777777-7777-4777-8777-777777777777", b: "66666666-6666-4666-8666-666666666666" };
 const mia = { id: "99999999-9999-4999-8999-999999999999", name: "Mia Chen", roleLabel: "Editor", isExternal: false, active: true };
 const versionOf = (over: Record<string, unknown> = {}) => ({ assetId: ids.a, version: 2, current: true, uploadedBy: mia, createdAt: "2026-10-09T01:00:00.000Z", originalFilename: "film.mp4", bytes: 1, fps: { num: 25, den: 1 }, frameCount: 300, durationMs: 12000, width: 1920, height: 1080, codec: "avc1", startTimecodeFrames: null, tcNominalFps: 25, tcDropFrame: false, fastStart: true, hasAudio: true, hasPoster: false, streamUrl: `/media/video/${ids.a}`, posterUrl: null, ...over });
-const videoOf = (): VideoDto => ({ id: ids.video, title: "Walkthrough", premium: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ids.a, latestNoteCount: null, uploading: null, versions: [versionOf(), versionOf({ assetId: ids.b, version: 1, current: false, streamUrl: `/media/video/${ids.b}` })] }) as VideoDto;
+const videoOf = (): VideoDto => ({ id: ids.video, title: "Walkthrough", premium: false, premiumUnlocked: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ids.a, latestNoteCount: null, uploading: null, versions: [versionOf(), versionOf({ assetId: ids.b, version: 1, current: false, streamUrl: `/media/video/${ids.b}` })] }) as VideoDto;
 
 let stub: VideoElementStub;
 let viewport: MockViewport;
