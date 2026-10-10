@@ -33,7 +33,8 @@ const MONO = "[font:var(--type-mono)] tabular-nums";
 const SMALL = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const LINK_BUTTON = "min-h-8 pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
-function VisibilityBadge({ visibility }: { visibility: VideoNoteDto["visibility"] }) {
+/** Shown, never chosen: the paste dialog renders it too, so a copy's visibility is visibly the source's. */
+export function VisibilityBadge({ visibility }: { visibility: VideoNoteDto["visibility"] }) {
   return visibility === "internal"
     ? <StatusPill tone="caution" data-testid="video-note-visibility-badge" data-visibility="internal"><Lock aria-hidden="true" className="size-3" />Internal</StatusPill>
     : <StatusPill tone="info" data-testid="video-note-visibility-badge" data-visibility="public">Client-visible</StatusPill>;
@@ -186,6 +187,7 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     <div className="grid min-w-0 gap-[var(--space-2)]">
       {pinned && <Notice tone="caution" data-testid="video-note-pinned">Outside current filters</Notice>}
       {header(thread, true)}
+      {thread.copiedFrom && <span data-testid="video-note-copied-from" className="text-foreground-secondary [font:var(--type-label)]">{`Copied from v${thread.copiedFrom.version} · originally by ${thread.copiedFrom.authorName}`}</span>}
       <div data-testid="video-note-header-row" className="flex flex-wrap items-center gap-[var(--space-2)]">
         <VisibilityBadge visibility={thread.visibility} />
         {thread.startFrame !== null && <ReuiButton type="button" variant="secondary" size="sm" data-testid="video-note-anchor-button" aria-label={`Go to ${label}`} className={cn("pointer-coarse:min-h-11 max-[721px]:min-h-11", MONO)} onClick={() => { onSeek(thread); }}>{label}</ReuiButton>}

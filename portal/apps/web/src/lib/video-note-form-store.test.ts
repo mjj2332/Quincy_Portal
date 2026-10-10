@@ -583,3 +583,137 @@ describe("subscription (#741 5b form store)", () => {
     expect(other).not.toHaveBeenCalled();
   });
 });
+
+describe("paste clipboard and draft (#741 5c-ui)", () => {
+  const VIDEO = "88888888-8888-4888-8888-888888888888";
+  const OTHER_VIDEO = "88888888-8888-4888-8888-888888888889";
+  const clip = (over: Record<string, unknown> = {}) => ({ sourceAssetId: V1, sourceVersion: 1, noteIds: ["a", "b"], ...over });
+
+  it("holds one clipboard per Video, and copying again replaces it", () => {
+    expect(store.clipboard(VIDEO)).toBeNull();
+    store.copyNotes(VIDEO, clip());
+    store.copyNotes(OTHER_VIDEO, clip({ noteIds: ["z"] }));
+    expect(store.clipboard(VIDEO)).toEqual({ sourceAssetId: V1, sourceVersion: 1, noteIds: ["a", "b"] });
+    store.copyNotes(VIDEO, clip({ noteIds: ["c"] }));
+    expect(store.clipboard(VIDEO)?.noteIds).toEqual(["c"]);
+    expect(store.clipboard(OTHER_VIDEO)?.noteIds).toEqual(["z"]);
+  });
+
+  it("caps the clipboard at the paste limit and copies nothing for an empty selection", () => {
+    store.copyNotes(VIDEO, clip({ noteIds: Array.from({ length: 150 }, (_, i) => `n${i}`) }));
+    expect(store.clipboard(VIDEO)?.noteIds).toHaveLength(100);
+    store.copyNotes(VIDEO, clip({ noteIds: [] }));
+    expect(store.clipboard(VIDEO)?.noteIds).toHaveLength(100);
+  });
+
+  it("notifies subscribers when the clipboard changes and keeps a stable reference otherwise", () => {
+    const listener = vi.fn();
+    store.subscribe(listener);
+    store.copyNotes(VIDEO, clip());
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(store.clipboard(VIDEO)).toBe(store.clipboard(VIDEO));
+  });
+
+  it("keeps the offset and the unticked notes per target Version, and everything is ticked by default", () => {
+    expect(store.pasteDraft(V2)).toEqual({ offset: 0, unticked: [] });
+    store.setPasteOffset(V2, -3);
+    store.setPasteTicked(V2, "a", false);
+    store.setPasteTicked(V2, "b", false);
+    store.setPasteTicked(V2, "b", true);
+    expect(store.pasteDraft(V2)).toEqual({ offset: -3, unticked: ["a"] });
+    expect(store.pasteDraft(V1)).toEqual({ offset: 0, unticked: [] });
+  });
+
+  it("survives leaving the Version, closing a form and a thread list that no longer holds the notes", () => {
+    store.copyNotes(VIDEO, clip());
+    store.setPasteOffset(V2, 5);
+    store.setPasteTicked(V2, "a", false);
+    store.leave(V2);
+    store.openReply(V2, "root");
+    store.close(V2);
+    store.retireMissing(V2, []);
+    expect(store.pasteDraft(V2)).toEqual({ offset: 5, unticked: ["a"] });
+    expect(store.clipboard(VIDEO)?.noteIds).toEqual(["a", "b"]);
+  });
+
+  it("resetPaste puts the offset and ticks back, and retire clears the clipboard", () => {
+    store.copyNotes(VIDEO, clip());
+    store.setPasteOffset(V2, 5);
+    store.resetPaste(V2);
+    expect(store.pasteDraft(V2)).toEqual({ offset: 0, unticked: [] });
+    store.retire();
+    expect(store.clipboard(VIDEO)).toBeNull();
+  });
+
+  it("clamps the offset to the integers the server accepts", () => {
+    store.setPasteOffset(V2, 2_000_000);
+    expect(store.pasteDraft(V2).offset).toBe(1_000_000);
+    store.setPasteOffset(V2, 2.6);
+    expect(store.pasteDraft(V2).offset).toBe(3);
+    store.setPasteOffset(V2, Number.NaN);
+    expect(store.pasteDraft(V2).offset).toBe(0);
+  });
+});
+
+describe("paste lifecycle (#741 5c-ui round 4)", () => {
+  const plan = (offsetFrames: number) => ({ sourceVersion: 1, targetVersion: 2, offsetFrames, rows: [] }) as never;
+  const done = { sourceVersion: 1, targetVersion: 2, offsetFrames: 0, copied: 1, skipped: 0, rows: [] } as never;
+  const deferred = <T,>() => { let resolve!: (v: T) => void; let reject!: (e: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+  const stale = () => new ApiError("changed", 409, { code: "paste_stale", error: "x", preview: { sourceVersion: 1, targetVersion: 2, offsetFrames: 0, rows: [] } });
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  it("only the preview with the current generation is applied", async () => {
+    const first = deferred<never>(); const second = deferred<never>();
+    store.requestPreview(V2, () => first.promise, 0);
+    store.requestPreview(V2, () => second.promise, 1);
+    second.resolve(plan(1)); first.resolve(plan(0)); await tick();
+    expect(store.pasteView(V2).plan?.offsetFrames).toBe(1);
+    expect(store.pasteView(V2).status).toBe("ok");
+  });
+
+  it("a commit's success clears the draft, closes the dialog and leaves the notice", async () => {
+    store.setPasteOpen(V2, true); store.setPasteOffset(V2, 4); store.setPasteTicked(V2, "a", false);
+    await store.commitPaste(V2, async () => done);
+    expect(store.pasteDraft(V2)).toEqual({ offset: 0, unticked: [] });
+    expect(store.pasteOpen(V2)).toBe(false);
+    expect(store.pasteResult(V2)).toBe("Pasted 1 note");
+  });
+
+  it("a 409 for the current op voids the plan, sets the notice and asks again with no dialog; earlier previews are discarded", async () => {
+    const early = deferred<never>(); const fresh = deferred<never>();
+    const runs = [early, fresh]; let n = 0;
+    const run = () => runs[n++]!.promise;
+    store.setPasteOpen(V2, true); store.setPasteOffset(V2, 3);
+    store.requestPreview(V2, run, 3);
+    const commit = store.commitPaste(V2, async () => { throw stale(); });
+    await commit; await tick();
+    expect(store.pasteView(V2).status).toBe("loading");
+    expect(store.pasteView(V2).notice).toContain("changed since");
+    early.resolve(plan(99)); await tick();
+    expect(store.pasteView(V2).plan).toBeNull();
+    fresh.resolve(plan(3)); await tick();
+    expect(store.pasteView(V2).plan?.offsetFrames).toBe(3);
+    expect(store.pasteView(V2).status).toBe("ok");
+  });
+
+  it("cancelAll supersedes a commit in flight: its late completion changes nothing", async () => {
+    const out = deferred<never>();
+    const commit = store.commitPaste(V2, () => out.promise);
+    store.cancelAll(); store.setPasteOffset(V2, 9); store.setPasteOpen(V2, true);
+    out.resolve(done); await commit;
+    expect(store.pasteDraft(V2).offset).toBe(9);
+    expect(store.pasteOpen(V2)).toBe(true);
+    expect(store.pasteResult(V2)).toBeNull();
+  });
+
+  it("a network failure keeps the draft and offers retry; closing forgets the plan but not the draft", async () => {
+    store.setPasteOpen(V2, true); store.setPasteOffset(V2, 2);
+    store.requestPreview(V2, async () => plan(2), 2); await tick();
+    await store.commitPaste(V2, async () => { throw new ApiError("Network error", 0); });
+    expect(store.pasteView(V2).failure?.retry).toBe(true);
+    expect(store.pasteOp(V2).status).toBe("failed");
+    store.setPasteOpen(V2, false);
+    expect(store.pasteView(V2)).toMatchObject({ status: "idle", plan: null, failure: null });
+    expect(store.pasteDraft(V2).offset).toBe(2);
+  });
+});

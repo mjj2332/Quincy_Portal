@@ -1073,3 +1073,367 @@ describe("Orphan notices (#741 5b, Sol r6)", () => {
     expect(tid("video-notes-orphan-notice")).toBeNull();
   });
 });
+
+// ---- Copy and paste notes between Versions (#741 5c-ui) ----
+describe("Copy and paste notes (#741 5c-ui)", () => {
+  const PASTE_DEBOUNCE = 400;
+  const menuItems = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+  const menuItem = (text: string) => menuItems().find((item) => item.textContent?.startsWith(text));
+  const openNotesMenu = async () => { await act(async () => { tid("video-notes-menu")!.click(); await Promise.resolve(); await Promise.resolve(); }); await flush(2); };
+  const pasteDialog = () => tid("video-note-paste-dialog");
+  const rows = () => [...document.querySelectorAll<HTMLElement>('[data-testid="video-note-paste-row"]')];
+  const skipped = () => [...document.querySelectorAll<HTMLElement>('[data-testid="video-note-paste-skipped"]')];
+  const offsetInput = () => tid("video-note-paste-offset") as HTMLInputElement;
+  async function setOffset(value: string) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(offsetInput(), value); offsetInput().dispatchEvent(new Event("input", { bubbles: true })); offsetInput().dispatchEvent(new Event("change", { bubbles: true })); });
+  }
+  const src = (n: VideoNoteThreadDto, over: Record<string, unknown> = {}) => ({ revision: n.revision, visibility: n.visibility, authorName: "Terry", excerpt: n.body, from: { startFrame: n.startFrame, endFrame: n.endFrame }, ...over });
+  /** A fake paste server over the v1 seed: every note maps `startFrame + offset`; `skips` names the ones it refuses. */
+  function pasteServer(sourceNotes: VideoNoteThreadDto[], skips: Record<string, string> = {}) {
+    const planFor = (noteIds: string[], offsetFrames: number) => ({
+      sourceVersion: 1, targetVersion: 2, offsetFrames,
+      rows: noteIds.map((noteId) => {
+        const n = sourceNotes.find((candidate) => candidate.id === noteId)!;
+        return skips[noteId] ? { noteId, status: "skipped", reason: skips[noteId], source: src(n) } : { noteId, status: "mapped", source: src(n), to: { startFrame: n.startFrame! + offsetFrames, endFrame: n.endFrame === null ? null : n.endFrame + offsetFrames }, shortened: false };
+      }),
+    });
+    api.apiPost.mockImplementation(async (path, body) => {
+      const input = body as { noteIds?: string[]; notes?: Array<{ noteId: string; revision: number }>; offsetFrames: number };
+      if (path.endsWith("/note-paste/preview")) return planFor(input.noteIds!, input.offsetFrames);
+      if (path.endsWith("/note-paste")) { const plan = planFor(input.notes!.map((n) => n.noteId), input.offsetFrames); return { ...plan, copied: plan.rows.length, skipped: 0, rows: plan.rows.map((row) => ({ ...row, status: "copied", copyId: nid() })) }; }
+      throw new Error(`unrouted ${path}`);
+    });
+    return planFor;
+  }
+  const v1Notes = () => {
+    const a = note({ assetId: ids.asset1, body: "Fix the sting", startFrame: 5, visibility: "internal" });
+    const b = note({ assetId: ids.asset1, body: "Hold the logo", startFrame: 20, endFrame: 50, visibility: "public", author: { kind: "staff", person: mia }, authorRole: "editor" });
+    const c = note({ assetId: ids.asset1, body: "Gone soon", startFrame: 80, visibility: "public" });
+    return { a, b, c, all: [a, b, c] };
+  };
+  /** Opens the film on v1, copies what it shows, then returns to v2. */
+  async function copyOnV1(v1 = v1Notes(), skips: Record<string, string> = {}) {
+    await openFilm({ notes: { [ids.asset2]: seed().all, [ids.asset1]: v1.all } });
+    await pickVersion("v1");
+    await openNotesMenu();
+    await click(menuItem("Copy shown notes")!);
+    await flush(2);
+    await pickVersion("v2");
+    const planFor = pasteServer(v1.all, skips);
+    return { v1, planFor };
+  }
+  async function openPasteDialog() { await openNotesMenu(); await click(menuItem("Paste")!); await flush(6); }
+
+  it("offers 'Copy shown notes' on a Version, copies the root notes the filters show and says so", async () => {
+    const v1 = v1Notes();
+    await openFilm({ notes: { [ids.asset2]: seed().all, [ids.asset1]: v1.all } });
+    await pickVersion("v1");
+    await openNotesMenu();
+    expect(menuItem("Copy shown notes")).toBeDefined();
+    expect(menuItem("Paste")).toBeUndefined();
+    await click(menuItem("Copy shown notes")!);
+    await flush(2);
+    expect(stores.made.at(-1)!.clipboard(ids.video)).toEqual({ sourceAssetId: ids.asset1, sourceVersion: 1, noteIds: v1.all.map((n) => n.id) });
+    expect(tid("video-notes-paste-status")!.textContent).toBe("Copied 3 notes");
+  });
+
+  it("copies only what the filters show", async () => {
+    const v1 = v1Notes();
+    await openFilm({ notes: { [ids.asset2]: seed().all, [ids.asset1]: v1.all } });
+    await pickVersion("v1");
+    await click(tid("video-notes-filter-visibility-internal")!);
+    await openNotesMenu();
+    await click(menuItem("Copy shown notes")!);
+    expect(stores.made.at(-1)!.clipboard(ids.video)!.noteIds).toEqual([v1.a.id]);
+  });
+
+  it("offers 'Paste N notes from v1…' only on another Version of the same Video, and the clipboard survives switching Versions", async () => {
+    await copyOnV1();
+    await openNotesMenu();
+    expect(menuItem("Paste 3 notes from v1…")).toBeDefined();
+    await click(menuItem("Paste 3 notes from v1…")!);
+    await flush(4);
+    expect(pasteDialog()).not.toBeNull();
+  });
+
+  it("hides the menu on an archived Project, and for a role without the notes capability", async () => {
+    await openFilm({ archivedProject: true });
+    expect(tid("video-notes-menu")).toBeNull();
+    await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
+    await openFilm({ role: "photographer" });
+    expect(tid("video-notes-menu")).toBeNull();
+  });
+
+  it("an External editor, who holds the capability, sees the menu", async () => {
+    await openFilm({ role: "external_editor" });
+    expect(tid("video-notes-menu")).not.toBeNull();
+  });
+
+  it("the dialog lists source → new timecodes with every note ticked, each note's visibility, and no way to change it", async () => {
+    const { v1 } = await copyOnV1();
+    await openPasteDialog();
+    expect(rows().map((r) => r.dataset.noteId)).toEqual(v1.all.map((n) => n.id));
+    expect(tid("video-note-paste-source", rows()[0]!)!.textContent).toBe("01:00:00:05");
+    expect(tid("video-note-paste-target", rows()[0]!)!.textContent).toBe("01:00:00:05");
+    expect(tid("video-note-paste-source", rows()[1]!)!.textContent).toBe("01:00:00:20 → 01:00:01:24");
+    expect(rows().map((r) => tid("video-note-visibility-badge", r)!.dataset.visibility)).toEqual(["internal", "public", "public"]);
+    expect(pasteDialog()!.querySelectorAll('[role="checkbox"][aria-checked="true"]').length).toBe(3);
+    expect(pasteDialog()!.querySelector('[role="radiogroup"], [role="switch"], [role="combobox"]')).toBeNull();
+    const sent = api.apiPost.mock.calls.at(-1)!;
+    expect(sent[0]).toBe(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/note-paste/preview`);
+    expect(sent[1]).toEqual({ sourceAssetId: ids.asset1, noteIds: v1.all.map((n) => n.id), offsetFrames: 0 });
+  });
+
+  it("lists skipped notes with their reason in plain words and never ticks them", async () => {
+    const v1 = v1Notes();
+    await copyOnV1(v1, { [v1.a.id]: "already_copied", [v1.c.id]: "out_of_range" });
+    await openPasteDialog();
+    expect(rows().map((r) => r.dataset.noteId)).toEqual([v1.b.id]);
+    expect(skipped().map((r) => r.textContent)).toEqual([expect.stringContaining("Already copied to this version"), expect.stringContaining("Falls outside this version")]);
+  });
+
+  it("re-runs the preview, debounced, when the offset changes, and the offset and ticks survive closing the dialog", async () => {
+    const { v1 } = await copyOnV1();
+    await openPasteDialog();
+    const before = api.apiPost.mock.calls.length;
+    await setOffset("2"); await setOffset("3");
+    await settle(PASTE_DEBOUNCE); await flush(4);
+    expect(api.apiPost.mock.calls.length).toBe(before + 1);
+    expect(api.apiPost.mock.calls.at(-1)![1]).toMatchObject({ offsetFrames: 3 });
+    expect(tid("video-note-paste-target", rows()[0]!)!.textContent).toBe("01:00:00:08");
+    await click(rows()[1]!.querySelector<HTMLElement>('[role="checkbox"]')!);
+    await click(tid("video-note-paste-cancel")!); await settle(200);
+    expect(pasteDialog()).toBeNull();
+    await openPasteDialog();
+    expect(offsetInput().value).toBe("3");
+    expect(rows().map((r) => r.querySelector('[role="checkbox"]')!.getAttribute("aria-checked"))).toEqual(["true", "false", "true"]);
+    expect(stores.made.at(-1)!.pasteDraft(ids.asset2)).toEqual({ offset: 3, unticked: [v1.b.id] });
+  });
+
+  it("Paste commits the ticked notes with the revisions the preview showed, closes, confirms and re-reads the notes and the Videos list", async () => {
+    const { v1 } = await copyOnV1();
+    await openPasteDialog();
+    await click(rows()[2]!.querySelector<HTMLElement>('[role="checkbox"]')!);
+    const reads = () => api.apiGet.mock.calls.map(([path]) => path);
+    const readsBefore = reads().length;
+    await click(tid("video-note-paste-submit")!); await flush(6);
+    const after = reads().slice(readsBefore);
+    expect(after.some((path) => path.endsWith("/videos"))).toBe(true);
+    expect(after.some((path) => path.endsWith(`/video-versions/${ids.asset2}/notes`))).toBe(true);
+    const [path, body] = api.apiPost.mock.calls.at(-1)!;
+    expect(path).toBe(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/note-paste`);
+    expect(body).toEqual({ sourceAssetId: ids.asset1, notes: [{ noteId: v1.a.id, revision: 1 }, { noteId: v1.b.id, revision: 1 }], offsetFrames: 0 });
+    await settle(200);
+    expect(pasteDialog()).toBeNull();
+    expect(tid("video-notes-paste-status")!.textContent).toBe("Pasted 2 notes");
+    expect(viewerStillOpen()).toBe(true);
+    expect(stores.made.at(-1)!.pasteDraft(ids.asset2)).toEqual({ offset: 0, unticked: [] });
+  });
+
+  it("a 409 paste_stale refreshes the list from the server's plan and says so; nothing is lost", async () => {
+    const { v1, planFor } = await copyOnV1();
+    await openPasteDialog();
+    const fresh = planFor([v1.a.id, v1.b.id], 0);
+    fresh.rows[1] = { ...fresh.rows[1]!, source: { ...(fresh.rows[1] as { source: object }).source, revision: 2, excerpt: "Hold the logo longer" } } as never;
+    api.apiPost.mockRejectedValueOnce(new ApiError("Some notes changed since the preview.", 409, { code: "paste_stale", error: "x", preview: { ...fresh, rows: [...fresh.rows, { noteId: v1.c.id, status: "skipped", reason: "deleted", source: null }] } }));
+    const stalePlan = { ...fresh, rows: [...fresh.rows, { noteId: v1.c.id, status: "skipped", reason: "deleted", source: null }] };
+    api.apiPost.mockImplementationOnce(async () => stalePlan);
+    await click(tid("video-note-paste-submit")!); await flush(6);
+    expect(pasteDialog()).not.toBeNull();
+    expect(tid("video-note-paste-notice")!.textContent).toContain("changed since");
+    expect(rows().map((r) => r.dataset.noteId)).toEqual([v1.a.id, v1.b.id]);
+    expect(rows()[1]!.textContent).toContain("Hold the logo longer");
+    expect(skipped()[0]!.textContent).toContain("Deleted on the source version");
+    api.apiPost.mockImplementationOnce(async (_p, body) => ({ sourceVersion: 1, targetVersion: 2, offsetFrames: 0, copied: 2, skipped: 0, rows: (body as { notes: Array<{ noteId: string }> }).notes.map((n) => ({ ...fresh.rows.find((r) => r.noteId === n.noteId)!, status: "copied", copyId: nid() })) }));
+    await click(tid("video-note-paste-submit")!); await flush(6);
+    expect((api.apiPost.mock.calls.at(-1)![1] as { notes: unknown[] }).notes).toEqual([{ noteId: v1.a.id, revision: 1 }, { noteId: v1.b.id, revision: 2 }]);
+  });
+
+  it("a 409 paste_stale asks again for the whole clipboard: unticked and skipped notes stay, the ticks and the offset are kept", async () => {
+    const v1 = v1Notes();
+    await copyOnV1(v1, { [v1.c.id]: "out_of_range" });
+    await openPasteDialog();
+    await setOffset("3"); await settle(PASTE_DEBOUNCE); await flush(4);
+    await click(rows()[1]!.querySelector<HTMLElement>('[role="checkbox"]')!);
+    // The server's 409 only covers the submitted note.
+    api.apiPost.mockRejectedValueOnce(new ApiError("Some notes changed since the preview.", 409, { code: "paste_stale", error: "x", preview: { sourceVersion: 1, targetVersion: 2, offsetFrames: 3, rows: [] } }));
+    await click(tid("video-note-paste-submit")!); await flush(6);
+    expect(tid("video-note-paste-notice")!.textContent).toContain("changed since");
+    expect(api.apiPost.mock.calls.at(-1)![0]).toMatch(/note-paste\/preview$/);
+    expect(api.apiPost.mock.calls.at(-1)![1]).toEqual({ sourceAssetId: ids.asset1, noteIds: v1.all.map((n) => n.id), offsetFrames: 3 });
+    expect(rows().map((r) => r.dataset.noteId)).toEqual([v1.a.id, v1.b.id]);
+    expect(rows().map((r) => r.querySelector('[role="checkbox"]')!.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+    expect(skipped().map((r) => r.dataset.noteId)).toEqual([v1.c.id]);
+    expect(offsetInput().value).toBe("3");
+    expect(stores.made.at(-1)!.pasteDraft(ids.asset2)).toEqual({ offset: 3, unticked: [v1.b.id] });
+  });
+
+  it("an untick survives a stale refresh that skips the note and an offset change that brings it back (#741 5c-ui round 3)", async () => {
+    const v1 = v1Notes();
+    await copyOnV1(v1);
+    await openPasteDialog();
+    await click(rows()[1]!.querySelector<HTMLElement>('[role="checkbox"]')!);
+    const planAt = (offsetFrames: number, skipB: boolean) => ({
+      sourceVersion: 1, targetVersion: 2, offsetFrames,
+      rows: v1.all.map((n) => skipB && n.id === v1.b.id
+        ? { noteId: n.id, status: "skipped", reason: "out_of_range", source: src(n) }
+        : { noteId: n.id, status: "mapped", source: src(n), to: { startFrame: n.startFrame! + offsetFrames, endFrame: n.endFrame === null ? null : n.endFrame + offsetFrames }, shortened: false }),
+    });
+    api.apiPost.mockRejectedValueOnce(new ApiError("Some notes changed since the preview.", 409, { code: "paste_stale", error: "x", preview: planAt(0, true) }));
+    api.apiPost.mockImplementationOnce(async () => planAt(0, true));
+    await click(tid("video-note-paste-submit")!); await flush(6);
+    expect(rows().map((r) => r.dataset.noteId)).toEqual([v1.a.id, v1.c.id]);
+    expect(stores.made.at(-1)!.pasteDraft(ids.asset2).unticked).toEqual([v1.b.id]);
+    await setOffset("1"); await settle(PASTE_DEBOUNCE); await flush(4);
+    expect(rows().map((r) => r.dataset.noteId)).toEqual([v1.a.id, v1.b.id, v1.c.id]);
+    expect(rows().map((r) => r.querySelector('[role="checkbox"]')!.getAttribute("aria-checked"))).toEqual(["true", "false", "true"]);
+    await click(tid("video-note-paste-submit")!); await flush(6);
+    expect((api.apiPost.mock.calls.at(-1)![1] as { notes: Array<{ noteId: string }> }).notes.map((n) => n.noteId)).toEqual([v1.a.id, v1.c.id]);
+  });
+
+  it("a paste that finishes after a remount, once a newer draft exists, leaves that draft and its dialog alone (#741 5c-ui round 3)", async () => {
+    await copyOnV1();
+    await openPasteDialog();
+    let finish!: (value: unknown) => void;
+    api.apiPost.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await click(tid("video-note-paste-submit")!); await flush(4);
+    expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(true);
+    // Remount: the Version goes away and comes back. The store still says a commit is out.
+    await pickVersion("v1"); await pickVersion("v2");
+    expect(pasteDialog()).not.toBeNull();
+    expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(true);
+    const store = stores.made.at(-1)!;
+    // The session ends (cancelAll) and the person starts a newer draft.
+    store.cancelAll();
+    store.setPasteOffset(ids.asset2, 7);
+    store.setPasteTicked(ids.asset2, "keep-me", false);
+    await act(async () => { finish({ sourceVersion: 1, targetVersion: 2, offsetFrames: 0, copied: 3, skipped: 0, rows: [] }); await Promise.resolve(); });
+    await flush(6); await settle(200);
+    expect(pasteDialog()).not.toBeNull();
+    expect(store.pasteDraft(ids.asset2)).toEqual({ offset: 7, unticked: ["keep-me"] });
+    expect(tid("video-notes-paste-status")).toBeNull();
+  });
+
+  it("a 409 that returns after a remount refreshes the live dialog: the stale notice, a fresh preview, Paste enabled (#741 5c-ui round 4)", async () => {
+    const { v1, planFor } = await copyOnV1();
+    await openPasteDialog();
+    let fail!: (error: unknown) => void;
+    api.apiPost.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+    await click(tid("video-note-paste-submit")!); await flush(4);
+    // Archive/restore, or any remount: the old dialog instance is gone and a new one has asked for its own preview.
+    await pickVersion("v1"); await pickVersion("v2");
+    expect(pasteDialog()).not.toBeNull();
+    expect(rows()).toHaveLength(3);
+    expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(true);
+    const fresh = planFor(v1.all.map((n) => n.id), 0);
+    fresh.rows[1] = { ...fresh.rows[1]!, source: { ...(fresh.rows[1] as { source: object }).source, revision: 2, excerpt: "Hold the logo longer" } } as never;
+    api.apiPost.mockImplementationOnce(async () => fresh);
+    await act(async () => { fail(new ApiError("Some notes changed since the preview.", 409, { code: "paste_stale", error: "x", preview: { sourceVersion: 1, targetVersion: 2, offsetFrames: 0, rows: [] } })); await Promise.resolve(); });
+    await flush(6);
+    expect(tid("video-note-paste-notice")!.textContent).toContain("changed since");
+    expect(rows()[1]!.textContent).toContain("Hold the logo longer");
+    expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("Cancel and Escape return focus to the Notes actions trigger (#741 5c-ui round 5)", async () => {
+    await copyOnV1();
+    await openPasteDialog();
+    await click(tid("video-note-paste-cancel")!); await settle(300);
+    expect(pasteDialog()).toBeNull();
+    expect(document.activeElement).toBe(tid("video-notes-menu"));
+    (document.activeElement as HTMLElement).blur();
+    await openPasteDialog();
+    await dispatchKey(offsetInput(), "Escape"); await settle(300);
+    expect(pasteDialog()).toBeNull();
+    expect(document.activeElement).toBe(tid("video-notes-menu"));
+  });
+
+  it("marks the table as stacking below 721px, with each timecode labelled by its Version (#741 5c-ui round 5)", async () => {
+    await copyOnV1();
+    await openPasteDialog();
+    const table = tid("video-note-paste-table")!;
+    expect(table.getAttribute("data-layout")).toBe("stack-below-721");
+    expect(tid("video-note-paste-source", rows()[0]!)!.getAttribute("data-version")).toBe("v1");
+    expect(tid("video-note-paste-target", rows()[0]!)!.parentElement!.getAttribute("data-version")).toBe("v2");
+  });
+
+  it("hides the offset field when nothing can be pasted (#741 5c-ui round 5)", async () => {
+    const v1 = v1Notes();
+    await copyOnV1(v1, { [v1.a.id]: "already_copied", [v1.b.id]: "already_copied", [v1.c.id]: "already_copied" });
+    await openPasteDialog();
+    expect(tid("video-note-paste-none")).not.toBeNull();
+    expect(tid("video-note-paste-offset")).toBeNull();
+  });
+
+  it("keeps the offset field while an offset is what put every note out of range, so it can be undone (#741 5c-ui round 6)", async () => {
+    const v1 = v1Notes();
+    await copyOnV1(v1);
+    const mapAt = (offsetFrames: number) => ({
+      sourceVersion: 1, targetVersion: 2, offsetFrames,
+      rows: v1.all.map((n) => offsetFrames !== 0
+        ? { noteId: n.id, status: "skipped", reason: "out_of_range", source: src(n) }
+        : { noteId: n.id, status: "mapped", source: src(n), to: { startFrame: n.startFrame!, endFrame: n.endFrame }, shortened: false }),
+    });
+    api.apiPost.mockImplementation(async (_path, body) => mapAt((body as { offsetFrames: number }).offsetFrames));
+    await openPasteDialog();
+    await setOffset("5000"); await settle(PASTE_DEBOUNCE); await flush(4);
+    expect(tid("video-note-paste-none")).not.toBeNull();
+    expect(tid("video-note-paste-offset")).not.toBeNull();
+    await setOffset("0"); await settle(PASTE_DEBOUNCE); await flush(4);
+    expect(rows()).toHaveLength(3);
+    expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("a stale refresh that fails keeps Paste disabled and offers 'Try again', which asks for the preview again (#741 5c-ui round 3)", async () => {
+    const { v1 } = await copyOnV1();
+    await openPasteDialog();
+    api.apiPost.mockRejectedValueOnce(new ApiError("Some notes changed since the preview.", 409, { code: "paste_stale", error: "x", preview: { sourceVersion: 1, targetVersion: 2, offsetFrames: 0, rows: [] } }));
+    api.apiPost.mockRejectedValueOnce(new ApiError("Network error", 0));
+    await click(tid("video-note-paste-submit")!); await flush(6);
+    expect(tid("video-note-paste-load-error")).not.toBeNull();
+    expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(true);
+    expect(stores.made.at(-1)!.pasteView(ids.asset2).status).toBe("failed");
+    const retry = [...tid("video-note-paste-load-error")!.querySelectorAll("button")].find((b) => b.textContent === "Try again")!;
+    await click(retry); await flush(6);
+    expect(api.apiPost.mock.calls.at(-1)![0]).toMatch(/note-paste\/preview$/);
+    expect(tid("video-note-paste-load-error")).toBeNull();
+    expect(rows().map((r) => r.dataset.noteId)).toEqual(v1.all.map((n) => n.id));
+    expect((tid("video-note-paste-submit") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("a network failure keeps the dialog and offers 'Try again', which sends the same payload", async () => {
+    await copyOnV1();
+    await openPasteDialog();
+    api.apiPost.mockRejectedValueOnce(new ApiError("Network error", 0));
+    await click(tid("video-note-paste-submit")!); await flush(6);
+    expect(tid("video-note-paste-error")!.textContent).toContain("Couldn't reach the server");
+    expect(tid("video-note-paste-submit")!.textContent).toBe("Try again");
+    const first = api.apiPost.mock.calls.at(-1)![1];
+    await click(tid("video-note-paste-submit")!); await flush(6);
+    expect(api.apiPost.mock.calls.at(-1)![1]).toEqual(first);
+    await settle(200);
+    expect(pasteDialog()).toBeNull();
+  });
+
+  it("shows each copied thread's origin: 'Copied from v1 · originally by …'", async () => {
+    const copy = note({ body: "Copied note", startFrame: 30, copiedFrom: { version: 1, authorName: "Mia Chen", authorRole: "editor" } });
+    await openFilm({ notes: { [ids.asset2]: [copy, ...seed().all], [ids.asset1]: [] } });
+    expect(tid("video-note-copied-from", threadOf(copy.id))!.textContent).toBe("Copied from v1 · originally by Mia Chen");
+    expect(tid("video-note-copied-from", threadOf(seed().n1.id))).toBeNull();
+  });
+
+  it("Escape inside the paste dialog closes only the dialog: the viewer stays and the composer's first Escape is not spent", async () => {
+    await copyOnV1();
+    composerText().focus();
+    await type(composerText(), "Do not lose this");
+    await openPasteDialog();
+    await dispatchKey(offsetInput(), "Escape");
+    await settle(300);
+    expect(pasteDialog()).toBeNull();
+    expect(viewerStillOpen()).toBe(true);
+    expect(stores.made.at(-1)!.slot(ids.asset2).spent).toBe(false);
+    expect(composerText().value).toBe("Do not lose this");
+  });
+});
+const viewerStillOpen = () => document.querySelector('[data-testid="video-review-viewer"]') !== null;

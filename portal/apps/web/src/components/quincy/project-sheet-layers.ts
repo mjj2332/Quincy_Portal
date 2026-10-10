@@ -15,6 +15,11 @@
  * counts only while open, so the gate never blocks a close on something already closing.
  */
 const MODAL_DIALOG = '[role="dialog"][aria-modal="true"]';
+/**
+ * An open modal dialog. Base UI's Dialog popup sets no `aria-modal` (a non-modal Popover popup is also `role="dialog"`), so the registry
+ * dialog is recognised by its slot as well: `reui/dialog`'s content carries `data-slot="dialog-content"`.
+ */
+const OPEN_MODAL = `${MODAL_DIALOG}[data-open], [data-slot="dialog-content"][data-open]`;
 /** #625: the global confirm is an alert dialog (Base UI sets no `aria-modal` on it) — its own arm. */
 const ALERT_DIALOG = '[role="alertdialog"][data-open]';
 /**
@@ -43,6 +48,22 @@ export function hasOpenFloatingPopup(popup: HTMLElement | null, slot: HTMLElemen
   // the `role="listbox"` inside carries none — so an open popup that CONTAINS a list counts too.
   // Scoped to the overlay slot: the sheet's own popup is `data-open` and contains everything.
   return Boolean(slot?.querySelector(OPEN_LIST_HOST));
+}
+
+/**
+ * Is a modal dialog open above `popup` (`OPEN_MODAL`): one opened after it, portalled beside it or rendered inside it? (#741 5c-ui.) A modal under it (the
+ * Project sheet the viewer opened from) comes earlier in the document and never counts. Modal dialogs are
+ * deliberately not in `OPEN_POPUP`, so `hasOpenFloatingPopup` never sees the notes paste dialog, which portals to `body` beside the viewer:
+ * without this, the viewer's window-capture Escape handler spent the notes form's first Escape and Base UI closed the viewer along with it.
+ * Alert dialogs have their own arm (`hasOpenAlertDialog`). A closing modal no longer carries `data-open`, so it does not count.
+ */
+export function hasOpenModalAbove(popup: HTMLElement | null, doc: Document): boolean {
+  if (!popup) return false;
+  for (const modal of doc.querySelectorAll<HTMLElement>(OPEN_MODAL)) {
+    if (modal === popup || modal.contains(popup)) continue;
+    if (popup.compareDocumentPosition(modal) & (Node.DOCUMENT_POSITION_FOLLOWING | Node.DOCUMENT_POSITION_CONTAINED_BY)) return true;
+  }
+  return false;
 }
 
 export function hasOpenInnerLayer(popup: HTMLElement | null, slot: HTMLElement | null, doc: Document): boolean {

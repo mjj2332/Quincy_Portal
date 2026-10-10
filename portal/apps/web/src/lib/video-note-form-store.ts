@@ -1,4 +1,4 @@
-import type { VideoNoteCreateInput, VideoNoteDto, VideoNoteEditInput, VideoNoteThreadDto, VideoNoteVisibility } from "@quincy/shared";
+import { VIDEO_NOTE_PASTE_MAX, VIDEO_NOTE_PASTE_OFFSET_MAX, type VideoNoteCreateInput, type VideoNotePasteCommitResponse, type VideoNotePastePreviewResponse, VideoNoteDto, VideoNoteEditInput, VideoNoteThreadDto, VideoNoteVisibility } from "@quincy/shared";
 import type { FrameClockState } from "./video-frame-clock";
 import { classifyVideoNoteError } from "./video-note-errors";
 import { EMPTY_MARKS, markFrame, marksToFrames, type NoteMarks } from "./video-note-marks";
@@ -39,11 +39,28 @@ export type OpenForm = {
 /** The marks belong to the clock they were made on (a Version or a viewer that is gone takes them with it); off that clock the form's baseline `seed` shows and no frame action has been taken. */
 export type StoredMarks = { clock: object | null; value: NoteMarks; touched: boolean; seed: NoteMarks };
 export type Op = { id: number; form: "composer" | "open"; phase: "confirming" | "posting"; revision: number };
-export type Slot = { composer: Composer; open: OpenForm | null; marks: StoredMarks; op: Op | null; spent: boolean; /** Why a form closed by itself (its note was deleted elsewhere). */ notice: (Problem & { rootId: string }) | null };
+/** What the paste dialog keeps for a target Version so closing and reopening it loses nothing: the frame offset and the notes the person unticked (everything is ticked by default, so a re-run preview never un-ticks a note). */
+export type PasteDraft = { offset: number; unticked: readonly string[] };
+/** The notes copied from one Version of a Video (#741 5c-ui): ids only, the paste dialog asks the server for the plan. */
+export type PasteClipboard = { sourceAssetId: string; sourceVersion: number; noteIds: readonly string[] };
+/** The commit that owns a target Version's paste draft (#741 5c-ui): a completion acts only while its `opId` is still the current one. */
+export type PasteOp = { opId: number; status: "idle" | "committing" | "failed" };
+/**
+ * Everything the paste dialog shows about the server's plan, owned here so no component's lifetime matters: the request is keyed by
+ * `generation` (only a result carrying the current one is applied), `invalid` means a 409 voided the plan and no fresh one has arrived,
+ * and `notice` / `failure` are what the person should read. Paste is allowed only at status `ok`.
+ */
+export type PastePreview = { generation: number; status: "idle" | "loading" | "ok" | "failed" | "invalid"; plan: VideoNotePastePreviewResponse | null; error: string | null; notice: string | null; failure: { text: string; retry: boolean } | null };
+export type PastePreviewRun = (offsetFrames: number) => Promise<VideoNotePastePreviewResponse>;
+export type Slot = { composer: Composer; open: OpenForm | null; marks: StoredMarks; op: Op | null; spent: boolean; /** Why a form closed by itself (its note was deleted elsewhere). */ notice: (Problem & { rootId: string }) | null; paste: PasteDraft; pasteOp: PasteOp; pasteView: PastePreview; /** Whether the paste dialog is open, and what the last paste said. */ pasteOpen: boolean; pasteResult: string | null };
 
 const NO_MARKS: StoredMarks = { clock: null, value: EMPTY_MARKS, touched: false, seed: EMPTY_MARKS };
 const EMPTY_COMPOSER: Composer = { body: "", visibility: "internal", anchorFrame: null, revision: 0, problem: null };
-const EMPTY_SLOT: Slot = Object.freeze({ composer: EMPTY_COMPOSER, open: null, marks: NO_MARKS, op: null, spent: false, notice: null });
+const EMPTY_PASTE: PasteDraft = Object.freeze({ offset: 0, unticked: Object.freeze([]) as readonly string[] });
+const EMPTY_PASTE_OP: PasteOp = Object.freeze({ opId: 0, status: "idle" });
+const EMPTY_PASTE_VIEW: PastePreview = Object.freeze({ generation: 0, status: "idle", plan: null, error: null, notice: null, failure: null });
+const PASTE_STALE_NOTICE = "Some notes changed since the preview, so the list was refreshed. Check it, then paste again.";
+const EMPTY_SLOT: Slot = Object.freeze({ composer: EMPTY_COMPOSER, open: null, marks: NO_MARKS, op: null, spent: false, notice: null, paste: EMPTY_PASTE, pasteOp: EMPTY_PASTE_OP, pasteView: EMPTY_PASTE_VIEW, pasteOpen: false, pasteResult: null });
 
 export function effectiveMarks(marks: StoredMarks, clock: object | null): { value: NoteMarks; touched: boolean } {
   return marks.clock !== null && marks.clock === clock ? marks : { value: marks.seed, touched: false };
@@ -88,6 +105,10 @@ const isDirty = (slot: Slot) => (slot.open ? (slot.open.kind === "reply" ? slot.
 
 export function createNoteFormStore(key: string) {
   const slots = new Map<string, Slot>();
+  // The clipboard is per Video, not per Version: it must outlive switching Versions, and no slot rewrite touches it.
+  const clipboards = new Map<string, PasteClipboard>();
+  // How to ask for the plan again, per target Version: lets a 409 refresh the preview with no dialog mounted.
+  const pasteRuns = new Map<string, PastePreviewRun>();
   const listeners = new Set<() => void>();
   let seq = 0;
   let dead = false;
@@ -97,6 +118,18 @@ export function createNoteFormStore(key: string) {
     slots.set(assetId, { ...slot(assetId), ...patch });
     listeners.forEach((listener) => { listener(); });
   };
+  function startPreview(assetId: string, run: PastePreviewRun, offset: number) {
+    if (dead) return;
+    pasteRuns.set(assetId, run);
+    const held = slot(assetId).pasteView;
+    const generation = held.generation + 1;
+    put(assetId, { pasteView: { ...held, generation, status: "loading", error: null } });
+    const current = () => slot(assetId).pasteView.generation === generation;
+    run(offset).then(
+      (plan) => { if (current()) put(assetId, { pasteView: { ...slot(assetId).pasteView, status: "ok", plan, error: null } }); },
+      (error: unknown) => { if (current()) put(assetId, { pasteView: { ...slot(assetId).pasteView, status: "failed", error: classifyVideoNoteError(error).kind === "network" ? "Couldn't reach the server." : messageOf(error, "The notes could not be previewed.") } }); },
+    );
+  }
   const owns = (assetId: string, op: Op) => slot(assetId).op?.id === op.id;
 
   const close = (assetId: string) => { if (slot(assetId).open) put(assetId, { open: null, marks: NO_MARKS, spent: false }); };
@@ -267,10 +300,81 @@ export function createNoteFormStore(key: string) {
     /** The open form's note left the Version's full list (deleted elsewhere): the form goes, unless its own request is out (it is reconciled again when that settles). */
     retireMissing(assetId: string, threads: readonly VideoNoteThreadDto[]) { latest.set(assetId, threads); reconcile(assetId); },
 
+    /** Copies the notes a person is looking at (at most the paste limit). An empty selection copies nothing and keeps the earlier clipboard. */
+    copyNotes(videoId: string, clip: PasteClipboard) {
+      if (dead || clip.noteIds.length === 0) return;
+      clipboards.set(videoId, { sourceAssetId: clip.sourceAssetId, sourceVersion: clip.sourceVersion, noteIds: clip.noteIds.slice(0, VIDEO_NOTE_PASTE_MAX) });
+      listeners.forEach((listener) => { listener(); });
+    },
+    clipboard: (videoId: string): PasteClipboard | null => clipboards.get(videoId) ?? null,
+    pasteDraft: (assetId: string): PasteDraft => slot(assetId).paste,
+    setPasteOffset(assetId: string, offset: number) {
+      const next = Number.isFinite(offset) ? Math.min(VIDEO_NOTE_PASTE_OFFSET_MAX, Math.max(-VIDEO_NOTE_PASTE_OFFSET_MAX, Math.round(offset))) : 0;
+      const held = slot(assetId).paste;
+      if (held.offset !== next) put(assetId, { paste: { ...held, offset: next } });
+    },
+    setPasteTicked(assetId: string, noteId: string, ticked: boolean) {
+      const held = slot(assetId).paste;
+      const has = held.unticked.includes(noteId);
+      if (ticked === has) put(assetId, { paste: { ...held, unticked: ticked ? held.unticked.filter((id) => id !== noteId) : [...held.unticked, noteId] } });
+    },
+    resetPaste(assetId: string) { if (slot(assetId).paste !== EMPTY_PASTE) put(assetId, { paste: EMPTY_PASTE }); },
+
+    // Paste lifecycle (#741 5c-ui): the dialog renders this and dispatches into it; it keeps no request or result of its own.
+    pasteOp: (assetId: string): PasteOp => slot(assetId).pasteOp,
+    pasteView: (assetId: string): PastePreview => slot(assetId).pasteView,
+    pasteOpen: (assetId: string): boolean => slot(assetId).pasteOpen,
+    pasteResult: (assetId: string): string | null => slot(assetId).pasteResult,
+    setPasteOpen(assetId: string, open: boolean) {
+      const held = slot(assetId);
+      if (held.pasteOpen === open) return;
+      if (open) { put(assetId, { pasteOpen: true, pasteResult: null }); return; }
+      // Closing forgets what the server said (and voids any request out); the offset and the ticks stay.
+      pasteRuns.delete(assetId);
+      put(assetId, { pasteOpen: false, pasteView: { ...EMPTY_PASTE_VIEW, generation: held.pasteView.generation + 1 } });
+    },
+    clearPasteResult(assetId: string) { if (slot(assetId).pasteResult !== null) put(assetId, { pasteResult: null }); },
+    /** Asks for the plan at `offset`. Starting bumps the generation, so anything asked earlier is discarded when it lands. */
+    requestPreview(assetId: string, run: PastePreviewRun, offset: number) { startPreview(assetId, run, offset); },
+    /** Sends the commit and owns what comes back. Success clears the draft, closes the dialog and leaves the notice; a 409 voids the plan and asks for a fresh one itself. */
+    async commitPaste(assetId: string, commit: () => Promise<VideoNotePasteCommitResponse>): Promise<void> {
+      const held = slot(assetId);
+      if (dead || held.pasteOp.status === "committing") return;
+      const opId = ++seq;
+      put(assetId, { pasteOp: { opId, status: "committing" }, pasteView: { ...held.pasteView, notice: null, failure: null } });
+      const mine = () => slot(assetId).pasteOp.opId === opId && slot(assetId).pasteOp.status === "committing";
+      try {
+        const result = await commit();
+        if (!mine()) return;
+        pasteRuns.delete(assetId);
+        put(assetId, { paste: EMPTY_PASTE, pasteOpen: false, pasteResult: `Pasted ${result.copied} ${result.copied === 1 ? "note" : "notes"}${result.skipped > 0 ? ` · ${result.skipped} left out` : ""}`, pasteOp: { opId, status: "idle" }, pasteView: { ...EMPTY_PASTE_VIEW, generation: slot(assetId).pasteView.generation + 1 } });
+      } catch (error) {
+        if (!mine()) return;
+        const classified = classifyVideoNoteError(error);
+        if (classified.kind === "stale" && classified.preview) {
+          put(assetId, { pasteOp: { opId, status: "idle" }, pasteView: { ...slot(assetId).pasteView, status: "invalid", notice: PASTE_STALE_NOTICE } });
+          const run = pasteRuns.get(assetId);
+          if (run) startPreview(assetId, run, slot(assetId).paste.offset);
+          return;
+        }
+        const failure = classified.kind === "network" ? { text: "Couldn't reach the server. Nothing is lost; try again — notes already pasted are not pasted twice.", retry: true }
+          : classified.kind === "archived" ? { text: "This Project was archived, so nothing was pasted.", retry: false }
+          : { text: messageOf(error, "The notes could not be pasted."), retry: false };
+        put(assetId, { pasteOp: { opId, status: "failed" }, pasteView: { ...slot(assetId).pasteView, failure } });
+      }
+    },
+
     /** The person's session ended: every frame confirmation stops. A request already sent is never touched. */
-    cancelAll() { for (const assetId of [...slots.keys()]) cancelConfirmation(assetId); },
+    cancelAll() {
+      for (const assetId of [...slots.keys()]) {
+        cancelConfirmation(assetId);
+        // A paste commit already sent is not touched, but it stops owning the draft: its completion is ignored.
+        const held = slot(assetId).pasteOp;
+        if (held.status === "committing") put(assetId, { pasteOp: { ...held, opId: ++seq, status: "idle" } });
+      }
+    },
     /** This store is being replaced (another person or Project): nothing it started may write or send again. */
-    retire() { dead = true; slots.clear(); listeners.clear(); },
+    retire() { dead = true; slots.clear(); clipboards.clear(); pasteRuns.clear(); listeners.clear(); },
   };
 }
 
