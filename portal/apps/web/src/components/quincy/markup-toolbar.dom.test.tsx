@@ -119,6 +119,12 @@ describe("MarkupToolbar", () => {
     }
   });
 
+  it("gives every swatch and width dot a title like the tool and history buttons", async () => {
+    const host = await mount(props());
+    for (const name of Object.values(PEN_COLOUR_NAMES)) expect(byLabel(host, name).getAttribute("title")).toBe(name);
+    for (const width of MARKUP_WIDTHS) expect(byLabel(host, `${width} pixels`).getAttribute("title")).toBe(`${width} pixels`);
+  });
+
   it("keeps all three width dots on the regular form", async () => {
     const host = await mount(props());
     expect(host.querySelectorAll('[aria-label="Stroke width"] button')).toHaveLength(3);

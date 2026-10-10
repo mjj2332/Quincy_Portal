@@ -41,7 +41,12 @@ const TOOLS: { kind: MarkupToolKind; label: string; Icon: LucideIcon }[] = [
 /** 28px; 44px on a phone and on a touch tablet. */
 const TARGET = "h-7 min-w-7 max-[721px]:h-11 max-[721px]:min-w-11 min-[721px]:pointer-coarse:h-11 min-[721px]:pointer-coarse:min-w-11";
 const GROUP = "inline-flex w-auto items-center gap-[var(--space-1)]";
-const PRESSED_RING = "aria-pressed:outline aria-pressed:outline-[length:var(--border-width-bold)] aria-pressed:outline-solid aria-pressed:outline-[var(--ring)] aria-pressed:outline-offset-2";
+/** The selection ring is a box-shadow on the inner circle (a --card gap, then a --ring band), so the outline stays free for the global keyboard :focus-visible ring. The pressed fill is cleared: the ring alone shows the selection. */
+const SWATCH_ITEM = "group/swatch aria-pressed:bg-transparent";
+const SWATCH_RING = "group-aria-pressed/swatch:shadow-[0_0_0_2px_var(--card),0_0_0_calc(2px+var(--border-width-bold))_var(--ring)]";
+/** The selected chip's fill (--secondary) is ~1.17:1 against the pill, so it also carries an inset --border-hover hairline. */
+const SELECTED_HAIRLINE_CHECKED = "data-checked:shadow-[inset_0_0_0_var(--border-width-hair)_var(--border-hover)]";
+const SELECTED_HAIRLINE_PRESSED = "aria-pressed:shadow-[inset_0_0_0_var(--border-width-hair)_var(--border-hover)]";
 const COMPACT_BUTTON = "w-11 min-w-11 px-0 min-[721px]:pointer-coarse:min-w-11";
 /** The default button is 38px; a touch tablet gets 44px. */
 /** Undo, Redo and Clear are icon-only at every width (at 1280 the worded form overflowed the pill's 868px budget): 38px square, 44px on a phone or a touch tablet. */
@@ -78,7 +83,7 @@ export function MarkupToolbar({ label, tool, onToolChange, onColorChange, onWidt
           className={cn(
             // size-auto first: tailwind-merge lets a later `size-*` drop an earlier `h-*`, and TARGET must keep its h-7.
             "aspect-auto size-auto", TARGET, "items-center justify-center rounded-[var(--radius-sm)] border-0 bg-transparent text-foreground-secondary",
-            "cursor-pointer hover:bg-secondary data-checked:border-0 data-checked:bg-secondary data-checked:text-foreground",
+            "cursor-pointer hover:bg-secondary data-checked:border-0 data-checked:bg-secondary data-checked:text-foreground", SELECTED_HAIRLINE_CHECKED,
           )}
         ><Icon aria-hidden="true" className="size-4" /></RadioGroupItem>
       ))}
@@ -88,8 +93,8 @@ export function MarkupToolbar({ label, tool, onToolChange, onColorChange, onWidt
   const colours = (
     <ToggleGroup key="colours" aria-label="Pen colour" className={GROUP} spacing={1} value={[tool.color]} onValueChange={(value) => { const next = value[0]; if (next && next !== tool.color) onColorChange(next); }}>
       {(Object.keys(PEN_COLOUR_NAMES) as (keyof typeof PEN_COLOUR_NAMES)[]).map((color) => (
-        <ToggleGroupItem key={color} value={color} size="sm" aria-label={PEN_COLOUR_NAMES[color]} className={cn(TARGET, "rounded-full px-0", PRESSED_RING)}>
-          <span aria-hidden="true" style={{ background: color }} className="block h-[19px] w-[19px] rounded-full border border-solid border-[length:var(--border-width-hair)] border-border" />
+        <ToggleGroupItem key={color} value={color} size="sm" aria-label={PEN_COLOUR_NAMES[color]} title={PEN_COLOUR_NAMES[color]} className={cn(TARGET, "rounded-full px-0", SWATCH_ITEM)}>
+          <span aria-hidden="true" style={{ background: color }} className={cn("block h-[19px] w-[19px] rounded-full border border-solid border-[length:var(--border-width-hair)] border-border", SWATCH_RING)} />
         </ToggleGroupItem>
       ))}
     </ToggleGroup>
@@ -105,7 +110,7 @@ export function MarkupToolbar({ label, tool, onToolChange, onColorChange, onWidt
     : (
       <ToggleGroup key="widths" aria-label="Stroke width" className={GROUP} spacing={1} value={[String(tool.width)]} onValueChange={(value) => { const next = Number(value[0]); if (value[0] && next !== tool.width) onWidthChange(next); }}>
         {MARKUP_WIDTHS.map((width) => (
-          <ToggleGroupItem key={width} value={String(width)} size="sm" aria-label={`${width} pixels`} className={cn(TARGET, "px-0 aria-pressed:bg-secondary hover:bg-secondary")}>
+          <ToggleGroupItem key={width} value={String(width)} size="sm" aria-label={`${width} pixels`} title={`${width} pixels`} className={cn(TARGET, "px-0 aria-pressed:bg-secondary hover:bg-secondary", SELECTED_HAIRLINE_PRESSED)}>
             <span aria-hidden="true" style={{ width: width + 3, height: width + 3 }} className="block rounded-full bg-foreground" />
           </ToggleGroupItem>
         ))}
@@ -131,7 +136,9 @@ export function MarkupToolbar({ label, tool, onToolChange, onColorChange, onWidt
   return (
     <div
       className={cn(
-        "drawbar pointer-events-auto flex w-max max-w-[calc(100%-32px)] flex-wrap items-center justify-center gap-x-[var(--space-3)] gap-y-[var(--space-2)] rounded-[var(--radius-pill)]",
+        "drawbar pointer-events-auto flex w-max max-w-[calc(100%-32px)] flex-wrap items-center justify-center gap-x-[var(--space-3)] gap-y-[var(--space-2)]",
+        // A pill wraps to several rows on a phone; a stadium radius then clips the corner controls, so compact takes the large radius.
+        compact ? "rounded-[var(--radius-lg)]" : "rounded-[var(--radius-pill)]",
         "border border-solid border-[length:var(--border-width-hair)] border-border bg-card py-[var(--space-2)] pr-[var(--space-2)] pl-[var(--space-4)] text-foreground shadow-[var(--shadow-lg)]",
         "max-[721px]:max-w-[calc(100%-16px)] max-[721px]:gap-[var(--space-2)] max-[721px]:pl-[var(--space-2)]",
         className,
