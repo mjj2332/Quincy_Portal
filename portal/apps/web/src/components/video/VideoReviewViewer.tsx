@@ -32,7 +32,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes }: {
   /** The control that opened the viewer; focus goes back to it on close. */
   returnFocusTo?: () => HTMLElement | null;
   /** Present only when the notes part is on. */
-  notes?: { projectId: string; role: Role; userId: string | null; archived: boolean; forms: NoteFormStore; /** The Project's `markup` part is on (#741 6b-ui). */ markup?: boolean };
+  notes?: { projectId: string; role: Role; userId: string | null; archived: boolean; forms: NoteFormStore; /** The Project's `markup` part is on (#741 6b-ui). */ markup?: boolean; /** The Project's `export` part is on (#741 9). */ exportEnabled?: boolean };
 }) {
   const [assetId, setAssetId] = useState(video.currentAssetId);
   const playerRef = useRef<VideoPlayerControl>(null);
