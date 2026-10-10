@@ -97,12 +97,13 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
   const rereadSeq = useRef(0);
   const decisionGen = useRef(new Map<string, number>());
   // A decision lands on the Version it was sent for, by id: whichever Version the guest is looking at now is untouched.
+  // A response older than what the page already holds (a refresh showed a newer revision first) is dropped: revisions only move forward.
   const decided = useCallback((assetId: string, decision: GuestDecision) => {
     decisionGen.current.set(assetId, (decisionGen.current.get(assetId) ?? 0) + 1);
     setVideos((list) => list.map((video) => (video.versions.some((version) => version.assetId === assetId)
-      ? { ...video, versions: video.versions.map((version) => (version.assetId === assetId ? { ...version, decision } : version)) } : video)));
+      ? { ...video, versions: video.versions.map((version) => (version.assetId === assetId && decision.revision >= (version.decision?.revision ?? 0) ? { ...version, decision } : version)) } : video)));
   }, []);
-  // A decision that may or may not have landed: read the list again, and take only the delivery fields (decision, Release, download link) of Versions already on the page, never its shape.
+  // A decision that may or may not have landed: read the list again, and take only the delivery fields (decision, Release, download link, and the Video's premium and unlock state) of what is already on the page, never its shape.
   const resyncDelivery = useCallback(() => {
     if (api === null) return;
     rereadSeq.current += 1;
@@ -112,7 +113,11 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
       if (fresh.kind !== "ok" || rereadSeq.current !== mine) return;
       const byAsset = new Map(fresh.value.flatMap((video) => video.versions).map((version) => [version.assetId, version] as const));
       const current = (assetId: string) => (decisionGen.current.get(assetId) ?? 0) === (startedAt.get(assetId) ?? 0);
-      setVideos((list) => list.map((video) => ({ ...video, versions: video.versions.map((version) => { const next = byAsset.get(version.assetId); return next && current(version.assetId) ? { ...version, decision: next.decision, released: next.released, downloadUrl: next.downloadUrl } : version; }) })));
+      const byVideo = new Map(fresh.value.map((video) => [video.id, video] as const));
+      setVideos((list) => list.map((video) => {
+        const freshVideo = byVideo.get(video.id);
+        return { ...video, premium: freshVideo?.premium ?? video.premium, unlocked: freshVideo?.unlocked ?? video.unlocked, versions: video.versions.map((version) => { const next = byAsset.get(version.assetId); return next && current(version.assetId) ? { ...version, decision: next.decision, released: next.released, downloadUrl: next.downloadUrl } : version; }) };
+      }));
     });
   }, [api]);
   // Staff took the displayed Video or Version off the link while it was open: show what is still granted, calmly, or nothing if nothing is.

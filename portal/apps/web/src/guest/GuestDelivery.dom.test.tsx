@@ -338,6 +338,36 @@ describe("Approve and Request changes", () => {
     expect(chipText()).toEqual(["Approved"]);
   });
 
+  it("a late Approve response (revision 1) cannot overwrite a newer revision 2 that a delivery refresh already showed", async () => {
+    videos = [videoOf(1, [versionOf(20), versionOf(10)])];
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    extra = async (url, init) => {
+      if (init?.method !== "POST") return undefined;
+      if (url === decisionUrl(asset(10))) { await gate; return json({ decision: decisionOf("approved", 1) }, 201); }
+      if (url === decisionUrl(asset(20))) {
+        // Another guest requested changes on v10 (revision 2) while this Approve was out; this unrelated answer is ambiguous, so the page re-reads and sees revision 2.
+        videos = [videoOf(1, [versionOf(20), versionOf(10, { decision: decisionOf("changes_requested", 2) })])];
+        return json({ error: "x" }, 503);
+      }
+      return undefined;
+    };
+    await open();
+    await chooseVersion("v10");
+    await click(byId("guest-approve"));
+    await click(byId("guest-decision-confirm"));
+    await click(byId("guest-decision-cancel"));
+    await chooseVersion("v20");
+    await click(byId("guest-approve"));
+    await click(byId("guest-decision-confirm"));
+    await click(byId("guest-decision-cancel"));
+    await chooseVersion("v10");
+    expect(chipText()).toEqual(["Changes requested"]);
+    await act(async () => { release(); });
+    await flush();
+    expect(chipText()).toEqual(["Changes requested"]);
+  });
+
   it("an archived project takes the decision controls away but downloads stay", async () => {
     videos = [videoOf(1, [versionOf(10, { released: true, downloadUrl: downloadUrl(asset(10)) })])];
     extra = (url, init) => (url === decisionUrl(asset(10)) && init?.method === "POST" ? json({ error: "project_archived" }, 409) : undefined);
@@ -346,6 +376,35 @@ describe("Approve and Request changes", () => {
     await click(byId("guest-decision-confirm"));
     expect(byId("guest-approve")).toBeNull();
     expect(byId("guest-download")).not.toBeNull();
+  });
+});
+
+describe("a delivery refresh after an ambiguous decision", () => {
+  const ambiguous = (change: () => void): Handler => (url, init) => {
+    if (url !== decisionUrl(asset(10)) || init?.method !== "POST") return undefined;
+    change();
+    return json({ error: "x" }, 503);
+  };
+  const decide = async () => { await click(byId("guest-approve")); await click(byId("guest-decision-confirm")); };
+
+  it("shows Download and clears the locked reason when staff unlocked the premium Video meanwhile", async () => {
+    videos = [videoOf(1, [versionOf(10, { released: true, downloadUrl: null })], { premium: true, unlocked: false })];
+    extra = ambiguous(() => { videos = [videoOf(1, [versionOf(10, { released: true, downloadUrl: downloadUrl(asset(10)) })], { premium: true, unlocked: true })]; });
+    await open();
+    expect(byId("guest-download-locked")).not.toBeNull();
+    await decide();
+    expect(byId("guest-download")?.getAttribute("href")).toBe(downloadUrl(asset(10)));
+    expect(byId("guest-download-locked")).toBeNull();
+  });
+
+  it("shows the locked reason and no Download when staff relocked the premium Video meanwhile", async () => {
+    videos = [videoOf(1, [versionOf(10, { released: true, downloadUrl: downloadUrl(asset(10)) })], { premium: true, unlocked: true })];
+    extra = ambiguous(() => { videos = [videoOf(1, [versionOf(10, { released: true, downloadUrl: null })], { premium: true, unlocked: false })]; });
+    await open();
+    expect(byId("guest-download")).not.toBeNull();
+    await decide();
+    expect(byId("guest-download")).toBeNull();
+    expect(byId("guest-download-locked")?.textContent).toMatch(/premium/i);
   });
 });
 
