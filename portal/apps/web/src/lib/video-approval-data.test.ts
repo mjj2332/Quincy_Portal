@@ -180,4 +180,28 @@ describe("a write that lands while the first decisions read is in flight (#741 1
     expect(client.getQueryData<typeof post>(key)!.versions[0]!.events).toHaveLength(1);
     expect(observer.getCurrentResult().status).toBe("success");
   });
+
+  it("a write whose response is lost converges onto a fresh read, not the stale first one", async () => {
+    const actual = await vi.importActual<typeof import("./project-data")>("./project-data");
+    vi.mocked(projectData.invalidateProjectSurfaces).mockImplementation(actual.invalidateProjectSurfaces);
+    const key = projectDataKeys.videoDecisions(P, V);
+    const pre = { versions: [{ assetId: A, version: 1, events: [], release: null }] };
+    const post = { versions: [{ assetId: A, version: 1, events: [event], release: null }] };
+    let resolveOld!: (value: unknown) => void;
+    api.apiGet.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+    api.apiGet.mockResolvedValueOnce(post);
+    const observer = new QueryObserver(client, { queryKey: key, queryFn: () => listVideoDecisions(P, V), staleTime: 15_000 });
+    const unsubscribe = observer.subscribe(() => {});
+    api.apiPost.mockRejectedValueOnce(new ApiError("offline", 0));
+    const write = recordClientDecision(ctx(), { decision: "approved" });
+    const settled = write.catch(() => undefined);
+    await vi.waitFor(() => expect(api.apiPost).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveOld(pre);
+    await settled;
+    await vi.waitFor(() => expect(observer.getCurrentResult().fetchStatus).toBe("idle"));
+    unsubscribe();
+    expect(client.getQueryData<typeof post>(key)!.versions[0]!.events).toHaveLength(1);
+    expect(observer.getCurrentResult().status).toBe("success");
+  });
 });

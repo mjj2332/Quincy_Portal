@@ -41,6 +41,9 @@ export function useVideoDecisionsQuery(projectId: string, videoId: string, enabl
 const retired = new WeakSet<object>();
 onPrincipalTerminal((queryClient) => { if (queryClient) retired.add(queryClient); });
 
+type Touches = "decisions" | "videos";
+const touchedKeys = (ctx: ApprovalWriteContext, touches: Touches) => (touches === "videos" ? [projectDataKeys.videos(ctx.projectId)] : [projectDataKeys.videoDecisions(ctx.projectId, ctx.videoId)]);
+
 const converge = (ctx: ApprovalWriteContext) => invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "video-decisions", videoId: ctx.videoId }, { kind: "videos" }], dashboard: false, calendar: false, gantt: false });
 
 /**
@@ -48,8 +51,11 @@ const converge = (ctx: ApprovalWriteContext) => invalidateProjectSurfaces(ctx.qu
  * Project or the gate is gone, so both are asked again; an archive is recorded and the Project re-read; a stale, duplicate, missing or conflicting answer (and a transport failure,
  * where the write may have landed) brings the Video's decisions up to date.
  */
-async function onFailure(ctx: ApprovalWriteContext, error: unknown): Promise<void> {
+async function onFailure(ctx: ApprovalWriteContext, error: unknown, touches: Touches): Promise<void> {
   terminatePrincipalOnUnauthorized(ctx.queryClient, error);
+  if (retired.has(ctx.queryClient)) return;
+  // A lost response may hide a committed write, so a read already in flight predates it just as on success: cancel it before any converge can dedupe onto it.
+  await cancelStaleReads(ctx, touchedKeys(ctx, touches));
   if (retired.has(ctx.queryClient)) return;
   const classified = classifyVideoApprovalError(error);
   if (classified.kind === "access") {
@@ -81,11 +87,11 @@ const applyWithdrawn = (ctx: ApprovalWriteContext) => patchVersion(ctx, (version
  */
 const cancelStaleReads = (ctx: ApprovalWriteContext, keys: ReadonlyArray<readonly unknown[]>) => Promise.all(keys.map((queryKey) => ctx.queryClient.cancelQueries({ queryKey, exact: true }, { revert: true })));
 
-async function run<T>(ctx: ApprovalWriteContext, send: () => Promise<T>, apply?: (value: T) => void, touches: "decisions" | "videos" = "decisions"): Promise<T> {
+async function run<T>(ctx: ApprovalWriteContext, send: () => Promise<T>, apply?: (value: T) => void, touches: Touches = "decisions"): Promise<T> {
   let value: T;
-  try { value = await send(); } catch (error) { await onFailure(ctx, error); throw error; }
+  try { value = await send(); } catch (error) { await onFailure(ctx, error, touches); throw error; }
   if (!retired.has(ctx.queryClient)) {
-    await cancelStaleReads(ctx, touches === "videos" ? [projectDataKeys.videos(ctx.projectId)] : [projectDataKeys.videoDecisions(ctx.projectId, ctx.videoId)]);
+    await cancelStaleReads(ctx, touchedKeys(ctx, touches));
     if (!retired.has(ctx.queryClient)) { apply?.(value); await converge(ctx); }
   }
   return value;
