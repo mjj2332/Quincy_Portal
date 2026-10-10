@@ -49,7 +49,7 @@ const converge = (ctx: ApprovalWriteContext) => invalidateProjectSurfaces(ctx.qu
 /**
  * What a refusal changes locally, before the caller sees the error: a 401 ends the captured person's data; an access refusal (403, or a 404 that is not a missing Release) means the
  * Project or the gate is gone, so both are asked again; an archive is recorded and the Project re-read; a stale, duplicate, missing or conflicting answer (and a transport failure,
- * where the write may have landed) brings the Video's decisions up to date.
+ * a server error or an unreadable success, where the write may have landed) brings the Video's decisions up to date.
  */
 async function onFailure(ctx: ApprovalWriteContext, error: unknown, touches: Touches): Promise<void> {
   terminatePrincipalOnUnauthorized(ctx.queryClient, error);
@@ -60,7 +60,7 @@ async function onFailure(ctx: ApprovalWriteContext, error: unknown, touches: Tou
   } else if (classified.kind === "archived") {
     await recordProjectArchivedRefusal(ctx.queryClient, ctx.projectId);
     await invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "detail" }], dashboard: false, calendar: false, gantt: false });
-  } else if (classified.kind === "stale" || classified.kind === "released" || classified.kind === "gone" || classified.kind === "conflict" || classified.kind === "network" || classified.kind === "not_approved") {
+  } else if (classified.kind === "stale" || classified.kind === "released" || classified.kind === "gone" || classified.kind === "conflict" || classified.kind === "network" || classified.kind === "uncertain" || classified.kind === "not_approved") {
     // A lost response may hide a committed write, so a read already in flight predates it just as on success: cancel it before the converge can dedupe onto it. Only here: a
     // cancelled read is put back to idle, and only a converge asks for it again.
     await cancelStaleReads(ctx, touchedKeys(ctx, touches));

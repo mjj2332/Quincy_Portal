@@ -16,8 +16,13 @@ describe("classifyVideoApprovalError (#741 14-ui-staff)", () => {
     expect(classifyVideoApprovalError(e(404, { code: "no_live_release" }))).toEqual({ kind: "gone" });
     expect(classifyVideoApprovalError(e(404, { error: "Version not found" }))).toEqual({ kind: "access" });
     expect(classifyVideoApprovalError(e(403))).toEqual({ kind: "access" });
-    expect(classifyVideoApprovalError(e(500))).toEqual({ kind: "other" });
-    expect(classifyVideoApprovalError(new Error("boom"))).toEqual({ kind: "other" });
+    expect(classifyVideoApprovalError(e(400))).toEqual({ kind: "other" });
+  });
+  it("treats a server error or an unreadable success as a write that may have landed", () => {
+    expect(classifyVideoApprovalError(e(500))).toEqual({ kind: "uncertain" });
+    expect(classifyVideoApprovalError(e(503))).toEqual({ kind: "uncertain" });
+    expect(classifyVideoApprovalError(new Error("boom"))).toEqual({ kind: "uncertain" });
+    expect(videoApprovalErrorText({ kind: "uncertain" })).toMatch(/may have been applied/i);
   });
   it("says something a person can act on for each kind", () => {
     expect(videoApprovalErrorText({ kind: "stale", current: 3 })).toMatch(/newer decision/i);

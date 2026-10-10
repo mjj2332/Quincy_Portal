@@ -1,14 +1,17 @@
 import { ApiError } from "./api";
 
 /** Which 14a refusal an error is (#741 14-ui-staff). Apart from the data layer so the store, which the collection loads eagerly, need not import the query code. */
-export type VideoApprovalErrorKind = "archived" | "stale" | "released" | "conflict" | "not_approved" | "gone" | "access" | "network" | "other";
+export type VideoApprovalErrorKind = "archived" | "stale" | "released" | "conflict" | "not_approved" | "gone" | "access" | "network" | "uncertain" | "other";
 export type ClassifiedVideoApprovalError = { kind: VideoApprovalErrorKind; /** `stale` only: the revision the server holds now (null when the latest event is gone). */ current?: number | null };
 
 const detailsOf = (error: ApiError): Record<string, unknown> => (error.details && typeof error.details === "object" ? error.details as Record<string, unknown> : {});
 
-/** A transport failure (status 0) is `network`: the write may have been applied, so nothing retries it. */
+/**
+ * A transport failure (status 0) is `network`: the write may have been applied, so nothing retries it. A server error (5xx) or an answer that is not an `ApiError` (a 2xx body the
+ * schema refused) is `uncertain` for the same reason: the route commits before it reads the row back, so a 500 can follow a saved decision.
+ */
 export function classifyVideoApprovalError(error: unknown): ClassifiedVideoApprovalError {
-  if (!(error instanceof ApiError)) return { kind: "other" };
+  if (!(error instanceof ApiError)) return { kind: "uncertain" };
   const code = detailsOf(error).code;
   if (error.status === 0) return { kind: "network" };
   if (error.status === 409 && code === "project_archived") return { kind: "archived" };
@@ -18,6 +21,7 @@ export function classifyVideoApprovalError(error: unknown): ClassifiedVideoAppro
   if (error.status === 422 && code === "not_approved") return { kind: "not_approved" };
   if (error.status === 404 && code === "no_live_release") return { kind: "gone" };
   if (error.status === 403 || error.status === 404) return { kind: "access" };
+  if (error.status >= 500) return { kind: "uncertain" };
   return { kind: "other" };
 }
 
@@ -32,6 +36,7 @@ export function videoApprovalErrorText(classified: ClassifiedVideoApprovalError)
     case "archived": return "This project is archived, so approvals, releases and premium are read-only.";
     case "access": return "You no longer have access to this. It has been refreshed.";
     case "network": return "Couldn't reach the server. The change may have been applied; check the list before trying again.";
+    case "uncertain": return "Something went wrong on the server. The change may have been applied; check the list before trying again.";
     case "other": return "That didn't go through. Try again.";
   }
 }

@@ -103,6 +103,16 @@ describe("video approval data (#741 14-ui-staff)", () => {
     await expect(releaseVideoVersion(ctx(), 2)).rejects.toBeInstanceOf(ApiError);
     expect(order).toEqual(["invalidate:video-decisions,videos"]);
   });
+
+  it("a server error or an unreadable success re-reads too: the decision may have committed before the 500", async () => {
+    api.apiPost.mockRejectedValueOnce(new ApiError("Internal", 500));
+    await expect(recordClientDecision(ctx(), { decision: "approved" } as never)).rejects.toBeInstanceOf(ApiError);
+    expect(order).toEqual(["invalidate:video-decisions,videos"]);
+    order.length = 0;
+    api.apiPost.mockResolvedValueOnce({ unexpected: true });
+    await expect(recordClientDecision(ctx(), { decision: "approved" } as never)).rejects.toBeTruthy();
+    expect(order).toEqual(["invalidate:video-decisions,videos"]);
+  });
 });
 
 describe("video approval data applies the write's answer to the cache before converging (#741 14-ui-staff)", () => {
