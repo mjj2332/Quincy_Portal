@@ -6160,3 +6160,12 @@ Tags: css-tokens · #741
 - **Rule.** Write arbitrary values out literally. To share one with another file, export the whole literal class string, not the pieces. Only a real browser (computed style) proves a class-only fix; jsdom has no Tailwind CSS.
 
 Guards: `apps/web/src/styles/tailwind-literal-class.guard.test.ts`.
+
+## A fan-out `INSERT ... SELECT` needs an id per row, so the id is SQL (#741 15b)
+Tags: notifications, d1-migrations · #741
+
+- **What bit.** The client digest producers write one `guest_notification_digest` row per subscribed member in a single `INSERT ... SELECT`. A bound `newId()` is the same value on every row, so the second member would collide on the primary key; and the number of rows is not known to the Worker (it is the number of members at commit time).
+- **Rule.** Mint the id inside the statement with `SQL_UUID_V4` (`lib/sql-uuid.ts`: `randomblob` is evaluated per output row, version nibble `4`, variant `8|9|a|b`), tested against 500 rows of one statement. Fence the statement on the source write's audit row and put the feature gate inside it (not a pre-read), so a part turned off before the batch commits produces nothing.
+- **Cross-Worker token contract.** The unsubscribe token is minted by the background Worker and looked up by the app Worker, and the background Worker cannot import `workers/app/src`. Both store/compare plain SHA-256 hex of the base64url token; `guest-digest.integration.test.ts` checks the stored hash against an independent SHA-256 and `guest-subscription.test.ts` pins the app side, so a change to either hash fails a test.
+
+Guards: `workers/app/test/sql-uuid.test.ts`, `workers/app/test/guest-digest-producers.test.ts`, `workers/background/test/guest-digest.integration.test.ts`.

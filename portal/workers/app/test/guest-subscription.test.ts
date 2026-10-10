@@ -58,6 +58,13 @@ const probe = async (response: Response) => ({ status: response.status, body: aw
 const stubBody = async () => probe(await guestFetch("/d"));
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+describe("the token contract with the background Worker", () => {
+  it("hashes a token as plain SHA-256 hex, which is what the digest flush stores (the Workers cannot share code)", async () => {
+    expect(await hashToken("abc")).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    expect(randomToken()).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+});
+
 describe("POST /d/api/unsubscribe", () => {
   it("unsubscribes the membership the token names, answers the state, audits once with no actor, and drops the pending digest rows", async () => {
     const link = await verifiedLink(); await seedPending(link); const token = await mintToken(link.memberId);
