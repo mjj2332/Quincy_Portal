@@ -397,6 +397,19 @@ describe("Compare: layout (#741 7c)", () => {
     expect(a.paused).toBe(true);
   });
 
+  it("the trigger shows version and date only; the menu items carry the uploader too", async () => {
+    await openCompare();
+    const trigger = tid("video-compare-select-b")!.textContent!;
+    expect(trigger).toContain("v2");
+    expect(trigger).toMatch(/\d{1,2} \w{3} \d{4}/);
+    expect(trigger).not.toContain("Mia Chen");
+    await openSelect("video-compare-select-b");
+    const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')];
+    expect(options.length).toBeGreaterThan(0);
+    for (const option of options) expect(option.textContent).toMatch(/^v\d+.* · .+ · \d{1,2} \w{3} \d{4}$/);
+    await key("Escape", options[0]!);
+  });
+
   it("a side cannot pick the Version the other side shows", async () => {
     await openCompare();
     await openSelect("video-compare-select-b");
@@ -527,7 +540,7 @@ describe("Compare: the offset (#741 7c)", () => {
     await openCompare({}, 5);
     stub.writes.length = 0;
     await commit("5000");
-    expect(tid("video-compare-offset-notice")!.textContent).toMatch(/between .*299/);
+    expect(tid("video-compare-offset-notice")!.textContent).toBe("5000 is out of range (\u2212299 to 299). The offset stays at 0.");
     expect(stub.writes).toEqual([]);
     expect(cell("b").textContent).not.toContain("Starts in");
   });
@@ -542,7 +555,7 @@ describe("Compare: the offset (#741 7c)", () => {
     expect(stub.callsOf(vid("a"))).not.toContain("pause");
     await blurField();
     await flush(2);
-    expect(tid("video-compare-offset-notice")!.textContent).toMatch(/between .*299/);
+    expect(tid("video-compare-offset-notice")!.textContent).toBe("99999 is out of range (\u2212299 to 299). The offset stays at 0.");
   });
 
   it("Enter commits the typed offset", async () => {
@@ -598,7 +611,7 @@ describe("Compare: the offset (#741 7c)", () => {
     await openCompare({}, 5);
     await commit("12");
     await commit("5000");
-    expect(tid("video-compare-offset-notice")!.textContent).toMatch(/between .*299/);
+    expect(tid("video-compare-offset-notice")!.textContent).toBe("5000 is out of range (\u2212299 to 299). The offset stays at 12.");
     expect(cell("b").textContent).toContain("Starts in");
     expect(cell("b").textContent).toContain("7");
     expect(offsetInput().value).toBe("12");

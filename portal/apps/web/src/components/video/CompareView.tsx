@@ -39,6 +39,8 @@ const clamp = (value: number, low: number, high: number) => Math.min(high, Math.
 const sameRate = (a: VideoVersionDto, b: VideoVersionDto) => a.fps.num * b.fps.den === b.fps.num * a.fps.den;
 const aspect = (v: VideoVersionDto) => v.width / v.height;
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+/** The select trigger's short label (version and date) so two of them fit the toolbar at 1280; the menu items carry the full `versionLabel`. */
+const versionShortLabel = (v: VideoVersionDto, newest: number) => `v${v.version}${v.version === newest ? " · latest" : ""} · ${formatVideoDate(v.createdAt)}`;
 const versionLabel = (v: VideoVersionDto, newest: number) => `v${v.version}${v.version === newest ? " · latest" : ""} · ${v.uploadedBy.name} · ${formatVideoDate(v.createdAt)}`;
 
 /**
@@ -168,7 +170,8 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
     const target = next;
     if (transport.setOffset(target)) { setOffsetProblem(null); return; }
     const bounds = transport.offsetBounds();
-    setOffsetProblem(`Offset must be a whole number of frames between ${bounds.min} and ${bounds.max}.`);
+    const signed = (n: number) => String(n).replace("-", "\u2212");
+    setOffsetProblem(`${signed(target)} is out of range (${signed(bounds.min)} to ${signed(bounds.max)}). The offset stays at ${signed(offset)}.`);
   };
 
   // --- wipe geometry: over the union of both pictures, not the letterbox ---
@@ -222,8 +225,8 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
     return <div className="flex min-w-36 max-w-[22rem] flex-[1_1_0] items-center gap-[var(--space-2)]">
       <Label htmlFor={id} className="shrink-0 text-foreground-secondary">{labels[target]}</Label>
       <Select value={mine.assetId} onValueChange={(next) => { if (typeof next === "string" && next !== mine.assetId) onChangeSide(target, next); }}>
-        <SelectTrigger id={id} data-testid={id} className={cn(BAR, "min-w-0 max-w-full")}>
-          <SelectValue>{() => <span className="block truncate">{versionLabel(mine, newest)}</span>}</SelectValue>
+        <SelectTrigger id={id} data-testid={id} className={cn(BAR, "w-full min-w-0")}>
+          <SelectValue>{() => <span className="block truncate">{versionShortLabel(mine, newest)}</span>}</SelectValue>
         </SelectTrigger>
         <SelectContent className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
           {video.versions.map((candidate) => <SelectItem key={candidate.assetId} value={candidate.assetId} disabled={candidate.assetId === theirs.assetId} className={TOOL}>{versionLabel(candidate, newest)}</SelectItem>)}
@@ -294,7 +297,7 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
         <IconTip label="Reset offset">
           <UiButton type="button" variant="ghost" size="icon" aria-label="Reset offset" data-testid="video-compare-offset-reset" className={COARSE} disabled={!ready || offset === 0} onClick={() => { commitOffset(0); }}><RotateCcw aria-hidden="true" /></UiButton>
         </IconTip>
-        <span data-testid="video-compare-offset-help" className="text-foreground-secondary [font:var(--type-label)]">{`e.g. +12: ${labels.b} starts 12 frames after ${labels.a}`}</span>
+        <span data-testid="video-compare-offset-help" className={cn("flex h-8 items-center text-foreground-secondary [font:var(--type-label)]", TOOL)}>{`e.g. +12: ${labels.b} starts 12 frames after ${labels.a}`}</span>
       </div>
 
       {offsetProblem && <div data-surface="default"><Notice tone="caution" className="bg-card" role="status" data-testid="video-compare-offset-notice">{offsetProblem}</Notice></div>}
