@@ -18,10 +18,11 @@ const BODY = "m-0 whitespace-pre-wrap text-foreground [font:var(--weight-regular
 const PROBLEM = "m-0 text-destructive [font:var(--type-body-sm)]";
 
 /** What a note action came to. `message` is what to tell the guest, or null when the answer is not for this form any more (a stale one). */
-export type ActionOutcome = { ok: true } | { ok: false; message: string | null };
+/** `saved` is a write that landed but whose answer is not for this view any more (the guest went to All videos meanwhile): the form's draft is done with all the same. `conflict` is the thread a conflict answered with: the latest version the guest was shown. */
+export type ActionOutcome = { ok: true } | { ok: false; message: string | null; saved?: boolean; conflict?: GuestNoteThreadDto };
 export type NoteActions = {
   reply: (root: GuestNoteThreadDto, body: string) => Promise<ActionOutcome>;
-  edit: (root: GuestNoteThreadDto, note: GuestNoteDto, body: string) => Promise<ActionOutcome>;
+  edit: (root: GuestNoteThreadDto, note: GuestNoteDto, body: string, expectedRevision: number) => Promise<ActionOutcome>;
   remove: (root: GuestNoteThreadDto, note: GuestNoteDto) => Promise<ActionOutcome>;
 };
 export type Writing = {
@@ -86,10 +87,15 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
     if (editDraft === null || editingNote === null || editStatus.pending) return;
     const text = editDraft.text.trim();
     if (text === "") { setEditStatus({ pending: false, problem: "A note can't be empty." }); return; }
-    if (text === editingNote.body) { drafts.clear(editKey); setEditStatus(IDLE); return; }
+    if (text === editDraft.baseText) { drafts.clear(editKey); setEditStatus(IDLE); return; }
     setEditStatus({ pending: true, problem: null });
-    const outcome = await writing.actions.edit(thread, editingNote, text);
-    if (outcome.ok) { drafts.clearIf(editKey, editDraft.rev); setEditStatus(IDLE); } else setEditStatus({ pending: false, problem: outcome.message });
+    const sent = editDraft;
+    const outcome = await writing.actions.edit(thread, editingNote, text, sent.ackRevision ?? sent.baseRevision ?? editingNote.revision);
+    if (outcome.ok || outcome.saved === true) { drafts.clearIf(editKey, sent.rev); setEditStatus(IDLE); return; }
+    // A conflict showed the guest the latest version: saving again is their acknowledgement, so the base moves to it (and only then).
+    const shown = outcome.conflict === undefined ? undefined : [outcome.conflict, ...outcome.conflict.replies].find((candidate) => candidate.id === editingNote.id);
+    if (shown !== undefined) { const current = drafts.get(editKey); if (current !== null && current.rev === sent.rev) drafts.set(editKey, { ...current, ackRevision: shown.revision }); }
+    setEditStatus({ pending: false, problem: outcome.message });
   };
   const sendReply = async (event: FormEvent) => {
     event.preventDefault();
@@ -97,8 +103,9 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
     const text = replyDraft.text.trim();
     if (text === "") { setReplyStatus({ pending: false, problem: "Write a reply first." }); return; }
     setReplyStatus({ pending: true, problem: null });
+    const sent = replyDraft;
     const outcome = await writing.actions.reply(thread, text);
-    if (outcome.ok) { drafts.clearIf(replyKey, replyDraft.rev); setReplyStatus(IDLE); } else setReplyStatus({ pending: false, problem: outcome.message });
+    if (outcome.ok || outcome.saved === true) { drafts.clearIf(replyKey, sent.rev); setReplyStatus(IDLE); } else setReplyStatus({ pending: false, problem: outcome.message });
   };
   const confirmDelete = async () => {
     if (deleting === null || deletingNote === null || deleting.pending) return;
@@ -109,14 +116,14 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
 
   const menu = (note: GuestNoteDto) => own(note)
     ? <Menu triggerLabel="Actions for your note" label="Note actions" triggerClassName={cn(ICON_BUTTON, "ms-auto")} triggerTestId="guest-note-actions" trigger={<span aria-hidden="true">⋯</span>}>
-      <MenuPrimitive.Item className={MENU_ITEM} disabled={busy || (note.id === thread.id && writing.composerOpen)} onClick={() => { if (note.id === thread.id) writing.editRoot(thread); else { setEditStatus(IDLE); drafts.set(editKey, { noteId: note.id, baseRevision: note.revision, text: note.body }); } }}>Edit</MenuPrimitive.Item>
+      <MenuPrimitive.Item className={MENU_ITEM} disabled={busy || (note.id === thread.id && writing.composerOpen)} onClick={() => { if (note.id === thread.id) writing.editRoot(thread); else { setEditStatus(IDLE); drafts.set(editKey, { noteId: note.id, baseRevision: note.revision, baseText: note.body, ackRevision: null, text: note.body }); } }}>Edit</MenuPrimitive.Item>
       <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={busy} onClick={() => { setDeleting({ noteId: note.id, problem: null, pending: false }); }}>Delete</MenuPrimitive.Item>
     </Menu>
     : null;
 
   const body = (note: GuestNoteDto) => editDraft !== null && editDraft.noteId === note.id
     ? <form data-testid="guest-note-edit-form" aria-label="Edit your note" onSubmit={(event) => { void saveEdit(event); }} noValidate className="flex flex-col gap-[var(--space-2)]">
-      <Textarea data-testid="guest-note-edit-body" aria-label="Your note" autoFocus value={editDraft.text} disabled={editStatus.pending} onChange={(event) => { drafts.set(editKey, { noteId: editDraft.noteId, baseRevision: editDraft.baseRevision, text: event.target.value }); }} />
+      <Textarea data-testid="guest-note-edit-body" aria-label="Your note" autoFocus value={editDraft.text} disabled={editStatus.pending} onChange={(event) => { drafts.set(editKey, { ...editDraft, text: event.target.value }); }} />
       {editDraft.baseRevision !== note.revision && <p data-testid="guest-note-edit-latest" className="m-0 whitespace-pre-wrap text-foreground-secondary [font:var(--type-body-sm)] [overflow-wrap:anywhere]">{`Latest saved version: ${note.body}`}</p>}
       {editStatus.problem !== null && <p role="alert" data-testid="guest-note-edit-problem" className={PROBLEM}>{editStatus.problem}</p>}
       <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
@@ -140,9 +147,9 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
         {body(reply)}
       </div>)}
       {writing.canWrite && !thread.deleted && (replyDraft === null
-        ? <div><Button type="button" variant="ghost" size="sm" data-testid="guest-note-reply-button" className={TOUCH} disabled={busy} onClick={() => { if (!writing.verified) writing.onNeedVerify(); else { setReplyStatus(IDLE); drafts.set(replyKey, { noteId: null, baseRevision: null, text: "" }); } }}>Reply</Button></div>
+        ? <div><Button type="button" variant="ghost" size="sm" data-testid="guest-note-reply-button" className={TOUCH} disabled={busy} onClick={() => { if (!writing.verified) writing.onNeedVerify(); else { setReplyStatus(IDLE); drafts.set(replyKey, { noteId: null, baseRevision: null, baseText: "", ackRevision: null, text: "" }); } }}>Reply</Button></div>
         : <form data-testid="guest-reply-form" aria-label="Reply" onSubmit={(event) => { void sendReply(event); }} noValidate className="flex flex-col gap-[var(--space-2)]">
-          <Textarea data-testid="guest-reply-body" aria-label="Your reply" autoFocus value={replyDraft.text} disabled={replyStatus.pending} onChange={(event) => { drafts.set(replyKey, { noteId: null, baseRevision: null, text: event.target.value }); }} />
+          <Textarea data-testid="guest-reply-body" aria-label="Your reply" autoFocus value={replyDraft.text} disabled={replyStatus.pending} onChange={(event) => { drafts.set(replyKey, { ...replyDraft, text: event.target.value }); }} />
           {replyStatus.problem !== null && <p role="alert" data-testid="guest-reply-problem" className={PROBLEM}>{replyStatus.problem}</p>}
           <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
             <Button type="button" variant="ghost" size="sm" data-testid="guest-reply-cancel" className={TOUCH} disabled={replyStatus.pending} onClick={() => { drafts.clear(replyKey); setReplyStatus(IDLE); }}>Cancel</Button>

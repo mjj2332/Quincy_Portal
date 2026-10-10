@@ -1,7 +1,7 @@
 import type { WriteResult } from "./guest-api";
 
 /** A write that was not sent because one for the same key is still out, or whose answer arrived after the screen or Version it was made in had gone. Neither changes anything. */
-export type Skipped = { kind: "busy" } | { kind: "stale" };
+export type Skipped = { kind: "busy" } | { kind: "stale"; /** What the write came to, which the caller may need even though the answer does not apply to the screen now on show (a reply that was saved must clear its draft). */ result: WriteResult };
 export type Run = (key: string, call: () => Promise<WriteResult>) => Promise<WriteResult | Skipped>;
 
 /** What the screen on show tells the writer: the Version it is on, what a refusal that changes the page does, and what to do when a write started on an earlier screen settles. All three are read live. */
@@ -43,7 +43,7 @@ export function createGuestWriter(): GuestWriter {
     try { result = await call(); } finally { inflight.delete(key); epoch += 1; }
     if (bound === null || bound !== startedBinding || bound.scope !== startedScope) {
       if (bound !== null && bound !== startedBinding) bound.onLostSettle();
-      return { kind: "stale" };
+      return { kind: "stale", result };
     }
     if (result.kind === "unverified") bound.effects.onUnverified();
     else if (result.kind === "gone") bound.effects.onGone();

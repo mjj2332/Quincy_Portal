@@ -831,6 +831,138 @@ describe("round 2 findings", () => {
   });
 });
 
+describe("round 4 findings", () => {
+  const reply7 = (over: Partial<GuestNoteThreadDto> = {}) => (({ replies: _replies, ...rest }) => rest)(mine(7, { parentId: noteId(1), startFrame: null, body: "Will do", revision: 2, ...over }));
+  const conflict = (thread: GuestNoteThreadDto) => json({ error: "note_conflict", thread }, 409);
+
+  it("a root edit saved after the list moved on still sends the revision it was opened on, and the conflict shows", async () => {
+    notes = { [asset(10)]: [mine(2, { revision: 3 })] };
+    let mode: "unverified" | "conflict" = "unverified";
+    extra = (url, init) => {
+      if (url === `${BASE}/notes/${noteId(2)}` && init?.method === "PATCH") return mode === "unverified" ? json({ error: "verification_required" }, 401) : conflict(mine(2, { revision: 5, body: "Edited elsewhere" }));
+      if (url === `${BASE}/email/code` && init?.method === "POST") return json({ sent: true, resendAfterSeconds: 60 }, 202);
+      if (url === `${BASE}/email/verify` && init?.method === "POST") { session = VERIFIED; return json(VERIFIED); }
+      return undefined;
+    };
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    await typeInto(byId("guest-composer-body"), "Reworded");
+    await submit("guest-composer");
+    // Someone else edits the note while the guest re-verifies; the notes read after it carries the new revision.
+    notes = { [asset(10)]: [mine(2, { revision: 5, body: "Edited elsewhere" })] };
+    mode = "conflict";
+    await typeInto(byId("guest-verify-email"), "sam@example.com");
+    await typeInto(byId("guest-verify-name"), "Sam");
+    await submit("guest-verify-identity-form");
+    await typeInto(byId("guest-verify-code"), "123456");
+    await flush();
+    await submit("guest-composer");
+    const patches = requests("PATCH");
+    expect(patches.length).toBeGreaterThanOrEqual(2);
+    expect(patches.at(-1)!.body).toEqual({ expectedRevision: 3, body: "Reworded" });
+    expect(byId("guest-composer-problem")?.textContent).toMatch(/changed/i);
+    expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("Reworded");
+  });
+
+  it("a reply edit saved after the guest left and came back sends the revision it was opened on, and the conflict shows", async () => {
+    videos = [videoOf(1), videoOf(2)];
+    notes = { [asset(10)]: [{ ...note(1), replies: [reply7()] }] };
+    extra = (url, init) => (url === `${BASE}/notes/${noteId(7)}` && init?.method === "PATCH"
+      ? conflict({ ...note(1), replies: [reply7({ revision: 4, body: "Edited elsewhere" })] }) : undefined);
+    await open();
+    await click(button("Open Film 1"));
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    await typeInto(byId("guest-note-edit-body"), "Will do it");
+    await click(button("All videos"));
+    notes = { [asset(10)]: [{ ...note(1), replies: [reply7({ revision: 4, body: "Edited elsewhere" })] }] };
+    await click(button("Open Film 1"));
+    await submit("guest-note-edit-form");
+    expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 2, body: "Will do it" });
+    expect(byId("guest-note-edit-problem")?.textContent).toMatch(/changed/i);
+    expect((byId("guest-note-edit-body") as HTMLTextAreaElement).value).toBe("Will do it");
+    // The guest has now been shown the latest version; saving again is the acknowledgement and moves the base forward.
+    extra = (url, init) => (url === `${BASE}/notes/${noteId(7)}` && init?.method === "PATCH" ? json({ ...note(1), replies: [reply7({ revision: 5, body: "Will do it" })] }) : undefined);
+    await submit("guest-note-edit-form");
+    expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 4, body: "Will do it" });
+  });
+
+  it("a reply edit whose text equals the body it started from is unchanged, even if the list body moved", async () => {
+    videos = [videoOf(1), videoOf(2)];
+    notes = { [asset(10)]: [{ ...note(1), replies: [reply7()] }] };
+    await open();
+    await click(button("Open Film 1"));
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    await click(button("All videos"));
+    notes = { [asset(10)]: [{ ...note(1), replies: [reply7({ revision: 4, body: "Edited elsewhere" })] }] };
+    await click(button("Open Film 1"));
+    await submit("guest-note-edit-form");
+    expect(requests("PATCH")).toHaveLength(0);
+    expect(byId("guest-note-edit-form")).toBeNull();
+  });
+
+  it("a reply that was saved while the guest was on All videos leaves no draft behind when the thread is reopened", async () => {
+    videos = [videoOf(1), videoOf(2)];
+    notes = { [asset(10)]: [note(1)] };
+    let release: () => void = () => undefined;
+    extra = (url, init) => {
+      if (url === `${BASE}/notes/${noteId(1)}/replies` && init?.method === "POST") {
+        return new Promise<Response>((resolve) => {
+          release = () => {
+            const saved = { ...note(1), replies: [(({ replies: _replies, ...rest }) => rest)(mine(7, { parentId: noteId(1), startFrame: null, body: "Will do" }))] };
+            notes[asset(10)] = [saved];
+            resolve(json(saved, 201));
+          };
+        });
+      }
+      return undefined;
+    };
+    await open();
+    await click(button("Open Film 1"));
+    await click(byId("guest-note-reply-button"));
+    await typeInto(byId("guest-reply-body"), "Will do");
+    await submit("guest-reply-form");
+    await click(button("All videos"));
+    await act(async () => { release(); });
+    await flush();
+    await click(button("Open Film 1"));
+    expect(allById("guest-note-reply")).toHaveLength(1);
+    expect(byId("guest-reply-form")).toBeNull();
+  });
+
+  it("a reply edit that was saved while the guest was on All videos leaves no edit draft behind", async () => {
+    videos = [videoOf(1), videoOf(2)];
+    notes = { [asset(10)]: [{ ...note(1), replies: [reply7()] }] };
+    let release: () => void = () => undefined;
+    extra = (url, init) => {
+      if (url === `${BASE}/notes/${noteId(7)}` && init?.method === "PATCH") {
+        return new Promise<Response>((resolve) => {
+          release = () => {
+            const saved = { ...note(1), replies: [reply7({ revision: 3, body: "Done" })] };
+            notes[asset(10)] = [saved];
+            resolve(json(saved));
+          };
+        });
+      }
+      return undefined;
+    };
+    await open();
+    await click(button("Open Film 1"));
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    await typeInto(byId("guest-note-edit-body"), "Done");
+    await submit("guest-note-edit-form");
+    await click(button("All videos"));
+    await act(async () => { release(); });
+    await flush();
+    await click(button("Open Film 1"));
+    expect(byId("guest-note-edit-form")).toBeNull();
+    expect(allById("guest-note-body").map((item) => item.textContent)).toContain("Done");
+  });
+});
+
 describe("the phone drawer", () => {
   beforeEach(async () => { await viewport.set({ width: 390, coarse: true }); });
   const drawer = () => document.querySelector('[data-testid="guest-notes-drawer"][data-open]');

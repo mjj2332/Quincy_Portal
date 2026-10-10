@@ -207,7 +207,8 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
   }, [api, writer, onUnavailable]);
   resyncRef.current = resync;
   const settle = useCallback((result: WriteResult | Skipped, rootId: string | null): ActionOutcome => {
-    if (result.kind === "stale") return { ok: false, message: null };
+    // A stale answer changes nothing on this screen, but a write that landed is still a write that landed: the form that sent it is done.
+    if (result.kind === "stale") return result.result.kind === "ok" ? { ok: false, message: null, saved: true } : { ok: false, message: null };
     if (result.kind === "busy") return { ok: false, message: "Another change to this note is still saving." };
     if (result.kind === "ok" || result.kind === "conflict") {
       if (result.thread !== null) { const fresh = result.thread; setThreads((list) => (list === null ? list : upsertThread(list, fresh))); }
@@ -215,19 +216,20 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
     } else if (result.kind === "deleted") setNotesAttempt((n) => n + 1);
     else if (result.kind === "unreachable") resync(); // the write may have landed: look before the guest sends it again
     const message = failureText(result);
-    return message === null ? { ok: true } : { ok: false, message };
+    if (message === null) return { ok: true };
+    return result.kind === "conflict" ? { ok: false, message, conflict: result.thread } : { ok: false, message };
   }, [resync]);
   const assetForWrites = version.assetId;
   const post = useCallback(async (input: Parameters<GuestApi["createNote"]>[1]) => settle(await writer.run(`new:${assetForWrites}`, () => api.createNote(assetForWrites, input)), null), [api, writer, settle, assetForWrites]);
-  const editRoot = useCallback(async (id: string, patch: EditPatch): Promise<ActionOutcome> => {
+  const editRoot = useCallback(async (id: string, patch: EditPatch, expectedRevision: number): Promise<ActionOutcome> => {
     const current = threadsRef.current?.find((thread) => thread.id === id);
     if (current === undefined || current.deleted) return { ok: false, message: "This note was deleted." };
-    return settle(await writer.run(id, () => api.editNote(id, { expectedRevision: current.revision, ...patch })), id);
+    return settle(await writer.run(id, () => api.editNote(id, { expectedRevision, ...patch })), id);
   }, [api, writer, settle]);
   const latestOf = useCallback((id: string) => threads?.find((thread) => thread.id === id) ?? null, [threads]);
   const actions = useMemo<NoteActions>(() => ({
     reply: async (root, body) => settle(await writer.run(root.id, () => api.replyToNote(root.id, body)), root.id),
-    edit: async (root, note, body) => settle(await writer.run(root.id, () => api.editNote(note.id, { expectedRevision: note.revision, body })), root.id),
+    edit: async (root, note, body, expectedRevision) => settle(await writer.run(root.id, () => api.editNote(note.id, { expectedRevision, body })), root.id),
     remove: async (root, note) => settle(await writer.run(root.id, () => api.deleteNote(note.id, note.revision)), note.id === root.id ? root.id : null),
   }), [api, writer, settle]);
 

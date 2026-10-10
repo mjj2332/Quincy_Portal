@@ -19,7 +19,7 @@ const FRAME_CONFIRM_TIMEOUT_MS = 10_000;
 const FIELD = "input, textarea, select, [contenteditable]:not([contenteditable='false'])";
 
 /** What the post came to: `message` is what to tell the guest, or null when the answer is not for this composer any more (a stale one). */
-export type PostOutcome = { ok: true } | { ok: false; message: string | null };
+export type PostOutcome = { ok: true } | { ok: false; message: string | null; saved?: boolean; conflict?: GuestNoteThreadDto };
 
 const frameOnScreen = (state: Pick<FrameClockState, "playing" | "frame" | "targetFrame">): number => (state.playing ? state.frame : (state.targetFrame ?? state.frame));
 const pointOf = (rect: DOMRect, event: PointerSample): FreehandPoint => ({
@@ -55,9 +55,9 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
   timecode: (frame: number) => string;
   markupAllowed: boolean;
   post: (input: GuestNoteCreateInput) => Promise<PostOutcome>;
-  /** Saves the edit draft of the note `id`. The caller supplies the note's current revision. */
-  edit: (id: string, patch: EditPatch) => Promise<PostOutcome>;
-  /** The note `id` as the page holds it now (its revision moves when a save conflicts), or null when it is gone. */
+  /** Saves the edit draft of the note `id`, sending `expectedRevision`: the revision the draft was opened on, or the one a conflict showed the guest (never the list's, which may have moved unseen). */
+  edit: (id: string, patch: EditPatch, expectedRevision: number) => Promise<PostOutcome>;
+  /** The note `id` as the page holds it now, for showing the latest version beside the draft, or null when it is gone. */
   latestOf: (id: string) => GuestNoteThreadDto | null;
   /** True while the pen is on the picture (the phone drawer must get out of its way), false when it is put down. */
   onDrawingChange?: (drawing: boolean) => void;
@@ -79,7 +79,7 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
   const [pending, setPending] = useState(false);
   const [pen, setPen] = useState<MarkupTool>(PEN);
   const [refusedFor, setRefusedFor] = useState<readonly MarkupItem[] | null>(null);
-  const [target, setTarget] = useState<{ id: string; baseline: EditBaseline; baseRevision: number } | null>(null);
+  const [target, setTarget] = useState<{ id: string; baseline: EditBaseline; baseRevision: number; ackRevision: number | null } | null>(null);
   const [removed, setRemoved] = useState(false);
   const compact = useMediaQuery("(max-width: 720px)");
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -101,7 +101,7 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
   const beginEdit = useCallback((thread: GuestNoteThreadDto) => {
     if (thread.startFrame === null) return;
     reset();
-    setTarget({ id: thread.id, baseRevision: thread.revision, baseline: { body: thread.body, startFrame: thread.startFrame, endFrame: thread.endFrame, hadDrawing: thread.hasMarkup } });
+    setTarget({ id: thread.id, baseRevision: thread.revision, ackRevision: null, baseline: { body: thread.body, startFrame: thread.startFrame, endFrame: thread.endFrame, hadDrawing: thread.hasMarkup } });
     setBody(thread.body);
     setMarks({ in: thread.startFrame, out: thread.endFrame === null ? null : thread.endFrame - 1 });
     setOpen(true);
@@ -193,7 +193,8 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
       if (!built.ok) { setProblem(built.problem); return; }
       if (built.patch === null) { close(); return; }
       const { patch } = built;
-      send = () => edit(target.id, patch);
+      const expected = target.ackRevision ?? target.baseRevision;
+      send = () => edit(target.id, patch, expected);
     }
     const mine = ++opId.current;
     setPending(true); setProblem(null);
@@ -202,6 +203,8 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
     if (opId.current !== mine) return;
     if (outcome.ok) { close(); return; }
     setPending(false);
+    // A conflict showed the guest the latest version: saving again is their acknowledgement, so the base moves to it (and only then).
+    if (outcome.conflict !== undefined) { const shown = outcome.conflict.revision; setTarget((current) => (current === null ? current : { ...current, ackRevision: shown })); }
     if (outcome.message !== null) setProblem(outcome.message);
   };
 

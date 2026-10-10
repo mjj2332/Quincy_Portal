@@ -1,7 +1,18 @@
 import { useSyncExternalStore } from "react";
 
-/** An inline note form the guest has open: a reply (`noteId` null) or an edit of one note of the thread (`noteId`). `rev` moves on every change, so a completion can tell whether the draft it sent is still the draft on show. */
-export type NoteDraft = { noteId: string | null; text: string; baseRevision: number | null; rev: number };
+/** An inline note form the guest has open: a reply (`noteId` null) or an edit of one note of the thread (`noteId`). */
+export type NoteDraft = {
+  noteId: string | null;
+  text: string;
+  /** The body the draft started from; "unchanged" is judged against this, not the list's body, which may have moved since. */
+  baseText: string;
+  /** The revision the draft was opened on. A save always sends this (or `ackRevision`), never the list's current revision, so an edit made elsewhere meanwhile is a conflict, not an overwrite. */
+  baseRevision: number | null;
+  /** The revision a conflict answer showed the guest; set only by that answer, so saving again is the guest's acknowledgement. */
+  ackRevision: number | null;
+  /** Moves on every change, so a completion can tell whether the draft it sent is still the draft on show. */
+  rev: number;
+};
 
 export type GuestDrafts = {
   get: (key: string) => NoteDraft | null;
