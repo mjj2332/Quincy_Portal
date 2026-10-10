@@ -6,7 +6,7 @@ import { auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { hashToken, randomToken } from "../lib/opaque-token";
 import type { AppEnv } from "../env";
-import { guestNotFound, guestRoute, originRejection, readSessionCookie, SESSION_MAX_MS, sessionCookieHeader, timingSafeEqualStrings, UUID, withHygiene } from "./http";
+import { guestNotFound, guestRoute, originRejection, readSessionCookie, SESSION_MAX_MS, readBoundedText, sessionCookieHeader, timingSafeEqualStrings, UUID, withHygiene } from "./http";
 import { guestGloballyOpen, loadActiveLink, resolveSession, sessionBody } from "./link";
 import { clientAddress, GUEST_LIMITS, ipBucket, reserveAttempts, windowStart } from "./rate-limit";
 import { listGuestNotes, listGuestVideos, readGuestMarkup, resolveGrantedVersion } from "./read";
@@ -18,11 +18,11 @@ import { listGuestNotes, listGuestVideos, readGuestMarkup, resolveGrantedVersion
  * wrongly credentialled it was. The order on each route: link id, gate, Origin (unsafe methods), then credential. See docs/maps/routes.md.
  */
 const POSTER_HEADERS = { "content-type": "image/jpeg", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox", "cross-origin-resource-policy": "same-origin" } as const;
-const BODY_MAX = 2048;
+const TOO_LARGE = Symbol("too_large");
 
-async function readJson(c: Context<AppEnv>): Promise<unknown | typeof INVALID> {
-  const text = await c.req.text();
-  if (text.length > BODY_MAX) return INVALID;
+async function readJson(c: Context<AppEnv>): Promise<unknown | typeof INVALID | typeof TOO_LARGE> {
+  const text = await readBoundedText(c.req.raw);
+  if (text === null) return TOO_LARGE;
   try { return JSON.parse(text) as unknown; } catch { return INVALID; }
 }
 const INVALID = Symbol("invalid");
@@ -40,7 +40,9 @@ async function startSession(c: Context<AppEnv, "/d/api/links/:linkId/session">):
   if (exchange.limited) return tooMany(exchange.retryAfterSeconds);
   const link = await loadActiveLink(c, linkId, now);
   if (!link) return guestNotFound(c);
-  const raw = await readJson(c); const parsed = raw === INVALID ? null : guestSessionInputSchema.safeParse(raw);
+  const raw = await readJson(c);
+  if (raw === TOO_LARGE) return c.json({ error: "payload_too_large" }, 413);
+  const parsed = raw === INVALID ? null : guestSessionInputSchema.safeParse(raw);
   if (!parsed?.success) return c.json({ error: "invalid_request" }, 400);
   // The token is compared as hashes in constant time; a wrong, malformed or other link's token falls through to the stub.
   if (!timingSafeEqualStrings(await hashToken(parsed.data.token), link.tokenHash)) return guestNotFound(c);
@@ -50,9 +52,9 @@ async function startSession(c: Context<AppEnv, "/d/api/links/:linkId/session">):
     if (attempt.limited) return tooMany(attempt.retryAfterSeconds);
     if (!await verifyPasscode(link.passcodeHash, parsed.data.passcode)) return c.json({ error: "passcode_incorrect" }, 401);
   }
-  const sessionToken = randomToken(); const sessionId = newId(); const expiresAt = Math.min(now + SESSION_MAX_MS, link.expiresAt);
+  const sessionToken = randomToken(); const sessionId = newId();
   // The INSERT repeats the link fence, so a revoke, replace, passcode change or expiry between the read above and here mints nothing; the audit row follows only a session that landed.
-  const [inserted] = await c.env.DB.batch([
+  const [inserted, , stored] = await c.env.DB.batch([
     c.env.DB.prepare(`INSERT INTO guest_sessions (id, token_hash, link_id, link_generation, guest_id, verified_at, created_at, expires_at, last_seen_at)
       SELECT ?1, ?2, l.id, l.token_generation, NULL, NULL, ?3, MIN(?4, l.expires_at), ?3 FROM client_links l
       WHERE l.id = ?5 AND l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ?3 AND l.token_generation = ?6 AND l.token_hash = ?7 AND l.passcode_hash IS ?8`)
@@ -60,10 +62,13 @@ async function startSession(c: Context<AppEnv, "/d/api/links/:linkId/session">):
     c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?1, NULL, 'review_link.session_start', 'review_link', ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM guest_sessions WHERE id = ?5)`)
       .bind(newId(), link.id, auditMeta(null, { guest: { sessionId }, linkId: link.id }), now, sessionId),
+    // Read back what actually landed: staff may have shortened or renamed the link since the snapshot above.
+    c.env.DB.prepare(`SELECT s.expires_at AS session_expires_at, l.label, l.expires_at, l.allow_comments, l.allow_approve, l.allow_download FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE s.id = ?1`).bind(sessionId),
   ]);
-  if (!inserted || inserted.meta.changes === 0) return guestNotFound(c);
-  const response = c.json(sessionBody(link));
-  response.headers.append("set-cookie", sessionCookieHeader(c.env, link.id, sessionToken, (expiresAt - now) / 1000));
+  const row = stored?.results[0] as { session_expires_at: number; label: string | null; expires_at: number; allow_comments: number; allow_approve: number; allow_download: number } | undefined;
+  if (!inserted || inserted.meta.changes === 0 || !row) return guestNotFound(c);
+  const response = c.json(sessionBody({ ...link, label: row.label, expiresAt: row.expires_at, allowComments: row.allow_comments === 1, allowApprove: row.allow_approve === 1, allowDownload: row.allow_download === 1 }));
+  response.headers.append("set-cookie", sessionCookieHeader(c.env, link.id, sessionToken, (row.session_expires_at - now) / 1000));
   return response;
 }
 

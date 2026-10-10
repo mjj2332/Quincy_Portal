@@ -335,13 +335,13 @@ describe("staff create and guest exchange together (11a + 12a)", () => {
 });
 
 describe("Sol round 1 fixes", () => {
-  /** An env whose DB runs `before` ahead of the Nth two-statement batch (the rate-limit reservation or the session INSERT), standing in for staff acting mid-exchange. */
+  /** An env whose DB runs `before` ahead of the Nth multi-statement batch (the rate-limit reservation or the session INSERT), standing in for staff acting mid-exchange. */
   async function exchangeWithRace(link: { id: string; token: string }, passcode: string | undefined, nth: number, before: () => Promise<void>) {
     let seen = 0;
     const db = new Proxy(baseEnv.DB, { get: (target, property) => {
       const value = Reflect.get(target, property);
       if (property !== "batch") return typeof value === "function" ? value.bind(target) : value;
-      return async (statements: unknown[]) => { if (statements.length === 2 && (seen += 1) === nth) await before(); return target.batch(statements as D1PreparedStatement[]); };
+      return async (statements: unknown[]) => { if (statements.length >= 2 && (seen += 1) === nth) await before(); return target.batch(statements as D1PreparedStatement[]); };
     } });
     const environment: Env = { ...baseEnv, DB: db as D1Database };
     return app.fetch(new Request(`https://portal.test${linkPath(link.id, "/session")}`, {
@@ -387,5 +387,36 @@ describe("Sol round 1 fixes", () => {
     await database.DB.prepare("UPDATE client_links SET token_generation = token_generation + 1 WHERE id = ?").bind(replaced.id).run();
     expect(await stubOf(await leave(replaced.id, replaced.cookie))).toEqual(reference);
     expect((await leave(live.id, live.cookie)).status).toBe(204);
+  });
+
+  it("rejects an oversize declared Content-Length without reading the body", async () => {
+    const link = await seedGuestLink();
+    const response = await guestFetch(linkPath(link.id, "/session"), { method: "POST", body: JSON.stringify({ token: link.token, pad: "x".repeat(5000) }) });
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ error: "payload_too_large" });
+  });
+
+  it("cuts a streamed body with no length off at the limit and cancels the reader", async () => {
+    const link = await seedGuestLink(); let pulled = 0; let cancelled = false;
+    const chunk = new Uint8Array(1024).fill(120);
+    const body = new ReadableStream<Uint8Array>({ pull(controller) { if (pulled >= 64 * 1024) { controller.close(); return; } pulled += chunk.length; controller.enqueue(chunk); }, cancel() { cancelled = true; } });
+    const request = new Request(`https://portal.test${linkPath(link.id, "/session")}`, { method: "POST", body, duplex: "half", headers: { origin: baseEnv.APP_ORIGIN, "content-type": "application/json", "cf-connecting-ip": freshIp() } } as RequestInit);
+    expect(request.headers.get("content-length")).toBeNull();
+    const response = await app.fetch(request, baseEnv, createExecutionContext());
+    expect(response.status).toBe(413);
+    expect(pulled).toBeLessThanOrEqual(8 * 1024); expect(cancelled).toBe(true);
+    expect(await sessionRows(link.id)).toHaveLength(0);
+  });
+
+  it("builds the cookie and the response from the stored session when staff shorten the expiry mid-exchange", async () => {
+    const link = await seedGuestLink(); const shortened = Date.now() + 3_600_000;
+    const response = await exchangeWithRace(link, undefined, 1, async () => { await database.DB.prepare("UPDATE client_links SET expires_at = ?, label = 'Renamed' WHERE id = ?").bind(shortened, link.id).run(); });
+    expect(response.status).toBe(200);
+    const maxAge = Number(response.headers.getSetCookie()[0]!.match(/Max-Age=(\d+)/)![1]);
+    expect(maxAge).toBeLessThanOrEqual(3600);
+    const body = guestSessionResponseSchema.parse(await response.json());
+    expect(body.link.expiresAt).toBe(new Date(shortened).toISOString()); expect(body.link.label).toBe("Renamed");
+    const [row] = await sessionRows(link.id);
+    expect(row!.expires_at).toBe(shortened);
   });
 });
