@@ -1,3 +1,4 @@
+import { guestDigestStatements } from "./guest-digest";
 import { ROLE_LABELS, REVIEW_LINK_STATUSES, type ReviewLinkDto, type Role } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
@@ -172,6 +173,8 @@ export async function addLinkVideo(db: D1Database, input: { projectId: string; l
     db.prepare(`INSERT INTO review_link_videos (id, link_id, video_id, project_id, added_by, added_at) SELECT ?, ?, ?, ?, ?, ? WHERE ${AUDITED}`).bind(newId(), input.linkId, input.videoId, input.projectId, input.principal.id, input.now, auditId),
     db.prepare(`INSERT INTO review_link_version_grants (id, link_id, video_id, asset_id, granted_by, granted_at) SELECT json_extract(j.value, '$.id'), ?, json_extract(j.value, '$.v'), json_extract(j.value, '$.a'), ?, ? FROM json_each(?) j WHERE ${AUDITED} ORDER BY j.key`)
       .bind(input.linkId, input.principal.id, input.now, pairs, auditId),
+    // 15b: the link's subscribers are told of the new Video (one line, whatever number of Versions came with it); fenced on the audit row.
+    ...guestDigestStatements(db, { kind: "video_added", linkId: input.linkId, videoId: input.videoId }, auditId, input.now),
   ]);
 }
 
@@ -190,7 +193,8 @@ export async function removeLinkVideo(db: D1Database, input: { projectId: string
 export async function setLinkGrants(db: D1Database, input: { projectId: string; linkId: string; principal: Principal; videoId: string; assetIds: string[]; now: number }): Promise<boolean> {
   const auditId = newId();
   const audit: Audit = { id: auditId, action: "review_link.grants_set", linkId: input.linkId, principal: input.principal, now: input.now, meta: { projectId: input.projectId, linkId: input.linkId, videoId: input.videoId, assetIds: input.assetIds } };
-  const pairs = JSON.stringify(input.assetIds.map((assetId) => ({ id: newId(), v: input.videoId, a: assetId })));
+  const grantRows = input.assetIds.map((assetId) => ({ id: newId(), v: input.videoId, a: assetId }));
+  const pairs = JSON.stringify(grantRows);
   return commit(db, audit, [
     auditStatement(db, audit, `${NOT_ARCHIVED} AND ${LINK_LIVE} AND ${MEMBER_LIVE} AND ${COUNT_PAIRS} = ?`, [input.projectId, input.linkId, input.projectId, input.linkId, input.videoId, pairs, input.projectId, input.assetIds.length]),
     db.prepare(`UPDATE review_link_version_grants SET revoked_at = ?, revoked_by = ? WHERE link_id = ? AND video_id = ? AND revoked_at IS NULL AND asset_id NOT IN (SELECT value FROM json_each(?)) AND ${AUDITED}`)
@@ -198,6 +202,8 @@ export async function setLinkGrants(db: D1Database, input: { projectId: string; 
     db.prepare(`INSERT INTO review_link_version_grants (id, link_id, video_id, asset_id, granted_by, granted_at) SELECT json_extract(j.value, '$.id'), ?, json_extract(j.value, '$.v'), json_extract(j.value, '$.a'), ?, ? FROM json_each(?) j
       WHERE NOT EXISTS (SELECT 1 FROM review_link_version_grants g WHERE g.link_id = ? AND g.asset_id = json_extract(j.value, '$.a') AND g.revoked_at IS NULL) AND ${AUDITED} ORDER BY j.key`)
       .bind(input.linkId, input.principal.id, input.now, pairs, input.linkId, auditId),
+    // 15b: subscribers are told of the Versions this write newly granted. A pre-generated id exists as a grant only if the INSERT above landed it, so a kept grant says nothing.
+    ...guestDigestStatements(db, { kind: "version_granted", linkId: input.linkId, grantIds: grantRows.map((row) => row.id) }, auditId, input.now),
     db.prepare("UPDATE client_links SET updated_at = ? WHERE id = ? AND kind = 'video_review' AND " + AUDITED).bind(input.now, input.linkId, auditId),
   ]);
 }
