@@ -462,16 +462,73 @@ describe("every guest write is the stub, and writes nothing, without a live cred
     }
   });
 
-  it("409 project_archived for an archived Project, before the 401, 403, 404 and 429 it would otherwise be", async () => {
+  it("409 project_archived for an archived Project, after the capability and visibility answers and before the quota and the body", async () => {
     for (const call of calls) {
       const w = await world(); await call.prepare(w); const before = await snapshot(); await archive();
       const response = await call.run(w); expect(response.status, call.name).toBe(409); expect(await json(response)).toEqual({ error: "project_archived" });
-      expect(await snapshot()).toBe(before);
-      const unverified = await world({ verified: false }); const refused = await create(unverified); expect(refused.status).toBe(409);
-      const noComments = await world({ link: { allow: [0, 1, 1] } }); expect((await create(noComments)).status).toBe(409);
+      for (const init of [{ body: { nonsense: true } }, { body: "{not json" }, { body: JSON.stringify({ pad: "y".repeat(601 * 1024) }) }]) { const invalid = await call.run(w, init); expect(invalid.status, call.name).toBe(409); }
+      expect(await snapshot()).toBe(before); expect(await bucketCount(`note:guest:${w.guest!.guestId}`)).toBeNull();
       await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run();
       await clearVideoNotes(); await clearGuestRows();
     }
+  });
+
+  it("on an archived Project an unverified session is still 401, comments off is still 403 and an unreachable or internal-note target is still the stub", async () => {
+    const stub = await stubBody(); const unverified = await world({ verified: false }); const noComments = await world({ link: { allow: [0, 1, 1] } }); const w = await world();
+    const internal = await staffNote(w, { visibility: "internal" }); await archive();
+    const unverifiedAnswer = await create(unverified); expect(unverifiedAnswer.status).toBe(401); expect(await json(unverifiedAnswer)).toEqual({ error: "verification_required" });
+    const commentsAnswer = await create(noComments); expect(commentsAnswer.status).toBe(403); expect(await json(commentsAnswer)).toEqual({ error: "comments_disabled" });
+    expect(await plain(await reply(w, internal.id))).toEqual(stub);
+    expect(await plain(await edit(w, internal.id, { expectedRevision: 1, body: "x" }))).toEqual(stub);
+    expect(await plain(await del(w, internal.id))).toEqual(stub);
+    expect(await plain(await guestFetch(notesUrl(w, w.a2.assetId), { method: "POST", cookie: w.link.cookie, body: { startFrame: 10, body: "x" } }))).toEqual(stub);
+    expect(await plain(await reply(w, crypto.randomUUID()))).toEqual(stub);
+  });
+
+  it("charges every invalid body (400, 413, 422) one attempt in each bucket", async () => {
+    await setVideoFlags("video_review_markup");
+    for (const call of calls) {
+      const w = await world(); await call.prepare(w); const guestBucket = `note:guest:${w.guest!.guestId}`; const linkBucket = `note:link:${w.link.id}`;
+      const invalid: Array<[number, Parameters<typeof guestFetch>[1]]> = [[400, { body: { nonsense: true } }], [400, { body: "{not json" }], [413, { body: JSON.stringify({ pad: "y".repeat(601 * 1024) }) }]];
+      if (call.name === "create") invalid.push([422, { body: { startFrame: 250, body: "x" } }]);
+      let count = 0;
+      for (const [status, init] of invalid) {
+        const response = await call.run(w, init); expect(response.status, `${call.name} ${status}`).toBe(status); count += 1;
+        expect(await bucketCount(guestBucket), `${call.name} ${status} guest`).toBe(count); expect(await bucketCount(linkBucket), `${call.name} ${status} link`).toBe(count);
+      }
+      await clearVideoNotes(); await clearGuestRows();
+    }
+  });
+
+  it("an invalid body after the quota is exhausted is 429, not 400, 413 or 422", async () => {
+    for (const call of calls) {
+      const w = await world(); await call.prepare(w); await seedBucket(`note:guest:${w.guest!.guestId}`, 60);
+      for (const init of [{ body: { nonsense: true } }, { body: "{not json" }, { body: JSON.stringify({ pad: "y".repeat(601 * 1024) }) }, ...(call.name === "create" ? [{ body: { startFrame: 250, body: "x" } }] : [])]) {
+        const response = await call.run(w, init); expect(response.status, call.name).toBe(429); expect(response.headers.get("retry-after")).not.toBeNull();
+      }
+      await clearVideoNotes(); await clearGuestRows();
+    }
+  });
+
+  it("with the markup part off, a drawing body is the byte-identical stub for an unverified session, a wrong Origin and no cookie", async () => {
+    const stub = await stubBody();
+    for (const call of calls) {
+      const w = await world(); await call.prepare(w); const unverified = await world({ verified: false }); const before = await snapshot();
+      const drawn = { body: { startFrame: 10, body: "x", expectedRevision: 1, drawingFrame: 10, markup: MARKUP } };
+      expect(await plain(await call.run(unverified, drawn)), `${call.name} unverified`).toEqual(stub);
+      expect(await plain(await call.run(w, { ...drawn, origin: "https://evil.test" })), `${call.name} origin`).toEqual(stub);
+      expect(await plain(await call.run(w, { ...drawn, contentType: "text/plain" })), `${call.name} content type`).toEqual(stub);
+      expect(await plain(await call.run(w, { ...drawn, cookie: null })), `${call.name} no cookie`).toEqual(stub);
+      expect(await snapshot()).toBe(before); expect(await bucketCount(`note:guest:${w.guest!.guestId}`)).toBeNull();
+      await clearVideoNotes(); await clearGuestRows();
+    }
+  });
+
+  it("an oversized body from an unverified session is 401, not 413, and from a wrong Origin is 403", async () => {
+    const unverified = await world({ verified: false }); const huge = JSON.stringify({ startFrame: 10, body: "x", pad: "y".repeat(601 * 1024) });
+    const response = await create(unverified, {}, { body: huge }); expect(response.status).toBe(401); expect(await json(response)).toEqual({ error: "verification_required" });
+    const w = await world(); const origin = await create(w, {}, { body: huge, origin: "https://evil.test" }); expect(origin.status).toBe(403);
+    expect(await bucketCount(`note:guest:${w.guest!.guestId}`)).toBeNull();
   });
 
   it("answers a guest cookie on the staff twin with 401", async () => {

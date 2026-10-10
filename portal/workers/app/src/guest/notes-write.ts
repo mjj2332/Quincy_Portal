@@ -9,20 +9,25 @@ import {
   type MarkupEdit, type MarkupWrite, type NoteAuthor, type NoteHead,
 } from "../lib/video-notes";
 import type { AppEnv } from "../env";
-import { archivedRefusal, authenticateGuest, classifyRefusal } from "./fence";
-import { guestNotFound, guestRoute, INVALID, readJson, TOO_LARGE, tooMany, UUID } from "./http";
-import type { GuestSession } from "./link";
+import { classifyRefusal } from "./fence";
+import { guestNotFound, guestRoute, INVALID, originRejection, readJson, TOO_LARGE, tooMany, UUID } from "./http";
+import { loadActiveLink, resolveSession, type GuestLink, type GuestSession } from "./link";
 import { GUEST_LIMITS, reserveAttempts } from "./rate-limit";
 import { readGuestThread, resolveGrantedVersion } from "./read";
 
 /**
- * Guest note writes (#741 13b): create, reply, edit and delete of a verified guest's own notes. Every route follows the guest write rules of 13a (docs/plans/741-13-15.md):
+ * Guest note writes (#741 13b): create, reply, edit and delete of a verified guest's own notes. Every route follows ONE order (docs/plans/741-13-15.md §1.1), and `enter()` below is it:
  *
- *  - ORDER. Link id, gate with `guest` and `guest_comments`, Origin, credential (each miss before the credential is the one stub); then an archived Project (409 `project_archived`),
- *    unverified (401 `verification_required`), comments off on the link (403 `comments_disabled`), the note or Version unreachable (stub); then the BODY; then, at a fresh time, the
- *    limits (429) and the state (400, 413, 422, 403 `not_author`, 409). The `markup` part is checked once the body is read, because only the body says whether it is needed.
- *  - REFUSAL FIRST. `answer()` runs `classifyRefusal` before every non-success answer after the credential, so lost access is the byte-identical stub, an archived Project is 409, and
- *    nothing else (a limit, a validation error, a conflict) is ever the answer to a request whose link, gate, part or Version has changed under it.
+ *  1. path ids are UUIDs, else the stub;
+ *  2. the link is active, the gate is open and the `guest` and `guest_comments` parts are on, else the stub. Then the bounded body is READ (never judged): an oversized body is remembered
+ *     and answered at 9; a fresh time is taken; the link is read again at it; a body that parses and carries markup or a drawing frame while the `markup` part is off is the stub;
+ *  3. Origin and content type, else 403;  4. the session cookie, else the stub;
+ *  5. capability: unverified is 401, comments off on the link is 403;  6. visibility: the Version or note is reachable, else the stub;  7. an archived Project is 409;
+ *  8. the rate-limit attempts are reserved (429), so an invalid body is charged;  9. the body is judged (400, 413, 422);  10. state (revision conflict 409, not_author 403, ...).
+ *
+ *  - REFUSAL FIRST. Every non-success answer after the credential goes through `classifyRefusal` (precedence in ./fence.ts: stub, capability, visibility, archived), so lost access is the
+ *    byte-identical stub and nothing else (a limit, a validation error, a conflict) is ever the answer to a request whose link, gate, part or Version has changed under it. Steps 5 and 6
+ *    pass `archived: false`, because an archived Project is only the answer at 7: an unverified session on one is still 401, and an internal-note target still the stub.
  *  - ONE FENCE. The statements that write carry `guestNoteGuard` (lib/guest-fence-sql.ts): the exact session token and guest, the link live with comments on, the gate and its parts, an
  *    unarchived Project and the Version reachable. Nothing is checked in JS and then written unfenced; a write that lands 0 rows is classified again and then diagnosed.
  *  - AUDIT. The audit row is in the same batch as the write and exists only if the write landed (actor NULL; the guest, session and link are in the meta).
@@ -38,39 +43,56 @@ const touchesMarkup = (raw: unknown): boolean => typeof raw === "object" && raw 
 type Verified = { session: GuestSession; guestId: string; link: GuestSession["link"] };
 type Target = { assetId?: string };
 
-/** What every note write shares once the body is in. */
+/** What every note write shares once it is admitted. */
 function context<P extends string>(c: Handled<P>, v: Verified, markup: boolean, target: Target) {
   const scope = { parts: noteWriteParts(markup), comments: true, ...(target.assetId === undefined ? {} : { assetId: target.assetId }) };
   const refusal = (): Promise<Response | null> => classifyRefusal(asApp(c), v.session, true, scope);
-  /** The refusal if there is one, else `response`. The only way a non-success leaves a handler after the credential. */
+  /** The refusal if there is one, else `response`. The only way a non-success leaves a handler once admitted. */
   const answer = async (response: Response | Promise<Response>): Promise<Response> => await refusal() ?? await response;
   return { refusal, answer };
 }
+type Ctx = ReturnType<typeof context>;
+type Body = unknown | typeof INVALID | typeof TOO_LARGE;
+type Entered<T> = { v: Verified; target: T; raw: Body; markup: boolean; ctx: Ctx };
 
-/** Link, gate, Origin, session, then archived (409 beats everything below), unverified (401) and comments off (403). */
-async function admit<P extends string>(c: Handled<P>): Promise<{ v: Verified } | { response: Response }> {
-  const auth = await authenticateGuest(c, Date.now(), ["guest_comments"]);
-  if ("response" in auth) return auth;
-  const { session } = auth; const link = session.link;
-  const early = (response: Response) => classifyRefusal(asApp(c), session, true, { parts: BASE_PARTS }).then((refused) => refused ?? response);
-  const archived = await archivedRefusal(asApp(c), link.projectId); if (archived) return { response: archived };
-  if (session.guestId === null) return { response: await early(c.json({ error: "verification_required" }, 401)) };
-  if (!link.allowComments) return { response: await early(c.json({ error: "comments_disabled" }, 403)) };
-  return { v: { session, guestId: session.guestId, link } };
+/**
+ * Steps 1 to 7 of the order above. `locate` is step 6: the Version or note the request names, as far as this guest may see it, or null (the stub). The body is read here and judged
+ * by the caller at step 9, after `reserve`.
+ */
+async function enter<P extends string, T extends { assetId: string }>(c: Handled<P>, input: { cap: number; ids: string[]; locate: (v: Verified) => Promise<T | null> }): Promise<{ response: Response } | Entered<T>> {
+  const stub = async () => ({ response: await guestNotFound(asApp(c)) });
+  if (input.ids.some((id) => !UUID.test(id))) return stub();
+  const linkId = c.req.param("linkId" as never) as string;
+  const open = (link: GuestLink | null): link is GuestLink => link !== null && link.parts.includes("guest") && link.parts.includes("guest_comments");
+  if (!open(await loadActiveLink(asApp(c), linkId, Date.now()))) return stub();
+  const raw = await readJson(asApp(c), input.cap);
+  // A fresh time for everything below, and the link read again at it: the body may have been held across a revoke, a gate change or a part going off.
+  const now = Date.now(); const link = await loadActiveLink(asApp(c), linkId, now);
+  if (!open(link)) return stub();
+  if (!link.parts.includes("markup") && touchesMarkup(raw)) return stub();
+  const rejected = originRejection(asApp(c)); if (rejected) return { response: rejected };
+  const session = await resolveSession(asApp(c), linkId, now); if (!session) return stub();
+  const early = (response: Response) => classifyRefusal(asApp(c), session, true, { parts: noteWriteParts(false), archived: false }).then((refused) => refused ?? response);
+  if (session.guestId === null) return { response: await early(asApp(c).json({ error: "verification_required" }, 401)) };
+  if (!session.link.allowComments) return { response: await early(asApp(c).json({ error: "comments_disabled" }, 403)) };
+  const v: Verified = { session, guestId: session.guestId, link: session.link };
+  const target = await input.locate(v);
+  if (!target) return { response: await classifyRefusal(asApp(c), session, true, { parts: noteWriteParts(false), comments: true, archived: false }).then((refused) => refused ?? guestNotFound(asApp(c))) };
+  const markup = touchesMarkup(raw);
+  const ctx = context(c, v, markup, { assetId: target.assetId });
+  const refused = await ctx.refusal(); if (refused) return { response: refused };
+  return { v, target, raw, markup, ctx };
+}
+
+/** Step 9: a body over the cap is 413, one that is not JSON or not the schema is 400. Only reached once the attempt is reserved. */
+function judge<T, P extends string>(c: Handled<P>, entered: Entered<unknown>, schema: { safeParse: (raw: unknown) => { success: true; data: T } | { success: false } }): { data: T } | { response: Promise<Response> } {
+  if (entered.raw === TOO_LARGE) return { response: entered.ctx.answer(c.json({ error: "payload_too_large" }, 413)) };
+  const parsed = entered.raw === INVALID ? null : schema.safeParse(entered.raw);
+  if (!parsed?.success) return { response: entered.ctx.answer(c.json({ error: "invalid_request" }, 400)) };
+  return { data: parsed.data };
 }
 
 const writerOf = (v: Verified, markup: boolean): NoteAuthor & GuestWriter => ({ kind: "guest", guestId: v.guestId, sessionId: v.session.id, linkId: v.link.id, tokenHash: v.session.tokenHash, markup });
-
-/** Reads the body once, at its cap, and classifies right away: 413 and 400 are given only to a request whose link, gate and Project still stand. */
-async function readBody<P extends string>(c: Handled<P>, v: Verified, cap: number, target: Target): Promise<{ raw: unknown; markup: boolean; ctx: ReturnType<typeof context> } | { response: Response }> {
-  const raw = await readJson(asApp(c), cap);
-  const markup = raw !== TOO_LARGE && raw !== INVALID && touchesMarkup(raw);
-  const ctx = context(c, v, markup, target);
-  const refused = await ctx.refusal(); if (refused) return { response: refused };
-  if (raw === TOO_LARGE) return { response: c.json({ error: "payload_too_large" }, 413) };
-  if (raw === INVALID) return { response: c.json({ error: "invalid_request" }, 400) };
-  return { raw, markup, ctx };
-}
 
 /** One attempt in each bucket, charged to the window the request completes in. */
 async function reserve<P extends string>(c: Handled<P>, v: Verified): Promise<Response | null> {
@@ -83,17 +105,14 @@ const tooLarge = <P extends string>(c: Handled<P>) => c.json({ error: "markup_to
 const drawingOutside = <P extends string>(c: Handled<P>) => c.json({ error: "drawing_frame_outside" }, 422);
 
 async function createNote(c: Handled<"/d/api/links/:linkId/versions/:assetId/notes">): Promise<Response> {
-  const admitted = await admit(c); if ("response" in admitted) return admitted.response;
-  const { v } = admitted; const assetId = c.req.param("assetId");
-  // Reachability (a Version this link grants, through a live member Video) is the stub, before the body is read.
-  const preAnswer = context(c, v, false, {}).answer;
-  if (!UUID.test(assetId) || !await resolveGrantedVersion(c.env.DB, v.link.id, v.link.projectId, assetId)) return preAnswer(await guestNotFound(asApp(c)));
-  const body = await readBody(c, v, GUEST_NOTE_BODY_MAX_BYTES, { assetId }); if ("response" in body) return body.response;
-  const { ctx } = body;
-  const parsed = guestNoteCreateInputSchema.safeParse(body.raw);
-  if (!parsed.success) return ctx.answer(c.json({ error: "invalid_request" }, 400));
-  const input = parsed.data;
+  const assetId = c.req.param("assetId");
+  // Reachability (a Version this link grants, through a live member Video) is step 6.
+  const body = await enter(c, { cap: GUEST_NOTE_BODY_MAX_BYTES, ids: [assetId], locate: async (v) => await resolveGrantedVersion(c.env.DB, v.link.id, v.link.projectId, assetId) ? { assetId } : null });
+  if ("response" in body) return body.response;
+  const { v, ctx } = body;
   const limited = await reserve(c, v); if (limited) return ctx.answer(limited);
+  const judged = judge(c, body, guestNoteCreateInputSchema); if ("response" in judged) return judged.response;
+  const input = judged.data;
   const stored = input.markup ? canonicalMarkup(input.markup) : null; if (input.markup && !stored) return ctx.answer(tooLarge(c));
   const frameCount = await versionFrameCount(c.env.DB, v.link.projectId, assetId); if (frameCount === null) return ctx.answer(guestNotFound(asApp(c)));
   const endFrame = input.endFrame ?? null;
@@ -106,35 +125,29 @@ async function createNote(c: Handled<"/d/api/links/:linkId/versions/:assetId/not
 }
 
 async function replyToNote(c: Handled<"/d/api/links/:linkId/notes/:noteId/replies">): Promise<Response> {
-  const admitted = await admit(c); if ("response" in admitted) return admitted.response;
-  const { v } = admitted; const noteId = c.req.param("noteId");
-  const preHead = UUID.test(noteId) ? await findNoteHeadForLink(c.env.DB, v.link, noteId) : null;
-  if (!preHead) return context(c, v, false, {}).answer(guestNotFound(asApp(c)));
-  const body = await readBody(c, v, GUEST_REPLY_BODY_MAX_BYTES, { assetId: preHead.asset_id }); if ("response" in body) return body.response;
-  const { ctx } = body;
-  const parsed = guestNoteReplyInputSchema.safeParse(body.raw);
-  if (!parsed.success) return ctx.answer(c.json({ error: "invalid_request" }, 400));
+  const noteId = c.req.param("noteId");
+  const body = await enter(c, { cap: GUEST_REPLY_BODY_MAX_BYTES, ids: [noteId], locate: async (v) => { const head = await findNoteHeadForLink(c.env.DB, v.link, noteId); return head ? { assetId: head.asset_id } : null; } });
+  if ("response" in body) return body.response;
+  const { v, ctx } = body;
   const limited = await reserve(c, v); if (limited) return ctx.answer(limited);
+  const judged = judge(c, body, guestNoteReplyInputSchema); if ("response" in judged) return judged.response;
   // Read again, after the limit and at the time of writing: the head the entry saw may be stale.
   const parent = await findNoteHeadForLink(c.env.DB, v.link, noteId);
   if (!parent || parent.deleted_at !== null) return ctx.answer(guestNotFound(asApp(c)));
   if (parent.parent_id !== null) return ctx.answer(c.json({ error: "not_a_thread" }, 422));
-  const outcome = await createVideoNoteReply<GuestNoteThreadDto>(c.env.DB, { projectId: v.link.projectId, parent, author: writerOf(v, false), body: parsed.data.body, now: Date.now(), read: (rootId) => readGuestThread(c.env.DB, v.link, rootId, v.guestId) });
+  const outcome = await createVideoNoteReply<GuestNoteThreadDto>(c.env.DB, { projectId: v.link.projectId, parent, author: writerOf(v, false), body: judged.data.body, now: Date.now(), read: (rootId) => readGuestThread(c.env.DB, v.link, rootId, v.guestId) });
   if (outcome.kind === "ok") return c.json(outcome.value, 201);
   return ctx.answer(guestNotFound(asApp(c)));
 }
 
 async function editNote(c: Handled<"/d/api/links/:linkId/notes/:noteId">): Promise<Response> {
-  const admitted = await admit(c); if ("response" in admitted) return admitted.response;
-  const { v } = admitted; const noteId = c.req.param("noteId");
-  const preHead = UUID.test(noteId) ? await findNoteHeadForLink(c.env.DB, v.link, noteId) : null;
-  if (!preHead) return context(c, v, false, {}).answer(guestNotFound(asApp(c)));
-  const body = await readBody(c, v, GUEST_NOTE_BODY_MAX_BYTES, { assetId: preHead.asset_id }); if ("response" in body) return body.response;
-  const { ctx } = body;
-  const parsed = guestNoteEditInputSchema.safeParse(body.raw);
-  if (!parsed.success) return ctx.answer(c.json({ error: "invalid_request" }, 400));
-  const input = parsed.data;
+  const noteId = c.req.param("noteId");
+  const body = await enter(c, { cap: GUEST_NOTE_BODY_MAX_BYTES, ids: [noteId], locate: async (v) => { const head = await findNoteHeadForLink(c.env.DB, v.link, noteId); return head ? { assetId: head.asset_id } : null; } });
+  if ("response" in body) return body.response;
+  const { v, ctx } = body;
   const limited = await reserve(c, v); if (limited) return ctx.answer(limited);
+  const judged = judge(c, body, guestNoteEditInputSchema); if ("response" in judged) return judged.response;
+  const input = judged.data;
   if (input.markup !== undefined && (input.startFrame !== undefined || input.endFrame !== undefined)) return ctx.answer(c.json({ error: "markup_and_frames" }, 422));
   const stored = input.markup ? canonicalMarkup(input.markup) : null; if (input.markup && !stored) return ctx.answer(tooLarge(c));
   const note = await findNoteHeadForLink(c.env.DB, v.link, noteId); if (!note) return ctx.answer(guestNotFound(asApp(c)));
@@ -187,15 +200,13 @@ function editFailure<P extends string>(c: Handled<P>, outcome: Exclude<Awaited<R
 }
 
 async function deleteNote(c: Handled<"/d/api/links/:linkId/notes/:noteId">): Promise<Response> {
-  const admitted = await admit(c); if ("response" in admitted) return admitted.response;
-  const { v } = admitted; const noteId = c.req.param("noteId");
-  const preHead = UUID.test(noteId) ? await findNoteHeadForLink(c.env.DB, v.link, noteId) : null;
-  if (!preHead) return context(c, v, false, {}).answer(guestNotFound(asApp(c)));
-  const body = await readBody(c, v, 1024, { assetId: preHead.asset_id }); if ("response" in body) return body.response;
-  const { ctx } = body;
-  const parsed = guestNoteDeleteInputSchema.safeParse(body.raw);
-  if (!parsed.success) return ctx.answer(c.json({ error: "invalid_request" }, 400));
+  const noteId = c.req.param("noteId");
+  const body = await enter(c, { cap: 1024, ids: [noteId], locate: async (v) => { const head = await findNoteHeadForLink(c.env.DB, v.link, noteId); return head ? { assetId: head.asset_id } : null; } });
+  if ("response" in body) return body.response;
+  const { v, ctx } = body;
   const limited = await reserve(c, v); if (limited) return ctx.answer(limited);
+  const judged = judge(c, body, guestNoteDeleteInputSchema); if ("response" in judged) return judged.response;
+  const parsed = { data: judged.data };
   const note: NoteHead | null = await findNoteHeadForLink(c.env.DB, v.link, noteId); if (!note) return ctx.answer(guestNotFound(asApp(c)));
   const read = (rootId: string) => readGuestThread(c.env.DB, v.link, rootId, v.guestId);
   if (note.author_guest_id !== v.guestId) return ctx.answer(c.json({ error: "not_author" }, 403));
