@@ -1,6 +1,6 @@
 import {
   guestEmailCodeErrorSchema, guestEmailCodeResponseSchema, guestNoteConflictSchema, guestNoteDeleteResponseSchema, guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNoteWriteResponseSchema,
-  guestPasscodeErrorSchema, guestSessionResponseSchema, guestVideoListResponseSchema,
+  guestPasscodeErrorSchema, guestSessionResponseSchema, guestSubscriptionResponseSchema, guestVideoListResponseSchema,
   type GuestNoteCreateInput, type GuestNoteEditInput, type GuestNoteMarkupResponse, type GuestNoteThreadDto, type GuestSessionResponse, type GuestVideoDto,
 } from "@quincy/shared";
 
@@ -171,4 +171,19 @@ export function createGuestApi(linkId: string): GuestApi {
     notes: (assetId) => read(`/versions/${assetId}/notes`, (body) => guestNoteListResponseSchema.parse(body).notes),
     markup: (noteId) => read(`/notes/${noteId}/markup`, (body) => guestNoteMarkupResponseSchema.parse(body)),
   };
+}
+
+/**
+ * `POST /d/api/unsubscribe` (#741 15b): the digest email's tokened link. No session, no link id; the token travels in the body only. `subscribed` omitted unsubscribes, true resubscribes.
+ * `ok.subscribed` is the state the server reports. Any non-2xx or unparsable answer is `gone` (the stub covers unknown tokens), a network failure or a 5xx or 429 is `transient`.
+ */
+export type UnsubscribeResult = { kind: "ok"; subscribed: boolean } | { kind: "gone" } | { kind: "transient" };
+export async function postUnsubscribe(token: string, subscribed?: boolean): Promise<UnsubscribeResult> {
+  let response: Response;
+  try {
+    response = await fetch("/d/api/unsubscribe", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(subscribed === undefined ? { token } : { token, subscribed }) });
+  } catch { return { kind: "transient" }; }
+  if (response.status >= 500 || response.status === 429) return { kind: "transient" };
+  if (!response.ok) return { kind: "gone" };
+  try { return { kind: "ok", subscribed: guestSubscriptionResponseSchema.parse(await response.json()).subscribed }; } catch { return { kind: "gone" }; }
 }
