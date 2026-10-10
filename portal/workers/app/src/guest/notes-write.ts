@@ -14,6 +14,7 @@ import { guestNotFound, guestRoute, INVALID, originRejection, readJson, TOO_LARG
 import { loadActiveLink, resolveSession, type GuestLink, type GuestSession } from "./link";
 import { GUEST_LIMITS, reserveAttempts } from "./rate-limit";
 import { readGuestThread, resolveGrantedVersion } from "./read";
+import { publishOutboxDetached } from "../lib/server-timing";
 
 /**
  * Guest note writes (#741 13b): create, reply, edit and delete of a verified guest's own notes. Every route follows ONE order (docs/plans/741-13-15.md §1.1), and `enter()` below is it:
@@ -92,6 +93,11 @@ function judge<T, P extends string>(c: Handled<P>, entered: Entered<unknown>, sc
   return { data: parsed.data };
 }
 
+/** 15a: the staff notification rows a landed note or reply appended are published after the response is decided; the Cron recovers any the queue refuses. */
+const publish = <P extends string>(c: Handled<P>, outboxIds: string[] | undefined): void => {
+  if (outboxIds?.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, outboxIds));
+};
+
 const writerOf = (v: Verified, markup: boolean): NoteAuthor & GuestWriter => ({ kind: "guest", guestId: v.guestId, sessionId: v.session.id, linkId: v.link.id, tokenHash: v.session.tokenHash, markup });
 
 /** One attempt in each bucket, charged to the window the request completes in. */
@@ -120,7 +126,7 @@ async function createNote(c: Handled<"/d/api/links/:linkId/versions/:assetId/not
   if (stored && !drawingFrameFits(input.drawingFrame!, input.startFrame, endFrame)) return ctx.answer(drawingOutside(c));
   const markup: MarkupWrite | undefined = stored ? { ...stored, drawingFrame: input.drawingFrame! } : undefined;
   const outcome = await createVideoNote<GuestNoteThreadDto>(c.env.DB, { projectId: v.link.projectId, assetId, author: writerOf(v, body.markup), visibility: "public", startFrame: input.startFrame, endFrame, body: input.body, markup, now: Date.now(), read: (rootId) => readGuestThread(c.env.DB, v.link, rootId, v.guestId) });
-  if (outcome.kind === "ok") return c.json(outcome.value, 201);
+  if (outcome.kind === "ok") { publish(c, outcome.outboxIds); return c.json(outcome.value, 201); }
   return ctx.answer(guestNotFound(asApp(c)));
 }
 
@@ -136,7 +142,7 @@ async function replyToNote(c: Handled<"/d/api/links/:linkId/notes/:noteId/replie
   if (!parent || parent.deleted_at !== null) return ctx.answer(guestNotFound(asApp(c)));
   if (parent.parent_id !== null) return ctx.answer(c.json({ error: "not_a_thread" }, 422));
   const outcome = await createVideoNoteReply<GuestNoteThreadDto>(c.env.DB, { projectId: v.link.projectId, parent, author: writerOf(v, false), body: judged.data.body, now: Date.now(), read: (rootId) => readGuestThread(c.env.DB, v.link, rootId, v.guestId) });
-  if (outcome.kind === "ok") return c.json(outcome.value, 201);
+  if (outcome.kind === "ok") { publish(c, outcome.outboxIds); return c.json(outcome.value, 201); }
   return ctx.answer(guestNotFound(asApp(c)));
 }
 

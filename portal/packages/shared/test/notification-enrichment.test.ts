@@ -13,9 +13,9 @@ const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_ID = "22222222-2222-4222-8222-222222222222";
 
 describe("NOTIFICATION_ENRICHMENT enumeration", () => {
-  it("declares exactly the 14 notification types, sorted", () => {
+  it("declares exactly the 18 notification types, sorted", () => {
     expect(Object.keys(NOTIFICATION_ENRICHMENT).sort()).toEqual([...NOTIFICATION_TYPES].sort());
-    expect(Object.keys(NOTIFICATION_ENRICHMENT)).toHaveLength(14);
+    expect(Object.keys(NOTIFICATION_ENRICHMENT)).toHaveLength(18);
   });
 
   const exercised: Record<NotificationType, boolean> = Object.fromEntries(
@@ -90,6 +90,14 @@ describe("NOTIFICATION_ENRICHMENT enumeration", () => {
     for (const type of noSourceTypes) {
       exercised[type] = true;
       expect(parseNotificationSource(type, PROJECT_ID, "legacy:whatever:123")).toEqual({ kind: "none" });
+      expect(parseNotificationSource(type, PROJECT_ID, null)).toEqual({ kind: "none" });
+    }
+  });
+
+  it("the four video-review types resolve no source (the stored title is final)", () => {
+    for (const type of ["video_version_uploaded", "video_note", "video_reply", "video_decision"] as const) {
+      exercised[type] = true;
+      expect(parseNotificationSource(type, PROJECT_ID, `${type}:${OTHER_ID}`)).toEqual({ kind: "none" });
       expect(parseNotificationSource(type, PROJECT_ID, null)).toEqual({ kind: "none" });
     }
   });

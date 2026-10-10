@@ -8,12 +8,13 @@ import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
 import { projectIsArchived } from "../lib/project-archive";
 import { terminalRoute } from "../lib/terminal-route";
-import { readVideoReviewGate } from "../lib/video-review-gate";
+import { readVideoReviewGate, type VideoReviewGateState } from "../lib/video-review-gate";
 import {
   canonicalMarkup, createVideoNote, createVideoNoteReply, deleteVideoNote, drawingFrameFits, editVideoNote, findNoteHead, listVideoNotes, readNoteMarkup, readNoteMarkupSnapshot, readThread, setVideoNoteResolution,
   userAuthor, versionFrameCount, type MarkupEdit, type MarkupWrite, type NoteHead, type NoteAuthor,
 } from "../lib/video-notes";
 import { commitNotePaste, planNotePaste, type PlanOutcome } from "../lib/video-note-paste";
+import { publishOutboxDetached } from "../lib/server-timing";
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
@@ -45,9 +46,11 @@ const tooLarge = (c: Ctx) => c.json({ error: `Markup is limited to ${VIDEO_MARKU
 const drawingOutside = (c: Ctx) => c.json({ error: "The drawing frame must be the note's frame, or inside its range.", code: "drawing_frame_outside" }, 422);
 
 /** Gate, capability, access and (for writes) archived. Returns the refusal, or null to carry on. `markup` is true when the request touches markup: that part must be on too. The gate is read once. */
+const gateOf = new WeakMap<Request, VideoReviewGateState>();
 async function admit(c: Ctx, projectId: string, write: boolean, markup = false): Promise<Response | null> {
   const user = c.get("user");
   const gate = await readVideoReviewGate(c.env.DB, projectId);
+  gateOf.set(c.req.raw, gate);
   if (!gate.parts.includes("notes") || (markup && !gate.parts.includes("markup"))) return c.json({ error: "Not found" }, 404);
   if (!roleHasCapability(user.role, write ? "annotateVideo" : "viewVideo")) return c.json({ error: "Forbidden" }, 403);
   if (!await hasProjectAccess(c, projectId)) return user.role === "external_editor" ? c.json({ error: "Project not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -58,6 +61,11 @@ const notFound = (c: Ctx) => c.json({ error: "Note not found" }, 404);
 const deletedResponse = (c: Ctx) => c.json({ error: "This note was deleted.", code: "note_deleted" }, 409);
 const thread = (c: Ctx, value: unknown, status: 200 | 201 = 200) => c.json(videoNoteThreadDtoSchema.parse(value), status);
 const conflict = (c: Ctx, value: unknown) => c.json({ error: "This note changed since you loaded it.", code: "note_conflict", thread: videoNoteThreadDtoSchema.parse(value) }, 409);
+
+/** 15a: the staff notification rows the write appended are published once the write has landed (the Cron recovers any the queue refuses). */
+function publishStaffNotifications(c: Ctx, outboxIds: string[] | undefined): void {
+  if (outboxIds?.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, outboxIds));
+}
 
 function principalOf(c: Ctx) { const user = c.get("user"); return { id: user.id, role: user.role, impersonatedBy: user.impersonatedBy, via: user.via }; }
 const authorOf = (c: Ctx): NoteAuthor => userAuthor(principalOf(c));
@@ -86,9 +94,10 @@ videoNotesRoutes.post("/projects/:projectId/video-versions/:assetId/notes", term
   if (input.startFrame >= frameCount || (endFrame !== null && endFrame > frameCount)) return c.json({ error: "The frames are outside this Version.", code: "frame_out_of_range", frameCount }, 422);
   if (stored && !drawingFrameFits(input.drawingFrame!, input.startFrame, endFrame)) return drawingOutside(c);
   const markup: MarkupWrite | undefined = stored ? { ...stored, drawingFrame: input.drawingFrame! } : undefined;
-  const outcome = await createVideoNote(c.env.DB, { projectId, assetId, author: authorOf(c), read: readerOf(c, projectId), visibility: input.visibility, startFrame: input.startFrame, endFrame, body: input.body, markup, now: Date.now() });
+  const outcome = await createVideoNote(c.env.DB, { projectId, assetId, author: authorOf(c), read: readerOf(c, projectId), visibility: input.visibility, startFrame: input.startFrame, endFrame, body: input.body, markup, now: Date.now(), gate: gateOf.get(c.req.raw) });
   if (outcome.kind === "archived") return archivedResponse(c);
   if (outcome.kind === "gone") return c.json({ error: "Version not found" }, 404);
+  publishStaffNotifications(c, outcome.outboxIds);
   return thread(c, outcome.value, 201);
 }));
 
@@ -100,9 +109,10 @@ videoNotesRoutes.post("/projects/:projectId/video-notes/:noteId/replies", termin
   const parent = await findNoteHead(c.env.DB, projectId, noteId); if (!parent) return notFound(c);
   if (parent.parent_id !== null) return c.json({ error: "Replies attach to a note, not to another reply.", code: "not_a_thread" }, 422);
   if (parent.deleted_at !== null) return deletedResponse(c);
-  const outcome = await createVideoNoteReply(c.env.DB, { projectId, parent, author: authorOf(c), read: readerOf(c, projectId), body: input.body, now: Date.now() });
+  const outcome = await createVideoNoteReply(c.env.DB, { projectId, parent, author: authorOf(c), read: readerOf(c, projectId), body: input.body, now: Date.now(), gate: gateOf.get(c.req.raw) });
   if (outcome.kind === "archived") return archivedResponse(c);
   if (outcome.kind === "gone") return deletedResponse(c);
+  publishStaffNotifications(c, outcome.outboxIds);
   return thread(c, outcome.value, 201);
 }));
 

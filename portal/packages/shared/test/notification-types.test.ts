@@ -44,6 +44,10 @@ describe("#337 notification type → Workspace tab", () => {
       subtask_due_today: "collaboration",
       subtask_reminder: "collaboration",
       project_collaboration_activity: "collaboration",
+      video_version_uploaded: "video",
+      video_note: "video",
+      video_reply: "video",
+      video_decision: "video",
     };
     expect({ ...NOTIFICATION_WORKSPACE_TAB }).toEqual(expected);
     for (const type of NOTIFICATION_TYPES) expect(notificationWorkspaceTab(type), type).toBe(expected[type]);
