@@ -1123,3 +1123,23 @@ describe("delete revision", () => {
     expect(byId("guest-delete-dialog")).toBeNull();
   });
 });
+
+describe("the video step keys and modals", () => {
+  const keyFrom = async (target: Element, key: string) => { await act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); }); await flush(); };
+  it("keeps [ / ] out of the verify dialog, and still steps from the screen itself", async () => {
+    session = ANON; videos = [videoOf(1), videoOf(2)];
+    await open();
+    await click(button("Open Film 1"));
+    await click(byId("guest-add-note"));
+    const dialog = document.body.querySelector('[role=dialog]');
+    expect(dialog).not.toBeNull();
+    const cancel = button("Cancel")!;
+    expect(dialog!.contains(cancel)).toBe(true);
+    await keyFrom(cancel, "]");
+    expect(byId("guest-video-title")?.textContent).toBe("Film 1");
+    // Close the dialog: the same key on the screen moves on to Film 2.
+    await click(cancel);
+    await keyDown("]");
+    expect(byId("guest-video-title")?.textContent).toBe("Film 2");
+  });
+});

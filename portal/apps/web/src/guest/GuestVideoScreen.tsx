@@ -23,16 +23,17 @@ import { PremiumWatermark } from "./PremiumWatermark";
 const VERSION_SELECT_ID = "guest-version";
 const FIELD = "input, textarea, select, [contenteditable], [role=listbox], [role=combobox]";
 const NOTES_HEADING = "m-0 text-foreground [font:var(--type-h3)]";
-const POPUP = "[role=dialog], [role=menu], [role=listbox], [role=combobox]";
+const MODAL = "[role=dialog], [role=alertdialog]";
+const POPUP = "[role=dialog], [role=alertdialog], [role=menu], [role=listbox], [role=combobox]";
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
-/** `[` and `]` step through the videos unless a field, list or modifier owns the key. */
+/** `[` and `]` step through the videos unless a field, list, modal or modifier owns the key. */
 function useVideoStepKeys(onStep: (delta: -1 | 1) => void) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
       if (event.key !== "[" && event.key !== "]") return;
-      if (event.target instanceof Element && event.target.closest(FIELD)) return;
+      if (event.target instanceof Element && event.target.closest(`${FIELD}, ${MODAL}`)) return;
       onStep(event.key === "]" ? 1 : -1);
     };
     window.addEventListener("keydown", onKeyDown);
