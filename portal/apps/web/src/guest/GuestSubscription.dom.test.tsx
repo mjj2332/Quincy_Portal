@@ -176,6 +176,23 @@ describe("Email-updates switch (#741 15b)", () => {
     expect(switchEl()!.hasAttribute("disabled") || switchEl()!.getAttribute("aria-disabled") === "true" || switchEl()!.hasAttribute("data-disabled")).toBe(true);
   });
 
+  it("an archived answer to a toggle still pending after the guest switches Version is handled at link scope", async () => {
+    videos = [videoOf(1, [versionOf(11), versionOf(10)])];
+    let release: (response: Response) => void = () => undefined;
+    extra = putHandler(() => new Promise<Response>((resolve) => { release = resolve; }));
+    await open();
+    await click(switchEl());
+    expect(checked()).toBe("false");
+    await click(byId("guest-version-trigger"));
+    await click([...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.startsWith("v10")));
+    await act(async () => { release(json({ error: "project_archived" }, 409)); });
+    await flush();
+    expect(byId("guest-archived-notice")).not.toBeNull();
+    expect(switchEl()!.hasAttribute("disabled") || switchEl()!.getAttribute("aria-disabled") === "true" || switchEl()!.hasAttribute("data-disabled")).toBe(true);
+    expect(checked()).toBe("true");
+    expect(puts()).toHaveLength(1);
+  });
+
   it("a toggle pending while the phone drawer closes is not lost: the reopened drawer shows its result", async () => {
     await viewport.set({ width: 400 });
     let release: (response: Response) => void = () => undefined;

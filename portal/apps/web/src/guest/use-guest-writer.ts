@@ -14,6 +14,8 @@ export type WriterBinding = {
 
 export type GuestWriter = {
   run: Run;
+  /** Like `run`, for a write that applies to the whole link (the email-updates switch), not to one Version: the screen on show handles a page-level refusal whichever Version or screen the write started on. Only with no screen on show is the answer `stale`. */
+  runLink: Run;
   epoch: () => number;
   attach: (binding: WriterBinding) => void;
   detach: (binding: WriterBinding) => void;
@@ -33,7 +35,7 @@ export function createGuestWriter(): GuestWriter {
   let epoch = 0;
   let bound: WriterBinding | null = null;
 
-  const run: Run = async (key, call) => {
+  const start = (linkScoped: boolean): Run => async (key, call) => {
     if (inflight.has(key)) return { kind: "busy" };
     inflight.add(key);
     epoch += 1;
@@ -41,8 +43,9 @@ export function createGuestWriter(): GuestWriter {
     const startedScope = bound?.scope ?? null;
     let result: WriteResult;
     try { result = await call(); } finally { inflight.delete(key); epoch += 1; }
-    if (bound === null || bound !== startedBinding || bound.scope !== startedScope) {
-      if (bound !== null && bound !== startedBinding) bound.onLostSettle();
+    if (bound === null) return { kind: "stale", result };
+    if (!linkScoped && (bound !== startedBinding || bound.scope !== startedScope)) {
+      if (bound !== startedBinding) bound.onLostSettle();
       return { kind: "stale", result };
     }
     if (result.kind === "unverified") bound.effects.onUnverified();
@@ -51,7 +54,8 @@ export function createGuestWriter(): GuestWriter {
     return result;
   };
   return {
-    run,
+    run: start(false),
+    runLink: start(true),
     epoch: () => epoch,
     attach: (binding) => { bound = binding; },
     detach: (binding) => { if (bound === binding) bound = null; },
