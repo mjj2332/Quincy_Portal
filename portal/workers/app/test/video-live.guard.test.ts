@@ -132,6 +132,11 @@ export const ALLOWLIST: ReadonlyArray<{ file: string; contains: string; reason: 
   { file: "../src/routes/video-uploads.ts", contains: "SELECT MAX(position) + 1 FROM videos WHERE collection_id", reason: "Position allocation counts Trash too, so a restored Video never lands on a position another Video took." },
   { file: "../src/routes/video-uploads.ts", contains: "SELECT poster_key FROM video_version_meta WHERE asset_id = ?) = ?", reason: "Cleanup ownership: the poster adoption's queue entry is deleted only if the row still holds the key, whether or not the Version is in Trash." },
   { file: "../src/routes/video-uploads.ts", contains: "SELECT poster_key AS posterKey FROM video_version_meta WHERE asset_id = ?", reason: "Cleanup ownership: after a thrown adoption the object is kept if the row holds its key, in Trash or not." },
+  { file: "../../background/src/video-trash-purge.ts", contains: "FROM video_version_meta m JOIN assets a ON a.id = m.asset_id JOIN videos v", reason: "The purge reads the Version it is deleting; its own statements carry the removed_at and purge_at fence, which is what decides a restore race." },
+  { file: "../../background/src/video-trash-purge.ts", contains: "FROM videos v JOIN assets a ON a.version_group_id = v.id", reason: "The purge reads the Video it is deleting; its own statements carry the removed_at and purge_at fence, which is what decides a restore race." },
+  { file: "../../background/src/video-trash-purge.ts", contains: "JOIN video_version_meta m ON m.asset_id = a.id WHERE ${fence}", reason: "Queues the poster of a Video being purged; the Video fence in the same statement decides a restore race." },
+  { file: "../../background/src/video-trash-purge.ts", contains: "SET supersedes_asset_id = NULL WHERE video_id = ?1", reason: "Runs after the Video row is gone: it clears a no-FK pointer only when the Video no longer exists, Trash or not." },
+  { file: "../../background/src/video-trash-purge.ts", contains: "DELETE FROM video_upload_reservations WHERE video_id = ?1", reason: "Runs after the Video row is gone: it drops terminal reservations only when the Video no longer exists, Trash or not." },
 ];
 
 const files = { ...app, ...background };

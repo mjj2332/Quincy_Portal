@@ -55,6 +55,7 @@ import { runEmailDigests } from "./email-digest";
 import { sweepExternalEditedUploads } from "./external-upload-sweep";
 import { sweepVideoUploads } from "./video-upload-sweep";
 import { sweepEmbeddedMedia } from "./embedded-media-sweep";
+import { purgeVideoTrash } from "./video-trash-purge";
 import { sweepEmbeddedMediaOrphans } from "./embedded-media-orphan-sweep";
 import { fetchLinkPreview as readLinkPreview, type LinkPreviewFetchResult } from "./link-preview-fetch";
 import { processExternalRoleCachePurges } from "./external-role-cache-purge";
@@ -252,6 +253,13 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       console.log("Notification pruning complete");
     } catch (error) {
       console.error("Notification pruning failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+    }
+    // Video Trash (#776 D): purge what has outlived its retention. Before the daily embedded-media sweep, so the keys it queues are drained in the same 03:00 run.
+    try {
+      const purged = await purgeVideoTrash(this.env, controller.scheduledTime);
+      if (purged.scanned > 0) console.log("Video Trash purge", purged);
+    } catch (error) {
+      console.error("Video Trash purge failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
     // Daily, on the hourly trigger at 03:00 Malaysia time (19:00 UTC) rather than a new cron trigger (#493).
     if (new Date(controller.scheduledTime).getUTCHours() === EMBEDDED_MEDIA_SWEEP_UTC_HOUR) {

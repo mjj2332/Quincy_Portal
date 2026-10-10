@@ -25,6 +25,12 @@ Answers: for each queue message type and Workflow, who sends it, who consumes it
 
 Callers of the enqueue helpers are not listed; grep the helper name (`enqueueRenditionSafely` has ~15).
 
+## Cron
+
+| trigger | job | where |
+|---|---|---|
+| `0 * * * *` (hourly) | Video Trash purge (#776 D): up to 25 due Versions or Videos a run, oldest `purge_at` first; each is one fenced D1 batch that queues the original and poster keys in `embedded_media_cleanup`, deletes the rows and writes a `video_version.purge` / `video.purge` audit row with a NULL actor. It runs before the daily embedded-media sweep, whose drain (03:00 Malaysia) deletes the objects after re-checking no live Version holds the key. | `purgeVideoTrash` portal/workers/background/src/video-trash-purge.ts, called from `scheduled` portal/workers/background/src/index.ts |
+
 ## Workflows
 
 All four are re-exported at `AutoHdrSend` portal/workers/background/src/index.ts:58 and declared in `portal/workers/background/wrangler.jsonc`.
