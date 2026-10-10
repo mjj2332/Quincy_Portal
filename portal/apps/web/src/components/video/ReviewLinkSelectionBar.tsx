@@ -1,3 +1,4 @@
+import { REVIEW_LINK_MAX_VIDEOS } from "@quincy/shared";
 import { Button } from "../quincy/Button";
 
 /**
@@ -14,8 +15,9 @@ export function ReviewLinkSelectionBar({ count, onCreate, onClear }: { count: nu
   return <div role="region" aria-label="Selected films" data-surface="inverse" data-testid="review-link-selection-bar" className={BAR}>
     <span className="[font:400_18px/1.18_var(--font-display)]">{count}</span>{" "}
     <span className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-on-inverse-muted">selected</span>
+    {count > REVIEW_LINK_MAX_VIDEOS && <span role="status" className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">{`A link can hold at most ${REVIEW_LINK_MAX_VIDEOS} films.`}</span>}
     <span className="h-[22px] w-px bg-border max-[721px]:hidden" aria-hidden="true" />
-    <Button type="button" variant="primary" className="min-h-11" onClick={onCreate}>Create Review link</Button>
+    <Button type="button" variant="primary" className="min-h-11" disabled={count > REVIEW_LINK_MAX_VIDEOS} onClick={onCreate}>Create Review link</Button>
     <Button type="button" variant="secondary" className="min-h-11" onClick={onClear}>Clear</Button>
   </div>;
 }

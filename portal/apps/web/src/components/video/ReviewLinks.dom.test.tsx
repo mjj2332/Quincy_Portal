@@ -1,7 +1,7 @@
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
-import { A1, A2, B1, L1, L2, L3, NOW, PROJECT, V1, V2, TEASER, WALK, all, button, buttonIn, checkbox, dialog, flush, linkOf, member, mount, openList, press, q, refused, selectFilms, state, text, toggle, type, unmount } from "@/testing/review-links-harness";
+import { id, A1, A2, B1, L1, L2, L3, NOW, PROJECT, V1, V2, TEASER, WALK, all, button, buttonIn, checkbox, dialog, flush, linkOf, member, mount, openList, press, q, refused, selectFilms, state, text, toggle, type, unmount } from "@/testing/review-links-harness";
 import "@/testing/dom-polyfills";
 
 /**
@@ -264,5 +264,16 @@ describe("create", () => {
     expect(checkbox("Select Main walkthrough")).toBeNull();
     await openList();
     expect(all('[data-testid="review-link-row"]')).toHaveLength(1);
+  });
+
+  it("stops at 50 films: the bar says so and Create Review link is off", async () => {
+    state.videos = Array.from({ length: 51 }, (_, n) => ({ ...WALK, id: id(1000 + n), title: `Film ${n}`, versions: WALK.versions.map((v, i) => ({ ...v, assetId: id(5000 + n * 2 + i) })), currentAssetId: id(5000 + n * 2) }));
+    await mount();
+    for (let n = 0; n < 50; n += 1) await press(checkbox(`Select Film ${n}`));
+    expect(buttonIn(q('[data-testid="review-link-selection-bar"]'), "Create Review link")!.disabled).toBe(false);
+    await press(checkbox("Select Film 50"));
+    const bar = q('[data-testid="review-link-selection-bar"]');
+    expect(text(bar)).toContain("at most 50");
+    expect(buttonIn(bar, "Create Review link")!.disabled).toBe(true);
   });
 });

@@ -79,7 +79,8 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
       ...(draft.removePasscode ? { passcode: null } : passcodeTyped ? { passcode: draft.passcode.trim() } : {}),
       ...(allowChanges.length > 0 ? { allow: Object.fromEntries(allowChanges.map((key) => [key, allowValue[key]])) } : {}),
     };
-    void store.run(`patch:${linkId}`, () => actions.patch(linkId, patch), () => store.resetDetail(linkId));
+    const sent = structuredClone(draft);
+    void store.run(`patch:${linkId}`, () => actions.patch(linkId, patch), () => store.settleDetail(linkId, sent));
   }
 
   function toggleVersion(member: ReviewLinkDto["videos"][number], video: VideoDto | undefined, assetId: string) {

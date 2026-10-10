@@ -1,8 +1,7 @@
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearToasts, getToasts } from "../../lib/toast-store";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
-import { A1, A2, B1, L1, L2, NOW, PROJECT, V1, V2, TEASER, WALK, all, button, buttonIn, checkbox, dialog, flush, linkOf, member, mount, openDetailOf, openList, press, q, refused, state, text, toggle, type, unmount } from "@/testing/review-links-harness";
+import { A1, A2, B1, id, videoOf, L1, L2, NOW, PROJECT, V1, V2, TEASER, WALK, all, button, buttonIn, checkbox, dialog, flush, linkOf, member, mount, openDetailOf, openList, press, q, refused, state, text, toggle, type, unmount } from "@/testing/review-links-harness";
 import "@/testing/dom-polyfills";
 
 /**
@@ -39,7 +38,9 @@ afterEach(async () => { await unmount(); resetVideoUploadStore(); document.body.
 const base = `/api/projects/${PROJECT}/review-links/${L1}`;
 const detail = () => q('[data-testid="review-link-detail"]')!;
 const listCalls = () => apiGetMock.mock.calls.filter(([path]) => path.endsWith("/review-links")).length;
-const confirm = async (open: string, confirmLabel: string) => { await press(buttonIn(detail(), open)); await press(buttonIn(q('[data-slot="alert-dialog-content"]'), confirmLabel)); };
+const confirm = async (open: string, confirmLabel: string) => { await press(buttonIn(detail(), open)); await press(buttonIn(q('[data-testid="review-link-confirm"]'), confirmLabel)); };
+const THREE = videoOf(V1, "Main walkthrough", [[id(303), 3, true], [A2, 2, false], [A1, 1, false]]);
+const hangList = () => apiGetMock.mockImplementation(async (path) => { if (path.endsWith("/review-links")) return new Promise(() => undefined); if (path.endsWith("/videos")) return { videos: state.videos }; throw new Error(path); });
 const save = () => buttonIn(detail(), "Save changes")!;
 
 describe("detail: Versions and Videos", () => {
@@ -75,8 +76,8 @@ describe("detail: Versions and Videos", () => {
     apiDeleteMock.mockResolvedValue(undefined);
     await mount(); await openDetailOf("Smith family");
     await press(buttonIn(detail(), "Remove Main walkthrough from link"));
-    expect(text(q('[data-slot="alert-dialog-content"]'))).toContain("Notes and decisions stay");
-    await press(buttonIn(q('[data-slot="alert-dialog-content"]'), "Cancel"));
+    expect(text(q('[data-testid="review-link-confirm"]'))).toContain("Notes and decisions stay");
+    await press(buttonIn(q('[data-testid="review-link-confirm"]'), "Cancel"));
     expect(apiDeleteMock).not.toHaveBeenCalled();
     await confirm("Remove Main walkthrough from link", "Remove Video");
     expect(apiDeleteMock).toHaveBeenCalledWith(`${base}/videos/${V1}`);
@@ -174,7 +175,7 @@ describe("detail: revoke and replace", () => {
     apiPostMock.mockImplementation(async () => { state.links = [linkOf({ status: "revoked", revokedAt: "2026-10-10T03:00:00.000Z" })]; return { link: state.links[0] }; });
     await mount(); await openDetailOf("Smith family");
     await press(buttonIn(detail(), "Revoke link"));
-    await press(buttonIn(q('[data-slot="alert-dialog-content"]'), "Cancel"));
+    await press(buttonIn(q('[data-testid="review-link-confirm"]'), "Cancel"));
     expect(apiPostMock).not.toHaveBeenCalled();
     await confirm("Revoke link", "Revoke");
     expect(apiPostMock).toHaveBeenCalledWith(`${base}/revoke`, {});
@@ -191,8 +192,8 @@ describe("detail: revoke and replace", () => {
     apiPostMock.mockResolvedValue({ link: linkOf(), url });
     await mount(); await openDetailOf("Smith family");
     await press(buttonIn(detail(), "Replace link"));
-    expect(text(q('[data-slot="alert-dialog-content"]'))).toContain("stops working at once");
-    await press(buttonIn(q('[data-slot="alert-dialog-content"]'), "Replace"));
+    expect(text(q('[data-testid="review-link-confirm"]'))).toContain("stops working at once");
+    await press(buttonIn(q('[data-testid="review-link-confirm"]'), "Replace"));
     expect(apiPostMock).toHaveBeenCalledWith(`${base}/replace`, {});
     expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toBe(url);
     await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
@@ -269,5 +270,77 @@ describe("phone width (390px): the responsive hooks", () => {
     await press(checkbox("Select Teaser"));
     expect(q('[data-testid="review-link-selection-bar"]')!.className).toContain("max-w-[calc(100vw-2*var(--space-4))]");
     expect(q('[data-testid="review-link-selection-bar"]')!.className).toContain("flex-wrap");
+  });
+});
+
+describe("a write's own answer is the truth until the refetch lands", () => {
+  const V3 = id(303);
+  it("grants chain on the returned link, not on a stale list: v3, then v2, then v1 sends [v3,v2,v1] while the GET is pending", async () => {
+    state.videos = [THREE, TEASER];
+    state.links = [linkOf({ videos: [member(V1, "Main walkthrough", [[V3, 3]])] })];
+    apiPutMock.mockImplementationOnce(async () => ({ link: linkOf({ videos: [member(V1, "Main walkthrough", [[V3, 3], [A2, 2]])] }) }));
+    apiPutMock.mockImplementationOnce(async () => ({ link: linkOf({ videos: [member(V1, "Main walkthrough", [[V3, 3], [A2, 2], [A1, 1]])] }) }));
+    await mount(); await openDetailOf("Smith family");
+    hangList();
+    await press(checkbox("Main walkthrough v2", detail()));
+    expect(apiPutMock).toHaveBeenNthCalledWith(1, `${base}/videos/${V1}/grants`, { assetIds: [V3, A2] });
+    expect(checkbox("Main walkthrough v2", detail())!.checked).toBe(true);
+    await press(checkbox("Main walkthrough v1", detail()));
+    expect(apiPutMock).toHaveBeenNthCalledWith(2, `${base}/videos/${V1}/grants`, { assetIds: [V3, A2, A1] });
+  });
+  it("the Version boxes stay locked until the answer is in the list", async () => {
+    state.videos = [THREE, TEASER];
+    state.links = [linkOf({ videos: [member(V1, "Main walkthrough", [[V3, 3]])] })];
+    let answer!: (value: unknown) => void;
+    apiPutMock.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    await mount(); await openDetailOf("Smith family");
+    hangList();
+    await press(checkbox("Main walkthrough v2", detail()));
+    expect(checkbox("Main walkthrough v1", detail())!.disabled).toBe(true);
+    await act(async () => { answer({ link: linkOf({ videos: [member(V1, "Main walkthrough", [[V3, 3], [A2, 2]])] }) }); });
+    await flush();
+    expect(checkbox("Main walkthrough v1", detail())!.disabled).toBe(false);
+    expect(checkbox("Main walkthrough v2", detail())!.checked).toBe(true);
+  });
+  it("Remove Video drops the member at once", async () => {
+    state.links = [linkOf({ videos: [member(V1, "Main walkthrough", [[A2, 2]]), member(V2, "Teaser", [[B1, 1]])] })];
+    apiDeleteMock.mockResolvedValue(undefined);
+    await mount(); await openDetailOf("Smith family");
+    hangList();
+    await confirm("Remove Teaser from link", "Remove Video");
+    expect(all('[data-testid="review-link-member"]')).toHaveLength(1);
+    expect(text(detail())).not.toContain("Teaser");
+  });
+  it("Add a Video shows the new member at once", async () => {
+    apiPostMock.mockResolvedValue({ link: linkOf({ videos: [member(V1, "Main walkthrough", [[A2, 2]]), member(V2, "Teaser", [[B1, 1]])] }) });
+    await mount(); await openDetailOf("Smith family");
+    hangList();
+    await press(button("Add a Video")); await press(all('[role="option"]')[0]);
+    expect(all('[data-testid="review-link-member"]')).toHaveLength(2);
+  });
+  it("Save shows the new label at once; Revoke shows Revoked at once", async () => {
+    apiPatchMock.mockResolvedValue({ link: linkOf({ label: "Renamed" }) });
+    apiPostMock.mockResolvedValue({ link: linkOf({ label: "Renamed", status: "revoked", revokedAt: "2026-10-10T03:00:00.000Z" }) });
+    await mount(); await openDetailOf("Smith family");
+    hangList();
+    await type(q<HTMLInputElement>("#review-link-detail-label", detail()), "Renamed");
+    await press(save());
+    expect(q<HTMLInputElement>("#review-link-detail-label", detail())!.value).toBe("Renamed");
+    expect(save().disabled).toBe(true);
+    await confirm("Revoke link", "Revoke");
+    expect(text(detail())).toContain("Revoked");
+    expect(buttonIn(detail(), "Revoke link")).toBeUndefined();
+  });
+  it("a successful Save keeps a passcode typed while the request was out", async () => {
+    let answer!: (value: unknown) => void;
+    apiPatchMock.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    await mount(); await openDetailOf("Smith family");
+    await type(q<HTMLInputElement>("#review-link-detail-label", detail()), "Renamed");
+    await press(save());
+    await type(q<HTMLInputElement>("#review-link-detail-passcode", detail()), "typed-meanwhile");
+    await act(async () => { answer({ link: linkOf({ label: "Renamed" }) }); });
+    await flush();
+    expect(q<HTMLInputElement>("#review-link-detail-passcode", detail())!.value).toBe("typed-meanwhile");
+    expect(save().disabled).toBe(false);
   });
 });

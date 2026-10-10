@@ -35,18 +35,32 @@ export type ReviewLinkActions = {
 };
 
 export function createReviewLinkActions(client: QueryClient, projectId: string): ReviewLinkActions {
+  const key = reviewLinksKey(projectId);
+  /**
+   * A write's own answer is the truth until the refetch lands: it goes into the cached list BEFORE the write resolves (and so before any
+   * control unlocks), and an older fetch still in flight is cancelled so it cannot put the pre-write list back. The next grant set, label
+   * or member list is therefore always built from this, never from a list that predates the write.
+   */
+  async function remember(change: (links: ReviewLinkDto[]) => ReviewLinkDto[]) {
+    await client.cancelQueries({ queryKey: key });
+    client.setQueryData<ReviewLinkDto[]>(key, (old) => (old ? change(old) : old));
+  }
+  const upsert = (link: ReviewLinkDto) => remember((links) => (links.some((existing) => existing.id === link.id) ? links.map((existing) => (existing.id === link.id ? link : existing)) : [link, ...links]));
   async function settled<T>(task: () => Promise<T>): Promise<T> {
     try { return await task(); }
     catch (error) { if (classifyReviewLinkError(error).action === "gateClosed") void client.invalidateQueries({ queryKey: projectDataKeys.videoReview(projectId) }); throw error; }
-    finally { void client.invalidateQueries({ queryKey: reviewLinksKey(projectId) }); }
+    finally { void client.invalidateQueries({ queryKey: key }); }
   }
-  const one = async (request: Promise<unknown>) => reviewLinkResponseSchema.parse(await request).link;
-  const reveal = async (request: Promise<unknown>) => reviewLinkRevealResponseSchema.parse(await request);
+  const one = async (request: Promise<unknown>) => { const link = reviewLinkResponseSchema.parse(await request).link; await upsert(link); return link; };
+  const reveal = async (request: Promise<unknown>) => { const response = reviewLinkRevealResponseSchema.parse(await request); await upsert(response.link); return response; };
   return {
     create: (input) => settled(() => reveal(apiPost(base(projectId), input))),
     patch: (linkId, input) => settled(() => one(apiPatch(linkPath(projectId, linkId), input))),
     addVideo: (linkId, videoId, assetIds) => settled(() => one(apiPost(`${linkPath(projectId, linkId)}/videos`, { videoId, assetIds }))),
-    removeVideo: (linkId, videoId) => settled(async () => { await apiDelete(videoPath(projectId, linkId, videoId)); }),
+    removeVideo: (linkId, videoId) => settled(async () => {
+      await apiDelete(videoPath(projectId, linkId, videoId));
+      await remember((links) => links.map((link) => (link.id === linkId ? { ...link, videos: link.videos.filter((member) => member.videoId !== videoId) } : link)));
+    }),
     setGrants: (linkId, videoId, assetIds) => settled(() => one(apiPut(`${videoPath(projectId, linkId, videoId)}/grants`, { assetIds }))),
     revoke: (linkId) => settled(() => one(apiPost(`${linkPath(projectId, linkId)}/revoke`, {}))),
     replace: (linkId) => settled(() => reveal(apiPost(`${linkPath(projectId, linkId)}/replace`, {}))),

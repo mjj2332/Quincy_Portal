@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useNow } from "../../lib/use-now";
 import type { ReviewLinkCreateInput, VideoDto } from "@quincy/shared";
-import { REVIEW_LINK_LABEL_MAX, REVIEW_LINK_PASSCODE_MAX, REVIEW_LINK_PASSCODE_MIN } from "@quincy/shared";
+import { REVIEW_LINK_LABEL_MAX, REVIEW_LINK_MAX_VIDEOS, REVIEW_LINK_PASSCODE_MAX, REVIEW_LINK_PASSCODE_MIN } from "@quincy/shared";
 import { defaultExpiryDay, expiryDayToIso } from "../../lib/review-link-expiry";
 import { formatVideoDate } from "./video-format";
 import { Button } from "../quincy/Button";
@@ -33,7 +33,8 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
   const pending = state.pending.has("create");
   const problem = state.problems["create"];
   const chosen = (video: VideoDto): readonly string[] => draft.grants[video.id] ?? [video.currentAssetId];
-  const ready = selected.length > 0 && expiry.ok && passcodeError === null && !pending;
+  const tooMany = selected.length > REVIEW_LINK_MAX_VIDEOS;
+  const ready = selected.length > 0 && !tooMany && expiry.ok && passcodeError === null && !pending;
 
   function toggleVersion(video: VideoDto, assetId: string) {
     const current = chosen(video);
@@ -52,7 +53,8 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
       ...(passcode ? { passcode } : {}),
       allow: draft.allow,
     };
-    void store.run("create", () => actions.create(body), (result) => store.showReveal({ url: result.url, linkId: result.link.id, label: result.link.label, origin: "create" }));
+    const sent = { videoIds: body.videoIds, draft: structuredClone(draft) };
+    void store.run("create", () => actions.create(body), (result) => store.showReveal({ url: result.url, linkId: result.link.id, label: result.link.label, origin: "create" }, sent));
   }
 
   return <>
@@ -61,6 +63,7 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
       <DialogDescription>{selected.length === 1 ? "A private link to watch 1 film." : `A private link to watch ${selected.length} films.`} Choose which Versions guests can see.</DialogDescription>
     </DialogHeader>
     <div className="grid gap-[var(--space-4)]">
+      {tooMany && <Notice tone="caution" role="status">{`A link can hold at most ${REVIEW_LINK_MAX_VIDEOS} films. Untick ${selected.length - REVIEW_LINK_MAX_VIDEOS} to continue.`}</Notice>}
       {selected.length === 0 && <Notice tone="caution" role="status">Tick at least one film on the page first.</Notice>}
       <QuincyField id="review-link-label" label="Label (optional)" placeholder="e.g. Smith family" maxLength={REVIEW_LINK_LABEL_MAX} autoComplete="off" value={draft.label} onChange={(event) => store.patchCreate({ label: event.target.value })} />
       <div className="grid gap-[var(--space-1)]">

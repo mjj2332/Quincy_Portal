@@ -36,6 +36,7 @@ export type ReviewLinkStoreState = {
 
 const emptyCreate = (): CreateDraft => ({ label: "", passcode: "", expiryDay: null, allow: { ...DEFAULT_ALLOW }, grants: {} });
 export const emptyDetail = (): DetailDraft => ({ label: null, expiryDay: null, passcode: "", removePasscode: false, allow: {} });
+const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((value, index) => value === b[index]);
 const initial = (): ReviewLinkStoreState => ({ selection: new Set(), view: { kind: "closed" }, create: emptyCreate(), details: {}, reveal: null, pending: new Set(), problems: {} });
 
 export type ReviewLinkStore = ReturnType<typeof createReviewLinkStore>;
@@ -76,11 +77,49 @@ export function createReviewLinkStore(key: string) {
     patchCreate(change: Partial<Omit<CreateDraft, "grants">>) { update((s) => ({ create: { ...s.create, ...change } })); },
     setGrant(videoId: string, assetIds: readonly string[]) { update((s) => ({ create: { ...s.create, grants: { ...s.create.grants, [videoId]: assetIds } } })); },
     patchDetail(linkId: string, change: Partial<DetailDraft>) { update((s) => ({ details: { ...s.details, [linkId]: { ...(s.details[linkId] ?? emptyDetail()), ...change } } })); },
+    /** A save answered: clear the fields that were sent (as `submitted` held them) and keep anything edited since. */
+    settleDetail(linkId: string, submitted: DetailDraft) {
+      update((s) => {
+        const now = s.details[linkId];
+        if (!now) return {};
+        const allow: Partial<Allow> = {};
+        for (const key of Object.keys(now.allow) as Array<keyof Allow>) if (!(key in submitted.allow) || submitted.allow[key] !== now.allow[key]) allow[key] = now.allow[key];
+        const next: DetailDraft = {
+          label: now.label === submitted.label ? null : now.label,
+          expiryDay: now.expiryDay === submitted.expiryDay ? null : now.expiryDay,
+          passcode: now.passcode === submitted.passcode ? "" : now.passcode,
+          removePasscode: now.removePasscode === submitted.removePasscode ? false : now.removePasscode,
+          allow,
+        };
+        const untouched = next.label === null && next.expiryDay === null && next.passcode === "" && !next.removePasscode && Object.keys(next.allow).length === 0;
+        return { details: untouched ? without(s.details, linkId) : { ...s.details, [linkId]: next } };
+      });
+    },
     resetDetail(linkId: string) { update((s) => ({ details: without(s.details, linkId) })); },
 
-    /** The create or replace answered: show the URL once. A created link also clears what it was made from. */
-    showReveal(reveal: Reveal) {
-      update((s) => ({ reveal, view: { kind: "reveal" }, ...(reveal.origin === "create" ? { selection: new Set<string>(), create: emptyCreate() } : {}), details: s.details }));
+    /**
+     * The create or replace answered: show the URL once. A created link clears what it was made from, and only that: with `submitted`
+     * (the Videos and the draft as sent), a tick or field the person changed while the request was out stays. Without it, everything goes.
+     */
+    showReveal(reveal: Reveal, submitted?: { videoIds: readonly string[]; draft: CreateDraft }) {
+      update((s) => {
+        if (reveal.origin !== "create") return { reveal, view: { kind: "reveal" } };
+        if (!submitted) return { reveal, view: { kind: "reveal" }, selection: new Set<string>(), create: emptyCreate() };
+        const sent = submitted.draft; const now = s.create;
+        const grants: Record<string, readonly string[]> = {};
+        for (const [videoId, ids] of Object.entries(now.grants)) {
+          const was = sent.grants[videoId];
+          if (!(submitted.videoIds.includes(videoId) && was && sameList(was, ids))) grants[videoId] = ids;
+        }
+        const create: CreateDraft = {
+          label: now.label === sent.label ? "" : now.label,
+          passcode: now.passcode === sent.passcode ? "" : now.passcode,
+          expiryDay: now.expiryDay === sent.expiryDay ? null : now.expiryDay,
+          allow: now.allow.comments === sent.allow.comments && now.allow.approve === sent.allow.approve && now.allow.download === sent.allow.download ? { ...DEFAULT_ALLOW } : now.allow,
+          grants,
+        };
+        return { reveal, view: { kind: "reveal" }, selection: new Set([...s.selection].filter((id) => !submitted.videoIds.includes(id))), create };
+      });
     },
     dismissReveal() {
       const linkId = state.reveal?.linkId;

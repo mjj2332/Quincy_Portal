@@ -35,7 +35,7 @@ export async function unmount() { if (root) await act(async () => { root!.unmoun
 export const q = <T extends Element = HTMLElement>(selector: string, scope: ParentNode | null = document) => scope === null ? null : scope.querySelector<T>(selector);
 export const all = <T extends Element = HTMLElement>(selector: string, scope: ParentNode | null = document) => scope === null ? [] : [...scope.querySelectorAll<T>(selector)];
 export const dialog = () => q('[data-testid="review-links-dialog"]');
-export const alertDialog = () => q('[data-slot="alert-dialog-content"]');
+export const alertDialog = () => q('[data-testid="review-link-confirm"]');
 export const buttonIn = (scope: ParentNode | null, label: string | RegExp) => all<HTMLButtonElement>("button", scope ?? document).find((b) => { const name = b.getAttribute("aria-label") ?? b.textContent ?? ""; return typeof label === "string" ? name === label || b.textContent === label : label.test(name) || label.test(b.textContent ?? ""); });
 export const button = (label: string | RegExp) => buttonIn(document, label);
 export async function press(el: Element | null | undefined) { if (!el) throw new Error("nothing to press"); await act(async () => { (el as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); }); await flush(); }

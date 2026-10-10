@@ -122,4 +122,39 @@ describe("review link form store (#741 11b)", () => {
     expect(store.getState()).not.toBe(before);
     off();
   });
+
+  it("settleDetail clears only what was submitted: a field edited during the request survives", () => {
+    const store = createReviewLinkStore("u:p");
+    store.patchDetail(A, { label: "Sent", passcode: "old-code", allow: { download: false, comments: false } });
+    const submitted = store.getState().details[A]!;
+    store.patchDetail(A, { passcode: "typed-meanwhile", allow: { ...submitted.allow, comments: true } });
+    store.settleDetail(A, submitted);
+    const left = store.getState().details[A]!;
+    expect(left.label).toBeNull();
+    expect(left.passcode).toBe("typed-meanwhile");
+    expect(left.allow).toEqual({ comments: true });
+  });
+
+  it("settleDetail removes the entry when everything sent is still what is there", () => {
+    const store = createReviewLinkStore("u:p");
+    store.patchDetail(A, { label: "Sent" });
+    store.settleDetail(A, store.getState().details[A]!);
+    expect(store.getState().details[A]).toBeUndefined();
+  });
+
+  it("a created link clears only the ticks and fields it was made from; later edits and ticks survive", () => {
+    const store = createReviewLinkStore("u:p");
+    store.toggleSelect(A); store.openCreate();
+    store.patchCreate({ label: "Smith", passcode: "secret1" });
+    store.setGrant(A, ["x"]);
+    const submitted = { videoIds: [A], draft: store.getState().create };
+    store.toggleSelect(B); store.patchCreate({ passcode: "changed-meanwhile" }); store.setGrant(B, ["y"]);
+    store.showReveal({ url: "https://x.test/d/review?link=a#t=tok", linkId: A, label: "Smith", origin: "create" }, submitted);
+    const s = store.getState();
+    expect([...s.selection]).toEqual([B]);
+    expect(s.create.label).toBe("");
+    expect(s.create.passcode).toBe("changed-meanwhile");
+    expect(s.create.grants[A]).toBeUndefined();
+    expect(s.create.grants[B]).toEqual(["y"]);
+  });
 });
