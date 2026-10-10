@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useSyncExternalStore, type ReactNode } from "react";
 import type { VideoDto, VideoVersionDto } from "@quincy/shared";
 import type { CompareSideId, CompareStore } from "../../lib/video-compare-store";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../reui/tabs";
@@ -7,12 +7,12 @@ import { useVideoNotes } from "./use-video-notes";
 import { VideoNotesPanel } from "./VideoNotesPanel";
 
 /**
- * The notes of both sides of a compare (#741 7c), one level above the stages like `VideoNotesHost` is above the single player. Both
+ * The notes of both sides of a compare (#741 7c), a sibling of the compare body (which never remounts when this comes or goes) and publishes its sessions to it. Both
  * sessions stay mounted whichever tab shows, so both marker lanes stay live; exactly one `VideoNotesPanel` is in the DOM (the tab
  * picks whose session it shows), so its fixed ids are never duplicated. Drawing is single-view only: `markup` is off for both.
  * A note or marker click goes to the transport through `seekBridge`, not to the side's own clock, so both sides follow.
  */
-export default function CompareNotesHost({ notes, video, versionA, versionB, store, seekBridge, detailsFor, children }: {
+export default function CompareNotesHost({ notes, video, versionA, versionB, store, seekBridge, detailsFor, publish }: {
   notes: CompareNotesProps;
   video: VideoDto;
   versionA: VideoVersionDto;
@@ -20,7 +20,8 @@ export default function CompareNotesHost({ notes, video, versionA, versionB, sto
   store: CompareStore;
   seekBridge: { current: (side: CompareSideId, frame: number) => void };
   detailsFor: (version: VideoVersionDto) => ReactNode;
-  children: (slots: CompareNotesSlots) => ReactNode;
+  /** Hands the sessions and the panel to the compare body, which stays mounted when this host comes and goes. */
+  publish: (slots: CompareNotesSlots | null) => void;
 }) {
   const shared = { projectId: notes.projectId, role: notes.role, userId: notes.userId, archived: notes.archived, forms: notes.forms, markup: false };
   const a = useVideoNotes({ ...shared, version: versionA, seekFrame: (frame) => { seekBridge.current("a", frame); } });
@@ -39,5 +40,7 @@ export default function CompareNotesHost({ notes, video, versionA, versionB, sto
       </TabsContent>
     </Tabs>
   </div>;
-  return <>{children({ a, b, panel })}</>;
+  useLayoutEffect(() => { publish({ a, b, panel }); });
+  useEffect(() => () => { publish(null); }, [publish]);
+  return null;
 }

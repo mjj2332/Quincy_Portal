@@ -64,14 +64,28 @@ export default function CompareView({ video, store, startFrame, onChangeSide, co
   const versionB = pair ? video.versions.find((candidate) => candidate.assetId === pair.b) : undefined;
   // The notes sessions sit above the stages and reach the transport only through this bridge, filled in by the body.
   const seekBridge = useRef<(side: CompareSideId, frame: number) => void>(() => {});
+  // The body is always the same element in the same place: the notes host is its sibling and hands the sessions over through this store, so
+  // the notes capability coming and going never remounts the stages, the transport or the position.
+  const [slotStore] = useState(createSlotStore);
   if (!versionA || !versionB) return null;
-  const body = (slots: CompareNotesSlots | null) => <CompareBody video={video} store={store} startFrame={startFrame} versionA={versionA} versionB={versionB} onChangeSide={onChangeSide} controlRef={controlRef} slots={slots} seekBridge={seekBridge} />;
-  return notes
-    ? <Suspense fallback={null}><LazyNotesHost notes={notes} video={video} versionA={versionA} versionB={versionB} store={store} seekBridge={seekBridge} detailsFor={detailsFor}>{body}</LazyNotesHost></Suspense>
-    : body(null);
+  return <>
+    <CompareBody video={video} store={store} startFrame={startFrame} versionA={versionA} versionB={versionB} onChangeSide={onChangeSide} controlRef={controlRef} slotStore={slotStore} seekBridge={seekBridge} />
+    {notes && <Suspense fallback={null}><LazyNotesHost notes={notes} video={video} versionA={versionA} versionB={versionB} store={store} seekBridge={seekBridge} detailsFor={detailsFor} publish={slotStore.set} /></Suspense>}
+  </>;
 }
 
-function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSide, controlRef, slots, seekBridge }: {
+type SlotStore = { get: () => CompareNotesSlots | null; set: (next: CompareNotesSlots | null) => void; subscribe: (listener: () => void) => () => void };
+function createSlotStore(): SlotStore {
+  let slots: CompareNotesSlots | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => slots,
+    set: (next) => { slots = next; for (const listener of [...listeners]) listener(); },
+    subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+  };
+}
+
+function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSide, controlRef, slotStore, seekBridge }: {
   video: VideoDto;
   store: CompareStore;
   startFrame: number;
@@ -79,10 +93,11 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
   versionB: VideoVersionDto;
   onChangeSide: (side: CompareSideId, assetId: string) => void;
   controlRef: Ref<VideoPlayerControl>;
-  slots: CompareNotesSlots | null;
+  slotStore: SlotStore;
   seekBridge: { current: (side: CompareSideId, frame: number) => void };
 }) {
   const compare = useSyncExternalStore(store.subscribe, store.getState);
+  const slots = useSyncExternalStore(slotStore.subscribe, slotStore.get);
   const position = useRef(startFrame);
   const [handles, setHandles] = useState<{ a: CompareSideHandle | null; b: CompareSideHandle | null }>({ a: null, b: null });
   const onHandleA = useCallback((handle: CompareSideHandle | null) => { setHandles((held) => (held.a === handle ? held : { ...held, a: handle })); }, []);
@@ -387,12 +402,11 @@ function SideStage({ side: id, version, title, label, initialFrame, phase, start
     onHandle({ video: element, clock: instance, fps, frameCount, hasAudio });
     return () => { onHandle(null); };
   }, [element, instance, fps, frameCount, hasAudio, onHandle]);
-  const onClockChangeRef = useRef(onClockChange);
-  onClockChangeRef.current = onClockChange;
+  // `onClockChange` is stable per notes session; it changes when the notes capability comes back, and the new session must be handed the clock.
   useEffect(() => {
-    onClockChangeRef.current?.(instance);
-    return () => { onClockChangeRef.current?.(null); };
-  }, [instance]);
+    onClockChange?.(instance);
+    return () => { onClockChange?.(null); };
+  }, [instance, onClockChange]);
 
   return <div data-compare-cell={id} data-phase={phase} style={cellStyle} className={cn("relative flex h-full min-h-0 min-w-0 flex-col", cellClassName)}>
     <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} onVideo={setElement} overlay={(box) => <>

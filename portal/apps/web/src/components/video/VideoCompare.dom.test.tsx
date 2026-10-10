@@ -986,4 +986,28 @@ describe("Compare: the capability going away while comparing (#741 7c Sol round 
     await key("ArrowRight", dialog()!);
     expect(stub.writes).toEqual([frameSeekSeconds(7, F25)]);
   });
+
+  it("keeps both videos, the position and playback when notes is switched off and on under compare", async () => {
+    await openCompare({ parts: ["notes", "compare"] }, 5);
+    const role = "editor" as const;
+    const withParts = async (parts: string[]) => {
+      await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role={role}><VideoCollectionPanel projectId={PROJECT} role={role} review={{ open: true, parts: parts as never }} /></QuincyQueryProvider>); });
+      await flush(4);
+    };
+    await key("ArrowRight", dialog()!);
+    await land(6);
+    const [a, b] = [vid("a"), vid("b")];
+    const frameShown = () => readoutA();
+    const before = frameShown();
+    await withParts(["compare"]);
+    expect(compareRoot()).not.toBeNull();
+    expect(vid("a")).toBe(a);
+    expect(vid("b")).toBe(b);
+    expect(frameShown()).toBe(before);
+    await withParts(["notes", "compare"]);
+    expect(vid("a")).toBe(a);
+    expect(vid("b")).toBe(b);
+    expect(frameShown()).toBe(before);
+    expect(tid("video-compare-notes-toggle")).not.toBeNull();
+  });
 });
