@@ -578,3 +578,16 @@ describe("VideoPlayer notes seams (#741 5b)", () => {
     expect(onClockChange.mock.calls.at(-1)![0]).toBeNull();
   });
 });
+
+describe("VideoPlayer control (#741 7a)", () => {
+  it("currentFrame is the frame on screen, and the frame on its way while a seek is in flight", async () => {
+    const control = createRef<VideoPlayerControl>();
+    await mount(versionOf(), { controlRef: control });
+    await load();
+    expect(control.current!.currentFrame()).toBe(0);
+    await key("ArrowRight");
+    expect(control.current!.currentFrame()).toBe(1);
+    await act(async () => { stub.finishSeek(video()); stub.presentFrame(video(), 1 / 25); });
+    expect(control.current!.currentFrame()).toBe(1);
+  });
+});
