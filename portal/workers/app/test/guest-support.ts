@@ -7,8 +7,8 @@ import { clearVideoFlags, setVideoFlags } from "./video-review-support";
 export const guestOrigin = baseEnv.APP_ORIGIN;
 export const GUEST_WINDOW_MS = 15 * 60_000;
 
-/** Master flag, pilot scope and the `guest` part: what a guest link needs before any `/d` route answers. */
-export const guestFlags = (projectId: string = ids.project) => ["video_review", `video_review_pilot:${projectId}`, "video_review_guest"] as const;
+/** Master flag, pilot scope and the `guest` part (plus the two capability parts, `guest_comments` and `delivery`, which 13a makes the `allow` flags depend on): what a guest link needs before any `/d` route answers. */
+export const guestFlags = (projectId: string = ids.project) => ["video_review", `video_review_pilot:${projectId}`, "video_review_guest", "video_review_guest_comments", "video_review_delivery"] as const;
 export async function openGuestGate(projectId: string = ids.project) { await clearVideoFlags(); await setVideoFlags(...guestFlags(projectId)); }
 
 export type LinkInput = { projectId?: string; expiresAt?: number; passcodeHash?: string | null; kind?: "video_review" | "delivery"; revoked?: boolean; label?: string | null; generation?: number; allow?: [number, number, number] };
@@ -68,3 +68,19 @@ export async function linkWithSession(input: LinkInput = {}) {
 export const HYGIENE = { "referrer-policy": "no-referrer", "cache-control": "private, no-store", "x-robots-tag": "noindex", "x-content-type-options": "nosniff" } as const;
 export async function sha256Hex(value: string) { return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))].map((byte) => byte.toString(16).padStart(2, "0")).join(""); }
 export const clearGuestRows = async () => { await database.DB.batch([database.DB.prepare("DELETE FROM guest_rate_limits"), database.DB.prepare("DELETE FROM guest_sessions"), database.DB.prepare("DELETE FROM review_link_version_grants"), database.DB.prepare("DELETE FROM review_link_videos"), database.DB.prepare("DELETE FROM client_links WHERE kind = 'video_review'")]); };
+
+export type SentEmail = { from: string; to: string; subject: string; text: string; html: string };
+/**
+ * Replaces the Worker's `EMAIL` binding and sender address with a spy (the test and the Worker share one `env` object). `fail` makes `send` throw it. `restore()` puts the originals back.
+ * `configured: false` removes both, the way a Worker without the binding looks.
+ */
+export function mockEmail(options: { fail?: unknown; configured?: boolean } = {}) {
+  const mutable = baseEnv as unknown as Record<string, unknown>; const original = { email: mutable.EMAIL, from: mutable.NOTIFICATIONS_FROM_ADDRESS };
+  const sent: SentEmail[] = [];
+  if (options.configured === false) { delete mutable.EMAIL; delete mutable.NOTIFICATIONS_FROM_ADDRESS; }
+  else {
+    mutable.EMAIL = { send: async (message: SentEmail) => { if (options.fail !== undefined) throw options.fail; sent.push(message); return { messageId: `message-${sent.length}` }; } };
+    mutable.NOTIFICATIONS_FROM_ADDRESS = "studio@example.test";
+  }
+  return { sent, restore() { mutable.EMAIL = original.email; mutable.NOTIFICATIONS_FROM_ADDRESS = original.from; } };
+}

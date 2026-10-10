@@ -17,13 +17,37 @@ export const GUEST_PASSCODE_MAX = 64;
 export const guestSessionInputSchema = z.object({ token: z.string().min(1).max(256), passcode: z.string().min(1).max(GUEST_PASSCODE_MAX).optional() }).strict();
 export type GuestSessionInput = z.infer<typeof guestSessionInputSchema>;
 
-/** `POST` and `GET /d/api/links/:linkId/session`. `verified` and `email` stay false and null until the email step (13) fills them. */
+/**
+ * `POST` and `GET /d/api/links/:linkId/session`, and the answer of `POST .../email/verify`. `verified`, `email` (the guest's own, normalised) and `name` are false, null and null until
+ * the email step (13a) fills them. Each `allow` flag is the link's flag AND its Worker part (`guest_comments` for comments, `delivery` for approve and download), so the page never
+ * renders a control whose POST would be the stub.
+ */
 export const guestSessionResponseSchema = z.object({
   link: z.object({ label: z.string().nullable(), expiresAt: iso, allow: z.object({ comments: z.boolean(), approve: z.boolean(), download: z.boolean() }).strict() }).strict(),
   verified: z.boolean(),
   email: z.string().nullable(),
+  name: z.string().nullable(),
 }).strict();
 export type GuestSessionResponse = z.infer<typeof guestSessionResponseSchema>;
+
+/** The address as typed (trimmed, 254 characters at most, an email); the Worker normalises it (NFC, lower case) before it is used for anything. */
+export const GUEST_EMAIL_MAX = 254;
+export const GUEST_NAME_MAX = 80;
+export const guestEmailCodeInputSchema = z.object({ email: z.string().trim().max(GUEST_EMAIL_MAX).email() }).strict();
+export type GuestEmailCodeInput = z.infer<typeof guestEmailCodeInputSchema>;
+/** `POST .../email/code`: 202 for every well-formed address, known or not. */
+export const GUEST_CODE_RESEND_SECONDS = 60;
+export const guestEmailCodeResponseSchema = z.object({ sent: z.literal(true), resendAfterSeconds: z.literal(GUEST_CODE_RESEND_SECONDS) }).strict();
+export type GuestEmailCodeResponse = z.infer<typeof guestEmailCodeResponseSchema>;
+/** `POST .../email/verify`: six digits and the name the guest wants shown (1 to 80 characters after trimming, on one line). The address is the one the newest code was sent to. */
+export const guestEmailVerifyInputSchema = z.object({ code: z.string().regex(/^\d{6}$/), name: z.string().trim().min(1).max(GUEST_NAME_MAX).regex(/^[^\r\n]*$/) }).strict();
+export type GuestEmailVerifyInput = z.infer<typeof guestEmailVerifyInputSchema>;
+export const guestEmailCodeErrorSchema = z.discriminatedUnion("error", [
+  z.object({ error: z.literal("code_expired") }).strict(),
+  z.object({ error: z.literal("code_incorrect"), attemptsLeft: z.number().int().min(0).max(4) }).strict(),
+  z.object({ error: z.literal("already_verified") }).strict(),
+  z.object({ error: z.literal("too_many_attempts"), retryAfterSeconds: z.number().int().positive() }).strict(),
+]);
 
 export const guestPasscodeErrorSchema = z.discriminatedUnion("error", [
   z.object({ error: z.literal("passcode_required") }).strict(),
@@ -67,7 +91,7 @@ export type GuestVideoListResponse = z.infer<typeof guestVideoListResponseSchema
 
 const guestAuthorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("studio"), name: z.string() }).strict(),
-  /** `self` is false until a guest can post (13). */
+  /** `self` is false until a guest can post (13b). */
   z.object({ kind: z.literal("guest"), name: z.string(), self: z.boolean() }).strict(),
 ]);
 

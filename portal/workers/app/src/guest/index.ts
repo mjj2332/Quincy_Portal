@@ -6,8 +6,9 @@ import { auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { hashToken, randomToken } from "../lib/opaque-token";
 import type { AppEnv } from "../env";
-import { guestNotFound, guestRoute, originRejection, readSessionCookie, SESSION_MAX_MS, readBoundedText, sessionCookieHeader, timingSafeEqualStrings, UUID, withHygiene } from "./http";
-import { guestGloballyOpen, loadActiveLink, resolveSession, sessionBody } from "./link";
+import { guestNotFound, guestRoute, INVALID, originRejection, readJson, SESSION_MAX_MS, sessionCookieHeader, timingSafeEqualStrings, TOO_LARGE, tooMany, UUID, withHygiene } from "./http";
+import { mountGuestEmail } from "./email";
+import { guestGloballyOpen, identityOf, loadActiveLink, resolveSession, sessionBody } from "./link";
 import { clientAddress, GUEST_LIMITS, ipBucket, reserveAttempts, windowStart } from "./rate-limit";
 import { listGuestNotes, listGuestVideos, readGuestMarkup, resolveGrantedVersion } from "./read";
 
@@ -18,16 +19,6 @@ import { listGuestNotes, listGuestVideos, readGuestMarkup, resolveGrantedVersion
  * wrongly credentialled it was. The order on each route: link id, gate, Origin (unsafe methods), then credential. See docs/maps/routes.md.
  */
 const POSTER_HEADERS = { "content-type": "image/jpeg", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox", "cross-origin-resource-policy": "same-origin" } as const;
-const TOO_LARGE = Symbol("too_large");
-
-async function readJson(c: Context<AppEnv>): Promise<unknown | typeof INVALID | typeof TOO_LARGE> {
-  const text = await readBoundedText(c.req.raw);
-  if (text === null) return TOO_LARGE;
-  try { return JSON.parse(text) as unknown; } catch { return INVALID; }
-}
-const INVALID = Symbol("invalid");
-
-const tooMany = (retryAfterSeconds: number) => Response.json({ error: "too_many_attempts", retryAfterSeconds }, { status: 429, headers: { "retry-after": String(retryAfterSeconds) } });
 
 /** `POST .../session`: exchange the link token (and the passcode, if the link has one) for a session. */
 async function startSession(c: Context<AppEnv, "/d/api/links/:linkId/session">): Promise<Response> {
@@ -79,6 +70,7 @@ async function withSession(c: Context<AppEnv, string>, handler: (session: NonNul
 }
 
 export function mountGuest(app: Hono<AppEnv>): void {
+  mountGuestEmail(app);
   app.get("/d/review", guestRoute("/d/review", async (c) => {
     // Only `link` is accepted in the query, once, as a UUID: the token lives in the fragment, which never reaches the server, and anything else is not read.
     const params = [...new URL(c.req.url).searchParams];
@@ -91,7 +83,7 @@ export function mountGuest(app: Hono<AppEnv>): void {
   }));
 
   app.post("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", startSession));
-  app.get("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", (c) => withSession(c, (session) => c.json(sessionBody(session.link)))));
+  app.get("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", (c) => withSession(c, (session) => c.json(sessionBody(session.link, identityOf(session))))));
   app.delete("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", async (c) => {
     // Resolve the session first: only a live credential for this link can leave, anything else is the stub.
     const session = await resolveSession(c, c.req.param("linkId"), Date.now());

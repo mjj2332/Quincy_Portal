@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { boardSchemaVariant, createDb, schema } from "@quincy/db";
 import { and, asc, desc, eq, isNotNull, isNull, notExists, sql } from "drizzle-orm";
-import { enqueueRenditionSafely, parseTonomoOrder, renditionsEnabled, roleHasCapability } from "@quincy/shared";
+import { EMAIL_SEND_ERROR_CODES, enqueueRenditionSafely, parseTonomoOrder, renditionsEnabled, roleHasCapability } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { audit, auditMeta } from "../lib/audit";
@@ -104,9 +104,7 @@ function safeNotificationErrorCode(value: string | null): string | null {
   const safe = new Set([
     "queue_publish_failed", "delivery_lease_expired", "delivery_retry", "reauthorization_suppressed", "recipient_preference_disabled",
     "queue_retries_exhausted", "email_configuration_missing", "email_acceptance_unknown",
-    "E_RATE_LIMIT_EXCEEDED", "E_DAILY_LIMIT_EXCEEDED", "E_DELIVERY_FAILED", "E_INVALID_FROM",
-    "E_INVALID_TO", "E_INVALID_EMAIL", "E_DOMAIN_NOT_VERIFIED", "E_SENDER_NOT_ALLOWED",
-    "E_RECIPIENT_SUPPRESSED", "E_MESSAGE_TOO_LARGE", "E_INVALID_HEADERS",
+    ...EMAIL_SEND_ERROR_CODES,
     "project_activity_payload_invalid", "project_activity_missing", "project_activity_invalid",
     "project_activity_project_mismatch", "project_activity_type_reserved",
     "digest_dropped_read", "recipient_inactive", "external_policy_suppressed", "digest_send_failed",

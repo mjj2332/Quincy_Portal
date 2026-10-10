@@ -171,7 +171,7 @@ describe("terminal route manifest", () => {
     const guest = PROJECT_SECURITY_ROUTE_CLASSIFICATION.filter((route) => route.class === "guest-link");
     expect(guest.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
       "DELETE /d/api/links/:linkId/session", "GET /d/api/links/:linkId/notes/:noteId/markup", "GET /d/api/links/:linkId/session", "GET /d/api/links/:linkId/versions/:assetId/notes",
-      "GET /d/api/links/:linkId/versions/:assetId/poster", "GET /d/api/links/:linkId/versions/:assetId/stream", "GET /d/api/links/:linkId/videos", "GET /d/review", "POST /d/api/links/:linkId/session",
+      "GET /d/api/links/:linkId/versions/:assetId/poster", "GET /d/api/links/:linkId/versions/:assetId/stream", "GET /d/api/links/:linkId/videos", "GET /d/review", "POST /d/api/links/:linkId/email/code", "POST /d/api/links/:linkId/email/verify", "POST /d/api/links/:linkId/session",
     ]);
     for (const route of guest) expect(route, `${route.method} ${route.path}`).toMatchObject({ scope: "none", projection: "guest-public", response: "protocol-404" });
     expect(registered.length).toBeGreaterThan(0);

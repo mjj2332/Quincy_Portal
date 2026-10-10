@@ -301,6 +301,8 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/d/api/links/:linkId/versions/:assetId/poster", class: "guest-link" },
   { method: "GET", path: "/d/api/links/:linkId/versions/:assetId/notes", class: "guest-link" },
   { method: "GET", path: "/d/api/links/:linkId/notes/:noteId/markup", class: "guest-link" },
+  { method: "POST", path: "/d/api/links/:linkId/email/code", class: "guest-link" },
+  { method: "POST", path: "/d/api/links/:linkId/email/verify", class: "guest-link" },
   { method: "ALL", path: "/d/*", class: "terminal-fallback" },
   { method: "ALL", path: "/d", class: "terminal-fallback" },
   { method: "ALL", path: "/media/*", class: "terminal-fallback" },
