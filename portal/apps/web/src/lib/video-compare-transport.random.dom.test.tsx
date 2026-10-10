@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type Rational } from "@quincy/shared";
+import { aOf, bOf, type Rational } from "@quincy/shared";
 import { installVideoElementStub, type VideoElementStub } from "../testing/video-element";
 import { VideoFrameClock } from "./video-frame-clock";
 import { CompareTransport, type CompareTransportState } from "./video-compare-transport";
@@ -43,16 +43,20 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
   const videos = { a: document.createElement("video"), b: document.createElement("video") };
   const fps = { a: config.fpsA, b: config.fpsB };
   const counts = { a: config.nA, b: config.nB };
+  // Every third seed opens the clocks mid-film (initialFrame) and lets the reviewer act BEFORE the metadata arrives.
+  const preMeta = seed % 3 === 0;
   const clocks = {
-    a: new VideoFrameClock(videos.a, { fps: config.fpsA, frameCount: config.nA }),
-    b: new VideoFrameClock(videos.b, { fps: config.fpsB, frameCount: config.nB }),
+    a: new VideoFrameClock(videos.a, { fps: config.fpsA, frameCount: config.nA }, preMeta ? { initialFrame: Math.floor(rand() * config.nA) } : {}),
+    b: new VideoFrameClock(videos.b, { fps: config.fpsB, frameCount: config.nB }, preMeta ? { initialFrame: Math.floor(rand() * config.nB) } : {}),
   };
-  for (const side of ["a", "b"] as const) {
-    stub.loadMetadata(videos[side], { duration: (counts[side] * fps[side].den) / fps[side].num });
-    stub.setReadyState(videos[side], 4);
-    stub.finishSeek(videos[side]);
-    stub.presentFrame(videos[side], 0);
-  }
+  const loadMetadata = () => {
+    for (const side of ["a", "b"] as const) {
+      stub.loadMetadata(videos[side], { duration: (counts[side] * fps[side].den) / fps[side].num });
+      stub.setReadyState(videos[side], 4);
+      if (!preMeta) { stub.finishSeek(videos[side]); stub.presentFrame(videos[side], 0); }
+    }
+  };
+  if (!preMeta) loadMetadata();
   const store = createCompareStore("rand");
   store.setPair("A", "B");
   store.setOffset(config.offset);
@@ -60,6 +64,49 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
   const t = new CompareTransport({ a: { clock: clocks.a, video: videos.a, fps: config.fpsA, frameCount: config.nA, hasAudio: true }, b: { clock: clocks.b, video: videos.b, fps: config.fpsB, frameCount: config.nB, hasAudio: true }, store, now: () => Date.now(), document: doc });
 
   const log: string[] = [];
+  // After a stop the transport did not choose (a post confirming a frame, an error, an end) the stopped side is not realigned to the
+  // mapping, by design; a transport-driven stop is.
+  let confirmSide: "a" | "b" | null = null; // set by a confirm event, cleared by anything else that stops or moves the pair
+  let aligned = false; // nothing has aligned the pair yet (the UI opens each side at its own initialFrame)
+  if (preMeta) {
+    for (let k = Math.floor(rand() * 5); k > 0; k--) {
+      const d = t.getState().domain;
+      const side = pick(["a", "b"] as const);
+      pick<() => void>([
+        () => { t.seekTo(d.start + Math.floor(rand() * (d.end - d.start + 1))); aligned = true; },
+        () => { t.step(pick([-2, 1, 3])); aligned = true; },
+        () => { t.seekSide(side, Math.floor(rand() * counts[side])); aligned = false; },
+        () => { t.pause(); aligned = true; },
+      ])();
+    }
+    loadMetadata();
+  }
+  const expectAligned = (where: string) => {
+    for (let round = 0; round < 8; round++) {
+      stub.deliverEvents();
+      for (const side of ["a", "b"] as const) {
+        const v = videos[side];
+        if (v.seeking) { stub.finishSeek(v); present(side, clocks[side].getState().targetFrame ?? clocks[side].getState().frame); }
+      }
+    }
+    const state = t.getState();
+    if (state.playing) return;
+    if (confirmSide) {
+      // The confirmed side keeps its frame; the OTHER side follows the frame that was confirmed (not an obsolete seek target).
+      const c = confirmSide;
+      const m = c === "a" ? "b" : "a";
+      const shown = clocks[c].getState().frame;
+      const mapped = c === "a" ? bOf(shown, config.offset, config.fpsA, config.fpsB) : aOf(shown, config.offset, config.fpsA, config.fpsB);
+      const want = Math.min(clocks[m].lastFrame(), Math.max(0, mapped));
+      expect(clocks[m].getState().frame, `${m} should follow ${c}'s confirmed frame ${shown} to ${want}: ${where}`).toBe(want);
+    }
+    if (confirmSide) return;
+    for (const side of ["a", "b"] as const) {
+      const local = side === "a" ? state.frame : bOf(state.frame, config.offset, config.fpsA, config.fpsB);
+      const want = Math.min(clocks[side].lastFrame(), Math.max(0, local));
+      expect(clocks[side].getState().frame, `${side} shows ${clocks[side].getState().frame}, mapping says ${want}: ${where}`).toBe(want);
+    }
+  };
   const present = (side: "a" | "b", frame: number) => stub.presentFrame(videos[side], (frame * fps[side].den) / fps[side].num);
   type Kind = { name: string; passive: boolean; run: () => void };
   const kinds: Kind[] = [
@@ -98,6 +145,8 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
       stub.fireError(videos[side]);
       videos[side].pause();
     } },
+    { name: "confirm", passive: true, run: () => { const side = pick(["a", "b"] as const); clocks[side].awaitConfirmedFrame().catch(() => {}); aligned = false; confirmSide = side; } },
+    { name: "settle", passive: true, run: () => { if (aligned) expectAligned(`mid-run settle after ${log.slice(-6).join(", ")} seed ${seed} ${config.name}`); } },
     { name: "reverse", passive: false, run: () => { t.reverse(pick([1, 2])); } },
     { name: "waiting", passive: true, run: () => { stub.fireWaiting(videos[pick(["a", "b"] as const)]); } },
     { name: "playing", passive: true, run: () => { const s = pick(["a", "b"] as const); stub.setReadyState(videos[s], 4); stub.firePlaying(videos[s]); } },
@@ -119,7 +168,7 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
     { name: "seekSide", passive: false, run: () => { const side = pick(["a", "b"] as const); t.seekSide(side, Math.floor(rand() * counts[side])); } },
     { name: "rejectPlay", passive: false, run: () => { stub.rejectNextPlay("NotAllowedError"); } },
   ];
-  const weights = [10, 6, 2, 4, 1, 1, 1, 2, 3, 1, 2, 3, 1, 1, 3, 1, 1, 1, 1, 1];
+  const weights = [10, 6, 2, 4, 1, 1, 2, 1, 1, 2, 3, 1, 2, 3, 1, 1, 3, 1, 1, 1, 1, 1];
 
   let prev: CompareTransportState = t.getState();
   for (let i = 0; i < EVENTS; i++) {
@@ -128,6 +177,8 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
     for (let k = 0; k < kinds.length; k++) { n -= weights[k]!; if (n < 0) { kind = kinds[k]!; break; } }
     log.push(kind.name);
     kind.run();
+    if (["seekTo", "step", "pause"].includes(kind.name)) aligned = true;
+    else if (["error", "ended", "finishSide", "confirm", "play", "reverse", "seekSide"].includes(kind.name)) aligned = false;
     await vi.advanceTimersByTimeAsync(0);
     const now = t.getState();
     const where = `${config.name} seed ${seed} event ${i} (${log.slice(-8).join(", ")}) state ${JSON.stringify(now)}`;
@@ -138,11 +189,21 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
       // A native stop whose event has not arrived yet cannot be known to the transport.
       if (stub.pendingEvents() === 0) expect(videos.a.paused && videos.b.paused && now.stalled === null, `playing with nothing running: ${where}`).toBe(false);
     }
+    // A started side that is buffering is the transport's stall, whatever else was happening (a rate change, a play).
+    if (now.playing && now.rate > 0 && stub.pendingEvents() === 0) {
+      for (const side of ["a", "b"] as const) {
+        if (clocks[side].getState().stalled && !videos[side].paused && now.phases[side] === "live") expect(now.stalled, `${side} is buffering but the transport is not stalled: ${where}`).not.toBeNull();
+      }
+    }
     if (!now.playing) expect(videos.a.paused && videos.b.paused, `not playing but an element runs: ${where}`).toBe(true);
     expect([videos.a, videos.b].filter((v) => !v.muted).length, `more than one unmuted: ${where}`).toBeLessThanOrEqual(1);
+    if (!kind.passive || now.playing) confirmSide = kind.name === "confirm" ? confirmSide : null;
     if (kind.passive && prev.playing && now.playing && prev.rate > 0 && now.rate > 0) expect(now.frame, `position went back: ${where}`).toBeGreaterThanOrEqual(prev.frame);
     prev = now;
   }
+  confirmSide = null;
+  t.pause();
+  expectAligned(`final pause, seed ${seed} ${config.name} after ${log.slice(-6).join(", ")}`);
   t.dispose();
   clocks.a.dispose(); clocks.b.dispose();
   stub.dispose();

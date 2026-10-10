@@ -66,6 +66,9 @@ export class VideoFrameClock {
   private initialConsumed = false;
   private readonly rejectListeners = new Set<(error: unknown) => void>();
   private readonly confirmListeners = new Set<() => void>();
+  private readonly confirmedListeners = new Set<(frame: number) => void>();
+  /** An explicit seek or step has been issued: metadata arriving must not replace its target with `initialFrame` (or 0). */
+  private commanded = false;
 
   constructor(private readonly video: HTMLVideoElement, version: FrameClockVersion, options: { now?: () => number; initialFrame?: number } = {}) {
     this.initialFrame = options.initialFrame !== undefined && Number.isFinite(options.initialFrame) ? Math.max(0, Math.trunc(options.initialFrame)) : 0;
@@ -82,6 +85,13 @@ export class VideoFrameClock {
 
   /** The frame the first seek will go to, or null once it has gone (compare reads it before metadata, when `state.frame` is still 0). */
   pendingInitialFrame(): number | null { return this.initialConsumed ? null : this.initialFrame; }
+
+  /** An explicit seek/step cancels the pending initial frame. */
+  private command(): void {
+    this.commanded = true;
+    this.initialFrame = 0;
+    this.initialConsumed = true;
+  }
 
   private takeInitialFrame(): number {
     const frame = this.initialFrame;
@@ -119,12 +129,22 @@ export class VideoFrameClock {
   }
 
   /** Seeks without stopping: the element keeps playing and lands on `frame` (a hard drift correction). */
-  seekWhilePlaying(frame: number): void { this.seek(frame, true, true); }
+  seekWhilePlaying(frame: number): void { this.command(); this.seek(frame, true, true); }
 
   /** Tells `listener` whenever `awaitConfirmedFrame()` is asked for, after any playback it stops: a note post is about to anchor to this clock's frame. */
   onConfirmRequest(listener: () => void): () => void {
     this.confirmListeners.add(listener);
     return () => { this.confirmListeners.delete(listener); };
+  }
+
+  /** Tells `listener` the frame each `awaitConfirmedFrame()` is resolved with, as it resolves (so the other half of a pair can follow it). */
+  onConfirmed(listener: (frame: number) => void): () => void {
+    this.confirmedListeners.add(listener);
+    return () => { this.confirmedListeners.delete(listener); };
+  }
+
+  private notifyConfirmed(frame: number): void {
+    for (const listener of [...this.confirmedListeners]) listener(frame);
   }
 
   /** Tells `listener` when the browser refused or failed a `play()` (anything but the AbortError a pause causes). Returns the remover. */
@@ -139,10 +159,11 @@ export class VideoFrameClock {
   };
 
   /** Seeks to `frame` (clamped to the film), stopping any playback. */
-  seekToFrame(frame: number): void { this.seek(frame, false); }
+  seekToFrame(frame: number): void { this.command(); this.seek(frame, false); }
 
   /** Moves `delta` frames from the frame on its way, or the one on screen. Stepping past either end does nothing. */
   step(delta: number): void {
+    this.command();
     const base = this.state.targetFrame ?? this.state.frame;
     const target = this.clamp(base + delta);
     if (target === base) return;
@@ -153,7 +174,10 @@ export class VideoFrameClock {
   awaitConfirmedFrame(): Promise<number> {
     if (this.state.playing) this.pause();
     for (const listener of [...this.confirmListeners]) listener();
-    if (this.state.confirmed && this.target === null && !this.video.seeking) return Promise.resolve(this.state.frame);
+    if (this.state.confirmed && this.target === null && !this.video.seeking) {
+      this.notifyConfirmed(this.state.frame);
+      return Promise.resolve(this.state.frame);
+    }
     return new Promise((resolve, reject) => { this.waiters.push({ resolve, reject }); });
   }
 
@@ -283,10 +307,12 @@ export class VideoFrameClock {
    */
   private initialize(): void {
     const { playing, rate } = this.state;
-    if (!(playing && rate > 0 && !this.reverseState)) { this.seek(this.takeInitialFrame(), true); return; }
+    // A seek or step issued before metadata keeps its target; otherwise the first seek goes to the initial frame.
+    const goal = (): number => (this.commanded ? (this.target ?? this.state.frame) : this.takeInitialFrame());
+    if (!(playing && rate > 0 && !this.reverseState)) { this.seek(goal(), true); return; }
     if (this.disposed) return;
     this.video.playbackRate = rate * this.trim;
-    const initial = this.takeInitialFrame();
+    const initial = goal();
     if (this.video.currentTime !== 0 || this.target !== null || initial !== 0) this.seek(initial, true, true);
     this.startRaf();
   }
@@ -340,6 +366,7 @@ export class VideoFrameClock {
     const waiters = this.waiters;
     this.waiters = [];
     for (const waiter of waiters) waiter.resolve(this.state.frame);
+    if (waiters.length > 0) this.notifyConfirmed(this.state.frame);
   }
 
   private onEnded(): void {
@@ -351,6 +378,7 @@ export class VideoFrameClock {
     const waiters = this.waiters;
     this.waiters = [];
     for (const waiter of waiters) waiter.resolve(this.state.frame);
+    if (waiters.length > 0) this.notifyConfirmed(this.state.frame);
   }
 
   private register(): void {
@@ -364,7 +392,10 @@ export class VideoFrameClock {
     this.register();
     this.presented = true;
     this.presentedTime = metadata.mediaTime;
+    // A composited frame is proof the element is not starved, whether or not a `playing` event is ever delivered.
+    const wasStalled = this.state.stalled;
     const frame = this.clamp(frameAtPresentationTime(metadata.mediaTime, this.fps));
+    if (wasStalled && !this.video.paused) this.set({ stalled: false });
     // Only the frame the seek asked for settles it; a late callback from an intermediate seek just reports what is on screen.
     if (this.target !== null && this.issued === this.target && !this.video.seeking && !this.reverseState && frame === this.target) {
       this.set({ frame });

@@ -62,7 +62,7 @@ export const RECOVERY_GRACE_MS = 2_000;
 const SIDES: readonly CompareSideId[] = ["a", "b"];
 const other = (side: CompareSideId): CompareSideId => (side === "a" ? "b" : "a");
 
-type Runtime = { ended: boolean; prevPlaying: boolean; prevFrame: number; samples: number[]; trimmed: number; detach: Array<() => void> };
+type Runtime = { confirming: boolean; ended: boolean; prevPlaying: boolean; prevFrame: number; samples: number[]; trimmed: number; detach: Array<() => void> };
 type Reverse = { base: number; startedAt: number; speed: number; final: boolean; timer: ReturnType<typeof setTimeout> | null };
 
 export class CompareTransport {
@@ -124,13 +124,15 @@ export class CompareTransport {
    */
   play(rate = 1): void {
     if (this.disposed) return;
+    // A rate change while buffering keeps the stall: the held side stays held until it recovers (I3).
+    const kept = this.playing && !this.reverseRun ? this.stall : null;
     this.endReverse();
     const domain = this.domain();
     // From the end, or from a tail where every side is on its last frame or past it (nothing left to play): start over.
     if (this.a >= domain.end || this.a < domain.start || !SIDES.some((side) => this.phaseOf(side, this.a) === "live")) this.a = domain.start;
     const startable = SIDES.some((side) => this.phaseOf(side, this.a) === "live");
     this.blocked = null;
-    this.stall = null;
+    this.stall = kept;
     if (!startable) {
       // Nothing can play (a one-frame pair): report paused rather than a playing state no element backs.
       this.halt();
@@ -143,14 +145,25 @@ export class CompareTransport {
     this.resetSamples();
     this.master = this.pickMaster();
     this.applyAudio();
+    const started: CompareSideId[] = [];
     this.act(() => {
       for (const side of SIDES) {
-        if (this.startSide(side)) continue;
         const { clock } = this.sides[side];
+        if (kept !== null) {
+          // The buffering side only changes rate (no seek: it is mid-fetch); the other stays held.
+          if (side === kept && this.phaseOf(side, this.a) === "live") clock.setRate(rate);
+          continue;
+        }
+        if (this.startSide(side)) { started.push(side); continue; }
         const parked = this.parkedFrame(side, this.localFrame(side, this.a));
         if (this.shownFrame(side) !== parked || clock.getState().playing) clock.seekToFrame(parked);
       }
     });
+    // A side that was started with too little data is buffering, not playing: say so through the central path.
+    for (const side of started) {
+      if (this.stall) break;
+      if (this.sides[side].clock.getState().stalled || this.sides[side].video.readyState < 3) this.enterStall(side, true);
+    }
     this.armWatchdog();
     this.refresh();
   }
@@ -321,7 +334,7 @@ export class CompareTransport {
 
   // --- state ---
 
-  private newRuntime(): Runtime { return { ended: false, prevPlaying: false, prevFrame: -1, samples: [], trimmed: 1, detach: [] }; }
+  private newRuntime(): Runtime { return { confirming: false, ended: false, prevPlaying: false, prevFrame: -1, samples: [], trimmed: 1, detach: [] }; }
 
   private build(): CompareTransportState {
     return {
@@ -495,6 +508,7 @@ export class CompareTransport {
     video.addEventListener("playing", onPlaying);
     run.detach.push(() => { video.removeEventListener("playing", onPlaying); });
     run.detach.push(clock.onConfirmRequest(() => { this.onConfirmRequest(side); }));
+    run.detach.push(clock.onConfirmed((frame) => { this.onConfirmed(side, frame); }));
     run.detach.push(clock.onPlayRejected((error) => { this.onPlayRejected(error); }));
   }
 
@@ -548,7 +562,9 @@ export class CompareTransport {
    * ends; the other side is paused and aligned to the confirming side, which is never seeked.
    */
   private onConfirmRequest(side: CompareSideId): void {
-    if (this.disposed || (!this.playing && !this.reverseRun)) return;
+    if (this.disposed) return;
+    this.runtime[side].confirming = true;
+    if (!this.playing && !this.reverseRun) return;
     const state = this.sides[side].clock.getState();
     const shared = this.sharedFrom(side, state.targetFrame ?? state.frame);
     this.endReverse();
@@ -556,6 +572,22 @@ export class CompareTransport {
     this.a = shared;
     const mate = other(side);
     this.act(() => { this.sides[mate].clock.seekToFrame(this.parkedFrame(mate, this.localFrame(mate, shared))); });
+    this.refresh();
+  }
+
+  /**
+   * The confirmation resolved with `frame`: that, not whatever was targeted when the stop began, is what the other side follows. The
+   * confirming side is never seeked. Skipped if playback has been started again since.
+   */
+  private onConfirmed(side: CompareSideId, frame: number): void {
+    const run = this.runtime[side];
+    if (this.disposed || !run.confirming) return;
+    run.confirming = false;
+    if (this.playing || this.reverseRun) return;
+    const domain = this.domain();
+    this.a = Math.min(domain.end, Math.max(domain.start, this.sharedFrom(side, frame)));
+    const mate = other(side);
+    this.act(() => { this.sides[mate].clock.seekToFrame(this.parkedFrame(mate, this.localFrame(mate, this.a))); });
     this.refresh();
   }
 

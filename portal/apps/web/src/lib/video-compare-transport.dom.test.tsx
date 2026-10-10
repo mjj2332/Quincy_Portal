@@ -962,3 +962,49 @@ describe("CompareTransport: found by the extended random model (#741 7b)", () =>
     expect(r.va.paused && r.vb.paused).toBe(true);
   });
 });
+
+describe("CompareTransport: sol review round 6 (#741 7b)", () => {
+  it("a confirmation during a pending hard seek aligns the other side to the CONFIRMED frame, never the obsolete target", () => {
+    const r = rig();
+    r.t.play();
+    stub.presentFrame(r.vb, 71 / 25);                       // B is far ahead of A ...
+    for (const f of [20, 21, 22]) show(r.va, f);            // ... and drift correction seeks it back to 22
+    expect(r.cb.getState()).toMatchObject({ frame: 71, targetFrame: 22 });
+    const confirmed = r.cb.awaitConfirmedFrame();
+    confirmed.catch(() => {});
+    // settle everything: both seeks land, the confirming side on the frame it was showing
+    for (let i = 0; i < 5; i++) for (const [v, c] of [[r.va, r.ca], [r.vb, r.cb]] as const) {
+      if (v.seeking) { stub.finishSeek(v); stub.presentFrame(v, (c.getState().targetFrame ?? c.getState().frame) / 25); }
+    }
+    expect(r.cb.getState()).toMatchObject({ frame: 71, targetFrame: null, confirmed: true });
+    expect(r.t.getState()).toMatchObject({ playing: false, frame: 71 });
+    expect(r.ca.getState().frame).toBe(71);
+    expect(r.va.currentTime).toBe(seekAt(71));
+    expect(r.vb.currentTime).toBe(seekAt(71));
+  });
+
+  it("changing the rate during buffering keeps the stall: the held side stays held until recovery", () => {
+    const r = rig();
+    r.t.play();
+    show(r.va, 10); show(r.vb, 10);
+    stub.fireWaiting(r.vb);
+    expect(r.t.getState().stalled).toBe("b");
+    r.t.play(2);
+    expect(r.t.getState()).toMatchObject({ stalled: "b", rate: 2, playing: true });
+    expect(r.va.paused).toBe(true);
+    expect(r.vb.playbackRate).toBe(2);
+    stub.firePlaying(r.vb);
+    expect(r.t.getState().stalled).toBeNull();
+    expect(r.va.paused).toBe(false);
+    expect(r.va.playbackRate).toBe(2);
+  });
+
+  it("play() re-enters a stall for a started side that has too little data", () => {
+    const r = rig();
+    stub.setReadyState(r.vb, 2);
+    r.t.play();
+    expect(r.t.getState().stalled).toBe("b");
+    expect(r.va.paused).toBe(true);
+    expect(r.vb.paused).toBe(false);
+  });
+});

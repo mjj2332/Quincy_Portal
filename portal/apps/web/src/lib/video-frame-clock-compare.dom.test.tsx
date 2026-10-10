@@ -169,4 +169,59 @@ describe("VideoFrameClock compare API (#741 7b)", () => {
     clock!.awaitConfirmedFrame().catch(() => {});
     expect(seen).toHaveLength(1);
   });
+
+  it("an explicit seek before metadata is not overwritten by initialFrame when metadata arrives (paused)", () => {
+    const video = setup({ initialFrame: 40 });
+    expect(clock!.pendingInitialFrame()).toBe(40);
+    clock!.seekToFrame(10);
+    expect(clock!.pendingInitialFrame()).toBeNull();
+    stub.writes.length = 0;
+    stub.loadMetadata(video, { duration: 4 });
+    expect(clock!.getState().targetFrame).toBe(10);
+    expect(stub.writes).not.toContain(frameSeekSeconds(40, FPS_25));
+  });
+
+  it("the same for a step, and for a seek while playing", () => {
+    const stepped = setup({ initialFrame: 40 });
+    clock!.step(3);
+    stub.loadMetadata(stepped, { duration: 4 });
+    expect(clock!.getState().targetFrame).toBe(3);
+    clock!.dispose(); stub.dispose();
+    const playing = setup({ initialFrame: 40 });
+    clock!.play();
+    clock!.seekWhilePlaying(10);
+    expect(clock!.pendingInitialFrame()).toBeNull();
+    stub.loadMetadata(playing, { duration: 4 });
+    expect(clock!.getState()).toMatchObject({ targetFrame: 10, playing: true });
+  });
+
+  it("with no explicit command a play before metadata still starts at initialFrame", () => {
+    const video = setup({ initialFrame: 40 });
+    clock!.play();
+    stub.loadMetadata(video, { duration: 4 });
+    expect(clock!.getState().targetFrame).toBe(40);
+  });
+
+  it("notifies onConfirmed with the confirmed frame, on resolution and when already confirmed", () => {
+    const video = setup(); settle(video);
+    const frames: number[] = [];
+    clock!.onConfirmed((frame) => { frames.push(frame); });
+    clock!.awaitConfirmedFrame().catch(() => {});
+    expect(frames).toEqual([0]);
+    clock!.seekToFrame(5);
+    clock!.awaitConfirmedFrame().catch(() => {});
+    expect(frames).toEqual([0]);
+    stub.finishSeek(video); stub.presentFrame(video, 5 / 25);
+    expect(frames).toEqual([0, 5]);
+  });
+
+  it("a composited frame clears a stall even when no playing event is delivered", () => {
+    const video = setup(); settle(video);
+    clock!.play();
+    stub.setReadyState(video, 2);
+    stub.fireWaiting(video);
+    expect(clock!.getState().stalled).toBe(true);
+    stub.presentFrame(video, 3 / 25);
+    expect(clock!.getState().stalled).toBe(false);
+  });
 });
