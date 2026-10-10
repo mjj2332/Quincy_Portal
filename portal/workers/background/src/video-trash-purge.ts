@@ -27,7 +27,8 @@ const auditMeta = (item: DueItem, extra: Record<string, unknown> = {}) => JSON.s
  *   2. delete the Asset row(s), which cascades meta, notes, markup, grants, approval events, Releases and guest digest rows;
  *   3. write the audit row with a NULL actor, immediately after the delete so `changes()` is that delete's;
  *   4. clear the no-FK columns (self-references on surviving Assets, terminal upload reservations).
- * A Video does the same over every Asset of its `version_group_id` (Assets have no FK to Videos), then deletes the `videos` row. If the restore wins, the first statement queues
+ * A Version bundled into a Video removal (`removed_with_video = 1`) is never a standalone item, in the scan or the fence: it goes only in its Video's batch, so a Video restore can never find the Video without its Versions.
+ * A Video does the same over every Asset of its `version_group_id`, bundled or on its own clock and due or not, (Assets have no FK to Videos), then deletes the `videos` row. If the restore wins, the first statement queues
  * nothing and the delete matches nothing, so the rows and the keys survive. No R2 call happens here: the daily drain deletes the objects, re-checking that no live Version holds the key.
  *
  * Collection counts are not recomputed: a removed Version is superseded and a removed Video has no current Version (the invariant slice B keeps), so a purge never changes
@@ -38,7 +39,7 @@ export async function purgeVideoTrash(env: Pick<Env, "DB">, now = Date.now()): P
     SELECT kind, id, videoId, projectId FROM (
       SELECT 'version' AS kind, m.asset_id AS id, m.video_id AS videoId, v.project_id AS projectId, m.purge_at AS purgeAt
         FROM video_version_meta m JOIN videos v ON v.id = m.video_id
-        WHERE m.removed_at IS NOT NULL AND m.purge_at <= ?1
+        WHERE m.removed_at IS NOT NULL AND m.removed_with_video = 0 AND m.purge_at <= ?1
       UNION ALL
       SELECT 'video', v.id, v.id, v.project_id, v.purge_at
         FROM videos v WHERE v.removed_at IS NOT NULL AND v.purge_at <= ?1
@@ -60,12 +61,12 @@ export async function purgeVideoTrash(env: Pick<Env, "DB">, now = Date.now()): P
 }
 
 function versionStatements(db: D1Database, item: DueItem, now: number): D1PreparedStatement[] {
-  const fence = "m.asset_id = ?2 AND m.removed_at IS NOT NULL AND m.purge_at <= ?3";
+  const fence = "m.asset_id = ?2 AND m.removed_at IS NOT NULL AND m.removed_with_video = 0 AND m.purge_at <= ?3";
   const from = "FROM video_version_meta m JOIN assets a ON a.id = m.asset_id JOIN videos v ON v.id = m.video_id";
   return [
     db.prepare(enqueue(`SELECT a.r2_key, NULL, v.project_id, ?1 ${from} WHERE ${fence} AND a.kind = 'video' AND ${notLiveKey("a.r2_key")}`)).bind(now, item.id, now),
     db.prepare(enqueue(`SELECT m.poster_key, NULL, v.project_id, ?1 ${from} WHERE ${fence} AND a.kind = 'video' AND m.poster_key IS NOT NULL AND ${notLiveKey("m.poster_key")}`)).bind(now, item.id, now),
-    db.prepare("DELETE FROM assets WHERE id = ?1 AND kind = 'video' AND EXISTS (SELECT 1 FROM video_version_meta m WHERE m.asset_id = assets.id AND m.removed_at IS NOT NULL AND m.purge_at <= ?2)").bind(item.id, now),
+    db.prepare("DELETE FROM assets WHERE id = ?1 AND kind = 'video' AND EXISTS (SELECT 1 FROM video_version_meta m WHERE m.asset_id = assets.id AND m.removed_at IS NOT NULL AND m.removed_with_video = 0 AND m.purge_at <= ?2)").bind(item.id, now),
     db.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'video_version.purge', 'asset', ?, ?, ? WHERE changes() > 0")
       .bind(crypto.randomUUID(), item.id, auditMeta(item), now),
     // No FK on these: the self-references of the surviving Assets (the routes/assets.ts hard delete does the same), and the reservations that name the Version.

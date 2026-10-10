@@ -249,6 +249,40 @@ describe("a restore racing the purge", () => {
     expect(await queued()).toEqual([]); expect(await audits()).toEqual([]);
   });
 
+  it("a Version bundled into a Video removal is never purged on its own: a Video restore afterwards finds the Video and the Version intact", async () => {
+    const fixture = await seedVideo({ count: 2 }); const [v1, v2] = fixture.versions as [Version, Version];
+    await seedChildren(fixture, v1); await trashVideo(fixture.videoId);
+    // The bundled Version's clock sorts before its Video's, so a pass between the two cutoffs would have taken only the Version.
+    await trashVersion(v1.assetId, REMOVED - DAY, 1); await trashVersion(v2.assetId, REMOVED, 1);
+    const before = await childCounts(fixture.videoId, v1.assetId);
+    await expect(purgeVideoTrash(database, REMOVED + 30 * DAY - DAY / 2)).resolves.toEqual({ scanned: 0, purged: 0, failed: 0 });
+    // The Video restore (slice C) brings the bundled Versions back with it.
+    await restoreVideo(fixture.videoId);
+    await run("UPDATE video_version_meta SET removed_at = NULL, removed_by = NULL, purge_at = NULL, removed_with_video = 0 WHERE video_id = ? AND removed_with_video = 1", fixture.videoId);
+    expect(await videoExists(fixture.videoId)).toBe(true);
+    expect(await assetExists(v1.assetId)).toBe(true); expect(await assetExists(v2.assetId)).toBe(true);
+    expect(await childCounts(fixture.videoId, v1.assetId)).toEqual(before);
+    expect(await queued()).toEqual([]); expect(await audits()).toEqual([]);
+  });
+
+  it("a Video purge takes its bundled Versions in the same batch, and a Version on its own clock that is not yet due", async () => {
+    const fixture = await seedVideo({ count: 3 }); const [own, bundled, bundledEarly] = fixture.versions as [Version, Version, Version];
+    await trashVideo(fixture.videoId);
+    await trashVersion(own.assetId, NOW - 10 * DAY); // its own clock: not due
+    await trashVersion(bundled.assetId, REMOVED, 1); await trashVersion(bundledEarly.assetId, REMOVED - DAY, 1);
+    const batches: number[] = [];
+    const counting = { DB: new Proxy(database.DB, { get: (target, property) => {
+      if (property === "batch") return async (statements: D1PreparedStatement[]) => { batches.push(statements.length); return target.batch(statements); };
+      const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+    } }) } as unknown as Pick<typeof database, "DB">;
+    await expect(purgeVideoTrash(counting, NOW)).resolves.toEqual({ scanned: 1, purged: 1, failed: 0 });
+    expect(batches).toHaveLength(1);
+    expect(await videoExists(fixture.videoId)).toBe(false);
+    for (const version of fixture.versions) expect(await assetExists(version.assetId)).toBe(false);
+    expect(await queued()).toEqual(fixture.versions.flatMap((version) => [version.key, version.posterKey!]).sort());
+    expect(await audits("video_version.purge")).toEqual([]);
+  });
+
   it("a Video restored before the run is not scanned at all, and keeps its Versions", async () => {
     const fixture = await seedVideo({ count: 2 }); await trashVideo(fixture.videoId);
     await restoreVideo(fixture.videoId);
