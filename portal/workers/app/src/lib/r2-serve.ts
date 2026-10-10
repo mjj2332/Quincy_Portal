@@ -20,7 +20,8 @@ export async function serveR2Object(c: Context<AppEnv>, key: string, headers: Re
       const parsed = parseByteRange(rangeHeader, meta.size);
       // If-Range comes first (RFC 9110 §13.1.5): a validator that does not match means the range is ignored, so the whole body is sent, even when the range could not have been satisfied.
       const rangeApplies = ifRangeAllows(c.req.header("if-range"), meta.httpEtag);
-      if (parsed.kind === "unsatisfiable" && rangeApplies) return new Response(null, { status: 416, headers: { "content-range": `bytes */${meta.size}` } });
+      // Video Trash (#776): a 416 names the object's size, so a removed object must answer 404 before it.
+      if (parsed.kind === "unsatisfiable" && rangeApplies) { if (authorize && !await authorize()) return c.json({ error: missing }, 404); return new Response(null, { status: 416, headers: { "content-range": `bytes */${meta.size}` } }); }
       if (parsed.kind === "partial" && rangeApplies) {
         range = { offset: parsed.offset, length: parsed.length };
         status = 206; length = parsed.length; contentRange = `bytes ${parsed.offset}-${parsed.offset + parsed.length - 1}/${meta.size}`;

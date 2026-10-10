@@ -289,3 +289,28 @@ describe("the current-Version invariant", () => {
   });
 });
 
+
+describe("Sol round 1: committing and serving paths re-check the fence", () => {
+  it("listGuestNotes carries its own live fence: a removal between the resolver and the SELECT returns no note", async () => {
+    const w = await world();
+    const link = await linkWithSession();
+    await addMember(link.id, w.a1.videoId, [w.a1.assetId, w.a2.assetId, w.a3.assetId]);
+    const { listGuestNotes, resolveGrantedVersion } = await import("../src/guest/read");
+    expect(await resolveGrantedVersion(database.DB, link.id, ids.project, w.a3.assetId)).not.toBeNull();
+    expect((await listGuestNotes(database.DB, { id: link.id, projectId: ids.project }, w.a3.assetId, null)).notes).toHaveLength(1);
+    await markVersionRemoved(w.a3.assetId);
+    const listed = await listGuestNotes(database.DB, { id: link.id, projectId: ids.project }, w.a3.assetId, null);
+    expect(listed.notes).toEqual([]);
+  });
+
+  it("a reply whose Version is removed after the parent lookup writes neither the reply nor its audit row", async () => {
+    const w = await world();
+    const { createVideoNoteReply, userAuthor } = await import("../src/lib/video-notes");
+    const parent = (await database.DB.prepare("SELECT n.*, 0 AS has_markup FROM video_notes n WHERE n.id = ?").bind(w.notes.a3).first<any>())!;
+    await markVersionRemoved(w.a3.assetId);
+    const outcome = await createVideoNoteReply(database.DB, { projectId: ids.project, parent, author: userAuthor({ id: ids.admin, role: "admin" } as never), body: "late reply", now: Date.now() });
+    expect(outcome.kind).toBe("gone");
+    expect(await rows("SELECT id FROM video_notes WHERE parent_id = ?", w.notes.a3)).toEqual([]);
+    expect(await rows("SELECT id FROM audit_log WHERE action = 'video_note.reply'")).toEqual([]);
+  });
+});

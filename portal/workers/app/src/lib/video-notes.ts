@@ -202,7 +202,7 @@ export async function createVideoNoteReply<T = VideoNoteThreadDto>(db: D1Databas
   const notify = await videoReviewOutboxStatements(db, { kind: "video_reply", projectId: input.projectId, videoId: input.parent.video_id, assetId: input.parent.asset_id, sourceId: replyId, threadRootId: input.parent.id, ...outboxActor(author), auditId, occurredAt: input.now, gate: input.gate });
   const results = await db.batch([
     db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.reply', 'video_note', ?3, ?4, ?5
-      WHERE ${projectFence(6)} AND EXISTS (SELECT 1 FROM video_notes p WHERE p.id = ?7 AND p.project_id = ?6 AND p.parent_id IS NULL AND p.deleted_at IS NULL${author.kind === "guest" ? " AND p.visibility = 'public'" : ""})${auditGuard.sql}`)
+      WHERE ${projectFence(6)} AND EXISTS (SELECT 1 FROM video_notes p WHERE p.id = ?7 AND p.project_id = ?6 AND p.parent_id IS NULL AND p.deleted_at IS NULL AND ${LIVE_VERSION_EXISTS("p.asset_id")}${author.kind === "guest" ? " AND p.visibility = 'public'" : ""})${auditGuard.sql}`)
       .bind(auditId, actorOf(author), replyId, meta, input.now, input.projectId, input.parent.id, ...auditGuard.binds),
     author.kind === "user"
       ? db.prepare(REPLY_INSERT_SQL).bind(replyId, author.principal.id, author.principal.role, input.body, input.now, input.parent.id, input.projectId, auditId)

@@ -93,13 +93,13 @@ function noteDto(row: NoteRow, viewer: string | null): GuestNoteDto {
 
 /**
  * Public roots with their replies for one Version. `visibility = 'public'` is in the WHERE of the single query: visibility is immutable and a reply inherits its root's, so roots and
- * replies are both covered, and `has_markup` is read off the public rows alone. A root deleted with no reply left is not shown (a tombstone is shown only while it holds a thread).
+ * replies are both covered, the Version is REACHED through the link in the same statement (a removal between the resolver and this read lists nothing), and `has_markup` is read off the public rows alone. A root deleted with no reply left is not shown (a tombstone is shown only while it holds a thread).
  */
-export async function listGuestNotes(db: D1Database, projectId: string, assetId: string, viewer: string | null): Promise<GuestNoteListResponse> {
+export async function listGuestNotes(db: D1Database, link: { id: string; projectId: string }, assetId: string, viewer: string | null): Promise<GuestNoteListResponse> {
   const rows = (await db.prepare(`SELECT n.id, n.parent_id, n.author_guest_id, n.start_frame, n.end_frame, n.drawing_frame, n.body, n.revision, n.resolved_at, n.deleted_at, n.created_at, n.edited_at,
       u.name AS u_name, g.display_name AS g_name, (k.note_id IS NOT NULL) AS has_markup
     FROM video_notes n LEFT JOIN user u ON u.id = n.author_user_id LEFT JOIN guest_reviewers g ON g.id = n.author_guest_id LEFT JOIN video_note_markup k ON k.note_id = n.id
-    WHERE n.asset_id = ?1 AND n.project_id = ?2 AND n.visibility = 'public' ORDER BY (n.parent_id IS NOT NULL), n.start_frame, n.created_at, n.id`).bind(assetId, projectId).all<NoteRow>()).results;
+    WHERE n.asset_id = ?1 AND n.project_id = ?2 AND n.visibility = 'public' AND ${reachSql("?3", "?2", "?1")} ORDER BY (n.parent_id IS NOT NULL), n.start_frame, n.created_at, n.id`).bind(assetId, link.projectId, link.id).all<NoteRow>()).results;
   const threads = new Map<string, GuestNoteThreadDto>(); const order: GuestNoteThreadDto[] = [];
   for (const row of rows) if (row.parent_id === null) { const thread = { ...noteDto(row, viewer), replies: [] as GuestNoteDto[] }; threads.set(row.id, thread); order.push(thread); }
   for (const row of rows) if (row.parent_id !== null) threads.get(row.parent_id)?.replies.push(noteDto(row, viewer));

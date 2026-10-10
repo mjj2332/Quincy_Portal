@@ -202,6 +202,8 @@ export async function* zipEntries(env: Pick<Env, "DB" | "MEDIA">, session: Guest
     const object = await env.MEDIA.get(entry.r2Key);
     if (!object) throw new Error("download object missing");
     if (object.size !== entry.bytes) { await object.body.cancel().catch(() => undefined); throw new Error("download object changed"); }
+    // A removal during the fetch must not put the removed Version's bytes in the archive: authorise again after R2 answered and before anything is yielded.
+    if (!await stillAllowed(env.DB, session, entry.assetId)) { await object.body.cancel().catch(() => undefined); throw new Error("download access lost"); }
     yield { name: entryName(entry.title, entry.version), size: entry.bytes, stream: object.body };
   }
   if (notice) {

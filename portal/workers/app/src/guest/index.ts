@@ -122,7 +122,7 @@ export function mountGuest(app: Hono<AppEnv>): void {
   app.get("/d/api/links/:linkId/versions/:assetId/notes", guestRoute("/d/api/links/:linkId/versions/:assetId/notes", (c) => withSession(c, async (session) => {
     const version = await resolveGrantedVersion(c.env.DB, session.link.id, session.link.projectId, c.req.param("assetId"));
     if (!version) return guestNotFound(c);
-    return c.json(await listGuestNotes(c.env.DB, session.link.projectId, c.req.param("assetId"), session.guestId));
+    return c.json(await listGuestNotes(c.env.DB, session.link, c.req.param("assetId"), session.guestId));
   })));
 
   app.get("/d/api/links/:linkId/notes/:noteId/markup", guestRoute("/d/api/links/:linkId/notes/:noteId/markup", (c) => withSession(c, async (session) => {
