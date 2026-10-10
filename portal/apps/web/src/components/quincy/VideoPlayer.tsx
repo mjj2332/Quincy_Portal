@@ -22,7 +22,7 @@ export type VideoPlayerControl = { handleKeyDown(event: KeyboardEvent | ReactKey
 
 const COARSE = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[721px]:min-h-11 max-[721px]:min-w-11";
 const MONO = "[font:var(--type-mono)] tabular-nums";
-// The Kbd primitive paints bg-muted, which the inverse surface does not remap; these chips take the Lightbox's SHORTCUT_KBD skin instead.
+// These chips keep the Lightbox's SHORTCUT_KBD skin (bordered, bg-secondary) rather than the Kbd primitive, to match the Lightbox legend.
 const LEGEND_KBD = "rounded-[var(--radius-xs)] border border-solid border-[length:var(--border-width-hair)] border-border bg-secondary px-[var(--space-1)] text-foreground [font:var(--weight-regular)_var(--text-2xs)/1.4_var(--font-mono)]";
 // What the timecode chip needs to show its frame part: mono glyph advance plus padding, border and the offset from the picture's edge.
 const CHIP_GLYPH_PX = 9;
