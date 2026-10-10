@@ -986,7 +986,7 @@ describe("Drawing layout (#741 6b-ui design review)", () => {
     expect(toolbar).not.toBeNull();
     expect(tid("video-stage")!.contains(toolbar)).toBe(false);
     expect(dialog()!.querySelector('[data-testid="video-player"]')!.contains(toolbar)).toBe(true);
-    expect(tid("video-stage")!.nextElementSibling).toBe(tid("video-markup-stack"));
+    expect(tid("video-stage")!.nextElementSibling!.contains(tid("video-markup-stack"))).toBe(true);
     expect(tid("video-markup-legend")!.textContent).toBe("⌘Z undo · ⇧⌘Z redo · Esc done");
     await click(doneButton()!);
     expect(tid("video-scrubber")).not.toBeNull();
@@ -1094,5 +1094,17 @@ describe("A Post that completes after the Version changed (#741 6b-ui)", () => {
     await flush(6);
     expect(threadOf(other.id).dataset.selected).toBe("true");
     expect(strokesOnScreen()).toBe(1);
+  });
+});
+
+describe("Frames follow the drawing (#741 6b-ui)", () => {
+  it("shows on opening an edit of a saved note that already has a drawing, and not for a plain note", async () => {
+    const saved = markNote({ author: { kind: "staff", person: me } });
+    markups = { [saved.id]: { revision: saved.revision, markup: [STROKE] } };
+    await openFilm({ parts: ON, notes: { [ids.asset2]: [saved], [ids.asset1]: [] } }, 30);
+    await chooseNoteAction(threadOf(saved.id), "Terry", "Edit");
+    await flush(4);
+    expect(tid("video-note-edit-frames-follow")!.textContent).toBe("Frames follow the drawing.");
+    expect(tid("video-note-edit-set-in")).toBeNull();
   });
 });

@@ -174,7 +174,7 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     <label className="sr-only" htmlFor={`video-note-edit-${note.id}`}>Edit note</label>
     <Textarea id={`video-note-edit-${note.id}`} data-testid="video-note-edit-body" value={editing.text} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) store.setOpenText(assetId, event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit, markup: drawings?.on ?? false }); } }} />
     {(editing.frames || showDrawControls) && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-      {editing.frames && editing.drawing.touched && <span data-testid="video-note-edit-frames-follow" className="text-foreground-secondary [font:var(--type-label)]">Frames follow the drawing.</span>}
+      {showDrawControls && (!editing.frames || editing.drawing.touched) && <span data-testid="video-note-edit-frames-follow" className="text-foreground-secondary [font:var(--type-label)]">Frames follow the drawing.</span>}
       {editing.frames && !editing.drawing.touched && <>
         <span data-testid="video-note-edit-anchor" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}>{editAnchorLabel(marks, timecode)}</span>
         <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-in" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "in", frameOnScreen(clock.getState()), clock); }}>Set in <Kbd>I</Kbd></Button>

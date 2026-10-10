@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
 import { Maximize, Pause, Play, StepBack, StepForward, Volume2, VolumeX } from "lucide-react";
 import { framesToTimecode, rationalToNumber, type Box, type VideoVersionDto } from "@quincy/shared";
 import { cn } from "@/lib/utils";
@@ -73,6 +73,10 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [muted, setMutedState] = useState(false);
   const playerRef = useRef<HTMLElement | null>(null);
+  // The transport block's height, kept while it shows so its replacement (drawing) takes at least the same room: the picture above never moves when Draw is pressed.
+  const transportRef = useRef<HTMLDivElement | null>(null);
+  const transportHeight = useRef<number | null>(null);
+  useLayoutEffect(() => { if (transportReplacement == null && transportRef.current) transportHeight.current = transportRef.current.offsetHeight; });
   const clock = useVideoFrameClock(video, version);
 
   const base = useMemo(() => ({ nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame }), [version.tcNominalFps, version.tcDropFrame]);
@@ -120,7 +124,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   >
     <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} onVideo={setVideo} overlay={overlay} />
 
-    {transportReplacement != null ? transportReplacement : <>
+    {transportReplacement != null ? <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div> : <div ref={transportRef} className="flex flex-col gap-[var(--space-3)]">
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}
     <div data-testid="video-scrubber">
       {/* The band is placed against the slider alone: inside the same box as the marker lane it would sit centred on the whole scrubber, 6px below the track. */}
@@ -169,6 +173,6 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         </IconTip>}
       </div>
     </div>
-    </>}
+    </div>}
   </section>;
 }

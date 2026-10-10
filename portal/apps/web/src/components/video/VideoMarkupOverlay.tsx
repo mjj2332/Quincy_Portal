@@ -46,7 +46,7 @@ export function useVideoMarkup(session: VideoNotesSession): { overlay: ((box: Bo
   const on = session.markup;
   const selectedThread = on ? session.selectedThread : null;
   const slot = useSyncExternalStore(forms.subscribe, () => forms.slot(assetId));
-  const compact = useMediaQuery("(max-width: 721px)");
+  const compact = useMediaQuery("(max-width: 720px)");
   const svgRef = useRef<SVGSVGElement | null>(null);
   const drawButton = useRef<HTMLButtonElement | null>(null);
   const doneButton = useRef<HTMLButtonElement | null>(null);
@@ -167,7 +167,7 @@ export function useVideoMarkup(session: VideoNotesSession): { overlay: ((box: Bo
     : null;
 
   const transportReplacement = drawing
-    ? <div className="flex min-w-0 flex-col items-center gap-[var(--space-2)]" data-testid="video-markup-stack">
+    ? <div className="flex min-w-0 flex-col items-center gap-[var(--space-1)]" data-testid="video-markup-stack">
       {refused && <Notice tone="caution" role="status">That is as much markup as one note can hold. Undo a stroke to add more.</Notice>}
       <MarkupToolbar
         label={compact ? null : form === "edit" ? "Editing drawing" : "Markup"}
