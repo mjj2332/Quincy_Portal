@@ -11,9 +11,15 @@ import type { Env } from "./env";
  *  2. SNAPSHOT the pending row ids. Everything below acts on exactly those, so a row that lands while the email is on its way waits for the next hour.
  *  3. RE-FILTER in one query: link live, gate open with `guest` and `notify_client`, member still subscribed, the Video still a live member, the Version still live-granted, the note still
  *     public staff text and not deleted (a reply's root too), the Release still live and downloads still on. Whatever fails is dropped.
- *  4. Nothing survives: mark the rows `sent_at` and send no email (and give the slot back, because no email used it).
- *  5. Otherwise mint a fresh unsubscribe token (only its SHA-256 is stored), compose, send, and in ONE batch write `sent_at` on the snapshot and `last_digest_sent_at`. DECISION 10: a send
- *     that throws, or whose outcome is unknown, COUNTS AS SENT and is never resent (a duplicate client email is worse than a missed digest), so that batch runs on a throw too.
+ *  4. Mint a fresh unsubscribe token (only its SHA-256 is stored) and load the label FIRST. Those are the last setup writes and reads.
+ *  5. THE FENCE, one batch, as the last database step before the send: UPDATE `sent_at` and re-assert the slot on exactly the snapshot rows that still pass the re-filter in step 3 (the re-filter runs INSIDE
+ *     this statement, against the real clock, so an unsubscribe or a revoke during steps 1 to 4 is honoured), read back the rows it marked, then mark the rest of the snapshot as dropped. The email is
+ *     composed from, and only from, the rows the fence marked.
+ *  6. Nothing survived: no email, and the slot is given back (no email used it). Otherwise send.
+ *
+ * DECISION 10 ("an ambiguous send counts as sent and is never resent") is enforced by ORDER, and this deliberately moves its "written after the send" to BEFORE the send: a crash, or a failed write, after
+ * `EMAIL.send` can never un-mark the rows, so it can never cause a resend. The cost is that a send that definitely failed loses that hour's items. That trade is the intent of "never resent" (a duplicate client
+ * email is worse than a missed digest). Nothing after the send touches the database; a failure is only logged, with a bounded reason and never the address.
  *
  * The email carries NO Review link (ADR 0021 section 10: the link token is never stored, so it cannot be re-sent). Its one URL is `${APP_ORIGIN}/d/unsubscribe#t=<token>`, the token only in
  * the fragment. Staff text reaches the email only through the re-filter above (public, undeleted, staff-authored), as an excerpt of at most 280 characters, escaped for HTML.
@@ -66,8 +72,23 @@ const SURVIVORS_SQL = `SELECT d.id, d.event_type, d.video_id, v.title AS video_t
       OR (d.event_type = 'staff_reply' AND vm.asset_id IS NOT NULL AND ${LIVE_GRANT} AND n.id IS NOT NULL AND n.asset_id = d.asset_id AND n.parent_id IS NOT NULL AND n.visibility = 'public' AND n.author_user_id IS NOT NULL AND n.deleted_at IS NULL
         AND EXISTS (SELECT 1 FROM video_notes root WHERE root.id = n.parent_id AND root.visibility = 'public' AND root.deleted_at IS NULL))
       OR (d.event_type = 'video_released' AND vm.asset_id IS NOT NULL AND l.allow_download = 1 AND ${LIVE_GRANT} AND EXISTS (SELECT 1 FROM video_releases rel WHERE rel.asset_id = d.asset_id AND rel.withdrawn_at IS NULL))
-    )
+    )`;
+/** The fence: marks exactly the snapshot rows that pass SURVIVORS_SQL right now, and only while this run still owns the member's slot (?3 = scheduled time, which the claim wrote; ?4 = member id). */
+const SLOT_HELD = "EXISTS (SELECT 1 FROM guest_link_members cm WHERE cm.id = ?4 AND cm.last_digest_sent_at = ?3)";
+const FENCE_SQL = `UPDATE guest_notification_digest SET sent_at = ?3 WHERE sent_at IS NULL AND ${SLOT_HELD} AND id IN (SELECT s.id FROM (${SURVIVORS_SQL}) s)`;
+/** What the email is composed from: the rows the fence just marked in this same batch (sent_at = ?2), read after the authorization decision and so not re-filtered. */
+const FENCED_ROWS_SQL = `SELECT d.id, d.event_type, d.video_id, v.title AS video_title, a.version AS version, n.body AS note_body, n.start_frame, vm.tc_nominal_fps, vm.tc_drop_frame, vm.start_tc_frames, l.label, gr.email_normalized AS email
+  FROM guest_notification_digest d
+  JOIN guest_reviewers gr ON gr.id = d.guest_id
+  JOIN client_links l ON l.id = d.link_id
+  JOIN videos v ON v.id = d.video_id
+  LEFT JOIN assets a ON a.id = d.asset_id
+  LEFT JOIN video_version_meta vm ON vm.asset_id = d.asset_id
+  LEFT JOIN video_notes n ON n.id = d.note_id
+  WHERE d.id IN (SELECT value FROM json_each(?1)) AND d.sent_at = ?2
   ORDER BY d.created_at, d.rowid`;
+/** The rest of the snapshot failed the re-filter: dropped, marked so it is never retried. */
+const DROP_REST_SQL = `UPDATE guest_notification_digest SET sent_at = ?3 WHERE sent_at IS NULL AND ${SLOT_HELD} AND id IN (SELECT value FROM json_each(?1))`;
 
 const escapeHtml = (value: string): string => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 /** Whitespace collapsed, then at most 280 characters (code points, so a surrogate pair is never cut), the last of them an ellipsis when the text was longer. */
@@ -117,35 +138,44 @@ export function composeGuestDigest(rows: Survivor[], label: string | null, unsub
 export type GuestDigestSummary = { candidates: number; claimed: number; sent: number; dropped: number; failed: number; skipped: boolean };
 type Candidate = { member_id: string; guest_id: string; link_id: string; last_digest_sent_at: number | null };
 
-/** One membership: claim, snapshot, re-filter, send, write. Throws only before the send (the claim is then given back); a send that throws is handled here as sent. */
+/** One membership: claim, snapshot, set up, fence, send. Throws only before the fence (the claim is then given back); once the fence has run nothing can un-mark the rows. */
 async function flushMember(env: Env, candidate: Candidate, now: number): Promise<"sent" | "dropped" | "unclaimed"> {
   const db = env.DB;
   const claim = await db.prepare("UPDATE guest_link_members SET last_digest_sent_at = ?1 WHERE id = ?2 AND (last_digest_sent_at IS NULL OR last_digest_sent_at <= ?3)").bind(now, candidate.member_id, now - CLAIM_WINDOW_MS).run();
   if ((claim.meta.changes ?? 0) !== 1) return "unclaimed";
   const giveBack = db.prepare("UPDATE guest_link_members SET last_digest_sent_at = ?1 WHERE id = ?2 AND last_digest_sent_at = ?3").bind(candidate.last_digest_sent_at, candidate.member_id, now);
+  let fenced = false;
   try {
     const pending = (await db.prepare("SELECT id FROM guest_notification_digest WHERE guest_id = ?1 AND link_id = ?2 AND sent_at IS NULL ORDER BY created_at, rowid").bind(candidate.guest_id, candidate.link_id).all<{ id: string }>()).results.map((row) => row.id);
     if (pending.length === 0) { await giveBack.run(); return "dropped"; }
     const snapshot = JSON.stringify(pending);
-    const markSent = db.prepare("UPDATE guest_notification_digest SET sent_at = ?1 WHERE sent_at IS NULL AND id IN (SELECT value FROM json_each(?2))").bind(now, snapshot);
-    const survivors = (await db.prepare(SURVIVORS_SQL).bind(snapshot, now).all<Survivor>()).results;
-    if (survivors.length === 0) { await db.batch([markSent, giveBack]); return "dropped"; }
 
+    // Setup first, so the authorization below is the last database read before the send.
     const token = newUnsubscribeToken();
     await db.prepare("INSERT INTO guest_unsubscribe_tokens (token_hash, member_id, created_at) VALUES (?1, ?2, ?3)").bind(await sha256Hex(token), candidate.member_id, now).run();
     const url = `${env.APP_ORIGIN}/d/unsubscribe#t=${token}`;
     const link = await db.prepare("SELECT label FROM client_links WHERE id = ?1").bind(candidate.link_id).first<{ label: string | null }>();
+
+    // The fence (see the header): authorized against the REAL clock (the cron's scheduled time `now` is only bookkeeping), marked sent BEFORE the send.
+    const [, fencedRows] = await db.batch([
+      db.prepare(FENCE_SQL).bind(snapshot, Date.now(), now, candidate.member_id),
+      db.prepare(FENCED_ROWS_SQL).bind(snapshot, now),
+      db.prepare(DROP_REST_SQL).bind(snapshot, null, now, candidate.member_id),
+    ]);
+    fenced = true;
+    const survivors = (fencedRows!.results ?? []) as Survivor[];
+    if (survivors.length === 0) { await giveBack.run(); return "dropped"; }
+
     const message = composeGuestDigest(survivors, link?.label ?? null, url);
     try {
       await env.EMAIL!.send({ from: env.NOTIFICATIONS_FROM_ADDRESS!, to: survivors[0]!.email, subject: message.subject, text: message.text, html: message.html, headers: { "List-Unsubscribe": `<${url}>` } });
     } catch (error) {
-      // Decision 10: the outcome is unknown (the message may have left), so it counts as sent and is never resent. The reason is a bounded message and never an address.
-      console.error("Guest digest send threw; counted as sent", { error: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
+      // The rows stay marked whatever happened: a definite failure loses this hour's items, an ambiguous one may have delivered, and neither is resent. A bounded reason, never an address.
+      console.error("Guest digest send threw; the rows stay marked sent", { error: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
     }
-    await db.batch([markSent, db.prepare("UPDATE guest_link_members SET last_digest_sent_at = ?1 WHERE id = ?2").bind(now, candidate.member_id)]);
     return "sent";
   } catch (error) {
-    await giveBack.run().catch(() => undefined);
+    if (!fenced) await giveBack.run().catch(() => undefined);
     throw error;
   }
 }

@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { runGuestDigests, sweepGuestDigests } from "../src/guest-digest";
 import type { Env } from "../src/env";
 
@@ -48,7 +48,9 @@ const wipe = () => database.DB.batch([
   "guest_notification_digest", "guest_unsubscribe_tokens", "guest_link_members", "video_releases", "video_approval_events", "review_link_version_grants", "review_link_videos", "client_links", "video_notes", "video_version_meta",
 ].map((table) => database.DB.prepare(`DELETE FROM ${table}`)).concat([database.DB.prepare("DELETE FROM assets WHERE kind = 'video'"), database.DB.prepare("DELETE FROM videos"), database.DB.prepare("DELETE FROM guest_reviewers"), database.DB.prepare("DELETE FROM feature_flags WHERE key LIKE 'video_review%'")]));
 const openGate = async (flags: string[] = OPEN_FLAGS) => { for (const key of flags) await database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_at) VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1").bind(key, Date.now()).run(); };
-beforeEach(async () => { await wipe(); await openGate(); });
+// The flush authorizes against the real clock (Date.now()), not the cron's scheduled time, so the clock is pinned to T0 for every case.
+beforeEach(async () => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(T0); await wipe(); await openGate(); });
+afterEach(() => { vi.useRealTimers(); });
 
 type Version = { videoId: string; assetId: string; version: number };
 async function seedVideo(title: string, versions = 1): Promise<Version[]> {
@@ -321,6 +323,75 @@ describe("sending", () => {
     await runGuestDigests(slow, T0);
     expect((await rowOf(late))!.sent_at).toBeNull();
     const mail = mailer(); await runGuestDigests(mail.env, T0 + HOUR); expect(mail.sent).toHaveLength(1);
+  });
+});
+
+/** A D1 wrapper for the ordering cases: `afterTokenInsert` runs right after the unsubscribe token INSERT (the last setup write before the send); `failAfterSend` makes every database call throw once `send` has been called. */
+function hooked(options: { afterTokenInsert?: () => Promise<unknown>; failAfterSend?: boolean } = {}) {
+  const sent: Sent[] = []; let sendCalled = false;
+  const real = database.DB;
+  const db = {
+    prepare(sql: string) {
+      if (sendCalled && options.failAfterSend) throw new Error("database unavailable after send");
+      const statement = real.prepare(sql);
+      if (!options.afterTokenInsert || !sql.includes("INSERT INTO guest_unsubscribe_tokens")) return statement;
+      return { bind: (...values: unknown[]) => { const bound = statement.bind(...values); return { run: async () => { const result = await bound.run(); await options.afterTokenInsert!(); return result; } }; } };
+    },
+    batch(statements: D1PreparedStatement[]) { if (sendCalled && options.failAfterSend) throw new Error("database unavailable after send"); return real.batch(statements); },
+  };
+  const send = vi.fn(async (message: Sent) => { sendCalled = true; sent.push(message); return { messageId: "m" }; });
+  return { sent, send, env: { DB: db, APP_ORIGIN: ORIGIN, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: SENDER } as unknown as Env };
+}
+
+describe("at most once, authorized at the last moment", () => {
+  it("a database failure AFTER the send never causes a resend: the rows were fenced before the send", async () => {
+    const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
+    const broken = hooked({ failAfterSend: true });
+    await runGuestDigests(broken.env, T0);
+    expect(broken.send).toHaveBeenCalledTimes(1);
+    expect((await rowOf(id))!.sent_at).not.toBeNull(); expect(await lastDigest(t.member.memberId)).toBe(T0);
+    const healthy = mailer(); await runGuestDigests(healthy.env, T0 + HOUR); await runGuestDigests(healthy.env, T0 + 2 * HOUR);
+    expect(healthy.sent).toHaveLength(0);
+  });
+
+  it("a send that throws leaves the rows marked, and the next flushes send nothing for them", async () => {
+    const t = await basic(); const ids2 = [await pend(t.member, t.link.id, "version_granted", t.version), await pend(t.member, t.link.id, "video_added", t.version)];
+    const failing = mailer({ fail: "definite failure" });
+    await runGuestDigests(failing.env, T0);
+    for (const id of ids2) expect((await rowOf(id))!.sent_at).toBe(T0);
+    const healthy = mailer(); await runGuestDigests(healthy.env, T0 + HOUR); expect(healthy.sent).toHaveLength(0);
+  });
+
+  it("a member who unsubscribes after the token is minted but before the send gets nothing", async () => {
+    const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
+    const mail = hooked({ afterTokenInsert: () => database.DB.prepare("UPDATE guest_link_members SET unsubscribed_at = ? WHERE id = ?").bind(Date.now(), t.member.memberId).run() });
+    const summary = await runGuestDigests(mail.env, T0);
+    expect(mail.send).not.toHaveBeenCalled(); expect(summary.sent).toBe(0);
+    expect((await rowOf(id))!.sent_at).not.toBeNull();
+  });
+
+  it("a link revoked after the token is minted but before the send gets nothing", async () => {
+    const t = await basic(); await pend(t.member, t.link.id, "version_granted", t.version);
+    const mail = hooked({ afterTokenInsert: () => database.DB.prepare("UPDATE client_links SET revoked_at = ?, revoked_by = ? WHERE id = ?").bind(Date.now(), ids.user, t.link.id).run() });
+    await runGuestDigests(mail.env, T0);
+    expect(mail.send).not.toHaveBeenCalled();
+  });
+
+  it("only the rows that pass the last-moment check are emailed and marked; a row that fails it is dropped", async () => {
+    const t = await basic(); const note = await seedNote(t.version, { body: "Soon deleted" });
+    const kept = await pend(t.member, t.link.id, "version_granted", t.version); const dropped = await pend(t.member, t.link.id, "public_note", t.version, note);
+    const mail = hooked({ afterTokenInsert: () => database.DB.prepare("UPDATE video_notes SET deleted_at = ? WHERE id = ?").bind(Date.now(), note).run() });
+    await runGuestDigests(mail.env, T0);
+    expect(mail.sent).toHaveLength(1); expect(mail.sent[0]!.text).not.toContain("Soon deleted"); expect(mail.sent[0]!.text).toContain("Version 1 is ready to review");
+    expect((await rowOf(kept))!.sent_at).toBe(T0); expect((await rowOf(dropped))!.sent_at).toBe(T0);
+  });
+
+  it("expiry is judged at the real current time: a link that expires after the cron's scheduled time but before the member is processed gets no email", async () => {
+    const [version] = await seedVideo("Late"); const link = await seedLink({ expiresAt: T0 + 1_000 }); await onLink(link.id, [version!]); const member = await seedMember(link.id);
+    const id = await pend(member, link.id, "version_granted", version!);
+    vi.setSystemTime(T0 + 2_000);
+    const mail = mailer(); await runGuestDigests(mail.env, T0);
+    expect(mail.sent).toHaveLength(0); expect((await rowOf(id))!.sent_at).toBe(T0);
   });
 });
 
