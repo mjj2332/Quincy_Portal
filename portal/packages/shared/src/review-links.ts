@@ -22,7 +22,9 @@ export const REVIEW_LINK_MAX_EXPIRY_MS = 365 * 86_400_000;
 const label = z.string().trim().min(1).max(REVIEW_LINK_LABEL_MAX);
 const passcode = z.string().trim().min(REVIEW_LINK_PASSCODE_MIN).max(REVIEW_LINK_PASSCODE_MAX);
 const allowPatch = z.object({ comments: z.boolean().optional(), approve: z.boolean().optional(), download: z.boolean().optional() }).strict();
-const assetIds = z.array(uuid).max(100);
+/** The API refuses more than this many granted Versions for one Video on a link (400). */
+export const REVIEW_LINK_MAX_GRANTS_PER_VIDEO = 100;
+const assetIds = z.array(uuid).max(REVIEW_LINK_MAX_GRANTS_PER_VIDEO);
 
 export const reviewLinkCreateInputSchema = z.object({
   videoIds: z.array(uuid).min(1).max(REVIEW_LINK_MAX_VIDEOS),
