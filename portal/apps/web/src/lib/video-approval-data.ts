@@ -54,9 +54,6 @@ const converge = (ctx: ApprovalWriteContext) => invalidateProjectSurfaces(ctx.qu
 async function onFailure(ctx: ApprovalWriteContext, error: unknown, touches: Touches): Promise<void> {
   terminatePrincipalOnUnauthorized(ctx.queryClient, error);
   if (retired.has(ctx.queryClient)) return;
-  // A lost response may hide a committed write, so a read already in flight predates it just as on success: cancel it before any converge can dedupe onto it.
-  await cancelStaleReads(ctx, touchedKeys(ctx, touches));
-  if (retired.has(ctx.queryClient)) return;
   const classified = classifyVideoApprovalError(error);
   if (classified.kind === "access") {
     await invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "video-review" }, { kind: "detail" }], dashboard: false, calendar: false, gantt: false });
@@ -64,6 +61,10 @@ async function onFailure(ctx: ApprovalWriteContext, error: unknown, touches: Tou
     await recordProjectArchivedRefusal(ctx.queryClient, ctx.projectId);
     await invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "detail" }], dashboard: false, calendar: false, gantt: false });
   } else if (classified.kind === "stale" || classified.kind === "released" || classified.kind === "gone" || classified.kind === "conflict" || classified.kind === "network" || classified.kind === "not_approved") {
+    // A lost response may hide a committed write, so a read already in flight predates it just as on success: cancel it before the converge can dedupe onto it. Only here: a
+    // cancelled read is put back to idle, and only a converge asks for it again.
+    await cancelStaleReads(ctx, touchedKeys(ctx, touches));
+    if (retired.has(ctx.queryClient)) return;
     await converge(ctx);
   }
 }
