@@ -1,7 +1,7 @@
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
-import { id, A1, A2, B1, L1, L2, L3, NOW, PROJECT, V1, V2, TEASER, WALK, all, button, buttonIn, checkbox, dialog, flush, linkOf, member, mount, openList, press, q, refused, selectFilms, state, text, toggle, type, unmount } from "@/testing/review-links-harness";
+import { id, A1, A2, B1, L1, L2, L3, NOW, PROJECT, V1, V2, TEASER, WALK, all, button, buttonIn, checkbox, dialog, flush, linkOf, member, mount, openList, setArchived, showTab, press, q, refused, selectFilms, state, text, toggle, type, unmount } from "@/testing/review-links-harness";
 import "@/testing/dom-polyfills";
 
 /**
@@ -235,6 +235,43 @@ describe("create", () => {
     await act(async () => { finish({ link: linkOf(), url: `https://quincy.test/d/review?link=${L1}#t=late` }); });
     await flush();
     expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')?.value).toContain("#t=late");
+  });
+  it("a create that lands after switching to another Collection tab still shows its URL", async () => {
+    let finish!: (value: unknown) => void;
+    apiPostMock.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    await mount(); await selectFilms("Teaser");
+    await press(buttonIn(q('[data-testid="review-link-selection-bar"]'), "Create Review link"));
+    await press(buttonIn(dialog(), "Create link"));
+    await press(buttonIn(dialog(), "Close"));
+    await showTab("floorplan");
+    expect(q('[data-testid="other-tab"]')).not.toBeNull();
+    await act(async () => { finish({ link: linkOf(), url: `https://quincy.test/d/review?link=${L1}#t=elsewhere` }); });
+    await flush();
+    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')?.value).toContain("#t=elsewhere");
+  });
+  it("a Replace that lands after switching tab still shows its URL", async () => {
+    state.links = [linkOf()];
+    let finish!: (value: unknown) => void;
+    apiPostMock.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    await mount(); await openList(); await press(button("Manage Smith family"));
+    await press(buttonIn(q('[data-testid="review-link-detail"]'), "Replace link"));
+    await press(buttonIn(q('[data-testid="review-link-confirm"]'), "Replace"));
+    await press(buttonIn(dialog(), "Close"));
+    await showTab("floorplan");
+    await act(async () => { finish({ link: linkOf(), url: `https://quincy.test/d/review?link=${L1}#t=replaced` }); });
+    await flush();
+    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')?.value).toContain("#t=replaced");
+  });
+  it("an archive that lands while Create is open shows a titled notice and keeps the draft", async () => {
+    await mount(); await selectFilms("Teaser");
+    await press(buttonIn(q('[data-testid="review-link-selection-bar"]'), "Create Review link"));
+    await type(q<HTMLInputElement>("#review-link-label", dialog()), "Keep me");
+    await setArchived(true);
+    expect(dialog()).not.toBeNull();
+    expect(text(dialog())).toContain("Create Review link");
+    expect(text(q('[role="status"]', dialog() as ParentNode))).toMatch(/Archived projects are read-only/);
+    await setArchived(false);
+    expect(q<HTMLInputElement>("#review-link-label", dialog())!.value).toBe("Keep me");
   });
   it.each([
     ["grant_not_version", 422, /no longer belongs to this Video/],

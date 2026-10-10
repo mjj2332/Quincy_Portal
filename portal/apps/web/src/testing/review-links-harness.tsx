@@ -2,8 +2,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Role, VideoDto } from "@quincy/shared";
 import { ApiError } from "../lib/api";
+import { useQuery } from "@tanstack/react-query";
 import { QuincyQueryProvider } from "../lib/query-client";
+import { projectDataKeys } from "../lib/project-data";
 import { VideoCollectionPanel } from "../components/video/VideoCollectionPanel";
+import { ReviewLinksScope } from "../components/video/ReviewLinksScope";
 
 /** Fixtures and DOM helpers for the Review links suites (#741 11b). The API mocks stay in each suite (`vi.mock` is per file). */
 export const USER = "44444444-4444-4444-8444-444444444444";
@@ -24,12 +27,27 @@ export const linkOf = (over: LinkOver = {}) => ({ id: L1, label: "Smith family",
 export const state: { links: unknown[]; videos: VideoDto[] } = { links: [], videos: [WALK, TEASER] };
 let root: Root | null = null; let host: HTMLElement;
 export async function flush(times = 8) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
-export async function mount(options: { parts?: string[]; role?: Role; archived?: boolean } = {}) {
-  const { parts = ["upload", "links"], role = "editor", archived = false } = options;
+/** The Video tab as `ProjectWorkspace` mounts it: the gate answer is read into the query cache by the tab body, the panel gets it as a prop. */
+function VideoTab({ role, archived, parts }: { role: Role; archived: boolean; parts: string[] }) {
+  const gate = useQuery({ queryKey: projectDataKeys.videoReview(PROJECT), queryFn: async (): Promise<{ open: boolean; parts: string[] }> => ({ open: true, parts }), staleTime: Infinity });
+  return gate.data ? <VideoCollectionPanel projectId={PROJECT} role={role} archived={archived} review={gate.data as never} /> : null;
+}
+const shown: { parts: string[]; role: Role; archived: boolean; tab: "video" | "floorplan" } = { parts: ["upload", "links"], role: "editor", archived: false, tab: "video" };
+async function render() {
   if (!root) { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
-  await act(async () => { root!.render(<><QuincyQueryProvider principalId={USER} role={role}><VideoCollectionPanel projectId={PROJECT} role={role} archived={archived} review={{ open: true, parts: parts as never }} /></QuincyQueryProvider></>); });
+  const { parts, role, archived, tab } = shown;
+  // As in ProjectWorkspace: the scope sits above the Collection tab body, which is keyed to the open tab.
+  await act(async () => { root!.render(<QuincyQueryProvider principalId={USER} role={role}><ReviewLinksScope projectId={PROJECT} role={role} archived={archived}>{tab === "video" ? <VideoTab key="video" role={role} archived={archived} parts={parts} /> : <div key="floorplan" data-testid="other-tab" />}</ReviewLinksScope></QuincyQueryProvider>); });
   await flush();
 }
+export async function mount(options: { parts?: string[]; role?: Role; archived?: boolean } = {}) {
+  Object.assign(shown, { parts: ["upload", "links"], role: "editor", archived: false, tab: "video" }, options);
+  await render();
+}
+/** The Project changed under the open screen (another admin archived it, say). */
+export async function setArchived(archived: boolean) { shown.archived = archived; await render(); }
+/** Switch the open Collection tab: the Video tab unmounts, the scope above it stays. */
+export async function showTab(tab: "video" | "floorplan") { shown.tab = tab; await render(); }
 export async function unmount() { if (root) await act(async () => { root!.unmount(); }); root = null; }
 
 export const q = <T extends Element = HTMLElement>(selector: string, scope: ParentNode | null = document) => scope === null ? null : scope.querySelector<T>(selector);

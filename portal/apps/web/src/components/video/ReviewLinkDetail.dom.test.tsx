@@ -273,6 +273,27 @@ describe("phone width (390px): the responsive hooks", () => {
   });
 });
 
+describe("grants the cached Video does not know about", () => {
+  const V3 = id(303);
+  it("toggling a Version keeps a granted Version missing from the cached Video, and shows it as its own row", async () => {
+    // Another editor uploaded and granted v3; the cached Videos still hold only v2 and v1.
+    state.links = [linkOf({ videos: [member(V1, "Main walkthrough", [[A2, 2], [V3, 3]])] })];
+    apiPutMock.mockResolvedValue({ link: linkOf({ videos: [member(V1, "Main walkthrough", [[A2, 2], [V3, 3], [A1, 1]])] }) });
+    await mount(); await openDetailOf("Smith family");
+    expect(checkbox("Main walkthrough v3", detail())!.checked).toBe(true);
+    expect(text(detail())).toContain("Version 3");
+    await press(checkbox("Main walkthrough v1", detail()));
+    expect(apiPutMock).toHaveBeenCalledWith(`${base}/videos/${V1}/grants`, { assetIds: [A2, A1, V3] });
+  });
+  it("unticking the unknown Version sends the rest", async () => {
+    state.links = [linkOf({ videos: [member(V1, "Main walkthrough", [[A2, 2], [V3, 3]])] })];
+    apiPutMock.mockResolvedValue({ link: linkOf() });
+    await mount(); await openDetailOf("Smith family");
+    await press(checkbox("Main walkthrough v3", detail()));
+    expect(apiPutMock).toHaveBeenCalledWith(`${base}/videos/${V1}/grants`, { assetIds: [A2] });
+  });
+});
+
 describe("a write's own answer is the truth until the refetch lands", () => {
   const V3 = id(303);
   it("grants chain on the returned link, not on a stale list: v3, then v2, then v1 sends [v3,v2,v1] while the GET is pending", async () => {

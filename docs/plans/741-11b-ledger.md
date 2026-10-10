@@ -19,6 +19,8 @@ Searches run: `mcp__ReUI__search` "share link dialog with copy URL input group a
 | Card chips | installed `reui/badge` inside installed `quincy/Button` (`text`) so the click target is a real button, not a raw `<button>` |
 | "+N" chip | `reui/badge` `outline` inside `quincy/Button` |
 | Reveal URL + Copy | `c-input-group-40` composition (visibility dropdown dropped) on installed `reui/input-group`, plus the `c-button-41` pattern in `video/CopyTextButton.tsx` (clipboard core of `quincy/CopyProjectLinkButton`; kept in `components/video/` for this slice, `CopyProjectLinkButton` unchanged; `use-copy-to-clipboard` still rejected for the reason in that file) |
+| Archived-while-creating notice (`ReviewLinksDialogHost`) | installed `quincy/Notice` (`caution`) under `reui/dialog` `DialogHeader`/`DialogTitle`, the wording of the detail's archived notice |
+| Unlisted-Version row in the detail | the existing Version row (`quincy/Checkbox` in a 44px `label`), labelled "Version N"; no new element |
 | Empty state, errors, notices | installed `quincy/EmptyState`, `quincy/Notice` |
 | Loading | installed `reui/spinner` |
 | Back to list | installed `quincy/Button` (`text`) + lucide `ChevronLeft` |

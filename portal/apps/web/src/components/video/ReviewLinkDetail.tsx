@@ -87,7 +87,9 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
 
   function toggleVersion(member: ReviewLinkDto["videos"][number], video: VideoDto | undefined, assetId: string) {
     const granted = new Set(member.grants.map((grant) => grant.assetId));
-    const order = video ? video.versions.map((version) => version.assetId) : member.grants.map((grant) => grant.assetId);
+    // The complete granted set is the base: a Version the cached Video does not list (uploaded and granted elsewhere) must survive a toggle.
+    const known = video ? video.versions.map((version) => version.assetId) : [];
+    const order = [...known, ...member.grants.map((grant) => grant.assetId).filter((id) => !known.includes(id))];
     const next = order.filter((id) => (id === assetId ? !granted.has(id) : granted.has(id)));
     if (next.length === 0) return;
     void store.run(`grants:${linkId}:${member.videoId}`, () => actions.setGrants(linkId, member.videoId, next), () => undefined, undefined, linkId);
@@ -137,7 +139,9 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
         {link.videos.map((member) => {
           const video = videos.find((candidate) => candidate.id === member.videoId);
           const granted = new Set(member.grants.map((grant) => grant.assetId));
-          const versions = video ? video.versions : member.grants.map((grant) => ({ assetId: grant.assetId, version: grant.version, current: false, uploadedBy: null, createdAt: null }));
+          // A granted Version the cached Video does not list still gets its row, so it can be seen and unticked.
+          const listed = new Set((video?.versions ?? []).map((version) => version.assetId));
+          const versions = [...(video?.versions ?? []), ...member.grants.filter((grant) => !listed.has(grant.assetId)).map((grant) => ({ assetId: grant.assetId, version: grant.version, current: false, uploadedBy: null, createdAt: null, unlisted: true }))];
           const busy = busyLink;
           return <Item key={member.videoId} variant="outline" data-testid="review-link-member" className="flex-wrap items-start">
             <ItemContent>
@@ -148,7 +152,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
                   const on = granted.has(version.assetId);
                   return <label key={version.assetId} className={`flex min-h-11 cursor-pointer items-center gap-[var(--space-3)] ${TEXT}`}>
                     <Checkbox aria-label={`${member.title} v${version.version}`} checked={on} disabled={locked || busy || (on && granted.size === 1)} onChange={() => toggleVersion(member, video, version.assetId)} />
-                    <span>{`v${version.version}${version.current ? " (current)" : ""}${version.uploadedBy && version.createdAt ? ` · ${version.uploadedBy.name} · ${formatVideoDate(version.createdAt)}` : ""}`}</span>
+                    <span>{"unlisted" in version ? `Version ${version.version}` : `v${version.version}${version.current ? " (current)" : ""}${version.uploadedBy && version.createdAt ? ` · ${version.uploadedBy.name} · ${formatVideoDate(version.createdAt)}` : ""}`}</span>
                   </label>;
                 })}
               </div>

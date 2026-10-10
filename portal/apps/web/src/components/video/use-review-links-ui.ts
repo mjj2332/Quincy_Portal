@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { createContext, useEffect, useRef, useSyncExternalStore } from "react";
 import type { QueryClient, UseQueryResult } from "@tanstack/react-query";
 import { roleHasCapability, type ReviewLinkDto, type Role, type VideoReviewResponse } from "@quincy/shared";
 import { onPrincipalTerminal } from "../../lib/principal-terminal";
@@ -30,13 +30,15 @@ export function useReviewLinkState(store: ReviewLinkStore): ReviewLinkStoreState
   return useSyncExternalStore(store.subscribe, store.getState);
 }
 
+/** The Project's Review link store, provided by `ReviewLinksScope` above the Collection tab switch. Absent (null): no Review link UI. */
+export const ReviewLinkStoreContext = createContext<ReviewLinkStore | null>(null);
+
 /**
- * Everything the Video tab needs for Review links (#741 11b), created by the collection like the note form store: one store per person
- * and Project (retired when either changes, cancelled when the session is terminated), the list query and the writes. Nothing here
- * renders; `ReviewLinksHost` and the cards read it.
+ * The form/operation store for Review links (#741 11b): one per person and Project, held ABOVE the Collection tabs so a create or replace
+ * answered after a tab switch still reveals its one-time URL. Retired when the person or Project changes; cancelled only when the
+ * principal is terminated (sign-out, a different person) or the Project screen itself goes away. Created by `ReviewLinksScope`.
  */
-export function useReviewLinksUi({ projectId, role, review, archived, userId, queryClient }: { projectId: string; role: Role; review: VideoReviewResponse; archived: boolean; userId: string | null; queryClient: QueryClient | undefined }): ReviewLinksUi {
-  const enabled = review.open && review.parts.includes("links") && roleHasCapability(role, "shareVideo");
+export function useReviewLinkStore({ projectId, userId, queryClient }: { projectId: string; userId: string | null; queryClient: QueryClient | undefined }): ReviewLinkStore {
   const storeRef = useRef<ReviewLinkStore | null>(null);
   const key = `${userId ?? ""}:${projectId}`;
   if (storeRef.current?.key !== key) { storeRef.current?.retire(); storeRef.current = createReviewLinkStore(key); }
@@ -46,8 +48,22 @@ export function useReviewLinksUi({ projectId, role, review, archived, userId, qu
     const off = onPrincipalTerminal((terminated) => { if (terminated === undefined || terminated === queryClient) store.cancelAll(); });
     return () => { off(); store.cancelAll(); };
   }, [store, queryClient]);
+  return store;
+}
+
+/** An unscoped panel (no `ReviewLinksScope` above it) has no Review links; this is the store it carries, never shown. */
+const INERT_STORE = createReviewLinkStore("inert");
+
+/**
+ * Everything the Video tab needs for Review links (#741 11b), over the scope's store: the list query and the writes. Nothing here
+ * renders; `ReviewLinksHost`, `ReviewLinksDialogHost` and the cards read it. `review` is the gate answer (undefined: not known yet).
+ * `fetchLinks` is off for the scope's own reader while its dialog is closed, so other tabs never fetch the list.
+ */
+export function useReviewLinksUi({ projectId, role, review, archived, store: scoped, fetchLinks = true }: { projectId: string; role: Role; review: VideoReviewResponse | undefined; archived: boolean; store: ReviewLinkStore | null; fetchLinks?: boolean }): ReviewLinksUi {
+  const store = scoped ?? INERT_STORE;
+  const enabled = scoped !== null && review?.open === true && review.parts.includes("links") && roleHasCapability(role, "shareVideo");
   const selection = useSyncExternalStore(store.subscribe, () => store.getState().selection);
-  const links = useReviewLinksQuery(projectId, enabled);
+  const links = useReviewLinksQuery(projectId, enabled && fetchLinks);
   const actions = useReviewLinkActions(projectId);
   const data = links.data;
   const chipsFor = (videoId: string): ReviewLinkChip[] => (data ?? [])
