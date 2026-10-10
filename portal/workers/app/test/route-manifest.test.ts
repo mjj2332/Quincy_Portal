@@ -381,6 +381,25 @@ describe("terminal route manifest", () => {
     EXTERNAL_API_RESPONSE_SCHEMAS["video-note-delete"].parse(await removed.json());
   });
 
+  it("reaches every Review link route (#741 11a): a gate-open Project answers an External 403 on the capability, not the fallback 404", async () => {
+    const cookie = await externalCookie();
+    const flag = "video_review_links"; const now = Date.now();
+    await database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_at) VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1").bind(flag, now).run();
+    try {
+      const base = `/api/projects/${manifestProjectId}/review-links`; const link = crypto.randomUUID(); const video = crypto.randomUUID();
+      const calls: Array<[string, string, unknown?]> = [
+        ["GET", base], ["POST", base, { videoIds: [video] }], ["PATCH", `${base}/${link}`, { label: "x" }], ["POST", `${base}/${link}/videos`, { videoId: video, assetIds: [] }],
+        ["DELETE", `${base}/${link}/videos/${video}`], ["PUT", `${base}/${link}/videos/${video}/grants`, { assetIds: [] }], ["POST", `${base}/${link}/revoke`, {}], ["POST", `${base}/${link}/replace`, {}],
+      ];
+      for (const [method, path, body] of calls) {
+        const response = await SELF.fetch(`https://portal.test${path}`, { method, headers: { cookie, "content-type": "application/json", origin: baseEnv.APP_ORIGIN }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+        expect(response.status, `${method} ${path}`).toBe(403);
+      }
+    } finally {
+      await database.DB.prepare("DELETE FROM feature_flags WHERE key = ?").bind(flag).run();
+    }
+  });
+
   it("keeps assigned-project Stage misses generic for External Editors", async () => {
     const cookie = await externalCookie();
     const body = JSON.stringify({

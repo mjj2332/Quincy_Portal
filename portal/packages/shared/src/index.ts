@@ -66,6 +66,7 @@ export * from "./video-marker-export-api";
 export * from "./video-nle-export";
 export * from "./video-mp4-probe";
 export * from "./video-review";
+export * from "./review-links";
 export * from "./video-upload";
 export * from "./video-notes";
 export * from "./freehand-strokes";
