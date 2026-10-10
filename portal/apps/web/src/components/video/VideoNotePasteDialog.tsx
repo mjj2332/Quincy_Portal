@@ -132,15 +132,15 @@ export function VideoNotePasteDialog({ open, onOpenChange, store, assetId, targe
             </TableRow>
           </TableHeader>
           <TableBody className={cn(!settled && "opacity-60", "max-[721px]:block")}>
-            {mapped.map((row) => <TableRow key={row.noteId} data-testid="video-note-paste-row" data-note-id={row.noteId} className="max-[721px]:grid max-[721px]:grid-cols-[auto_auto_1fr] max-[721px]:items-start max-[721px]:gap-x-[var(--space-2)] max-[721px]:py-[var(--space-2)]">
+            {mapped.map((row) => <TableRow key={row.noteId} data-testid="video-note-paste-row" data-note-id={row.noteId} className="max-[721px]:grid max-[721px]:grid-cols-[auto_1fr] max-[721px]:items-start max-[721px]:gap-x-[var(--space-2)] max-[721px]:py-[var(--space-2)]">
               {/* Coarse pointers and phone widths get a 44px target: the shared checkbox's own hit area is only 16 + 24 x 16 + 16. */}
-              <TableCell className="max-[721px]:row-span-2"><Checkbox aria-label={`Paste note: ${row.source.excerpt}`} data-testid="video-note-paste-tick" className="pointer-coarse:after:-inset-3.5 max-[721px]:after:-inset-3.5 data-unchecked:border-[var(--control-off)]" checked={!unticked.has(row.noteId)} disabled={pending} onCheckedChange={(checked) => { store.setPasteTicked(assetId, row.noteId, checked); }} /></TableCell>
-              <TableCell className="min-w-0 whitespace-normal max-[721px]:col-span-2">
+              <TableCell className="max-[721px]:row-span-3"><Checkbox aria-label={`Paste note: ${row.source.excerpt}`} data-testid="video-note-paste-tick" className="pointer-coarse:after:-inset-3.5 max-[721px]:after:-inset-3.5 data-unchecked:border-[var(--control-off)]" checked={!unticked.has(row.noteId)} disabled={pending} onCheckedChange={(checked) => { store.setPasteTicked(assetId, row.noteId, checked); }} /></TableCell>
+              <TableCell className="min-w-0 whitespace-normal">
                 <span className="line-clamp-3 [overflow-wrap:anywhere]">{row.source.excerpt}</span>
                 <span className="mt-[var(--space-1)] flex flex-wrap items-center gap-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">{row.source.authorName}<VisibilityBadge visibility={row.source.visibility} /></span>
               </TableCell>
-              <TableCell className={cn(MONO, "max-[721px]:col-start-2 max-[721px]:py-0 max-[721px]:after:ms-[var(--space-2)] max-[721px]:after:content-['→'] max-[721px]:before:content-[attr(data-version)] max-[721px]:before:me-[var(--space-1)] max-[721px]:before:text-foreground-secondary")} data-version={sourceLabel} data-testid="video-note-paste-source">{noteAnchorLabel(row.source.from as { startFrame: number; endFrame: number | null }, sourceTc)}</TableCell>
-              <TableCell className={cn(MONO, "max-[721px]:py-0 max-[721px]:before:content-[attr(data-version)] max-[721px]:before:me-[var(--space-1)] max-[721px]:before:text-foreground-secondary")} data-version={`v${target.version}`}>
+              <TableCell className={cn(MONO, "max-[721px]:col-start-2 max-[721px]:py-0 max-[721px]:whitespace-normal max-[721px]:before:content-[attr(data-version)] max-[721px]:before:me-[var(--space-1)] max-[721px]:before:text-foreground-secondary")} data-version={sourceLabel} data-testid="video-note-paste-source">{noteAnchorLabel(row.source.from as { startFrame: number; endFrame: number | null }, sourceTc)}</TableCell>
+              <TableCell className={cn(MONO, "max-[721px]:col-start-2 max-[721px]:py-0 max-[721px]:whitespace-normal max-[721px]:before:content-[attr(data-version)] max-[721px]:before:me-[var(--space-1)] max-[721px]:before:text-foreground-secondary")} data-version={`v${target.version}`}>
                 <span data-testid="video-note-paste-target">{noteAnchorLabel(row.to, targetTc)}</span>
                 {row.shortened && <span className="block text-foreground-secondary [font:var(--type-label)]">Shortened to fit</span>}
               </TableCell>
