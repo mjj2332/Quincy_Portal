@@ -2,7 +2,7 @@ import { useQuery, type QueryClient, type QueryFunctionContext, type UseQueryRes
 import {
   videoNoteDeleteResponseSchema, videoNoteMarkupResponseSchema, videoNotePasteCommitResponseSchema, videoNotePastePreviewResponseSchema,
   type VideoNotePasteCommitResponse, type VideoNotePastePreviewResponse, videoNoteListResponseSchema, videoNoteThreadDtoSchema,
-  type Role, type VideoNoteMarkupResponse, type VideoNoteCreateInput, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto,
+  type MarkupItem, type Role, type VideoNoteMarkupResponse, type VideoNoteCreateInput, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto,
 } from "@quincy/shared";
 import { apiDeleteWithBody, apiGet, apiPatch, apiPost, apiPut } from "./api";
 import { decodeExternalResponse, externalApiGet } from "./external-api-response";
@@ -10,6 +10,7 @@ import { getProjectQueryRuntime } from "./project-query-sync";
 import { invalidateProjectSurfaces, projectDataKeys, projectQueryRetry, recordProjectArchivedRefusal, removedDataError, terminatePrincipalOnUnauthorized } from "./project-data";
 import { onPrincipalTerminal } from "./principal-terminal";
 import { classifyVideoNoteError } from "./video-note-errors";
+import { readStoredMarkup } from "./read-stored-markup";
 import { removeThread, upsertThread } from "./video-note-view";
 
 /** Notes on one Video Version (#741 5b): the list query, the five writes, and the error classifier. No optimistic writes; every success patches the cache by root id. */
@@ -37,11 +38,18 @@ export function useVideoNotesQuery(projectId: string, assetId: string, enabled: 
   });
 }
 
-/** One note's drawing: `markup` is null for a note without one. Never cached across revisions (the revision is in the key) and never seeded with an empty list. */
-export async function readVideoNoteMarkup(projectId: string, noteId: string, role: Role, signal?: AbortSignal): Promise<VideoNoteMarkupResponse> {
+/** One note's drawing as this build can read it: `markup` holds only the items it knows how to show, and `unsupported` says the saved drawing had more (a newer writer's `type`). Null `markup` = no drawing. */
+export type VideoNoteMarkupRead = { noteId: string; revision: number; markup: MarkupItem[] | null; unsupported: boolean };
+
+/** One note's drawing, read tolerantly (never through the strict write schema): an unknown item is dropped from `markup` and flagged, not thrown on. The stored data is untouched. */
+export async function readVideoNoteMarkup(projectId: string, noteId: string, role: Role, signal?: AbortSignal): Promise<VideoNoteMarkupRead> {
   const path = `${notePath(projectId, noteId)}/markup`;
-  if (role === "external_editor") return await externalApiGet("video-note-markup", path, signal) as VideoNoteMarkupResponse;
-  return videoNoteMarkupResponseSchema.parse(await apiGet<unknown>(path, signal ? { signal } : undefined));
+  const response: VideoNoteMarkupResponse = (role === "external_editor"
+    ? await externalApiGet("video-note-markup", path, signal) as VideoNoteMarkupResponse
+    : videoNoteMarkupResponseSchema.parse(await apiGet<unknown>(path, signal ? { signal } : undefined)));
+  if (response.markup === null) return { noteId: response.noteId, revision: response.revision, markup: null, unsupported: false };
+  const { items, unsupported } = readStoredMarkup(response.markup);
+  return { noteId: response.noteId, revision: response.revision, markup: items, unsupported };
 }
 
 /**
@@ -49,8 +57,8 @@ export async function readVideoNoteMarkup(projectId: string, noteId: string, rol
  * edit (a new revision) is a fresh entry. A response of a newer revision than the list showed is still the note's current drawing; saving over it sends the list's revision and meets the
  * ordinary 409, so nothing is overwritten unseen.
  */
-export function useVideoNoteMarkupQuery(projectId: string, noteId: string, revision: number, enabled: boolean, role: Role): UseQueryResult<VideoNoteMarkupResponse, Error> {
-  return useQuery<VideoNoteMarkupResponse, Error>({
+export function useVideoNoteMarkupQuery(projectId: string, noteId: string, revision: number, enabled: boolean, role: Role): UseQueryResult<VideoNoteMarkupRead, Error> {
+  return useQuery<VideoNoteMarkupRead, Error>({
     queryKey: projectDataKeys.videoNoteMarkup(projectId, noteId, revision), enabled, staleTime: Number.POSITIVE_INFINITY, gcTime: 5 * 60_000, retry: projectQueryRetry,
     queryFn: async ({ signal, client }: QueryFunctionContext) => {
       const response = await readVideoNoteMarkup(projectId, noteId, role, signal);

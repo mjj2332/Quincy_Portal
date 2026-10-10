@@ -622,3 +622,66 @@ describe("Editing a note's drawing (#741 6b-ui)", () => {
     expect(threadOf(target.id).textContent).toMatch(/could not be loaded/i);
   });
 });
+
+describe("A drawing with an item this build cannot read (#741 6b-ui, 6s override 2)", () => {
+  const FUTURE = { type: "spiral", color: "#e64b3c", width: 4, points: [{ x: 0.2, y: 0.2 }, { x: 0.6, y: 0.6 }] };
+  async function future() {
+    const target = markNote({ author: { kind: "staff", person: me } });
+    markups = { [target.id]: { revision: target.revision, markup: [STROKE, FUTURE] } };
+    await openFilm({ parts: ON, notes: { [ids.asset2]: [target], [ids.asset1]: [] } }, 5);
+    return target;
+  }
+
+  it("shows the known items, nothing for the unknown one, and the short note beside the drawing (no throw on the read)", async () => {
+    const target = await future();
+    await click(tid("video-note-anchor-button", threadOf(target.id))!);
+    await land(30);
+    await flush(4);
+    expect(strokesOnScreen()).toBe(1);
+    expect(tid("video-markup-unsupported")!.textContent).toBe("Some markup can't be shown");
+    await present(31);
+    expect(tid("video-markup-unsupported")).toBeNull(); // the note goes with the drawing
+  });
+
+  it("a fully readable drawing shows no note", async () => {
+    const target = markNote({ author: { kind: "staff", person: me } });
+    markups = { [target.id]: { revision: 3, markup: [STROKE] } };
+    await openFilm({ parts: ON, notes: { [ids.asset2]: [target], [ids.asset1]: [] } }, 5);
+    await click(tid("video-note-anchor-button", threadOf(target.id))!);
+    await land(30);
+    await flush(4);
+    expect(strokesOnScreen()).toBe(1);
+    expect(tid("video-markup-unsupported")).toBeNull();
+  });
+
+  it("disables Edit drawing and Remove drawing in the edit form, with the reason, and the Draw pill is not offered", async () => {
+    const target = await future();
+    await chooseNoteAction(threadOf(target.id), "Terry", "Edit");
+    await flush(6);
+    const edit = tid("video-note-edit-draw") as HTMLButtonElement;
+    const remove = tid("video-note-edit-remove-drawing") as HTMLButtonElement;
+    expect(edit.disabled).toBe(true);
+    expect(remove.disabled).toBe(true);
+    const reason = tid("video-note-edit-drawing-unsupported")!;
+    expect(reason.textContent).toMatch(/can't be shown/);
+    expect(edit.getAttribute("aria-describedby")).toBe(reason.id);
+    expect(remove.getAttribute("aria-describedby")).toBe(reason.id);
+    expect(drawButton()).toBeNull();
+    await click(edit); await click(remove);
+    expect(tid("video-note-edit-drawing-removed")).toBeNull();
+  });
+
+  it("a text-only edit still saves, and its PATCH carries no markup key", async () => {
+    const target = await future();
+    await chooseNoteAction(threadOf(target.id), "Terry", "Edit");
+    await flush(6);
+    await type(threadOf(target.id).querySelector("textarea") as HTMLTextAreaElement, "Reworded");
+    api.apiPatch.mockResolvedValue(commit({ ...target, body: "Reworded", revision: 4 } as VideoNoteThreadDto));
+    await click(tid("video-note-edit-save")!);
+    await flush(4);
+    const [, body] = api.apiPatch.mock.calls.at(-1) as [string, Record<string, unknown>];
+    expect(body).toEqual({ expectedRevision: 3, body: "Reworded" });
+    expect("markup" in body).toBe(false);
+    expect("drawingFrame" in body).toBe(false);
+  });
+});

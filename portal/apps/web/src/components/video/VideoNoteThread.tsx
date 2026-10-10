@@ -264,13 +264,17 @@ function EditDrawingControls({ store, assetId, note, editing, clock, frameCount,
     if (saved && loaded !== null) store.loadDrawing(assetId, note.id, loaded, drawing.baseFrame ?? note.drawingFrame ?? note.startFrame ?? 0);
     void store.enterDraw(assetId, { clock, form: "edit", frameCount });
   };
-  const disabled = busy || !clock || framesChosen || drawingNow || !ready;
+  // A drawing with an item this build cannot read is kept as it is: Edit and Remove would save back a copy without that item.
+  const unsupported = saved && query.data?.unsupported === true;
+  const disabled = busy || !clock || framesChosen || drawingNow || !ready || unsupported;
+  const why = unsupported ? `video-note-edit-drawing-unsupported-${note.id}` : undefined;
   return <div data-testid="video-note-edit-drawing" className="flex flex-wrap items-center gap-[var(--space-2)]">
     {hasItems && frame !== null && <span data-testid="video-note-edit-drawing-chip" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" /><span className="sr-only">Drawing on </span>{timecode(frame)}</span>}
     {drawing.remove && <span data-testid="video-note-edit-drawing-removed" className="text-foreground-secondary [font:var(--type-label)]">The drawing is removed when you save.</span>}
-    {!drawing.remove && <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-draw" disabled={disabled} onClick={enter}>{hasItems ? "Edit drawing" : "Add drawing"}</Button>}
-    {!drawing.remove && hasItems && <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-remove-drawing" disabled={busy || drawingNow} onClick={() => { store.removeDrawing(assetId); }}>Remove drawing</Button>}
+    {!drawing.remove && <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-draw" aria-describedby={why} disabled={disabled} onClick={enter}>{hasItems ? "Edit drawing" : "Add drawing"}</Button>}
+    {!drawing.remove && hasItems && <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-remove-drawing" aria-describedby={why} disabled={busy || drawingNow || unsupported} onClick={() => { store.removeDrawing(assetId); }}>Remove drawing</Button>}
     {drawing.remove && <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-keep-drawing" disabled={busy} onClick={() => { store.keepDrawing(assetId); }}>Keep drawing</Button>}
+    {unsupported && <span id={why} data-testid="video-note-edit-drawing-unsupported" className="text-foreground-secondary [font:var(--type-label)]">Some markup can't be shown, so this drawing can't be edited or removed here. You can still change the text.</span>}
     {saved && query.isError && <span role="alert" className="text-destructive [font:var(--type-label)]">The drawing could not be loaded. <Button type="button" variant="text" onClick={() => { void query.refetch(); }}>Retry</Button></span>}
     {saved && query.isPending && <span role="status" className="text-foreground-secondary [font:var(--type-label)]">Loading the drawing…</span>}
     {framesChosen && !drawing.touched && <span className="text-foreground-secondary [font:var(--type-label)]">Save the new frames before changing the drawing.</span>}

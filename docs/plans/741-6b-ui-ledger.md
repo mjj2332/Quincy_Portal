@@ -14,3 +14,4 @@ One line per new UI element. Raw `<button>`, `<input>`, `<select>`, `<textarea>`
 | "Add/Edit drawing", "Remove drawing", "Keep drawing" in the edit form | `components/reui/button` | Pending removal shown in the form and sent on Save. |
 | "Drawing" mark on a note row | lucide `PencilIcon` in the existing eyebrow span | |
 | Transport lock | `disabled` on existing `reui/button` and slider | No new element. |
+| "Some markup can't be shown" over the picture, and the edit-form reason | Same copy as the Lightbox's `lightbox-markup-unsupported` note (`components/Lightbox.tsx`); overlay pill uses the key-hint strip's classes, the form line the existing label-type helper span | Tolerant read via `lib/read-stored-markup.ts`. Edit and Remove drawing are `disabled` with `aria-describedby` on that line (a native `title` does not show on a disabled button). No new primitive. |
