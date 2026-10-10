@@ -660,6 +660,22 @@ describe("own notes", () => {
     expect(byId("guest-delete-problem")?.textContent).toMatch(/30 seconds/);
     expect(allById("guest-note")).toHaveLength(1);
   });
+  it("disables the confirm's Delete once the Project turns out to be archived, keeping Cancel working and sending no second DELETE", async () => {
+    notes = { [asset(10)]: [mine(2, { revision: 3 })] };
+    extra = (url, init) => (url === `${BASE}/notes/${noteId(2)}` && init?.method === "DELETE" ? json({ error: "project_archived" }, 409) : undefined);
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Delete"));
+    await click(byId("guest-delete-confirm"));
+    expect(requests("DELETE")).toHaveLength(1);
+    expect(byId("guest-archived-notice")).not.toBeNull();
+    expect((byId("guest-delete-confirm") as HTMLButtonElement).disabled).toBe(true);
+    await click(byId("guest-delete-confirm"));
+    expect(requests("DELETE")).toHaveLength(1);
+    expect((byId("guest-delete-cancel") as HTMLButtonElement).disabled).toBe(false);
+    await click(byId("guest-delete-cancel"));
+    expect(byId("guest-delete-dialog")).toBeNull();
+  });
 });
 
 describe("replies", () => {

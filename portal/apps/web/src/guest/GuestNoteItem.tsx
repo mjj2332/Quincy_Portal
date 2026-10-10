@@ -108,7 +108,7 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
     if (outcome.ok || outcome.saved === true) { drafts.clearIf(replyKey, sent.rev); setReplyStatus(IDLE); } else setReplyStatus({ pending: false, problem: outcome.message });
   };
   const confirmDelete = async () => {
-    if (deleting === null || deletingNote === null || deleting.pending) return;
+    if (!writing.canWrite || deleting === null || deletingNote === null || deleting.pending) return;
     setDeleting({ ...deleting, pending: true, problem: null });
     // The revision the confirm opened on (or the one a conflict then showed the guest), never the list's, which may have moved unseen.
     const outcome = await writing.actions.remove(thread, deletingNote, deleting.ackRevision ?? deleting.baseRevision);
@@ -169,7 +169,7 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
         {deleting?.problem != null && <p role="alert" data-testid="guest-delete-problem" className={PROBLEM}>{deleting.problem}</p>}
         <AlertDialogFooter>
           <AlertDialogCancel data-testid="guest-delete-cancel" disabled={deleting?.pending ?? false}>Cancel</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" data-testid="guest-delete-confirm" disabled={deleting?.pending ?? false} onClick={() => { void confirmDelete(); }}>Delete</AlertDialogAction>
+          <AlertDialogAction variant="destructive" data-testid="guest-delete-confirm" disabled={(deleting?.pending ?? false) || !writing.canWrite} onClick={() => { void confirmDelete(); }}>Delete</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
