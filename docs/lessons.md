@@ -6161,3 +6161,10 @@ Tags: reui-vendor, testing-guards · #741
 - **Also.** `data-testid="guest-note-reply"` already named the reply container on the guest page; a new control reused it and passed half its assertions. Give a new control its own id and grep the tree for the old one first.
 
 Guards: `guest/GuestVerifyDialog.dom.test.tsx`, `guest/GuestNotesWrite.dom.test.tsx`.
+## Tailwind never generates an interpolated arbitrary value (#741 11b)
+Tags: css-tokens · #741
+
+- **What bit.** A scroll margin written as `` `scroll-mt-[calc(var(--space-4)+${SIZE}+var(--space-2))]` `` passed every unit test, Sol and a design review, then measured `0px` in the browser: Tailwind scans source text for whole class names and never sees the interpolated one, so no CSS rule exists.
+- **Rule.** Write arbitrary values out literally. To share one with another file, export the whole literal class string, not the pieces. Only a real browser (computed style) proves a class-only fix; jsdom has no Tailwind CSS.
+
+Guards: `apps/web/src/styles/tailwind-literal-class.guard.test.ts`.
