@@ -10,7 +10,8 @@ import { cn } from "@/lib/utils"
  * - Quincy's field box: `rounded-lg` / `border-input` / `bg-input/30` / `size-8` are re-pointed to `--radius-sm`, `border-border`, `--field-bg` and a 44px slot (the field box's `max-[721px]`
  *   rung is 44px; 40px above it). The invalid ring uses `--destructive` at the token strength other fields use.
  * - The fake caret's `animate-caret-blink` keyframe does not exist in this app's tokens, so the caret uses `motion-safe:animate-pulse` (a stock Tailwind keyframe) instead.
- * - The active slot's `ring-3` is `ring-2`: the real input behind the slots is transparent, so this ring is the only focus indicator the guest sees.
+ * - The active slot draws ONE focus line, an outline in `--focus-ring` (no border recolour, no ring): the real input behind the slots is transparent, so this is the only focus indicator the guest sees.
+ *   Digits are set in `--type-mono`.
  */
 function InputOTP({
   className,
@@ -61,7 +62,7 @@ function InputOTPSlot({
       data-slot="input-otp-slot"
       data-active={isActive}
       className={cn(
-        "relative flex size-10 items-center justify-center border-y border-r border-border bg-[var(--field-bg)] text-sm transition-all outline-none first:rounded-l-[var(--radius-sm)] first:border-l last:rounded-r-[var(--radius-sm)] max-[721px]:size-11 aria-invalid:border-destructive data-[active=true]:z-10 data-[active=true]:border-ring data-[active=true]:ring-2 data-[active=true]:ring-ring/50 data-[active=true]:aria-invalid:border-destructive data-[active=true]:aria-invalid:ring-destructive/30",
+        "relative flex size-10 items-center justify-center border-y border-r border-border bg-[var(--field-bg)] [font:var(--type-mono)] transition-all outline-none first:rounded-l-[var(--radius-sm)] first:border-l last:rounded-r-[var(--radius-sm)] max-[721px]:size-11 aria-invalid:border-destructive data-[active=true]:z-10 data-[active=true]:outline-[length:var(--border-width-bold)] data-[active=true]:outline-solid data-[active=true]:outline-[var(--focus-ring)] data-[active=true]:aria-invalid:border-destructive data-[active=true]:aria-invalid:ring-destructive/30",
         className
       )}
       {...props}

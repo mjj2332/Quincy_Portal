@@ -283,7 +283,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
   const heading = <h2 data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</h2>;
   const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} top={addNote} writing={writing} />;
 
-  return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-dvh flex-col bg-background text-foreground">
+  return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-dvh flex-col bg-background text-foreground min-[721px]:h-dvh">
     <header className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-2)] border-b border-border bg-card px-[var(--space-5)] py-[var(--space-3)] text-card-foreground">
       {onBack && <Button type="button" variant="ghost" className={TOUCH} onClick={onBack}><ChevronLeft aria-hidden="true" />All videos</Button>}
       <h1 data-testid="guest-video-title" className="m-0 min-w-[160px] flex-1 truncate text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{video.title}</h1>
@@ -307,11 +307,11 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
       {phone && <Button type="button" variant="outline" aria-label={threads === null ? "Notes" : `Notes, ${threads.length}`} className={`${TOUCH} shrink-0`} onClick={() => { setDrawerOpen(true); }}><MessageSquare aria-hidden="true" />{threads !== null && <span className="[font:var(--type-label)]">{threads.length}</span>}</Button>}
       </div>
     </header>
-    <div className="flex min-h-0 flex-1 flex-wrap min-[721px]:flex-nowrap">
+    <div className="flex min-h-0 flex-1 flex-wrap min-[721px]:flex-nowrap min-[721px]:overflow-hidden">
       <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col p-[var(--space-5)] min-[721px]:flex-1">
         <VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} onMark={compose.onMark} overlay={overlay} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} />
       </div>
-      {!phone && <aside data-surface="default" className="flex flex-[1_1_360px] flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:max-h-dvh min-[721px]:flex-[0_0_clamp(240px,28vw,360px)]">{panel}</aside>}
+      {!phone && <aside data-surface="default" className="flex flex-[1_1_360px] flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-y-auto min-[721px]:flex-[0_0_clamp(240px,28vw,360px)]">{panel}</aside>}
     </div>
     {phone && <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
       <SheetContent side="bottom" showCloseButton={false} data-testid="guest-notes-drawer" className="max-h-[80dvh] p-[var(--space-4)]">

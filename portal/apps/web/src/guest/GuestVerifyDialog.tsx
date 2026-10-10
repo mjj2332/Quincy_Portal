@@ -8,6 +8,7 @@ import { Input } from "../components/reui/input";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "../components/reui/input-otp";
 import type { GuestApi } from "./guest-api";
 import { useCountdown } from "./GuestScreens";
+import { DIALOG_TITLE } from "../components/video/ReviewLinkDialogFrame";
 
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const ERROR = "m-0 text-destructive [font:var(--type-body-sm)]";
@@ -39,7 +40,7 @@ export function GuestVerifyDialog({ api, open, onOpenChange, onVerified, onGone 
   if (open && !wasOpen.current) setOpening((n) => n + 1);
   wasOpen.current = open;
   return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent data-testid="guest-verify-dialog" showCloseButton={false} className="max-w-sm">
+    <DialogContent data-testid="guest-verify-dialog" showCloseButton={false} className="sm:max-w-[460px]">
       <VerifyFlow key={opening} api={api} generation={generation} onCancel={() => { generation.current += 1; onOpenChange(false); }} onVerified={onVerified} onGone={onGone} />
     </DialogContent>
   </Dialog>;
@@ -128,8 +129,8 @@ function VerifyFlow({ api, generation, onCancel, onVerified, onGone }: { api: Gu
   if (step === "identity") {
     return <>
       <DialogHeader>
-        <DialogTitle className="[font:var(--type-h3)]">Add a note</DialogTitle>
-        <DialogDescription>Enter your email and we'll send a six-digit code. Your name is shown on the notes you add.</DialogDescription>
+        <DialogTitle className={DIALOG_TITLE}>Add a note</DialogTitle>
+        <DialogDescription className="text-foreground-secondary">Enter your email and we'll send a six-digit code. Your name is shown on the notes you add.</DialogDescription>
       </DialogHeader>
       <form data-testid="guest-verify-identity-form" onSubmit={(event) => { void submitIdentity(event); }} noValidate>
         <FieldGroup>
@@ -153,8 +154,8 @@ function VerifyFlow({ api, generation, onCancel, onVerified, onGone }: { api: Gu
 
   return <>
     <DialogHeader>
-      <DialogTitle className="[font:var(--type-h3)]">Enter your code</DialogTitle>
-      <DialogDescription>We sent a six-digit code to the address below. It works for 10 minutes.</DialogDescription>
+      <DialogTitle className={DIALOG_TITLE}>Enter your code</DialogTitle>
+      <DialogDescription className="text-foreground-secondary">We sent a six-digit code to the address below. It works for 10 minutes.</DialogDescription>
     </DialogHeader>
     <form data-testid="guest-verify-code-form" onSubmit={(event) => { event.preventDefault(); void submitCode(code); }} noValidate>
       <FieldGroup>

@@ -252,19 +252,19 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
     : framesChanged && markupAllowed ? "Save the new frames before you draw."
     : null;
   const drawLabel = items.length > 0 ? "Edit drawing" : keptDrawing ? "Redraw" : "Draw";
-  const form = !isOpen ? null : <form data-testid="guest-composer" aria-label={target === null ? "New note" : "Edit note"} onSubmit={(event) => { void submit(event); }} noValidate className="flex flex-col gap-[var(--space-2)]">
+  const form = !isOpen ? null : <form data-testid="guest-composer" aria-label={target === null ? "New note" : "Edit note"} onSubmit={(event) => { void submit(event); }} noValidate className="flex flex-col gap-[var(--space-2)] border-b border-border pb-[var(--space-3)]">
     <p data-testid="guest-composer-anchor" className="m-0 text-foreground [font:var(--type-mono)] tabular-nums">{anchor}</p>
     <div className="flex flex-wrap gap-[var(--space-2)]">
       <Button type="button" variant="outline" size="sm" data-testid="guest-composer-mark-in" className={TOUCH} disabled={clock === null || marksLocked || pending} onClick={() => { if (!pending) setMarks((current) => markFrame(current, "in", here())); }}>Mark in</Button>
       <Button type="button" variant="outline" size="sm" data-testid="guest-composer-mark-out" className={TOUCH} disabled={clock === null || marksLocked || pending} onClick={() => { if (!pending) setMarks((current) => markFrame(current, "out", here())); }}>Mark out</Button>
-      {markupAllowed && <Button type="button" variant="outline" size="sm" data-testid="guest-composer-draw" className={TOUCH} disabled={clock === null || pending || phase !== "off" || framesChanged} onClick={() => { void startDrawing(); }}><PencilIcon aria-hidden="true" />{drawLabel}</Button>}
+      {markupAllowed && <Button type="button" variant={drawing ? "default" : "outline"} size="sm" data-testid="guest-composer-draw" aria-pressed={drawing} className={TOUCH} disabled={pending || (!drawing && (clock === null || phase !== "off" || framesChanged))} onClick={() => { if (drawing) setPhase("off"); else void startDrawing(); }}><PencilIcon aria-hidden="true" />{drawLabel}</Button>}
     </div>
     {hint !== null && <p data-testid="guest-composer-hint" className="m-0 text-foreground-secondary [font:var(--type-label)]">{hint}</p>}
     {(items.length > 0 || keptDrawing || (removed && hadDrawing)) && <p data-testid="guest-composer-drawing" className="m-0 flex flex-wrap items-center gap-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">
       <span>{items.length > 0 ? `Drawing attached (${items.length} ${items.length === 1 ? "mark" : "marks"})` : keptDrawing ? "This note has a drawing" : "The drawing will be removed when you save"}</span>
       {markupAllowed && (items.length > 0 || keptDrawing) && <Button type="button" variant="ghost" size="sm" data-testid="guest-composer-remove-drawing" className={TOUCH} disabled={pending} onClick={() => { setItems(NO_ITEMS); setDrawFrame(null); if (hadDrawing) setRemoved(true); }}>Remove drawing</Button>}
     </p>}
-    <Textarea ref={bodyRef} data-testid="guest-composer-body" aria-label="Your note" value={body} disabled={pending} onChange={(event) => { setBody(event.target.value); }} />
+    <Textarea ref={bodyRef} data-testid="guest-composer-body" aria-label="Your note" placeholder="Add a note at this frame…" value={body} disabled={pending} onChange={(event) => { setBody(event.target.value); }} />
     {target !== null && latest !== null && latest.revision !== target.baseRevision && <p data-testid="guest-composer-latest" className="m-0 whitespace-pre-wrap text-foreground-secondary [font:var(--type-body-sm)] [overflow-wrap:anywhere]">{`Latest saved version: ${latest.body}`}</p>}
     {problem !== null && <p role="alert" data-testid="guest-composer-problem" className="m-0 text-destructive [font:var(--type-body-sm)]">{problem}</p>}
     <div className="flex flex-wrap justify-end gap-[var(--space-2)]">

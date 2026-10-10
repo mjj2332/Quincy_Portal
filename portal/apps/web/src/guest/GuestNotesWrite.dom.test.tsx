@@ -319,6 +319,29 @@ describe("drawing", () => {
     expect(posted).toMatchObject({ startFrame: 50, body: "Look here", drawingFrame: 50 });
     expect((posted as unknown as { markup: unknown[] }).markup).toHaveLength(1);
   });
+  it("keeps Draw enabled and pressed while drawing, and pressing it again finishes the drawing like Done; Post stays disabled meanwhile", async () => {
+    await withLayout(async () => {
+      await open();
+      await atSeconds(2);
+      await click(byId("guest-add-note"));
+      await click(byId("guest-composer-draw"));
+      await atSeconds(2);
+      const drawButton = byId("guest-composer-draw") as HTMLButtonElement;
+      expect(byId("guest-markup-toolbar")).not.toBeNull();
+      expect(drawButton.getAttribute("aria-pressed")).toBe("true");
+      expect(drawButton.disabled).toBe(false);
+      expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(true);
+      await click(drawButton);
+      expect(byId("guest-markup-toolbar")).toBeNull();
+      expect((byId("guest-composer-draw") as HTMLButtonElement).getAttribute("aria-pressed")).toBe("false");
+      expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(false);
+    });
+  });
+  it("gives the composer's note field a placeholder", async () => {
+    await open();
+    await click(byId("guest-add-note"));
+    expect(byId("guest-composer-body")?.getAttribute("placeholder")).toBe("Add a note at this frame…");
+  });
   it("can take the drawing off again before posting", async () => {
     await withLayout(async () => {
       await open();
