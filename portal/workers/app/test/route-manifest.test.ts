@@ -166,6 +166,22 @@ describe("terminal route manifest", () => {
     }
   });
 
+  it("classifies every /d registration as a guest-link route or one of the two fallbacks (#741 12a)", () => {
+    const registered = app.routes.filter((route) => route.path === "/d" || route.path.startsWith("/d/"));
+    const guest = PROJECT_SECURITY_ROUTE_CLASSIFICATION.filter((route) => route.class === "guest-link");
+    expect(guest.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
+      "DELETE /d/api/links/:linkId/session", "GET /d/api/links/:linkId/notes/:noteId/markup", "GET /d/api/links/:linkId/session", "GET /d/api/links/:linkId/versions/:assetId/notes",
+      "GET /d/api/links/:linkId/versions/:assetId/poster", "GET /d/api/links/:linkId/versions/:assetId/stream", "GET /d/api/links/:linkId/videos", "GET /d/review", "POST /d/api/links/:linkId/session",
+    ]);
+    for (const route of guest) expect(route, `${route.method} ${route.path}`).toMatchObject({ scope: "none", projection: "guest-public", response: "protocol-404" });
+    expect(registered.length).toBeGreaterThan(0);
+    for (const route of registered) {
+      const entry = PROJECT_SECURITY_ROUTE_CLASSIFICATION.find((candidate) => candidate.method === route.method && candidate.path === route.path);
+      const fallback = entry?.class === "terminal-fallback" && (route.path === "/d" || route.path === "/d/*");
+      expect(entry?.class === "guest-link" || fallback, `${route.method} ${route.path}`).toBe(true);
+    }
+  });
+
   it("classifies GET /api/production-gantt as scoped-project / external-safe", () => {
     for (const path of ["/api/production-gantt", "/api/production-gantt/"]) {
       const route = PROJECT_SECURITY_ROUTE_CLASSIFICATION.find((entry) => entry.method === "GET" && entry.path === path);
