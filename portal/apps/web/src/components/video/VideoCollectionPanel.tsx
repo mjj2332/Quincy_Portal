@@ -34,6 +34,8 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   const uploads = useVideoUploads(userId, projectId);
   const canUpload = review.parts.includes("upload");
   const notesEnabled = review.parts.includes("notes");
+  // Drawing on notes (#741 6b-ui) needs the notes part too: markup alone offers nothing.
+  const markupEnabled = notesEnabled && review.parts.includes("markup");
   // Every unsent or open note form lives here for as long as the Video tab is open (#741 5b, D3): one store per person and Project, never a
   // module, so a different person starts with none. Swapped during render (the person or Project changed) so nothing the old store started
   // can send or write again; the viewer and the notes panel only subscribe to it.
@@ -104,7 +106,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     </div>
     {openVideo && <ViewLoadBoundary viewLabel="video player">
       <Suspense fallback={null}>
-        <Viewer video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => opener.current} {...(notesEnabled ? { notes: { projectId, role, userId, archived, forms } } : {})} />
+        <Viewer video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => opener.current} {...(notesEnabled ? { notes: { projectId, role, userId, archived, forms, markup: markupEnabled } } : {})} />
       </Suspense>
     </ViewLoadBoundary>}
   </section>;

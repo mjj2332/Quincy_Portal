@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type Ref } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
 import { Maximize, Pause, Play, StepBack, StepForward, Volume2, VolumeX } from "lucide-react";
-import { framesToTimecode, rationalToNumber, type VideoVersionDto } from "@quincy/shared";
+import { framesToTimecode, rationalToNumber, type Box, type VideoVersionDto } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { useVideoFrameClock, type VideoFrameClock } from "../../lib/video-frame-clock";
 import { usePlayerKeys } from "../../lib/use-player-keys";
@@ -45,7 +45,7 @@ function IconTip({ label, keys, children }: { label: string; keys?: string; chil
  * surface (`data-surface="inverse"`) around it, like the Lightbox. `keyboard="self"` listens on the player; `"host"` leaves the
  * scope to the caller, who forwards events to `controlRef.handleKeyDown`.
  */
-export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, markers, pendingRange, onMarkerSelect, onMark, onClockChange }: {
+export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, markers, pendingRange, onMarkerSelect, onMark, onClockChange, overlay, transportLocked = false }: {
   version: VideoPlayerVersion;
   title: string;
   controlRef?: Ref<VideoPlayerControl>;
@@ -61,6 +61,10 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   onMark?: (kind: "in" | "out", frame: number) => void;
   /** The frame clock, once the element is ready, and null when it goes away; siblings (the notes composer) subscribe to it on their own. */
   onClockChange?: (clock: VideoFrameClock | null) => void;
+  /** Drawn over the stage (#741 6b-ui); a function is handed the picture box. Built by the host, so this module never imports it. */
+  overlay?: ReactNode | ((box: Box | null) => ReactNode);
+  /** Drawing: the transport, the scrubber and the player's keys are inert, so nothing moves the frame under the pen. */
+  transportLocked?: boolean;
 }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [muted, setMutedState] = useState(false);
@@ -95,7 +99,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     home: () => { clock.seekToFrame(0); },
     end: () => { clock.seekToFrame(lastFrame); },
     markFrame,
-  }, onMark);
+  }, onMark, transportLocked);
   const currentFrame = useCallback(() => currentFrameRef.current(), []);
   useImperativeHandle(controlRef, () => ({ handleKeyDown, currentFrame }), [handleKeyDown, currentFrame]);
 
@@ -110,7 +114,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     onKeyDown={keyboard === "self" ? (event) => { handleKeyDown(event); } : undefined}
     className={cn("flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", className)}
   >
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} onVideo={setVideo} />
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} onVideo={setVideo} overlay={overlay} />
 
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}
     <div data-testid="video-scrubber">
@@ -122,6 +126,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
           min={0}
           max={Math.max(1, lastFrame)}
           step={1}
+          disabled={transportLocked}
           largeStep={Math.max(1, Math.round(rationalToNumber(version.fps)))}
           onValueChange={(value) => { clock.seekToFrame(Array.isArray(value) ? (value[0] ?? 0) : value); }}
           thumbProps={{ getAriaLabel: () => "Timeline", getAriaValueText: (_formatted, value) => timecode(value) }}
@@ -132,13 +137,13 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
 
     <div className="flex flex-wrap items-center gap-[var(--space-2)]">
       <IconTip label="Previous frame" keys="←">
-        <Button type="button" variant="outline" size="icon" aria-label="Previous frame" className={COARSE} onClick={() => { clock.step(-1); }}><StepBack aria-hidden="true" /></Button>
+        <Button type="button" variant="outline" size="icon" aria-label="Previous frame" className={COARSE} disabled={transportLocked} onClick={() => { clock.step(-1); }}><StepBack aria-hidden="true" /></Button>
       </IconTip>
       <IconTip label={playLabel} keys="Space">
-        <Button type="button" variant="default" size="icon" aria-label={playLabel} className={cn("w-[var(--space-7)]", COARSE)} onClick={() => { if (clock.playing) clock.pause(); else clock.play(); }}>{clock.playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}</Button>
+        <Button type="button" variant="default" size="icon" aria-label={playLabel} className={cn("w-[var(--space-7)]", COARSE)} disabled={transportLocked} onClick={() => { if (clock.playing) clock.pause(); else clock.play(); }}>{clock.playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}</Button>
       </IconTip>
       <IconTip label="Next frame" keys="→">
-        <Button type="button" variant="outline" size="icon" aria-label="Next frame" className={COARSE} onClick={() => { clock.step(1); }}><StepForward aria-hidden="true" /></Button>
+        <Button type="button" variant="outline" size="icon" aria-label="Next frame" className={COARSE} disabled={transportLocked} onClick={() => { clock.step(1); }}><StepForward aria-hidden="true" /></Button>
       </IconTip>
       <output data-testid="video-readout" aria-live={clock.playing || !clock.confirmed ? "off" : "polite"} className={cn("px-[var(--space-2)] max-[721px]:px-0", MONO)}>
         <span>{timecode(clock.frame)}</span><span className="text-foreground-secondary">{` / ${timecode(version.frameCount)}`}</span>

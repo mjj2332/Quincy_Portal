@@ -52,6 +52,8 @@ export const projectDataKeys = {
   videos: (projectId: string) => ["project-data", projectId, "videos"] as const,
   /** Every note thread on one Video Version (#741 5b). Under the Project root, so `project-data-removed` clears it; keyed by the Version's Asset id. */
   videoNotes: (projectId: string, assetId: string) => ["project-data", projectId, "video-notes", assetId] as const,
+  /** One note's drawing at one revision (#741 6b-ui). The revision is in the key, so an edited drawing is a different entry and a cached one is never stale. */
+  videoNoteMarkup: (projectId: string, noteId: string, revision: number) => ["project-data", projectId, "video-note-markup", noteId, revision] as const,
 };
 
 export type AccessErrorScope = "principal" | "project" | "collection" | "collaboration";

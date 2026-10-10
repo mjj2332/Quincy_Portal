@@ -1,6 +1,7 @@
-import { VIDEO_NOTE_PASTE_MAX, VIDEO_NOTE_PASTE_OFFSET_MAX, type VideoNoteCreateInput, type VideoNotePasteCommitResponse, type VideoNotePastePreviewResponse, VideoNoteDto, VideoNoteEditInput, VideoNoteThreadDto, VideoNoteVisibility } from "@quincy/shared";
+import { strokesJsonBytes, STROKE_LIMITS, VIDEO_MARKUP_MAX_BYTES, VIDEO_NOTE_PASTE_MAX, VIDEO_NOTE_PASTE_OFFSET_MAX, type MarkupItem, type VideoMarkup, type VideoNoteCreateInput, type VideoNotePasteCommitResponse, type VideoNotePastePreviewResponse, VideoNoteDto, VideoNoteEditInput, VideoNoteThreadDto, VideoNoteVisibility } from "@quincy/shared";
 import type { FrameClockState } from "./video-frame-clock";
-import { classifyVideoNoteError } from "./video-note-errors";
+import type { MarkupTool } from "./use-markup";
+import { classifyVideoNoteError, MARKUP_ERROR_TEXT } from "./video-note-errors";
 import { EMPTY_MARKS, markFrame, marksToFrames, type NoteMarks } from "./video-note-marks";
 
 /**
@@ -30,6 +31,8 @@ export type OpenForm = {
   base: Opened;
   /** An edit of a plain root: the frame controls show. */
   frames: boolean;
+  /** The drawing of an edit (always empty for a reply). */
+  drawing: EditDrawing;
   /** The server's note after a reviewed 409: "Save anyway" sends exactly its revision. */
   conflict: Opened | null;
   problem: Problem | null;
@@ -39,6 +42,17 @@ export type OpenForm = {
 /** The marks belong to the clock they were made on (a Version or a viewer that is gone takes them with it); off that clock the form's baseline `seed` shows and no frame action has been taken. */
 export type StoredMarks = { clock: object | null; value: NoteMarks; touched: boolean; seed: NoteMarks };
 export type Op = { id: number; form: "composer" | "open"; phase: "confirming" | "posting"; revision: number };
+/** Which form a drawing belongs to: the composer's, or the open edit's. */
+export type DrawForm = "composer" | "edit";
+/** Draw mode of one Version (#741 6b-ui): `confirming` while the frame is being brought up, `drawing` once it is on screen and frozen. A completion acts only while its `opId` still owns it. */
+export type DrawState = { form: DrawForm; phase: "confirming" | "drawing"; opId: number; frame: number };
+/** The composer's unsent drawing. `drawingFrame` is frozen by the first stroke and released when every stroke is gone; `revision` advances with every change, so a success never clears a newer drawing. */
+export type ComposerMarkup = { items: MarkupItem[]; drawingFrame: number | null; revision: number };
+/**
+ * An open edit's drawing: what the note had (`hadDrawing`, `baseFrame`), the strokes once the saved drawing was fetched (`items` is null until then, and is never seeded with an empty list),
+ * and what the person did to it. Save sends markup only when `touched`.
+ */
+export type EditDrawing = { hadDrawing: boolean; baseFrame: number | null; items: MarkupItem[] | null; drawingFrame: number | null; remove: boolean; touched: boolean; revision: number };
 /** What the paste dialog keeps for a target Version so closing and reopening it loses nothing: the frame offset and the notes the person unticked (everything is ticked by default, so a re-run preview never un-ticks a note). */
 export type PasteDraft = { offset: number; unticked: readonly string[] };
 /** The notes copied from one Version of a Video (#741 5c-ui): ids only, the paste dialog asks the server for the plan. */
@@ -52,15 +66,18 @@ export type PasteOp = { opId: number; status: "idle" | "committing" | "failed" }
  */
 export type PastePreview = { generation: number; status: "idle" | "loading" | "ok" | "failed" | "invalid"; plan: VideoNotePastePreviewResponse | null; error: string | null; notice: string | null; failure: { text: string; retry: boolean } | null };
 export type PastePreviewRun = (offsetFrames: number) => Promise<VideoNotePastePreviewResponse>;
-export type Slot = { composer: Composer; open: OpenForm | null; marks: StoredMarks; op: Op | null; spent: boolean; /** Why a form closed by itself (its note was deleted elsewhere). */ notice: (Problem & { rootId: string }) | null; paste: PasteDraft; pasteOp: PasteOp; pasteView: PastePreview; /** Whether the paste dialog is open, and what the last paste said. */ pasteOpen: boolean; pasteResult: string | null };
+export type Slot = { composer: Composer; /** The composer's drawing, the pen, and draw mode (#741 6b-ui). */ markup: ComposerMarkup; tool: MarkupTool; draw: DrawState | null; open: OpenForm | null; marks: StoredMarks; op: Op | null; spent: boolean; /** Why a form closed by itself (its note was deleted elsewhere). */ notice: (Problem & { rootId: string }) | null; paste: PasteDraft; pasteOp: PasteOp; pasteView: PastePreview; /** Whether the paste dialog is open, and what the last paste said. */ pasteOpen: boolean; pasteResult: string | null };
 
+const NO_DRAWING: EditDrawing = Object.freeze({ hadDrawing: false, baseFrame: null, items: null, drawingFrame: null, remove: false, touched: false, revision: 0 });
+const EMPTY_MARKUP: ComposerMarkup = Object.freeze({ items: Object.freeze([]) as unknown as MarkupItem[], drawingFrame: null, revision: 0 });
+export const DEFAULT_PEN: MarkupTool = Object.freeze({ kind: "freehand", color: "#e64b3c", width: 4 });
 const NO_MARKS: StoredMarks = { clock: null, value: EMPTY_MARKS, touched: false, seed: EMPTY_MARKS };
 const EMPTY_COMPOSER: Composer = { body: "", visibility: "internal", anchorFrame: null, revision: 0, problem: null };
 const EMPTY_PASTE: PasteDraft = Object.freeze({ offset: 0, unticked: Object.freeze([]) as readonly string[] });
 const EMPTY_PASTE_OP: PasteOp = Object.freeze({ opId: 0, status: "idle" });
 const EMPTY_PASTE_VIEW: PastePreview = Object.freeze({ generation: 0, status: "idle", plan: null, error: null, notice: null, failure: null });
 const PASTE_STALE_NOTICE = "Some notes changed since the preview, so the list was refreshed. Check it, then paste again.";
-const EMPTY_SLOT: Slot = Object.freeze({ composer: EMPTY_COMPOSER, open: null, marks: NO_MARKS, op: null, spent: false, notice: null, paste: EMPTY_PASTE, pasteOp: EMPTY_PASTE_OP, pasteView: EMPTY_PASTE_VIEW, pasteOpen: false, pasteResult: null });
+const EMPTY_SLOT: Slot = Object.freeze({ composer: EMPTY_COMPOSER, markup: EMPTY_MARKUP, tool: DEFAULT_PEN, draw: null, open: null, marks: NO_MARKS, op: null, spent: false, notice: null, paste: EMPTY_PASTE, pasteOp: EMPTY_PASTE_OP, pasteView: EMPTY_PASTE_VIEW, pasteOpen: false, pasteResult: null });
 
 export function effectiveMarks(marks: StoredMarks, clock: object | null): { value: NoteMarks; touched: boolean } {
   return marks.clock !== null && marks.clock === clock ? marks : { value: marks.seed, touched: false };
@@ -69,21 +86,25 @@ export function effectiveMarks(marks: StoredMarks, clock: object | null): { valu
 const isAbort = (error: unknown) => error instanceof Error && error.name === "AbortError";
 const messageOf = (error: unknown, fallback: string) => (error instanceof Error && error.message ? error.message : fallback);
 
-function composerProblem(error: unknown): Problem {
+const MARKUP_GONE = "Drawing isn't available on this Project any more. Your draft is kept.";
+
+function composerProblem(error: unknown, touchedMarkup = false): Problem {
   const classified = classifyVideoNoteError(error);
   switch (classified.kind) {
+    case "markup": return { text: MARKUP_ERROR_TEXT[classified.markupCode!] };
     case "network": return { text: "Couldn't reach the server. Your note may or may not have posted — refresh the notes to check, then post again if it isn't there.", refresh: true };
     case "range": return { text: `That frame is outside this film${classified.frameCount ? ` (the last frame is ${classified.frameCount - 1})` : ""}.` };
     case "archived": return { text: "This Project was archived, so the note was not posted. Your draft is kept." };
-    case "access": return { text: messageOf(error, "You no longer have access to this Project.") };
+    case "access": return { text: touchedMarkup ? MARKUP_GONE : messageOf(error, "You no longer have access to this Project.") };
     default: return { text: messageOf(error, "The note could not be posted.") };
   }
 }
 
 /** What a refused write says, and (for a 409) the server's current note and (when it is gone) that the note is. */
-export function writeFailure(error: unknown, fallback: string, noteId = ""): { problem: Problem; conflict?: VideoNoteDto; gone?: boolean } {
+export function writeFailure(error: unknown, fallback: string, noteId = "", touchedMarkup = false): { problem: Problem; conflict?: VideoNoteDto; gone?: boolean } {
   const classified = classifyVideoNoteError(error);
   switch (classified.kind) {
+    case "markup": return { problem: { text: MARKUP_ERROR_TEXT[classified.markupCode!] } };
     case "conflict": {
       const current = classified.thread && [classified.thread, ...classified.thread.replies].find((candidate) => candidate.id === noteId);
       if (current) return { problem: { text: "This note changed since you opened it. Its current text is shown below; Save anyway replaces it with your edit." }, conflict: current };
@@ -93,7 +114,7 @@ export function writeFailure(error: unknown, fallback: string, noteId = ""): { p
     case "gone": return { problem: { text: "This note no longer exists." }, gone: true };
     case "network": return { problem: { text: "Couldn't reach the server. The change may or may not have gone through — refresh the notes to check.", refresh: true } };
     case "archived": return { problem: { text: "This Project was archived, so nothing was changed." } };
-    case "access": return { problem: { text: messageOf(error, "You no longer have access to this Project.") } };
+    case "access": return { problem: { text: touchedMarkup ? MARKUP_GONE : messageOf(error, "You no longer have access to this Project.") } };
     case "range": return { problem: { text: "Those frames are outside this film." } };
     default: break;
   }
@@ -101,7 +122,18 @@ export function writeFailure(error: unknown, fallback: string, noteId = ""): { p
 }
 
 /** Whether leaving the form would lose something: an edit's text or frames changed, a reply or composer with text, or a composer with marks set. */
-const isDirty = (slot: Slot) => (slot.open ? (slot.open.kind === "reply" ? slot.open.text !== "" : slot.open.text !== slot.open.base.body || slot.marks.touched) : slot.composer.body !== "" || slot.marks.touched);
+const isDirty = (slot: Slot) => (slot.open ? (slot.open.kind === "reply" ? slot.open.text !== "" : slot.open.text !== slot.open.base.body || slot.marks.touched || slot.open.drawing.touched) : slot.composer.body !== "" || slot.marks.touched || slot.markup.items.length > 0);
+
+/** The frame a drawing may be on: a point note's frame, or any frame of a range (`end` is exclusive). */
+const inFrames = (frame: number, start: number, end: number | null) => frame >= start && frame < (end ?? start + 1);
+const clampFrame = (frame: number, low: number, high: number) => Math.min(high, Math.max(low, frame));
+
+/** Waits for the browser to show the frame the clock was asked for (10 s at most): the frame that landed, "timeout", or an abort/failure error the caller classifies. */
+async function confirmed(clock: NoteClock): Promise<number | "timeout"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<"timeout">((resolve) => { timer = setTimeout(() => { resolve("timeout"); }, FRAME_CONFIRM_TIMEOUT_MS); });
+  try { return await Promise.race([clock.awaitConfirmedFrame(), timedOut]); } finally { clearTimeout(timer); }
+}
 
 export function createNoteFormStore(key: string) {
   const slots = new Map<string, Slot>();
@@ -132,18 +164,24 @@ export function createNoteFormStore(key: string) {
   }
   const owns = (assetId: string, op: Op) => slot(assetId).op?.id === op.id;
 
-  const close = (assetId: string) => { if (slot(assetId).open) put(assetId, { open: null, marks: NO_MARKS, spent: false }); };
-  const cancelConfirmation = (assetId: string) => { if (slot(assetId).op?.phase === "confirming") put(assetId, { op: null }); };
+  /** The patch that ends an edit's draw phase when its form goes (the composer's draw phase is its own). */
+  const endEditDraw = (assetId: string): Partial<Slot> => (slot(assetId).draw?.form === "edit" ? { draw: null } : {});
+  const close = (assetId: string) => { if (slot(assetId).open) put(assetId, { open: null, marks: NO_MARKS, spent: false, ...endEditDraw(assetId) }); };
+  const cancelConfirmation = (assetId: string) => {
+    const held = slot(assetId);
+    const draw = held.draw?.phase === "confirming";
+    if (held.op?.phase === "confirming" || draw) put(assetId, { ...(held.op?.phase === "confirming" ? { op: null } : {}), ...(draw ? { draw: null } : {}) });
+  };
 
-  function open(assetId: string, form: Omit<OpenForm, "revision" | "conflict" | "problem">, seed: NoteMarks): boolean {
+  function open(assetId: string, form: Omit<OpenForm, "revision" | "conflict" | "problem" | "drawing"> & { drawing?: EditDrawing }, seed: NoteMarks): boolean {
     if (slot(assetId).op?.phase === "posting") return false;
-    put(assetId, { op: null, open: { ...form, revision: 0, conflict: null, problem: null }, marks: { ...NO_MARKS, value: seed, seed }, spent: false, notice: null });
+    put(assetId, { op: null, draw: null, open: { ...form, drawing: form.drawing ?? NO_DRAWING, revision: 0, conflict: null, problem: null }, marks: { ...NO_MARKS, value: seed, seed }, spent: false, notice: null });
     return true;
   }
 
   function takeMark(assetId: string, clock: object, change: (marks: NoteMarks) => NoteMarks) {
     const held = slot(assetId);
-    if (held.op || (held.open && !held.open.frames)) return;
+    if (held.op || held.draw || (held.open && (!held.open.frames || held.open.drawing.touched))) return;
     put(assetId, { marks: { clock, value: change(effectiveMarks(held.marks, clock).value), touched: true, seed: held.marks.seed }, spent: false });
   }
 
@@ -155,26 +193,26 @@ export function createNoteFormStore(key: string) {
     const threads = latest.get(assetId);
     if (!form || held.op || !threads) return;
     const root = threads.find((thread) => thread.id === form.rootId);
-    if (root?.deleted && (form.kind === "reply" || form.noteId === root.id)) { put(assetId, { open: null, marks: NO_MARKS, spent: false, notice: { text: "This note was deleted.", rootId: root.id } }); return; }
-    if (!root) { put(assetId, { open: null, marks: NO_MARKS, spent: false, notice: { text: "This note no longer exists.", rootId: form.rootId } }); return; }
+    if (root?.deleted && (form.kind === "reply" || form.noteId === root.id)) { put(assetId, { open: null, marks: NO_MARKS, spent: false, ...endEditDraw(assetId), notice: { text: "This note was deleted.", rootId: root.id } }); return; }
+    if (!root) { put(assetId, { open: null, marks: NO_MARKS, spent: false, ...endEditDraw(assetId), notice: { text: "This note no longer exists.", rootId: form.rootId } }); return; }
     if (form.kind === "edit" && form.noteId !== root.id && !root.replies.some((reply) => reply.id === form.noteId)) close(assetId);
   }
 
   /** An edit or a reply goes out. It is never cancelled once sent; its result closes the form only if the same operation still owns it. */
-  async function submitOpen(assetId: string, form: OpenForm, run: () => Promise<unknown>, fallback: string) {
+  async function submitOpen(assetId: string, form: OpenForm, run: () => Promise<unknown>, fallback: string, touchedMarkup = false) {
     const op: Op = { id: ++seq, form: "open", phase: "posting", revision: form.revision };
     put(assetId, { op, open: { ...form, problem: null }, notice: null });
     try { await run(); } catch (error) {
       if (!owns(assetId, op)) return;
-      const failure = writeFailure(error, fallback, form.noteId);
+      const failure = writeFailure(error, fallback, form.noteId, touchedMarkup);
       const current = slot(assetId).open;
-      if (failure.gone) put(assetId, { op: null, open: null, marks: NO_MARKS, spent: false, notice: { ...failure.problem, rootId: form.rootId } });
+      if (failure.gone) put(assetId, { op: null, open: null, marks: NO_MARKS, spent: false, ...endEditDraw(assetId), notice: { ...failure.problem, rootId: form.rootId } });
       else { put(assetId, { op: null, open: current && { ...current, problem: failure.problem, ...(failure.conflict ? { conflict: failure.conflict } : {}) } }); reconcile(assetId); }
       return;
     }
     if (!owns(assetId, op)) return;
     const current = slot(assetId).open;
-    put(assetId, { op: null, ...(current?.noteId === form.noteId && current.kind === form.kind ? { open: null, marks: NO_MARKS, spent: false } : {}) });
+    put(assetId, { op: null, ...(current?.noteId === form.noteId && current.kind === form.kind ? { open: null, marks: NO_MARKS, spent: false, ...endEditDraw(assetId) } : {}) });
     reconcile(assetId);
   }
 
@@ -198,7 +236,8 @@ export function createNoteFormStore(key: string) {
     openEdit(assetId: string, note: VideoNoteDto, rootId: string): boolean {
       const frames = note.id === rootId && !note.hasMarkup && note.startFrame !== null;
       const seed: NoteMarks = frames ? { in: note.startFrame, out: note.endFrame === null ? null : note.endFrame - 1 } : EMPTY_MARKS;
-      return open(assetId, { kind: "edit", noteId: note.id, rootId, text: note.body, base: { revision: note.revision, body: note.body, startFrame: note.startFrame, endFrame: note.endFrame }, frames, focusOnOpen: true }, seed);
+      const drawing: EditDrawing = note.id === rootId && note.hasMarkup ? { ...NO_DRAWING, hadDrawing: true, baseFrame: note.drawingFrame, drawingFrame: note.drawingFrame } : NO_DRAWING;
+      return open(assetId, { kind: "edit", noteId: note.id, rootId, text: note.body, base: { revision: note.revision, body: note.body, startFrame: note.startFrame, endFrame: note.endFrame }, frames, drawing, focusOnOpen: true }, seed);
     },
     /** True once, to the edit form that mounted because a person opened it: it then focuses its text field. */
     takeFocusOnOpen(assetId: string, noteId: string): boolean {
@@ -218,51 +257,86 @@ export function createNoteFormStore(key: string) {
     makePoint: (assetId: string, clock: object) => { takeMark(assetId, clock, (marks) => ({ in: marks.in ?? marks.out, out: null })); },
     clearMarks(assetId: string) { const held = slot(assetId); if (!held.op) put(assetId, { marks: { ...NO_MARKS, seed: held.marks.seed }, spent: false }); },
 
-    /** Pause, seek to the range start or the frozen anchor, confirm exactly that frame (10 s at most), then send. Cancelling the confirmation invalidates the operation before it can send. */
-    async post(assetId: string, { clock, frameCount, send }: { clock: NoteClock; frameCount: number; send: (input: VideoNoteCreateInput) => Promise<unknown> }) {
+    /** Pause, seek to the range start, the drawing frame or the frozen anchor, confirm exactly that frame (10 s at most), then send. Cancelling the confirmation invalidates the operation before it can send. */
+    async post(assetId: string, { clock, frameCount, send, markup: markupOn = true }: { clock: NoteClock; frameCount: number; send: (input: VideoNoteCreateInput) => Promise<unknown>; /** False when the Project's markup part is off: the note posts without its drawing. */ markup?: boolean }) {
       const held = slot(assetId);
       const draft = held.composer;
       const text = draft.body.trim();
       if (held.op || held.open || !text) return;
+      const drawn = held.markup;
+      const withDrawing = markupOn && drawn.items.length > 0 && drawn.drawingFrame !== null;
       const marked = marksToFrames(effectiveMarks(held.marks, clock).value, frameCount);
-      const anchor = marked ? marked.startFrame : Math.min(Math.max(0, draft.anchorFrame ?? frameOnScreen(clock.getState())), Math.max(0, frameCount - 1));
+      if (withDrawing) {
+        const problem = strokesJsonBytes(drawn.items) > VIDEO_MARKUP_MAX_BYTES ? MARKUP_ERROR_TEXT.markup_too_large
+          : marked && !inFrames(drawn.drawingFrame!, marked.startFrame, marked.endFrame) ? "The drawing is outside the In/Out range. Draw again inside it, or change the marks." : null;
+        if (problem) { put(assetId, { draw: null, composer: { ...draft, problem: { text: problem } } }); return; }
+      }
+      const anchor = withDrawing ? drawn.drawingFrame! : marked ? marked.startFrame : Math.min(Math.max(0, draft.anchorFrame ?? frameOnScreen(clock.getState())), Math.max(0, frameCount - 1));
       const op: Op = { id: ++seq, form: "composer", phase: "confirming", revision: draft.revision };
-      put(assetId, { op, composer: { ...draft, problem: null } });
+      const markupRevision = drawn.revision;
+      put(assetId, { op, draw: null, composer: { ...draft, problem: null } });
       const stop = (problem: Problem | null) => { if (owns(assetId, op)) put(assetId, { op: null, composer: { ...slot(assetId).composer, problem } }); };
       clock.seekToFrame(anchor);
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const timedOut = new Promise<"timeout">((resolve) => { timer = setTimeout(() => { resolve("timeout"); }, FRAME_CONFIRM_TIMEOUT_MS); });
-      let confirmed: number | "timeout";
-      try { confirmed = await Promise.race([clock.awaitConfirmedFrame(), timedOut]); }
+      let landed: number | "timeout";
+      try { landed = await confirmed(clock); }
       catch (error) { stop(isAbort(error) ? null : { text: "The frame could not be confirmed. Your draft is kept.", retry: true }); return; }
-      finally { clearTimeout(timer); }
       if (!owns(assetId, op)) return;
-      if (confirmed === "timeout") return stop({ text: "The frame took too long to show. Your draft is kept.", retry: true });
+      if (landed === "timeout") return stop({ text: "The frame took too long to show. Your draft is kept.", retry: true });
       // The frame on screen must be the one the note was composed at: a scrub or a step that landed first moved it.
-      if (confirmed !== anchor) return stop({ text: "Frame moved — Post again" });
+      if (landed !== anchor) return stop({ text: "Frame moved — Post again" });
       put(assetId, { op: { ...op, phase: "posting" } });
-      const frames = marked ?? { startFrame: anchor, endFrame: null };
-      try { await send({ startFrame: frames.startFrame, ...(frames.endFrame !== null ? { endFrame: frames.endFrame } : {}), visibility: draft.visibility, body: text }); }
-      catch (error) { stop(composerProblem(error)); return; }
+      const frames = withDrawing && !marked ? { startFrame: anchor, endFrame: null } : marked ?? { startFrame: anchor, endFrame: null };
+      try { await send({ startFrame: frames.startFrame, ...(frames.endFrame !== null ? { endFrame: frames.endFrame } : {}), visibility: draft.visibility, body: text, ...(withDrawing ? { markup: drawn.items as VideoMarkup, drawingFrame: drawn.drawingFrame! } : {}) }); }
+      catch (error) { stop(composerProblem(error, withDrawing)); return; }
       if (!owns(assetId, op)) return;
       const now = slot(assetId).composer;
-      put(assetId, { op: null, marks: NO_MARKS, composer: now.revision === op.revision ? { ...EMPTY_COMPOSER, revision: now.revision + 1 } : now });
+      const nowMarkup = slot(assetId).markup;
+      put(assetId, {
+        op: null, marks: NO_MARKS, composer: now.revision === op.revision ? { ...EMPTY_COMPOSER, revision: now.revision + 1 } : now,
+        markup: nowMarkup.revision === markupRevision ? { ...EMPTY_MARKUP, revision: nowMarkup.revision + 1 } : nowMarkup,
+      });
     },
 
-    /** Sends the revision the form was opened with (or, after a reviewed conflict, the server's) and only what changed; frames only after a frame action since opening. Never seeks. */
+    /** Sends the revision the form was opened with (or, after a reviewed conflict, the server's) and only what changed; frames only after a frame action since opening. Never seeks, except that a drawing change confirms its drawing frame first. */
     async save(assetId: string, { clock, frameCount, send }: { clock: object | null; frameCount: number; send: (noteId: string, input: VideoNoteEditInput) => Promise<unknown> }) {
       const held = slot(assetId);
       const form = held.open;
       const text = form?.text.trim();
       if (!form || form.kind !== "edit" || held.op || !text) return;
       const against = form.conflict ?? form.base;
-      const input: { expectedRevision: number; body?: string; startFrame?: number; endFrame?: number | null } = { expectedRevision: against.revision };
+      const input: { expectedRevision: number; body?: string; startFrame?: number; endFrame?: number | null; markup?: VideoMarkup | null; drawingFrame?: number } = { expectedRevision: against.revision };
       if (text !== against.body) input.body = text;
       const marks = effectiveMarks(held.marks, clock);
       const frames = form.frames && marks.touched ? marksToFrames(marks.value, frameCount) : null;
       if (frames && (frames.startFrame !== against.startFrame || frames.endFrame !== against.endFrame)) { input.startFrame = frames.startFrame; input.endFrame = frames.endFrame; }
-      if (input.body === undefined && input.startFrame === undefined) { close(assetId); return; }
-      await submitOpen(assetId, form, () => send(form.noteId, input as VideoNoteEditInput), "The note could not be saved.");
+      const drawing = form.drawing;
+      const items = drawing.items !== null && drawing.items.length > 0 ? drawing.items : null;
+      if (drawing.touched) {
+        if (items && !drawing.remove) { input.markup = items as VideoMarkup; input.drawingFrame = drawing.drawingFrame ?? against.startFrame ?? 0; }
+        else if (drawing.hadDrawing) input.markup = null;
+      }
+      if (input.body === undefined && input.startFrame === undefined && input.markup === undefined) { close(assetId); return; }
+      if (held.draw) put(assetId, { draw: null }); // saving ends draw mode; the strokes go with the save
+      const fail = (problem: string) => { put(assetId, { open: { ...form, problem: { text: problem } } }); };
+      if (input.markup !== undefined && input.startFrame !== undefined) return fail(MARKUP_ERROR_TEXT.markup_and_frames);
+      if (input.markup && strokesJsonBytes(input.markup) > VIDEO_MARKUP_MAX_BYTES) return fail(MARKUP_ERROR_TEXT.markup_too_large);
+      const send_ = () => submitOpen(assetId, form, () => send(form.noteId, input as VideoNoteEditInput), "The note could not be saved.", input.markup !== undefined);
+      if (!input.markup) { await send_(); return; }
+      // A drawing is saved on the frame it was drawn on: bring that frame up again first, exactly as Post does (story 31).
+      const target = input.drawingFrame!;
+      const live = clock as NoteClock | null;
+      if (!live || typeof live.awaitConfirmedFrame !== "function") return fail("The film isn't ready, so the drawing can't be saved yet.");
+      const op: Op = { id: ++seq, form: "open", phase: "confirming", revision: form.revision };
+      put(assetId, { op, draw: null, open: { ...form, problem: null } });
+      const stop = (problem: Problem | null) => { if (owns(assetId, op)) put(assetId, { op: null, open: { ...(slot(assetId).open ?? form), problem } }); };
+      live.seekToFrame(target);
+      let landed: number | "timeout";
+      try { landed = await confirmed(live); }
+      catch (error) { stop(isAbort(error) ? null : { text: "The frame could not be confirmed. Your edit is kept.", retry: true }); return; }
+      if (!owns(assetId, op)) return;
+      if (landed === "timeout") return stop({ text: "The frame took too long to show. Your edit is kept.", retry: true });
+      if (landed !== target) return stop({ text: "Frame moved — Save again" });
+      await send_();
     },
     async reply(assetId: string, { send }: { send: (rootId: string, body: string) => Promise<unknown> }) {
       const held = slot(assetId);
@@ -273,9 +347,103 @@ export function createNoteFormStore(key: string) {
     },
 
     cancelConfirmation,
-    /** The first Escape of a dirty form is held (the text stays); the next one is not. A clean edit or reply closes. Nothing here moves focus: the answer says where it should go. */
-    escape(assetId: string, { focusInForm }: { focusInForm: boolean }): { consumed: boolean; focus: "dialog" | "textarea" | "opener" | null } {
+
+    /**
+     * Draw mode (#741 6b-ui): pause, seek to the drawing's frame, wait for exactly that frame (10 s at most, the same deadline and cancellation as Post), then open the drawing phase with the
+     * frame frozen. Chosen frame: a drawing that already exists keeps its own; otherwise the frame on screen, brought inside the note's frames (an edit) or its In/Out marks (the composer).
+     * Strokes are never touched by a cancel, a timeout or a mismatch.
+     */
+    async enterDraw(assetId: string, { clock, form, frameCount }: { clock: NoteClock; form: DrawForm; frameCount: number }) {
       const held = slot(assetId);
+      if (dead || held.op || held.draw) return;
+      const last = Math.max(0, frameCount - 1);
+      const onScreen = clampFrame(frameOnScreen(clock.getState()), 0, last);
+      const complain = (text: string) => { put(assetId, form === "edit" && held.open ? { open: { ...held.open, problem: { text } } } : { composer: { ...held.composer, problem: { text } } }); };
+      let frame: number;
+      if (form === "edit") {
+        const open_ = held.open;
+        if (!open_ || open_.kind !== "edit" || open_.noteId !== open_.rootId || open_.base.startFrame === null) return;
+        const drawing = open_.drawing;
+        if (drawing.touched && held.marks.touched) return complain("Save the new frames first; a note's frames and its drawing change one at a time.");
+        if (held.marks.touched) return complain("Save the new frames first; a note's frames and its drawing change one at a time.");
+        if (drawing.hadDrawing && !drawing.remove && drawing.items === null) return complain("The saved drawing hasn't loaded yet. Try again in a moment.");
+        const start = open_.base.startFrame;
+        const end = open_.base.endFrame === null ? start : open_.base.endFrame - 1;
+        frame = drawing.items !== null && drawing.items.length > 0 && drawing.drawingFrame !== null ? drawing.drawingFrame : clampFrame(onScreen, start, end);
+      } else {
+        if (held.open) return;
+        const drawn = held.markup;
+        const marked = marksToFrames(effectiveMarks(held.marks, clock).value, frameCount);
+        frame = drawn.items.length > 0 && drawn.drawingFrame !== null ? drawn.drawingFrame : marked && !inFrames(onScreen, marked.startFrame, marked.endFrame) ? marked.startFrame : onScreen;
+      }
+      const state: DrawState = { form, phase: "confirming", opId: ++seq, frame };
+      put(assetId, { draw: state, ...(form === "edit" && held.open ? { open: { ...held.open, problem: null } } : { composer: { ...held.composer, problem: null } }) });
+      const mine = () => slot(assetId).draw?.opId === state.opId;
+      const stop = (problem: Problem | null) => {
+        if (!mine()) return;
+        const now = slot(assetId);
+        put(assetId, { draw: null, ...(problem === null ? {} : form === "edit" && now.open ? { open: { ...now.open, problem } } : { composer: { ...now.composer, problem } }) });
+      };
+      clock.seekToFrame(frame);
+      let landed: number | "timeout";
+      try { landed = await confirmed(clock); }
+      catch (error) { stop(isAbort(error) ? null : { text: "The frame could not be confirmed. Try Draw again.", retry: true }); return; }
+      if (!mine()) return;
+      if (landed === "timeout") return stop({ text: "The frame took too long to show. Try Draw again.", retry: true });
+      if (landed !== frame) return stop({ text: "Frame moved — press Draw again" });
+      put(assetId, { draw: { ...state, phase: "drawing" } });
+    },
+    /** Leaves draw mode. The strokes stay. */
+    exitDraw(assetId: string) { if (slot(assetId).draw) put(assetId, { draw: null }); },
+    /**
+     * The committed strokes of a form, replaced by `next` (or a function of the current ones). Every change advances the draft's revision; the array is stored as given, so a caller's
+     * history, which is valid only for the very array it last stored, stays valid. The first stroke freezes the drawing frame; none left releases it.
+     */
+    setItems(assetId: string, form: DrawForm, next: MarkupItem[] | ((current: MarkupItem[]) => MarkupItem[])) {
+      const held = slot(assetId);
+      const frame = held.draw?.frame ?? null;
+      if (form === "composer") {
+        const items = typeof next === "function" ? next(held.markup.items) : next;
+        put(assetId, { markup: { items, drawingFrame: items.length === 0 ? null : held.markup.drawingFrame ?? frame, revision: held.markup.revision + 1 }, spent: false });
+        return;
+      }
+      const open_ = held.open;
+      if (!open_ || open_.kind !== "edit") return;
+      const d = open_.drawing;
+      const items = typeof next === "function" ? next(d.items ?? []) : next;
+      put(assetId, { open: { ...open_, drawing: { ...d, items, remove: false, touched: true, drawingFrame: items.length === 0 ? d.baseFrame : d.drawingFrame ?? frame, revision: d.revision + 1 } }, spent: false });
+    },
+    /** The saved drawing of the note being edited, fetched by the form's owner. It seeds the editor once and is not a change; nothing replaces strokes already being edited. */
+    loadDrawing(assetId: string, noteId: string, items: MarkupItem[], frame: number) {
+      const open_ = slot(assetId).open;
+      if (!open_ || open_.kind !== "edit" || open_.noteId !== noteId || open_.drawing.items !== null) return;
+      put(assetId, { open: { ...open_, drawing: { ...open_.drawing, items, drawingFrame: frame, baseFrame: open_.drawing.baseFrame ?? frame } } });
+    },
+    /** Takes the composer's drawing away (the chip's Remove). */
+    clearMarkup(assetId: string) {
+      const held = slot(assetId);
+      if (held.markup.items.length === 0 && held.markup.drawingFrame === null) return;
+      put(assetId, { markup: { ...EMPTY_MARKUP, revision: held.markup.revision + 1 }, spent: false, ...(held.draw?.form === "composer" ? { draw: null } : {}) });
+    },
+    /** Marks the open edit's saved drawing for removal (Save sends `markup: null`). */
+    removeDrawing(assetId: string) {
+      const open_ = slot(assetId).open;
+      if (!open_ || open_.kind !== "edit" || !open_.drawing.hadDrawing) return;
+      put(assetId, { open: { ...open_, drawing: { ...open_.drawing, items: null, remove: true, touched: true, drawingFrame: open_.drawing.baseFrame, revision: open_.drawing.revision + 1 } }, spent: false, ...endEditDraw(assetId) });
+    },
+    /** Undoes a removal that has not been saved. */
+    keepDrawing(assetId: string) {
+      const open_ = slot(assetId).open;
+      if (!open_ || open_.kind !== "edit" || !open_.drawing.remove) return;
+      put(assetId, { open: { ...open_, drawing: { ...open_.drawing, remove: false, touched: false, items: null, drawingFrame: open_.drawing.baseFrame, revision: open_.drawing.revision + 1 } } });
+    },
+    setTool(assetId: string, patch: Partial<MarkupTool>) { put(assetId, { tool: { ...slot(assetId).tool, ...patch } }); },
+
+    /** The first Escape of a dirty form is held (the text stays); the next one is not. A clean edit or reply closes. Nothing here moves focus: the answer says where it should go. */
+    escape(assetId: string, { focusInForm }: { focusInForm: boolean }): { consumed: boolean; focus: "dialog" | "textarea" | "opener" | "draw" | null } {
+      const held = slot(assetId);
+      // Draw mode owns the first Escape: it cancels a frame confirmation or leaves the drawing phase, and the strokes stay. The dirty-form hold below is the next Escape, the viewer the one after.
+      if (held.draw) { put(assetId, { draw: null }); return { consumed: true, focus: "draw" }; }
       if (held.op?.phase === "confirming") { cancelConfirmation(assetId); put(assetId, { spent: true }); return { consumed: true, focus: "textarea" }; }
       const dirty = isDirty(held);
       if (held.open && !dirty) { close(assetId); return { consumed: true, focus: "opener" }; }
@@ -287,6 +455,7 @@ export function createNoteFormStore(key: string) {
     observeClock(assetId: string, clock: object) {
       const held = slot(assetId);
       if (held.marks.clock !== null && held.marks.clock !== clock) put(assetId, { marks: { ...NO_MARKS, seed: held.marks.seed } });
+      if (held.draw) put(assetId, { draw: null }); // a frame confirmed on another clock means nothing here; the strokes stay
     },
     /** Dismisses the notice a closed form left behind. */
     dismissNotice(assetId: string) { if (slot(assetId).notice) put(assetId, { notice: null }); },
@@ -294,7 +463,7 @@ export function createNoteFormStore(key: string) {
     leave(assetId: string) {
       const held = slot(assetId);
       const reset = held.composer.body === "" && held.composer.visibility !== "internal";
-      if (held.spent || reset) put(assetId, { ...(held.spent ? { spent: false } : {}), ...(reset ? { composer: { ...held.composer, visibility: "internal" as const, revision: held.composer.revision + 1 } } : {}) });
+      if (held.spent || reset || held.draw) put(assetId, { ...(held.draw ? { draw: null } : {}), ...(held.spent ? { spent: false } : {}), ...(reset ? { composer: { ...held.composer, visibility: "internal" as const, revision: held.composer.revision + 1 } } : {}) });
     },
     rearm(assetId: string) { if (slot(assetId).spent) put(assetId, { spent: false }); },
     /** The open form's note left the Version's full list (deleted elsewhere): the form goes, unless its own request is out (it is reconciled again when that settles). */
@@ -368,6 +537,7 @@ export function createNoteFormStore(key: string) {
     cancelAll() {
       for (const assetId of [...slots.keys()]) {
         cancelConfirmation(assetId);
+        if (slot(assetId).draw) put(assetId, { draw: null });
         // A paste commit already sent is not touched, but it stops owning the draft: its completion is ignored.
         const held = slot(assetId).pasteOp;
         if (held.status === "committing") put(assetId, { pasteOp: { ...held, opId: ++seq, status: "idle" } });

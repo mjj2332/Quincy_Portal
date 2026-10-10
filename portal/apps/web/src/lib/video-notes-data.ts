@@ -1,8 +1,8 @@
 import { useQuery, type QueryClient, type QueryFunctionContext, type UseQueryResult } from "@tanstack/react-query";
 import {
-  videoNoteDeleteResponseSchema, videoNotePasteCommitResponseSchema, videoNotePastePreviewResponseSchema,
+  videoNoteDeleteResponseSchema, videoNoteMarkupResponseSchema, videoNotePasteCommitResponseSchema, videoNotePastePreviewResponseSchema,
   type VideoNotePasteCommitResponse, type VideoNotePastePreviewResponse, videoNoteListResponseSchema, videoNoteThreadDtoSchema,
-  type Role, type VideoNoteCreateInput, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto,
+  type Role, type VideoNoteMarkupResponse, type VideoNoteCreateInput, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto,
 } from "@quincy/shared";
 import { apiDeleteWithBody, apiGet, apiPatch, apiPost, apiPut } from "./api";
 import { decodeExternalResponse, externalApiGet } from "./external-api-response";
@@ -33,6 +33,29 @@ export function useVideoNotesQuery(projectId: string, assetId: string, enabled: 
       const notes = await listVideoNotes(projectId, assetId, role, signal);
       if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
       return notes;
+    },
+  });
+}
+
+/** One note's drawing: `markup` is null for a note without one. Never cached across revisions (the revision is in the key) and never seeded with an empty list. */
+export async function readVideoNoteMarkup(projectId: string, noteId: string, role: Role, signal?: AbortSignal): Promise<VideoNoteMarkupResponse> {
+  const path = `${notePath(projectId, noteId)}/markup`;
+  if (role === "external_editor") return await externalApiGet("video-note-markup", path, signal) as VideoNoteMarkupResponse;
+  return videoNoteMarkupResponseSchema.parse(await apiGet<unknown>(path, signal ? { signal } : undefined));
+}
+
+/**
+ * The drawing of a note at the revision the list shows (#741 6b-ui), fetched only when `enabled`. The entry is keyed by note and revision, so it is fetched once per revision and an
+ * edit (a new revision) is a fresh entry. A response of a newer revision than the list showed is still the note's current drawing; saving over it sends the list's revision and meets the
+ * ordinary 409, so nothing is overwritten unseen.
+ */
+export function useVideoNoteMarkupQuery(projectId: string, noteId: string, revision: number, enabled: boolean, role: Role): UseQueryResult<VideoNoteMarkupResponse, Error> {
+  return useQuery<VideoNoteMarkupResponse, Error>({
+    queryKey: projectDataKeys.videoNoteMarkup(projectId, noteId, revision), enabled, staleTime: Number.POSITIVE_INFINITY, gcTime: 5 * 60_000, retry: projectQueryRetry,
+    queryFn: async ({ signal, client }: QueryFunctionContext) => {
+      const response = await readVideoNoteMarkup(projectId, noteId, role, signal);
+      if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
+      return response;
     },
   });
 }

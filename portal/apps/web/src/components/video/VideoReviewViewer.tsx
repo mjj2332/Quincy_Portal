@@ -32,7 +32,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes }: {
   /** The control that opened the viewer; focus goes back to it on close. */
   returnFocusTo?: () => HTMLElement | null;
   /** Present only when the notes part is on. */
-  notes?: { projectId: string; role: Role; userId: string | null; archived: boolean; forms: NoteFormStore };
+  notes?: { projectId: string; role: Role; userId: string | null; archived: boolean; forms: NoteFormStore; /** The Project's `markup` part is on (#741 6b-ui). */ markup?: boolean };
 }) {
   const [assetId, setAssetId] = useState(video.currentAssetId);
   const playerRef = useRef<VideoPlayerControl>(null);
@@ -45,8 +45,9 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes }: {
   const notesOn = notes !== undefined;
   // Escape order with the notes panel (#741 5b), decided from a snapshot taken at keydown, before any handler has run: Base UI reports one
   // Escape to `onOpenChange` more than once, so the answer cannot come from state the first call changed (the ProjectSheet note).
-  // 1. an open menu, popover, list, confirm or modal dialog owns it; 2. the form store decides for the Version's form (a frame confirmation is cancelled, a
-  // clean edit or reply closes, a dirty form or the composer keeps its text on the first Escape); 3. only then does it close the viewer.
+  // 1. an open menu, popover, list, confirm or modal dialog owns it; 2. the form store decides for the Version's form (draw mode first: a confirmation is cancelled, or
+  // drawing ends and the strokes stay; then a frame confirmation is cancelled, a clean edit or reply closes, a dirty form or the composer keeps its text on the first Escape);
+  // 3. only then does it close the viewer.
   const forms = notes?.forms;
   const escapeSnapshot = useRef({ layer: false, form: false });
   useEffect(() => {
@@ -61,6 +62,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes }: {
       const { consumed, focus } = forms.escape(assetId, { focusInForm: active instanceof Element && popup.contains(active) && active.closest("[data-notes-form]") !== null });
       escapeSnapshot.current = { layer, form: consumed };
       if (focus === "dialog") popup.focus({ preventScroll: true });
+      // focus === "draw": the pill is still expanded here, so the overlay returns focus to its Draw button itself once drawing has ended.
       else if (focus === "textarea") (popup.querySelector<HTMLElement>('[data-notes-form="edit"] textarea, [data-notes-form="reply"] textarea') ?? popup.querySelector<HTMLElement>("#video-note-body"))?.focus({ preventScroll: true });
     };
     window.addEventListener("keydown", onKeyDown, true);
