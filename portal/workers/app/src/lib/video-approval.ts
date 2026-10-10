@@ -21,16 +21,16 @@ const isUnique = (error: unknown) => error instanceof Error && /UNIQUE constrain
 
 type EventRow = {
   id: string; asset_id: string; revision: number; decision: "approved" | "changes_requested"; note: string | null; created_at: number; link_id: string | null; link_label: string | null;
-  actor_guest_id: string | null; g_email: string | null; g_name: string | null; u_id: string | null; u_name: string | null; u_role: Role | null; u_active: number | null;
+  actor_guest_id: string | null; g_name: string | null; u_id: string | null; u_name: string | null; u_role: Role | null; u_active: number | null;
 };
-const EVENT_SELECT = `SELECT e.id, e.asset_id, e.revision, e.decision, e.note, e.created_at, e.link_id, l.label AS link_label, e.actor_guest_id, g.email_normalized AS g_email, g.display_name AS g_name,
+const EVENT_SELECT = `SELECT e.id, e.asset_id, e.revision, e.decision, e.note, e.created_at, e.link_id, l.label AS link_label, e.actor_guest_id, g.display_name AS g_name,
     u.id AS u_id, u.name AS u_name, u.role AS u_role, u.active AS u_active
   FROM video_approval_events e LEFT JOIN client_links l ON l.id = e.link_id LEFT JOIN guest_reviewers g ON g.id = e.actor_guest_id LEFT JOIN user u ON u.id = e.actor_user_id`;
 function eventDto(row: EventRow): VideoDecisionEvent {
   const user = person(row.u_id, row.u_name, row.u_role, row.u_active);
   return {
     id: row.id, revision: row.revision, decision: row.decision, note: row.note, at: iso(row.created_at),
-    actor: row.actor_guest_id !== null ? { kind: "guest", name: row.g_name, email: row.g_email! } : { kind: "user", person: user! },
+    actor: row.actor_guest_id !== null ? { kind: "guest", name: row.g_name } : { kind: "user", person: user! },
     link: row.link_id === null ? null : { id: row.link_id, label: row.link_label },
   };
 }
@@ -163,17 +163,27 @@ const stateOf = (video: { premium: boolean; unlocked: boolean }): PremiumState =
 /** Sets `videos.premium`. Idempotent: the same state writes nothing and audits nothing. `archived` when the Project is. */
 export async function setPremium(db: D1Database, input: { projectId: string; videoId: string; principal: Principal; premium: boolean; now: number }): Promise<PremiumState | "archived" | "not_found"> {
   const before = await findVideo(db, input.projectId, input.videoId); if (!before) return "not_found";
+  let landed = false;
   if (before.premium !== input.premium) {
-    await db.batch([
+    const [update] = await db.batch([
       db.prepare(`UPDATE videos SET premium = ?1, updated_at = ?2 WHERE id = ?3 AND project_id = ?4 AND premium <> ?1 AND ${NOT_ARCHIVED("?4")}`).bind(input.premium ? 1 : 0, input.now, input.videoId, input.projectId),
       db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?1, ?2, 'video.premium_set', 'video', ?3, ${metaWith("?4", "json_object('projectId', ?5, 'premium', json(?6))")}, ?7 WHERE changes() > 0`)
         .bind(newId(), input.principal.id, input.videoId, auditMeta(input.principal), input.projectId, input.premium ? "true" : "false", input.now),
     ]);
+    landed = (update?.meta.changes ?? 0) > 0;
   }
-  const after = await findVideo(db, input.projectId, input.videoId);
-  if (!after) return "not_found";
-  return after.premium !== input.premium && await projectArchived(db, input.projectId) ? "archived" : stateOf(after);
+  return settle(db, input.projectId, landed, () => findVideo(db, input.projectId, input.videoId));
+}
+
+/**
+ * The answer after a write: the Video's state, or `archived` when no mutation landed and the Project is archived. A request that changed nothing (idempotent, or refused by the guard) is
+ * not a success on a Project that was archived while its body was being read, so the archive is checked at the end, not only on entry.
+ */
+async function settle(db: D1Database, projectId: string, landed: boolean, read: () => Promise<{ premium: boolean; unlocked: boolean } | null>): Promise<PremiumState | "archived" | "not_found"> {
+  if (!landed && await projectArchived(db, projectId)) return "archived";
+  const after = await read();
+  return after ? stateOf(after) : "not_found";
 }
 
 /**
@@ -183,8 +193,9 @@ export async function setPremium(db: D1Database, input: { projectId: string; vid
 export async function setPremiumUnlock(db: D1Database, input: { projectId: string; videoId: string; principal: Principal; unlocked: boolean; paymentRef: string | null; now: number }): Promise<PremiumState | "archived" | "not_found"> {
   const before = await findVideo(db, input.projectId, input.videoId); if (!before) return "not_found";
   const meta = (extra: string) => `json_object('projectId', ?5, ${extra})`;
+  let landed = false;
   if (input.unlocked && (!before.unlocked || before.paymentRef !== input.paymentRef)) {
-    await db.batch([
+    const [write] = await db.batch([
       db.prepare(`INSERT INTO video_premium_unlocks (video_id, project_id, unlocked_by, unlocked_at, payment_ref)
         SELECT v.id, v.project_id, ?1, ?2, ?3 FROM videos v WHERE v.id = ?4 AND v.project_id = ?5 AND ${NOT_ARCHIVED("?5")}
         ON CONFLICT (video_id) DO UPDATE SET payment_ref = excluded.payment_ref WHERE payment_ref IS NOT excluded.payment_ref`).bind(input.principal.id, input.now, input.paymentRef, input.videoId, input.projectId),
@@ -192,16 +203,15 @@ export async function setPremiumUnlock(db: D1Database, input: { projectId: strin
         SELECT ?1, ?2, 'video.premium_unlock', 'video', ?3, ${metaWith("?4", meta("'hasPaymentRef', json(?6), 'paymentRefChanged', json(?7)"))}, ?8 WHERE changes() > 0`)
         .bind(newId(), input.principal.id, input.videoId, auditMeta(input.principal), input.projectId, input.paymentRef === null ? "false" : "true", before.unlocked ? "true" : "false", input.now),
     ]);
+    landed = (write?.meta.changes ?? 0) > 0;
   } else if (!input.unlocked && before.unlocked) {
-    await db.batch([
+    const [write] = await db.batch([
       db.prepare(`DELETE FROM video_premium_unlocks WHERE video_id = ?1 AND project_id = ?2 AND ${NOT_ARCHIVED("?2")}`).bind(input.videoId, input.projectId),
       db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?1, ?2, 'video.premium_relock', 'video', ?3, ${metaWith("?4", "json_object('projectId', ?5)")}, ?6 WHERE changes() > 0`)
         .bind(newId(), input.principal.id, input.videoId, auditMeta(input.principal), input.projectId, input.now),
     ]);
+    landed = (write?.meta.changes ?? 0) > 0;
   }
-  const after = await findVideo(db, input.projectId, input.videoId);
-  if (!after) return "not_found";
-  const settled = input.unlocked ? after.unlocked && after.paymentRef === input.paymentRef : !after.unlocked;
-  return !settled && await projectArchived(db, input.projectId) ? "archived" : stateOf(after);
+  return settle(db, input.projectId, landed, () => findVideo(db, input.projectId, input.videoId));
 }

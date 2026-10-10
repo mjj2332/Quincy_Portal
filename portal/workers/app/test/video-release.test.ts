@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { videoDecisionsResponseSchema, videoListResponseSchema, videoPremiumResponseSchema, videoReleaseResponseSchema, videoDecisionRecordedResponseSchema } from "@quincy/shared";
-import { database, ids, request, seedFixture, type Who } from "./embedded-media-support";
+import { SELF as workerSelf } from "cloudflare:test";
+import { baseEnv, cookie, database, ids, request, seedFixture, type Who } from "./embedded-media-support";
 import { addMember, clearGuestRows, linkPath, openGuestGate, seedGuestLink, startSession } from "./guest-support";
 import { hashToken } from "../src/lib/opaque-token";
 import { guestFetch } from "./guest-support";
@@ -148,17 +149,19 @@ describe("recording and reading decisions", () => {
     expect(rows[0]!.meta_json).not.toContain("Client said yes");
   });
 
-  it("lists every Version newest first with events oldest first: staff by person, guests by name and email, the link label, and the live Release", async () => {
+  it("lists every Version newest first with events oldest first: staff by person, guests by name only (never an email), the link label, and the live Release", async () => {
     const link = await seedGuestLink({ label: "Smith family" }); const guest = await seedGuest("Gina Guest", "gina@guest-14a.test");
     await addMember(link.id, v1.videoId, [v1.assetId]);
     await seedEvent({ assetId: v1.assetId, videoId: v1.videoId, decision: "approved", guest: { id: guest.id, linkId: link.id }, note: "Love it" });
     await seedEvent({ assetId: v1.assetId, videoId: v1.videoId, decision: "changes_requested" });
     const response = await request(decisionsOf(v1.videoId), "member"); expect(response.status).toBe(200);
+    const text = await response.clone().text(); expect(text).not.toContain("gina@guest-14a.test"); expect(text).not.toContain("guest-14a.test");
     const { versions } = videoDecisionsResponseSchema.parse(await response.json());
     expect(versions.map((version) => version.version)).toEqual([2, 1]);
     expect(versions[0]!.events).toEqual([]); expect(versions[0]!.release).toBeNull();
     expect(versions[1]!.events.map((event) => [event.revision, event.decision])).toEqual([[1, "approved"], [2, "changes_requested"]]);
-    expect(versions[1]!.events[0]).toMatchObject({ note: "Love it", link: { id: link.id, label: "Smith family" }, actor: { kind: "guest", name: "Gina Guest", email: "gina@guest-14a.test" } });
+    expect(versions[1]!.events[0]).toMatchObject({ note: "Love it", link: { id: link.id, label: "Smith family" }, actor: { kind: "guest", name: "Gina Guest" } });
+    expect(versions[1]!.events[0]!.actor).toEqual({ kind: "guest", name: "Gina Guest" });
     expect(versions[1]!.events[1]).toMatchObject({ link: null, actor: { kind: "user", person: { id: ids.admin } } });
     const released = await release(v1.assetId, 99); expect(released.status).toBe(409);
     await seedEvent({ assetId: v2.assetId, videoId: v1.videoId, decision: "approved" });
@@ -265,6 +268,15 @@ describe("Release", () => {
   });
 });
 
+/** A staff request whose body arrives `delayMs` after the headers, so the route has passed its entry checks (including the archived one) when the state changes under it. */
+async function slowStaff(path: string, who: Who, method: "PUT", body: unknown, delayMs: number): Promise<Response> {
+  const bytes = new TextEncoder().encode(JSON.stringify(body));
+  const stream = new ReadableStream<Uint8Array>({ async start(controller) { await new Promise((resolve) => setTimeout(resolve, delayMs)); controller.enqueue(bytes); controller.close(); } });
+  const headers = new Headers({ cookie: await cookie(who), "content-type": "application/json", origin: baseEnv.APP_ORIGIN });
+  return workerSelf.fetch(`https://portal.test${path}`, { method, headers, body: stream, duplex: "half" } as RequestInit);
+}
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 describe("premium and unlock", () => {
   const listed = async (videoId: string) => { const response = await request(p("/videos"), "admin"); expect(response.status).toBe(200); return videoListResponseSchema.parse(await response.json()).videos.find((video) => video.id === videoId)!; };
 
@@ -324,5 +336,38 @@ describe("premium and unlock", () => {
 
   it("shows premiumUnlocked false on every Video of the staff list until an unlock row exists", async () => {
     expect((await listed(v1.videoId))).toMatchObject({ premium: false, premiumUnlocked: false });
+  });
+});
+
+describe("an archive landing while the PUT body is being read", () => {
+  const setArchived = (at: number | null) => database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(at, ids.project).run();
+  afterEach(async () => { await setArchived(null); });
+  type Held = { name: string; path: () => string; body: unknown; ready: () => Promise<void>; unchanged: () => Promise<unknown> };
+  const calls: Held[] = [
+    { name: "premium (already on)", path: () => premiumPath(v1.videoId), body: { premium: true }, ready: async () => { await database.DB.prepare("UPDATE videos SET premium = 1 WHERE id = ?").bind(v1.videoId).run(); }, unchanged: () => premiumOf(v1.videoId) },
+    { name: "premium (already off)", path: () => premiumPath(v1.videoId), body: { premium: false }, ready: async () => undefined, unchanged: () => premiumOf(v1.videoId) },
+    { name: "unlock (already unlocked, same reference)", path: () => unlockPath(v1.videoId), body: { unlocked: true, paymentRef: "INV-1" },
+      ready: async () => { await database.DB.prepare("INSERT INTO video_premium_unlocks (video_id, project_id, unlocked_by, unlocked_at, payment_ref) VALUES (?, ?, ?, ?, 'INV-1')").bind(v1.videoId, ids.project, ids.admin, Date.now()).run(); }, unchanged: () => unlockRow(v1.videoId) },
+    { name: "re-lock (already locked)", path: () => unlockPath(v1.videoId), body: { unlocked: false }, ready: async () => undefined, unchanged: () => unlockRow(v1.videoId) },
+  ];
+  it("an unchanged request is a plain 200 while nothing changes", async () => {
+    for (const call of calls) { await call.ready(); expect((await slowStaff(call.path(), "admin", "PUT", call.body, 150)).status, call.name).toBe(200); }
+  });
+  it("an idempotent premium or unlock request is 409 project_archived, not 200, and writes nothing", async () => {
+    for (const call of calls) {
+      await call.ready(); const before = await call.unchanged(); const auditsBefore = (await audits("video.premium_set", "video.premium_unlock", "video.premium_relock")).length;
+      const pending = slowStaff(call.path(), "admin", "PUT", call.body, 300);
+      await sleep(80); await setArchived(Date.now());
+      const response = await pending;
+      expect(response.status, call.name).toBe(409); expect(await json(response)).toMatchObject({ code: "project_archived" });
+      expect(await call.unchanged(), call.name).toEqual(before);
+      expect((await audits("video.premium_set", "video.premium_unlock", "video.premium_relock")).length, call.name).toBe(auditsBefore);
+      await setArchived(null);
+    }
+  });
+  it("a request that changes state while the Project is archived under it is still 409 and writes nothing", async () => {
+    const pending = slowStaff(premiumPath(v1.videoId), "admin", "PUT", { premium: true }, 300);
+    await sleep(80); await setArchived(Date.now());
+    const response = await pending; expect(response.status).toBe(409); expect(await premiumOf(v1.videoId)).toBe(0);
   });
 });

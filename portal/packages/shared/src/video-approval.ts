@@ -3,8 +3,8 @@ import { videoPersonSchema } from "./video-review";
 import { GUEST_DECISION_NOTE_MAX, guestDecisionValueSchema } from "./guest-review";
 
 /**
- * Staff approval, Release and premium (#741 14a). Every object is `.strict()` and the Worker parses each response with these. A guest event shows its actor's name and email here and
- * nowhere else: the reader holds `shareVideo` (Admin, Editor), the same people who see `verifiedGuests`.
+ * Staff approval, Release and premium (#741 14a). Every object is `.strict()` and the Worker parses each response with these. A guest event names its actor and nothing more: no email (decision #6 lists
+ * the surfaces that may show one, and this is not among them), even to the Admin and Editor who hold `shareVideo`.
  */
 const uuid = z.string().uuid();
 const isoDateTime = z.string().datetime();
@@ -17,7 +17,7 @@ export type VideoDecisionInput = z.infer<typeof videoDecisionInputSchema>;
 
 export const videoDecisionActorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("user"), person: videoPersonSchema }).strict(),
-  z.object({ kind: z.literal("guest"), name: z.string().nullable(), email: z.string() }).strict(),
+  z.object({ kind: z.literal("guest"), name: z.string().nullable() }).strict(),
 ]);
 export const videoDecisionEventSchema = z.object({
   id: uuid, revision: z.number().int().positive(), decision: videoDecisionValueSchema, note: z.string().nullable(), at: isoDateTime,
