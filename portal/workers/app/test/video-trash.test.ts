@@ -414,17 +414,34 @@ describe("the Trash list", () => {
     expect((await removeAuto(b1!.assetId)).status).toBe(200); expect((await removeAuto(b2!.assetId)).status).toBe(200);
     expect((await removeAuto(c1!.assetId)).status).toBe(200);
     const list = await trashList("member");
-    expect(list.items.map((item) => `${item.kind}:${item.title}`)).toEqual(["video:Hall", "video:Garden", "version:Kitchen"]);
+    expect(list.items.map((item) => `${item.kind}:${item.title}`)).toEqual(["video:Hall", "video:Garden", "version:Garden", "version:Kitchen"]);
     const garden = list.items.find((item) => item.title === "Garden")!; expect(garden).toMatchObject({ videoId: b1!.videoId, versionCount: 1, removedBy: { id: ids.admin } }); expect(garden.assetId).toBeUndefined();
     const kitchen = list.items.find((item) => item.title === "Kitchen")!; expect(kitchen).toMatchObject({ assetId: a1!.assetId, version: 1, removedBy: { id: ids.member } }); expect(kitchen.versionCount).toBeUndefined();
     for (const item of list.items) expect(Date.parse(item.purgeAt) - Date.parse(item.removedAt)).toBe(VIDEO_TRASH_RETENTION_DAYS * DAY);
     expect(a2).toBeTruthy();
-    // A Version removed on its own before its Video was removed is not a Trash item until the Video is back.
+    // A Version removed on its own stays listed when its Video is removed too, on its own clock, and says why it cannot be restored yet.
     const [d1, d2] = await seedVideo(2, { title: "Drive" });
-    expect((await removeAuto(d1!.assetId)).status).toBe(200); expect((await removeAuto(d2!.assetId)).status).toBe(200);
-    const withVideo = (await trashList()).items.filter((item) => item.videoId === d1!.videoId); expect(withVideo.map((item) => item.kind)).toEqual(["video"]); expect(withVideo[0]!.versionCount).toBe(1);
+    expect((await removeAuto(d1!.assetId)).status).toBe(200);
+    const alone = (await trashList()).items.find((item) => item.assetId === d1!.assetId)!; expect(alone).toMatchObject({ kind: "version", canRestore: true }); expect(alone.restoreBlockedReason).toBeUndefined();
+    expect((await removeAuto(d2!.assetId)).status).toBe(200);
+    const both = (await trashList()).items.filter((item) => item.videoId === d1!.videoId);
+    expect(both.map((item) => `${item.kind}:${item.version ?? ""}`).sort()).toEqual(["version:1", "video:"]);
+    const version = both.find((item) => item.kind === "version")!; const video = both.find((item) => item.kind === "video")!;
+    expect(video.versionCount).toBe(1); expect(video.canRestore).toBeUndefined();
+    expect(version).toMatchObject({ assetId: d1!.assetId, canRestore: false, restoreBlockedReason: "video_in_trash" });
+    expect(version.removedAt).toBe(alone.removedAt); expect(version.purgeAt).toBe(alone.purgeAt);
+    expect(Date.parse(video.removedAt)).toBeGreaterThanOrEqual(Date.parse(version.removedAt));
+    // The Video's purge takes the whole group, so a Version under a removed Video reports the earlier purge time, never a day that will not come.
+    expect(Date.parse(version.purgeAt)).toBe(Math.min(Date.parse(alone.purgeAt), Date.parse(video.purgeAt)));
+    const earlier = Date.now() + 2 * DAY;
+    await database.DB.prepare("UPDATE videos SET purge_at = ? WHERE id = ?").bind(earlier, d1!.videoId).run();
+    const capped = (await trashList()).items.filter((item) => item.videoId === d1!.videoId);
+    expect(Date.parse(capped.find((item) => item.kind === "version")!.purgeAt)).toBe(earlier);
+    expect(Date.parse(capped.find((item) => item.kind === "video")!.purgeAt)).toBe(earlier);
+    expect((await restoreVersion(d1!.assetId)).status).toBe(409);
     expect((await restoreVideo(d1!.videoId)).status).toBe(200);
-    expect((await trashList()).items.filter((item) => item.videoId === d1!.videoId).map((item) => `${item.kind}:${item.version}`)).toEqual(["version:1"]);
+    const after = (await trashList()).items.filter((item) => item.videoId === d1!.videoId); expect(after.map((item) => `${item.kind}:${item.version}`)).toEqual(["version:1"]);
+    expect(after[0]).toMatchObject({ canRestore: true });
   });
 
   it("keeps the purge time fixed at removal, and lists an archived Project", async () => {
@@ -447,7 +464,7 @@ describe("the Trash list", () => {
 
 describe("outstanding notifications", () => {
   type Target = { assetId: string; videoId: string };
-  async function seedDelivery(target: Target, status: "pending" | "queued" | "processing" | "completed", ledger: "pending" | "deferred" | "sent", digest: "pending" | "sent" | null, tag: string) {
+  async function seedDelivery(target: Target, status: "pending" | "queued" | "processing" | "completed", ledger: "pending" | "deferred" | "processing" | "sent", digest: "pending" | "sent" | null, tag: string) {
     const outboxId = crypto.randomUUID(); const now = Date.now(); const sourceKey = `video_note:${tag}`;
     const payload = JSON.stringify({ schemaVersion: 1, video: { kind: "video_note", projectId: ids.project, videoId: target.videoId, assetId: target.assetId, sourceId: tag } });
     const lease = status === "processing";
@@ -475,12 +492,27 @@ describe("outstanding notifications", () => {
     expect(await states(queued)).toEqual({ outbox: "suppressed", ledger: "suppressed", digest: null });
     expect(await states(deferred)).toEqual({ outbox: "completed", ledger: "suppressed", digest: "suppressed" });
     expect(await states(delivered)).toEqual({ outbox: "completed", ledger: "sent", digest: "sent" });
-    expect(await states(processing)).toEqual({ outbox: "processing", ledger: "pending", digest: null });
+    expect(await states(processing)).toEqual({ outbox: "processing", ledger: "suppressed", digest: null });
     expect(await states(other)).toEqual({ outbox: "pending", ledger: "pending", digest: "pending" });
     expect((await restoreVersion(v2!.assetId)).status).toBe(200);
     expect(await states(pending)).toEqual({ outbox: "suppressed", ledger: "suppressed", digest: null });
     expect(await states(deferred)).toEqual({ outbox: "completed", ledger: "suppressed", digest: "suppressed" });
     expect(await states(other)).toEqual({ outbox: "pending", ledger: "pending", digest: "pending" });
+  });
+
+  it("a claimed outbox row (processing) does not let a stale email out: remove then Undo while the worker holds the lease, and the ledger and digest are suppressed, the lease untouched", async () => {
+    const [, v2] = await seedVideo(2);
+    const claimed = await seedDelivery(v2!, "processing", "pending", "pending", "n9");
+    const deferredClaimed = await seedDelivery(v2!, "processing", "deferred", "pending", "n10");
+    const inFlight = await seedDelivery(v2!, "processing", "processing", null, "n11");
+    expect((await removeAuto(v2!.assetId)).status).toBe(200);
+    expect((await restoreVersion(v2!.assetId)).status).toBe(200);
+    // The worker resumes: its send claim needs a `pending` email ledger row, and there is none.
+    expect(await states(claimed)).toEqual({ outbox: "processing", ledger: "suppressed", digest: "suppressed" });
+    expect(await states(deferredClaimed)).toEqual({ outbox: "processing", ledger: "suppressed", digest: "suppressed" });
+    expect(await first("SELECT lease_token, lease_expires_at FROM notification_outbox WHERE id = ?", claimed.outboxId)).toMatchObject({ lease_token: "lease" });
+    // A send attempt already in flight is kept.
+    expect(await states(inFlight)).toEqual({ outbox: "processing", ledger: "processing", digest: null });
   });
 
   it("removing the Video suppresses the notifications of every Version of it, and a refused removal suppresses nothing", async () => {
@@ -591,14 +623,36 @@ describe("concurrency: the fence repeats in the committing batch", () => {
     expect(await audits(...AUDIT_ACTIONS)).toEqual([]);
   });
 
+  /** The collection's `updated_at`, which the count statement moves, for the Video. */
+  const collectionStamp = async (videoId: string) => (await first("SELECT c.updated_at FROM collections c JOIN videos v ON v.collection_id = c.id WHERE v.id = ?", videoId))!.updated_at as number;
+  const assetStamps = async (videoId: string) => rows("SELECT id, superseded_at, updated_at FROM assets WHERE version_group_id = ? ORDER BY id", videoId);
+  const archive = () => database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), ids.project).run();
+  const unarchive = () => database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run();
+
   it("a Project archived after the read refuses the removal 409 project_archived and writes nothing", async () => {
     const [, v2] = await seedVideo(2);
+    const stamp = await collectionStamp(v2!.videoId); const assets = await assetStamps(v2!.videoId); await new Promise((resolve) => setTimeout(resolve, 5));
     const response = await racing("POST", p(`/video-versions/${v2!.assetId}/remove`), { expected: ZERO, removeVideo: false }, async () => { await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), ids.project).run(); });
     try {
       expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ code: "project_archived" });
       expect(await first("SELECT removed_at FROM video_version_meta WHERE asset_id = ?", v2!.assetId)).toEqual({ removed_at: null });
       expect(await audits(...AUDIT_ACTIONS)).toEqual([]);
+      expect(await collectionStamp(v2!.videoId), "collections.updated_at").toBe(stamp);
+      expect(await assetStamps(v2!.videoId), "assets").toEqual(assets);
     } finally { await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run(); }
+  });
+
+  it("a Project archived after the read refuses a Version restore and leaves the collection and the assets untouched, with no audit row", async () => {
+    const [v1, v2] = await seedVideo(2); expect((await removeAuto(v2!.assetId)).status).toBe(200);
+    const stamp = await collectionStamp(v1!.videoId); const assets = await assetStamps(v1!.videoId); await new Promise((resolve) => setTimeout(resolve, 5));
+    const response = await racing("POST", p(`/video-versions/${v2!.assetId}/restore`), {}, archive, { min: 3 });
+    try {
+      expect(response.status).toBe(409);
+      expect((await first("SELECT removed_at FROM video_version_meta WHERE asset_id = ?", v2!.assetId))!.removed_at).not.toBeNull();
+      expect(await audits("video_version.restore")).toEqual([]);
+      expect(await collectionStamp(v1!.videoId), "collections.updated_at").toBe(stamp);
+      expect(await assetStamps(v1!.videoId), "assets").toEqual(assets);
+    } finally { await unarchive(); }
   });
 
   it("a restore racing a second removal of the same Version, and two simultaneous restores, leave one audit row each", async () => {
@@ -616,11 +670,14 @@ describe("concurrency: the fence repeats in the committing batch", () => {
 
   it("a restore of a Video whose Project is archived after the read is refused and restores nothing", async () => {
     const [a] = await seedVideo(1); expect((await removeAuto(a!.assetId)).status).toBe(200);
+    const stamp = await collectionStamp(a!.videoId); const assets = await assetStamps(a!.videoId); await new Promise((resolve) => setTimeout(resolve, 5));
     const response = await racing("POST", p(`/videos/${a!.videoId}/restore`), {}, async () => { await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), ids.project).run(); }, { min: 3 });
     try {
       expect(response.status).toBe(409);
       expect((await first("SELECT removed_at FROM videos WHERE id = ?", a!.videoId))!.removed_at).not.toBeNull();
       expect(await audits("video.restore")).toEqual([]);
+      expect(await collectionStamp(a!.videoId), "collections.updated_at").toBe(stamp);
+      expect(await assetStamps(a!.videoId), "assets").toEqual(assets);
     } finally { await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run(); }
   });
 });

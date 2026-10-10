@@ -53,6 +53,9 @@ export const videoTrashItemSchema = z.object({
   version: z.number().int().positive().optional(),
   /** A Video item only: the Versions a restore of the Video brings back. */
   versionCount: z.number().int().positive().optional(),
+  /** A Version item only: false while its Video is also in Trash (the restore is refused `video_in_trash` until the Video is back), with the reason so the UI can say why. */
+  canRestore: z.boolean().optional(),
+  restoreBlockedReason: z.literal("video_in_trash").optional(),
   removedAt: isoDateTime,
   removedBy: videoPersonSchema,
   purgeAt: isoDateTime,

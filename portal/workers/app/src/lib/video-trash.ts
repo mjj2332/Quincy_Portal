@@ -5,7 +5,7 @@ import {
 } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
-import { recomputeCurrentStatements } from "./video-live-sql";
+import { RECOMPUTE_CURRENT_SQL } from "./video-live-sql";
 
 /**
  * Video Trash (#776 C): remove a Version or a Video, restore it, and list what is in Trash. A removal HIDES; it deletes nothing. Grants, notes, decisions, Releases and memberships are not
@@ -66,17 +66,28 @@ export function removalRefusal(impact: VideoRemovalImpact, input: VideoRemoveInp
   return null;
 }
 
+// ---- statements fenced on the mutation's audit row -------------------------------------------------------------------------------------------------------
+
+const AUDIT_FENCE = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)";
+/** The current-Version recompute, each statement also fenced on the mutation's audit row, so a refused fence moves no asset. */
+const fencedRecompute = (db: D1Database, videoId: string, now: number, auditId: string): D1PreparedStatement[] =>
+  RECOMPUTE_CURRENT_SQL.map((sql) => db.prepare(`${sql.trimEnd()} AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?3)`).bind(videoId, now, auditId));
+/** The collection count and status, fenced on the mutation's audit row, so a refused fence leaves `collections.updated_at` alone. */
+const fencedCollectionCount = (db: D1Database, collectionId: string, now: number, auditId: string): D1PreparedStatement =>
+  db.prepare(`${COLLECTION_RECEIVED_COUNT_SQL.trimEnd()} AND ${AUDIT_FENCE}`).bind(...collectionReceivedCountBindings(collectionId, now), auditId);
+
 // ---- notifications -----------------------------------------------------------------------------------------------------------------------------------
 
 /**
  * Terminally suppresses what is outstanding for a removed subject, fenced on the removal's audit row. The subject is the Version (`$.video.assetId`) or, for a Video, the Video (`$.video.videoId`)
- * in the payload of a video-review outbox row. A pending or queued outbox row, a pending or deferred ledger row and a pending digest item go to `suppressed`; a row that is `processing` is leased
- * to the delivery worker and is left to its send-time re-check (which already requires a live Version and Video). A delivery that already went out stays sent.
+ * in the payload of a video-review outbox row. A pending or queued outbox row, a pending or deferred ledger row and a pending digest item go to `suppressed` WHATEVER the outbox row's lease state: a worker that
+ * claimed the row before the removal and resumes after an Undo would pass the live re-check, but its send claim needs a `pending` ledger row, so it finds none. The outbox row itself is left to
+ * its lease holder when `processing`. A ledger row that is `processing` is a send attempt already in flight and is kept, as is a delivery that already went out.
  */
 function suppressionStatements(db: D1Database, input: { projectId: string; path: "$.video.assetId" | "$.video.videoId"; subjectId: string; auditId: string; now: number }): D1PreparedStatement[] {
   const binds = [input.now, NOTIFICATION_OUTBOX_EVENT_TYPES.projectVideoReview, input.projectId, input.path, input.subjectId, input.auditId] as const;
   const fence = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?6)";
-  const subject = "o.event_type = ?2 AND o.project_id = ?3 AND o.status <> 'processing' AND json_extract(o.payload_json, ?4) = ?5";
+  const subject = "o.event_type = ?2 AND o.project_id = ?3 AND json_extract(o.payload_json, ?4) = ?5";
   return [
     db.prepare(`UPDATE notification_digest_items SET state = 'suppressed', outcome_code = 'video_removed', updated_at = ?1
       WHERE state = 'pending' AND ledger_id IN (SELECT l.id FROM notification_delivery_ledger l JOIN notification_outbox o ON o.id = l.outbox_id WHERE ${subject}) AND ${fence}`).bind(...binds),
@@ -114,8 +125,8 @@ export async function removeVersion(db: D1Database, input: { projectId: string; 
     bind("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?1, ?5, 'video_version.remove', 'asset', ?3, ?12, ?2 WHERE changes() > 0", 12),
     bind("UPDATE videos SET removed_at = ?2, removed_by = ?5, purge_at = ?7, updated_at = ?2 WHERE id = ?13 AND project_id = ?4 AND removed_at IS NULL AND ?6 = 1 AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?1)", 13),
     bind("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?14, ?5, 'video.remove', 'video', ?13, ?15, ?2 WHERE changes() > 0", 15),
-    ...recomputeCurrentStatements(db, videoId, now),
-    db.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collectionId, now)),
+    ...fencedRecompute(db, videoId, now, versionAudit),
+    fencedCollectionCount(db, collectionId, now, versionAudit),
     ...suppressionStatements(db, { projectId, path: request.removeVideo ? "$.video.videoId" : "$.video.assetId", subjectId: request.removeVideo ? videoId : assetId, auditId: versionAudit, now }),
   ]);
   if (await db.prepare("SELECT 1 AS one FROM audit_log WHERE id = ?1").bind(versionAudit).first()) return { kind: "removed" };
@@ -160,8 +171,8 @@ export async function restoreVersion(db: D1Database, input: { projectId: string;
       WHERE asset_id = ?1 AND video_id = ?2 AND removed_at IS NOT NULL
         AND EXISTS (SELECT 1 FROM videos v WHERE v.id = video_version_meta.video_id AND v.project_id = ?3 AND v.removed_at IS NULL) AND ${NOT_ARCHIVED("?3")}`).bind(assetId, target.videoId, projectId),
     db.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?1, ?2, 'video_version.restore', 'asset', ?3, ?4, ?5 WHERE changes() > 0").bind(auditId, input.principal.id, assetId, meta, now),
-    ...recomputeCurrentStatements(db, target.videoId, now),
-    db.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(target.collectionId, now)),
+    ...fencedRecompute(db, target.videoId, now, auditId),
+    fencedCollectionCount(db, target.collectionId, now, auditId),
   ]);
   if (await db.prepare("SELECT 1 AS one FROM audit_log WHERE id = ?1").bind(auditId).first()) return { kind: "restored" };
   if (await projectArchived(db, projectId)) return { kind: "archived" };
@@ -191,8 +202,8 @@ export async function restoreVideo(db: D1Database, input: { projectId: string; v
       WHERE m.video_id = ?3 AND m.removed_with_video = 1 AND m.removed_at IS NOT NULL AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?1)`).bind(auditId, input.principal.id, videoId, versionMeta, now),
     db.prepare(`UPDATE video_version_meta SET removed_at = NULL, removed_by = NULL, purge_at = NULL, removed_with_video = 0
       WHERE video_id = ?1 AND removed_with_video = 1 AND removed_at IS NOT NULL AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?2)`).bind(videoId, auditId),
-    ...recomputeCurrentStatements(db, videoId, now),
-    db.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(target.collectionId, now)),
+    ...fencedRecompute(db, videoId, now, auditId),
+    fencedCollectionCount(db, target.collectionId, now, auditId),
   ]);
   if (await db.prepare("SELECT 1 AS one FROM audit_log WHERE id = ?1").bind(auditId).first()) return { kind: "restored" };
   if (await projectArchived(db, projectId)) return { kind: "archived" };
@@ -203,24 +214,25 @@ export async function restoreVideo(db: D1Database, input: { projectId: string; v
 
 type RemoverColumns = { u_id: string; u_name: string; u_role: Role; u_active: number };
 /**
- * What is in Trash for a Project, newest removal first: each removed Video (with how many Versions a restore of it brings back), and each Version removed on its own while its Video is live. A
- * Version removed on its own and then left behind by a Video removal is not listed until the Video is restored, because it cannot be restored before then.
+ * What is in Trash for a Project, newest removal first: each removed Video (with how many Versions a restore of it brings back), and each Version removed on its own, whatever state its Video
+ * is in (every removed item stays visible, each on its own `purgeAt`, except that a Version whose Video is also in Trash reports the earlier of the two, because the Video's purge deletes the whole group). A Version whose Video is also in Trash is listed with `canRestore: false` and the reason, because `restoreVersion`
+ * refuses it until the Video is back; a Version removed together with its Video is not a separate item (the Video item counts it).
  */
 export async function listTrash(db: D1Database, projectId: string): Promise<VideoTrashResponse> {
   const [videos, versions] = await db.batch([
     db.prepare(`SELECT v.id, v.title, v.removed_at, v.purge_at, u.id AS u_id, u.name AS u_name, u.role AS u_role, u.active AS u_active,
         (SELECT COUNT(*) FROM video_version_meta m WHERE m.video_id = v.id AND m.removed_with_video = 1 AND m.removed_at IS NOT NULL) AS version_count
       FROM videos v JOIN user u ON u.id = v.removed_by WHERE v.project_id = ?1 AND v.removed_at IS NOT NULL`).bind(projectId),
-    db.prepare(`SELECT a.id AS asset_id, a.version, v.id, v.title, m.removed_at, m.purge_at, u.id AS u_id, u.name AS u_name, u.role AS u_role, u.active AS u_active
+    db.prepare(`SELECT a.id AS asset_id, a.version, v.id, v.title, m.removed_at, m.purge_at, v.removed_at IS NOT NULL AS video_removed, v.purge_at AS video_purge_at, u.id AS u_id, u.name AS u_name, u.role AS u_role, u.active AS u_active
       FROM video_version_meta m JOIN videos v ON v.id = m.video_id JOIN assets a ON a.id = m.asset_id AND a.kind = 'video' JOIN user u ON u.id = m.removed_by
-      WHERE v.project_id = ?1 AND m.removed_at IS NOT NULL AND v.removed_at IS NULL`).bind(projectId),
+      WHERE v.project_id = ?1 AND m.removed_at IS NOT NULL AND m.removed_with_video = 0`).bind(projectId),
   ]);
   const items: Array<VideoTrashItem & { at: number }> = [];
   for (const row of videos!.results as Array<{ id: string; title: string; removed_at: number; purge_at: number | null; version_count: number } & RemoverColumns>) {
     items.push({ kind: "video", videoId: row.id, title: row.title, versionCount: Math.max(row.version_count, 1), removedAt: iso(row.removed_at), removedBy: person(row.u_id, row.u_name, row.u_role, row.u_active), purgeAt: iso(row.purge_at ?? row.removed_at + VIDEO_TRASH_RETENTION_MS), at: row.removed_at });
   }
-  for (const row of versions!.results as Array<{ asset_id: string; version: number; id: string; title: string; removed_at: number; purge_at: number | null } & RemoverColumns>) {
-    items.push({ kind: "version", videoId: row.id, title: row.title, assetId: row.asset_id, version: row.version, removedAt: iso(row.removed_at), removedBy: person(row.u_id, row.u_name, row.u_role, row.u_active), purgeAt: iso(row.purge_at ?? row.removed_at + VIDEO_TRASH_RETENTION_MS), at: row.removed_at });
+  for (const row of versions!.results as Array<{ asset_id: string; version: number; id: string; title: string; removed_at: number; purge_at: number | null; video_removed: number; video_purge_at: number | null } & RemoverColumns>) {
+    items.push({ kind: "version", videoId: row.id, title: row.title, assetId: row.asset_id, version: row.version, canRestore: row.video_removed !== 1, ...(row.video_removed === 1 ? { restoreBlockedReason: "video_in_trash" as const } : {}), removedAt: iso(row.removed_at), removedBy: person(row.u_id, row.u_name, row.u_role, row.u_active), purgeAt: iso(Math.min(row.purge_at ?? row.removed_at + VIDEO_TRASH_RETENTION_MS, row.video_removed === 1 && row.video_purge_at !== null ? row.video_purge_at : Infinity)), at: row.removed_at });
   }
   items.sort((a, b) => b.at - a.at || a.videoId.localeCompare(b.videoId) || (a.assetId ?? "").localeCompare(b.assetId ?? ""));
   return { retentionDays: VIDEO_TRASH_RETENTION_DAYS, items: items.map(({ at: _at, ...item }) => item) };
