@@ -820,4 +820,51 @@ describe("Code-review fixes (#741 6b-ui)", () => {
     await startDrawing(20);
     expect((tid("video-note-clear-marks") as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("Undo after Clear cannot carry the old strokes to a different frame", async () => {
+    await openFilm({ parts: ON }, 12);
+    let svg = await startDrawing(12);
+    await stroke(svg, [500, 425], [900, 650]);
+    await click(popup().querySelector<HTMLElement>('button[aria-label="Clear"]')!);
+    await click(doneButton()!);
+    await present(45);
+    svg = await startDrawing(45);
+    const undo = popup().querySelector<HTMLButtonElement>('button[aria-label="Undo"]')!;
+    expect(undo.disabled).toBe(true);
+    await click(undo);
+    expect(stores.made.at(-1)!.slot(ids.asset2).markup).toMatchObject({ items: [], drawingFrame: null });
+    await stroke(svg, [500, 425], [600, 500]);
+    expect(stores.made.at(-1)!.slot(ids.asset2).markup.drawingFrame).toBe(45);
+  });
+
+  it("an unsaved drawing added to a note that had none stays on the picture after Done", async () => {
+    const plain = note({ author: { kind: "staff", person: me }, body: "Plain", startFrame: 40, endFrame: 60 });
+    await openFilm({ parts: ON, notes: { [ids.asset2]: [plain], [ids.asset1]: [] } }, 45);
+    await click(tid("video-note-anchor-button", threadOf(plain.id))!);
+    await land(40);
+    await chooseNoteAction(threadOf(plain.id), "Terry", "Edit");
+    await flush(4);
+    await click(tid("video-note-edit-draw")!);
+    await land(40);
+    await flush(2);
+    const svg = layer(); sized(svg);
+    await stroke(svg, [500, 425], [900, 650]);
+    await click(doneButton()!);
+    expect(strokesOnScreen()).toBe(1);
+    await present(41);
+    expect(strokesOnScreen()).toBe(0);
+  });
+
+  it("a tapped dot keeps its CSS-pixel width: a zero-length round non-scaling path, not a circle scaled with the picture", async () => {
+    await openFilm({ parts: ON }, 12);
+    const svg = await startDrawing();
+    await pointer(svg, "pointerdown", 500, 425); await pointer(svg, "pointerup", 500, 425);
+    const dot = document.querySelector('[data-testid="video-markup-stroke"]')!;
+    expect(dot.tagName.toLowerCase()).toBe("path");
+    expect(dot.getAttribute("vector-effect")).toBe("non-scaling-stroke");
+    expect(dot.getAttribute("stroke-linecap")).toBe("round");
+    expect(dot.getAttribute("stroke-width")).toBe("4");
+    expect(dot.getAttribute("d")).toMatch(/^M\s*0\.5[,\s]+0\.5\s*h\s*0$/);
+    expect(dot.getAttribute("r")).toBeNull();
+  });
 });

@@ -38,10 +38,17 @@ const isShape = (item: MarkupItem): item is MarkupShape => item.type !== undefin
 const KNOWN_SHAPES = ["arrow", "line", "rectangle"];
 const isRenderable = (item: MarkupItem) => !isShape(item) || (KNOWN_SHAPES.includes(item.type) && Array.isArray(item.points) && item.points.length === 2);
 
-export function StrokeVisible({ stroke, opacity, testId = "lightbox-stroke" }: { stroke: MarkupItem; opacity: number; testId?: string }) {
+/**
+ * `pixelDots` (the video overlay) draws a one-point stroke as a zero-length round-capped path with a non-scaling stroke, so a dot is `width` CSS pixels across whatever the picture's
+ * shape or size, like every line. The default (photos) keeps the normalised circle.
+ */
+export function StrokeVisible({ stroke, opacity, testId = "lightbox-stroke", pixelDots = false }: { stroke: MarkupItem; opacity: number; testId?: string; pixelDots?: boolean }) {
   const box = useContext(MarkupBoxContext);
   if (!isRenderable(stroke)) return null;
   if (!isShape(stroke)) {
+    if (stroke.points.length < 2 && pixelDots && stroke.points[0]) {
+      return <path d={`M${stroke.points[0].x} ${stroke.points[0].y}h0`} fill="none" stroke={stroke.color} strokeWidth={stroke.width} vectorEffect="non-scaling-stroke" strokeLinecap="round" opacity={opacity} className="stroke-vis" data-testid={testId} />;
+    }
     return stroke.points.length < 2
       ? <circle cx={stroke.points[0]?.x} cy={stroke.points[0]?.y} r={stroke.width / 600} fill={stroke.color} opacity={opacity} className="stroke-vis" data-testid={testId} />
       : <polyline points={pointsString(stroke.points)} fill="none" stroke={stroke.color} strokeWidth={stroke.width} vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" opacity={opacity} className="stroke-vis" data-testid={testId} />;

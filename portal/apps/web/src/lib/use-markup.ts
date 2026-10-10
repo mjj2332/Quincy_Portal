@@ -180,11 +180,13 @@ export function useMarkup({ enabled, tool, toPoint, strokes, setStrokes, beforeS
 
   const undoStep = useCallback(() => { if (!idle()) return; refuseOr(undo(historyRef.current, strokesRef.current, latest.current.limits), true); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const redoStep = useCallback(() => { if (!idle()) return; refuseOr(redo(historyRef.current, strokesRef.current, latest.current.limits), true); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  /** Forgets every undo and redo step, keeping the strokes: for a caller whose steps can no longer be applied as they were (the frame under the list changed). */
+  const resetHistory = useCallback(() => { const fresh = createHistory(strokesRef.current); historyRef.current = fresh; setHistoryState(fresh); }, []);
   const clear = useCallback(() => { if (!idle()) return; refuseOr(clearAll(historyRef.current, strokesRef.current, latest.current.limits), false); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlers: MarkupHandlers = { onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onLostPointerCapture: onPointerCancel, onPointerLeave };
   return {
-    handlers, active, undo: undoStep, redo: redoStep, clear, cancel: discard,
+    handlers, active, undo: undoStep, redo: redoStep, clear, resetHistory, cancel: discard,
     canUndo: canUndo(history, strokes), canRedo: canRedo(history, strokes),
   };
 }

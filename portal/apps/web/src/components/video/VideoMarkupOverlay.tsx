@@ -89,6 +89,16 @@ export function VideoMarkupOverlay({ session, box }: { session: VideoNotesSessio
   const { cancel } = markup;
   useEffect(() => { cancel(); }, [cancel, drawing, box?.left, box?.top, box?.width, box?.height]);
 
+  // A drawing has exactly one frame, and an undo step restores strokes without one: when drawing starts on a different frame than the history was built on, its steps are dropped.
+  const { resetHistory } = markup;
+  const historyFrame = useRef<number | null>(null);
+  const drawFrame = drawing ? draw.frame : null;
+  useEffect(() => {
+    if (drawFrame === null) return;
+    if (historyFrame.current !== null && historyFrame.current !== drawFrame) resetHistory();
+    historyFrame.current = drawFrame;
+  }, [drawFrame, resetHistory]);
+
   // Nothing may move the frame under the pen. If playback starts or the frame changes anyway (a seek that got through), drawing ends and the strokes stay.
   const offFrame = drawing && (playing || frameNow !== draw.frame);
   useEffect(() => { if (offFrame) forms.exitDraw(assetId); }, [offFrame, forms, assetId]);
@@ -121,7 +131,8 @@ export function VideoMarkupOverlay({ session, box }: { session: VideoNotesSessio
 
   // What is on the picture. The draft being drawn wins; then a draft made earlier on this frame; then the selected note's saved drawing.
   const atRest = !playing && frameNow >= 0;
-  const editingThis = savedNote !== null && editing?.noteId === savedNote.id && (editing.drawing.touched || draw?.form === "edit");
+  // The edit's draft is shown whether or not the saved note has a drawing (a plain note's new drawing has no saved one to fall back on).
+  const editingThis = editing !== null && editing.noteId === editing.rootId && editing.noteId === selectedThread?.id && (editing.drawing.touched || draw?.form === "edit");
   let shownItems: readonly MarkupItem[] = NO_ITEMS;
   let shownFrame: number | null = null;
   if (drawing) { shownItems = items; shownFrame = draw.frame; }
@@ -141,8 +152,8 @@ export function VideoMarkupOverlay({ session, box }: { session: VideoNotesSessio
         style={{ pointerEvents: drawing ? "auto" : "none", cursor: drawing ? "crosshair" : "default", touchAction: drawing ? "none" : "auto" }}
         {...handlers}
       >
-        {visible && shownItems.map((item, index) => <StrokeVisible key={index} stroke={item} opacity={1} testId="video-markup-stroke" />)}
-        {drawing && markup.active && <StrokeVisible stroke={markup.active} opacity={1} testId="video-markup-stroke" />}
+        {visible && shownItems.map((item, index) => <StrokeVisible key={index} stroke={item} opacity={1} testId="video-markup-stroke" pixelDots />)}
+        {drawing && markup.active && <StrokeVisible stroke={markup.active} opacity={1} testId="video-markup-stroke" pixelDots />}
       </MarkupLayer>
       {visible && !drawing && shownItems === savedQuery.data?.markup && savedQuery.data?.unsupported && <div data-testid="video-markup-unsupported" role="status" className="pointer-events-none absolute inset-x-0 top-[var(--space-2)] flex justify-center"><span className="rounded-[var(--radius-pill)] bg-[var(--scrim-overlay)] px-[var(--space-3)] py-[var(--space-1)] text-on-inverse-muted [font:var(--type-eyebrow)]">Some markup can't be shown</span></div>}
     </div>}
