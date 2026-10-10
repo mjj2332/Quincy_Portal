@@ -2,21 +2,28 @@ import type { Context, Hono } from "hono";
 import { guestDecisionInputSchema, guestDecisionResponseSchema, type VideoReviewPart } from "@quincy/shared";
 import { newId } from "../lib/ids";
 import type { AppEnv } from "../env";
-import { archivedResponse, classifyRefusal, guestFence } from "./fence";
-import { guestNotFound, guestRoute, INVALID, originRejection, readJson, TOO_LARGE, UUID } from "./http";
-import { loadActiveLink, resolveSession, type GuestSession } from "./link";
+import { committableSql } from "../lib/guest-fence-sql";
+import { classifyRefusal } from "./fence";
+import { guestNotFound, guestRoute, INVALID, originRejection, readJson, TOO_LARGE, tooMany, UUID } from "./http";
+import { loadActiveLink, resolveSession, type GuestLink, type GuestSession } from "./link";
+import { GUEST_LIMITS, reserveAttempts } from "./rate-limit";
 import { resolveGrantedVersion } from "./read";
 
 /**
  * Guest client decision (#741 14a): `POST /d/api/links/:linkId/versions/:assetId/decision`. A verified guest approves a Version or asks for changes; the answer is an append-only event
- * (`video_approval_events`), informational only (ADR 0021 section 5). The order is the guest order of the plan (section 1.1): ids, link and gate (the `guest` AND `delivery` parts),
- * Origin, the session, then the capability (unverified 401, `allow_approve` off 403), the Version through a live member and a live grant (a miss is the stub), the archived Project
- * (409), the body, and the write.
+ * (`video_approval_events`), informational only (ADR 0021 section 5). It follows the order of `notes-write.ts` (docs/plans/741-13-15.md section 1.1):
  *
- * Every non-success answer goes through `answer`, which runs `classifyRefusal` first (the shared fence of `fence.ts`, with the `delivery` part): a request whose link, session, gate or
- * Project changed under it is the stub, or 409 `project_archived`, and never a 401, 403, 400, 413 or conflict. The INSERT repeats the fence at a fresh time taken after the body was read:
- * the exact session token and identity, a VERIFIED session, `allow_approve`, the live member and grant of this Version, and the revision allocated in the same statement. The audit row
- * follows only an event that landed, in the same batch, and carries no note text.
+ *  1. path ids are UUIDs, else the stub;
+ *  2. the link is active, the gate is open and the `guest` and `delivery` parts are on, else the stub. Then the bounded body is READ (never judged), a fresh time is taken and the link is
+ *     read again at it;
+ *  3. Origin and content type, else 403;  4. the session cookie, else the stub;
+ *  5. capability: unverified is 401, `allow_approve` off is 403;  6. visibility: the Version is reachable through a live member and a live grant, else the stub;  7. an archived Project is 409;
+ *  8. the rate-limit attempts are reserved (429), so an invalid body is charged;  9. the body is judged (400, 413);  10. the write.
+ *
+ * Every non-success answer after the credential goes through `classifyRefusal` (./fence.ts, with the `delivery` part), so lost access is the byte-identical stub and nothing else is ever
+ * the answer to a request whose link, gate, part or Version changed under it. The INSERT repeats the fence at a fresh time taken after the body was read: the exact session token and
+ * identity, a VERIFIED session, `allow_approve`, the live member and grant of this Version, and the revision allocated in the same statement. The audit row follows only an event that
+ * landed, in the same batch, and carries no note text.
  */
 const PARTS: readonly VideoReviewPart[] = ["guest", "delivery"];
 /** The note is at most 2000 characters, which can be 8 KiB of UTF-8; the rest is the JSON around it. */
@@ -24,31 +31,33 @@ const DECISION_BODY_MAX = 16 * 1024;
 
 type Handled = Context<AppEnv, "/d/api/links/:linkId/versions/:assetId/decision">;
 const plain = (c: Handled) => c as unknown as Context<AppEnv>;
+const open = (link: GuestLink | null): link is GuestLink => link !== null && PARTS.every((part) => link.parts.includes(part));
 
 async function decide(c: Handled): Promise<Response> {
-  const now = Date.now(); const linkId = c.req.param("linkId"); const assetId = c.req.param("assetId");
-  if (!UUID.test(assetId)) return guestNotFound(plain(c));
-  const link = await loadActiveLink(plain(c), linkId, now);
-  if (!link || !link.parts.includes("delivery")) return guestNotFound(plain(c));
-  const rejected = originRejection(plain(c)); if (rejected) return rejected;
-  const session = await resolveSession(plain(c), linkId, now);
-  if (!session) return guestNotFound(plain(c));
-  const answer = async (response: Response): Promise<Response> => await classifyRefusal(plain(c), session, true, PARTS) ?? response;
-
-  // The capability is not a stub on purpose: the session body already tells the page whether it is verified and what the link allows.
-  if (session.guestId === null) return answer(c.json({ error: "verification_required" }, 401));
-  if (!session.link.allowApprove) return answer(c.json({ error: "approve_disabled" }, 403));
-  const version = await resolveGrantedVersion(c.env.DB, session.link.id, session.link.projectId, assetId);
-  if (!version) return guestNotFound(plain(c));
-  const archived = await archivedResponse(plain(c), session.link.projectId); if (archived) return archived;
-
+  const linkId = c.req.param("linkId"); const assetId = c.req.param("assetId");
+  const stub = () => guestNotFound(plain(c));
+  if (!UUID.test(assetId)) return stub();
+  if (!open(await loadActiveLink(plain(c), linkId, Date.now()))) return stub();
   const raw = await readJson(plain(c), DECISION_BODY_MAX);
-  // Refusal first, once the body is in: every answer below is given only to a request whose link, session, gate and Project still stand, and whose Video and grant are still live.
-  const early = await classifyRefusal(plain(c), session, true, PARTS); if (early) return early;
-  if (!await resolveGrantedVersion(c.env.DB, session.link.id, session.link.projectId, assetId)) return guestNotFound(plain(c));
-  if (raw === TOO_LARGE) return c.json({ error: "payload_too_large" }, 413);
+  // A fresh time for everything below, and the link read again at it: the body may have been held across a revoke, a gate change or a part going off.
+  const now = Date.now();
+  if (!open(await loadActiveLink(plain(c), linkId, now))) return stub();
+  const rejected = originRejection(plain(c)); if (rejected) return rejected;
+  const session = await resolveSession(plain(c), linkId, now); if (!session) return stub();
+  const early = (response: Response) => classifyRefusal(plain(c), session, true, { parts: PARTS, archived: false }).then((refused) => refused ?? response);
+  // The capability is not a stub on purpose: the session body already tells the page whether it is verified and what the link allows.
+  if (session.guestId === null) return early(c.json({ error: "verification_required" }, 401));
+  if (!session.link.allowApprove) return early(c.json({ error: "approve_disabled" }, 403));
+  const guestId = session.guestId;
+  const scope = { parts: PARTS, approve: true, assetId };
+  if (!await resolveGrantedVersion(c.env.DB, session.link.id, session.link.projectId, assetId)) return await classifyRefusal(plain(c), session, true, { ...scope, archived: false }) ?? stub();
+  const answer = async (response: Response): Promise<Response> => await classifyRefusal(plain(c), session, true, scope) ?? response;
+  const refused = await classifyRefusal(plain(c), session, true, scope); if (refused) return refused;
+
+  const limited = await reserve(c, session.link.id, guestId); if (limited) return answer(limited);
+  if (raw === TOO_LARGE) return answer(c.json({ error: "payload_too_large" }, 413));
   const parsed = raw === INVALID ? null : guestDecisionInputSchema.safeParse(raw);
-  if (!parsed?.success) return c.json({ error: "invalid_request" }, 400);
+  if (!parsed?.success) return answer(c.json({ error: "invalid_request" }, 400));
 
   const eventId = newId(); const committedAt = Date.now();
   const note = parsed.data.note ? parsed.data.note : null;
@@ -62,8 +71,8 @@ async function decide(c: Handled): Promise<Response> {
           JOIN review_link_videos rv ON rv.link_id = g.link_id AND rv.video_id = g.video_id AND rv.removed_at IS NULL
           JOIN videos v ON v.id = g.video_id AND v.project_id = l.project_id
           JOIN video_version_meta m ON m.asset_id = g.asset_id AND m.video_id = g.video_id
-        WHERE s.id = ?5 AND s.guest_id IS NOT NULL AND s.verified_at IS NOT NULL AND l.allow_approve = 1 AND ${guestFence({ now: "?4", token: "?6", guest: "?7" }, PARTS)}`)
-        .bind(eventId, parsed.data.decision, note, committedAt, session.id, session.tokenHash, session.guestId, assetId),
+        WHERE s.id = ?5 AND s.guest_id IS NOT NULL AND s.verified_at IS NOT NULL AND l.allow_approve = 1 AND s.token_hash = ?6 AND s.guest_id IS ?7 AND ${committableSql("?4", PARTS)}`)
+        .bind(eventId, parsed.data.decision, note, committedAt, session.id, session.tokenHash, guestId, assetId),
       c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?1, NULL, 'video_version.decision', 'asset', e.asset_id, json_object('guest', json_object('guestId', e.actor_guest_id, 'sessionId', ?2), 'linkId', e.link_id, 'projectId', e.project_id,
           'videoId', e.video_id, 'decision', e.decision, 'revision', e.revision, 'hasNote', e.note IS NOT NULL), ?3 FROM video_approval_events e WHERE e.id = ?4`)
@@ -77,12 +86,19 @@ async function decide(c: Handled): Promise<Response> {
   }
   const stored = results[2]!.results[0] as { revision: number; decision: "approved" | "changes_requested"; created_at: number } | undefined;
   if (stored) return c.json(guestDecisionResponseSchema.parse({ decision: { value: stored.decision, revision: stored.revision, at: new Date(stored.created_at).toISOString(), self: true } }), 201);
-  return refusedBecause(c, session);
+  return refusedBecause(c, session, assetId);
+}
+
+/** One attempt in each bucket, charged to the window the request completes in. */
+async function reserve(c: Handled, linkId: string, guestId: string): Promise<Response | null> {
+  const decidedAt = Date.now();
+  const attempt = await reserveAttempts(c.env.DB, [{ bucket: `decision:guest:${guestId}`, limit: GUEST_LIMITS.decisionGuest }, { bucket: `decision:link:${linkId}`, limit: GUEST_LIMITS.decisionLink }], decidedAt);
+  return attempt.limited ? tooMany(attempt.retryAfterSeconds) : null;
 }
 
 /** Nothing landed: say why, from a fresh read, in the same order as the entry. The stub or the archive first, then what this session may do, else the Version is no longer reachable. */
-async function refusedBecause(c: Handled, session: GuestSession): Promise<Response> {
-  const refused = await classifyRefusal(plain(c), session, true, PARTS); if (refused) return refused;
+async function refusedBecause(c: Handled, session: GuestSession, assetId: string): Promise<Response> {
+  const refused = await classifyRefusal(plain(c), session, true, { parts: PARTS, approve: true, assetId }); if (refused) return refused;
   const row = await c.env.DB.prepare("SELECT s.guest_id, s.verified_at, l.allow_approve FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE s.id = ?1").bind(session.id).first<{ guest_id: string | null; verified_at: number | null; allow_approve: number }>();
   if (!row) return guestNotFound(plain(c));
   if (row.guest_id === null || row.verified_at === null || row.guest_id !== session.guestId) return c.json({ error: "verification_required" }, 401);

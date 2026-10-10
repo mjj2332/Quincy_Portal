@@ -1,6 +1,7 @@
 import { SELF as workerSelf } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { guestDecisionResponseSchema, guestVideoListResponseSchema } from "@quincy/shared";
+import { GUEST_LIMITS, GUEST_WINDOW_MS } from "../src/guest/rate-limit";
 import { hashToken } from "../src/lib/opaque-token";
 import { database, ids, seedFixture } from "./embedded-media-support";
 import { addMember, clearGuestRows, freshIp, guestFetch, guestOrigin, HYGIENE, linkPath, openGuestGate, seedGuestLink, startSession, type LinkInput } from "./guest-support";
@@ -179,7 +180,7 @@ describe("POST .../versions/:assetId/decision", () => {
     expect((await events(version.assetId)).length + (await events(v2.assetId)).length + (await events(elsewhere.assetId)).length).toBe(0);
   });
 
-  it("is 409 project_archived once the Project is archived, before the body is read, and writes nothing", async () => {
+  it("is 409 project_archived once the Project is archived, before the limit is charged or the body judged, and writes nothing", async () => {
     const { link, version } = await setup(); await archive();
     const response = await decide(link, link.cookie, version.assetId);
     expect(response.status).toBe(409); expect(await response.json()).toEqual({ error: "project_archived" });
@@ -243,16 +244,12 @@ describe("the committing SQL repeats what the entry checked", () => {
     expect(await events(version.assetId)).toHaveLength(0); expect(await audits()).toHaveLength(0);
   });
 
-  it("a session that verified as someone else mid-request writes nothing", async () => {
-    const { link, version } = await setup();
+  it("a session whose token is rotated while the body is on its way writes nothing and answers the stub (the session is resolved after the body, as in the note routes)", async () => {
+    const { link, version } = await setup(); const stub = await stubBody();
     const pending = slowPost(decisionPath(link.id, version.assetId), link.cookie, { decision: "approved" }, 250);
-    await sleep(80);
-    const swapped = crypto.randomUUID();
-    await database.DB.prepare("INSERT INTO guest_reviewers (id, email_normalized, display_name, created_at) VALUES (?, ?, 'Someone Else', ?)").bind(swapped, `${swapped}@guest-14a.test`, Date.now()).run();
-    await database.DB.prepare("UPDATE guest_sessions SET guest_id = ? WHERE link_id = ?").bind(swapped, link.id).run();
-    const response = await pending.response;
-    expect(response.status).not.toBe(201);
-    expect(await events(version.assetId)).toHaveLength(0);
+    await sleep(80); await database.DB.prepare("UPDATE guest_sessions SET token_hash = 'rotated' WHERE link_id = ?").bind(link.id).run();
+    expect(await probe(await pending.response)).toEqual(stub);
+    expect(await events(version.assetId)).toHaveLength(0); expect(await audits()).toHaveLength(0);
   });
 
   it("an unverified session whose link is revoked is the stub, not 401", async () => {
@@ -305,5 +302,98 @@ describe("the guest Version DTO: decision, released, downloadUrl", () => {
     await decide(link, link.cookie, version.assetId, { decision: "approved", note: "private reasoning" });
     const dump = JSON.stringify(await videos(link, link.cookie));
     for (const secret of ["private reasoning", ids.admin, ids.member, "guest-14a.test", link.guestId]) expect(dump).not.toContain(secret);
+  });
+});
+
+describe("rate limits and write order", () => {
+  const seedBucket = (bucket: string, count: number) => database.DB.prepare("INSERT INTO guest_rate_limits (bucket, window_start, count) VALUES (?1, ?2, ?3)").bind(bucket, Math.floor(Date.now() / GUEST_WINDOW_MS) * GUEST_WINDOW_MS, count).run();
+  const bucketCount = async (bucket: string) => (await database.DB.prepare("SELECT count FROM guest_rate_limits WHERE bucket = ?").bind(bucket).first<{ count: number }>())?.count ?? null;
+  const wipeBuckets = () => database.DB.prepare("DELETE FROM guest_rate_limits WHERE bucket LIKE 'decision:%'").run();
+  beforeEach(wipeBuckets); afterEach(wipeBuckets);
+
+  it("caps a guest at 20 decisions in 15 minutes: the 21st is 429 with Retry-After and writes nothing", async () => {
+    expect(GUEST_LIMITS.decisionGuest).toBe(20);
+    const { link, version } = await setup();
+    for (let n = 0; n < 20; n++) expect((await decide(link, link.cookie, version.assetId)).status, `decision ${n + 1}`).toBe(201);
+    const limited = await decide(link, link.cookie, version.assetId);
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(await limited.json()).toEqual({ error: "too_many_attempts", retryAfterSeconds: Number(limited.headers.get("retry-after")) });
+    expect(await events(version.assetId)).toHaveLength(20); expect(await audits()).toHaveLength(20);
+  });
+
+  it("caps a link at 100 decisions in 15 minutes, across guests, and charges both buckets", async () => {
+    expect(GUEST_LIMITS.decisionLink).toBe(100);
+    const { link, version } = await setup(); await seedBucket(`decision:link:${link.id}`, 99);
+    expect((await decide(link, link.cookie, version.assetId)).status).toBe(201);
+    expect(await bucketCount(`decision:link:${link.id}`)).toBe(100); expect(await bucketCount(`decision:guest:${link.guestId}`)).toBe(1);
+    const limited = await decide(link, link.cookie, version.assetId);
+    expect(limited.status).toBe(429); expect(limited.headers.get("retry-after")).not.toBeNull();
+    expect(await events(version.assetId)).toHaveLength(1);
+  });
+
+  it("charges an invalid body: a 400 and a 413 each spend an attempt, and an exhausted guest gets 429, not 400", async () => {
+    const { link, version } = await setup();
+    expect((await decide(link, link.cookie, version.assetId, { decision: "maybe" })).status).toBe(400);
+    expect((await decide(link, link.cookie, version.assetId, { decision: "approved", note: "x".repeat(20_000) })).status).toBe(413);
+    expect(await bucketCount(`decision:guest:${link.guestId}`)).toBe(2); expect(await bucketCount(`decision:link:${link.id}`)).toBe(2);
+    await database.DB.prepare("UPDATE guest_rate_limits SET count = 20 WHERE bucket = ?").bind(`decision:guest:${link.guestId}`).run();
+    for (const body of [{ decision: "maybe" }, "not json", { decision: "approved", note: "x".repeat(20_000) }]) {
+      const response = await decide(link, link.cookie, version.assetId, body); expect(response.status, JSON.stringify(body).slice(0, 30)).toBe(429);
+    }
+    expect(await events(version.assetId)).toHaveLength(0);
+  });
+
+  it("does not charge a request refused before the limit: stub, Origin, 401, 403, unreachable Version and archived", async () => {
+    const { link, version } = await setup(); const other = await seedVideoVersion({ title: "Not granted" });
+    await decide(link, link.cookie, version.assetId, undefined, { origin: "https://evil.example" });
+    await decide(link, link.cookie, other.assetId);
+    await decide(link, null, version.assetId);
+    await archive(); await decide(link, link.cookie, version.assetId);
+    const off = await verifiedLink({ allow: [1, 0, 1] }); await addMember(off.id, version.videoId, [version.assetId]); await decide(off, off.cookie, version.assetId);
+    const unverified = await seedGuestLink(); const { cookie } = await startSession(unverified); await addMember(unverified.id, version.videoId, [version.assetId]); await decide(unverified, cookie, version.assetId);
+    expect((await database.DB.prepare("SELECT COUNT(*) AS n FROM guest_rate_limits WHERE bucket LIKE 'decision:%'").first<{ n: number }>())!.n).toBe(0);
+  });
+
+  it("answers an archived Project only after capability and visibility: unverified is 401, approve off 403, an unreachable Version the stub", async () => {
+    const { link, version } = await setup(); const other = await seedVideoVersion({ title: "Not granted" }); const reference = await stubBody();
+    const unverified = await seedGuestLink(); const { cookie } = await startSession(unverified); await addMember(unverified.id, version.videoId, [version.assetId]);
+    const off = await verifiedLink({ allow: [1, 0, 1] }); await addMember(off.id, version.videoId, [version.assetId]);
+    await archive();
+    const a = await decide(unverified, cookie, version.assetId); expect(a.status).toBe(401);
+    const b = await decide(off, off.cookie, version.assetId); expect(b.status).toBe(403);
+    expect(await probe(await decide(link, link.cookie, other.assetId))).toEqual(reference);
+    expect((await decide(link, link.cookie, version.assetId)).status).toBe(409);
+  });
+
+  it("a 429 held across a revoke is the stub, and across an archive is 409 project_archived (and is a plain 429 when nothing changes)", async () => {
+    {
+      const { link, version } = await setup(); await seedBucket(`decision:guest:${link.guestId}`, 20);
+      expect((await slowPost(decisionPath(link.id, version.assetId), link.cookie, { decision: "approved" }, 150).response).status).toBe(429);
+    }
+    for (const [change, kind] of [
+      [(linkId: string) => database.DB.batch([database.DB.prepare("UPDATE client_links SET revoked_at = ? WHERE id = ?").bind(Date.now(), linkId), database.DB.prepare("DELETE FROM guest_sessions WHERE link_id = ?").bind(linkId)]), "stub"],
+      [() => archive(), "archived"],
+    ] as const) {
+      await wipe(); await clearGuestRows(); await openGuestGate(); await wipeBuckets();
+      const { link, version } = await setup(); const reference = await stubBody();
+      await seedBucket(`decision:guest:${link.guestId}`, 20);
+      const pending = slowPost(decisionPath(link.id, version.assetId), link.cookie, { decision: "approved" }, 300);
+      await sleep(80); await change(link.id);
+      const response = await pending.response;
+      if (kind === "stub") expect(await probe(response)).toEqual(reference);
+      else { expect(response.status).toBe(409); expect(await response.json()).toEqual({ error: "project_archived" }); }
+      expect(await events(version.assetId)).toHaveLength(0);
+    }
+  });
+
+  it("charges a decision whose body is held across a window boundary to the window it completes in", async () => {
+    const { link, version } = await setup();
+    const pending = slowPost(decisionPath(link.id, version.assetId), link.cookie, { decision: "approved" }, 300);
+    await sleep(80);
+    const rows = async () => (await database.DB.prepare("SELECT window_start FROM guest_rate_limits WHERE bucket = ?").bind(`decision:guest:${link.guestId}`).all<{ window_start: number }>()).results;
+    expect(await rows()).toEqual([]);
+    expect((await pending.response).status).toBe(201);
+    const [row] = await rows(); expect(row!.window_start).toBe(Math.floor(Date.now() / GUEST_WINDOW_MS) * GUEST_WINDOW_MS);
   });
 });
