@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { STROKE_LIMITS } from "./freehand-strokes";
+import { videoNoteBodySchema, videoNoteCreateFields, videoNoteRevisionSchema, videoMarkupSchema, videoNoteFrameSchema, withVideoNoteCreateRules } from "./video-notes";
 
 /**
  * The guest-facing DTOs of a Review link (#741 12a). A leaf module on purpose, like `video-notes`. Every object is `.strict()` and the Worker `.parse`s each
@@ -91,7 +92,7 @@ export type GuestVideoListResponse = z.infer<typeof guestVideoListResponseSchema
 
 const guestAuthorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("studio"), name: z.string() }).strict(),
-  /** `self` is false until a guest can post (13b). */
+  /** `self` is true only for the viewing guest's own notes; another guest is a name and nothing else (no email, no id). */
   z.object({ kind: z.literal("guest"), name: z.string(), self: z.boolean() }).strict(),
 ]);
 
@@ -106,6 +107,8 @@ export const guestNoteDtoSchema = z.object({
   /** A tombstone is `deleted: true` with an empty body. */
   body: z.string(),
   deleted: z.boolean(),
+  /** The compare-and-set token of an edit or delete (#741 13b). */
+  revision: z.number().int().positive(),
   /** A boolean on purpose: a guest never learns who resolved a note. */
   resolved: z.boolean(),
   createdAt: iso,
@@ -123,3 +126,35 @@ export type GuestNoteListResponse = z.infer<typeof guestNoteListResponseSchema>;
 /** `GET /d/api/links/:linkId/notes/:noteId/markup`. Items are not validated here, for the reason `videoNoteMarkupResponseSchema` gives. */
 export const guestNoteMarkupResponseSchema = z.object({ noteId: uuid, revision: z.number().int().positive(), markup: z.array(z.unknown()).max(STROKE_LIMITS.strokes).nullable() }).strict();
 export type GuestNoteMarkupResponse = z.infer<typeof guestNoteMarkupResponseSchema>;
+
+/**
+ * The guest note writes (#741 13b). Each input reuses the staff field schemas, so a rule changed there changes here, but has NO `visibility`: a guest note is public, always, and
+ * `.strict()` makes a body that names one a 400. Markup is gated by its Worker part at the route, not here.
+ */
+export const GUEST_NOTE_BODY_MAX_BYTES = 600 * 1024;
+export const GUEST_REPLY_BODY_MAX_BYTES = 16 * 1024;
+export const guestNoteCreateInputSchema = withVideoNoteCreateRules(z.object({ ...videoNoteCreateFields }).strict());
+export type GuestNoteCreateInput = z.infer<typeof guestNoteCreateInputSchema>;
+export const guestNoteReplyInputSchema = z.object({ body: videoNoteBodySchema }).strict();
+export type GuestNoteReplyInput = z.infer<typeof guestNoteReplyInputSchema>;
+export const guestNoteEditInputSchema = z.object({
+  expectedRevision: videoNoteRevisionSchema,
+  body: videoNoteBodySchema.optional(),
+  startFrame: videoNoteFrameSchema.optional(),
+  endFrame: videoNoteFrameSchema.nullable().optional(),
+  markup: videoMarkupSchema.nullable().optional(),
+  drawingFrame: videoNoteFrameSchema.optional(),
+}).strict()
+  .refine((value) => value.body !== undefined || value.startFrame !== undefined || value.endFrame !== undefined || value.markup !== undefined, { message: "Nothing to change" })
+  .refine((value) => value.drawingFrame === undefined || (value.markup !== undefined && value.markup !== null), { message: "drawingFrame goes with a markup envelope", path: ["drawingFrame"] });
+export type GuestNoteEditInput = z.infer<typeof guestNoteEditInputSchema>;
+export const guestNoteDeleteInputSchema = z.object({ expectedRevision: videoNoteRevisionSchema }).strict();
+export type GuestNoteDeleteInput = z.infer<typeof guestNoteDeleteInputSchema>;
+
+/** 201 of a create or reply, and 200 of an edit: the root thread, in the guest projection. */
+export const guestNoteWriteResponseSchema = guestNoteThreadDtoSchema;
+/** 200 of a delete: the thread the note belonged to, or null when the root itself is gone (a hard delete). */
+export const guestNoteDeleteResponseSchema = z.object({ thread: guestNoteThreadDtoSchema.nullable() }).strict();
+export type GuestNoteDeleteResponse = z.infer<typeof guestNoteDeleteResponseSchema>;
+/** 409 `note_conflict` carries the current thread, in the guest projection, so the page can offer the fresh text. */
+export const guestNoteConflictSchema = z.object({ error: z.literal("note_conflict"), thread: guestNoteThreadDtoSchema }).strict();
