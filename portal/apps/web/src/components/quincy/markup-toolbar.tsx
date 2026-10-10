@@ -19,7 +19,7 @@ import { Eyebrow } from "./Eyebrow";
  *   toggle groups with a single value; clicking the pressed one is ignored, so neither can be left empty.
  * - Targets are 28px, and 44px on a phone (`max-[721px]`) and on a coarse pointer above it (`min-[721px]:pointer-coarse`,
  *   scoped so the two never compete in the cascade: docs/lessons.md, "A touch phone matches `pointer-coarse:` too").
- * - `compact` (the host's phone band) packs two rows: tools and icon-only history, then colours and one width button that
+ * - `compact` (the host's phone band) packs two rows: tools and history, then colours and one width button that
  *   cycles 2 -> 4 -> 7. Label and host slot follow on a last row.
  * - No tooltips: a Base UI tooltip closes on Escape with a document-level stopPropagation, which would make one Escape
  *   close the tip instead of ending drawing. The title attribute and the host's hint pill carry the shortcuts.
@@ -44,6 +44,8 @@ const GROUP = "inline-flex w-auto items-center gap-[var(--space-1)]";
 const PRESSED_RING = "aria-pressed:outline aria-pressed:outline-[length:var(--border-width-bold)] aria-pressed:outline-solid aria-pressed:outline-[var(--ring)] aria-pressed:outline-offset-2";
 const COMPACT_BUTTON = "w-11 min-w-11 px-0 min-[721px]:pointer-coarse:min-w-11";
 /** The default button is 38px; a touch tablet gets 44px. */
+/** Undo, Redo and Clear are icon-only at every width (at 1280 the worded form overflowed the pill's 868px budget): 38px square, 44px on a phone or a touch tablet. */
+const HISTORY_BUTTON = "w-[38px] min-w-[38px] px-0 max-[721px]:w-11 max-[721px]:min-w-11 min-[721px]:pointer-coarse:w-11 min-[721px]:pointer-coarse:min-w-11";
 const COARSE_BUTTON = "min-[721px]:pointer-coarse:min-h-11";
 
 export interface MarkupToolbarProps {
@@ -103,7 +105,7 @@ export function MarkupToolbar({ label, tool, onToolChange, onColorChange, onWidt
     : (
       <ToggleGroup key="widths" aria-label="Stroke width" className={GROUP} spacing={1} value={[String(tool.width)]} onValueChange={(value) => { const next = Number(value[0]); if (value[0] && next !== tool.width) onWidthChange(next); }}>
         {MARKUP_WIDTHS.map((width) => (
-          <ToggleGroupItem key={width} value={String(width)} size="sm" aria-label={`${width} pixels`} className={cn(TARGET, "px-0")}>
+          <ToggleGroupItem key={width} value={String(width)} size="sm" aria-label={`${width} pixels`} className={cn(TARGET, "px-0 aria-pressed:bg-secondary hover:bg-secondary")}>
             <span aria-hidden="true" style={{ width: width + 3, height: width + 3 }} className="block rounded-full bg-foreground" />
           </ToggleGroupItem>
         ))}
@@ -111,8 +113,8 @@ export function MarkupToolbar({ label, tool, onToolChange, onColorChange, onWidt
     );
 
   const historyButton = (name: string, Icon: LucideIcon, disabled: boolean, onClick: () => void, extra: { shortcuts?: string; title: string }) => (
-    <Button key={name} type="button" variant="outline" className={cn(COARSE_BUTTON, compact && COMPACT_BUTTON)} aria-label={name} title={extra.title} aria-keyshortcuts={extra.shortcuts} disabled={disabled} onClick={onClick}>
-      <Icon aria-hidden="true" className="size-4" />{!compact && name}
+    <Button key={name} type="button" variant="outline" className={cn(COARSE_BUTTON, HISTORY_BUTTON)} aria-label={name} title={extra.title} aria-keyshortcuts={extra.shortcuts} disabled={disabled} onClick={onClick}>
+      <Icon aria-hidden="true" className="size-4" />
     </Button>
   );
   const history = (
