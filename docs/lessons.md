@@ -6152,3 +6152,12 @@ Tags: workers-runtime · #741
 - **Why `crc32`.** The JS table loop cost ~1.1 s CPU per 256 MiB against a 30000 ms `cpu_ms`; native is ~6 ms for the same bytes in Node.
 
 Guards: `workers/app/test/zip-stream-crc.test.ts`.
+
+## `input-otp`'s `onComplete` fires on reaching six digits, not on every six-digit value (#741 13c)
+Tags: reui-vendor, testing-guards · #741
+
+- **What bit.** A DOM test set a six-digit code, got a retriable failure (rate limit, dropped connection) that left the code in the field, then set a different six-digit code and waited for `onComplete`. It never fired: the component calls it only when the value grows to `maxLength`, so a replacement of one full value by another is silent.
+- **Rule.** Anything that must be retriable with the same field content needs a real submit control (the verify dialog's Verify button is a form submit), and a test that wants a fresh completion clears the field first. A wrong or expired code clears the field itself, so the next entry completes normally.
+- **Also.** `data-testid="guest-note-reply"` already named the reply container on the guest page; a new control reused it and passed half its assertions. Give a new control its own id and grep the tree for the old one first.
+
+Guards: `guest/GuestVerifyDialog.dom.test.tsx`, `guest/GuestNotesWrite.dom.test.tsx`.
