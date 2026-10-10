@@ -45,7 +45,7 @@ export function IconTip({ label, keys, children }: { label: string; keys?: strin
  * surface (`data-surface="inverse"`) around it, like the Lightbox. `keyboard="self"` listens on the player; `"host"` leaves the
  * scope to the caller, who forwards events to `controlRef.handleKeyDown`.
  */
-export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, markers, pendingRange, onMarkerSelect, onMark, onClockChange, overlay, transportLocked = false, transportActions, transportReplacement }: {
+export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, onClockChange, overlay, transportLocked = false, transportActions, transportReplacement }: {
   version: VideoPlayerVersion;
   title: string;
   controlRef?: Ref<VideoPlayerControl>;
@@ -53,6 +53,9 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   className?: string;
   /** The frame the player opens on (Compare hands A's frame back on exit). Read once, when the clock is built. */
   initialFrame?: number;
+  /** The mute choice the player opens with (one choice across the single player and Compare), and where a change is reported. */
+  initialMuted?: boolean;
+  onMutedChange?: (muted: boolean) => void;
   /** Notes (or anything frame-anchored) to draw under the track. Data, not note DTOs: the guest page and Compare pass their own. */
   markers?: readonly TimelineMarker[];
   /** The in / out marks being composed, drawn as a band over the track. */
@@ -73,7 +76,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   transportReplacement?: ReactNode;
 }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
-  const [muted, setMutedState] = useState(false);
+  const [muted, setMutedState] = useState(initialMuted);
   const playerRef = useRef<HTMLElement | null>(null);
   // The transport block's height, kept while it shows so its replacement (drawing) takes at least the same room: the picture above never moves when Draw is pressed.
   const transportRef = useRef<HTMLDivElement | null>(null);
@@ -91,6 +94,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const onClockChangeRef = useRef(onClockChange);
   onClockChangeRef.current = onClockChange;
   const instance = clock.instance;
+  useEffect(() => { if (instance && initialMuted) instance.setMuted(true); }, [instance]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     onClockChangeRef.current?.(instance);
     return () => { onClockChangeRef.current?.(null); };
@@ -113,7 +117,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const currentFrame = useCallback(() => currentFrameRef.current(), []);
   useImperativeHandle(controlRef, () => ({ handleKeyDown, currentFrame }), [handleKeyDown, currentFrame]);
 
-  const toggleMuted = (next: boolean) => { setMutedState(next); clock.setMuted(next); };
+  const toggleMuted = (next: boolean) => { setMutedState(next); clock.setMuted(next); onMutedChange?.(next); };
   const playLabel = clock.playing ? "Pause" : "Play";
 
   return <section

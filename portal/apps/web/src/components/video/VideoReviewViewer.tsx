@@ -22,7 +22,7 @@ const loadCompare = () => import("./CompareView");
 const LazyCompareView = lazy(loadCompare);
 const preloadCompare = (withNotes: boolean) => { void loadCompare(); if (withNotes) void import("./CompareNotesHost"); };
 /** Compare needs room for two pictures: below this the viewer is the single player, and the Compare button is not offered. */
-const PHONE_QUERY = "(max-width: 721px)";
+const PHONE_QUERY = "(width < 721px)";
 
 const VERSION_SELECT_ID = "video-review-version";
 
@@ -56,6 +56,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const [startFrame, setStartFrame] = useState(0);
   const [resume, setResume] = useState<{ assetId: string; frame: number } | null>(null);
   const phone = useMediaQuery(PHONE_QUERY);
+  // One mute choice for both views: the single player and compare each start from it, and report back on exit.
+  const [muted, setMuted] = useState(false);
   const canCompare = compareStore !== undefined && video.versions.length >= 2 && !phone;
   // Focus opens on the dialog itself, not its first button: Space on the Video button would close it (and the player leaves Space to a focused button).
   const popupRef = useRef<HTMLDivElement | null>(null);
@@ -76,6 +78,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     const frame = compareRef.current?.currentFrame();
     const pairA = compareStore?.getState().pair?.a;
     if (frame !== undefined && pairA !== undefined) setResume({ assetId: pairA, frame });
+    if (compareStore) setMuted(compareStore.getState().muted);
     modeRef.current = "single";
     setMode("single");
     if (focus === "button" && compareButtonRef.current?.isConnected) compareButtonRef.current.focus({ preventScroll: true });
@@ -92,13 +95,15 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       if (layer || popup === null) { escapeSnapshot.current = { layer, form: false, compare: false }; return; }
       const active = document.activeElement;
       let consumed = false;
-      if (notesOn && forms) {
+      const inForm = active instanceof Element && popup.contains(active) && active.closest("[data-notes-form]") !== null;
+      // In compare a form is only the Escape's when focus is inside that side's note form: a hidden or unfocused draft never swallows it.
+      if (notesOn && forms && (modeRef.current !== "compare" || inForm)) {
         // In compare the form belongs to the side whose panel holds focus (else the side whose tab is showing).
         const pair = compareStore?.getState().pair;
         const sideOf = active instanceof Element ? active.closest("[data-compare-side]")?.getAttribute("data-compare-side") : null;
         const formSide: CompareSideId = sideOf === "a" || sideOf === "b" ? sideOf : (compareStore?.getState().activeTab ?? "a");
         const formAsset = modeRef.current === "compare" && pair ? pair[formSide] : assetId;
-        const result = forms.escape(formAsset, { focusInForm: active instanceof Element && popup.contains(active) && active.closest("[data-notes-form]") !== null });
+        const result = forms.escape(formAsset, { focusInForm: inForm });
         consumed = result.consumed;
         if (result.focus === "dialog") popup.focus({ preventScroll: true });
         // focus === "draw": the pill is still expanded here, so the overlay returns focus to its Draw button itself once drawing has ended.
@@ -134,6 +139,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     const partner = sameFilm ? video.versions.find((candidate) => candidate.assetId === stored.b)! : below;
     const heard: CompareSideId = compareStore.getState().pair && sameFilm ? compareStore.getState().audible : here.hasAudio ? "a" : "b";
     compareStore.setPair(here.assetId, partner.assetId, heard);
+    compareStore.setMuted(muted);
     setStartFrame(frame);
     setResume(null);
     setMode("compare");
@@ -218,7 +224,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     {header}
     <div className="flex min-h-0 flex-1 flex-wrap overflow-y-auto min-[721px]:flex-nowrap min-[721px]:overflow-hidden">
       <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col min-[721px]:flex-1 p-[var(--space-5)]">
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" className="flex-1" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...slots?.playerProps} />
+        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" initialMuted={muted} onMutedChange={setMuted} className="flex-1" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...slots?.playerProps} />
       </div>
       {slots
         ? slots.panel

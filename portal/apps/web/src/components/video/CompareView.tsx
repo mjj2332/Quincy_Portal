@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { usePictureBox } from "../../lib/use-picture-box";
 import { useCompareTransport, type CompareSideHandle } from "../../lib/use-compare-transport";
 import { usePlayerKeys } from "../../lib/use-player-keys";
-import { useVideoFrameClock, type VideoFrameClock } from "../../lib/video-frame-clock";
+import { useFrameClockSelector, useVideoFrameClock, type VideoFrameClock } from "../../lib/video-frame-clock";
 import type { CompareSideId, CompareStore } from "../../lib/video-compare-store";
 import type { NoteFormStore } from "../../lib/video-note-form-store";
 import { Button } from "../quincy/Button";
@@ -90,10 +90,14 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
   const newest = Math.max(...video.versions.map((candidate) => candidate.version));
   const versions: Record<CompareSideId, VideoVersionDto> = { a: versionA, b: versionB };
   const offset = state.offset;
-  const lastA = Math.max(0, versionA.frameCount - 1);
-  const lastB = Math.max(0, versionB.frameCount - 1);
-  const frameA = clamp(state.frame, 0, lastA);
-  const frameB = clamp(bOf(state.frame, offset, versionA.fps, versionB.fps), 0, lastB);
+  // Each side's own clock decides what its frame and last frame are: the mapping and the DTO's length are for the other side's position, not for what this one shows.
+  const lastA = handles.a?.clock.lastFrame() ?? Math.max(0, versionA.frameCount - 1);
+  const lastB = handles.b?.clock.lastFrame() ?? Math.max(0, versionB.frameCount - 1);
+  const mappedB = clamp(bOf(state.frame, offset, versionA.fps, versionB.fps), 0, lastB);
+  const shownA = useFrameClockSelector(handles.a?.clock ?? null, (c) => c.targetFrame ?? c.frame, clamp(state.frame, 0, lastA));
+  const shownB = useFrameClockSelector(handles.b?.clock ?? null, (c) => c.targetFrame ?? c.frame, mappedB);
+  const frameA = clamp(shownA, 0, lastA);
+  const frameB = clamp(shownB, 0, lastB);
   const domainLength = state.domain.end - state.domain.start + 1;
   const timecodeOf = useCallback((version: VideoVersionDto, frame: number) => framesToTimecode(frame, { nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame }, version.startTimecodeFrames ?? 0), []);
 

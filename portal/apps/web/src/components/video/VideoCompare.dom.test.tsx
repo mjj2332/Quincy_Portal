@@ -178,12 +178,12 @@ describe("Compare: who gets the button (#741 7c)", () => {
     expect(compareButton()!.textContent).toContain("Compare");
   });
 
-  it("follows the viewer's 721px breakpoint: hidden at 721 and below (the max-[721px] rule), offered from 722", async () => {
-    await viewport.set({ width: 721 });
+  it("follows Tailwind's max-[721px], which is width < 721px: hidden at 720, offered at 721", async () => {
+    await viewport.set({ width: 720 });
     await mount({ parts: ["compare"] });
     await openViewer();
     expect(compareButton()).toBeNull();
-    await viewport.set({ width: 722 });
+    await viewport.set({ width: 721 });
     expect(compareButton()).not.toBeNull();
   });
 });
@@ -247,6 +247,66 @@ describe("Compare: entry and exit (#741 7c)", () => {
     expect(tid("video-markup-toolbar-draw")).not.toBeNull();
     await enterCompare(0);
     expect(tid("video-markup-toolbar-draw")).toBeNull();
+  });
+});
+
+describe("Compare: mute is one choice across both views (#741 7c)", () => {
+  const muteButton = () => dialog()!.querySelector<HTMLElement>('button[aria-label="Mute"]')!;
+
+  it("muting in compare carries to the single player after exit", async () => {
+    await openCompare();
+    await click(muteButton());
+    await click(compareButton()!);
+    await flush(4);
+    await loadFilm(0);
+    expect(muteButton().getAttribute("aria-pressed")).toBe("true");
+    await key(" ", dialog()!);
+    expect(playerVideo()!.muted).toBe(true);
+  });
+
+  it("muting in the single player carries into compare, silencing both sides", async () => {
+    await mount({ parts: ["compare"] });
+    await openViewer();
+    await loadFilm(0);
+    await click(muteButton());
+    await enterCompare(0);
+    expect(muteButton().getAttribute("aria-pressed")).toBe("true");
+    expect(vid("a").muted).toBe(true);
+    expect(vid("b").muted).toBe(true);
+  });
+});
+
+describe("Compare: readouts follow each clock (#741 7c)", () => {
+  it("a B note on frame 0 of a 50 fps cut against a 25 fps A reads frame 0, not the mapped 1", async () => {
+    patch = { 2: { fps: { num: 50, den: 1 }, frameCount: 600, tcNominalFps: 50, startTimecodeFrames: 0 } };
+    const n = note({ assetId: ids.asset2, body: "At the start", startFrame: 0 });
+    await openCompare({ parts: ["notes", "compare"], notes: { [ids.asset2]: [n] } }, 5);
+    await openNotes();
+    const tabs = [...dialog()!.querySelectorAll<HTMLElement>('[role="tab"]')];
+    await click(tabs[1]!);
+    await flush(4);
+    await click(tid("video-note-anchor-button", document.querySelector<HTMLElement>(`[data-note-id="${n.id}"]`)!)!);
+    await act(async () => { stub.finishSeek(vid("b")); stub.presentFrame(vid("b"), 0); stub.finishSeek(vid("a")); stub.presentFrame(vid("a"), 0); });
+    await flush(2);
+    expect(readoutA()).toContain("v2 00:00:00:00");
+  });
+
+  it("stops at a side's effective last frame, not the DTO's frame count", async () => {
+    await mount({ parts: ["compare"] });
+    await openViewer();
+    await loadFilm(0);
+    await click(compareButton()!);
+    await waitFor(compareRoot, "the compare view");
+    await flush(4);
+    // B's file turns out to hold 6 s (150 frames), not the 300 the DTO says.
+    for (const [side, duration] of [["a", 12], ["b", 6]] as const) {
+      await act(async () => { stub.loadMetadata(vid(side), { duration, videoWidth: 1920, videoHeight: 1080 }); stub.setReadyState(vid(side), 4); });
+      await act(async () => { stub.finishSeek(vid(side)); stub.presentFrame(vid(side), 0); });
+    }
+    await key("End", dialog()!);
+    await act(async () => { stub.finishSeek(vid("a")); stub.presentFrame(vid("a"), 299 / 25); stub.finishSeek(vid("b")); stub.presentFrame(vid("b"), 149 / 25); });
+    await flush(2);
+    expect(readoutA()).toContain("v2 01:00:05:24");
   });
 });
 
@@ -548,6 +608,20 @@ describe("Compare: the keyboard drives the transport (#741 7c)", () => {
 });
 
 describe("Compare: Escape order (#741 7c)", () => {
+  it("a draft left in a hidden composer does not swallow Escape when focus is elsewhere", async () => {
+    await openCompare({ parts: ["notes", "compare"] }, 5);
+    await openNotes();
+    const text = tid("video-note-composer")!.querySelector<HTMLTextAreaElement>("textarea")!;
+    await type(text, "A draft");
+    await click(tid("video-compare-notes-toggle")!);
+    const play = dialog()!.querySelector<HTMLElement>('button[aria-label="Play"]')!;
+    play.focus();
+    await key("Escape", play);
+    await settle(200);
+    expect(compareRoot()).toBeNull();
+    expect(dialog()).not.toBeNull();
+  });
+
   it("exits compare before closing the viewer, and puts focus on the Compare button", async () => {
     await openCompare({}, 5);
     await key("Escape", dialog()!);
