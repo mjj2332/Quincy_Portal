@@ -54,10 +54,13 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   modeRef.current = mode;
   // Where the compare view opens A (the single player's frame), and where the single player reopens after it (A's frame).
   const [startFrame, setStartFrame] = useState(0);
+  const startFrameRef = useRef(0);
   const [resume, setResume] = useState<{ assetId: string; frame: number } | null>(null);
   const phone = useMediaQuery(PHONE_QUERY);
   // One mute choice for both views: the single player and compare each start from it, and report back on exit.
-  const [muted, setMuted] = useState(false);
+  // The compare store owns the preference (it outlives the viewer): the viewer reads it on open and writes every single-player change back.
+  const [muted, setMutedState] = useState(() => compareStore?.getState().muted ?? false);
+  const setMuted = useCallback((next: boolean) => { setMutedState(next); compareStore?.setMuted(next); }, [compareStore]);
   const canCompare = compareStore !== undefined && video.versions.length >= 2 && !phone;
   // Focus opens on the dialog itself, not its first button: Space on the Video button would close it (and the player leaves Space to a focused button).
   const popupRef = useRef<HTMLDivElement | null>(null);
@@ -75,10 +78,11 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const escapeSnapshot = useRef({ layer: false, form: false, compare: false });
   const exitCompare = useCallback((focus: "button" | "dialog") => {
     if (modeRef.current !== "compare") return;
-    const frame = compareRef.current?.currentFrame();
+    // The view may not have loaded yet (leaving at once): then the frame it was entered at is still the position.
+    const frame = compareRef.current?.currentFrame() ?? startFrameRef.current;
     const pairA = compareStore?.getState().pair?.a;
     if (frame !== undefined && pairA !== undefined) setResume({ assetId: pairA, frame });
-    if (compareStore) setMuted(compareStore.getState().muted);
+    if (compareStore) setMutedState(compareStore.getState().muted);
     modeRef.current = "single";
     setMode("single");
     if (focus === "button" && compareButtonRef.current?.isConnected) compareButtonRef.current.focus({ preventScroll: true });
@@ -139,8 +143,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     const partner = sameFilm ? video.versions.find((candidate) => candidate.assetId === stored.b)! : below;
     const heard: CompareSideId = compareStore.getState().pair && sameFilm ? compareStore.getState().audible : here.hasAudio ? "a" : "b";
     compareStore.setPair(here.assetId, partner.assetId, heard);
-    compareStore.setMuted(muted);
     setStartFrame(frame);
+    startFrameRef.current = frame;
     setResume(null);
     setMode("compare");
   };

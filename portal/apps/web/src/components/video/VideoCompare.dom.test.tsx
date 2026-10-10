@@ -310,6 +310,45 @@ describe("Compare: readouts follow each clock (#741 7c)", () => {
   });
 });
 
+describe("Compare: the store owns the mute preference (#741 7c)", () => {
+  it("a mute made in compare survives closing the viewer and entering compare again", async () => {
+    await openCompare();
+    await click(dialog()!.querySelector<HTMLElement>('button[aria-label="Mute"]')!);
+    await key("Escape", dialog()!);
+    await settle(200);
+    await key("Escape", dialog()!);
+    await settle(200);
+    expect(dialog()).toBeNull();
+    await openViewer();
+    await loadFilm(0);
+    await enterCompare(0);
+    expect(dialog()!.querySelector('button[aria-label="Mute"]')!.getAttribute("aria-pressed")).toBe("true");
+    expect(vid("a").muted).toBe(true);
+    expect(vid("b").muted).toBe(true);
+  });
+
+  it("a mute made in the single player is kept in the store", async () => {
+    await mount({ parts: ["compare"] });
+    await openViewer();
+    await loadFilm(0);
+    await click(dialog()!.querySelector<HTMLElement>('button[aria-label="Mute"]')!);
+    await key("Escape", dialog()!);
+    await settle(200);
+    await openViewer();
+    await loadFilm(0);
+    expect(dialog()!.querySelector('button[aria-label="Mute"]')!.getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+describe("Compare: the wipe grip (#741 7c)", () => {
+  it("the slider is widened past the picture by its negative insets, so its width must be auto, not the registry's w-full", async () => {
+    await openCompare();
+    await click(tid("video-compare-mode-wipe")!);
+    const slider = tid("video-compare-wipe-surface")!.querySelector<HTMLElement>('[data-slot="slider"]')!;
+    expect(slider.className).toContain("data-[orientation=horizontal]:w-auto");
+  });
+});
+
 describe("Compare: layout (#741 7c)", () => {
   it("side-by-side and wipe are the same <video> elements: only the layout attribute changes", async () => {
     await openCompare();

@@ -288,7 +288,7 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
         >
           <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 w-px -translate-x-1/2 bg-invert-foreground" style={{ left: `${wipePercent}%` }} />
           <Slider
-            className="absolute top-1/2 left-[calc(-1*var(--thumb-half))] right-[calc(-1*var(--thumb-half))] w-auto -translate-y-1/2 [--thumb-half:6px] pointer-coarse:[--thumb-half:8px] [&_[data-slot=slider-track]]:opacity-0 pointer-coarse:[&_[data-slot=slider-thumb]]:after:-inset-3.5"
+            className="absolute top-1/2 left-[calc(-1*var(--thumb-half))] right-[calc(-1*var(--thumb-half))] data-[orientation=horizontal]:w-auto -translate-y-1/2 [--thumb-half:6px] pointer-coarse:[--thumb-half:8px] [&_[data-slot=slider-track]]:opacity-0 pointer-coarse:[&_[data-slot=slider-thumb]]:after:-inset-3.5"
             value={[wipePercent]}
             min={0}
             max={100}
