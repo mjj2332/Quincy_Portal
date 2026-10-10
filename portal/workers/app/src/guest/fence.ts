@@ -11,7 +11,7 @@ import { loadActiveLink, resolveSession, type GuestSession } from "./link";
  *  - the order on every route is link id, gate (and the route's parts), Origin, credential, and each miss before the credential is the one stub;
  *  - once the body is read, `classifyRefusal` runs ONCE right away and again before EVERY later non-success answer, so lost access is the byte-identical stub and an archived
  *    Project is 409 `project_archived` before any later error (a limit, a validation error, a state conflict). Precedence inside the classifier follows the plan's order:
- *    stub (session, link, gate, parts, rotated token), then capability (comments 403), then visibility (Version unreachable, stub), then archived (409).
+ *    stub (session, link, gate, parts, rotated token), then capability (comments or approve 403), then visibility (Version unreachable, stub), then archived (409).
  */
 type Handled<P extends string> = Context<AppEnv, P>;
 const asApp = <P extends string>(c: Handled<P>): Context<AppEnv> => c as unknown as Context<AppEnv>;
@@ -35,6 +35,8 @@ export async function archivedRefusal(c: Context<AppEnv>, projectId: string): Pr
 /** What a refusal check additionally covers: the parts the write needs, a Version it must still reach, and whether comments must still be on. */
 export type RefusalScope = {
   parts?: readonly VideoReviewPart[]; assetId?: string; comments?: boolean;
+  /** Whether approving must still be on for the link (403 `approve_disabled`, the same slot as `comments`). */
+  approve?: boolean;
   /** Default true. False: an archived Project is not a refusal here, because the caller answers something that comes before the archive in the order (401, 403, the target stub). */
   archived?: boolean;
 };
@@ -48,12 +50,13 @@ export type RefusalScope = {
  */
 export async function classifyRefusal(c: Context<AppEnv>, session: GuestSession, rotatedIsRefusal = true, scope: RefusalScope = {}): Promise<Response | null> {
   const reach = scope.assetId === undefined ? "1" : reachSql("l.id", "l.project_id", "?3");
-  const row = await c.env.DB.prepare(`SELECT s.token_hash, p.archived_at, l.allow_comments, ${reach} AS reachable FROM guest_sessions s JOIN client_links l ON l.id = s.link_id JOIN projects p ON p.id = l.project_id
+  const row = await c.env.DB.prepare(`SELECT s.token_hash, p.archived_at, l.allow_comments, l.allow_approve, ${reach} AS reachable FROM guest_sessions s JOIN client_links l ON l.id = s.link_id JOIN projects p ON p.id = l.project_id
     WHERE s.id = ?1 AND ${liveSql("?2")} AND ${gateSql(scope.parts ?? ["guest"])}`).bind(session.id, Date.now(), ...(scope.assetId === undefined ? [] : [scope.assetId]))
-    .first<{ token_hash: string; archived_at: number | null; allow_comments: number; reachable: number }>();
+    .first<{ token_hash: string; archived_at: number | null; allow_comments: number; allow_approve: number; reachable: number }>();
   if (!row) return guestNotFound(c);
   if (row.token_hash !== session.tokenHash && rotatedIsRefusal) return guestNotFound(c);
   if (scope.comments === true && row.allow_comments !== 1) return c.json({ error: "comments_disabled" }, 403);
+  if (scope.approve === true && row.allow_approve !== 1) return c.json({ error: "approve_disabled" }, 403);
   if (row.reachable !== 1) return guestNotFound(c);
   if (row.archived_at !== null && scope.archived !== false) return c.json({ error: "project_archived" }, 409);
   return null;

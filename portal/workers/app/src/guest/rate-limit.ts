@@ -11,6 +11,8 @@ export const GUEST_LIMITS = {
   codeSendSession: 1, codeSendEmail: 5, codeSendEmailDay: 20, codeSendLink: 30, codeSendIp: 10, codeVerifyLink: 100, codeVerifyIp: 30,
   // Note writes (#741 13b): create, reply, edit and delete each cost one; a guest may write 60 in 15 minutes and a link 300.
   noteGuest: 60, noteLink: 300,
+  // Client decisions (#741 14a): a guest may decide 20 times in 15 minutes and a link 100.
+  decisionGuest: 20, decisionLink: 100,
 } as const;
 export const GUEST_CODE_RESEND_MS = 60_000;
 

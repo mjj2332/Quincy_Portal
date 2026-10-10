@@ -42,7 +42,7 @@ describe("GET /d/api/links/:linkId/videos", () => {
     expect(body.videos[0]).toMatchObject({ id: a.videoId, title: "Hero film", premium: false, unlocked: true });
     expect(body.videos[0]!.versions).toEqual([{
       assetId: a.assetId, version: 1, fps: { num: 25, den: 1 }, frameCount: 250, durationMs: 10000, width: 1920, height: 1080, startTimecodeFrames: null, tcNominalFps: 25, tcDropFrame: false, hasAudio: true,
-      posterUrl: linkPath(session.id, `/versions/${a.assetId}/poster`), streamUrl: linkPath(session.id, `/versions/${a.assetId}/stream`), publicNoteCount: 0,
+      posterUrl: linkPath(session.id, `/versions/${a.assetId}/poster`), streamUrl: linkPath(session.id, `/versions/${a.assetId}/stream`), publicNoteCount: 0, decision: null, released: false, downloadUrl: null,
     }]);
     expect(JSON.stringify(body)).not.toContain(a2.assetId);
   });
