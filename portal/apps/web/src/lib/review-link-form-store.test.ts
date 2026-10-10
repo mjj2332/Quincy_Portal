@@ -158,6 +158,26 @@ describe("review link form store (#741 11b)", () => {
     expect(s.create.grants[B]).toEqual(["y"]);
   });
 
+  it("a late create success leaves a film that was cleared and reselected since the submit, with its edited Versions", () => {
+    const store = createReviewLinkStore("u:p");
+    store.toggleSelect(A); store.openCreate();
+    const submitted = { videoIds: [A], draft: store.getState().create, selectionRevs: store.selectionRevisions([A]) };
+    store.closeDialog(); // closed while the request is out
+    store.clearSelection(); store.toggleSelect(A); store.setGrant(A, ["old-version"]);
+    store.showReveal({ url: "https://x.test/d/review?link=a#t=tok", linkId: A, label: null, origin: "create" }, submitted);
+    const s = store.getState();
+    expect([...s.selection]).toEqual([A]);
+    expect(s.create.grants[A]).toEqual(["old-version"]);
+  });
+
+  it("control: a create success with the selection untouched since the submit clears it", () => {
+    const store = createReviewLinkStore("u:p");
+    store.toggleSelect(A); store.toggleSelect(B); store.openCreate();
+    const submitted = { videoIds: [A], draft: store.getState().create, selectionRevs: store.selectionRevisions([A]) };
+    store.showReveal({ url: "https://x.test/d/review?link=a#t=tok", linkId: A, label: null, origin: "create" }, submitted);
+    expect([...store.getState().selection]).toEqual([B]);
+  });
+
   it("one write per lock: a second write under the same lock is refused whatever its scope, and a different lock goes ahead", async () => {
     const store = createReviewLinkStore("u:p");
     const first = deferred<void>();

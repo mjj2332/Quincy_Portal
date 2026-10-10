@@ -54,7 +54,7 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
       ...(passcode ? { passcode } : {}),
       allow: draft.allow,
     };
-    const sent = { videoIds: body.videoIds, draft: structuredClone(draft) };
+    const sent = { videoIds: body.videoIds, draft: structuredClone(draft), selectionRevs: store.selectionRevisions(body.videoIds) };
     void store.run("create", () => actions.create(body), (result) => store.showReveal({ url: result.url, linkId: result.link.id, label: result.link.label, origin: "create" }, sent));
   }
 

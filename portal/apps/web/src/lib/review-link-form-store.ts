@@ -52,6 +52,9 @@ export function createReviewLinkStore(key: string) {
   /** The op that owns each scope. */
   const owner = new Map<string, number>();
   const listeners = new Set<() => void>();
+  /** A revision per Video's tick, bumped whenever the tick is toggled, cleared or pruned: a create success clears only ticks unchanged since its submit. */
+  const tickRevs = new Map<string, number>();
+  const bump = (ids: Iterable<string>) => { for (const id of ids) tickRevs.set(id, (tickRevs.get(id) ?? 0) + 1); };
   const set = (next: ReviewLinkStoreState) => { if (dead) return; state = next; for (const listener of [...listeners]) listener(); };
   const update = (change: (current: ReviewLinkStoreState) => Partial<ReviewLinkStoreState>) => set({ ...state, ...change(state) });
   const without = <T,>(record: Readonly<Record<string, T>>, name: string): Record<string, T> => { const { [name]: _gone, ...rest } = record; return rest; };
@@ -63,12 +66,15 @@ export function createReviewLinkStore(key: string) {
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     getState: () => state,
 
-    toggleSelect(videoId: string) { update((s) => { const selection = new Set(s.selection); if (!selection.delete(videoId)) selection.add(videoId); return { selection }; }); },
-    clearSelection() { update(() => ({ selection: new Set() })); },
+    /** The tick revisions of these Videos, captured at submit and handed back to `showReveal`. */
+    selectionRevisions(videoIds: readonly string[]): Record<string, number> { return Object.fromEntries(videoIds.map((id) => [id, tickRevs.get(id) ?? 0])); },
+    toggleSelect(videoId: string) { bump([videoId]); update((s) => { const selection = new Set(s.selection); if (!selection.delete(videoId)) selection.add(videoId); return { selection }; }); },
+    clearSelection() { bump(state.selection); update(() => ({ selection: new Set() })); },
     /** Drops ticks for Videos that are no longer in the Project. */
     pruneSelection(existing: Iterable<string>) {
       const live = new Set(existing);
       if ([...state.selection].every((id) => live.has(id))) return;
+      bump([...state.selection].filter((id) => !live.has(id)));
       update((s) => ({ selection: new Set([...s.selection].filter((id) => live.has(id))) }));
     },
 
@@ -111,7 +117,7 @@ export function createReviewLinkStore(key: string) {
      * The create or replace answered: show the URL once. A created link clears what it was made from, and only that: with `submitted`
      * (the Videos and the draft as sent), a tick or field the person changed while the request was out stays. Without it, everything goes.
      */
-    showReveal(reveal: Reveal, submitted?: { videoIds: readonly string[]; draft: CreateDraft }) {
+    showReveal(reveal: Reveal, submitted?: { videoIds: readonly string[]; draft: CreateDraft; /** `selectionRevisions` at submit; a tick changed since stays. */ selectionRevs?: Readonly<Record<string, number>> }) {
       update((s) => {
         const reveals = queued([...s.reveals, reveal]);
         if (reveal.origin !== "create") return { ...reveals, view: { kind: "reveal" } };
@@ -129,7 +135,7 @@ export function createReviewLinkStore(key: string) {
           allow: now.allow.comments === sent.allow.comments && now.allow.approve === sent.allow.approve && now.allow.download === sent.allow.download ? { ...DEFAULT_ALLOW } : now.allow,
           grants,
         };
-        return { ...reveals, view: { kind: "reveal" }, selection: new Set([...s.selection].filter((id) => !submitted.videoIds.includes(id))), create };
+        return { ...reveals, view: { kind: "reveal" }, selection: new Set([...s.selection].filter((id) => !submitted.videoIds.includes(id) || (submitted.selectionRevs !== undefined && (tickRevs.get(id) ?? 0) !== submitted.selectionRevs[id]))), create };
       });
     },
     dismissReveal() {
