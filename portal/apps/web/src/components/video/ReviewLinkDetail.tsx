@@ -66,7 +66,9 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
   const expiry = expiryChanged ? expiryDayToIso(expiryValue, now) : null;
   const passcodeError = passcodeProblem(draft.passcode);
   const saving = state.pending.has(`patch:${linkId}`);
-  const canSave = !locked && dirty && !saving && passcodeError === null && (expiry === null || expiry.ok);
+  // One write in flight per link (see the store's `run`): while any is out, every control that would start another is off.
+  const busyLink = [...state.pending].some((scope) => belongsTo(scope, linkId));
+  const canSave = !locked && dirty && !busyLink && passcodeError === null && (expiry === null || expiry.ok);
   const problems = Object.entries(state.problems).filter(([scope]) => belongsTo(scope, linkId));
   const memberIds = new Set(link.videos.map((member) => member.videoId));
   const available = videos.filter((video) => !memberIds.has(video.id));
@@ -80,7 +82,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
       ...(allowChanges.length > 0 ? { allow: Object.fromEntries(allowChanges.map((key) => [key, allowValue[key]])) } : {}),
     };
     const sent = structuredClone(draft);
-    void store.run(`patch:${linkId}`, () => actions.patch(linkId, patch), () => store.settleDetail(linkId, sent));
+    void store.run(`patch:${linkId}`, () => actions.patch(linkId, patch), () => store.settleDetail(linkId, sent), undefined, linkId);
   }
 
   function toggleVersion(member: ReviewLinkDto["videos"][number], video: VideoDto | undefined, assetId: string) {
@@ -88,14 +90,14 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
     const order = video ? video.versions.map((version) => version.assetId) : member.grants.map((grant) => grant.assetId);
     const next = order.filter((id) => (id === assetId ? !granted.has(id) : granted.has(id)));
     if (next.length === 0) return;
-    void store.run(`grants:${linkId}:${member.videoId}`, () => actions.setGrants(linkId, member.videoId, next), () => undefined);
+    void store.run(`grants:${linkId}:${member.videoId}`, () => actions.setGrants(linkId, member.videoId, next), () => undefined, undefined, linkId);
   }
 
   function run(action: Confirm) {
     setConfirm(null);
-    if (action.kind === "remove") void store.run(`remove:${linkId}:${action.videoId}`, () => actions.removeVideo(linkId, action.videoId), () => undefined);
-    else if (action.kind === "revoke") void store.run(`revoke:${linkId}`, () => actions.revoke(linkId), () => undefined);
-    else void store.run(`replace:${linkId}`, () => actions.replace(linkId), (result) => store.showReveal({ url: result.url, linkId, label: result.link.label, origin: "replace" }));
+    if (action.kind === "remove") void store.run(`remove:${linkId}:${action.videoId}`, () => actions.removeVideo(linkId, action.videoId), () => undefined, undefined, linkId);
+    else if (action.kind === "revoke") void store.run(`revoke:${linkId}`, () => actions.revoke(linkId), () => undefined, undefined, linkId);
+    else void store.run(`replace:${linkId}`, () => actions.replace(linkId), (result) => store.showReveal({ url: result.url, linkId, label: result.link.label, origin: "replace" }), undefined, linkId);
   }
 
   return <div data-testid="review-link-detail" className="grid gap-[var(--space-5)]">
@@ -136,7 +138,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
           const video = videos.find((candidate) => candidate.id === member.videoId);
           const granted = new Set(member.grants.map((grant) => grant.assetId));
           const versions = video ? video.versions : member.grants.map((grant) => ({ assetId: grant.assetId, version: grant.version, current: false, uploadedBy: null, createdAt: null }));
-          const busy = state.pending.has(`grants:${linkId}:${member.videoId}`) || state.pending.has(`remove:${linkId}:${member.videoId}`);
+          const busy = busyLink;
           return <Item key={member.videoId} variant="outline" data-testid="review-link-member" className="flex-wrap items-start">
             <ItemContent>
               <ItemTitle>{member.title}</ItemTitle>
@@ -159,8 +161,8 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
         })}
       </ItemGroup>
       {!locked && (available.length > 0
-        ? <Combobox<VideoDto> items={available} value={null} onValueChange={(video) => { if (video) void store.run(`add:${linkId}`, () => actions.addVideo(linkId, video.id, [video.currentAssetId]), () => undefined); }} itemToStringLabel={(video) => video.title} itemToStringValue={(video) => video.id} isItemEqualToValue={(a, b) => a.id === b.id}>
-          <ComboboxTrigger aria-label="Add a Video" disabled={state.pending.has(`add:${linkId}`)} className={buttonClasses("secondary", { className: "min-h-11 justify-between self-start" })}>{state.pending.has(`add:${linkId}`) ? "Adding…" : "Add a Video"}</ComboboxTrigger>
+        ? <Combobox<VideoDto> items={available} value={null} onValueChange={(video) => { if (video) void store.run(`add:${linkId}`, () => actions.addVideo(linkId, video.id, [video.currentAssetId]), () => undefined, undefined, linkId); }} itemToStringLabel={(video) => video.title} itemToStringValue={(video) => video.id} isItemEqualToValue={(a, b) => a.id === b.id}>
+          <ComboboxTrigger aria-label="Add a Video" disabled={busyLink} className={buttonClasses("secondary", { className: "min-h-11 justify-between self-start" })}>{state.pending.has(`add:${linkId}`) ? "Adding…" : "Add a Video"}</ComboboxTrigger>
           <ComboboxContent className="min-w-[max(var(--anchor-width),240px)] max-w-[calc(100vw-2*var(--space-4))]">
             <ComboboxInput showTrigger={false} placeholder="Search films…" aria-label="Search films" />
             <ComboboxEmpty>No matching film</ComboboxEmpty>
@@ -184,8 +186,8 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
 
     {!revoked && <section aria-label="Danger zone" className="grid gap-[var(--space-2)]">
       <div data-testid="review-link-actions" className="flex flex-wrap gap-[var(--space-2)]">
-        <Button type="button" variant="secondary" className="min-h-11" disabled={ui.archived || expired || state.pending.has(`replace:${linkId}`)} onClick={() => setConfirm({ kind: "replace" })}>Replace link</Button>
-        <Button type="button" variant="danger" className="min-h-11" disabled={state.pending.has(`revoke:${linkId}`)} onClick={() => setConfirm({ kind: "revoke" })}>Revoke link</Button>
+        <Button type="button" variant="secondary" className="min-h-11" disabled={ui.archived || expired || busyLink} onClick={() => setConfirm({ kind: "replace" })}>Replace link</Button>
+        <Button type="button" variant="danger" className="min-h-11" disabled={busyLink} onClick={() => setConfirm({ kind: "revoke" })}>Revoke link</Button>
       </div>
       {expired && <p className={MUTED}>Expired links can't be replaced. Extend the expiry first, then replace it.</p>}
     </section>}

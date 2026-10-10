@@ -23,7 +23,7 @@ export function ReviewLinksHost({ ui, videos }: { ui: ReviewLinksUi; videos: Vid
   // A Video that left the Project takes its tick with it.
   useEffect(() => { store.pruneSelection(videoIds === "" ? [] : videoIds.split(",")); }, [store, videoIds]);
   if (!ui.enabled) return null;
-  const { view, reveal } = state;
+  const { view, reveal, reveals } = state;
   return <>
     <div className="flex justify-end">
       <Button type="button" variant="secondary" className="min-h-11" data-testid="review-links-open" onClick={store.openList}>Review links</Button>
@@ -35,7 +35,7 @@ export function ReviewLinksHost({ ui, videos }: { ui: ReviewLinksUi; videos: Vid
           {view.kind === "list" && <ReviewLinkList ui={ui} />}
           {view.kind === "create" && ui.canWrite && <ReviewLinkCreateView ui={ui} videos={videos} />}
           {view.kind === "detail" && <ReviewLinkDetail ui={ui} videos={videos} linkId={view.linkId} />}
-          {view.kind === "reveal" && reveal && <ReviewLinkReveal reveal={reveal} onDone={store.dismissReveal} />}
+          {view.kind === "reveal" && reveal && <ReviewLinkReveal reveal={reveal} queued={reveals.length} onDone={store.dismissReveal} />}
         </OverlayContainerContext.Provider>
         <div ref={setSlot} />
       </DialogContent>

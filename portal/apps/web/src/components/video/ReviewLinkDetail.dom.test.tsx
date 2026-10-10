@@ -344,3 +344,90 @@ describe("a write's own answer is the truth until the refetch lands", () => {
     expect(save().disabled).toBe(false);
   });
 });
+
+describe("one write in flight per link", () => {
+  const B2 = id(204);
+  const TEASER2 = videoOf(V2, "Teaser", [[B2, 2, true], [B1, 1, false]]);
+  const twoMembers = (walk: Array<[string, number]>, teaser: Array<[string, number]>) => linkOf({ videos: [member(V1, "Main walkthrough", walk), member(V2, "Teaser", teaser)] });
+  const later = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; };
+
+  it("grant on one Video locks every control of the link, so a second Video's grant cannot overlap and be undone by a late answer", async () => {
+    state.videos = [WALK, TEASER2];
+    state.links = [twoMembers([[A2, 2]], [[B2, 2]])];
+    const a = later<unknown>();
+    apiPutMock.mockReturnValueOnce(a.promise);
+    await mount(); await openDetailOf("Smith family");
+    await press(checkbox("Main walkthrough v1", detail()));
+    expect(checkbox("Teaser v1", detail())!.disabled).toBe(true);
+    await press(checkbox("Teaser v1", detail()));
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    await act(async () => { a.resolve({ link: twoMembers([[A2, 2], [A1, 1]], [[B2, 2]]) }); });
+    await flush();
+    expect(checkbox("Teaser v1", detail())!.disabled).toBe(false);
+    apiPutMock.mockResolvedValueOnce({ link: twoMembers([[A2, 2], [A1, 1]], [[B2, 2], [B1, 1]]) });
+    await press(checkbox("Teaser v1", detail()));
+    expect(apiPutMock).toHaveBeenLastCalledWith(`${base}/videos/${V2}/grants`, { assetIds: [B2, B1] });
+  });
+
+  it("a grant, a Remove and a Save tried together go one at a time, each built on the last answer", async () => {
+    state.videos = [WALK, TEASER2];
+    state.links = [twoMembers([[A2, 2]], [[B2, 2]])];
+    const grant = later<unknown>();
+    apiPutMock.mockReturnValueOnce(grant.promise);
+    apiDeleteMock.mockResolvedValue(undefined);
+    apiPatchMock.mockImplementation(async () => { state.links = [linkOf({ label: "Renamed", videos: [member(V1, "Main walkthrough", [[A2, 2], [A1, 1]])] })]; return { link: state.links[0] }; });
+    await mount(); await openDetailOf("Smith family");
+    await type(q<HTMLInputElement>("#review-link-detail-label", detail()), "Renamed");
+    await press(checkbox("Main walkthrough v1", detail()));
+    // everything else on the link is locked while the grant is out
+    expect(buttonIn(detail(), "Remove Teaser from link")!.disabled).toBe(true);
+    expect(save().disabled).toBe(true);
+    expect(buttonIn(detail(), "Replace link")!.disabled).toBe(true);
+    expect(buttonIn(detail(), "Revoke link")!.disabled).toBe(true);
+    await press(buttonIn(detail(), "Remove Teaser from link")); await press(save());
+    expect(apiDeleteMock).not.toHaveBeenCalled(); expect(apiPatchMock).not.toHaveBeenCalled();
+    // the server keeps the truth, so the refetch after each write returns it
+    await act(async () => { state.links = [twoMembers([[A2, 2], [A1, 1]], [[B2, 2]])]; grant.resolve({ link: state.links[0] }); });
+    await flush();
+    apiDeleteMock.mockImplementation(async () => { state.links = [linkOf({ videos: [member(V1, "Main walkthrough", [[A2, 2], [A1, 1]])] })]; });
+    await confirm("Remove Teaser from link", "Remove Video");
+    expect(apiDeleteMock).toHaveBeenCalledWith(`${base}/videos/${V2}`);
+    await flush();
+    expect(all('[data-testid="review-link-member"]')).toHaveLength(1);
+    expect(checkbox("Main walkthrough v1", detail())!.checked).toBe(true);
+    await press(save());
+    expect(apiPatchMock).toHaveBeenCalledWith(base, { label: "Renamed" });
+    expect(q<HTMLInputElement>("#review-link-detail-label", detail())!.value).toBe("Renamed");
+    expect(checkbox("Main walkthrough v1", detail())!.checked).toBe(true);
+  });
+});
+
+describe("one-time URLs are never overwritten", () => {
+  it("a create that lands after a replace queues behind it: 1 of 2, then the other once dismissed", async () => {
+    state.links = [linkOf(), linkOf({ id: L2, label: "Jones" })];
+    const created = later2();
+    apiPostMock.mockImplementation(async (path) => {
+      if (path.endsWith("/review-links")) return created.promise;
+      if (path.endsWith(`${L2}/replace`)) return { link: linkOf({ id: L2, label: "Jones" }), url: `https://quincy.test/d/review?link=${L2}#t=replaced` };
+      throw new Error(path);
+    });
+    await mount();
+    await press(checkbox("Select Teaser"));
+    await press(buttonIn(q('[data-testid="review-link-selection-bar"]'), "Create Review link"));
+    await press(buttonIn(dialog(), "Create link"));
+    await press(buttonIn(dialog(), "Close"));
+    await openList(); await press(button("Manage Jones"));
+    await confirm("Replace link", "Replace");
+    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toContain("#t=replaced");
+    await act(async () => { created.resolve({ link: linkOf({ id: L1 }), url: `https://quincy.test/d/review?link=${L1}#t=created` }); });
+    await flush();
+    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toContain("#t=replaced");
+    expect(text(q('[data-testid="review-link-reveal"]'))).toContain("1 of 2");
+    await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
+    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toContain("#t=created");
+    expect(text(q('[data-testid="review-link-reveal"]'))).not.toContain("of 2");
+    await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
+    expect(q('input[aria-label="Review link URL"]')).toBeNull();
+  });
+});
+function later2() { let resolve!: (value: unknown) => void; const promise = new Promise<unknown>((r) => { resolve = r; }); return { promise, resolve }; }

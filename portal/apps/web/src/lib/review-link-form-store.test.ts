@@ -157,4 +157,52 @@ describe("review link form store (#741 11b)", () => {
     expect(s.create.grants[A]).toBeUndefined();
     expect(s.create.grants[B]).toEqual(["y"]);
   });
+
+  it("one write per lock: a second write under the same lock is refused whatever its scope, and a different lock goes ahead", async () => {
+    const store = createReviewLinkStore("u:p");
+    const first = deferred<void>();
+    void store.run(`grants:${A}:v1`, () => first.promise, vi.fn(), undefined, A);
+    expect(await store.run(`patch:${A}`, () => Promise.resolve(), vi.fn(), undefined, A)).toBe(false);
+    expect(await store.run(`revoke:${B}`, () => Promise.resolve(), vi.fn(), undefined, B)).toBe(true);
+    first.resolve();
+    await Promise.resolve(); await Promise.resolve();
+    expect(await store.run(`patch:${A}`, () => Promise.resolve(), vi.fn(), undefined, A)).toBe(true);
+  });
+
+  it("one-time URLs queue: a second never overwrites the first, and each goes only when dismissed", () => {
+    const store = createReviewLinkStore("u:p");
+    store.showReveal({ url: "https://x.test/d/review?link=a#t=first", linkId: A, label: "A", origin: "replace" });
+    store.showReveal({ url: "https://x.test/d/review?link=b#t=second", linkId: B, label: "B", origin: "create" });
+    expect(store.getState().reveals.map((r) => r.url)).toEqual(["https://x.test/d/review?link=a#t=first", "https://x.test/d/review?link=b#t=second"]);
+    expect(store.getState().reveal?.url).toContain("#t=first");
+    store.dismissReveal();
+    expect(store.getState().view.kind).toBe("reveal");
+    expect(store.getState().reveal?.url).toContain("#t=second");
+    store.dismissReveal();
+    expect(store.getState().reveals).toEqual([]);
+    expect(store.getState().view).toEqual({ kind: "detail", linkId: B });
+  });
+
+  it("closing the dialog on a reveal drops only the one on screen", () => {
+    const store = createReviewLinkStore("u:p");
+    store.showReveal({ url: "https://x.test/d/review?link=a#t=first", linkId: A, label: null, origin: "replace" });
+    store.showReveal({ url: "https://x.test/d/review?link=b#t=second", linkId: B, label: null, origin: "replace" });
+    store.closeDialog();
+    expect(store.getState().reveal?.url).toContain("#t=second");
+    expect(store.getState().view.kind).toBe("reveal");
+    store.closeDialog();
+    expect(store.getState().reveals).toEqual([]);
+    expect(store.getState().view.kind).toBe("closed");
+  });
+
+  it("three mixed writes on one link started together: only the first goes out, so there is no reverse-order answer to apply", async () => {
+    const store = createReviewLinkStore("u:p");
+    const sent: string[] = [];
+    const gates = [deferred<void>(), deferred<void>(), deferred<void>()];
+    const start = (scope: string, i: number) => store.run(scope, () => { sent.push(scope); return gates[i]!.promise; }, vi.fn(), undefined, A);
+    const results = [start(`grants:${A}:v1`, 0), start(`remove:${A}:v2`, 1), start(`patch:${A}`, 2)];
+    gates[2]!.resolve(); gates[1]!.resolve(); gates[0]!.resolve();
+    expect(await Promise.all(results)).toEqual([true, false, false]);
+    expect(sent).toEqual([`grants:${A}:v1`]);
+  });
 });

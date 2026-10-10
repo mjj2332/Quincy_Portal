@@ -27,6 +27,9 @@ export type ReviewLinkStoreState = {
   view: ReviewLinkView;
   create: CreateDraft;
   details: Readonly<Record<string, DetailDraft>>;
+  /** The one-time URLs waiting to be read, oldest first; none is ever replaced, each goes only when dismissed. */
+  reveals: readonly Reveal[];
+  /** The one on screen: `reveals[0]`. */
   reveal: Reveal | null;
   /** Scopes with a request out. */
   pending: ReadonlySet<string>;
@@ -37,7 +40,8 @@ export type ReviewLinkStoreState = {
 const emptyCreate = (): CreateDraft => ({ label: "", passcode: "", expiryDay: null, allow: { ...DEFAULT_ALLOW }, grants: {} });
 export const emptyDetail = (): DetailDraft => ({ label: null, expiryDay: null, passcode: "", removePasscode: false, allow: {} });
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((value, index) => value === b[index]);
-const initial = (): ReviewLinkStoreState => ({ selection: new Set(), view: { kind: "closed" }, create: emptyCreate(), details: {}, reveal: null, pending: new Set(), problems: {} });
+const queued = (reveals: readonly Reveal[]): Pick<ReviewLinkStoreState, "reveals" | "reveal"> => ({ reveals, reveal: reveals[0] ?? null });
+const initial = (): ReviewLinkStoreState => ({ selection: new Set(), view: { kind: "closed" }, create: emptyCreate(), details: {}, reveals: [], reveal: null, pending: new Set(), problems: {} });
 
 export type ReviewLinkStore = ReturnType<typeof createReviewLinkStore>;
 
@@ -71,8 +75,14 @@ export function createReviewLinkStore(key: string) {
     openList() { update(() => ({ view: { kind: "list" } })); },
     openCreate() { update(() => ({ view: { kind: "create" } })); },
     openDetail(linkId: string) { update(() => ({ view: { kind: "detail", linkId } })); },
-    /** Closing never cancels a request and never discards a draft; it does discard the one-time URL. */
-    closeDialog() { update(() => ({ view: { kind: "closed" }, reveal: null })); },
+    /** Closing never cancels a request and never discards a draft; it does discard the one-time URL on screen. */
+    closeDialog() {
+      update((s) => {
+        // On a reveal, closing dismisses the URL on screen and nothing else: a second one waiting is still unread.
+        if (s.view.kind === "reveal" && s.reveals.length > 1) return queued(s.reveals.slice(1));
+        return { view: { kind: "closed" }, ...queued([]) };
+      });
+    },
 
     patchCreate(change: Partial<Omit<CreateDraft, "grants">>) { update((s) => ({ create: { ...s.create, ...change } })); },
     setGrant(videoId: string, assetIds: readonly string[]) { update((s) => ({ create: { ...s.create, grants: { ...s.create.grants, [videoId]: assetIds } } })); },
@@ -103,8 +113,9 @@ export function createReviewLinkStore(key: string) {
      */
     showReveal(reveal: Reveal, submitted?: { videoIds: readonly string[]; draft: CreateDraft }) {
       update((s) => {
-        if (reveal.origin !== "create") return { reveal, view: { kind: "reveal" } };
-        if (!submitted) return { reveal, view: { kind: "reveal" }, selection: new Set<string>(), create: emptyCreate() };
+        const reveals = queued([...s.reveals, reveal]);
+        if (reveal.origin !== "create") return { ...reveals, view: { kind: "reveal" } };
+        if (!submitted) return { ...reveals, view: { kind: "reveal" }, selection: new Set<string>(), create: emptyCreate() };
         const sent = submitted.draft; const now = s.create;
         const grants: Record<string, readonly string[]> = {};
         for (const [videoId, ids] of Object.entries(now.grants)) {
@@ -118,33 +129,38 @@ export function createReviewLinkStore(key: string) {
           allow: now.allow.comments === sent.allow.comments && now.allow.approve === sent.allow.approve && now.allow.download === sent.allow.download ? { ...DEFAULT_ALLOW } : now.allow,
           grants,
         };
-        return { reveal, view: { kind: "reveal" }, selection: new Set([...s.selection].filter((id) => !submitted.videoIds.includes(id))), create };
+        return { ...reveals, view: { kind: "reveal" }, selection: new Set([...s.selection].filter((id) => !submitted.videoIds.includes(id))), create };
       });
     },
     dismissReveal() {
-      const linkId = state.reveal?.linkId;
-      update(() => ({ reveal: null, view: linkId ? { kind: "detail", linkId } : { kind: "list" } }));
+      update((s) => {
+        const [done, ...rest] = s.reveals;
+        if (rest.length > 0) return queued(rest);
+        return { ...queued([]), view: done ? { kind: "detail", linkId: done.linkId } : { kind: "list" } };
+      });
     },
 
     clearProblem(scope: string) { if (state.problems[scope]) update((s) => ({ problems: without(s.problems, scope) })); },
 
     /**
-     * Sends one request for `scope`. Refused (false) while that scope already has one out. `ok` runs only if this op still owns the scope
+     * Sends one request for `scope`. Refused (false) while its `lock` (default: the scope itself) already has one out. Every write on a
+     * link passes the link id as the lock: ONE WRITE IN FLIGHT PER LINK, so responses cannot arrive out of order for a link and a later
+     * one is always built on the earlier answer (the UI locks the link's controls while `pending` holds any of its scopes). `ok` runs only if this op still owns the scope
      * (nothing cancelled or retired it meanwhile); a failure leaves a classified problem on the scope. Resolves to whether it succeeded.
      */
-    async run<T>(scope: string, task: () => Promise<T>, ok: (result: T) => void, onFail?: (problem: Problem) => void): Promise<boolean> {
-      if (dead || owner.has(scope)) return false;
+    async run<T>(scope: string, task: () => Promise<T>, ok: (result: T) => void, onFail?: (problem: Problem) => void, lock: string = scope): Promise<boolean> {
+      if (dead || owner.has(lock)) return false;
       const op = nextOp++;
-      owner.set(scope, op);
+      owner.set(lock, op);
       update((s) => ({ pending: new Set(s.pending).add(scope), problems: without(s.problems, scope) }));
-      const settle = () => { owner.delete(scope); update((s) => { const pending = new Set(s.pending); pending.delete(scope); return { pending }; }); };
+      const settle = () => { owner.delete(lock); update((s) => { const pending = new Set(s.pending); pending.delete(scope); return { pending }; }); };
       try {
         const result = await task();
-        if (owner.get(scope) !== op) return false;
+        if (owner.get(lock) !== op) return false;
         settle(); ok(result);
         return true;
       } catch (error) {
-        if (owner.get(scope) !== op) return false;
+        if (owner.get(lock) !== op) return false;
         const classified = classifyReviewLinkError(error);
         const problem: Problem = { text: classified.text, action: classified.action };
         settle();

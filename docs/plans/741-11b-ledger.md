@@ -24,3 +24,7 @@ Searches run: `mcp__ReUI__search` "share link dialog with copy URL input group a
 | Back to list | installed `quincy/Button` (`text`) + lucide `ChevronLeft` |
 
 No raw `<button>`, `<input>`, `<select>`, `<textarea>`, `<dialog>` or widget role was added outside `components/reui/` and `components/quincy/`; `ui-primitive-allowlist.ts` is unchanged.
+
+## Ordering notes (Sol round 2)
+- **Rule A, one write in flight per link.** Design: a per-link lock in `review-link-form-store.run` (the link id is the lock; every write on a link, whatever its scope, is refused while another is out). The detail disables every write control of the link while any of its scopes is pending, so a response can only be the latest write for that link and is applied to the cache as such. Chosen over a queue because the UI already locks and a queued write would be built on a stale set.
+- **Rule B, reveals queue.** `reveals` holds every successful create/replace URL; the dialog shows `reveals[0]` with "1 of N" and drops one only on Done/close.
