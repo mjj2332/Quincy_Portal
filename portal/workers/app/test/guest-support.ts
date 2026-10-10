@@ -7,8 +7,8 @@ import { clearVideoFlags, setVideoFlags } from "./video-review-support";
 export const guestOrigin = baseEnv.APP_ORIGIN;
 export const GUEST_WINDOW_MS = 15 * 60_000;
 
-/** Master flag, pilot scope and the `guest` part: what a guest link needs before any `/d` route answers. */
-export const guestFlags = (projectId: string = ids.project) => ["video_review", `video_review_pilot:${projectId}`, "video_review_guest"] as const;
+/** Master flag, pilot scope and the `guest` part (plus the two capability parts, `guest_comments` and `delivery`, which 13a makes the `allow` flags depend on): what a guest link needs before any `/d` route answers. */
+export const guestFlags = (projectId: string = ids.project) => ["video_review", `video_review_pilot:${projectId}`, "video_review_guest", "video_review_guest_comments", "video_review_delivery"] as const;
 export async function openGuestGate(projectId: string = ids.project) { await clearVideoFlags(); await setVideoFlags(...guestFlags(projectId)); }
 
 export type LinkInput = { projectId?: string; expiresAt?: number; passcodeHash?: string | null; kind?: "video_review" | "delivery"; revoked?: boolean; label?: string | null; generation?: number; allow?: [number, number, number] };
@@ -68,3 +68,42 @@ export async function linkWithSession(input: LinkInput = {}) {
 export const HYGIENE = { "referrer-policy": "no-referrer", "cache-control": "private, no-store", "x-robots-tag": "noindex", "x-content-type-options": "nosniff" } as const;
 export async function sha256Hex(value: string) { return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))].map((byte) => byte.toString(16).padStart(2, "0")).join(""); }
 export const clearGuestRows = async () => { await database.DB.batch([database.DB.prepare("DELETE FROM guest_rate_limits"), database.DB.prepare("DELETE FROM guest_sessions"), database.DB.prepare("DELETE FROM review_link_version_grants"), database.DB.prepare("DELETE FROM review_link_videos"), database.DB.prepare("DELETE FROM client_links WHERE kind = 'video_review'")]); };
+
+export type SentEmail = { from: string; to: string; subject: string; text: string; html: string };
+/**
+ * Replaces the Worker's `EMAIL` binding and sender address with a spy (the test and the Worker share one `env` object). `fail` makes `send` throw it. `restore()` puts the originals back.
+ * `configured: false` removes both, the way a Worker without the binding looks.
+ */
+export function mockEmail(options: { fail?: unknown; configured?: boolean } = {}) {
+  const mutable = baseEnv as unknown as Record<string, unknown>; const original = { email: mutable.EMAIL, from: mutable.NOTIFICATIONS_FROM_ADDRESS };
+  const sent: SentEmail[] = [];
+  if (options.configured === false) { delete mutable.EMAIL; delete mutable.NOTIFICATIONS_FROM_ADDRESS; }
+  else {
+    mutable.EMAIL = { send: async (message: SentEmail) => { if (options.fail !== undefined) throw options.fail; sent.push(message); return { messageId: `message-${sent.length}` }; } };
+    mutable.NOTIFICATIONS_FROM_ADDRESS = "studio@example.test";
+  }
+  return { sent, restore() { mutable.EMAIL = original.email; mutable.NOTIFICATIONS_FROM_ADDRESS = original.from; } };
+}
+
+/**
+ * Makes a started session a verified guest without the email round trip (13a's suite covers that flow): the reviewer, the membership and the session columns go in directly. The cookie is
+ * unchanged (no rotation), so a test can keep using the one it started with.
+ */
+export async function verifySession(link: { id: string; cookie: string }, input: { email?: string; name?: string | null } = {}) {
+  const sessionId = (await database.DB.prepare("SELECT id FROM guest_sessions WHERE token_hash = ?").bind(await hashToken(link.cookie.split("=")[1]!)).first<{ id: string }>())!.id;
+  const guestId = crypto.randomUUID(); const now = Date.now(); const email = input.email ?? `${guestId}@guest-13b.test`;
+  await database.DB.batch([
+    database.DB.prepare("INSERT INTO guest_reviewers (id, email_normalized, display_name, created_at) VALUES (?, ?, ?, ?)").bind(guestId, email, input.name === undefined ? "Gina Guest" : input.name, now),
+    database.DB.prepare("INSERT INTO guest_link_members (id, link_id, guest_id, first_verified_at, last_verified_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), link.id, guestId, now, now, now),
+    database.DB.prepare("UPDATE guest_sessions SET guest_id = ?, verified_at = ? WHERE id = ?").bind(guestId, now, sessionId),
+  ]);
+  return { guestId, sessionId, email };
+}
+
+/** A request whose body arrives `delayMs` after the headers, so the Worker has passed its entry checks when the state changes under it. Any method. */
+export function slowRequest(method: "POST" | "PATCH" | "DELETE", path: string, cookie: string, body: unknown, delayMs: number, headers: Record<string, string> = {}): Promise<Response> {
+  const bytes = new TextEncoder().encode(typeof body === "string" ? body : JSON.stringify(body));
+  const stream = new ReadableStream<Uint8Array>({ async start(controller) { await new Promise((resolve) => setTimeout(resolve, delayMs)); controller.enqueue(bytes); controller.close(); } });
+  const all = new Headers({ "cf-connecting-ip": freshIp(), cookie, origin: guestOrigin, "content-type": "application/json", ...headers });
+  return workerSelf.fetch(`https://portal.test${path}`, { method, headers: all, body: stream, duplex: "half" } as RequestInit);
+}

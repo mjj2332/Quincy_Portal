@@ -56,7 +56,7 @@ const iso = (ms: number) => new Date(ms).toISOString();
 /** The Project's Review links (or one), newest first, as the staff DTO. Never selects the token hash or the passcode hash itself. */
 export async function loadReviewLinkDtos(db: D1Database, projectId: string, now: number, linkId?: string): Promise<ReviewLinkDto[]> {
   const scope = "SELECT id FROM client_links WHERE project_id = ?1 AND kind = 'video_review' AND (?2 IS NULL OR id = ?2)";
-  const [links, videos, grants, activity] = await db.batch([
+  const [links, videos, grants, activity, guests] = await db.batch([
     db.prepare(`SELECT l.id, l.label, l.expires_at, l.created_at, l.revoked_at, l.passcode_hash IS NOT NULL AS has_passcode, l.allow_comments, l.allow_approve, l.allow_download,
         l.created_by, cu.name AS cu_name, cu.role AS cu_role, cu.active AS cu_active, l.revoked_by, ru.name AS ru_name, ru.role AS ru_role, ru.active AS ru_active
       FROM client_links l LEFT JOIN user cu ON cu.id = l.created_by LEFT JOIN user ru ON ru.id = l.revoked_by
@@ -67,7 +67,14 @@ export async function loadReviewLinkDtos(db: D1Database, projectId: string, now:
       WHERE g.revoked_at IS NULL AND g.link_id IN (${scope}) ORDER BY a.version, g.rowid`).bind(projectId, linkId ?? null),
     db.prepare(`SELECT s.link_id, SUM(CASE WHEN s.expires_at > ?3 AND s.link_generation = l.token_generation AND l.revoked_at IS NULL AND l.expires_at > ?3 THEN 1 ELSE 0 END) AS open_sessions, MAX(s.created_at) AS last_opened
       FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE s.link_id IN (${scope}) GROUP BY s.link_id`).bind(projectId, linkId ?? null, now),
+    // Guests who verified an email on the link (#741 13a): the only place staff see an address besides a note author.
+    db.prepare(`SELECT m.link_id, g.email_normalized AS email, g.display_name AS name, m.last_seen_at, m.unsubscribed_at FROM guest_link_members m JOIN guest_reviewers g ON g.id = m.guest_id
+      WHERE m.link_id IN (${scope}) ORDER BY m.first_verified_at, m.rowid`).bind(projectId, linkId ?? null),
   ]);
+  const guestMap = new Map<string, ReviewLinkDto["activity"]["verifiedGuests"]>();
+  for (const row of (guests!.results as Array<{ link_id: string; email: string; name: string | null; last_seen_at: number; unsubscribed_at: number | null }>)) {
+    const list = guestMap.get(row.link_id) ?? []; list.push({ email: row.email, name: row.name, lastSeenAt: iso(row.last_seen_at), unsubscribed: row.unsubscribed_at !== null }); guestMap.set(row.link_id, list);
+  }
   const grantMap = new Map<string, Array<{ assetId: string; version: number }>>();
   for (const row of (grants!.results as Array<{ link_id: string; video_id: string; asset_id: string; version: number }>)) {
     const key = `${row.link_id}:${row.video_id}`; const list = grantMap.get(key) ?? []; list.push({ assetId: row.asset_id, version: row.version }); grantMap.set(key, list);
@@ -84,7 +91,7 @@ export async function loadReviewLinkDtos(db: D1Database, projectId: string, now:
       id: row.id, label: row.label, status, createdAt: iso(row.created_at), createdBy: person(row.created_by, row.cu_name, row.cu_role, row.cu_active), expiresAt: iso(row.expires_at),
       revokedAt: row.revoked_at === null ? null : iso(row.revoked_at), revokedBy: person(row.revoked_by, row.ru_name, row.ru_role, row.ru_active), hasPasscode: row.has_passcode === 1,
       allow: { comments: row.allow_comments === 1, approve: row.allow_approve === 1, download: row.allow_download === 1 }, videos: videoMap.get(row.id) ?? [],
-      activity: { openSessions: Number(seen?.open_sessions ?? 0), lastOpenedAt: seen?.last_opened == null ? null : iso(seen.last_opened), verifiedGuests: [] },
+      activity: { openSessions: Number(seen?.open_sessions ?? 0), lastOpenedAt: seen?.last_opened == null ? null : iso(seen.last_opened), verifiedGuests: guestMap.get(row.id) ?? [] },
     };
   });
 }

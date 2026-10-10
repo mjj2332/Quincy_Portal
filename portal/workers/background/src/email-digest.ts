@@ -5,12 +5,13 @@ import {
   digestSlotAt,
   isDigestSlotDue,
   projectNotificationRoute,
+  VIDEO_REVIEW_NOTIFICATION_TYPES,
   staffPathFor,
   type EmailDigestCadence,
 } from "@quincy/shared";
 import { externalVisibleNotificationWhere } from "@quincy/db";
 import type { Env } from "./env";
-import { classifyEmailError } from "./notification-delivery";
+import { classifyEmailError, VIDEO_REVIEW_AUTHORIZED_SQL } from "./notification-delivery";
 
 /** #489: at most this many items are written into one email. The rest are still marked sent and summarised as "and N more". */
 export const EMAIL_DIGEST_MAX_ITEMS = 50;
@@ -76,6 +77,19 @@ const CLAIMABLE_ITEM = "(ledger_id IS NULL OR ledger_id IN (SELECT id FROM notif
  */
 const ACTIVITY_TYPE_LIST = EMAIL_DIGEST_ACTIVITY_TYPES.map(() => "?").join(", ");
 const ACTIVITY_EXCLUDED = `(notification_type IN (${ACTIVITY_TYPE_LIST}) AND EXISTS (SELECT 1 FROM notification_preferences np WHERE np.user_id = notification_digest_items.recipient_id AND np.include_project_activity = 0))`;
+
+/**
+ * #741 15a: a deferred video-review item is re-authorized from its outbox row when the digest composes it and again when it is admitted to `sending`: membership, role capability, epoch, the
+ * `notify_staff` gate and the live source, by the very predicate channel admission uses. `item` is the digest-item alias (or table name) the condition is correlated to.
+ */
+const VIDEO_REVIEW_TYPE_LIST = VIDEO_REVIEW_NOTIFICATION_TYPES.map((type) => `'${type}'`).join(", ");
+const videoReviewUnauthorized = (item: string) => `(${item}.notification_type IN (${VIDEO_REVIEW_TYPE_LIST}) AND NOT EXISTS (
+  SELECT 1 FROM notification_delivery_ledger vl
+  JOIN notification_outbox o ON o.id = vl.outbox_id
+  JOIN user recipient ON recipient.id = o.recipient_id
+  JOIN projects p ON p.id = o.project_id
+  WHERE vl.id = ${item}.ledger_id AND ${VIDEO_REVIEW_AUTHORIZED_SQL}
+))`;
 
 type DueRecipient = { recipientId: string; email: string; role: string; cadence: string };
 
@@ -194,6 +208,7 @@ async function sendDigestForRecipient(env: Env, recipient: DueRecipient, slotAt:
     dropRules.push({ state: "suppressed", code: "recipient_inactive", message: "Recipient is inactive.", condition: "1 = 1" });
   } else {
     dropRules.push({ state: "dropped_read", code: "digest_dropped_read", message: "Already read in the notification centre.", condition: "(notification_id IS NULL OR notification_id IN (SELECT id FROM notifications WHERE read_at IS NOT NULL))" });
+    dropRules.push({ state: "suppressed", code: "video_review_reauthorization_failed", message: "The video-review notification is no longer authorized.", condition: videoReviewUnauthorized("notification_digest_items") });
   }
   for (const rule of dropRules) {
     await env.DB.batch([
@@ -292,6 +307,10 @@ async function sendDigestForRecipient(env: Env, recipient: DueRecipient, slotAt:
           AND EXISTS (SELECT 1 FROM notification_preferences np WHERE np.user_id = i.recipient_id AND np.include_project_activity = 0)
       )
       AND (SELECT COUNT(*) FROM notification_digest_items i WHERE i.digest_id = notification_digests.id AND i.state = 'pending') = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM notification_digest_items i
+        WHERE i.digest_id = notification_digests.id AND i.state = 'pending' AND ${videoReviewUnauthorized("i")}
+      )
       AND NOT EXISTS (
         SELECT 1 FROM notification_digest_items i
         WHERE i.digest_id = notification_digests.id AND i.state = 'pending'

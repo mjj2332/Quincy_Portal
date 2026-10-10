@@ -69,6 +69,11 @@ export const EXTERNAL_LEGACY_NOTIFICATION_POLICY: Record<NotificationType, Exter
   project_deadline_reminder: { decision: "allowed", durableEvent: "project.deadline.reminder" },
   project_activity: { decision: "allowed", durableEvent: "project.activity.broad" },
   project_collaboration_activity: { decision: "allowed", durableEvent: "project.activity.broad" },
+  // #741 15a: an assigned External hears that something happened on a Video in their Project. The title names the Video, the Version and the actor, never note text.
+  video_version_uploaded: { decision: "allowed", durableEvent: "project.video_review.notification" },
+  video_note: { decision: "allowed", durableEvent: "project.video_review.notification" },
+  video_reply: { decision: "allowed", durableEvent: "project.video_review.notification" },
+  video_decision: { decision: "allowed", durableEvent: "project.video_review.notification" },
 };
 
 export type ExternalProjectDetailSafeField = (typeof SAFE_PROJECT_FIELDS)[number];

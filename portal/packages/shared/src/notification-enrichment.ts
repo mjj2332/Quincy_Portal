@@ -151,6 +151,11 @@ export const NOTIFICATION_ENRICHMENT: Record<NotificationType, NotificationEnric
   autohdr_stalled: SYSTEM,
   delivered: SYSTEM,
   project_deadline_reminder: SYSTEM,
+  // #741 15a: the stored title (composed at delivery) is final; there is no source row text to substitute.
+  video_version_uploaded: SYSTEM,
+  video_note: SYSTEM,
+  video_reply: SYSTEM,
+  video_decision: SYSTEM,
 };
 
 /**

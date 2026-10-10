@@ -73,8 +73,8 @@ export const reviewLinkDtoSchema = z.object({
   activity: z.object({
     openSessions: z.number().int().nonnegative(),
     lastOpenedAt: isoDateTime.nullable(),
-    /** Empty until the guest email verification slice. */
-    verifiedGuests: z.array(z.object({ email: z.string(), lastSeenAt: isoDateTime, unsubscribed: z.boolean() }).strict()),
+    /** Guests who verified an email on this link (#741 13a). `name` is the last one they wrote, and null only for a reviewer row that has none. */
+    verifiedGuests: z.array(z.object({ email: z.string(), name: z.string().nullable(), lastSeenAt: isoDateTime, unsubscribed: z.boolean() }).strict()),
   }).strict(),
 }).strict();
 export type ReviewLinkDto = z.infer<typeof reviewLinkDtoSchema>;

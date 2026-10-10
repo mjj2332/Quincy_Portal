@@ -15,6 +15,8 @@ import { abortMultipart, completeMultipart, createMultipartPresign, PART_BYTES, 
 import { discardUnreferencedObject, enqueueEmbeddedMediaCleanup, settleThrownAdoption } from "../lib/embedded-media";
 import { readVideoReviewGate, videoReviewGate } from "../lib/video-review-gate";
 import { loadVideoDtos } from "../lib/video-dto";
+import { videoReviewOutboxStatements } from "../lib/video-review-notifications";
+import { publishOutboxDetached } from "../lib/server-timing";
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
@@ -349,6 +351,9 @@ videoUploadsRoutes.post("/projects/:projectId/video-uploads/:reservationId/compl
     db.prepare("UPDATE video_upload_reservations SET status = 'completed', completed_at = ?, updated_at = ? WHERE id = ? AND status = 'completing'").bind(now, now, row.id),
     db.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(row.collectionId, now)),
   );
+  // 15a: the Project's other members are told of the new Version (no text), fenced on the completion's audit row. Recipients are read now, just before the batch.
+  const notify = await videoReviewOutboxStatements(db, { kind: "video_version_uploaded", projectId, videoId: row.videoId, assetId: row.assetId, sourceId: row.assetId, actorId: user.id, excludeUserId: user.id, auditId: row.completionAuditId, occurredAt: now });
+  statements.push(...notify.statements);
   try { await db.batch(statements); }
   catch {
     const current = await loadReservation(db, row.id);
@@ -357,6 +362,7 @@ videoUploadsRoutes.post("/projects/:projectId/video-uploads/:reservationId/compl
     if (current?.status !== "completing") return unavailable(c);
     return c.json({ error: "Could not finish this upload. Try again.", code: "completion_failed" }, 409);
   }
+  if (notify.outboxIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, db, notify.outboxIds));
   return completedResponse(c, row, 201, probe.warnings);
 }));
 

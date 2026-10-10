@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { videoNoteListResponseSchema, videoNotePastePreviewResponseSchema, videoNoteThreadDtoSchema, type VideoNoteThreadDto } from "@quincy/shared";
-import { createVideoNote, editVideoNote, findNoteHead, readNoteMarkupSnapshot } from "../src/lib/video-notes";
+import { createVideoNote, editVideoNote, findNoteHead, readNoteMarkupSnapshot, userAuthor } from "../src/lib/video-notes";
 import { database, ids, request, seedFixture, type Who } from "./embedded-media-support";
 import { clearVideoFlags, clearVideoNotes, noteAudit, noteRow, SEED_STROKES_JSON, seedVideoNote, seedVideoVersion, setVideoFlags } from "./video-review-support";
 
@@ -167,7 +167,7 @@ describe("create with markup: the drawing-frame rule", () => {
   it("repeats the frame rule in the batch SQL: a write that bypasses the route inserts nothing", async () => {
     const version = await seedVideoVersion();
     const write = (startFrame: number, endFrame: number | null, drawingFrame: number) => createVideoNote(database.DB, {
-      projectId: ids.project, assetId: version.assetId, principal, visibility: "public", startFrame, endFrame, body: "x", now: Date.now(),
+      projectId: ids.project, assetId: version.assetId, author: userAuthor(principal), visibility: "public", startFrame, endFrame, body: "x", now: Date.now(),
       markup: { json: JSON.stringify(MARKUP), items: 1, bytes: JSON.stringify(MARKUP).length, drawingFrame },
     });
     for (const [s, e, d] of [[20, null, 21], [20, null, 19], [20, 30, 30], [20, 30, 19]] as const) expect((await write(s, e, d)).kind, `${s} ${e} ${d}`).toBe("gone");
@@ -269,7 +269,7 @@ describe("edit with markup", () => {
     const version = await seedVideoVersion(); const point = await seedVideoNote({ assetId: version.assetId, startFrame: 10, author: ids.member });
     const head = (await findNoteHead(database.DB, ids.project, point.id))!;
     const set = (drawingFrame: number) => ({ kind: "set" as const, json: JSON.stringify(MARKUP), items: 1, bytes: 10, drawingFrame });
-    const edit = (markup: Parameters<typeof editVideoNote>[1]["markup"], expectedRevision = 1) => editVideoNote(database.DB, { projectId: ids.project, note: head, principal, expectedRevision, body: head.body, startFrame: 10, endFrame: null, now: Date.now(), markup });
+    const edit = (markup: Parameters<typeof editVideoNote>[1]["markup"], expectedRevision = 1) => editVideoNote(database.DB, { projectId: ids.project, note: head, author: userAuthor(principal), expectedRevision, body: head.body, startFrame: 10, endFrame: null, now: Date.now(), markup });
     expect((await edit(set(11))).kind).not.toBe("ok");
     expect(await counts()).toMatchObject({ markup: 0, audits: 0 }); expect(await noteRow(point.id)).toMatchObject({ revision: 1, drawing_frame: null });
     expect((await edit(set(10), 5)).kind).toBe("conflict");
