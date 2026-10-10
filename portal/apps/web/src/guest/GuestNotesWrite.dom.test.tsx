@@ -605,6 +605,24 @@ describe("own notes", () => {
     await submit("guest-note-edit-form");
     expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 2, body: "Done" });
   });
+  it("disables a reply edit once the Project turns out to be archived, keeping its draft and sending nothing more", async () => {
+    const reply = (({ replies: _replies, ...rest }) => rest)(mine(7, { parentId: noteId(1), startFrame: null, body: "Will do", revision: 2 }));
+    notes = { [asset(10)]: [{ ...note(1), replies: [reply] }] };
+    extra = (url, init) => (url === `${BASE}/notes/${noteId(7)}` && init?.method === "PATCH" ? json({ error: "project_archived" }, 409) : undefined);
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    await typeInto(byId("guest-note-edit-body"), "Done");
+    await submit("guest-note-edit-form");
+    expect(requests("PATCH")).toHaveLength(1);
+    expect(byId("guest-archived-notice")).not.toBeNull();
+    expect((byId("guest-note-edit-body") as HTMLTextAreaElement).disabled).toBe(true);
+    expect((byId("guest-note-edit-save") as HTMLButtonElement).disabled).toBe(true);
+    await click(byId("guest-note-edit-save"));
+    await submit("guest-note-edit-form");
+    expect(requests("PATCH")).toHaveLength(1);
+    expect((byId("guest-note-edit-body") as HTMLTextAreaElement).value).toBe("Done");
+  });
   it("deletes only after the confirm, with the revision, and drops a hard-deleted thread", async () => {
     notes = { [asset(10)]: [mine(2, { revision: 3 })] };
     extra = (url, init) => (url === `${BASE}/notes/${noteId(2)}` && init?.method === "DELETE" ? json({ thread: null }) : undefined);

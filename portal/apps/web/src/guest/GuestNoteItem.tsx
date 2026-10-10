@@ -84,7 +84,7 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
 
   const saveEdit = async (event: FormEvent) => {
     event.preventDefault();
-    if (editDraft === null || editingNote === null || editStatus.pending) return;
+    if (!writing.canWrite || editDraft === null || editingNote === null || editStatus.pending) return;
     const text = editDraft.text.trim();
     if (text === "") { setEditStatus({ pending: false, problem: "A note can't be empty." }); return; }
     if (text === editDraft.baseText) { drafts.clear(editKey); setEditStatus(IDLE); return; }
@@ -99,7 +99,7 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
   };
   const sendReply = async (event: FormEvent) => {
     event.preventDefault();
-    if (replyDraft === null || replyStatus.pending) return;
+    if (!writing.canWrite || replyDraft === null || replyStatus.pending) return;
     const text = replyDraft.text.trim();
     if (text === "") { setReplyStatus({ pending: false, problem: "Write a reply first." }); return; }
     setReplyStatus({ pending: true, problem: null });
@@ -123,12 +123,12 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
 
   const body = (note: GuestNoteDto) => editDraft !== null && editDraft.noteId === note.id
     ? <form data-testid="guest-note-edit-form" aria-label="Edit your note" onSubmit={(event) => { void saveEdit(event); }} noValidate className="flex flex-col gap-[var(--space-2)]">
-      <Textarea data-testid="guest-note-edit-body" aria-label="Your note" autoFocus value={editDraft.text} disabled={editStatus.pending} onChange={(event) => { drafts.set(editKey, { ...editDraft, text: event.target.value }); }} />
+      <Textarea data-testid="guest-note-edit-body" aria-label="Your note" autoFocus value={editDraft.text} disabled={editStatus.pending || !writing.canWrite} onChange={(event) => { drafts.set(editKey, { ...editDraft, text: event.target.value }); }} />
       {editDraft.baseRevision !== note.revision && <p data-testid="guest-note-edit-latest" className="m-0 whitespace-pre-wrap text-foreground-secondary [font:var(--type-body-sm)] [overflow-wrap:anywhere]">{`Latest saved version: ${note.body}`}</p>}
       {editStatus.problem !== null && <p role="alert" data-testid="guest-note-edit-problem" className={PROBLEM}>{editStatus.problem}</p>}
       <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
         <Button type="button" variant="ghost" size="sm" data-testid="guest-note-edit-cancel" className={TOUCH} disabled={editStatus.pending} onClick={() => { drafts.clear(editKey); setEditStatus(IDLE); }}>Cancel</Button>
-        <Button type="submit" size="sm" data-testid="guest-note-edit-save" className={TOUCH} disabled={editStatus.pending}>Save</Button>
+        <Button type="submit" size="sm" data-testid="guest-note-edit-save" className={TOUCH} disabled={editStatus.pending || !writing.canWrite}>Save</Button>
       </div>
     </form>
     : <NoteText note={note} />;
@@ -149,11 +149,11 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
       {writing.canWrite && !thread.deleted && (replyDraft === null
         ? <div><Button type="button" variant="ghost" size="sm" data-testid="guest-note-reply-button" className={TOUCH} disabled={busy} onClick={() => { if (!writing.verified) writing.onNeedVerify(); else { setReplyStatus(IDLE); drafts.set(replyKey, { noteId: null, baseRevision: null, baseText: "", ackRevision: null, text: "" }); } }}>Reply</Button></div>
         : <form data-testid="guest-reply-form" aria-label="Reply" onSubmit={(event) => { void sendReply(event); }} noValidate className="flex flex-col gap-[var(--space-2)]">
-          <Textarea data-testid="guest-reply-body" aria-label="Your reply" autoFocus value={replyDraft.text} disabled={replyStatus.pending} onChange={(event) => { drafts.set(replyKey, { ...replyDraft, text: event.target.value }); }} />
+          <Textarea data-testid="guest-reply-body" aria-label="Your reply" autoFocus value={replyDraft.text} disabled={replyStatus.pending || !writing.canWrite} onChange={(event) => { drafts.set(replyKey, { ...replyDraft, text: event.target.value }); }} />
           {replyStatus.problem !== null && <p role="alert" data-testid="guest-reply-problem" className={PROBLEM}>{replyStatus.problem}</p>}
           <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
             <Button type="button" variant="ghost" size="sm" data-testid="guest-reply-cancel" className={TOUCH} disabled={replyStatus.pending} onClick={() => { drafts.clear(replyKey); setReplyStatus(IDLE); }}>Cancel</Button>
-            <Button type="submit" size="sm" data-testid="guest-reply-send" className={TOUCH} disabled={replyStatus.pending}>Send reply</Button>
+            <Button type="submit" size="sm" data-testid="guest-reply-send" className={TOUCH} disabled={replyStatus.pending || !writing.canWrite}>Send reply</Button>
           </div>
         </form>)}
     </ItemContent>
