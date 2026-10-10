@@ -380,6 +380,24 @@ describe("a paste that settles after the guest moved on", () => {
     expect(byId("guest-version-trigger")?.textContent).toMatch(/^v1/);
     expect(allById("guest-note-body").map((item) => item.textContent)).toEqual(["My note"]);
   });
+  it("does not fill the list or enable Paste when a slow preview for the old source lands after the source was switched", async () => {
+    videos = [videoOf(1, [versionOf(3), versionOf(2), versionOf(1)])];
+    notes = { [asset(2)]: [mine(7)], [asset(1)]: [] };
+    const url = `${BASE}/versions/${asset(3)}/note-paste/preview`;
+    let release: (response: Response) => void = () => undefined;
+    const held = new Promise<Response>((resolve) => { release = resolve; });
+    extra = (requested, init) => (requested === url && init?.method === "POST" ? held : undefined);
+    await open();
+    await openDialog();
+    await click(byId("guest-paste-source"));
+    await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.startsWith("v1")));
+    expect(byId("guest-paste-none")).not.toBeNull();
+    await act(async () => { release(json({ sourceVersion: 2, targetVersion: 3, offsetFrames: 0, rows: [mapped(7)] })); });
+    await flush();
+    expect(rowIds()).toEqual([]);
+    expect(byId("guest-paste-dialog")?.textContent).not.toContain("My note 7");
+    expect(byId("guest-paste-submit")?.hasAttribute("disabled")).toBe(true);
+  });
   it("does not show a preview that arrives after the dialog was cancelled", async () => {
     let release: (response: Response) => void = () => undefined;
     const held = new Promise<Response>((resolve) => { release = resolve; });

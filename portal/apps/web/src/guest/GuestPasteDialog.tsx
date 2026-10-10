@@ -25,7 +25,8 @@ type Mapped = Extract<GuestNotePasteRow, { status: "mapped" }>;
 type Skipped = Extract<GuestNotePasteRow, { status: "skipped" }>;
 /** `sourceId` is the Version the list was read for: a plan is only asked for notes that belong to the source now chosen. */
 type Own = { status: "loading" } | { status: "failed" } | { status: "ready"; sourceId: string; ids: string[]; drawn: number; capped: boolean };
-type View = { plan: GuestNotePastePreviewResponse | null; status: "idle" | "loading" | "ok" | "failed"; error: string | null };
+/** `key` is the `{source, target}` pair the plan was made for: a plan is only used while the pair on screen is the same. */
+type View = { plan: GuestNotePastePreviewResponse | null; status: "idle" | "loading" | "ok" | "failed"; error: string | null; key: string | null };
 
 const timecodeOf = (version: Version) => (frame: number) => framesToTimecode(frame, { nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame }, version.startTimecodeFrames ?? 0);
 
@@ -83,13 +84,14 @@ function PasteFlow({ api, writer, video, target, markupAllowed, generation, comm
   const [offset, setOffset] = useState(0);
   const [asked, setAsked] = useState(0);
   const [previewAttempt, setPreviewAttempt] = useState(0);
-  const [view, setView] = useState<View>({ plan: null, status: "idle", error: null });
+  const [view, setView] = useState<View>({ plan: null, status: "idle", error: null, key: null });
   const [unticked, setUnticked] = useState<ReadonlySet<string>>(() => new Set());
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  /** Moves on with every plan asked for, so only the newest answer is applied. */
-  const planSeq = useRef(0);
+  /** Names each preview call to the writer, so two in flight never share a key. */
+  const previewCalls = useRef(0);
+  const pairKey = `${source?.assetId ?? ""}|${target.assetId}`;
 
   // The offset field is always live; the plan follows it once it has rested.
   useEffect(() => {
@@ -103,7 +105,7 @@ function PasteFlow({ api, writer, video, target, markupAllowed, generation, comm
     if (source === undefined) return;
     const started = generation.current;
     let live = true;
-    setOwn({ status: "loading" }); setView({ plan: null, status: "idle", error: null }); setUnticked(new Set()); setNotice(null); setFailure(null);
+    setOwn({ status: "loading" }); setView({ plan: null, status: "idle", error: null, key: null }); setUnticked(new Set()); setNotice(null); setFailure(null);
     void api.notes(source.assetId).then((result) => {
       if (!live || generation.current !== started) return;
       if (result.kind === "gone") { onGone(); return; }
@@ -118,20 +120,24 @@ function PasteFlow({ api, writer, video, target, markupAllowed, generation, comm
   useEffect(() => {
     if (ids === null || ids.length === 0 || source === undefined) return;
     const started = generation.current;
-    const mine = ++planSeq.current;
+    const key = `${source.assetId}|${target.assetId}`;
+    const call = ++previewCalls.current;
+    let live = true;
     setView((current) => ({ ...current, status: "loading", error: null }));
-    void writer.run(`paste-preview:${target.assetId}:${mine}`, () => api.previewPaste(target.assetId, { sourceAssetId: source.assetId, noteIds: ids, offsetFrames: asked })).then((result) => {
-      if (generation.current !== started || planSeq.current !== mine) return;
+    void writer.run(`paste-preview:${target.assetId}:${call}`, () => api.previewPaste(target.assetId, { sourceAssetId: source.assetId, noteIds: ids, offsetFrames: asked })).then((result) => {
+      if (!live || generation.current !== started) return;
       if (result.kind === "stale" || result.kind === "busy") return;
-      if (result.kind === "ok" || result.kind === "changed") { setView({ plan: result.kind === "ok" ? result.value : result.preview, status: "ok", error: null }); return; }
+      if (result.kind === "ok" || result.kind === "changed") { setView({ plan: result.kind === "ok" ? result.value : result.preview, status: "ok", error: null, key }); return; }
       const text = pasteFailureText(result, "preview");
       if (text === null) { onClose(); return; } // verification lost, link gone or archived: the page has already been told
       setView((current) => ({ ...current, status: "failed", error: text }));
     });
+    // Whatever changes the question (notes, source, target, offset, a retry) or closes the flow makes this answer a stale one.
+    return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the plan depends on which notes, from where, to where and the offset
   }, [idsKey, asked, source?.assetId, target.assetId, previewAttempt]);
 
-  const plan = view.plan;
+  const plan = view.key === pairKey ? view.plan : null;
   const mapped = useMemo(() => (plan?.rows ?? []).filter((row): row is Mapped => row.status === "mapped"), [plan]);
   const left = useMemo(() => (plan?.rows ?? []).filter((row): row is Skipped => row.status === "skipped"), [plan]);
   const chosen = mapped.filter((row) => !unticked.has(row.noteId));
@@ -155,7 +161,7 @@ function PasteFlow({ api, writer, video, target, markupAllowed, generation, comm
     switch (result.kind) {
       case "busy": setFailure("Still pasting. Wait a moment, then try again."); return;
       case "ok": onPasted({ copied: result.value.copied, sourceVersion: result.value.sourceVersion }); onClose(); return;
-      case "changed": setView({ plan: result.preview, status: "ok", error: null }); setNotice("Some of your notes changed since you looked. Check the list, then paste again."); return;
+      case "changed": setView({ plan: result.preview, status: "ok", error: null, key: pairKey }); setNotice("Some of your notes changed since you looked. Check the list, then paste again."); return;
       case "unverified": case "gone": case "archived": onClose(); return;
       case "unreachable": onPasted(null); setFailure(pasteFailureText(result, "commit")); return;
       default: setFailure(pasteFailureText(result, "commit"));
