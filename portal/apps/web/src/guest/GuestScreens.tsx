@@ -19,7 +19,7 @@ export function UnavailableScreen() {
 }
 
 /** Seconds left on a rate-limit wait: 0 when there is none. `key` restarts it when the same wait arrives again. */
-function useCountdown(retryAfterSeconds: number | null, key: unknown): number {
+export function useCountdown(retryAfterSeconds: number | null, key: unknown): number {
   const [until, setUntil] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { if (retryAfterSeconds !== null) { setUntil(Date.now() + retryAfterSeconds * 1000); setNow(Date.now()); } }, [retryAfterSeconds, key]);

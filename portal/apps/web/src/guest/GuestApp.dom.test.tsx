@@ -7,6 +7,8 @@ import { mockViewport, type MockViewport } from "../testing/viewport";
 import { GuestApp } from "./GuestApp";
 import type { GuestApi } from "./guest-api";
 import { GuestVideoScreen } from "./GuestVideoScreen";
+import { createGuestWriter } from "./use-guest-writer";
+import { createGuestDrafts } from "./guest-drafts";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea reads (same stub as App-project-sheet.dom.test.tsx).
@@ -17,7 +19,7 @@ vi.mock("../components/LazyImage", () => ({ LazyImage: ({ src, alt, className }:
 const LINK = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const asset = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const vid = (n: number) => `11111111-1111-4111-8111-${String(n).padStart(12, "0")}`;
-const SESSION = { link: { label: "Smith house", expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: false, approve: false, download: false } }, verified: false, email: null, name: null };
+const SESSION = { link: { label: "Smith house", expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: false, approve: false, download: false, markup: true } }, verified: false, email: null, name: null };
 
 const versionOf = (n: number, over: Record<string, unknown> = {}) => ({
   assetId: asset(n), version: n, fps: { num: 25, den: 1 }, frameCount: 3000, durationMs: 120000, width: 1920, height: 1080, startTimecodeFrames: null, tcNominalFps: 25, tcDropFrame: false,
@@ -671,11 +673,17 @@ describe("Sol round 7", () => {
       videos: async () => { await gate; return { kind: "ok", value: [] }; },
       notes: async () => ({ kind: "ok", value: [] }),
       markup: async () => ({ kind: "gone" }),
+      sendCode: async () => ({ ok: false, reason: "gone" }),
+      verifyCode: async () => ({ ok: false, reason: "gone" }),
+      createNote: async () => ({ kind: "gone" }),
+      replyToNote: async () => ({ kind: "gone" }),
+      editNote: async () => ({ kind: "gone" }),
+      deleteNote: async () => ({ kind: "gone" }),
     };
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
-    await act(async () => { root!.render(<GuestVideoScreen api={api} videos={videos} index={0} onIndex={() => undefined} onBack={null} onUnavailable={onUnavailable} onGrantsChanged={onGrantsChanged} />); });
+    await act(async () => { root!.render(<GuestVideoScreen api={api} writer={createGuestWriter()} drafts={createGuestDrafts()} session={SESSION} onSession={() => undefined} archived={false} onArchived={() => undefined} videos={videos} index={0} onIndex={() => undefined} onBack={null} onUnavailable={onUnavailable} onGrantsChanged={onGrantsChanged} />); });
     await flush();
     await act(async () => { stub.fireError(host.querySelector("video")!); });
     await act(async () => { root!.unmount(); });

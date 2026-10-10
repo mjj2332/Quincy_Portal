@@ -6140,6 +6140,8 @@ Tags: focus-overlays, media-renditions · #741
 - **What broke, three review rounds running.** Note forms lived in React state and refs that remounted with the Version, the panel and the filters. So Post on v2, switch to v1 and back lost the pending state or double-posted; a success cleared the wrong form or a newer draft (compared by text); a frame confirmation outlived its form; a filter that hid the edited note discarded the edit; pausing for I/O raced the seek. Each fix patched one lifetime and exposed the next.
 - **Rule.** One store that outlives the components (created by the collection, one per person + Project, retired on a change of either). A completion addresses the slot (Version) and operation it started in, never "the form on screen", and acts only if that operation still owns the slot. Compare a draft revision captured at submit, not its text. Closing or hiding a view never discards a form; the filter pins the thread instead.
 - **Same rule again for the paste dialog (#741 5c-ui).** Pruning unticks after a stale refresh re-ticked notes the person had refused, and a commit's `pending` and completion lived in the dialog, so a late success after a remount cleared a newer draft. The store owns a per-Version paste op (`opId`, `status`, `previewRevision`); a completion acts only while its `opId` still owns it, and a stale refresh keeps Paste off until a fresh preview succeeds. Unticks are never pruned.
+- **Same rule again for the guest page (#741 13c, round 2).** The guest writer's in-flight set lived in the video screen, so All videos and back during a slow Post sent the note twice. It is created by `GuestApp` (`createGuestWriter`) and the screen only attaches to it; an answer for a screen that has gone applies nothing and tells the screen now on show to read the list again. A `null` list means "not read yet", never "the edited note is gone": judge that only after a completed read.
+- **Same rule again for the guest inline drafts (#741 13c, round 3).** Reply and reply-edit text lived in `GuestThreadItem` state, so closing the phone drawer or a re-verification (both unmount the list) lost it. `GuestApp` creates `createGuestDrafts` (`guest/guest-drafts.ts`); a draft is removed only by Cancel or a successful submit, and a completion clears it only if its `rev` is still the one it sent. Likewise a history keyed to a frame (the drawing undo stack) must remember its frame through the off / confirming phases, and a control that reads the live frame (Mark in / out) is off while a save is pending.
 - Related: "Don't mirror server reservation state on the client (#751)" is the same rule for uploads: state that outlives the view belongs to one owner, not the component.
 
 Guards: `lib/video-note-form-store.test.ts`, `components/video/VideoNotes.dom.test.tsx` ("form lifetime").
@@ -6153,6 +6155,14 @@ Tags: workers-runtime · #741
 
 Guards: `workers/app/test/zip-stream-crc.test.ts`.
 
+## `input-otp`'s `onComplete` fires on reaching six digits, not on every six-digit value (#741 13c)
+Tags: reui-vendor, testing-guards · #741
+
+- **What bit.** A DOM test set a six-digit code, got a retriable failure (rate limit, dropped connection) that left the code in the field, then set a different six-digit code and waited for `onComplete`. It never fired: the component calls it only when the value grows to `maxLength`, so a replacement of one full value by another is silent.
+- **Rule.** Anything that must be retriable with the same field content needs a real submit control (the verify dialog's Verify button is a form submit), and a test that wants a fresh completion clears the field first. A wrong or expired code clears the field itself, so the next entry completes normally.
+- **Also.** `data-testid="guest-note-reply"` already named the reply container on the guest page; a new control reused it and passed half its assertions. Give a new control its own id and grep the tree for the old one first.
+
+Guards: `guest/GuestVerifyDialog.dom.test.tsx`, `guest/GuestNotesWrite.dom.test.tsx`.
 ## Tailwind never generates an interpolated arbitrary value (#741 11b)
 Tags: css-tokens · #741
 
