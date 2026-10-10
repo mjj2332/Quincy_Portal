@@ -1,7 +1,7 @@
 import { useId, useMemo } from "react";
 import { useNow } from "../../lib/use-now";
 import type { ReviewLinkCreateInput, VideoDto } from "@quincy/shared";
-import { REVIEW_LINK_LABEL_MAX, REVIEW_LINK_MAX_VIDEOS, REVIEW_LINK_PASSCODE_MAX, REVIEW_LINK_PASSCODE_MIN } from "@quincy/shared";
+import { REVIEW_LINK_LABEL_MAX, REVIEW_LINK_MAX_GRANTS_PER_VIDEO, REVIEW_LINK_MAX_VIDEOS, REVIEW_LINK_PASSCODE_MAX, REVIEW_LINK_PASSCODE_MIN } from "@quincy/shared";
 import { defaultExpiryDay, expiryDayToIso } from "../../lib/review-link-expiry";
 import { formatVideoDate } from "./video-format";
 import { Button } from "../quincy/Button";
@@ -15,6 +15,8 @@ import { DIALOG_TITLE, ReviewLinkDialogFrame } from "./ReviewLinkDialogFrame";
 import { LEGEND, ReviewLinkAllowFields } from "./ReviewLinkAllowFields";
 import { useReviewLinkState, type ReviewLinksUi } from "./use-review-links-ui";
 
+/** Shown beside a film whose Versions have reached the most one link can share. */
+export const GRANT_LIMIT_HINT = `A film can share up to ${REVIEW_LINK_MAX_GRANTS_PER_VIDEO} Versions on a link.`;
 export const DIALOG_FIELD_LAYER = "z-[calc(var(--z-dialog)+1)]";
 export const passcodeProblem = (value: string): string | null => {
   const trimmed = value.trim();
@@ -36,10 +38,12 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
   const problem = state.problems["create"];
   const chosen = (video: VideoDto): readonly string[] => draft.grants[video.id] ?? [video.currentAssetId];
   const tooMany = selected.length > REVIEW_LINK_MAX_VIDEOS;
-  const ready = selected.length > 0 && !tooMany && expiry.ok && passcodeError === null && !pending;
+  const overLimit = selected.some((video) => chosen(video).length > REVIEW_LINK_MAX_GRANTS_PER_VIDEO);
+  const ready = selected.length > 0 && !tooMany && !overLimit && expiry.ok && passcodeError === null && !pending;
 
   function toggleVersion(video: VideoDto, assetId: string) {
     const current = chosen(video);
+    if (!current.includes(assetId) && current.length >= REVIEW_LINK_MAX_GRANTS_PER_VIDEO) return;
     const next = video.versions.map((version) => version.assetId).filter((id) => (id === assetId ? !current.includes(id) : current.includes(id)));
     if (next.length > 0) store.setGrant(video.id, next);
   }
@@ -87,15 +91,18 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
         {selected.map((video) => {
           const locked = chosen(video).length === 1;
           const hintId = `review-link-lock-hint-${video.id}`;
+          const limitId = `review-link-limit-hint-${video.id}`;
+          const full = chosen(video).length >= REVIEW_LINK_MAX_GRANTS_PER_VIDEO;
           return <div key={video.id} role="group" aria-label={video.title} className="grid gap-[var(--space-1)]" data-testid="review-link-create-video">
             <span className="[font:var(--weight-medium)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">{video.title}</span>
             {video.versions.map((version) => {
               const on = chosen(video).includes(version.assetId);
               return <label key={version.assetId} className="flex min-h-11 cursor-pointer items-center gap-[var(--space-3)] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">
-                <Checkbox aria-label={`${video.title} v${version.version}`} checked={on} disabled={on && locked} {...(on && locked ? { "aria-describedby": hintId } : {})} onChange={() => toggleVersion(video, version.assetId)} />
+                <Checkbox data-testid="review-link-version-checkbox" aria-label={`${video.title} v${version.version}`} checked={on} disabled={(on && locked) || (!on && full)} {...(on && locked ? { "aria-describedby": hintId } : !on && full ? { "aria-describedby": limitId } : {})} onChange={() => toggleVersion(video, version.assetId)} />
                 <span>{`v${version.version}${version.current ? " (current)" : ""} · ${version.uploadedBy.name} · ${formatVideoDate(version.createdAt)}`}</span>
               </label>;
             })}
+            {full && <FieldDescription id={limitId} data-testid="review-link-grant-limit-hint" className="text-foreground-secondary">{GRANT_LIMIT_HINT}</FieldDescription>}
             {locked && <FieldDescription id={hintId} className="text-foreground-secondary">A film needs at least one Version. Remove the film to stop sharing it.</FieldDescription>}
           </div>;
         })}

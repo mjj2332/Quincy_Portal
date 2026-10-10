@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ChevronLeft } from "lucide-react";
-import { REVIEW_LINK_LABEL_MAX, type ReviewLinkDto, type ReviewLinkPatchInput, type VideoDto } from "@quincy/shared";
+import { REVIEW_LINK_LABEL_MAX, REVIEW_LINK_MAX_GRANTS_PER_VIDEO, type ReviewLinkDto, type ReviewLinkPatchInput, type VideoDto } from "@quincy/shared";
 import { formatCivilDay, formatRelativeTime, sydneyDayKey } from "../../lib/date-format";
 import { expiryDayToIso } from "../../lib/review-link-expiry";
 import { emptyDetail, type Allow } from "../../lib/review-link-form-store";
@@ -17,7 +17,7 @@ import { DialogDescription, DialogHeader, DialogTitle } from "../reui/dialog";
 import { FieldDescription } from "../reui/field";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
 import { formatVideoDate } from "./video-format";
-import { DIALOG_FIELD_LAYER, passcodeProblem } from "./ReviewLinkCreateView";
+import { DIALOG_FIELD_LAYER, GRANT_LIMIT_HINT, passcodeProblem } from "./ReviewLinkCreateView";
 import { DIALOG_TITLE, ReviewLinkDialogFrame } from "./ReviewLinkDialogFrame";
 import { ReviewLinkAllowFields } from "./ReviewLinkAllowFields";
 import { activityLine, expiryLine, linkName } from "./ReviewLinkList";
@@ -93,7 +93,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
     const known = video ? video.versions.map((version) => version.assetId) : [];
     const order = [...known, ...member.grants.map((grant) => grant.assetId).filter((id) => !known.includes(id))];
     const next = order.filter((id) => (id === assetId ? !granted.has(id) : granted.has(id)));
-    if (next.length === 0) return;
+    if (next.length === 0 || (next.length > granted.size && next.length > REVIEW_LINK_MAX_GRANTS_PER_VIDEO)) return;
     void store.run(`grants:${linkId}:${member.videoId}`, () => actions.setGrants(linkId, member.videoId, next), () => undefined, undefined, linkId);
   }
 
@@ -148,6 +148,8 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
           const listed = new Set((video?.versions ?? []).map((version) => version.assetId));
           const versions = [...(video?.versions ?? []), ...member.grants.filter((grant) => !listed.has(grant.assetId)).map((grant) => ({ assetId: grant.assetId, version: grant.version, current: false, uploadedBy: null, createdAt: null, unlisted: true }))];
           const busy = busyLink;
+          const full = granted.size >= REVIEW_LINK_MAX_GRANTS_PER_VIDEO;
+          const limitId = `review-link-limit-hint-${member.videoId}`;
           return <Item key={member.videoId} variant="outline" data-testid="review-link-member" className="flex-wrap items-start">
             <ItemContent>
               <ItemTitle>{member.title}</ItemTitle>
@@ -156,11 +158,12 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
                 {versions.map((version) => {
                   const on = granted.has(version.assetId);
                   return <label key={version.assetId} className={`flex min-h-11 cursor-pointer items-center gap-[var(--space-3)] ${TEXT}`}>
-                    <Checkbox aria-label={`${member.title} v${version.version}`} checked={on} disabled={locked || busy || (on && granted.size === 1)} onChange={() => toggleVersion(member, video, version.assetId)} />
+                    <Checkbox data-testid="review-link-version-checkbox" aria-label={`${member.title} v${version.version}`} checked={on} disabled={locked || busy || (on && granted.size === 1) || (!on && full)} {...(!on && full ? { "aria-describedby": limitId } : {})} onChange={() => toggleVersion(member, video, version.assetId)} />
                     <span>{"unlisted" in version ? `Version ${version.version}` : `v${version.version}${version.current ? " (current)" : ""}${version.uploadedBy && version.createdAt ? ` · ${version.uploadedBy.name} · ${formatVideoDate(version.createdAt)}` : ""}`}</span>
                   </label>;
                 })}
               </div>
+              {!locked && full && <p id={limitId} data-testid="review-link-grant-limit-hint" className={MUTED}>{GRANT_LIMIT_HINT}</p>}
               {!locked && granted.size === 1 && <p className={MUTED}>Remove the film to stop sharing it.</p>}
             </ItemContent>
             {!locked && <ItemActions>

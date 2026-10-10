@@ -1,7 +1,8 @@
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
-import { id, A1, A2, B1, L1, L2, L3, NOW, PROJECT, V1, V2, TEASER, WALK, all, button, buttonIn, checkbox, dialog, flush, linkOf, member, mount, openList, setArchived, showTab, press, q, refused, selectFilms, state, text, toggle, type, unmount } from "@/testing/review-links-harness";
+import { onPrincipalTerminal } from "../../lib/principal-terminal";
+import { id, A1, A2, B1, L1, L2, L3, NOW, PROJECT, V1, V2, TEASER, WALK, all, button, buttonIn, checkbox, dialog, openDetailOf, videoOf, flush, linkOf, member, mount, openList, setArchived, showTab, press, q, refused, selectFilms, state, text, toggle, type, unmount } from "@/testing/review-links-harness";
 import "@/testing/dom-polyfills";
 
 /**
@@ -312,5 +313,89 @@ describe("create", () => {
     const bar = q('[data-testid="review-link-selection-bar"]');
     expect(text(bar)).toContain("at most 50");
     expect(buttonIn(bar, "Create Review link")!.disabled).toBe(true);
+  });
+});
+
+describe("a refused list read is handled like a refused write (#741 11b round 13)", () => {
+  it.each([[403, { error: "Forbidden" }], [404, { error: "Not found" }]])("a %s on the list read re-reads the gate and the Project, and the Review links controls disappear", async (status, body) => {
+    const gate = { reads: 0, parts: ["upload", "links"] };
+    apiGetMock.mockImplementation(async (path) => {
+      if (path.endsWith("/review-links")) throw refused(status, body);
+      if (path.endsWith("/video-review")) { gate.reads += 1; return { open: true, parts: gate.parts }; }
+      if (path.endsWith("/videos")) return { videos: state.videos };
+      throw new Error(`unrouted ${path}`);
+    });
+    await mount({ parts: ["upload", "links"] });
+    expect(q('[data-testid="review-links-open"]')).not.toBeNull();
+    const reads = gate.reads;
+    gate.parts = ["upload"]; // the links part has closed since the gate was cached
+    await openList(); await flush(12);
+    expect(gate.reads).toBeGreaterThan(reads);
+    expect(q('[data-testid="review-links-open"]')).toBeNull();
+    expect(checkbox("Select Main walkthrough")).toBeNull();
+  });
+  it("a 401 on the list read ends the originating principal's session", async () => {
+    apiGetMock.mockImplementation(async (path) => {
+      if (path.endsWith("/review-links")) throw refused(401, { error: "Unauthorized" });
+      if (path.endsWith("/videos")) return { videos: state.videos };
+      throw new Error(`unrouted ${path}`);
+    });
+    const ended: unknown[] = [];
+    const off = onPrincipalTerminal((terminated) => { ended.push(terminated); });
+    await mount(); await openList(); await flush(12);
+    off();
+    expect(ended.length).toBeGreaterThan(0);
+  });
+});
+
+describe("a Video can share at most 100 Versions on a link (#741 11b round 13)", () => {
+  const BIG = (versions: number) => videoOf(V1, "Big film", Array.from({ length: versions }, (_, n) => [id(7000 + n), versions - n, n === 0] as [string, number, boolean]));
+  const boxes = (scope: ParentNode | null) => all<HTMLInputElement>('[data-testid="review-link-version-checkbox"]', scope);
+  const tickAll = async (scope: ParentNode | null, count: number) => { for (let n = 0; n < count; n += 1) { const box = boxes(scope).find((candidate) => !candidate.checked && !candidate.disabled); if (!box) break; await act(async () => { box.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); }); } await flush(2); };
+  it("create: at 100 ticked, the 101st Version is off and a hint says why; unticking frees it", async () => {
+    state.videos = [BIG(101)];
+    await mount(); await selectFilms("Big film");
+    await press(buttonIn(q('[data-testid="review-link-selection-bar"]'), "Create Review link"));
+    expect(q('[data-testid="review-link-grant-limit-hint"]', dialog())).toBeNull();
+    await tickAll(dialog(), 99);
+    const list = boxes(dialog());
+    expect(list).toHaveLength(101);
+    expect(list.filter((box) => box.checked)).toHaveLength(100);
+    expect(list[100]!.disabled).toBe(true);
+    const hint = q('[data-testid="review-link-grant-limit-hint"]', dialog());
+    expect(hint?.textContent).toContain("up to 100 Versions");
+    expect(list[100]!.getAttribute("aria-describedby")?.split(" ")).toContain(hint!.id);
+    expect(list[0]!.disabled).toBe(false);
+    await act(async () => { list[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); }); await flush(2);
+    expect(boxes(dialog())[100]!.disabled).toBe(false);
+    expect(q('[data-testid="review-link-grant-limit-hint"]', dialog())).toBeNull();
+  });
+  it("create: a film under the limit keeps every unticked Version enabled and shows no hint", async () => {
+    state.videos = [BIG(5)];
+    await mount(); await selectFilms("Big film");
+    await press(buttonIn(q('[data-testid="review-link-selection-bar"]'), "Create Review link"));
+    expect(boxes(dialog()).filter((box) => !box.checked).every((box) => !box.disabled)).toBe(true);
+    expect(q('[data-testid="review-link-grant-limit-hint"]', dialog())).toBeNull();
+  });
+  it("detail: at 100 granted, the next Version cannot be granted, a granted one can still be removed, and the hint shows", async () => {
+    state.videos = [BIG(101)];
+    state.links = [linkOf({ videos: [member(V1, "Big film", Array.from({ length: 100 }, (_, n) => [id(7000 + n), 101 - n] as [string, number]))] })];
+    await mount(); await openDetailOf("Smith family");
+    const list = boxes(q('[data-testid="review-link-detail"]'));
+    expect(list).toHaveLength(101);
+    expect(list[100]!.checked).toBe(false);
+    expect(list[100]!.disabled).toBe(true);
+    expect(list[1]!.disabled).toBe(false);
+    const hint = q('[data-testid="review-link-grant-limit-hint"]', q('[data-testid="review-link-detail"]'));
+    expect(hint?.textContent).toContain("up to 100 Versions");
+    expect(list[100]!.getAttribute("aria-describedby")?.split(" ")).toContain(hint!.id);
+  });
+  it("detail: under the limit the next Version stays enabled", async () => {
+    state.videos = [BIG(101)];
+    state.links = [linkOf({ videos: [member(V1, "Big film", Array.from({ length: 99 }, (_, n) => [id(7000 + n), 101 - n] as [string, number]))] })];
+    await mount(); await openDetailOf("Smith family");
+    const list = boxes(q('[data-testid="review-link-detail"]'));
+    expect(list.filter((box) => !box.checked).every((box) => !box.disabled)).toBe(true);
+    expect(q('[data-testid="review-link-grant-limit-hint"]', q('[data-testid="review-link-detail"]'))).toBeNull();
   });
 });

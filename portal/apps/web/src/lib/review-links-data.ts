@@ -16,11 +16,26 @@ const base = (projectId: string) => `/api/projects/${encodeURIComponent(projectI
 const linkPath = (projectId: string, linkId: string) => `${base(projectId)}/${encodeURIComponent(linkId)}`;
 const videoPath = (projectId: string, linkId: string, videoId: string) => `${linkPath(projectId, linkId)}/videos/${encodeURIComponent(videoId)}`;
 
+const surfacesOf = (client: QueryClient, projectId: string, resources: Array<{ kind: "video-review" } | { kind: "detail" }>) => invalidateProjectSurfaces(client, { projectId, resources, dashboard: false, calendar: false, gantt: false });
+/** What a refusal changes before the caller sees it, for a read or a write, whichever screen is mounted: a 401 ends the session; a closed gate or lost access asks the gate and the Project again; an archive is recorded, then the Project re-read. */
+async function onRefusal(client: QueryClient, projectId: string, error: unknown) {
+  terminatePrincipalOnUnauthorized(client, error);
+  const classified = classifyReviewLinkError(error);
+  if (classified.action === "gateClosed") void surfacesOf(client, projectId, [{ kind: "video-review" }, { kind: "detail" }]);
+  else if (classified.code === "project_archived") { await recordProjectArchivedRefusal(client, projectId); void surfacesOf(client, projectId, [{ kind: "detail" }]); }
+}
+
+/** The list read: a permanent refusal is handled exactly as a write's is, so a gate that closed under the open dialog hides the controls. */
+export async function fetchReviewLinks(client: QueryClient, projectId: string, signal?: AbortSignal): Promise<ReviewLinkDto[]> {
+  try { return reviewLinkListResponseSchema.parse(await apiGet<unknown>(base(projectId), { signal })).links; }
+  catch (error) { if (!(error instanceof ZodError)) await onRefusal(client, projectId, error); throw error; }
+}
+
 export function useReviewLinksQuery(projectId: string, enabled: boolean): UseQueryResult<ReviewLinkDto[], Error> {
   return useQuery<ReviewLinkDto[], Error>({
     queryKey: reviewLinksKey(projectId), enabled, staleTime: 15_000,
     retry: (count, error) => (error instanceof ZodError ? false : projectQueryRetry(count, error)),
-    queryFn: async ({ signal }) => reviewLinkListResponseSchema.parse(await apiGet<unknown>(base(projectId), { signal })).links,
+    queryFn: ({ signal, client }) => fetchReviewLinks(client, projectId, signal),
   });
 }
 
@@ -48,17 +63,10 @@ export function createReviewLinkActions(client: QueryClient, projectId: string):
   // A link the server just returned is seeded even into a list that never loaded (initial GET pending or failed), so Done can still open it;
   // the refetch that follows every write fills in the rest. A removal never invents a list.
   const upsert = (link: ReviewLinkDto) => remember((links) => (links.some((existing) => existing.id === link.id) ? links.map((existing) => (existing.id === link.id ? link : existing)) : [link, ...links]), true);
-  const surfaces = (resources: Array<{ kind: "video-review" } | { kind: "detail" }>) => invalidateProjectSurfaces(client, { projectId, resources, dashboard: false, calendar: false, gantt: false });
-  /** What a refusal changes before the caller sees it, whichever screen is mounted: a 401 ends the session; a closed gate or lost access asks the gate and the Project again; an archive is recorded, then the Project re-read. */
-  async function onRefusal(error: unknown) {
-    terminatePrincipalOnUnauthorized(client, error);
-    const classified = classifyReviewLinkError(error);
-    if (classified.action === "gateClosed") void surfaces([{ kind: "video-review" }, { kind: "detail" }]);
-    else if (classified.code === "project_archived") { await recordProjectArchivedRefusal(client, projectId); void surfaces([{ kind: "detail" }]); }
-  }
+  const onWriteRefusal = (error: unknown) => onRefusal(client, projectId, error);
   async function settled<T>(task: () => Promise<T>): Promise<T> {
     try { return await task(); }
-    catch (error) { await onRefusal(error); throw error; }
+    catch (error) { await onWriteRefusal(error); throw error; }
     finally { void client.invalidateQueries({ queryKey: key }); }
   }
   const one = async (request: Promise<unknown>) => { const link = reviewLinkResponseSchema.parse(await request).link; await upsert(link); return link; };
