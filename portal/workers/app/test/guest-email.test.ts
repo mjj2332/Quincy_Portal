@@ -243,7 +243,7 @@ describe("POST .../email/verify", () => {
     const before = Date.now(); const response = await verify(link, session.cookie, code, "  Gina   Guest ");
     expect(response.status).toBe(200);
     const body = guestSessionResponseSchema.parse(await response.json());
-    expect(body).toEqual({ link: { label: "Smith family", expiresAt: expect.any(String), allow: { comments: true, approve: true, download: true } }, verified: true, email: EMAIL, name: "Gina   Guest" });
+    expect(body).toEqual({ link: { label: "Smith family", expiresAt: expect.any(String), allow: { comments: true, approve: true, download: true, markup: false } }, verified: true, email: EMAIL, name: "Gina   Guest" });
     for (const [name, value] of Object.entries(HYGIENE)) expect(response.headers.get(name), name).toBe(value);
     const rotated = sessionCookie(response, link.id)!;
     expect(rotated).not.toBe(session.cookie);
@@ -451,21 +451,21 @@ describe("the session body's allow flags", () => {
 
   it("is the link flag AND its part: comments need guest_comments, approve and download need delivery", async () => {
     const link = await seedGuestLink({ allow: [1, 1, 1] }); const { cookie } = await sessionOf(link);
-    expect(await allowOf(link, cookie)).toEqual({ comments: true, approve: true, download: true });
-    await clearVideoFlags(); await setVideoFlags("video_review", `video_review_pilot:${ids.project}`, "video_review_guest", "video_review_delivery");
-    expect(await allowOf(link, cookie)).toEqual({ comments: false, approve: true, download: true });
+    expect(await allowOf(link, cookie)).toEqual({ comments: true, approve: true, download: true, markup: false });
+    await clearVideoFlags(); await setVideoFlags("video_review", `video_review_pilot:${ids.project}`, "video_review_guest", "video_review_delivery", "video_review_markup");
+    expect(await allowOf(link, cookie)).toEqual({ comments: false, approve: true, download: true, markup: true });
     await clearVideoFlags(); await setVideoFlags("video_review", `video_review_pilot:${ids.project}`, "video_review_guest", "video_review_guest_comments");
-    expect(await allowOf(link, cookie)).toEqual({ comments: true, approve: false, download: false });
+    expect(await allowOf(link, cookie)).toEqual({ comments: true, approve: false, download: false, markup: false });
     await clearVideoFlags(); await setVideoFlags("video_review", `video_review_pilot:${ids.project}`, "video_review_guest");
-    expect(await allowOf(link, cookie)).toEqual({ comments: false, approve: false, download: false });
+    expect(await allowOf(link, cookie)).toEqual({ comments: false, approve: false, download: false, markup: false });
   });
 
   it("stays false when the link flag is off even though the part is on, in the exchange response too", async () => {
     const link = await seedGuestLink({ allow: [0, 1, 0] }); const { response, cookie } = await startSession(link);
-    expect((await json(response)).link.allow).toEqual({ comments: false, approve: true, download: false });
-    expect(await allowOf(link, cookie!)).toEqual({ comments: false, approve: true, download: false });
+    expect((await json(response)).link.allow).toEqual({ comments: false, approve: true, download: false, markup: false });
+    expect(await allowOf(link, cookie!)).toEqual({ comments: false, approve: true, download: false, markup: false });
     const verified = await verifiedGuest({ link: await seedGuestLink({ allow: [0, 0, 1] }) });
-    expect(await allowOf(verified.link, verified.cookie)).toEqual({ comments: false, approve: false, download: true });
+    expect(await allowOf(verified.link, verified.cookie)).toEqual({ comments: false, approve: false, download: true, markup: false });
   });
 });
 
