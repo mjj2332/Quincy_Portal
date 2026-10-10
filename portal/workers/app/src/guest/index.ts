@@ -12,7 +12,7 @@ import { mountGuestDownloads } from "./download";
 import { mountGuestEmail } from "./email";
 import { mountGuestNotes } from "./notes-write";
 import { mountGuestSubscription } from "./subscription";
-import { guestGloballyOpen, identityOf, loadActiveLink, resolveSession, sessionBody } from "./link";
+import { guestGloballyOpen, identityOf, loadActiveLink, notificationsOf, resolveSession, sessionBody } from "./link";
 import { clientAddress, GUEST_LIMITS, ipBucket, reserveAttempts, windowStart } from "./rate-limit";
 import { listGuestNotes, listGuestVideos, readGuestMarkup, resolveGrantedVersion } from "./read";
 
@@ -98,7 +98,7 @@ export function mountGuest(app: Hono<AppEnv>): void {
   app.get("/d/unsubscribe", guestRoute("/d/unsubscribe", (c) => guestShell(c)));
 
   app.post("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", startSession));
-  app.get("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", (c) => withSession(c, (session) => c.json(sessionBody(session.link, identityOf(session))))));
+  app.get("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", (c) => withSession(c, async (session) => c.json(sessionBody(session.link, identityOf(session), await notificationsOf(c.env.DB, session.link, session.guestId))))));
   app.delete("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", async (c) => {
     // Resolve the session first: only a live credential for this link can leave, anything else is the stub.
     const session = await resolveSession(c, c.req.param("linkId"), Date.now());

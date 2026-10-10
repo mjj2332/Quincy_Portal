@@ -13,6 +13,8 @@ import type { GuestApi, WriteResult } from "./guest-api";
 import { failureText, removeThread, upsertThread, type EditPatch } from "./guest-compose";
 import type { ActionOutcome, NoteActions, Writing } from "./GuestNoteItem";
 import { GuestNotesPanel } from "./GuestNotesPanel";
+import { GuestSubscriptionRow } from "./GuestSubscriptionRow";
+import type { GuestSubscription } from "./guest-subscription";
 import { GuestVerifyDialog } from "./GuestVerifyDialog";
 import type { GuestDrafts } from "./guest-drafts";
 import { useGuestCompose } from "./use-guest-compose";
@@ -58,11 +60,13 @@ function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
  * One Video on the guest page (#741 12b), read-only: the reused review player on the inverse surface, the granted-Versions select, previous / next Video, and the public notes (a
  * column beside the player, a bottom drawer below 721px). Moving between Videos never returns to the list. State is in memory; the URL does not change.
  */
-export function GuestVideoScreen({ api, writer, drafts, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged }: {
+export function GuestVideoScreen({ api, writer, drafts, subscription, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged }: {
   api: GuestApi;
   /** Owned by `GuestApp`, so a write still out survives this screen being left and opened again. */
   writer: GuestWriter;
   drafts: GuestDrafts;
+  /** The email-updates switch's state, owned by `GuestApp` for the same reason. */
+  subscription: GuestSubscription;
   session: GuestSessionResponse;
   /** The session changed: verified (the verify route's body), or verification lost (a 401 on a write). */
   onSession: (next: GuestSessionResponse) => void;
@@ -101,7 +105,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
   const binding = useRef<WriterBinding>({ scope: version.assetId, effects: { onUnverified: () => undefined, onGone: () => undefined, onArchived: () => undefined }, onLostSettle: () => undefined });
   binding.current.scope = version.assetId;
   binding.current.effects = {
-    onUnverified: () => { afterVerify.current = "none"; setVerifyOpen(true); onSession({ ...session, verified: false, email: null, name: null }); },
+    onUnverified: () => { afterVerify.current = "none"; setVerifyOpen(true); onSession({ ...session, verified: false, email: null, name: null, notifications: null }); },
     onGone: onUnavailable,
     onArchived,
   };
@@ -282,7 +286,11 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
   const optionLabel = (candidate: GuestVideoDto["versions"][number]) => `v${candidate.version}${candidate.version === newest ? " · latest" : ""}`;
   const headingContent = <>Notes{threads !== null && <><span className="sr-only"> </span><span data-testid="guest-notes-count" className="ms-[var(--space-1)] text-foreground-secondary [font:var(--type-label)]">{threads.length}</span></>}</>;
   const heading = <h2 data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</h2>;
-  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} top={addNote} writing={writing} />;
+  const toggleSubscription = useCallback((next: boolean, previous: boolean) => { void subscription.toggle(next, previous, () => writer.run("subscription", () => api.setSubscription(next))); }, [subscription, writer, api]);
+  const footer = session.verified && session.notifications?.available
+    ? <GuestSubscriptionRow store={subscription} initial={session.notifications.subscribed} readOnly={archived} onToggle={toggleSubscription} />
+    : null;
+  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} top={addNote} footer={footer} writing={writing} />;
 
   return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-dvh flex-col bg-background text-foreground min-[721px]:h-dvh">
     <header className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-2)] border-b border-border bg-card px-[var(--space-5)] py-[var(--space-3)] text-card-foreground">

@@ -28,6 +28,8 @@ export const guestSessionResponseSchema = z.object({
   verified: z.boolean(),
   email: z.string().nullable(),
   name: z.string().nullable(),
+  /** The client email-updates switch (#741 15b): null until verified. `available` is the `notify_client` part on for a live link and a membership to flip; `subscribed` is that membership being subscribed. */
+  notifications: z.object({ available: z.boolean(), subscribed: z.boolean() }).strict().nullable(),
 }).strict();
 export type GuestSessionResponse = z.infer<typeof guestSessionResponseSchema>;
 

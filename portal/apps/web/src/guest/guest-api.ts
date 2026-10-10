@@ -57,6 +57,8 @@ export type GuestApi = {
   replyToNote(noteId: string, body: string): Promise<WriteResult>;
   editNote(noteId: string, input: GuestNoteEditInput): Promise<WriteResult>;
   deleteNote(noteId: string, expectedRevision: number): Promise<WriteResult>;
+  /** `PUT .../subscription` (#741 15b): the verified guest's own email-updates switch. `ok.thread` is always null. */
+  setSubscription(subscribed: boolean): Promise<WriteResult>;
 };
 
 export function createGuestApi(linkId: string): GuestApi {
@@ -147,6 +149,7 @@ export function createGuestApi(linkId: string): GuestApi {
     replyToNote: (noteId, body) => write(`/notes/${noteId}/replies`, "POST", { body }, (parsed) => guestNoteWriteResponseSchema.parse(parsed)),
     editNote: (noteId, input) => write(`/notes/${noteId}`, "PATCH", input, (body) => guestNoteWriteResponseSchema.parse(body)),
     deleteNote: (noteId, expectedRevision) => write(`/notes/${noteId}`, "DELETE", { expectedRevision }, (body) => guestNoteDeleteResponseSchema.parse(body).thread),
+    setSubscription: (subscribed) => write("/subscription", "PUT", { subscribed }, (body) => { guestSubscriptionResponseSchema.parse(body); return null; }),
     async exchange(token, passcode) {
       const response = await send("/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(passcode === undefined ? { token } : { token, passcode }) });
       if (response === null) return { ok: false, reason: "unreachable" };

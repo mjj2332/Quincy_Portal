@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { guestSubscriptionResponseSchema } from "@quincy/shared";
+import { guestSessionResponseSchema, guestSubscriptionResponseSchema } from "@quincy/shared";
 import { GUEST_LIMITS } from "../src/guest/rate-limit";
 import { hashToken, randomToken } from "../src/lib/opaque-token";
 import { database, ids, seedFixture } from "./embedded-media-support";
@@ -284,5 +284,33 @@ describe("GET /d/unsubscribe (#741 15b): the SPA shell with no gate", () => {
   });
   it("does not serve a sub-path: /d/unsubscribe/x is the stub", async () => {
     expect((await guestFetch("/d/unsubscribe/x")).status).toBe(404);
+  });
+});
+
+describe("the session body's notifications block (#741 15b)", () => {
+  const sessionOf = async (link: Linked) => guestSessionResponseSchema.parse(await (await guestFetch(linkPath(link.id, "/session"), { cookie: link.cookie })).json());
+  const setNotify = async (on: boolean) => { await clearVideoFlags(); await setVideoFlags(...[...(await import("./guest-support")).guestFlags(), ...(on ? ["video_review_notify_client"] : [])]); };
+
+  it("is null while the session is unverified, on the exchange and on GET", async () => {
+    await setNotify(true);
+    const link = await seedGuestLink(); const started = await startSession(link);
+    expect((await started.response.json() as Json).notifications).toBeNull();
+    const again = guestSessionResponseSchema.parse(await (await guestFetch(linkPath(link.id, "/session"), { cookie: started.cookie })).json());
+    expect(again.notifications).toBeNull();
+  });
+  it("is available only with the notify_client part on, and subscribed follows unsubscribed_at", async () => {
+    const link = await verifiedLink();
+    await setNotify(false);
+    expect((await sessionOf(link)).notifications).toEqual({ available: false, subscribed: true });
+    await setNotify(true);
+    expect((await sessionOf(link)).notifications).toEqual({ available: true, subscribed: true });
+    await database.DB.prepare("UPDATE guest_link_members SET unsubscribed_at = ? WHERE id = ?").bind(Date.now(), link.memberId).run();
+    expect((await sessionOf(link)).notifications).toEqual({ available: true, subscribed: false });
+  });
+  it("a verified session with no membership row is neither available nor subscribed", async () => {
+    await setNotify(true);
+    const link = await verifiedLink();
+    await database.DB.prepare("DELETE FROM guest_link_members WHERE id = ?").bind(link.memberId).run();
+    expect((await sessionOf(link)).notifications).toEqual({ available: false, subscribed: false });
   });
 });

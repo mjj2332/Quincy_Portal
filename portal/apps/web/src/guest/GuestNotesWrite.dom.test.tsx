@@ -15,7 +15,7 @@ const BASE = `/d/api/links/${LINK}`;
 const asset = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const vid = (n: number) => `11111111-1111-4111-8111-${String(n).padStart(12, "0")}`;
 const noteId = (n: number) => `22222222-2222-4222-8222-${String(n).padStart(12, "0")}`;
-const SESSION_OFF: GuestSessionResponse = { link: { label: "Smith house", expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: false, approve: false, download: false, markup: true } }, verified: false, email: null, name: null };
+const SESSION_OFF: GuestSessionResponse = { link: { label: "Smith house", expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: false, approve: false, download: false, markup: true } }, verified: false, email: null, name: null, notifications: null };
 const ANON: GuestSessionResponse = { ...SESSION_OFF, link: { ...SESSION_OFF.link, allow: { ...SESSION_OFF.link.allow, comments: true } } };
 const VERIFIED: GuestSessionResponse = { ...ANON, verified: true, email: "sam@example.com", name: "Sam" };
 
