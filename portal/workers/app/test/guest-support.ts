@@ -84,3 +84,26 @@ export function mockEmail(options: { fail?: unknown; configured?: boolean } = {}
   }
   return { sent, restore() { mutable.EMAIL = original.email; mutable.NOTIFICATIONS_FROM_ADDRESS = original.from; } };
 }
+
+/**
+ * Makes a started session a verified guest without the email round trip (13a's suite covers that flow): the reviewer, the membership and the session columns go in directly. The cookie is
+ * unchanged (no rotation), so a test can keep using the one it started with.
+ */
+export async function verifySession(link: { id: string; cookie: string }, input: { email?: string; name?: string | null } = {}) {
+  const sessionId = (await database.DB.prepare("SELECT id FROM guest_sessions WHERE token_hash = ?").bind(await hashToken(link.cookie.split("=")[1]!)).first<{ id: string }>())!.id;
+  const guestId = crypto.randomUUID(); const now = Date.now(); const email = input.email ?? `${guestId}@guest-13b.test`;
+  await database.DB.batch([
+    database.DB.prepare("INSERT INTO guest_reviewers (id, email_normalized, display_name, created_at) VALUES (?, ?, ?, ?)").bind(guestId, email, input.name === undefined ? "Gina Guest" : input.name, now),
+    database.DB.prepare("INSERT INTO guest_link_members (id, link_id, guest_id, first_verified_at, last_verified_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), link.id, guestId, now, now, now),
+    database.DB.prepare("UPDATE guest_sessions SET guest_id = ?, verified_at = ? WHERE id = ?").bind(guestId, now, sessionId),
+  ]);
+  return { guestId, sessionId, email };
+}
+
+/** A request whose body arrives `delayMs` after the headers, so the Worker has passed its entry checks when the state changes under it. Any method. */
+export function slowRequest(method: "POST" | "PATCH" | "DELETE", path: string, cookie: string, body: unknown, delayMs: number, headers: Record<string, string> = {}): Promise<Response> {
+  const bytes = new TextEncoder().encode(typeof body === "string" ? body : JSON.stringify(body));
+  const stream = new ReadableStream<Uint8Array>({ async start(controller) { await new Promise((resolve) => setTimeout(resolve, delayMs)); controller.enqueue(bytes); controller.close(); } });
+  const all = new Headers({ "cf-connecting-ip": freshIp(), cookie, origin: guestOrigin, "content-type": "application/json", ...headers });
+  return workerSelf.fetch(`https://portal.test${path}`, { method, headers: all, body: stream, duplex: "half" } as RequestInit);
+}

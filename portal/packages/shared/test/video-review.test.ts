@@ -28,7 +28,7 @@ describe("videoDtoSchema latestNoteCount (#741 5b-counts)", () => {
   const person = { id: "99999999-9999-4999-8999-999999999999", name: "Mia", roleLabel: "Editor", isExternal: false, active: true };
   const asset = "77777777-7777-4777-8777-777777777777";
   const version = { assetId: asset, version: 1, current: true, uploadedBy: person, createdAt: "2026-10-09T01:00:00.000Z", originalFilename: "f.mp4", bytes: 1, fps: { num: 25, den: 1 }, frameCount: 1, durationMs: 40, width: 1, height: 1, codec: "avc1", startTimecodeFrames: null, tcNominalFps: 25, tcDropFrame: false, fastStart: true, hasAudio: false, hasPoster: false, streamUrl: `/media/video/${asset}`, posterUrl: null };
-  const video = { id: "88888888-8888-4888-8888-888888888888", title: "T", premium: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: asset, uploading: null, versions: [version] };
+  const video = { id: "88888888-8888-4888-8888-888888888888", title: "T", premium: false, premiumUnlocked: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: asset, uploading: null, versions: [version] };
 
   it("accepts null and a non-negative integer", () => {
     expect(videoDtoSchema.parse({ ...video, latestNoteCount: null }).latestNoteCount).toBeNull();

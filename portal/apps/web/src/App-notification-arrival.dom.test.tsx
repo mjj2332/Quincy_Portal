@@ -18,7 +18,7 @@ import { NOTIFICATION_TYPES, type NotificationType, type Role } from "@quincy/sh
 
 const PROJECT_ID = "123e4567-e89b-42d3-a456-426614174000";
 
-const EXPECTED_TAB: Record<NotificationType, "RAW" | "Edited" | "Collaboration"> = {
+const EXPECTED_TAB: Record<NotificationType, "RAW" | "Edited" | "Collaboration" | "Video"> = {
   raw_ready: "RAW",
   sent_to_editing: "RAW",
   autohdr_stalled: "RAW",
@@ -33,6 +33,10 @@ const EXPECTED_TAB: Record<NotificationType, "RAW" | "Edited" | "Collaboration">
   project_deadline_reminder: "Collaboration",
   project_activity: "Collaboration",
   project_collaboration_activity: "Collaboration",
+  video_version_uploaded: "Video",
+  video_note: "Video",
+  video_reply: "Video",
+  video_decision: "Video",
 };
 
 const sessionState = vi.hoisted(() => ({ role: "admin" }));

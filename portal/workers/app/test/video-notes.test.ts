@@ -203,7 +203,49 @@ describe("author-only edit and delete (stories 38-40)", () => {
     }
     expect(await noteRow(guest.id)).toMatchObject({ body: "Seeded note", revision: 1 });
     const read = (await list("admin", version.assetId))[0]!;
-    expect(read.author).toEqual({ kind: "guest", id: guest.guestId, name: "Client Person" }); expect(read.authorRole).toBe("guest");
+    expect(read.author).toEqual({ kind: "guest", id: guest.guestId, name: "Client Person", email: `${guest.guestId}@guest.test` }); expect(read.authorRole).toBe("guest");
+  });
+
+  it("refuses Admin and Editor PATCH and DELETE on a guest's root and on a guest's reply with 403, changing nothing", async () => {
+    const version = await seedVideoVersion(); const root = await seedVideoNote({ assetId: version.assetId, guest: true });
+    const guestReply = await seedVideoNote({ assetId: version.assetId, parentId: root.id, guest: true, body: "Guest reply" });
+    const before = { root: await noteRow(root.id), reply: await noteRow(guestReply.id) };
+    for (const who of ["admin", "member"] as const) {
+      for (const target of [root, guestReply]) {
+        const patched = await request(notePath(target.id), who, "PATCH", { expectedRevision: 1, body: "hijack" }); expect(patched.status, `${who} PATCH`).toBe(403);
+        const deleted = await request(notePath(target.id), who, "DELETE", { expectedRevision: 1 }); expect(deleted.status, `${who} DELETE`).toBe(403);
+      }
+    }
+    expect(await noteRow(root.id)).toEqual(before.root); expect(await noteRow(guestReply.id)).toEqual(before.reply);
+    expect(await noteAudit()).toEqual([]);
+  });
+
+  it("lets staff resolve a guest's public root and reply to it, the reply being a staff reply on the guest thread", async () => {
+    const version = await seedVideoVersion(); const root = await seedVideoNote({ assetId: version.assetId, guest: true });
+    const resolved = await request(`${notePath(root.id)}/resolution`, "admin", "PUT", { resolved: true }); expect(resolved.status).toBe(200);
+    expect(videoNoteThreadDtoSchema.parse(await resolved.json()).resolved).toMatchObject({ by: { id: ids.admin } });
+    expect(await noteAudit("video_note.resolve")).toHaveLength(1);
+    const replied = await request(`${notePath(root.id)}/replies`, "member", "POST", { body: "Thanks, noted" }); expect(replied.status, await replied.clone().text()).toBe(201);
+    const thread = videoNoteThreadDtoSchema.parse(await replied.json());
+    expect(thread.id).toBe(root.id); expect(thread.author.kind).toBe("guest");
+    expect(thread.replies).toHaveLength(1); expect(thread.replies[0]).toMatchObject({ parentId: root.id, body: "Thanks, noted", author: { kind: "staff" } });
+    expect(await noteRow(thread.replies[0]!.id)).toMatchObject({ author_user_id: ids.member, author_guest_id: null, parent_id: root.id, visibility: "public" });
+  });
+
+  it("shows a guest author's email to a viewer who holds shareVideo (Admin, Editor) and the name alone to an External, on the list and on a thread", async () => {
+    const version = await seedVideoVersion(); const guest = await seedVideoNote({ assetId: version.assetId, guest: true });
+    const reply = await seedVideoNote({ assetId: version.assetId, parentId: guest.id, guest: true });
+    for (const who of ["admin", "member"] as const) {
+      const notes = await list(who, version.assetId);
+      expect(notes[0]!.author, who).toEqual({ kind: "guest", id: guest.guestId, name: "Client Person", email: `${guest.guestId}@guest.test` });
+      expect(notes[0]!.replies[0]!.author, who).toEqual({ kind: "guest", id: reply.guestId, name: "Client Person", email: `${reply.guestId}@guest.test` });
+    }
+    const raw = await (await request(notesPath(version.assetId), "external")).text();
+    expect(JSON.parse(raw).notes[0].author).toEqual({ kind: "guest", id: guest.guestId, name: "Client Person" });
+    expect(raw).not.toContain("@guest.test");
+    const posted = await createOk("member", version.assetId); const replied = await request(`${notePath(guest.id)}/replies`, "external", "POST", { body: "from an External" });
+    expect(replied.status).toBe(201); expect(await replied.text()).not.toContain("@guest.test"); expect(posted.author.kind).toBe("staff");
+    const resolved = await request(`${notePath(guest.id)}/resolution`, "member", "PUT", { resolved: true }); expect((await resolved.json() as Json).author.email).toBe(`${guest.guestId}@guest.test`);
   });
 
   it("lets an impersonating Admin act as the author, stamping the Editor as the actor and the Admin in impersonatedBy", async () => {

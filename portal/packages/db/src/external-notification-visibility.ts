@@ -1,4 +1,4 @@
-import { EXTERNAL_LEGACY_NOTIFICATION_POLICY, EXTERNAL_PROJECT_ACTIVITY_POLICY } from "@quincy/shared";
+import { EXTERNAL_LEGACY_NOTIFICATION_POLICY, EXTERNAL_PROJECT_ACTIVITY_POLICY, VIDEO_REVIEW_NOTIFICATION_EVENT, VIDEO_REVIEW_NOTIFICATION_TYPES } from "@quincy/shared";
 
 const legacyTypes = Object.entries(EXTERNAL_LEGACY_NOTIFICATION_POLICY)
   .filter(([, policy]) => policy.decision === "allowed")
@@ -9,6 +9,9 @@ const directLegacyTypes = Object.entries(EXTERNAL_LEGACY_NOTIFICATION_POLICY)
 const activityTypes = Object.entries(EXTERNAL_PROJECT_ACTIVITY_POLICY)
   .filter(([, policy]) => policy.decision === "allowed")
   .map(([type]) => type);
+
+/** Constants from the shared module, never user input: they go in as SQL literals so the positional binds below keep their order. */
+const videoReviewTypes = VIDEO_REVIEW_NOTIFICATION_TYPES.map((type) => `'${type}'`).join(", ");
 
 const placeholders = (values: readonly unknown[]) => values.map(() => "?").join(",");
 
@@ -110,6 +113,19 @@ export function externalVisibleNotificationWhere(principalId: string, alias = "n
                   )
                   AND EXISTS (SELECT 1 FROM json_each(o.payload_json, '$.authorizationAtOccurrence.membershipIds') cycle WHERE cycle.value = pm.id)
               )
+            )
+            OR (
+              o.event_type = '${VIDEO_REVIEW_NOTIFICATION_EVENT}'
+              AND ${alias}.type IN (${videoReviewTypes})
+              AND json_valid(o.payload_json) = 1
+              AND json_extract(o.payload_json, '$.schemaVersion') = 1
+              AND json_extract(o.payload_json, '$.event.type') = o.event_type
+              AND json_extract(o.payload_json, '$.event.sourceKey') = o.source_key
+              AND json_extract(o.payload_json, '$.event.recipientId') = o.recipient_id
+              AND json_extract(o.payload_json, '$.authorizationAtOccurrence.kind') = 'project_member'
+              AND EXISTS (SELECT 1 FROM json_each(o.payload_json, '$.authorizationAtOccurrence.membershipIds') cycle WHERE cycle.value = pm.id)
+              AND json_extract(o.payload_json, '$.video.kind') = ${alias}.type
+              AND json_extract(o.payload_json, '$.video.projectId') = o.project_id
             )
             OR (
               o.event_type = 'project.deadline.reminder'

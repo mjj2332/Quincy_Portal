@@ -170,8 +170,8 @@ describe("terminal route manifest", () => {
     const registered = app.routes.filter((route) => route.path === "/d" || route.path.startsWith("/d/"));
     const guest = PROJECT_SECURITY_ROUTE_CLASSIFICATION.filter((route) => route.class === "guest-link");
     expect(guest.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
-      "DELETE /d/api/links/:linkId/session", "GET /d/api/links/:linkId/notes/:noteId/markup", "GET /d/api/links/:linkId/session", "GET /d/api/links/:linkId/versions/:assetId/notes",
-      "GET /d/api/links/:linkId/versions/:assetId/poster", "GET /d/api/links/:linkId/versions/:assetId/stream", "GET /d/api/links/:linkId/videos", "GET /d/review", "POST /d/api/links/:linkId/email/code", "POST /d/api/links/:linkId/email/verify", "POST /d/api/links/:linkId/session",
+      "DELETE /d/api/links/:linkId/notes/:noteId", "DELETE /d/api/links/:linkId/session", "GET /d/api/links/:linkId/downloads", "GET /d/api/links/:linkId/downloads/all.zip", "GET /d/api/links/:linkId/notes/:noteId/markup", "GET /d/api/links/:linkId/session", "GET /d/api/links/:linkId/versions/:assetId/download", "GET /d/api/links/:linkId/versions/:assetId/notes",
+      "GET /d/api/links/:linkId/versions/:assetId/poster", "GET /d/api/links/:linkId/versions/:assetId/stream", "GET /d/api/links/:linkId/videos", "GET /d/review", "PATCH /d/api/links/:linkId/notes/:noteId", "POST /d/api/links/:linkId/email/code", "POST /d/api/links/:linkId/email/verify", "POST /d/api/links/:linkId/notes/:noteId/replies", "POST /d/api/links/:linkId/session", "POST /d/api/links/:linkId/versions/:assetId/decision", "POST /d/api/links/:linkId/versions/:assetId/notes",
     ]);
     for (const route of guest) expect(route, `${route.method} ${route.path}`).toMatchObject({ scope: "none", projection: "guest-public", response: "protocol-404" });
     expect(registered.length).toBeGreaterThan(0);

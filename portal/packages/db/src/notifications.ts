@@ -41,6 +41,11 @@ export function notificationCopy(
     case "project_deadline_reminder": return { title: "Project deadline reminder", body: `${projectLabel} has a deadline reminder.` };
     case "project_activity": return { title: "Project activity", body: `${projectLabel} has a project update.` };
     case "project_collaboration_activity": return { title: "Project collaboration activity", body: `${projectLabel} has a collaboration update.` };
+    // #741 15a: these four exist only on the outbox path, whose resolver composes the title (naming the Video, Version and actor); this is the neutral form.
+    case "video_version_uploaded":
+    case "video_note":
+    case "video_reply":
+    case "video_decision": return { title: "Video review update", body: `${projectLabel} has a video review update.` };
   }
 }
 
