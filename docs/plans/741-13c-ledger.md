@@ -24,3 +24,6 @@ Installed this slice: `components/reui/input-otp.tsx`, base-nova `input-otp` (th
 | Archived notice | `guest/GuestApp.tsx` | the `<p role="status">` band `guest-notice` already uses on the same page |
 | Staff "Client" badge | `components/video/VideoNoteThread.tsx` | `components/reui/badge.tsx` |
 | Staff guest email | `components/video/VideoNoteThread.tsx` | `components/reui/tooltip.tsx` (`Tooltip`, `TooltipTrigger`, `TooltipContent`), only where the DTO carries `email` |
+| Edit composer (root note: body, Mark in / out, Redraw, Remove drawing, Save) | `guest/use-guest-compose.tsx` | the same composer as a new note (`components/reui/button.tsx`, `components/reui/textarea.tsx`, `MarkupToolbar`); no new element |
+| Frames-locked hint, "Latest saved version" line, drawing status line | `guest/use-guest-compose.tsx` | plain `<p>` text in the secondary-foreground token, the line the inline edit form already used for "Latest saved version" |
+| Frozen address / name while a code is requested | `guest/GuestVerifyDialog.tsx` | `components/reui/input.tsx` with `disabled` |

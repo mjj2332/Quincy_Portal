@@ -30,6 +30,10 @@ export type Writing = {
   actions: NoteActions;
   /** An unverified guest pressed a write control: open the verify dialog. */
   onNeedVerify: () => void;
+  /** The composer is open (a new note or an edit): only one draft at a time, so editing another note waits. */
+  composerOpen: boolean;
+  /** Edit the guest's own root note in the composer (body, frames, drawing). Replies are edited inline, body only. */
+  editRoot: (thread: GuestNoteThreadDto) => void;
 };
 
 function Author({ note }: { note: GuestNoteDto }) {
@@ -96,7 +100,7 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
 
   const menu = (note: GuestNoteDto) => own(note)
     ? <Menu triggerLabel="Actions for your note" label="Note actions" triggerClassName={cn(ICON_BUTTON, "ms-auto")} triggerTestId="guest-note-actions" trigger={<span aria-hidden="true">⋯</span>}>
-      <MenuPrimitive.Item className={MENU_ITEM} disabled={busy} onClick={() => { setEditing({ noteId: note.id, baseRevision: note.revision, text: note.body, problem: null, pending: false }); }}>Edit</MenuPrimitive.Item>
+      <MenuPrimitive.Item className={MENU_ITEM} disabled={busy || (note.id === thread.id && writing.composerOpen)} onClick={() => { if (note.id === thread.id) writing.editRoot(thread); else setEditing({ noteId: note.id, baseRevision: note.revision, text: note.body, problem: null, pending: false }); }}>Edit</MenuPrimitive.Item>
       <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={busy} onClick={() => { setDeleting({ noteId: note.id, problem: null, pending: false }); }}>Delete</MenuPrimitive.Item>
     </Menu>
     : null;

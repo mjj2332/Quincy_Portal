@@ -7,7 +7,7 @@ import { GuestVerifyDialog } from "./GuestVerifyDialog";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const SESSION: GuestSessionResponse = { link: { label: null, expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: true, approve: false, download: false } }, verified: true, email: "sam@example.com", name: "Sam" };
+const SESSION: GuestSessionResponse = { link: { label: null, expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: true, approve: false, download: false, markup: true } }, verified: true, email: "sam@example.com", name: "Sam" };
 const UNVERIFIED: GuestSessionResponse = { ...SESSION, verified: false, email: null, name: null };
 
 let sendCode: ReturnType<typeof vi.fn<(email: string) => Promise<SendCodeResult>>>;
@@ -37,6 +37,12 @@ async function mount() {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => { root!.render(<GuestVerifyDialog api={api} open onOpenChange={onOpenChange} onVerified={onVerified} onGone={onGone} />); });
+  await flush();
+}
+/** Re-renders the mounted dialog open or closed, as its parent would after onOpenChange. */
+async function setOpen(open: boolean) {
+  const api = { sendCode, verifyCode, session } as unknown as GuestApi;
+  await act(async () => { root!.render(<GuestVerifyDialog api={api} open={open} onOpenChange={onOpenChange} onVerified={onVerified} onGone={onGone} />); });
   await flush();
 }
 async function reachCodeStep() {
@@ -190,5 +196,47 @@ describe("GuestVerifyDialog: code step", () => {
     expect((q("guest-verify-email") as HTMLInputElement).value).toBe("Sam@Example.com");
     await click(q("guest-verify-cancel"));
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+});
+
+describe("GuestVerifyDialog: in-flight requests (#741 13c round 1)", () => {
+  it("freezes the address while the code request is out, and the code step and Resend use the address that was sent", async () => {
+    let finish!: (result: SendCodeResult) => void;
+    sendCode.mockImplementationOnce(() => new Promise<SendCodeResult>((resolve) => { finish = resolve; }));
+    await mount();
+    await reachCodeStep();
+    expect((q("guest-verify-email") as HTMLInputElement).disabled).toBe(true);
+    await act(async () => { finish({ ok: true, resendAfterSeconds: 60 }); });
+    await flush();
+    expect(q("guest-verify-code-form")?.textContent).toContain("Sam@Example.com");
+    await act(async () => { vi.advanceTimersByTime(61_000); });
+    await click(q("guest-verify-resend"));
+    expect(sendCode).toHaveBeenLastCalledWith("Sam@Example.com");
+  });
+  it("lets a verify that finishes after Cancel and a reopen do nothing to the new dialog", async () => {
+    let finish!: (result: VerifyResult) => void;
+    verifyCode.mockImplementationOnce(() => new Promise<VerifyResult>((resolve) => { finish = resolve; }));
+    await mount();
+    await reachCodeStep();
+    await typeCode("111111");
+    await click(q("guest-verify-cancel"));
+    await setOpen(false);
+    await setOpen(true);
+    await act(async () => { finish({ ok: true, session: SESSION }); });
+    await flush();
+    expect(onVerified).not.toHaveBeenCalled();
+    expect(q("guest-verify-identity-form")).not.toBeNull();
+  });
+  it("lets a code request that finishes after Cancel and a reopen leave the new dialog on its first step", async () => {
+    let finish!: (result: SendCodeResult) => void;
+    sendCode.mockImplementationOnce(() => new Promise<SendCodeResult>((resolve) => { finish = resolve; }));
+    await mount();
+    await reachCodeStep();
+    await click(q("guest-verify-cancel"));
+    await setOpen(false);
+    await setOpen(true);
+    await act(async () => { finish({ ok: false, reason: "gone" }); });
+    await flush();
+    expect(onGone).not.toHaveBeenCalled();
   });
 });

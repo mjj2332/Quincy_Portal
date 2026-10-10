@@ -15,7 +15,7 @@ const BASE = `/d/api/links/${LINK}`;
 const asset = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const vid = (n: number) => `11111111-1111-4111-8111-${String(n).padStart(12, "0")}`;
 const noteId = (n: number) => `22222222-2222-4222-8222-${String(n).padStart(12, "0")}`;
-const SESSION_OFF: GuestSessionResponse = { link: { label: "Smith house", expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: false, approve: false, download: false } }, verified: false, email: null, name: null };
+const SESSION_OFF: GuestSessionResponse = { link: { label: "Smith house", expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: false, approve: false, download: false, markup: true } }, verified: false, email: null, name: null };
 const ANON: GuestSessionResponse = { ...SESSION_OFF, link: { ...SESSION_OFF.link, allow: { ...SESSION_OFF.link.allow, comments: true } } };
 const VERIFIED: GuestSessionResponse = { ...ANON, verified: true, email: "sam@example.com", name: "Sam" };
 
@@ -72,6 +72,8 @@ const typeInto = async (element: HTMLElement | null, value: string) => {
   await act(async () => { Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(field, value); field.dispatchEvent(new Event("input", { bubbles: true })); });
 };
 const submit = async (id: string) => { await act(async () => { byId(id)!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); }); await flush(); };
+const button = (label: string) => [...document.body.querySelectorAll<HTMLElement>("button")].find((item) => item.getAttribute("aria-label")?.startsWith(label) || item.textContent?.trim() === label);
+const keyDown = async (key: string) => { await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); }); await flush(); };
 const menuItem = (label: string) => [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.trim() === label);
 /** Puts the film on `seconds` (25 fps), as the browser would after a seek. */
 async function atSeconds(seconds: number) {
@@ -311,6 +313,40 @@ describe("drawing", () => {
       expect(byId("guest-composer-drawing")).toBeNull();
     });
   });
+  it("redraws the drawing of a note being edited, sending the strokes with the note's drawing frame", async () => {
+    notes = { [asset(10)]: [mine(2, { revision: 3, startFrame: 50, hasMarkup: true, drawingFrame: 50 })] };
+    extra = (url, init) => (url === `${BASE}/notes/${noteId(2)}` && init?.method === "PATCH" ? json(mine(2, { revision: 4, hasMarkup: true, drawingFrame: 50 })) : undefined);
+    await withLayout(async () => {
+      await open();
+      await click(byId("guest-note-actions"));
+      await click(menuItem("Edit"));
+      await click(byId("guest-composer-draw"));
+      await atSeconds(2);
+      await draw(byId("guest-draft-layer")!);
+      await click(byId("guest-markup-done"));
+      await submit("guest-composer");
+    });
+    const body = requests("PATCH").at(-1)!.body as { markup: unknown[] };
+    expect(body).toMatchObject({ expectedRevision: 3, drawingFrame: 50 });
+    expect(body.markup).toHaveLength(1);
+    expect(Object.keys(body).sort()).toEqual(["drawingFrame", "expectedRevision", "markup"]);
+  });
+  it("does not offer Draw when the link's markup part is off, and the composer still posts text", async () => {
+    session = { ...VERIFIED, link: { ...VERIFIED.link, allow: { ...VERIFIED.link.allow, markup: false } } };
+    await open();
+    await click(byId("guest-add-note"));
+    expect(byId("guest-composer")).not.toBeNull();
+    expect(byId("guest-composer-draw")).toBeNull();
+  });
+  it("offers no drawing controls when editing a note either (even removing one would be refused)", async () => {
+    session = { ...VERIFIED, link: { ...VERIFIED.link, allow: { ...VERIFIED.link.allow, markup: false } } };
+    notes = { [asset(10)]: [mine(2, { revision: 3, startFrame: 50, hasMarkup: true, drawingFrame: 50 })] };
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    expect(byId("guest-composer-draw")).toBeNull();
+    expect(byId("guest-composer-remove-drawing")).toBeNull();
+  });
 });
 
 describe("refusals on a post", () => {
@@ -377,13 +413,22 @@ describe("own notes", () => {
     await open();
     await click(byId("guest-note-actions"));
     await click(menuItem("Edit"));
-    const field = byId("guest-note-edit-body") as HTMLTextAreaElement;
+    const field = byId("guest-composer-body") as HTMLTextAreaElement;
     expect(field.value).toBe("My note");
     await typeInto(field, "Reworded");
-    await submit("guest-note-edit-form");
+    await submit("guest-composer");
     expect(patched).toEqual({ expectedRevision: 3, body: "Reworded" });
-    expect(byId("guest-note-edit-form")).toBeNull();
+    expect(byId("guest-composer")).toBeNull();
     expect(byId("guest-note-body")?.textContent).toBe("Reworded");
+  });
+  it("sends nothing when an edit changed nothing", async () => {
+    notes = { [asset(10)]: [mine(2, { revision: 3 })] };
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    await submit("guest-composer");
+    expect(requests("PATCH")).toHaveLength(0);
+    expect(byId("guest-composer")).toBeNull();
   });
   it("on a revision conflict shows the latest, keeps the typed text, and says so", async () => {
     notes = { [asset(10)]: [mine(2, { revision: 3 })] };
@@ -391,15 +436,53 @@ describe("own notes", () => {
     await open();
     await click(byId("guest-note-actions"));
     await click(menuItem("Edit"));
-    await typeInto(byId("guest-note-edit-body"), "My draft");
-    await submit("guest-note-edit-form");
-    expect((byId("guest-note-edit-body") as HTMLTextAreaElement).value).toBe("My draft");
-    expect(byId("guest-note-edit-problem")?.textContent).toMatch(/changed/i);
-    expect(byId("guest-note-edit-latest")?.textContent).toContain("Edited elsewhere");
+    await typeInto(byId("guest-composer-body"), "My draft");
+    await submit("guest-composer");
+    expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("My draft");
+    expect(byId("guest-composer-problem")?.textContent).toMatch(/changed/i);
+    expect(byId("guest-composer-latest")?.textContent).toContain("Edited elsewhere");
     // Saving again uses the fresh revision.
     extra = (url, init) => (url === `${BASE}/notes/${noteId(2)}` && init?.method === "PATCH" ? json(mine(2, { revision: 6, body: "My draft" })) : undefined);
-    await submit("guest-note-edit-form");
+    await submit("guest-composer");
     expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 5, body: "My draft" });
+  });
+  it("re-marks the frames of a note without a drawing, sending only the frames", async () => {
+    notes = { [asset(10)]: [mine(2, { revision: 3, startFrame: 50 })] };
+    extra = (url, init) => (url === `${BASE}/notes/${noteId(2)}` && init?.method === "PATCH" ? json(mine(2, { revision: 4, startFrame: 100, endFrame: 151 })) : undefined);
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:02:00");
+    await atSeconds(4);
+    await click(byId("guest-composer-mark-in"));
+    await atSeconds(6);
+    await click(byId("guest-composer-mark-out"));
+    await submit("guest-composer");
+    expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 3, startFrame: 100, endFrame: 151 });
+  });
+  it("takes a drawing off a note, locking the frames while it has one", async () => {
+    notes = { [asset(10)]: [mine(2, { revision: 3, startFrame: 50, hasMarkup: true, drawingFrame: 50 })] };
+    extra = (url, init) => (url === `${BASE}/notes/${noteId(2)}` && init?.method === "PATCH" ? json(mine(2, { revision: 4, hasMarkup: false })) : undefined);
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    expect((byId("guest-composer-mark-in") as HTMLButtonElement).disabled).toBe(true);
+    expect((byId("guest-composer-mark-out") as HTMLButtonElement).disabled).toBe(true);
+    expect(byId("guest-composer-drawing")?.textContent).toMatch(/has a drawing/i);
+    await click(byId("guest-composer-remove-drawing"));
+    await submit("guest-composer");
+    expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 3, markup: null });
+  });
+  it("keeps editing a reply inline, body only", async () => {
+    const reply = (({ replies: _replies, ...rest }) => rest)(mine(7, { parentId: noteId(1), startFrame: null, body: "Will do", revision: 2 }));
+    notes = { [asset(10)]: [{ ...note(1), replies: [reply] }] };
+    extra = (url, init) => (url === `${BASE}/notes/${noteId(7)}` && init?.method === "PATCH" ? json({ ...note(1), replies: [{ ...reply, body: "Done", revision: 3 }] }) : undefined);
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    await typeInto(byId("guest-note-edit-body"), "Done");
+    await submit("guest-note-edit-form");
+    expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 2, body: "Done" });
   });
   it("deletes only after the confirm, with the revision, and drops a hard-deleted thread", async () => {
     notes = { [asset(10)]: [mine(2, { revision: 3 })] };
@@ -466,5 +549,128 @@ describe("replies", () => {
     notes = { [asset(10)]: [note(1)] };
     await open();
     expect(byId("guest-note-reply-button")).toBeNull();
+  });
+});
+
+describe("round 1 findings", () => {
+  it("an old post that succeeds after the guest left the Version and came back does not erase the new draft", async () => {
+    videos = [videoOf(1, [versionOf(11), versionOf(10)].sort((a, b) => b.version - a.version))];
+    notes = { [asset(11)]: [], [asset(10)]: [note(1)] };
+    let release: () => void = () => undefined;
+    let posts = 0;
+    extra = (url, init) => {
+      if (url === `${BASE}/versions/${asset(11)}/notes` && init?.method === "POST") { posts += 1; return new Promise<Response>((resolve) => { release = () => { resolve(json(mine(5), 201)); }; }); }
+      return undefined;
+    };
+    const pick = async (label: string) => {
+      await click(byId("guest-version-trigger"));
+      await click([...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.startsWith(label)));
+    };
+    await open();
+    await click(byId("guest-add-note"));
+    await typeInto(byId("guest-composer-body"), "first");
+    await submit("guest-composer");
+    expect(posts).toBe(1);
+    await pick("v10");
+    await pick("v11");
+    await click(byId("guest-add-note"));
+    await typeInto(byId("guest-composer-body"), "second draft");
+    await act(async () => { release(); });
+    await flush();
+    expect(byId("guest-composer")).not.toBeNull();
+    expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("second draft");
+  });
+
+  it("after verifying, the notes are read again so the guest's own notes carry Edit, Delete and 'You'", async () => {
+    session = ANON;
+    let verified = false;
+    notes = { [asset(10)]: [] };
+    extra = (url, init) => {
+      if (url === `${BASE}/email/code` && init?.method === "POST") return json({ sent: true, resendAfterSeconds: 60 }, 202);
+      if (url === `${BASE}/email/verify` && init?.method === "POST") { verified = true; session = VERIFIED; return json(VERIFIED); }
+      if (url === `${BASE}/versions/${asset(10)}/notes` && (init?.method ?? "GET") === "GET") return json({ notes: [{ ...mine(2), author: { kind: "guest", name: "Sam", self: verified } }] });
+      return undefined;
+    };
+    await open();
+    expect(byId("guest-note-self-badge")).toBeNull();
+    await click(byId("guest-add-note"));
+    await typeInto(byId("guest-verify-email"), "sam@example.com");
+    await typeInto(byId("guest-verify-name"), "Sam");
+    await submit("guest-verify-identity-form");
+    await typeInto(byId("guest-verify-code"), "123456");
+    await flush();
+    expect(byId("guest-note-self-badge")).not.toBeNull();
+    expect(byId("guest-note-actions")).not.toBeNull();
+  });
+
+  it("a dropped connection on a post says the outcome is unknown and reads the notes again", async () => {
+    let landed = false;
+    extra = (url, init) => {
+      if (url === `${BASE}/versions/${asset(10)}/notes` && init?.method === "POST") { landed = true; throw new TypeError("offline"); }
+      if (url === `${BASE}/versions/${asset(10)}/notes` && (init?.method ?? "GET") === "GET") return json({ notes: landed ? [mine(5, { body: "keep me" })] : [] });
+      return undefined;
+    };
+    await open();
+    await click(byId("guest-add-note"));
+    await typeInto(byId("guest-composer-body"), "keep me");
+    await submit("guest-composer");
+    expect(byId("guest-composer-problem")?.textContent).toMatch(/may or may not/i);
+    expect(byId("guest-composer-problem")?.textContent).not.toMatch(/nothing was changed/i);
+    expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("keep me");
+    // The re-read found the note the failed answer hid.
+    expect(allById("guest-note")).toHaveLength(1);
+  });
+
+  it("a 4xx refusal keeps the definite wording and does not read the notes again", async () => {
+    extra = (url, init) => (url.endsWith("/notes") && init?.method === "POST" ? json({ error: "invalid_request" }, 400) : undefined);
+    await open();
+    const reads = () => fetchMock.mock.calls.filter((call) => String(call[0]) === `${BASE}/versions/${asset(10)}/notes` && ((call[1] as RequestInit | undefined)?.method ?? "GET") === "GET").length;
+    const before = reads();
+    await click(byId("guest-add-note"));
+    await typeInto(byId("guest-composer-body"), "x");
+    await submit("guest-composer");
+    expect(byId("guest-composer-problem")?.textContent).toMatch(/couldn.t be saved/i);
+    expect(reads()).toBe(before);
+  });
+
+  it("I and O mark the in and out frames while a composer is open, and do nothing otherwise", async () => {
+    await open();
+    await atSeconds(2);
+    await keyDown("i");
+    await click(byId("guest-add-note"));
+    expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:02:00");
+    await atSeconds(4);
+    await keyDown("o");
+    expect(byId("guest-composer-anchor")?.textContent).toMatch(/00:00:02:00.*00:00:04:00/);
+    await atSeconds(6);
+    await keyDown("i");
+    expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:06:00");
+    expect(byId("guest-composer-anchor")?.textContent).not.toMatch(/00:00:04:00/);
+  });
+});
+
+describe("the phone drawer", () => {
+  beforeEach(async () => { await viewport.set({ width: 390, coarse: true }); });
+  const drawer = () => document.querySelector('[data-testid="guest-notes-drawer"][data-open]');
+  it("closes when the composer opens, so the picture is visible, and stays closed until the guest opens it", async () => {
+    await open();
+    // The drawer is where Add a note lives on a phone.
+    await click(button("Notes"));
+    expect(drawer()).not.toBeNull();
+    await click(byId("guest-add-note"));
+    expect(byId("guest-composer")).toBeNull();
+    expect(drawer()).toBeNull();
+    await click(button("Notes"));
+    expect(byId("guest-composer")).not.toBeNull();
+  });
+  it("opens again once the draft is posted or cancelled", async () => {
+    await open();
+    await click(button("Notes"));
+    await click(byId("guest-add-note"));
+    expect(drawer()).toBeNull();
+    await click(button("Notes"));
+    await click(byId("guest-composer-cancel"));
+    expect(byId("guest-composer")).toBeNull();
+    expect(drawer()).not.toBeNull();
   });
 });

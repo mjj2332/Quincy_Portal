@@ -10,7 +10,7 @@ import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "../components/quincy/Sh
 import { VideoPlayer, type VideoPlayerControl } from "../components/quincy/VideoPlayer";
 import type { TimelineMarker } from "../components/quincy/VideoTimelineMarkers";
 import type { GuestApi, WriteResult } from "./guest-api";
-import { failureText, removeThread, upsertThread } from "./guest-compose";
+import { failureText, removeThread, upsertThread, type EditPatch } from "./guest-compose";
 import type { ActionOutcome, NoteActions, Writing } from "./GuestNoteItem";
 import { GuestNotesPanel } from "./GuestNotesPanel";
 import { GuestVerifyDialog } from "./GuestVerifyDialog";
@@ -176,6 +176,22 @@ export function GuestVideoScreen({ api, session, onSession, archived, onArchived
 
   // Writes (#741 13c). Every answer is applied to the thread list by id, and only if it is not stale; the settle below is the one place a WriteResult becomes list state and words.
   const canWrite = session.link.allow.comments && !archived;
+  const assetRef = useRef(version.assetId);
+  assetRef.current = version.assetId;
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
+  /** Reads the notes again without clearing the list (open forms and drafts stay). A write that starts or settles while the read is out has applied a newer answer: read again rather than overwrite it. */
+  const resync = useCallback(() => {
+    const asked = assetRef.current;
+    const epoch = writer.epoch();
+    void api.notes(asked).then((result) => {
+      if (assetRef.current !== asked) return;
+      if (result.kind === "gone") onUnavailable();
+      else if (result.kind !== "ok") return;
+      else if (writer.epoch() !== epoch) resync();
+      else setThreads(result.value);
+    });
+  }, [api, writer, onUnavailable]);
   const settle = useCallback((result: WriteResult | Skipped, rootId: string | null): ActionOutcome => {
     if (result.kind === "stale") return { ok: false, message: null };
     if (result.kind === "busy") return { ok: false, message: "Another change to this note is still saving." };
@@ -183,11 +199,18 @@ export function GuestVideoScreen({ api, session, onSession, archived, onArchived
       if (result.thread !== null) { const fresh = result.thread; setThreads((list) => (list === null ? list : upsertThread(list, fresh))); }
       else if (rootId !== null) { setThreads((list) => (list === null ? list : removeThread(list, rootId))); setSelectedId((current) => (current === rootId ? null : current)); }
     } else if (result.kind === "deleted") setNotesAttempt((n) => n + 1);
+    else if (result.kind === "unreachable") resync(); // the write may have landed: look before the guest sends it again
     const message = failureText(result);
     return message === null ? { ok: true } : { ok: false, message };
-  }, []);
+  }, [resync]);
   const assetForWrites = version.assetId;
   const post = useCallback(async (input: Parameters<GuestApi["createNote"]>[1]) => settle(await writer.run(`new:${assetForWrites}`, () => api.createNote(assetForWrites, input)), null), [api, writer, settle, assetForWrites]);
+  const editRoot = useCallback(async (id: string, patch: EditPatch): Promise<ActionOutcome> => {
+    const current = threadsRef.current?.find((thread) => thread.id === id);
+    if (current === undefined || current.deleted) return { ok: false, message: "This note was deleted." };
+    return settle(await writer.run(id, () => api.editNote(id, { expectedRevision: current.revision, ...patch })), id);
+  }, [api, writer, settle]);
+  const latestOf = useCallback((id: string) => threads?.find((thread) => thread.id === id) ?? null, [threads]);
   const actions = useMemo<NoteActions>(() => ({
     reply: async (root, body) => settle(await writer.run(root.id, () => api.replyToNote(root.id, body)), root.id),
     edit: async (root, note, body) => settle(await writer.run(root.id, () => api.editNote(note.id, { expectedRevision: note.revision, body })), root.id),
@@ -195,11 +218,23 @@ export function GuestVideoScreen({ api, session, onSession, archived, onArchived
   }), [api, writer, settle]);
 
   const onDrawingChange = useCallback((drawing: boolean) => { if (phone) setDrawerOpen(!drawing); }, [phone]);
-  const compose = useGuestCompose({ clock, frameCount: version.frameCount, timecode, post, onDrawingChange });
+  const compose = useGuestCompose({ clock, frameCount: version.frameCount, timecode, markupAllowed: session.link.allow.markup, post, edit: editRoot, latestOf, onDrawingChange });
   // A draft belongs to the Version it was made on; an archived Project takes it away.
-  const { close: closeComposer } = compose;
+  const { close: closeComposer, editingId } = compose;
   useEffect(() => { closeComposer(); }, [version.assetId, closeComposer]);
   useEffect(() => { if (archived) closeComposer(); }, [archived, closeComposer]);
+  // An edit of a note that has since been deleted (here or elsewhere) has nothing left to save to.
+  const editedGone = editingId !== null && (latestOf(editingId)?.deleted ?? true);
+  useEffect(() => { if (editedGone) closeComposer(); }, [editedGone, closeComposer]);
+
+  // On a phone the composer lives in the notes drawer, which covers the picture the guest is marking: opening a draft closes the drawer, and it comes back when the draft ends.
+  const restoreDrawer = useRef(false);
+  const startDraft = useCallback((start: () => void) => { start(); if (phone) { restoreDrawer.current = true; setDrawerOpen(false); } }, [phone]);
+  const wasComposing = useRef(false);
+  useEffect(() => {
+    if (wasComposing.current && !compose.isOpen && restoreDrawer.current) { restoreDrawer.current = false; if (phone) setDrawerOpen(true); }
+    wasComposing.current = compose.isOpen;
+  }, [compose.isOpen, phone]);
 
   const requestVerify = useCallback((then: "compose" | "none") => {
     afterVerify.current = then;
@@ -211,9 +246,13 @@ export function GuestVideoScreen({ api, session, onSession, archived, onArchived
     setVerifyOpen(false);
     if (reopenDrawer.current) { reopenDrawer.current = false; setDrawerOpen(true); }
   }, []);
-  const writing = useMemo<Writing>(() => ({ canWrite, verified: session.verified, actions, onNeedVerify: () => { requestVerify("none"); } }), [canWrite, session.verified, actions, requestVerify]);
+  const { beginEdit } = compose;
+  const writing = useMemo<Writing>(() => ({
+    canWrite, verified: session.verified, actions, onNeedVerify: () => { requestVerify("none"); },
+    composerOpen: compose.isOpen, editRoot: (thread) => { startDraft(() => { beginEdit(thread); }); },
+  }), [canWrite, session.verified, actions, requestVerify, compose.isOpen, startDraft, beginEdit]);
   const addNote = canWrite
-    ? compose.isOpen ? compose.form : <Button type="button" variant="outline" data-testid="guest-add-note" className={TOUCH} onClick={() => { if (session.verified) compose.begin(); else requestVerify("compose"); }}>Add a note</Button>
+    ? compose.isOpen ? compose.form : <Button type="button" variant="outline" data-testid="guest-add-note" className={TOUCH} onClick={() => { if (session.verified) startDraft(compose.begin); else requestVerify("compose"); }}>Add a note</Button>
     : null;
 
   const overlay = useCallback((box: Box | null) => <>{watermark && box && <PremiumWatermark box={box} />}{markupOverlay(box)}{compose.overlay(box)}</>, [watermark, markupOverlay, compose.overlay]); // eslint-disable-line react-hooks/exhaustive-deps -- compose.overlay is the dependency that matters
@@ -250,7 +289,7 @@ export function GuestVideoScreen({ api, session, onSession, archived, onArchived
     </header>
     <div className="flex min-h-0 flex-1 flex-wrap min-[721px]:flex-nowrap">
       <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col p-[var(--space-5)] min-[721px]:flex-1">
-        <VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} overlay={overlay} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} />
+        <VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} onMark={compose.onMark} overlay={overlay} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} />
       </div>
       {!phone && <aside data-surface="default" className="flex flex-[1_1_360px] flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:max-h-dvh min-[721px]:flex-[0_0_clamp(240px,28vw,360px)]">{panel}</aside>}
     </div>
@@ -262,6 +301,12 @@ export function GuestVideoScreen({ api, session, onSession, archived, onArchived
       </SheetContent>
     </Sheet>}
     <GuestVerifyDialog api={api} open={verifyOpen} onOpenChange={(next) => { if (next) setVerifyOpen(true); else finishVerify(); }} onGone={() => { setVerifyOpen(false); onUnavailable(); }}
-      onVerified={(next) => { onSession(next); const then = afterVerify.current; afterVerify.current = "none"; finishVerify(); if (then === "compose") compose.begin(); }} />
+      onVerified={(next) => {
+        onSession(next);
+        // The notes read before verifying carried no 'self' marks: drop that read (bumping the attempt cancels it) and read again as the verified guest.
+        setNotesAttempt((n) => n + 1);
+        const then = afterVerify.current; afterVerify.current = "none"; finishVerify();
+        if (then === "compose") startDraft(compose.begin);
+      }} />
   </div>;
 }

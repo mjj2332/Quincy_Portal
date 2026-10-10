@@ -17,7 +17,7 @@ vi.mock("../components/LazyImage", () => ({ LazyImage: ({ src, alt, className }:
 const LINK = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const asset = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const vid = (n: number) => `11111111-1111-4111-8111-${String(n).padStart(12, "0")}`;
-const SESSION = { link: { label: "Smith house", expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: false, approve: false, download: false } }, verified: false, email: null, name: null };
+const SESSION = { link: { label: "Smith house", expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: false, approve: false, download: false, markup: true } }, verified: false, email: null, name: null };
 
 const versionOf = (n: number, over: Record<string, unknown> = {}) => ({
   assetId: asset(n), version: n, fps: { num: 25, den: 1 }, frameCount: 3000, durationMs: 120000, width: 1920, height: 1080, startTimecodeFrames: null, tcNominalFps: 25, tcDropFrame: false,

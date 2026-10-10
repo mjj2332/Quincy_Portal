@@ -8,7 +8,7 @@ const thread = (over: Record<string, unknown> = {}) => ({
   id: NOTE, parentId: null, author: { kind: "guest", name: "Sam", self: true }, startFrame: 50, endFrame: null, drawingFrame: null, hasMarkup: false, body: "Hi", deleted: false, revision: 1,
   resolved: false, createdAt: "2026-10-09T01:00:00.000Z", editedAt: null, replies: [], ...over,
 });
-const SESSION = { link: { label: null, expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: true, approve: false, download: false } }, verified: true, email: "sam@example.com", name: "Sam" };
+const SESSION = { link: { label: null, expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: true, approve: false, download: false, markup: true } }, verified: true, email: "sam@example.com", name: "Sam" };
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 
 let fetchMock: ReturnType<typeof vi.fn>;

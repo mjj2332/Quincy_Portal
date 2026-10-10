@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type MutableRefObject } from "react";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
 import { GUEST_NAME_MAX, guestEmailCodeInputSchema, type GuestSessionResponse } from "@quincy/shared";
 import { Button } from "../components/reui/button";
@@ -30,16 +30,21 @@ export function GuestVerifyDialog({ api, open, onOpenChange, onVerified, onGone 
   /** A stub answer: the link is gone, the page's unavailable path. */
   onGone: () => void;
 }) {
+  // Every request the flow starts remembers this number; closing moves it on, so an answer that arrives after Cancel (and maybe a reopen) changes nothing.
+  const generation = useRef(0);
+  useEffect(() => { if (!open) generation.current += 1; }, [open]);
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent data-testid="guest-verify-dialog" showCloseButton={false} className="max-w-sm">
-      <VerifyFlow api={api} onCancel={() => { onOpenChange(false); }} onVerified={onVerified} onGone={onGone} />
+      <VerifyFlow api={api} generation={generation} onCancel={() => { generation.current += 1; onOpenChange(false); }} onVerified={onVerified} onGone={onGone} />
     </DialogContent>
   </Dialog>;
 }
 
-function VerifyFlow({ api, onCancel, onVerified, onGone }: { api: GuestApi; onCancel: () => void; onVerified: (session: GuestSessionResponse) => void; onGone: () => void }) {
+function VerifyFlow({ api, generation, onCancel, onVerified, onGone }: { api: GuestApi; generation: MutableRefObject<number>; onCancel: () => void; onVerified: (session: GuestSessionResponse) => void; onGone: () => void }) {
   const [step, setStep] = useState<Step>("identity");
   const [email, setEmail] = useState("");
+  /** The address a code was last sent to: the code step shows it and Resend sends to it, whatever the field says now. */
+  const [sentTo, setSentTo] = useState("");
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -50,10 +55,12 @@ function VerifyFlow({ api, onCancel, onVerified, onGone }: { api: GuestApi; onCa
 
   /** Sends a code to the typed address. Returns true when the guest should be on the code step. */
   const send = async (address: string): Promise<boolean> => {
+    const mine = generation.current;
     setPending(true); setError(null);
     const result = await api.sendCode(address);
+    if (generation.current !== mine) return false;
     setPending(false);
-    if (result.ok) { startWait(result.resendAfterSeconds); return true; }
+    if (result.ok) { setSentTo(address); startWait(result.resendAfterSeconds); return true; }
     if (result.reason === "gone") onGone();
     else if (result.reason === "limited") { startWait(result.retryAfterSeconds); setError(`Too many codes requested. Try again in ${waitPhrase(result.retryAfterSeconds)}.`); }
     else if (result.reason === "archived") setError("This project was archived, so notes are read-only.");
@@ -75,13 +82,15 @@ function VerifyFlow({ api, onCancel, onVerified, onGone }: { api: GuestApi; onCa
   const resend = async () => {
     if (pending || secondsLeft > 0) return;
     setCode("");
-    await send(email.trim());
+    await send(sentTo);
   };
 
   const submitCode = async (value: string) => {
     if (pending || value.length !== 6) return;
+    const mine = generation.current;
     setPending(true); setError(null);
     const result = await api.verifyCode(value, name.trim());
+    if (generation.current !== mine) return;
     if (result.ok) { setPending(false); onVerified(result.session); return; }
     if (result.reason === "code_incorrect") {
       setCode("");
@@ -89,6 +98,7 @@ function VerifyFlow({ api, onCancel, onVerified, onGone }: { api: GuestApi; onCa
     } else if (result.reason === "code_expired" || result.reason === "already_verified") {
       // Two correct submissions race and one wins: the loser reads the session to find out it is verified.
       const current = await api.session();
+      if (generation.current !== mine) return;
       if (current.kind === "ok" && current.value.verified) { setPending(false); onVerified(current.value); return; }
       if (current.kind === "gone") { setPending(false); onGone(); return; }
       setCode("");
@@ -113,11 +123,11 @@ function VerifyFlow({ api, onCancel, onVerified, onGone }: { api: GuestApi; onCa
         <FieldGroup>
           <Field>
             <FieldLabel htmlFor="guest-verify-email">Email</FieldLabel>
-            <Input id="guest-verify-email" data-testid="guest-verify-email" type="email" autoComplete="email" inputMode="email" value={email} className={TOUCH} onChange={(event) => { setEmail(event.target.value); }} />
+            <Input id="guest-verify-email" data-testid="guest-verify-email" type="email" autoComplete="email" inputMode="email" value={email} disabled={pending} className={TOUCH} onChange={(event) => { setEmail(event.target.value); }} />
           </Field>
           <Field>
             <FieldLabel htmlFor="guest-verify-name">Your name</FieldLabel>
-            <Input id="guest-verify-name" data-testid="guest-verify-name" autoComplete="name" maxLength={GUEST_NAME_MAX} value={name} className={TOUCH} onChange={(event) => { setName(event.target.value); }} />
+            <Input id="guest-verify-name" data-testid="guest-verify-name" autoComplete="name" maxLength={GUEST_NAME_MAX} value={name} disabled={pending} className={TOUCH} onChange={(event) => { setName(event.target.value); }} />
           </Field>
           {errorLine}
           <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
@@ -137,7 +147,7 @@ function VerifyFlow({ api, onCancel, onVerified, onGone }: { api: GuestApi; onCa
     <form data-testid="guest-verify-code-form" onSubmit={(event) => { event.preventDefault(); void submitCode(code); }} noValidate>
       <FieldGroup>
         <p className="m-0 flex flex-wrap items-center gap-x-[var(--space-2)] text-foreground-secondary [font:var(--type-body-sm)]">
-          <span className="[overflow-wrap:anywhere]">{email.trim()}</span>
+          <span className="[overflow-wrap:anywhere]">{sentTo}</span>
           <Button type="button" variant="link" size="sm" data-testid="guest-verify-change-email" className={TOUCH} onClick={() => { setStep("identity"); setCode(""); setError(null); }}>Change</Button>
         </p>
         <Field>

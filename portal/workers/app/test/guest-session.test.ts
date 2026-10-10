@@ -28,7 +28,7 @@ describe("POST /d/api/links/:linkId/session", () => {
     const { response, cookie } = await startSession(link);
     expect(response.status).toBe(200);
     const body = guestSessionResponseSchema.parse(await response.json());
-    expect(body).toEqual({ link: { label: "Smith family", expiresAt: expect.any(String), allow: { comments: true, approve: false, download: true } }, verified: false, email: null, name: null });
+    expect(body).toEqual({ link: { label: "Smith family", expiresAt: expect.any(String), allow: { comments: true, approve: false, download: true, markup: false } }, verified: false, email: null, name: null });
 
     const setCookie = response.headers.getSetCookie().find((entry) => entry.startsWith(`${cookieName(link.id)}=`))!;
     expect(setCookie, "cookie name carries the __Secure- prefix and the link id").toBeDefined();
