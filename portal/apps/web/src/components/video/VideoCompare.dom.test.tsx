@@ -1025,4 +1025,16 @@ describe("Compare: the capability going away while comparing (#741 7c Sol round 
     expect(frameShown()).toBe(before);
     expect(tid("video-compare-notes-toggle")).not.toBeNull();
   });
+
+  it("with notes on, Single view leaves focus on the (same, connected) Compare button", async () => {
+    await openCompare({ parts: ["notes", "compare"] }, 5);
+    const button = compareButton()!;
+    button.focus();
+    await click(button);
+    await flush(4);
+    expect(compareRoot()).toBeNull();
+    expect(compareButton()).toBe(button);
+    expect(button.isConnected).toBe(true);
+    expect(document.activeElement).toBe(button);
+  });
 });

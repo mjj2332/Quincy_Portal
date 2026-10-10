@@ -233,7 +233,6 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       ><Columns2 aria-hidden="true" />{comparing ? "Single view" : "Compare"}</Button>}
     </header>;
   const layout = (slots: { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode } | null): ReactNode => <>
-    {header}
     <div className="flex min-h-0 flex-1 flex-wrap overflow-y-auto min-[721px]:flex-nowrap min-[721px]:overflow-hidden">
       <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col min-[721px]:flex-1 p-[var(--space-5)]">
         <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" initialMuted={muted} onMutedChange={setMuted} className="flex-1" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...slots?.playerProps} />
@@ -259,9 +258,10 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       className="top-0 left-0 flex h-dvh w-dvw max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none bg-background p-0 text-foreground ring-0 focus-visible:!outline-none sm:max-w-none"
     >
       <OverlayContainerContext.Provider value={slot}>
+      {/* The header sits outside the mode switch so the Compare button is the same node in both modes (focus survives the switch). */}
+      {header}
       {comparing
         ? <>
-          {header}
           <Suspense fallback={null}>
             <LazyCompareView video={video} store={compareStore} startFrame={startFrame} onChangeSide={changeSide} controlRef={compareRef} detailsFor={detailsFor} {...(notes ? { notes: { projectId: notes.projectId, role: notes.role, userId: notes.userId, archived: notes.archived, forms: notes.forms } } : {})} />
           </Suspense>
