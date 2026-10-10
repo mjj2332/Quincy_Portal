@@ -63,6 +63,8 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   const mark = (kind: "in" | "out") => { if (clock) store.mark(assetId, kind, frameOnScreen(clock.getState()), clock); };
 
   // The anchor is only the timecode (or the in -> out pair); "Note at" stays for screen readers.
+  // A drawing on the anchor frame is one chip, not two identical timecodes; with in / out marks the anchor reads differently and the drawing keeps its own chip.
+  const merged = drawn !== null && !pendingFrames;
   const anchorText = pendingFrames
     ? marks.in !== null && marks.out !== null ? `In ${timecode(marks.in)} → Out ${timecode(marks.out)}` : marks.in !== null ? `In ${timecode(marks.in)}` : `Out ${timecode(marks.out!)}`
     : timecode(drawn?.drawingFrame ?? composer.anchorFrame ?? liveFrame);
@@ -77,13 +79,13 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     onSubmit={(event) => { event.preventDefault(); submit(); }}
   >
     <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-      <span data-testid="video-note-anchor" aria-live="off" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}>{!pendingFrames && <span className="sr-only">Note at </span>}{anchorText}</span>
+      <span data-testid="video-note-anchor" aria-live="off" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}>{!pendingFrames && <span className="sr-only">{merged ? "Note with a drawing at " : "Note at "}</span>}{merged && <PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />}{anchorText}</span>
       <Button type="button" variant="secondary" data-testid="video-note-set-in" className={SMALL_BUTTON} disabled={clock === null || frozen || drawingNow || otherForm !== null} aria-keyshortcuts="I" onClick={() => { mark("in"); }}>Set in <Kbd className={KBD_HINT}>I</Kbd></Button>
       <Button type="button" variant="secondary" data-testid="video-note-set-out" className={SMALL_BUTTON} disabled={clock === null || frozen || drawingNow || otherForm !== null} aria-keyshortcuts="O" onClick={() => { mark("out"); }}>Set out <Kbd className={KBD_HINT}>O</Kbd></Button>
       {pendingFrames && <Button type="button" variant="text" data-testid="video-note-clear-marks" disabled={frozen || drawingNow} onClick={() => { store.clearMarks(assetId); }}>Clear marks</Button>}
     </div>
     {drawn && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-      <span data-testid="video-note-drawing-chip" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}><span className="sr-only">Drawing on </span><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />{timecode(drawn.drawingFrame!)}</span>
+      {!merged && <span data-testid="video-note-drawing-chip" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}><span className="sr-only">Drawing on </span><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />{timecode(drawn.drawingFrame!)}</span>}
       <Button type="button" variant="text" data-testid="video-note-remove-drawing" className={SMALL_BUTTON} disabled={frozen} onClick={() => { store.clearMarkup(assetId); }}>Remove drawing</Button>
     </div>}
     <label className="sr-only" htmlFor="video-note-body">Add a note</label>

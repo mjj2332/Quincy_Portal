@@ -19,6 +19,7 @@ import { Button as ReuiButton } from "../reui/button";
 import { Item } from "../reui/item";
 import { Kbd } from "../reui/kbd";
 import { Textarea } from "../reui/textarea";
+import { IconTip } from "../quincy/VideoPlayer";
 import { ANCHOR_CHIP, ANCHOR_CHIP_ROW } from "./VideoNoteComposer";
 
 /** What a thread asks of the panel. Every write rejects with the original error, which the thread classifies. */
@@ -32,7 +33,7 @@ export type ThreadActions = {
 
 const MONO = "[font:var(--type-mono)] tabular-nums";
 const SMALL = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
-const LINK_BUTTON = "min-h-8 pointer-coarse:min-h-11 max-[721px]:min-h-11";
+const LINK_BUTTON = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
 /** Shown, never chosen: the paste dialog renders it too, so a copy's visibility is visibly the source's. */
 export function VisibilityBadge({ visibility }: { visibility: VideoNoteDto["visibility"] }) {
@@ -162,7 +163,9 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     </div>
   </header>;
 
-  const editForm = (note: VideoNoteDto) => editing && editing.noteId === note.id && <form
+  const editForm = (note: VideoNoteDto) => editing && editing.noteId === note.id && (() => {
+    const showDrawControls = Boolean(drawings?.on && drawings.canAnnotate && note.id === thread.id && thread.startFrame !== null);
+    return <form
     data-notes-form="edit"
     data-size-container="true"
     className="@container grid gap-[var(--space-2)]"
@@ -170,19 +173,23 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
   >
     <label className="sr-only" htmlFor={`video-note-edit-${note.id}`}>Edit note</label>
     <Textarea id={`video-note-edit-${note.id}`} data-testid="video-note-edit-body" value={editing.text} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) store.setOpenText(assetId, event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit, markup: drawings?.on ?? false }); } }} />
-    {editing.frames && !editing.drawing.touched && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-      <span data-testid="video-note-edit-anchor" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}>{editAnchorLabel(marks, timecode)}</span>
-      <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-in" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "in", frameOnScreen(clock.getState()), clock); }}>Set in <Kbd>I</Kbd></Button>
-      <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-out" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "out", frameOnScreen(clock.getState()), clock); }}>Set out <Kbd>O</Kbd></Button>
-      <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-make-point" disabled={busy || !clock} onClick={() => { if (clock) store.makePoint(assetId, clock); }}>Make point</Button>
+    {(editing.frames || showDrawControls) && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+      {editing.frames && editing.drawing.touched && <span data-testid="video-note-edit-frames-follow" className="text-foreground-secondary [font:var(--type-label)]">Frames follow the drawing.</span>}
+      {editing.frames && !editing.drawing.touched && <>
+        <span data-testid="video-note-edit-anchor" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}>{editAnchorLabel(marks, timecode)}</span>
+        <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-in" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "in", frameOnScreen(clock.getState()), clock); }}>Set in <Kbd>I</Kbd></Button>
+        <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-out" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "out", frameOnScreen(clock.getState()), clock); }}>Set out <Kbd>O</Kbd></Button>
+        <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-make-point" disabled={busy || !clock} onClick={() => { if (clock) store.makePoint(assetId, clock); }}>Make point</Button>
+      </>}
+      {showDrawControls && drawings && <EditDrawingControls store={store} assetId={assetId} note={thread} editing={editing} clock={clock} frameCount={frameCount} busy={busy} timecode={timecode} projectId={drawings.projectId} role={drawings.role} />}
     </div>}
-    {drawings?.on && drawings.canAnnotate && note.id === thread.id && thread.startFrame !== null && <EditDrawingControls store={store} assetId={assetId} note={thread} editing={editing} clock={clock} frameCount={frameCount} busy={busy} timecode={timecode} projectId={drawings.projectId} role={drawings.role} />}
     {editing.conflict && <Notice tone="caution" data-testid="video-note-conflict" className="grid gap-[var(--space-1)]"><span>Current note on the server:</span><span data-testid="video-note-conflict-body" className="whitespace-pre-wrap [overflow-wrap:anywhere] text-foreground">{editing.conflict.body}</span></Notice>}
     <div className="flex justify-end gap-[var(--space-2)]">
       <Button type="button" variant="secondary" data-testid="video-note-edit-cancel" disabled={busy} onClick={() => { store.close(assetId); }}>Cancel</Button>
       <Button type="submit" data-testid="video-note-edit-save" disabled={busy || editing.text.trim() === ""}>{busy ? "Saving…" : editing.conflict ? "Save anyway" : "Save"}</Button>
     </div>
   </form>;
+  })();
 
   const label = noteAnchorLabel(thread, timecode);
   const resolvedLine = thread.resolved ? `Resolved by ${thread.resolved.by.name}` : null;
@@ -196,7 +203,7 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
         <VisibilityBadge visibility={thread.visibility} />
         {thread.startFrame !== null && <ReuiButton type="button" variant="secondary" size="sm" data-testid="video-note-anchor-button" aria-label={`Go to ${label}`} className={cn("pointer-coarse:min-h-11 max-[721px]:min-h-11", MONO)} onClick={() => { onSeek(thread); }}>{label}</ReuiButton>}
         {resolvedLine && <span className={cn(META_TEXT, "!normal-case")}>{resolvedLine}</span>}
-        {drawings && thread.hasMarkup && !thread.deleted && <span data-testid="video-note-has-drawing" className={cn(META_TEXT, "inline-flex items-center gap-[var(--space-1)] !normal-case")}><PencilIcon aria-hidden="true" className="size-3" />{drawings.on ? "Drawing" : "Drawing hidden"}</span>}
+        {drawings && thread.hasMarkup && !thread.deleted && <IconTip label="Has a drawing"><span data-testid="video-note-has-drawing" className={cn(META_TEXT, "inline-flex items-center !normal-case")}><PencilIcon aria-hidden="true" className="size-3" /><span className="sr-only">{drawings.on ? "Drawing" : "Drawing hidden"}</span></span></IconTip>}
         <span className="ms-auto">{renderMenu(thread)}</span>
       </div>
       {editing?.noteId === thread.id ? editForm(thread) : <NoteText note={thread} />}
@@ -271,8 +278,10 @@ function EditDrawingControls({ store, assetId, note, editing, clock, frameCount,
   const unsupported = saved && query.data?.unsupported === true;
   const disabled = busy || !clock || framesChosen || drawingNow || !ready || unsupported;
   const why = unsupported ? `video-note-edit-drawing-unsupported-${note.id}` : undefined;
-  return <div data-testid="video-note-edit-drawing" className="flex flex-wrap items-center gap-[var(--space-2)]">
-    {hasItems && frame !== null && <span data-testid="video-note-edit-drawing-chip" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" /><span className="sr-only">Drawing on </span>{timecode(frame)}</span>}
+  // The header's anchor button already reads the note's frame: the chip only earns its place when the drawing is on another frame.
+  const chipShown = hasItems && frame !== null && timecode(frame) !== noteAnchorLabel(note, timecode);
+  return <div data-testid="video-note-edit-drawing" className="contents">
+    {chipShown && frame !== null && <span data-testid="video-note-edit-drawing-chip" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" /><span className="sr-only">Drawing on </span>{timecode(frame)}</span>}
     {drawing.remove && <span data-testid="video-note-edit-drawing-removed" className="text-foreground-secondary [font:var(--type-label)]">The drawing is removed when you save.</span>}
     {!drawing.remove && <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-draw" aria-describedby={why} disabled={disabled} onClick={enter}>{hasItems ? "Edit drawing" : "Add drawing"}</Button>}
     {!drawing.remove && hasItems && <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-remove-drawing" aria-describedby={why} disabled={busy || drawingNow || unsupported || !ready} onClick={() => { store.removeDrawing(assetId); }}>Remove drawing</Button>}

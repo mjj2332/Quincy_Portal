@@ -22,13 +22,13 @@ export type VideoPlayerControl = {
   currentFrame(): number;
 };
 
-const COARSE = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[721px]:min-h-11 max-[721px]:min-w-11";
+export const COARSE = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[721px]:min-h-11 max-[721px]:min-w-11";
 const MONO = "[font:var(--type-mono)] tabular-nums";
 // These chips keep the Lightbox's SHORTCUT_KBD skin (bordered, bg-secondary) rather than the Kbd primitive, to match the Lightbox legend.
-const LEGEND_KBD = "rounded-[var(--radius-xs)] border border-solid border-[length:var(--border-width-hair)] border-border bg-secondary px-[var(--space-1)] text-foreground [font:var(--weight-regular)_var(--text-2xs)/1.4_var(--font-mono)]";
+export const LEGEND_KBD = "rounded-[var(--radius-xs)] border border-solid border-[length:var(--border-width-hair)] border-border bg-secondary px-[var(--space-1)] text-foreground [font:var(--weight-regular)_var(--text-2xs)/1.4_var(--font-mono)]";
 const LEGEND = "flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)] text-foreground-secondary [font:var(--type-label)] pointer-coarse:hidden max-[721px]:hidden";
 
-function IconTip({ label, keys, children }: { label: string; keys?: string; children: React.ReactElement }) {
+export function IconTip({ label, keys, children }: { label: string; keys?: string; children: React.ReactElement }) {
   return <Tooltip>
     <TooltipTrigger render={children} />
     <TooltipContent>{label}{keys && <Kbd>{keys}</Kbd>}</TooltipContent>
@@ -45,7 +45,7 @@ function IconTip({ label, keys, children }: { label: string; keys?: string; chil
  * surface (`data-surface="inverse"`) around it, like the Lightbox. `keyboard="self"` listens on the player; `"host"` leaves the
  * scope to the caller, who forwards events to `controlRef.handleKeyDown`.
  */
-export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, markers, pendingRange, onMarkerSelect, onMark, onClockChange, overlay, transportLocked = false }: {
+export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, markers, pendingRange, onMarkerSelect, onMark, onClockChange, overlay, transportLocked = false, transportActions, transportReplacement }: {
   version: VideoPlayerVersion;
   title: string;
   controlRef?: Ref<VideoPlayerControl>;
@@ -65,6 +65,10 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   overlay?: ReactNode | ((box: Box | null) => ReactNode);
   /** Drawing: the transport, the scrubber and the player's keys are inert, so nothing moves the frame under the pen. */
   transportLocked?: boolean;
+  /** Extra transport buttons, in the right-hand group before volume and full screen (the notes host puts "Draw" here). Built by the host, so this module never imports markup code. */
+  transportActions?: ReactNode;
+  /** Replaces the whole transport block (scrubber, controls, key legend) in place, under the picture, while the host needs the room (drawing). Never overlaid on the picture. */
+  transportReplacement?: ReactNode;
 }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [muted, setMutedState] = useState(false);
@@ -116,6 +120,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   >
     <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} onVideo={setVideo} overlay={overlay} />
 
+    {transportReplacement != null ? transportReplacement : <>
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}
     <div data-testid="video-scrubber">
       {/* The band is placed against the slider alone: inside the same box as the marker lane it would sit centred on the whole scrubber, 6px below the track. */}
@@ -155,6 +160,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         {onMark && <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>I</Kbd><Kbd className={LEGEND_KBD}>O</Kbd></KbdGroup>in/out</span>}
       </div>
       <div className="ml-auto flex items-center gap-[var(--space-1)]">
+        {transportActions}
         <IconTip label={muted ? "Unmute" : "Mute"}>
           <Toggle variant="default" size="default" pressed={muted} onPressedChange={toggleMuted} aria-label="Mute" className={cn("size-8", COARSE)}>{muted ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}</Toggle>
         </IconTip>
@@ -163,5 +169,6 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         </IconTip>}
       </div>
     </div>
+    </>}
   </section>;
 }

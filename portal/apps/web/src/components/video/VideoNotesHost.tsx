@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { Role, VideoDto, VideoVersionDto } from "@quincy/shared";
 import type { NoteFormStore } from "../../lib/video-note-form-store";
 import { useVideoNotes, type VideoNotesSession } from "./use-video-notes";
-import { VideoMarkupOverlay } from "./VideoMarkupOverlay";
+import { useVideoMarkup } from "./VideoMarkupOverlay";
 import { VideoNotesPanel } from "./VideoNotesPanel";
 
 /**
@@ -20,7 +20,7 @@ export default function VideoNotesHost({ notes, video, version, detailsRows, chi
   children: (slots: { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode }) => ReactNode;
 }) {
   const session = useVideoNotes({ projectId: notes.projectId, version, role: notes.role, userId: notes.userId, archived: notes.archived, forms: notes.forms, markup: notes.markup === true });
-  // The drawing surface reaches the player only as this render prop, built here in the notes chunk: the player never imports it, so a Project without markup pays nothing.
-  const overlay = session.markup ? (box: Parameters<typeof VideoMarkupOverlay>[0]["box"]) => <VideoMarkupOverlay session={session} box={box} /> : undefined;
-  return <>{children({ playerProps: { ...session.playerProps, ...(overlay ? { overlay } : {}) }, panel: <VideoNotesPanel key={version.assetId} session={session} video={video} detailsRows={detailsRows} /> })}</>;
+  // The drawing surface, the Draw button and the drawing stack reach the player only as these slots, built here in the notes chunk: the player never imports them, so a Project without markup pays nothing.
+  const { overlay, transportActions, transportReplacement } = useVideoMarkup(session);
+  return <>{children({ playerProps: { ...session.playerProps, ...(overlay ? { overlay } : {}), ...(transportActions ? { transportActions } : {}), ...(transportReplacement ? { transportReplacement } : {}) }, panel: <VideoNotesPanel key={version.assetId} session={session} video={video} detailsRows={detailsRows} /> })}</>;
 }

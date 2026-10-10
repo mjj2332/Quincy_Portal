@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
+import { PencilIcon } from "lucide-react";
 import { STROKE_LIMITS, VIDEO_MARKUP_MAX_BYTES, type Box, type FreehandPoint, type MarkupItem } from "@quincy/shared";
 import { useFrameClockSelector } from "../../lib/video-frame-clock";
 import { useMediaQuery } from "../../lib/use-media-query";
@@ -7,6 +8,8 @@ import { useVideoNoteMarkupQuery } from "../../lib/video-notes-data";
 import { preloadSavedDrawing, type DrawForm } from "../../lib/video-note-form-store";
 import { Button } from "../reui/button";
 import { Kbd } from "../reui/kbd";
+import { cn } from "@/lib/utils";
+import { COARSE, IconTip, LEGEND_KBD } from "../quincy/VideoPlayer";
 import { MarkupToolbar } from "../quincy/markup-toolbar";
 import { MarkupLayer, StrokeVisible } from "../quincy/freehand-strokes";
 import { Notice } from "../quincy/Notice";
@@ -31,15 +34,19 @@ const pointOf = (rect: DOMRect, event: PointerSample): FreehandPoint => ({
 const overPicture = (rect: DOMRect, event: PointerSample): boolean => event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
 
 /**
- * The markup surface and floating pill of the review player (#741 6b-ui), drawn through `VideoStage`'s overlay slot. The SVG sits exactly on the picture box (so a stroke
+ * The markup of the review player (#741 6b-ui), as a hook the notes host calls so the three places it lives share one state: the SVG surface drawn through `VideoStage`'s
+ * overlay slot, the rest-state "Draw" button in the player's transport row, and the drawing stack (the shared `MarkupToolbar` pill and its key legend) that replaces the
+ * transport block under the picture while drawing. The picture is never covered by toolbar UI, only by the drawing SVG, which sits exactly on the picture box (so a stroke
  * never starts in a letterbox band and a point is a fraction of the picture, whatever the stage's shape), takes input only while drawing, and shows a drawing only while the
  * film is paused on the frame it was drawn on. Everything a draft is (strokes, frozen frame, phase, pen) lives in the Video tab's form store; the only thing held here is the
- * stroke being drawn, in `useMarkup`. At rest the pill is one "Draw" button; pressing it pauses, confirms the frame, and expands the shared `MarkupToolbar` in place.
+ * stroke being drawn, in `useMarkup`. Pressing Draw pauses, confirms the frame, then swaps the transport for the stack. With the part off every slot is empty.
  */
-export function VideoMarkupOverlay({ session, box }: { session: VideoNotesSession; box: Box | null }) {
-  const { forms, assetId, clock, role, projectId, canAnnotate, selectedThread } = session;
+export function useVideoMarkup(session: VideoNotesSession): { overlay: ((box: Box | null) => ReactNode) | undefined; transportActions: ReactNode; transportReplacement: ReactNode } {
+  const { forms, assetId, clock, role, projectId, canAnnotate } = session;
+  const on = session.markup;
+  const selectedThread = on ? session.selectedThread : null;
   const slot = useSyncExternalStore(forms.subscribe, () => forms.slot(assetId));
-  const compact = useMediaQuery("(max-width: 720px)");
+  const compact = useMediaQuery("(max-width: 721px)");
   const svgRef = useRef<SVGSVGElement | null>(null);
   const drawButton = useRef<HTMLButtonElement | null>(null);
   const doneButton = useRef<HTMLButtonElement | null>(null);
@@ -50,15 +57,15 @@ export function VideoMarkupOverlay({ session, box }: { session: VideoNotesSessio
 
   // The drawing on screen is the selected note's saved one; read it here because an unreadable item blocks drawing on that note.
   const open = slot.open;
-  const editing = open?.kind === "edit" ? open : null;
+  const editing = on && open?.kind === "edit" ? open : null;
   const savedNote = selectedThread !== null && !selectedThread.deleted && selectedThread.hasMarkup && selectedThread.drawingFrame !== null ? selectedThread : null;
   const savedQuery = useVideoNoteMarkupQuery(projectId, assetId, savedNote?.id ?? "", savedNote?.revision ?? 1, savedNote !== null, role);
   // The edit form reads the same entry (note + revision), so this adds no fetch. A drawing with an unreadable item is never edited here.
-  const editingSaved = editing !== null && editing.noteId === editing.rootId && editing.drawing.hadDrawing && editing.drawing.items === null && !editing.drawing.remove;
+  const editingSaved = on && editing !== null && editing.noteId === editing.rootId && editing.drawing.hadDrawing && editing.drawing.items === null && !editing.drawing.remove;
   const editedQuery = useVideoNoteMarkupQuery(projectId, assetId, editing?.noteId ?? "", editing?.base.revision ?? 1, editingSaved, role);
   const savedBlocked = editingSaved && editedQuery.data?.unsupported === true;
-  const target = session.readOnly || !canAnnotate || savedBlocked ? null : drawTarget(slot.open);
-  const draw = slot.draw;
+  const target = !on || session.readOnly || !canAnnotate || savedBlocked ? null : drawTarget(slot.open);
+  const draw = on ? slot.draw : null;
   const drawing = draw !== null && draw.phase === "drawing";
   const confirming = draw !== null && draw.phase === "confirming";
   const form: DrawForm = draw?.form ?? target ?? "composer";
@@ -85,10 +92,6 @@ export function VideoMarkupOverlay({ session, box }: { session: VideoNotesSessio
     onPointerMove: (event: ReactPointerEvent<Element>) => { const rect = svgRef.current?.getBoundingClientRect(); if (rect && !overPicture(rect, event)) onPointerLeave(event); else onPointerMove(event); },
     onPointerUp: (event: ReactPointerEvent<Element>) => { const rect = svgRef.current?.getBoundingClientRect(); if (rect && !overPicture(rect, event)) onPointerLeave(event); else onPointerUp(event); },
   };
-
-  // A gesture never outlives draw mode or the picture it started on: leaving, or a resize, drops the stroke in progress and keeps the finished ones.
-  const { cancel } = markup;
-  useEffect(() => { cancel(); }, [cancel, drawing, box?.left, box?.top, box?.width, box?.height]);
 
   // A drawing has exactly one frame, and an undo step restores strokes without one: when drawing starts on a different frame than the history was built on, its steps are dropped.
   const { resetHistory } = markup;
@@ -148,29 +151,27 @@ export function VideoMarkupOverlay({ session, box }: { session: VideoNotesSessio
   else if (savedNote !== null && savedQuery.data?.markup && savedQuery.data.noteId === savedNote.id) { shownItems = savedQuery.data.markup; shownFrame = savedNote.drawingFrame; }
   const visible = drawing || (shownFrame !== null && atRest && frameNow === shownFrame);
 
-  const showPill = pillShows(target, drawing, confirming, clock !== null, playing);
-  const pillHint = drawing ? <div aria-hidden="true" className="pointer-events-none flex w-max items-center gap-[var(--space-2)] rounded-[var(--radius-pill)] border border-solid border-[length:var(--border-width-hair)] border-border bg-[var(--scrim-overlay)] px-[var(--space-3)] py-[var(--space-1)] text-on-inverse-muted [font:var(--type-eyebrow)] max-[721px]:hidden"><Kbd>⌘Z</Kbd> undo<Kbd>⇧⌘Z</Kbd> redo<Kbd>Esc</Kbd> done</div> : null;
+  const restShows = !drawing && (confirming || (target !== null && clock !== null && !playing));
+  const expand = () => { if (clock && target) { if (target === "edit") preloadSavedDrawing(forms, assetId, editedQuery.data); void forms.enterDraw(assetId, { clock, form: target, frameCount: session.frameCount }); } };
+  const unsupportedNote = visible && !drawing && shownItems === savedQuery.data?.markup && savedQuery.data?.unsupported === true;
 
-  return <>
-    {box !== null && <div data-testid="video-markup" data-drawing={drawing ? "true" : "false"} className="pointer-events-none absolute" style={{ left: box.left, top: box.top, width: box.width, height: box.height }}>
-      <MarkupLayer
-        ref={svgRef} aria-hidden="true" data-testid="video-markup-layer" viewBox="0 0 1 1" preserveAspectRatio="none" className="absolute inset-0 size-full overflow-hidden"
-        style={{ pointerEvents: drawing ? "auto" : "none", cursor: drawing ? "crosshair" : "default", touchAction: drawing ? "none" : "auto" }}
-        {...handlers}
-      >
-        {visible && shownItems.map((item, index) => <StrokeVisible key={index} stroke={item} opacity={1} testId="video-markup-stroke" pixelDots />)}
-        {drawing && markup.active && <StrokeVisible stroke={markup.active} opacity={1} testId="video-markup-stroke" pixelDots />}
-      </MarkupLayer>
-      {visible && !drawing && shownItems === savedQuery.data?.markup && savedQuery.data?.unsupported && <div data-testid="video-markup-unsupported" role="status" className="pointer-events-none absolute inset-x-0 top-[var(--space-2)] flex justify-center"><span className="rounded-[var(--radius-pill)] bg-[var(--scrim-overlay)] px-[var(--space-3)] py-[var(--space-1)] text-on-inverse-muted [font:var(--type-eyebrow)]">Some markup can't be shown</span></div>}
-    </div>}
-    {showPill && <div className="pointer-events-none absolute inset-x-0 bottom-[var(--space-3)] z-10 flex flex-col items-center gap-[var(--space-2)] max-[721px]:bottom-[var(--space-2)]" data-testid="video-markup-stack">
-      {refused && <Notice tone="caution" role="status" className="pointer-events-auto">That is as much markup as one note can hold. Undo a stroke to add more.</Notice>}
-      {pillHint}
+  const overlay = on ? (box: Box | null) => <MarkupSurface box={box} svgRef={svgRef} drawing={drawing} handlers={handlers} cancel={markup.cancel} unsupported={unsupportedNote}>
+    {visible && shownItems.map((item, index) => <StrokeVisible key={index} stroke={item} opacity={1} testId="video-markup-stroke" pixelDots />)}
+    {drawing && markup.active && <StrokeVisible stroke={markup.active} opacity={1} testId="video-markup-stroke" pixelDots />}
+  </MarkupSurface> : undefined;
+
+  const transportActions = restShows
+    ? <IconTip label="Draw">
+      <Button ref={drawButton} type="button" variant="ghost" size="icon" aria-label="Draw" data-testid="video-markup-toolbar-draw" disabled={confirming} className={cn("size-8", COARSE)} onClick={expand}><PencilIcon aria-hidden="true" /></Button>
+    </IconTip>
+    : null;
+
+  const transportReplacement = drawing
+    ? <div className="flex min-w-0 flex-col items-center gap-[var(--space-2)]" data-testid="video-markup-stack">
+      {refused && <Notice tone="caution" role="status">That is as much markup as one note can hold. Undo a stroke to add more.</Notice>}
       <MarkupToolbar
         label={compact ? null : form === "edit" ? "Editing drawing" : "Markup"}
-        tool={pen} compact={compact} testId="video-markup-toolbar" drawRef={drawButton}
-        collapsed={!drawing} expanding={confirming}
-        onExpand={() => { if (clock && target) { if (target === "edit") preloadSavedDrawing(forms, assetId, editedQuery.data); void forms.enterDraw(assetId, { clock, form: target, frameCount: session.frameCount }); } }}
+        tool={pen} compact={compact} testId="video-markup-toolbar"
         onToolChange={(kind) => { forms.setTool(assetId, { kind }); }}
         onColorChange={(color) => { forms.setTool(assetId, { color }); }}
         onWidthChange={(width) => { forms.setTool(assetId, { width }); }}
@@ -178,12 +179,31 @@ export function VideoMarkupOverlay({ session, box }: { session: VideoNotesSessio
         onUndo={markup.undo} onRedo={markup.redo} onClear={markup.clear}
         trailing={<Button ref={doneButton} type="button" data-testid="video-markup-done" className="max-[721px]:min-h-11 min-[721px]:pointer-coarse:min-h-11" onClick={() => { forms.exitDraw(assetId); }}>Done</Button>}
       />
-    </div>}
-  </>;
+      <div data-testid="video-markup-legend" aria-hidden="true" className="flex flex-wrap items-center justify-center gap-x-[var(--space-2)] gap-y-[var(--space-1)] text-foreground-secondary [font:var(--type-label)] max-[721px]:hidden">
+        <span className="inline-flex items-center gap-[var(--space-1)]"><Kbd className={LEGEND_KBD}>⌘Z</Kbd> undo</span><span> · </span>
+        <span className="inline-flex items-center gap-[var(--space-1)]"><Kbd className={LEGEND_KBD}>⇧⌘Z</Kbd> redo</span><span> · </span>
+        <span className="inline-flex items-center gap-[var(--space-1)]"><Kbd className={LEGEND_KBD}>Esc</Kbd> done</span>
+      </div>
+    </div>
+    : null;
+
+  return { overlay, transportActions, transportReplacement };
 }
 
-/** The pill (or the lone Draw button) shows while drawing or confirming; at rest only when something can take a drawing, the film is ready, and it is paused. */
-function pillShows(target: DrawForm | null, drawing: boolean, confirming: boolean, ready: boolean, playing: boolean): boolean {
-  if (drawing || confirming) return true;
-  return target !== null && ready && !playing;
+/** The SVG on the picture box. A gesture never outlives draw mode or the picture it started on: leaving, or a resize, drops the stroke in progress and keeps the finished ones. */
+function MarkupSurface({ box, svgRef, drawing, handlers, cancel, unsupported, children }: {
+  box: Box | null; svgRef: RefObject<SVGSVGElement | null>; drawing: boolean; handlers: React.ComponentProps<typeof MarkupLayer>; cancel: () => void; unsupported: boolean; children: ReactNode;
+}) {
+  useEffect(() => { cancel(); }, [cancel, drawing, box?.left, box?.top, box?.width, box?.height]);
+  if (box === null) return null;
+  return <div data-testid="video-markup" data-drawing={drawing ? "true" : "false"} className="pointer-events-none absolute" style={{ left: box.left, top: box.top, width: box.width, height: box.height }}>
+    <MarkupLayer
+      ref={svgRef} aria-hidden="true" data-testid="video-markup-layer" viewBox="0 0 1 1" preserveAspectRatio="none" className="absolute inset-0 size-full overflow-hidden"
+      style={{ pointerEvents: drawing ? "auto" : "none", cursor: drawing ? "crosshair" : "default", touchAction: drawing ? "none" : "auto" }}
+      {...handlers}
+    >
+      {children}
+    </MarkupLayer>
+    {unsupported && <div data-testid="video-markup-unsupported" role="status" className="pointer-events-none absolute inset-x-0 top-[var(--space-2)] flex justify-center"><span className="rounded-[var(--radius-pill)] bg-[var(--scrim-overlay)] px-[var(--space-3)] py-[var(--space-1)] text-on-inverse-muted [font:var(--type-eyebrow)]">Some markup can't be shown</span></div>}
+  </div>;
 }

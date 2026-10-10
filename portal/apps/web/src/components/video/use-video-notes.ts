@@ -92,7 +92,8 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
 
   const refresh = useCallback(() => { void query.refetch(); }, [query]);
 
-  const post = useCallback((input: VideoNoteCreateInput) => withCtx((context) => createVideoNote(context, input)), [withCtx]);
+  // A note posted with a drawing becomes the selected one, so its drawing stays on the picture (the display rule shows the selected note's).
+  const post = useCallback((input: VideoNoteCreateInput) => withCtx((context) => createVideoNote(context, input)).then((created) => { if (markup && input.markup !== undefined) select(created.id); return created; }), [withCtx, markup, select]);
   const actions = useMemo<ThreadActions>(() => ({
     reply: (rootId, body) => withCtx((context) => replyToVideoNote(context, rootId, body)),
     edit: (noteId: string, input: VideoNoteEditInput) => withCtx((context) => editVideoNote(context, noteId, input)),

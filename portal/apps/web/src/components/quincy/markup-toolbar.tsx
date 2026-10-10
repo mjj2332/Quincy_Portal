@@ -1,4 +1,4 @@
-import type { ReactNode, Ref } from "react";
+import type { ReactNode } from "react";
 import { ArrowUpRightIcon, MinusIcon, PencilIcon, Redo2Icon, SquareIcon, Trash2Icon, Undo2Icon, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/reui/button";
@@ -13,7 +13,7 @@ import { Eyebrow } from "./Eyebrow";
  * The markup toolbar shared by the photo Lightbox and (in 6b) the video note (#741 slice 6s-ui): one floating pill holding
  * tools, pen colours, stroke widths, Undo, Redo, Clear and a host slot. Every control is one tap: no mode swap, no popover.
  * Presentational only; the host owns the tool state, the history and the key handling (the shortcuts are written on the
- * buttons as `aria-keyshortcuts`, and the host shows them in its hint pill).
+ * buttons as `aria-keyshortcuts`, and the host shows them in its key legend).
  *
  * - The tools are one choice, so they are a radio group (one tab stop, arrow keys, aria-checked). Colours and widths are
  *   toggle groups with a single value; clicking the pressed one is ignored, so neither can be left empty.
@@ -21,10 +21,8 @@ import { Eyebrow } from "./Eyebrow";
  *   scoped so the two never compete in the cascade: docs/lessons.md, "A touch phone matches `pointer-coarse:` too").
  * - `compact` (the host's phone band) packs two rows: tools and history, then colours and one width button that
  *   cycles 2 -> 4 -> 7. Label and host slot follow on a last row.
- * - `collapsed` (video's rest state, #741 6b-ui) swaps the whole pill for one "Draw" button in the same place; `onExpand` runs the host's enter-draw.
- *   Photo never collapses. The button carries the pill's `drawbar` class and the toolbar's test id with a `-draw` suffix.
  * - No tooltips: a Base UI tooltip closes on Escape with a document-level stopPropagation, which would make one Escape
- *   close the tip instead of ending drawing. The title attribute and the host's hint pill carry the shortcuts.
+ *   close the tip instead of ending drawing. The title attribute and the host's key legend carry the shortcuts.
  */
 // The hex values stay literals: they are pen ink applied to the photograph, not interface chrome (design tokens §1.5).
 export const PEN_COLOUR_NAMES = {
@@ -72,28 +70,11 @@ export interface MarkupToolbarProps {
   compact?: boolean;
   /** The host's own controls (Cancel / Save, Done). */
   trailing?: ReactNode;
-  /** Video's rest state: one "Draw" button instead of the pill. */
-  collapsed?: boolean;
-  /** Pressing "Draw" in the collapsed state. */
-  onExpand?: () => void;
-  /** Disables the collapsed "Draw" button (the frame is being confirmed). */
-  expanding?: boolean;
-  /** The collapsed button's ref, so a host can return focus to it. */
-  drawRef?: Ref<HTMLButtonElement>;
   testId?: string;
   className?: string;
 }
 
-export function MarkupToolbar({ label, tool, onToolChange, onColorChange, onWidthChange, canUndo, canRedo, canClear, onUndo, onRedo, onClear, compact = false, trailing, collapsed = false, onExpand, expanding = false, drawRef, testId, className }: MarkupToolbarProps) {
-  if (collapsed) {
-    return (
-      <Button
-        ref={drawRef} type="button" variant="outline" aria-label="Draw" data-testid={testId ? `${testId}-draw` : undefined} disabled={expanding} onClick={onExpand}
-        className={cn("drawbar pointer-events-auto bg-card shadow-[var(--shadow-lg)] min-[721px]:pointer-coarse:min-h-11", className)}
-      ><PencilIcon aria-hidden="true" className="size-4" />Draw</Button>
-    );
-  }
-
+export function MarkupToolbar({ label, tool, onToolChange, onColorChange, onWidthChange, canUndo, canRedo, canClear, onUndo, onRedo, onClear, compact = false, trailing, testId, className }: MarkupToolbarProps) {
   const tools = (
     <RadioGroup key="tools" aria-label="Markup tool" className={GROUP} value={tool.kind} onValueChange={(value) => { if (value !== tool.kind) onToolChange(value as MarkupToolKind); }}>
       {TOOLS.map(({ kind, label: name, Icon }) => (
