@@ -128,6 +128,15 @@ async function drawOneStroke(host: HTMLElement) {
   });
 }
 
+// 6s: a stroke is only committed (and so undoable) once the pointer is released; undo is a no-op mid-gesture.
+async function releasePointer(host: HTMLElement) {
+  const svg = host.querySelector('[data-testid="lightbox-markup"]')!;
+  await act(async () => {
+    svg.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, pointerId: 1, clientX: 10, clientY: 10 }));
+    await Promise.resolve();
+  });
+}
+
 function draftStrokeCount(host: HTMLElement) {
   return host.querySelectorAll('[data-testid="lightbox-markup"] [data-testid="lightbox-stroke"]').length;
 }
@@ -221,6 +230,7 @@ describe("Lightbox — always-on drawing and draft protection", () => {
     expect(draftStrokeCount(host)).toBe(0);
     await drawOneStroke(host);
     expect(draftStrokeCount(host)).toBe(1);
+    await releasePointer(host);
     await keydown(window, { key: "z", ctrlKey: true });
     expect(draftStrokeCount(host)).toBe(0);
   });
