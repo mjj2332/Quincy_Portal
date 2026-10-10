@@ -6,6 +6,7 @@ import type { VideoFrameClock } from "../lib/video-frame-clock";
 import { Button } from "../components/reui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/reui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../components/reui/sheet";
+import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "../components/quincy/SheetCloseButton";
 import { VideoPlayer, type VideoPlayerControl } from "../components/quincy/VideoPlayer";
 import type { TimelineMarker } from "../components/quincy/VideoTimelineMarkers";
 import type { GuestApi } from "./guest-api";
@@ -172,9 +173,10 @@ export function GuestVideoScreen({ api, videos, index, onIndex, onBack, onUnavai
       {!phone && <aside data-surface="default" className="flex flex-[1_1_360px] flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:max-h-dvh min-[721px]:flex-[0_0_clamp(240px,28vw,360px)]">{panel}</aside>}
     </div>
     {phone && <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
-      <SheetContent side="bottom" data-testid="guest-notes-drawer" className="max-h-[80dvh] p-[var(--space-4)]">
-        <SheetHeader className="p-0"><SheetTitle data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</SheetTitle></SheetHeader>
+      <SheetContent side="bottom" showCloseButton={false} data-testid="guest-notes-drawer" className="max-h-[80dvh] p-[var(--space-4)]">
+        <SheetHeader className={`p-0 ${SHEET_CLOSE_CLEARANCE}`}><SheetTitle data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</SheetTitle></SheetHeader>
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">{panel}</div>
+        <SheetCloseButton label="Close notes" data-testid="guest-notes-close" />
       </SheetContent>
     </Sheet>}
   </div>;

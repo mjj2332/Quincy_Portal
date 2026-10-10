@@ -316,6 +316,11 @@ describe("the video screen", () => {
     expect(document.body.textContent).toContain("Trim the opening");
     const heading = drawer.querySelector<HTMLElement>('[data-testid="guest-notes-heading"]')!;
     expect(heading.textContent).toBe("Notes 1");
+    const closes = drawer.querySelectorAll<HTMLElement>("button[aria-label^=\"Close\"]");
+    expect(closes).toHaveLength(1);
+    expect(closes[0]!.getAttribute("data-testid")).toBe("guest-notes-close");
+    await click(closes[0]!);
+    await vi.waitFor(() => { expect(document.querySelector('[data-testid="guest-notes-drawer"][data-open]')).toBeNull(); });
   });
 
   it("shows the notes count beside the desktop heading", async () => {
