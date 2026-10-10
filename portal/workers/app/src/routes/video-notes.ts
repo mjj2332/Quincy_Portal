@@ -10,7 +10,7 @@ import { projectIsArchived } from "../lib/project-archive";
 import { terminalRoute } from "../lib/terminal-route";
 import { readVideoReviewGate } from "../lib/video-review-gate";
 import {
-  createVideoNote, createVideoNoteReply, deleteVideoNote, drawingFrameFits, editVideoNote, findNoteHead, listVideoNotes, readNoteMarkup, readThread, setVideoNoteResolution,
+  createVideoNote, createVideoNoteReply, deleteVideoNote, drawingFrameFits, editVideoNote, findNoteHead, listVideoNotes, readNoteMarkup, readNoteMarkupSnapshot, readThread, setVideoNoteResolution,
   versionFrameCount, type MarkupEdit, type MarkupWrite, type NoteHead,
 } from "../lib/video-notes";
 import { commitNotePaste, planNotePaste, type PlanOutcome } from "../lib/video-note-paste";
@@ -163,9 +163,9 @@ videoNotesRoutes.get("/projects/:projectId/video-notes/:noteId/markup", terminal
   c.header("Cache-Control", "private, no-store");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(noteId).success) return c.json({ error: "Invalid id" }, 400);
   const refused = await admit(c, projectId, false, true); if (refused) return refused;
-  const note = await findNoteHead(c.env.DB, projectId, noteId); if (!note) return notFound(c);
-  const stored = note.parent_id === null && note.deleted_at === null ? await readNoteMarkup(c.env.DB, projectId, noteId) : null;
-  return c.json(videoNoteMarkupResponseSchema.parse({ noteId, revision: note.revision, markup: stored ? JSON.parse(stored.strokes_json) : null }));
+  // One statement: the revision and the drawing must be one row-state, or a concurrent edit pairs R with R+1's strokes and poisons the client's revision-keyed cache.
+  const snapshot = await readNoteMarkupSnapshot(c.env.DB, projectId, noteId); if (!snapshot) return notFound(c);
+  return c.json(videoNoteMarkupResponseSchema.parse({ noteId, revision: snapshot.revision, markup: snapshot.strokes_json ? JSON.parse(snapshot.strokes_json) : null }));
 }));
 
 videoNotesRoutes.delete("/projects/:projectId/video-notes/:noteId", terminalRoute("/projects/:projectId/video-notes/:noteId", async (c) => {

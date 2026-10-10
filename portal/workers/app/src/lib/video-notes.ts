@@ -101,6 +101,15 @@ export async function readNoteMarkup(db: D1Database, projectId: string, noteId: 
   return await db.prepare("SELECT k.strokes_json FROM video_note_markup k JOIN video_notes n ON n.id = k.note_id WHERE k.note_id = ?1 AND n.project_id = ?2").bind(noteId, projectId).first<{ strokes_json: string }>() ?? null;
 }
 
+/**
+ * The revision and the live root's drawing in ONE statement, so a concurrent edit cannot pair revision R with the drawing of R+1. `strokes_json` is null for a reply, a tombstone
+ * or a note without a drawing; the whole result is null when the note is not in this Project.
+ */
+export async function readNoteMarkupSnapshot(db: D1Database, projectId: string, noteId: string): Promise<{ revision: number; strokes_json: string | null } | null> {
+  return await db.prepare(`SELECT n.revision, CASE WHEN n.parent_id IS NULL AND n.deleted_at IS NULL THEN k.strokes_json END AS strokes_json
+      FROM video_notes n LEFT JOIN video_note_markup k ON k.note_id = n.id WHERE n.id = ?1 AND n.project_id = ?2`).bind(noteId, projectId).first<{ revision: number; strokes_json: string | null }>() ?? null;
+}
+
 export type WriteOutcome<T> = { kind: "ok"; value: T } | { kind: "archived" } | { kind: "gone" };
 
 export async function createVideoNote(db: D1Database, input: { projectId: string; assetId: string; principal: Principal; visibility: VideoNoteVisibility; startFrame: number; endFrame: number | null; body: string; markup?: MarkupWrite; now: number }): Promise<WriteOutcome<VideoNoteThreadDto>> {
@@ -187,7 +196,12 @@ export async function editVideoNote(db: D1Database, input: { projectId: string; 
         AND (parent_id IS NOT NULL OR EXISTS (SELECT 1 FROM ${VERSION_FROM} WHERE m.asset_id = video_notes.asset_id AND m.frame_count > ?2 AND (?3 IS NULL OR ?3 <= m.frame_count)))
         AND ${projectFence(6)}${guard}`)
       .bind(...binds),
-    db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.edit', 'video_note', ?3, ?4, ?5 WHERE changes() = 1`).bind(auditId, input.principal.id, note.id, meta, input.now),
+    // A removal records what it removed (counts and frame, never strokes): this runs before the DELETE below, so the markup row is still readable, and the UPDATE has already cleared the note's own drawing_frame.
+    markup?.kind === "remove"
+      ? db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.edit', 'video_note', ?3,
+          json_set(?4, '$.strokeCount', (SELECT json_array_length(k.strokes_json) FROM video_note_markup k WHERE k.note_id = ?3), '$.markupBytes', (SELECT length(CAST(k.strokes_json AS BLOB)) FROM video_note_markup k WHERE k.note_id = ?3), '$.drawingFrame', ?6), ?5 WHERE changes() = 1`)
+        .bind(auditId, input.principal.id, note.id, meta, input.now, note.drawing_frame)
+      : db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.edit', 'video_note', ?3, ?4, ?5 WHERE changes() = 1`).bind(auditId, input.principal.id, note.id, meta, input.now),
     ...write,
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
   ]);

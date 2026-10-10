@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { videoNoteListResponseSchema, videoNotePastePreviewResponseSchema, videoNoteThreadDtoSchema, type VideoNoteThreadDto } from "@quincy/shared";
-import { createVideoNote, editVideoNote, findNoteHead } from "../src/lib/video-notes";
+import { createVideoNote, editVideoNote, findNoteHead, readNoteMarkupSnapshot } from "../src/lib/video-notes";
 import { database, ids, request, seedFixture, type Who } from "./embedded-media-support";
 import { clearVideoFlags, clearVideoNotes, noteAudit, noteRow, SEED_STROKES_JSON, seedVideoNote, seedVideoVersion, setVideoFlags } from "./video-review-support";
 
@@ -223,7 +223,8 @@ describe("edit with markup", () => {
     const removed = await request(notePath(note.id), "member", "PATCH", { expectedRevision: 1, markup: null }); expect(removed.status).toBe(200);
     expect(videoNoteThreadDtoSchema.parse(await removed.json())).toMatchObject({ revision: 2, hasMarkup: false, drawingFrame: null });
     expect(await markupRow(note.id)).toBeNull(); expect(await noteRow(note.id)).toMatchObject({ drawing_frame: null, revision: 2 });
-    expect(await meta("video_note.edit")).toMatchObject({ markup: "remove" });
+    expect(await meta("video_note.edit")).toMatchObject({ markup: "remove", strokeCount: 1, markupBytes: new TextEncoder().encode(JSON.stringify(MARKUP)).length, drawingFrame: 10 });
+    expect((await noteAudit("video_note.edit")).at(-1)!.meta_json).not.toContain("points");
     const again = await request(notePath(note.id), "member", "PATCH", { expectedRevision: 2, markup: null }); expect(again.status).toBe(200);
     expect(await json(again)).toMatchObject({ revision: 2 }); expect(await noteAudit("video_note.edit")).toHaveLength(1);
     expect((await request(notePath(note.id), "member", "PATCH", { expectedRevision: 2, markup: null, drawingFrame: 10 })).status).toBe(400);
@@ -290,6 +291,23 @@ describe("the lazy markup read", () => {
     await seedVideoNote({ assetId: version.assetId, parentId: note.id, author: ids.other });
     expect((await request(notePath(note.id), "member", "DELETE", { expectedRevision: 2 })).status).toBe(200);
     expect(await json(await request(markupPath(note.id), "member"))).toEqual({ noteId: note.id, revision: 3, markup: null });
+  });
+
+  it("reads the revision and the drawing from ONE statement, so the pair is always one row-state", async () => {
+    const version = await seedVideoVersion(); const note = await createDrawn("member", version.assetId, { markup: [stroke(), arrow] });
+    let prepared = 0;
+    const counting = new Proxy(database.DB, { get: (target, key) => key === "prepare" ? (sql: string) => { prepared += 1; return target.prepare(sql); } : Reflect.get(target, key).bind?.(target) ?? Reflect.get(target, key) }) as D1Database;
+    expect(await readNoteMarkupSnapshot(counting, ids.project, note.id)).toEqual({ revision: 1, strokes_json: JSON.stringify([stroke(), arrow]) });
+    expect(prepared).toBe(1);
+    await request(notePath(note.id), "member", "PATCH", { expectedRevision: 1, markup: [stroke("#010101")] });
+    prepared = 0;
+    expect(await readNoteMarkupSnapshot(counting, ids.project, note.id)).toEqual({ revision: 2, strokes_json: JSON.stringify([stroke("#010101")]) });
+    expect(prepared).toBe(1);
+    // A reply, an unknown id and another Project's note.
+    const reply = await seedVideoNote({ assetId: version.assetId, parentId: note.id });
+    expect(await readNoteMarkupSnapshot(counting, ids.project, reply.id)).toEqual({ revision: 1, strokes_json: null });
+    expect(await readNoteMarkupSnapshot(counting, ids.project, crypto.randomUUID())).toBeNull();
+    expect(await readNoteMarkupSnapshot(counting, crypto.randomUUID(), note.id)).toBeNull();
   });
 
   it("answers 400 for a bad id, 404 for an unknown note or another Project's, 403 to a Photographer and 404 to an outsider External", async () => {
