@@ -24,6 +24,9 @@ const T0 = Date.UTC(2026, 9, 12, 10, 0, 0);
 const OPEN_FLAGS = ["video_review", "video_review_all_projects", "video_review_guest", "video_review_notify_client"];
 const SENTINEL = "INTERNAL-SENTINEL-7f3a91";
 
+/** Runs the flush with the cron's scheduled time AND the real clock at `at` (the flush judges and records the real clock; a delayed run is its own case). */
+const runAt = (target: Env, at: number) => { vi.setSystemTime(at); return runGuestDigests(target, at); };
+
 type Sent = { from: string; to: string; subject: string; text?: string; html?: string; headers?: Record<string, string> };
 function mailer(options: { fail?: unknown } = {}) {
   const sent: Sent[] = [];
@@ -120,7 +123,7 @@ describe("one email an hour", () => {
     await release(version);
     const rows = [await pend(member, link.id, "video_added", second), await pend(member, link.id, "version_granted", version), await pend(member, link.id, "public_note", version, note), await pend(member, link.id, "video_released", version)];
     const mail = mailer();
-    const summary = await runGuestDigests(mail.env, T0);
+    const summary = await runAt(mail.env, T0);
     expect(mail.sent).toHaveLength(1); expect(summary.sent).toBe(1);
     const [message] = mail.sent;
     expect(message).toMatchObject({ from: SENDER, to: member.email, subject: "Updates on Smith family" });
@@ -131,8 +134,8 @@ describe("one email an hour", () => {
     expect(await lastDigest(member.memberId)).toBe(T0);
     // A new event 10 minutes later waits for the hour; the next hour sends it.
     const later = await pend(member, link.id, "version_granted", version, null, T0 + 600_000);
-    await runGuestDigests(mail.env, T0 + 10 * 60_000); expect(mail.sent).toHaveLength(1); expect((await rowOf(later))!.sent_at).toBeNull();
-    await runGuestDigests(mail.env, T0 + HOUR); expect(mail.sent).toHaveLength(2); expect((await rowOf(later))!.sent_at).not.toBeNull();
+    await runAt(mail.env, T0 + 10 * 60_000); expect(mail.sent).toHaveLength(1); expect((await rowOf(later))!.sent_at).toBeNull();
+    await runAt(mail.env, T0 + HOUR); expect(mail.sent).toHaveLength(2); expect((await rowOf(later))!.sent_at).not.toBeNull();
   });
 
   it("claims a member once: two flushes racing send one email", async () => {
@@ -146,7 +149,7 @@ describe("one email an hour", () => {
     const { version, link, member } = await basic(); const other = await seedMember(link.id);
     const second = await seedLink({ label: "Jones family" }); await onLink(second.id, [version]); const same = await seedMember(second.id, { guestId: member.guestId });
     for (const [who, linkId] of [[member, link.id], [other, link.id], [same, second.id]] as const) await pend(who, linkId, "version_granted", version);
-    const mail = mailer(); await runGuestDigests(mail.env, T0);
+    const mail = mailer(); await runAt(mail.env, T0);
     expect(mail.sent).toHaveLength(3);
     expect(mail.sent.map((message) => message.subject).sort()).toEqual(["Updates on Jones family", "Updates on Smith family", "Updates on Smith family"]);
     expect(new Set(mail.sent.map(urlOf)).size).toBe(3);
@@ -154,7 +157,7 @@ describe("one email an hour", () => {
 
   it("falls back to 'your video review' when the link has no label", async () => {
     const { version, link, member } = await basic({ label: null }); await pend(member, link.id, "version_granted", version);
-    const mail = mailer(); await runGuestDigests(mail.env, T0);
+    const mail = mailer(); await runAt(mail.env, T0);
     expect(mail.sent[0]!.subject).toBe("Updates on your video review");
   });
 });
@@ -174,7 +177,7 @@ describe("re-filtering at send time", () => {
   for (const [label, change] of drops) {
     it(`drops the item, sends nothing and marks the rows sent when: ${label}`, async () => {
       const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version); await change(t);
-      const mail = mailer(); const summary = await runGuestDigests(mail.env, T0);
+      const mail = mailer(); const summary = await runAt(mail.env, T0);
       expect(mail.sent, label).toHaveLength(0); expect(summary.sent).toBe(0);
       expect((await rowOf(id))!.sent_at, label).not.toBeNull();
     });
@@ -184,7 +187,7 @@ describe("re-filtering at send time", () => {
     const t = await basic(); const gone = await seedNote(t.version, { deleted: true }); const kept = await seedNote(t.version, { body: "Keep this one" });
     await release(t.version, true);
     await pend(t.member, t.link.id, "public_note", t.version, gone); await pend(t.member, t.link.id, "video_released", t.version); await pend(t.member, t.link.id, "public_note", t.version, kept);
-    const mail = mailer(); await runGuestDigests(mail.env, T0);
+    const mail = mailer(); await runAt(mail.env, T0);
     expect(mail.sent).toHaveLength(1);
     expect(mail.sent[0]!.text).toContain("Keep this one"); expect(mail.sent[0]!.text).not.toContain("Released and ready"); expect(mail.sent[0]!.text).not.toContain("Please trim the intro");
   });
@@ -193,7 +196,7 @@ describe("re-filtering at send time", () => {
     const [version] = await seedVideo("Final"); const link = await seedLink({ allowDownload: 0 }); await onLink(link.id, [version!]); const member = await seedMember(link.id);
     await release(version!);
     await pend(member, link.id, "video_released", version!);
-    const mail = mailer(); await runGuestDigests(mail.env, T0); expect(mail.sent).toHaveLength(0);
+    const mail = mailer(); await runAt(mail.env, T0); expect(mail.sent).toHaveLength(0);
   });
 });
 
@@ -207,18 +210,18 @@ describe("what an email may contain", () => {
     const goodReply = await seedNote(t.version, { parentId: publicRoot, body: "Studio public reply" });
     await pend(t.member, t.link.id, "public_note", t.version, internal); await pend(t.member, t.link.id, "staff_reply", t.version, underInternal);
     await pend(t.member, t.link.id, "staff_reply", t.version, internalReply); await pend(t.member, t.link.id, "staff_reply", t.version, goodReply);
-    const mail = mailer(); await runGuestDigests(mail.env, T0);
+    const mail = mailer(); await runAt(mail.env, T0);
     expect(mail.sent).toHaveLength(1); expect(mail.sent[0]!.text).toContain("The studio replied to your note: “Studio public reply”");
     expect(everything(mail.sent[0]!)).not.toContain(SENTINEL);
     // Only internal rows pending: no email at all.
     await wipe(); await openGate(); const only = await basic(); const hidden = await seedNote(only.version, { visibility: "internal", body: SENTINEL });
     await pend(only.member, only.link.id, "public_note", only.version, hidden);
-    const quiet = mailer(); await runGuestDigests(quiet.env, T0); expect(quiet.sent).toHaveLength(0);
+    const quiet = mailer(); await runAt(quiet.env, T0); expect(quiet.sent).toHaveLength(0);
   });
 
   it("carries no Review link token and no link id: the only URL is the unsubscribe URL, the token only in the fragment, and List-Unsubscribe names the same URL", async () => {
     const t = await basic(); await pend(t.member, t.link.id, "version_granted", t.version);
-    const mail = mailer(); await runGuestDigests(mail.env, T0);
+    const mail = mailer(); await runAt(mail.env, T0);
     const [message] = mail.sent; const url = urlOf(message!)!;
     expect(url).toMatch(/^https:\/\/portal\.test\/d\/unsubscribe#t=[A-Za-z0-9_-]{43}$/);
     const token = url.split("#t=")[1]!;
@@ -237,8 +240,8 @@ describe("what an email may contain", () => {
 
   it("mints a fresh token for every email, and every one of them stays valid", async () => {
     const t = await basic(); const mail = mailer();
-    await pend(t.member, t.link.id, "version_granted", t.version); await runGuestDigests(mail.env, T0);
-    await pend(t.member, t.link.id, "version_granted", t.version, null, T0 + 1); await runGuestDigests(mail.env, T0 + HOUR);
+    await pend(t.member, t.link.id, "version_granted", t.version); await runAt(mail.env, T0);
+    await pend(t.member, t.link.id, "version_granted", t.version, null, T0 + 1); await runAt(mail.env, T0 + HOUR);
     const [first, second] = mail.sent.map(urlOf);
     expect(first).not.toBe(second);
     const stored = (await tokens(t.member.memberId)).map((row) => row.token_hash).sort();
@@ -250,7 +253,7 @@ describe("what an email may contain", () => {
     const ids60: string[] = [];
     ids60.push(await pend(t.member, t.link.id, "public_note", t.version, note));
     for (let index = 0; index < 59; index += 1) ids60.push(await pend(t.member, t.link.id, "version_granted", t.version));
-    const mail = mailer(); await runGuestDigests(mail.env, T0);
+    const mail = mailer(); await runAt(mail.env, T0);
     const text = mail.sent[0]!.text!;
     const lines = text.split("\n").filter((line) => line.startsWith("- "));
     expect(lines.length).toBeLessThanOrEqual(50); expect(text).toMatch(/and \d+ more/);
@@ -261,14 +264,14 @@ describe("what an email may contain", () => {
 
   it("trims a note excerpt to 280 characters, ending in an ellipsis", async () => {
     const t = await basic(); const note = await seedNote(t.version, { body: `${"x".repeat(900)} END` }); await pend(t.member, t.link.id, "public_note", t.version, note);
-    const mail = mailer(); await runGuestDigests(mail.env, T0);
+    const mail = mailer(); await runAt(mail.env, T0);
     const excerpt = /“([^”]*)”/.exec(mail.sent[0]!.text!)![1]!;
     expect(Array.from(excerpt).length).toBeLessThanOrEqual(280); expect(excerpt.endsWith("…")).toBe(true); expect(mail.sent[0]!.text).not.toContain("END");
   });
 
   it("escapes staff text in the HTML part, and keeps a label out of the subject's line breaks", async () => {
     const t = await basic({ label: "Smith\r\nBcc: evil@example.test <b>" }); const note = await seedNote(t.version, { body: `<script>alert("x")</script> & more` }); await pend(t.member, t.link.id, "public_note", t.version, note);
-    const mail = mailer(); await runGuestDigests(mail.env, T0);
+    const mail = mailer(); await runAt(mail.env, T0);
     const [message] = mail.sent;
     expect(message!.html).not.toContain("<script>"); expect(message!.html).toContain("&lt;script&gt;"); expect(message!.html).toContain("&amp; more");
     expect(message!.subject).not.toMatch(/[\r\n]/);
@@ -277,7 +280,7 @@ describe("what an email may contain", () => {
   it("names a Version with its number and a note without a start frame without a timecode", async () => {
     const versions = await seedVideo("Cut", 3); const link = await seedLink(); await onLink(link.id, versions); const member = await seedMember(link.id);
     await pend(member, link.id, "version_granted", versions[2]!);
-    const mail = mailer(); await runGuestDigests(mail.env, T0);
+    const mail = mailer(); await runAt(mail.env, T0);
     expect(mail.sent[0]!.text).toContain("Version 3 is ready to review");
   });
 });
@@ -286,10 +289,10 @@ describe("sending", () => {
   it("an ambiguous send (the call throws) counts as sent and is never resent: rows are marked and the slot is spent", async () => {
     const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
     const failing = mailer({ fail: new Error("socket closed after write") });
-    const summary = await runGuestDigests(failing.env, T0);
+    const summary = await runAt(failing.env, T0);
     expect(failing.send).toHaveBeenCalledTimes(1); expect(summary.sent).toBe(1);
     expect((await rowOf(id))!.sent_at).not.toBeNull(); expect(await lastDigest(t.member.memberId)).toBe(T0);
-    const healthy = mailer(); await runGuestDigests(healthy.env, T0 + HOUR); await runGuestDigests(healthy.env, T0 + 2 * HOUR);
+    const healthy = mailer(); await runAt(healthy.env, T0 + HOUR); await runAt(healthy.env, T0 + 2 * HOUR);
     expect(healthy.sent).toHaveLength(0);
   });
 
@@ -304,7 +307,7 @@ describe("sending", () => {
       const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) => vi.spyOn(console, level).mockImplementation(() => undefined));
       try {
         const t = await basic(); await pend(t.member, t.link.id, "version_granted", t.version);
-        await runGuestDigests(mailer({ fail: thrown }).env, T0);
+        await runAt(mailer({ fail: thrown }).env, T0);
         const logged = spies.flatMap((spy) => spy.mock.calls);
         expect(logged.length).toBeGreaterThan(0);
         expect(JSON.stringify(logged)).not.toContain(LEAK);
@@ -318,32 +321,32 @@ describe("sending", () => {
     const t = await basic(); const other = await seedMember(t.link.id); await pend(t.member, t.link.id, "version_granted", t.version); await pend(other, t.link.id, "version_granted", t.version);
     let calls = 0; const sent: Sent[] = [];
     const flaky = { DB: database.DB, APP_ORIGIN: ORIGIN, NOTIFICATIONS_FROM_ADDRESS: SENDER, EMAIL: { send: async (message: Sent) => { calls += 1; if (calls === 1) throw new Error("boom"); sent.push(message); return { messageId: "m" }; } } } as unknown as Env;
-    await runGuestDigests(flaky, T0);
+    await runAt(flaky, T0);
     expect(calls).toBe(2); expect(sent).toHaveLength(1);
   });
 
   it("does nothing, and spends no slot, when the EMAIL binding or the sender address is missing", async () => {
     const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
-    await runGuestDigests({ DB: database.DB, APP_ORIGIN: ORIGIN } as unknown as Env, T0);
+    await runAt({ DB: database.DB, APP_ORIGIN: ORIGIN } as unknown as Env, T0);
     expect((await rowOf(id))!.sent_at).toBeNull(); expect(await lastDigest(t.member.memberId)).toBeNull();
-    const mail = mailer(); await runGuestDigests(mail.env, T0); expect(mail.sent).toHaveLength(1);
+    const mail = mailer(); await runAt(mail.env, T0); expect(mail.sent).toHaveLength(1);
   });
 
   it("a member inside the 55 minute window is not touched; one past it is", async () => {
     const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
     await database.DB.prepare("UPDATE guest_link_members SET last_digest_sent_at = ? WHERE id = ?").bind(T0 - 54 * 60_000, t.member.memberId).run();
-    const mail = mailer(); await runGuestDigests(mail.env, T0);
+    const mail = mailer(); await runAt(mail.env, T0);
     expect(mail.sent).toHaveLength(0); expect((await rowOf(id))!.sent_at).toBeNull(); expect(await lastDigest(t.member.memberId)).toBe(T0 - 54 * 60_000);
-    await runGuestDigests(mail.env, T0 + 2 * 60_000); expect(mail.sent).toHaveLength(1);
+    await runAt(mail.env, T0 + 2 * 60_000); expect(mail.sent).toHaveLength(1);
   });
 
   it("a row that arrives while the email is being sent stays pending for the next hour", async () => {
     const t = await basic(); await pend(t.member, t.link.id, "version_granted", t.version); let late = "";
     const sent: Sent[] = [];
     const slow = { DB: database.DB, APP_ORIGIN: ORIGIN, NOTIFICATIONS_FROM_ADDRESS: SENDER, EMAIL: { send: async (message: Sent) => { late = await pend(t.member, t.link.id, "public_note", t.version, await seedNote(t.version), T0 + 5); sent.push(message); return { messageId: "m" }; } } } as unknown as Env;
-    await runGuestDigests(slow, T0);
+    await runAt(slow, T0);
     expect((await rowOf(late))!.sent_at).toBeNull();
-    const mail = mailer(); await runGuestDigests(mail.env, T0 + HOUR); expect(mail.sent).toHaveLength(1);
+    const mail = mailer(); await runAt(mail.env, T0 + HOUR); expect(mail.sent).toHaveLength(1);
   });
 });
 
@@ -368,25 +371,25 @@ describe("at most once, authorized at the last moment", () => {
   it("a database failure AFTER the send never causes a resend: the rows were fenced before the send", async () => {
     const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
     const broken = hooked({ failAfterSend: true });
-    await runGuestDigests(broken.env, T0);
+    await runAt(broken.env, T0);
     expect(broken.send).toHaveBeenCalledTimes(1);
     expect((await rowOf(id))!.sent_at).not.toBeNull(); expect(await lastDigest(t.member.memberId)).toBe(T0);
-    const healthy = mailer(); await runGuestDigests(healthy.env, T0 + HOUR); await runGuestDigests(healthy.env, T0 + 2 * HOUR);
+    const healthy = mailer(); await runAt(healthy.env, T0 + HOUR); await runAt(healthy.env, T0 + 2 * HOUR);
     expect(healthy.sent).toHaveLength(0);
   });
 
   it("a send that throws leaves the rows marked, and the next flushes send nothing for them", async () => {
     const t = await basic(); const ids2 = [await pend(t.member, t.link.id, "version_granted", t.version), await pend(t.member, t.link.id, "video_added", t.version)];
     const failing = mailer({ fail: "definite failure" });
-    await runGuestDigests(failing.env, T0);
+    await runAt(failing.env, T0);
     for (const id of ids2) expect((await rowOf(id))!.sent_at).toBe(T0);
-    const healthy = mailer(); await runGuestDigests(healthy.env, T0 + HOUR); expect(healthy.sent).toHaveLength(0);
+    const healthy = mailer(); await runAt(healthy.env, T0 + HOUR); expect(healthy.sent).toHaveLength(0);
   });
 
   it("a member who unsubscribes after the token is minted but before the send gets nothing", async () => {
     const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
     const mail = hooked({ afterTokenInsert: () => database.DB.prepare("UPDATE guest_link_members SET unsubscribed_at = ? WHERE id = ?").bind(Date.now(), t.member.memberId).run() });
-    const summary = await runGuestDigests(mail.env, T0);
+    const summary = await runAt(mail.env, T0);
     expect(mail.send).not.toHaveBeenCalled(); expect(summary.sent).toBe(0);
     expect((await rowOf(id))!.sent_at).not.toBeNull();
   });
@@ -394,7 +397,7 @@ describe("at most once, authorized at the last moment", () => {
   it("a link revoked after the token is minted but before the send gets nothing", async () => {
     const t = await basic(); await pend(t.member, t.link.id, "version_granted", t.version);
     const mail = hooked({ afterTokenInsert: () => database.DB.prepare("UPDATE client_links SET revoked_at = ?, revoked_by = ? WHERE id = ?").bind(Date.now(), ids.user, t.link.id).run() });
-    await runGuestDigests(mail.env, T0);
+    await runAt(mail.env, T0);
     expect(mail.send).not.toHaveBeenCalled();
   });
 
@@ -402,7 +405,7 @@ describe("at most once, authorized at the last moment", () => {
     const t = await basic(); const note = await seedNote(t.version, { body: "Soon deleted" });
     const kept = await pend(t.member, t.link.id, "version_granted", t.version); const dropped = await pend(t.member, t.link.id, "public_note", t.version, note);
     const mail = hooked({ afterTokenInsert: () => database.DB.prepare("UPDATE video_notes SET deleted_at = ? WHERE id = ?").bind(Date.now(), note).run() });
-    await runGuestDigests(mail.env, T0);
+    await runAt(mail.env, T0);
     expect(mail.sent).toHaveLength(1); expect(mail.sent[0]!.text).not.toContain("Soon deleted"); expect(mail.sent[0]!.text).toContain("Version 1 is ready to review");
     expect((await rowOf(kept))!.sent_at).toBe(T0); expect((await rowOf(dropped))!.sent_at).toBe(T0);
   });
@@ -412,7 +415,106 @@ describe("at most once, authorized at the last moment", () => {
     const id = await pend(member, link.id, "version_granted", version!);
     vi.setSystemTime(T0 + 2_000);
     const mail = mailer(); await runGuestDigests(mail.env, T0);
-    expect(mail.sent).toHaveLength(0); expect((await rowOf(id))!.sent_at).toBe(T0);
+    expect(mail.sent).toHaveLength(0); expect((await rowOf(id))!.sent_at).toBe(T0 + 2_000);
+  });
+});
+
+const rejection = (code: string) => Object.assign(new Error("rejected for leak@example.com"), { code });
+
+describe("a proven rejection is released for retry (#741 15b)", () => {
+  it("a rate-limit rejection returns the rows to pending and the slot to the member, and the next run sends them", async () => {
+    const t = await basic(); const ids2 = [await pend(t.member, t.link.id, "version_granted", t.version), await pend(t.member, t.link.id, "video_added", t.version)];
+    const limited = mailer({ fail: rejection("E_RATE_LIMIT_EXCEEDED") });
+    await runAt(limited.env, T0);
+    expect(limited.send).toHaveBeenCalledTimes(1);
+    for (const id of ids2) expect((await rowOf(id))!.sent_at).toBeNull();
+    expect(await lastDigest(t.member.memberId)).toBeNull();
+    const healthy = mailer(); await runAt(healthy.env, T0 + HOUR);
+    expect(healthy.sent).toHaveLength(1);
+    for (const id of ids2) expect((await rowOf(id))!.sent_at).toBe(T0 + HOUR);
+  });
+
+  it("restores the member's PRIOR slot value, not null", async () => {
+    const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
+    const prior = T0 - 3 * HOUR;
+    await database.DB.prepare("UPDATE guest_link_members SET last_digest_sent_at = ? WHERE id = ?").bind(prior, t.member.memberId).run();
+    await runAt(mailer({ fail: rejection("E_INVALID_FROM") }).env, T0);
+    expect((await rowOf(id))!.sent_at).toBeNull(); expect(await lastDigest(t.member.memberId)).toBe(prior);
+  });
+
+  it("an ambiguous outcome stays marked sent: no code, an unknown code, E_DELIVERY_FAILED", async () => {
+    for (const fail of [new Error("socket closed"), "timeout", rejection("E_SOMETHING_NEW"), rejection("E_DELIVERY_FAILED")]) {
+      const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
+      await runAt(mailer({ fail }).env, T0);
+      expect((await rowOf(id))!.sent_at, String(fail)).toBe(T0); expect(await lastDigest(t.member.memberId)).toBe(T0);
+      const healthy = mailer(); await runAt(healthy.env, T0 + HOUR); expect(healthy.sent).toHaveLength(0);
+    }
+  });
+
+  it("a release only touches this run's rows: earlier-sent rows, rows dropped by the re-filter, rows another run re-marked, and other members stay as they were", async () => {
+    const t = await basic(); const other = await seedMember(t.link.id);
+    const note = await seedNote(t.version, { deleted: true });
+    const mine1 = await pend(t.member, t.link.id, "version_granted", t.version);
+    const mine2 = await pend(t.member, t.link.id, "video_added", t.version);
+    const remarked = await pend(t.member, t.link.id, "version_granted", t.version);
+    const dropped = await pend(t.member, t.link.id, "public_note", t.version, note);
+    const old = await pend(t.member, t.link.id, "version_granted", t.version, null, T0 - 2 * HOUR);
+    await database.DB.prepare("UPDATE guest_notification_digest SET sent_at = ? WHERE id = ?").bind(T0 - HOUR, old).run();
+    const theirs = await pend(other, t.link.id, "version_granted", t.version);
+    await database.DB.prepare("UPDATE guest_link_members SET last_digest_sent_at = ? WHERE id = ?").bind(T0 - 2 * HOUR, other.memberId).run();
+    // The send is rejected, but meanwhile another writer re-marks one of this run's rows (and the other member's slot is spent by a run of its own).
+    const racing = {
+      DB: database.DB, APP_ORIGIN: ORIGIN, NOTIFICATIONS_FROM_ADDRESS: SENDER,
+      EMAIL: { send: async () => { await database.DB.prepare("UPDATE guest_notification_digest SET sent_at = ? WHERE id = ?").bind(T0 + 7, remarked).run(); throw rejection("E_RATE_LIMIT_EXCEEDED"); } },
+    } as unknown as Env;
+    await runAt(racing, T0);
+    expect((await rowOf(mine1))!.sent_at).toBeNull(); expect((await rowOf(mine2))!.sent_at).toBeNull();
+    expect((await rowOf(remarked))!.sent_at).toBe(T0 + 7);
+    expect((await rowOf(dropped))!.sent_at).toBe(T0);
+    expect((await rowOf(old))!.sent_at).toBe(T0 - HOUR);
+    expect(await lastDigest(t.member.memberId)).toBeNull();
+    // The other member was flushed by the same run, with its own rejected send: released too, with its own prior slot.
+    expect((await rowOf(theirs))!.sent_at).toBeNull(); expect(await lastDigest(other.memberId)).toBe(T0 - 2 * HOUR);
+  });
+
+  it("the slot is restored only while it still holds this run's value", async () => {
+    const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
+    const racing = {
+      DB: database.DB, APP_ORIGIN: ORIGIN, NOTIFICATIONS_FROM_ADDRESS: SENDER,
+      EMAIL: { send: async () => { await database.DB.prepare("UPDATE guest_link_members SET last_digest_sent_at = ? WHERE id = ?").bind(T0 + 99, t.member.memberId).run(); throw rejection("E_RATE_LIMIT_EXCEEDED"); } },
+    } as unknown as Env;
+    await runAt(racing, T0);
+    expect((await rowOf(id))!.sent_at).toBeNull(); expect(await lastDigest(t.member.memberId)).toBe(T0 + 99);
+  });
+
+  it("if the release write itself fails, the rows stay marked and only a safe code is logged", async () => {
+    const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
+    let sendCalled = false; const real = database.DB;
+    const db = { prepare: (sql: string) => { if (sendCalled) throw new Error("database down for leak@example.com"); return real.prepare(sql); }, batch: (statements: D1PreparedStatement[]) => { if (sendCalled) throw new Error("database down for leak@example.com"); return real.batch(statements); } };
+    const env2 = { DB: db, APP_ORIGIN: ORIGIN, NOTIFICATIONS_FROM_ADDRESS: SENDER, EMAIL: { send: async () => { sendCalled = true; throw rejection("E_RATE_LIMIT_EXCEEDED"); } } } as unknown as Env;
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) => vi.spyOn(console, level).mockImplementation(() => undefined));
+    try {
+      await runAt(env2, T0);
+      expect(JSON.stringify(spies.flatMap((spy) => spy.mock.calls))).not.toContain("leak@example.com");
+    } finally { spies.forEach((spy) => spy.mockRestore()); }
+    expect((await rowOf(id))!.sent_at).toBe(T0);
+    const healthy = mailer(); await runAt(healthy.env, T0 + HOUR); expect(healthy.sent).toHaveLength(0);
+  });
+});
+
+describe("the cooldown runs on the real clock", () => {
+  it("a delayed run (scheduled 10:00, real clock 10:10) records 10:10, and the 11:00 run is refused", async () => {
+    const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
+    vi.setSystemTime(T0 + 10 * 60_000);
+    const first = mailer(); await runGuestDigests(first.env, T0);
+    expect(first.sent).toHaveLength(1);
+    expect(await lastDigest(t.member.memberId)).toBe(T0 + 10 * 60_000); expect((await rowOf(id))!.sent_at).toBe(T0 + 10 * 60_000);
+    const later = await pend(t.member, t.link.id, "version_granted", t.version, null, T0 + 30 * 60_000);
+    vi.setSystemTime(T0 + HOUR);
+    const second = mailer(); await runGuestDigests(second.env, T0 + HOUR);
+    expect(second.sent).toHaveLength(0); expect((await rowOf(later))!.sent_at).toBeNull();
+    vi.setSystemTime(T0 + 65 * 60_000);
+    await runGuestDigests(second.env, T0 + 2 * HOUR); expect(second.sent).toHaveLength(1);
   });
 });
 

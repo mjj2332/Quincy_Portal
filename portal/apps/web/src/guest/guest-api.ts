@@ -35,7 +35,7 @@ export type VerifyResult =
  * `rejected` is every other refusal of the request itself (400, 403 `not_author`, 413, 422).
  */
 export type WriteResult =
-  | { kind: "ok"; thread: GuestNoteThreadDto | null }
+  | { kind: "ok"; thread: GuestNoteThreadDto | null; /** Only `setSubscription`: the server's own answer, which wins over what the switch asked for. */ subscribed?: boolean }
   | { kind: "conflict"; thread: GuestNoteThreadDto }
   | { kind: "deleted" }
   | { kind: "unverified" }
@@ -57,7 +57,7 @@ export type GuestApi = {
   replyToNote(noteId: string, body: string): Promise<WriteResult>;
   editNote(noteId: string, input: GuestNoteEditInput): Promise<WriteResult>;
   deleteNote(noteId: string, expectedRevision: number): Promise<WriteResult>;
-  /** `PUT .../subscription` (#741 15b): the verified guest's own email-updates switch. `ok.thread` is always null. */
+  /** `PUT .../subscription` (#741 15b): the verified guest's own email-updates switch. `ok.thread` is always null; `ok.subscribed` is the server's answer. */
   setSubscription(subscribed: boolean): Promise<WriteResult>;
 };
 
@@ -88,14 +88,14 @@ export function createGuestApi(linkId: string): GuestApi {
   };
   const errorOf = (body: unknown): string => (typeof body === "object" && body !== null && "error" in body && typeof (body as { error: unknown }).error === "string" ? (body as { error: string }).error : "invalid_request");
   /** The shared reading of a write's answer. `parseOk` reads the success body; everything else is the same for every note write. */
-  const write = async (path: string, method: string, body: unknown, parseOk: (body: unknown) => GuestNoteThreadDto | null): Promise<WriteResult> => {
+  const write = async (path: string, method: string, body: unknown, parseOk: (body: unknown) => GuestNoteThreadDto | null, parseExtra?: (body: unknown) => { subscribed: boolean }): Promise<WriteResult> => {
     const response = await send(path, { method, headers: JSON_HEADERS, body: JSON.stringify(body) });
     if (response === null) return { kind: "unreachable" };
     const read = await readJson(response);
     const parsedBody = read === null ? undefined : read.body;
     if (response.ok) {
       if (read === null) return { kind: "unreachable" };
-      try { return { kind: "ok", thread: parseOk(read.body) }; } catch { return { kind: "unreachable" }; }
+      try { return { kind: "ok", thread: parseOk(read.body), ...parseExtra?.(read.body) }; } catch { return { kind: "unreachable" }; }
     }
     const error = errorOf(parsedBody);
     if (response.status >= 500) return { kind: "unreachable" };
@@ -149,7 +149,7 @@ export function createGuestApi(linkId: string): GuestApi {
     replyToNote: (noteId, body) => write(`/notes/${noteId}/replies`, "POST", { body }, (parsed) => guestNoteWriteResponseSchema.parse(parsed)),
     editNote: (noteId, input) => write(`/notes/${noteId}`, "PATCH", input, (body) => guestNoteWriteResponseSchema.parse(body)),
     deleteNote: (noteId, expectedRevision) => write(`/notes/${noteId}`, "DELETE", { expectedRevision }, (body) => guestNoteDeleteResponseSchema.parse(body).thread),
-    setSubscription: (subscribed) => write("/subscription", "PUT", { subscribed }, (body) => { guestSubscriptionResponseSchema.parse(body); return null; }),
+    setSubscription: (subscribed) => write("/subscription", "PUT", { subscribed }, () => null, (body) => ({ subscribed: guestSubscriptionResponseSchema.parse(body).subscribed })),
     async exchange(token, passcode) {
       const response = await send("/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(passcode === undefined ? { token } : { token, passcode }) });
       if (response === null) return { ok: false, reason: "unreachable" };

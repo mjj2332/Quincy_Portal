@@ -17,9 +17,14 @@ import type { Env } from "./env";
  *     composed from, and only from, the rows the fence marked.
  *  6. Nothing survived: no email, and the slot is given back (no email used it). Otherwise send.
  *
- * DECISION 10 ("an ambiguous send counts as sent and is never resent") is enforced by ORDER, and this deliberately moves its "written after the send" to BEFORE the send: a crash, or a failed write, after
- * `EMAIL.send` can never un-mark the rows, so it can never cause a resend. The cost is that a send that definitely failed loses that hour's items. That trade is the intent of "never resent" (a duplicate client
- * email is worse than a missed digest). Nothing after the send touches the database; a failure is only logged, with a bounded reason and never the address.
+ * DECISION 10 ("an ambiguous send counts as sent and is never resent") is enforced by ORDER, and this deliberately moves its "written after the send" to BEFORE the send: the rows are CLAIMED before the send,
+ * so a crash, or a failed write, after `EMAIL.send` can never un-mark them and so can never cause a resend. A duplicate client email is worse than a missed digest, so every AMBIGUOUS outcome (a throw with no
+ * code, an unknown code, a timeout, E_DELIVERY_FAILED) stays marked as sent. The one exception is a PROVEN rejection (`DEFINITE_REJECTIONS`: the Email Service documents the message as not accepted / not
+ * sent): that is released for retry. The marker is this run's own `sent_at` stamp (the real clock at the claim, which is also what the slot holds), so one UPDATE returns exactly this run's fenced rows to
+ * pending (`sent_at = stamp` and the fenced ids) and restores the member's prior `last_digest_sent_at` only while it still holds the stamp. If that release write fails it is logged with a safe code and the
+ * rows stay marked: an acceptable loss. Apart from that release, nothing after the send touches the database; a failure is only logged, with a bounded reason and never the address.
+ *
+ * The cooldown and every timestamp this run records come from the REAL clock (`Date.now()`), not the cron's scheduled time: a delayed run must not be judged, or recorded, as if it had started on time.
  *
  * The email carries NO Review link (ADR 0021 section 10: the link token is never stored, so it cannot be re-sent). Its one URL is `${APP_ORIGIN}/d/unsubscribe#t=<token>`, the token only in
  * the fragment. Staff text reaches the email only through the re-filter above (public, undeleted, staff-authored), as an excerpt of at most 280 characters, escaped for HTML.
@@ -73,7 +78,7 @@ const SURVIVORS_SQL = `SELECT d.id, d.event_type, d.video_id, v.title AS video_t
         AND EXISTS (SELECT 1 FROM video_notes root WHERE root.id = n.parent_id AND root.visibility = 'public' AND root.deleted_at IS NULL))
       OR (d.event_type = 'video_released' AND vm.asset_id IS NOT NULL AND l.allow_download = 1 AND ${LIVE_GRANT} AND EXISTS (SELECT 1 FROM video_releases rel WHERE rel.asset_id = d.asset_id AND rel.withdrawn_at IS NULL))
     )`;
-/** The fence: marks exactly the snapshot rows that pass SURVIVORS_SQL right now, and only while this run still owns the member's slot (?3 = scheduled time, which the claim wrote; ?4 = member id). */
+/** The fence: marks exactly the snapshot rows that pass SURVIVORS_SQL right now, and only while this run still owns the member's slot (?3 = this run's stamp, which the claim wrote; ?4 = member id). */
 const SLOT_HELD = "EXISTS (SELECT 1 FROM guest_link_members cm WHERE cm.id = ?4 AND cm.last_digest_sent_at = ?3)";
 const FENCE_SQL = `UPDATE guest_notification_digest SET sent_at = ?3 WHERE sent_at IS NULL AND ${SLOT_HELD} AND id IN (SELECT s.id FROM (${SURVIVORS_SQL}) s)`;
 /** What the email is composed from: the rows the fence just marked in this same batch (sent_at = ?2), read after the authorization decision and so not re-filtered. */
@@ -140,18 +145,27 @@ const SAFE_SEND_ERRORS = new Set<string>([
   "E_RATE_LIMIT_EXCEEDED", "E_DAILY_LIMIT_EXCEEDED", "E_DELIVERY_FAILED", "E_INVALID_FROM", "E_INVALID_TO", "E_INVALID_EMAIL", "E_DOMAIN_NOT_VERIFIED", "E_SENDER_NOT_ALLOWED",
   "E_RECIPIENT_SUPPRESSED", "E_MESSAGE_TOO_LARGE", "E_INVALID_HEADERS",
 ]);
+/**
+ * The codes that PROVE the Email Service did not accept the message ("not accepted / not sent": a rate or daily limit, or a validation or sender error rejected up front), so nothing can have been
+ * delivered and a retry cannot duplicate. Deliberately a subset of SAFE_SEND_ERRORS: `E_DELIVERY_FAILED` is excluded because delivery may have been attempted or partly happened. Anything not listed here,
+ * or thrown without a code, is ambiguous and stays marked sent.
+ */
+const DEFINITE_REJECTIONS = new Set<string>([
+  "E_RATE_LIMIT_EXCEEDED", "E_DAILY_LIMIT_EXCEEDED", "E_INVALID_FROM", "E_INVALID_TO", "E_INVALID_EMAIL", "E_DOMAIN_NOT_VERIFIED", "E_SENDER_NOT_ALLOWED",
+  "E_RECIPIENT_SUPPRESSED", "E_MESSAGE_TOO_LARGE", "E_INVALID_HEADERS",
+]);
 /** A known Email Service code, else the constant "send_failed". The message is never logged, because it can carry the address. */
-function sendFailureCode(error: unknown): string {
-  const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code: unknown }).code) : "";
-  return SAFE_SEND_ERRORS.has(code) ? code : "send_failed";
-}
+function rawErrorCode(error: unknown): string { return typeof error === "object" && error !== null && "code" in error ? String((error as { code: unknown }).code) : ""; }
+function sendFailureCode(error: unknown): string { const code = rawErrorCode(error); return SAFE_SEND_ERRORS.has(code) ? code : "send_failed"; }
+const isDefiniteRejection = (error: unknown): boolean => DEFINITE_REJECTIONS.has(rawErrorCode(error));
 
-export type GuestDigestSummary = { candidates: number; claimed: number; sent: number; dropped: number; failed: number; skipped: boolean };
+export type GuestDigestSummary = { candidates: number; claimed: number; sent: number; dropped: number; released: number; failed: number; skipped: boolean };
 type Candidate = { member_id: string; guest_id: string; link_id: string; last_digest_sent_at: number | null };
 
 /** One membership: claim, snapshot, set up, fence, send. Throws only before the fence (the claim is then given back); once the fence has run nothing can un-mark the rows. */
-async function flushMember(env: Env, candidate: Candidate, now: number): Promise<"sent" | "dropped" | "unclaimed"> {
+async function flushMember(env: Env, candidate: Candidate): Promise<"sent" | "dropped" | "released" | "unclaimed"> {
   const db = env.DB;
+  const now = Date.now(); // the real clock, taken once: the claim, the cooldown, the fence marker and the slot all use this one value
   const claim = await db.prepare("UPDATE guest_link_members SET last_digest_sent_at = ?1 WHERE id = ?2 AND (last_digest_sent_at IS NULL OR last_digest_sent_at <= ?3)").bind(now, candidate.member_id, now - CLAIM_WINDOW_MS).run();
   if ((claim.meta.changes ?? 0) !== 1) return "unclaimed";
   const giveBack = db.prepare("UPDATE guest_link_members SET last_digest_sent_at = ?1 WHERE id = ?2 AND last_digest_sent_at = ?3").bind(candidate.last_digest_sent_at, candidate.member_id, now);
@@ -167,7 +181,7 @@ async function flushMember(env: Env, candidate: Candidate, now: number): Promise
     const url = `${env.APP_ORIGIN}/d/unsubscribe#t=${token}`;
     const link = await db.prepare("SELECT label FROM client_links WHERE id = ?1").bind(candidate.link_id).first<{ label: string | null }>();
 
-    // The fence (see the header): authorized against the REAL clock (the cron's scheduled time `now` is only bookkeeping), marked sent BEFORE the send.
+    // The fence (see the header): authorized against the REAL clock, marked sent (with this run's stamp) BEFORE the send.
     const [, fencedRows] = await db.batch([
       db.prepare(FENCE_SQL).bind(snapshot, Date.now(), now, candidate.member_id),
       db.prepare(FENCED_ROWS_SQL).bind(snapshot, now),
@@ -181,8 +195,24 @@ async function flushMember(env: Env, candidate: Candidate, now: number): Promise
     try {
       await env.EMAIL!.send({ from: env.NOTIFICATIONS_FROM_ADDRESS!, to: survivors[0]!.email, subject: message.subject, text: message.text, html: message.html, headers: { "List-Unsubscribe": `<${url}>` } });
     } catch (error) {
-      // The rows stay marked whatever happened: a definite failure loses this hour's items, an ambiguous one may have delivered, and neither is resent. Only a whitelisted code is logged, never the message: it can carry the address.
-      console.error("Guest digest send failed; the rows stay marked sent", { code: sendFailureCode(error) });
+      const code = sendFailureCode(error);
+      if (!isDefiniteRejection(error)) {
+        // Ambiguous: it may have delivered, so the rows stay marked and are never resent. Only a whitelisted code is logged, never the message: it can carry the address.
+        console.error("Guest digest send failed; the rows stay marked sent", { code });
+        return "sent";
+      }
+      // Proven rejection: nothing was sent. Return exactly this run's fenced rows to pending (still carrying this run's stamp) and the slot to its prior value (only while it still holds the stamp).
+      try {
+        await db.batch([
+          db.prepare("UPDATE guest_notification_digest SET sent_at = NULL WHERE sent_at = ?1 AND id IN (SELECT value FROM json_each(?2))").bind(now, JSON.stringify(survivors.map((row) => row.id))),
+          giveBack,
+        ]);
+        console.error("Guest digest send rejected; the rows were released for the next run", { code });
+        return "released";
+      } catch {
+        console.error("Guest digest send rejected, and releasing the rows failed; they stay marked sent", { code: "release_failed", sendCode: code });
+        return "sent";
+      }
     }
     return "sent";
   } catch (error) {
@@ -192,18 +222,19 @@ async function flushMember(env: Env, candidate: Candidate, now: number): Promise
 }
 
 /** The hourly flush. Skipped (nothing claimed, nothing marked) while the `EMAIL` binding or the sender address is missing, so a misconfiguration never silently swallows news. */
-export async function runGuestDigests(env: Env, now: number): Promise<GuestDigestSummary> {
-  const summary: GuestDigestSummary = { candidates: 0, claimed: 0, sent: 0, dropped: 0, failed: 0, skipped: false };
+/** `_scheduledAt` is the cron's scheduled time, accepted for the caller's sake and deliberately unused: the flush judges and records the real clock. */
+export async function runGuestDigests(env: Env, _scheduledAt: number): Promise<GuestDigestSummary> {
+  const summary: GuestDigestSummary = { candidates: 0, claimed: 0, sent: 0, dropped: 0, released: 0, failed: 0, skipped: false };
   if (!env.EMAIL || !env.NOTIFICATIONS_FROM_ADDRESS) return { ...summary, skipped: true };
   const candidates = (await env.DB.prepare(`SELECT m.id AS member_id, m.guest_id, m.link_id, m.last_digest_sent_at FROM guest_link_members m
       JOIN guest_notification_digest d ON d.guest_id = m.guest_id AND d.link_id = m.link_id AND d.sent_at IS NULL
-      WHERE m.last_digest_sent_at IS NULL OR m.last_digest_sent_at <= ?1 GROUP BY m.id ORDER BY MIN(d.created_at), m.id LIMIT ?2`).bind(now - CLAIM_WINDOW_MS, MAX_MEMBERS_PER_RUN).all<Candidate>()).results;
+      WHERE m.last_digest_sent_at IS NULL OR m.last_digest_sent_at <= ?1 GROUP BY m.id ORDER BY MIN(d.created_at), m.id LIMIT ?2`).bind(Date.now() - CLAIM_WINDOW_MS, MAX_MEMBERS_PER_RUN).all<Candidate>()).results;
   summary.candidates = candidates.length;
   for (const candidate of candidates) {
     try {
-      const outcome = await flushMember(env, candidate, now);
+      const outcome = await flushMember(env, candidate);
       if (outcome !== "unclaimed") summary.claimed += 1;
-      if (outcome === "sent") summary.sent += 1; else if (outcome === "dropped") summary.dropped += 1;
+      if (outcome === "sent") summary.sent += 1; else if (outcome === "dropped") summary.dropped += 1; else if (outcome === "released") summary.released += 1;
     } catch (error) {
       summary.failed += 1;
       console.error("Guest digest member failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });

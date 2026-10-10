@@ -140,6 +140,16 @@ describe("Email-updates switch (#741 15b)", () => {
     expect(document.body.querySelector('[role="alert"]')).toBeNull();
   });
 
+  it("applies the server's answer when it differs from the toggle: the user turns it off, the server answers subscribed:true, the switch ends on", async () => {
+    extra = putHandler(() => json({ subscribed: true }));
+    await open();
+    expect(checked()).toBe("true");
+    await click(switchEl());
+    expect(puts()).toEqual([{ url: `${BASE}/subscription`, body: { subscribed: false } }]);
+    expect(checked()).toBe("true");
+    expect(document.body.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it("reverts and says so inline when the PUT fails", async () => {
     extra = putHandler(() => json({ error: "server_error" }, 500));
     await open();

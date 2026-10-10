@@ -10,7 +10,7 @@ export type GuestSubscription = {
   subscribe: (listener: () => void) => () => void;
   /** A fresh session body arrived: forget the local choice (the server's answer is newer), unless a PUT is out. */
   reseed: () => void;
-  /** Flip to `next` at once, send it, and keep it on success or restore `previous` on any other answer. */
+  /** Flip to `next` at once, send it, and keep the server's answer on success or restore `previous` on any other answer. */
   toggle: (next: boolean, previous: boolean, send: () => Promise<WriteResult | Skipped>) => Promise<void>;
 };
 
@@ -21,6 +21,7 @@ export type GuestSubscription = {
  */
 export function createGuestSubscription(): GuestSubscription {
   let state: SubscriptionState = { value: null, pending: false, failed: false };
+  let latest = 0;
   const listeners = new Set<() => void>();
   const set = (next: SubscriptionState) => { state = next; for (const listener of [...listeners]) listener(); };
   return {
@@ -29,10 +30,12 @@ export function createGuestSubscription(): GuestSubscription {
     reseed: () => { if (!state.pending && (state.value !== null || state.failed)) set({ value: null, pending: false, failed: false }); },
     toggle: async (next, previous, send) => {
       if (state.pending) return;
+      const mine = ++latest;
       set({ value: next, pending: true, failed: false });
       const answered = await send();
       const result = answered.kind === "stale" ? answered.result : answered;
-      if (result.kind === "ok") { set({ value: next, pending: false, failed: false }); return; }
+      // The server's answer wins over what was asked, but only for the latest toggle.
+      if (result.kind === "ok") { set({ value: mine === latest && result.subscribed !== undefined ? result.subscribed : next, pending: false, failed: false }); return; }
       const refused = result.kind === "unverified" || result.kind === "gone" || result.kind === "archived";
       set({ value: previous, pending: false, failed: !refused });
     },
