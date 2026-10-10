@@ -22,7 +22,7 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message.sl
 /** How long a sweep's claim on a queue entry holds before another sweep may take it over. */
 const CLEANUP_LEASE_MS = 10 * 60 * 1000;
 
-const ENQUEUE_SQL = `
+export const ENQUEUE_SQL = `
   INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, ?, ?, ?)
   ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at), claimed_until = NULL
 `;
@@ -115,6 +115,12 @@ async function drainCleanupQueue(env: Pick<Env, "DB" | "MEDIA">, now: number): P
         .bind(now + CLEANUP_LEASE_MS, storageKey, now).all<{ uploadId: string | null; attempts: number; queuedAt: number }>();
       const claimed = claim.results[0];
       if (!claimed) continue;
+      // #776: a key a live Video Version still holds is never deleted. A purge enqueues a key only in the batch that deletes its row, so this is the
+      // second fence behind it: a stale or mis-queued entry for restored media is dropped here, with its object kept. Fenced like every other dequeue.
+      if (await holdsLiveVideoKey(env.DB, storageKey)) {
+        await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND attempts = ? AND queued_at = ?").bind(storageKey, claimed.attempts, claimed.queuedAt).run();
+        continue;
+      }
       const release = async (error: unknown, step: string) => {
         console.error(`Embedded media cleanup ${step} failed`, { key: storageKey, error: errorText(error) });
         try { await env.DB.prepare("UPDATE embedded_media_cleanup SET claimed_until = 0 WHERE storage_key = ? AND attempts = ? AND queued_at = ?").bind(storageKey, claimed.attempts, claimed.queuedAt).run(); }
@@ -131,4 +137,16 @@ async function drainCleanupQueue(env: Pick<Env, "DB" | "MEDIA">, now: number): P
     } catch (error) { console.error("Embedded media cleanup failed", { key: storageKey, error: errorText(error) }); }
   }
   return drained;
+}
+
+/** True when a Version that is neither in Trash nor under a Video in Trash holds this object key as its original or its poster. */
+async function holdsLiveVideoKey(db: D1Database, key: string): Promise<boolean> {
+  const row = await db.prepare(`
+    SELECT 1 AS held FROM video_version_meta m
+    JOIN assets a ON a.id = m.asset_id
+    JOIN videos v ON v.id = m.video_id
+    WHERE m.removed_at IS NULL AND v.removed_at IS NULL AND (a.r2_key = ?1 OR m.poster_key = ?1)
+    LIMIT 1
+  `).bind(key).first();
+  return row !== null;
 }
