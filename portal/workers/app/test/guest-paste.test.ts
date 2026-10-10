@@ -243,6 +243,23 @@ describe("quota refusal comes after source authorization (#741 13d)", () => {
     expect(await plain(await commit(w, revisions([note]), {}, { visibility: "internal" }))).toEqual(stub);
   });
 
+  it("is the stub and spends no quota when the target is granted, the source is revoked and the request names 60 notes (preview and commit)", async () => {
+    const w = await world(); const notes: string[] = []; for (let n = 0; n < 60; n += 1) notes.push(await ownNote(w, { startFrame: 10 + n }));
+    const stub = await stubBody(); await revokeSource(w);
+    expect(await plain(await commit(w, revisions(notes)))).toEqual(stub);
+    expect(await plain(await preview(w, notes))).toEqual(stub);
+    expect(await bucketCount(`note:guest:${w.guest!.guestId}`)).toBeNull(); expect(await bucketCount(`note:link:${w.link.id}`)).toBeNull();
+    await database.DB.prepare("UPDATE review_link_version_grants SET revoked_at = NULL, revoked_by = NULL WHERE link_id = ? AND asset_id = ?").bind(w.link.id, w.a.assetId).run();
+    expect((await commit(w, revisions([notes[0]!]))).status).not.toBe(429);
+  });
+
+  it("is the stub, not project_archived, when the Project is archived, the target is granted and the source is revoked (preview and commit)", async () => {
+    const w = await world(); const note = await ownNote(w); const stub = await stubBody();
+    await revokeSource(w); await archive();
+    expect(await plain(await preview(w, [note]))).toEqual(stub);
+    expect(await plain(await commit(w, revisions([note])))).toEqual(stub);
+  });
+
   it("still 429s when both Versions are reachable and the quota is exhausted", async () => {
     const w = await world(); const note = await ownNote(w); await seedBucket(`note:guest:${w.guest!.guestId}`, 60);
     expect((await preview(w, [note])).status).toBe(429); expect((await commit(w, revisions([note]))).status).toBe(429);

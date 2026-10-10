@@ -6,17 +6,17 @@ import { commitNotePaste, planDrawn, planNotePaste, type PlanOutcome } from "../
 import type { AppEnv } from "../env";
 import { guestNotFound, guestRoute, UUID, type INVALID, type TOO_LARGE } from "./http";
 import { classifyRefusal } from "./fence";
-import { enter, judge, reserve, writerOf, type Entered, type Verified } from "./notes-write";
+import { enter, judge, reserve, writerOf, type Verified } from "./notes-write";
 import { noteWriteParts } from "../lib/guest-fence-sql";
 import { resolveGrantedVersion } from "./read";
 
 /**
  * Guest note paste (#741 13d): preview and commit of copying a verified guest's OWN notes from one granted Version of a Video onto another. It is `planNotePaste` and `commitNotePaste` with the
  * guest author (lib/video-note-paste.ts), behind the same entry order as every guest note write (`enter` in ./notes-write.ts: link id, gate with `guest` and `guest_comments`, the bounded body read,
- * Origin, credential, capability, the TARGET Version reachable, archived, quota), with the same refusal-first rule: every non-success after the credential goes through `classifyRefusal`, so lost
+ * Origin, credential, capability, the TARGET and the named SOURCE Version reachable, archived, quota), with the same refusal-first rule: every non-success after the credential goes through `classifyRefusal`, so lost
  * access is the byte-identical stub and an archived Project is 409 before any limit, validation error or state conflict.
  *
- *  - The SOURCE Version is named in the body, so it is decided after the body is judged: a source the link does not reach is `no_source`, the same stub as an unreachable target.
+ *  - The SOURCE Version is named in the body. When the body names a plausible id, `enter` admits it with the target, so a source the link does not reach is the stub before the archive refusal and the quota; later checks (`settle`, the plan's `no_source`, the SQL fences) stay.
  *  - QUOTA. A commit spends its note count in `note:guest` and `note:link` (docs/plans/741-13-15.md §2.4), a preview spends one attempt. The list is capped at the guest quota, so a paste is never a permanent 429.
  *  - AUDIT. One `video_note.paste` row per commit that passes the fence, in the same batch as the copies (actor NULL; the guest, session and link are in the meta).
  */
@@ -34,15 +34,6 @@ function requested(raw: Body, key: "noteIds" | "notes"): number {
 function sourceOf(raw: Body): string | null {
   const id = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>).sourceAssetId : undefined;
   return typeof id === "string" && UUID.test(id) ? id : null;
-}
-
-/** The entry with its refusal check widened to the named source: every answer after the credential (the 429, the 400 and 413) is the stub if EITHER Version is no longer reachable. */
-function withSource<P extends string>(c: Handled<P>, entered: Entered<{ assetId: string }>): Entered<{ assetId: string }> {
-  const source = sourceOf(entered.raw); if (source === null) return entered;
-  const { v, target, markup } = entered;
-  const answer = async (response: Response | Promise<Response>): Promise<Response> =>
-    await classifyRefusal(asApp(c), v.session, true, { parts: noteWriteParts(markup), comments: true, assetId: target.assetId, alsoAssetIds: [source] }) ?? await response;
-  return { ...entered, ctx: { ...entered.ctx, answer } };
 }
 
 /** The plan outcomes that are not a plan: an unreachable Version is the stub, the pair rules are 422. */
@@ -76,11 +67,11 @@ const COMMIT = "/d/api/links/:linkId/versions/:assetId/note-paste";
 
 async function previewPaste(c: Handled<typeof PREVIEW>): Promise<Response> {
   const assetId = c.req.param("assetId");
-  const entered = await enter(c, { cap: GUEST_PASTE_BODY_MAX_BYTES, ids: [assetId], locate: async (v) => await resolveGrantedVersion(c.env.DB, v.link.id, v.link.projectId, assetId) ? { assetId } : null });
+  const entered = await enter(c, { cap: GUEST_PASTE_BODY_MAX_BYTES, ids: [assetId], locate: async (v) => await resolveGrantedVersion(c.env.DB, v.link.id, v.link.projectId, assetId) ? { assetId } : null, also: (raw) => { const source = sourceOf(raw); return source === null ? [] : [source]; } });
   if ("response" in entered) return entered.response;
-  const { v } = entered; const widened = withSource(c, entered); const { ctx } = widened;
+  const { v, ctx } = entered;
   const limited = await reserve(c, v); if (limited) return ctx.answer(limited);
-  const judged = judge(c, widened, guestNotePastePreviewInputSchema); if ("response" in judged) return judged.response;
+  const judged = judge(c, entered, guestNotePastePreviewInputSchema); if ("response" in judged) return judged.response;
   const input = judged.data;
   const planned = await planNotePaste(c.env.DB, { projectId: v.link.projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, noteIds: input.noteIds, offsetFrames: input.offsetFrames, guest: { guestId: v.guestId, linkId: v.link.id } });
   if (planned.kind !== "ok") return answerOutcome(c, ctx, v, assetId, input.sourceAssetId, planned);
@@ -89,11 +80,11 @@ async function previewPaste(c: Handled<typeof PREVIEW>): Promise<Response> {
 
 async function commitPaste(c: Handled<typeof COMMIT>): Promise<Response> {
   const assetId = c.req.param("assetId");
-  const entered = await enter(c, { cap: GUEST_PASTE_BODY_MAX_BYTES, ids: [assetId], locate: async (v) => await resolveGrantedVersion(c.env.DB, v.link.id, v.link.projectId, assetId) ? { assetId } : null });
+  const entered = await enter(c, { cap: GUEST_PASTE_BODY_MAX_BYTES, ids: [assetId], locate: async (v) => await resolveGrantedVersion(c.env.DB, v.link.id, v.link.projectId, assetId) ? { assetId } : null, also: (raw) => { const source = sourceOf(raw); return source === null ? [] : [source]; } });
   if ("response" in entered) return entered.response;
-  const { v } = entered; const widened = withSource(c, entered); const { ctx } = widened;
+  const { v, ctx } = entered;
   const limited = await reserve(c, v, requested(entered.raw, "notes")); if (limited) return ctx.answer(limited);
-  const judged = judge(c, widened, guestNotePasteCommitInputSchema); if ("response" in judged) return judged.response;
+  const judged = judge(c, entered, guestNotePasteCommitInputSchema); if ("response" in judged) return judged.response;
   const input = judged.data;
   const outcome = await commitNotePaste(c.env.DB, { projectId: v.link.projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, notes: input.notes, offsetFrames: input.offsetFrames, principal: null, guest: writerOf(v, false) });
   if (outcome.kind === "ok") return settle(c, v, assetId, input.sourceAssetId, outcome.drawn, () => c.json(guestNotePasteCommitResponseSchema.parse(outcome.value)));

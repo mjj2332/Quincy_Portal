@@ -42,11 +42,11 @@ const BASE_PARTS = noteWriteParts(false);
 const touchesMarkup = (raw: unknown): boolean => typeof raw === "object" && raw !== null && ("markup" in raw || "drawingFrame" in raw);
 
 export type Verified = { session: GuestSession; guestId: string; link: GuestSession["link"] };
-type Target = { assetId?: string };
+type Target = { assetId?: string; alsoAssetIds?: readonly string[] };
 
 /** What every note write shares once it is admitted. */
 function context<P extends string>(c: Handled<P>, v: Verified, markup: boolean, target: Target) {
-  const scope = { parts: noteWriteParts(markup), comments: true, ...(target.assetId === undefined ? {} : { assetId: target.assetId }) };
+  const scope = { parts: noteWriteParts(markup), comments: true, ...(target.assetId === undefined ? {} : { assetId: target.assetId }), ...(target.alsoAssetIds === undefined ? {} : { alsoAssetIds: target.alsoAssetIds }) };
   const refusal = (): Promise<Response | null> => classifyRefusal(asApp(c), v.session, true, scope);
   /** The refusal if there is one, else `response`. The only way a non-success leaves a handler once admitted. */
   const answer = async (response: Response | Promise<Response>): Promise<Response> => await refusal() ?? await response;
@@ -60,7 +60,7 @@ export type Entered<T> = { v: Verified; target: T; raw: Body; markup: boolean; c
  * Steps 1 to 7 of the order above. `locate` is step 6: the Version or note the request names, as far as this guest may see it, or null (the stub). The body is read here and judged
  * by the caller at step 9, after `reserve`.
  */
-export async function enter<P extends string, T extends { assetId: string }>(c: Handled<P>, input: { cap: number; ids: string[]; locate: (v: Verified) => Promise<T | null> }): Promise<{ response: Response } | Entered<T>> {
+export async function enter<P extends string, T extends { assetId: string }>(c: Handled<P>, input: { cap: number; ids: string[]; locate: (v: Verified) => Promise<T | null>; also?: (raw: Body) => readonly string[] }): Promise<{ response: Response } | Entered<T>> {
   const stub = async () => ({ response: await guestNotFound(asApp(c)) });
   if (input.ids.some((id) => !UUID.test(id))) return stub();
   const linkId = c.req.param("linkId" as never) as string;
@@ -80,7 +80,8 @@ export async function enter<P extends string, T extends { assetId: string }>(c: 
   const target = await input.locate(v);
   if (!target) return { response: await classifyRefusal(asApp(c), session, true, { parts: noteWriteParts(false), comments: true, archived: false }).then((refused) => refused ?? guestNotFound(asApp(c))) };
   const markup = touchesMarkup(raw);
-  const ctx = context(c, v, markup, { assetId: target.assetId });
+  // Further Versions the body names (a paste's source) are admitted with the target, so the archive and the quota come only after every Version is known to be reachable.
+  const ctx = context(c, v, markup, { assetId: target.assetId, alsoAssetIds: input.also?.(raw) ?? [] });
   const refused = await ctx.refusal(); if (refused) return { response: refused };
   return { v, target, raw, markup, ctx };
 }
