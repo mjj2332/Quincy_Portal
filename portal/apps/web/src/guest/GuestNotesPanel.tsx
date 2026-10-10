@@ -26,8 +26,8 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
   writing: Writing;
 }) {
   return <section data-testid="guest-notes-panel" aria-label="Notes" className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-3)]">
-    {header}
-    {top}
+    {header && <div className="shrink-0">{header}</div>}
+    {top && <div className="max-h-[60%] min-h-0 shrink-0 overflow-y-auto">{top}</div>}
     {failed
       ? <EmptyState size="compact" tone="error" data-testid="guest-notes-unreachable" title="Couldn't reach Quincy. Check your connection and try again."><Button type="button" variant="outline" size="sm" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={onRetry}>Try again</Button></EmptyState>
       : threads === null

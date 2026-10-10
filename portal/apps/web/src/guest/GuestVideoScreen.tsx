@@ -312,7 +312,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
       <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col p-[var(--space-5)] min-[721px]:flex-1">
         <VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} onMark={compose.onMark} overlay={overlay} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} />
       </div>
-      {!phone && <aside data-surface="default" className="flex flex-[1_1_360px] flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-y-auto min-[721px]:flex-[0_0_clamp(240px,28vw,360px)]">{panel}</aside>}
+      {!phone && <aside data-surface="default" className="flex flex-[1_1_360px] flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-hidden min-[721px]:flex-[0_0_clamp(240px,28vw,360px)]">{panel}</aside>}
     </div>
     {phone && <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
       <SheetContent side="bottom" showCloseButton={false} data-testid="guest-notes-drawer" className="max-h-[80dvh] p-[var(--space-4)]">
