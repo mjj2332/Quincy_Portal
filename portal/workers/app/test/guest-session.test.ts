@@ -282,19 +282,38 @@ describe("GET /d/review", () => {
     expect(await response.text()).toContain("<div id=\"root\"");
   });
 
-  it("serves byte-identical shells for a live, unknown, expired, revoked and non-video link, with the hygiene headers", async () => {
+  it("serves byte-identical shells (body and every header) for a live, unknown, expired, revoked, non-video and non-pilot link", async () => {
     const live = await seedGuestLink();
     const expired = await seedGuestLink({ expiresAt: Date.now() - 1000 }); const revoked = await seedGuestLink({ revoked: true }); const delivery = await seedGuestLink({ kind: "delivery" });
     const shellOf = async (response: Response) => ({ status: response.status, body: await response.text(), headers: [...response.headers].filter(([name]) => name !== "server-timing").sort() });
     const reference = await shellOf(await guestFetch(`/d/review?link=${live.id}`));
     expect(reference.status).toBe(200);
+    expect(reference.body).toContain("<div id=\"root\"");
     for (const id of [crypto.randomUUID(), expired.id, revoked.id, delivery.id]) {
       const other = await shellOf(await guestFetch(`/d/review?link=${id}`));
       expect(other, id).toEqual(reference);
     }
+    // The Project's pilot is off (the pilot flag names another Project only): the link is live in D1, the shell is the same.
+    await clearVideoFlags(); await setVideoFlags("video_review", "video_review_pilot:another-project", "video_review_guest");
+    expect(await shellOf(await guestFetch(`/d/review?link=${live.id}`)), "pilot off").toEqual(reference);
+    // "Guest part off, master on" is not a shell case: `guestGloballyOpen` reads that pair, so it is the stub (next test).
     const headers = Object.fromEntries(reference.headers);
     for (const [name, value] of Object.entries(HYGIENE)) expect(headers[name], name).toBe(value);
     expect(headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+    expect(headers["x-frame-options"]).toBe("DENY");
+  });
+
+  it("answers the shared stub, not the shell, for a closed global gate (master off, guest part off), a missing, malformed or extra query", async () => {
+    const link = await seedGuestLink(); const reference = await stubOf(await guestFetch("/d/api/x"));
+    expect(reference.status).toBe(404);
+    const probe = async (path: string, label: string) => expect(await stubOf(await guestFetch(path)), label).toEqual(reference);
+    await probe("/d/review", "missing ?link=");
+    await probe("/d/review?link=not-a-uuid", "malformed ?link=");
+    await probe(`/d/review?link=${link.id}&x=1`, "extra query param");
+    await clearVideoFlags(); await setVideoFlags(`video_review_pilot:${ids.project}`, "video_review_guest");
+    await probe(`/d/review?link=${link.id}`, "master flag off");
+    await clearVideoFlags(); await setVideoFlags("video_review", `video_review_pilot:${ids.project}`);
+    await probe(`/d/review?link=${link.id}`, "master on, guest part off");
   });
 
   it("answers the stub for a missing, repeated, extra or malformed query, a wrong path, and a closed gate", async () => {
