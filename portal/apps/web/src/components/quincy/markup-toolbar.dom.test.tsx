@@ -143,6 +143,17 @@ describe("MarkupToolbar", () => {
     expect(byLabel(host, "Pen").className.split(/\s+/)).not.toContain("size-4");
   });
 
+  it("sizes Undo, Redo and Clear for a coarse pointer above the phone width, with matching width when icon-only", async () => {
+    const regular = await mount(props());
+    for (const name of ["Undo", "Redo", "Clear"]) expect(byLabel(regular, name).className).toContain("min-[721px]:pointer-coarse:min-h-11");
+    await act(async () => { root!.unmount(); }); document.body.replaceChildren();
+    const compact = await mount(props({ compact: true }));
+    for (const name of ["Undo", "Redo", "Clear", "Stroke width, 4 pixels"]) {
+      expect(byLabel(compact, name).className).toContain("min-[721px]:pointer-coarse:min-h-11");
+      expect(byLabel(compact, name).className).toContain("min-[721px]:pointer-coarse:min-w-11");
+    }
+  });
+
   it("wraps whole groups: every group is an inline-flex that does not split", async () => {
     const host = await mount(props());
     for (const label of ["Markup tool", "Pen colour", "Stroke width"]) expect(byLabel(host, label).className).toContain("inline-flex");

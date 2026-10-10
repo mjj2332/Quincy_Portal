@@ -224,6 +224,83 @@ describe("useMarkup: the gate and enabled", () => {
     await down(l, 10, 10); expect(l.api.active).not.toBeNull();
   });
 
+  describe("a delayed gate that resolves after its pointer ended", () => {
+    function gated() {
+      let resolve!: (value: boolean) => void;
+      const promise = new Promise<boolean>((r) => { resolve = r; });
+      return { promise, resolve };
+    }
+    async function pending(l: Latest, event = fakeEvent(10, 10)) {
+      // Not awaited: the gate is still pending, and returning it would make this helper wait for it.
+      await act(async () => { void l.api.handlers.onPointerDown(event as never); });
+    }
+    const settle = async (g: { resolve: (v: boolean) => void }, value = true) => { await act(async () => { g.resolve(value); await Promise.resolve(); await Promise.resolve(); }); };
+
+    it("starts nothing after pointer up, and takes no pointer capture", async () => {
+      const g = gated();
+      const l = await mountHook({ beforeStart: () => g.promise });
+      const event = fakeEvent(10, 10) as unknown as { currentTarget: { setPointerCapture: ReturnType<typeof vi.fn> } };
+      await pending(l, event as never);
+      await up(l, 10, 10);
+      await settle(g);
+      expect(l.api.active).toBeNull();
+      expect(event.currentTarget.setPointerCapture).not.toHaveBeenCalled();
+      await down(l, 20, 20);                                  // a fresh pointer-down still works
+    });
+
+    it("starts nothing after pointercancel, a lost capture, cancel() or disabling", async () => {
+      for (const end of [(l: Latest) => cancel(l), (l: Latest) => lost(l), (l: Latest) => act(async () => { l.api.cancel(); })]) {
+        const g = gated();
+        const l = await mountHook({ beforeStart: () => g.promise });
+        await pending(l); await end(l); await settle(g);
+        expect(l.api.active).toBeNull();
+      }
+    });
+
+    it("starts nothing when drawing was disabled or the hook unmounted while the gate was pending", async () => {
+      const g = gated();
+      let enabled = true;
+      const latest = {} as Latest;
+      function Harness() {
+        const [strokes, setStrokes] = useState<MarkupItem[]>([]);
+        latest.api = useMarkup({ enabled, tool: { kind: "freehand", color: "#000", width: 2 }, toPoint: (e) => ({ x: e.clientX / 100, y: e.clientY / 100 }), strokes, setStrokes, beforeStart: () => g.promise });
+        return null;
+      }
+      const host = document.createElement("div"); document.body.appendChild(host);
+      const root = createRoot(host); roots.push(root);
+      await act(async () => { root.render(<Harness />); });
+      await pending(latest);
+      enabled = false;
+      await act(async () => { root.render(<Harness />); });
+      await settle(g);
+      expect(latest.api.active).toBeNull();
+      enabled = true;
+      await act(async () => { root.render(<Harness />); });
+      const g2 = gated();
+      Object.assign(g, g2);
+      await act(async () => { root.unmount(); });
+      roots = roots.filter((r) => r !== root);
+      await settle(g);
+    });
+
+    it("still starts when the gate resolves true while the pointer is down", async () => {
+      const g = gated();
+      const l = await mountHook({ beforeStart: () => g.promise });
+      await pending(l); await settle(g);
+      expect(l.api.active).not.toBeNull();
+    });
+
+    it("abandons the gesture, and stays usable, when pointer capture throws", async () => {
+      const l = await mountHook();
+      const bad = fakeEvent(10, 10) as unknown as { currentTarget: { setPointerCapture: () => void } };
+      bad.currentTarget.setPointerCapture = () => { throw new Error("InvalidStateError"); };
+      await act(async () => { await l.api.handlers.onPointerDown(bad as never); });
+      expect(l.api.active).toBeNull();
+      await down(l, 20, 20);
+      expect(l.api.active).not.toBeNull();
+    });
+  });
+
   it("is inert when disabled", async () => {
     const l = await mountHook({ enabled: false });
     const event = fakeEvent(1, 1) as unknown as { preventDefault: () => void };

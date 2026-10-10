@@ -251,3 +251,44 @@ describe("Lightbox markup toolbar", () => {
     expect(button(host, "Blue").getAttribute("aria-pressed")).toBe("true");
   });
 });
+
+describe("Lightbox saving mid-gesture", () => {
+  async function editing() {
+    const saved = { id: "ann-1", authorId: "user-1", author: { id: "user-1", name: "A", role: "editor" }, scope: "edited", strokeR2Key: "key", noteText: "Saved", createdAt: "2026-07-28T00:00:00.000Z", editedAt: null };
+    apiGetMock.mockImplementation((path) => path.includes("/annotations") ? Promise.resolve({ annotations: [saved] }) : path.includes("/media/annotation/") ? Promise.resolve([{ points: [{ x: 0.2, y: 0.2 }], color: "#000", width: 2 }]) : Promise.resolve({}));
+    const host = mount();
+    await render(<Lightbox {...baseProps()} />);
+    await click(host.querySelector('[data-testid="lightbox-review-trigger"]')!);
+    await flush();
+    await click(button(host, "Edit drawing")); await flush();
+    stubFrameRect(host, RECT);
+    return { host, svg: svgOf(host) };
+  }
+
+  it("disables Save while a stroke is unfinished, and a click then sends nothing and discards nothing", async () => {
+    const { host, svg } = await editing();
+    await pointer(svg, "pointerdown", 110, 60); await pointer(svg, "pointermove", 200, 100);
+    expect((button(host, "Save") as HTMLButtonElement).disabled).toBe(true);
+    await click(button(host, "Save"));
+    expect(apiPatchMock).not.toHaveBeenCalled();
+    await pointer(svg, "pointerup", 200, 100);
+    expect((button(host, "Save") as HTMLButtonElement).disabled).toBe(false);
+    await click(button(host, "Save")); await flush(12);
+    expect(apiPatchMock).toHaveBeenCalledTimes(1);
+    expect((apiPatchMock.mock.calls[0]![1] as { strokes: unknown[] }).strokes).toHaveLength(2);
+  });
+
+  it("disables Save annotation while a new stroke is unfinished", async () => {
+    const { host, svg } = await setup();
+    await pointer(svg, "pointerdown", 110, 60); await pointer(svg, "pointermove", 200, 100);
+    await click(host.querySelector('[data-testid="lightbox-review-trigger"]')!);
+    expect((button(host, "Save annotation") as HTMLButtonElement).disabled).toBe(true);
+    await click(button(host, "Save annotation"));
+    expect(apiPostMock).not.toHaveBeenCalled();
+  });
+
+  it("sizes Cancel and Save for a coarse pointer above the phone width", async () => {
+    const { host } = await editing();
+    for (const name of ["Cancel", "Save"]) expect(button(host, name).className).toContain("min-[721px]:pointer-coarse:min-h-11");
+  });
+});
