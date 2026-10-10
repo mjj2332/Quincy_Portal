@@ -41,7 +41,7 @@ export async function loadActiveLink(c: Context<AppEnv>, linkId: string, now: nu
 }
 
 /** `guestId`, `email` and `name` are null until the session is verified (13a); `email` is the normalised address. */
-export type GuestSession = { id: string; link: GuestLink; guestId: string | null; email: string | null; name: string | null; expiresAt: number };
+export type GuestSession = { id: string; /** SHA-256 of the cookie token this request authenticated with. */ tokenHash: string; link: GuestLink; guestId: string | null; email: string | null; name: string | null; expiresAt: number };
 const SEEN_GRANULARITY_MS = 5 * 60_000;
 
 /**
@@ -53,10 +53,11 @@ export async function resolveSession(c: Context<AppEnv>, linkId: string, now: nu
   if (!UUID.test(linkId)) return null;
   const token = readSessionCookie(c, linkId);
   if (!token) return null;
+  const tokenHash = await hashToken(token);
   const row = await c.env.DB.prepare(`SELECT s.id AS session_id, s.guest_id, g.email_normalized AS guest_email, g.display_name AS guest_name, s.expires_at AS session_expires_at, s.last_seen_at, ${LINK_SELECT}
       FROM guest_sessions s JOIN client_links l ON l.id = s.link_id LEFT JOIN guest_reviewers g ON g.id = s.guest_id
       WHERE s.token_hash = ?1 AND s.link_id = ?2 AND s.expires_at > ?3 AND l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ?3 AND s.link_generation = l.token_generation`)
-    .bind(await hashToken(token), linkId, now).first<LinkRow & { session_id: string; guest_id: string | null; guest_email: string | null; guest_name: string | null; session_expires_at: number; last_seen_at: number }>();
+    .bind(tokenHash, linkId, now).first<LinkRow & { session_id: string; guest_id: string | null; guest_email: string | null; guest_name: string | null; session_expires_at: number; last_seen_at: number }>();
   const parts = row ? await guestGateParts(c.env.DB, row.project_id) : null;
   if (!row || !parts) return null;
   if (row.last_seen_at < now - SEEN_GRANULARITY_MS) {
@@ -65,7 +66,7 @@ export async function resolveSession(c: Context<AppEnv>, linkId: string, now: nu
     if (row.guest_id !== null) touch.push(c.env.DB.prepare("UPDATE guest_link_members SET last_seen_at = ?1 WHERE link_id = ?2 AND guest_id = ?3 AND last_seen_at < ?1").bind(now, row.id, row.guest_id));
     await c.env.DB.batch(touch);
   }
-  return { id: row.session_id, link: toLink(row, parts), guestId: row.guest_id, email: row.guest_email, name: row.guest_name, expiresAt: row.session_expires_at };
+  return { id: row.session_id, tokenHash, link: toLink(row, parts), guestId: row.guest_id, email: row.guest_email, name: row.guest_name, expiresAt: row.session_expires_at };
 }
 
 /**

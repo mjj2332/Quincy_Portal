@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { guestSessionResponseSchema, reviewLinkListResponseSchema } from "@quincy/shared";
 import { hashToken } from "../src/lib/opaque-token";
 import { emailBucket, ipBucket } from "../src/guest/rate-limit";
-import { database, ids, request as staffRequest, seedFixture } from "./embedded-media-support";
+import { baseEnv, database, ids, request as staffRequest, seedFixture } from "./embedded-media-support";
 import {
   addMember, clearGuestRows, freshIp, GUEST_WINDOW_MS, guestFetch, guestOrigin, HYGIENE, linkPath, linkWithSession, mockEmail, openGuestGate, seedGuestLink, sessionCookie, sha256Hex, startSession, type SentEmail,
 } from "./guest-support";
@@ -604,5 +604,58 @@ describe("the committing SQL repeats what the entry checked (Sol round 1)", () =
     await sleep(80); await archive();
     const sendResponse = await sending.response;
     expect(sendResponse.status).toBe(409); expect(await codeCount()).toBe(codes);
+  });
+});
+
+describe("one fence for every write on the email routes (Sol round 2)", () => {
+  it("a wrong code delayed past a gate close, a link expiry or an archive spends no try and answers the refusal, not code_incorrect", async () => {
+    const cases: Array<[string, (linkId: string) => Promise<unknown>, (response: Response) => Promise<void>]> = [
+      ["gate closes", () => clearVideoFlags(), async (r) => expect(await plain(r)).toEqual(await stubBody())],
+      ["link expires", (id) => database.DB.prepare("UPDATE client_links SET expires_at = ? WHERE id = ?").bind(Date.now() - 1, id).run(), async (r) => expect(await plain(r)).toEqual(await stubBody())],
+      ["project archived", () => archive(), async (r) => { expect(r.status).toBe(409); expect(await r.json()).toEqual({ error: "project_archived" }); }],
+    ];
+    for (const [label, change, expectRefusal] of cases) {
+      await openGuestGate(); await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run();
+      const { link, session, code } = await sent({ link: await seedGuestLink(), email: `${label.replaceAll(" ", "")}@guest-13a.test` });
+      const pending = slowPost(linkPath(link.id, "/email/verify"), session.cookie, { code: wrongCode(code), name: NAME }, 250);
+      await sleep(80); await change(link.id);
+      await expectRefusal(await pending.response);
+      expect((await codeRows(session.id))[0]!.attempts, label).toBe(0);
+    }
+  });
+
+  it("a send to address B that was in flight when the session verified as address A issues nothing", async () => {
+    const { link, session, code } = await sent();
+    await pastResendWait(session.id); const mailed = mail.sent.length;
+    const pending = slowPost(linkPath(link.id, "/email/code"), session.cookie, { email: "address-b@guest-13a.test" }, 300);
+    await sleep(80);
+    expect((await verify(link, session.cookie, code)).status).toBe(200);
+    expect(await plain(await pending.response)).toEqual(await stubBody());
+    expect(mail.sent.length).toBe(mailed);
+    expect((await codeRows(session.id)).map((row) => row.email_normalized)).toEqual([EMAIL]);
+  });
+
+  it("the send audit row is written with the code and survives a revoke and a gate close during the send", async () => {
+    const link = await seedGuestLink(); const session = await sessionOf(link);
+    const mutable = baseEnv as unknown as Record<string, unknown>;
+    mutable.EMAIL = { send: async () => {
+      await database.DB.prepare("UPDATE client_links SET revoked_at = ? WHERE id = ?").bind(Date.now(), link.id).run();
+      await database.DB.prepare("DELETE FROM guest_sessions WHERE link_id = ?").bind(link.id).run();
+      await clearVideoFlags();
+      return { messageId: "m" };
+    } };
+    const response = await sendCode(link, session.cookie);
+    expect(response.status).toBe(202);
+    const rows = await audits("review_link.email_code_send", link.id);
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]!.meta_json)).toEqual({ guest: { sessionId: session.id }, linkId: link.id, delivered: true });
+  });
+
+  it("a failed send is recorded against the same audit row, after the code is already stored", async () => {
+    mail.restore(); mail = mockEmail({ fail: Object.assign(new Error("x"), { code: "E_DELIVERY_FAILED" }) });
+    const link = await seedGuestLink(); const session = await sessionOf(link);
+    expect((await sendCode(link, session.cookie)).status).toBe(202);
+    const rows = await audits("review_link.email_code_send", link.id);
+    expect(rows).toHaveLength(1); expect(JSON.parse(rows[0]!.meta_json)).toMatchObject({ delivered: false, errorCode: "E_DELIVERY_FAILED" });
   });
 });

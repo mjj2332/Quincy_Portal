@@ -13,6 +13,12 @@ import { clientAddress, emailBucket, GUEST_CODE_RESEND_MS, GUEST_DAY_MS, GUEST_L
  * Guest email verification (#741 13a): `POST .../email/code` mails a six-digit code to an address, `POST .../email/verify` swaps the right code for a verified session. The code is
  * 6 digits, lives 10 minutes, allows 5 tries and works once. It is stored as a PBKDF2 hash (`lib/review-passcode.ts`, no secret: a leaked row is a single-use, 10-minute hash bound to a
  * session whose token exists only as a hash). The order on both routes is the guest order of 12a: link id, gate, Origin, credential; then the limits and the body.
+ *
+ * THE RULE (Sol rounds 1 and 2): whatever the entry checked, the SQL that writes checks again, at a fresh time. `guestEmailFence` is the one fragment for that: the session row with the exact
+ * token hash this request authenticated with and the identity it saw (`guest_id`), the link active and at the session's generation, the gate (master flag, all-projects or pilot row,
+ * `guest` part) and an unarchived Project. EVERY write on these two routes either carries it (the attempt counter, the code INSERT, the token swap) or runs in the same atomic batch
+ * only after a statement that carried it landed (the rest of the verify batch, keyed on the fresh token hash). `classifyRefusal` then runs BEFORE any code-specific answer
+ * (`code_expired`, `code_incorrect`, 429): a refused write is the guest stub, or 409 `project_archived` when only the archive landed, and never says anything about the code.
  */
 export const CODE_TTL_MS = 10 * 60_000;
 export const CODE_TRIES = 5;
@@ -62,13 +68,16 @@ const UNARCHIVED_SQL = "EXISTS (SELECT 1 FROM projects p WHERE p.id = l.project_
 /** Everything a committing statement re-checks, for aliases `s` and `l`: live session and link at `now`, the gate, and an unarchived Project. */
 const committable = (now: string) => `${live(now)} AND ${GATE_SQL} AND ${UNARCHIVED_SQL}`;
 
+/** The fence for aliases `s` (guest_sessions) and `l` (client_links), as SQL over the placeholders `now` (a time), `token` (hash) and `guest` (the guest id the request saw, or NULL). */
+const guestEmailFence = (bind: { now: string; token: string; guest: string }): string => `s.token_hash = ${bind.token} AND s.guest_id IS ${bind.guest} AND ${committable(bind.now)}`;
+
 /**
- * Why a committing statement landed nothing: the guest stub when the session, link or gate is gone, `project_archived` (409) when only the Project is archived, else null. Reads at its
- * own fresh time, after the write was refused.
+ * Whether a refused write was refused by the fence, and how. Runs at its own fresh time before any code-specific answer: the stub when the session (token, identity), link or gate is no
+ * longer what the request authenticated, `project_archived` (409) when only the Project is archived, else null (the fence held and the code decides).
  */
-async function refusal(c: Context<AppEnv>, sessionId: string): Promise<Response | null> {
-  const row = await c.env.DB.prepare(`SELECT p.archived_at FROM guest_sessions s JOIN client_links l ON l.id = s.link_id JOIN projects p ON p.id = l.project_id WHERE s.id = ?1 AND ${live("?2")} AND ${GATE_SQL}`)
-    .bind(sessionId, Date.now()).first<{ archived_at: number | null }>();
+async function classifyRefusal(c: Context<AppEnv>, session: GuestSession): Promise<Response | null> {
+  const row = await c.env.DB.prepare(`SELECT p.archived_at FROM guest_sessions s JOIN client_links l ON l.id = s.link_id JOIN projects p ON p.id = l.project_id
+    WHERE s.id = ?1 AND s.token_hash = ?2 AND s.guest_id IS ?3 AND ${live("?4")} AND ${GATE_SQL}`).bind(session.id, session.tokenHash, session.guestId, Date.now()).first<{ archived_at: number | null }>();
   if (!row) return guestNotFound(c);
   return row.archived_at !== null ? c.json({ error: "project_archived" }, 409) : null;
 }
@@ -118,13 +127,20 @@ async function sendCode(c: Handled<"/d/api/links/:linkId/email/code">): Promise<
   const code = newCode(); const codeId = newId(); const codeHash = await hashPasscode(code);
   // The time is taken again here, after the body was read and the code hashed: a slow body must not stretch the session, link or minute it is checked against.
   const issuedAt = Date.now();
-  // The INSERT is the fence: the session, link, gate and Project are still as the entry saw them, and no code was issued to this session in the last minute (a lost fence is the stub, or 409 for an archived Project, unless a code just landed).
-  const inserted = await c.env.DB.prepare(`INSERT INTO guest_email_codes (id, link_id, session_id, email_normalized, code_hash, attempts, expires_at, consumed_at, created_at)
-    SELECT ?1, s.link_id, s.id, ?2, ?3, 0, ?4, NULL, ?5 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id
-    WHERE s.id = ?6 AND ${committable("?5")} AND NOT EXISTS (SELECT 1 FROM guest_email_codes c WHERE c.session_id = s.id AND c.created_at > ?7)`)
-    .bind(codeId, email, codeHash, issuedAt + CODE_TTL_MS, issuedAt, session.id, issuedAt - GUEST_CODE_RESEND_MS).run();
-  if (inserted.meta.changes === 0) {
-    const refused = await refusal(c as unknown as Context<AppEnv>, session.id); if (refused) return refused;
+  // The code and its audit row land together or not at all, under the fence; the row says the send is unconfirmed until the outcome below replaces it. So provenance survives
+  // anything that happens during the send (a revoke deletes the code, not the audit row).
+  const auditId = newId();
+  const [inserted] = await c.env.DB.batch([
+    c.env.DB.prepare(`INSERT INTO guest_email_codes (id, link_id, session_id, email_normalized, code_hash, attempts, expires_at, consumed_at, created_at)
+      SELECT ?1, s.link_id, s.id, ?2, ?3, 0, ?4, NULL, ?5 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id
+      WHERE s.id = ?6 AND ${guestEmailFence({ now: "?5", token: "?8", guest: "?9" })} AND NOT EXISTS (SELECT 1 FROM guest_email_codes c WHERE c.session_id = s.id AND c.created_at > ?7)`)
+      .bind(codeId, email, codeHash, issuedAt + CODE_TTL_MS, issuedAt, session.id, issuedAt - GUEST_CODE_RESEND_MS, session.tokenHash, session.guestId),
+    c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?1, NULL, 'review_link.email_code_send', 'review_link', ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM guest_email_codes WHERE id = ?5)`)
+      .bind(auditId, link.id, auditMeta(null, { guest: { sessionId: session.id }, linkId: link.id, delivered: false, errorCode: "send_unconfirmed" }), issuedAt, codeId),
+  ]);
+  if (inserted!.meta.changes === 0) {
+    const refused = await classifyRefusal(c as unknown as Context<AppEnv>, session); if (refused) return refused;
     const newest = await c.env.DB.prepare("SELECT created_at FROM guest_email_codes WHERE session_id = ?1 AND created_at > ?2 ORDER BY created_at DESC LIMIT 1").bind(session.id, issuedAt - GUEST_CODE_RESEND_MS).first<{ created_at: number }>();
     return newest ? tooMany(Math.max(1, Math.ceil((newest.created_at + GUEST_CODE_RESEND_MS - issuedAt) / 1000))) : guestNotFound(c as unknown as Context<AppEnv>);
   }
@@ -136,11 +152,9 @@ async function sendCode(c: Handled<"/d/api/links/:linkId/email/code">): Promise<
     const message = composeCodeEmail(code, link.label);
     try { await c.env.EMAIL.send({ from: sender, to: email, subject: message.subject, text: message.text, html: message.html }); } catch (error) { errorCode = sendFailureCode(error); }
   }
-  // Written after the send so it can say whether it went. It never carries the address or the code, and it lands only while the code row and its session are still live.
-  await c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
-    SELECT ?1, NULL, 'review_link.email_code_send', 'review_link', ?2, ?3, ?4
-    WHERE EXISTS (SELECT 1 FROM guest_email_codes c JOIN guest_sessions s ON s.id = c.session_id JOIN client_links l ON l.id = s.link_id WHERE c.id = ?5 AND ${live("?4")} AND ${GATE_SQL})`)
-    .bind(newId(), link.id, auditMeta(null, { guest: { sessionId: session.id }, linkId: link.id, delivered: errorCode === null, ...(errorCode === null ? {} : { errorCode }) }), Date.now(), codeId).run();
+  // The safe outcome, recorded against the audit row by its id and unconditionally: it never carries the address or the code, and it needs no live session because the row already exists.
+  await c.env.DB.prepare("UPDATE audit_log SET meta_json = ?1 WHERE id = ?2 AND action = 'review_link.email_code_send'")
+    .bind(auditMeta(null, { guest: { sessionId: session.id }, linkId: link.id, delivered: errorCode === null, ...(errorCode === null ? {} : { errorCode }) }), auditId).run();
   // The same answer for every address: it says nothing of whether the address is known, deliverable or limited by anything but this session.
   return c.json({ sent: true, resendAfterSeconds: GUEST_CODE_RESEND_SECONDS }, 202);
 }
@@ -167,9 +181,12 @@ async function verifyCode(c: Handled<"/d/api/links/:linkId/email/verify">): Prom
   // One statement counts the try and says whether the code can still be tried: expired, consumed, burned (5 tries) or superseded all return no row, so the sixth try finds nothing even with the right code.
   const tried = await c.env.DB.prepare(`UPDATE guest_email_codes SET attempts = attempts + 1
     WHERE id = ?1 AND consumed_at IS NULL AND expires_at > ?2 AND attempts < ?3 AND NOT EXISTS (SELECT 1 FROM guest_email_codes n WHERE n.session_id = guest_email_codes.session_id AND n.created_at > guest_email_codes.created_at)
-    RETURNING attempts, code_hash`).bind(newest.id, Date.now(), CODE_TRIES).first<{ attempts: number; code_hash: string }>();
-  if (!tried) return c.json({ error: "code_expired" }, 401);
-  if (!await verifyPasscode(tried.code_hash, parsed.data.code)) return c.json({ error: "code_incorrect", attemptsLeft: CODE_TRIES - tried.attempts }, 401);
+      AND EXISTS (SELECT 1 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE s.id = guest_email_codes.session_id AND ${guestEmailFence({ now: "?2", token: "?4", guest: "?5" })})
+    RETURNING attempts, code_hash`).bind(newest.id, Date.now(), CODE_TRIES, session.tokenHash, session.guestId).first<{ attempts: number; code_hash: string }>();
+  // Refusal first: a code answer must never come from a request the fence would have refused.
+  if (!tried) return await classifyRefusal(c as unknown as Context<AppEnv>, session) ?? c.json({ error: "code_expired" }, 401);
+  const correct = await verifyPasscode(tried.code_hash, parsed.data.code);
+  if (!correct) return await classifyRefusal(c as unknown as Context<AppEnv>, session) ?? c.json({ error: "code_incorrect", attemptsLeft: CODE_TRIES - tried.attempts }, 401);
 
   // The right code. The first statement swaps the session token under every fence; each later one runs only if that swap landed (the token hash is a fresh value that only this request
   // holds), so a revoke, a replace, an expiry, a newer code or the other half of a double-click writes nothing. The audit row is last and carries the guest id the batch actually stored.
@@ -180,11 +197,11 @@ async function verifyCode(c: Handled<"/d/api/links/:linkId/email/verify">): Prom
   const landed = (s: number, h: number) => sessionLanded.replace("?{S}", `?${s}`).replace("?{H}", `?${h}`);
   const email = newest.email_normalized; const db = c.env.DB;
   const results = await db.batch([
-    db.prepare(`UPDATE guest_sessions SET token_hash = ?1 WHERE id = ?2 AND expires_at > ?3
-      AND EXISTS (SELECT 1 FROM client_links l WHERE l.id = guest_sessions.link_id AND l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ?3 AND l.token_generation = guest_sessions.link_generation AND ${GATE_SQL} AND ${UNARCHIVED_SQL})
+    db.prepare(`UPDATE guest_sessions SET token_hash = ?1 WHERE id = ?2
+      AND EXISTS (SELECT 1 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE s.id = ?2 AND ${guestEmailFence({ now: "?3", token: "?5", guest: "?6" })})
       AND EXISTS (SELECT 1 FROM guest_email_codes c WHERE c.id = ?4 AND c.session_id = guest_sessions.id AND c.consumed_at IS NULL AND c.expires_at > ?3
         AND NOT EXISTS (SELECT 1 FROM guest_email_codes n WHERE n.session_id = c.session_id AND n.created_at > c.created_at)
-        AND (guest_sessions.guest_id IS NULL OR guest_sessions.guest_id = (SELECT id FROM guest_reviewers WHERE email_normalized = c.email_normalized)))`).bind(tokenHash, session.id, committedAt, newest.id),
+        AND (guest_sessions.guest_id IS NULL OR guest_sessions.guest_id = (SELECT id FROM guest_reviewers WHERE email_normalized = c.email_normalized)))`).bind(tokenHash, session.id, committedAt, newest.id, session.tokenHash, session.guestId),
     db.prepare(`UPDATE guest_email_codes SET consumed_at = ?1 WHERE id = ?2 AND ${landed(3, 4)}`).bind(committedAt, newest.id, session.id, tokenHash),
     // The name is that person's current one: the last verification writes it, on this link or another.
     db.prepare(`INSERT INTO guest_reviewers (id, email_normalized, display_name, created_at) SELECT ?1, ?2, ?3, ?4 WHERE ${landed(5, 6)}
@@ -202,7 +219,7 @@ async function verifyCode(c: Handled<"/d/api/links/:linkId/email/verify">): Prom
   const stored = results[results.length - 1]!.results[0] as { expires_at: number; email_normalized: string; display_name: string | null } | undefined;
   if (!stored) {
     // Nothing landed. A gone session, link or gate is the stub and an archived Project is 409; a session that is still live lost the race to a double-click, a newer code or an expiry: the code is spent.
-    return await refusal(c as unknown as Context<AppEnv>, session.id) ?? c.json({ error: "code_expired" }, 401);
+    return await classifyRefusal(c as unknown as Context<AppEnv>, session) ?? c.json({ error: "code_expired" }, 401);
   }
   const response = c.json(sessionBody(link, identityOf({ email: stored.email_normalized, name: stored.display_name })));
   response.headers.append("set-cookie", sessionCookieHeader(c.env, link.id, token, (stored.expires_at - committedAt) / 1000));
