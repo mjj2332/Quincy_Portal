@@ -162,11 +162,17 @@ describe("toResolveEdl", () => {
     expect(r.ok && r.text).toContain("00:01:00;02");
   });
 
+  it("joins the name and its replies with one dash per reply", () => {
+    const r = toResolveEdl([marker({ name: "Quincy Admin: 9a public", note: "— Quincy Admin: 9a reply\n— Bob: ok" })], ctx({ startFrames: 0 }));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.text).toContain("|M:Quincy Admin: 9a public — Quincy Admin: 9a reply — Bob: ok |D:1");
+  });
+
   it("sanitises pipes, newlines and a leading digit", () => {
     const r = toResolveEdl([marker({ name: "2nd pass | fix\nthis\r\nnow", note: "— Bob: ok" })], ctx({ startFrames: 0 }));
     if (!r.ok) throw new Error("expected ok");
     const line = r.text.split("\n").find((l) => l.startsWith(" |C:")) ?? "";
-    expect(line).toContain("|M:_2nd pass / fix this now — — Bob: ok |D:1");
+    expect(line).toContain("|M:_2nd pass / fix this now — Bob: ok |D:1");
     expect(line.match(/\|/g)).toHaveLength(3);
   });
 

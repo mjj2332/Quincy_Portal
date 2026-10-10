@@ -148,7 +148,8 @@ export function toResolveEdl(
     const recIn = framesToTimecode(m.frame, ctx.base, ctx.startFrames);
     const recOut = framesToTimecode(m.frame + 1, ctx.base, ctx.startFrames);
     const color = m.resolved ? "ResolveColorGreen" : "ResolveColorBlue";
-    const text = edlText(m.note ? `${m.name} — ${m.note}` : m.name);
+    // Each reply line in `note` already opens with "— ", so the name and the replies are joined by a space (one dash per reply).
+    const text = edlText(m.note ? `${m.name} ${m.note}` : m.name);
     lines.push(`${String(i + 1).padStart(3, "0")}  001      V     C        ${recIn} ${recOut} ${recIn} ${recOut}`);
     lines.push(` |C:${color} |M:${text} |D:${m.durationFrames}`);
   });

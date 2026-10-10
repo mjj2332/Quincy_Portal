@@ -4,6 +4,7 @@ import type { Mp4Probe, Role, VideoDto, VideoReviewResponse } from "@quincy/shar
 import { useSession } from "../../lib/auth";
 import { useOptionalProjectQueryClient, useProjectAccessTermination, useProjectVideosQuery } from "../../lib/project-data";
 import { onPrincipalTerminal } from "../../lib/principal-terminal";
+import { createCompareStore, type CompareStore } from "../../lib/video-compare-store";
 import { createNoteFormStore, type NoteFormStore } from "../../lib/video-note-form-store";
 import { abortVideoReservation, cancelVideoUpload, removeVideoUpload, retryVideoUpload, startVideoUpload, uploadIdentityGeneration, useVideoUploads } from "../../lib/video-upload-store";
 import { checkVideoFile } from "../../lib/video-upload";
@@ -39,6 +40,8 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   const notesEnabled = review.parts.includes("notes");
   // Drawing on notes (#741 6b-ui) needs the notes part too: markup alone offers nothing.
   const markupEnabled = notesEnabled && review.parts.includes("markup");
+  // Marker export (#741 9) is offered in the notes panel, so it needs the notes part too (the server gate wants both).
+  const exportEnabled = notesEnabled && review.parts.includes("export");
   // Every unsent or open note form lives here for as long as the Video tab is open (#741 5b, D3): one store per person and Project, never a
   // module, so a different person starts with none. Swapped during render (the person or Project changed) so nothing the old store started
   // can send or write again; the viewer and the notes panel only subscribe to it.
@@ -46,6 +49,11 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   const formsKey = `${userId ?? ""}:${projectId}`;
   if (formsRef.current?.key !== formsKey) { formsRef.current?.retire(); formsRef.current = createNoteFormStore(formsKey); }
   const forms = formsRef.current;
+  // A compare's state (the pair, every pair's offset, the layout, the wipe, the sound side, the notes tab) lives and dies with the forms: same key, same retirement.
+  const compareRef = useRef<CompareStore | null>(null);
+  if (compareRef.current?.key !== formsKey) { compareRef.current?.retire(); compareRef.current = createCompareStore(formsKey); }
+  const compareStore = compareRef.current;
+  const compareEnabled = review.parts.includes("compare");
   useEffect(() => {
     // The notice names the session's query client: a retired session's late 401 must not cancel this session's confirmation (as in video-upload-store).
     const off = onPrincipalTerminal((terminated) => { if (terminated === undefined || terminated === queryClient) forms.cancelAll(); });
@@ -115,7 +123,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     </div>
     {openVideo && <ViewLoadBoundary viewLabel="video player">
       <Suspense fallback={null}>
-        <Viewer video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => opener.current} {...(notesEnabled ? { notes: { projectId, role, userId, archived, forms, markup: markupEnabled } } : {})} />
+        <Viewer video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => opener.current} {...(notesEnabled ? { notes: { projectId, role, userId, archived, forms, markup: markupEnabled, exportEnabled } } : {})} {...(compareEnabled ? { compare: { store: compareStore } } : {})} />
       </Suspense>
     </ViewLoadBoundary>}
   </section>;
