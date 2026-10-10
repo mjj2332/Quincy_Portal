@@ -421,7 +421,7 @@ describe("the SQL fence on its own (a paste that bypasses the route inserts and 
   const run = async (w: World, note: string, writer: Awaited<ReturnType<typeof writerOf>>, between?: () => Promise<unknown>) => {
     let batches = 0;
     const db = { prepare: (sql: string) => database.DB.prepare(sql), batch: async (statements: D1PreparedStatement[]) => { batches += 1; if (batches === 2 && between) await between(); return database.DB.batch(statements); } } as unknown as D1Database;
-    return (await commitNotePaste(db, { projectId: w.a.projectId, targetAssetId: w.a2.assetId, sourceAssetId: w.a.assetId, notes: revisions([note]), offsetFrames: 0, principal: null, guest: writer, now: Date.now() })).kind;
+    return (await commitNotePaste(db, { projectId: w.a.projectId, targetAssetId: w.a2.assetId, sourceAssetId: w.a.assetId, notes: revisions([note]), offsetFrames: 0, principal: null, guest: writer })).kind;
   };
   const breaks: Array<[string, (w: World) => Promise<unknown>]> = [
     ["revoked", (w) => database.DB.prepare("UPDATE client_links SET revoked_at = ? WHERE id = ?").bind(Date.now(), w.link.id).run()],
@@ -512,10 +512,61 @@ describe("a stale or conflicting paste still checks the source Version", () => {
   });
 });
 
+describe("the commit time is taken after planning (#741 13d)", () => {
+  afterEach(() => { vi.useRealTimers(); });
+  /** A db whose planner batch (the first) is followed by the clock jumping `jump` ms: expiry passes during the planner await. */
+  const slowPlanner = (jump: number): D1Database => {
+    let batches = 0;
+    return { prepare: (sql: string) => database.DB.prepare(sql), batch: async (statements: D1PreparedStatement[]) => {
+      batches += 1; const results = await database.DB.batch(statements);
+      if (batches === 1) vi.setSystemTime(Date.now() + jump);
+      return results;
+    } } as unknown as D1Database;
+  };
+
+  it("writes no copy and no audit row when the link expires while the plan is read, and the response is the stub", async () => {
+    const stub = await stubBody();
+    const w = await world({ link: { expiresAt: Date.now() + 30_000 } }); const note = await ownNote(w);
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    const real = pasteLib.commitNotePaste;
+    vi.spyOn(pasteLib, "commitNotePaste").mockImplementation(async (_db, input) => real(slowPlanner(60_000), input));
+    const response = await plain(await commit(w, revisions([note])));
+    expect(response).toEqual(stub);
+    expect(await copyCount()).toBe(0); expect(await pasteAudits()).toEqual([]);
+  });
+
+  it("writes no copy and no audit row when the link expires between the plan and the write (direct)", async () => {
+    const w = await world({ link: { expiresAt: Date.now() + 30_000 } }); const note = await ownNote(w);
+    const writer = { guestId: w.guest!.guestId, sessionId: w.guest!.sessionId, linkId: w.link.id, tokenHash: await hashToken(w.link.cookie.split("=")[1]!), markup: false };
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    const outcome = await commitNotePaste(slowPlanner(60_000), { projectId: w.a.projectId, targetAssetId: w.a2.assetId, sourceAssetId: w.a.assetId, notes: revisions([note]), offsetFrames: 0, principal: null, guest: writer });
+    expect(outcome.kind).not.toBe("ok");
+    expect(await copyCount()).toBe(0); expect(await pasteAudits()).toEqual([]);
+  });
+});
+
+describe("a pair error still checks both Versions (#741 13d)", () => {
+  const revokeSource = (w: World) => database.DB.prepare("UPDATE review_link_version_grants SET revoked_at = ?, revoked_by = ? WHERE link_id = ? AND asset_id = ?").bind(Date.now(), ids.member, w.link.id, w.a.assetId).run();
+
+  it("answers the stub, not 422 not_same_video, when the source grant is revoked after the plan (preview and commit)", async () => {
+    const stub = await stubBody();
+    const w = await world(); const note = await ownNote(w); const b = await seedVideoVersion({ projectId: w.a.projectId }); await addMember(w.link.id, b.videoId, [b.assetId]);
+    const body = { sourceAssetId: w.a.assetId };
+    const realPlan = pasteLib.planNotePaste; const realCommit = pasteLib.commitNotePaste;
+    vi.spyOn(pasteLib, "planNotePaste").mockImplementation(async (...args) => { const outcome = await realPlan(...args); await revokeSource(w); return outcome; });
+    const previewed = await plain(await guestFetch(previewUrl(w, b.assetId), { method: "POST", cookie: w.link.cookie, body: { ...body, noteIds: [note] } }));
+    expect(previewed).toEqual(stub);
+    vi.restoreAllMocks(); await database.DB.prepare("UPDATE review_link_version_grants SET revoked_at = NULL, revoked_by = NULL WHERE link_id = ?").bind(w.link.id).run();
+    vi.spyOn(pasteLib, "commitNotePaste").mockImplementation(async (...args) => { const outcome = await realCommit(...args); await revokeSource(w); return outcome; });
+    const committed = await plain(await guestFetch(commitUrl(w, b.assetId), { method: "POST", cookie: w.link.cookie, body: { ...body, notes: revisions([note]) } }));
+    expect(committed).toEqual(stub);
+  });
+});
+
 describe("the staff paste is unchanged", () => {
   it("still copies as the staff author and never skips as not_author", async () => {
     const w = await world(); const staffNoteRow = await seedVideoNote({ assetId: w.a.assetId, body: STAFF_BODY });
-    const outcome = await commitNotePaste(database.DB, { projectId: w.a.projectId, targetAssetId: w.a2.assetId, sourceAssetId: w.a.assetId, notes: revisions([staffNoteRow.id]), offsetFrames: 0, principal: { id: ids.member, role: "editor" } as never, now: Date.now() });
+    const outcome = await commitNotePaste(database.DB, { projectId: w.a.projectId, targetAssetId: w.a2.assetId, sourceAssetId: w.a.assetId, notes: revisions([staffNoteRow.id]), offsetFrames: 0, principal: { id: ids.member, role: "editor" } as never });
     expect(outcome.kind).toBe("ok");
     expect(await copyOf(staffNoteRow.id, w.a2.assetId)).toMatchObject({ author_user_id: ids.member, author_guest_id: null });
     expect(await noteRow(staffNoteRow.id)).toMatchObject({ revision: 1 });

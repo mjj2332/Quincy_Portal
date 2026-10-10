@@ -47,6 +47,15 @@ async function settle(c: Handled<string>, v: Verified, assetId: string, sourceAs
   return await classifyRefusal(asApp(c), v.session, true, { parts: noteWriteParts(drawn), comments: true, assetId, alsoAssetIds: [sourceAssetId] }) ?? await response();
 }
 
+/**
+ * A plan outcome that is not a plan. The pair errors (`same_version`, `not_same_video`) say something about BOTH Versions, so they leave through `settle` and recheck the source as well as the
+ * target; the unreachable-Version outcomes are already the stub.
+ */
+async function answerOutcome(c: Handled<string>, ctx: { answer: (response: Response | Promise<Response>) => Promise<Response> }, v: Verified, assetId: string, sourceAssetId: string, outcome: Exclude<PlanOutcome, { kind: "ok" }>): Promise<Response> {
+  if (outcome.kind === "same_version" || outcome.kind === "not_same_video") return ctx.answer(settle(c, v, assetId, sourceAssetId, false, () => refusal(c, outcome)));
+  return ctx.answer(refusal(c, outcome));
+}
+
 const PREVIEW = "/d/api/links/:linkId/versions/:assetId/note-paste/preview";
 const COMMIT = "/d/api/links/:linkId/versions/:assetId/note-paste";
 
@@ -59,7 +68,7 @@ async function previewPaste(c: Handled<typeof PREVIEW>): Promise<Response> {
   const judged = judge(c, entered, guestNotePastePreviewInputSchema); if ("response" in judged) return judged.response;
   const input = judged.data;
   const planned = await planNotePaste(c.env.DB, { projectId: v.link.projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, noteIds: input.noteIds, offsetFrames: input.offsetFrames, guest: { guestId: v.guestId, linkId: v.link.id } });
-  if (planned.kind !== "ok") return ctx.answer(refusal(c, planned));
+  if (planned.kind !== "ok") return answerOutcome(c, ctx, v, assetId, input.sourceAssetId, planned);
   return settle(c, v, assetId, input.sourceAssetId, planDrawn(planned.plan), () => c.json(guestNotePastePreviewResponseSchema.parse(planned.plan.preview)));
 }
 
@@ -71,13 +80,13 @@ async function commitPaste(c: Handled<typeof COMMIT>): Promise<Response> {
   const limited = await reserve(c, v, requested(entered.raw, "notes")); if (limited) return ctx.answer(limited);
   const judged = judge(c, entered, guestNotePasteCommitInputSchema); if ("response" in judged) return judged.response;
   const input = judged.data;
-  const outcome = await commitNotePaste(c.env.DB, { projectId: v.link.projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, notes: input.notes, offsetFrames: input.offsetFrames, principal: null, guest: writerOf(v, false), now: Date.now() });
+  const outcome = await commitNotePaste(c.env.DB, { projectId: v.link.projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, notes: input.notes, offsetFrames: input.offsetFrames, principal: null, guest: writerOf(v, false) });
   if (outcome.kind === "ok") return settle(c, v, assetId, input.sourceAssetId, outcome.drawn, () => c.json(guestNotePasteCommitResponseSchema.parse(outcome.value)));
   // Anything but a landed paste is classified first: a fence that failed mid-request must not be mistaken for a stale preview.
   switch (outcome.kind) {
     case "stale": return settle(c, v, assetId, input.sourceAssetId, outcome.drawn, () => c.json(guestNotePasteStaleSchema.parse({ error: "paste_stale", preview: outcome.preview }), 409));
     case "archived": return settle(c, v, assetId, input.sourceAssetId, outcome.drawn, () => c.json({ error: "project_archived" }, 409));
-    default: return ctx.answer(refusal(c, outcome));
+    default: return answerOutcome(c, ctx, v, assetId, input.sourceAssetId, outcome);
   }
 }
 

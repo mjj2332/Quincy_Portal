@@ -107,7 +107,7 @@ export type CommitOutcome =
  * all-skipped included. Idempotent: a repeat finds every copy in place (`already_copied`).
  */
 export async function commitNotePaste(db: D1Database, input: {
-  projectId: string; targetAssetId: string; sourceAssetId: string; notes: Array<{ noteId: string; revision: number }>; offsetFrames: number; now: number;
+  projectId: string; targetAssetId: string; sourceAssetId: string; notes: Array<{ noteId: string; revision: number }>; offsetFrames: number;
 } & ({ principal: Principal; guest?: undefined } | { principal: null; guest: GuestWriter })): Promise<CommitOutcome> {
   const noteIds = input.notes.map((note) => note.noteId);
   const { guest } = input;
@@ -135,11 +135,14 @@ export async function commitNotePaste(db: D1Database, input: {
   const fenced = guest ? { ...guest, markup: guest.markup || drawn } : undefined;
   const insertGuard = fenced ? guestNoteGuard(fenced, 11, "?8", "?2", ["?4"]) : { sql: "", binds: [] as unknown[] };
   const auditGuard = fenced ? guestNoteGuard(fenced, 14, "?5", "?3", ["?7"]) : { sql: "", binds: [] as unknown[] };
+  // The time of the write, taken now: after the planner was awaited and the batch built, never at arrival. Both fences judge expiry at this value, so a session or link that
+  // expired while the plan was read copies nothing and writes no audit row.
+  const now = Date.now();
   const results = await db.batch([
-    db.prepare(pasteInsertSql(insertGuard.sql)).bind(copiesJson, input.targetAssetId, input.projectId, input.sourceAssetId, guest ? guest.guestId : input.principal!.id, guest ? "guest" : input.principal!.role, plan.preview.sourceVersion, input.now, expectedJson, noteIds.length, ...insertGuard.binds),
-    db.prepare(pasteAuditSql(auditGuard.sql)).bind(auditId, guest ? null : input.principal!.id, input.targetAssetId, meta, input.now, input.projectId, input.sourceAssetId, expectedJson, noteIds.length, noteIds.length, plan.copies.length, reasonCount("already_copied"), copiesJson, ...auditGuard.binds),
+    db.prepare(pasteInsertSql(insertGuard.sql)).bind(copiesJson, input.targetAssetId, input.projectId, input.sourceAssetId, guest ? guest.guestId : input.principal!.id, guest ? "guest" : input.principal!.role, plan.preview.sourceVersion, now, expectedJson, noteIds.length, ...insertGuard.binds),
+    db.prepare(pasteAuditSql(auditGuard.sql)).bind(auditId, guest ? null : input.principal!.id, input.targetAssetId, meta, now, input.projectId, input.sourceAssetId, expectedJson, noteIds.length, noteIds.length, plan.copies.length, reasonCount("already_copied"), copiesJson, ...auditGuard.binds),
     // AFTER the audit statement, which reads `changes()` from the note INSERT: the markup rows of the copies that actually landed.
-    db.prepare(PASTE_MARKUP_SQL).bind(copiesJson, input.targetAssetId, input.now),
+    db.prepare(PASTE_MARKUP_SQL).bind(copiesJson, input.targetAssetId, now),
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
     db.prepare("SELECT id FROM audit_log WHERE id = ?1").bind(auditId),
     db.prepare("SELECT id FROM video_notes WHERE id IN (SELECT value FROM json_each(?1))").bind(JSON.stringify([...copyIds.values()])),
