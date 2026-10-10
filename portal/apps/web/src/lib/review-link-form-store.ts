@@ -55,6 +55,9 @@ export function createReviewLinkStore(key: string) {
   /** A revision per Video's tick, bumped whenever the tick is toggled, cleared or pruned: a create success clears only ticks unchanged since its submit. */
   const tickRevs = new Map<string, number>();
   const bump = (ids: Iterable<string>) => { for (const id of ids) tickRevs.set(id, (tickRevs.get(id) ?? 0) + 1); };
+  /** A revision per create-draft field, bumped on every edit (an edit back to the sent value included): a create success clears only fields unchanged since its submit. */
+  const draftRevs = new Map<string, number>();
+  const touch = (fields: Iterable<string>) => { for (const field of fields) draftRevs.set(field, (draftRevs.get(field) ?? 0) + 1); };
   const set = (next: ReviewLinkStoreState) => { if (dead) return; state = next; for (const listener of [...listeners]) listener(); };
   const update = (change: (current: ReviewLinkStoreState) => Partial<ReviewLinkStoreState>) => set({ ...state, ...change(state) });
   const without = <T,>(record: Readonly<Record<string, T>>, name: string): Record<string, T> => { const { [name]: _gone, ...rest } = record; return rest; };
@@ -66,6 +69,8 @@ export function createReviewLinkStore(key: string) {
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     getState: () => state,
 
+    /** The create draft's field revisions (`label`, `passcode`, `expiryDay`, `allow`, `grant:<video>`), captured at submit and handed back to `showReveal`. */
+    draftRevisions(): Record<string, number> { return Object.fromEntries(draftRevs); },
     /** The tick revisions of these Videos, captured at submit and handed back to `showReveal`. */
     selectionRevisions(videoIds: readonly string[]): Record<string, number> { return Object.fromEntries(videoIds.map((id) => [id, tickRevs.get(id) ?? 0])); },
     toggleSelect(videoId: string) { bump([videoId]); update((s) => { const selection = new Set(s.selection); if (!selection.delete(videoId)) selection.add(videoId); return { selection }; }); },
@@ -90,8 +95,8 @@ export function createReviewLinkStore(key: string) {
       });
     },
 
-    patchCreate(change: Partial<Omit<CreateDraft, "grants">>) { update((s) => ({ create: { ...s.create, ...change } })); },
-    setGrant(videoId: string, assetIds: readonly string[]) { update((s) => ({ create: { ...s.create, grants: { ...s.create.grants, [videoId]: assetIds } } })); },
+    patchCreate(change: Partial<Omit<CreateDraft, "grants">>) { touch(Object.keys(change)); update((s) => ({ create: { ...s.create, ...change } })); },
+    setGrant(videoId: string, assetIds: readonly string[]) { touch([`grant:${videoId}`]); update((s) => ({ create: { ...s.create, grants: { ...s.create.grants, [videoId]: assetIds } } })); },
     patchDetail(linkId: string, change: Partial<DetailDraft>) { update((s) => ({ details: { ...s.details, [linkId]: { ...(s.details[linkId] ?? emptyDetail()), ...change } } })); },
     /** A save answered: clear the fields that were sent (as `submitted` held them) and keep anything edited since. */
     settleDetail(linkId: string, submitted: DetailDraft) {
@@ -117,24 +122,27 @@ export function createReviewLinkStore(key: string) {
      * The create or replace answered: show the URL once. A created link clears what it was made from, and only that: with `submitted`
      * (the Videos and the draft as sent), a tick or field the person changed while the request was out stays. Without it, everything goes.
      */
-    showReveal(reveal: Reveal, submitted?: { videoIds: readonly string[]; draft: CreateDraft; /** `selectionRevisions` at submit; a tick changed since stays. */ selectionRevs?: Readonly<Record<string, number>> }) {
+    showReveal(reveal: Reveal, submitted?: { videoIds: readonly string[]; draft: CreateDraft; /** `selectionRevisions` at submit; a tick changed since stays. */ selectionRevs?: Readonly<Record<string, number>>; draftRevs?: Readonly<Record<string, number>> }) {
       update((s) => {
         const reveals = queued([...s.reveals, reveal]);
         if (reveal.origin !== "create") return { ...reveals, view: { kind: "reveal" } };
         if (!submitted) return { ...reveals, view: { kind: "reveal" }, selection: new Set<string>(), create: emptyCreate() };
         const sent = submitted.draft; const now = s.create;
+        // With the submit's field revisions, a field is cleared only if nobody edited it since; without them, only if it still equals what was sent.
+        const revs = submitted.draftRevs;
+        const unchanged = (field: string, same: boolean) => (revs ? (draftRevs.get(field) ?? 0) === (revs[field] ?? 0) : same);
         const grants: Record<string, readonly string[]> = {};
         for (const [videoId, ids] of Object.entries(now.grants)) {
           const was = sent.grants[videoId];
           // A Video whose tick changed since the submit is a new selection: its grant draft stays whatever it holds.
           const reselected = submitted.selectionRevs !== undefined && (tickRevs.get(videoId) ?? 0) !== submitted.selectionRevs[videoId];
-          if (!(submitted.videoIds.includes(videoId) && was && sameList(was, ids) && !reselected)) grants[videoId] = ids;
+          if (!(submitted.videoIds.includes(videoId) && was && unchanged(`grant:${videoId}`, sameList(was, ids)) && !reselected)) grants[videoId] = ids;
         }
         const create: CreateDraft = {
-          label: now.label === sent.label ? "" : now.label,
-          passcode: now.passcode === sent.passcode ? "" : now.passcode,
-          expiryDay: now.expiryDay === sent.expiryDay ? null : now.expiryDay,
-          allow: now.allow.comments === sent.allow.comments && now.allow.approve === sent.allow.approve && now.allow.download === sent.allow.download ? { ...DEFAULT_ALLOW } : now.allow,
+          label: unchanged("label", now.label === sent.label) ? "" : now.label,
+          passcode: unchanged("passcode", now.passcode === sent.passcode) ? "" : now.passcode,
+          expiryDay: unchanged("expiryDay", now.expiryDay === sent.expiryDay) ? null : now.expiryDay,
+          allow: unchanged("allow", now.allow.comments === sent.allow.comments && now.allow.approve === sent.allow.approve && now.allow.download === sent.allow.download) ? { ...DEFAULT_ALLOW } : now.allow,
           grants,
         };
         return { ...reveals, view: { kind: "reveal" }, selection: new Set([...s.selection].filter((id) => !submitted.videoIds.includes(id) || (submitted.selectionRevs !== undefined && (tickRevs.get(id) ?? 0) !== submitted.selectionRevs[id]))), create };

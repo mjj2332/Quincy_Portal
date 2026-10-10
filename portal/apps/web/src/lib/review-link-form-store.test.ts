@@ -189,6 +189,37 @@ describe("review link form store (#741 11b)", () => {
     expect([...store.getState().selection]).toEqual([B]);
   });
 
+  it("a late create success keeps a passcode edited A to B to A since the submit, though it equals what was sent", () => {
+    const store = createReviewLinkStore("u:p");
+    store.toggleSelect(A); store.openCreate(); store.patchCreate({ passcode: "A" });
+    const submitted = { videoIds: [A], draft: structuredClone(store.getState().create), selectionRevs: store.selectionRevisions([A]), draftRevs: store.draftRevisions() };
+    store.closeDialog();
+    store.clearSelection(); store.toggleSelect(B); store.openCreate();
+    store.patchCreate({ passcode: "B" }); store.patchCreate({ passcode: "A" });
+    store.showReveal({ url: "https://x.test/d/review?link=a#t=tok", linkId: A, label: null, origin: "create" }, submitted);
+    expect(store.getState().create.passcode).toBe("A");
+  });
+
+  it("a late create success keeps a label edited and restored since the submit", () => {
+    const store = createReviewLinkStore("u:p");
+    store.toggleSelect(A); store.openCreate(); store.patchCreate({ label: "Smith" });
+    const submitted = { videoIds: [A], draft: structuredClone(store.getState().create), selectionRevs: store.selectionRevisions([A]), draftRevs: store.draftRevisions() };
+    store.closeDialog();
+    store.patchCreate({ label: "Jones" }); store.patchCreate({ label: "Smith" });
+    store.showReveal({ url: "https://x.test/d/review?link=a#t=tok", linkId: A, label: null, origin: "create" }, submitted);
+    expect(store.getState().create.label).toBe("Smith");
+  });
+
+  it("control: a create success with the draft untouched since the submit clears every field", () => {
+    const store = createReviewLinkStore("u:p");
+    store.toggleSelect(A); store.openCreate();
+    store.patchCreate({ label: "Smith", passcode: "secret1", expiryDay: "2026-12-01", allow: { comments: false, approve: true, download: true } });
+    store.setGrant(A, ["x"]);
+    const submitted = { videoIds: [A], draft: structuredClone(store.getState().create), selectionRevs: store.selectionRevisions([A]), draftRevs: store.draftRevisions() };
+    store.showReveal({ url: "https://x.test/d/review?link=a#t=tok", linkId: A, label: null, origin: "create" }, submitted);
+    expect(store.getState().create).toEqual({ label: "", passcode: "", expiryDay: null, allow: { comments: true, approve: true, download: true }, grants: {} });
+  });
+
   it("one write per lock: a second write under the same lock is refused whatever its scope, and a different lock goes ahead", async () => {
     const store = createReviewLinkStore("u:p");
     const first = deferred<void>();
