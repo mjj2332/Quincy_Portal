@@ -67,3 +67,4 @@ export * from "./video-mp4-probe";
 export * from "./video-review";
 export * from "./video-upload";
 export * from "./video-notes";
+export * from "./freehand-strokes";

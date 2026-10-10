@@ -13,6 +13,9 @@ import { buttonClasses } from "./quincy/Button";
 import { Eyebrow, META_TEXT } from "./quincy/Eyebrow";
 import { Textarea } from "./reui/textarea";
 import { REVIEW_LABELS } from "./lightbox/review-labels";
+import { StrokeHitTarget, StrokeVisible } from "./quincy/freehand-strokes";
+import { useFreehandMarkup, type PointerSample } from "../lib/use-freehand-markup";
+import type { FreehandPoint as Point, FreehandStroke as Stroke } from "@quincy/shared";
 
 // TB8-09 slice 2: the stage's keyboard-shortcut pill. Three sites of each,
 // pulled into constants so the `.viewer__shortcuts` variants below (with vs.
@@ -74,8 +77,6 @@ const STRIP_THUMB =
   "block w-[84px] h-[56px] object-cover bg-[var(--ink-700)] transition-opacity " +
   "duration-[var(--dur-fast)] max-[721px]:w-[60px] max-[721px]:h-[44px]";
 
-type Point = { x: number; y: number };
-type Stroke = { points: Point[]; color: string; width: number };
 type ViewerBand = "desktop" | "tablet" | "phone";
 type Annotation = { id: string; authorId: string; author: { id: string; name: string; role: string }; scope: "raw" | "edited"; strokeR2Key: string | null; noteText: string | null; createdAt: string; editedAt: string | null };
 type AnnotationResponse = { annotations: Annotation[] };
@@ -93,10 +94,7 @@ interface LightboxProps {
   onToast: (message: string, tone?: "success" | "error") => void;
 }
 
-function pointsString(points: Point[]) { return points.map((point) => `${point.x},${point.y}`).join(" "); }
 function time(value: string) { return new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(new Date(value)); }
-function strokeVisible(stroke: Stroke, key: string, opacity: number) { return stroke.points.length < 2 ? <circle key={key} cx={stroke.points[0]?.x} cy={stroke.points[0]?.y} r={stroke.width / 600} fill={stroke.color} opacity={opacity} className="stroke-vis" data-testid="lightbox-stroke" /> : <polyline key={key} points={pointsString(stroke.points)} fill="none" stroke={stroke.color} strokeWidth={stroke.width} vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" opacity={opacity} className="stroke-vis" data-testid="lightbox-stroke" />; }
-function strokeHitTarget(stroke: Stroke, key: string) { return stroke.points.length < 2 ? <circle key={key} cx={stroke.points[0]?.x} cy={stroke.points[0]?.y} r={(stroke.width + 12) / 600} fill="transparent" style={{ pointerEvents: "fill" }} /> : <polyline key={key} points={pointsString(stroke.points)} fill="none" stroke="transparent" strokeWidth={stroke.width + 12} vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: "stroke" }} />; }
 function viewerBand(): ViewerBand {
   if (typeof window === "undefined") return "desktop";
   if (window.innerWidth <= 720) return "phone";
@@ -140,7 +138,6 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   const peekHandleRef = useRef<HTMLButtonElement>(null);
   const collapseButtonRef = useRef<HTMLButtonElement>(null);
   const panelTriggerRef = useRef<HTMLElement | null>(null);
-  const drawingRef = useRef(false);
   const annotationRefs = useRef(new Map<string, HTMLDivElement>());
   const highlightTimeoutRef = useRef<number | null>(null);
   const panRef = useRef<{ pointerId: number; x: number; y: number; width: number; height: number; bounds: ZoomBounds } | null>(null);
@@ -170,6 +167,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   annotationNoteRef.current = annotationNote;
   editingDrawingIdRef.current = editingDrawingId;
   const hasDraftMarkup = strokes.length > 0 || editingDrawingId !== null || annotationNote.trim().length > 0 || editingAnnotationId !== null;
+  const markup = useFreehandMarkup({ enabled: canAnnotate, tool, toPoint: pointerPoint, setStrokes, beforeStart: beforeStroke });
   const rawCompareAsset = useMemo(() => asset.sourceRawAssetId ? rawAssets.find((item) => item.id === asset.sourceRawAssetId) ?? null : null, [asset.sourceRawAssetId, rawAssets]);
   const compareActive = band !== "phone" && showRawCompare && Boolean(rawCompareAsset);
   const stars = asset.review?.stars ?? asset.ratingFromMetadata ?? 0;
@@ -289,7 +287,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
       if (event.key === "Escape" && hasDraftMarkup) { if (inEditableField) return; event.preventDefault(); exitDrawMode(); return; }
       // Markup owns the keyboard: never navigate or apply review shortcuts while a drawing
       // draft is active. Escape above and undo below are the only supported keys.
-      if (hasDraftMarkup && !inEditableField && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); setStrokes((current) => current.slice(0, -1)); return; }
+      if (hasDraftMarkup && !inEditableField && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); markup.undo(); return; }
       if (hasDraftMarkup) return;
       // Sheet behavior is deliberately ahead of the legacy interactive-element branch:
       // the collapse button is itself a button, and the closed-state trigger must allow
@@ -313,30 +311,25 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     }
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
-  }, [asset, band, canReview, closePanel, hasDraftMarkup, onClose, onReview, panelOpen]);
+  }, [asset, band, canReview, closePanel, hasDraftMarkup, markup.undo, onClose, onReview, panelOpen]);
 
-  function pointerPoint(event: React.PointerEvent<SVGSVGElement>): Point {
+  function pointerPoint(event: PointerSample): Point {
     const rect = frameRef.current?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0 };
     return { x: Math.max(0, Math.min(1, Number(((event.clientX - rect.left) / rect.width).toFixed(4)))), y: Math.max(0, Math.min(1, Number(((event.clientY - rect.top) / rect.height).toFixed(4)))) };
   }
-  async function drawDown(event: React.PointerEvent<SVGSVGElement>) {
-    if (!canAnnotate) return;
-    event.preventDefault();
-    event.stopPropagation();
+  // The photo markup's only async gate: drawing over an open inline note edit asks first. Accepting consumes the gesture
+  // (the pointer may have been released while the modal was open), so it never starts a stroke either way.
+  function beforeStroke(): boolean | Promise<boolean> {
     if (strokes.length === 0 && editingDrawingId === null && editingAnnotationId !== null) {
-      if (!await confirm({ title: "Discard note edit?", message: "Discard the note edit in progress?", confirmLabel: "Discard", danger: true })) return;
-      // The original pointer gesture may have ended while the modal was open. Do not
-      // synthesize a point or resume pointer capture; the next fresh gesture draws.
-      cancelInlineEdit();
-      return;
+      return (async () => {
+        if (!await confirm({ title: "Discard note edit?", message: "Discard the note edit in progress?", confirmLabel: "Discard", danger: true })) return false;
+        cancelInlineEdit();
+        return false;
+      })();
     }
-    drawingRef.current = true;
-    setStrokes((current) => [...current, { color: tool.color, width: tool.width, points: [pointerPoint(event)] }]);
-    event.currentTarget.setPointerCapture(event.pointerId);
+    return true;
   }
-  function drawMove(event: React.PointerEvent<SVGSVGElement>) { if (!canAnnotate || !drawingRef.current) return; const point = pointerPoint(event); setStrokes((current) => { if (!current.length) return current; const next = current.slice(); const last = next[next.length - 1]!; next[next.length - 1] = { ...last, points: [...last.points, point] }; return next; }); }
-  function drawUp() { drawingRef.current = false; }
   async function saveAnnotation() {
     if (!canAnnotate || editingDrawingId || (!strokes.length && !annotationNote.trim())) return;
     const assetIdAtStart = asset.id;
@@ -513,17 +506,17 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     return { transform: `translate(${local.panX * 100}%, ${local.panY * 100}%) scale(${local.scale})` };
   }
 
-  const drawLayer = <svg className="markup-svg" data-testid="lightbox-markup" viewBox="0 0 1 1" preserveAspectRatio="none" style={{ pointerEvents: canAnnotate ? "auto" : "none", cursor: canAnnotate ? "crosshair" : "default", touchAction: "none" }} onPointerDown={drawDown} onPointerMove={drawMove} onPointerUp={drawUp} onPointerLeave={drawUp}>
+  const drawLayer = <svg className="markup-svg" data-testid="lightbox-markup" viewBox="0 0 1 1" preserveAspectRatio="none" style={{ pointerEvents: canAnnotate ? "auto" : "none", cursor: canAnnotate ? "crosshair" : "default", touchAction: "none" }} {...markup.handlers}>
     {markupVisible && annotations.map((annotation) => {
       if (annotation.id === editingDrawingId || !annotation.strokeR2Key) return null;
       const cached = strokeCache.get(annotation.id);
       if (!cached || cached.key !== annotation.strokeR2Key) return null;
       const opacity = highlightedAnnotationId === annotation.id ? 1 : 0.82;
       return <g key={annotation.id} data-annotation-id={annotation.id} style={{ pointerEvents: canAnnotate ? "none" : "auto", cursor: "pointer", opacity: editingDrawingId ? 0.25 : 1 }} onClick={canAnnotate ? undefined : () => selectAnnotation(annotation.id)}>
-        {cached.strokes.map((stroke, strokeIndex) => <g key={strokeIndex}>{strokeHitTarget(stroke, `hit-${strokeIndex}`)}{strokeVisible(stroke, `vis-${strokeIndex}`, opacity)}</g>)}
+        {cached.strokes.map((stroke, strokeIndex) => <g key={strokeIndex}><StrokeHitTarget stroke={stroke} /><StrokeVisible stroke={stroke} opacity={opacity} /></g>)}
       </g>;
     })}
-    {strokes.map((stroke, strokeIndex) => strokeVisible(stroke, `draft-${strokeIndex}`, 1))}
+    {strokes.map((stroke, strokeIndex) => <StrokeVisible key={`draft-${strokeIndex}`} stroke={stroke} opacity={1} />)}
   </svg>;
   async function closeViewer(event?: React.MouseEvent<HTMLButtonElement>) {
     event?.preventDefault();
@@ -541,7 +534,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     setIndex(index);
   }
   const editedStage = <div className="viewer__stage row-start-1 row-end-2 relative grid place-items-center overflow-hidden min-w-0"><IconButton className="absolute top-[16px] left-[16px] z-[5] max-[721px]:top-[calc(16px+env(safe-area-inset-top))] max-[721px]:left-[max(16px,env(safe-area-inset-left))]" type="button" onClick={(event) => { void closeViewer(event); }} aria-label="Close">×</IconButton><button ref={reviewTriggerRef} className={buttonClasses("secondary", { className: "viewer__panel-trigger absolute top-[16px] right-[16px] z-[5] hidden max-[1081px]:inline-flex max-[721px]:!hidden" })} data-testid="lightbox-review-trigger" type="button" onClick={(event) => openPanel(event.currentTarget)} aria-expanded={panelOpen} aria-controls="lightbox-review-panel">Review</button><div className="absolute top-[16px] left-1/2 -translate-x-1/2 z-[4] text-center text-foreground max-[721px]:top-[calc(18px+env(safe-area-inset-top))] max-[721px]:max-w-[45vw]"><div className="[font:var(--type-h3)] [font-family:var(--font-display)] max-[721px]:hidden">{asset.originalFilename}</div><Eyebrow className="mt-[3px] text-on-inverse-muted max-[721px]:mt-0">{collectionKind === "edited" ? "Edited" : "RAW"} · Frame {displayIndex + 1} of {assets.length}</Eyebrow></div><IconButton className="absolute top-1/2 -translate-y-1/2 z-[3] left-[18px] max-[721px]:left-[10px]" type="button" onClick={(event) => { void move(-1, event); }} aria-label="Previous frame">←</IconButton><div className="relative w-full h-full grid place-items-center overflow-hidden p-[28px] pb-[84px] max-[721px]:pt-[calc(28px+env(safe-area-inset-top))] max-[721px]:pb-[118px]"><div className={`canvasframe canvasframe--zoomable ${zoom.scale > 1 && !canAnnotate ? "is-zoomed" : ""}`} ref={frameRef} data-testid="lightbox-canvas" style={zoomStyleFor(frameRef)} onPointerDown={(event) => { startPan(event); startSwipe(event); }} onPointerMove={(event) => { movePan(event); moveSwipe(event); }} onPointerUp={(event) => { endSwipe(event); endPan(event); }} onPointerCancel={(event) => { swipeRef.current = null; endPan(event); }} onWheel={wheelZoom} onTouchStart={touchStartZoom} onTouchMove={touchMoveZoom} onTouchEnd={touchEndZoom}><img className="viewer__img max-w-full max-h-full object-contain select-none" draggable={false} onDragStart={(event) => event.preventDefault()} src={`/media/asset/${encodeURIComponent(asset.id)}/web`} alt={asset.originalFilename} />{drawLayer}</div></div><IconButton className="absolute top-1/2 -translate-y-1/2 z-[3] right-[18px] max-[721px]:right-[10px]" type="button" onClick={(event) => { void move(1, event); }} aria-label="Next frame">→</IconButton><div className={cn("absolute inset-x-0 mx-auto w-max z-[4] flex items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-1)] rounded-[var(--radius-pill)] border border-solid border-[length:var(--border-width-hair)] border-border bg-[var(--scrim-overlay)] text-on-inverse-muted [font:var(--type-eyebrow)] tracking-[var(--tracking-wide)] whitespace-nowrap pointer-events-none max-[721px]:hidden", canAnnotate ? cn("bottom-[82px]") : "bottom-[18px]")} aria-hidden="true">{hasDraftMarkup ? <><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>⌘Z</kbd> undo</span><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>Esc</kbd> done</span></> : <><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>←</kbd><kbd className={SHORTCUT_KBD}>→</kbd> frames</span>{canReview && <><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>A</kbd> approve</span><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>X</kbd> flag</span><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>1–5</kbd> rate</span><i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>0</kbd> clear</span></>}<i className={SHORTCUT_SEP}>·</i><span className={SHORTCUT_ITEM}><kbd className={SHORTCUT_KBD}>Esc</kbd> close</span></>}</div>
-    {canAnnotate && <div className="drawbar absolute inset-x-0 bottom-[18px] mx-auto w-max z-[6] flex items-center flex-wrap gap-[var(--space-3)] py-[var(--space-2)] pr-[var(--space-2)] pl-[var(--space-4)] bg-card border border-solid border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-pill)] shadow-[var(--shadow-lg)] text-foreground max-w-[calc(100%-32px)] max-[721px]:bottom-[calc(18px+env(safe-area-inset-bottom))] max-[721px]:max-w-[calc(100%-16px)] max-[721px]:gap-[var(--space-2)]" data-testid="lightbox-markup-toolbar"><Eyebrow className="text-on-inverse-muted">{editingDrawingId ? "Editing drawing" : "Markup"}</Eyebrow><div role="group" aria-label="Pen colour" className="inline-flex items-center gap-[var(--space-2)] px-[var(--space-1)]">{(Object.keys(PEN_COLOUR_NAMES) as (keyof typeof PEN_COLOUR_NAMES)[]).map((color) => <button key={color} type="button" className={cn(ICON_BUTTON, "rounded-full", tool.color === color && "outline outline-[length:var(--border-width-bold)] outline-solid outline-[var(--ring)] outline-offset-2")} aria-pressed={tool.color === color} aria-label={PEN_COLOUR_NAMES[color]} onClick={() => setTool((current) => ({ ...current, color }))}><span aria-hidden="true" style={{ background: color }} className="w-[19px] h-[19px] rounded-full border border-[length:var(--border-width-hair)] border-solid border-border" /></button>)}</div><div role="group" aria-label="Stroke width" className="inline-flex items-center gap-[var(--space-2)] px-[var(--space-1)]">{[2, 4, 7].map((width) => <button key={width} type="button" className={cn(ICON_BUTTON, tool.width === width && "bg-secondary")} aria-pressed={tool.width === width} aria-label={`${width} pixels`} onClick={() => setTool((current) => ({ ...current, width }))}><span aria-hidden="true" style={{ width: width + 3, height: width + 3 }} className="block rounded-full bg-foreground" /></button>)}</div><button type="button" className={buttonClasses("secondary")} disabled={!strokes.length} onClick={() => setStrokes((current) => current.slice(0, -1))}>Undo</button><button type="button" className={buttonClasses("secondary")} disabled={!strokes.length} onClick={() => setStrokes([])}>Clear</button>{editingDrawingId && <><button type="button" className={buttonClasses("secondary")} onClick={exitDrawMode}>Cancel</button><button type="button" className={buttonClasses("primary")} disabled={isSaving} onClick={() => void saveDrawingEdit()}>Save</button></>}</div>}
+    {canAnnotate && <div className="drawbar absolute inset-x-0 bottom-[18px] mx-auto w-max z-[6] flex items-center flex-wrap gap-[var(--space-3)] py-[var(--space-2)] pr-[var(--space-2)] pl-[var(--space-4)] bg-card border border-solid border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-pill)] shadow-[var(--shadow-lg)] text-foreground max-w-[calc(100%-32px)] max-[721px]:bottom-[calc(18px+env(safe-area-inset-bottom))] max-[721px]:max-w-[calc(100%-16px)] max-[721px]:gap-[var(--space-2)]" data-testid="lightbox-markup-toolbar"><Eyebrow className="text-on-inverse-muted">{editingDrawingId ? "Editing drawing" : "Markup"}</Eyebrow><div role="group" aria-label="Pen colour" className="inline-flex items-center gap-[var(--space-2)] px-[var(--space-1)]">{(Object.keys(PEN_COLOUR_NAMES) as (keyof typeof PEN_COLOUR_NAMES)[]).map((color) => <button key={color} type="button" className={cn(ICON_BUTTON, "rounded-full", tool.color === color && "outline outline-[length:var(--border-width-bold)] outline-solid outline-[var(--ring)] outline-offset-2")} aria-pressed={tool.color === color} aria-label={PEN_COLOUR_NAMES[color]} onClick={() => setTool((current) => ({ ...current, color }))}><span aria-hidden="true" style={{ background: color }} className="w-[19px] h-[19px] rounded-full border border-[length:var(--border-width-hair)] border-solid border-border" /></button>)}</div><div role="group" aria-label="Stroke width" className="inline-flex items-center gap-[var(--space-2)] px-[var(--space-1)]">{[2, 4, 7].map((width) => <button key={width} type="button" className={cn(ICON_BUTTON, tool.width === width && "bg-secondary")} aria-pressed={tool.width === width} aria-label={`${width} pixels`} onClick={() => setTool((current) => ({ ...current, width }))}><span aria-hidden="true" style={{ width: width + 3, height: width + 3 }} className="block rounded-full bg-foreground" /></button>)}</div><button type="button" className={buttonClasses("secondary")} disabled={!strokes.length} onClick={markup.undo}>Undo</button><button type="button" className={buttonClasses("secondary")} disabled={!strokes.length} onClick={markup.clear}>Clear</button>{editingDrawingId && <><button type="button" className={buttonClasses("secondary")} onClick={exitDrawMode}>Cancel</button><button type="button" className={buttonClasses("primary")} disabled={isSaving} onClick={() => void saveDrawingEdit()}>Save</button></>}</div>}
   </div>;
 
   return <div className={cn(
