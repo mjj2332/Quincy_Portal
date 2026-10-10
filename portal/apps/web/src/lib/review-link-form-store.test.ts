@@ -1,0 +1,125 @@
+import { describe, expect, it, vi } from "vitest";
+import { ApiError } from "./api";
+import { createReviewLinkStore } from "./review-link-form-store";
+
+const deferred = <T,>() => { let resolve!: (value: T) => void; let reject!: (error: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"; const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+describe("review link form store (#741 11b)", () => {
+  it("keeps a selection across dialog opens and prunes Videos that are gone", () => {
+    const store = createReviewLinkStore("u:p");
+    store.toggleSelect(A); store.toggleSelect(B);
+    expect([...store.getState().selection]).toEqual([A, B]);
+    store.toggleSelect(A);
+    expect([...store.getState().selection]).toEqual([B]);
+    store.pruneSelection([A]);
+    expect(store.getState().selection.size).toBe(0);
+  });
+
+  it("holds the create draft while the dialog closes and reopens", () => {
+    const store = createReviewLinkStore("u:p");
+    store.openCreate();
+    store.patchCreate({ label: "Smith family", passcode: "hunter22", expiryDay: "2026-12-01", allow: { comments: true, approve: false, download: true } });
+    store.setGrant(A, ["x", "y"]);
+    store.closeDialog();
+    expect(store.getState().view.kind).toBe("closed");
+    store.openCreate();
+    const draft = store.getState().create;
+    expect(draft).toMatchObject({ label: "Smith family", passcode: "hunter22", expiryDay: "2026-12-01", allow: { approve: false } });
+    expect(draft.grants[A]).toEqual(["x", "y"]);
+  });
+
+  it("holds a link's unsaved detail edits per link", () => {
+    const store = createReviewLinkStore("u:p");
+    store.patchDetail(A, { label: "New name" });
+    store.patchDetail(B, { removePasscode: true });
+    store.openDetail(A); store.closeDialog();
+    expect(store.getState().details[A]?.label).toBe("New name");
+    expect(store.getState().details[B]?.removePasscode).toBe(true);
+    store.resetDetail(A);
+    expect(store.getState().details[A]).toBeUndefined();
+  });
+
+  it("run: pending while out, success applies, and a second run on the same scope is refused", async () => {
+    const store = createReviewLinkStore("u:p");
+    const first = deferred<string>();
+    const ok = vi.fn();
+    const sent = store.run("create", () => first.promise, ok);
+    expect(store.getState().pending.has("create")).toBe(true);
+    expect(await store.run("create", () => Promise.resolve("again"), ok)).toBe(false);
+    first.resolve("done");
+    expect(await sent).toBe(true);
+    expect(ok).toHaveBeenCalledWith("done");
+    expect(store.getState().pending.has("create")).toBe(false);
+  });
+
+  it("run: a failure leaves a classified problem on the scope and clears it on the next attempt", async () => {
+    const store = createReviewLinkStore("u:p");
+    expect(await store.run("revoke:a", () => Promise.reject(new ApiError("x", 409, { error: "x", code: "link_revoked" })), vi.fn())).toBe(false);
+    expect(store.getState().problems["revoke:a"]).toMatchObject({ action: "refetch" });
+    const again = deferred<void>();
+    void store.run("revoke:a", () => again.promise, vi.fn());
+    expect(store.getState().problems["revoke:a"]).toBeUndefined();
+    again.resolve();
+  });
+
+  it("closing the dialog does not cancel a create in flight: the reveal still lands, so the one-time URL is not lost", async () => {
+    const store = createReviewLinkStore("u:p");
+    store.openCreate();
+    const out = deferred<{ url: string }>();
+    void store.run("create", () => out.promise, (result) => store.showReveal({ url: result.url, linkId: A, label: null, origin: "create" }));
+    store.closeDialog();
+    out.resolve({ url: "https://x.test/d/review?link=a#t=tok" });
+    await Promise.resolve(); await Promise.resolve();
+    expect(store.getState().view.kind).toBe("reveal");
+    expect(store.getState().reveal?.url).toContain("#t=tok");
+  });
+
+  it("showReveal clears the selection and the create draft; dismissing it clears the URL and lands on the link's detail", () => {
+    const store = createReviewLinkStore("u:p");
+    store.toggleSelect(A); store.openCreate(); store.patchCreate({ label: "Smith", passcode: "secret1" });
+    store.showReveal({ url: "https://x.test/d/review?link=a#t=tok", linkId: A, label: "Smith", origin: "create" });
+    expect(store.getState().selection.size).toBe(0);
+    expect(store.getState().create.label).toBe("");
+    expect(store.getState().create.passcode).toBe("");
+    store.dismissReveal();
+    expect(store.getState().reveal).toBeNull();
+    expect(store.getState().view).toEqual({ kind: "detail", linkId: A });
+  });
+
+  it("closing the dialog on the reveal step discards the URL", () => {
+    const store = createReviewLinkStore("u:p");
+    store.showReveal({ url: "https://x.test/d/review?link=a#t=tok", linkId: A, label: null, origin: "replace" });
+    store.closeDialog();
+    expect(store.getState().reveal).toBeNull();
+    expect(store.getState().view.kind).toBe("closed");
+  });
+
+  it("cancelAll resets everything and a completion that was in flight changes nothing; retire does the same for good", async () => {
+    const store = createReviewLinkStore("u:p");
+    store.toggleSelect(A);
+    const out = deferred<string>(); const ok = vi.fn();
+    void store.run("create", () => out.promise, ok);
+    store.cancelAll();
+    out.resolve("late");
+    await Promise.resolve(); await Promise.resolve();
+    expect(ok).not.toHaveBeenCalled();
+    expect(store.getState().selection.size).toBe(0);
+    expect(store.getState().pending.size).toBe(0);
+    const listener = vi.fn(); store.subscribe(listener);
+    store.retire();
+    store.toggleSelect(B);
+    expect(store.getState().selection.size).toBe(0);
+  });
+
+  it("notifies subscribers and hands React a stable snapshot until something changes", () => {
+    const store = createReviewLinkStore("u:p");
+    const listener = vi.fn(); const off = store.subscribe(listener);
+    const before = store.getState();
+    expect(store.getState()).toBe(before);
+    store.toggleSelect(A);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(store.getState()).not.toBe(before);
+    off();
+  });
+});

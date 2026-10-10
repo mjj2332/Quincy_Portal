@@ -13,6 +13,8 @@ import { EmptyState } from "../quincy/EmptyState";
 import { Notice } from "../quincy/Notice";
 import { NewFilmUploader } from "./NewFilmUploader";
 import { VideoCard } from "./VideoCard";
+import { ReviewLinksHost } from "./ReviewLinksHost";
+import { useReviewLinksUi } from "./use-review-links-ui";
 
 /** The player is a separate chunk: nobody who never opens a film pays for it (#292: every lazy view sits in a ViewLoadBoundary). */
 type ViewerComponent = typeof import("./VideoReviewViewer").VideoReviewViewer;
@@ -48,6 +50,8 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     const off = onPrincipalTerminal((terminated) => { if (terminated === undefined || terminated === queryClient) forms.cancelAll(); });
     return () => { off(); forms.cancelAll(); };
   }, [forms, queryClient]);
+  // Review links (#741 11b): its own store and queries, shipped dark behind the `links` part and `shareVideo`.
+  const reviewLinks = useReviewLinksUi({ projectId, role, review, archived, userId, queryClient });
   const running = uploads.filter((upload) => upload.phase === "reserving" || upload.phase === "uploading" || upload.phase === "finishing");
   // The component is chosen once per opening: swapping `lazy` for the loaded one mid-open would remount the viewer (playback, Version and frame lost).
   const [opened, setOpened] = useState<{ id: string; Viewer: ViewerComponent | typeof LazyViewer } | null>(null);
@@ -96,12 +100,13 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
       <div className="muted">Upload web-ready H.264 MP4 cuts. A re-cut becomes a new version of the same film; notes stay with the version they were made on.</div>
     </div>
     <div className="grid gap-[var(--space-5)] p-[var(--space-6)]">
+      <ReviewLinksHost ui={reviewLinks} videos={videos.data ?? []} />
       {canUpload && <NewFilmUploader onStart={({ title, ...picked }) => start({ ...picked, target: { kind: "new", title } })} />}
       <EmbeddedUploadTray uploads={rows} errors={[]} onCancel={(key) => void cancelVideoUpload(key, queryClient)} onRemove={(key) => removeVideoUpload(key)} onRetry={(key) => retryVideoUpload(key)} testId="video-upload-tray" />
       {videos.isError && !videos.data && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{videos.error.message || "Films could not be loaded."}</span><Button type="button" variant="text" onClick={() => { terminate(videos.error); void videos.refetch(); }}>Retry</Button></Notice>}
       {videos.data && videos.data.length === 0 && <EmptyState title="No films yet.">{canUpload ? "Drop the first MP4 above to begin." : "Uploaded films will appear here."}</EmptyState>}
       {videos.data && videos.data.length > 0 && <div className="grid gap-[var(--space-5)] [grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr))]" data-testid="video-card-grid" onFocusCapture={() => { preloadViewer(); if (notesEnabled) preloadNotes(); }} onPointerOverCapture={() => { preloadViewer(); if (notesEnabled) preloadNotes(); }}>
-        {videos.data.map((video) => <VideoCard key={video.id} video={video} canUpload={canUpload} currentUserId={userId} myUpload={myVersionUpload(video)} onVersionFile={versionFile} onCancelReservation={(reservationId) => abortVideoReservation(queryClient, projectId, reservationId)} onOpen={(picked, trigger) => { opener.current = trigger; setOpenVideoId(picked.id); }} />)}
+        {videos.data.map((video) => <VideoCard key={video.id} video={video} canUpload={canUpload} currentUserId={userId} myUpload={myVersionUpload(video)} onVersionFile={versionFile} onCancelReservation={(reservationId) => abortVideoReservation(queryClient, projectId, reservationId)} onOpen={(picked, trigger) => { opener.current = trigger; setOpenVideoId(picked.id); }} {...(reviewLinks.enabled ? { reviewLinks: { selected: reviewLinks.selection.has(video.id), ...(reviewLinks.canWrite ? { onToggle: () => reviewLinks.store.toggleSelect(video.id) } : {}), chips: reviewLinks.chipsFor(video.id), onOpenChip: reviewLinks.store.openDetail, onOpenAll: reviewLinks.store.openList } } : {})} />)}
       </div>}
     </div>
     {openVideo && <ViewLoadBoundary viewLabel="video player">
