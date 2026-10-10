@@ -56,6 +56,12 @@ beforeEach(() => {
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; store.retire(); document.body.replaceChildren(); });
 
 describe("VideoDeliveryPanel decisions (#741 14-ui-staff)", () => {
+  it("re-scopes its tokens to the light surface so it stays legible inside the viewer's inverse scope", async () => {
+    decide([{ assetId: A2, version: 2, events: [], release: null }]);
+    await mount();
+    expect(document.querySelector('[data-testid="video-delivery"]')?.getAttribute("data-surface")).toBe("default");
+  });
+
   it("lists the shown Version's decisions with who, what, when, the note and where they came from", async () => {
     decide([{ assetId: A2, version: 2, events: [guestEvent(1, "changes_requested", { note: "Fix the title card" }), staffEvent(2, "approved")], release: null }, { assetId: A1, version: 1, events: [guestEvent(1, "approved", { actor: { kind: "guest", name: "Other Person" } })], release: null }]);
     await mount();

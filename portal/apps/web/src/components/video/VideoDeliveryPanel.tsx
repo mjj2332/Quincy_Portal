@@ -61,7 +61,7 @@ export function VideoDeliveryPanel({ projectId, role, archived, video, version, 
   const problem = versionState.problem ?? videoState.problem;
   const ordered = [...events].reverse();
 
-  return <Frame data-testid="video-delivery" aria-label={`Delivery of version ${version.version}`} role="group" className="shrink-0">
+  return <Frame data-testid="video-delivery" data-surface="default" aria-label={`Delivery of version ${version.version}`} role="group" className="shrink-0 text-foreground">
     <FramePanel className="grid gap-[var(--space-4)]">
       <FrameHeader className="p-0">
         <div className="flex flex-wrap items-center justify-between gap-[var(--space-2)]">
