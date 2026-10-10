@@ -40,7 +40,7 @@ const versionOf = (over: Record<string, unknown> = {}) => ({ assetId: ids.asset3
 /** v3 (A by default), v2 (B by default), v1. `over` patches v2 and v1 by version number. */
 let patch: Record<number, Record<string, unknown>> = {};
 const videoOf = (versions = 3): VideoDto => ({
-  id: ids.video, title: "Main walkthrough", premium: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ids.asset3, latestNoteCount: null, uploading: null,
+  id: ids.video, title: "Main walkthrough", premium: false, premiumUnlocked: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ids.asset3, latestNoteCount: null, uploading: null,
   versions: [
     versionOf(patch[3]),
     ...(versions >= 2 ? [versionOf({ assetId: ids.asset2, version: 2, current: false, uploadedBy: me, streamUrl: `/media/video/${ids.asset2}`, ...patch[2] })] : []),
