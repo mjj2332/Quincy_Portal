@@ -105,13 +105,33 @@ describe("MarkupToolbar", () => {
     expect((byLabel(host, "Clear") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("shows words on Undo, Redo and Clear in the regular form, and icons only in the compact form", async () => {
-    const regular = await mount(props());
-    expect(["Undo", "Redo", "Clear"].map((l) => byLabel(regular, l).textContent?.trim())).toEqual(["Undo", "Redo", "Clear"]);
-    await act(async () => { root!.unmount(); }); document.body.replaceChildren();
-    const compact = await mount(props({ compact: true }));
-    expect(["Undo", "Redo", "Clear"].map((l) => byLabel(compact, l).textContent?.trim())).toEqual(["", "", ""]);
-    expect(byLabel(compact, "Undo").querySelector("svg")).not.toBeNull();
+  it("shows icons only on Undo, Redo and Clear at every width, keeping name, title and shortcuts", async () => {
+    for (const compact of [false, true]) {
+      const host = await mount(props({ compact }));
+      for (const name of ["Undo", "Redo", "Clear"]) {
+        const button = byLabel(host, name);
+        expect(button.textContent?.trim()).toBe("");
+        expect(button.querySelector("svg")).not.toBeNull();
+        expect(button.getAttribute("title")).toBeTruthy();
+      }
+      expect(byLabel(host, "Undo").getAttribute("aria-keyshortcuts")).toContain("Control+Z");
+      await act(async () => { root!.unmount(); }); document.body.replaceChildren();
+    }
+  });
+
+  it("keeps all three width dots on the regular form", async () => {
+    const host = await mount(props());
+    expect(host.querySelectorAll('[aria-label="Stroke width"] button')).toHaveLength(3);
+  });
+
+  it("paints a pressed or hovered width dot on the secondary fill, not the muted one the inverse dot disappears into", async () => {
+    const host = await mount(props());
+    for (const width of MARKUP_WIDTHS) {
+      const classes = byLabel(host, `${width} pixels`).className.split(/\s+/);
+      expect(classes).toEqual(expect.arrayContaining(["aria-pressed:bg-secondary", "hover:bg-secondary"]));
+      expect(classes).not.toContain("aria-pressed:bg-muted");
+      expect(classes).not.toContain("hover:bg-muted");
+    }
   });
 
   it("collapses the three width dots into one cycle button on a phone (2, 4, 7, then back to 2)", async () => {
