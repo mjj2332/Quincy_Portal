@@ -10,7 +10,7 @@ import { VideoNoteComposer } from "./VideoNoteComposer";
 
 /** The part of VideoFrameClock the composer and its store use, with a held-open confirmation. */
 function fakeClock(initial: Partial<FrameClockState> = {}) {
-  let state: FrameClockState = { frame: 12, targetFrame: null, confirmed: true, playing: false, rate: 0, ...initial };
+  let state: FrameClockState = { frame: 12, targetFrame: null, confirmed: true, playing: false, rate: 0, stalled: false, ...initial };
   const listeners = new Set<() => void>();
   const waiters: Array<{ resolve: (frame: number) => void; reject: (reason: unknown) => void }> = [];
   const clock = {
