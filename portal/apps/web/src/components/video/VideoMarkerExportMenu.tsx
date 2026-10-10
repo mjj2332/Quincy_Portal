@@ -3,7 +3,7 @@ import { CheckIcon } from "lucide-react";
 import type { MarkerExportFormat, MarkerExportStatus, VideoNoteThreadDto } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
 import { onPrincipalTerminal } from "../../lib/principal-terminal";
-import { useOptionalProjectQueryClient, useProjectAccessTermination } from "../../lib/project-data";
+import { invalidateProjectSurfaces, useOptionalProjectQueryClient, useProjectAccessTermination } from "../../lib/project-data";
 import {
   DEFAULT_MARKER_EXPORT_OPTIONS, EDL_LIMIT, MARKER_EXPORT_EMPTY, MARKER_EXPORT_PREPARING, markerExportCount, markerExportFailureMessage, markerExportPreviewName, requestMarkerExport, saveBlob,
   type MarkerExportFailure, type MarkerExportOptions,
@@ -29,7 +29,8 @@ const FORMATS: Array<{ format: MarkerExportFormat; label: string; testId: string
   { format: "edl", label: "DaVinci Resolve markers (.edl)", testId: "video-export-edl" },
   { format: "fcpxml", label: "Final Cut Pro markers (.fcpxml)", testId: "video-export-fcpxml" },
 ];
-const OPTION_ITEM = "relative pe-[var(--space-6)]";
+const COARSE = "pointer-coarse:min-h-11";
+const OPTION_ITEM = `relative pe-[var(--space-6)] ${COARSE}`;
 const LABEL_TEXT = "[font:var(--type-label)]";
 const SECONDARY = `text-foreground-secondary ${LABEL_TEXT}`;
 
@@ -72,12 +73,15 @@ export function useMarkerExport({ enabled, projectId, assetId, userId, title, ve
     if (!result.ok) {
       if (result.aborted) return;
       if (result.failure.kind === "unauthorized") terminate(new ApiError("Unauthorized", 401));
+      // Access lost or the gate closed: read both again so the notes and this menu go away with it (as the note writes do, video-notes-data).
+      else if ((result.failure.kind === "forbidden" || result.failure.kind === "unavailable") && queryClient)
+        void invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "video-review" }, { kind: "detail" }], dashboard: false, calendar: false, gantt: false });
       set({ kind: "error", failure: result.failure, format, options });
       return;
     }
     saveBlob(result.blob, result.filename);
     set({ kind: "done", message: result.count === 0 || result.blob.size === 0 ? MARKER_EXPORT_EMPTY : "" });
-  }, [enabled, projectId, assetId, title, version, set, terminate]);
+  }, [enabled, projectId, assetId, title, version, set, terminate, queryClient]);
 
   return { enabled, options: live.options, setOptions, phase: live.phase, pending, count, title, version, start };
 }
@@ -111,7 +115,7 @@ export function MarkerExportMenuItems({ exp }: { exp: MarkerExport }) {
       return <MenuPrimitive.Item
         key={format}
         data-testid={testId}
-        className={`${MENU_ITEM} !flex-col !items-start gap-[var(--space-1)]`}
+        className={`${MENU_ITEM} ${COARSE} !flex-col !items-start gap-[var(--space-1)]`}
         disabled={pending || blocked}
         aria-describedby={blocked ? hintId : undefined}
         onClick={() => { void start(format, options); }}

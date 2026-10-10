@@ -209,6 +209,13 @@ describe("Marker export menu (#741 9)", () => {
     expect(urls()).toHaveLength(1);
   });
 
+  it("every export row carries the coarse-pointer 44px minimum", async () => {
+    await openFilm(); await openMenu();
+    for (const id of ["video-export-internal", "video-export-status-all", "video-export-status-open", "video-export-status-resolved", "video-export-edl", "video-export-fcpxml"]) {
+      expect(tid(id)!.className, id).toContain("pointer-coarse:min-h-11");
+    }
+  });
+
   it("defaults: internal unchecked, All selected, previews and a client-side count from the shared selection", async () => {
     await openFilm(); await openMenu();
     expect(tid("video-export-internal")!.getAttribute("aria-checked")).toBe("false");
@@ -315,6 +322,24 @@ describe("Marker export menu (#741 9)", () => {
     await openFilm(); await openMenu(); await click(tid("video-export-edl")!); await flush(4);
     expect(tid("video-export-error")!.textContent).toContain(copy);
     expect(created).toHaveLength(0); expect(downloads).toHaveLength(0);
+  });
+
+  it.each([[403, { error: "Forbidden" }], [404, { error: "Not found" }]])("a %i refreshes the Project's detail and review gates, so lost access stops showing the export", async (status, body) => {
+    useExportFetch(async () => jsonResponse(status, body));
+    await openFilm();
+    const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
+    await openMenu(); await click(tid("video-export-edl")!); await flush(6);
+    const keys = invalidate.mock.calls.map((call) => JSON.stringify((call[0] as { queryKey: unknown }).queryKey));
+    expect(keys).toContain(JSON.stringify(projectDataKeys.detail(PROJECT)));
+    expect(keys).toContain(JSON.stringify(projectDataKeys.videoReview(PROJECT)));
+  });
+
+  it("a 500 does not refresh access", async () => {
+    useExportFetch(async () => jsonResponse(500, { error: "boom" }));
+    await openFilm();
+    const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
+    await openMenu(); await click(tid("video-export-edl")!); await flush(6);
+    expect(invalidate.mock.calls.map((call) => JSON.stringify((call[0] as { queryKey: unknown }).queryKey))).not.toContain(JSON.stringify(projectDataKeys.detail(PROJECT)));
   });
 
   it("a network failure is retryable with the same request", async () => {
