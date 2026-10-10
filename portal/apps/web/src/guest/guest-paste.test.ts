@@ -22,17 +22,19 @@ describe("defaultSource", () => {
 describe("pastableNotes", () => {
   it("keeps the guest's own live root notes and nothing else", () => {
     const list = [thread(1), thread(2, { author: { kind: "studio", name: "Mia" } }), thread(3, { author: { kind: "guest", name: "Pat", self: false } }), thread(4, { deleted: true }), thread(5, { parentId: id(1) })];
-    expect(pastableNotes(list, true)).toEqual({ ids: [id(1)], drawn: 0, capped: false });
+    expect(pastableNotes(list, true)).toMatchObject({ ids: [id(1)], drawn: 0 });
   });
   it("leaves drawn notes out and counts them when markup is off", () => {
     const list = [thread(1), thread(2, { hasMarkup: true })];
-    expect(pastableNotes(list, false)).toEqual({ ids: [id(1)], drawn: 1, capped: false });
+    expect(pastableNotes(list, false)).toMatchObject({ ids: [id(1)], drawn: 1 });
     expect(pastableNotes(list, true).ids).toEqual([id(1), id(2)]);
   });
-  it("asks for at most 60 and says it left some off", () => {
-    const list = Array.from({ length: 61 }, (_, n) => thread(n + 1));
+  it("returns every own note, however many, with its text and frame for the list", () => {
+    const list = Array.from({ length: 61 }, (_, n) => thread(n + 1, { body: `Note ${n + 1}`, startFrame: n }));
     const result = pastableNotes(list, true);
-    expect([result.ids.length, result.capped]).toEqual([60, true]);
+    expect(result.ids).toHaveLength(61);
+    expect(result.items[60]).toEqual({ id: id(61), excerpt: "Note 61", startFrame: 60, endFrame: null });
+    expect("capped" in result).toBe(false);
   });
 });
 

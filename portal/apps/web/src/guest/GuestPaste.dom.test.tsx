@@ -241,6 +241,58 @@ describe("previewing a paste", () => {
   });
 });
 
+describe("a guest with more notes than one paste may carry", () => {
+  const LIMIT_MESSAGE = "Copy up to 60 notes at a time. Untick some to continue.";
+  const many = () => Array.from({ length: 61 }, (_, index) => mine(index + 1, { startFrame: 10 + index }));
+  const planFor = (init: RequestInit | undefined) => json(plan((JSON.parse(String(init?.body)) as { noteIds: string[] }).noteIds.map((id) => mapped(Number(id.slice(-12))))));
+  const asked = () => pasteCalls(PREVIEW_URL).map((call) => (call.body as { noteIds: string[] }).noteIds);
+  beforeEach(() => {
+    notes = { [SOURCE]: many() };
+    extra = (url, init) => (url === PREVIEW_URL && init?.method === "POST" ? planFor(init) : undefined);
+  });
+
+  it("lists all 61 notes, ticks the first 60 and sends only those", async () => {
+    await open();
+    await openDialog();
+    expect(rowIds()).toHaveLength(61);
+    expect(rowIds()).toContain(noteId(61));
+    expect(asked()).toHaveLength(1);
+    expect(asked()[0]).toHaveLength(60);
+    expect(asked()[0]).not.toContain(noteId(61));
+    expect(byId("guest-paste-submit")?.textContent).toBe("Paste 60 notes");
+    expect(byId("guest-paste-submit")?.hasAttribute("disabled")).toBe(false);
+  });
+  it("sends the 61st note once it is ticked in place of another", async () => {
+    await open();
+    await openDialog();
+    expect(allById("guest-paste-tick")).toHaveLength(61);
+    await click(allById("guest-paste-tick")[0]);
+    await click(allById("guest-paste-tick")[60]);
+    await wait(400);
+    const latest = asked().at(-1)!;
+    expect(latest).toHaveLength(60);
+    expect(latest).toContain(noteId(61));
+    expect(latest).not.toContain(noteId(1));
+    expect(byId("guest-paste-submit")?.hasAttribute("disabled")).toBe(false);
+    await click(byId("guest-paste-submit"));
+    expect((pasteCalls(COMMIT_URL)[0]?.body as { notes: Array<{ noteId: string }> } | undefined)?.notes.map((entry) => entry.noteId)).toContain(noteId(61));
+  });
+  it("disables Paste and says why when all 61 are ticked", async () => {
+    await open();
+    await openDialog();
+    expect(allById("guest-paste-tick")).toHaveLength(61);
+    await click(allById("guest-paste-tick")[60]);
+    await wait(400);
+    expect(byId("guest-paste-submit")?.hasAttribute("disabled")).toBe(true);
+    expect(byId("guest-paste-dialog")?.textContent).toContain(LIMIT_MESSAGE);
+    expect(asked().every((ids) => ids.length <= 60)).toBe(true);
+    await click(allById("guest-paste-tick")[0]);
+    await wait(400);
+    expect(byId("guest-paste-dialog")?.textContent).not.toContain(LIMIT_MESSAGE);
+    expect(byId("guest-paste-submit")?.hasAttribute("disabled")).toBe(false);
+  });
+});
+
 describe("committing a paste", () => {
   const withPlan = (rows: unknown[] = [mapped(1), mapped(2)]) => { extra = (url, init) => (url === PREVIEW_URL && init?.method === "POST" ? json(plan(rows)) : undefined); };
 

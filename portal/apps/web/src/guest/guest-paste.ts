@@ -1,4 +1,4 @@
-import { GUEST_NOTE_PASTE_MAX, type GuestNotePasteSkipReason, type GuestNoteThreadDto, type GuestVideoDto } from "@quincy/shared";
+import { type GuestNotePasteSkipReason, type GuestNoteThreadDto, type GuestVideoDto } from "@quincy/shared";
 import { waitPhrase } from "./GuestVerifyDialog";
 import type { PasteResult } from "./guest-api";
 
@@ -20,16 +20,19 @@ export function defaultSource(versions: readonly GrantedVersion[], target: Grant
   return others.find((candidate) => candidate.version < target.version) ?? others[0] ?? null;
 }
 
+/** An own note of the source Version, as the list shows it before any plan exists. */
+export type PastableNote = { id: string; excerpt: string; startFrame: number; endFrame: number | null };
+
 /**
  * The notes of the source Version that the guest may ask to copy: their own ROOT notes that are not deleted (a reply is copied with nothing, and a tombstone has nothing to copy). With the
- * `markup` part off the server answers the stub for a request that names a drawn note, so those are counted and left out here instead of sending the guest to the unavailable page. At most
- * `GUEST_NOTE_PASTE_MAX` (the server's cap) are asked for; `capped` says some were left off.
+ * `markup` part off the server answers the stub for a request that names a drawn note, so those are counted and left out here instead of sending the guest to the unavailable page. Every
+ * such note is returned, however many: one request carries at most `GUEST_NOTE_PASTE_MAX`, so the dialog lets the guest choose which (and never drops one silently).
  */
-export function pastableNotes(threads: readonly GuestNoteThreadDto[], markupAllowed: boolean): { ids: string[]; drawn: number; capped: boolean } {
+export function pastableNotes(threads: readonly GuestNoteThreadDto[], markupAllowed: boolean): { ids: string[]; items: PastableNote[]; drawn: number } {
   const own = threads.filter((thread) => thread.parentId === null && !thread.deleted && thread.author.kind === "guest" && thread.author.self);
   const drawn = markupAllowed ? 0 : own.filter((thread) => thread.hasMarkup).length;
-  const ids = own.filter((thread) => markupAllowed || !thread.hasMarkup).map((thread) => thread.id);
-  return { ids: ids.slice(0, GUEST_NOTE_PASTE_MAX), drawn, capped: ids.length > GUEST_NOTE_PASTE_MAX };
+  const usable = own.filter((thread) => markupAllowed || !thread.hasMarkup);
+  return { ids: usable.map((thread) => thread.id), items: usable.map((thread) => ({ id: thread.id, excerpt: thread.body, startFrame: thread.startFrame ?? 0, endFrame: thread.endFrame })), drawn };
 }
 
 /** What to tell the guest about a preview or commit that did not go through. Null for the answers the page handles itself (success, verification, the link going away, the archive). */
