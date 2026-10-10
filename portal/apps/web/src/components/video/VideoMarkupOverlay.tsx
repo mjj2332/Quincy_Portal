@@ -138,7 +138,7 @@ export function VideoMarkupOverlay({ session, box }: { session: VideoNotesSessio
   if (drawing) { shownItems = items; shownFrame = draw.frame; }
   else if (editingThis && editing.drawing.items !== null) { shownItems = editing.drawing.remove ? NO_ITEMS : editing.drawing.items; shownFrame = editing.drawing.drawingFrame; }
   else if (editingThis) { shownItems = NO_ITEMS; shownFrame = null; }
-  else if (slot.markup.items.length > 0 && slot.markup.drawingFrame !== null && !editing) { shownItems = slot.markup.items; shownFrame = slot.markup.drawingFrame; }
+  else if (slot.markup.items.length > 0 && slot.markup.drawingFrame !== null && !editing && frameNow === slot.markup.drawingFrame) { shownItems = slot.markup.items; shownFrame = slot.markup.drawingFrame; }
   else if (savedNote !== null && savedQuery.data?.markup && savedQuery.data.noteId === savedNote.id) { shownItems = savedQuery.data.markup; shownFrame = savedNote.drawingFrame; }
   const visible = drawing || (shownFrame !== null && atRest && frameNow === shownFrame);
 

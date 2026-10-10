@@ -86,6 +86,8 @@ export function effectiveMarks(marks: StoredMarks, clock: object | null): { valu
 const isAbort = (error: unknown) => error instanceof Error && error.name === "AbortError";
 const messageOf = (error: unknown, fallback: string) => (error instanceof Error && error.message ? error.message : fallback);
 
+/** Said when a Save dropped pending drawing changes because the Project's markup part went off. */
+const MARKUP_OFF_DROPPED = "Drawing changes were dropped: drawing is turned off";
 const MARKUP_GONE = "Drawing isn't available on this Project any more. Your draft is kept.";
 
 function composerProblem(error: unknown, touchedMarkup = false): Problem {
@@ -298,11 +300,15 @@ export function createNoteFormStore(key: string) {
     },
 
     /** Sends the revision the form was opened with (or, after a reviewed conflict, the server's) and only what changed; frames only after a frame action since opening. Never seeks, except that a drawing change confirms its drawing frame first. */
-    async save(assetId: string, { clock, frameCount, send }: { clock: object | null; frameCount: number; send: (noteId: string, input: VideoNoteEditInput) => Promise<unknown> }) {
+    async save(assetId: string, { clock, frameCount, send, markup: markupOn = true }: { clock: object | null; frameCount: number; send: (noteId: string, input: VideoNoteEditInput) => Promise<unknown>; /** False when the Project's markup part has gone off: Save sends the text only and discards pending drawing changes (said so afterwards). */ markup?: boolean }) {
       const held = slot(assetId);
-      const form = held.open;
-      const text = form?.text.trim();
-      if (!form || form.kind !== "edit" || held.op || !text) return;
+      const opened = held.open;
+      const text = opened?.text.trim();
+      if (!opened || opened.kind !== "edit" || held.op || !text) return;
+      const dropped = !markupOn && opened.drawing.touched;
+      const form: OpenForm = dropped ? { ...opened, drawing: { ...opened.drawing, items: null, remove: false, touched: false, drawingFrame: opened.drawing.baseFrame, revision: opened.drawing.revision + 1 } } : opened;
+      if (dropped) put(assetId, { open: form, ...endEditDraw(assetId) });
+      const say = () => { if (dropped && slot(assetId).open === null) put(assetId, { notice: { text: MARKUP_OFF_DROPPED, rootId: form.rootId } }); };
       const against = form.conflict ?? form.base;
       const input: { expectedRevision: number; body?: string; startFrame?: number; endFrame?: number | null; markup?: VideoMarkup | null; drawingFrame?: number } = { expectedRevision: against.revision };
       if (text !== against.body) input.body = text;
@@ -315,13 +321,13 @@ export function createNoteFormStore(key: string) {
         if (items && !drawing.remove) { input.markup = items as VideoMarkup; input.drawingFrame = drawing.drawingFrame ?? against.startFrame ?? 0; }
         else if (drawing.hadDrawing) input.markup = null;
       }
-      if (input.body === undefined && input.startFrame === undefined && input.markup === undefined) { close(assetId); return; }
+      if (input.body === undefined && input.startFrame === undefined && input.markup === undefined) { close(assetId); say(); return; }
       if (held.draw) put(assetId, { draw: null }); // saving ends draw mode; the strokes go with the save
       const fail = (problem: string) => { put(assetId, { open: { ...form, problem: { text: problem } } }); };
       if (input.markup !== undefined && input.startFrame !== undefined) return fail(MARKUP_ERROR_TEXT.markup_and_frames);
       if (input.markup && strokesJsonBytes(input.markup) > VIDEO_MARKUP_MAX_BYTES) return fail(MARKUP_ERROR_TEXT.markup_too_large);
       const send_ = () => submitOpen(assetId, form, () => send(form.noteId, input as VideoNoteEditInput), "The note could not be saved.", input.markup !== undefined);
-      if (!input.markup) { await send_(); return; }
+      if (!input.markup) { await send_(); say(); return; }
       // A drawing is saved on the frame it was drawn on: bring that frame up again first, exactly as Post does (story 31).
       const target = input.drawingFrame!;
       const live = clock as NoteClock | null;

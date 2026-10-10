@@ -867,4 +867,20 @@ describe("Code-review fixes (#741 6b-ui)", () => {
     expect(dot.getAttribute("d")).toMatch(/^M\s*0\.5[,\s]+0\.5\s*h\s*0$/);
     expect(dot.getAttribute("r")).toBeNull();
   });
+
+  it("an unsent composer drawing on one frame does not hide a selected note's drawing on another", async () => {
+    const drawn = markNote();
+    markups = { [drawn.id]: { revision: 3, markup: [STROKE, STROKE] } };
+    await openFilm({ parts: ON, notes: { [ids.asset2]: [drawn], [ids.asset1]: [] } }, 12);
+    const svg = await startDrawing(12);
+    await stroke(svg, [500, 425], [900, 650]);
+    await click(doneButton()!);
+    expect(strokesOnScreen()).toBe(1); // the draft, on its own frame
+    await click(tid("video-note-anchor-button", threadOf(drawn.id))!);
+    await land(30);
+    await flush(4);
+    expect(strokesOnScreen()).toBe(2); // the note's drawing
+    await present(12);
+    expect(strokesOnScreen()).toBe(1); // the draft again on its frame
+  });
 });

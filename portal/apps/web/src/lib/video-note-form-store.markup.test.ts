@@ -514,4 +514,44 @@ describe("review fixes (#741 6b-ui form store)", () => {
     store.clearMarks(V2);
     expect(store.slot(V2).marks.touched).toBe(false);
   });
+
+  describe("saving after the markup part went off", () => {
+    const edited = () => {
+      const target = note({ startFrame: 10, endFrame: 60, drawingFrame: 30, hasMarkup: true, revision: 4 });
+      store.openEdit(V2, target, target.id);
+      store.loadDrawing(V2, target.id, [stroke()], 30);
+      store.setItems(V2, "edit", [stroke(), arrow()]);
+      store.setOpenText(V2, "New words");
+      return target;
+    };
+
+    it("sends the text only, drops the pending drawing change, and says so", async () => {
+      const target = edited();
+      const send = vi.fn(() => Promise.resolve({}));
+      await store.save(V2, { clock: null, frameCount: 300, send, markup: false });
+      expect(send).toHaveBeenCalledWith(target.id, { expectedRevision: 4, body: "New words" });
+      expect(store.slot(V2).open).toBeNull();
+      expect(store.slot(V2).notice).toMatchObject({ text: "Drawing changes were dropped: drawing is turned off", rootId: target.id });
+    });
+
+    it("a failed text save keeps the text, with the drawing change already discarded", async () => {
+      edited();
+      const send = vi.fn(() => Promise.reject(new Error("offline")));
+      await store.save(V2, { clock: null, frameCount: 300, send, markup: false });
+      expect(store.slot(V2).open?.text).toBe("New words");
+      expect(store.slot(V2).open?.drawing.touched).toBe(false);
+    });
+
+    it("with nothing else to save the form closes and still says so", async () => {
+      const target = note({ startFrame: 10, endFrame: 60, drawingFrame: 30, hasMarkup: true, revision: 4 });
+      store.openEdit(V2, target, target.id);
+      store.loadDrawing(V2, target.id, [stroke()], 30);
+      store.setItems(V2, "edit", [stroke(), arrow()]);
+      const send = vi.fn(() => Promise.resolve({}));
+      await store.save(V2, { clock: null, frameCount: 300, send, markup: false });
+      expect(send).not.toHaveBeenCalled();
+      expect(store.slot(V2).open).toBeNull();
+      expect(store.slot(V2).notice?.text).toMatch(/dropped/);
+    });
+  });
 });
