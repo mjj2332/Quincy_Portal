@@ -282,7 +282,7 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
       <div className="flex flex-wrap items-end gap-x-[var(--space-4)] gap-y-[var(--space-2)]">
         <NumberField value={offset} onValueCommitted={commitOffset} step={1} smallStep={1} largeStep={10} disabled={!ready} className="max-w-40">
           <Label htmlFor="video-compare-offset" className="text-foreground-secondary">Offset (frames)</Label>
-          <NumberFieldGroup>
+          <NumberFieldGroup size="sm" className={TOOL}>
             <NumberFieldDecrement aria-label="One frame earlier" />
             <NumberFieldInput id="video-compare-offset" data-testid="video-compare-offset" onKeyDown={(event) => {
               // Enter takes the field's own blur path (its parser, formatting and commit), then gives focus back.
