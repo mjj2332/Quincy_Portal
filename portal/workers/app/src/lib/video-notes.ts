@@ -3,6 +3,7 @@ import { archivedInSnapshot, ARCHIVED_SNAPSHOT_SQL } from "./project-archive";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
 import { guestNoteGuard, reachSql, type GuestWriter } from "./guest-fence-sql";
+import { LIVE_VERSION_EXISTS } from "./video-live-sql";
 import { guestReplyInsertSql, projectFence, REPLY_INSERT_SQL, VERSION_FROM } from "./video-notes-sql";
 import { videoReviewOutboxStatements } from "./video-review-notifications";
 import type { VideoReviewGateState } from "./video-review-gate";
@@ -72,7 +73,7 @@ export async function listVideoNotes(db: D1Database, projectId: string, assetId:
 
 /** One root with its replies, or null when no such root in the Project. */
 export async function readThread(db: D1Database, projectId: string, rootId: string, showGuestEmail = false): Promise<VideoNoteThreadDto | null> {
-  const rows = (await db.prepare(`${NOTE_SELECT} WHERE n.project_id = ?1 AND (n.id = ?2 OR n.parent_id = ?2) ${NOTE_ORDER}`).bind(projectId, rootId).all<NoteRow>()).results;
+  const rows = (await db.prepare(`${NOTE_SELECT} WHERE n.project_id = ?1 AND (n.id = ?2 OR n.parent_id = ?2) AND ${LIVE_VERSION_EXISTS("n.asset_id")} ${NOTE_ORDER}`).bind(projectId, rootId).all<NoteRow>()).results;
   const thread = threads(rows, showGuestEmail)[0];
   return thread ? videoNoteThreadDtoSchema.parse(thread) : null;
 }
@@ -85,7 +86,7 @@ const HEAD_COLUMNS = `n.id, n.project_id, n.video_id, n.asset_id, n.parent_id, n
       (EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = n.id)) AS has_markup`;
 /** The columns the routes decide on, for a note scoped to the Project. */
 export async function findNoteHead(db: D1Database, projectId: string, noteId: string): Promise<NoteHead | null> {
-  return await db.prepare(`SELECT ${HEAD_COLUMNS} FROM video_notes n WHERE n.id = ?1 AND n.project_id = ?2`).bind(noteId, projectId).first<NoteHead>() ?? null;
+  return await db.prepare(`SELECT ${HEAD_COLUMNS} FROM video_notes n WHERE n.id = ?1 AND n.project_id = ?2 AND ${LIVE_VERSION_EXISTS("n.asset_id")}`).bind(noteId, projectId).first<NoteHead>() ?? null;
 }
 /**
  * The same, for a guest: a PUBLIC note on a Version the link reaches (live member Video and live grant), else null. Visibility and reach are in the same statement as the note, so an
@@ -140,7 +141,7 @@ export type MarkupEdit = ({ kind: "set" } & MarkupWrite) | { kind: "remove" };
 
 /** The stored JSON and drawing frame of a root's markup, or null. For the route's no-op decision and the lazy read. */
 export async function readNoteMarkup(db: D1Database, projectId: string, noteId: string): Promise<{ strokes_json: string } | null> {
-  return await db.prepare("SELECT k.strokes_json FROM video_note_markup k JOIN video_notes n ON n.id = k.note_id WHERE k.note_id = ?1 AND n.project_id = ?2").bind(noteId, projectId).first<{ strokes_json: string }>() ?? null;
+  return await db.prepare("SELECT k.strokes_json FROM video_note_markup k JOIN video_notes n ON n.id = k.note_id WHERE k.note_id = ?1 AND n.project_id = ?2 AND " + LIVE_VERSION_EXISTS("n.asset_id")).bind(noteId, projectId).first<{ strokes_json: string }>() ?? null;
 }
 
 /**
@@ -149,7 +150,7 @@ export async function readNoteMarkup(db: D1Database, projectId: string, noteId: 
  */
 export async function readNoteMarkupSnapshot(db: D1Database, projectId: string, noteId: string): Promise<{ revision: number; strokes_json: string | null } | null> {
   return await db.prepare(`SELECT n.revision, CASE WHEN n.parent_id IS NULL AND n.deleted_at IS NULL THEN k.strokes_json END AS strokes_json
-      FROM video_notes n LEFT JOIN video_note_markup k ON k.note_id = n.id WHERE n.id = ?1 AND n.project_id = ?2`).bind(noteId, projectId).first<{ revision: number; strokes_json: string | null }>() ?? null;
+      FROM video_notes n LEFT JOIN video_note_markup k ON k.note_id = n.id WHERE n.id = ?1 AND n.project_id = ?2 AND ${LIVE_VERSION_EXISTS("n.asset_id")}`).bind(noteId, projectId).first<{ revision: number; strokes_json: string | null }>() ?? null;
 }
 
 /** `outboxIds` are the staff notification rows this write appended (15a): the caller publishes them after the response is decided. Empty when `notify_staff` is off. */
@@ -201,7 +202,7 @@ export async function createVideoNoteReply<T = VideoNoteThreadDto>(db: D1Databas
   const notify = await videoReviewOutboxStatements(db, { kind: "video_reply", projectId: input.projectId, videoId: input.parent.video_id, assetId: input.parent.asset_id, sourceId: replyId, threadRootId: input.parent.id, ...outboxActor(author), auditId, occurredAt: input.now, gate: input.gate });
   const results = await db.batch([
     db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.reply', 'video_note', ?3, ?4, ?5
-      WHERE ${projectFence(6)} AND EXISTS (SELECT 1 FROM video_notes p WHERE p.id = ?7 AND p.project_id = ?6 AND p.parent_id IS NULL AND p.deleted_at IS NULL${author.kind === "guest" ? " AND p.visibility = 'public'" : ""})${auditGuard.sql}`)
+      WHERE ${projectFence(6)} AND EXISTS (SELECT 1 FROM video_notes p WHERE p.id = ?7 AND p.project_id = ?6 AND p.parent_id IS NULL AND p.deleted_at IS NULL AND ${LIVE_VERSION_EXISTS("p.asset_id")}${author.kind === "guest" ? " AND p.visibility = 'public'" : ""})${auditGuard.sql}`)
       .bind(auditId, actorOf(author), replyId, meta, input.now, input.projectId, input.parent.id, ...auditGuard.binds),
     author.kind === "user"
       ? db.prepare(REPLY_INSERT_SQL).bind(replyId, author.principal.id, author.principal.role, input.body, input.now, input.parent.id, input.projectId, auditId)
@@ -253,7 +254,7 @@ export async function editVideoNote<T = VideoNoteThreadDto>(db: D1Database, inpu
         AND (body IS NOT ?1 OR start_frame IS NOT ?2 OR end_frame IS NOT ?3${changed})
         AND ((start_frame IS ?2 AND end_frame IS ?3) OR NOT EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = video_notes.id))
         AND (parent_id IS NOT NULL OR EXISTS (SELECT 1 FROM ${VERSION_FROM} WHERE m.asset_id = video_notes.asset_id AND m.frame_count > ?2 AND (?3 IS NULL OR ?3 <= m.frame_count)))
-        AND ${projectFence(6)}${guard}${fence.sql}`)
+        AND ${projectFence(6)} AND ${LIVE_VERSION_EXISTS("video_notes.asset_id")}${guard}${fence.sql}`)
       .bind(...binds),
     // A removal records what it removed (counts and frame, never strokes): this runs before the DELETE below, so the markup row is still readable, and the UPDATE has already cleared the note's own drawing_frame.
     markup?.kind === "remove"
@@ -297,17 +298,17 @@ export async function deleteVideoNote<T = VideoNoteThreadDto>(db: D1Database, in
   const deleteBinds: unknown[] = [note.id, input.projectId, me, input.expectedRevision, hardAudit]; if (author.kind === "guest") deleteBinds.push(input.now);
   const hardAuditGuard = guardOf(author, 9, "?7", "n.asset_id"); const hardDeleteGuard = guardOf(author, deleteBinds.length + 1, "?6", "video_notes.asset_id"); const tombGuard = guardOf(author, 6, "?1", "video_notes.asset_id");
   // The hard-delete conditions, shared by the audit that precedes the DELETE and the DELETE itself (?1 note, ?2 Project, ?3 author, ?4 revision).
-  const hardWhere = `FROM video_notes n WHERE n.id = ?1 AND n.project_id = ?2 AND ${authorPredicate(author, "n", "?3")} AND n.revision = ?4 AND n.deleted_at IS NULL AND ${projectFence(2)}
+  const hardWhere = `FROM video_notes n WHERE n.id = ?1 AND n.project_id = ?2 AND ${authorPredicate(author, "n", "?3")} AND n.revision = ?4 AND n.deleted_at IS NULL AND ${projectFence(2)} AND ${LIVE_VERSION_EXISTS("n.asset_id")}
       AND NOT EXISTS (SELECT 1 FROM video_notes c WHERE c.parent_id = ?1 AND ${notAuthorPredicate(author, "c", "?3")})`;
   const results = await db.batch([
     // The audit goes first so the author's replies are counted before the DELETE cascades them: the winning audit records what was actually removed.
     db.prepare(`${AUDIT_INSERT} SELECT ?5, ?8, 'video_note.delete', 'video_note', ?1, json_set(?6, '$.ownRepliesRemoved', (SELECT COUNT(*) FROM video_notes r WHERE r.parent_id = ?1 AND ${authorPredicate(author, "r", "?3")}), '$.hadMarkup', json(CASE WHEN EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = ?1) THEN 'true' ELSE 'false' END)), ?7 ${hardWhere}${hardAuditGuard.sql}`)
       .bind(note.id, input.projectId, me, input.expectedRevision, hardAudit, metaOf(author, { ...base, mode: "removed" }), input.now, actorOf(author), ...hardAuditGuard.binds),
-    db.prepare(`DELETE FROM video_notes WHERE id = ?1 AND project_id = ?2 AND ${authorPredicate(author, "", "?3")} AND revision = ?4 AND deleted_at IS NULL AND ${projectFence(2)}
+    db.prepare(`DELETE FROM video_notes WHERE id = ?1 AND project_id = ?2 AND ${authorPredicate(author, "", "?3")} AND revision = ?4 AND deleted_at IS NULL AND ${projectFence(2)} AND ${LIVE_VERSION_EXISTS("video_notes.asset_id")}
       AND NOT EXISTS (SELECT 1 FROM video_notes c WHERE c.parent_id = ?1 AND ${notAuthorPredicate(author, "c", "?3")}) AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?5)${hardDeleteGuard.sql}`)
       .bind(...deleteBinds, ...hardDeleteGuard.binds),
     db.prepare(`UPDATE video_notes SET deleted_at = ?1, body = '', drawing_frame = NULL, revision = revision + 1
-      WHERE id = ?2 AND project_id = ?3 AND ${authorPredicate(author, "", "?4")} AND revision = ?5 AND deleted_at IS NULL AND ${projectFence(3)}${tombGuard.sql}`)
+      WHERE id = ?2 AND project_id = ?3 AND ${authorPredicate(author, "", "?4")} AND revision = ?5 AND deleted_at IS NULL AND ${projectFence(3)} AND ${LIVE_VERSION_EXISTS("video_notes.asset_id")}${tombGuard.sql}`)
       .bind(input.now, note.id, input.projectId, me, input.expectedRevision, ...tombGuard.binds),
     // The markup row is still there (it is deleted by the statement after this one), so the audit can say whether the tombstoned note had a drawing.
     db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.delete', 'video_note', ?3, json_set(?4, '$.hadMarkup', json(CASE WHEN EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = ?3) THEN 'true' ELSE 'false' END)), ?5 WHERE changes() = 1`)
@@ -332,8 +333,8 @@ export async function setVideoNoteResolution<T = VideoNoteThreadDto>(db: D1Datab
   const { note, principal } = input; const auditId = newId();
   const meta = auditMeta(principal, { projectId: input.projectId, assetId: note.asset_id });
   const update = input.resolved
-    ? db.prepare(`UPDATE video_notes SET resolved_at = ?1, resolved_by = ?2 WHERE id = ?3 AND project_id = ?4 AND parent_id IS NULL AND resolved_at IS NULL AND ${projectFence(4)}`).bind(input.now, principal.id, note.id, input.projectId)
-    : db.prepare(`UPDATE video_notes SET resolved_at = NULL, resolved_by = NULL WHERE id = ?1 AND project_id = ?2 AND parent_id IS NULL AND resolved_at IS NOT NULL AND ${projectFence(2)}`).bind(note.id, input.projectId);
+    ? db.prepare(`UPDATE video_notes SET resolved_at = ?1, resolved_by = ?2 WHERE id = ?3 AND project_id = ?4 AND parent_id IS NULL AND resolved_at IS NULL AND ${projectFence(4)} AND ${LIVE_VERSION_EXISTS("video_notes.asset_id")}`).bind(input.now, principal.id, note.id, input.projectId)
+    : db.prepare(`UPDATE video_notes SET resolved_at = NULL, resolved_by = NULL WHERE id = ?1 AND project_id = ?2 AND parent_id IS NULL AND resolved_at IS NOT NULL AND ${projectFence(2)} AND ${LIVE_VERSION_EXISTS("video_notes.asset_id")}`).bind(note.id, input.projectId);
   const results = await db.batch([
     update,
     db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, ?3, 'video_note', ?4, ?5, ?6 WHERE changes() = 1`).bind(auditId, principal.id, input.resolved ? "video_note.resolve" : "video_note.reopen", note.id, meta, input.now),

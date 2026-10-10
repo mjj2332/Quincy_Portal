@@ -54,7 +54,11 @@ videoApprovalRoutes.post("/projects/:projectId/video-versions/:assetId/decisions
   if (!await findVersion(c.env.DB, projectId, assetId)) return versionNotFound(c);
   const input = await jsonInput(c, videoDecisionInputSchema); if (input instanceof Response) return input;
   const event = await recordStaffDecision(c.env.DB, { projectId, assetId, principal: principalOf(c), decision: input.decision, note: input.note || null, now: Date.now() });
-  if (!event) return await projectIsArchived(c.env, projectId) ? archivedResponse(c) : c.json({ error: "Another decision landed at the same time; try again.", code: "decision_conflict" }, 409);
+  if (!event) {
+    if (await projectIsArchived(c.env, projectId)) return archivedResponse(c);
+    if (!await findVersion(c.env.DB, projectId, assetId)) return versionNotFound(c);
+    return c.json({ error: "Another decision landed at the same time; try again.", code: "decision_conflict" }, 409);
+  }
   return c.json(videoDecisionRecordedResponseSchema.parse({ decision: event }), 201);
 }));
 
@@ -76,6 +80,7 @@ videoApprovalRoutes.post("/projects/:projectId/video-versions/:assetId/release",
   const result = await releaseVersion(c.env.DB, { projectId, assetId, principal: principalOf(c), approvalRevision: input.approvalRevision, now: Date.now() });
   if ("release" in result) return c.json(videoReleaseResponseSchema.parse({ release: result.release }), 201);
   if (result.kind === "archived") return archivedResponse(c);
+  if (!await findVersion(c.env.DB, projectId, assetId)) return versionNotFound(c);
   return answer(result) ?? c.json({ error: "The client decision changed; review it before releasing.", code: "release_stale", current: null }, 409);
 }));
 

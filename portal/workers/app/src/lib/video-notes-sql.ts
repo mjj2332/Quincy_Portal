@@ -4,17 +4,19 @@
  * `video_notes` (5c paste, 13 guest notes) reuses this shape: visibility is never a bind on a reply.
  */
 
+import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO } from "./video-live-sql";
+
 /** The Project is not archived. `?1`-style numbered parameter `n` is the Project id. */
 export const projectFence = (n: number): string => `EXISTS (SELECT 1 FROM projects p WHERE p.id = ?${n} AND p.archived_at IS NULL)`;
 
-/** A Version (one video-kind Asset with its probed meta) joined to its Video. */
-export const VERSION_FROM = "video_version_meta m JOIN assets a ON a.id = m.asset_id AND a.kind = 'video' JOIN videos v ON v.id = m.video_id";
+/** A LIVE Version (one video-kind Asset with its probed meta, not in Trash) joined to its LIVE Video. Every user of this fragment inherits the Trash filter (#776 B). */
+export const VERSION_FROM = `video_version_meta m JOIN assets a ON a.id = m.asset_id AND a.kind = 'video' AND ${LIVE_VERSION("m")} JOIN videos v ON v.id = m.video_id AND ${LIVE_VIDEO("v")}`;
 
 /** Binds: ?1 reply id, ?2 user id, ?3 role, ?4 body, ?5 now, ?6 parent id, ?7 Project id, ?8 audit id. Note: no visibility bind. */
 export const REPLY_INSERT_SQL = `INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_guest_id, author_role, visibility, start_frame, end_frame, drawing_frame, body, revision, created_at)
   SELECT ?1, p.project_id, p.video_id, p.asset_id, p.id, ?2, NULL, ?3, p.visibility, NULL, NULL, NULL, ?4, 1, ?5
   FROM video_notes p WHERE p.id = ?6 AND p.project_id = ?7 AND p.parent_id IS NULL AND p.deleted_at IS NULL
-    AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?8)`;
+    AND ${LIVE_VERSION_EXISTS("p.asset_id")} AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?8)`;
 
 /**
  * A guest's reply (#741 13b). Same shape as `REPLY_INSERT_SQL`, with the guest as author (`author_user_id` NULL, `author_role` the literal 'guest') and the extra rule that the root must be
@@ -24,7 +26,7 @@ export const REPLY_INSERT_SQL = `INSERT INTO video_notes (id, project_id, video_
 export const guestReplyInsertSql = (guard: string): string => `INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_guest_id, author_role, visibility, start_frame, end_frame, drawing_frame, body, revision, created_at)
   SELECT ?1, p.project_id, p.video_id, p.asset_id, p.id, NULL, ?2, 'guest', p.visibility, NULL, NULL, NULL, ?4, 1, ?5
   FROM video_notes p WHERE p.id = ?6 AND p.project_id = ?7 AND p.parent_id IS NULL AND p.deleted_at IS NULL AND p.visibility = 'public'
-    AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?8)${guard}`;
+    AND ${LIVE_VERSION_EXISTS("p.asset_id")} AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?8)${guard}`;
 
 /**
  * A source note is already on the target Version (#741, 5c): the target holds a copy of it, holds its original, or holds a sibling copy of
@@ -47,7 +49,7 @@ export const pasteFence = (p: PasteFenceParams): string => `${projectFence(p.pro
          AND x.revision = json_extract(e.value, '$.rev')) = ?${p.count}
     AND EXISTS (SELECT 1 FROM video_version_meta tm JOIN assets ta ON ta.id = tm.asset_id AND ta.kind = 'video' JOIN videos tv ON tv.id = tm.video_id
          JOIN video_version_meta sm ON sm.asset_id = ?${p.source} AND sm.video_id = tm.video_id
-         WHERE tm.asset_id = ?${p.target} AND tv.project_id = ?${p.project})`;
+         WHERE tm.asset_id = ?${p.target} AND tv.project_id = ?${p.project} AND ${LIVE_VERSION("tm")} AND ${LIVE_VIDEO("tv")} AND ${LIVE_VERSION("sm")})`;
 
 /**
  * Binds: ?1 copies JSON `[{ id, src, start, end, draw }]` (mapped rows only; `draw` is the mapped drawing frame, null for a note without a drawing), ?2 target Version, ?3 Project, ?4 source Version, ?5 user id, ?6 role,
@@ -62,7 +64,7 @@ export const PASTE_INSERT_SQL = `INSERT INTO video_notes (id, project_id, video_
   LEFT JOIN user su ON su.id = s.author_user_id LEFT JOIN guest_reviewers g ON g.id = s.author_guest_id
   WHERE s.project_id = ?3 AND s.asset_id = ?4 AND s.parent_id IS NULL AND s.deleted_at IS NULL AND s.revision = (SELECT json_extract(x.value, '$.rev') FROM json_each(?9) x WHERE json_extract(x.value, '$.id') = s.id)
     AND ${pasteFence({ target: 2, project: 3, source: 4, expected: 9, count: 10 })}
-    AND EXISTS (SELECT 1 FROM video_version_meta tm WHERE tm.asset_id = ?2 AND tm.frame_count > json_extract(r.value, '$.start') AND (json_extract(r.value, '$.end') IS NULL OR json_extract(r.value, '$.end') <= tm.frame_count))
+    AND EXISTS (SELECT 1 FROM video_version_meta tm WHERE tm.asset_id = ?2 AND ${LIVE_VERSION("tm")} AND tm.frame_count > json_extract(r.value, '$.start') AND (json_extract(r.value, '$.end') IS NULL OR json_extract(r.value, '$.end') <= tm.frame_count))
     AND (json_extract(r.value, '$.draw') IS NULL OR (json_extract(r.value, '$.draw') >= json_extract(r.value, '$.start')
          AND CASE WHEN json_extract(r.value, '$.end') IS NULL THEN json_extract(r.value, '$.draw') = json_extract(r.value, '$.start') ELSE json_extract(r.value, '$.draw') < json_extract(r.value, '$.end') END))
     AND NOT ${alreadyOnTarget("s", "?2")}

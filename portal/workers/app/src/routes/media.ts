@@ -12,6 +12,7 @@ import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visib
 import { visibleProjectWhere } from "../lib/visible-project-scope";
 import { getEmbeddedMedia } from "../lib/embedded-media";
 import { videoReviewGate } from "../lib/video-review-gate";
+import { LIVE_VERSION, LIVE_VIDEO, versionIsLive } from "../lib/video-live-sql";
 import { serveR2Object, VIDEO_STREAM_HEADERS } from "../lib/r2-serve";
 
 export const mediaRoutes = new Hono<AppEnv>();
@@ -263,9 +264,9 @@ mediaRoutes.get("/embedded/:mediaId/poster", terminalRoute("/embedded/:mediaId/p
  * indistinguishable from an unknown id for every caller), the `viewVideo` capability (403), Project visibility (an External outside the Project 404, staff 403).
  * Any Version streams, a superseded one included, because compare needs it. A non-video or unknown id is 404, so a photo id cannot be probed through here. Inline, no `.use()`: router-wide middleware leaks across sibling mounts (docs/lessons.md).
  */
-async function readableVideoVersion(c: Context<AppEnv>, assetId: string): Promise<{ r2Key: string; posterKey: string | null } | Response> {
+async function readableVideoVersion(c: Context<AppEnv>, assetId: string): Promise<{ r2Key: string; posterKey: string | null; projectId: string } | Response> {
   if (!z.string().uuid().safeParse(assetId).success) return c.json({ error: "Invalid asset id" }, 400);
-  const row = await c.env.DB.prepare("SELECT a.r2_key AS r2Key, m.poster_key AS posterKey, v.project_id AS projectId FROM assets a JOIN video_version_meta m ON m.asset_id = a.id JOIN videos v ON v.id = m.video_id WHERE a.id = ?1 AND a.kind = 'video'")
+  const row = await c.env.DB.prepare(`SELECT a.r2_key AS r2Key, m.poster_key AS posterKey, v.project_id AS projectId FROM assets a JOIN video_version_meta m ON m.asset_id = a.id JOIN videos v ON v.id = m.video_id WHERE a.id = ?1 AND a.kind = 'video' AND ${LIVE_VERSION("m")} AND ${LIVE_VIDEO("v")}`)
     .bind(assetId).first<{ r2Key: string; posterKey: string | null; projectId: string }>();
   if (!row) return c.json({ error: "Video not found" }, 404);
   const user = c.get("user");
@@ -277,7 +278,8 @@ async function readableVideoVersion(c: Context<AppEnv>, assetId: string): Promis
 
 mediaRoutes.get("/video/:assetId", terminalRoute("/video/:assetId", async (c) => {
   const row = await readableVideoVersion(c, c.req.param("assetId")); if (row instanceof Response) return row;
-  return serveR2Object(c, row.r2Key, { ...VIDEO_STREAM_HEADERS }, "Video object not found");
+  const assetId = c.req.param("assetId");
+  return serveR2Object(c, row.r2Key, { ...VIDEO_STREAM_HEADERS }, "Video object not found", () => versionIsLive(c.env.DB, row.projectId, assetId));
 }));
 
 /** A Version's poster frame, under the same access rules. */
@@ -285,7 +287,7 @@ mediaRoutes.get("/video/:assetId/poster", terminalRoute("/video/:assetId/poster"
   const row = await readableVideoVersion(c, c.req.param("assetId")); if (row instanceof Response) return row;
   if (!row.posterKey) return c.json({ error: "Poster not found" }, 404);
   const object = await c.env.MEDIA.get(row.posterKey);
-  if (!object) return c.json({ error: "Poster not found" }, 404);
+  if (!object || !await versionIsLive(c.env.DB, row.projectId, c.req.param("assetId"))) return c.json({ error: "Poster not found" }, 404);
   const headers: Record<string, string> = { "content-type": "image/jpeg", "content-length": String(object.size), ...EMBEDDED_RESPONSE_HEADERS, "cross-origin-resource-policy": "same-origin" };
   if (object.httpEtag) headers.etag = object.httpEtag;
   return new Response(object.body, { headers });

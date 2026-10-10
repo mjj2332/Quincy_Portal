@@ -3,6 +3,7 @@ import {
   type VideoReviewNotificationPayload, type VideoReviewNotificationType,
 } from "@quincy/shared";
 import { newId } from "./ids";
+import { LIVE_VERSION } from "./video-live-sql";
 import { readVideoReviewGate, type VideoReviewGateState } from "./video-review-gate";
 
 /**
@@ -53,7 +54,7 @@ async function threadParticipants(db: D1Database, input: VideoReviewEmit): Promi
       AND (u.role = 'admin' OR pm.id IS NOT NULL)
       AND u.id IN (
         SELECT n.author_user_id FROM video_notes n WHERE n.project_id = ?1 AND (n.id = ?3 OR n.parent_id = ?3) AND n.author_user_id IS NOT NULL
-        UNION SELECT m.uploaded_by FROM video_version_meta m WHERE m.asset_id = ?4
+        UNION SELECT m.uploaded_by FROM video_version_meta m WHERE m.asset_id = ?4 AND ${LIVE_VERSION("m")}
       )
   `).bind(input.projectId, input.excludeUserId, input.threadRootId ?? null, input.assetId).all<Candidate>()).results;
 }

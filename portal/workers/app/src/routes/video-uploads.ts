@@ -17,6 +17,7 @@ import { readVideoReviewGate, videoReviewGate } from "../lib/video-review-gate";
 import { loadVideoDtos } from "../lib/video-dto";
 import { videoReviewOutboxStatements } from "../lib/video-review-notifications";
 import { publishOutboxDetached } from "../lib/server-timing";
+import { LIVE_VERSION, LIVE_VIDEO, LIVE_VIDEO_EXISTS, recomputeCurrentStatements } from "../lib/video-live-sql";
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
@@ -91,13 +92,13 @@ const RESERVE_SQL = `
   INSERT INTO video_upload_reservations (id, project_id, collection_id, created_by, video_id, new_video_title, version, asset_id, r2_key,
     original_filename, bytes, content_type, supersedes_asset_id, client_probe_json, status, expires_at, completion_audit_id, created_at, updated_at)
   SELECT ?1, p.id, c.id, ?2, ?3, ?4,
-    COALESCE((SELECT MAX(a.version) FROM assets a WHERE a.version_group_id = ?3 AND a.kind = 'video'), 0) + 1,
+    MAX(COALESCE((SELECT MAX(a.version) FROM assets a WHERE a.version_group_id = ?3 AND a.kind = 'video'), 0), COALESCE((SELECT hw.version_high_water FROM videos hw WHERE hw.id = ?3 AND ${LIVE_VIDEO("hw")}), 0)) + 1,
     ?5, ?6, ?7, ?8, 'video/mp4',
     (SELECT a.id FROM assets a WHERE a.version_group_id = ?3 AND a.kind = 'video' AND a.superseded_at IS NULL),
     ?9, 'pending', ?10, ?11, ?12, ?12
   FROM projects p JOIN collections c ON c.project_id = p.id AND c.kind = 'video'
   WHERE p.id = ?13 AND p.archived_at IS NULL
-    AND CASE WHEN ?4 IS NULL THEN EXISTS (SELECT 1 FROM videos v WHERE v.id = ?3 AND v.collection_id = c.id)
+    AND CASE WHEN ?4 IS NULL THEN EXISTS (SELECT 1 FROM videos v WHERE v.id = ?3 AND v.collection_id = c.id AND ${LIVE_VIDEO("v")})
              ELSE NOT EXISTS (SELECT 1 FROM videos v WHERE v.id = ?3) END
     AND (SELECT COUNT(*) FROM video_upload_reservations r WHERE r.project_id = p.id AND r.created_by = ?2
          AND r.status IN (${ACTIVE_SQL})) < ${VIDEO_UPLOAD_MAX_ACTIVE_PER_USER}
@@ -168,7 +169,7 @@ async function reserveRefusal(c: Context<AppEnv>, projectId: string, existingVid
   if (!project) return c.json({ error: "Project not found" }, 404);
   if (project.archivedAt !== null) return archivedResponse(c);
   if (!project.collectionId) return c.json({ error: "This project has no Video service. Add it before uploading video.", code: "video_service_missing" }, 409);
-  if (existingVideoId && !await db.prepare("SELECT 1 FROM videos WHERE id = ? AND collection_id = ?").bind(existingVideoId, project.collectionId).first()) return c.json({ error: "Video not found" }, 404);
+  if (existingVideoId && !await db.prepare("SELECT 1 FROM videos WHERE id = ? AND collection_id = ? AND removed_at IS NULL").bind(existingVideoId, project.collectionId).first()) return c.json({ error: "Video not found" }, 404);
   const active = (await db.prepare(`SELECT COUNT(*) AS n FROM video_upload_reservations WHERE project_id = ? AND created_by = ? AND status IN (${ACTIVE_SQL})`).bind(projectId, userId).first<{ n: number }>())?.n ?? 0;
   if (active >= VIDEO_UPLOAD_MAX_ACTIVE_PER_USER) return c.json({ error: "You already have three uploads in progress in this project. Finish or cancel one first.", code: "too_many_uploads" }, 429);
   return uploadInProgress(c, existingVideoId ?? videoId);
@@ -322,8 +323,9 @@ videoUploadsRoutes.post("/projects/:projectId/video-uploads/:reservationId/compl
   const now = Date.now(); const fps = probe.fps;
   const base = timecodeBaseFor(fps, null);
   const startTimecode = probe.startTimecode ?? { frames: null, dropFrame: base.dropFrame, nominalFps: base.nominalFps };
-  const fence = "EXISTS (SELECT 1 FROM video_upload_reservations WHERE id = ? AND status = 'completing') AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)";
-  const fenceBinds = [row.id, projectId];
+  // A later Version needs its Video to be live at the commit (Video 1 creates the Video, so there is nothing to be in Trash yet).
+  const fence = `EXISTS (SELECT 1 FROM video_upload_reservations WHERE id = ? AND status = 'completing') AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)${row.version === 1 ? "" : ` AND ${LIVE_VIDEO_EXISTS("?")}`}`;
+  const fenceBinds = row.version === 1 ? [row.id, projectId] : [row.id, projectId, row.videoId];
   const statements: D1PreparedStatement[] = [];
   if (row.version === 1) {
     statements.push(db.prepare(`INSERT INTO videos (id, project_id, collection_id, title, premium, position, created_by, created_at, updated_at)
@@ -342,9 +344,11 @@ videoUploadsRoutes.post("/projects/:projectId/video-uploads/:reservationId/compl
       .bind(row.assetId, row.videoId, fps.num, fps.den, probe.mediaTimescale, probe.frameDelta, probe.frameCount, probe.durationMs, probe.width, probe.height, probe.codec, probe.codecString,
         startTimecode.frames, startTimecode.nominalFps, startTimecode.dropFrame ? 1 : 0, probe.fastStart ? 1 : 0, probe.hasAudio ? 1 : 0, user.id, now),
   );
-  if (row.supersedesAssetId) statements.push(db.prepare("UPDATE assets SET superseded_at = ?, replaced_by_asset_id = ?, updated_at = ? WHERE id = ? AND superseded_at IS NULL").bind(now, row.assetId, now, row.supersedesAssetId));
   statements.push(
-    db.prepare("UPDATE videos SET updated_at = ? WHERE id = ?").bind(now, row.videoId),
+    // The number is spent for good once a Version commits, even if a purge later deletes the row: reserve reads the high-water mark.
+    db.prepare("UPDATE videos SET updated_at = ?, version_high_water = MAX(version_high_water, ?) WHERE id = ? AND removed_at IS NULL").bind(now, row.version, row.videoId),
+    // The newest live Version is current and every other video asset of the Video is superseded, whatever was current or removed while this upload ran.
+    ...recomputeCurrentStatements(db, row.videoId, now),
     // The unique audit id makes a duplicate batch fail, so a completion is recorded once.
     db.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, 'video.version.upload', 'asset', ?, ?, ?)")
       .bind(row.completionAuditId, user.id, row.assetId, auditMeta(user, { projectId, videoId: row.videoId, version: row.version, bytes: row.bytes, fps: { num: fps.num, den: fps.den }, frameCount: probe.frameCount, warnings: probe.warnings, clientProbeDisagreed: clientProbeDisagreement(row.clientProbeJson, probe) }), now),
@@ -360,6 +364,8 @@ videoUploadsRoutes.post("/projects/:projectId/video-uploads/:reservationId/compl
     if (current?.status === "completed") return completedResponse(c, current, 200);
     // Abort or the sweep owns the row now: touch nothing. Otherwise the claim is kept for its lease and the client may retry.
     if (current?.status !== "completing") return unavailable(c);
+    // The Video went to Trash while this Version was uploading: the fence refused the batch. Hand the claim back (the sweep reaps the object with the expired reservation) and say so, instead of a retry that can never land.
+    if (row.version > 1 && !await db.prepare("SELECT 1 AS one FROM videos WHERE id = ? AND removed_at IS NULL").bind(row.videoId).first()) { await release(); return c.json({ error: "Video not found" }, 404); }
     return c.json({ error: "Could not finish this upload. Try again.", code: "completion_failed" }, 409);
   }
   if (notify.outboxIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, db, notify.outboxIds));
@@ -407,7 +413,7 @@ videoUploadsRoutes.put("/projects/:projectId/video-versions/:assetId/poster", te
   const denied = await access(c, projectId); if (denied) return denied;
   const user = c.get("user"); const db = c.env.DB;
   if (await isArchived(db, projectId)) return archivedResponse(c);
-  const row = await db.prepare("SELECT m.video_id AS videoId, m.poster_key AS posterKey, m.uploaded_by AS uploadedBy FROM video_version_meta m JOIN videos v ON v.id = m.video_id WHERE m.asset_id = ? AND v.project_id = ?").bind(assetId, projectId).first<{ videoId: string; posterKey: string | null; uploadedBy: string }>();
+  const row = await db.prepare(`SELECT m.video_id AS videoId, m.poster_key AS posterKey, m.uploaded_by AS uploadedBy FROM video_version_meta m JOIN videos v ON v.id = m.video_id WHERE m.asset_id = ? AND v.project_id = ? AND ${LIVE_VERSION("m")} AND ${LIVE_VIDEO("v")}`).bind(assetId, projectId).first<{ videoId: string; posterKey: string | null; uploadedBy: string }>();
   if (!row || row.uploadedBy !== user.id) return c.json({ error: "Video version not found" }, 404);
   if (row.posterKey) return c.json({ error: "This video already has a poster", code: "poster_unavailable" }, 409);
   if (Number(c.req.header("content-length") ?? "0") > EMBEDDED_POSTER_MAX_BYTES) return c.json({ error: "The poster is larger than 2 MB" }, 413);
@@ -426,7 +432,8 @@ videoUploadsRoutes.put("/projects/:projectId/video-versions/:assetId/poster", te
       db.prepare(`
         UPDATE video_version_meta SET poster_key = ?
         WHERE asset_id = ? AND poster_key IS NULL AND uploaded_by = ?
-          AND EXISTS (SELECT 1 FROM videos v JOIN projects p ON p.id = v.project_id WHERE v.id = video_version_meta.video_id AND p.id = ? AND p.archived_at IS NULL)
+          AND ${LIVE_VERSION("video_version_meta")}
+          AND EXISTS (SELECT 1 FROM videos v JOIN projects p ON p.id = v.project_id WHERE v.id = video_version_meta.video_id AND p.id = ? AND p.archived_at IS NULL AND ${LIVE_VIDEO("v")})
           AND EXISTS (SELECT 1 FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ? AND claimed_until IS NULL)
       `).bind(posterKey, assetId, user.id, projectId, posterKey, queuedAt),
       db.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'video.poster.set', 'asset', ?, ?, ? WHERE changes() > 0")

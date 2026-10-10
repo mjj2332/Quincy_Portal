@@ -1,6 +1,7 @@
 import { ROLE_LABELS, type Role, type VideoDecisionEvent, type VideoRelease, type VideoVersionDecisions } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
+import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO, LIVE_VIDEO_EXISTS } from "./video-live-sql";
 
 /**
  * Staff approval, Release and premium (#741 14a). Every write is ONE `db.batch` in the shape of `review-links.ts` and `video-notes.ts`: the committing statement carries the whole
@@ -50,7 +51,7 @@ export async function readRelease(db: D1Database, releaseId: string): Promise<Vi
 /** Every Version of a Video (newest first) with its decision events (oldest first) and its live Release. The caller has already checked the Video belongs to the Project. */
 export async function loadDecisions(db: D1Database, projectId: string, videoId: string): Promise<VideoVersionDecisions[]> {
   const [versions, events, releases] = await db.batch([
-    db.prepare("SELECT a.id AS asset_id, a.version FROM video_version_meta m JOIN assets a ON a.id = m.asset_id AND a.kind = 'video' WHERE m.video_id = ?1 ORDER BY a.version DESC").bind(videoId),
+    db.prepare(`SELECT a.id AS asset_id, a.version FROM video_version_meta m JOIN assets a ON a.id = m.asset_id AND a.kind = 'video' WHERE m.video_id = ?1 AND ${LIVE_VERSION("m")} ORDER BY a.version DESC`).bind(videoId),
     db.prepare(`${EVENT_SELECT} WHERE e.video_id = ?1 AND e.project_id = ?2 ORDER BY e.revision, e.rowid`).bind(videoId, projectId),
     db.prepare(`${RELEASE_SELECT} WHERE r.video_id = ?1 AND r.project_id = ?2 AND r.withdrawn_at IS NULL`).bind(videoId, projectId),
   ]);
@@ -62,11 +63,11 @@ export async function loadDecisions(db: D1Database, projectId: string, videoId: 
 
 /** The Version's Video and Project, or null when it is not a Version of this Project. */
 export async function findVersion(db: D1Database, projectId: string, assetId: string): Promise<{ videoId: string; version: number } | null> {
-  const row = await db.prepare("SELECT m.video_id, a.version FROM video_version_meta m JOIN assets a ON a.id = m.asset_id AND a.kind = 'video' JOIN videos v ON v.id = m.video_id WHERE a.id = ?1 AND v.project_id = ?2").bind(assetId, projectId).first<{ video_id: string; version: number }>();
+  const row = await db.prepare(`SELECT m.video_id, a.version FROM video_version_meta m JOIN assets a ON a.id = m.asset_id AND a.kind = 'video' JOIN videos v ON v.id = m.video_id WHERE a.id = ?1 AND v.project_id = ?2 AND ${LIVE_VERSION("m")} AND ${LIVE_VIDEO("v")}`).bind(assetId, projectId).first<{ video_id: string; version: number }>();
   return row ? { videoId: row.video_id, version: row.version } : null;
 }
 export async function findVideo(db: D1Database, projectId: string, videoId: string): Promise<{ premium: boolean; unlocked: boolean; paymentRef: string | null } | null> {
-  const row = await db.prepare("SELECT v.premium, (p.video_id IS NOT NULL) AS unlocked, p.payment_ref FROM videos v LEFT JOIN video_premium_unlocks p ON p.video_id = v.id WHERE v.id = ?1 AND v.project_id = ?2").bind(videoId, projectId).first<{ premium: number; unlocked: number; payment_ref: string | null }>();
+  const row = await db.prepare(`SELECT v.premium, (p.video_id IS NOT NULL) AS unlocked, p.payment_ref FROM videos v LEFT JOIN video_premium_unlocks p ON p.video_id = v.id WHERE v.id = ?1 AND v.project_id = ?2 AND ${LIVE_VIDEO("v")}`).bind(videoId, projectId).first<{ premium: number; unlocked: number; payment_ref: string | null }>();
   return row ? { premium: row.premium === 1, unlocked: row.unlocked === 1, paymentRef: row.payment_ref } : null;
 }
 
@@ -83,7 +84,7 @@ export async function recordStaffDecision(db: D1Database, input: { projectId: st
       db.prepare(`INSERT INTO video_approval_events (id, project_id, video_id, asset_id, link_id, revision, decision, note, actor_guest_id, actor_user_id, created_at)
         SELECT ?1, v.project_id, m.video_id, a.id, NULL, COALESCE((SELECT MAX(x.revision) FROM video_approval_events x WHERE x.asset_id = a.id), 0) + 1, ?2, ?3, NULL, ?4, ?5
         FROM video_version_meta m JOIN assets a ON a.id = m.asset_id AND a.kind = 'video' JOIN videos v ON v.id = m.video_id
-        WHERE a.id = ?6 AND v.project_id = ?7 AND ${NOT_ARCHIVED("?7")}`).bind(eventId, input.decision, input.note, input.principal.id, input.now, input.assetId, input.projectId),
+        WHERE a.id = ?6 AND v.project_id = ?7 AND ${LIVE_VERSION("m")} AND ${LIVE_VIDEO("v")} AND ${NOT_ARCHIVED("?7")}`).bind(eventId, input.decision, input.note, input.principal.id, input.now, input.assetId, input.projectId),
       db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?1, ?2, 'video_version.decision', 'asset', e.asset_id, ${metaWith("?3", "json_object('projectId', e.project_id, 'videoId', e.video_id, 'decision', e.decision, 'revision', e.revision, 'staffRecorded', json('true'), 'hasNote', e.note IS NOT NULL)")}, ?4
         FROM video_approval_events e WHERE e.id = ?5`).bind(newId(), input.principal.id, auditMeta(input.principal), input.now, eventId),
@@ -120,7 +121,7 @@ export async function releaseVersion(db: D1Database, input: { projectId: string;
         SELECT ?1, e.project_id, e.video_id, e.asset_id, e.id, e.revision, ?2, ?3, NULL, NULL FROM video_approval_events e
         WHERE e.asset_id = ?4 AND e.project_id = ?5 AND e.revision = ?6 AND e.decision = 'approved'
           AND e.revision = (SELECT MAX(x.revision) FROM video_approval_events x WHERE x.asset_id = e.asset_id)
-          AND NOT EXISTS (SELECT 1 FROM video_releases r WHERE r.asset_id = e.asset_id AND r.withdrawn_at IS NULL) AND ${NOT_ARCHIVED("e.project_id")}`)
+          AND NOT EXISTS (SELECT 1 FROM video_releases r WHERE r.asset_id = e.asset_id AND r.withdrawn_at IS NULL) AND ${LIVE_VERSION_EXISTS("e.asset_id")} AND ${NOT_ARCHIVED("e.project_id")}`)
         .bind(releaseId, input.principal.id, input.now, input.assetId, input.projectId, input.approvalRevision),
       db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?1, ?2, 'video_version.release', 'asset', r.asset_id, ${metaWith("?3", "json_object('projectId', r.project_id, 'videoId', r.video_id, 'releaseId', r.id, 'approvalRevision', r.approval_revision)")}, ?4
@@ -142,7 +143,7 @@ export async function withdrawRelease(db: D1Database, input: { projectId: string
   if (!live) return "none";
   const auditId = newId();
   await db.batch([
-    db.prepare(`UPDATE video_releases SET withdrawn_at = ?1, withdrawn_by = ?2 WHERE id = ?3 AND withdrawn_at IS NULL AND ${NOT_ARCHIVED("project_id")}`).bind(input.now, input.principal.id, live.id),
+    db.prepare(`UPDATE video_releases SET withdrawn_at = ?1, withdrawn_by = ?2 WHERE id = ?3 AND withdrawn_at IS NULL AND ${LIVE_VERSION_EXISTS("video_releases.asset_id")} AND ${NOT_ARCHIVED("project_id")}`).bind(input.now, input.principal.id, live.id),
     db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?1, ?2, 'video_version.release_withdraw', 'asset', r.asset_id, ${metaWith("?3", "json_object('projectId', r.project_id, 'videoId', r.video_id, 'releaseId', r.id, 'approvalRevision', r.approval_revision)")}, ?4
       FROM video_releases r WHERE r.id = ?5 AND r.withdrawn_at = ?4 AND r.withdrawn_by = ?2 AND changes() > 0`).bind(auditId, input.principal.id, auditMeta(input.principal), input.now, live.id),
@@ -166,7 +167,7 @@ export async function setPremium(db: D1Database, input: { projectId: string; vid
   let landed = false;
   if (before.premium !== input.premium) {
     const [update] = await db.batch([
-      db.prepare(`UPDATE videos SET premium = ?1, updated_at = ?2 WHERE id = ?3 AND project_id = ?4 AND premium <> ?1 AND ${NOT_ARCHIVED("?4")}`).bind(input.premium ? 1 : 0, input.now, input.videoId, input.projectId),
+      db.prepare(`UPDATE videos SET premium = ?1, updated_at = ?2 WHERE id = ?3 AND project_id = ?4 AND premium <> ?1 AND ${LIVE_VIDEO("videos")} AND ${NOT_ARCHIVED("?4")}`).bind(input.premium ? 1 : 0, input.now, input.videoId, input.projectId),
       db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?1, ?2, 'video.premium_set', 'video', ?3, ${metaWith("?4", "json_object('projectId', ?5, 'premium', json(?6))")}, ?7 WHERE changes() > 0`)
         .bind(newId(), input.principal.id, input.videoId, auditMeta(input.principal), input.projectId, input.premium ? "true" : "false", input.now),
@@ -197,7 +198,7 @@ export async function setPremiumUnlock(db: D1Database, input: { projectId: strin
   if (input.unlocked && (!before.unlocked || before.paymentRef !== input.paymentRef)) {
     const [write] = await db.batch([
       db.prepare(`INSERT INTO video_premium_unlocks (video_id, project_id, unlocked_by, unlocked_at, payment_ref)
-        SELECT v.id, v.project_id, ?1, ?2, ?3 FROM videos v WHERE v.id = ?4 AND v.project_id = ?5 AND ${NOT_ARCHIVED("?5")}
+        SELECT v.id, v.project_id, ?1, ?2, ?3 FROM videos v WHERE v.id = ?4 AND v.project_id = ?5 AND ${LIVE_VIDEO("v")} AND ${NOT_ARCHIVED("?5")}
         ON CONFLICT (video_id) DO UPDATE SET payment_ref = excluded.payment_ref WHERE payment_ref IS NOT excluded.payment_ref`).bind(input.principal.id, input.now, input.paymentRef, input.videoId, input.projectId),
       db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?1, ?2, 'video.premium_unlock', 'video', ?3, ${metaWith("?4", meta("'hasPaymentRef', json(?6), 'paymentRefChanged', json(?7)"))}, ?8 WHERE changes() > 0`)
@@ -206,7 +207,7 @@ export async function setPremiumUnlock(db: D1Database, input: { projectId: strin
     landed = (write?.meta.changes ?? 0) > 0;
   } else if (!input.unlocked && before.unlocked) {
     const [write] = await db.batch([
-      db.prepare(`DELETE FROM video_premium_unlocks WHERE video_id = ?1 AND project_id = ?2 AND ${NOT_ARCHIVED("?2")}`).bind(input.videoId, input.projectId),
+      db.prepare(`DELETE FROM video_premium_unlocks WHERE video_id = ?1 AND project_id = ?2 AND ${LIVE_VIDEO_EXISTS("video_premium_unlocks.video_id")} AND ${NOT_ARCHIVED("?2")}`).bind(input.videoId, input.projectId),
       db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?1, ?2, 'video.premium_relock', 'video', ?3, ${metaWith("?4", "json_object('projectId', ?5)")}, ?6 WHERE changes() > 0`)
         .bind(newId(), input.principal.id, input.videoId, auditMeta(input.principal), input.projectId, input.now),
