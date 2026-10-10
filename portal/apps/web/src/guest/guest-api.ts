@@ -11,6 +11,9 @@ import {
  */
 export type Read<T> = { kind: "ok"; value: T } | { kind: "gone" } | { kind: "transient" };
 
+/** The Download all manifest read: a 401 is `verify` (the guest has to confirm an email first; the link is fine), never `gone`. Only a 404 or the stub is `gone`. */
+export type DownloadsRead = Read<GuestDownloadManifest> | { kind: "verify" };
+
 export type ExchangeResult =
   | { ok: true; session: GuestSessionResponse }
   | { ok: false; reason: "passcode_required" | "passcode_incorrect" | "invalid_input" | "unavailable" | "unreachable" }
@@ -65,7 +68,7 @@ export type GuestApi = {
   /** The Download all route (#741 14b). The page only ever links to it: a download is the browser's, so the page cannot read its status. */
   downloadAllUrl: string;
   decide(assetId: string, decision: GuestDecisionInput["decision"], note?: string): Promise<DecisionResult>;
-  downloads(): Promise<Read<GuestDownloadManifest>>;
+  downloads(): Promise<DownloadsRead>;
   exchange(token: string, passcode?: string): Promise<ExchangeResult>;
   session(): Promise<Read<GuestSessionResponse>>;
   videos(): Promise<Read<GuestVideoDto[]>>;
@@ -91,6 +94,9 @@ export function createGuestApi(linkId: string): GuestApi {
   const transient = (response: Response | null) => response === null || response.status >= 500 || response.status === 429;
   const read = async <T>(path: string, parse: (body: unknown) => T): Promise<Read<T>> => {
     const response = await send(path);
+    return readResponse(response, parse);
+  };
+  const readResponse = async <T>(response: Response | null, parse: (body: unknown) => T): Promise<Read<T>> => {
     if (transient(response)) return { kind: "transient" };
     if (!response?.ok) return { kind: "gone" };
     const read = await readJson(response);
@@ -150,7 +156,11 @@ export function createGuestApi(linkId: string): GuestApi {
       }
       return { kind: "rejected", error };
     },
-    downloads: () => read("/downloads", (body) => guestDownloadManifestSchema.parse(body)),
+    async downloads() {
+      const response = await send("/downloads");
+      if (response?.status === 401) return { kind: "verify" };
+      return readResponse(response, (body) => guestDownloadManifestSchema.parse(body));
+    },
     async sendCode(email) {
       const response = await send("/email/code", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ email }) });
       if (response === null) return { ok: false, reason: "unreachable" };

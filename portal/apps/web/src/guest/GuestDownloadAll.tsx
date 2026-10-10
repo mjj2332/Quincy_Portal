@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DownloadIcon } from "lucide-react";
-import { GUEST_ZIP_MAX_BYTES, GUEST_ZIP_MAX_ENTRIES, type GuestDownloadManifest } from "@quincy/shared";
+import { GUEST_ZIP_MAX_BYTES, GUEST_ZIP_MAX_ENTRIES, type GuestDownloadManifest, type GuestSessionResponse } from "@quincy/shared";
 import { Button } from "../components/reui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/reui/dialog";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../components/reui/item";
 import type { GuestApi } from "./guest-api";
 import { formatBytes } from "./guest-format";
+import { GuestVerifyDialog } from "./GuestVerifyDialog";
 
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const PROBLEM = "m-0 text-foreground-secondary [font:var(--type-body-sm)]";
@@ -19,9 +20,14 @@ type Loaded = { kind: "loading" } | { kind: "failed" } | { kind: "ok"; manifest:
  * reason for each, before anything is requested. Its action is a plain anchor to the zip route, so the browser streams the archive to disk; the page cannot see that request's status (a refusal
  * such as the zip rate limit is the browser's failed download), so what it CAN know is checked first: nothing to download, or over the cap (20 films, 8 GB), has no action at all, and the hint
  * under the action says what to do if the download does not start. Each read is bound to the opening it started in, so an answer that arrives after Close, or after a newer open, changes nothing.
+ * The routes need a verified guest: an unverified guest's button opens the verify dialog first (this component owns one, so the list screen needs no other), and lands on this dialog once verified.
+ * A manifest 401 (verification lost) does the same, and is never the Unavailable page.
  */
-export function GuestDownloadAll({ api, onUnavailable }: { api: GuestApi; onUnavailable: () => void }) {
+export function GuestDownloadAll({ api, session, onSession, onVerified, onUnavailable }: { api: GuestApi; session: GuestSessionResponse; onSession: (next: GuestSessionResponse) => void; onVerified?: () => void; onUnavailable: () => void }) {
   const [open, setOpen] = useState(false);
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
   const generation = useRef(0);
   const load = useCallback(() => {
@@ -31,28 +37,34 @@ export function GuestDownloadAll({ api, onUnavailable }: { api: GuestApi; onUnav
     void api.downloads().then((result) => {
       if (generation.current !== mine) return;
       if (result.kind === "gone") { setOpen(false); onUnavailable(); }
+      else if (result.kind === "verify") {
+        setOpen(false); setVerifyOpen(true);
+        onSession({ ...sessionRef.current, verified: false, email: null, name: null });
+      }
       else if (result.kind === "transient") setLoaded({ kind: "failed" });
       else setLoaded({ kind: "ok", manifest: result.value });
     });
-  }, [api, onUnavailable]);
+  }, [api, onUnavailable, onSession]);
   useEffect(() => () => { generation.current += 1; }, []);
   const close = () => { generation.current += 1; setOpen(false); };
   return <>
-    <Button type="button" variant="outline" data-testid="guest-download-all" className={TOUCH} onClick={() => { setOpen(true); load(); }}><DownloadIcon aria-hidden="true" />Download all</Button>
+    <Button type="button" variant="outline" data-testid="guest-download-all" className={TOUCH} onClick={() => { if (session.verified) { setOpen(true); load(); } else setVerifyOpen(true); }}><DownloadIcon aria-hidden="true" />Download all</Button>
     <Dialog open={open} onOpenChange={(next) => { if (next) setOpen(true); else close(); }}>
-      <DialogContent data-testid="guest-download-all-dialog" showCloseButton={false} className="sm:max-w-[520px]">
-        <DialogHeader>
+      <DialogContent data-testid="guest-download-all-dialog" showCloseButton={false} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col sm:max-w-[520px]">
+        <DialogHeader className="shrink-0">
           <DialogTitle>Download all</DialogTitle>
           <DialogDescription>One zip with the released films below.</DialogDescription>
         </DialogHeader>
-        <DownloadAllBody loaded={loaded} onRetry={load} />
-        <DialogFooter>
+        <div data-testid="guest-download-all-body" className="min-h-0 flex-1 overflow-y-auto"><DownloadAllBody loaded={loaded} onRetry={load} /></div>
+        <DialogFooter className="shrink-0">
           <Button type="button" variant="outline" data-testid="guest-download-all-close" className={TOUCH} onClick={close}>Close</Button>
           {loaded.kind === "ok" && loaded.manifest.included.length > 0 && !loaded.manifest.tooLarge
             && <Button nativeButton={false} data-testid="guest-download-all-start" className={TOUCH} render={<a href={api.downloadAllUrl} download />}><DownloadIcon aria-hidden="true" />Download zip</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <GuestVerifyDialog api={api} open={verifyOpen} onOpenChange={setVerifyOpen} onGone={() => { setVerifyOpen(false); onUnavailable(); }}
+      onVerified={(next) => { onSession(next); setVerifyOpen(false); onVerified?.(); setOpen(true); load(); }} />
   </>;
 }
 

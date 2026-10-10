@@ -80,6 +80,20 @@ async function chooseVersion(prefix: string) {
   await click([...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.startsWith(prefix)));
 }
 
+/** Walks the verify dialog through to a verified session (the verify route answers with it). */
+async function completeVerify() {
+  extra = (url, init) => {
+    if (url === `${BASE}/email/code` && init?.method === "POST") return json({ sent: true, resendAfterSeconds: 60 }, 202);
+    if (url === `${BASE}/email/verify` && init?.method === "POST") { session = sessionOf(); return json(session); }
+    return undefined;
+  };
+  await typeInto(byId("guest-verify-email"), "sam@example.com");
+  await typeInto(byId("guest-verify-name"), "Sam");
+  await submit("guest-verify-identity-form");
+  await typeInto(byId("guest-verify-code"), "123456");
+  await flush();
+}
+
 beforeEach(() => {
   stub = installVideoElementStub();
   viewport = mockViewport({ width: 1440 });
@@ -277,6 +291,53 @@ describe("Approve and Request changes", () => {
     expect(chipText()).toEqual(["Approved"]);
   });
 
+  it("a delayed delivery re-read from an ambiguous Approve cannot put the Approved chip back over a newer Request changes", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let hold = false;
+    extra = async (url, init) => {
+      if (url === decisionUrl(asset(10)) && init?.method === "POST") {
+        if (hold) return json({ decision: decisionOf("changes_requested", 2) }, 201);
+        return json({ error: "x" }, 503);
+      }
+      if (url === `${BASE}/videos` && hold === false && init?.method === undefined && posts().length > 0) {
+        // The re-read that follows the ambiguous Approve: it captured revision 1 and is slow to arrive.
+        const stale = [videoOf(1, [versionOf(10, { decision: decisionOf("approved", 1) })])];
+        hold = true;
+        await gate;
+        return json({ videos: stale });
+      }
+      return undefined;
+    };
+    await open();
+    await click(byId("guest-approve"));
+    await click(byId("guest-decision-confirm"));
+    expect(byId("guest-decision-problem")?.textContent).toMatch(/may or may not/i);
+    await click(byId("guest-decision-cancel"));
+    await click(byId("guest-request-changes"));
+    await click(byId("guest-decision-confirm"));
+    expect(chipText()).toEqual(["Changes requested"]);
+    await act(async () => { release(); });
+    await flush();
+    expect(chipText()).toEqual(["Changes requested"]);
+  });
+
+  it("an Approve that completes after the guest opened Request changes on the same Version is applied without closing the new dialog", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    extra = async (url, init) => { if (url === decisionUrl(asset(10)) && init?.method === "POST") { await gate; return json({ decision: decisionOf("approved") }, 201); } return undefined; };
+    await open();
+    await click(byId("guest-approve"));
+    await click(byId("guest-decision-confirm"));
+    await click(byId("guest-decision-cancel"));
+    await click(byId("guest-request-changes"));
+    expect(byId("guest-decision-dialog")).not.toBeNull();
+    await act(async () => { release(); });
+    await flush();
+    expect(byId("guest-decision-dialog")).not.toBeNull();
+    expect(chipText()).toEqual(["Approved"]);
+  });
+
   it("an archived project takes the decision controls away but downloads stay", async () => {
     videos = [videoOf(1, [versionOf(10, { released: true, downloadUrl: downloadUrl(asset(10)) })])];
     extra = (url, init) => (url === decisionUrl(asset(10)) && init?.method === "POST" ? json({ error: "project_archived" }, 409) : undefined);
@@ -360,6 +421,49 @@ describe("Download", () => {
     expect(byId("guest-download")).toBeNull();
     await chooseVersion("v10");
     expect(byId("guest-download")?.getAttribute("href")).toBe(downloadUrl(asset(10)));
+  });
+});
+
+describe("Download needs a verified guest", () => {
+  it("an unverified guest's Download is a button that opens the verify dialog, and after the code it is the anchor with a hint to press it again", async () => {
+    session = sessionOf({ verified: false });
+    videos = [videoOf(1, [versionOf(10, { released: true, downloadUrl: downloadUrl(asset(10)) })])];
+    await open();
+    const before = byId("guest-download") as HTMLElement;
+    expect(before.tagName).toBe("BUTTON");
+    await click(before);
+    expect(byId("guest-verify-dialog")).not.toBeNull();
+    await completeVerify();
+    expect(byId("guest-verify-dialog")).toBeNull();
+    const after = byId("guest-download") as HTMLAnchorElement;
+    expect(after.tagName).toBe("A");
+    expect(after.getAttribute("href")).toBe(downloadUrl(asset(10)));
+    expect(byId("guest-download-hint")?.textContent).toMatch(/press download/i);
+  });
+
+  it("an unverified guest's Download all opens the verify dialog, not the manifest, and opens its dialog once verified", async () => {
+    session = sessionOf({ verified: false });
+    videos = [videoOf(1), videoOf(2)];
+    manifest = { included: [{ videoId: vid(1), title: "Film 1", version: 1, bytes: 5 }], leftOut: [], totalBytes: 5, tooLarge: false };
+    await open();
+    await click(byId("guest-download-all"));
+    expect(byId("guest-verify-dialog")).not.toBeNull();
+    expect(byId("guest-download-all-dialog")).toBeNull();
+    expect(gets(`${BASE}/downloads`)).toBe(0);
+    await completeVerify();
+    expect(byId("guest-verify-dialog")).toBeNull();
+    expect(byId("guest-download-all-dialog")).not.toBeNull();
+    expect(allById("guest-download-item")).toHaveLength(1);
+  });
+
+  it("a 401 on the manifest opens the verify dialog and does not show the Unavailable page", async () => {
+    videos = [videoOf(1), videoOf(2)];
+    manifest = json({ error: "verification_required" }, 401);
+    await open();
+    await click(byId("guest-download-all"));
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(byId("guest-verify-dialog")).not.toBeNull();
+    expect(byId("guest-download-all-dialog")).toBeNull();
   });
 });
 

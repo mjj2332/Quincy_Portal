@@ -104,7 +104,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
 
   const [verifyOpen, setVerifyOpen] = useState(false);
   // What the verify dialog was opened for, so a successful code lands the guest where they were going.
-  const afterVerify = useRef<"compose" | "none" | DecisionValue>("none");
+  const afterVerify = useRef<"compose" | "download" | "none" | DecisionValue>("none");
   const reopenDrawer = useRef(false);
   const resyncRef = useRef<() => void>(() => undefined);
   const binding = useRef<WriterBinding>({ scope: version.assetId, effects: { onUnverified: () => undefined, onGone: () => undefined, onArchived: () => undefined }, onLostSettle: () => undefined });
@@ -265,7 +265,7 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
     wasComposing.current = compose.isOpen;
   }, [compose.isOpen, phone]);
 
-  const requestVerify = useCallback((then: "compose" | "none" | DecisionValue) => {
+  const requestVerify = useCallback((then: "compose" | "download" | "none" | DecisionValue) => {
     afterVerify.current = then;
     reopenDrawer.current = phone && drawerOpen;
     if (reopenDrawer.current) setDrawerOpen(false);
@@ -287,13 +287,20 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
   // Approve / Request changes (#741 14-ui-guest). The note draft is in `drafts` and the write is the writer's, so both outlive this screen; the dialog is per Version and decision.
   const [decideFor, setDecideFor] = useState<DecisionValue | null>(null);
   const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
-  useEffect(() => { setDecideFor(null); setDecisionNotice(null); }, [version.assetId]);
+  // Every opening of the dialog gets an id. A completion closes the dialog only if the opening it came from is still the one showing; the decision itself applies by Version either way.
+  const opening = useRef(0);
+  const openDecision = useCallback((value: DecisionValue) => { opening.current += 1; setDecideFor(value); }, []);
+  // After verifying for Download, the Download button becomes the anchor and the guest presses it again (a click made after the async verification would be blocked as a popup).
+  const [downloadHint, setDownloadHint] = useState(false);
+  useEffect(() => { setDecideFor(null); setDecisionNotice(null); setDownloadHint(false); }, [version.assetId]);
   const canDecide = session.link.allow.approve && !archived;
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const confirmDecision = useCallback(async (value: DecisionValue, note: string | undefined): Promise<DecisionOutcome> => {
     // Everything below is about the Version the decision was sent for, however far the guest has moved on by the time it settles.
     const sentFor = version.assetId;
+    const mine = opening.current;
+    const closeIfShowing = () => { if (opening.current === mine) setDecideFor(null); };
     const key = decisionDraftKey(sentFor, value);
     const rev = drafts.get(key)?.rev ?? null;
     const result = await writer.run(`decision:${sentFor}`, () => api.decide(sentFor, value, note));
@@ -304,21 +311,21 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
       onDecided(sentFor, settled.decision);
       if (rev !== null) drafts.clearIf(key, rev);
       if (stale) return { ok: false, message: null };
-      setDecideFor(null);
+      closeIfShowing();
       return { ok: true };
     }
     if (settled.kind === "conflict" || settled.kind === "unreachable") onResyncDelivery(); // the decision may exist: look before the guest sends it again
     if (stale) return { ok: false, message: null };
-    if (settled.kind === "unverified") { afterVerify.current = value; setDecideFor(null); }
-    else if (settled.kind === "archived" || settled.kind === "gone") setDecideFor(null);
+    if (settled.kind === "unverified") { afterVerify.current = value; closeIfShowing(); }
+    else if (settled.kind === "archived" || settled.kind === "gone") closeIfShowing();
     else if (settled.kind === "disabled") {
-      setDecideFor(null); setDecisionNotice("Approving is no longer available on this link.");
+      closeIfShowing(); setDecisionNotice("Approving is no longer available on this link.");
       const now = sessionRef.current;
       onSession({ ...now, link: { ...now.link, allow: { ...now.link.allow, approve: false } } });
     }
     return { ok: false, message: decisionFailureText(settled) };
   }, [api, writer, drafts, version.assetId, onDecided, onResyncDelivery, onSession]);
-  const startDecision = (value: DecisionValue) => { if (session.verified) setDecideFor(value); else requestVerify(value); };
+  const startDecision = (value: DecisionValue) => { if (session.verified) openDecision(value); else requestVerify(value); };
   const allowDownload = session.link.allow.download;
 
   const savedHidden = compose.replacesSavedDrawing(selectedId);
@@ -359,8 +366,9 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
           <Button type="button" data-testid="guest-approve" className={TOUCH} onClick={() => { startDecision("approved"); }}><Check aria-hidden="true" />Approve</Button>
           <Button type="button" variant="outline" data-testid="guest-request-changes" className={TOUCH} onClick={() => { startDecision("changes_requested"); }}><MessageSquareWarning aria-hidden="true" />Request changes</Button>
         </>}
-        <GuestDownload video={video} version={version} allowDownload={allowDownload} />
-        {allowDownload && videos.length > 1 && <GuestDownloadAll api={api} onUnavailable={onUnavailable} />}
+        <GuestDownload video={video} version={version} allowDownload={allowDownload} verified={session.verified} onNeedVerify={() => { requestVerify("download"); }} />
+        {allowDownload && videos.length > 1 && <GuestDownloadAll api={api} session={session} onSession={onSession} onVerified={() => { setNotesAttempt((n) => n + 1); }} onUnavailable={onUnavailable} />}
+        {downloadHint && session.verified && version.downloadUrl !== null && <p role="status" data-testid="guest-download-hint" className="m-0 text-foreground-secondary [font:var(--type-label)]">You're verified. Press Download to start it.</p>}
         {decisionNotice !== null && <p role="status" data-testid="guest-decision-notice" className="m-0 text-foreground-secondary [font:var(--type-label)]">{decisionNotice}</p>}
       </div>
     </header>
@@ -385,7 +393,8 @@ export function GuestVideoScreen({ api, writer, drafts, session, onSession, arch
         setNotesAttempt((n) => n + 1);
         const then = afterVerify.current; afterVerify.current = "none"; finishVerify();
         if (then === "compose") startDraft(compose.begin);
-        else if (then === "approved" || then === "changes_requested") setDecideFor(then);
+        else if (then === "download") setDownloadHint(true);
+        else if (then === "approved" || then === "changes_requested") openDecision(then);
       }} />
   </div>;
 }

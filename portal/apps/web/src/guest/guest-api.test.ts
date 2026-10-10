@@ -170,4 +170,12 @@ describe("guest-api: decisions and downloads (#741 14-ui-guest)", () => {
     answer(new Response("", { status: 503 }));
     expect(await api().downloads()).toEqual({ kind: "transient" });
   });
+  it("maps a 401 on the manifest to verify (the guest has to confirm an email first), never to gone; only a 404 is gone", async () => {
+    answer(json({ error: "verification_required" }, 401));
+    expect(await api().downloads()).toEqual({ kind: "verify" });
+    answer(new Response("", { status: 401 }));
+    expect(await api().downloads()).toEqual({ kind: "verify" });
+    answer(new Response("Not found", { status: 404 }));
+    expect(await api().downloads()).toEqual({ kind: "gone" });
+  });
 });
