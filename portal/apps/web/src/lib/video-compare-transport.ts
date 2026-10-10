@@ -34,6 +34,8 @@ export type CompareTransportOptions = {
   a: CompareTransportSide;
   b: CompareTransportSide;
   store: CompareStore;
+  /** The shared position to start at (A's frame). Defaults to where A's clock is, or will first seek to. */
+  initialA?: number;
   now?: () => number;
   /** Where `visibilitychange` is heard. Defaults to `document`. */
   document?: Pick<Document, "addEventListener" | "removeEventListener" | "visibilityState">;
@@ -79,7 +81,7 @@ export class CompareTransport {
     this.now = options.now ?? (() => performance.now());
     this.doc = options.document ?? (typeof document === "undefined" ? null : document);
     const startState = options.a.clock.getState();
-    this.a = startState.targetFrame ?? startState.frame;
+    this.a = options.initialA ?? options.a.clock.pendingInitialFrame() ?? startState.targetFrame ?? startState.frame;
     this.runtime = { a: this.newRuntime(), b: this.newRuntime() };
     for (const side of SIDES) this.attach(side);
     if (this.doc) {
@@ -211,7 +213,7 @@ export class CompareTransport {
     if (this.disposed) return;
     this.store.setAudible(side);
     this.applyAudio();
-    if (this.playing) { this.master = this.pickMaster(); this.resetSamples(); }
+    if (this.playing) this.reselectMaster();
     this.refresh();
   }
 
@@ -219,7 +221,7 @@ export class CompareTransport {
     if (this.disposed) return;
     this.store.setMuted(muted);
     this.applyAudio();
-    if (this.playing) this.master = this.pickMaster();
+    if (this.playing) this.reselectMaster();
     this.refresh();
   }
 
@@ -363,11 +365,20 @@ export class CompareTransport {
 
   /** The audible live side, else the other live side (A first when muted). With no live side the master stays as it was. */
   private pickMaster(): CompareSideId {
-    const live = SIDES.filter((side) => this.phaseOf(side, this.a) === "live");
+    // An ended element never advances again, whatever the frame mapping calls it.
+    const live = SIDES.filter((side) => this.phaseOf(side, this.a) === "live" && !this.runtime[side].ended);
     if (live.length === 0) return this.master;
     const { audible, muted } = this.store.getState();
     if (!muted && live.includes(audible)) return audible;
     return live.includes("a") ? "a" : "b";
+  }
+
+  /** The one place the master changes: a new master means new drift history and no trim left on either element. */
+  private reselectMaster(): void {
+    const next = this.pickMaster();
+    if (next === this.master) return;
+    this.master = next;
+    this.resetSamples();
   }
 
   private onMasterFrame(master: CompareSideId, frame: number): void {
@@ -400,8 +411,7 @@ export class CompareTransport {
     const phases = SIDES.map((side) => this.phaseOf(side, this.a));
     const running = phases.some((ph) => ph === "live" || ph === "before");
     if (this.a >= this.domain().end || !running) { this.finish(); return; }
-    const master = this.pickMaster();
-    if (master !== this.master) { this.master = master; this.resetSamples(); }
+    this.reselectMaster();
   }
 
   /** Playback reached the shared end: stop and park both sides there. */
@@ -548,7 +558,7 @@ export class CompareTransport {
       // Not a gesture: a refusal comes back through onPlayRejected and blocks.
       this.act(() => { this.sides[mate].clock.setRate(this.rate); });
     }
-    this.master = this.pickMaster();
+    this.reselectMaster();
     this.armWatchdog();
     this.refresh();
   }

@@ -696,3 +696,67 @@ describe("CompareTransport: sol review round 1 (#741 7b)", () => {
     expect(r.t.getState()).toMatchObject({ blocked: "recovery", playing: false });
   });
 });
+
+describe("CompareTransport: sol review round 2 (#741 7b)", () => {
+  it("an ended side is never the master even where the frame mapping still labels it live (25 fps A, 60 fps audible B)", () => {
+    const F60: Rational = { num: 60, den: 1 };
+    const r = rig({ fpsB: F60, nB: 60, audible: "b" });
+    r.t.play();
+    expect(r.t.getState().master).toBe("b");
+    show(r.vb, 58, F60);
+    stub.endPlayback(r.vb);
+    expect(r.t.getState()).toMatchObject({ master: "a", playing: true });
+    expect(r.vb.paused).toBe(true);
+    show(r.va, 30);
+    expect(r.t.getState().frame).toBe(30);
+    expect(stub.callsOf(r.vb).filter((c) => c === "play")).toHaveLength(1);
+  });
+
+  for (const order of ["transport before metadata", "transport after metadata"] as const) {
+    it(`entry position survives: A opens at frame 40 (${order})`, () => {
+      stub = installVideoElementStub({ rvfc: true });
+      const va = document.createElement("video");
+      const vb = document.createElement("video");
+      const ca = new VideoFrameClock(va, { fps: F25, frameCount: 100 }, { initialFrame: 40 });
+      const cb = new VideoFrameClock(vb, { fps: F25, frameCount: 100 }, { initialFrame: 40 });
+      clocks = [ca, cb];
+      const store = createCompareStore("t");
+      store.setPair("A", "B");
+      const build = () => new CompareTransport({ a: { clock: ca, video: va, fps: F25, frameCount: 100, hasAudio: true }, b: { clock: cb, video: vb, fps: F25, frameCount: 100, hasAudio: true }, store, now: () => Date.now(), document: Object.assign(new EventTarget(), { visibilityState: "visible" as const }) });
+      if (order === "transport before metadata") transport = build();
+      for (const v of [va, vb]) { stub.loadMetadata(v, { duration: 4 }); stub.setReadyState(v, 4); stub.finishSeek(v); stub.presentFrame(v, 40 / 25); }
+      if (order === "transport after metadata") transport = build();
+      expect(transport!.getState().frame).toBe(40);
+      stub.writes.length = 0;
+      transport!.play();
+      expect(stub.writes).toEqual([]);
+      expect(va.currentTime).toBe(seekAt(40));
+      expect(transport!.getState().frame).toBe(40);
+    });
+  }
+
+  it("an explicit initialA wins over a clock that has not reported yet", () => {
+    stub = installVideoElementStub({ rvfc: true });
+    const va = document.createElement("video");
+    const vb = document.createElement("video");
+    const ca = new VideoFrameClock(va, { fps: F25, frameCount: 100 });
+    const cb = new VideoFrameClock(vb, { fps: F25, frameCount: 100 });
+    clocks = [ca, cb];
+    const store = createCompareStore("t");
+    store.setPair("A", "B");
+    transport = new CompareTransport({ a: { clock: ca, video: va, fps: F25, frameCount: 100, hasAudio: true }, b: { clock: cb, video: vb, fps: F25, frameCount: 100, hasAudio: true }, store, initialA: 33, now: () => Date.now(), document: Object.assign(new EventTarget(), { visibilityState: "visible" as const }) });
+    expect(transport.getState().frame).toBe(33);
+  });
+
+  it("muting promotes the other master and releases the follower's trim at the ladder rate", () => {
+    const r = rig({ audible: "b" });
+    r.t.play(2);
+    expect(r.t.getState().master).toBe("b");
+    for (const f of [1, 2, 3]) { stub.presentFrame(r.va, 0.2 + f / 25); show(r.vb, f); } // A (the follower) runs ahead
+    expect(r.va.playbackRate).toBeCloseTo(1.9);
+    r.t.setMuted(true);
+    expect(r.t.getState().master).toBe("a");
+    expect(r.va.playbackRate).toBe(2);
+    expect(r.vb.playbackRate).toBe(2);
+  });
+});

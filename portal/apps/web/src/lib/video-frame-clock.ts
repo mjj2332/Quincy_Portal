@@ -63,6 +63,7 @@ export class VideoFrameClock {
   private presentedTime: number | null = null;
   /** The frame the first seek goes to (compare opens a side mid-film); consumed once. */
   private initialFrame: number;
+  private initialConsumed = false;
   private readonly rejectListeners = new Set<(error: unknown) => void>();
   private readonly confirmListeners = new Set<() => void>();
 
@@ -79,9 +80,13 @@ export class VideoFrameClock {
 
   getState = (): FrameClockState => this.state;
 
+  /** The frame the first seek will go to, or null once it has gone (compare reads it before metadata, when `state.frame` is still 0). */
+  pendingInitialFrame(): number | null { return this.initialConsumed ? null : this.initialFrame; }
+
   private takeInitialFrame(): number {
     const frame = this.initialFrame;
     this.initialFrame = 0;
+    this.initialConsumed = true;
     return frame;
   }
 
