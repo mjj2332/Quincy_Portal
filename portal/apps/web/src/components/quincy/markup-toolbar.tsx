@@ -13,7 +13,7 @@ import { Eyebrow } from "./Eyebrow";
  * The markup toolbar shared by the photo Lightbox and (in 6b) the video note (#741 slice 6s-ui): one floating pill holding
  * tools, pen colours, stroke widths, Undo, Redo, Clear and a host slot. Every control is one tap: no mode swap, no popover.
  * Presentational only; the host owns the tool state, the history and the key handling (the shortcuts are written on the
- * buttons as `aria-keyshortcuts`, and the host shows them in its hint pill).
+ * buttons as `aria-keyshortcuts`, and the host shows them in its key legend).
  *
  * - The tools are one choice, so they are a radio group (one tab stop, arrow keys, aria-checked). Colours and widths are
  *   toggle groups with a single value; clicking the pressed one is ignored, so neither can be left empty.
@@ -22,7 +22,7 @@ import { Eyebrow } from "./Eyebrow";
  * - `compact` (the host's phone band) packs two rows: tools and history, then colours and one width button that
  *   cycles 2 -> 4 -> 7. Label and host slot follow on a last row.
  * - No tooltips: a Base UI tooltip closes on Escape with a document-level stopPropagation, which would make one Escape
- *   close the tip instead of ending drawing. The title attribute and the host's hint pill carry the shortcuts.
+ *   close the tip instead of ending drawing. The title attribute and the host's key legend carry the shortcuts.
  */
 // The hex values stay literals: they are pen ink applied to the photograph, not interface chrome (design tokens §1.5).
 export const PEN_COLOUR_NAMES = {

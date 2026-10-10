@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
+import type { Box } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { usePictureBox } from "../../lib/use-picture-box";
 import { Notice } from "./Notice";
@@ -11,8 +12,9 @@ const CHIP_CHROME_PX = 40;
 /**
  * The picture half of the review player (#741 7a, extracted from `VideoPlayer` so Compare can draw one per side): the stage, the
  * `<video>` (no native controls, no download, no picture-in-picture), the picture box with the timecode chip inside it, and the
- * "can't play" Notice. `onVideo` hands up the element (and null when it goes away); `overlay` is drawn over the stage. Key it by
- * Version like the player: a new Version is a new element.
+ * "can't play" Notice. `onVideo` hands up the element (and null when it goes away); `overlay` is drawn over the stage, and as a function
+ * it is handed the picture box (the box the picture really occupies, null until measured) so markup can be mapped onto the picture and not
+ * the letterbox bands (#741 6b-ui). Key it by Version like the player: a new Version is a new element.
  */
 export function VideoStage({ streamUrl, title, width, height, timecode, frame, onVideo, overlay }: {
   streamUrl: string;
@@ -25,7 +27,7 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, o
   /** The frame on screen, appended to the chip where the picture is wide enough. */
   frame: number;
   onVideo?: (video: HTMLVideoElement | null) => void;
-  overlay?: ReactNode;
+  overlay?: ReactNode | ((box: Box | null) => ReactNode);
 }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [failed, setFailed] = useState(false);
@@ -59,6 +61,6 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, o
       <span data-testid="video-timecode-chip" aria-hidden="true" className={cn("absolute bottom-[var(--space-2)] left-[var(--space-2)] max-w-[calc(100%-var(--space-4))] overflow-hidden whitespace-nowrap border border-invert-foreground/20 bg-invert px-[var(--space-2)] py-[var(--space-1)] text-invert-foreground", MONO)}>{chip}</span>
     </div>}
     {failed && <div data-surface="default" className="absolute inset-x-[var(--space-3)] top-[var(--space-3)]"><Notice tone="caution" role="alert" className="bg-card">This version can't play in this browser.</Notice></div>}
-    {overlay}
+    {typeof overlay === "function" ? overlay(box) : overlay}
   </div>;
 }

@@ -29,8 +29,10 @@ export type PlayerKeyTarget = {
  *
  * K is down: J / L step a frame (the NLE chord). K pauses at once when playing; from paused it waits, so a K + J / K + L chord never
  * starts playback, and a lone K press toggles on keyup. Cleared by its keyup anywhere, and by losing focus (which never toggles).
+ * `locked` (drawing, #741 6b-ui) hands every key back: nothing moves the frame under the pen, and a K already held is forgotten so its
+ * keyup cannot restart playback.
  */
-export function usePlayerKeys(target: PlayerKeyTarget, onMark?: (kind: "in" | "out", frame: number) => void): (event: KeyboardEvent | ReactKeyboardEvent) => boolean {
+export function usePlayerKeys(target: PlayerKeyTarget, onMark?: (kind: "in" | "out", frame: number) => void, locked = false): (event: KeyboardEvent | ReactKeyboardEvent) => boolean {
   const targetRef = useRef(target);
   targetRef.current = target;
   const onMarkRef = useRef(onMark);
@@ -59,7 +61,10 @@ export function usePlayerKeys(target: PlayerKeyTarget, onMark?: (kind: "in" | "o
     }
   }, []);
 
+  const lockedRef = useRef(locked);
+  lockedRef.current = locked;
   const kHeld = useRef<{ fromPaused: boolean; chord: boolean } | null>(null);
+  useEffect(() => { if (locked) kHeld.current = null; }, [locked]);
   useEffect(() => {
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.key !== "k" && event.key !== "K") return;
@@ -74,6 +79,7 @@ export function usePlayerKeys(target: PlayerKeyTarget, onMark?: (kind: "in" | "o
   }, [apply]);
 
   return useCallback((event: KeyboardEvent | ReactKeyboardEvent): boolean => {
+    if (lockedRef.current) { kHeld.current = null; return false; }
     const t = targetRef.current;
     const native = "nativeEvent" in event ? event.nativeEvent : event;
     const action = playerKeyAction(native, { k: kHeld.current !== null, marks: marksBoundRef.current });

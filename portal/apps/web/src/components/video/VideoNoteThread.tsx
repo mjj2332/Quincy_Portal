@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { Lock } from "lucide-react";
-import { VIDEO_NOTE_BODY_MAX, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto } from "@quincy/shared";
+import { Lock, PencilIcon } from "lucide-react";
+import { VIDEO_NOTE_BODY_MAX, type Role, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto } from "@quincy/shared";
 import { cn } from "../../lib/utils";
 import { isOwnNote, noteAnchorLabel } from "../../lib/video-note-view";
-import { effectiveMarks, frameOnScreen, writeFailure, type NoteFormStore, type Problem } from "../../lib/video-note-form-store";
+import { MarkupRevisionMismatch, useVideoNoteMarkupQuery } from "../../lib/video-notes-data";
+import { effectiveMarks, frameOnScreen, preloadSavedDrawing, writeFailure, type NoteFormStore, type Problem } from "../../lib/video-note-form-store";
 import type { VideoFrameClock } from "../../lib/video-frame-clock";
 import type { NoteMarks } from "../../lib/video-note-marks";
 import { META_TEXT } from "../quincy/Eyebrow";
@@ -18,6 +19,7 @@ import { Button as ReuiButton } from "../reui/button";
 import { Item } from "../reui/item";
 import { Kbd } from "../reui/kbd";
 import { Textarea } from "../reui/textarea";
+import { IconTip } from "../quincy/VideoPlayer";
 import { ANCHOR_CHIP, ANCHOR_CHIP_ROW } from "./VideoNoteComposer";
 
 /** What a thread asks of the panel. Every write rejects with the original error, which the thread classifies. */
@@ -31,7 +33,7 @@ export type ThreadActions = {
 
 const MONO = "[font:var(--type-mono)] tabular-nums";
 const SMALL = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
-const LINK_BUTTON = "min-h-8 pointer-coarse:min-h-11 max-[721px]:min-h-11";
+const LINK_BUTTON = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
 /** Shown, never chosen: the paste dialog renders it too, so a copy's visibility is visibly the source's. */
 export function VisibilityBadge({ visibility }: { visibility: VideoNoteDto["visibility"] }) {
@@ -56,7 +58,7 @@ function NoteText({ note }: { note: VideoNoteDto }) {
  * which is the impersonated user while an Admin impersonates), and the server enforces it again. The open form's text, baseline, conflict and
  * marks live in the Video tab's form store: this component renders them and sends commands.
  */
-export function VideoNoteThread({ thread, selected, userId, readOnly, now, timecode, frameCount, actions, onSeek, store, assetId, clock, pinned = false }: {
+export function VideoNoteThread({ thread, selected, userId, readOnly, now, timecode, frameCount, actions, onSeek, store, assetId, clock, pinned = false, drawings }: {
   thread: VideoNoteThreadDto;
   selected: boolean;
   userId: string | null;
@@ -71,6 +73,8 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
   clock: VideoFrameClock | null;
   /** The filters exclude this thread but its form is open, so it stays listed. */
   pinned?: boolean;
+  /** Drawings on notes (#741 6b-ui): whether the Project's `markup` part is on, whether this person may draw, and what the lazy read needs. Absent = 5b's thread. */
+  drawings?: { on: boolean; canAnnotate: boolean; projectId: string; role: Role };
 }) {
   const articleRef = useRef<HTMLElement>(null);
   const form = useSyncExternalStore(store.subscribe, () => { const open = store.slot(assetId).open; return open && open.rootId === thread.id ? open : null; });
@@ -159,19 +163,25 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     </div>
   </header>;
 
-  const editForm = (note: VideoNoteDto) => editing && editing.noteId === note.id && <form
+  const editForm = (note: VideoNoteDto) => editing && editing.noteId === note.id && (() => {
+    const showDrawControls = Boolean(drawings?.on && drawings.canAnnotate && note.id === thread.id && thread.startFrame !== null);
+    return <form
     data-notes-form="edit"
     data-size-container="true"
     className="@container grid gap-[var(--space-2)]"
-    onSubmit={(event) => { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit }); }}
+    onSubmit={(event) => { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit, markup: drawings?.on ?? false }); }}
   >
     <label className="sr-only" htmlFor={`video-note-edit-${note.id}`}>Edit note</label>
-    <Textarea id={`video-note-edit-${note.id}`} data-testid="video-note-edit-body" value={editing.text} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) store.setOpenText(assetId, event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit }); } }} />
-    {editing.frames && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-      <span data-testid="video-note-edit-anchor" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}>{editAnchorLabel(marks, timecode)}</span>
-      <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-in" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "in", frameOnScreen(clock.getState()), clock); }}>Set in <Kbd>I</Kbd></Button>
-      <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-out" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "out", frameOnScreen(clock.getState()), clock); }}>Set out <Kbd>O</Kbd></Button>
-      <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-make-point" disabled={busy || !clock} onClick={() => { if (clock) store.makePoint(assetId, clock); }}>Make point</Button>
+    <Textarea id={`video-note-edit-${note.id}`} data-testid="video-note-edit-body" value={editing.text} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) store.setOpenText(assetId, event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit, markup: drawings?.on ?? false }); } }} />
+    {(editing.frames || showDrawControls) && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+      {showDrawControls && (!editing.frames || editing.drawing.touched) && <span data-testid="video-note-edit-frames-follow" className="text-foreground-secondary [font:var(--type-label)]">Frames follow the drawing.</span>}
+      {editing.frames && !editing.drawing.touched && <>
+        <span data-testid="video-note-edit-anchor" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}>{editAnchorLabel(marks, timecode)}</span>
+        <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-in" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "in", frameOnScreen(clock.getState()), clock); }}>Set in <Kbd>I</Kbd></Button>
+        <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-out" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "out", frameOnScreen(clock.getState()), clock); }}>Set out <Kbd>O</Kbd></Button>
+        <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-make-point" disabled={busy || !clock} onClick={() => { if (clock) store.makePoint(assetId, clock); }}>Make point</Button>
+      </>}
+      {showDrawControls && drawings && <EditDrawingControls store={store} assetId={assetId} note={thread} editing={editing} clock={clock} frameCount={frameCount} busy={busy} timecode={timecode} projectId={drawings.projectId} role={drawings.role} />}
     </div>}
     {editing.conflict && <Notice tone="caution" data-testid="video-note-conflict" className="grid gap-[var(--space-1)]"><span>Current note on the server:</span><span data-testid="video-note-conflict-body" className="whitespace-pre-wrap [overflow-wrap:anywhere] text-foreground">{editing.conflict.body}</span></Notice>}
     <div className="flex justify-end gap-[var(--space-2)]">
@@ -179,6 +189,7 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
       <Button type="submit" data-testid="video-note-edit-save" disabled={busy || editing.text.trim() === ""}>{busy ? "Saving…" : editing.conflict ? "Save anyway" : "Save"}</Button>
     </div>
   </form>;
+  })();
 
   const label = noteAnchorLabel(thread, timecode);
   const resolvedLine = thread.resolved ? `Resolved by ${thread.resolved.by.name}` : null;
@@ -192,6 +203,7 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
         <VisibilityBadge visibility={thread.visibility} />
         {thread.startFrame !== null && <ReuiButton type="button" variant="secondary" size="sm" data-testid="video-note-anchor-button" aria-label={`Go to ${label}`} className={cn("pointer-coarse:min-h-11 max-[721px]:min-h-11", MONO)} onClick={() => { onSeek(thread); }}>{label}</ReuiButton>}
         {resolvedLine && <span className={cn(META_TEXT, "!normal-case")}>{resolvedLine}</span>}
+        {drawings && thread.hasMarkup && !thread.deleted && <IconTip label="Has a drawing"><span data-testid="video-note-has-drawing" className={cn(META_TEXT, "inline-flex items-center !normal-case")}><PencilIcon aria-hidden="true" className="size-3" /><span className="sr-only">{drawings.on ? "Drawing" : "Drawing hidden"}</span></span></IconTip>}
         <span className="ms-auto">{renderMenu(thread)}</span>
       </div>
       {editing?.noteId === thread.id ? editForm(thread) : <NoteText note={thread} />}
@@ -235,4 +247,48 @@ function editAnchorLabel(marks: NoteMarks, timecode: (frame: number) => string):
   if (marks.in !== null && marks.out !== null) return `${timecode(marks.in)} → ${timecode(marks.out)}`;
   const only = marks.in ?? marks.out;
   return only === null ? "No frames" : timecode(only);
+}
+
+/**
+ * The drawing part of an edit form (#741 6b-ui): add a drawing to a plain note, edit or replace the one it has, or remove it. The saved drawing is fetched lazily, keyed by note and
+ * revision, and the editor is only opened once it has loaded: it is never seeded with an empty list. A removal is a pending change until Save; "Keep drawing" takes it back.
+ */
+function EditDrawingControls({ store, assetId, note, editing, clock, frameCount, busy, timecode, projectId, role }: {
+  store: NoteFormStore; assetId: string; note: VideoNoteThreadDto; editing: NonNullable<ReturnType<NoteFormStore["slot"]>["open"]>;
+  clock: VideoFrameClock | null; frameCount: number; busy: boolean; timecode: (frame: number) => string; projectId: string; role: Role;
+}) {
+  const drawing = editing.drawing;
+  const saved = drawing.hadDrawing && !drawing.remove && drawing.items === null;
+  const query = useVideoNoteMarkupQuery(projectId, assetId, note.id, editing.base.revision, saved, role);
+  // The read was refused because the list moved on (another session saved): once the list shows the newer note, the edit follows it, or asks, as a 409 does.
+  const moved = query.error instanceof MarkupRevisionMismatch && note.revision !== editing.base.revision;
+  useEffect(() => { if (moved) store.adoptCurrentNote(assetId, note); }, [moved, store, assetId, note]);
+  const framesChosen = useSyncExternalStore(store.subscribe, () => store.slot(assetId).marks.touched);
+  const drawingNow = useSyncExternalStore(store.subscribe, () => store.slot(assetId).draw !== null);
+  const loaded = query.data?.markup ?? null;
+  const ready = !saved || loaded !== null;
+  const hasItems = drawing.items === null ? drawing.hadDrawing && !drawing.remove : drawing.items.length > 0;
+  const frame = drawing.drawingFrame ?? drawing.baseFrame;
+  const enter = () => {
+    if (!clock) return;
+    preloadSavedDrawing(store, assetId, query.data);
+    void store.enterDraw(assetId, { clock, form: "edit", frameCount });
+  };
+  // A drawing with an item this build cannot read is kept as it is: Edit and Remove would save back a copy without that item.
+  const unsupported = saved && query.data?.unsupported === true;
+  const disabled = busy || !clock || framesChosen || drawingNow || !ready || unsupported;
+  const why = unsupported ? `video-note-edit-drawing-unsupported-${note.id}` : undefined;
+  // The header's anchor button already reads the note's frame: the chip only earns its place when the drawing is on another frame.
+  const chipShown = hasItems && frame !== null && timecode(frame) !== noteAnchorLabel(note, timecode);
+  return <div data-testid="video-note-edit-drawing" className="contents">
+    {chipShown && frame !== null && <span data-testid="video-note-edit-drawing-chip" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" /><span className="sr-only">Drawing on </span>{timecode(frame)}</span>}
+    {drawing.remove && <span data-testid="video-note-edit-drawing-removed" className="text-foreground-secondary [font:var(--type-label)]">The drawing is removed when you save.</span>}
+    {!drawing.remove && <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-draw" aria-describedby={why} disabled={disabled} onClick={enter}>{hasItems ? "Edit drawing" : "Add drawing"}</Button>}
+    {!drawing.remove && hasItems && <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-remove-drawing" aria-describedby={why} disabled={busy || drawingNow || unsupported || !ready} onClick={() => { store.removeDrawing(assetId); }}>Remove drawing</Button>}
+    {drawing.remove && <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-keep-drawing" disabled={busy} onClick={() => { store.keepDrawing(assetId); }}>Keep drawing</Button>}
+    {unsupported && <span id={why} data-testid="video-note-edit-drawing-unsupported" className="text-foreground-secondary [font:var(--type-label)]">Some markup can't be shown, so this drawing can't be edited or removed here. You can still change the text.</span>}
+    {saved && query.isError && <span role="alert" className="text-destructive [font:var(--type-label)]">The drawing could not be loaded. <Button type="button" variant="text" onClick={() => { void query.refetch(); }}>Retry</Button></span>}
+    {saved && query.isPending && <span role="status" className="text-foreground-secondary [font:var(--type-label)]">Loading the drawing…</span>}
+    {framesChosen && !drawing.touched && <span className="text-foreground-secondary [font:var(--type-label)]">Save the new frames before changing the drawing.</span>}
+  </div>;
 }

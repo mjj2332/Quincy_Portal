@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ROLES } from "./capabilities";
-import { shapeSchema, strokePointSchema, strokeSchema, strokesSchema, STROKE_LIMITS } from "./freehand-strokes";
+import { shapeSchema, strokePointSchema, strokeSchema, STROKE_LIMITS } from "./freehand-strokes";
 import { videoPersonSchema } from "./video-review";
 
 /**
@@ -68,8 +68,8 @@ export const videoNoteEditInputSchema = z.object({
   .refine((value) => value.drawingFrame === undefined || (value.markup !== undefined && value.markup !== null), { message: "drawingFrame goes with a markup envelope", path: ["drawingFrame"] });
 export type VideoNoteEditInput = z.infer<typeof videoNoteEditInputSchema>;
 
-/** `GET .../video-notes/:noteId/markup`: the lazy read. `markup` is null for a note without a drawing, a reply or a tombstone; `revision` keys a client cache. Loose items: an old row is read, not re-validated. */
-export const videoNoteMarkupResponseSchema = z.object({ noteId: uuid, revision: z.number().int().positive(), markup: strokesSchema.nullable() }).strict();
+/** `GET .../video-notes/:noteId/markup`: the lazy read. `markup` is null for a note without a drawing, a reply or a tombstone; `revision` keys a client cache. Items are NOT validated here: a row written by a newer build may hold a `type` this build does not know, and the reader (`readStoredMarkup` on the client) decides what it can show. Only the list size is bounded. */
+export const videoNoteMarkupResponseSchema = z.object({ noteId: uuid, revision: z.number().int().positive(), markup: z.array(z.unknown()).max(STROKE_LIMITS.strokes).nullable() }).strict();
 export type VideoNoteMarkupResponse = z.infer<typeof videoNoteMarkupResponseSchema>;
 
 export const videoNoteDeleteInputSchema = z.object({ expectedRevision: revision }).strict();

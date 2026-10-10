@@ -389,3 +389,59 @@ describe("useMarkup: undo, redo, clear", () => {
     expect(b.api.canUndo).toBe(false);
   });
 });
+
+describe("useMarkup: the latest setStrokes", () => {
+  it("undo, redo and clear call the setter of the current render, not the first one", async () => {
+    const calls: number[] = [];
+    const latest = {} as { api: Api; bump: () => void };
+    function Harness() {
+      const [strokes, setStrokes] = useState<MarkupItem[]>([]);
+      const [generation, setGeneration] = useState(0);
+      const api = useMarkup({
+        enabled: true, tool: { kind: "freehand", color: "#e64b3c", width: 4 }, toPoint: (event) => ({ x: event.clientX / 100, y: event.clientY / 100 }),
+        strokes, setStrokes: (next) => { calls.push(generation); setStrokes(next); },
+      });
+      Object.assign(latest, { api, bump: () => { setGeneration((g) => g + 1); } });
+      return null;
+    }
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); roots.push(root);
+    await act(async () => { root.render(<Harness />); });
+    const l = latest as unknown as Latest & { bump: () => void };
+    await down(l, 10, 10); await up(l, 10, 10);
+    await act(async () => { latest.bump(); });
+    calls.length = 0;
+    await act(async () => { latest.api.undo(); });
+    await act(async () => { latest.api.redo(); });
+    await act(async () => { latest.api.clear(); });
+    expect(calls).toEqual([1, 1, 1]);
+  });
+});
+
+describe("useMarkup: controlled history", () => {
+  it("steps kept by the caller survive the hook being unmounted and mounted again", async () => {
+    const held: { history: import("./markup-history").MarkupHistory | null; strokes: MarkupItem[] } = { history: null, strokes: [] };
+    const latest = {} as { api: Api };
+    function Harness() {
+      const [, tick] = useState(0);
+      const api = useMarkup({
+        enabled: true, tool: { kind: "freehand", color: "#e64b3c", width: 4 }, toPoint: (event) => ({ x: event.clientX / 100, y: event.clientY / 100 }),
+        strokes: held.strokes, setStrokes: (next) => { held.strokes = next as MarkupItem[]; tick((n) => n + 1); },
+        history: { value: held.history, set: (next) => { held.history = next; tick((n) => n + 1); } },
+      });
+      latest.api = api;
+      return null;
+    }
+    const mount = async () => { const host = document.createElement("div"); document.body.appendChild(host); const root = createRoot(host); await act(async () => { root.render(<Harness />); }); return root; };
+    const first = await mount();
+    const l = latest as unknown as Latest;
+    await down(l, 10, 10); await up(l, 10, 10);
+    await act(async () => { latest.api.undo(); });
+    expect(held.strokes).toEqual([]);
+    await act(async () => { first.unmount(); });
+    const second = await mount(); roots.push(second);
+    expect(latest.api.canRedo).toBe(true);
+    await act(async () => { latest.api.redo(); });
+    expect(held.strokes).toHaveLength(1);
+  });
+});

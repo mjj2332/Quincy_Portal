@@ -1,8 +1,8 @@
 import { useQuery, type QueryClient, type QueryFunctionContext, type UseQueryResult } from "@tanstack/react-query";
 import {
-  videoNoteDeleteResponseSchema, videoNotePasteCommitResponseSchema, videoNotePastePreviewResponseSchema,
+  videoNoteDeleteResponseSchema, videoNoteMarkupResponseSchema, videoNotePasteCommitResponseSchema, videoNotePastePreviewResponseSchema,
   type VideoNotePasteCommitResponse, type VideoNotePastePreviewResponse, videoNoteListResponseSchema, videoNoteThreadDtoSchema,
-  type Role, type VideoNoteCreateInput, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto,
+  type MarkupItem, type Role, type VideoNoteMarkupResponse, type VideoNoteCreateInput, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto,
 } from "@quincy/shared";
 import { apiDeleteWithBody, apiGet, apiPatch, apiPost, apiPut } from "./api";
 import { decodeExternalResponse, externalApiGet } from "./external-api-response";
@@ -10,6 +10,7 @@ import { getProjectQueryRuntime } from "./project-query-sync";
 import { invalidateProjectSurfaces, projectDataKeys, projectQueryRetry, recordProjectArchivedRefusal, removedDataError, terminatePrincipalOnUnauthorized } from "./project-data";
 import { onPrincipalTerminal } from "./principal-terminal";
 import { classifyVideoNoteError } from "./video-note-errors";
+import { readStoredMarkup } from "./read-stored-markup";
 import { removeThread, upsertThread } from "./video-note-view";
 
 /** Notes on one Video Version (#741 5b): the list query, the five writes, and the error classifier. No optimistic writes; every success patches the cache by root id. */
@@ -33,6 +34,46 @@ export function useVideoNotesQuery(projectId: string, assetId: string, enabled: 
       const notes = await listVideoNotes(projectId, assetId, role, signal);
       if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
       return notes;
+    },
+  });
+}
+
+/** One note's drawing as this build can read it: `markup` holds only the items it knows how to show, and `unsupported` says the saved drawing had more (a newer writer's `type`). Null `markup` = no drawing. */
+export type VideoNoteMarkupRead = { noteId: string; revision: number; markup: MarkupItem[] | null; unsupported: boolean };
+
+/** One note's drawing, read tolerantly (never through the strict write schema): an unknown item is dropped from `markup` and flagged, not thrown on. The stored data is untouched. */
+export async function readVideoNoteMarkup(projectId: string, noteId: string, role: Role, signal?: AbortSignal): Promise<VideoNoteMarkupRead> {
+  const path = `${notePath(projectId, noteId)}/markup`;
+  const response: VideoNoteMarkupResponse = (role === "external_editor"
+    ? await externalApiGet("video-note-markup", path, signal) as VideoNoteMarkupResponse
+    : videoNoteMarkupResponseSchema.parse(await apiGet<unknown>(path, signal ? { signal } : undefined)));
+  if (response.markup === null) return { noteId: response.noteId, revision: response.revision, markup: null, unsupported: false };
+  const { items, unsupported } = readStoredMarkup(response.markup);
+  return { noteId: response.noteId, revision: response.revision, markup: items, unsupported };
+}
+
+/** The drawing read answered for a different revision than the list row it was asked for: another session changed the note in between. Never displayed; the list is read again. */
+export class MarkupRevisionMismatch extends Error {
+  constructor() { super("The drawing changed while it was loading."); this.name = "MarkupRevisionMismatch"; }
+}
+
+/**
+ * The drawing of a note at the revision the list shows (#741 6b-ui), fetched only when `enabled`. The entry is keyed by note and revision, so it is fetched once per revision and an
+ * edit (a new revision) is a fresh entry. A response for any other revision than the list row's is refused (the strokes and the row's drawing frame would disagree): nothing is shown,
+ * the notes list of `assetId` is read again, and the row's new revision is a new key that fetches the matching drawing.
+ */
+export function useVideoNoteMarkupQuery(projectId: string, assetId: string, noteId: string, revision: number, enabled: boolean, role: Role): UseQueryResult<VideoNoteMarkupRead, Error> {
+  return useQuery<VideoNoteMarkupRead, Error>({
+    queryKey: projectDataKeys.videoNoteMarkup(projectId, noteId, revision), enabled, staleTime: Number.POSITIVE_INFINITY, gcTime: 5 * 60_000,
+    retry: (count, error) => !(error instanceof MarkupRevisionMismatch) && projectQueryRetry(count, error),
+    queryFn: async ({ signal, client }: QueryFunctionContext) => {
+      const response = await readVideoNoteMarkup(projectId, noteId, role, signal);
+      if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
+      if (response.revision !== revision) {
+        void client.invalidateQueries({ queryKey: projectDataKeys.videoNotes(projectId, assetId), exact: true });
+        throw new MarkupRevisionMismatch();
+      }
+      return response;
     },
   });
 }
