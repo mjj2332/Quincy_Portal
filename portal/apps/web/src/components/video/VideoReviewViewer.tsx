@@ -239,9 +239,9 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     </header>;
   const layout = (slots: { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode } | null): ReactNode => <>
     <div className="flex min-h-0 flex-1 flex-wrap overflow-y-auto min-[721px]:flex-nowrap min-[721px]:overflow-hidden">
-      <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col min-[721px]:flex-1 p-[var(--space-5)]">
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" initialMuted={muted} onMutedChange={setMuted} className="flex-1" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...slots?.playerProps} />
-        {delivery && <div className="mt-[var(--space-4)] max-h-[45dvh] shrink-0 overflow-y-auto"><Suspense fallback={null}><LazyDeliveryPanel projectId={delivery.projectId} role={delivery.role} archived={delivery.archived} video={video} version={version} store={delivery.store} /></Suspense></div>}
+      <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col overflow-y-auto min-[721px]:flex-1 p-[var(--space-5)]">
+        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...slots?.playerProps} />
+        {delivery && <div className="mt-[var(--space-4)] shrink-0"><Suspense fallback={null}><LazyDeliveryPanel projectId={delivery.projectId} role={delivery.role} archived={delivery.archived} video={video} version={version} store={delivery.store} /></Suspense></div>}
       </div>
       {slots
         ? slots.panel

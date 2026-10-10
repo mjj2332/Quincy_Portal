@@ -68,17 +68,17 @@ export function VideoDeliveryPanel({ projectId, role, archived, video, version, 
           <FrameTitle>{`Delivery · v${version.version}`}</FrameTitle>
           <Badge variant={state.variant} data-testid="delivery-state">{state.label}</Badge>
         </div>
-        <FrameDescription>{live ? `Released ${formatWhen(live.releasedAt)}${live.releasedBy ? ` by ${live.releasedBy.name}` : ""}. Withdraw it to stop the client downloading.` : "Client decisions on this version. Only an approval can be released."}</FrameDescription>
+        <FrameDescription className="text-foreground-secondary">{live ? `Released ${formatWhen(live.releasedAt)}${live.releasedBy ? ` by ${live.releasedBy.name}` : ""}. Withdraw it to stop the client downloading.` : "Client decisions on this version. Only an approval can be released."}</FrameDescription>
       </FrameHeader>
 
       {decisions.isError && !decisions.data && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{decisions.error.message || "Decisions could not be loaded."}</span><Button type="button" variant="outline" className={TOUCH} onClick={() => { void decisions.refetch(); }}>Retry</Button></Notice>}
       {loaded && events.length === 0 && <p data-testid="delivery-empty" className="m-0 text-foreground-secondary [font:var(--type-label)]">The client has not decided on this version.</p>}
       {ordered.length > 0 && <ItemGroup>
-        {ordered.map((event) => <Item key={event.id} size="xs" data-testid="delivery-decision">
+        {ordered.map((event) => <Item key={event.id} size="xs" className="px-0" data-testid="delivery-decision">
           <ItemContent>
             <ItemTitle>{`${actorName(event)} · ${decisionLabel(event)}`}</ItemTitle>
-            <ItemDescription>{`${formatWhen(event.at)} · ${event.link ? (event.link.label ? `Review link “${event.link.label}”` : "Review link") : "Recorded by staff"}`}</ItemDescription>
-            {event.note && <ItemDescription data-testid="delivery-decision-note" className="whitespace-pre-wrap text-foreground">{event.note}</ItemDescription>}
+            <ItemDescription className="text-foreground-secondary">{`${formatWhen(event.at)} · ${event.link ? (event.link.label ? `Review link “${event.link.label}”` : "Review link") : "Recorded by staff"}`}</ItemDescription>
+            {event.note && <ItemDescription data-testid="delivery-decision-note" className="line-clamp-none whitespace-pre-wrap text-foreground">{event.note}</ItemDescription>}
           </ItemContent>
         </Item>)}
       </ItemGroup>}

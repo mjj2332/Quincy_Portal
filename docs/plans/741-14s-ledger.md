@@ -15,4 +15,4 @@ Placement (spec-silent): under the player in the viewer's left column, so the no
 | Premium switch | `VideoDeliveryPanel.tsx` (`delivery-premium-switch`) | `components/reui/switch.tsx` with `components/reui/label.tsx` |
 | Locked / Unlocked chip | `VideoDeliveryPanel.tsx` (`delivery-lock-state`) | `components/reui/badge.tsx` |
 | Refusal text, decisions load error | `VideoDeliveryPanel.tsx` (`delivery-problem`) | `components/quincy/Notice.tsx`, as in `VideoCollectionPanel.tsx` |
-| Reason lines (why Release is off, read-only, why premium is off) | `VideoDeliveryPanel.tsx` | Plain `<p>` in the existing `[font:var(--type-label)]` role. No widget. |
+| Reason lines (the empty-state `<p>` `delivery-empty`, why Release is off, read-only, why premium is off, and the premium explanation `<p>`) | `VideoDeliveryPanel.tsx` | Plain `<p>` in the existing `[font:var(--type-label)]` role. No widget. |
