@@ -15,12 +15,22 @@ const COPIED_MS = 2000;
 export function CopyTextButton({ text, label = "Copy link", success = "Link copied.", failure = "Couldn't copy the link.", className }: { text: string; label?: string; success?: string; failure?: string; className?: string }) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<number | undefined>(undefined);
+  const textRef = useRef(text);
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
+  // A new `text` (the one-time reveal moving on to the next queued URL) must not inherit the last URL's "Copied", and a write that was
+  // started for the old text must not mark the new one copied when it resolves late.
+  useEffect(() => {
+    textRef.current = text;
+    window.clearTimeout(timerRef.current);
+    setCopied(false);
+  }, [text]);
 
   function copy() {
     if (!navigator.clipboard?.writeText) { pushToast(failure, "error"); return; }
-    navigator.clipboard.writeText(text).then(
+    const written = text;
+    navigator.clipboard.writeText(written).then(
       () => {
+        if (textRef.current !== written) return;
         setCopied(true);
         pushToast(success);
         window.clearTimeout(timerRef.current);

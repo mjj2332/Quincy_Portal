@@ -429,5 +429,49 @@ describe("one-time URLs are never overwritten", () => {
     await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
     expect(q('input[aria-label="Review link URL"]')).toBeNull();
   });
+
+  async function queueTwoReveals() {
+    state.links = [linkOf(), linkOf({ id: L2, label: "Jones" })];
+    const created = later2();
+    apiPostMock.mockImplementation(async (path) => {
+      if (path.endsWith("/review-links")) return created.promise;
+      if (path.endsWith(`${L2}/replace`)) return { link: linkOf({ id: L2, label: "Jones" }), url: `https://quincy.test/d/review?link=${L2}#t=replaced` };
+      throw new Error(path);
+    });
+    await mount();
+    await press(checkbox("Select Teaser"));
+    await press(buttonIn(q('[data-testid="review-link-selection-bar"]'), "Create Review link"));
+    await press(buttonIn(dialog(), "Create link"));
+    await press(buttonIn(dialog(), "Close"));
+    await openList(); await press(button("Manage Jones"));
+    await confirm("Replace link", "Replace");
+    await act(async () => { created.resolve({ link: linkOf({ id: L1 }), url: `https://quincy.test/d/review?link=${L1}#t=created` }); });
+    await flush();
+  }
+  const copyButton = () => buttonIn(q('[data-testid="review-link-reveal"]'), /Copy|Copied/);
+
+  it("the Copied feedback does not carry over to the next queued URL", async () => {
+    await queueTwoReveals();
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn().mockResolvedValue(undefined) }, configurable: true });
+    await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Copy link"));
+    expect(text(copyButton())).toContain("Copied");
+    await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
+    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toContain("#t=created");
+    expect(text(copyButton())).toContain("Copy link");
+    expect(text(copyButton())).not.toContain("Copied");
+  });
+
+  it("a slow clipboard write for the previous URL cannot mark the next one Copied", async () => {
+    await queueTwoReveals();
+    const slow = later2();
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn().mockReturnValue(slow.promise) }, configurable: true });
+    await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Copy link"));
+    await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
+    await act(async () => { slow.resolve(undefined); });
+    await flush();
+    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toContain("#t=created");
+    expect(text(copyButton())).toContain("Copy link");
+    expect(text(copyButton())).not.toContain("Copied");
+  });
 });
 function later2() { let resolve!: (value: unknown) => void; const promise = new Promise<unknown>((r) => { resolve = r; }); return { promise, resolve }; }
