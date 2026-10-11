@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { crc32 } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { createNativeZip, nativeZipLength, type NativeZipEntry, type ZipObjectEntry } from "../src/lib/zip-native";
+import { createNativeZip, nativeZipLength, planNativeZip, type NativeZipEntry, type ZipObjectEntry } from "../src/lib/zip-native";
 import { drain, hasEocd, parseZip } from "./zip-parse-support";
 
 /** The native ZIP writer (#802): headers carry the CRC-32 and size up front, the R2 bodies are piped natively into one fixed-length stream. */
@@ -130,6 +130,20 @@ describe("createNativeZip", () => {
     const bucket = { get: (key: string, options?: R2GetOptions) => { seen.push(options); return MEDIA.get(key, options); } } as unknown as R2Bucket;
     const { zip, response } = run([first], { bucket }); await drain(response); await zip.done;
     expect(seen[0]).toEqual({ onlyIf: { etagMatches: first.etag } });
+  });
+});
+
+describe("planNativeZip", () => {
+  it("fails on a bad entry before anything is read, and reads nothing until it is opened", async () => {
+    const reads: string[] = []; const bucket = { get: (key: string, options?: R2GetOptions) => { reads.push(key); return MEDIA.get(key, options); } } as unknown as R2Bucket;
+    const first = await put("first", "x");
+    expect(() => planNativeZip({ bucket, entries: [first, { ...first, name: "bad", bytes: -1 }] })).toThrow(/non-negative safe integers/);
+    expect(() => planNativeZip({ bucket, entries: [{ name: "n".repeat(70_000), data: new Uint8Array(0) }] })).toThrow(/too long/);
+    const planned = planNativeZip({ bucket, entries: [first] });
+    expect(planned.length).toBe(nativeZipLength([first]));
+    await new Promise((resolve) => setTimeout(resolve, 20)); expect(reads).toEqual([]);
+    const zip = planned.open(); const { bytes, errored } = await drain(new Response(zip.body)); await zip.done;
+    expect(errored).toBe(false); expect(bytes.length).toBe(planned.length); expect(reads).toEqual([first.r2Key]);
   });
 });
 

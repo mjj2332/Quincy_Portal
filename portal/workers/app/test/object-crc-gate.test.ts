@@ -23,8 +23,8 @@ async function work(name: string, state: "queued" | "running" | "failed", update
   await database.DB.prepare("INSERT OR REPLACE INTO object_crc32_work (r2_key, state, attempts, requested_at, updated_at) VALUES (?, ?, 0, ?, ?)").bind(key(name), state, updatedAt, updatedAt).run();
 }
 const workRows = async () => (await database.DB.prepare("SELECT r2_key FROM object_crc32_work WHERE r2_key LIKE ?").bind(`${prefix}%`).all<{ r2_key: string }>()).results.map((r) => r.r2_key);
-async function assess(subjects: Array<{ name: string; bytes: number }>, media: ReturnType<typeof fakeMedia>, queue: ReturnType<typeof fakeQueue>, enqueue: "never" | "when_blocked" | "always" = "when_blocked", now = Date.now()): Promise<ZipAssessment> {
-  return assessZip({ DB: database.DB, MEDIA: media as never, OBJECT_CRC_QUEUE: queue as never }, subjects.map((s) => ({ r2Key: key(s.name), bytes: s.bytes })), { source: "test", enqueue, now });
+async function assess(subjects: Array<{ name: string; bytes: number }>, media: ReturnType<typeof fakeMedia>, queue: ReturnType<typeof fakeQueue>, enqueue: "never" | "when_blocked" | "always" = "when_blocked", now = Date.now(), headWhenOff = false): Promise<ZipAssessment> {
+  return assessZip({ DB: database.DB, MEDIA: media as never, OBJECT_CRC_QUEUE: queue as never }, subjects.map((s) => ({ r2Key: key(s.name), bytes: s.bytes })), { source: "test", enqueue, now, headWhenOff });
 }
 const setFlag = (on: boolean) => setVideoFlags([NATIVE_ZIP_FLAG, on]);
 
@@ -43,6 +43,21 @@ describe("flag off (missing = off)", () => {
   it("is too_large one byte over 256 MiB, and a flag row that is present but off behaves the same", async () => {
     await setFlag(false);
     expect(await assess([{ name: "a", bytes: ZIP_LEGACY_MAX_BYTES + 1 }], fakeMedia({}), fakeQueue())).toEqual({ kind: "too_large" });
+  });
+});
+
+describe("flag off with headWhenOff (the guest route already HEADed every object)", () => {
+  it("still refuses a missing or resized object, and otherwise stays legacy without touching the queue", async () => {
+    const queue = fakeQueue();
+    expect(await assess([{ name: "a", bytes: 10 }], fakeMedia({}), queue, "when_blocked", Date.now(), true)).toEqual({ kind: "unavailable", reason: "missing" });
+    expect(await assess([{ name: "a", bytes: 10 }], fakeMedia({ [key("a")]: { etag: "e", size: 11 } }), queue, "when_blocked", Date.now(), true)).toEqual({ kind: "unavailable", reason: "changed" });
+    expect(await assess([{ name: "a", bytes: 10 }], fakeMedia({ [key("a")]: { etag: "e", size: 10 } }), queue, "always", Date.now(), true)).toEqual({ kind: "legacy" });
+    expect(queue.sent).toEqual([]);
+  });
+  it("is still too_large before any HEAD", async () => {
+    const media = fakeMedia({});
+    expect(await assess([{ name: "a", bytes: ZIP_LEGACY_MAX_BYTES + 1 }], media, fakeQueue(), "when_blocked", Date.now(), true)).toEqual({ kind: "too_large" });
+    expect(media.heads).toEqual([]);
   });
 });
 

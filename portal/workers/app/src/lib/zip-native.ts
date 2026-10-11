@@ -127,9 +127,26 @@ function plan(entries: readonly NativeZipEntry[], zip32Max: number): Plan {
 /** The exact byte length `createNativeZip` will produce for these entries. */
 export function nativeZipLength(entries: readonly NativeZipEntry[], zip32Max = ZIP32_MAX): number { return plan(entries, zip32Max).length; }
 
-export function createNativeZip(options: NativeZipOptions): NativeZip {
-  const { bucket, authorize } = options;
+export type PlannedNativeZip = {
+  /** Exact byte length of the archive. Known the moment the plan is made. */
+  length: number;
+  /** Starts the pump: from here R2 is read and bytes flow. Call it once, only after everything that must come first (the audit row) is done. */
+  open: () => NativeZip;
+};
+
+/**
+ * Plans the archive without touching R2 or starting a stream. A bad entry (a name over 65535 bytes, a size that is not a safe integer, a total that overflows) throws HERE, so a route that plans
+ * before it writes its audit row leaves no audit row behind a failure.
+ */
+export function planNativeZip(options: NativeZipOptions): PlannedNativeZip {
   const layout = plan(options.entries, options.zip32Max ?? ZIP32_MAX);
+  return { length: layout.length, open: () => openPlanned(options, layout) };
+}
+
+export function createNativeZip(options: NativeZipOptions): NativeZip { return planNativeZip(options).open(); }
+
+function openPlanned(options: NativeZipOptions, layout: Plan): NativeZip {
+  const { bucket, authorize } = options;
   const fixed = new FixedLengthStream(layout.length);
   const out = fixed.writable;
   const write = async (chunk: Uint8Array) => { const writer = out.getWriter(); try { await writer.write(chunk); } finally { writer.releaseLock(); } };

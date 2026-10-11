@@ -86,10 +86,13 @@ async function queuePending(env: GateEnv, keys: readonly string[], work: Map<str
  * With the flag on, EVERY object is HEADed: Dropbox RAW keys are reused across revisions, so a stored row can describe bytes that are gone, and only R2's etag now says whether it still matches.
  * An object is pending when it has no row or its row's etag differs from R2's. The row's own size is not compared with D1's: the etag decides, and the writer checks the size again as it reads.
  */
-export async function assessZip(env: GateEnv, subjects: readonly CrcSubject[], options: { source: string; enqueue: EnqueueMode; now?: number }): Promise<ZipAssessment> {
+export async function assessZip(env: GateEnv, subjects: readonly CrcSubject[], options: { source: string; enqueue: EnqueueMode; now?: number; headWhenOff?: boolean }): Promise<ZipAssessment> {
   const now = options.now ?? Date.now();
   const small = subjects.reduce((total, subject) => total + subject.bytes, 0) <= ZIP_LEGACY_MAX_BYTES;
-  if (!await nativeZipEnabled(env.DB)) return small ? { kind: "legacy" } : { kind: "too_large" };
+  const enabled = await nativeZipEnabled(env.DB);
+  if (!enabled && !small) return { kind: "too_large" };
+  // With the flag off a route keeps what it did before: the guest route already HEADed every object (a missing or resized one fails before byte 0), the staff routes did not.
+  if (!enabled && !options.headWhenOff) return { kind: "legacy" };
 
   const unique = [...new Map(subjects.map((subject) => [subject.r2Key, subject])).values()];
   const heads: Array<{ etag: string; size: number } | null> = [];
@@ -98,6 +101,7 @@ export async function assessZip(env: GateEnv, subjects: readonly CrcSubject[], o
     if (head === null) return { kind: "unavailable", reason: "missing" };
     if (head.size !== unique[index]!.bytes) return { kind: "unavailable", reason: "changed" };
   }
+  if (!enabled) return { kind: "legacy" };
 
   const rows = await loadObjectCrcs(env.DB, unique.map((subject) => subject.r2Key));
   const ready = new Map<string, ObjectCrc>(); const pending: string[] = [];

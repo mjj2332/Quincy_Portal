@@ -6,6 +6,8 @@ import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO } from "../lib/video-live
 import { gateSql, liveSql, reachSql } from "../lib/guest-fence-sql";
 import { VIDEO_STREAM_HEADERS, serveR2Object } from "../lib/r2-serve";
 import { createZipStream, type ZipStreamEntry } from "../lib/zip-stream";
+import { nativeZipResponse, planNativeZip, type NativeZipEntry } from "../lib/zip-native";
+import { assessZip, objectEntry, ZIP_LEGACY_MAX_BYTES, type ZipAssessment } from "../lib/object-crc";
 import type { AppEnv, Env } from "../env";
 import { classifyRefusal, type RefusalScope } from "./fence";
 import { guestNotFound, guestRoute, originRejection, tooMany, UUID } from "./http";
@@ -196,6 +198,20 @@ const bytesStream = (bytes: Uint8Array): ReadableStream<Uint8Array> => new Reada
  * The entries of the zip, one at a time as the archive is pulled. Before EACH entry (the notice included) the session, the Release and the unlock are checked again; losing any throws,
  * which errors the response stream, so the client gets a truncated archive with no central directory and not a complete-looking one.
  */
+/**
+ * The writer's re-authorisation for a guest archive: before each entry's R2 read and again after it answered (a removal during the fetch must not put the removed Version's bytes in the
+ * archive), for the notice, and once more before the central directory. Losing any aborts the stream, so the client sees fewer bytes than the `Content-Length` and the download fails.
+ */
+export function zipAuthorizer(db: D1Database, session: GuestSession, included: Included[]): (entry: NativeZipEntry | null) => Promise<boolean> {
+  const assetByKey = new Map(included.map((entry) => [entry.r2Key, entry.assetId]));
+  return async (entry) => {
+    if (entry === null || "data" in entry) return stillAllowed(db, session, null);
+    const assetId = assetByKey.get(entry.r2Key);
+    return assetId !== undefined && await stillAllowed(db, session, assetId);
+  };
+}
+
+/** The legacy writer's entries (the native writer is used when every CRC-32 is ready). */
 export async function* zipEntries(env: Pick<Env, "DB" | "MEDIA">, session: GuestSession, included: Included[], notice: Uint8Array | null): AsyncGenerator<ZipStreamEntry> {
   for (const entry of included) {
     if (!await stillAllowed(env.DB, session, entry.assetId)) throw new Error("download access lost");
@@ -212,19 +228,41 @@ export async function* zipEntries(env: Pick<Env, "DB" | "MEDIA">, session: Guest
   }
 }
 
+/**
+ * What the gate's refusals look like to a guest. The error string is the stable part; `download_preparing` carries the count and when to ask again. Not a stub: the caller has already passed
+ * every access check, and these only say that the archive cannot be served right now.
+ */
+function archiveRefusal(c: Ctx, assessed: ZipAssessment): Response | null {
+  switch (assessed.kind) {
+    case "too_large": return c.json({ error: "download_too_large", maxBytes: ZIP_LEGACY_MAX_BYTES }, 413);
+    case "unavailable": return c.json({ error: "download_unavailable" }, 502);
+    case "preparing": return c.json({ error: "download_preparing", pending: assessed.pending.length, retryAfterSeconds: assessed.retryAfterSeconds }, 409, { "retry-after": String(assessed.retryAfterSeconds) });
+    default: return null;
+  }
+}
+
 async function downloadAll(c: Ctx): Promise<Response> {
   const entered = await enter(c); if (entered instanceof Response) return entered;
   const { session, guestId, answer } = entered;
-  // Starting a zip is the costly thing, so it is the only download with a quota, and a HEAD must not spend it, write an audit row or build anything.
+  // A HEAD must not write an audit row or build anything.
   if (c.req.method === "HEAD") return answer(c.json({ error: "method_not_allowed" }, 405, { allow: "GET" }));
-  const attempt = await reserveAttempts(c.env.DB, [{ bucket: `zip:guest:${guestId}`, limit: GUEST_LIMITS.zipGuest }, { bucket: `zip:link:${session.link.id}`, limit: GUEST_LIMITS.zipLink }], Date.now());
-  if (attempt.limited) return answer(tooMany(attempt.retryAfterSeconds));
   const { included, leftOut } = await readDownloadSet(c.env.DB, session.link.id, session.link.projectId);
   if (included.length === 0) return answer(c.json({ error: "nothing_to_download" }, 409));
   if (tooLarge(included)) return answer(c.json({ error: "zip_too_large", maxEntries: GUEST_ZIP_MAX_ENTRIES, maxBytes: GUEST_ZIP_MAX_BYTES }, 422));
-  // A missing or resized object fails here, before byte 0 and before the audit row, and not halfway through an archive.
-  const heads = await Promise.all(included.map((entry) => c.env.MEDIA.head(entry.r2Key)));
-  if (heads.some((head, index) => head === null || head.size !== included[index]!.bytes)) return answer(c.json({ error: "download_unavailable" }, 502));
+  // The gate: a missing or resized object fails here, before byte 0 and before the audit row, and so does a set whose CRC-32s are still being prepared or that is too big for the old writer.
+  const assessed = await assessZip(c.env, included, { source: "guest-download-all", enqueue: "when_blocked", headWhenOff: true });
+  const refusal = archiveRefusal(c, assessed); if (refusal) return answer(refusal);
+  const notice = leftOutText(leftOut);
+  // Plan before the audit row, so an archive that cannot be built leaves no audit row behind it.
+  const planned = assessed.kind === "native" ? (() => {
+    const entries: NativeZipEntry[] = included.map((entry) => objectEntry(entryName(entry.title, entry.version), entry.r2Key, assessed.ready));
+    if (notice) entries.push({ name: "Left out.txt", data: notice });
+    return planNativeZip({ bucket: c.env.MEDIA, entries, authorize: zipAuthorizer(c.env.DB, session, included) });
+  })() : null;
+  // Starting a zip is the costly thing, so it is the only download with a quota. It is spent only here, on a start that has passed every check and is about to be audited: preparing, a refusal or a
+  // failed plan never costs a start.
+  const attempt = await reserveAttempts(c.env.DB, [{ bucket: `zip:guest:${guestId}`, limit: GUEST_LIMITS.zipGuest }, { bucket: `zip:link:${session.link.id}`, limit: GUEST_LIMITS.zipLink }], Date.now());
+  if (attempt.limited) return answer(tooMany(attempt.retryAfterSeconds));
   const at = Date.now();
   const written = await c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?1, NULL, 'review_link.download_all', 'review_link', l.id, ?2, ?3 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE ${sessionFence({ session: "?4", token: "?5", guest: "?6", now: "?3" })}`)
@@ -233,8 +271,10 @@ async function downloadAll(c: Ctx): Promise<Response> {
       assetIds: included.map((entry) => entry.assetId), leftOut: leftOut.map(({ videoId, reason }) => ({ videoId, reason })), totalBytes: totalOf(included),
     }), at, session.id, session.tokenHash, guestId).run();
   if (written.meta.changes === 0) return refusedBecause(c, session, undefined);
-  const stream = createZipStream(zipEntries(c.env, session, included, leftOutText(leftOut)));
-  return new Response(stream, { status: 200, headers: { ...SECURITY_HEADERS, "content-type": "application/zip", "content-disposition": attachment(`${safeFileName(session.link.label ?? "Videos")}.zip`) } });
+  const filename = attachment(`${safeFileName(session.link.label ?? "Videos")}.zip`);
+  if (planned) return nativeZipResponse(planned.open(), (promise) => c.executionCtx.waitUntil(promise), { ...SECURITY_HEADERS, "content-disposition": filename });
+  const stream = createZipStream(zipEntries(c.env, session, included, notice));
+  return new Response(stream, { status: 200, headers: { ...SECURITY_HEADERS, "content-type": "application/zip", "content-disposition": filename } });
 }
 
 export function mountGuestDownloads(app: Hono<AppEnv>): void {
