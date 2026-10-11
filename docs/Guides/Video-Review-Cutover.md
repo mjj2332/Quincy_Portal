@@ -56,8 +56,22 @@ commands below leave `updated_by` null.
      `video_review_links` and `video_review_guest`, using the `INSERT … ON CONFLICT` shape from section 2. Leave
      `guest_comments`, `notify_staff` and `notify_client` **off**.
   2. On the test Project, upload a short Version and create a Review link. Open it in a private
-     window, request a code to two addresses that are **not** verified Email Routing destinations
-     (otherwise the probe proves nothing), and confirm both codes arrive in the inbox, not spam.
+     window. With `guest_comments` and `notify_*` off the page shows no "Add a note" or email
+     prompt, so request the code from that window's DevTools instead:
+     - In the Network tab, find any `/d/api/links/<linkId>/…` request the page made and copy the
+       `<linkId>`.
+     - In the Console of the same tab (same origin, so the guest cookie and `Origin` header go with
+       it), run:
+       ```js
+       await fetch("/d/api/links/<linkId>/email/code", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "first@example.com" }) }).then(async (r) => [r.status, await r.json()])
+       ```
+       Expect `[202, { sent: true, resendAfterSeconds: 60 }]`. A 403 `invalid_origin` means it was
+       run from another tab; a 404 means one of the five flags is missing.
+     - Use a **second private window** for the second address: once a session has a code, a
+       different address on the same session needs a fresh session, and the same session can send
+       again only after 60 seconds.
+     Use two addresses that are **not** verified Email Routing destinations (otherwise the probe
+     proves nothing), and confirm both codes arrive in the inbox, not spam.
   3. Remove the temporary rows with the section 4 `DELETE`, using the same five keys.
 
   If either code fails to arrive, stop and reopen the sender choice. Workers Paid is confirmed on
