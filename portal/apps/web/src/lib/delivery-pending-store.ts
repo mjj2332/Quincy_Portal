@@ -7,7 +7,7 @@ import { onPrincipalTerminal } from "./principal-terminal";
  * See docs/lessons.md "Form lifetime is not component lifetime".
  */
 export type PendingPublish = { id: string; body: { assetIds: string[]; coverAssetId: string | null; expectedLatestSet: number | null } };
-const bySession = new WeakMap<object, Map<string, PendingPublish>>();
+let bySession = new WeakMap<object, Map<string, PendingPublish>>();
 export const readPendingPublish = (session: object, projectId: string): PendingPublish | null => bySession.get(session)?.get(projectId) ?? null;
 export function writePendingPublish(session: object, projectId: string, pending: PendingPublish | null): void {
   let projects = bySession.get(session);
@@ -15,4 +15,5 @@ export function writePendingPublish(session: object, projectId: string, pending:
   if (!projects) { projects = new Map(); bySession.set(session, projects); }
   projects.set(projectId, pending);
 }
-onPrincipalTerminal((session) => { if (session) bySession.delete(session); });
+// A notice with no session ends every session this tab held.
+onPrincipalTerminal((session) => { if (session) bySession.delete(session); else bySession = new WeakMap(); });
