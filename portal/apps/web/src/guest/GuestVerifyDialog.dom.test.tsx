@@ -7,8 +7,8 @@ import { GuestVerifyDialog } from "./GuestVerifyDialog";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const SESSION: GuestSessionResponse = { link: { label: null, expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: true, approve: false, download: false, markup: true } }, verified: true, email: "sam@example.com", name: "Sam" };
-const UNVERIFIED: GuestSessionResponse = { ...SESSION, verified: false, email: null, name: null };
+const SESSION: GuestSessionResponse = { link: { label: null, expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: true, approve: false, download: false, markup: true } }, verified: true, email: "sam@example.com", name: "Sam", notifications: null };
+const UNVERIFIED: GuestSessionResponse = { ...SESSION, verified: false, email: null, name: null, notifications: null };
 
 let sendCode: ReturnType<typeof vi.fn<(email: string) => Promise<SendCodeResult>>>;
 let verifyCode: ReturnType<typeof vi.fn<(code: string, name: string) => Promise<VerifyResult>>>;

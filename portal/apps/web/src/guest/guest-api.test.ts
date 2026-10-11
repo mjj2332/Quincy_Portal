@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createGuestApi } from "./guest-api";
+import { createGuestApi, postUnsubscribe } from "./guest-api";
 
 const LINK = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ASSET = "00000000-0000-4000-8000-000000000010";
@@ -8,7 +8,7 @@ const thread = (over: Record<string, unknown> = {}) => ({
   id: NOTE, parentId: null, author: { kind: "guest", name: "Sam", self: true }, startFrame: 50, endFrame: null, drawingFrame: null, hasMarkup: false, body: "Hi", deleted: false, revision: 1,
   resolved: false, createdAt: "2026-10-09T01:00:00.000Z", editedAt: null, replies: [], ...over,
 });
-const SESSION = { link: { label: null, expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: true, approve: false, download: false, markup: true } }, verified: true, email: "sam@example.com", name: "Sam" };
+const SESSION = { link: { label: null, expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: true, approve: false, download: false, markup: true } }, verified: true, email: "sam@example.com", name: "Sam", notifications: null };
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -118,6 +118,21 @@ describe("guest-api: note writes", () => {
   it("treats a success body that fails the schema as unreachable, never as an applied write", async () => {
     answer(json({ id: "nope" }, 201));
     expect(await api().createNote(ASSET, { startFrame: 1, body: "x" })).toEqual({ kind: "unreachable" });
+  });
+});
+
+describe("postUnsubscribe: body read failures (#741 15b)", () => {
+  it("maps a 200 whose body cannot be read to transient, so Retry stays available", async () => {
+    const dropped = new Response("{}", { status: 200 });
+    vi.spyOn(dropped, "json").mockRejectedValue(new TypeError("network connection lost"));
+    answer(dropped);
+    expect(await postUnsubscribe("tok")).toEqual({ kind: "transient" });
+  });
+  it("still maps a 200 whose body fails the schema to gone, and a good body to ok", async () => {
+    answer(json({ subscribed: "yes" }));
+    expect(await postUnsubscribe("tok")).toEqual({ kind: "gone" });
+    answer(json({ subscribed: false }));
+    expect(await postUnsubscribe("tok")).toEqual({ kind: "ok", subscribed: false });
   });
 });
 

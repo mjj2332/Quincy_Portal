@@ -17,7 +17,7 @@ const vid = (n: number) => `11111111-1111-4111-8111-${String(n).padStart(12, "0"
 const allow = (over: Partial<GuestSessionResponse["link"]["allow"]> = {}) => ({ comments: true, approve: true, download: true, markup: true, ...over });
 const sessionOf = (over: { verified?: boolean; allow?: Partial<GuestSessionResponse["link"]["allow"]> } = {}): GuestSessionResponse => ({
   link: { label: "Smith house", expiresAt: "2026-11-01T00:00:00.000Z", allow: allow(over.allow) },
-  verified: over.verified ?? true, email: over.verified === false ? null : "sam@example.com", name: over.verified === false ? null : "Sam",
+  verified: over.verified ?? true, email: over.verified === false ? null : "sam@example.com", name: over.verified === false ? null : "Sam", notifications: null,
 });
 const decisionOf = (value: "approved" | "changes_requested", revision = 1) => ({ value, revision, at: "2026-10-10T01:00:00.000Z", self: true });
 
