@@ -18,7 +18,7 @@ async function executeSql(source: string): Promise<void> {
   }
 }
 const row = (key: string) => database.DB.prepare("SELECT r2_key, crc32, bytes, etag, computed_at FROM object_crc32 WHERE r2_key = ?").bind(key).first<{ r2_key: string; crc32: number; bytes: number; etag: string; computed_at: number }>();
-const work = (key: string) => database.DB.prepare('SELECT r2_key, etag, bytes, "offset", crc_partial, state, attempts, last_error FROM object_crc32_work WHERE r2_key = ?').bind(key).first<{ r2_key: string; etag: string | null; bytes: number | null; offset: number; crc_partial: number; state: string; attempts: number; last_error: string | null }>();
+const work = (key: string) => database.DB.prepare('SELECT r2_key, etag, bytes, "offset", crc_partial, state, attempts, last_error, generation FROM object_crc32_work WHERE r2_key = ?').bind(key).first<{ r2_key: string; etag: string | null; bytes: number | null; offset: number; crc_partial: number; state: string; attempts: number; last_error: string | null; generation: number }>();
 const random = (length: number) => { const out = new Uint8Array(length); for (let at = 0; at < length; at += 65_536) crypto.getRandomValues(out.subarray(at, Math.min(length, at + 65_536))); return out; };
 const start = (r2Key: string): ObjectCrcMessage => ({ type: "object_crc32", r2Key });
 
@@ -220,8 +220,46 @@ describe("processObjectCrc, failures", () => {
   it("a failure on a stale continuation does not mark the newer run failed", async () => {
     const key = `${prefix}stale-fail`; await database.MEDIA.put(key, random(2 * MIB)); const { env: job } = jobEnv(); await processObjectCrc(job, start(key), { rangeBytes: MIB });
     const media = { head: () => { throw new Error("late failure"); }, get: async () => null };
-    expect(await processObjectCrc(jobEnv(undefined, media).env, { type: "object_crc32", r2Key: key, etag: "old", offset: 0 }, { rangeBytes: MIB, attempts: 3 })).toBe("failed");
+    expect(await processObjectCrc(jobEnv(undefined, media).env, { type: "object_crc32", r2Key: key, etag: "old", offset: 0 }, { rangeBytes: MIB, attempts: 3 })).toBe("stale");
     expect(await work(key)).toMatchObject({ state: "queued" });
+  });
+});
+
+describe("processObjectCrc, ownership of a failure", () => {
+  const plant = (key: string, etag: string, offset: number, state = "queued", generation = 5) =>
+    database.DB.prepare(`INSERT INTO object_crc32_work (r2_key, etag, bytes, "offset", crc_partial, state, attempts, requested_at, updated_at, generation) VALUES (?1, ?2, 100, ?3, 0, ?4, 0, 1, 1, ?5)`).bind(key, etag, offset, state, generation).run();
+
+  it("a start that fails before it claims anything does not fail the run that holds the row", async () => {
+    const key = `${prefix}own-start`; await database.MEDIA.put(key, "x"); await plant(key, "newer-etag", 40, "running");
+    const before = await work(key); const broken = { head: async () => { throw new Error("head failed"); }, get: async () => null };
+    expect(await processObjectCrc(jobEnv(undefined, broken).env, start(key), { rangeBytes: MIB, attempts: 3 })).toBe("failed");
+    expect(await work(key)).toEqual(before);
+  });
+
+  it("an owner displaced by a takeover cannot fail, advance or finish the run that took over", async () => {
+    const key = `${prefix}own-displaced`; const data = random(2 * MIB); await database.MEDIA.put(key, data);
+    const takeover = { head: (k: string) => database.MEDIA.head(k), get: async () => { await database.DB.prepare("UPDATE object_crc32_work SET generation = generation + 1, attempts = 0 WHERE r2_key = ?").bind(key).run(); throw new Error("late failure"); } };
+    expect(await processObjectCrc(jobEnv(undefined, takeover).env, start(key), { rangeBytes: MIB, attempts: 3 })).toBe("failed");
+    expect(await work(key)).toMatchObject({ state: "running", last_error: null, generation: 2 });
+    const slow = { head: (k: string) => database.MEDIA.head(k), get: async (k: string, o: R2GetOptions) => { await database.DB.prepare("UPDATE object_crc32_work SET generation = generation + 1 WHERE r2_key = ?").bind(key).run(); return database.MEDIA.get(k, o); } };
+    const { env: job, queue } = jobEnv(undefined, slow); await database.DB.prepare("UPDATE object_crc32_work SET state = 'queued' WHERE r2_key = ?").bind(key).run();
+    expect(await processObjectCrc(job, start(key), { rangeBytes: MIB })).toBe("stale");
+    expect(queue.sent).toEqual([]); expect(await row(key)).toBeNull();
+  });
+
+  it("an obsolete continuation that sees the object gone does not fail the run that replaced it", async () => {
+    const key = `${prefix}own-obsolete`; await plant(key, "replacement", 40, "queued");
+    const before = await work(key);
+    expect(await processObjectCrc(jobEnv().env, { type: "object_crc32", r2Key: key, etag: "old", offset: 0 }, { rangeBytes: MIB })).toBe("stale");
+    expect(await processObjectCrc(jobEnv().env, { type: "object_crc32", r2Key: key, etag: "replacement", offset: 0 }, { rangeBytes: MIB })).toBe("stale");
+    expect(await work(key)).toEqual(before);
+  });
+
+  it("a start for a gone object fails only a row nobody has begun, and leaves a run in progress to its own continuation", async () => {
+    const fresh = `${prefix}own-gone-fresh`; await database.DB.prepare("INSERT INTO object_crc32_work (r2_key, state, requested_at, updated_at) VALUES (?, 'queued', 1, 1)").bind(fresh).run();
+    expect(await processObjectCrc(jobEnv().env, start(fresh), { rangeBytes: MIB })).toBe("missing"); expect(await work(fresh)).toMatchObject({ state: "failed" });
+    const running = `${prefix}own-gone-running`; await plant(running, "e", 40); const before = await work(running);
+    expect(await processObjectCrc(jobEnv().env, start(running), { rangeBytes: MIB })).toBe("missing"); expect(await work(running)).toEqual(before);
   });
 });
 

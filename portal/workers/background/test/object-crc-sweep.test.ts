@@ -80,6 +80,14 @@ describe("sweepObjectCrcs", () => {
     expect(queue.sendBatch).not.toHaveBeenCalled(); expect(await workRows()).toEqual([]);
   });
 
+  it("includes a superseded RAW that is still selected for editing, as selected-raw.zip does, and not one that is merely superseded", async () => {
+    const selected = await asset({ collection: "raw", superseded: true }); const plain = await asset({ collection: "raw", superseded: true });
+    await run("INSERT INTO selections (id, asset_id, selected_by, state, created_at) VALUES (?, ?, ?, 'selected_for_editing', ?)", id(), selected.id, userId, NOW);
+    const queue = fakeQueue();
+    expect(await sweepObjectCrcs({ DB: database.DB, OBJECT_CRC_QUEUE: queue as never }, NOW)).toEqual({ candidates: 1, queued: 1 });
+    expect(keys(queue)).toEqual([selected.key]); expect(plain.key).not.toBe(selected.key);
+  });
+
   it("picks only the keys with no stored CRC and no live work row", async () => {
     const stored = await asset({ collection: "raw" }); const live = await asset({ collection: "raw" }); const failed = await asset({ collection: "raw" }); const missing = await asset({ collection: "raw" });
     await crcRow(stored.key); await workRow(live.key, "queued", NOW - 60_000); await workRow(failed.key, "failed", NOW - 99 * CRC_STALE_MS);

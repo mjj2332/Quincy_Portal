@@ -5,6 +5,7 @@
 -- There is no foreign key on purpose: a row outlives the asset that pointed at it and is harmless, because a ZIP entry is only written when the stored etag still matches the object.
 -- object_crc32_work is the job state of the background CRC computation. One row per object being worked on, keyed by R2 key: queued (waiting for the next range), running (a range is being read) or failed (retries exhausted, last_error says why).
 -- A row carries the running CRC-32 (crc_partial) and the byte offset reached, so an object of any size is read in ranges of at most 512 MiB, one queue message each, and resumed rather than restarted.
+-- generation counts the claims of the row. Whoever claims a range holds the generation it got, and every later write of that owner (advance, finish, failure) is fenced on it, so a duplicate or displaced delivery can never fail or move a run it does not hold.
 -- etag and bytes stay NULL until the first range reads the object (a sweep queues keys it has never seen). Rows are short lived: the final range upserts object_crc32 and deletes the row in one batch.
 -- Rollback: a code rollback is safe. Dropping the table means a D1 Time Travel restore, which loses every write since the bookmark. A dropped table only costs a recompute.
 -- No trigger and no semicolon inside a comment: the worker test harness splits this file on semicolons.
@@ -27,5 +28,6 @@ CREATE TABLE object_crc32_work (
   requested_at integer NOT NULL CHECK (typeof(requested_at) = 'integer'),
   updated_at integer NOT NULL CHECK (typeof(updated_at) = 'integer'),
   last_error text,
+  generation integer NOT NULL DEFAULT 0 CHECK (typeof(generation) = 'integer' AND generation >= 0),
   CHECK ((etag IS NULL) = (bytes IS NULL))
 );

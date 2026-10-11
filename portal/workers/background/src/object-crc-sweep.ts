@@ -6,7 +6,7 @@ import type { Env } from "./env";
  * The hourly object CRC sweep (#802): backfill, and the repair path for a lost send or a run that went quiet. It queues the CRC job for every original a zip route can include that has no stored CRC
  * and no live work row. Eligible, as the three zip routes include them (`selected-raw.zip` and `download-selection` in `routes/projects.ts`, Download all in `guest/download.ts`): photos in a RAW
  * collection, photos in an Edited collection once published (`ready`), and video Versions with a live Release whose Version and Video are not in Trash. Superseded photos are not offered by Download
- * Selection, so they are left out. A `failed` work row is skipped for good, and a queued or running row is live until it has been quiet for ten minutes.
+ * Selection, so they are left out, except a superseded RAW that is still selected for editing, which `selected-raw.zip` includes. A `failed` work row is skipped for good, and a queued or running row is live until it has been quiet for ten minutes.
  */
 export const OBJECT_CRC_SWEEP_LIMIT = 500;
 /** D1 statements per `batch`. */
@@ -15,6 +15,8 @@ const WORK_ROW_BATCH = 100;
 const ELIGIBLE = `
   SELECT a.r2_key AS r2_key, a.created_at AS at FROM assets a JOIN collections c ON c.id = a.collection_id
     WHERE a.kind = 'photo' AND a.superseded_at IS NULL AND (c.kind = 'raw' OR (c.kind = 'edited' AND a.publish_status = 'ready'))
+  UNION ALL
+  SELECT a.r2_key, a.created_at FROM assets a JOIN collections c ON c.id = a.collection_id AND c.kind = 'raw' JOIN selections s ON s.asset_id = a.id AND s.state = 'selected_for_editing'
   UNION ALL
   SELECT a.r2_key, a.created_at FROM assets a JOIN video_releases r ON r.asset_id = a.id AND r.withdrawn_at IS NULL
     JOIN video_version_meta m ON m.asset_id = a.id AND m.removed_at IS NULL JOIN videos v ON v.id = m.video_id AND v.removed_at IS NULL

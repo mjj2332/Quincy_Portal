@@ -82,6 +82,12 @@ describe("object_crc32_work, the resumable job's state (#802)", () => {
     expect((db.prepare("SELECT count(*) AS n FROM object_crc32_work").get() as { n: number }).n).toBe(3);
   });
 
+  it("carries a generation, 0 by default, that fences each owner of a row", () => {
+    const db = migrated();
+    insertWork(db, work({ r2_key: "default" })); insertWork(db, work({ r2_key: "later", generation: 7 }));
+    expect(db.prepare("SELECT r2_key, generation FROM object_crc32_work ORDER BY r2_key").all()).toEqual([{ r2_key: "default", generation: 0 }, { r2_key: "later", generation: 7 }]);
+  });
+
   it("is keyed by R2 key", () => {
     const db = migrated();
     insertWork(db, work());
@@ -90,7 +96,7 @@ describe("object_crc32_work, the resumable job's state (#802)", () => {
 
   it("rejects an unknown state, a partial CRC outside unsigned 32 bits, a negative offset or attempts, an offset past the size, and non-integer times", () => {
     const db = migrated();
-    for (const bad of [{ state: "done" }, { state: null }, { crc_partial: -1 }, { crc_partial: 4_294_967_296 }, { crc_partial: "x" }, { offset: -1 }, { offset: "x" }, { offset: 11 }, { bytes: -1 }, { attempts: -1 }, { attempts: "x" }, { etag: "" }, { r2_key: "" }, { requested_at: "x" }, { updated_at: "x" }, { etag: null, bytes: 10 }, { etag: null, bytes: null, offset: 1 }]) {
+    for (const bad of [{ state: "done" }, { state: null }, { crc_partial: -1 }, { crc_partial: 4_294_967_296 }, { crc_partial: "x" }, { offset: -1 }, { offset: "x" }, { offset: 11 }, { bytes: -1 }, { attempts: -1 }, { attempts: "x" }, { generation: -1 }, { generation: "x" }, { etag: "" }, { r2_key: "" }, { requested_at: "x" }, { updated_at: "x" }, { etag: null, bytes: 10 }, { etag: null, bytes: null, offset: 1 }]) {
       expect(() => insertWork(db, work(bad)), JSON.stringify(bad)).toThrow();
     }
   });
