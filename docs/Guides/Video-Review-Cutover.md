@@ -48,10 +48,20 @@ commands below leave `updated_by` null.
   `cfr-25-v2-notes-all-public.fcpxml` (also `cfr-25-v2-notes-all-with-internal.edl`) into your
   editor. Confirm every marker lands on the right frame and carries the right note text. Do not
   pilot if a marker is off.
-- [ ] **Email probe.** One guest verification code reaches an **unverified** address from
-  production or a preview deploy. Workers Paid is confirmed on #741. Set-up reference:
-  `docs/Guides/Cloudflare-Email-Service-Setup.md`. Do this before turning on `guest_comments` or
-  `notify_client`.
+- [ ] **Email probe, on a throwaway test Project** (`docs/plans/741-13-15.md`, "Email proof, two
+  steps"). There is no preview deploy, and the guest flow is pinned to the production
+  `APP_ORIGIN`. The code route also answers 404 unless the master flag, Project scope and `guest`
+  are all on, so the probe needs temporary flags on a **test** Project, never a client Project:
+  1. Enable `video_review`, `video_review_pilot:<testProjectId>`, `video_review_upload`,
+     `video_review_links` and `video_review_guest`, using the `INSERT … ON CONFLICT` shape from section 2. Leave
+     `guest_comments`, `notify_staff` and `notify_client` **off**.
+  2. On the test Project, upload a short Version and create a Review link. Open it in a private
+     window, request a code to two addresses that are **not** verified Email Routing destinations
+     (otherwise the probe proves nothing), and confirm both codes arrive in the inbox, not spam.
+  3. Remove the temporary rows with the section 4 `DELETE`, using the same five keys.
+
+  If either code fails to arrive, stop and reopen the sender choice. Workers Paid is confirmed on
+  #741. Set-up reference: `docs/Guides/Cloudflare-Email-Service-Setup.md`.
 - [ ] **Migrations 0068 and 0069 applied.** Read-only; the output must say
   "No migrations to apply" (`docs/Guides/CI-Deploy.md:13`):
   ```sh
