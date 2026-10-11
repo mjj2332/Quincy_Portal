@@ -97,6 +97,8 @@ function PasteFlow({ opening, api, writer, video, target, markupAllowed, generat
   const [previewAttempt, setPreviewAttempt] = useState(0);
   const [view, setView] = useState<View>({ plan: null, status: "idle", error: null, key: null, ids: null });
   const [unticked, setUnticked] = useState<ReadonlySet<string>>(() => new Set());
+  /** Notes a plan has reported as skipped (any reason), by id: they have no tick, so past the cap they neither count toward it nor go in the commit. A later plan's mapped row takes a note back out. */
+  const [leftOut, setLeftOut] = useState<ReadonlyMap<string, Skipped>>(() => new Map());
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -104,6 +106,11 @@ function PasteFlow({ opening, api, writer, video, target, markupAllowed, generat
   const previewCalls = useRef(0);
   /** How many times in a row the writer answered `busy` for a preview (it should not, since each key is its own). */
   const busyRetries = useRef(0);
+  const learn = (rows: GuestNotePastePreviewResponse["rows"]) => setLeftOut((current) => {
+    const next = new Map(current);
+    for (const row of rows) { if (row.status === "skipped") next.set(row.noteId, row); else next.delete(row.noteId); }
+    return next;
+  });
   const pairKey = `${source?.assetId ?? ""}|${target.assetId}`;
 
   // The offset field is always live; the plan follows it once it has rested.
@@ -118,7 +125,7 @@ function PasteFlow({ opening, api, writer, video, target, markupAllowed, generat
     if (source === undefined) return;
     const started = generation.current;
     let live = true;
-    setOwn({ status: "loading" }); setAskedNotes(null); setView({ plan: null, status: "idle", error: null, key: null, ids: null }); setUnticked(new Set()); setNotice(null); setFailure(null);
+    setOwn({ status: "loading" }); setAskedNotes(null); setView({ plan: null, status: "idle", error: null, key: null, ids: null }); setUnticked(new Set()); setLeftOut(new Map()); setNotice(null); setFailure(null);
     void api.notes(source.assetId).then((result) => {
       if (!live || generation.current !== started) return;
       if (result.kind === "gone") { onGone(); return; }
@@ -134,7 +141,7 @@ function PasteFlow({ opening, api, writer, video, target, markupAllowed, generat
   // Which notes the plan is for: all of them, or (with more than one request can carry) the ticked ones. More than the cap ticked is a state with no plan: Paste waits for the guest.
   const ids = own.status === "ready" && own.sourceId === source?.assetId ? own.ids : null;
   const overflow = ids !== null && ids.length > GUEST_NOTE_PASTE_MAX;
-  const tickedIds = ids === null ? [] : overflow ? ids.filter((id) => !unticked.has(id)) : ids;
+  const tickedIds = ids === null ? [] : overflow ? ids.filter((id) => !unticked.has(id) && !leftOut.has(id)) : ids;
   const overLimit = tickedIds.length > GUEST_NOTE_PASTE_MAX;
   const previewKey = ids === null || tickedIds.length === 0 || overLimit ? null : tickedIds.join(",");
   useEffect(() => {
@@ -156,7 +163,7 @@ function PasteFlow({ opening, api, writer, video, target, markupAllowed, generat
     let live = true;
     let retry: ReturnType<typeof setTimeout> | undefined;
     setView((current) => ({ ...current, status: "loading", error: null }));
-    void writer.run(`paste-preview:${target.assetId}:${opening}:${call}`, () => api.previewPaste(target.assetId, { sourceAssetId: source.assetId, noteIds, offsetFrames: asked })).then((result) => {
+    void writer.run(`paste-preview:${target.assetId}:${opening}:${call}`, () => api.previewPaste(target.assetId, { sourceAssetId: source.assetId, noteIds, offsetFrames: asked }), () => live && generation.current === started).then((result) => {
       if (!live || generation.current !== started) return;
       if (result.kind === "stale") return;
       if (result.kind === "busy") {
@@ -165,7 +172,7 @@ function PasteFlow({ opening, api, writer, video, target, markupAllowed, generat
         busyRetries.current = 0; setView((current) => ({ ...current, status: "failed", error: "Couldn't load the preview. Try again." })); return;
       }
       busyRetries.current = 0;
-      if (result.kind === "ok" || result.kind === "changed") { setView({ plan: result.kind === "ok" ? result.value : result.preview, status: "ok", error: null, key, ids: result.kind === "ok" ? askedKey : result.preview.rows.map((row) => row.noteId).join(",") }); return; }
+      if (result.kind === "ok" || result.kind === "changed") { learn(result.kind === "ok" ? result.value.rows : result.preview.rows); setView({ plan: result.kind === "ok" ? result.value : result.preview, status: "ok", error: null, key, ids: result.kind === "ok" ? askedKey : result.preview.rows.map((row) => row.noteId).join(",") }); return; }
       const text = pasteFailureText(result, "preview");
       if (text === null) { onClose(); return; } // verification lost, link gone or archived: the page has already been told
       setView((current) => ({ ...current, status: "failed", error: text }));
@@ -177,8 +184,12 @@ function PasteFlow({ opening, api, writer, video, target, markupAllowed, generat
 
   const plan = view.key === pairKey ? view.plan : null;
   const mapped = useMemo(() => (plan?.rows ?? []).filter((row): row is Mapped => row.status === "mapped"), [plan]);
-  const left = useMemo(() => (plan?.rows ?? []).filter((row): row is Skipped => row.status === "skipped"), [plan]);
-  const chosen = mapped.filter((row) => !unticked.has(row.noteId));
+  // The notes left out include those an earlier plan left out and the plan on show no longer asks about.
+  const left = useMemo(() => {
+    const inPlan = new Set((plan?.rows ?? []).map((row) => row.noteId));
+    return [...(plan?.rows ?? []).filter((row): row is Skipped => row.status === "skipped"), ...(plan === null ? [] : [...leftOut.values()].filter((row) => !inPlan.has(row.noteId)))];
+  }, [plan, leftOut]);
+  const chosen = mapped.filter((row) => !unticked.has(row.noteId) && !leftOut.has(row.noteId));
   const settled = plan !== null && view.status === "ok" && plan.offsetFrames === offset && previewKey !== null && covered(view.ids, tickedIds, unticked);
   // The rows follow the guest's own order. A note the plan was not asked about (unticked past the cap) is a row too, so it can be ticked; one the plan left out is under "Left out".
   const rows = useMemo(() => {
@@ -209,7 +220,7 @@ function PasteFlow({ opening, api, writer, video, target, markupAllowed, generat
     switch (result.kind) {
       case "busy": setFailure("Still pasting. Wait a moment, then try again."); return;
       case "ok": onPasted({ copied: result.value.copied, sourceVersion: result.value.sourceVersion }); onClose(); return;
-      case "changed": setView({ plan: result.preview, status: "ok", error: null, key: pairKey, ids: result.preview.rows.map((row) => row.noteId).join(",") }); setNotice("Some of your notes changed since you looked. Check the list, then paste again."); return;
+      case "changed": learn(result.preview.rows); setView({ plan: result.preview, status: "ok", error: null, key: pairKey, ids: result.preview.rows.map((row) => row.noteId).join(",") }); setNotice("Some of your notes changed since you looked. Check the list, then paste again."); return;
       case "unverified": case "gone": case "archived": onClose(); return;
       case "unreachable": onPasted(null); setFailure(pasteFailureText(result, "commit")); return;
       default: setFailure(pasteFailureText(result, "commit"));

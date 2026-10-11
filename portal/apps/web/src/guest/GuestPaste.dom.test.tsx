@@ -293,6 +293,65 @@ describe("a guest with more notes than one paste may carry", () => {
   });
 });
 
+describe("notes the plan leaves out do not count toward the cap", () => {
+  it("lets note 61 be ticked and pasted alone when the first 60 already preview as already copied", async () => {
+    notes = { [SOURCE]: Array.from({ length: 61 }, (_, index) => mine(index + 1, { startFrame: 10 + index })) };
+    extra = (url, init) => {
+      if (init?.method !== "POST") return undefined;
+      if (url === PREVIEW_URL) {
+        const ids = (JSON.parse(String(init.body)) as { noteIds: string[] }).noteIds.map((id) => Number(id.slice(-12)));
+        return json(plan(ids.map((n) => (n === 61 ? mapped(n) : skipped(n, "already_copied")))));
+      }
+      if (url === COMMIT_URL) return json(receipt([copied(61, 99)], 1));
+      return undefined;
+    };
+    await open();
+    await openDialog();
+    await click(allById("guest-paste-tick").at(-1));
+    await wait(400);
+    expect(byId("guest-paste-dialog")?.textContent).not.toContain("Copy up to 60 notes at a time");
+    expect(byId("guest-paste-submit")?.hasAttribute("disabled")).toBe(false);
+    await click(byId("guest-paste-submit"));
+    expect((pasteCalls(COMMIT_URL)[0]?.body as { notes: Array<{ noteId: string }> }).notes.map((entry) => entry.noteId)).toEqual([noteId(61)]);
+  });
+});
+
+describe("a preview that is no longer the current one", () => {
+  const THREE = () => [videoOf(1, [versionOf(3), versionOf(2), versionOf(1)])];
+  const URL3 = `${BASE}/versions/${asset(3)}/note-paste/preview`;
+  const sourceOf = (init: RequestInit) => (JSON.parse(String(init.body)) as { sourceAssetId: string }).sourceAssetId;
+  it("sends the guest nowhere when its late 404 arrives after the source was switched to a reachable Version", async () => {
+    videos = THREE();
+    notes = { [asset(2)]: [mine(7)], [asset(1)]: [mine(8)] };
+    let release: (response: Response) => void = () => undefined;
+    const held = new Promise<Response>((resolve) => { release = resolve; });
+    extra = (url, init) => {
+      if (url !== URL3 || init?.method !== "POST") return undefined;
+      return sourceOf(init) === asset(2) ? held : json({ sourceVersion: 1, targetVersion: 3, offsetFrames: 0, rows: [mapped(8)] });
+    };
+    await open();
+    await openDialog();
+    await click(byId("guest-paste-source"));
+    await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.startsWith("v1")));
+    await act(async () => { release(stub404()); });
+    await flush();
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(rowIds()).toEqual([noteId(8)]);
+  });
+  it("still sends the guest to the unavailable page when the current preview is refused", async () => {
+    videos = THREE();
+    notes = { [asset(2)]: [mine(7)] };
+    let release: (response: Response) => void = () => undefined;
+    const held = new Promise<Response>((resolve) => { release = resolve; });
+    extra = (url, init) => (url === URL3 && init?.method === "POST" ? held : undefined);
+    await open();
+    await openDialog();
+    await act(async () => { release(stub404()); });
+    await flush();
+    expect(byId("guest-unavailable")).not.toBeNull();
+  });
+});
+
 describe("committing a paste", () => {
   const withPlan = (rows: unknown[] = [mapped(1), mapped(2)]) => { extra = (url, init) => (url === PREVIEW_URL && init?.method === "POST" ? json(plan(rows)) : undefined); };
 
