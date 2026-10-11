@@ -24,7 +24,7 @@ const scanDirs = ["workers/app/src", "workers/background/src", "workers/webhook-
 
 /** Files that write `superseded_at` and legitimately carry nothing. Each needs a reason. */
 const EXEMPT: Record<string, string> = {
-  "workers/app/src/routes/video-uploads.ts":
+  "workers/app/src/lib/video-live-sql.ts":
     "Video Versions: premium lives on videos.premium + video_premium_unlocks (plan 787 section 1, Premium is live), not on the Version's asset row.",
 };
 
@@ -71,8 +71,8 @@ describe("supersede carry guard (#787)", () => {
   it("scans the writers it is meant to cover", () => {
     const writers = productionFiles().filter(({ source }) => count(source, SQL_WRITER) + count(source, DRIZZLE_WRITER) > 0).map(({ path }) => path).sort();
     expect(writers).toEqual([
+      "workers/app/src/lib/video-live-sql.ts",
       "workers/app/src/routes/collections.ts",
-      "workers/app/src/routes/video-uploads.ts",
       "workers/background/src/autohdr/finals.ts",
       "workers/background/src/dropbox/sync.ts",
       "workers/background/src/editor-folders/sync-output.ts",
