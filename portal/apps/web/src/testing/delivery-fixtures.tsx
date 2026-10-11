@@ -47,8 +47,11 @@ export type FakeEmbla = {
   snap: number;
   /** A swipe: embla settles on `index` and reports `select`. */
   swipeTo(index: number): Promise<void>;
+  /** Embla reporting an event of its own (`pointerUp`, the end of a drag) with the snap it will settle on. */
+  emit(event: string, snap?: number): Promise<void>;
 };
-export const embla: FakeEmbla = { api: null, options: null, snap: 0, async swipeTo(index) { embla.snap = index; await act(async () => { listeners.get("select")?.forEach((listener) => listener()); }); } };
+export const embla: FakeEmbla = { api: null, options: null, snap: 0, async swipeTo(index) { embla.snap = index; await act(async () => { listeners.get("select")?.forEach((listener) => listener()); }); },
+  async emit(event, snap) { if (snap !== undefined) embla.snap = snap; await act(async () => { listeners.get(event)?.forEach((listener) => listener()); }); } };
 const listeners = new Map<string, Set<Listener>>();
 /** A stand-in for `embla-carousel-react`: happy-dom has no layout, so real embla has nothing to measure. The page's own index state is what the tests read; this records where the page told embla to go and lets a test report a swipe. */
 export function fakeEmblaModule() {

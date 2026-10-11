@@ -133,6 +133,24 @@ describe("photo grid", () => {
     expect(allByTestId("delivery-tile")[0]!.querySelector("img")).toBeNull();
     expect(byTestId("delivery-processing")).not.toBeNull();
   });
+  it("keeps the open button outside any overflow-hidden ancestor within its tile, so its focus outline is not clipped", async () => {
+    await show(page([photo(1), locked(2)]));
+    for (const name of ["Photos", "Premium"]) {
+      await click(tab(name));
+      for (const tile of allByTestId("delivery-tile")) {
+        const open = tile.querySelector<HTMLElement>('[aria-label^="Open "]')!;
+        for (let node: HTMLElement | null = open.parentElement; node && node !== tile; node = node.parentElement) expect(node.className, `${name}: ${node.className}`).not.toMatch(/overflow-(hidden|clip)/);
+      }
+    }
+  });
+  it("tries a tile's picture again once an unlock refetch changes the item, after a failure on the locked preview", async () => {
+    mounted = await render(<Harness initial={page([locked(2)])} after={page([photo(2, { premium: true })])} />);
+    await click(tab("Premium"));
+    await act(async () => { allByTestId("delivery-tile")[0]!.querySelector("img")!.dispatchEvent(new Event("error")); });
+    expect(allByTestId("delivery-tile")[0]!.querySelector("img")).toBeNull();
+    await click(byTestId("swap"));
+    expect(allByTestId("delivery-tile")[0]!.querySelector("img")?.getAttribute("src")).toBe(photo(2).thumbUrl);
+  });
   it("keeps every control at 44 px on a phone or a touch screen", async () => {
     await show(page([photo(1)]));
     for (const control of [...document.querySelectorAll<HTMLElement>('[data-testid="delivery-tile"] a')]) expect(control.className).toContain("max-[721px]:min-h-11");
@@ -260,6 +278,28 @@ describe("lightbox", () => {
       await press("ArrowRight", byTestId("delivery-lightbox")!);
       expect(embla.api!.scrollTo).toHaveBeenLastCalledWith(2, true);
       expect(embla.options).toMatchObject({ duration: 0 });
+    } finally { window.matchMedia = original; }
+  });
+  it("shows the slide again after an unlock refetch when the locked preview had failed", async () => {
+    mounted = await render(<Harness initial={page([locked(2)])} after={page([photo(2, { premium: true })])} />);
+    await click(tab("Premium")); await click(byLabel("Open Photo 02")); await until(() => byTestId("delivery-lightbox"));
+    const box = () => byTestId("delivery-lightbox")!;
+    await act(async () => { box().querySelector("img")!.dispatchEvent(new Event("error")); });
+    expect(box().querySelector("img")).toBeNull();
+    await click(byTestId("swap"));
+    expect(box().querySelector("img")?.getAttribute("src")).toBe(photo(2).url);
+  });
+  it("jumps to the selected snap when a drag is released under prefers-reduced-motion, and lets embla settle otherwise", async () => {
+    const original = window.matchMedia;
+    const motion = (reduce: boolean) => { window.matchMedia = ((query: string) => ({ matches: reduce && query.includes("prefers-reduced-motion"), media: query, addEventListener: () => undefined, removeEventListener: () => undefined, addListener: () => undefined, removeListener: () => undefined, dispatchEvent: () => false, onchange: null })) as typeof window.matchMedia; };
+    try {
+      motion(false); await open();
+      embla.api!.scrollTo.mockClear(); await embla.emit("pointerUp", 2);
+      expect(embla.api!.scrollTo).not.toHaveBeenCalled();
+      await mounted!.unmount(); mounted = null;
+      motion(true); await open();
+      embla.api!.scrollTo.mockClear(); await embla.emit("pointerUp", 2);
+      expect(embla.api!.scrollTo).toHaveBeenLastCalledWith(2, true);
     } finally { window.matchMedia = original; }
   });
   it("shows a locked photo as its preview with Premium and Request unlock, and the same unlock state as the grid", async () => {

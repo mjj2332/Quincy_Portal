@@ -655,6 +655,16 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
     expect(pdf.getAttribute("href")).toBe("/pdf/1"); expect(pdf.getAttribute("target")).toBe("_blank"); expect(pdf.getAttribute("rel")).toBe("noopener noreferrer");
     expect(dialog.querySelectorAll("a[download]")).toHaveLength(0);
   });
+  it("shows a locked photo with no preview URL as the icon tile with a Premium badge, never an image", async () => {
+    apiPostMock.mockResolvedValue(lockedPreviewDto);
+    await openDelivery(); await click(byId("delivery-preview"));
+    const dialog = bodyById("delivery-preview-dialog")!;
+    await click(previewTab(dialog, "Premium"));
+    const tile = dialog.querySelector<HTMLElement>('[data-testid="delivery-tile"]')!;
+    expect(tile.querySelector("img")).toBeNull();
+    expect(tile.querySelector('[data-testid="delivery-processing"]')).not.toBeNull();
+    expect(tile.querySelector('[data-testid="delivery-premium-badge"]')?.textContent).toBe("Premium");
+  });
   it("pauses a playing Preview Video when the tab changes or Preview closes", async () => {
     const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
     try {

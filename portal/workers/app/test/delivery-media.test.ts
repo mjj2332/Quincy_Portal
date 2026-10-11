@@ -135,3 +135,25 @@ describe("preview media", () => {
     expect((await previewMedia(photo.id, "media")).status).toBe(404);
   });
 });
+
+describe("a locked item is shown to staff as the client sees it (#787 slice 9)", () => {
+  const PREVIEW = "WATERMARKED-PREVIEW";
+  const putPreview = async (assetId: string) => {
+    const key = `renditions/${assetId}/premium_preview`; await database.MEDIA.put(key, new TextEncoder().encode(PREVIEW), { httpMetadata: { contentType: "image/jpeg" } });
+    const { RENDITION_VARIANT_SPEC } = await import("@quincy/shared");
+    await database.DB.prepare("INSERT INTO asset_renditions (id, asset_id, variant, r2_key, bytes, content_type, width, height, spec_version, created_at) VALUES (?, ?, 'premium_preview', ?, 19, 'image/jpeg', 1, 1, ?, ?)").bind(crypto.randomUUID(), assetId, key, RENDITION_VARIANT_SPEC.premium_preview, Date.now()).run();
+  };
+  const previewDto = async (assetIds: string[]) => ((await (await request(`${base()}/preview`, "admin", "POST", { assetIds })).json()) as Json).dto as Json;
+  it("points a locked photo at premium_preview when it exists, serves only that, and never the clean web or thumb", async () => {
+    const photo = await photoWithRenditions(); await database.DB.prepare("UPDATE assets SET delivery_premium = 1 WHERE id = ?").bind(photo.id).run(); await putPreview(photo.id);
+    const dto = await previewDto([photo.id]);
+    expect(dto.items[0].locked).toBe(true); expect(dto.items[0].url).toBe(`${base()}/preview-media/${photo.id}/media`);
+    for (const part of ["media", "thumb"] as const) { const response = await previewMedia(photo.id, part); expect(response.status).toBe(200); expect(await response.text()).toBe(PREVIEW); }
+  });
+  it("has null urls for a locked photo with no premium_preview, and its staff routes answer 404", async () => {
+    const photo = await photoWithRenditions(); await database.DB.prepare("UPDATE assets SET delivery_premium = 1 WHERE id = ?").bind(photo.id).run();
+    const dto = await previewDto([photo.id]);
+    expect([dto.items[0].url, dto.items[0].thumbUrl]).toEqual([null, null]);
+    for (const part of ["media", "thumb"] as const) expect((await previewMedia(photo.id, part)).status).toBe(404);
+  });
+});

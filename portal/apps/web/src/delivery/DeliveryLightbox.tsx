@@ -58,6 +58,14 @@ export function DeliveryLightbox({ title, items, startIndex, hrefs, unlock, onRe
     return () => { api.off("select", onSelect); };
   }, [api]);
 
+  // Embla's drag release settles with its own duration, whatever `duration` says. Under reduced motion, once the release has chosen a snap, jump to it.
+  useEffect(() => {
+    if (!api || !reduced) return;
+    const onPointerUp = () => { api.scrollTo(api.selectedScrollSnap(), true); };
+    api.on("pointerUp", onPointerUp);
+    return () => { api.off("pointerUp", onPointerUp); };
+  }, [api, reduced]);
+
   // The slideshow: one timer per photo, so any move (a key, a swipe) restarts the hold. It stops at the last photo.
   useEffect(() => {
     if (!playing) return;
@@ -95,7 +103,7 @@ export function DeliveryLightbox({ title, items, startIndex, hrefs, unlock, onRe
       <div className="relative min-h-0 flex-1">
         <Carousel opts={options} setApi={setApi} className="h-full [&>[data-slot=carousel-content]]:h-full" aria-label={`${title} photos`}>
           <CarouselContent className="ml-0 h-full">
-            {items.map((entry, position) => <CarouselItem key={entry.handle} className="h-full pl-0" aria-label={`${position + 1} of ${count}`}><Slide item={entry} near={Math.abs(position - at) <= 1} /></CarouselItem>)}
+            {items.map((entry, position) => <CarouselItem key={entry.handle} className="h-full pl-0" aria-label={`${position + 1} of ${count}`}><Slide key={`${entry.locked}:${entry.url}`} item={entry} near={Math.abs(position - at) <= 1} /></CarouselItem>)}
           </CarouselContent>
         </Carousel>
         <Button type="button" variant="secondary" size="icon" aria-label="Previous photo" disabled={at === 0} className={`${nav} left-[var(--space-3)] max-[721px]:size-11`} onClick={() => { go(at - 1); }}><ChevronLeftIcon aria-hidden /></Button>

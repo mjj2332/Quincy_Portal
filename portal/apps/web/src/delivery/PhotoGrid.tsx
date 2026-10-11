@@ -21,13 +21,19 @@ export function PhotoDownloads({ item, hrefs }: { item: DeliveryItemDto; hrefs: 
   </div>;
 }
 
-function PhotoTile({ item, items, index, hrefs, unlock, onRequestUnlock, onOpen }: { item: DeliveryItemDto; items: DeliveryItemDto[]; index: number; hrefs: DeliveryHrefs | null; unlock: UnlockStates; onRequestUnlock: (handle: string) => void; onOpen: OpenViewer }) {
+/** The tile's picture. Keyed by its address and lock state, so a failure belongs to the file that failed: an unlock refetch brings a different file and gets a fresh try. */
+function TileImage({ item }: { item: DeliveryItemDto }) {
   const [failed, setFailed] = useState(false);
+  return item.thumbUrl !== null && !failed
+    ? <LazyImage src={item.thumbUrl} alt={item.label} className="size-full object-cover" onFailedChange={setFailed} />
+    : <ProcessingTile label={item.label} />;
+}
+
+function PhotoTile({ item, items, index, hrefs, unlock, onRequestUnlock, onOpen }: { item: DeliveryItemDto; items: DeliveryItemDto[]; index: number; hrefs: DeliveryHrefs | null; unlock: UnlockStates; onRequestUnlock: (handle: string) => void; onOpen: OpenViewer }) {
   return <li data-testid="delivery-tile" data-handle={item.handle} className="grid content-start gap-[var(--space-2)]">
-    <div style={{ aspectRatio: aspectOf(item) }} className="relative overflow-hidden border border-solid border-[var(--border-hairline)] bg-surface-sunken">
-      {item.thumbUrl !== null && !failed
-        ? <LazyImage src={item.thumbUrl} alt={item.label} className="size-full object-cover" onFailedChange={setFailed} />
-        : <ProcessingTile label={item.label} />}
+    {/* The clip is on the picture's own wrapper, not on the tile: the open button's focus outline is drawn outward and an ancestor with overflow-hidden would cut it off. */}
+    <div style={{ aspectRatio: aspectOf(item) }} className="relative border border-solid border-[var(--border-hairline)] bg-surface-sunken">
+      <div className="absolute inset-0 overflow-hidden"><TileImage key={`${item.locked}:${item.thumbUrl}`} item={item} /></div>
       <Button type="button" variant="ghost" aria-label={`Open ${item.label}`} className="absolute inset-0 h-full w-full rounded-none p-0 hover:bg-transparent" onClick={(event) => { onOpen(items, index, event.currentTarget); }} />
       {item.locked && <span className="pointer-events-none absolute top-[var(--space-2)] left-[var(--space-2)]"><PremiumBadge /></span>}
     </div>

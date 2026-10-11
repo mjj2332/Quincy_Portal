@@ -1,4 +1,4 @@
-import { DELIVERY_ITEM_KINDS, type DeliveryCandidateDto, type DeliveryItemKind, type DeliveryItemDto, type DeliveryPageDto, type DeliveryState } from "@quincy/shared";
+import { DELIVERY_ITEM_KINDS, RENDITION_VARIANT_SPEC, type DeliveryCandidateDto, type DeliveryItemKind, type DeliveryItemDto, type DeliveryPageDto, type DeliveryState } from "@quincy/shared";
 import { lockedSql, premiumSql } from "./delivery-lock";
 import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VERSION_OF_VIDEO } from "./video-live-sql";
 
@@ -26,6 +26,21 @@ export const previewItemUrls = (projectId: string): DeliveryUrlResolver => (row)
   url: `/api/projects/${projectId}/delivery/preview-media/${row.assetId}/media`,
   thumbUrl: row.kind === "photo" || row.kind === "video" ? `/api/projects/${projectId}/delivery/preview-media/${row.assetId}/thumb` : null,
 });
+
+/**
+ * Staff must see what the client sees for a locked item (#787 slice 9): never a clean staff thumb or web URL. A locked photo keeps its URLs only when its watermarked `premium_preview` derivative exists
+ * (the staff media routes serve exactly that for a locked photo); otherwise, and for a locked Video or PDF, there is no URL at all and the page shows its placeholder tile.
+ */
+export async function lockAwareUrls(db: D1Database, rows: readonly DeliveryItemRow[], urls: DeliveryUrlResolver): Promise<DeliveryUrlResolver> {
+  const lockedPhotos = rows.filter((row) => row.locked && row.kind === "photo").map((row) => row.assetId);
+  const ready = new Set<string>();
+  if (lockedPhotos.length > 0) {
+    const found = (await db.prepare("SELECT asset_id AS id FROM asset_renditions WHERE variant = 'premium_preview' AND spec_version = ?2 AND asset_id IN (SELECT value FROM json_each(?1))")
+      .bind(JSON.stringify(lockedPhotos), RENDITION_VARIANT_SPEC.premium_preview).all<{ id: string }>()).results;
+    for (const row of found) ready.add(row.id);
+  }
+  return (row) => (!row.locked ? urls(row) : row.kind === "photo" && ready.has(row.assetId) ? urls(row) : { url: null, thumbUrl: null });
+}
 
 /** Labels count within a kind in page order and are zero-padded to the width of that kind's total, at least two ("Photo 07", "Photo 007"). */
 export function deliveryLabels(rows: readonly Pick<DeliveryItemRow, "kind">[]): string[] {
@@ -135,7 +150,7 @@ export async function readDeliveryState(db: D1Database, projectId: string, optio
   const rows = await readSetRows(db, set.id);
   const project = (await db.prepare("SELECT street, suburb FROM projects WHERE id = ?1").bind(projectId).first<{ street: string; suburb: string | null }>())!;
   const coverHandle = rows.find((row) => row.assetId === set.coverAssetId)?.handle ?? null;
-  const dto = buildDeliveryDto({ property: project, setNumber: set.setNumber, publishedAt: set.publishedAt, coverHandle, rows, urls: options.urls ?? setItemUrls(projectId) });
+  const dto = buildDeliveryDto({ property: project, setNumber: set.setNumber, publishedAt: set.publishedAt, coverHandle, rows, urls: await lockAwareUrls(db, rows, options.urls ?? setItemUrls(projectId)) });
   const flags = await readPremiumFlags(db, rows.map((row) => row.assetId));
   const items = rows.map((row, index) => ({ assetId: row.assetId, handle: row.handle, kind: row.kind, label: dto.items[index]!.label, position: row.position, locked: row.locked, premium: flags.get(row.assetId)?.premium ?? false, premiumUnlocked: flags.get(row.assetId)?.unlocked ?? false, videoId: flags.get(row.assetId)?.videoId ?? null })).filter((item) => STATE_KINDS.includes(item.kind));
   return { page: pageState, set: { setNumber: set.setNumber, publishedAt: set.publishedAt, coverAssetId: set.coverAssetId, items }, dto };
@@ -148,5 +163,5 @@ export async function previewDelivery(db: D1Database, projectId: string, assetId
   const project = (await db.prepare("SELECT street, suburb FROM projects WHERE id = ?1").bind(projectId).first<{ street: string; suburb: string | null }>())!;
   const latest = (await db.prepare("SELECT latest_set_number AS latest FROM delivery_pages WHERE project_id = ?1").bind(projectId).first<{ latest: number }>())?.latest ?? 0;
   const coverHandle = verdict.rows.find((row) => row.assetId === coverAssetId)?.handle ?? null;
-  return { ok: true, dto: buildDeliveryDto({ property: project, setNumber: latest + 1, publishedAt: null, coverHandle, rows: verdict.rows, urls }) };
+  return { ok: true, dto: buildDeliveryDto({ property: project, setNumber: latest + 1, publishedAt: null, coverHandle, rows: verdict.rows, urls: await lockAwareUrls(db, verdict.rows, urls) }) };
 }

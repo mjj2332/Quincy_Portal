@@ -113,7 +113,7 @@ export function DeliveryPage(props: DeliveryPageProps) {
   const { street } = dto.property;
   return <article aria-label={`Delivery: ${street}`} data-testid="delivery-page" className="@container w-full bg-background text-foreground">
     <div className="mx-auto grid w-full max-w-[var(--container-page)] gap-[var(--space-6)] px-[var(--space-4)] py-[var(--space-5)]">
-      <Hero dto={dto} hero={hero} />
+      <Hero key={hero?.url ?? ""} dto={dto} hero={hero} />
       {active === null
         ? <EmptyState data-testid="delivery-empty" title="Nothing here yet.">The studio hasn't added anything to this page.</EmptyState>
         : <Tabs value={active} onValueChange={(value) => { setChosen(value as DeliveryTabId); }}>
