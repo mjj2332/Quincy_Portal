@@ -246,7 +246,12 @@ bearer: whoever holds it can fetch the file until it expires, so do not paste it
   unchanged, `read` scope still held), so revoking an app kills links already handed out.
 - **Stored renditions only.** If the requested rendition has not been generated yet, the link answers
   `409 rendition_not_ready` rather than building one. Try again later or request another variant.
-- Zip selections keep the usual caps: 500 assets and 256 MiB.
+- Zip selections keep the usual caps: 500 assets, and 256 MiB until `native_zip` is on (#802).
+- **`get_selection_download_url` outcomes (#802).** Success is `{ url, expiresAt }`. When the zip's checksums are still being
+  prepared the tool returns a normal, non-error result `{ status: "preparing", code: "download_preparing", pending, retryAfterSeconds,
+  message }` ("preparing; try again in about a minute"): wait and call it again, no link is issued and nothing is audited. A selection
+  over the size limit is an error (`download_too_large`, from the 413), and a file that is missing or changed is an error
+  (`download_unavailable`, from the 502).
 - A bad, tampered or revoked link is a bare `403`; an expired one is `410`.
 
 ## Whiteboard
