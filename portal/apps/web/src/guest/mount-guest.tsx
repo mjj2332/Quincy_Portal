@@ -22,3 +22,19 @@ export function mountGuest(root: HTMLElement, importer: () => Promise<GuestAppMo
   };
   load();
 }
+
+type GuestUnsubscribeModule = { GuestUnsubscribe: ComponentType<{ token: string | null }> };
+
+/**
+ * Boots the unsubscribe page (#741 15b). Same order as `mountGuest`: the `#t=<token>` fragment is read and scrubbed synchronously BEFORE the lazy chunk is requested, and so before the
+ * page's POST. The token then lives only in this closure and in the component's props.
+ */
+export function mountGuestUnsubscribe(root: HTMLElement, importer: () => Promise<GuestUnsubscribeModule> = () => import("./GuestUnsubscribe"), reopen: (token: string | null) => void = reopenWithToken): void {
+  const token = takeLinkToken();
+  const reactRoot = createRoot(root);
+  void importer().then(({ GuestUnsubscribe }) => {
+    reactRoot.render(<StrictMode><GuestUnsubscribe token={token} /></StrictMode>);
+  }, () => {
+    reactRoot.render(<GuestLoadFailure reload={() => { reopen(token); }} />);
+  });
+}

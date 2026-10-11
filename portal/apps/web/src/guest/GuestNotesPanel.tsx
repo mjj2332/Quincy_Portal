@@ -11,7 +11,7 @@ import { GuestThreadItem, type Writing } from "./GuestNoteItem";
  * reply to, edit and delete notes through `writing`; `top` is the "Add a note" entry or the open composer. It reads no staff store and no staff DTO: `VideoNoteThread` is coupled to the
  * form store and the staff person, so this is built from the installed `item`, `badge` and `scroll-area`. `threads` is null while the first read is out.
  */
-export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect, timecode, header, top, writing }: {
+export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect, timecode, header, top, footer, writing }: {
   threads: readonly GuestNoteThreadDto[] | null;
   /** The notes read failed in transit (not a revoked link): say so in place and offer to repeat it. */
   failed: boolean;
@@ -23,6 +23,8 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
   header?: ReactNode;
   /** Above the list: the "Add a note" entry, or the composer while one is open. */
   top?: ReactNode;
+  /** A quiet row below the list, outside the scroll area (the email-updates switch). */
+  footer?: ReactNode;
   writing: Writing;
 }) {
   return <section data-testid="guest-notes-panel" aria-label="Notes" tabIndex={-1} className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-3)]">
@@ -39,5 +41,6 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
             {threads.map((thread) => <GuestThreadItem key={thread.id} thread={thread} selected={thread.id === selectedId} onSelect={onSelect} timecode={timecode} writing={writing} />)}
           </ItemGroup>
         </ScrollArea>}
+    {footer && <div className="shrink-0">{footer}</div>}
   </section>;
 }
