@@ -11,7 +11,7 @@
  * The old row keeps its own flag and Unlock as history: only the current version is ever served,
  * and Re-lock acts on the current row.
  *
- * Every worker source file that writes `superseded_at` must call this or be listed in
+ * Every worker source file that writes `superseded_at` or `replaced_by_asset_id` must call this or `supersedeCarryToSuccessorStatements` or be listed in
  * `packages/db/test/supersede-carry.guard.test.ts`.
  */
 export function supersedeCarryStatements(db: D1Database, oldAssetId: string, newAssetId: string): D1PreparedStatement[] {

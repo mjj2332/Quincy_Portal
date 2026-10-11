@@ -6,6 +6,9 @@
  * re-edits. Every worker source file that retires an Asset (`UPDATE assets SET superseded_at = ...`,
  * or a Drizzle `.set({ supersededAt: ... })`) must therefore call `supersedeCarryStatements` at least
  * once per writer, in the same D1 batch, or be listed in `EXEMPT` with the reason it needs none.
+ * The same holds for a successor-pointer writer (`SET replaced_by_asset_id = ...`, or a Drizzle
+ * `.set({ replacedByAssetId: ... })`) that does not write `superseded_at`, which must call either
+ * `supersedeCarryStatements` or `supersedeCarryToSuccessorStatements`.
  *
  * What this catches: a new file that becomes a writer, and a file that gains a writer without a
  * matching carry call. It counts per file, so it cannot tell WHICH call covers WHICH writer, and it
@@ -30,21 +33,35 @@ const EXEMPT: Record<string, string> = {
 
 const SQL_WRITER = /\bSET\b(?:(?!\bWHERE\b)[^`"';]){0,200}?\bsuperseded_at\s*=\s*(?!CASE\b)(?=\S)/gi;
 const DRIZZLE_WRITER = /\.set\(\s*\{[^}]*\bsupersededAt\s*:/gs;
-const CARRY_CALL = /\bsupersedeCarryStatements\s*\(/g;
+/**
+ * Successor-pointer writers: a repoint can hand the predecessor a NEW successor without writing
+ * `superseded_at` (the Dropbox compensation and identity-race batches), and that successor then
+ * needs the carry. An assignment sits after `SET` or a comma; a predicate sits after WHERE/AND/OR,
+ * so it is not matched. Clears (`= NULL`, `CASE WHEN replaced_by_asset_id = ? THEN NULL ELSE
+ * replaced_by_asset_id END`, `.set({ replacedByAssetId: null })`) point at nothing and need no carry.
+ */
+const SQL_POINTER_WRITER = /(?:\bSET|,)\s+replaced_by_asset_id\s*=(?!\s*NULL\b)(?!\s*CASE\s+WHEN\s+replaced_by_asset_id\b)/gi;
+const DRIZZLE_POINTER_WRITER = /\.set\(\s*\{[^}]*\breplacedByAssetId\s*:(?!\s*null\b)/gs;
+const CARRY_CALL = /\bsupersedeCarry(?:ToSuccessor)?Statements\s*\(/g;
 const count = (source: string, pattern: RegExp) => [...source.matchAll(pattern)].length;
+const supersedeWriters = (source: string) => count(source, SQL_WRITER) + count(source, DRIZZLE_WRITER);
+const pointerWriters = (source: string) => count(source, SQL_POINTER_WRITER) + count(source, DRIZZLE_POINTER_WRITER);
 
 export function carryViolations(files: Array<{ path: string; source: string }>, exempt: Record<string, string> = EXEMPT): string[] {
   const problems: string[] = [];
   const seen = new Set<string>();
   for (const { path, source } of files) {
-    const writers = count(source, SQL_WRITER) + count(source, DRIZZLE_WRITER);
-    if (writers === 0) continue;
+    const superseders = supersedeWriters(source);
+    const pointers = pointerWriters(source);
+    if (superseders === 0 && pointers === 0) continue;
     seen.add(path);
     if (exempt[path]) continue;
     const carries = count(source, CARRY_CALL);
-    if (carries < writers) problems.push(`${path}: ${writers} superseded_at writer(s) but ${carries} supersedeCarryStatements call(s)`);
+    // A statement that sets both columns is one writer, so each count is checked on its own rather than summed.
+    if (carries < superseders) problems.push(`${path}: ${superseders} superseded_at writer(s) but ${carries} supersedeCarryStatements call(s)`);
+    else if (carries < pointers) problems.push(`${path}: ${pointers} successor-pointer writer(s) but ${carries} supersedeCarryStatements/supersedeCarryToSuccessorStatements call(s)`);
   }
-  for (const path of Object.keys(exempt)) if (!seen.has(path)) problems.push(`${path}: exempt but no longer writes superseded_at; remove the exemption`);
+  for (const path of Object.keys(exempt)) if (!seen.has(path)) problems.push(`${path}: exempt but no longer writes superseded_at or replaced_by_asset_id; remove the exemption`);
   return problems;
 }
 
@@ -69,7 +86,7 @@ describe("supersede carry guard (#787)", () => {
   });
 
   it("scans the writers it is meant to cover", () => {
-    const writers = productionFiles().filter(({ source }) => count(source, SQL_WRITER) + count(source, DRIZZLE_WRITER) > 0).map(({ path }) => path).sort();
+    const writers = productionFiles().filter(({ source }) => supersedeWriters(source) + pointerWriters(source) > 0).map(({ path }) => path).sort();
     expect(writers).toEqual([
       "workers/app/src/lib/video-live-sql.ts",
       "workers/app/src/routes/collections.ts",
@@ -100,8 +117,30 @@ describe("supersede carry guard (#787)", () => {
       expect(carryViolations([{ path: "e.ts", source: `UPDATE assets SET superseded_at = CASE WHEN x THEN NULL ELSE superseded_at END` }], {})).toEqual([]);
       expect(carryViolations([{ path: "f.ts", source: `UPDATE claims SET current_asset_id = ?, updated_at = ? WHERE id = ? AND EXISTS (SELECT 1 FROM assets WHERE id = ? AND superseded_at = ?)` }], {})).toEqual([]);
     });
+    it("fails a planted successor-pointer repoint that does not supersede, with no carry (#787 round 3)", () => {
+      const message = (path: string) => [`${path}: 1 successor-pointer writer(s) but 0 supersedeCarryStatements/supersedeCarryToSuccessorStatements call(s)`];
+      // The compensation form: repoints a superseded predecessor with a CASE, never writing superseded_at.
+      const caseRepoint = `UPDATE assets SET superseded_at = CASE WHEN x THEN NULL ELSE superseded_at END, replaced_by_asset_id = CASE WHEN x THEN NULL ELSE (SELECT a3.id FROM assets a3 LIMIT 1) END WHERE id = ?`;
+      expect(carryViolations([{ path: "h.ts", source: caseRepoint }], {})).toEqual(message("h.ts"));
+      // The identity-race form: pointer is the only column set.
+      expect(carryViolations([{ path: "i.ts", source: `UPDATE assets SET replaced_by_asset_id = COALESCE((SELECT 1), replaced_by_asset_id), updated_at = ? WHERE id = ?` }], {})).toEqual(message("i.ts"));
+      // Drizzle repoint.
+      expect(carryViolations([{ path: "j.ts", source: `await db.update(assets).set({ updatedAt: now, replacedByAssetId: winnerId }).where(x)` }], {})).toEqual(message("j.ts"));
+    });
+    it("passes a pointer repoint that calls either helper, and ignores clears and predicates", () => {
+      const toSuccessor = `UPDATE assets SET replaced_by_asset_id = COALESCE((SELECT 1), replaced_by_asset_id) WHERE id = ?\nstatements.push(...supersedeCarryToSuccessorStatements(db, oldId));`;
+      expect(carryViolations([{ path: "k.ts", source: toSuccessor }], {})).toEqual([]);
+      expect(carryViolations([{ path: "l.ts", source: `UPDATE assets SET replaced_by_asset_id = NULL, updated_at = ? WHERE id = ?` }], {})).toEqual([]);
+      expect(carryViolations([{ path: "m.ts", source: `UPDATE assets SET replaced_by_asset_id = CASE WHEN replaced_by_asset_id = ?1 THEN NULL ELSE replaced_by_asset_id END WHERE (supersedes_asset_id = ?1 OR replaced_by_asset_id = ?1)` }], {})).toEqual([]);
+      expect(carryViolations([{ path: "n.ts", source: `await db.update(assets).set({ replacedByAssetId: null }).where(x)` }], {})).toEqual([]);
+      expect(carryViolations([{ path: "o.ts", source: `SELECT 1 FROM assets WHERE a.id = ? AND replaced_by_asset_id = ?` }], {})).toEqual([]);
+    });
+    it("counts a file with two pointer writers against one carry", () => {
+      const repoint = `UPDATE assets SET replaced_by_asset_id = ? WHERE id = ?`;
+      expect(carryViolations([{ path: "p.ts", source: `${repoint}\n${repoint}\nsupersedeCarryToSuccessorStatements(db, a)` }], {})).toHaveLength(1);
+    });
     it("fails an exemption that no longer matches a writer", () => {
-      expect(carryViolations([{ path: "g.ts", source: "const x = 1;" }], { "g.ts": "stale" })).toEqual(["g.ts: exempt but no longer writes superseded_at; remove the exemption"]);
+      expect(carryViolations([{ path: "g.ts", source: "const x = 1;" }], { "g.ts": "stale" })).toEqual(["g.ts: exempt but no longer writes superseded_at or replaced_by_asset_id; remove the exemption"]);
     });
   });
 });

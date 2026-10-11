@@ -273,6 +273,7 @@ describe("Dropbox RAW delete-then-reupload reconciliation", () => {
 
   it("takes the compensation branch for a legitimate current occupant created before the check", async () => {
     const context = await fixture();
+    await markPaid(context.oldAssetId, context.projectId);
     const thirdId = crypto.randomUUID();
     const database = withBatchHooks({
       2: async () => {
@@ -299,6 +300,8 @@ describe("Dropbox RAW delete-then-reupload reconciliation", () => {
     expect(result.results.find((row) => row.id === context.oldAssetId)).toMatchObject({ superseded_at: expect.any(Number), replaced_by_asset_id: thirdId });
     expect(result.results.find((row) => row.id === thirdId)).toMatchObject({ superseded_at: null });
     await expect(receivedCount(context.collectionId)).resolves.toEqual({ received_count: 1 });
+    // #787: the compensation repoints the predecessor to the occupant, so the paid extra follows.
+    await expect(paidState(thirdId)).resolves.toEqual({ premium: 1, by: "carry-admin", at: 1700000000000, ref: "inv-1" });
   });
 
   it("deletes an identity-race orphan and repoints its predecessor to the collection winner atomically", async () => {

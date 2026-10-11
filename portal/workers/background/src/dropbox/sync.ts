@@ -491,6 +491,9 @@ export async function syncProjectRawFolder(
               now.getTime(), staleOccupant.id, now.getTime(),
             ),
             env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime())),
+            // The predecessor may now point at a live occupant that appeared after the supersede
+            // (#787); the paid extra follows that pointer. Last, after the repoint and recount.
+            ...supersedeCarryToSuccessorStatements(env.DB, staleOccupant.id),
           ]);
         }
         if (retryInsertResult === 0) continue;
