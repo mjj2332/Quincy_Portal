@@ -29,6 +29,8 @@ export const guestSessionResponseSchema = z.object({
   verified: z.boolean(),
   email: z.string().nullable(),
   name: z.string().nullable(),
+  /** The client email-updates switch (#741 15b): null until verified. `available` is the `notify_client` part on for a live link and a membership to flip; `subscribed` is that membership being subscribed. */
+  notifications: z.object({ available: z.boolean(), subscribed: z.boolean() }).strict().nullable(),
 }).strict();
 export type GuestSessionResponse = z.infer<typeof guestSessionResponseSchema>;
 
@@ -71,6 +73,17 @@ export type GuestDecisionInput = z.infer<typeof guestDecisionInputSchema>;
 /** 201 answer to the decision POST: the event just recorded, `self` always true. */
 export const guestDecisionResponseSchema = z.object({ decision: guestDecisionSchema }).strict();
 export type GuestDecisionResponse = z.infer<typeof guestDecisionResponseSchema>;
+
+/**
+ * Client digest subscription (#741 15b). `POST /d/api/unsubscribe` carries the token from the digest email's fragment: `subscribed` omitted or false unsubscribes, true resubscribes.
+ * `PUT /d/api/links/:linkId/subscription` is the verified guest's own switch. Both answer the resulting state.
+ */
+export const guestUnsubscribeInputSchema = z.object({ token: z.string().min(1).max(256), subscribed: z.boolean().optional() }).strict();
+export type GuestUnsubscribeInput = z.infer<typeof guestUnsubscribeInputSchema>;
+export const guestSubscriptionInputSchema = z.object({ subscribed: z.boolean() }).strict();
+export type GuestSubscriptionInput = z.infer<typeof guestSubscriptionInputSchema>;
+export const guestSubscriptionResponseSchema = z.object({ subscribed: z.boolean() }).strict();
+export type GuestSubscriptionResponse = z.infer<typeof guestSubscriptionResponseSchema>;
 
 export const guestVersionDtoSchema = z.object({
   assetId: uuid,

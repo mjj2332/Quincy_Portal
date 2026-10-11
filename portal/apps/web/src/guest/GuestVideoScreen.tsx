@@ -13,6 +13,8 @@ import type { GuestApi, WriteResult } from "./guest-api";
 import { decisionFailureText, failureText, removeThread, upsertThread, type EditPatch } from "./guest-compose";
 import type { ActionOutcome, NoteActions, Writing } from "./GuestNoteItem";
 import { GuestNotesPanel } from "./GuestNotesPanel";
+import { GuestSubscriptionRow } from "./GuestSubscriptionRow";
+import type { GuestSubscription } from "./guest-subscription";
 import { GuestPasteDialog } from "./GuestPasteDialog";
 import { GuestDecisionDialog, decisionDraftKey, type DecisionOutcome, type DecisionValue } from "./GuestDecisionDialog";
 import { GuestDeliveryChips } from "./GuestDeliveryChips";
@@ -63,13 +65,15 @@ function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
  * One Video on the guest page (#741 12b), read-only: the reused review player on the inverse surface, the granted-Versions select, previous / next Video, and the public notes (a
  * column beside the player, a bottom drawer below 721px). Moving between Videos never returns to the list. State is in memory; the URL does not change.
  */
-export function GuestVideoScreen({ api, verify, writer, drafts, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged, onDecided, onResyncDelivery, onShownVersion }: {
+export function GuestVideoScreen({ api, verify, writer, drafts, subscription, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged, onDecided, onResyncDelivery, onShownVersion }: {
   api: GuestApi;
   /** The page's one verify dialog and continuation slot, owned by `GuestApp`. */
   verify: GuestVerify;
   /** Owned by `GuestApp`, so a write still out survives this screen being left and opened again. */
   writer: GuestWriter;
   drafts: GuestDrafts;
+  /** The email-updates switch's state, owned by `GuestApp` for the same reason. */
+  subscription: GuestSubscription;
   session: GuestSessionResponse;
   /** The session changed: verified (the verify route's body), or verification lost (a 401 on a write). */
   onSession: (next: GuestSessionResponse) => void;
@@ -119,7 +123,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, session, onSessi
       // The paste dialog would sit over the verify dialog: close it (and give a phone its notes drawer back) before asking.
       setPasteOpen(false);
       if (restorePasteDrawer.current) { restorePasteDrawer.current = false; setDrawerOpen(true); }
-      verify.request(); onSession({ ...session, verified: false, email: null, name: null });
+      verify.request(); onSession({ ...session, verified: false, email: null, name: null, notifications: null });
     },
     onGone: onUnavailable,
     onArchived,
@@ -376,7 +380,11 @@ export function GuestVideoScreen({ api, verify, writer, drafts, session, onSessi
   const optionLabel = (candidate: GuestVideoDto["versions"][number]) => `v${candidate.version}${candidate.version === newest ? " · latest" : ""}`;
   const headingContent = <>Notes{threads !== null && <><span className="sr-only"> </span><span data-testid="guest-notes-count" className="ms-[var(--space-1)] text-foreground-secondary [font:var(--type-label)]">{threads.length}</span></>}</>;
   const heading = <h2 data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</h2>;
-  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} top={addNote} writing={writing} />;
+  const toggleSubscription = useCallback((next: boolean, previous: boolean) => { void subscription.toggle(next, previous, () => writer.runLink("subscription", () => api.setSubscription(next))); }, [subscription, writer, api]);
+  const footer = session.verified && session.notifications?.available
+    ? <GuestSubscriptionRow store={subscription} initial={session.notifications.subscribed} readOnly={archived} onToggle={toggleSubscription} />
+    : null;
+  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} top={addNote} footer={footer} writing={writing} />;
 
   return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-dvh flex-col bg-background text-foreground min-[721px]:h-dvh">
     <header className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-2)] border-b border-border bg-card px-[var(--space-5)] py-[var(--space-3)] text-card-foreground">
@@ -420,9 +428,9 @@ export function GuestVideoScreen({ api, verify, writer, drafts, session, onSessi
       {!phone && <aside data-surface="default" className="flex flex-[1_1_360px] flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-hidden min-[721px]:flex-[0_0_clamp(240px,28vw,360px)]">{panel}</aside>}
     </div>
     {phone && <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
-      <SheetContent side="bottom" showCloseButton={false} data-testid="guest-notes-drawer" className="max-h-[80dvh] p-[var(--space-4)]">
+      <SheetContent side="bottom" showCloseButton={false} data-testid="guest-notes-drawer" className="data-[side=bottom]:h-[80dvh] max-h-[80dvh] p-[var(--space-4)]">
         <SheetHeader className={`p-0 ${SHEET_CLOSE_CLEARANCE}`}><SheetTitle data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</SheetTitle></SheetHeader>
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">{panel}</div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{panel}</div>
         <SheetCloseButton label="Close notes" data-testid="guest-notes-close" />
       </SheetContent>
     </Sheet>}

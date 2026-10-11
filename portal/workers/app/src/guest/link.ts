@@ -73,12 +73,24 @@ export async function resolveSession(c: Context<AppEnv>, linkId: string, now: nu
  * What the page is told. Each `allow` flag is the link's flag AND its Worker part (`guest_comments` for comments, `delivery` for approve and download), from the gate state already
  * read for this request. `verified`, `email` and `name` are false, null and null until the session is verified.
  */
-export const sessionBody = (link: GuestLink, identity: { email: string; name: string | null } | null = null): GuestSessionResponse => ({
+export const sessionBody = (link: GuestLink, identity: { email: string; name: string | null } | null = null, notifications: GuestSessionResponse["notifications"] = null): GuestSessionResponse => ({
   link: {
     label: link.label, expiresAt: new Date(link.expiresAt).toISOString(),
     allow: { comments: link.allowComments && link.parts.includes("guest_comments"), approve: link.allowApprove && link.parts.includes("delivery"), download: link.allowDownload && link.parts.includes("delivery"), markup: link.parts.includes("markup") },
   },
   verified: identity !== null, email: identity?.email ?? null, name: identity?.name ?? null,
+  notifications: identity === null ? null : notifications,
 });
 /** The identity of a session for `sessionBody`, or null while it is unverified. */
 export const identityOf = (session: Pick<GuestSession, "email" | "name">): { email: string; name: string | null } | null => (session.email === null ? null : { email: session.email, name: session.name });
+
+/**
+ * The email-updates switch's state for a verified guest (#741 15b). `available` needs the `notify_client` part (from the gate state already read for this request; the link is active because
+ * the caller holds it) AND a membership to flip: the verify batch upserts the row with the session swap, so a verified guest always has one unless the reviewer was erased since, and the
+ * PUT would be the stub then. `subscribed` is that row existing with `unsubscribed_at IS NULL`.
+ */
+export async function notificationsOf(db: D1Database, link: GuestLink, guestId: string | null): Promise<GuestSessionResponse["notifications"]> {
+  if (guestId === null) return null;
+  const member = await db.prepare("SELECT unsubscribed_at FROM guest_link_members WHERE link_id = ?1 AND guest_id = ?2").bind(link.id, guestId).first<{ unsubscribed_at: number | null }>();
+  return { available: member !== null && link.parts.includes("notify_client"), subscribed: member !== null && member.unsubscribed_at === null };
+}

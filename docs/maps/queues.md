@@ -36,6 +36,8 @@ All four are re-exported at `AutoHdrSend` portal/workers/background/src/index.ts
 | `AutoHdrFetch` portal/workers/background/src/workflows/autohdr-fetch.ts:80 | `AUTOHDR_FETCH_WORKFLOW` portal/workers/background/wrangler.jsonc:53 | `AUTOHDR_FETCH_WORKFLOW.create` portal/workers/background/src/autohdr/claims.ts:1346 (in `startClaimedFetch`) | none in the class |
 | `ManualEditedPublish` portal/workers/background/src/workflows/manual-edited-publish.ts:147 | `MANUAL_EDITED_PUBLISH_WORKFLOW` portal/workers/background/wrangler.jsonc:58 | `MANUAL_EDITED_PUBLISH_WORKFLOW.create` portal/workers/background/src/index.ts:590 (pre-check `archivedAt` portal/workers/background/src/index.ts:543) | `archivedAt` portal/workers/background/src/workflows/manual-edited-publish.ts:168 |
 
+**Not a queue: the client hourly digest (#741 15b).** `runGuestDigests` / `sweepGuestDigests` portal/workers/background/src/guest-digest.ts run on the existing `0 * * * *` Cron (`scheduled` portal/workers/background/src/index.ts), read `guest_notification_digest` straight from D1 and send through the `EMAIL` binding. No queue message, no DLQ: a send that throws counts as sent and is never resent. Details in `docs/maps/notifications.md` ("Client hourly digest").
+
 List every message type:
 
     grep -rhoE 'type: "[a-z_]+"' portal/workers/background/src/messages.ts portal/packages/shared/src/renditions.ts portal/packages/shared/src/notification-outbox.ts | sort -u
