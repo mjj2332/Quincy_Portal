@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
-import { buildProjectActivityStatements, COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, computeInsertPosition, createDb, schema } from "@quincy/db";
+import { buildProjectActivityStatements, COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, computeInsertPosition, createDb, schema, supersedeCarryStatements } from "@quincy/db";
 import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 import { externalCollectionLinkListResponseSchema, externalCollectionLinkSchema, projectActivityDeepLink, roleHasCapability, type CollectionKind, type ProjectActivityIntent } from "@quincy/shared";
 import { z } from "zod";
@@ -499,10 +499,14 @@ collectionsRoutes.post("/projects/:id/documents/complete", terminalRoute("/proje
   // the predecessor here keeps the count derived state inside the one batch that produces it,
   // so a rollback cannot leave a version retired by a completion that never committed. This
   // must stay ahead of COLLECTION_RECEIVED_COUNT_SQL below, which reads what these write.
-  for (const supersededId of [upload.pdfSupersedesAssetId, ...(upload.kind === "floorplan" ? [upload.previewSupersedesAssetId] : [])]) {
-    if (!supersededId) continue;
+  const retired: Array<[supersededId: string, successorId: string]> = [];
+  for (const [supersededId, successorId] of [[upload.pdfSupersedesAssetId, upload.pdfAssetId], ...(upload.kind === "floorplan" ? [[upload.previewSupersedesAssetId, upload.previewAssetId]] : [])] as Array<[string | null, string | null]>) {
+    if (!supersededId || !successorId) continue;
     statements.push(c.env.DB.prepare("UPDATE assets SET superseded_at = ?, updated_at = ? WHERE id = ? AND superseded_at IS NULL").bind(now.getTime(), now.getTime(), supersededId));
+    retired.push([supersededId, successorId]);
   }
+  // A paid extra follows the new version (#787), in this same batch, after the insert and the retire.
+  for (const [supersededId, successorId] of retired) statements.push(...supersedeCarryStatements(c.env.DB, supersededId, successorId));
   statements.push(
     c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, 'document.complete', 'document_upload', ?, ?, ?)").bind(upload.completionAuditId, c.get("user").id, upload.id, auditMeta(c.get("user"), { projectId, kind: upload.kind, versionGroupId: upload.versionGroupId, version: upload.version, assetIds: responseFor(upload).assets.map((asset) => asset.id) }), now.getTime()),
     c.env.DB.prepare("UPDATE document_uploads SET status = 'completed', completed_at = ?, updated_at = ? WHERE id = ? AND status = 'completing' AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)").bind(now.getTime(), now.getTime(), upload.id, projectId),

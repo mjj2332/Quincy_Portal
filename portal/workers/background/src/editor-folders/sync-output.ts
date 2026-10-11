@@ -3,6 +3,7 @@ import {
   buildEditedArrivalRecord,
   collectionReceivedCountBindings,
   createDb,
+  supersedeCarryStatements,
 } from "@quincy/db";
 import {
   assets,
@@ -431,6 +432,8 @@ export async function syncProjectEditorOutput(
               ...collectionReceivedCountBindings(collection.id, now),
             ),
             recordArrival,
+            // A paid extra follows the re-edited photo (#787). Last, so no `changes()` reader sees it.
+            ...supersedeCarryStatements(env.DB, existing!.id, assetId),
           ]
         : [
             insert,
