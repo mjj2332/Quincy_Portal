@@ -170,7 +170,7 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
             ? <Item size="xs" className="px-0"><ItemContent><ItemTitle className="font-normal">Nothing else is affected.</ItemTitle></ItemContent></Item>
             : rows.map((row) => <Item key={row.key} size="xs" className="px-0"><ItemContent>
               <ItemTitle className="font-normal">{row.title}{row.badge && <Badge variant="warning-light" size="sm">{row.badge}</Badge>}</ItemTitle>
-              <ItemDescription>{row.description}</ItemDescription>
+              <ItemDescription className="line-clamp-none">{row.description}</ItemDescription>
             </ItemContent></Item>)}
         </ItemGroup>}
         {blockedByUpload && <Notice tone="caution" role="status">A new version is being uploaded to this film. Wait for it to finish or cancel it before removing the whole film.</Notice>}
