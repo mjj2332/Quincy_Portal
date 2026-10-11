@@ -20,6 +20,9 @@ describe("the /d stub", () => {
       ["/d/"], ["/d/review"], ["/d/api/session"], ["/d/api/x"], ["/d/api"], [linkPath(unknown, "/session")], [linkPath(unknown, "/videos")],
       [linkPath(unknown, "/session"), { method: "POST", body: { token: "A".repeat(43) } }], [linkPath(unknown, "/session"), { method: "DELETE" }], [`/d/api/links/${unknown}`], ["/d/api/links/not-a-uuid/session"],
       [`/d/api/links/${unknown}/versions/${unknown}/stream`], [`/d/api/links/${unknown}/notes/${unknown}/markup`], ["/d/something/else"],
+      // The public Delivery routes (#787 slice 6): a slug nobody published, a bad slug, a bad handle and an unsupported method are the same stub.
+      ["/d/no-such-page-bcdfgh/"], ["/d/api/pages/no-such-page-bcdfgh"], ["/d/api/pages/no-such-page-bcdfgh/items/0123456789abcdef/media"], ["/d/api/pages/no-such-page-bcdfgh/items/0123456789abcdef/download"],
+      ["/d/api/pages/bad"], ["/d/api/pages/no-such-page-bcdfgh/items/short/thumb"], ["/d/api/pages/no-such-page-bcdfgh/items/0123456789abcdef/original"], ["/d/api/pages/no-such-page-bcdfgh", { method: "POST", body: {} }],
     ];
     for (const [path, init] of probes) expect(await snapshot(await guestFetch(path, init)), path).toEqual(reference);
   });

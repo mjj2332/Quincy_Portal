@@ -178,8 +178,22 @@ describe("terminal route manifest", () => {
     for (const route of registered) {
       const entry = PROJECT_SECURITY_ROUTE_CLASSIFICATION.find((candidate) => candidate.method === route.method && candidate.path === route.path);
       const fallback = entry?.class === "terminal-fallback" && (route.path === "/d" || route.path === "/d/*");
-      expect(entry?.class === "guest-link" || fallback, `${route.method} ${route.path}`).toBe(true);
+      expect(entry?.class === "guest-link" || entry?.class === "delivery-public" || fallback, `${route.method} ${route.path}`).toBe(true);
     }
+  });
+
+  it("classifies the public Client Delivery routes as delivery-public, all GET (#787 slice 6)", () => {
+    const publicRoutes = PROJECT_SECURITY_ROUTE_CLASSIFICATION.filter((route) => route.class === "delivery-public");
+    expect(publicRoutes.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
+      "GET /d/:slug", "GET /d/api/pages/:slug", "GET /d/api/pages/:slug/items/:handle/download", "GET /d/api/pages/:slug/items/:handle/media", "GET /d/api/pages/:slug/items/:handle/thumb",
+    ]);
+    for (const route of publicRoutes) {
+      expect(route, `${route.method} ${route.path}`).toMatchObject({ scope: "none", projection: "guest-public", response: "protocol-404" });
+      expect(app.routes.some((registered) => registered.method === route.method && registered.path === route.path), `registered ${route.path}`).toBe(true);
+    }
+    // Registered after the Review routes and before the `/d` stubs, so neither shadows the other.
+    const order = app.routes.filter((route) => route.path === "/d" || route.path.startsWith("/d/")).map((route) => route.path);
+    expect(order.indexOf("/d/review")).toBeLessThan(order.indexOf("/d/:slug")); expect(order.indexOf("/d/:slug")).toBeLessThan(order.indexOf("/d/*"));
   });
 
   it("classifies GET /api/production-gantt as scoped-project / external-safe", () => {
