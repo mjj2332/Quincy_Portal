@@ -221,6 +221,15 @@ describe("re-filtering at send time", () => {
       expect((await rowOf(removedId))!.sent_at).not.toBeNull();
     });
 
+    it("a video_added item is not emailed when the only granted Version was removed, even though an ungranted Version is live", async () => {
+      const [v1, v2] = await seedVideo("Kitchen walkthrough", 2); const link = await seedLink(); await onLink(link.id, [v1!, v2!], [v1!]); const member = await seedMember(link.id);
+      const removedId = await pend(member, link.id, "video_added", v1!);
+      await removeVersion(v1!.assetId);
+      const mail = mailer(); await runAt(mail.env, T0);
+      expect(mail.sent).toHaveLength(0);
+      expect((await rowOf(removedId))!.sent_at).not.toBeNull();
+    });
+
     for (const [label, remove] of [["Version", (t: Awaited<ReturnType<typeof basic>>) => removeVersion(t.version.assetId)], ["Video", (t: Awaited<ReturnType<typeof basic>>) => removeVideo(t.version.videoId)]] as const) {
       it(`when every item's ${label} is removed, no email is sent, the rows are marked and the slot is given back`, async () => {
         const t = await basic(); const ids2 = [await pend(t.member, t.link.id, label === "Video" ? "video_added" : "public_note", t.version, label === "Video" ? null : await seedNote(t.version)), await pend(t.member, t.link.id, "version_granted", t.version)];
