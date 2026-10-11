@@ -103,7 +103,7 @@ async function resolveStageVisibleProject(input: MoveProjectStageInput) {
   } : null;
 }
 
-function finalizerFromResults(results: D1Result<unknown>[], projectId: string, auditIndex: number, winnerIndex: number, activityIndex: number) {
+export function finalizerFromResults(results: D1Result<unknown>[], projectId: string, auditIndex: number, winnerIndex: number, activityIndex: number) {
   const winner = (results[winnerIndex]?.results ?? []).find((item) => (item as { id?: unknown }).id === projectId) as { id?: string; stage_key?: StageKey; stageKey?: StageKey; board_revision?: number; boardRevision?: number } | undefined;
   const marker = results[auditIndex]?.results?.[0] as { id?: string } | undefined;
   if (!winner?.id || !marker?.id) return null;
