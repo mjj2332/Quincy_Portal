@@ -11,7 +11,7 @@ import {
   shootDateFillLanded,
   type CommittedStageFinalizerIntent,
 } from "@quincy/db";
-import { projectActivityDeepLink } from "@quincy/shared";
+import { enqueueDeliveryDerivativesSafely, projectActivityDeepLink } from "@quincy/shared";
 import type { Env, SessionUser } from "../env";
 import { auditMeta } from "./audit";
 import { deliverySlugBase, randomItemHandle, randomSlugSuffix } from "./delivery-address";
@@ -58,10 +58,13 @@ export type PublishOutcome =
 export const MAX_ADDRESS_ATTEMPTS = 5;
 
 /**
- * Slice 4 enqueues the `delivery_web` and `premium_preview` derivatives of a published set here. Deliberately a no-op until then; the route calls it after the batch commits.
- * RULE: slice 4 must land before the `client_delivery` gate is enabled for any Project. Until it does, a Published set has no derivatives, and the page would have nothing safe to serve.
+ * Hands a published set's photos to the rendition queue for their Client Delivery derivatives (#787 slice 4): `delivery_web` for each, plus `premium_preview` for a premium one, each only when
+ * missing or at a stale spec. PDFs and Videos have none. The route calls it after the batch commits, detached, so it can never fail a Publish. RULE: this must be live before the `client_delivery`
+ * gate is enabled for any Project, or a Published set has nothing safe to serve (the page then answers its processing stub, never the original).
  */
-export async function enqueueDeliveryDerivatives(_env: unknown, _publication: { projectId: string; setNumber: number; assetIds: readonly string[] }): Promise<void> {}
+export async function enqueueDeliveryDerivatives(env: Pick<Env, "DB" | "RENDITIONS_ENABLED" | "RENDITION_QUEUE">, publication: { projectId: string; setNumber: number; assetIds: readonly string[] }): Promise<void> {
+  await enqueueDeliveryDerivativesSafely(env, publication.assetIds, "delivery-publish");
+}
 
 type BoardSnapshot = NonNullable<Awaited<ReturnType<typeof readBoardProject>>>;
 type Inspected = { terminal: PublishOutcome } | { latest: number | null; project: { street: string; suburb: string | null }; board: BoardSnapshot | null; rows: Extract<SelectionVerdict, { ok: true }>["rows"] };

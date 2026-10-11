@@ -52,7 +52,7 @@ reviewRoutes.get("/projects/:id/assets", terminalRoute("/projects/:id/assets", a
       .leftJoin(schema.selections, eq(schema.selections.assetId, schema.assets.id))
       .where(and(isNull(schema.assets.supersededAt), ne(schema.assets.kind, "video"), kind === "edited" ? eq(schema.assets.publishStatus, "ready") : sql`1 = 1`, visibleProjectWhere(c.get("user"))))
       .orderBy(asc(sql`lower(${schema.assets.originalFilename})`), asc(schema.assets.originalFilename), asc(schema.assets.id)).all();
-    const readiness = new Map<string, Set<"thumb" | "web">>();
+    const readiness = new Map<string, Set<string>>();
     const unique: typeof rows = [];
     for (const row of rows) {
       if (row.renditionVariant) readiness.set(row.id, new Set([...(readiness.get(row.id) ?? []), row.renditionVariant]));
@@ -91,10 +91,10 @@ reviewRoutes.get("/projects/:id/assets", terminalRoute("/projects/:id/assets", a
     .leftJoin(schema.assetPremiumUnlocks, eq(schema.assetPremiumUnlocks.assetId, schema.assets.id))
     .orderBy(asc(sql`lower(${schema.assets.originalFilename})`), asc(schema.assets.originalFilename), asc(schema.assets.id))
     .all();
-  const readiness = new Map<string, Set<"thumb" | "web">>();
+  const readiness = new Map<string, Set<string>>();
   for (const row of rows) {
     if (!row.renditionVariant) continue;
-    const variants = readiness.get(row.asset.id) ?? new Set<"thumb" | "web">();
+    const variants = readiness.get(row.asset.id) ?? new Set<string>();
     variants.add(row.renditionVariant);
     readiness.set(row.asset.id, variants);
   }

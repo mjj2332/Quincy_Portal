@@ -1,12 +1,16 @@
 import { assetRenditions, assets } from "@quincy/db/schema";
 import {
+  ANY_RENDITION_VARIANTS,
+  DEFAULT_RENDITION_VARIANTS,
+  DELIVERY_RENDITION_SPECS,
   issueTransformSource,
   RENDITION_SPECS,
-  RENDITION_SPEC_VERSION,
+  RENDITION_VARIANT_SPEC,
   renditionR2Key,
   TRANSFORM_CACHE_VERSION,
   isDngFilename,
-  type RenditionVariant,
+  type AnyRenditionVariant,
+  type DeliveryRenditionVariant,
 } from "@quincy/shared";
 import { and, eq, inArray } from "drizzle-orm";
 
@@ -14,11 +18,16 @@ import type { Env } from "./env";
 import { dbFor } from "./lib/db";
 import { user } from "@quincy/db/schema";
 import { DngPreviewError, ensureDngPreview } from "./dng-preview";
+import deliveryWatermarkTile from "../assets/delivery-watermark-tile.png";
 
 const MAX_RENDITION_BYTES = 16 * 1024 * 1024;
+/** The Images binding's documented `.input()` cap. */
+const IMAGES_INPUT_MAX_BYTES = 20 * 1024 * 1024;
+
+const isDeliveryVariant = (variant: AnyRenditionVariant): variant is DeliveryRenditionVariant => variant === "delivery_web" || variant === "premium_preview";
 
 export type RenditionAsset = { id: string; r2Key: string; contentHash: string | null; originalFilename?: string };
-export type StoredRendition = { variant: RenditionVariant; r2Key: string; specVersion: string };
+export type StoredRendition = { variant: AnyRenditionVariant; r2Key: string; specVersion: string };
 export type RenditionContentType = "image/webp" | "image/jpeg";
 export type MeasuredRendition = StoredRendition & { bytes: number; contentType: RenditionContentType; width: number | null; height: number | null };
 
@@ -126,9 +135,30 @@ function sha256Hex(bytes: Uint8Array): Promise<string> {
   return crypto.subtle.digest("SHA-256", new Uint8Array(bytes).buffer).then((digest) => [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join(""));
 }
 
-function transformUrl(origin: string, key: string, variant: RenditionVariant, secret: string | undefined, principalId: string, authorizationEpoch: number): Promise<string> {
-  const spec = RENDITION_SPECS[variant];
-  return signedTransformUrl(origin, key, `width=${spec.maxEdge},height=${spec.maxEdge},fit=scale-down,quality=${spec.quality},format=webp`, secret, principalId, authorizationEpoch);
+function transformUrl(origin: string, key: string, variant: "thumb" | "web" | "delivery_web", secret: string | undefined, principalId: string, authorizationEpoch: number): Promise<string> {
+  // `delivery_web` is a JPEG for the client page; the QA pair stays WebP.
+  const options = variant === "delivery_web"
+    ? `width=${DELIVERY_RENDITION_SPECS.delivery_web.maxEdge},height=${DELIVERY_RENDITION_SPECS.delivery_web.maxEdge},fit=scale-down,quality=${DELIVERY_RENDITION_SPECS.delivery_web.quality},format=jpeg`
+    : `width=${RENDITION_SPECS[variant].maxEdge},height=${RENDITION_SPECS[variant].maxEdge},fit=scale-down,quality=${RENDITION_SPECS[variant].quality},format=webp`;
+  return signedTransformUrl(origin, key, options, secret, principalId, authorizationEpoch);
+}
+
+/** Width and height from a baseline or progressive JPEG's SOF marker; null if it is not a JPEG with one. */
+export function jpegDimensions(bytes: Uint8Array): { width: number; height: number } | null {
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  let offset = 2;
+  while (offset + 9 < bytes.length) {
+    if (bytes[offset] !== 0xff) { offset += 1; continue; }
+    const marker = bytes[offset + 1]!;
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { offset += 2; continue; }
+    const length = (bytes[offset + 2]! << 8) | bytes[offset + 3]!;
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+      const height = (bytes[offset + 5]! << 8) | bytes[offset + 6]!; const width = (bytes[offset + 7]! << 8) | bytes[offset + 8]!;
+      return width > 0 && height > 0 ? { width, height } : null;
+    }
+    offset += 2 + length;
+  }
+  return null;
 }
 
 /** The Image Transformations URL for `key` with `options` (the part after `/cdn-cgi/image/`), over a freshly signed `/__transform-source` URL. */
@@ -145,7 +175,7 @@ export function signedTransformUrl(origin: string, key: string, options: string,
   });
 }
 
-export type RenditionGenerationEnv = Pick<Env, "APP_ORIGIN" | "TRANSFORM_SOURCE_SECRET" | "TRANSFORM_SOURCE_PRINCIPAL_ID" | "TRANSFORM_SOURCE_AUTHORIZATION_EPOCH" | "MEDIA"> & { DB?: D1Database };
+export type RenditionGenerationEnv = Pick<Env, "APP_ORIGIN" | "TRANSFORM_SOURCE_SECRET" | "TRANSFORM_SOURCE_PRINCIPAL_ID" | "TRANSFORM_SOURCE_AUTHORIZATION_EPOCH" | "MEDIA"> & { DB?: D1Database; IMAGES?: ImagesBinding };
 type TransformPrincipal = { id: string; authorizationEpoch: number };
 
 export async function resolveTransformPrincipal(env: RenditionGenerationEnv): Promise<TransformPrincipal> {
@@ -170,6 +200,11 @@ export async function resolveTransformPrincipal(env: RenditionGenerationEnv): Pr
   return { id: principal.id, authorizationEpoch: principal.authorizationEpoch };
 }
 
+/**
+ * Builds the requested variants of one photo, in the canonical order (`thumb`, `web`, `delivery_web`, `premium_preview`). With no `variants` it builds the QA pair, as before #787.
+ * Each variant is skipped when a row at ITS OWN spec version (`RENDITION_VARIANT_SPEC`) and its object exist, so a Delivery spec bump regenerates only that variant.
+ * `premium_preview` is derived from the asset's own current `web` rendition, never from the original: when that rendition is missing or stale it first makes that `web` in the same invocation.
+ */
 export async function generateRenditions(
   env: RenditionGenerationEnv,
   assetId: string,
@@ -177,53 +212,98 @@ export async function generateRenditions(
   // fetch with `this = dependencies`, which throws "Illegal invocation". The arrow calls the
   // free global fetch with correct binding. (Injected test fetchers are unaffected.)
   dependencies?: { store: RenditionStore; fetch: typeof fetch },
-): Promise<{ generated: RenditionVariant[]; skipped: RenditionVariant[] }> {
+  variants: readonly AnyRenditionVariant[] = DEFAULT_RENDITION_VARIANTS,
+): Promise<{ generated: AnyRenditionVariant[]; skipped: AnyRenditionVariant[] }> {
   const resolvedDependencies = dependencies ?? { store: createRenditionStore(env as Env), fetch: (...args: Parameters<typeof fetch>) => fetch(...args) };
+  const wanted = ANY_RENDITION_VARIANTS.filter((variant) => variants.includes(variant));
   const asset = await resolvedDependencies.store.getAsset(assetId);
-  if (!asset) return { generated: [], skipped: ["thumb", "web"] };
+  if (!asset) return { generated: [], skipped: wanted };
   const existing = new Map((await resolvedDependencies.store.getRenditions(assetId)).map((row) => [row.variant, row]));
-  const principal = await resolveTransformPrincipal(env);
-  const generated: RenditionVariant[] = []; const skipped: RenditionVariant[] = [];
+  // The preview is drawn over `web`. When that row is missing or stale (right after a supersede carry, say) make it first, in this invocation, rather than throwing into retries and the DLQ.
+  // A current `web` is left alone, and unreported, so the result still names only what was asked for.
+  const currentWeb = existing.get("web");
+  const webUsable = currentWeb?.specVersion === RENDITION_VARIANT_SPEC.web && Boolean(await env.MEDIA.head(currentWeb.r2Key));
+  const work = wanted.includes("premium_preview") && !wanted.includes("web") && !webUsable
+    ? ANY_RENDITION_VARIANTS.filter((variant) => variant === "web" || wanted.includes(variant))
+    : wanted;
+  const generated: AnyRenditionVariant[] = []; const skipped: AnyRenditionVariant[] = [];
+  let principal: TransformPrincipal | null = null;
   let sourceKey: string | null = null;
-  for (const variant of ["thumb", "web"] as const) {
+  for (const variant of work) {
     const previous = existing.get(variant);
-    if (previous?.specVersion === RENDITION_SPEC_VERSION && await env.MEDIA.head(previous.r2Key)) { skipped.push(variant); continue; }
-    if (sourceKey === null) {
-      sourceKey = asset.r2Key;
-      if (isDngFilename(asset.originalFilename ?? asset.r2Key)) {
-        try {
-          sourceKey = (await ensureDngPreview(env.MEDIA, asset.r2Key)).key;
-        } catch (error) {
-          if (error instanceof DngPreviewError) throw error;
-          const detail = error instanceof Error ? error.message : "embedded JPEG preview is unavailable";
-          throw new Error(`DNG preview unavailable for ${assetId}: ${detail}`);
+    const spec = RENDITION_VARIANT_SPEC[variant];
+    if (previous?.specVersion === spec && await env.MEDIA.head(previous.r2Key)) { skipped.push(variant); continue; }
+    let body: Uint8Array; let contentType: RenditionContentType; let width: number | null = null; let height: number | null = null;
+    if (variant === "premium_preview") {
+      ({ body, width, height } = await watermarkedPreview(env, asset, existing.get("web")));
+      contentType = "image/jpeg";
+    } else {
+      principal ??= await resolveTransformPrincipal(env);
+      if (sourceKey === null) {
+        sourceKey = asset.r2Key;
+        if (isDngFilename(asset.originalFilename ?? asset.r2Key)) {
+          try {
+            sourceKey = (await ensureDngPreview(env.MEDIA, asset.r2Key)).key;
+          } catch (error) {
+            if (error instanceof DngPreviewError) throw error;
+            const detail = error instanceof Error ? error.message : "embedded JPEG preview is unavailable";
+            throw new Error(`DNG preview unavailable for ${assetId}: ${detail}`);
+          }
         }
       }
-    }
-    const response = await resolvedDependencies.fetch(await transformUrl(env.APP_ORIGIN, sourceKey, variant, env.TRANSFORM_SOURCE_SECRET, principal.id, principal.authorizationEpoch), { headers: { accept: "image/webp" } });
-    const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-    const resized = response.headers.get("cf-resized");
-    if (!response.ok || (contentType !== "image/webp" && contentType !== "image/jpeg") || /(?:^|[;,\s])err=/i.test(resized ?? "") || !/(?:^|[;,\s])internal=ok/i.test(resized ?? "")) {
-      throw new Error(`Invalid transform response for ${assetId}/${variant}: status=${response.status} content-type=${contentType ?? "missing"} cf-resized=${resized ?? "missing"}`);
-    }
-    const body = await readBounded(response.body);
-    let width: number | null = null; let height: number | null = null;
-    if (contentType === "image/webp") {
-      const dimensions = webpDimensions(body);
-      if (!validDimensions(dimensions, RENDITION_SPECS[variant].maxEdge)) throw new Error(`Invalid WebP dimensions for ${assetId}/${variant}`);
-      width = dimensions.width; height = dimensions.height;
-    } else if (!isJpeg(body)) {
-      throw new Error(`Invalid JPEG output for ${assetId}/${variant}`);
+      const response = await resolvedDependencies.fetch(await transformUrl(env.APP_ORIGIN, sourceKey, variant, env.TRANSFORM_SOURCE_SECRET, principal.id, principal.authorizationEpoch), { headers: { accept: variant === "delivery_web" ? "image/jpeg" : "image/webp" } });
+      const responseType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+      const resized = response.headers.get("cf-resized");
+      if (!response.ok || (responseType !== "image/webp" && responseType !== "image/jpeg") || /(?:^|[;,\s])err=/i.test(resized ?? "") || !/(?:^|[;,\s])internal=ok/i.test(resized ?? "")) {
+        throw new Error(`Invalid transform response for ${assetId}/${variant}: status=${response.status} content-type=${responseType ?? "missing"} cf-resized=${resized ?? "missing"}`);
+      }
+      contentType = responseType;
+      body = await readBounded(response.body);
+      if (variant === "delivery_web") {
+        // A client-facing JPEG: it must be a JPEG with a readable size inside the spec's edge, never a pass-through.
+        const dimensions = contentType === "image/jpeg" && isJpeg(body) ? jpegDimensions(body) : null;
+        if (!validDimensions(dimensions, DELIVERY_RENDITION_SPECS.delivery_web.maxEdge)) throw new Error(`Invalid JPEG output for ${assetId}/${variant}`);
+        width = dimensions.width; height = dimensions.height;
+      } else if (contentType === "image/webp") {
+        const dimensions = webpDimensions(body);
+        if (!validDimensions(dimensions, RENDITION_SPECS[variant].maxEdge)) throw new Error(`Invalid WebP dimensions for ${assetId}/${variant}`);
+        width = dimensions.width; height = dimensions.height;
+      } else if (!isJpeg(body)) {
+        throw new Error(`Invalid JPEG output for ${assetId}/${variant}`);
+      }
     }
     const outputDigest = await sha256Hex(body);
     const r2Key = renditionR2Key(asset.id, asset.contentHash, variant, outputDigest, contentType);
     // Never overwrite an immutable rendition object. If a prior attempt wrote R2 then lost its
     // D1 update, the deterministic digest key is adopted below; an untracked orphan is safe.
     if (!await env.MEDIA.head(r2Key)) {
-      await env.MEDIA.put(r2Key, body, { httpMetadata: { contentType }, customMetadata: { specVersion: RENDITION_SPEC_VERSION, assetId, variant, outputDigest } });
+      await env.MEDIA.put(r2Key, body, { httpMetadata: { contentType }, customMetadata: { specVersion: spec, assetId, variant, outputDigest } });
     }
-    await resolvedDependencies.store.save({ assetId, variant, r2Key, specVersion: RENDITION_SPEC_VERSION, bytes: body.byteLength, contentType, width, height });
+    await resolvedDependencies.store.save({ assetId, variant, r2Key, specVersion: spec, bytes: body.byteLength, contentType, width, height });
+    existing.set(variant, { variant, r2Key, specVersion: spec });
     generated.push(variant);
   }
   return { generated, skipped };
+}
+
+/**
+ * The locked-photo preview (#787): the asset's own `web` rendition, scaled to 1600 px, with the repeated watermark tile burned in by the Images binding, as a JPEG. The tile PNG carries its own
+ * opacity, so the draw opacity is 1. The binding caps its input at 20 MB, and the watermark must never be drawn over anything but the asset's own current `web` rendition.
+ */
+async function watermarkedPreview(env: RenditionGenerationEnv, asset: RenditionAsset, web: StoredRendition | undefined): Promise<{ body: Uint8Array; width: number | null; height: number | null }> {
+  if (!web || web.specVersion !== RENDITION_VARIANT_SPEC.web) throw new Error(`premium_preview for ${asset.id} needs a current web rendition and has none`);
+  if (!env.IMAGES) throw new Error("IMAGES binding is required for premium_preview");
+  const source = await env.MEDIA.get(web.r2Key);
+  if (!source) throw new Error(`premium_preview for ${asset.id}: the web rendition object is missing`);
+  if (source.size > IMAGES_INPUT_MAX_BYTES) { await source.body.cancel(); throw new Error(`premium_preview for ${asset.id}: the web rendition exceeds the 20 MB Images input cap`); }
+  const edge = DELIVERY_RENDITION_SPECS.premium_preview.maxEdge;
+  // Resize first: the output canvas is the base image's size, so drawing at 3200 px and shrinking afterwards would shrink the tile with it.
+  const result = await env.IMAGES.input(source.body)
+    .transform({ width: edge, height: edge, fit: "scale-down" })
+    .draw(env.IMAGES.input(new Response(deliveryWatermarkTile).body!), { repeat: true, opacity: 1 })
+    .output({ format: "image/jpeg", quality: DELIVERY_RENDITION_SPECS.premium_preview.quality });
+  const body = await readBounded(result.image());
+  const dimensions = isJpeg(body) ? jpegDimensions(body) : null;
+  if (!validDimensions(dimensions, edge)) throw new Error(`Invalid JPEG output for ${asset.id}/premium_preview`);
+  return { body, width: dimensions.width, height: dimensions.height };
 }

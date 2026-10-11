@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import { assetPremiumInputSchema, assetPremiumResponseSchema, assetPremiumUnlockInputSchema, roleHasCapability } from "@quincy/shared";
+import { assetPremiumInputSchema, enqueueDeliveryDerivativesSafely, assetPremiumResponseSchema, assetPremiumUnlockInputSchema, roleHasCapability } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
 import { projectIsArchived } from "../lib/project-archive";
@@ -47,7 +47,10 @@ assetPremiumRoutes.put("/projects/:projectId/assets/:assetId/delivery-premium", 
   const result = await setAssetPremium(c.env.DB, { projectId, assetId, principal: principalOf(c), premium: input.premium, now: Date.now() });
   if (result === "archived") return archivedResponse(c);
   if (result === "published") return publishedResponse(c);
-  return result === "not_found" ? assetNotFound(c) : c.json(assetPremiumResponseSchema.parse(result));
+  if (result === "not_found") return assetNotFound(c);
+  // A premium photo needs its watermarked preview before a Publish can show it locked; detached, so a queue failure never fails the mark. The helper decides what is still missing.
+  if (result.premium && asset.kind === "photo") c.executionCtx.waitUntil(enqueueDeliveryDerivativesSafely(c.env, [assetId], "asset-premium"));
+  return c.json(assetPremiumResponseSchema.parse(result));
 }));
 
 assetPremiumRoutes.put("/projects/:projectId/assets/:assetId/delivery-premium-unlock", terminalRoute("/projects/:projectId/assets/:assetId/delivery-premium-unlock", async (c) => {
