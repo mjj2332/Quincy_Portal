@@ -236,7 +236,7 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
                   <ItemMedia variant="image" className="size-14 overflow-hidden bg-surface-sunken text-foreground-secondary group-data-[size=xs]/item:size-14 group-has-data-[slot=item-description]/item:translate-y-0 group-has-data-[slot=item-description]/item:self-center">
                     {url ? <LazyImage src={url} alt="" className="size-full object-cover" /> : c.kind === "video" ? <FilmIcon aria-hidden className="size-5" /> : <FileTextIcon aria-hidden className="size-5" />}
                   </ItemMedia>
-                  <ItemContent className="min-w-0 grow basis-[12rem]">
+                  <ItemContent className="min-w-0 flex-[1_1_12rem]">
                     <ItemTitle className="line-clamp-none [overflow-wrap:anywhere]">{c.name}</ItemTitle>
                     {c.premium && <ItemDescription className="line-clamp-none flex flex-wrap items-center gap-[var(--space-2)]">
                       <Badge variant={c.premiumUnlocked ? "success-light" : "warning-light"}>{c.premiumUnlocked ? "Premium · unlocked" : "Premium · locked"}</Badge>
@@ -256,7 +256,7 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
           <p className="m-0 text-foreground-secondary [font:var(--type-label)]">The client page still shows these, because a newer version has not been published. Locking and unlocking here changes what the client sees.</p>
           <ItemGroup>
             {served.map((c) => <Item key={c.assetId} size="xs" variant="outline" data-testid="delivery-served-item" data-kind={c.kind} className="flex-wrap">
-              <ItemContent className="min-w-0 grow basis-[12rem]">
+              <ItemContent className="min-w-0 flex-[1_1_12rem]">
                 <ItemTitle className="line-clamp-none [overflow-wrap:anywhere]">{c.name}</ItemTitle>
                 {c.premium && <ItemDescription className="line-clamp-none flex flex-wrap items-center gap-[var(--space-2)]">
                   <Badge variant={c.premiumUnlocked ? "success-light" : "warning-light"}>{c.premiumUnlocked ? "Premium · unlocked" : "Premium · locked"}</Badge>
