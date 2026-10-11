@@ -25,8 +25,8 @@ export function DeliveryPreviewDialog({ dto, onClose }: { dto: DeliveryPageDto |
     <DialogContent data-testid="delivery-preview-dialog" showCloseButton={false} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col gap-[var(--space-4)] sm:max-w-[720px]">
       {dto && <ReviewLinkDialogFrame
         header={<DialogHeader>
-          <DialogTitle className={DIALOG_TITLE}>{`Preview · ${dto.property.street}`}</DialogTitle>
-          <DialogDescription className="text-foreground-secondary">{`How the client page will look as set ${dto.setNumber}. Nothing is published.`}</DialogDescription>
+          <DialogTitle className={DIALOG_TITLE}>Preview</DialogTitle>
+          <DialogDescription className="text-foreground-secondary">{`${dto.property.street}: how the client page will look as set ${dto.setNumber}. Nothing is published.`}</DialogDescription>
         </DialogHeader>}>
         {inspected && <div data-testid="delivery-preview-inspect" className="mb-[var(--space-3)] grid gap-[var(--space-2)]">
           {inspected.kind === "video"
@@ -35,7 +35,7 @@ export function DeliveryPreviewDialog({ dto, onClose }: { dto: DeliveryPageDto |
           <Button type="button" variant="outline" size="sm" className="w-fit pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={() => setInspecting(null)}>Close {inspected.label}</Button>
         </div>}
         <ul className="m-0 grid list-none grid-cols-2 gap-[var(--space-3)] p-0 min-[721px]:grid-cols-3" aria-label="Items on the page">
-          {dto.items.map((item) => <li key={item.handle} data-testid="delivery-preview-item" className="grid gap-[var(--space-2)]">
+          {dto.items.map((item) => <li key={item.handle} data-testid="delivery-preview-item" className="grid content-start gap-[var(--space-2)]">
             {(() => {
               const tile = <div className="grid aspect-[4/3] place-items-center overflow-hidden border border-solid border-[var(--border-hairline)] bg-surface-sunken text-foreground-secondary">
                 {item.thumbUrl && !item.locked ? <LazyImage src={item.thumbUrl} alt={item.label} className="size-full object-cover" /> : item.kind === "video" ? <FilmIcon aria-hidden className="size-6" /> : <FileTextIcon aria-hidden className="size-6" />}

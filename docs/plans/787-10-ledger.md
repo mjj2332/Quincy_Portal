@@ -64,3 +64,7 @@ No new raw `<button>`, `<input>`, `<select>`, `<textarea>`, `<dialog>` or widget
 - "Close <label>" for the inspect panel: `reui/button` (outline, sm).
 - Pending Publish: no UI; `lib/delivery-pending-store.ts` (session + Project keyed, retired by `onPrincipalTerminal`).
 - Cover is derived (null unless a selected, eligible photo); no UI change.
+
+## Design review round 1 additions
+
+No new elements. Row thumbnail overrides `reui/item` xs media (size-14, centred) from the call site; the premium `ItemDescription` now renders only when the item is premium. Preview title is plain "Preview" (the display font lacks the middle dot); the street leads the description.

@@ -172,6 +172,8 @@ describe("Preview", () => {
     const dialog = bodyById("delivery-preview-dialog")!;
     expect(dialog.textContent).toContain("Photo 01");
     expect(dialog.textContent).toContain("Locked");
+    expect(dialog.querySelector("h2")?.textContent).toBe("Preview");
+    expect(dialog.textContent).toContain("12 Example St: how the client page will look as set 1.");
     expect(dialog.querySelector("img")?.getAttribute("src")).toContain("/delivery/preview-media/");
   });
   it("says why when the server refuses the selection, and names the items", async () => {
@@ -516,6 +518,12 @@ describe("round 4: fresh candidates, first-Publish defaults and Request unlock i
     expect(candidateReads()).toBe(before); // leaving does not read
     await click(tab("Delivery")); await flush(10);
     expect(candidateReads()).toBeGreaterThan(before);
+  });
+  it("names the cover step and the Delivered move only when they apply", async () => {
+    await openDelivery();
+    expect(host.textContent).toContain("then a cover photo");
+    await click(byId("delivery-publish"));
+    expect(bodyById("delivery-publish-confirm")?.closest('[role="alertdialog"]')?.textContent).toContain("moves the Project to Delivered");
   });
   it("starts a first Publish with every item ticked and the first photo as cover", async () => {
     await openDelivery();

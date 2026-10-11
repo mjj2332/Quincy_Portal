@@ -192,7 +192,7 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
     {page && address && <Frame data-surface="default" aria-label="Client page address" role="group">
       <FramePanel className="grid gap-[var(--space-3)]">
         <FrameHeader className="p-0">
-          <div className="flex flex-wrap items-center justify-between gap-[var(--space-2)]">
+          <div className="flex flex-wrap items-center gap-[var(--space-2)]">
             <FrameTitle>Client page</FrameTitle>
             <Badge variant={page.enabled ? "success-light" : "outline"} data-testid="delivery-page-state">{page.enabled ? "On" : "Off"}</Badge>
           </div>
@@ -214,7 +214,7 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
       <FramePanel className="grid gap-[var(--space-4)]">
         <FrameHeader className="p-0">
           <FrameTitle>What to publish</FrameTitle>
-          <FrameDescription className="text-foreground-secondary">{`Choose the items for the client page, then a cover photo. ${orderedIds.length} selected.`}</FrameDescription>
+          <FrameDescription className="text-foreground-secondary">{`Choose the items for the client page${candidates.some((c) => c.kind === "photo") ? ", then a cover photo" : ""}. ${orderedIds.length} selected.`}</FrameDescription>
         </FrameHeader>
         {(!listsUsable || delivery.isPending) && !listsFailed && <p role="status" className="m-0 text-foreground-secondary [font:var(--type-label)]">Loading what can be published…</p>}
         {listsFailed && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>The items could not be loaded.</span><Button type="button" variant="outline" className={TOUCH} onClick={() => void listsFailed.refetch()}>Retry</Button></Notice>}
@@ -233,14 +233,14 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
                 const on = selected.has(c.assetId); const url = thumbUrl(projectId, c); const working = rowBusy.has(c.assetId);
                 return <Item key={c.assetId} size="xs" variant="outline" data-testid="delivery-item" data-kind={c.kind} className="flex-wrap">
                   <label className="grid size-11 shrink-0 place-items-center"><Checkbox aria-label={`Select ${c.name}`} checked={on} onChange={(event) => toggleSelected(c.assetId, event.target.checked)} /></label>
-                  <ItemMedia variant="image" className="size-14 overflow-hidden bg-surface-sunken text-foreground-secondary">
+                  <ItemMedia variant="image" className="size-14 overflow-hidden bg-surface-sunken text-foreground-secondary group-data-[size=xs]/item:size-14 group-has-data-[slot=item-description]/item:translate-y-0 group-has-data-[slot=item-description]/item:self-center">
                     {url ? <LazyImage src={url} alt="" className="size-full object-cover" /> : c.kind === "video" ? <FilmIcon aria-hidden className="size-5" /> : <FileTextIcon aria-hidden className="size-5" />}
                   </ItemMedia>
-                  <ItemContent className="min-w-0">
-                    <ItemTitle className="[overflow-wrap:anywhere]">{c.name}</ItemTitle>
-                    <ItemDescription className="flex flex-wrap items-center gap-[var(--space-2)]">
-                      {c.premium && <Badge variant={c.premiumUnlocked ? "success-light" : "warning-light"}>{c.premiumUnlocked ? "Premium · unlocked" : "Premium · locked"}</Badge>}
-                    </ItemDescription>
+                  <ItemContent className="min-w-0 grow basis-[12rem]">
+                    <ItemTitle className="line-clamp-none [overflow-wrap:anywhere]">{c.name}</ItemTitle>
+                    {c.premium && <ItemDescription className="line-clamp-none flex flex-wrap items-center gap-[var(--space-2)]">
+                      <Badge variant={c.premiumUnlocked ? "success-light" : "warning-light"}>{c.premiumUnlocked ? "Premium · unlocked" : "Premium · locked"}</Badge>
+                    </ItemDescription>}
                   </ItemContent>
                   <ItemActions className="flex-wrap">
                     {c.kind === "photo" && on && <Toggle variant="outline" size="sm" aria-label={`Cover ${c.name}`} pressed={cover === c.assetId} onPressedChange={(pressed) => setCover(pressed ? c.assetId : null)}>Cover</Toggle>}
@@ -256,11 +256,11 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
           <p className="m-0 text-foreground-secondary [font:var(--type-label)]">The client page still shows these, because a newer version has not been published. Locking and unlocking here changes what the client sees.</p>
           <ItemGroup>
             {served.map((c) => <Item key={c.assetId} size="xs" variant="outline" data-testid="delivery-served-item" data-kind={c.kind} className="flex-wrap">
-              <ItemContent className="min-w-0">
-                <ItemTitle className="[overflow-wrap:anywhere]">{c.name}</ItemTitle>
-                <ItemDescription className="flex flex-wrap items-center gap-[var(--space-2)]">
-                  {c.premium && <Badge variant={c.premiumUnlocked ? "success-light" : "warning-light"}>{c.premiumUnlocked ? "Premium · unlocked" : "Premium · locked"}</Badge>}
-                </ItemDescription>
+              <ItemContent className="min-w-0 grow basis-[12rem]">
+                <ItemTitle className="line-clamp-none [overflow-wrap:anywhere]">{c.name}</ItemTitle>
+                {c.premium && <ItemDescription className="line-clamp-none flex flex-wrap items-center gap-[var(--space-2)]">
+                  <Badge variant={c.premiumUnlocked ? "success-light" : "warning-light"}>{c.premiumUnlocked ? "Premium · unlocked" : "Premium · locked"}</Badge>
+                </ItemDescription>}
               </ItemContent>
               <ItemActions className="flex-wrap">{premiumControls(c)}</ItemActions>
             </Item>)}
@@ -281,7 +281,7 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
       <AlertDialogContent size="default">
         <AlertDialogHeader>
           <AlertDialogTitle>{pending.current ? `Retry the unfinished publish (${pending.current.body.assetIds.length} item${pending.current.body.assetIds.length === 1 ? "" : "s"})?` : `Publish ${orderedIds.length} item${orderedIds.length === 1 ? "" : "s"}?`}</AlertDialogTitle>
-          <AlertDialogDescription>{pending.current ? "The earlier attempt may or may not have gone through. This sends it again exactly as it was; the server publishes it only once." : page ? "This replaces what the client sees with this selection as the next set." : "This creates the client page. The first Publish also moves the Project to Delivered."}</AlertDialogDescription>
+          <AlertDialogDescription>{pending.current ? "The earlier attempt may or may not have gone through. This sends it again exactly as it was; the server publishes it only once." : page ? "This replaces what the client sees with this selection as the next set." : detail.data?.stageKey === "delivered" ? "This creates the client page." : "This creates the client page. The first Publish also moves the Project to Delivered."}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
