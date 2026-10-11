@@ -191,6 +191,37 @@ describe("request unlock", () => {
     await open(); await request();
     expect(byTestId("delivery-gone")).not.toBeNull();
   });
+  it("stays gone when a 404 on one item overtakes the page re-read another item's 409 started", async () => {
+    let answerRead!: (response: Response) => void; let reads = 0;
+    const two = () => page([photo(1), locked(2), locked(3)], { coverHandle: handle(1) });
+    route = (url, init) => {
+      if (init?.method === "POST") return url === unlockUrl(2) ? json({ error: "not_locked" }, 409) : new Response("Not found", { status: 404 });
+      reads += 1; return reads === 1 ? json(two()) : new Promise<Response>((resolve) => { answerRead = resolve; });
+    };
+    await open(); await click(tab("Premium"));
+    await click(byLabel("Request unlock: Photo 02")); await flush(); // 409: a quiet re-read is now out
+    expect(reads).toBe(2);
+    await click(byLabel("Request unlock: Photo 03")); await flush(); // 404: the page is gone
+    expect(byTestId("delivery-gone")).not.toBeNull();
+    await act(async () => { answerRead(json(two())); }); await flush();
+    expect(byTestId("delivery-gone")).not.toBeNull();
+    expect(byTestId("delivery-page")).toBeNull();
+  });
+  it("ignores an unlock answer that was started before the page went gone", async () => {
+    let answerFirst!: (response: Response) => void;
+    const two = () => page([photo(1), locked(2), locked(3)], { coverHandle: handle(1) });
+    route = (url, init) => {
+      if (init?.method !== "POST") return json(two());
+      return url === unlockUrl(2) ? new Promise<Response>((resolve) => { answerFirst = resolve; }) : new Response("Not found", { status: 404 });
+    };
+    await open(); await click(tab("Premium"));
+    await click(byLabel("Request unlock: Photo 02"));
+    await click(byLabel("Request unlock: Photo 03")); await flush();
+    expect(byTestId("delivery-gone")).not.toBeNull();
+    await act(async () => { answerFirst(json({ error: "not_locked" }, 409)); }); await flush();
+    expect(byTestId("delivery-gone")).not.toBeNull();
+    expect(reads()).toHaveLength(1); // the stale 409 did not start another read
+  });
   it.each(["network", "500"])("says it couldn't send, and lets the person try again, on a %s failure", async (kind) => {
     route = (url, init) => { if (init?.method !== "POST") return json(dto()); if (kind === "network") throw new TypeError("offline"); return new Response("", { status: 500 }); };
     await open(); await request();

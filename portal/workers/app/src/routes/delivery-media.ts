@@ -24,9 +24,8 @@ const HANDLE = /^[a-z0-9]{16}$/;
  */
 export const deliveryMediaRoutes = new Hono<AppEnv>();
 type Ctx = Context<AppEnv>;
-/** These `/api` routes sit outside `/media`'s cache default, so a refusal would carry no Cache-Control. Anything not already marked is `private, no-store`. Per route, not `.use(...)`, which leaks across sibling mounts. */
+/** Staff Delivery media is never cached by the browser: whether an item is locked can change between two views, and a cached clean image would bypass the lock-aware handler. Volume is a few staff, so correctness wins over the 300 s `/media` default. Always overrides. */
 async function withNoStoreDefault(response: Response): Promise<Response> {
-  if (response.headers.has("cache-control")) return response;
   const marked = new Response(response.body, response);
   marked.headers.set("cache-control", "private, no-store");
   return marked;

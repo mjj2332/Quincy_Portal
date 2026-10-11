@@ -302,6 +302,19 @@ describe("lightbox", () => {
       expect(embla.api!.scrollTo).toHaveBeenLastCalledWith(2, true);
     } finally { window.matchMedia = original; }
   });
+  it("keeps the photo on screen when the motion preference changes mid-view, and follows embla's own re-init", async () => {
+    const original = window.matchMedia; const changes = new Set<() => void>(); let reduce = false;
+    window.matchMedia = ((query: string) => ({ get matches() { return reduce && query.includes("prefers-reduced-motion"); }, media: query, addEventListener: (_: string, listener: () => void) => { changes.add(listener); }, removeEventListener: (_: string, listener: () => void) => { changes.delete(listener); }, addListener: () => undefined, removeListener: () => undefined, dispatchEvent: () => false, onchange: null })) as typeof window.matchMedia;
+    try {
+      await open();
+      await press("ArrowRight", byTestId("delivery-lightbox")!);
+      expect(byTestId("delivery-lightbox-counter")!.textContent).toBe("Photo 3 of 3");
+      reduce = true; await act(async () => { changes.forEach((listener) => listener()); });
+      expect(embla.options).toMatchObject({ startIndex: 2, duration: 0 }); // re-initialises where the person is, not at the opening photo
+      await embla.emit("reInit", 1);
+      expect(byTestId("delivery-lightbox-counter")!.textContent).toBe("Photo 2 of 3");
+    } finally { window.matchMedia = original; }
+  });
   it("shows a locked photo as its preview with Premium and Request unlock, and the same unlock state as the grid", async () => {
     const onRequestUnlock = vi.fn();
     await show(page([photo(1), locked(2)]), { onRequestUnlock, unlockState: { [handle(2)]: { kind: "requested" } } });

@@ -51,6 +51,8 @@ export function DeliveryApp({ slug }: { slug: string }) {
   const attempt = useRef(0);
   const controller = useRef<AbortController | null>(null);
   const alive = useRef(true);
+  /** Bumped when the page turns out to be gone: an unlock answer that was started before it is stale and must not touch the screen or the unlock states. */
+  const generation = useRef(0);
   const unlockRef = useRef<UnlockStates>({});
   unlockRef.current = unlock;
 
@@ -79,21 +81,27 @@ export function DeliveryApp({ slug }: { slug: string }) {
 
   useEffect(() => { if (screen.name === "ready") document.title = screen.dto.property.street; }, [screen]);
 
+  /** Once gone, always gone: abort and retire any page read still out (a late 200 would resurrect stale content), and retire older unlock answers. */
+  const gone = useCallback(() => {
+    generation.current += 1; attempt.current += 1; controller.current?.abort();
+    setScreen({ name: "gone" });
+  }, []);
   const setState = useCallback((handle: string, next: UnlockState) => { setUnlock((current) => ({ ...current, [handle]: next })); }, []);
   const requestUnlock = useCallback(async (handle: string) => {
     const current = unlockRef.current[handle];
     if (current && (current.kind === "sending" || current.kind === "requested" || (current.kind === "limited" && current.until > Date.now()))) return;
     setState(handle, { kind: "sending" });
+    const started = generation.current;
     const result = await api.requestUnlock(handle);
-    if (!alive.current) return;
+    if (!alive.current || generation.current !== started) return;
     switch (result.kind) {
       case "requested": setState(handle, { kind: "requested" }); break;
       case "limited": setState(handle, { kind: "limited", until: Date.now() + result.retryAfterSeconds * 1000 }); break;
       case "failed": setState(handle, { kind: "failed" }); break;
       case "notLocked": setState(handle, { kind: "idle" }); void load(true); break;
-      case "gone": setScreen({ name: "gone" }); break;
+      case "gone": gone(); break;
     }
-  }, [api, load, setState]);
+  }, [api, load, setState, gone]);
 
   switch (screen.name) {
     case "loading": return <LoadingScreen />;

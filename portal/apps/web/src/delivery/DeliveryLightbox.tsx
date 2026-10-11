@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { DeliveryItemDto } from "@quincy/shared";
 import { ChevronLeftIcon, ChevronRightIcon, PauseIcon, PlayIcon, XIcon } from "lucide-react";
 import { Button } from "../components/reui/button";
@@ -37,11 +37,13 @@ export function DeliveryLightbox({ title, items, startIndex, hrefs, unlock, onRe
   const [index, setIndex] = useState(initial);
   const [playing, setPlaying] = useState(false);
   const reduced = usePrefersReducedMotion();
-  // Embla re-initialises when its options change, so they are fixed per mount (and per motion preference), never per photo.
-  const options = useMemo(() => ({ startIndex: initial, duration: reduced ? 0 : 25 }), [initial, reduced]);
+  // Embla re-initialises when its options change, so they are fixed per mount and per motion preference, never per photo. When the preference flips mid-view it re-initialises AT the photo on screen (`indexRef`), not the one that opened.
+  const indexRef = useRef(initial);
+  const options = useMemo(() => ({ startIndex: indexRef.current, duration: reduced ? 0 : 25 }), [reduced]);
   // A refetch can shrink the list under an open viewer.
   const at = Math.min(index, Math.max(count - 1, 0));
   const item = items[at];
+  indexRef.current = at;
   const urls = useMemo(() => items.map((entry) => entry.url), [items]);
   useNeighbourPreload(urls, at);
 
@@ -54,8 +56,8 @@ export function DeliveryLightbox({ title, items, startIndex, hrefs, unlock, onRe
   useEffect(() => {
     if (!api) return;
     const onSelect = () => { setIndex(api.selectedScrollSnap()); };
-    api.on("select", onSelect);
-    return () => { api.off("select", onSelect); };
+    api.on("select", onSelect); api.on("reInit", onSelect);
+    return () => { api.off("select", onSelect); api.off("reInit", onSelect); };
   }, [api]);
 
   // Embla's drag release settles with its own duration, whatever `duration` says. Under reduced motion, once the release has chosen a snap, jump to it.

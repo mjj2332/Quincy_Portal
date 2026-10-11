@@ -49,11 +49,12 @@ let archivedDetail = false;
 let candidatesFail = false; let candidatesHang = false; let videoReviewOff = false; let latchDetailFails = false;
 let delivery: unknown = NO_PAGE; // an object is the 200 answer; an ApiError instance is thrown
 let photos = [asset(ids.photo1), asset(ids.photo2, { premium: true })];
+let filmPremium = { premium: false, premiumUnlocked: false };
 /** What `GET /delivery/candidates` answers: Publish-eligible items, photos then the Floorplan then the Video. */
 const candidatesBody = () => ({ candidates: [
   ...photos.filter((item) => item.kind === "photo").map((item) => ({ assetId: item.id, kind: "photo", name: item.originalFilename, videoId: null, premium: item.premium === true, premiumUnlocked: item.premiumUnlocked === true })),
   { assetId: ids.plan, kind: "floorplan", name: "plan.pdf", videoId: null, premium: false, premiumUnlocked: false },
-  { assetId: ids.videoAsset, kind: "video", name: "Main walkthrough", videoId: ids.video, premium: false, premiumUnlocked: false },
+  { assetId: ids.videoAsset, kind: "video", name: "Main walkthrough", videoId: ids.video, ...filmPremium },
 ] });
 function install() {
   apiGetMock.mockReset();
@@ -100,7 +101,7 @@ async function openDelivery(role: Role = "admin") { await mount(role); await cli
 async function startEmpty() { for (const box of [...host.querySelectorAll<HTMLInputElement>('input[type="checkbox"][aria-label^="Select "]')]) if (box.checked) await click(box); }
 const api = (status: number, body: Record<string, unknown>) => new ApiError(String(body.error ?? "x"), status, body);
 
-beforeEach(() => { archivedDetail = false; candidatesFail = false; candidatesHang = false; videoReviewOff = false; latchDetailFails = false; apiPostMock.mockReset(); apiPutMock.mockReset(); document.body.innerHTML = ""; delivery = NO_PAGE; photos = [asset(ids.photo1), asset(ids.photo2, { premium: true })]; Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn(() => Promise.resolve()) } }); });
+beforeEach(() => { archivedDetail = false; candidatesFail = false; candidatesHang = false; videoReviewOff = false; latchDetailFails = false; apiPostMock.mockReset(); apiPutMock.mockReset(); document.body.innerHTML = ""; delivery = NO_PAGE; filmPremium = { premium: false, premiumUnlocked: false }; photos = [asset(ids.photo1), asset(ids.photo2, { premium: true })]; Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn(() => Promise.resolve()) } }); });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; document.body.innerHTML = ""; });
 
 describe("the Delivery tab's existence", () => {
@@ -520,6 +521,16 @@ describe("round 4: fresh candidates, first-Publish defaults and Request unlock i
     expect(candidateReads()).toBe(before); // leaving does not read
     await click(tab("Delivery")); await flush(10);
     expect(candidateReads()).toBeGreaterThan(before);
+  });
+  it("shows a locked film as the icon tile without asking for its poster, and the poster once it is unlocked", async () => {
+    filmPremium = { premium: true, premiumUnlocked: false };
+    await openDelivery();
+    const poster = () => host.querySelector(`img[src$="/preview-media/${ids.videoAsset}/thumb"]`);
+    expect(poster()).toBeNull();
+    expect(host.querySelector('[data-testid="delivery-item"][data-kind="video"] svg')).not.toBeNull();
+    filmPremium = { premium: true, premiumUnlocked: true };
+    await click(tab("Collaboration")); await click(tab("Delivery")); await flush(10);
+    expect(poster()).not.toBeNull();
   });
   it("names the cover step and the Delivered move only when they apply", async () => {
     await openDelivery();

@@ -56,6 +56,7 @@ const listeners = new Map<string, Set<Listener>>();
 /** A stand-in for `embla-carousel-react`: happy-dom has no layout, so real embla has nothing to measure. The page's own index state is what the tests read; this records where the page told embla to go and lets a test report a swipe. */
 export function fakeEmblaModule() {
   const useEmblaCarousel = (options: { startIndex?: number } = {}) => {
+    embla.options = options; // the latest options, as embla sees them on every render
     const [api] = useState(() => {
       embla.snap = options.startIndex ?? 0; embla.options = options; listeners.clear();
       const fake = {

@@ -39,7 +39,14 @@ export async function lockAwareUrls(db: D1Database, rows: readonly DeliveryItemR
       .bind(JSON.stringify(lockedPhotos), RENDITION_VARIANT_SPEC.premium_preview).all<{ id: string }>()).results;
     for (const row of found) ready.add(row.id);
   }
-  return (row) => (!row.locked ? urls(row) : row.kind === "photo" && ready.has(row.assetId) ? urls(row) : { url: null, thumbUrl: null });
+  // A locked URL differs from the unlocked one for the same item (`?v=locked`), so an image a browser cached while the item was open can never answer for it once it is locked.
+  const tagged = (value: string | null): string | null => (value === null ? null : `${value}?v=locked`);
+  return (row) => {
+    if (!row.locked) return urls(row);
+    if (row.kind !== "photo" || !ready.has(row.assetId)) return { url: null, thumbUrl: null };
+    const { url, thumbUrl } = urls(row);
+    return { url: tagged(url), thumbUrl: tagged(thumbUrl) };
+  };
 }
 
 /** Labels count within a kind in page order and are zero-padded to the width of that kind's total, at least two ("Photo 07", "Photo 007"). */

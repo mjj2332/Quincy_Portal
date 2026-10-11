@@ -147,7 +147,7 @@ describe("a locked item is shown to staff as the client sees it (#787 slice 9)",
   it("points a locked photo at premium_preview when it exists, serves only that, and never the clean web or thumb", async () => {
     const photo = await photoWithRenditions(); await database.DB.prepare("UPDATE assets SET delivery_premium = 1 WHERE id = ?").bind(photo.id).run(); await putPreview(photo.id);
     const dto = await previewDto([photo.id]);
-    expect(dto.items[0].locked).toBe(true); expect(dto.items[0].url).toBe(`${base()}/preview-media/${photo.id}/media`);
+    expect(dto.items[0].locked).toBe(true); expect(dto.items[0].url).toBe(`${base()}/preview-media/${photo.id}/media?v=locked`);
     for (const part of ["media", "thumb"] as const) { const response = await previewMedia(photo.id, part); expect(response.status).toBe(200); expect(await response.text()).toBe(PREVIEW); }
   });
   it("has null urls for a locked photo with no premium_preview, and its staff routes answer 404", async () => {
@@ -155,5 +155,19 @@ describe("a locked item is shown to staff as the client sees it (#787 slice 9)",
     const dto = await previewDto([photo.id]);
     expect([dto.items[0].url, dto.items[0].thumbUrl]).toEqual([null, null]);
     for (const part of ["media", "thumb"] as const) expect((await previewMedia(photo.id, part)).status).toBe(404);
+  });
+  it("never lets the browser cache staff Delivery media, and gives a locked item a different URL from its unlocked one", async () => {
+    const photo = await photoWithRenditions(); await putPreview(photo.id);
+    const open = await previewDto([photo.id]);
+    expect(open.items[0].locked).toBe(false);
+    for (const part of ["media", "thumb"] as const) expect((await previewMedia(photo.id, part)).headers.get("cache-control")).toBe("private, no-store");
+    await database.DB.prepare("UPDATE assets SET delivery_premium = 1 WHERE id = ?").bind(photo.id).run();
+    const shut = await previewDto([photo.id]);
+    expect(shut.items[0].locked).toBe(true);
+    expect(shut.items[0].url).not.toBe(open.items[0].url); expect(shut.items[0].thumbUrl).not.toBe(open.items[0].thumbUrl);
+    expect(shut.items[0].url).toBe(`${open.items[0].url}?v=locked`);
+    expect((await previewMedia(photo.id, "media")).headers.get("cache-control")).toBe("private, no-store");
+    await seedPage({ assetIds: [photo.id] });
+    for (const part of ["media", "thumb"] as const) expect((await item(await handleOf(photo.id), part)).headers.get("cache-control")).toBe("private, no-store");
   });
 });
