@@ -224,6 +224,15 @@ describe("Remove a Version from the staff viewer (#776 E)", () => {
     expect(forms.slot(ids.asset2).composer.body).toBe("");
   });
 
+  it("the discard warning also shows for an unsaved drawing with no text", async () => {
+    await mount({ parts: ["trash", "notes"] });
+    await openViewer();
+    const forms = stores.made.at(-1)!;
+    forms.setItems(ids.asset2, "composer", [{ color: "#e64b3c", width: 4, points: [{ x: 0.1, y: 0.2 }, { x: 0.2, y: 0.3 }] }]);
+    await startRemove();
+    expect(tid("video-remove-draft")).not.toBeNull();
+  });
+
   it("when the Version is the last, the confirmation says the whole film goes to Trash, and the removal is sent with removeVideo true", async () => {
     versions = [{ assetId: ids.asset2, version: 2 }];
     impact = impactOf({ lastVersion: true });

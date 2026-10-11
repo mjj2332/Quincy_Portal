@@ -165,10 +165,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     if (removed.video === null) delivery?.store.forget(videoSlot(removed.videoId));
     else { setResume(null); setAssetId(removed.video.currentAssetId); }
   }, [forms, compareStore, delivery?.store]);
-  const hasDraft = useCallback((target: string) => {
-    const held = forms?.slot(target);
-    return held !== undefined && (held.composer.body !== "" || (held.open?.text ?? "") !== "");
-  }, [forms]);
+  const hasDraft = useCallback((target: string) => forms?.isDirty(target) ?? false, [forms]);
 
   const enterCompare = () => {
     if (!compareStore || mode === "compare") return;

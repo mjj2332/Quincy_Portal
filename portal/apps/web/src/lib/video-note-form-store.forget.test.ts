@@ -60,4 +60,23 @@ describe("forgetSlot: a removed Version's form slot is retired (#776 E, 'Form li
     expect(store.clipboard("video-a")).toBeNull();
     expect(store.clipboard("video-b")).not.toBeNull();
   });
+
+  it("a delayed paste preview asked before the Version was removed cannot overwrite the preview of the restored Version", async () => {
+    const stale = gate<never>();
+    const fresh = gate<never>();
+    const stalePlan = { marker: "stale" } as never;
+    const freshPlan = { marker: "fresh" } as never;
+    store.requestPreview(REMOVED, () => stale.promise, 0);
+    store.setPasteOpen(REMOVED, false);
+    store.forgetSlot(REMOVED);
+    store.requestPreview(REMOVED, () => fresh.promise, 3);
+    expect(store.pasteView(REMOVED).status).toBe("loading");
+    stale.resolve(stalePlan);
+    await tick();
+    expect(store.pasteView(REMOVED).status).toBe("loading");
+    expect(store.pasteView(REMOVED).plan).toBeNull();
+    fresh.resolve(freshPlan);
+    await tick();
+    expect(store.pasteView(REMOVED).plan).toBe(freshPlan);
+  });
 });

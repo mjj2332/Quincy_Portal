@@ -144,6 +144,9 @@ async function confirmed(clock: NoteClock): Promise<number | "timeout"> {
   try { return await Promise.race([clock.awaitConfirmedFrame(), timedOut]); } finally { clearTimeout(timer); }
 }
 
+/** Paste-preview generations come from one counter for every store and slot: a slot that is forgotten and recreated (a removed Version restored) never reuses a generation an old request still holds. */
+let previewGeneration = 0;
+
 export function createNoteFormStore(key: string) {
   const slots = new Map<string, Slot>();
   // The clipboard is per Video, not per Version: it must outlive switching Versions, and no slot rewrite touches it.
@@ -166,7 +169,7 @@ export function createNoteFormStore(key: string) {
     if (dead) return;
     pasteRuns.set(assetId, run);
     const held = slot(assetId).pasteView;
-    const generation = held.generation + 1;
+    const generation = ++previewGeneration;
     put(assetId, { pasteView: { ...held, generation, status: "loading", error: null } });
     const current = () => slot(assetId).pasteView.generation === generation;
     run(offset).then(
@@ -493,6 +496,8 @@ export function createNoteFormStore(key: string) {
     setHistory(assetId: string, form: DrawForm, steps: MarkupHistory, frame: number | null) { put(assetId, { history: { ...slot(assetId).history, [form]: { steps, frame } } }); },
     setTool(assetId: string, patch: Partial<MarkupTool>) { put(assetId, { tool: { ...slot(assetId).tool, ...patch } }); },
 
+    /** Whether the Version's form holds anything not yet sent: text, a drawing, or a frame/range edit. The same check Escape uses. */
+    isDirty: (assetId: string): boolean => isDirty(slot(assetId)),
     /** The first Escape of a dirty form is held (the text stays); the next one is not. A clean edit or reply closes. Nothing here moves focus: the answer says where it should go. */
     escape(assetId: string, { focusInForm }: { focusInForm: boolean }): { consumed: boolean; focus: "dialog" | "textarea" | "opener" | "draw" | null } {
       const held = slot(assetId);
@@ -554,7 +559,7 @@ export function createNoteFormStore(key: string) {
       if (open) { put(assetId, { pasteOpen: true, pasteResult: null }); return; }
       // Closing forgets what the server said (and voids any request out); the offset and the ticks stay.
       pasteRuns.delete(assetId);
-      put(assetId, { pasteOpen: false, pasteView: { ...EMPTY_PASTE_VIEW, generation: held.pasteView.generation + 1 } });
+      put(assetId, { pasteOpen: false, pasteView: { ...EMPTY_PASTE_VIEW, generation: ++previewGeneration } });
     },
     clearPasteResult(assetId: string) { if (slot(assetId).pasteResult !== null) put(assetId, { pasteResult: null }); },
     /** Asks for the plan at `offset`. Starting bumps the generation, so anything asked earlier is discarded when it lands. */
@@ -570,7 +575,7 @@ export function createNoteFormStore(key: string) {
         const result = await commit();
         if (!mine()) return;
         pasteRuns.delete(assetId);
-        put(assetId, { paste: EMPTY_PASTE, pasteOpen: false, pasteResult: `Pasted ${result.copied} ${result.copied === 1 ? "note" : "notes"}${result.skipped > 0 ? ` · ${result.skipped} left out` : ""}`, pasteOp: { opId, status: "idle" }, pasteView: { ...EMPTY_PASTE_VIEW, generation: slot(assetId).pasteView.generation + 1 } });
+        put(assetId, { paste: EMPTY_PASTE, pasteOpen: false, pasteResult: `Pasted ${result.copied} ${result.copied === 1 ? "note" : "notes"}${result.skipped > 0 ? ` · ${result.skipped} left out` : ""}`, pasteOp: { opId, status: "idle" }, pasteView: { ...EMPTY_PASTE_VIEW, generation: ++previewGeneration } });
       } catch (error) {
         if (!mine()) return;
         const classified = classifyVideoNoteError(error);
