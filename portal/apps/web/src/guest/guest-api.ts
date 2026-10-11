@@ -178,7 +178,7 @@ export function createGuestApi(linkId: string): GuestApi {
 
 /**
  * `POST /d/api/unsubscribe` (#741 15b): the digest email's tokened link. No session, no link id; the token travels in the body only. `subscribed` omitted unsubscribes, true resubscribes.
- * `ok.subscribed` is the state the server reports. Any non-2xx or unparsable answer is `gone` (the stub covers unknown tokens), a network failure or a 5xx or 429 is `transient`.
+ * `ok.subscribed` is the state the server reports. Any non-2xx answer or a body that reads but fails the schema is `gone` (the stub covers unknown tokens); a network failure, an unreadable body, a 5xx or a 429 is `transient`.
  */
 export type UnsubscribeResult = { kind: "ok"; subscribed: boolean } | { kind: "gone" } | { kind: "transient" };
 export async function postUnsubscribe(token: string, subscribed?: boolean): Promise<UnsubscribeResult> {
@@ -188,5 +188,9 @@ export async function postUnsubscribe(token: string, subscribed?: boolean): Prom
   } catch { return { kind: "transient" }; }
   if (response.status >= 500 || response.status === 429) return { kind: "transient" };
   if (!response.ok) return { kind: "gone" };
-  try { return { kind: "ok", subscribed: guestSubscriptionResponseSchema.parse(await response.json()).subscribed }; } catch { return { kind: "gone" }; }
+  // A body that cannot be read (the connection dropped after the headers) is transient: the token is scrubbed, so only Retry can recover. A body that reads but fails the schema is `gone`.
+  let body: unknown;
+  try { body = await response.json(); } catch { return { kind: "transient" }; }
+  const parsed = guestSubscriptionResponseSchema.safeParse(body);
+  return parsed.success ? { kind: "ok", subscribed: parsed.data.subscribed } : { kind: "gone" };
 }

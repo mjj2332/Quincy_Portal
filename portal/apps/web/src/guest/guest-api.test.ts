@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createGuestApi } from "./guest-api";
+import { createGuestApi, postUnsubscribe } from "./guest-api";
 
 const LINK = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ASSET = "00000000-0000-4000-8000-000000000010";
@@ -118,5 +118,20 @@ describe("guest-api: note writes", () => {
   it("treats a success body that fails the schema as unreachable, never as an applied write", async () => {
     answer(json({ id: "nope" }, 201));
     expect(await api().createNote(ASSET, { startFrame: 1, body: "x" })).toEqual({ kind: "unreachable" });
+  });
+});
+
+describe("postUnsubscribe: body read failures (#741 15b)", () => {
+  it("maps a 200 whose body cannot be read to transient, so Retry stays available", async () => {
+    const dropped = new Response("{}", { status: 200 });
+    vi.spyOn(dropped, "json").mockRejectedValue(new TypeError("network connection lost"));
+    answer(dropped);
+    expect(await postUnsubscribe("tok")).toEqual({ kind: "transient" });
+  });
+  it("still maps a 200 whose body fails the schema to gone, and a good body to ok", async () => {
+    answer(json({ subscribed: "yes" }));
+    expect(await postUnsubscribe("tok")).toEqual({ kind: "gone" });
+    answer(json({ subscribed: false }));
+    expect(await postUnsubscribe("tok")).toEqual({ kind: "ok", subscribed: false });
   });
 });

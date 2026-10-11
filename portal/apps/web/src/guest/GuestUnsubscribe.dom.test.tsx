@@ -94,6 +94,12 @@ describe("GuestUnsubscribe (#741 15b)", () => {
     expect(text()).toContain("You won't get emails about this review");
   });
 
+  it("a 200 whose body read drops shows Retry, not the unavailable state", async () => {
+    await open("#t=tok-123", () => { const r = reply(200, { subscribed: false }); vi.spyOn(r, "json").mockRejectedValue(new TypeError("connection lost")); return r; });
+    expect(host!.querySelector('[data-testid="guest-unavailable"]')).toBeNull();
+    expect(button("Retry")).toBeDefined();
+  });
+
   it("a network error on the first POST offers Retry; no fragment makes no request", async () => {
     await open("#t=tok", () => { throw new Error("offline"); });
     expect(host!.querySelector('[data-testid="guest-unavailable"]')).toBeNull();
