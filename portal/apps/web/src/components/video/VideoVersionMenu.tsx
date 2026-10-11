@@ -125,7 +125,7 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
       finalFocus={() => (handOff.current ? false : undefined)}
       onOpenChange={(isOpen) => { if (isOpen) handOff.current = false; }}
     >
-      <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={archived || !queryClient} data-testid="video-version-remove" onClick={() => { handOff.current = true; open(); }}>Remove version…</MenuPrimitive.Item>
+      <MenuPrimitive.Item className={cn(MENU_ITEM, "[color:var(--destructive-wash-foreground)]")} disabled={archived || !queryClient} data-testid="video-version-remove" onClick={() => { handOff.current = true; open(); }}>Remove version…</MenuPrimitive.Item>
     </Menu>
     <AlertDialog open={target !== null} onOpenChange={(next) => { if (!next && !pending) close(); }}>
       <AlertDialogContent data-testid="video-remove-dialog" initialFocus={cancelRef} finalFocus={() => document.querySelector<HTMLElement>(MENU_TRIGGER_SELECTOR) ?? true}>
