@@ -13,6 +13,7 @@ export type ExternalSuppressionReason =
   | "restore_withheld"
   | "provider_or_diagnostic"
   | "unlinked_or_notice_board"
+  | "delivery_withheld"
   | "unknown_event";
 export type ExternalProjectActivityProjector = "safe_activity" | "safe_details" | "safe_team" | "safe_checklist" | "safe_comment" | "safe_deliverable" | "safe_workflow";
 export type ExternalActivityPolicy =
@@ -48,6 +49,8 @@ export const EXTERNAL_PROJECT_ACTIVITY_POLICY: Record<ProjectActivityType, Exter
   "project.collection.raw_sync_completed": allowed("safe_workflow"),
   "project.checklist.schedule_changed": allowed("safe_checklist"),
   "project.stage.changed": allowed("safe_activity"),
+  // Internal only (#787): a Publish is the studio's act, and an External must not learn a client page exists.
+  "project.delivery.published": suppressed("delivery_withheld"),
   "project.workflow.raw_ready": allowed("safe_workflow"),
   "project.workflow.sent_to_editing": allowed("safe_workflow"),
   "project.workflow.edited_ready": allowed("safe_workflow"),
