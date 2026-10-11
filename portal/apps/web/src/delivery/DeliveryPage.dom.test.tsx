@@ -115,7 +115,7 @@ describe("hero", () => {
   });
   it("lets the tab list grow past its fixed 32px height, so a wrapped fifth tab is not hidden under the panel", async () => {
     await show(page([photo(1), film(2), pdf(3, "floorplan"), pdf(4, "copy"), locked(5)]));
-    const list = document.querySelector("[data-slot=tabs-list]")!;
+    const list = byTestId("delivery-tabs-list")!;
     expect(list.className).toContain("flex-wrap");
     expect(list.className).toContain("group-data-[orientation=horizontal]/tabs:h-auto");
     expect(list.className).not.toContain("group-data-[orientation=horizontal]/tabs:h-8");
