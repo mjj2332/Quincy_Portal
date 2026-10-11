@@ -200,8 +200,14 @@ describe("VideoDeliveryPanel decisions (#741 14-ui-staff)", () => {
 });
 
 describe("VideoDeliveryPanel premium (#741 14-ui-staff)", () => {
-  it("an Editor sees premium but cannot change it, and is told why", async () => {
+  it("an Editor can change premium (#787 owner Q1)", async () => {
     await mount({ role: "editor", video: videoOf({ premium: true }) });
+    expect(enabled("delivery-premium-switch")).toBe(true);
+    expect(byId("delivery-premium-reason")).toBeNull();
+  });
+
+  it("an External editor sees premium but cannot change it, and is told why", async () => {
+    await mount({ role: "external_editor", video: videoOf({ premium: true }) });
     expect(byId("delivery-premium-switch")!.getAttribute("aria-checked")).toBe("true");
     expect(enabled("delivery-premium-switch")).toBe(false);
     expect(byId("delivery-premium-reason")!.textContent).toMatch(/admin/i);

@@ -828,6 +828,8 @@ export const assets = sqliteTable(
     section: text("section"),
     /** Deprecated in favour of section; retained for non-destructive compatibility. */
     isPremium: integer("is_premium", { mode: "boolean" }).notNull().default(false),
+    /** A paid extra on the Client Delivery page (photo, Floorplan, Copy). Live; the published set never changes (#787). */
+    deliveryPremium: integer("delivery_premium", { mode: "boolean" }).notNull().default(false),
     version: integer("version").notNull().default(1),
     supersedesAssetId: text("supersedes_asset_id"),
     /** Current edited versions have NULL. Historical versions are retained indefinitely. */
@@ -2173,6 +2175,85 @@ export const videoPremiumUnlocks = sqliteTable(
     index("video_premium_unlocks_project_idx").on(t.projectId),
     check("video_premium_unlocks_unlocked_at_check", sql`typeof(${t.unlockedAt}) = 'integer'`),
     check("video_premium_unlocks_payment_ref_check", sql`${t.paymentRef} IS NULL OR length(${t.paymentRef}) <= 200`),
+  ],
+);
+
+/** A Project's one public Delivery page (#787). Created at the first Publish; slug is immutable. */
+export const deliveryPages = sqliteTable(
+  "delivery_pages",
+  {
+    projectId: text("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    latestSetNumber: integer("latest_set_number").notNull(),
+    createdAt: intTime("created_at").notNull(),
+    updatedAt: intTime("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("delivery_pages_slug_unique").on(t.slug),
+    check("delivery_pages_slug_check", sql`length(${t.slug}) BETWEEN 8 AND 120`),
+    check("delivery_pages_enabled_check", sql`${t.enabled} IN (0, 1)`),
+    check("delivery_pages_latest_set_number_check", sql`${t.latestSetNumber} >= 1`),
+    check("delivery_pages_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
+    check("delivery_pages_updated_at_check", sql`typeof(${t.updatedAt}) = 'integer'`),
+  ],
+);
+
+/** One numbered, frozen Published set (#787). */
+export const deliverySets = sqliteTable(
+  "delivery_sets",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    setNumber: integer("set_number").notNull(),
+    /** Client-chosen id that makes a retried Publish idempotent. */
+    operationId: text("operation_id").notNull(),
+    coverAssetId: text("cover_asset_id").references(() => assets.id, { onDelete: "set null" }),
+    publishedBy: text("published_by").notNull().references(() => user.id),
+    publishedAt: intTime("published_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("delivery_sets_project_number_unique").on(t.projectId, t.setNumber),
+    uniqueIndex("delivery_sets_project_op_unique").on(t.projectId, t.operationId),
+    check("delivery_sets_set_number_check", sql`${t.setNumber} >= 1`),
+    check("delivery_sets_operation_id_check", sql`length(${t.operationId}) BETWEEN 1 AND 64`),
+    check("delivery_sets_published_at_check", sql`typeof(${t.publishedAt}) = 'integer'`),
+  ],
+);
+
+/** Frozen membership of a Published set: one row per Asset (a Video Version is an assets row). */
+export const deliverySetItems = sqliteTable(
+  "delivery_set_items",
+  {
+    setId: text("set_id").notNull().references(() => deliverySets.id, { onDelete: "cascade" }),
+    assetId: text("asset_id").notNull().references(() => assets.id, { onDelete: "cascade" }),
+    /** Random 16-character public id of the item. */
+    handle: text("handle").notNull(),
+    position: integer("position").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.setId, t.assetId] }),
+    uniqueIndex("delivery_set_items_handle_unique").on(t.setId, t.handle),
+    index("delivery_set_items_asset_idx").on(t.assetId),
+    check("delivery_set_items_handle_check", sql`length(${t.handle}) = 16`),
+    check("delivery_set_items_position_check", sql`${t.position} >= 0`),
+  ],
+);
+
+/** Unlock of a premium photo, Floorplan or Copy Asset (#787). Re-lock deletes the row. */
+export const assetPremiumUnlocks = sqliteTable(
+  "asset_premium_unlocks",
+  {
+    assetId: text("asset_id").primaryKey().references(() => assets.id, { onDelete: "cascade" }),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    unlockedBy: text("unlocked_by").notNull().references(() => user.id),
+    unlockedAt: intTime("unlocked_at").notNull(),
+    paymentRef: text("payment_ref"),
+  },
+  (t) => [
+    index("asset_premium_unlocks_project_idx").on(t.projectId),
+    check("asset_premium_unlocks_unlocked_at_check", sql`typeof(${t.unlockedAt}) = 'integer'`),
+    check("asset_premium_unlocks_payment_ref_check", sql`${t.paymentRef} IS NULL OR length(${t.paymentRef}) <= 200`),
   ],
 );
 

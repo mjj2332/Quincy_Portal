@@ -118,6 +118,18 @@ function configureFile(file: DropboxFile, downloadedHash = file.content_hash): v
   vi.mocked(recordDropboxSuccess).mockResolvedValue(undefined);
 }
 
+/** #787 supersede carry: marks `assetId` a paid extra with an Unlock, as the Delivery API will. */
+async function markPaid(assetId: string, projectId: string, ref = "inv-1") {
+  await bindings.DB.batch([
+    bindings.DB.prepare("INSERT OR IGNORE INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES ('carry-admin', 'Carry Admin', 'carry-admin@test.invalid', 1, 'admin', 1, 1, 1)"),
+    bindings.DB.prepare("UPDATE assets SET delivery_premium = 1 WHERE id = ?").bind(assetId),
+    bindings.DB.prepare("INSERT INTO asset_premium_unlocks (asset_id, project_id, unlocked_by, unlocked_at, payment_ref) VALUES (?, ?, 'carry-admin', 1700000000000, ?)").bind(assetId, projectId, ref),
+  ]);
+}
+async function paidState(assetId: string) {
+  return bindings.DB.prepare("SELECT a.delivery_premium AS premium, u.unlocked_by AS by, u.unlocked_at AS at, u.payment_ref AS ref FROM assets a LEFT JOIN asset_premium_unlocks u ON u.asset_id = a.id WHERE a.id = ?").bind(assetId).first();
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -156,6 +168,24 @@ describe("Editor Output synchronization", () => {
     expect(versions.results[1]).toMatchObject({ supersedes_asset_id: expect.any(String), replaced_by_asset_id: versions.results[2] ? expect.any(String) : null });
     await expect(bindings.DB.prepare("SELECT received_count FROM collections c WHERE c.project_id = ? AND c.kind = 'edited'").bind(data.projectId).first())
       .resolves.toEqual({ received_count: 1 });
+  });
+
+  it("carries delivery_premium and the Unlock forward through A -> B -> A (#787)", async () => {
+    const data = await fixture();
+    configureFile(outputFile(data, "hash-a"));
+    await syncProjectEditorOutput(localEnv(), data.projectId, data.connectionId);
+    const current = async () => (await bindings.DB.prepare("SELECT a.id FROM assets a JOIN collections c ON c.id = a.collection_id WHERE c.project_id = ? AND c.kind = 'edited' AND a.superseded_at IS NULL").bind(data.projectId).first<{ id: string }>())!.id;
+    const first = await current();
+    await markPaid(first, data.projectId);
+    configureFile(outputFile(data, "hash-b"));
+    await syncProjectEditorOutput(localEnv(), data.projectId, data.connectionId);
+    const second = await current();
+    expect(second).not.toBe(first);
+    await expect(paidState(second)).resolves.toEqual({ premium: 1, by: "carry-admin", at: 1700000000000, ref: "inv-1" });
+    configureFile(outputFile(data, "hash-a"));
+    await syncProjectEditorOutput(localEnv(), data.projectId, data.connectionId);
+    const third = await current();
+    await expect(paidState(third)).resolves.toEqual({ premium: 1, by: "carry-admin", at: 1700000000000, ref: "inv-1" });
   });
 
   it("does not let concurrent stale listings supersede a newer current row", async () => {

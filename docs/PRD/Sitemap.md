@@ -50,8 +50,8 @@ Quincy Portal
 │   │   ├── ▸ Floorplan  🔶                            (A · E)
 │   │   ├── ▸ Copywriting  ⬜                          (A · E)
 │   │   │
-│   │   └── ★ Publish to client  ✅ (images/floorplan) (A · E)
-│   │         └── + video + copy  ⬜
+│   │   └── ★ Delivery tab  ⬜  (A · E; Admin-only on/off switch)
+│   │         └── Select items + cover, Preview, Publish, copy address, premium Mark / Unlock / Re-lock  ⬜
 │   │
 │   ├── Clients  ✏️ (nav item exists, no screen yet)   (A)
 │   ├── Schedule  ✏️ (nav item exists, no screen yet)  (A)
@@ -63,17 +63,16 @@ Quincy Portal
 │   ├── Approve / request changes per Version  ⬜
 │   └── Download released Video, "Download all" zip  ⬜
 │
-└── 🌐 CLIENT DELIVERY PAGE  ⬜ not built — /d and /d/* return 404 today  (C — no login, private link)
+└── 🌐 CLIENT DELIVERY PAGE  ⬜ not built  /d/<address-slug>-<suffix>  (C — no login, public by address, one per Project, ADR 0022)
     ├── Cover hero  ⬜
-    ├── Collection tabs  ⬜  (Web / Print / Floorplan today → ✏️ Images / Video / Floorplan / Copy)
+    ├── Tabs  ⬜  (Photos / Film / Floorplan / Description, empty tabs hidden, Premium tab when extras exist)
     ├── Gallery grid + lightbox  ⬜
-    ├── Favourites  ⬜
     ├── Slideshow  ⬜
-    ├── Download (web / full-res · single / zip)  ⬜
-    ├── Share  ⬜
+    ├── Download (Web-size / Full-res · single / photo zip)  ⬜
     ├── Video / Film section  ⬜
     ├── Description (copywriting) section  ⬜
-    └── Premium content  ⬜  (watermarked + paywalled — unlock to download)
+    ├── Premium content  ⬜  (watermarked preview until staff Unlock; "Request unlock" notifies staff)
+    └── "Not available" page  ⬜  (switched off, unpublished or unknown address, all identical)
 ```
 
 ---
@@ -112,8 +111,8 @@ This is a presentation convenience, **not** the real permission model. The targe
 | Floorplan | 🔶 | A · E | project tab |
 | Copywriting | ⬜ | A · E | project tab |
 | autoHDR status | ⬜ | A (full details) · E (neutral **Editing** status only) | after "select for editing"; API projection/authorization enforces the boundary, not UI hiding |
-| Publish flow | ✅ | A · E | workspace toolbar |
-| Client delivery page | ⬜ (routes return 404) | C (+ A·E preview) | private link / "preview client" |
+| Publish flow (Delivery tab) | ⬜ | A · E | Project workspace |
+| Client delivery page | ⬜ | C (anyone holding the address; A·E preview) | public address / Preview |
 | Settings · Users | ⬜ | A | top nav |
 | Clients directory | ✏️ | A | top nav (stub) |
 | Schedule | ✏️ | A | top nav (stub) |

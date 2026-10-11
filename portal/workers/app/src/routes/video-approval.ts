@@ -9,7 +9,7 @@ import { hasProjectAccess } from "../middleware/capability";
 import { projectIsArchived } from "../lib/project-archive";
 import { terminalRoute } from "../lib/terminal-route";
 import { readVideoReviewGate } from "../lib/video-review-gate";
-import { findVersion, findVideo, loadDecisions, recordStaffDecision, releaseVerdict, releaseVersion, setPremium, setPremiumUnlock, withdrawRelease, type Principal } from "../lib/video-approval";
+import { findVersion, findVideo, loadDecisions, recordStaffDecision, releaseVerdict, releaseVersion, setPremium, setPremiumUnlock, videoPublished, withdrawRelease, type Principal } from "../lib/video-approval";
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
@@ -23,6 +23,7 @@ const uuid = z.string().uuid();
 export const videoApprovalRoutes = new Hono<AppEnv>();
 
 type Ctx = Context<AppEnv>;
+const publishedResponse = (c: Ctx) => c.json({ error: "This Video is on a published Client Delivery page, so it stays premium. Use Unlock or Re-lock instead.", code: "premium_published" }, 409);
 const archivedResponse = (c: Ctx) => c.json({ error: "Archived projects are read-only; approvals, Releases and premium can't be changed.", code: "project_archived" }, 409);
 const versionNotFound = (c: Ctx) => c.json({ error: "Version not found" }, 404);
 const videoNotFound = (c: Ctx) => c.json({ error: "Video not found" }, 404);
@@ -99,10 +100,12 @@ videoApprovalRoutes.put("/projects/:projectId/videos/:videoId/premium", terminal
   const projectId = c.req.param("projectId"); const videoId = c.req.param("videoId");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(videoId).success) return c.json({ error: "Invalid id" }, 400);
   const refused = await admit(c, projectId, "manageVideoPremium", true); if (refused) return refused;
-  if (!await findVideo(c.env.DB, projectId, videoId)) return videoNotFound(c);
+  const video = await findVideo(c.env.DB, projectId, videoId); if (!video) return videoNotFound(c);
   const input = await jsonInput(c, videoPremiumInputSchema); if (input instanceof Response) return input;
+  if (!input.premium && video.premium && await videoPublished(c.env.DB, videoId)) return publishedResponse(c);
   const result = await setPremium(c.env.DB, { projectId, videoId, principal: principalOf(c), premium: input.premium, now: Date.now() });
   if (result === "archived") return archivedResponse(c);
+  if (result === "published") return publishedResponse(c);
   return result === "not_found" ? videoNotFound(c) : c.json(videoPremiumResponseSchema.parse(result));
 }));
 

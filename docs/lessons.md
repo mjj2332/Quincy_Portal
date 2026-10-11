@@ -6195,3 +6195,11 @@ Tags: search-filters · #776
 - **Rule.** Retire typed state (note drafts, decision drafts) only on the person's own confirmed local action: the Remove confirmation, which warns the draft will be discarded, calls `forgetSlot` / `forget` through `onRemoved`. A list diff may retire only state that holds nothing typed (the compare pair and offsets, where the worst case is leaving compare). A Version that vanishes any other way (another tab, a lost response, a stale snapshot) leaves its draft dormant, and it is still there if the Version comes back.
 
 Guards: `apps/web/src/components/video/VideoCollectionPanel.trash-retire.dom.test.tsx`, `VideoReviewViewer.trash.dom.test.tsx` ("retires the removed Version's form slot").
+## A flag that lives on the file row dies when a writer swaps the file (#787)
+Tags: d1-migrations, dropbox · #787
+
+- **What bit.** Five worker files retire an Asset by setting `superseded_at` and inserting its successor (document completion, Dropbox RAW reconciliation, Editor Output sync, AutoHDR finals, video versions). `assets.delivery_premium` and the `asset_premium_unlocks` row are keyed on the Asset id, so each of those writers silently dropped a paid Unlock on every re-edit. The Dropbox sync never touched `delivery_premium` (it only resets the deprecated `is_premium`), so the feared clobber was `is_premium` only.
+- **Rule.** A writer that supersedes a photo or document appends `supersedeCarryStatements(db, oldId, newId)` (`packages/db/src/supersede-carry.ts`) as the last statements of the same D1 batch, after anything that reads `changes()`. It is a no-op unless the new row exists and the old one is superseded. The old row keeps its flag and Unlock as history. Video Versions are exempt: their premium is on `videos.premium`.
+- **Gate.** The guard counts writers against carry calls per file, so a new writer cannot land without one; it cannot see which call covers which writer, so each writer also has an integration test.
+
+Guards: `packages/db/test/supersede-carry.guard.test.ts` (with planted fixtures), `workers/background/test/dropbox-reconciliation.test.ts`, `editor-output-sync.test.ts`, `autohdr-versioning.test.ts`, and the document completion case in `workers/app/test/api.test.ts`.

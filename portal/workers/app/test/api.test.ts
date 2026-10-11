@@ -3727,6 +3727,14 @@ describe("staff app API", () => {
     const v1Response = await complete(floorplan1.sessionId, true); expect(v1Response.status).toBe(201); const v1 = await v1Response.json() as { id: string; version: number; versionGroupId: string; preview: { id: string; version: number } };
     expect(v1).toMatchObject({ version: 1, versionGroupId: floorplan1.versionGroupId, preview: { version: 1 } });
     expect((await complete(floorplan1.sessionId, true)).status).toBe(200); // retry-safe completion
+    // #787 supersede carry: a paid Unlock on a floorplan pair or a copy PDF follows a re-uploaded version.
+    const carryUser = (await database.DB.prepare("SELECT id FROM user LIMIT 1").first<{ id: string }>())!.id;
+    const markPaid = (assetId: string, ref: string) => database.DB.batch([
+      database.DB.prepare("UPDATE assets SET delivery_premium = 1 WHERE id = ?").bind(assetId),
+      database.DB.prepare("INSERT INTO asset_premium_unlocks (asset_id, project_id, unlocked_by, unlocked_at, payment_ref) VALUES (?, ?, ?, 1700000000000, ?)").bind(assetId, project.id, carryUser, ref),
+    ]);
+    const paidState = (assetId: string) => database.DB.prepare("SELECT a.delivery_premium AS premium, u.unlocked_by AS by, u.unlocked_at AS at, u.payment_ref AS ref FROM assets a LEFT JOIN asset_premium_unlocks u ON u.asset_id = a.id WHERE a.id = ?").bind(assetId).first();
+    await markPaid(v1.id, "inv-pdf"); await markPaid(v1.preview.id, "inv-preview");
 
     const expiryRaceResponse = await reserve(copyInput("expiry-race")); expect(expiryRaceResponse.status).toBe(201); const expiryRace = await expiryRaceResponse.json() as Reserved;
     await put(expiryRace.sessionId, "pdf", "expiry-race");
@@ -3781,11 +3789,18 @@ describe("staff app API", () => {
     expect(floorplan2.version).toBe(2); expect((await put(floorplan2.sessionId, "pdf", "two")).status).toBe(204); expect((await put(floorplan2.sessionId, "preview", "two")).status).toBe(204);
     const v2Response = await complete(floorplan2.sessionId, true); expect(v2Response.status).toBe(201); const v2 = await v2Response.json() as { id: string; version: number; versionGroupId: string; preview: { id: string; version: number } };
     expect(v2).toMatchObject({ version: 2, versionGroupId: v1.versionGroupId, preview: { version: 2 } });
+    expect(await paidState(v2.id)).toEqual({ premium: 1, by: carryUser, at: 1700000000000, ref: "inv-pdf" });
+    expect(await paidState(v2.preview.id)).toEqual({ premium: 1, by: carryUser, at: 1700000000000, ref: "inv-preview" });
+    expect(await paidState(v1.id)).toMatchObject({ premium: 1, ref: "inv-pdf" }); // the superseded row keeps its own history
     const concurrent = await Promise.all([reserve(floorplanInput("three", "three", v1.versionGroupId)), reserve(floorplanInput("four", "four", v1.versionGroupId))]);
     expect(concurrent.map((response) => response.status).sort()).toEqual([201, 409]);
 
     const copy1Response = await reserve(copyInput("copy")); expect(copy1Response.status).toBe(201); const copy1 = await copy1Response.json() as Reserved; await put(copy1.sessionId, "pdf", "copy"); expect((await complete(copy1.sessionId)).status).toBe(201);
+    await markPaid(copy1.files.pdf.assetId, "inv-copy");
     const copy2Response = await reserve(copyInput("next", copy1.versionGroupId)); expect(copy2Response.status).toBe(201); const copy2 = await copy2Response.json() as Reserved; expect(copy2.version).toBe(2); await put(copy2.sessionId, "pdf", "next"); expect((await complete(copy2.sessionId)).status).toBe(201);
+    expect(await paidState(copy2.files.pdf.assetId)).toEqual({ premium: 1, by: carryUser, at: 1700000000000, ref: "inv-copy" });
+    const liveUnlocks = await database.DB.prepare("SELECT count(*) AS count FROM assets a JOIN asset_premium_unlocks u ON u.asset_id = a.id WHERE a.version_group_id = ? AND a.superseded_at IS NULL").bind(copy2.versionGroupId).first();
+    expect(liveUnlocks).toEqual({ count: 1 }); // exactly one live unlock row for the group, on the current version
 
     const approved = await SELF.fetch(`https://portal.test/api/assets/${v2.id}/review`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ decision: "approved" }) });
     expect(approved.status).toBe(200);

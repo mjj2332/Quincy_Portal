@@ -116,14 +116,14 @@ describe("video review capabilities (#741)", () => {
     for (const capability of VIDEO) expect(CAPABILITIES).toContain(capability);
   });
 
-  it("grants view, upload and annotate to admin, editor and External; share and release to admin and editor; premium to admin only, and Trash to admin and editor", () => {
+  it("grants view, upload and annotate to admin, editor and External; share and release to admin and editor; premium to admin and editor (#787 owner Q1), and Trash to admin and editor", () => {
     const grants: Record<(typeof VIDEO)[number], readonly string[]> = {
       viewVideo: ["admin", "editor", "external_editor"],
       uploadVideo: ["admin", "editor", "external_editor"],
       annotateVideo: ["admin", "editor", "external_editor"],
       shareVideo: ["admin", "editor"],
       releaseVideo: ["admin", "editor"],
-      manageVideoPremium: ["admin"],
+      manageVideoPremium: ["admin", "editor"],
       manageVideoTrash: ["admin", "editor"],
     };
     for (const capability of VIDEO) {
@@ -134,6 +134,20 @@ describe("video review capabilities (#741)", () => {
   it("gives photographers none of the seven and Externals never share, release, premium or Trash", () => {
     for (const capability of VIDEO) expect(roleHasCapability("photographer", capability)).toBe(false);
     for (const capability of ["shareVideo", "releaseVideo", "manageVideoPremium", "manageVideoTrash"] as const) expect(EXTERNAL_EDITOR_CAPABILITIES as readonly string[]).not.toContain(capability);
+  });
+});
+
+describe("Client Delivery capabilities (#787)", () => {
+  it("adds switchDeliveryPage, held by Admin only", () => {
+    expect(CAPABILITIES).toContain("switchDeliveryPage");
+    for (const role of ROLES) expect(roleHasCapability(role, "switchDeliveryPage"), role).toBe(role === "admin");
+    expect(EXTERNAL_EDITOR_CAPABILITIES as readonly string[]).not.toContain("switchDeliveryPage");
+  });
+
+  it("keeps photo and document premium on manageExtras and Publish and Preview on their existing capabilities (Admin and Editor only)", () => {
+    for (const capability of ["manageExtras", "publish", "viewClientPreview"] as const) {
+      for (const role of ROLES) expect(roleHasCapability(role, capability), `${role} ${capability}`).toBe(role === "admin" || role === "editor");
+    }
   });
 });
 

@@ -24,7 +24,7 @@ type Pending = { kind: "release"; revision: number } | { kind: "withdraw" } | { 
  * Decisions, Release and premium for the Version on screen (#741 14-ui-staff), shown under the player when the Project's `delivery` part is on. Reads every decision the Version has,
  * says where it stands (no decision, changes requested, approved, released), and offers Release (citing the approval revision the person saw, so a newer decision is refused by the
  * server and not silently overridden), Withdraw, and a client decision staff record themselves (the client approved by phone). Premium belongs to the Video: the switch and
- * Unlock / Re-lock need `manageVideoPremium`, which an Editor lacks. Writes go through `store`, so they and an unsent note outlive this component.
+ * Unlock / Re-lock need `manageVideoPremium` (Admin and Editor). Writes go through `store`, so they and an unsent note outlive this component.
  */
 export function VideoDeliveryPanel({ projectId, role, archived, video, version, store }: { projectId: string; role: Role; archived: boolean; video: VideoDto; version: VideoVersionDto; store: VideoApprovalStore }): ReactNode {
   const queryClient = useOptionalProjectQueryClient();
@@ -106,7 +106,7 @@ export function VideoDeliveryPanel({ projectId, role, archived, video, version, 
         </div>
         {videoState.problem && <Notice tone="critical" role="alert" data-testid="delivery-premium-problem">{videoState.problem}</Notice>}
         <p className="m-0 text-foreground-secondary [font:var(--type-label)]">{video.premium ? (video.premiumUnlocked ? "The client can download released versions of this film." : "The client sees a watermark and can't download until you unlock it.") : "Turn on to watermark this film for the client until it is unlocked."}</p>
-        {!canPremium && <p data-testid="delivery-premium-reason" className="m-0 text-foreground-secondary [font:var(--type-label)]">Only an Admin can change premium or unlock it.</p>}
+        {!canPremium && <p data-testid="delivery-premium-reason" className="m-0 text-foreground-secondary [font:var(--type-label)]">Only an Admin or Editor can change premium or unlock it.</p>}
       </div>
     </FramePanel>
 

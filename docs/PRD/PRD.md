@@ -55,7 +55,7 @@ contractors. It does not create a client account or broaden the client-delivery 
 - ✅ **Role-based access** so each person sees only what they should.
 - ✅ A clear **RAW → autoHDR → Edited** production flow with selection gates.
 - ✅ Editorial, on-brand client galleries (Quincy Productions design system).
-- ✅ Frictionless client delivery — **no login**, private link, download + favourites.
+- ⬜ Frictionless client delivery — **no login**: one public Delivery page per Project at a hard-to-guess address, download only (ADR 0022). Planned under #787.
 
 ### Approved incremental revamp outcomes (planned, not live)
 
@@ -69,7 +69,7 @@ contractors. It does not create a client account or broaden the client-delivery 
   no Notice Board, global directory, Admin, delivery/publish, RAW-selection, or extras scope.
 
 ### Non-goals (for now)
-- Billing, invoicing (the premium-content paywall is a simulated checkout only).
+- Billing, invoicing, payment. A client asks to unlock a premium extra and staff Unlock it after payment outside the Portal.
 - Full RAW developing / editing inside the portal (autoHDR is the external editor).
 - A native mobile app (the web app is responsive instead).
 - Client accounts / persistent client logins.
@@ -111,8 +111,10 @@ Full detail in **`Personas.md`**. Four internal-production roles + the external 
 | Compare images side-by-side | ✓ | ✓ | ✓ | ✗ |
 | Manage **videos / floorplans / copywriting** | ✓ | ✗ | ✓ | ✗ |
 | **Publish to client delivery page** | ✓ | ✗ | ✓ | ✗ |
-| View client delivery page | ✓ | ✗ | ✓ | ✓ |
-| Download final media | ✓ | ✗ | ✓ | ✓ |
+| Preview the client delivery page (staff session) | ✓ | ✗ | ✓ | ✗ |
+| Mark premium, Unlock / Re-lock a premium Asset | ✓ | ✗ | ✓ | ✗ |
+| Switch a client delivery page on / off | ✓ | ✗ | ✗ | ✗ |
+| Open the public client delivery page and download (anyone holding the address, no account) | n/a | n/a | n/a | ✓ |
 | **Access Admin backend dashboard** (users, project CRUD/archive, agencies/agents, pipeline config, integrations) | ✓ | ✗ | ✗ | ✗ |
 
 **Resolved decisions:**
@@ -232,9 +234,9 @@ between stages are where QA happens.
 - Editor/QA reviews the edited images, approves / flags, rates, labels, annotates.
 - _Open:_ whether to show **RAW vs Edited** of the same frame side-by-side in compare. ✏️ confirm.
 
-**5. Delivery / publish** ✅ Built
-- Editor/QA (or Admin) publishes approved **images, videos, floorplans, copywriting** to the client delivery page.
-- Client opens a private link, browses, favourites, downloads.
+**5. Delivery / publish** ⬜ Not built (planned under #787, see §6.7)
+- Editor/QA (or Admin) **Publishes** a chosen set of **images, videos, floorplans, copywriting** from the Project workspace. Each Publish freezes a numbered Published set. The first Publish moves the Project to Delivered.
+- The agent opens the Project's public Delivery page, browses and downloads. No sign-in, no favourites.
 
 ---
 
@@ -318,12 +320,14 @@ Native video review inside the Portal replaces Frame.io for video. The earlier V
 - _Planned:_ entering &amp; displaying copywriting directly in the Portal, plus delivering **social-media content** to the client alongside the copy.
 
 ### 6.7 Client delivery page ⬜ Not built
-> **Correction:** earlier drafts marked this section built. It is **not**. The `/d` and `/d/*` guest routes return **404** today, and `client_links` and `premium_unlocks` exist only as database tables with no route reading them.
-- ⬜ Editorial cover hero, collection tabs (Gallery / Film / Floorplan / Description), favourites, slideshow, share, download (web/full-res, single + zip).
-- ⬜ **Video** and **Copywriting** sections on the delivered page.
-- ⬜ **Premium / paywalled content** — extra images & video shown **watermarked** behind a paywall; client unlocks to remove the watermark and download. _(replaces the former print store)_
-- ⬜ No login — private link. Link contract: 30-day default expiry, optional passcode, revocation, and hashed tokens per D-04 (built out for Review links in ADR 0021).
-- 🔶 **Review link (first guest surface, planned under epic #741).** A client opens a Review link with no account, sees the Videos on it, verifies their email with a one-time code, comments, draws on a frame, and approves or requests changes per Version of each Video. The Review link delivers **released video only** for now; the single delivery page for photos, Video and Floorplan is **out of scope** of that epic and remains not built. A Review link is built so that page can reuse it later.
+> **Status:** not built. The `/d/<address>` routes do not exist yet. Slice 1 of #787 lands only the database schema, dark and unread. `client_links.kind='delivery'`, `publishes` and `premium_unlocks` stay dormant and are not used by this page. Decisions: ADR 0022 and `docs/plans/787.md`.
+- ⬜ **One page per Project, public by address.** `/d/<street-suburb-slug>-<6 random characters>`, minted at the first Publish and never changed, even if the property address is edited. No sign-in, no code, no passcode, no expiry, no token. This departs from the D-04 link contract on purpose and shares nothing with `client_links` or Review links. Pages are `noindex`, `no-referrer` and `no-store`.
+- ⬜ **Publish.** Admin and Editor choose the items (current Edited photos, Floorplans, Copy PDFs, each Video's latest Version, all ticked by default) and a cover photo, preview the page behind their staff session, then Publish. Each Publish freezes a numbered Published set and the page serves only the latest. Later re-edits and re-uploads change nothing until the next Publish. The first Publish moves the Project to Delivered, later ones leave the Stage alone.
+- ⬜ **Page content.** Cover hero, tabs for Photos, Film, Floorplan and Description (empty tabs hidden, a Premium tab when extras exist), lightbox, slideshow. Receive-only: no comments, approval or favourites.
+- ⬜ **Downloads.** Photos as Web-size (2048 px JPEG) or Full-res, singly or as a zip (locked items left out). Videos, Floorplan and Copy as single original files.
+- ⬜ **Premium extras.** Staff mark a photo, Floorplan or Copy Asset premium; it stays premium across Publishes. Videos keep their existing premium flag. A locked premium photo is served only as a server-watermarked preview of about 1600 px and every full-size request for it is refused, including Range and HEAD. The client can press "Request unlock", which notifies Admins and the Project's Editors. Staff Unlock after payment outside the Portal and can Re-lock. There is no checkout or payment in the Portal.
+- ⬜ **Admin switch.** An Admin can switch a page off (a plain "not available" page, identical to an unknown address) and back on at the same address. No unpublish, no address rotation.
+- 🔶 **Review link (separate guest surface, epic #741).** A client opens a Review link with no account, verifies their email with a one-time code, comments, draws on a frame, and approves or requests changes per Video Version. It delivers released video only and is unrelated to the Delivery page.
 
 ### 6.8 Annotations & comments ✅ Built
 - ✅ Threaded notes per image, freehand drawing, author + role + timestamp.
@@ -537,7 +541,7 @@ remains deferred and hidden.
 
 ## 10. Out of current prototype scope / parked
 
-- Real payment processing for premium unlocks (currently a simulated checkout).
+- Real payment processing for premium unlocks (staff Unlock after payment outside the Portal).
 - Analytics (client opens, downloads).
 - Audit log / version history.
 

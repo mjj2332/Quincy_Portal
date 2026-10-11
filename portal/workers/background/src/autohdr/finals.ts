@@ -8,7 +8,7 @@ import {
   editedSourceClaims,
   projects,
 } from "@quincy/db/schema";
-import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
+import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, supersedeCarryStatements } from "@quincy/db";
 import { enqueueRenditionSafely } from "@quincy/shared";
 
 import type { Env } from "../env";
@@ -386,7 +386,9 @@ AND EXISTS (
     statements.push(
       env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collectionId, now.getTime())),
       env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'autohdr.final_replaced', 'asset', ?, ?, ? WHERE EXISTS (SELECT 1 FROM edited_source_claims WHERE id = ? AND current_asset_id = ?)")
-        .bind(crypto.randomUUID(), assetId, JSON.stringify({ priorAssetId: current.currentAssetId, sourcePathKey, handoffId: context.handoffId, jobId: context.jobId, trigger: context.trigger, mappingGeneration: context.mappingGeneration, connectionId: context.connectionId }), now.getTime(), current.claimId, assetId));
+        .bind(crypto.randomUUID(), assetId, JSON.stringify({ priorAssetId: current.currentAssetId, sourcePathKey, handoffId: context.handoffId, jobId: context.jobId, trigger: context.trigger, mappingGeneration: context.mappingGeneration, connectionId: context.connectionId }), now.getTime(), current.claimId, assetId),
+      // A paid extra follows the re-edited final (#787). Last, so no `changes()` reader sees it.
+      ...supersedeCarryStatements(env.DB, current.currentAssetId!, assetId)); // non-null: a claim without one was quarantined above
     const result = await env.DB.batch(statements);
     if ((result[2]?.meta.changes ?? 0) !== 1) {
       const winner = await db.select({ currentAssetId: editedSourceClaims.currentAssetId, contentHash: editedSourceClaims.contentHash })
