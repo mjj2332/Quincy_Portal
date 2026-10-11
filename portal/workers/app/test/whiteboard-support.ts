@@ -59,7 +59,7 @@ export async function connect(projectId: string, options: Options = {}): Promise
   ws.accept();
   return {
     ws, closed,
-    next: () => new Promise((resolve, reject) => { const queued = queue.shift(); if (queued) return resolve(queued); const timer = setTimeout(() => reject(new Error("timed out waiting for a server message")), 3000); waiters.push((message) => { clearTimeout(timer); resolve(message); }); }),
+    next: () => new Promise((resolve, reject) => { const queued = queue.shift(); if (queued) return resolve(queued); const waiter = (message: WhiteboardServerMessage) => { clearTimeout(timer); resolve(message); }; const timer = setTimeout(() => { waiters.splice(waiters.indexOf(waiter), 1); reject(new Error("timed out waiting for a server message")); }, 3000); waiters.push(waiter); }),
     send: (message) => ws.send(typeof message === "string" ? message : JSON.stringify(message)),
     drain: async (ms = 150) => { await new Promise((resolve) => setTimeout(resolve, ms)); return queue.splice(0); },
   };
