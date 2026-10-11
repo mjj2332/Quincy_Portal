@@ -742,6 +742,7 @@ describe("Download all", () => {
     await click(byId("guest-download-all"));
     expect(byId("guest-download-all-start")).toBeNull();
     expect(byId("guest-download-all-problem")?.textContent).toMatch(/20 films|8 GB/);
+    expect(byId("guest-download-all-dialog")?.textContent).not.toContain("One zip with the released films below.");
   });
 
   it("says there is nothing to download yet when no film is released", async () => {
