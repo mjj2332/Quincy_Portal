@@ -20,8 +20,10 @@ Answers: for each queue message type and Workflow, who sends it, who consumes it
 | `autohdr_scaffold` | `autohdr_scaffold` portal/workers/background/src/autohdr/scaffold.ts:21 | `case "autohdr_scaffold"` portal/workers/background/src/index.ts:935 → `ensureScaffold` portal/workers/background/src/autohdr/scaffold.ts:34 | none in `portal/workers/background/src/autohdr/scaffold.ts` |
 | `asset_ingested` | none (legacy messages) | `case "asset_ingested"` portal/workers/background/src/index.ts:914 acks | n/a |
 | `autohdr_check` | none (reserved) | `case "autohdr_check"` portal/workers/background/src/index.ts:957 acks | n/a |
-| `generate_renditions` | `generate_renditions` portal/packages/shared/src/renditions.ts:22 (`enqueueRenditionSafely`, app + background) | `case "generate_renditions"` portal/workers/background/src/index.ts:918 → `generateRenditions` portal/workers/background/src/renditions.ts:168 | none; only `renditionsEnabled` portal/workers/background/src/index.ts:921 |
+| `generate_renditions` | `generate_renditions` portal/packages/shared/src/renditions.ts:26 (`enqueueRenditionSafely`, app + background) · optional `variants` (absent = `thumb`+`web`) from `enqueueDeliveryDerivativesSafely` portal/packages/shared/src/renditions.ts:67: Publish (`enqueueDeliveryDerivatives` portal/workers/app/src/lib/delivery-publish.ts), marking premium (`asset-premium.ts`), and the photo carry sites (Dropbox, Editor output, AutoHDR final) | `case "generate_renditions"` portal/workers/background/src/index.ts:997 → `generateRenditions` portal/workers/background/src/renditions.ts:208 (`variants` parsed by `parseRenditionVariants`) | none; only `renditionsEnabled` portal/workers/background/src/index.ts:1000 |
 | `notification_outbox` | `notification_outbox` portal/packages/shared/src/notification-outbox.ts:51 (`publishNotificationOutbox`; app wraps it as `publishOutboxDetached` portal/workers/app/src/lib/server-timing.ts:200) | `processNotificationMessage` portal/workers/background/src/index.ts:837 → `processNotificationMessage` portal/workers/background/src/notification-delivery.ts:2156 | suppressed per type, not thrown: `projectArchivedAt` portal/workers/background/src/notification-delivery.ts:417 (and :549, :611, :738, :1069) |
+
+**Delivery derivatives (#787 slice 4).** One message type, variants chosen per message: `delivery_web` (JPEG, 2048 px, q85, from the original through the signed `/cdn-cgi/image/` path) and `premium_preview` (JPEG, 1600 px, the repeated watermark tile drawn by the background Worker's `IMAGES` binding over the asset's own current `web` rendition; it throws and the queue retries when `web` is missing or stale). Each variant is skipped when a row at its own `RENDITION_VARIANT_SPEC` exists, so `RENDITION_SPEC_VERSION` is untouched. The rule for every trigger: a PHOTO needs `premium_preview` when `delivery_premium = 1` and `delivery_web` when it is in any Delivery set, minus rows already current. A DLQ replay (`rendition_dlq_events` keeps only `asset_id`) re-sends as `thumb`+`web`; the next Publish, premium mark or carry re-enqueues a lost derivative.
 
 Callers of the enqueue helpers are not listed; grep the helper name (`enqueueRenditionSafely` has ~15).
 
@@ -48,4 +50,4 @@ List every message type:
 
     grep -rhoE 'type: "[a-z_]+"' portal/workers/background/src/messages.ts portal/packages/shared/src/renditions.ts portal/packages/shared/src/notification-outbox.ts | sort -u
 
-Last verified against 495766e9
+Last verified against fc8363a2 (+ #787 slice 4)

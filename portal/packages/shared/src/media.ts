@@ -20,6 +20,16 @@ export const RENDITION_SPEC_VERSION = "v1";
 export const DELIVERY_RENDITION_VARIANTS = ["delivery_web", "premium_preview"] as const;
 export type DeliveryRenditionVariant = (typeof DELIVERY_RENDITION_VARIANTS)[number];
 export const RENDITION_VARIANT_SPEC = { thumb: "v1", web: "v1", delivery_web: "v1", premium_preview: "v1" } as const;
+/** Every variant a `generate_renditions` message can name, in the order the generator runs them (`premium_preview` reads the asset's own `web`). */
+export const ANY_RENDITION_VARIANTS = ["thumb", "web", "delivery_web", "premium_preview"] as const;
+export type AnyRenditionVariant = (typeof ANY_RENDITION_VARIANTS)[number];
+/** What a `generate_renditions` message without `variants` means: the QA pair, exactly as before #787. */
+export const DEFAULT_RENDITION_VARIANTS: readonly AnyRenditionVariant[] = RENDITION_VARIANTS;
+/** `delivery_web` is a JPEG cut from the original at 2048 px, q85. `premium_preview` is a JPEG at 1600 px, q85, with the watermark tile burned in over the asset's `web` rendition. */
+export const DELIVERY_RENDITION_SPECS: Record<DeliveryRenditionVariant, { maxEdge: number; quality: number }> = {
+  delivery_web: { maxEdge: 2048, quality: 85 },
+  premium_preview: { maxEdge: 1600, quality: 85 },
+};
 /** Bump to make a repaired transform URL distinct from previously cached failures. */
 export const TRANSFORM_CACHE_VERSION = "v2";
 
@@ -41,7 +51,7 @@ export const RENDITION_SPECS: Record<RenditionVariant, { maxEdge: number; qualit
 export function renditionR2Key(
   assetId: string,
   contentHash: string | null,
-  variant: RenditionVariant,
+  variant: AnyRenditionVariant,
   outputDigest: string,
   contentType: "image/webp" | "image/jpeg",
 ): string {
@@ -52,7 +62,7 @@ export function renditionR2Key(
   // The output digest makes each successfully written object immutable. A retry after an R2
   // success / D1 failure adopts this key after HEAD instead of overwriting it.
   const extension = contentType === "image/jpeg" ? "jpg" : "webp";
-  return `renditions/${assetId}/${content}/${RENDITION_SPEC_VERSION}/${variant}/${outputDigest.toLowerCase()}.${extension}`;
+  return `renditions/${assetId}/${content}/${RENDITION_VARIANT_SPEC[variant]}/${variant}/${outputDigest.toLowerCase()}.${extension}`;
 }
 
 /**

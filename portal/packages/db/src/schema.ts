@@ -866,7 +866,7 @@ export const assetRenditions = sqliteTable(
     assetId: text("asset_id")
       .notNull()
       .references(() => assets.id, { onDelete: "cascade" }),
-    variant: text("variant", { enum: ["thumb", "web"] }).notNull(),
+    variant: text("variant", { enum: ["thumb", "web", "delivery_web", "premium_preview"] }).notNull(),
     r2Key: text("r2_key").notNull(),
     bytes: integer("bytes"),
     // Defaults deliberately describe unvalidated legacy rows. The generator writes every

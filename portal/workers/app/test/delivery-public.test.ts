@@ -134,6 +134,15 @@ describe("single items", () => {
     for (const part of ["media", "thumb", "download"] as const) { const response = await get(itemUrl(handle, part)); expect([403, 404], part).toContain(response.status); const text_ = await body(response); for (const secret of [WEB, THUMB, ORIGINAL]) expect(text_).not.toContain(secret); }
   });
 
+  it("answers the stub until the derivative is generated, then serves it, for a locked and an unlocked photo alike (#787 slice 4)", async () => {
+    const locked = await photo({ premium: true, web: false, thumb: false }); const open = await photo({ web: false, thumb: false });
+    await seedPage({ slug: SLUG, assetIds: [locked.id, open.id] }); const lockedHandle = await handleOf(locked.id); const openHandle = await handleOf(open.id);
+    for (const handle of [lockedHandle, openHandle]) expect((await get(itemUrl(handle, "media"))).status).toBe(404);
+    await putRendition(locked.id, "premium_preview", PREVIEW); await putRendition(open.id, "delivery_web", WEB);
+    expect(await body(await get(itemUrl(lockedHandle, "media")))).toBe(PREVIEW);
+    expect(await body(await get(itemUrl(openHandle, "media")))).toBe(WEB);
+  });
+
   it("answers 403 on GET, HEAD and Range for a locked item BEFORE any R2 call (no object seeded at all)", async () => {
     const bare = await seedAsset("photo", { deliveryPremium: true }); await seedPage({ slug: SLUG, assetIds: [bare.id] }); const handle = await handleOf(bare.id);
     for (const init of [{}, { method: "HEAD" }, { range: "bytes=0-3" }, { method: "HEAD", range: "bytes=0-3" }]) expect((await get(itemUrl(handle, "download"), init)).status, JSON.stringify(init)).toBe(403);
