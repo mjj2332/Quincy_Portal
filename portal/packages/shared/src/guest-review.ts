@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { STROKE_LIMITS } from "./freehand-strokes";
+import { VIDEO_NOTE_PASTE_OFFSET_MAX, VIDEO_NOTE_PASTE_SKIP_REASONS, videoNotePasteRowSchema } from "./video-note-paste-api";
 import { videoNoteBodySchema, videoNoteCreateFields, videoNoteRevisionSchema, videoMarkupSchema, videoNoteFrameSchema, withVideoNoteCreateRules } from "./video-notes";
 
 /**
@@ -21,10 +22,10 @@ export type GuestSessionInput = z.infer<typeof guestSessionInputSchema>;
 /**
  * `POST` and `GET /d/api/links/:linkId/session`, and the answer of `POST .../email/verify`. `verified`, `email` (the guest's own, normalised) and `name` are false, null and null until
  * the email step (13a) fills them. Each `allow` flag is the link's flag AND its Worker part (`guest_comments` for comments, `delivery` for approve and download), so the page never
- * renders a control whose POST would be the stub.
+ * renders a control whose POST would be the stub. `markup` is the Worker part alone (a drawing is a note field, so it needs `comments` too): with it off, a note that carries a drawing is the stub.
  */
 export const guestSessionResponseSchema = z.object({
-  link: z.object({ label: z.string().nullable(), expiresAt: iso, allow: z.object({ comments: z.boolean(), approve: z.boolean(), download: z.boolean() }).strict() }).strict(),
+  link: z.object({ label: z.string().nullable(), expiresAt: iso, allow: z.object({ comments: z.boolean(), approve: z.boolean(), download: z.boolean(), markup: z.boolean() }).strict() }).strict(),
   verified: z.boolean(),
   email: z.string().nullable(),
   name: z.string().nullable(),
@@ -194,3 +195,49 @@ export const guestNoteDeleteResponseSchema = z.object({ thread: guestNoteThreadD
 export type GuestNoteDeleteResponse = z.infer<typeof guestNoteDeleteResponseSchema>;
 /** 409 `note_conflict` carries the current thread, in the guest projection, so the page can offer the fresh text. */
 export const guestNoteConflictSchema = z.object({ error: z.literal("note_conflict"), thread: guestNoteThreadDtoSchema }).strict();
+
+/**
+ * Guest note paste (#741 13d): copy the guest's OWN notes from one granted Version of a Video onto another. The shapes mirror the staff paste (`video-note-paste-api.ts`) and are
+ * additive: the staff schemas are untouched. Differences: a note that is not the guest's (another guest's, a studio note, an internal note, an unknown id) is skipped as `not_author` with
+ * `source: null`, so a row never names or quotes a note the guest does not own, and the list is capped at the guest's note quota (60), so a paste is never a permanent 429.
+ */
+export const GUEST_NOTE_PASTE_MAX = 60;
+export const GUEST_PASTE_BODY_MAX_BYTES = 16 * 1024;
+export const GUEST_NOTE_PASTE_SKIP_REASONS = [...VIDEO_NOTE_PASTE_SKIP_REASONS, "not_author"] as const;
+export type GuestNotePasteSkipReason = (typeof GUEST_NOTE_PASTE_SKIP_REASONS)[number];
+const pasteRevision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const pasteOffset = z.number().int().min(-VIDEO_NOTE_PASTE_OFFSET_MAX).max(VIDEO_NOTE_PASTE_OFFSET_MAX).default(0);
+const pasteUnique = (ids: string[]) => new Set(ids).size === ids.length;
+
+export const guestNotePastePreviewInputSchema = z.object({
+  sourceAssetId: uuid,
+  noteIds: z.array(uuid).min(1).max(GUEST_NOTE_PASTE_MAX),
+  offsetFrames: pasteOffset,
+}).strict().refine((value) => pasteUnique(value.noteIds), { message: "Duplicate note", path: ["noteIds"] });
+export type GuestNotePastePreviewInput = z.infer<typeof guestNotePastePreviewInputSchema>;
+/** The commit sends the revision of every note it previewed with a `source`; a `not_author` row has none and is left out. */
+export const guestNotePasteCommitInputSchema = z.object({
+  sourceAssetId: uuid,
+  notes: z.array(z.object({ noteId: uuid, revision: pasteRevision }).strict()).min(1).max(GUEST_NOTE_PASTE_MAX),
+  offsetFrames: pasteOffset,
+}).strict().refine((value) => pasteUnique(value.notes.map((note) => note.noteId)), { message: "Duplicate note", path: ["notes"] });
+export type GuestNotePasteCommitInput = z.infer<typeof guestNotePasteCommitInputSchema>;
+
+const [pasteMapped, pasteCopied, pasteSkipped] = videoNotePasteRowSchema.options;
+export const guestNotePasteRowSchema = z.discriminatedUnion("status", [
+  pasteMapped, pasteCopied,
+  z.object({ noteId: uuid, status: z.literal("skipped"), reason: z.enum(GUEST_NOTE_PASTE_SKIP_REASONS), source: pasteSkipped.shape.source }).strict(),
+]);
+export type GuestNotePasteRow = z.infer<typeof guestNotePasteRowSchema>;
+export const guestNotePastePreviewResponseSchema = z.object({
+  sourceVersion: z.number().int().positive(), targetVersion: z.number().int().positive(), offsetFrames: z.number().int(), rows: z.array(guestNotePasteRowSchema),
+}).strict();
+export type GuestNotePastePreviewResponse = z.infer<typeof guestNotePastePreviewResponseSchema>;
+export const guestNotePasteCommitResponseSchema = z.object({
+  sourceVersion: z.number().int().positive(), targetVersion: z.number().int().positive(), offsetFrames: z.number().int(),
+  copied: z.number().int().nonnegative(), skipped: z.number().int().nonnegative(), rows: z.array(guestNotePasteRowSchema),
+}).strict();
+export type GuestNotePasteCommitResponse = z.infer<typeof guestNotePasteCommitResponseSchema>;
+/** 409 `paste_stale`: a source note changed since the preview. Nothing was written; `preview` is the current plan. */
+export const guestNotePasteStaleSchema = z.object({ error: z.literal("paste_stale"), preview: guestNotePastePreviewResponseSchema }).strict();
+export type GuestNotePasteStale = z.infer<typeof guestNotePasteStaleSchema>;

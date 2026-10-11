@@ -20,7 +20,7 @@ const fresh = (assetId: string): Local => ({ assetId, selectedId: null, scroll: 
  * (read from the form store), the clock handed up by the player, and the writes. The viewer calls this once
  * and gives the panel `session` and the player `playerProps`.
  */
-export function useVideoNotes({ projectId, version, role, userId, archived, forms, markup = false }: {
+export function useVideoNotes({ projectId, version, role, userId, archived, forms, markup = false, seekFrame }: {
   projectId: string;
   version: VideoVersionDto;
   role: Role;
@@ -30,6 +30,8 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
   forms: NoteFormStore;
   /** The Project's `markup` part is on (#741 6b-ui): drawing, and a note's drawing on screen. Off, the notes are exactly 5b's. */
   markup?: boolean;
+  /** Where a note or marker click sends the playhead. Defaults to this Version's own clock; Compare (#741 7c) routes it through the transport so both sides follow. */
+  seekFrame?: (frame: number) => void;
 }) {
   const assetId = version.assetId;
   const queryClient = useOptionalProjectQueryClient();
@@ -73,20 +75,23 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
   const select = useCallback((id: string | null) => { update((current) => ({ ...current, selectedId: id })); }, [update]);
   /** A note with a drawing opens on the frame it was drawn on, so selecting it shows the drawing at once; every other note on its first frame. While drawing nothing seeks. */
   const landing = (thread: VideoNoteThreadDto) => (markup && thread.hasMarkup && thread.drawingFrame !== null ? thread.drawingFrame : thread.startFrame);
+  const seekRef = useRef(seekFrame);
+  seekRef.current = seekFrame;
+  const goTo = useCallback((frame: number) => { if (seekRef.current) seekRef.current(frame); else clock?.seekToFrame(frame); }, [clock]);
   const seekToNote = useCallback((thread: VideoNoteThreadDto) => {
     if (forms.slot(assetId).draw !== null && markup) return;
     const frame = landing(thread);
-    if (frame !== null) clock?.seekToFrame(frame);
+    if (frame !== null) goTo(frame);
     select(thread.id);
-  }, [clock, select, forms, assetId, markup]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [goTo, select, forms, assetId, markup]); // eslint-disable-line react-hooks/exhaustive-deps
   const onMarkerSelect = useCallback((id: string) => {
     if (forms.slot(assetId).draw !== null && markup) return;
     const thread = threads?.find((candidate) => candidate.id === id);
     if (!thread) return;
     const frame = landing(thread);
-    if (frame !== null) clock?.seekToFrame(frame);
+    if (frame !== null) goTo(frame);
     update((current) => ({ ...current, selectedId: id, scroll: { id, seq: (current.scroll?.seq ?? 0) + 1 } }));
-  }, [clock, threads, update, forms, assetId, markup]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [goTo, threads, update, forms, assetId, markup]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ctx = useMemo<NoteWriteContext | null>(() => (queryClient ? { queryClient, projectId, assetId, role } : null), [queryClient, projectId, assetId, role]);
   const withCtx = useCallback(<T,>(run: (context: NoteWriteContext) => Promise<T>): Promise<T> => (ctx ? run(ctx) : Promise.reject(new Error("Notes are not available here."))), [ctx]);

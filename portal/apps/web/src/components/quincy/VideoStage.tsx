@@ -16,7 +16,7 @@ const CHIP_CHROME_PX = 40;
  * it is handed the picture box (the box the picture really occupies, null until measured) so markup can be mapped onto the picture and not
  * the letterbox bands (#741 6b-ui). Key it by Version like the player: a new Version is a new element.
  */
-export function VideoStage({ streamUrl, title, width, height, timecode, frame, onVideo, overlay }: {
+export function VideoStage({ streamUrl, title, width, height, timecode, frame, onVideo, overlay, onMediaError }: {
   streamUrl: string;
   title: string;
   /** The stored size: the stage's shape on a phone, and the picture box's stand-in until the decoded size is known. */
@@ -28,10 +28,14 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, o
   frame: number;
   onVideo?: (video: HTMLVideoElement | null) => void;
   overlay?: ReactNode | ((box: Box | null) => ReactNode);
+  /** The element reported a media error (after the stage has shown its own notice). The guest page rechecks access here: a revoked link fails a range request the same way a bad file does. */
+  onMediaError?: () => void;
 }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [failed, setFailed] = useState(false);
   const box = usePictureBox(video, { width, height });
+  const onMediaErrorRef = useRef(onMediaError);
+  onMediaErrorRef.current = onMediaError;
   const onVideoRef = useRef(onVideo);
   onVideoRef.current = onVideo;
   const attach = useCallback((element: HTMLVideoElement | null) => { setVideo(element); onVideoRef.current?.(element); }, []);
@@ -54,7 +58,7 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, o
       disableRemotePlayback
       controlsList="nodownload noremoteplayback"
       onContextMenu={(event) => { event.preventDefault(); }}
-      onError={() => { setFailed(true); }}
+      onError={() => { setFailed(true); onMediaErrorRef.current?.(); }}
       className="absolute inset-0 h-full w-full object-contain"
     />
     {box && <div data-testid="video-picture-box" className="pointer-events-none absolute" style={{ left: box.left, top: box.top, width: box.width, height: box.height }}>
