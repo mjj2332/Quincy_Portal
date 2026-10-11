@@ -460,6 +460,7 @@ describe("a received Trash or decisions broadcast is not swallowed by a read alr
   }
   const video = "88888888-8888-4888-8888-888888888888";
   it.each([
+    ["videos", { kind: "videos" } as const, projectDataKeys.videos("p")],
     ["video-trash", { kind: "video-trash" } as const, projectDataKeys.videoTrash("p")],
     ["video-decisions", { kind: "video-decisions", videoId: video } as const, projectDataKeys.videoDecisions("p", video)],
   ])("%s: the answer to the first read, issued before the broadcast, does not become the cache", async (_name, resource, key) => {
