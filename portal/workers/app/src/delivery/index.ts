@@ -1,8 +1,9 @@
 import type { Context, Hono } from "hono";
-import { DELIVERY_HANDLE_LENGTH, DELIVERY_SLUG_ALPHABET, DELIVERY_SLUG_SUFFIX_LENGTH, RENDITION_VARIANT_SPEC, deliveryPageDtoSchema, deliveryUnlockRequestInputSchema, rawMediaContentType, type DeliveryItemKind } from "@quincy/shared";
+import { DELIVERY_HANDLE_LENGTH, DELIVERY_SLUG_ALPHABET, DELIVERY_SLUG_SUFFIX_LENGTH, DELIVERY_UNLOCK_NOTIFICATION_EVENT, RENDITION_VARIANT_SPEC, deliveryPageDtoSchema, deliveryUnlockRequestInputSchema, deliveryUnlockSourceKey, rawMediaContentType, type DeliveryItemKind } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { clientDeliveryGate } from "../lib/client-delivery-gate";
 import { deliveryLabels, readDeliveryState, readSetRows, type DeliveryUrlResolver } from "../lib/delivery-dto";
+import { newId } from "../lib/ids";
 import { lockedSql } from "../lib/delivery-lock";
 import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO } from "../lib/video-live-sql";
 import { VIDEO_STREAM_HEADERS, serveR2Object } from "../lib/r2-serve";
@@ -22,7 +23,7 @@ import { guestShell } from "../guest";
  * Every miss (malformed path, unknown slug, page off, Client Delivery gate shut, stale handle, a Video no longer live, a derivative that is not there) is `guestNotFound`: the same bytes as the `/d/*` fallback.
  * The slug is matched on the RAW path segment: no decoding, trailing slash or extra segment is normalised into a match. Every response is `private, no-store` with the guest hygiene headers.
  */
-export const publicDeliveryTestHooks: { beforeServe?: () => Promise<void>; beforeWrite?: () => Promise<void> } = {};
+export const publicDeliveryTestHooks: { beforeServe?: () => Promise<void>; beforeWrite?: () => Promise<void>; afterWrite?: () => Promise<void>; beforeVerify?: () => Promise<void> } = {};
 
 const SLUG_PATTERN = `[a-z0-9]+(?:-[a-z0-9]+)*-[${DELIVERY_SLUG_ALPHABET}]{${DELIVERY_SLUG_SUFFIX_LENGTH}}`;
 const HANDLE_PATTERN = `[a-z0-9]{${DELIVERY_HANDLE_LENGTH}}`;
@@ -147,6 +148,11 @@ async function serveItem(c: Ctx, slug: string, handle: string, part: "media" | "
  * and page buckets are reserved (429, so an invalid body is charged to them), the body is judged (400, 413), then the item's own daily slot: a full one answers 202 `already_requested` and writes
  * nothing. The write is one fenced batch (`lib/delivery-unlock-request.ts`); when it lands nothing, the item's slot is given back and the answer is the state it found (stub or `not_locked`).
  */
+async function unlockLanded(db: D1Database, auditId: string): Promise<boolean> {
+  await publicDeliveryTestHooks.beforeVerify?.();
+  return (await db.prepare("SELECT 1 AS present FROM audit_log WHERE id = ?").bind(auditId).first()) !== null;
+}
+
 async function requestUnlock(c: Ctx, slug: string, handle: string): Promise<Response> {
   const item = await admitItem(c.env.DB, slug, handle);
   if (!item) return guestNotFound(c);
@@ -165,19 +171,27 @@ async function requestUnlock(c: Ctx, slug: string, handle: string): Promise<Resp
   const slot = await reserveAttempts(c.env.DB, [{ bucket: slotBucket, limit: GUEST_LIMITS.unlockItem, windowMs: GUEST_DAY_MS }], now);
   if (slot.limited) return c.json({ status: "already_requested" }, 202);
   // The item's daily slot is spent only by a request that lands: every other exit, a thrown read or a rolled-back batch included, gives it back.
+  const auditId = newId();
   try {
     await publicDeliveryTestHooks.beforeWrite?.();
     const rows = await readSetRows(c.env.DB, current.setId);
     const label = deliveryLabels(rows)[rows.findIndex((row) => row.assetId === current.assetId)];
     if (label === undefined) { await refundAttempt(c.env.DB, slotBucket, now, GUEST_DAY_MS); return guestNotFound(c); }
-    const written = await writeUnlockRequest(c.env.DB, { slug, handle, projectId: current.projectId, setId: current.setId, setNumber: current.setNumber, assetId: current.assetId, label, ipBucket: address, now });
+    const written = await writeUnlockRequest(c.env.DB, { auditId, slug, handle, projectId: current.projectId, setId: current.setId, setNumber: current.setNumber, assetId: current.assetId, label, ipBucket: address, now });
+    await publicDeliveryTestHooks.afterWrite?.();
     if (written.landed) {
       if (written.outboxIds.length) c.executionCtx.waitUntil(publishUnlockOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, written.outboxIds));
       return c.json({ status: "requested" }, 202);
     }
   } catch (error) {
-    await refundAttempt(c.env.DB, slotBucket, now, GUEST_DAY_MS).catch(() => undefined);
-    throw error;
+    // A throw does not say whether D1 committed (the reply can be lost after the batch landed). The attempt's own audit row does: present, the request landed and keeps the slot (a retry must not notify staff twice);
+    // absent, nothing was stored and the slot is given back; a verification that cannot be read keeps the slot and fails.
+    const landed = await unlockLanded(c.env.DB, auditId).catch(() => "unknown" as const);
+    if (landed === false) await refundAttempt(c.env.DB, slotBucket, now, GUEST_DAY_MS).catch(() => undefined);
+    if (landed !== true) throw error;
+    const pending = await c.env.DB.prepare("SELECT id FROM notification_outbox WHERE event_type = ? AND source_key = ? AND status = 'pending'").bind(DELIVERY_UNLOCK_NOTIFICATION_EVENT, deliveryUnlockSourceKey(auditId)).all<{ id: string }>().then((rows) => rows.results.map((row) => row.id)).catch(() => []);
+    if (pending.length) c.executionCtx.waitUntil(publishUnlockOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, pending));
+    return c.json({ status: "requested" }, 202);
   }
   // The fence wrote nothing: the page, the gate, the set or the lock changed since admission. Give the item's slot back and answer what is true now.
   await refundAttempt(c.env.DB, slotBucket, now, GUEST_DAY_MS);

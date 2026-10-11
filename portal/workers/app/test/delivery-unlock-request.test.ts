@@ -38,8 +38,8 @@ const wipe = async () => {
   ]);
   await clearGuestRows();
 };
-beforeEach(async () => { await wipe(); await clearDeliveryFlags(); await openDelivery(ids.project); publicDeliveryTestHooks.beforeServe = undefined; publicDeliveryTestHooks.beforeWrite = undefined; });
-afterEach(async () => { publicDeliveryTestHooks.beforeServe = undefined; publicDeliveryTestHooks.beforeWrite = undefined; await wipe(); await clearDeliveryFlags(); });
+beforeEach(async () => { await wipe(); await clearDeliveryFlags(); await openDelivery(ids.project); publicDeliveryTestHooks.beforeServe = undefined; publicDeliveryTestHooks.beforeWrite = undefined; publicDeliveryTestHooks.afterWrite = undefined; publicDeliveryTestHooks.beforeVerify = undefined; });
+afterEach(async () => { publicDeliveryTestHooks.beforeServe = undefined; publicDeliveryTestHooks.beforeWrite = undefined; publicDeliveryTestHooks.afterWrite = undefined; publicDeliveryTestHooks.beforeVerify = undefined; await wipe(); await clearDeliveryFlags(); });
 
 async function lockedPage(slug = SLUG) {
   const asset = await lockedPhoto(); await seedPage({ slug, assetIds: [asset.id] });
@@ -261,6 +261,28 @@ describe("state that changes between admission and the write", () => {
     expect(await audits()).toEqual([]); expect(await outbox()).toEqual([]);
     expect(deliveryUnlockRequestResponseSchema.parse(await (await post(handle)).json())).toEqual({ status: "requested" });
     expect((await outbox()).length).toBeGreaterThan(0);
+  });
+
+  it("a batch that committed but whose reply was lost keeps the slot: the client gets 202, the retry is already_requested, and staff are told exactly once", async () => {
+    const { handle } = await lockedPage();
+    publicDeliveryTestHooks.afterWrite = async () => { throw new Error("reply lost"); };
+    const first = await post(handle);
+    publicDeliveryTestHooks.afterWrite = undefined;
+    expect(first.status).toBe(202); expect(deliveryUnlockRequestResponseSchema.parse(await first.json())).toEqual({ status: "requested" });
+    const told = (await outbox()).length; expect(told).toBeGreaterThan(0); expect(await audits()).toHaveLength(1);
+    expect(deliveryUnlockRequestResponseSchema.parse(await (await post(handle)).json())).toEqual({ status: "already_requested" });
+    expect(await audits()).toHaveLength(1); expect((await outbox()).length).toBe(told);
+  });
+
+  it("a verification read that throws keeps the slot and answers 500: the retry is already_requested, never a second notification", async () => {
+    const { handle } = await lockedPage();
+    publicDeliveryTestHooks.afterWrite = async () => { throw new Error("reply lost"); };
+    publicDeliveryTestHooks.beforeVerify = async () => { throw new Error("verify down"); };
+    expect((await post(handle)).status).toBe(500);
+    publicDeliveryTestHooks.afterWrite = undefined; publicDeliveryTestHooks.beforeVerify = undefined;
+    const told = (await outbox()).length;
+    expect(deliveryUnlockRequestResponseSchema.parse(await (await post(handle)).json())).toEqual({ status: "already_requested" });
+    expect((await outbox()).length).toBe(told);
   });
 
   it("the Client Delivery gate shut in the gap writes nothing and answers the stub", async () => {

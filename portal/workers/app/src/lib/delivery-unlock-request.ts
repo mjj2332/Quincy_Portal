@@ -1,7 +1,6 @@
 import {
   CLIENT_DELIVERY_ALL_PROJECTS_FLAG, CLIENT_DELIVERY_MASTER_FLAG, DELIVERY_CLIENT_OUTBOX_ACTOR, DELIVERY_UNLOCK_NOTIFICATION_EVENT, ROLES, clientDeliveryPilotFlag, deliveryUnlockSourceKey, roleHasCapability,
 } from "@quincy/shared";
-import { newId } from "./ids";
 import { lockedSql } from "./delivery-lock";
 import { SQL_UUID_V4 } from "./sql-uuid";
 import { LIVE_VERSION_EXISTS } from "./video-live-sql";
@@ -16,14 +15,14 @@ import { publishOutboxDetached } from "./server-timing";
  * active Admin, plus every active Editor holding an `editor` membership on the Project (the user role holds `manageExtras`, so an External editor and a Photographer are excluded by construction,
  * whatever their membership). Nothing here touches premium or Unlock state.
  */
-export type UnlockRequest = { slug: string; handle: string; projectId: string; setId: string; setNumber: number; assetId: string; label: string; ipBucket: string; now: number };
+export type UnlockRequest = { auditId: string; slug: string; handle: string; projectId: string; setId: string; setNumber: number; assetId: string; label: string; ipBucket: string; now: number };
 
 const ELIGIBLE_ROLES = ROLES.filter((role) => roleHasCapability(role, "manageExtras")).map((role) => `'${role}'`).join(", ");
 const GATE = `(EXISTS (SELECT 1 FROM feature_flags WHERE key = '${CLIENT_DELIVERY_MASTER_FLAG}' AND enabled = 1)
   AND (EXISTS (SELECT 1 FROM feature_flags WHERE key = '${CLIENT_DELIVERY_ALL_PROJECTS_FLAG}' AND enabled = 1) OR EXISTS (SELECT 1 FROM feature_flags WHERE key = '${clientDeliveryPilotFlag("")}' || p.project_id AND enabled = 1)))`;
 
 export async function writeUnlockRequest(db: D1Database, input: UnlockRequest): Promise<{ landed: boolean; outboxIds: string[] }> {
-  const auditId = newId(); const sourceKey = deliveryUnlockSourceKey(auditId); const { now } = input;
+  const { auditId } = input; const sourceKey = deliveryUnlockSourceKey(auditId); const { now } = input;
   const meta = JSON.stringify({ via: "public_delivery", handle: input.handle, label: input.label, setNumber: input.setNumber, ipBucket: input.ipBucket });
   const results = await db.batch([
     db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
