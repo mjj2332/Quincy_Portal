@@ -350,6 +350,49 @@ describe("sending", () => {
   });
 });
 
+describe("the cooldown clock restarts when the send completes (#741 15b)", () => {
+  const MIN = 60_000;
+  /** A mailer whose send resolves only after the clock has advanced to `completeAt`, optionally running `during` first. */
+  function slowMailer(completeAt: number, during?: () => Promise<unknown>, db: unknown = database.DB) {
+    const sent: Sent[] = [];
+    const send = vi.fn(async (message: Sent) => { if (during) await during(); vi.setSystemTime(completeAt); sent.push(message); return { messageId: "m" }; });
+    return { sent, send, env: { DB: db, APP_ORIGIN: ORIGIN, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: SENDER } as unknown as Env };
+  }
+
+  it("a send that completes minutes after the stamp moves the slot to the completion time, so the next flush waits 55 minutes from the real send", async () => {
+    const t = await basic(); await pend(t.member, t.link.id, "version_granted", t.version);
+    await runAt(slowMailer(T0 + 6 * MIN).env, T0);
+    expect(await lastDigest(t.member.memberId)).toBe(T0 + 6 * MIN);
+    const mail = mailer();
+    await pend(t.member, t.link.id, "version_granted", t.version, null, T0 + 7 * MIN);
+    await runAt(mail.env, T0 + HOUR); expect(mail.sent).toHaveLength(0);
+    await runAt(mail.env, T0 + 6 * MIN + 55 * MIN); expect(mail.sent).toHaveLength(1);
+  });
+
+  it("does not overwrite the slot when it no longer holds this run's stamp", async () => {
+    const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
+    const other = T0 + 2 * MIN;
+    await runAt(slowMailer(T0 + 6 * MIN, () => database.DB.prepare("UPDATE guest_link_members SET last_digest_sent_at = ? WHERE id = ?").bind(other, t.member.memberId).run()).env, T0);
+    expect(await lastDigest(t.member.memberId)).toBe(other);
+    expect((await rowOf(id))!.sent_at).toBe(T0);
+  });
+
+  it("a failing post-send stamp keeps the rows marked and the pre-send stamp, and logs no address", async () => {
+    const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
+    const real = database.DB; let sendDone = false;
+    const db = { prepare(sql: string) { if (sendDone) throw new Error(`boom ${t.member.email}`); return real.prepare(sql); }, batch: (s: D1PreparedStatement[]) => real.batch(s) };
+    const mail = slowMailer(T0 + 6 * MIN, async () => { sendDone = true; }, db);
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const summary = await runAt(mail.env, T0);
+      expect(summary.sent).toBe(1); expect(summary.failed).toBe(0);
+      expect(JSON.stringify(spy.mock.calls)).not.toContain(t.member.email);
+      expect(spy).toHaveBeenCalled();
+    } finally { spy.mockRestore(); }
+    expect((await rowOf(id))!.sent_at).toBe(T0); expect(await lastDigest(t.member.memberId)).toBe(T0);
+  });
+});
+
 /** A D1 wrapper for the ordering cases: `afterTokenInsert` runs right after the unsubscribe token INSERT (the last setup write before the send); `failAfterSend` makes every database call throw once `send` has been called. */
 function hooked(options: { afterTokenInsert?: () => Promise<unknown>; failAfterSend?: boolean } = {}) {
   const sent: Sent[] = []; let sendCalled = false;

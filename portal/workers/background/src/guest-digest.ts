@@ -216,6 +216,12 @@ async function flushMember(env: Env, candidate: Candidate): Promise<"sent" | "dr
         return "sent";
       }
     }
+    // The send succeeded: restart the cooldown from now, so a slow send cannot shorten the 55 minutes. Best effort, and only while the slot still holds this run's stamp.
+    try {
+      await db.prepare("UPDATE guest_link_members SET last_digest_sent_at = ?1 WHERE id = ?2 AND last_digest_sent_at = ?3").bind(Date.now(), candidate.member_id, now).run();
+    } catch {
+      console.error("Guest digest sent, but restarting the cooldown failed; the pre-send stamp stays", { code: "cooldown_stamp_failed" });
+    }
     return "sent";
   } catch (error) {
     if (!fenced) await giveBack.run().catch(() => undefined);
