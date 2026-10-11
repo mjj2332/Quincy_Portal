@@ -148,9 +148,10 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
     const attempt = pending.current;
     try {
       const response = await publishDelivery(queryClient, projectId, { ...attempt.body, operationId: attempt.id });
-      pending.current = null;
+      // Only this attempt's own answer releases it: a discarded earlier attempt answering late must not drop a newer one's retry identity.
+      if (pending.current?.id === attempt.id) pending.current = null;
       setReceipt(response.replayed ? `This was already published as set ${response.operationSetNumber}.` : `Published as set ${response.operationSetNumber}.`);
-    } catch (error) { if (!uncertain(error)) pending.current = null; refuse(error); } finally { setBusy(null); rerender((n) => n + 1); }
+    } catch (error) { if (!uncertain(error) && pending.current?.id === attempt.id) pending.current = null; refuse(error); } finally { setBusy(null); rerender((n) => n + 1); }
   }
   async function runSwitch(enabled: boolean) {
     setBusy("switch"); setProblem(null);

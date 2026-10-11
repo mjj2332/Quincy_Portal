@@ -596,6 +596,30 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
     expect(publishCalls()[0]).toMatchObject({ coverAssetId: null });
     expect(publishCalls()[0]!.assetIds).not.toContain(ids.photo1);
   });
+  it("a late answer to a discarded Publish does not release the next one's retry identity", async () => {
+    let answerA: ((value: unknown) => void) | null = null; let calls = 0;
+    apiPostMock.mockImplementation(async (path) => {
+      if (!path.endsWith("/delivery/publish")) return {};
+      calls += 1;
+      if (calls === 1) return new Promise((resolve) => { answerA = resolve; }); // A: still in flight
+      if (calls === 2) throw new ApiError("offline", 0); // B: committed or not, the answer is lost
+      return { ...stateAfterPublish(2), replayed: true, operationSetNumber: 2 };
+    });
+    await openDelivery();
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    await act(async () => { root!.render(treeOf(false)); }); await flush();
+    await act(async () => { root!.render(treeOf(true)); }); await flush();
+    await click(tab("Delivery")); await flush();
+    await click(byId("delivery-discard-retry"));
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    expect(byId("delivery-publish")?.textContent).toBe("Retry publish");
+    await act(async () => { answerA!({ ...stateAfterPublish(1), replayed: false, operationSetNumber: 1 }); }); await flush();
+    expect(byId("delivery-publish")?.textContent).toBe("Retry publish");
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    const [a, b, retry] = publishCalls();
+    expect(b!.operationId).not.toBe(a!.operationId);
+    expect(retry!.operationId).toBe(b!.operationId);
+  });
   const lockedPreviewDto = { dto: { property: { street: "12 Example St", suburb: "Suburbia" }, setNumber: 1, publishedAt: null, coverHandle: null, items: [
     { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, width: 10, height: 10, durationMs: null, url: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`, thumbUrl: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/thumb` },
     { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null },
@@ -613,5 +637,24 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
     expect(dialog.querySelector('[data-testid="delivery-preview-inspect"] video')?.getAttribute("src")).toBe("/video/1");
     const pdf = control("Open Floorplan 01") as HTMLAnchorElement;
     expect(pdf.getAttribute("href")).toBe("/pdf/1"); expect(pdf.getAttribute("target")).toBe("_blank"); expect(pdf.getAttribute("rel")).toContain("noopener");
+  });
+  it("pauses a playing Preview Video when another item is inspected or Preview closes", async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    try {
+      apiPostMock.mockResolvedValue(lockedPreviewDto);
+      await openDelivery(); await click(byId("delivery-preview"));
+      const dialog = bodyById("delivery-preview-dialog")!;
+      const control = (name: string) => dialog.querySelector<HTMLElement>(`[aria-label="${name}"]`);
+      await click(control("Play Video 01"));
+      const video = dialog.querySelector('[data-testid="delivery-preview-inspect"] video');
+      pause.mockClear();
+      await click(control("Open Photo 01"));
+      expect(pause.mock.contexts).toContain(video);
+      await click(control("Play Video 01"));
+      const again = dialog.querySelector('[data-testid="delivery-preview-inspect"] video');
+      pause.mockClear();
+      await click(bodyById("delivery-preview-close")); await flush();
+      expect(pause.mock.contexts).toContain(again);
+    } finally { pause.mockRestore(); }
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DeliveryItemDto, DeliveryPageDto } from "@quincy/shared";
 import { FileTextIcon, FilmIcon } from "lucide-react";
 import { LazyImage } from "../LazyImage";
@@ -30,7 +30,7 @@ export function DeliveryPreviewDialog({ dto, onClose }: { dto: DeliveryPageDto |
         </DialogHeader>}>
         {inspected && <div data-testid="delivery-preview-inspect" className="mb-[var(--space-3)] grid gap-[var(--space-2)]">
           {inspected.kind === "video"
-            ? <video src={inspected.url!} controls playsInline preload="metadata" aria-label={inspected.label} className="max-h-[60dvh] w-full bg-surface-sunken" />
+            ? <PreviewVideo key={inspected.handle} src={inspected.url!} label={inspected.label} />
             : <img src={inspected.url!} alt={inspected.label} className="max-h-[60dvh] w-full object-contain" />}
           <Button type="button" variant="outline" size="sm" className="w-fit pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={() => setInspecting(null)}>Close {inspected.label}</Button>
         </div>}
@@ -59,4 +59,11 @@ export function DeliveryPreviewDialog({ dto, onClose }: { dto: DeliveryPageDto |
       <SheetCloseButton label="Close" data-testid="delivery-preview-close" />
     </DialogContent>
   </Dialog>;
+}
+
+/** A removed `<video>` keeps playing (sound and all) until it is collected, so it pauses itself on the way out: when another item is inspected or Preview closes. See docs/lessons.md "A removed `<video>` does not stop". */
+function PreviewVideo({ src, label }: { src: string; label: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => { const video = ref.current; return () => { video?.pause(); }; }, []);
+  return <video ref={ref} src={src} controls playsInline preload="metadata" aria-label={label} className="max-h-[60dvh] w-full bg-surface-sunken" />;
 }
