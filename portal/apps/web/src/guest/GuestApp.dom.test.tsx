@@ -679,6 +679,8 @@ describe("Sol round 7", () => {
       replyToNote: async () => ({ kind: "gone" }),
       editNote: async () => ({ kind: "gone" }),
       deleteNote: async () => ({ kind: "gone" }),
+      previewPaste: async () => ({ kind: "gone" }),
+      commitPaste: async () => ({ kind: "gone" }),
       decide: async () => ({ kind: "gone" }),
       downloads: async () => ({ kind: "gone" }),
       downloadAllUrl: `/d/api/links/${LINK}/downloads/all.zip`,

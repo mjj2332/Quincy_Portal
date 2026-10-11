@@ -11,6 +11,7 @@ import { mountGuestApproval } from "./approval";
 import { mountGuestDownloads } from "./download";
 import { mountGuestEmail } from "./email";
 import { mountGuestNotes } from "./notes-write";
+import { mountGuestPaste } from "./paste";
 import { guestGloballyOpen, identityOf, loadActiveLink, resolveSession, sessionBody } from "./link";
 import { clientAddress, GUEST_LIMITS, ipBucket, reserveAttempts, windowStart } from "./rate-limit";
 import { listGuestNotes, listGuestVideos, readGuestMarkup, resolveGrantedVersion } from "./read";
@@ -75,6 +76,7 @@ async function withSession(c: Context<AppEnv, string>, handler: (session: NonNul
 export function mountGuest(app: Hono<AppEnv>): void {
   mountGuestEmail(app);
   mountGuestNotes(app);
+  mountGuestPaste(app);
   mountGuestApproval(app);
   mountGuestDownloads(app);
   app.get("/d/review", guestRoute("/d/review", async (c) => {

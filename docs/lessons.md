@@ -6170,3 +6170,11 @@ Tags: css-tokens · #741
 - **Rule.** Write arbitrary values out literally. To share one with another file, export the whole literal class string, not the pieces. Only a real browser (computed style) proves a class-only fix; jsdom has no Tailwind CSS.
 
 Guards: `apps/web/src/styles/tailwind-literal-class.guard.test.ts`.
+
+## Quincy's `--container-*` tokens are page widths, not dialog widths (#741 13c, 13d)
+Tags: css-tokens, focus-overlays · #741
+
+- **What bit.** `styles/tokens/spacing.css` redefines `--container-sm` as 640px and `--container-xl` as 1320px, so Tailwind's `max-w-sm`…`max-w-xl` resolve to page widths. 13c's verify dialog took one and rendered 640px wide; 13d's paste dialog took `sm:max-w-xl` and rendered 1320px wide. Both passed every jsdom test (no layout) and were caught only by a design review of screenshots.
+- **Rule.** A dialog, alert dialog or sheet states its width explicitly (`sm:max-w-[460px]`) or uses a size whose container token is not redefined (`sm:max-w-3xl` is 48rem, as `VideoNotePasteDialog` does). Never `max-w-{sm,md,lg,xl}`, with or without a breakpoint prefix, on `DialogContent`, `AlertDialogContent` or `SheetContent`.
+
+Guards: `apps/web/src/styles/design-system-guards.test.ts` ("dialog and sheet content never uses a page-width max-w").

@@ -47,14 +47,14 @@ export const noteWriteParts = (markup: boolean): VideoReviewPart[] => (markup ? 
 /**
  * The fence of a guest note write, as ` AND EXISTS (...)` to append to a statement's WHERE, and the binds to append, numbered from `first`. It is the session row with the exact
  * token hash and verified guest this request authenticated with, the link (comments on) live at `now`, the gate and its parts, an unarchived Project, and the Version reachable.
- * `now` and `asset` are SQL expressions already in the statement (`?4`, `video_notes.asset_id`).
+ * `now` and `asset` are SQL expressions already in the statement (`?4`, `video_notes.asset_id`). `alsoReach` names further Versions (SQL expressions) the same link must reach: a paste's source Version (13d).
  */
-export function guestNoteGuard(writer: GuestWriter, first: number, now: string, asset: string): { sql: string; binds: unknown[] } {
+export function guestNoteGuard(writer: GuestWriter, first: number, now: string, asset: string, alsoReach: readonly string[] = []): { sql: string; binds: unknown[] } {
   const [session, token, guest, link] = [first, first + 1, first + 2, first + 3].map((index) => `?${index}`);
   return {
     sql: ` AND EXISTS (SELECT 1 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id
       WHERE s.id = ${session} AND s.token_hash = ${token} AND s.guest_id = ${guest} AND s.verified_at IS NOT NULL AND l.id = ${link} AND l.allow_comments = 1
-        AND ${committableSql(now, noteWriteParts(writer.markup))} AND ${reachSql("l.id", "l.project_id", asset)})`,
+        AND ${committableSql(now, noteWriteParts(writer.markup))} AND ${reachSql("l.id", "l.project_id", asset)}${alsoReach.map((other) => ` AND ${reachSql("l.id", "l.project_id", other)}`).join("")})`,
     binds: [writer.sessionId, writer.tokenHash, writer.guestId, writer.linkId],
   };
 }
