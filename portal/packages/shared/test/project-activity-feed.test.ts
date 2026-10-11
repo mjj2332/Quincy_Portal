@@ -59,7 +59,7 @@ function feedRow(overrides: Record<string, unknown> = {}): Record<string, unknow
 
 describe("Project Activity feed contracts", () => {
   it("derives exactly the live-and-allowed External event set", () => {
-    expect(LIVE_TYPES).toHaveLength(22);
+    expect(LIVE_TYPES).toHaveLength(23);
     expect(RESERVED_TYPES).toHaveLength(4);
     expect(EXTERNAL_ACTIVITY_FEED_TYPES).toHaveLength(19);
     expect(EXTERNAL_ACTIVITY_FEED_TYPES).not.toEqual(expect.arrayContaining([

@@ -34,6 +34,7 @@ export const LIVE_TYPES = [
   "project.collection.raw_sync_completed",
   "project.stage.changed",
   "project.checklist.schedule_changed",
+  "project.delivery.published",
 ] as const;
 export const RESERVED_TYPES = [
   "project.workflow.raw_ready",
@@ -64,7 +65,7 @@ type SourceKind =
   | "project_member" | "project_deadline_schedule" | "project_priority" | "project_details"
   | "project" | "project_checklist" | "project_comment" | "project_video_link"
   | "project_video_links" | "project_document" | "project_manual_edited" | "project_raw_sync"
-  | "project_stage" | "project_workflow";
+  | "project_stage" | "project_workflow" | "project_delivery";
 
 const identifier = z.string().min(1).max(512);
 const activityId = z.string().regex(CANONICAL_LOWERCASE_UUID_REGEX, "Activity id must be a canonical lowercase UUID");
@@ -98,6 +99,8 @@ const payloadSchemas = {
   "project.workflow.manual_edited_ready": z.object({ collectionKind: z.literal("edited"), count: z.literal(1) }).strict(),
   "project.collection.raw_sync_completed": z.object({ collectionKind: z.literal("raw"), importedCount: z.number().int().min(1).max(100_000) }).strict(),
   "project.stage.changed": emptyPayload,
+  /** A Publish froze set `setNumber` of `itemCount` items on the Delivery page. Counts only: no item, filename, address or contact. */
+  "project.delivery.published": z.object({ setNumber: z.number().int().min(1), itemCount: z.number().int().min(1).max(10_000), firstPublish: z.boolean() }).strict(),
   "project.workflow.raw_ready": emptyPayload,
   "project.workflow.sent_to_editing": emptyPayload,
   "project.workflow.edited_ready": emptyPayload,
@@ -186,6 +189,8 @@ export const PROJECT_ACTIVITY_REGISTRY = {
   "project.workflow.manual_edited_ready": live("review_workflow", "manual edited publication workflow", ["workers/background/src/workflows/manual-edited-publish.ts"], "project_manual_edited", "project-manual-edited:<jobId>:<assetId>:ready", "project", payloadSchemas["project.workflow.manual_edited_ready"], null, "system"),
   "project.collection.raw_sync_completed": live("collection_delivery", "RAW Dropbox reconciliation", ["workers/background/src/dropbox/sync.ts#claim-completion"], "project_raw_sync", "project-raw-sync:<claimId>:completed", "project", payloadSchemas["project.collection.raw_sync_completed"], null, "system"),
   "project.stage.changed": live("stage", "moveProjectStage", ["workers/app/src/lib/project-stage.ts#moveProjectStage"], "project_stage", "project-stage:<projectId>:transition:<activityId>", "project", payloadSchemas["project.stage.changed"]),
+  // TODO(#787 slice 10): deep-link to the Project's Delivery tab once it exists; until then the Project sheet is the closest link.
+  "project.delivery.published": live("collection_delivery", "delivery publish", ["workers/app/src/lib/delivery-publish.ts#publishDelivery"], "project_delivery", "project-delivery:<setId>:published", "project", payloadSchemas["project.delivery.published"]),
   "project.checklist.schedule_changed": live("checklist", "TB4D saveProjectSubtask", ["workers/app/src/lib/project-subtasks.ts#saveProjectSubtask"], "project_checklist", "project-checklist-schedule:<projectId>:<itemId>:version:<version>", "project_collaboration", payloadSchemas["project.checklist.schedule_changed"], { strategy: "leading_edge", keyShape: "project-checklist-schedule:<projectId>:<itemId>:<actorId>", windowSeconds: 300 }, "user", {
     cutoverOwner: "TB4D saveProjectSubtask",
     // Explicit TB4D cutover metadata; do not inherit the TB4C helper default.
@@ -276,6 +281,7 @@ function sourceKeyMatches(type: ProjectActivityType, sourceId: string, key: stri
       return token.length > 0 && !token.includes(":");
     }
     case "project.collection.raw_sync_completed": return exact("project-raw-sync:", ":completed");
+    case "project.delivery.published": return exact("project-delivery:", ":published");
     case "project.stage.changed": return projectId !== undefined && key === `project-stage:${projectId}:transition:${sourceId}`;
     case "project.checklist.schedule_changed": {
       const match = /^project-checklist-schedule:([^:]+):([^:]+):version:(\d+)$/.exec(key);
@@ -470,6 +476,7 @@ export function renderProjectActivityNotification(
     case "project.workflow.manual_edited_ready": return { title: "Edited media is ready", body: `${actor}${projectLabel} edited media is ready.` };
     case "project.collection.raw_sync_completed": return { title: "RAW import completed", body: `${actor}${projectLabel} RAW import completed (${String(safe.importedCount ?? 0)} items).` };
     case "project.checklist.schedule_changed": return { title: "Checklist schedule updated", body: `${actor}Checklist “${String(safe.checklistTitle ?? "item")}” schedule was updated.` };
+    case "project.delivery.published": return { title: "Delivery published", body: `${actor}${projectLabel} was published to its Delivery page${typeof safe.setNumber === "number" ? ` (set ${safe.setNumber})` : ""}.` };
     case "project.stage.changed":
     case "project.workflow.raw_ready":
     case "project.workflow.sent_to_editing":

@@ -40,9 +40,25 @@ export async function seedPage(input: { projectId?: string; slug?: string; setNu
       await database.DB.prepare("INSERT INTO delivery_set_items (set_id, asset_id, handle, position) VALUES (?, ?, ?, ?)").bind(setId, assetId, crypto.randomUUID().replaceAll("-", "").slice(0, 16), position).run();
   }
 }
+/** A photo in the RAW collection: eligible for nothing on a Delivery page. */
+export async function seedRawPhoto(projectId = ids.project) {
+  const collectionId = await ensureCollection(projectId, "raw"); const id = crypto.randomUUID(); const now = Date.now();
+  await database.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, version, publish_status, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, 10, 'upload', 1, 'ready', ?, ?)").bind(id, collectionId, `projects/${projectId}/raw-test/${id}`, `${id}.cr3`, now, now).run();
+  return { id, projectId, collectionId };
+}
+/** A Project of its own (so a Stage move leaves the shared fixture Projects alone), with the pilot gate row open. */
+export async function seedOpenProject(input: { stageKey?: string; street?: string; suburb?: string | null; archived?: boolean } = {}) {
+  const id = crypto.randomUUID(); const now = Date.now();
+  await database.DB.prepare("INSERT INTO projects (id, street, suburb, stage_key, board_revision, archived_at, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)").bind(id, input.street ?? "12 Test Street", input.suburb === undefined ? "Testville" : input.suburb, input.stageKey ?? "editing_autohdr", input.archived ? now : null, now, now).run();
+  await openDelivery(id);
+  return id;
+}
 export async function wipeDelivery() {
   await database.DB.batch([
     database.DB.prepare("DELETE FROM delivery_set_items"), database.DB.prepare("DELETE FROM delivery_sets"), database.DB.prepare("DELETE FROM delivery_pages"), database.DB.prepare("DELETE FROM asset_premium_unlocks"),
-    database.DB.prepare("DELETE FROM audit_log WHERE action LIKE 'asset.delivery_premium%' OR action LIKE 'asset.premium_%'"),
+    database.DB.prepare("DELETE FROM audit_log WHERE action LIKE 'asset.delivery_premium%' OR action LIKE 'asset.premium_%' OR action LIKE 'delivery.%' OR action = 'stage.set'"),
+    database.DB.prepare("DELETE FROM notification_delivery_ledger WHERE outbox_id IN (SELECT id FROM notification_outbox WHERE source_key IN (SELECT id FROM project_activity_events WHERE event_type IN ('project.delivery.published', 'project.stage.changed')))"),
+    database.DB.prepare("DELETE FROM notification_outbox WHERE source_key IN (SELECT id FROM project_activity_events WHERE event_type IN ('project.delivery.published', 'project.stage.changed'))"),
+    database.DB.prepare("DELETE FROM project_activity_events WHERE event_type IN ('project.delivery.published', 'project.stage.changed')"),
   ]);
 }
