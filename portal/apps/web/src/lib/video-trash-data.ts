@@ -55,9 +55,9 @@ onPrincipalTerminal((queryClient) => { if (queryClient) retired.add(queryClient)
  */
 const cancelStaleReads = (ctx: TrashWriteContext) => Promise.all([projectDataKeys.videos(ctx.projectId), projectDataKeys.videoTrash(ctx.projectId), projectDataKeys.videoDecisions(ctx.projectId, ctx.videoId)].map((queryKey) => ctx.queryClient.cancelQueries({ queryKey, exact: true }, { revert: true })));
 
-/** Other windows hear about the Videos, the Trash and the Video's decisions, so an open Trash or a restored Version there is not left stale. */
+/** Other windows hear about the Videos, the Trash, the Video's decisions and the Project detail (it carries the Videos tab count), so an open Trash or a restored Version there is not left stale. */
 const converge = (ctx: TrashWriteContext) => Promise.all([
-  invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "videos" }, { kind: "video-trash" }, { kind: "video-decisions", videoId: ctx.videoId }], dashboard: false, calendar: false, gantt: false }),
+  invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "videos" }, { kind: "video-trash" }, { kind: "video-decisions", videoId: ctx.videoId }, { kind: "detail" }], dashboard: false, calendar: false, gantt: false }),
   ctx.queryClient.invalidateQueries({ queryKey: projectDataKeys.videoTrash(ctx.projectId), exact: true }),
   ctx.queryClient.invalidateQueries({ queryKey: projectDataKeys.videoDecisions(ctx.projectId, ctx.videoId), exact: true }),
 ]);

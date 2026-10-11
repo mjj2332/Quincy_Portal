@@ -33,6 +33,7 @@ const PROJECT = "11111111-1111-4111-8111-111111111111";
 const ids = { video: "88888888-8888-4888-8888-888888888888", asset2: "77777777-7777-4777-8777-777777777777", asset1: "66666666-6666-4666-8666-666666666666" };
 const impactOf = (over: Partial<VideoRemovalImpact> = {}): VideoRemovalImpact => ({ lastVersion: false, uploading: false, notes: 3, decisions: 1, release: true, links: [{ id: "55555555-5555-4555-8555-555555555555", label: "Client cut" }, { id: "44444444-4444-4444-8444-444444444444", label: null }], ...over });
 
+const ORIGINAL_USER = auth.userId;
 let stub: VideoElementStub;
 let root: Root | null = null; let host: HTMLElement;
 /** The "server": the Versions the film has now. */
@@ -54,9 +55,13 @@ async function mount(opts: { parts?: string[]; role?: Role; archived?: boolean }
   });
   const role = opts.role ?? "editor";
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
-  await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role={role}><ToastViewport /><VideoCollectionPanel projectId={PROJECT} role={role} archived={opts.archived ?? false} review={{ open: true, parts: (opts.parts ?? ["trash"]) as never }} /></QuincyQueryProvider>); });
+  const tree = () => <QuincyQueryProvider principalId={auth.userId} role={role}><ToastViewport /><VideoCollectionPanel projectId={PROJECT} role={role} archived={opts.archived ?? false} review={{ open: true, parts: (opts.parts ?? ["trash"]) as never }} /></QuincyQueryProvider>;
+  rerender = async () => { await act(async () => { root!.render(tree()); }); await flush(4); };
+  await act(async () => { root!.render(tree()); });
   await flush();
 }
+let rerender: () => Promise<void>;
+const OTHER_USER = "22222222-2222-4222-8222-222222222222";
 const dialog = () => document.querySelector<HTMLElement>('[data-testid="video-review-viewer"]');
 const tid = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const confirm = () => document.querySelector<HTMLElement>('[role="alertdialog"]');
@@ -96,7 +101,7 @@ beforeEach(() => {
   api.apiPost.mockImplementation(async (path) => { if (String(path).endsWith("/remove")) return removeOutcome(); throw new Error(`unrouted ${path}`); });
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } })));
 });
-afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; resetVideoUploadStore(); stub.dispose(); document.body.replaceChildren(); vi.unstubAllGlobals(); clearToasts(); });
+afterEach(async () => { auth.userId = ORIGINAL_USER; if (root) await act(async () => { root!.unmount(); }); root = null; resetVideoUploadStore(); stub.dispose(); document.body.replaceChildren(); vi.unstubAllGlobals(); clearToasts(); });
 
 describe("Remove a Version from the staff viewer (#776 E)", () => {
   it("offers no Version menu with the trash part off, or to a role that may not manage Trash", async () => {
@@ -310,6 +315,39 @@ describe("Remove a Version from the staff viewer (#776 E)", () => {
     await act(async () => { toast!.action!.onAction(); });
     await flush(8);
     expect(posts().pop()?.path).toBe(`/api/projects/${PROJECT}/videos/${ids.video}/restore`);
+  });
+
+  it("a removal answered after the person changed announces nothing and offers no Undo", async () => {
+    versions = [{ assetId: ids.asset2, version: 2 }];
+    impact = impactOf({ lastVersion: true });
+    await mount();
+    await openViewer();
+    await startRemove();
+    let answer!: () => void;
+    removeOutcome = async () => { await new Promise<void>((resolve) => { answer = resolve; }); versions = []; return { video: null }; };
+    await click(confirmButton());
+    await flush(4);
+    auth.userId = OTHER_USER;
+    await rerender();
+    await act(async () => { answer(); });
+    await flush(10);
+    expect(getToasts().filter((candidate) => /Main walkthrough/.test(candidate.message) || candidate.action)).toEqual([]);
+  });
+
+  it("an Undo toast shown before the person changed is dismissed when they do", async () => {
+    versions = [{ assetId: ids.asset2, version: 2 }];
+    impact = impactOf({ lastVersion: true });
+    await mount();
+    await openViewer();
+    await startRemove();
+    removeOutcome = async () => { versions = []; return { video: null }; };
+    await click(confirmButton());
+    await flush(10);
+    expect(getToasts().some((candidate) => candidate.action?.label === "Undo")).toBe(true);
+    auth.userId = OTHER_USER;
+    await rerender();
+    await flush(4);
+    expect(getToasts().some((candidate) => candidate.action?.label === "Undo")).toBe(false);
   });
 
   it("a changed impact keeps the dialog open with the new counts and asks again; nothing is re-sent on its own", async () => {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { VIDEO_TRASH_RETENTION_DAYS, type VideoDto, type VideoRemovalImpact } from "@quincy/shared";
 import { useOptionalProjectQueryClient, useProjectAccessTermination } from "../../lib/project-data";
-import { pushToast } from "../../lib/toast-store";
+import { pushTrashToast, trashSession } from "../../lib/video-trash-session";
 import { UNDO_TOAST_TTL_MS } from "../../lib/use-scheduling-undo-toast";
 import { readRemovalImpact, refreshAfterRefusal, removeVideoVersion, restoreVideoVersion, restoreWholeVideo } from "../../lib/video-trash-data";
 import { classifyVideoTrashError, type ClassifiedVideoTrashError } from "../../lib/video-trash-errors";
@@ -95,31 +95,32 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
   const close = () => { run.current += 1; setTarget(null); setImpact(null); setLoadFailure(null); setProblem(null); setPending(false); };
 
   /** `whole`: what the person confirmed (the last Version, so the whole film), never what the answer turned out to be: another editor may have removed the other Versions first. */
-  const announce = useCallback((done: Target, whole: boolean) => {
+  const announce = useCallback((done: Target, whole: boolean, started: string) => {
     if (!queryClient) return;
     const ctx = { queryClient, projectId, videoId: done.videoId };
     const subject = `“${done.title}”`;
     const undo = async () => {
+      if (started !== trashSession()) return;
       try {
         if (whole) await restoreWholeVideo(ctx); else await restoreVideoVersion({ ...ctx, assetId: done.assetId });
-        pushToast(whole ? `Restored ${subject}.` : `Restored version ${done.version} of ${subject}.`);
+        pushTrashToast(started, whole ? `Restored ${subject}.` : `Restored version ${done.version} of ${subject}.`);
       } catch (error) {
-        pushToast(classifyVideoTrashError(error, "restore").message, "error");
+        pushTrashToast(started, classifyVideoTrashError(error, "restore").message, "error");
       }
     };
-    pushToast(whole ? `${subject} removed.` : `Version ${done.version} of ${subject} removed.`, "success", { ttlMs: UNDO_TOAST_TTL_MS, action: { label: "Undo", onAction: () => { void undo(); } } });
+    pushTrashToast(started, whole ? `${subject} removed.` : `Version ${done.version} of ${subject} removed.`, "success", { ttlMs: UNDO_TOAST_TTL_MS, action: { label: "Undo", onAction: () => { void undo(); } } });
   }, [queryClient, projectId]);
 
   const confirm = async () => {
     if (!target || !impact || !queryClient) return;
     const mine = ++run.current;
     setPending(true); setProblem(null);
-    const sent = target; const confirmed = impact;
+    const sent = target; const confirmed = impact; const started = trashSession();
     try {
       const response = await removeVideoVersion({ queryClient, projectId, videoId: sent.videoId, assetId: sent.assetId }, confirmed, confirmed.lastVersion);
       // The removal happened whatever this dialog has become since: retire the Version and say so.
       onRemoved({ assetId: sent.assetId, videoId: sent.videoId, video: response.video });
-      announce(sent, confirmed.lastVersion);
+      announce(sent, confirmed.lastVersion, started);
       if (alive.current && run.current === mine) close();
     } catch (error) {
       terminate(error);

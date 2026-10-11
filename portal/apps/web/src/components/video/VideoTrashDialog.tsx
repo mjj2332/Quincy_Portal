@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { VIDEO_TRASH_RETENTION_DAYS, type VideoTrashItem } from "@quincy/shared";
 import { useOptionalProjectQueryClient, useProjectAccessTermination } from "../../lib/project-data";
-import { pushToast } from "../../lib/toast-store";
+import { pushTrashToast, trashSession } from "../../lib/video-trash-session";
 import { restoreVideoVersion, restoreWholeVideo, useVideoTrashQuery } from "../../lib/video-trash-data";
 import { classifyVideoTrashError } from "../../lib/video-trash-errors";
 import { Badge } from "../reui/badge";
@@ -49,9 +49,10 @@ export function VideoTrashDialog({ projectId, archived, open, onOpenChange, retu
     if (!queryClient || busy.has(key)) return;
     setBusy((held) => new Set(held).add(key)); setProblem(null);
     const ctx = { queryClient, projectId, videoId: item.videoId };
+    const started = trashSession();
     try {
       if (item.kind === "version" && item.assetId) await restoreVideoVersion({ ...ctx, assetId: item.assetId }); else await restoreWholeVideo(ctx);
-      pushToast(item.kind === "version" ? `Restored version ${item.version} of “${item.title}”.` : `Restored “${item.title}”.`);
+      pushTrashToast(started, item.kind === "version" ? `Restored version ${item.version} of “${item.title}”.` : `Restored “${item.title}”.`);
     } catch (error) {
       terminate(error);
       setProblem(classifyVideoTrashError(error, "restore").message);

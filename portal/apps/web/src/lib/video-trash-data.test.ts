@@ -191,14 +191,14 @@ describe("video trash data (#776 E)", () => {
     expect(client.getQueryData(key)).toEqual({ fresh: true });
   });
 
-  it("a remove and a restore tell other windows about the Videos, the Trash and the Video's decisions", async () => {
+  it("a remove and a restore tell other windows about the Videos, the Trash, the Video's decisions and the Project detail (the Videos tab count)", async () => {
     vi.mocked(projectData.invalidateProjectSurfaces).mockClear();
     api.apiPost.mockResolvedValueOnce({ video: null });
     await removeVideoVersion({ ...ctx(), assetId: A }, { ...impact, lastVersion: true }, true);
     api.apiPost.mockResolvedValueOnce({ video: videoOf(V) });
     await restoreWholeVideo(ctx());
     const calls = vi.mocked(projectData.invalidateProjectSurfaces).mock.calls.map(([, input]) => (input as { resources: Array<{ kind: string }> }).resources.map((r) => r.kind));
-    expect(calls).toEqual([["videos", "video-trash", "video-decisions"], ["videos", "video-trash", "video-decisions"]]);
+    expect(calls).toEqual([["videos", "video-trash", "video-decisions", "detail"], ["videos", "video-trash", "video-decisions", "detail"]]);
   });
 
   it("a read refusal runs the same recovery as a write refusal: a vanished Version refreshes the list, a lost access asks for the gate again", async () => {
