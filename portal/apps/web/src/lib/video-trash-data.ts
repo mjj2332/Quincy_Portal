@@ -49,6 +49,12 @@ export function useVideoTrashQuery(projectId: string, enabled: boolean): UseQuer
 const retired = new WeakSet<object>();
 onPrincipalTerminal((queryClient) => { if (queryClient) retired.add(queryClient); });
 
+/**
+ * A read already in flight when a write lands predates it, and with no entry yet nothing supersedes it: the invalidation below would dedupe onto that older read and its answer would become
+ * the cache. Cancelling the exact keys (`revert` puts a query with no data back to idle) makes the converge fetch new, as in `video-approval-data.ts`.
+ */
+const cancelStaleReads = (ctx: TrashWriteContext) => Promise.all([projectDataKeys.videos(ctx.projectId), projectDataKeys.videoTrash(ctx.projectId)].map((queryKey) => ctx.queryClient.cancelQueries({ queryKey, exact: true }, { revert: true })));
+
 const converge = (ctx: TrashWriteContext) => Promise.all([
   invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "videos" }], dashboard: false, calendar: false, gantt: false }),
   ctx.queryClient.invalidateQueries({ queryKey: projectDataKeys.videoTrash(ctx.projectId), exact: true }),
@@ -88,6 +94,8 @@ export async function removeVideoVersion(ctx: TrashWriteContext & { assetId: str
     throw error;
   }
   if (retired.has(ctx.queryClient)) return response;
+  await cancelStaleReads(ctx);
+  if (retired.has(ctx.queryClient)) return response;
   const { queryClient, projectId, videoId, assetId } = ctx;
   queryClient.setQueryData<VideoDto[]>(projectDataKeys.videos(projectId), (old) => old && (response.video ? old.map((candidate) => (candidate.id === response.video!.id ? response.video! : candidate)) : old.filter((candidate) => candidate.id !== videoId)));
   // Nothing may keep pointing at the removed Version: its notes leave the cache, and the Video's decisions are read again without it.
@@ -104,6 +112,8 @@ async function restore(ctx: TrashWriteContext, path: string): Promise<VideoResto
     await onFailure(ctx, error, "restore");
     throw error;
   }
+  if (retired.has(ctx.queryClient)) return response;
+  await cancelStaleReads(ctx);
   if (retired.has(ctx.queryClient)) return response;
   upsertVideo(ctx.queryClient, ctx.projectId, response.video);
   await Promise.all([converge(ctx), ctx.queryClient.invalidateQueries({ queryKey: projectDataKeys.videoDecisions(ctx.projectId, ctx.videoId), exact: true })]);

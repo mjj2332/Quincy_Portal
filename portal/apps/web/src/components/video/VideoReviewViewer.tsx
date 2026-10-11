@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, Columns2 } from "lucide-react";
 import { framesToTimecode, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
+import { registerToastHost } from "../../lib/toast-host";
 import { hasOpenAlertDialog } from "../../lib/alert-dialog-press";
 import { useMediaQuery } from "../../lib/use-media-query";
 import type { CompareSideId, CompareStore } from "../../lib/video-compare-store";
@@ -82,6 +83,9 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const takePopup = useCallback((element: HTMLDivElement | null) => { popupRef.current = element; element?.focus({ preventScroll: true }); }, []);
   // The Project sheet's overlay slot sits under this dialog: popups opened in here (Version, tooltips) portal into a slot of the dialog's own.
   const [slot, setSlot] = useState<HTMLElement | null>(null);
+  // The toast viewport renders in here while the viewer is open, so an Undo toast sits inside the focus trap.
+  const [toastSlot, setToastSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => (toastSlot ? registerToastHost(toastSlot) : undefined), [toastSlot]);
   const notesOn = notes !== undefined;
   // Escape order with the notes panel (#741 5b), decided from a snapshot taken at keydown, before any handler has run: Base UI reports one
   // Escape to `onOpenChange` more than once, so the answer cannot come from state the first call changed (the ProjectSheet note).
@@ -165,7 +169,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     if (removed.video === null) delivery?.store.forget(videoSlot(removed.videoId));
     else { setResume(null); setAssetId(removed.video.currentAssetId); }
   }, [forms, compareStore, delivery?.store]);
-  const hasDraft = useCallback((target: string) => forms?.isDirty(target) ?? false, [forms]);
+  const hasDraft = useCallback((target: string) => forms?.hasUnsent(target) ?? false, [forms]);
 
   const enterCompare = () => {
     if (!compareStore || mode === "compare") return;
@@ -305,6 +309,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         : notes ? <Suspense fallback={null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows}>{layout}</LazyNotesHost></Suspense> : layout(null)}
       </OverlayContainerContext.Provider>
       <div ref={setSlot} />
+      <div ref={setToastSlot} />
     </DialogContent>
   </Dialog>;
 }

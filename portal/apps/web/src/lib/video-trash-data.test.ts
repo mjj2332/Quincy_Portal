@@ -1,4 +1,4 @@
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { VideoDto, VideoRemovalImpact } from "@quincy/shared";
 import { ApiError } from "./api";
@@ -18,6 +18,7 @@ vi.mock("./project-data", async (importOriginal) => {
     invalidateProjectSurfaces: vi.fn(async (_client: QueryClient, input: { resources: Array<{ kind: string }> }) => { surfaces.invalidated.push(input.resources.map((r) => r.kind).join(",")); }),
   };
 });
+import * as projectData from "./project-data";
 import { projectDataKeys } from "./project-data";
 import { readRemovalImpact, removeVideoVersion, restoreVideoVersion, restoreWholeVideo } from "./video-trash-data";
 
@@ -103,5 +104,26 @@ describe("video trash data (#776 E)", () => {
     api.apiPost.mockRejectedValue(new ApiError("Version not found in Trash", 404, { error: "Version not found in Trash" }));
     await expect(restoreVideoVersion({ ...ctx(), assetId: A })).rejects.toBeInstanceOf(ApiError);
     expect(surfaces.invalidated.some((entry) => entry.includes("videos"))).toBe(true);
+  });
+
+  it("a restore that lands while the first Videos read is in flight is not overwritten by that older read", async () => {
+    const actual = await vi.importActual<typeof import("./project-data")>("./project-data");
+    vi.mocked(projectData.invalidateProjectSurfaces).mockImplementation(actual.invalidateProjectSurfaces);
+    const key = projectDataKeys.videos(P);
+    const restored = videoOf(V);
+    let resolveOld!: (value: unknown) => void;
+    api.apiGet.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+    api.apiGet.mockResolvedValueOnce([restored]);
+    const observer = new QueryObserver(client, { queryKey: key, queryFn: async () => api.apiGet("/videos"), staleTime: 15_000 });
+    const unsubscribe = observer.subscribe(() => {});
+    api.apiPost.mockResolvedValueOnce({ video: restored });
+    const write = restoreWholeVideo(ctx());
+    await vi.waitFor(() => expect(api.apiPost).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveOld([]);
+    await write;
+    await vi.waitFor(() => expect(observer.getCurrentResult().fetchStatus).toBe("idle"));
+    unsubscribe();
+    expect(client.getQueryData<VideoDto[]>(key)!.map((v) => v.id)).toEqual([V]);
   });
 });

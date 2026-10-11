@@ -133,6 +133,9 @@ export function writeFailure(error: unknown, fallback: string, noteId = "", touc
 /** Whether leaving the form would lose something: an edit's text or frames changed, a reply or composer with text, or a composer with marks set. */
 const isDirty = (slot: Slot) => (slot.open ? (slot.open.kind === "reply" ? slot.open.text !== "" : slot.open.text !== slot.open.base.body || slot.marks.touched || slot.open.drawing.touched) : slot.composer.body !== "" || slot.marks.touched || slot.markup.items.length > 0);
 
+/** What Remove would discard: the composer's text and drawing (kept while an edit or reply is open) and, independently, the open form's own changes. */
+const hasUnsent = (slot: Slot) => slot.composer.body !== "" || slot.markup.items.length > 0 || (slot.open ? isDirty(slot) : slot.marks.touched);
+
 /** The frame a drawing may be on: a point note's frame, or any frame of a range (`end` is exclusive). */
 const inFrames = (frame: number, start: number, end: number | null) => frame >= start && frame < (end ?? start + 1);
 const clampFrame = (frame: number, low: number, high: number) => Math.min(high, Math.max(low, frame));
@@ -498,6 +501,8 @@ export function createNoteFormStore(key: string) {
 
     /** Whether the Version's form holds anything not yet sent: text, a drawing, or a frame/range edit. The same check Escape uses. */
     isDirty: (assetId: string): boolean => isDirty(slot(assetId)),
+    /** Whether removing the Version would discard something not yet sent: the composer's draft and an open form's changes are each counted. Escape keeps using `isDirty`. */
+    hasUnsent: (assetId: string): boolean => hasUnsent(slot(assetId)),
     /** The first Escape of a dirty form is held (the text stays); the next one is not. A clean edit or reply closes. Nothing here moves focus: the answer says where it should go. */
     escape(assetId: string, { focusInForm }: { focusInForm: boolean }): { consumed: boolean; focus: "dialog" | "textarea" | "opener" | "draw" | null } {
       const held = slot(assetId);

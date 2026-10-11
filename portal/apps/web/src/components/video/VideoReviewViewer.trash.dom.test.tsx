@@ -196,6 +196,47 @@ describe("Remove a Version from the staff viewer (#776 E)", () => {
     expect(getToasts().some((candidate) => candidate.tone === "error")).toBe(false);
   });
 
+  it("Undo follows what the person confirmed, not what the answer turned out to be (another editor removed the last Version first)", async () => {
+    await mount();
+    await openViewer();
+    await startRemove();
+    removeOutcome = async () => { versions = []; return { video: null }; };
+    await click(confirmButton());
+    await flush(8);
+    const toast = getToasts().find((candidate) => candidate.action?.label === "Undo");
+    expect(toast?.message).toMatch(/version 2 of/i);
+    api.apiPost.mockImplementation(async () => { versions = [{ assetId: ids.asset2, version: 2 }, { assetId: ids.asset1, version: 1 }]; return { video: videoNow() }; });
+    await act(async () => { toast!.action!.onAction(); });
+    await flush(8);
+    expect(posts().pop()?.path).toBe(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/restore`);
+  });
+
+  it("Undo is inside the open viewer, so the modal focus trap can reach it", async () => {
+    await mount();
+    await openViewer();
+    await startRemove();
+    removeOutcome = async () => { versions = [{ assetId: ids.asset1, version: 1 }]; return { video: videoNow() }; };
+    await click(confirmButton());
+    await flush(8);
+    expect(dialog()).not.toBeNull();
+    const undo = tid("toast-action");
+    expect(undo, "the Undo action").not.toBeNull();
+    expect(dialog()!.contains(undo)).toBe(true);
+    expect(document.querySelectorAll('[data-testid="toast"]')).toHaveLength(1);
+    undo!.focus();
+    expect(document.activeElement).toBe(undo);
+  });
+
+  it("the discard warning counts the composer's draft even while an unchanged reply is open", async () => {
+    await mount({ parts: ["trash", "notes"] });
+    await openViewer();
+    const forms = stores.made.at(-1)!;
+    forms.setBody(ids.asset2, "an unsent note", 4);
+    forms.openReply(ids.asset2, "00000000-0000-4000-8000-000000000001");
+    await startRemove();
+    expect(tid("video-remove-draft")).not.toBeNull();
+  });
+
   it("an Undo that is refused says why", async () => {
     await mount();
     await openViewer();

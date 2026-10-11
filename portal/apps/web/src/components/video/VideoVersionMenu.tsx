@@ -74,10 +74,10 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
   };
   const close = () => { run.current += 1; setTarget(null); setImpact(null); setLoadFailure(null); setProblem(null); setPending(false); };
 
-  const announce = useCallback((done: Target, removed: VideoDto | null) => {
+  /** `whole`: what the person confirmed (the last Version, so the whole film), never what the answer turned out to be: another editor may have removed the other Versions first. */
+  const announce = useCallback((done: Target, whole: boolean) => {
     if (!queryClient) return;
     const ctx = { queryClient, projectId, videoId: done.videoId };
-    const whole = removed === null;
     const subject = `“${done.title}”`;
     const undo = async () => {
       try {
@@ -99,7 +99,7 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
       const response = await removeVideoVersion({ queryClient, projectId, videoId: sent.videoId, assetId: sent.assetId }, confirmed, confirmed.lastVersion);
       // The removal happened whatever this dialog has become since: retire the Version and say so.
       onRemoved({ assetId: sent.assetId, videoId: sent.videoId, video: response.video });
-      announce(sent, response.video);
+      announce(sent, confirmed.lastVersion);
       if (alive.current && run.current === mine) close();
     } catch (error) {
       terminate(error);
