@@ -64,6 +64,8 @@ export function createVideoApprovalStore(key: string) {
       });
       return "ok";
     },
+    /** The Version or Video behind `slot` was removed (#776 E): its draft and write state go. A write already sent settles as `dropped` (it no longer owns the slot). */
+    forget(slot: string) { if (!dead && slots.delete(slot)) for (const listener of [...listeners]) listener(); },
     retire() { dead = true; slots.clear(); listeners.clear(); },
   };
 }

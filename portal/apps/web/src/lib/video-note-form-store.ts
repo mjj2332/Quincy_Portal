@@ -597,6 +597,16 @@ export function createNoteFormStore(key: string) {
         if (held.status === "committing") put(assetId, { pasteOp: { ...held, opId: ++seq, status: "idle" } });
       }
     },
+    /**
+     * A Version was removed (#776 E): its slot, paste state, thread list and any clipboard copied from it go, so nothing keeps pointing at it. A request already sent is not touched,
+     * but with the slot gone it no longer owns it (`owns` compares the slot's op), so its completion writes nothing back.
+     */
+    forgetSlot(assetId: string) {
+      if (dead) return;
+      slots.delete(assetId); pasteRuns.delete(assetId); latest.delete(assetId);
+      for (const [videoId, clip] of [...clipboards]) if (clip.sourceAssetId === assetId) clipboards.delete(videoId);
+      listeners.forEach((listener) => { listener(); });
+    },
     /** This store is being replaced (another person or Project): nothing it started may write or send again. */
     retire() { dead = true; slots.clear(); clipboards.clear(); pasteRuns.clear(); listeners.clear(); },
   };

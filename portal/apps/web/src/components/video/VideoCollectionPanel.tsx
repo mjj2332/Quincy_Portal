@@ -1,6 +1,6 @@
 import { lazy, Suspense, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useReportBarHeight } from "./ReviewBarClearance";
-import type { Mp4Probe, Role, VideoDto, VideoReviewResponse } from "@quincy/shared";
+import { roleHasCapability, type Mp4Probe, type Role, type VideoDto, type VideoReviewResponse } from "@quincy/shared";
 import { useSession } from "../../lib/auth";
 import { useOptionalProjectQueryClient, useProjectAccessTermination, useProjectVideosQuery } from "../../lib/project-data";
 import { onPrincipalTerminal } from "../../lib/principal-terminal";
@@ -17,6 +17,7 @@ import { Notice } from "../quincy/Notice";
 import { NewFilmUploader } from "./NewFilmUploader";
 import { VideoCard } from "./VideoCard";
 import { ReviewLinksHost, ReviewLinksOpenButton } from "./ReviewLinksHost";
+import { PROJECT_SHEET_CLOSE_SCROLL_MARGIN } from "../quincy/ProjectSheet";
 import { ReviewLinkStoreContext, useReviewLinksUi } from "./use-review-links-ui";
 
 /** The player is a separate chunk: nobody who never opens a film pays for it (#292: every lazy view sits in a ViewLoadBoundary). */
@@ -26,6 +27,9 @@ const loadViewer = () => import("./VideoReviewViewer").then((module) => { loaded
 const LazyViewer = lazy(loadViewer);
 /** Pointing at or focusing a film starts the chunk, so Enter opens the dialog (and moves focus into it) in its own tick: a Space typed straight after would otherwise land on the Open review button while the chunk loads. */
 const preloadViewer = () => { void loadViewer(); };
+/** The Trash dialog (#776 E) is its own chunk, loaded the first time Trash is opened and kept mounted after (it reads the list afresh on every opening). */
+const LazyTrashDialog = lazy(() => import("./VideoTrashDialog").then((module) => ({ default: module.VideoTrashDialog })));
+const TRASH_OPEN_ID = "video-trash-open";
 /** With notes on, the notes chunk starts loading along with the viewer's. */
 const preloadNotes = () => { void import("./VideoNotesHost"); };
 
@@ -60,6 +64,10 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   if (deliveryRef.current?.key !== formsKey) { deliveryRef.current?.retire(); deliveryRef.current = createVideoApprovalStore(formsKey); }
   const deliveryStore = deliveryRef.current;
   const deliveryEnabled = review.parts.includes("delivery");
+  // Remove, restore and the Trash (#776 E): the `trash` part and the capability (Admin and Editor), dark otherwise.
+  const trashEnabled = review.parts.includes("trash") && roleHasCapability(role, "manageVideoTrash");
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trashMounted, setTrashMounted] = useState(false);
   useEffect(() => {
     // The notice names the session's query client: a retired session's late 401 must not cancel this session's confirmation (as in video-upload-store).
     const off = onPrincipalTerminal((terminated) => { if (terminated === undefined || terminated === queryClient) forms.cancelAll(); });
@@ -80,7 +88,17 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   };
   const opener = useRef<HTMLElement | null>(null);
   const openVideo = openVideoId ? videos.data?.find((video) => video.id === openVideoId) ?? null : null;
-  useEffect(() => { if (openVideoId && videos.data && !openVideo) setOpenVideoId(null); }, [openVideoId, openVideo, videos.data]);
+  useEffect(() => {
+    if (!(openVideoId && videos.data && !openVideo)) return;
+    setOpenVideoId(null);
+    // The film left the list while its viewer was open (removed to Trash, #776 E): the card that opened it is gone and Base UI has nowhere to return focus, so the Trash button, where
+    // the film now is, takes it, unless focus already went somewhere on its own.
+    // No cleanup: closing the viewer changes these dependencies at once, and a cleanup would cancel the very timer that restores focus.
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (active === null || active === document.body) document.querySelector<HTMLElement>(`[data-testid="${TRASH_OPEN_ID}"]`)?.focus({ preventScroll: true });
+    }, 0);
+  }, [openVideoId, openVideo, videos.data]);
 
   const rows = useMemo<EmbeddedUpload[]>(() => uploads.map((upload) => ({
     key: upload.id,
@@ -115,7 +133,12 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     <div className="workspace-intro workspace-intro--stack" data-testid="video-films-header">
       <div><div className="ey">Video review</div><h1 className="serif" id="video-films-heading">Films</h1></div>
       <div className="muted">Upload web-ready H.264 MP4 cuts. A re-cut becomes a new version of the same film; notes stay with the version they were made on.</div>
-      <ReviewLinksOpenButton ui={reviewLinks} />
+      {trashEnabled
+        ? <div className="flex flex-wrap items-center gap-[var(--space-3)]">
+          <ReviewLinksOpenButton ui={reviewLinks} />
+          <Button type="button" variant="secondary" className={`min-h-11 ${PROJECT_SHEET_CLOSE_SCROLL_MARGIN}`} data-testid={TRASH_OPEN_ID} onClick={() => { setTrashMounted(true); setTrashOpen(true); }}>Trash</Button>
+        </div>
+        : <ReviewLinksOpenButton ui={reviewLinks} />}
     </div>
     <div className="grid gap-[var(--space-5)] p-[var(--space-6)]" data-testid="video-collection-body">
       <ReviewLinksHost ui={reviewLinks} videos={videos.data ?? []} {...(setBarHeight ? { onBarHeight: setBarHeight } : {})} />
@@ -127,9 +150,12 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
         {videos.data.map((video) => <VideoCard key={video.id} video={video} canUpload={canUpload} currentUserId={userId} myUpload={myVersionUpload(video)} onVersionFile={versionFile} onCancelReservation={(reservationId) => abortVideoReservation(queryClient, projectId, reservationId)} onOpen={(picked, trigger) => { opener.current = trigger; setOpenVideoId(picked.id); }} {...(reviewLinks.enabled ? { reviewLinks: { selected: reviewLinks.selection.has(video.id), ...(reviewLinks.canWrite ? { onToggle: () => reviewLinks.store.toggleSelect(video.id) } : {}), chips: reviewLinks.chipsFor(video.id), onOpenChip: reviewLinks.store.openDetail, onOpenAll: reviewLinks.store.openList } } : {})} />)}
       </div>}
     </div>
+    {trashEnabled && trashMounted && <ViewLoadBoundary viewLabel="Trash">
+      <Suspense fallback={null}><LazyTrashDialog projectId={projectId} archived={archived} open={trashOpen} onOpenChange={setTrashOpen} returnFocusId={TRASH_OPEN_ID} /></Suspense>
+    </ViewLoadBoundary>}
     {openVideo && <ViewLoadBoundary viewLabel="video player">
       <Suspense fallback={null}>
-        <Viewer video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => opener.current} {...(notesEnabled ? { notes: { projectId, role, userId, archived, forms, markup: markupEnabled, exportEnabled } } : {})} {...(compareEnabled ? { compare: { store: compareStore } } : {})} {...(deliveryEnabled ? { delivery: { projectId, role, archived, store: deliveryStore } } : {})} />
+        <Viewer video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => { const card = opener.current; return card?.isConnected ? card : document.querySelector<HTMLElement>(`[data-testid="${TRASH_OPEN_ID}"]`); }} {...(notesEnabled ? { notes: { projectId, role, userId, archived, forms, markup: markupEnabled, exportEnabled } } : {})} {...(compareEnabled ? { compare: { store: compareStore } } : {})} {...(deliveryEnabled ? { delivery: { projectId, role, archived, store: deliveryStore } } : {})} {...(trashEnabled ? { trash: { projectId, archived } } : {})} />
       </Suspense>
     </ViewLoadBoundary>}
   </section>;

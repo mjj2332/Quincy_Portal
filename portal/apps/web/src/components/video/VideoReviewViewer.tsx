@@ -13,13 +13,15 @@ import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
 import { formatBytes, formatDuration, formatFps, formatVideoDate } from "./video-format";
 import type { NoteFormStore } from "../../lib/video-note-form-store";
-import type { VideoApprovalStore } from "../../lib/video-approval-store";
+import { versionSlot, videoSlot, type VideoApprovalStore } from "../../lib/video-approval-store";
 import type { VideoNotesSession } from "./use-video-notes";
 
 /** The notes UI is its own chunk: a Project whose notes part is off never loads it. */
 const LazyNotesHost = lazy(() => import("./VideoNotesHost"));
 /** Decisions, Release and premium (#741 14-ui-staff) are their own chunk: a Project whose `delivery` part is off never loads it. */
 const LazyDeliveryPanel = lazy(() => import("./VideoDeliveryPanel").then((module) => ({ default: module.VideoDeliveryPanel })));
+/** The Version menu (Remove, #776 E) is its own chunk: a Project whose `trash` part is off never loads it. */
+const LazyVersionMenu = lazy(() => import("./VideoVersionMenu").then((module) => ({ default: module.VideoVersionMenu })));
 /** Compare (#741 7c) is its own chunk too, and the viewer never imports the transport: only a Project whose `compare` part is on, and only when a reviewer opens it. */
 const loadCompare = () => import("./CompareView");
 const LazyCompareView = lazy(loadCompare);
@@ -37,7 +39,7 @@ const VERSION_SELECT_ID = "video-review-version";
  * With `notes` (the Project's `notes` part is on, #741 5b) the Version details column becomes the notes panel, and the Version details
  * move behind a button in its header; without it the viewer is exactly the 4d-ii viewer.
  */
-export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery }: {
+export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash }: {
   video: VideoDto;
   onClose: () => void;
   /** The control that opened the viewer; focus goes back to it on close. */
@@ -48,6 +50,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   compare?: { store: CompareStore };
   /** Present only when the Project's `delivery` part is on (#741 14-ui-staff): decisions, Release and premium under the player. */
   delivery?: { projectId: string; role: Role; archived: boolean; store: VideoApprovalStore };
+  /** Present only when the Project's `trash` part is on and the role may manage the Trash (#776 E): the Version menu with Remove. */
+  trash?: { projectId: string; archived: boolean };
 }) {
   const [assetId, setAssetId] = useState(video.currentAssetId);
   const playerRef = useRef<VideoPlayerControl>(null);
@@ -142,6 +146,29 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   useEffect(() => { if (mode === "compare" && liveStore === undefined) exitCompare("dialog"); }, [mode, liveStore, exitCompare]);
   // Compare is not offered below 721px: crossing it leaves for the single view on A, with focus on the dialog (the button is gone).
   useEffect(() => { if (phone && mode === "compare") exitCompare("dialog"); }, [phone, mode, exitCompare]);
+  // A Version left the list (removed here, or in another tab: #776 E). The one on show goes to the current Version; a Compare that had it as a side forgets it and leaves for the single view.
+  const versionIds = video.versions.map((candidate) => candidate.assetId).join(",");
+  useEffect(() => {
+    const present = new Set(versionIds.split(","));
+    if (!present.has(assetId)) { setResume(null); setAssetId(video.currentAssetId); }
+    const pair = compareStore?.getState().pair;
+    if (compareStore && pair && (!present.has(pair.a) || !present.has(pair.b))) {
+      for (const side of [pair.a, pair.b]) if (!present.has(side)) compareStore.dropVersion(side);
+      if (modeRef.current === "compare") exitCompare("dialog");
+    }
+  }, [versionIds, assetId, video.currentAssetId, compareStore, exitCompare]);
+  /** The Version was removed (#776 E): everything that kept state for it lets go, and the viewer moves to the Video's current Version. */
+  const onVersionRemoved = useCallback((removed: { assetId: string; videoId: string; video: VideoDto | null }) => {
+    forms?.forgetSlot(removed.assetId);
+    compareStore?.dropVersion(removed.assetId);
+    delivery?.store.forget(versionSlot(removed.assetId));
+    if (removed.video === null) delivery?.store.forget(videoSlot(removed.videoId));
+    else { setResume(null); setAssetId(removed.video.currentAssetId); }
+  }, [forms, compareStore, delivery?.store]);
+  const hasDraft = useCallback((target: string) => {
+    const held = forms?.slot(target);
+    return held !== undefined && (held.composer.body !== "" || (held.open?.text ?? "") !== "");
+  }, [forms]);
 
   const enterCompare = () => {
     if (!compareStore || mode === "compare") return;
@@ -224,6 +251,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
             {video.versions.map((candidate) => <SelectItem key={candidate.assetId} value={candidate.assetId} className="pointer-coarse:min-h-11 max-[721px]:min-h-11">{optionLabel(candidate)}</SelectItem>)}
           </SelectContent>
         </Select>
+        {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} onRemoved={onVersionRemoved} /></Suspense>}
       </div>}
       {(canCompare || comparing) && <Button
         ref={compareButtonRef}
