@@ -27,6 +27,7 @@ const NOT_ENTITY_REFERENCES: Readonly<Record<string, string>> = {
   "document_uploads.preview_upload_id": "an R2 multipart-upload id",
   "video_upload_reservations.upload_id": "an R2 multipart-upload id",
   "assets.version_group_id": "a generated grouping key shared by every version of one asset, never any row's id",
+  "delivery_sets.operation_id": "a client-chosen idempotency key for one Publish, never any row's id",
   "autohdr_handoffs.workflow_id": "a Cloudflare Workflows instance id",
   "autohdr_fetch_claims.workflow_id": "a Cloudflare Workflows instance id",
   "autohdr_output_mappings.folder_id": "a Dropbox folder id",

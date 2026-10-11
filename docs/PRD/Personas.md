@@ -28,7 +28,7 @@ assigns photographers, keeps projects moving, and is accountable for what reache
 - Create / configure / archive projects; assign photographer & editor.
 - Manage users and their roles, including which users are **default editors** added to every new project.
 - Step into any stage (RAW, editing, edited QA, delivery) when needed.
-- Publish to client and manage the client link.
+- Publish to the client's Delivery page, Unlock premium extras, and switch a page off if it must stop serving.
 
 **Permissions:** everything (see matrix in `PRD.md` §4).
 
@@ -96,19 +96,16 @@ history, and confidence that only approved media reaches the agent.
 Ray White, Sotheby's, The Agency). Not a Quincy employee.
 
 **What they need to do**
-- Open a **private link** (no login) to their property's delivery page.
+- Open their property's **Delivery page** by its address (no login, no code) and forward the address to anyone who needs it.
 - Browse final **images, video, floorplan, copywriting**.
-- **Favourite**, **download** (web-size / full-res, single or zip), **share**, view **slideshow**.
-- **Purchase premium content** — unlock watermarked extra images / video add-ons.
+- **Download** (Web-size / Full-res, single or zip) and view a **slideshow**. The page is receive-only: no comments, approval or favourites.
+- See premium extras as watermarked previews and press **Request unlock**. Staff Unlock after payment outside the Portal; there is no checkout.
 
-**Permissions:** the client delivery page for **their** project only — no internal access.
+**Permissions:** none, because there is no account. Anyone holding the address can open that one Project's page and download its non-premium items. No internal access.
 
 **Success looks like:** they land on a beautiful, fast gallery and get their assets in seconds.
 
-> ✏️ **NEEDS INPUT:** Your original brief mentioned *"a photo review site, before publish to
-> the end client."* Does the **agent ever review/approve** media (a guest-reviewer step),
-> or do they **only receive** the final delivery? This decides whether we keep the
-> "guest reviewer link" concept that's in the prototype today.
+> **Resolved:** the agent only receives on the Delivery page. Reviewing and approving video happens through Review links (see the guest reviewer persona below), which are a separate surface.
 
 ---
 
