@@ -717,3 +717,30 @@ describe("paste lifecycle (#741 5c-ui round 4)", () => {
     expect(store.pasteDraft(V2).offset).toBe(2);
   });
 });
+
+describe("hasUnsent: what Remove would discard (#776 E)", () => {
+  it("counts the composer's text and drawing even while an unchanged edit or reply is open", () => {
+    const a = note();
+    store.setBody(V2, "unsent", 4);
+    store.openEdit(V2, a, a.id);
+    expect(store.isDirty(V2)).toBe(false);
+    expect(store.hasUnsent(V2)).toBe(true);
+    store.close(V2);
+    store.clearMarkup(V2);
+    store.setBody(V2, "", 4);
+    store.setItems(V2, "composer", [{ color: "#e64b3c", width: 4, points: [{ x: 0.1, y: 0.2 }, { x: 0.2, y: 0.3 }] }]);
+    store.openReply(V2, a.id);
+    expect(store.isDirty(V2)).toBe(false);
+    expect(store.hasUnsent(V2)).toBe(true);
+  });
+
+  it("counts an open form's own changes, and is false when nothing is unsent", () => {
+    const a = note();
+    expect(store.hasUnsent(V2)).toBe(false);
+    store.openEdit(V2, a, a.id);
+    expect(store.hasUnsent(V2)).toBe(false);
+    store.openReply(V2, a.id);
+    store.setOpenText(V2, "a reply");
+    expect(store.hasUnsent(V2)).toBe(true);
+  });
+});

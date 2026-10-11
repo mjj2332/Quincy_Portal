@@ -797,3 +797,40 @@ describe("Sol round 10: a deleted-drawing recovery does not clear a newer select
     });
   });
 });
+
+describe("#776 E: a removed Version's stream 404 refreshes the list", () => {
+  const pickVersion = async (prefix: string) => {
+    await click(byId("guest-version-trigger") ?? undefined);
+    await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.startsWith(prefix)));
+  };
+  const versionOptions = async () => {
+    await click(byId("guest-version-trigger") ?? undefined);
+    const labels = [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((option) => option.textContent ?? "");
+    await click(byId("guest-version-trigger") ?? undefined);
+    return labels;
+  };
+
+  it("after a stream error the picker no longer offers a Version the studio removed meanwhile, and nothing is announced", async () => {
+    videos = [videoOf(1, { versions: [versionOf(30), versionOf(10)] })];
+    await open();
+    expect((await versionOptions()).some((label) => label.startsWith("v10"))).toBe(true);
+    videos = [videoOf(1, { versions: [versionOf(30)] })];
+    await act(async () => { stub.fireError(host.querySelector("video")!); });
+    await flush();
+    expect(byId("guest-video-screen")).not.toBeNull();
+    expect(byId("guest-notice")).toBeNull();
+    expect((await versionOptions()).some((label) => label.startsWith("v10"))).toBe(false);
+  });
+
+  it("when the shown Version is the one removed, the guest lands on what is still granted with the studio's notice", async () => {
+    videos = [videoOf(1, { versions: [versionOf(30), versionOf(10)] }), videoOf(2)];
+    await open();
+    await click(button("Open Film 1"));
+    await pickVersion("v10");
+    videos = [videoOf(1, { versions: [versionOf(30)] }), videoOf(2)];
+    await act(async () => { stub.fireError(host.querySelector("video")!); });
+    await flush();
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(byId("guest-notice")).not.toBeNull();
+  });
+});
