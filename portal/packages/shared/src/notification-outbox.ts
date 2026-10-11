@@ -11,6 +11,7 @@ export const NOTIFICATION_OUTBOX_EVENT_TYPES = {
   subtaskReminder: "project.subtask.reminder",
   projectActivityBroad: "project.activity.broad",
   projectVideoReview: "project.video_review.notification",
+  deliveryUnlockRequested: "project.delivery.unlock_requested",
 } as const;
 export type ProjectDeadlineReminderOutboxPayload = import("./project-deadline").ProjectDeadlineReminderPayload;
 export type ProjectAssignmentCreatedPayload = {

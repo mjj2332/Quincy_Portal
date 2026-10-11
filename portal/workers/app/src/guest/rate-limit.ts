@@ -19,6 +19,8 @@ export const GUEST_LIMITS = {
   unsubscribeIp: 30, subscriptionGuest: 30,
   // Paste previews (#741 13d): a preview writes nothing, so it has its own buckets and never spends the note quota a commit needs; a guest may preview 60 times in 15 minutes and a link 300.
   pastePreviewGuest: 60, pastePreviewLink: 300,
+  // Delivery unlock request (#787 slice 8): an address may ask 5 times in 15 minutes and a page 30 in a day (a request costs one in each, valid or not); one item is asked about once a day.
+  unlockIp: 5, unlockPage: 30, unlockItem: 1,
 } as const;
 export const GUEST_CODE_RESEND_MS = 60_000;
 
@@ -33,7 +35,7 @@ async function sha256Hex(value: string): Promise<string> {
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 export const clientAddress = (request: Request): string => request.headers.get("cf-connecting-ip") ?? "unknown";
-export const ipBucket = async (kind: "passcode" | "exchange" | "codesend" | "codeverify" | "unsubscribe", ip: string, start: number): Promise<string> => `${kind}:ip:${await sha256Hex(`${ip}|${start}`)}`;
+export const ipBucket = async (kind: "passcode" | "exchange" | "codesend" | "codeverify" | "unsubscribe" | "unlock", ip: string, start: number): Promise<string> => `${kind}:ip:${await sha256Hex(`${ip}|${start}`)}`;
 /** An email bucket is keyed by the SHA-256 of `email|window`, never the address itself (the table holds no address, raw or plain). `codesend24h` is the daily one. */
 export const emailBucket = async (kind: "codesend" | "codesend24h", email: string, start: number): Promise<string> => `${kind}:email:${await sha256Hex(`${email}|${start}`)}`;
 
@@ -52,4 +54,13 @@ export async function reserveAttempts(db: D1Database, reservations: Reservation[
     limited = true; retry = Math.max(retry, windowStart(now, windows[index]) + windows[index]! - now);
   });
   return { limited, retryAfterSeconds: Math.max(1, Math.ceil(retry / 1000)) };
+}
+
+/** Gives back one attempt in a bucket (a request that reserved its slot and then found nothing to write must not spend the slot for the rest of the window). The table requires `count >= 1`, so the last one deletes the row. */
+export async function refundAttempt(db: D1Database, bucket: string, now: number, windowMs: number = GUEST_WINDOW_MS): Promise<void> {
+  const start = windowStart(now, windowMs);
+  await db.batch([
+    db.prepare("UPDATE guest_rate_limits SET count = count - 1 WHERE bucket = ?1 AND window_start = ?2 AND count > 1").bind(bucket, start),
+    db.prepare("DELETE FROM guest_rate_limits WHERE bucket = ?1 AND window_start = ?2 AND count <= 1").bind(bucket, start),
+  ]);
 }

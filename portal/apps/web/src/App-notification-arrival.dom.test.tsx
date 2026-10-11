@@ -37,6 +37,7 @@ const EXPECTED_TAB: Record<NotificationType, "RAW" | "Edited" | "Collaboration" 
   video_note: "Video",
   video_reply: "Video",
   video_decision: "Video",
+  delivery_unlock_requested: "Edited",
 };
 
 const sessionState = vi.hoisted(() => ({ role: "admin" }));

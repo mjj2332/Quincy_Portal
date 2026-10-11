@@ -182,10 +182,10 @@ describe("terminal route manifest", () => {
     }
   });
 
-  it("classifies the public Client Delivery routes as delivery-public, all GET (#787 slice 6)", () => {
+  it("classifies the public Client Delivery routes as delivery-public: GET reads, and the one POST unlock request (#787 slices 6 and 8)", () => {
     const publicRoutes = PROJECT_SECURITY_ROUTE_CLASSIFICATION.filter((route) => route.class === "delivery-public");
     expect(publicRoutes.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
-      "GET /d/:slug", "GET /d/api/pages/:slug", "GET /d/api/pages/:slug/items/:handle/download", "GET /d/api/pages/:slug/items/:handle/media", "GET /d/api/pages/:slug/items/:handle/thumb",
+      "GET /d/:slug", "GET /d/api/pages/:slug", "GET /d/api/pages/:slug/items/:handle/download", "GET /d/api/pages/:slug/items/:handle/media", "GET /d/api/pages/:slug/items/:handle/thumb", "POST /d/api/pages/:slug/items/:handle/unlock-request",
     ]);
     for (const route of publicRoutes) {
       expect(route, `${route.method} ${route.path}`).toMatchObject({ scope: "none", projection: "guest-public", response: "protocol-404" });

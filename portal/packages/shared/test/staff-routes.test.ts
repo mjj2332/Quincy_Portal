@@ -178,6 +178,7 @@ describe("shared staff route contract", () => {
       video_note: `/projects/${projectId}?tab=video`,
       video_reply: `/projects/${projectId}?tab=video`,
       video_decision: `/projects/${projectId}?tab=video`,
+      delivery_unlock_requested: `/projects/${projectId}?tab=edited`,
     };
     for (const type of NOTIFICATION_TYPES) {
       const route = projectNotificationRoute(projectId, type);

@@ -67,6 +67,7 @@ export * from "./video-nle-export";
 export * from "./video-mp4-probe";
 export * from "./video-review";
 export * from "./video-review-notifications";
+export * from "./delivery-unlock-notifications";
 export * from "./review-links";
 export * from "./video-upload";
 export * from "./video-notes";
