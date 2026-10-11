@@ -38,10 +38,10 @@ export function GuestUnsubscribe({ token }: { token: string | null }) {
   if (phase === "working" || token === null) return <main aria-busy="true" className="flex min-h-dvh items-center justify-center bg-background p-[var(--space-4)]" />;
 
   if (phase === "retry") return <main className="flex min-h-dvh items-center justify-center bg-background p-[var(--space-4)]">
-    <div className="flex flex-col items-center gap-[var(--space-3)]">
-      <p role="alert" className="m-0 text-destructive">We couldn't unsubscribe you just now. Try again.</p>
+    <EmptyState tone="error" data-testid="guest-unsubscribe-retry" title="We couldn't unsubscribe you just now">
+      <p role="alert" className="m-0 mb-[var(--space-4)]">Try again.</p>
       <Button type="button" disabled={busy} onClick={() => { void first(token); }}>Retry</Button>
-    </div>
+    </EmptyState>
   </main>;
 
   const change = async (subscribed: boolean) => {
@@ -56,7 +56,7 @@ export function GuestUnsubscribe({ token }: { token: string | null }) {
   const subscribed = phase === "subscribed";
   return <main className="flex min-h-dvh items-center justify-center bg-background p-[var(--space-4)]">
     <EmptyState data-testid="guest-unsubscribe" title={subscribed ? "You'll get emails about this review again." : "You won't get emails about this review."}>
-      <p className="m-0 mb-[var(--space-4)]">{subscribed ? "You can stop them again whenever you like." : "Changed your mind? You can turn them back on."}</p>
+      <p className="m-0 mb-[var(--space-4)] [text-wrap:pretty]">{subscribed ? "You can stop them again whenever you like." : "Changed your mind? You can turn them back on."}</p>
       <Button type="button" variant={subscribed ? "secondary" : "default"} disabled={busy} onClick={() => { void change(!subscribed); }}>{subscribed ? "Unsubscribe" : "Resubscribe"}</Button>
       {failed ? <p role="alert" className="m-0 mt-[var(--space-3)] text-destructive">That didn't go through. Try again.</p> : null}
     </EmptyState>

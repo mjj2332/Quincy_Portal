@@ -67,7 +67,8 @@ describe("GuestUnsubscribe (#741 15b)", () => {
   it("a 503 on the first POST offers Retry; Retry re-POSTs the same token and a 200 shows the unsubscribed state", async () => {
     await open("#t=tok-123", (call) => (call === 0 ? reply(503, { error: "unavailable" }) : reply(200, { subscribed: false })));
     expect(host!.querySelector('[data-testid="guest-unavailable"]')).toBeNull();
-    expect(host!.querySelector('[role="alert"]')?.textContent).toContain("We couldn't unsubscribe you just now. Try again.");
+    expect(host!.querySelector('[role="alert"]')?.textContent).toContain("Try again.");
+    expect(host!.textContent).toContain("We couldn't unsubscribe you just now");
     await act(async () => { button("Retry")!.click(); });
     await flush();
     expect(fetchMock).toHaveBeenCalledTimes(2);
