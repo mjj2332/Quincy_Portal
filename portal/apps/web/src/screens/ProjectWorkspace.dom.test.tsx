@@ -1121,6 +1121,57 @@ describe("ProjectWorkspace selection download", () => {
       expect(hrefs).toEqual(["/api/projects/p1/download-selection/fresh/archive.zip"]); expect(notice()).toBeNull();
     });
 
+    it("another selection requested while the notice is ready starts its own preparation: no stale Download zip, polling restarts (Sol r2 #1)", async () => {
+      const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+      apiPostMock.mockRejectedValue(preparing());
+      await selectOneAndDownload();
+      apiPostMock.mockResolvedValue({ downloadUrl: "/api/projects/p1/download-selection/a/archive.zip" });
+      await tick(30_000); expect(host.querySelector('[data-testid="prepared-zip-download"]')).not.toBeNull();
+      apiPostMock.mockRejectedValue(preparing());
+      await act(async () => { host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[1]!.click(); }); await tick(0);
+      await act(async () => { [...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((item) => item.textContent === "Download selection")!.click(); }); await tick(0);
+      expect(host.querySelector('[data-testid="prepared-zip-download"]')).toBeNull(); expect(notice()?.textContent).toContain("Preparing this download.");
+      const before = zipPosts(); await tick(30_000); expect(zipPosts()).toBe(before + 1);
+      apiPostMock.mockResolvedValue({ downloadUrl: "/api/projects/p1/download-selection/b/archive.zip" }); await tick(30_000);
+      expect(host.querySelector('[data-testid="prepared-zip-download"]')).not.toBeNull(); expect(anchorClick).not.toHaveBeenCalled();
+    });
+
+    it("Download zip on a selection that went back to preparing restarts the wait instead of closing (Sol r2 #1)", async () => {
+      const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+      apiPostMock.mockRejectedValue(preparing());
+      await selectOneAndDownload();
+      apiPostMock.mockResolvedValue({ downloadUrl: "/api/projects/p1/download-selection/a/archive.zip" }); await tick(30_000);
+      apiPostMock.mockRejectedValue(preparing());
+      await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="prepared-zip-download"]')!.click(); }); await tick(0);
+      expect(anchorClick).not.toHaveBeenCalled(); expect(notice()).not.toBeNull(); expect(host.querySelector('[data-testid="prepared-zip-download"]')).toBeNull();
+      const before = zipPosts(); await tick(30_000); expect(zipPosts()).toBe(before + 1);
+    });
+
+    it("selected RAW: Download zip rechecks the server's selected set; on preparing it resumes the wait and follows no link (Sol r2 #2)", async () => {
+      authState.role = "admin";
+      apiGetMock.mockImplementation((path: string) => {
+        if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), stageKey: "awaiting_raw" });
+        if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+        if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-selected", { selected: true })] });
+        if (path.includes("/jobs")) return Promise.resolve({ jobs: [] });
+        return Promise.resolve({});
+      });
+      const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+      const prepares = () => apiPostMock.mock.calls.filter(([path]) => path === "/api/projects/p1/selected-raw/prepare").length;
+      apiPostMock.mockResolvedValue({ state: "preparing", pending: 1, retryAfterSeconds: 30 });
+      await render(<ProjectWorkspace projectId="p1" />); await flush();
+      await openTab(host, "RAW");
+      const rawButton = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="autohdr-handoff"] button')].find((item) => item.textContent === "Download 1 selected (zip)")!;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      await act(async () => { rawButton.click(); }); await tick(0);
+      apiPostMock.mockResolvedValue({ state: "ready" }); await tick(30_000);
+      apiPostMock.mockResolvedValue({ state: "preparing", pending: 3, retryAfterSeconds: 30 });
+      const before = prepares();
+      await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="prepared-zip-download"]')!.click(); }); await tick(0);
+      expect(prepares()).toBe(before + 1); expect(anchorClick).not.toHaveBeenCalled(); expect(host.querySelector('[data-testid="prepared-zip-download"]')).toBeNull(); expect(notice()).not.toBeNull();
+      await tick(30_000); expect(prepares()).toBe(before + 2);
+    });
+
     it("stops polling when the notice is closed and when the workspace unmounts, and Check again asks once more after five minutes", async () => {
       apiPostMock.mockRejectedValue(preparing());
       await selectOneAndDownload();
