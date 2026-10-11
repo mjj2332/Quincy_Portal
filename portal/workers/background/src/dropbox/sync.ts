@@ -1,6 +1,6 @@
 import { buildProjectActivityStatements, COLLECTION_RECEIVED_COUNT_SQL, RAW_CLAIM_LEASE_MS, collectionReceivedCountBindings, supersedeCarryStatements, supersedeCarryToSuccessorStatements } from "@quincy/db";
 import { assetIngestIdentities, assets, collections, jobs, projects, rawReconciliationClaims } from "@quincy/db/schema";
-import { enqueueRenditionSafely, isAcceptedPhotoFilename, isDngFilename, isRawMediaFilename, parseXmpRating, projectActivityDeepLink, publishNotificationOutbox, rawMediaContentType, XMP_SCAN_BYTES, xmpRatingToStars, type ProjectActivityIntent } from "@quincy/shared";
+import { enqueueDeliveryDerivativesSafely, enqueueRenditionSafely, isAcceptedPhotoFilename, isDngFilename, isRawMediaFilename, parseXmpRating, projectActivityDeepLink, publishNotificationOutbox, rawMediaContentType, XMP_SCAN_BYTES, xmpRatingToStars, type ProjectActivityIntent } from "@quincy/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { Env } from "../env";
@@ -495,6 +495,7 @@ export async function syncProjectRawFolder(
             // (#787); the paid extra follows that pointer. Last, after the repoint and recount.
             ...supersedeCarryToSuccessorStatements(env.DB, staleOccupant.id),
           ]);
+          await enqueueCarriedSuccessorDerivatives(env, staleOccupant.id);
         }
         if (retryInsertResult === 0) continue;
         if ((retryResults[2]?.meta.changes ?? 0) === 0) {
@@ -509,9 +510,12 @@ export async function syncProjectRawFolder(
             // predecessor's repointed successor (#787). Last, after the repoint.
             ...supersedeCarryToSuccessorStatements(env.DB, staleOccupant.id),
           ]);
+          await enqueueCarriedSuccessorDerivatives(env, staleOccupant.id);
           continue;
         }
         await enqueueRenditionSafely(env, assetId, "dropbox-ingest");
+        // A premium photo carried onto this re-upload needs its watermarked preview (#787); the helper reads the flag the batch just carried.
+        await enqueueDeliveryDerivativesSafely(env, [assetId], "dropbox-ingest-carry");
         newlyImported += 1;
         continue;
       }
@@ -615,4 +619,10 @@ export async function syncProjectRawFolder(
     await setJobStatus(db, trackingJobId, "failed", errorMessage(error));
     throw error;
   }
+}
+
+/** After a carry that resolves its target through `replaced_by_asset_id` (the identity-race cleanups), asks for the premium preview of whichever photo the superseded row now points at (#787). */
+async function enqueueCarriedSuccessorDerivatives(env: Env, supersededAssetId: string): Promise<void> {
+  const successor = await env.DB.prepare("SELECT replaced_by_asset_id AS id FROM assets WHERE id = ?").bind(supersededAssetId).first<{ id: string | null }>();
+  if (successor?.id) await enqueueDeliveryDerivativesSafely(env, [successor.id], "dropbox-ingest-carry");
 }

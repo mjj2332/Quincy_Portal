@@ -1017,7 +1017,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
             // Do not acknowledge work while the red gate is closed: explicit retries reach the
             // configured DLQ instead of silently producing bytes outside max_concurrency=1.
             if (!renditionsEnabled(this.env)) throw new Error("Rendition consumer is disabled");
-            await generateRenditions(this.env, parsed.body.assetId);
+            await generateRenditions(this.env, parsed.body.assetId, undefined, parsed.body.variants);
             message.ack();
             break;
           case "embedded_display":

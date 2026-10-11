@@ -991,6 +991,13 @@ Tags: focus-overlays
   "restore focus in the same synchronous call that closes it," not "restore it after the DOM
   settles."
 
+## Base UI's own focus guards redirected on the next frame, so a fast Tab left the dialog (#796)
+Tags: focus-overlays, reui-vendor, testing-guards · #796
+
+- **What bit.** In `@base-ui/react` 1.7.0 the modal `FloatingFocusManager` guards (the two `data-base-ui-focus-guard` spans around the popup) send focus back in with `enqueueFocus(target)`, which defers to `requestAnimationFrame`. A Tab that arrives before that frame (key repeat, rapid presses, or a frame-throttled background tab) finds focus still on the guard, and native Tab walks out of the dialog into the page (observed: guard to the navigation rail brand, from a Dialog nested in the Project sheet). It was found by a browser pass run in a background tab, where frames are throttled and the gap is wide; in a foreground tab it is rare enough to pass by hand. Base UI 1.9.0 still defers, so upgrading does not fix it. Same family as the TB8-02 rule above: a deferred focus call is a race.
+- **Rule.** `portal/patches/@base-ui+react+1.7.0.patch` (`patch-package`, run by `portal`'s `postinstall`) passes `{ sync: true }` to both guard calls, in the `.mjs` and the `.js` build, each marked `// Quincy #796`. Do not hand-roll a trap in `DialogContent`; keep Base UI's and keep it synchronous.
+- **Gate.** `components/quincy/dialog-focus-guard-sync.dom.test.tsx` focuses each guard of the real `DialogContent` nested in a `Sheet` and asserts the landing element with no frame flush (red on the unpatched package). `config/base-ui-patch.guard.test.ts` fails when the installed Base UI version no longer matches the patch file name, so a bump must re-make the patch (`npx patch-package @base-ui/react`) or drop it together with `postinstall`, after checking upstream still defers.
+
 ## Two ways a green test quietly stops proving anything (TB8-04, 2026-09-02)
 Tags: testing-guards
 

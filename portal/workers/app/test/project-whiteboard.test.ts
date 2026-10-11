@@ -215,10 +215,12 @@ describe("live relay between two sockets (#499)", () => {
     const project = await newProject();
     const a = await join(project, "member"); const b = await join(project, "member2");
     a.client.send(batch(1, element("from-a", 1, 1))); b.client.send(batch(1, element("from-b", 1, 2)));
-    const seenByA = await a.client.drain(); const seenByB = await b.client.drain();
+    // Each side gets exactly two messages, its own ack and the other side's relayed edit, in either order: wait for both rather than a fixed window (#792).
+    const seenByA = [await a.client.next(), await a.client.next()]; const seenByB = [await b.client.next(), await b.client.next()];
     expect(seenByA).toContainEqual({ type: "ack", seq: 1, generation: 1 }); expect(seenByB).toContainEqual({ type: "ack", seq: 1, generation: 1 });
     expect(seenByA).toContainEqual(expect.objectContaining({ type: "elements", elements: [expect.objectContaining({ id: "from-b" })] }));
     expect(seenByB).toContainEqual(expect.objectContaining({ type: "elements", elements: [expect.objectContaining({ id: "from-a" })] }));
+    expect(await a.client.drain()).toEqual([]); expect(await b.client.drain()).toEqual([]);
     expect(Object.keys(byId(await initOf(project)))).toEqual(expect.arrayContaining(["from-a", "from-b"]));
     a.client.ws.close(1000); b.client.ws.close(1000);
   });

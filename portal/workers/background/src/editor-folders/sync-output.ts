@@ -10,7 +10,7 @@ import {
   collections,
   projects,
 } from "@quincy/db/schema";
-import { enqueueRenditionSafely } from "@quincy/shared";
+import { enqueueDeliveryDerivativesSafely, enqueueRenditionSafely } from "@quincy/shared";
 import { and, eq, isNull } from "drizzle-orm";
 
 import type { Env } from "../env";
@@ -464,6 +464,8 @@ export async function syncProjectEditorOutput(
         continue;
       }
       await enqueueRenditionSafely(env, assetId, "editor-output-ingest");
+      // A premium photo carried onto this re-edit needs its watermarked preview (#787).
+      if (supersede) await enqueueDeliveryDerivativesSafely(env, [assetId], "editor-output-carry");
       newlyImported += 1;
     }
     if (continuationEnqueued) {

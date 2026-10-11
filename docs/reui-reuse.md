@@ -54,6 +54,11 @@ Then copy each file into `components/reui/`, and on the way:
   pinned by `styles/design-system-guards.test.ts`; a re-install that restores the registry class
   fails that guard
 
+- `@base-ui/react` itself carries a Quincy patch (#796): `portal/patches/@base-ui+react+1.7.0.patch`,
+  applied by `patch-package` on `postinstall`, makes the modal focus guards redirect synchronously.
+  A Base UI bump fails `config/base-ui-patch.guard.test.ts` until the patch is re-made or dropped
+  (see the lesson in `lessons.md`). A `shadcn add` does not touch it.
+
 `npx shadcn@latest view <name>` shows the raw registry source with unresolved placeholders
 (`cn`, `IconPlaceholder`). Read it for dependencies; copy files only from an `add`.
 

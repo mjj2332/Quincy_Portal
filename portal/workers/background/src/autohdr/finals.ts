@@ -9,7 +9,7 @@ import {
   projects,
 } from "@quincy/db/schema";
 import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, supersedeCarryStatements } from "@quincy/db";
-import { enqueueRenditionSafely } from "@quincy/shared";
+import { enqueueDeliveryDerivativesSafely, enqueueRenditionSafely } from "@quincy/shared";
 
 import type { Env } from "../env";
 import { dbFor } from "../lib/db";
@@ -405,6 +405,8 @@ AND EXISTS (
     const stageAdvanced = await advanceFinalStage(env, context, fence, coverage, collectionId, sourcePathKey, assetId);
     await dependencies.afterD1Commit?.();
     await (dependencies.enqueue ?? enqueueRenditionSafely)(env, assetId, "autohdr-replacement");
+    // A premium photo carried onto this re-edited final needs its watermarked preview (#787).
+    await enqueueDeliveryDerivativesSafely(env, [assetId], "autohdr-replacement-carry");
     return { status: "replaced", assetId, coveredUnit: coverage?.unitKey, stageAdvanced };
   } catch (error) {
     // R2 is intentionally retained. A same-key/same-hash winner is replay success.

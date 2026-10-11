@@ -21,6 +21,9 @@
   "r2_buckets": [
     { "binding": "MEDIA", "bucket_name": "quincy-portal-media" }
   ],
+  // Client Delivery (#787): burns the watermark tile into premium_preview. The tile PNG (assets/) is bundled as a Data module.
+  "images": { "binding": "IMAGES" },
+  "rules": [{ "type": "Data", "globs": ["**/*.png"], "fallthrough": true }],
   "send_email": [
     { "name": "EMAIL" }
   ],

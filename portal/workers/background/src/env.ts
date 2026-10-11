@@ -11,6 +11,8 @@ export interface Env {
   APP_ENV: string;
   DB: D1Database;
   MEDIA: R2Bucket;
+  /** Cloudflare Images binding: burns the Client Delivery watermark into `premium_preview` (#787). */
+  IMAGES: ImagesBinding;
   INGEST_QUEUE: Queue<IngestMessage>;
   NOTIFICATION_QUEUE: Queue<NotificationOutboxMessage>;
   /** Bound only after quincy-renditions is provisioned and the red gate is green. */
