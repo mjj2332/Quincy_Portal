@@ -27,6 +27,9 @@ export const VENDOR_CHUNK_NAME = "vendor";
  * reach an entry chunk or the shared `vendor` chunk (which every page load downloads). */
 export const EXCALIDRAW_MODULE_PATTERN = /[\\/]node_modules[\\/]@excalidraw[\\/]/u;
 
+/** #787: the Client Delivery lightbox's carousel. The public page is a lazy chunk, so no module of embla may reach an entry chunk or the shared `vendor` chunk (every page load downloads those). */
+export const EMBLA_MODULE_PATTERN = /[\\/]node_modules[\\/]embla-carousel(?:-[a-z-]+)?[\\/]/u;
+
 export interface VendorGuardChunk {
   type: "chunk" | "asset";
   name?: string;
@@ -61,6 +64,8 @@ export function checkVendorChunk(context: VendorGuardContext, bundle: Record<str
     if (!chunk.isEntry && chunk.name !== VENDOR_CHUNK_NAME) continue;
     const leaked = (chunk.moduleIds ?? []).filter((id) => EXCALIDRAW_MODULE_PATTERN.test(id));
     if (leaked.length > 0) problems.push(`  chunk ${chunk.fileName ?? chunk.name ?? "(unnamed)"} contains ${leaked.length} @excalidraw module(s), e.g. ${leaked[0]}; the whiteboard editor must load only when a board opens (#498)`);
+    const carousel = (chunk.moduleIds ?? []).filter((id) => EMBLA_MODULE_PATTERN.test(id));
+    if (carousel.length > 0) problems.push(`  chunk ${chunk.fileName ?? chunk.name ?? "(unnamed)"} contains ${carousel.length} embla module(s), e.g. ${carousel[0]}; the Delivery lightbox carousel must load only with the Delivery page (#787)`);
   }
   if (problems.length === 0) return;
   context.error(
