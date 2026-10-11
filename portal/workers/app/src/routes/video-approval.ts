@@ -96,10 +96,15 @@ videoApprovalRoutes.delete("/projects/:projectId/video-versions/:assetId/release
   return c.json(videoReleaseWithdrawnResponseSchema.parse({ released: false }));
 }));
 
-videoApprovalRoutes.put("/projects/:projectId/videos/:videoId/premium", terminalRoute("/projects/:projectId/videos/:videoId/premium", async (c) => {
-  const projectId = c.req.param("projectId"); const videoId = c.req.param("videoId");
+/**
+ * The two Video premium writes as handlers over their gate: the Video Review routes below admit through the `delivery` part, the Client Delivery tab's routes (`routes/delivery.ts`) through
+ * the Client Delivery gate. Everything after the admission is shared, so the two cannot drift.
+ */
+export type VideoPremiumAdmission = (c: Ctx, projectId: string) => Promise<Response | null>;
+export async function putVideoPremium(c: Ctx, admission: VideoPremiumAdmission): Promise<Response> {
+  const projectId = c.req.param("projectId")!; const videoId = c.req.param("videoId")!;
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(videoId).success) return c.json({ error: "Invalid id" }, 400);
-  const refused = await admit(c, projectId, "manageVideoPremium", true); if (refused) return refused;
+  const refused = await admission(c, projectId); if (refused) return refused;
   const video = await findVideo(c.env.DB, projectId, videoId); if (!video) return videoNotFound(c);
   const input = await jsonInput(c, videoPremiumInputSchema); if (input instanceof Response) return input;
   if (!input.premium && video.premium && await videoPublished(c.env.DB, videoId)) return publishedResponse(c);
@@ -107,15 +112,18 @@ videoApprovalRoutes.put("/projects/:projectId/videos/:videoId/premium", terminal
   if (result === "archived") return archivedResponse(c);
   if (result === "published") return publishedResponse(c);
   return result === "not_found" ? videoNotFound(c) : c.json(videoPremiumResponseSchema.parse(result));
-}));
-
-videoApprovalRoutes.put("/projects/:projectId/videos/:videoId/premium-unlock", terminalRoute("/projects/:projectId/videos/:videoId/premium-unlock", async (c) => {
-  const projectId = c.req.param("projectId"); const videoId = c.req.param("videoId");
+}
+export async function putVideoPremiumUnlock(c: Ctx, admission: VideoPremiumAdmission): Promise<Response> {
+  const projectId = c.req.param("projectId")!; const videoId = c.req.param("videoId")!;
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(videoId).success) return c.json({ error: "Invalid id" }, 400);
-  const refused = await admit(c, projectId, "manageVideoPremium", true); if (refused) return refused;
+  const refused = await admission(c, projectId); if (refused) return refused;
   if (!await findVideo(c.env.DB, projectId, videoId)) return videoNotFound(c);
   const input = await jsonInput(c, videoPremiumUnlockInputSchema); if (input instanceof Response) return input;
   const result = await setPremiumUnlock(c.env.DB, { projectId, videoId, principal: principalOf(c), unlocked: input.unlocked, paymentRef: input.unlocked ? input.paymentRef ?? null : null, now: Date.now() });
   if (result === "archived") return archivedResponse(c);
   return result === "not_found" ? videoNotFound(c) : c.json(videoPremiumResponseSchema.parse(result));
-}));
+}
+
+const admitVideoReviewPremium: VideoPremiumAdmission = (c, projectId) => admit(c, projectId, "manageVideoPremium", true);
+videoApprovalRoutes.put("/projects/:projectId/videos/:videoId/premium", terminalRoute("/projects/:projectId/videos/:videoId/premium", (c) => putVideoPremium(c, admitVideoReviewPremium)));
+videoApprovalRoutes.put("/projects/:projectId/videos/:videoId/premium-unlock", terminalRoute("/projects/:projectId/videos/:videoId/premium-unlock", (c) => putVideoPremiumUnlock(c, admitVideoReviewPremium)));

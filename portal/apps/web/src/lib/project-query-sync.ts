@@ -15,6 +15,8 @@ export type ProjectDataResource =
   | { kind: "collaboration-summary" }
   | { kind: "video-review" }
   | { kind: "videos" }
+  | { kind: "delivery" }
+  | { kind: "delivery-candidates" }
   | { kind: "video-trash" }
   | { kind: "video-notes"; assetId: string }
   | { kind: "video-decisions"; videoId: string };
@@ -82,7 +84,7 @@ function nonEmptyString(value: unknown): value is string {
 function isResource(value: unknown): value is ProjectDataResource {
   if (!value || typeof value !== "object") return false;
   const resource = value as Record<string, unknown>;
-  if (resource.kind === "detail" || resource.kind === "activity" || resource.kind === "subtasks" || resource.kind === "comments" || resource.kind === "comment-read-marker" || resource.kind === "collaboration-summary" || resource.kind === "video-review" || resource.kind === "videos" || resource.kind === "video-trash") return Object.keys(resource).length === 1;
+  if (resource.kind === "detail" || resource.kind === "activity" || resource.kind === "subtasks" || resource.kind === "comments" || resource.kind === "comment-read-marker" || resource.kind === "collaboration-summary" || resource.kind === "video-review" || resource.kind === "videos" || resource.kind === "delivery" || resource.kind === "delivery-candidates" || resource.kind === "video-trash") return Object.keys(resource).length === 1;
   if (resource.kind === "video-notes") return nonEmptyString(resource.assetId) && Object.keys(resource).length === 2;
   if (resource.kind === "video-decisions") return nonEmptyString(resource.videoId) && Object.keys(resource).length === 2;
   return resource.kind === "assets" && validCollections.has(resource.collectionKind as CollectionKind) && Object.keys(resource).length === 2;
@@ -142,6 +144,8 @@ export function projectResourceKey(projectId: string, resource: ProjectDataResou
     case "collaboration-summary": return projectDataKeys.collaborationSummary(projectId);
     case "video-review": return projectDataKeys.videoReview(projectId);
     case "videos": return projectDataKeys.videos(projectId);
+    case "delivery": return projectDataKeys.delivery(projectId);
+    case "delivery-candidates": return projectDataKeys.deliveryCandidates(projectId);
     case "video-trash": return projectDataKeys.videoTrash(projectId);
     case "video-notes": return projectDataKeys.videoNotes(projectId, resource.assetId);
     case "video-decisions": return projectDataKeys.videoDecisions(projectId, resource.videoId);
@@ -257,6 +261,15 @@ export class ProjectQueryRuntime {
     return this.queryClient.invalidateQueries({ queryKey, exact: true, refetchType: "active" });
   }
 
+  /**
+   * An invalidation that must not dedupe onto a read already in flight: that read predates the change. TanStack only supersedes an in-flight fetch on refetch when data exists, so with no
+   * entry yet the older read would become the cache. Cancel it (`revert` puts the query back to idle) and only then invalidate. Owned and ledger-held keys are deferred as usual.
+   */
+  requestFreshInvalidation(queryKey: QueryKey): Promise<void> {
+    if (this.isOwned(queryKey) || isProjectQueryLedgerPending(this.queryClient, queryKey)) return this.requestInvalidation(queryKey);
+    return this.queryClient.cancelQueries({ queryKey, exact: true }, { revert: true }).then(() => this.requestInvalidation(queryKey));
+  }
+
   publish(message: ProjectDataOutgoingMessage) {
     if (!this.channel || this.disposed) return;
     this.channel.postMessage({ ...message, sourceTabId: this.sourceTabId });
@@ -313,17 +326,27 @@ export class ProjectQueryRuntime {
       }
       return;
     }
-    for (const resource of message.resources) {
+    for (const resource of withDependentResources(message.resources)) {
       const key = projectResourceKey(message.projectId, resource);
       // A first read already in flight predates this change and an invalidation would dedupe onto it: cancel it (with no data yet the query goes back to idle) so the refetch is new.
-      if ((resource.kind === "videos" || resource.kind === "video-trash" || resource.kind === "video-decisions") && !this.isOwned(key) && !isProjectQueryLedgerPending(this.queryClient, key)) {
-        void this.queryClient.cancelQueries({ queryKey: key, exact: true }, { revert: true }).then(() => this.requestInvalidation(key));
-        continue;
-      }
+      if (invalidatesPastPendingRead(resource)) { void this.requestFreshInvalidation(key); continue; }
       this.requestInvalidation(key);
     }
   }
 }
+
+/**
+ * Resources that change when another does. The Delivery tab's candidates are what Publish would accept (Assets other than RAW, Video Versions, Trash), so a change to any of those changes them. Applied
+ * where invalidation fans out, locally (`invalidateProjectResources`) and on a received cross-tab message, so a new writer inherits it without knowing about Delivery.
+ */
+export function withDependentResources(resources: readonly ProjectDataResource[]): ProjectDataResource[] {
+  const touchesCandidates = resources.some((resource) => (resource.kind === "assets" && resource.collectionKind !== "raw") || resource.kind === "videos" || resource.kind === "video-trash");
+  const all = touchesCandidates ? [...resources, { kind: "delivery-candidates" } as const] : [...resources];
+  return [...new Map(all.map((resource) => [JSON.stringify(resource), resource])).values()];
+}
+
+/** Resources whose first read can be in flight when they change (#776 for the Video lists, #787 for the Delivery candidates). */
+export const invalidatesPastPendingRead = (resource: ProjectDataResource) => resource.kind === "videos" || resource.kind === "video-trash" || resource.kind === "video-decisions" || resource.kind === "delivery-candidates";
 
 export function getProjectQueryRuntime(queryClient: QueryClient): ProjectQueryRuntime | undefined {
   return runtimes.get(queryClient);

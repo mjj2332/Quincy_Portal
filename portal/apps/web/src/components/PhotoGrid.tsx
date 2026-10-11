@@ -8,7 +8,7 @@ import { buttonClasses } from "./quincy/Button";
 import { REVIEW_LABELS as LABELS } from "./lightbox/review-labels";
 
 export type Review = { stars: number | null; colorLabel: "select" | "maybe" | "cut" | "hero" | null; decision: "approved" | "flagged" | null; recommended: boolean };
-export type WorkspaceAsset = { id: string; collectionId: string; kind: "photo" | "video" | "floorplan_pdf" | "floorplan_preview" | "copy_pdf"; originalFilename: string; bytes: number; width: number | null; height: number | null; ratingFromMetadata: number | null; section: string | null; renditionStatus: "processing" | "ready"; createdAt: string; sourceRawAssetId: string | null; version: number; versionGroupId: string | null; supersedesAssetId: string | null; review: Review | null; selected: boolean };
+export type WorkspaceAsset = { id: string; collectionId: string; kind: "photo" | "video" | "floorplan_pdf" | "floorplan_preview" | "copy_pdf"; originalFilename: string; bytes: number; width: number | null; height: number | null; ratingFromMetadata: number | null; section: string | null; renditionStatus: "processing" | "ready"; createdAt: string; sourceRawAssetId: string | null; version: number; versionGroupId: string | null; supersedesAssetId: string | null; review: Review | null; selected: boolean; /** Paid-extra state (#787 slice 10), on the staff list only; absent for an External editor and for kinds that cannot be premium. */ premium?: boolean; premiumUnlocked?: boolean };
 export type ReviewPatch = Partial<Pick<Review, "stars" | "colorLabel" | "decision" | "recommended">>;
 
 interface PhotoGridProps {

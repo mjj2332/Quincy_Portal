@@ -12,8 +12,9 @@ export function availableCollectionTabs(canViewEdited: boolean, denied: Readonly
 }
 
 /** #337: the tab a notification arrival actually selects -- its target when the strip offers it,
- * otherwise Collaboration (always present in the full workspace). */
-export function resolveArrivalTab(tab: WorkspaceTab, canViewEdited: boolean, denied: ReadonlySet<CollectionKind>): WorkspaceTab {
+ * otherwise Collaboration (always present in the full workspace). Delivery is offered only while its gate is open (#787). */
+export function resolveArrivalTab(tab: WorkspaceTab, canViewEdited: boolean, denied: ReadonlySet<CollectionKind>, deliveryOffered = false): WorkspaceTab {
+  if (tab === "delivery") return deliveryOffered ? tab : "collaboration";
   if (!isCollectionTab(tab)) return tab;
   return availableCollectionTabs(canViewEdited, denied).includes(tab) ? tab : "collaboration";
 }

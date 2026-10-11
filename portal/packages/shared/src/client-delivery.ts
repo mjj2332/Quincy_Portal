@@ -77,11 +77,28 @@ export const deliveryStateSchema = z.object({
     setNumber: z.number().int().min(1),
     publishedAt: z.number().int(),
     coverAssetId: z.string().uuid().nullable(),
-    items: z.array(z.object({ assetId: z.string().uuid(), handle: z.string().length(DELIVERY_HANDLE_LENGTH), kind: z.enum(DELIVERY_ITEM_KINDS), label: z.string(), position: z.number().int().nonnegative(), locked: z.boolean() }).strict()),
+    items: z.array(z.object({ assetId: z.string().uuid(), handle: z.string().length(DELIVERY_HANDLE_LENGTH), kind: z.enum(DELIVERY_ITEM_KINDS), label: z.string(), position: z.number().int().nonnegative(), locked: z.boolean(),
+    /** The item's own paid-extra state: the Asset's for a photo or document, the Video's for a Video Version. `locked` is the live answer; these say how to change it. */
+    premium: z.boolean(), premiumUnlocked: z.boolean(),
+    /** The Video a video item is a Version of (staff only), so its premium can be changed from an older Version still on the page. */
+    videoId: z.string().uuid().nullable() }).strict()),
   }).strict().nullable(),
   dto: deliveryPageDtoSchema.nullable(),
 }).strict();
 export type DeliveryState = z.infer<typeof deliveryStateSchema>;
+
+/**
+ * What the staff Delivery tab offers to publish: the Assets Publish would accept right now, in page order (photos, Floorplans, Copy documents, then Videos), each Video at its current Version.
+ * Behind the Client Delivery gate alone, so it does not depend on Video Review being open.
+ */
+export const deliveryCandidateSchema = z.object({
+  assetId: z.string().uuid(), kind: z.enum(DELIVERY_ITEM_KINDS),
+  /** The original filename of a photo or document, or the Video's title. Staff only. */
+  name: z.string(), videoId: z.string().uuid().nullable(), premium: z.boolean(), premiumUnlocked: z.boolean(),
+}).strict();
+export const deliveryCandidatesResponseSchema = z.object({ candidates: z.array(deliveryCandidateSchema) }).strict();
+export type DeliveryCandidateDto = z.infer<typeof deliveryCandidateSchema>;
+export type DeliveryCandidatesResponse = z.infer<typeof deliveryCandidatesResponseSchema>;
 
 /** The Publish response: the CURRENT state (the same shape as the staff read), the receipt for the operation, and whether this was a retry. `operationSetNumber` is the set the operation landed as, which on a replay may be older than `set.setNumber`. */
 export const deliveryPublishResponseSchema = deliveryStateSchema.extend({ replayed: z.boolean(), operationSetNumber: z.number().int().min(1) }).strict();

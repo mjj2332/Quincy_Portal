@@ -19,6 +19,8 @@ import { useDashboardReturnLink } from "../components/quincy/ProjectSheet";
 import { CopyProjectLinkButton } from "../components/quincy/CopyProjectLinkButton";
 import { ProjectWhiteboard } from "../components/ProjectWhiteboard";
 import { WhiteboardButton } from "../components/ProjectHeader";
+import { DeliveryTab } from "../components/delivery/DeliveryTab";
+import { useProjectDeliveryQuery } from "../lib/delivery-data";
 import { ProjectCollaborationPanel, type CollaborationView } from "../components/ProjectCollaborationPanel";
 import { ProjectHeader } from "../components/ProjectHeader";
 import { Button, buttonClasses } from "../components/quincy/Button";
@@ -28,7 +30,7 @@ import { EmptyState } from "../components/quincy/EmptyState";
 import {
   beginAssetOptimisticMutation, classifyProjectAccessError, discardAssetLedgerForResource, invalidateProjectResources, invalidateProjectSurfaces,
   projectAssetsQueryOptions, projectCollaborationSummaryQueryOptions, projectDataKeys, projectDetailQueryOptions, purgeProjectCollaborationData, purgeProjectData,
-  clearPrincipalProjectData, usePassiveRawAssetsQuery, useProjectAssetsQuery, useProjectDetailQuery,
+  clearPrincipalProjectData, refreshDeliveryCandidates, usePassiveRawAssetsQuery, useProjectAssetsQuery, useProjectDetailQuery,
   useProjectCollaborationSummaryQuery,
   useProjectAccessTermination,
   type ProjectDetail,
@@ -79,6 +81,15 @@ function LoadingProject() { return <main className={FULL_PAGE}><div className="e
 type ProjectWorkspaceProps = { projectId: string; notice?: string | null; onNoticeShown?: () => void; arrivalSignal?: number; arrivalTab?: WorkspaceTab; onArrivalConsumed?: (signal: number) => void; urlTab?: WorkspaceTab; onTabShown?: (tab: WorkspaceTab) => void; whiteboardOpen?: boolean; onOpenWhiteboard?: () => void; onCloseWhiteboard?: (tab: WorkspaceTab) => void };
 type TerminalState = { projectId: string; scope: "principal" | "project"; message: string };
 type AccessFailureResource = "detail" | "activity" | "assets" | "comments" | "comment-read-marker" | "nested-comment" | "collaboration-summary";
+
+/** Reads the Delivery state and reports whether the tab is offered (#787). Renders nothing; unmounting resets the answer. */
+function DeliveryGateProbe({ projectId, onChange }: { projectId: string; onChange: (gate: { pending: boolean; offered: boolean }) => void }) {
+  const query = useProjectDeliveryQuery(projectId, true);
+  const pending = query.isPending; const offered = Boolean(query.data);
+  useEffect(() => { onChange({ pending, offered }); }, [pending, offered, onChange]);
+  useEffect(() => () => onChange({ pending: true, offered: false }), [onChange]);
+  return null;
+}
 
 function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
   const { projectId, notice, onNoticeShown, arrivalSignal, arrivalTab, onArrivalConsumed, urlTab, onTabShown, whiteboardOpen = false, onOpenWhiteboard, onCloseWhiteboard } = props;
@@ -245,20 +256,22 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
     try { return await queryClient.fetchQuery({ ...projectDetailQueryOptions(projectId), staleTime: 0 }); } catch (reason) { if (!isExpectedReadCancellation(reason)) accessFailure(reason, "detail"); throw reason; } finally { release(); }
   }, [accessFailure, isCurrent, projectId, queryClient, runtime]);
   const canReadCollection = useCallback((kind: CollectionKind) => kind === "raw" ? can("viewRaw") : canViewEdited, [can, canViewEdited]);
+  // A background refresh of a Collection (an ingest poll, a job, a hand-off) reads or invalidates its Assets directly, outside `invalidateProjectResources`; the Delivery candidates are those Assets, so they follow.
+  const refreshCandidates = useCallback(() => refreshDeliveryCandidates(queryClient, projectId), [projectId, queryClient]);
   const forceAssetsRead = useCallback(async (kind: CollectionKind) => {
     if (!isCurrent() || !canReadCollection(kind)) return undefined;
     const release = runtime.acquireOwner(projectDataKeys.assets(projectId, kind));
-    try { return await queryClient.fetchQuery({ ...projectAssetsQueryOptions(projectId, kind), staleTime: 0 }); } catch (reason) { if (!isExpectedReadCancellation(reason)) accessFailure(reason, "assets", kind); throw reason; } finally { release(); }
-  }, [accessFailure, canReadCollection, isCurrent, projectId, queryClient, runtime]);
+    try { const assets = await queryClient.fetchQuery({ ...projectAssetsQueryOptions(projectId, kind), staleTime: 0 }); void refreshCandidates(); return assets; } catch (reason) { if (!isExpectedReadCancellation(reason)) accessFailure(reason, "assets", kind); throw reason; } finally { release(); }
+  }, [accessFailure, canReadCollection, isCurrent, projectId, queryClient, refreshCandidates, runtime]);
   // A Collection's assets are read only while its tab is open. Any other refresh (a job poll, an AutoHDR
   // hand-off, a Dropbox sync) invalidates instead: that refetches an observed query and merely marks an
   // unobserved one stale, so it reads on its next open and no request fires from the Collaboration tab.
   const refreshCollectionAssets = useCallback(async (kind: CollectionKind) => {
     if (!isCurrent() || !canReadCollection(kind)) return undefined;
     if (activeTabRef.current === kind) return forceAssetsRead(kind);
-    await queryClient.invalidateQueries({ queryKey: projectDataKeys.assets(projectId, kind), exact: true, refetchType: "active" });
+    await Promise.all([queryClient.invalidateQueries({ queryKey: projectDataKeys.assets(projectId, kind), exact: true, refetchType: "active" }), refreshCandidates()]);
     return undefined;
-  }, [canReadCollection, forceAssetsRead, isCurrent, projectId, queryClient]);
+  }, [canReadCollection, forceAssetsRead, isCurrent, projectId, queryClient, refreshCandidates]);
   const refreshIngest = useCallback(async () => {
     const owner = manualOwnerRef.current; if (!isCurrent() || !owner) return;
     try { const response = await apiGet<IngestStatus>(`/api/projects/${encodeURIComponent(projectId)}/ingest-status`, { signal: owner.controller.signal }); if (isCurrent()) setIngest(response); } catch (reason) { if (!(reason instanceof Error && reason.name === "AbortError")) accessFailure(reason, "detail"); }
@@ -365,6 +378,12 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
     setTerminal(runtimeTerminal);
   }, [projectId, runtimeTerminal, terminal]);
   const viewState = currentTerminal ? "unavailable" : collaborationOnly ? "collaboration-only" : workspaceReady ? "full-workspace" : collaborationUnavailable ? "collaboration-unavailable" : "loading";
+  // #787: whether the Delivery tab exists is the Delivery read's answer (200 = gate open; 404/403 = no tab, handled in the query, never a Project failure). Staff with `viewClientPreview` only.
+  // The read lives in a probe that renders only in the full workspace, so a terminated principal or Project (the unavailable view) leaves no observer to put its query back in the cache.
+  const canViewDelivery = can("viewClientPreview") && role !== "external_editor";
+  const [deliveryGate, setDeliveryGate] = useState({ pending: true, offered: false });
+  const deliveryPending = viewState === "full-workspace" && canViewDelivery && deliveryGate.pending;
+  const deliveryOffered = viewState === "full-workspace" && canViewDelivery && deliveryGate.offered;
   // #337: the Workspace-tab arrival (`?tab=<kind>` / `?collaboration=open`). In the full workspace it selects the arrival's tab
   // (Collaboration, on Discussion, when that tab is not offered to this role or has been denied) and moves focus to it; every
   // other view only acknowledges it. Held while the view is still loading, so a signal is never spent before it can act, and
@@ -375,16 +394,20 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
   onTabShownRef.current = onTabShown;
   useEffect(() => {
     if (arrivalSignal === undefined || arrivalSignal === consumedSignalRef.current || viewState === "loading") return;
+    // A Delivery arrival waits for the Delivery read, or it would fall back to Collaboration before the tab is known to exist.
+    if (arrivalTab === "delivery" && viewState === "full-workspace" && deliveryPending) return;
     consumedSignalRef.current = arrivalSignal;
     if (viewState === "full-workspace") {
-      const tab = resolveArrivalTab(arrivalTab ?? "collaboration", canViewEdited, collectionDenied);
+      const tab = resolveArrivalTab(arrivalTab ?? "collaboration", canViewEdited, collectionDenied, deliveryOffered);
       selectWorkspaceTab(tab);
       awaitingTabRef.current = tab;
       if (tab === "collaboration") setCollaborationView("discussion");
       setArrivalFocusTab(tab);
     }
     onArrivalConsumed?.(arrivalSignal);
-  }, [arrivalSignal, arrivalTab, canViewEdited, collectionDenied, onArrivalConsumed, selectWorkspaceTab, viewState]);
+  }, [arrivalSignal, arrivalTab, canViewEdited, collectionDenied, deliveryOffered, deliveryPending, onArrivalConsumed, selectWorkspaceTab, viewState]);
+  // The gate closed (or the person lost the capability) under an open Delivery tab: Collaboration is always there.
+  useEffect(() => { if (activeTab === "delivery" && workspaceReady && !deliveryPending && !deliveryOffered) selectWorkspaceTab("collaboration"); }, [activeTab, deliveryOffered, deliveryPending, selectWorkspaceTab, workspaceReady]);
   // Focus is set synchronously in the effect that follows the commit which selected the tab, rather than from a setTimeout, so it cannot fire before the tab is rendered or after the user has moved on.
   useEffect(() => {
     if (arrivalFocusTab === null || viewState !== "full-workspace") return;
@@ -409,7 +432,8 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
   if (viewState === "collaboration-unavailable") return <CollaborationOnlyUnavailable />;
   if (initialDetailProbe) return <LoadingProject />;
   return <>
-    <ProjectWorkspaceQueryOwner projectId={projectId} role={role ?? "photographer"} run={run} activeTab={activeTab} collectionDenied={collectionDenied} workspaceReady={workspaceReady} collaborationView={collaborationView} onCollaborationViewChange={setCollaborationView} workspaceTabRefs={workspaceTabRefs} collaborationUnavailable={collaborationUnavailable} canViewEdited={canViewEdited} canAdminBackend={canAdminBackend} onDetailReady={(ownerRun, stageKey) => {
+      {canViewDelivery && workspaceReady && <DeliveryGateProbe key={projectId} projectId={projectId} onChange={setDeliveryGate} />}
+    <ProjectWorkspaceQueryOwner deliveryOffered={deliveryOffered} projectId={projectId} role={role ?? "photographer"} run={run} activeTab={activeTab} collectionDenied={collectionDenied} workspaceReady={workspaceReady} collaborationView={collaborationView} onCollaborationViewChange={setCollaborationView} workspaceTabRefs={workspaceTabRefs} collaborationUnavailable={collaborationUnavailable} canViewEdited={canViewEdited} canAdminBackend={canAdminBackend} onDetailReady={(ownerRun, stageKey) => {
       if (ownerRun !== runRef.current) return;
       setStageKeyForManual(stageKey);
       setDetailReadyFor(ownerRun);
@@ -457,7 +481,7 @@ function CollaborationOnlyUnavailable() {
 function UnavailableProject({ message }: { message: string }) { const dashboardReturn = useDashboardReturnLink(); return <main className={FULL_PAGE}><div className="pagehead"><h1 className="serif">Project workspace</h1><InternalLink className={buttonClasses("secondary")} {...dashboardReturn}>Back to dashboard</InternalLink></div><div className="empty" role="alert"><span className="serif">Project unavailable.</span>{message}</div></main>; }
 
 type QueryOwnerProps = {
-  projectId: string; role: Role; run: number; activeTab: WorkspaceTab; collectionDenied: Set<CollectionKind>; workspaceReady: boolean; collaborationView: CollaborationView; onCollaborationViewChange: (view: CollaborationView) => void; workspaceTabRefs: React.RefObject<Map<WorkspaceTab, HTMLButtonElement>>; collaborationUnavailable: boolean; canViewEdited: boolean; canAdminBackend: boolean;
+  deliveryOffered: boolean; projectId: string; role: Role; run: number; activeTab: WorkspaceTab; collectionDenied: Set<CollectionKind>; workspaceReady: boolean; collaborationView: CollaborationView; onCollaborationViewChange: (view: CollaborationView) => void; workspaceTabRefs: React.RefObject<Map<WorkspaceTab, HTMLButtonElement>>; collaborationUnavailable: boolean; canViewEdited: boolean; canAdminBackend: boolean;
   onDetailReady: (run: number, stageKey: ProjectStageKey) => void; onDetailStage: (run: number, stageKey: ProjectStageKey) => void; onAccessFailure: (error: unknown, resource: AccessFailureResource, kind?: CollectionKind, initial?: boolean) => void; onCollectionDenied: (kind: CollectionKind) => void; activeTabChange: (tab: WorkspaceTab) => void; whiteboardOpen: boolean; onOpenWhiteboard?: () => void; onCloseWhiteboard?: (tab: WorkspaceTab) => void;
   openAssetId: string | null; setOpenAssetId: (id: string | null) => void; lightboxOrderIds: string[] | null; setLightboxOrderIds: (ids: string[] | null) => void; ingest: IngestStatus | null; jobs: Job[]; autohdrStatus: AutoHdrStatusResponse["handoff"]; isSyncing: boolean; isSending: boolean; onSyncDropbox: () => void | Promise<"archived" | void>; onSendToAutoHdr: () => void; onRetryAutoHdr: (jobId: string) => void; onUploadComplete: (kind: "raw" | "edited") => Promise<void>; onDocumentsChanged: (kind: "floorplan" | "copy") => Promise<void>; onLinksChanged: () => Promise<void>; onInvalidate: (resources: ProjectDataResource[]) => Promise<void>; onRefreshDetail: () => Promise<ProjectDetail | undefined>; canReadCollection: (kind: CollectionKind) => boolean;
 };
@@ -498,6 +522,9 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
   const canUpload = can("uploadRaw"), canEdit = can("editProject");
   const availableTabs = availableCollectionTabs(can("viewEdited"), props.collectionDenied);
   const [collaborationUnread, setCollaborationUnread] = useState(0);
+  // Delivery mounts when first opened and then stays, so a half-made selection survives a tab hop; its reads start only on that first open.
+  const [deliveryOpened, setDeliveryOpened] = useState(false);
+  if (activeTab === "delivery" && !deliveryOpened) setDeliveryOpened(true);
   const [stageMovePending, setStageMovePending] = useState(false);
   const [stageMoveDisabledReason, setStageMoveDisabledReason] = useState<string | null>(null);
   const restoreStageFocusRef = useRef(false);
@@ -574,7 +601,7 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
     {props.whiteboardOpen && <ProjectWhiteboard projectId={project.id} street={project.street} archivedHint={Boolean(project.archivedAt)} onClose={() => props.onCloseWhiteboard?.(activeTab)} onAccessFailure={(error) => props.onAccessFailure(error, "collaboration-summary")} />}
     {/* The Workspace stays mounted under the board (drafts, sub-tab, read state); only its visibility changes. */}
     <div className={props.whiteboardOpen ? "hidden" : "contents"} data-whiteboard-hidden={String(props.whiteboardOpen)}>
-    <ProjectHeader whiteboardOpen={props.whiteboardOpen} onOpenWhiteboard={props.collaborationUnavailable ? undefined : props.onOpenWhiteboard} project={project} activeTab={activeTab} availableTabs={availableTabs} canUpload={canUpload} canAdminBackend={props.canAdminBackend} canEdit={canEdit} hasRawFolder={hasRawFolder} autohdrBlocked={autohdrBlocked} isSyncing={props.isSyncing} onSyncDropbox={props.onSyncDropbox} onActiveTabChange={props.activeTabChange} collaborationUnread={props.collaborationUnavailable ? 0 : collaborationUnread} workspaceTabRefs={props.workspaceTabRefs} onStageMove={(targetStageKey) => moveStage(targetStageKey)} stageMovePending={stageMovePending} stageMoveDisabledReason={stageMoveDisabledReason} />
+    <ProjectHeader whiteboardOpen={props.whiteboardOpen} onOpenWhiteboard={props.collaborationUnavailable ? undefined : props.onOpenWhiteboard} project={project} activeTab={activeTab} availableTabs={availableTabs} deliveryOffered={props.deliveryOffered} canUpload={canUpload} canAdminBackend={props.canAdminBackend} canEdit={canEdit} hasRawFolder={hasRawFolder} autohdrBlocked={autohdrBlocked} isSyncing={props.isSyncing} onSyncDropbox={props.onSyncDropbox} onActiveTabChange={props.activeTabChange} collaborationUnread={props.collaborationUnavailable ? 0 : collaborationUnread} workspaceTabRefs={props.workspaceTabRefs} onStageMove={(targetStageKey) => moveStage(targetStageKey)} stageMovePending={stageMovePending} stageMoveDisabledReason={stageMoveDisabledReason} />
     <section className="workmain" data-testid="workspace-main">
       {/* Review links (#741 11b): the store and the reveal dialog sit above the Collection tab switch, so a create answered after a tab change still shows its URL. */}
       <ReviewLinksScope projectId={project.id} role={props.role} archived={Boolean(project.archivedAt)}>
@@ -582,6 +609,9 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
       <div role="tabpanel" id="project-workspace-panel-collaboration" aria-labelledby="project-workspace-tab-collaboration" hidden={activeTab !== "collaboration"} className="workgrid">
         {props.collaborationUnavailable ? <CollaborationUnavailableSection /> : <ProjectCollaborationPanel projectId={project.id} archived={Boolean(project.archivedAt)} presented={activeTab === "collaboration"} jobs={props.canAdminBackend ? props.jobs : undefined} onRetryJob={props.onRetryAutoHdr} view={props.collaborationView} onViewChange={props.onCollaborationViewChange} showUnreadBadge={false} onUnreadCountChange={setCollaborationUnread} onAccessFailure={props.onAccessFailure} embedded />}
       </div>
+      {props.deliveryOffered && (activeTab === "delivery" || deliveryOpened) && <div role="tabpanel" id="project-workspace-panel-delivery" aria-labelledby="project-workspace-tab-delivery" hidden={activeTab !== "delivery"}>
+        <DeliveryTab projectId={project.id} role={props.role} archived={Boolean(project.archivedAt)} active={activeTab === "delivery"} />
+      </div>}
       </ReviewLinksScope>
     </section>
     </div>
