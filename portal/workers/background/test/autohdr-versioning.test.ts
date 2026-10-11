@@ -93,6 +93,18 @@ async function seedCurrent(context: Awaited<ReturnType<typeof fixture>>, hash: s
   return assetId;
 }
 
+/** #787 supersede carry: marks `assetId` a paid extra with an Unlock, as the Delivery API will. */
+async function markPaid(assetId: string, projectId: string, ref = "inv-1") {
+  await bindings.DB.batch([
+    bindings.DB.prepare("INSERT OR IGNORE INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES ('carry-admin', 'Carry Admin', 'carry-admin@test.invalid', 1, 'admin', 1, 1, 1)"),
+    bindings.DB.prepare("UPDATE assets SET delivery_premium = 1 WHERE id = ?").bind(assetId),
+    bindings.DB.prepare("INSERT INTO asset_premium_unlocks (asset_id, project_id, unlocked_by, unlocked_at, payment_ref) VALUES (?, ?, 'carry-admin', 1700000000000, ?)").bind(assetId, projectId, ref),
+  ]);
+}
+async function paidState(assetId: string) {
+  return bindings.DB.prepare("SELECT a.delivery_premium AS premium, u.unlocked_by AS by, u.unlocked_at AS at, u.payment_ref AS ref FROM assets a LEFT JOIN asset_premium_unlocks u ON u.asset_id = a.id WHERE a.id = ?").bind(assetId).first();
+}
+
 describe("immutable AutoHDR final writer", () => {
   it("uses N+1 for an editing-entry token and N for a completion token", () => {
     const result = (rows: Record<string, unknown>[]) => ({ results: rows, meta: { changes: 0 } }) as never;
@@ -171,6 +183,16 @@ describe("immutable AutoHDR final writer", () => {
     const currentReadiness = await bindings.DB.prepare("SELECT count(*) count FROM autohdr_final_associations a JOIN assets x ON x.id = a.asset_id WHERE a.handoff_id = ? AND x.superseded_at IS NULL")
       .bind(context.handoffId).first<{ count: number }>();
     expect(currentReadiness?.count).toBe(1);
+  });
+
+  it("carries delivery_premium and the Unlock to a replacement final (#787)", async () => {
+    const context = await fixture();
+    const first = await writeAutoHdrFinal(bindings as never, context, file("hash-old"), deps);
+    await markPaid(first.assetId!, context.projectId);
+    const replacement = await writeAutoHdrFinal(bindings as never, context, file("hash-new"), deps);
+    expect(replacement).toMatchObject({ status: "replaced" });
+    await expect(paidState(replacement.assetId!)).resolves.toEqual({ premium: 1, by: "carry-admin", at: 1700000000000, ref: "inv-1" });
+    await expect(paidState(first.assetId!)).resolves.toMatchObject({ premium: 1, ref: "inv-1" });
   });
 
   it("advances from credible replay-repair and replacement commits when no earlier final advanced the handoff", async () => {

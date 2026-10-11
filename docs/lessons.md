@@ -6186,3 +6186,11 @@ Tags: css-tokens, focus-overlays · #741
 - **Rule.** A dialog, alert dialog or sheet states its width explicitly (`sm:max-w-[460px]`) or uses a size whose container token is not redefined (`sm:max-w-3xl` is 48rem, as `VideoNotePasteDialog` does). Never `max-w-{sm,md,lg,xl}`, with or without a breakpoint prefix, on `DialogContent`, `AlertDialogContent` or `SheetContent`.
 
 Guards: `apps/web/src/styles/design-system-guards.test.ts` ("dialog and sheet content never uses a page-width max-w").
+## A flag that lives on the file row dies when a writer swaps the file (#787)
+Tags: d1-migrations, dropbox · #787
+
+- **What bit.** Five worker files retire an Asset by setting `superseded_at` and inserting its successor (document completion, Dropbox RAW reconciliation, Editor Output sync, AutoHDR finals, video versions). `assets.delivery_premium` and the `asset_premium_unlocks` row are keyed on the Asset id, so each of those writers silently dropped a paid Unlock on every re-edit. The Dropbox sync never touched `delivery_premium` (it only resets the deprecated `is_premium`), so the feared clobber was `is_premium` only.
+- **Rule.** A writer that supersedes a photo or document appends `supersedeCarryStatements(db, oldId, newId)` (`packages/db/src/supersede-carry.ts`) as the last statements of the same D1 batch, after anything that reads `changes()`. It is a no-op unless the new row exists and the old one is superseded. The old row keeps its flag and Unlock as history. Video Versions are exempt: their premium is on `videos.premium`.
+- **Gate.** The guard counts writers against carry calls per file, so a new writer cannot land without one; it cannot see which call covers which writer, so each writer also has an integration test.
+
+Guards: `packages/db/test/supersede-carry.guard.test.ts` (with planted fixtures), `workers/background/test/dropbox-reconciliation.test.ts`, `editor-output-sync.test.ts`, `autohdr-versioning.test.ts`, and the document completion case in `workers/app/test/api.test.ts`.
