@@ -49,10 +49,10 @@ export function VideoTrashDialog({ projectId, archived, open, onOpenChange, retu
     if (!queryClient || busy.has(key)) return;
     setBusy((held) => new Set(held).add(key)); setProblem(null);
     const ctx = { queryClient, projectId, videoId: item.videoId };
-    const started = trashSession();
+    const started = trashSession(queryClient);
     try {
       if (item.kind === "version" && item.assetId) await restoreVideoVersion({ ...ctx, assetId: item.assetId }); else await restoreWholeVideo(ctx);
-      pushTrashToast(started, item.kind === "version" ? `Restored version ${item.version} of “${item.title}”.` : `Restored “${item.title}”.`);
+      pushTrashToast(queryClient, started, item.kind === "version" ? `Restored version ${item.version} of “${item.title}”.` : `Restored “${item.title}”.`);
     } catch (error) {
       terminate(error);
       setProblem(classifyVideoTrashError(error, "restore").message);

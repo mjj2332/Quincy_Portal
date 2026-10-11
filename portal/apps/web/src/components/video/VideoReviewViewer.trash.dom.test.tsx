@@ -3,7 +3,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Role, VideoDto, VideoRemovalImpact } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
+import { announcePrincipalTerminal } from "../../lib/principal-terminal";
 import { QuincyQueryProvider } from "../../lib/query-client";
+import { projectDataKeys } from "../../lib/project-data";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { clearToasts, getToasts } from "../../lib/toast-store";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
@@ -55,12 +58,15 @@ async function mount(opts: { parts?: string[]; role?: Role; archived?: boolean }
   });
   const role = opts.role ?? "editor";
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
-  const tree = () => <QuincyQueryProvider principalId={auth.userId} role={role}><ToastViewport /><VideoCollectionPanel projectId={PROJECT} role={role} archived={opts.archived ?? false} review={{ open: true, parts: (opts.parts ?? ["trash"]) as never }} /></QuincyQueryProvider>;
+  const tree = () => <QuincyQueryProvider key={providerKey} principalId={auth.userId} role={role}><ToastViewport /><Probe /><VideoCollectionPanel projectId={PROJECT} role={role} archived={opts.archived ?? false} review={{ open: true, parts: (opts.parts ?? ["trash"]) as never }} /></QuincyQueryProvider>;
   rerender = async () => { await act(async () => { root!.render(tree()); }); await flush(4); };
   await act(async () => { root!.render(tree()); });
   await flush();
 }
 let rerender: () => Promise<void>;
+let providerKey = 0;
+const probe: { client: QueryClient | null } = { client: null };
+function Probe() { probe.client = useQueryClient(); return null; }
 const OTHER_USER = "22222222-2222-4222-8222-222222222222";
 const dialog = () => document.querySelector<HTMLElement>('[data-testid="video-review-viewer"]');
 const tid = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
@@ -94,6 +100,7 @@ const posts = () => api.apiPost.mock.calls.map(([path, body]) => ({ path: String
 const versionLabel = () => tid("video-version-label")?.textContent ?? "";
 
 beforeEach(() => {
+  providerKey = 0;
   stub = installVideoElementStub(); Object.values(api).forEach((m) => m.mockReset()); stores.made.length = 0; clearToasts();
   versions = [{ assetId: ids.asset2, version: 2 }, { assetId: ids.asset1, version: 1 }];
   impact = impactOf(); uploadingNow = null;
@@ -272,6 +279,34 @@ describe("Remove a Version from the staff viewer (#776 E)", () => {
     expect(forms.slot(ids.asset2).composer.body).toBe("");
   });
 
+  it("a draft typed on a restored Version while the removal is still converging survives the removal's retirement", async () => {
+    versions = [{ assetId: ids.asset2, version: 2 }];
+    impact = impactOf({ lastVersion: true });
+    await mount({ parts: ["trash", "notes"] });
+    await openViewer();
+    const forms = stores.made.at(-1)!;
+    await startRemove();
+    // Another device restores the film while the removal's Videos refetch (its convergence) is still out.
+    let releaseVideos!: () => void;
+    const routed = api.apiGet.getMockImplementation()!;
+    const restored = () => fixtureVideo({ id: ids.video, versions: [fixtureVersion({ assetId: ids.asset2, version: 2 })] });
+    let removed = false;
+    api.apiGet.mockImplementation(async (path) => {
+      if (removed && path.endsWith("/videos")) { await new Promise<void>((resolve) => { releaseVideos = resolve; }); return { videos: [restored()] }; }
+      return routed(path);
+    });
+    removeOutcome = async () => { removed = true; return { video: null }; };
+    await click(confirmButton());
+    await flush(8);
+    await act(async () => { probe.client!.setQueryData(projectDataKeys.videos(PROJECT), [restored()]); });
+    await flush(4);
+    await openViewer();
+    forms.setBody(ids.asset2, "a new draft", 4);
+    await act(async () => { releaseVideos(); });
+    await flush(8);
+    expect(forms.slot(ids.asset2).composer.body).toBe("a new draft");
+  });
+
   it("the discard warning also shows for an unsaved drawing with no text", async () => {
     await mount({ parts: ["trash", "notes"] });
     await openViewer();
@@ -332,6 +367,30 @@ describe("Remove a Version from the staff viewer (#776 E)", () => {
     await act(async () => { answer(); });
     await flush(10);
     expect(getToasts().filter((candidate) => /Main walkthrough/.test(candidate.message) || candidate.action)).toEqual([]);
+  });
+
+  it("a retired session's late terminal notice does not end the fresh session's Undo toast or its announcements", async () => {
+    versions = [{ assetId: ids.asset2, version: 2 }];
+    impact = impactOf({ lastVersion: true });
+    await mount();
+    const retiredClient = probe.client!;
+    // Sign out and back in as someone else: a new query client.
+    auth.userId = OTHER_USER; providerKey += 1;
+    await rerender();
+    await openViewer();
+    await startRemove();
+    removeOutcome = async () => { versions = []; return { video: null }; };
+    await click(confirmButton());
+    await flush(10);
+    expect(getToasts().some((candidate) => candidate.action?.label === "Undo")).toBe(true);
+    await act(async () => { announcePrincipalTerminal(retiredClient); });
+    await flush(4);
+    const undo = getToasts().find((candidate) => candidate.action?.label === "Undo");
+    expect(undo, "the Undo toast survives").toBeDefined();
+    api.apiPost.mockImplementation(async () => { versions = [{ assetId: ids.asset2, version: 2 }]; return { video: videoNow() }; });
+    await act(async () => { undo!.action!.onAction(); });
+    await flush(8);
+    expect(getToasts().some((candidate) => /Restored/.test(candidate.message))).toBe(true);
   });
 
   it("an Undo toast shown before the person changed is dismissed when they do", async () => {

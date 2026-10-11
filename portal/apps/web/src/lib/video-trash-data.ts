@@ -91,7 +91,7 @@ const upsertVideo = (queryClient: QueryClient, projectId: string, video: VideoDt
  * Removes one Version (`removeVideo` true removes the whole Video, and must be sent exactly when `impact.lastVersion`). `impact` is what the person confirmed; its link list is sent as a count.
  * Resolves with the Video as it stands, or null when it was removed. A refusal is rethrown after `onFailure`.
  */
-export async function removeVideoVersion(ctx: TrashWriteContext & { assetId: string }, impact: VideoRemovalImpact, removeVideo: boolean): Promise<VideoRemoveResponse> {
+export async function removeVideoVersion(ctx: TrashWriteContext & { assetId: string }, impact: VideoRemovalImpact, removeVideo: boolean, onApplied?: (response: VideoRemoveResponse) => void): Promise<VideoRemoveResponse> {
   const body: VideoRemoveInput = { expected: { notes: impact.notes, decisions: impact.decisions, release: impact.release, links: impact.links.length }, removeVideo };
   let response: VideoRemoveResponse;
   try {
@@ -100,13 +100,16 @@ export async function removeVideoVersion(ctx: TrashWriteContext & { assetId: str
     await refreshAfterRefusal(ctx, error, "remove");
     throw error;
   }
-  if (retired.has(ctx.queryClient)) return response;
+  // `onApplied` runs once, as soon as the answer is applied and before the convergence is awaited: what the caller retires (a form slot) must go while it is still the removed
+  // Version's, not after a slow refetch during which that Version may have been restored and drafted on.
+  if (retired.has(ctx.queryClient)) { onApplied?.(response); return response; }
   await cancelStaleReads(ctx);
-  if (retired.has(ctx.queryClient)) return response;
+  if (retired.has(ctx.queryClient)) { onApplied?.(response); return response; }
   const { queryClient, projectId, videoId, assetId } = ctx;
   queryClient.setQueryData<VideoDto[]>(projectDataKeys.videos(projectId), (old) => old && (response.video ? old.map((candidate) => (candidate.id === response.video!.id ? response.video! : candidate)) : old.filter((candidate) => candidate.id !== videoId)));
   // Nothing may keep pointing at the removed Version: its notes leave the cache, and the Video's decisions are read again without it.
   queryClient.removeQueries({ queryKey: projectDataKeys.videoNotes(projectId, assetId), exact: true });
+  onApplied?.(response);
   await converge(ctx);
   return response;
 }

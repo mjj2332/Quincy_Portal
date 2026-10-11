@@ -100,26 +100,28 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
     const ctx = { queryClient, projectId, videoId: done.videoId };
     const subject = `“${done.title}”`;
     const undo = async () => {
-      if (started !== trashSession()) return;
+      if (started !== trashSession(queryClient)) return;
       try {
         if (whole) await restoreWholeVideo(ctx); else await restoreVideoVersion({ ...ctx, assetId: done.assetId });
-        pushTrashToast(started, whole ? `Restored ${subject}.` : `Restored version ${done.version} of ${subject}.`);
+        pushTrashToast(queryClient, started, whole ? `Restored ${subject}.` : `Restored version ${done.version} of ${subject}.`);
       } catch (error) {
-        pushTrashToast(started, classifyVideoTrashError(error, "restore").message, "error");
+        pushTrashToast(queryClient, started, classifyVideoTrashError(error, "restore").message, "error");
       }
     };
-    pushTrashToast(started, whole ? `${subject} removed.` : `Version ${done.version} of ${subject} removed.`, "success", { ttlMs: UNDO_TOAST_TTL_MS, action: { label: "Undo", onAction: () => { void undo(); } } });
+    pushTrashToast(queryClient, started, whole ? `${subject} removed.` : `Version ${done.version} of ${subject} removed.`, "success", { ttlMs: UNDO_TOAST_TTL_MS, action: { label: "Undo", onAction: () => { void undo(); } } });
   }, [queryClient, projectId]);
 
   const confirm = async () => {
     if (!target || !impact || !queryClient) return;
     const mine = ++run.current;
     setPending(true); setProblem(null);
-    const sent = target; const confirmed = impact; const started = trashSession();
+    const sent = target; const confirmed = impact; const started = trashSession(queryClient);
     try {
-      const response = await removeVideoVersion({ queryClient, projectId, videoId: sent.videoId, assetId: sent.assetId }, confirmed, confirmed.lastVersion);
-      // The removal happened whatever this dialog has become since: retire the Version and say so.
-      onRemoved({ assetId: sent.assetId, videoId: sent.videoId, video: response.video });
+      const response = await removeVideoVersion({ queryClient, projectId, videoId: sent.videoId, assetId: sent.assetId }, confirmed, confirmed.lastVersion, (applied) => {
+        // The removal happened whatever this dialog has become since: retire the Version as the answer is applied, before the refetches (a restored Version may be drafted on meanwhile).
+        onRemoved({ assetId: sent.assetId, videoId: sent.videoId, video: applied.video });
+      });
+      // ...and say so.
       announce(sent, confirmed.lastVersion, started);
       if (alive.current && run.current === mine) close();
     } catch (error) {
