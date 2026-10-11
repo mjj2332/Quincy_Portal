@@ -546,6 +546,19 @@ describe("a proven rejection is released for retry (#741 15b)", () => {
     expect((await rowOf(id))!.sent_at).toBeNull(); expect(await lastDigest(t.member.memberId)).toBe(T0 + 99);
   });
 
+  it("a fence whose commit lands but whose reply is lost releases the rows, since nothing was sent", async () => {
+    const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
+    const real = database.DB; let batches = 0;
+    const db = { prepare: (sql: string) => real.prepare(sql), batch: async (statements: D1PreparedStatement[]) => { const result = await real.batch(statements); batches += 1; if (batches === 1) throw new Error("network lost"); return result; } };
+    const send = vi.fn(async () => ({ messageId: "m" }));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await runAt({ DB: db, APP_ORIGIN: ORIGIN, NOTIFICATIONS_FROM_ADDRESS: SENDER, EMAIL: { send } } as unknown as Env, T0);
+    expect(send).not.toHaveBeenCalled();
+    expect((await rowOf(id))!.sent_at).toBeNull();
+    expect(await lastDigest(t.member.memberId)).toBeNull();
+    const mail = mailer(); await runAt(mail.env, T0 + 60_000); expect(mail.sent).toHaveLength(1);
+  });
+
   it("if the release write itself fails, the rows stay marked and only a safe code is logged", async () => {
     const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
     let sendCalled = false; const real = database.DB;

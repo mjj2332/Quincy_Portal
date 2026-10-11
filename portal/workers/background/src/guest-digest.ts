@@ -164,7 +164,7 @@ const isDefiniteRejection = (error: unknown): boolean => DEFINITE_REJECTIONS.has
 export type GuestDigestSummary = { candidates: number; claimed: number; sent: number; dropped: number; released: number; failed: number; skipped: boolean };
 type Candidate = { member_id: string; guest_id: string; link_id: string; last_digest_sent_at: number | null };
 
-/** One membership: claim, snapshot, set up, fence, send. Throws only before the fence (the claim is then given back); once the fence has run nothing can un-mark the rows. */
+/** One membership: claim, snapshot, set up, fence, send. Throws only before the send; the claim and any rows this run marked are then given back. Once the send is attempted, only a definite rejection un-marks the rows. */
 async function flushMember(env: Env, candidate: Candidate): Promise<"sent" | "dropped" | "released" | "unclaimed"> {
   const db = env.DB;
   const now = Date.now(); // the real clock, taken once: the claim, the cooldown, the fence marker and the slot all use this one value
@@ -172,10 +172,11 @@ async function flushMember(env: Env, candidate: Candidate): Promise<"sent" | "dr
   if ((claim.meta.changes ?? 0) !== 1) return "unclaimed";
   const giveBack = db.prepare("UPDATE guest_link_members SET last_digest_sent_at = ?1 WHERE id = ?2 AND last_digest_sent_at = ?3").bind(candidate.last_digest_sent_at, candidate.member_id, now);
   let fenced = false;
+  let snapshot: string | null = null;
   try {
     const pending = (await db.prepare("SELECT id FROM guest_notification_digest WHERE guest_id = ?1 AND link_id = ?2 AND sent_at IS NULL ORDER BY created_at, rowid").bind(candidate.guest_id, candidate.link_id).all<{ id: string }>()).results.map((row) => row.id);
     if (pending.length === 0) { await giveBack.run(); return "dropped"; }
-    const snapshot = JSON.stringify(pending);
+    snapshot = JSON.stringify(pending);
 
     // Setup first, so the authorization below is the last database read before the send.
     const token = newUnsubscribeToken();
@@ -229,7 +230,12 @@ async function flushMember(env: Env, candidate: Candidate): Promise<"sent" | "dr
     await restartCooldown();
     return "sent";
   } catch (error) {
-    if (!fenced) await giveBack.run().catch(() => undefined);
+    // Before the send nothing was delivered, so give everything back. The fence batch may have committed with its reply lost:
+    // release any of this run's rows it marked (a no-op if it never landed), then the slot.
+    if (!fenced) {
+      const undo = snapshot === null ? [giveBack] : [db.prepare("UPDATE guest_notification_digest SET sent_at = NULL WHERE sent_at = ?1 AND id IN (SELECT value FROM json_each(?2))").bind(now, snapshot), giveBack];
+      await db.batch(undo).catch(() => undefined);
+    }
     throw error;
   }
 }
