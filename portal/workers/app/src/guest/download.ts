@@ -1,5 +1,5 @@
 import type { Context, Hono } from "hono";
-import { GUEST_ZIP_MAX_BYTES, GUEST_ZIP_MAX_ENTRIES, guestDownloadManifestSchema, type GuestDownloadManifest, type VideoReviewPart } from "@quincy/shared";
+import { GUEST_ZIP_MAX_BYTES, GUEST_ZIP_MAX_ENTRIES, guestDownloadManifestSchema, type GuestArchiveState, type GuestDownloadManifest, type VideoReviewPart } from "@quincy/shared";
 import { auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO } from "../lib/video-live-sql";
@@ -175,15 +175,45 @@ async function readDownloadSet(db: D1Database, linkId: string, projectId: string
 const totalOf = (included: Included[]): number => included.reduce((sum, entry) => sum + entry.bytes, 0);
 const tooLarge = (included: Included[]): boolean => included.length > GUEST_ZIP_MAX_ENTRIES || totalOf(included) > GUEST_ZIP_MAX_BYTES;
 
+/** The gate's answer as the page sees it. `ready` covers both writers: a click will download. */
+function archiveState(assessed: ZipAssessment): GuestArchiveState {
+  switch (assessed.kind) {
+    case "too_large": return { state: "too_large", pending: 0 };
+    case "unavailable": return { state: "unavailable", pending: 0 };
+    case "preparing": return { state: "preparing", pending: assessed.pending.length };
+    default: return { state: "ready", pending: 0 };
+  }
+}
+
+/** Read-only: the page polls this, and a GET must not queue work (that is `prepare`'s job). */
 async function manifest(c: Ctx): Promise<Response> {
   const entered = await enter(c); if (entered instanceof Response) return entered;
   const { session } = entered;
   const { included, leftOut } = await readDownloadSet(c.env.DB, session.link.id, session.link.projectId);
+  const archive: GuestArchiveState = included.length === 0 ? { state: "ready", pending: 0 }
+    : tooLarge(included) ? { state: "too_large", pending: 0 }
+    : archiveState(await assessZip(c.env, included, { source: "guest-downloads-manifest", enqueue: "never", headWhenOff: false }));
   return c.json(guestDownloadManifestSchema.parse({
     included: included.map(({ videoId, title, version, bytes }) => ({ videoId, title, version, bytes })),
     leftOut: leftOut.map(({ title, reason }) => ({ title, reason })),
-    totalBytes: totalOf(included), tooLarge: tooLarge(included),
+    totalBytes: totalOf(included), tooLarge: tooLarge(included), archive,
   } satisfies GuestDownloadManifest));
+}
+
+/**
+ * `POST .../downloads/prepare` (#802): queues the CRC-32 job for every object Download all still needs and says where that stands. It goes through the same session, capability, Origin and fence steps
+ * as the zip (`enter`), but it streams nothing, writes no audit row, and spends its own small quota, never a zip start.
+ */
+async function prepare(c: Ctx): Promise<Response> {
+  const entered = await enter(c); if (entered instanceof Response) return entered;
+  const { session, guestId, answer } = entered;
+  const attempt = await reserveAttempts(c.env.DB, [{ bucket: `zipprep:guest:${guestId}`, limit: GUEST_LIMITS.zipPrepareGuest }, { bucket: `zipprep:link:${session.link.id}`, limit: GUEST_LIMITS.zipPrepareLink }], Date.now());
+  if (attempt.limited) return answer(tooMany(attempt.retryAfterSeconds));
+  const { included } = await readDownloadSet(c.env.DB, session.link.id, session.link.projectId);
+  if (included.length === 0) return answer(c.json({ error: "nothing_to_download" }, 409));
+  if (tooLarge(included)) return answer(c.json({ error: "zip_too_large", maxEntries: GUEST_ZIP_MAX_ENTRIES, maxBytes: GUEST_ZIP_MAX_BYTES }, 422));
+  const assessed = await assessZip(c.env, included, { source: "guest-downloads-prepare", enqueue: "always" });
+  return answer(c.json(assessed.kind === "preparing" ? { ...archiveState(assessed), retryAfterSeconds: assessed.retryAfterSeconds } : archiveState(assessed)));
 }
 
 const REASON_TEXT = { not_released: "not released yet", premium_locked: "premium video, not unlocked yet" } as const;
@@ -282,4 +312,5 @@ export function mountGuestDownloads(app: Hono<AppEnv>): void {
   app.get("/d/api/links/:linkId/versions/:assetId/download", guestRoute("/d/api/links/:linkId/versions/:assetId/download", (c) => downloadOne(plain(c))));
   app.get("/d/api/links/:linkId/downloads", guestRoute("/d/api/links/:linkId/downloads", (c) => manifest(plain(c))));
   app.get("/d/api/links/:linkId/downloads/all.zip", guestRoute("/d/api/links/:linkId/downloads/all.zip", (c) => downloadAll(plain(c))));
+  app.post("/d/api/links/:linkId/downloads/prepare", guestRoute("/d/api/links/:linkId/downloads/prepare", (c) => prepare(plain(c))));
 }

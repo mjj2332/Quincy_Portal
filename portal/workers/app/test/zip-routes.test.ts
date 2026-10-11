@@ -18,7 +18,7 @@ const fakeQueue = (): Queue => { const sent: unknown[] = []; return { sent, send
 function media(heads: Record<string, { etag: string; size: number }> = {}) {
   return new Proxy(database.MEDIA, { get(target, prop) { return (...args: unknown[]) => (prop === "head" && String(args[0]) in heads ? Promise.resolve(heads[String(args[0])]) : (target as any)[prop](...args)); } });
 }
-async function call(path: string, who: "member" | "admin", options: { method?: "GET" | "POST"; body?: unknown; heads?: Record<string, { etag: string; size: number }>; queue?: Queue } = {}) {
+async function call(path: string, who: "member" | "admin" | "photographer", options: { method?: "GET" | "POST"; body?: unknown; heads?: Record<string, { etag: string; size: number }>; queue?: Queue } = {}) {
   const method = options.method ?? "GET"; const headers = new Headers({ cookie: await cookie(who) });
   if (method === "POST") { headers.set("origin", baseEnv.APP_ORIGIN); headers.set("content-type", "application/json"); }
   const context = createExecutionContext();
@@ -146,5 +146,38 @@ describe("POST /api/projects/:id/download-selection and its archive", () => {
     await database.DB.prepare("UPDATE object_crc32 SET etag = 'older' WHERE r2_key = ?").bind(a.key).run();
     const { response } = await call(downloadUrl, "member", { heads: big(a), queue: fakeQueue() }); expect(response.status).toBe(409);
     expect(await audits("project.download_selection")).toHaveLength(0);
+  });
+});
+
+describe("POST /api/projects/:id/selected-raw/prepare", () => {
+  const path = `/api/projects/${ids.project}/selected-raw/prepare`;
+  const prepare = (options: Parameters<typeof call>[2] = {}, who: "member" | "admin" = "member") => call(path, who, { ...options, method: "POST", body: {} });
+  const workRows = async () => (await database.DB.prepare("SELECT COUNT(*) AS n FROM object_crc32_work").first<{ n: number }>())!.n;
+
+  it("answers ready for a small selection, flag off, and writes nothing", async () => {
+    await raw("a.dng"); const { response } = await prepare(); expect(response.status).toBe(200); expect(await response.json()).toEqual({ state: "ready" });
+    expect(await audits("project.download_selected")).toHaveLength(0);
+  });
+  it("answers too_large for a selection over 256 MiB, flag off", async () => {
+    await raw("big.dng", { bytes: BIG, object: false });
+    expect(await (await prepare()).response.json()).toMatchObject({ state: "too_large", maxBytes: ZIP_LEGACY_MAX_BYTES });
+  });
+  it("answers preparing with the pending count, queues the job once, and a second call does not queue it again", async () => {
+    await flag(true); const a = await raw("big.dng", { bytes: BIG, object: false }); const queue = fakeQueue();
+    expect(await (await prepare({ heads: big(a), queue })).response.json()).toEqual({ state: "preparing", pending: 1, retryAfterSeconds: 30 });
+    await prepare({ heads: big(a), queue }); expect(queue.sent).toEqual([{ type: "object_crc32", r2Key: a.key }]); expect(await workRows()).toBe(1);
+  });
+  it("answers ready when every CRC is ready, and unavailable for a missing object or a failed job", async () => {
+    await flag(true); const a = await raw("a.dng", { body: "alpha" }); await ready(a);
+    expect(await (await prepare()).response.json()).toEqual({ state: "ready" });
+    const gone = await raw("gone.dng", { object: false }); expect(await (await prepare()).response.json()).toEqual({ state: "unavailable" });
+    await database.DB.prepare("DELETE FROM assets WHERE id = ?").bind(gone.id).run();
+    const b = await raw("big.dng", { bytes: BIG, object: false });
+    await database.DB.prepare("INSERT INTO object_crc32_work (r2_key, state, attempts, requested_at, updated_at) VALUES (?, 'failed', 3, ?, ?)").bind(b.key, Date.now(), Date.now()).run();
+    expect(await (await prepare({ heads: big(b), queue: fakeQueue() })).response.json()).toEqual({ state: "unavailable" });
+  });
+  it("400 with nothing selected, and 403 without the capability", async () => {
+    expect((await prepare()).response.status).toBe(400);
+    await raw("a.dng"); expect((await call(path, "photographer", { method: "POST", body: {} })).response.status).toBe(403);
   });
 });

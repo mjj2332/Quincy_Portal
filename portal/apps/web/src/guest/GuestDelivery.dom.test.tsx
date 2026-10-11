@@ -97,7 +97,7 @@ async function completeVerify() {
 beforeEach(() => {
   stub = installVideoElementStub();
   viewport = mockViewport({ width: 1440 });
-  session = sessionOf(); videos = [videoOf(1)]; manifest = { included: [], leftOut: [], totalBytes: 0, tooLarge: false }; extra = null;
+  session = sessionOf(); videos = [videoOf(1)]; manifest = { included: [], leftOut: [], totalBytes: 0, tooLarge: false, archive: { state: "ready", pending: 0 } }; extra = null;
   fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => route(String(input), init));
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
@@ -367,7 +367,7 @@ describe("Approve and Request changes", () => {
     expect(allById("guest-verify-dialog")).toHaveLength(1);
     await lateAnswer();
     expect(allById("guest-verify-dialog")).toHaveLength(1);
-    manifest = { included: [{ videoId: vid(1), title: "Film 1", version: 1, bytes: 5 }], leftOut: [], totalBytes: 5, tooLarge: false };
+    manifest = { included: [{ videoId: vid(1), title: "Film 1", version: 1, bytes: 5 }], leftOut: [], totalBytes: 5, tooLarge: false, archive: { state: "ready", pending: 0 } };
     const before = gets(`${BASE}/downloads`);
     await completeVerify();
     expect(allById("guest-verify-dialog")).toHaveLength(0);
@@ -661,7 +661,7 @@ describe("Download needs a verified guest", () => {
   it("an unverified guest's Download all opens the verify dialog, not the manifest, and opens its dialog once verified", async () => {
     session = sessionOf({ verified: false });
     videos = [videoOf(1), videoOf(2)];
-    manifest = { included: [{ videoId: vid(1), title: "Film 1", version: 1, bytes: 5 }], leftOut: [], totalBytes: 5, tooLarge: false };
+    manifest = { included: [{ videoId: vid(1), title: "Film 1", version: 1, bytes: 5 }], leftOut: [], totalBytes: 5, tooLarge: false, archive: { state: "ready", pending: 0 } };
     await open();
     await click(byId("guest-download-all"));
     expect(byId("guest-verify-dialog")).not.toBeNull();
@@ -688,7 +688,7 @@ describe("Download all", () => {
   const MANIFEST: GuestDownloadManifest = {
     included: [{ videoId: vid(1), title: "Film 1", version: 3, bytes: 5 * 1024 ** 2 }, { videoId: vid(2), title: "Film 2", version: 1, bytes: 2 * 1024 ** 3 }],
     leftOut: [{ title: "Film 3", reason: "not_released" }, { title: "Film 4", reason: "premium_locked" }],
-    totalBytes: 5 * 1024 ** 2 + 2 * 1024 ** 3, tooLarge: false,
+    totalBytes: 5 * 1024 ** 2 + 2 * 1024 ** 3, tooLarge: false, archive: { state: "ready", pending: 0 },
   };
   beforeEach(() => { videos = [videoOf(1), videoOf(2)]; manifest = MANIFEST; });
 
@@ -737,7 +737,7 @@ describe("Download all", () => {
   });
 
   it("explains the cap and offers no download when the zip is too large", async () => {
-    manifest = { ...MANIFEST, tooLarge: true, totalBytes: 9 * 1024 ** 3 };
+    manifest = { ...MANIFEST, tooLarge: true, archive: { state: "too_large", pending: 0 }, totalBytes: 9 * 1024 ** 3 };
     await open();
     await click(byId("guest-download-all"));
     expect(byId("guest-download-all-start")).toBeNull();
@@ -746,7 +746,7 @@ describe("Download all", () => {
   });
 
   it("says there is nothing to download yet when no film is released", async () => {
-    manifest = { included: [], leftOut: [{ title: "Film 1", reason: "not_released" }, { title: "Film 2", reason: "not_released" }], totalBytes: 0, tooLarge: false };
+    manifest = { included: [], leftOut: [{ title: "Film 1", reason: "not_released" }, { title: "Film 2", reason: "not_released" }], totalBytes: 0, tooLarge: false, archive: { state: "ready", pending: 0 } };
     await open();
     await click(byId("guest-download-all"));
     expect(byId("guest-download-all-start")).toBeNull();
@@ -755,7 +755,7 @@ describe("Download all", () => {
   });
 
   it("shows the zip description only when something is included", async () => {
-    manifest = { included: [], leftOut: [{ title: "Film 1", reason: "not_released" }], totalBytes: 0, tooLarge: false };
+    manifest = { included: [], leftOut: [{ title: "Film 1", reason: "not_released" }], totalBytes: 0, tooLarge: false, archive: { state: "ready", pending: 0 } };
     await open();
     await click(byId("guest-download-all"));
     expect(byId("guest-download-all-dialog")?.textContent).not.toContain("One zip with the released films below.");
@@ -765,6 +765,82 @@ describe("Download all", () => {
     await open();
     await click(byId("guest-download-all"));
     expect(byId("guest-download-all-dialog")?.textContent).toContain("One zip with the released films below.");
+  });
+
+  describe("while the zip is being prepared (#802)", () => {
+    const PREPARING: GuestDownloadManifest = { ...MANIFEST, archive: { state: "preparing", pending: 2 } };
+    const READY: GuestDownloadManifest = { ...MANIFEST, archive: { state: "ready", pending: 0 } };
+    let visible: DocumentVisibilityState = "visible";
+    let prepareAnswer: () => Response;
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] }); visible = "visible";
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visible });
+      manifest = PREPARING; prepareAnswer = () => json({ state: "preparing", pending: 2, retryAfterSeconds: 30 });
+      extra = (url, init) => (url === `${BASE}/downloads/prepare` && init?.method === "POST" ? prepareAnswer() : undefined);
+    });
+    afterEach(() => { vi.useRealTimers(); });
+    const settle = async (ms = 0) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); for (let i = 0; i < 3; i += 1) await act(async () => { await vi.advanceTimersByTimeAsync(0); }); };
+    const openDialog = async () => {
+      window.history.replaceState(null, "", `/d/review?link=${LINK}#t=tok123`);
+      host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+      await act(async () => { root!.render(<GuestApp token="tok123" />); }); await settle(10);
+      await act(async () => { byId("guest-download-all")!.click(); }); await settle(10);
+    };
+    const preparing = () => byId("guest-download-all-preparing");
+    const prepares = () => posts().filter((post) => post.url === `${BASE}/downloads/prepare`).length;
+
+    it("asks the server to prepare, shows the preparing copy, and offers no download link", async () => {
+      await openDialog();
+      expect(prepares()).toBe(1); expect(preparing()?.textContent).toContain("Preparing this download. This may take a few minutes.");
+      expect(byId("guest-download-all-start")).toBeNull(); expect(allById("guest-download-item")).toHaveLength(2);
+    });
+
+    it("polls the manifest every 30 s; when it reports ready the link appears, and nothing downloads by itself", async () => {
+      await openDialog(); const before = gets(`${BASE}/downloads`);
+      await settle(30_000); expect(gets(`${BASE}/downloads`)).toBe(before + 1); expect(byId("guest-download-all-start")).toBeNull();
+      manifest = READY; await settle(30_000);
+      expect(preparing()).toBeNull();
+      const start = byId("guest-download-all-start") as HTMLAnchorElement; expect(start.getAttribute("href")).toBe(`${BASE}/downloads/all.zip`);
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/all.zip"))).toBe(false);
+      const polls = gets(`${BASE}/downloads`); await settle(120_000); expect(gets(`${BASE}/downloads`)).toBe(polls);
+    });
+
+    it("stops polling when the dialog closes, and when the page unmounts", async () => {
+      await openDialog(); await settle(30_000); const polls = gets(`${BASE}/downloads`);
+      await act(async () => { byId("guest-download-all-close")!.click(); }); await settle(10);
+      await settle(120_000); expect(gets(`${BASE}/downloads`)).toBe(polls);
+      await act(async () => { byId("guest-download-all")!.click(); }); await settle(10); const reopened = gets(`${BASE}/downloads`);
+      await act(async () => { root!.unmount(); }); root = null; await settle(120_000); expect(gets(`${BASE}/downloads`)).toBe(reopened);
+    });
+
+    it("gives up after five minutes and offers Check again, which asks the server again", async () => {
+      await openDialog(); for (let i = 0; i < 10; i += 1) await settle(30_000); await settle(1_000);
+      expect(byId("guest-download-all-check-again")).not.toBeNull(); expect(byId("guest-download-all-start")).toBeNull();
+      const polls = gets(`${BASE}/downloads`); await settle(120_000); expect(gets(`${BASE}/downloads`)).toBe(polls);
+      await act(async () => { byId("guest-download-all-check-again")!.click(); }); await settle(10);
+      expect(prepares()).toBe(2); expect(preparing()).not.toBeNull();
+    });
+
+    it("does not poll while the page is hidden", async () => {
+      await openDialog(); visible = "hidden"; const polls = gets(`${BASE}/downloads`);
+      await settle(120_000); expect(gets(`${BASE}/downloads`)).toBe(polls);
+    });
+
+    it("says it could not prepare when the server reports the zip unavailable, with Check again", async () => {
+      manifest = { ...MANIFEST, archive: { state: "unavailable", pending: 0 } }; await openDialog();
+      expect(byId("guest-download-all-problem")?.textContent).toContain("Couldn't prepare this zip. Try again or download the files one at a time.");
+      expect(byId("guest-download-all-check-again")).not.toBeNull(); expect(byId("guest-download-all-start")).toBeNull(); expect(prepares()).toBe(0);
+    });
+
+    it("says the zip is too big when the archive is over what one zip can hold", async () => {
+      manifest = { ...MANIFEST, archive: { state: "too_large", pending: 0 } }; await openDialog();
+      expect(byId("guest-download-all-problem")?.textContent).toMatch(/too big|more than one zip/i); expect(byId("guest-download-all-start")).toBeNull();
+    });
+
+    it("a ready archive is the plain link and writes no prepare request", async () => {
+      manifest = READY; await openDialog();
+      expect(byId("guest-download-all-start")).not.toBeNull(); expect(prepares()).toBe(0); expect(preparing()).toBeNull();
+    });
   });
 
   it("reads the manifest fresh each time it opens", async () => {

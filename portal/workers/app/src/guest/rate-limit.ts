@@ -15,6 +15,8 @@ export const GUEST_LIMITS = {
   decisionGuest: 20, decisionLink: 100,
   // Download all (#741 14b): a zip start costs the most, so a guest may start 10 in 15 minutes and a link 30. Single and Range downloads have no limit.
   zipGuest: 10, zipLink: 30,
+  // Preparing Download all (#802): a prepare queues background work but streams nothing, and a page asks once per click, so a guest may ask 20 times in 15 minutes and a link 60. It never touches the zip quota above.
+  zipPrepareGuest: 20, zipPrepareLink: 60,
   // Digest subscription (#741 15b): the unsubscribe link is 30 per address in 15 minutes (it carries no gate and no session), and a verified guest may flip the switch 30 times.
   unsubscribeIp: 30, subscriptionGuest: 30,
   // Paste previews (#741 13d): a preview writes nothing, so it has its own buckets and never spends the note quota a commit needs; a guest may preview 60 times in 15 minutes and a link 300.

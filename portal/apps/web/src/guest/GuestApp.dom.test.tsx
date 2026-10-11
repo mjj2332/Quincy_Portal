@@ -685,6 +685,7 @@ describe("Sol round 7", () => {
       commitPaste: async () => ({ kind: "gone" }),
       decide: async () => ({ kind: "gone" }),
       downloads: async () => ({ kind: "gone" }),
+      prepareDownloads: async () => ({ kind: "gone" }),
       downloadAllUrl: `/d/api/links/${LINK}/downloads/all.zip`,
     };
     host = document.createElement("div");

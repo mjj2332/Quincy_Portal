@@ -1052,19 +1052,44 @@ projectsRoutes.post("/projects/:id/autohdr-coverage", requireCapability("adminBa
   return c.json({ ok: true });
 }));
 
+/** The server's selected-for-editing RAW set of a Project, oldest first. The download and its prepare step read the same set. */
+function selectedRawOf(c: Context<AppEnv>, projectId: string) {
+  return createDb(c.env.DB).select({ r2Key: schema.assets.r2Key, originalFilename: schema.assets.originalFilename, bytes: schema.assets.bytes })
+    .from(schema.selections)
+    .innerJoin(schema.assets, eq(schema.selections.assetId, schema.assets.id))
+    .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, projectId), eq(schema.collections.kind, "raw")))
+    .where(eq(schema.selections.state, "selected_for_editing"))
+    .orderBy(asc(schema.assets.createdAt))
+    .all();
+}
+
+/**
+ * `POST /projects/:id/selected-raw/prepare` (#802): the page calls this before it follows the download link. It reads the selected set, runs the CRC gate, queues what is pending and answers
+ * `ready`, `preparing` (with `pending` and `retryAfterSeconds`), `unavailable` or `too_large`. A POST because it has a side effect (the queue), and it writes no audit row: nothing is downloaded.
+ */
+projectsRoutes.post("/projects/:id/selected-raw/prepare", terminalRoute("/projects/:id/selected-raw/prepare", async (c) => {
+  const id = c.req.param("id");
+  if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  if (!roleHasCapability(c.get("user").role, "selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
+  const selected = await selectedRawOf(c, id);
+  if (!selected.length) return c.json({ error: "Select at least one RAW asset before downloading" }, 400);
+  const assessed = await assessZip(c.env, selected, { source: "selected-raw-prepare", enqueue: "always" });
+  switch (assessed.kind) {
+    case "too_large": return c.json({ state: "too_large", maxBytes: ZIP_LEGACY_MAX_BYTES });
+    case "unavailable": return c.json({ state: "unavailable" });
+    case "preparing": return c.json({ state: "preparing", pending: assessed.pending.length, retryAfterSeconds: assessed.retryAfterSeconds });
+    default: return c.json({ state: "ready" });
+  }
+}));
+
 projectsRoutes.get("/projects/:id/selected-raw.zip", terminalRoute("/projects/:id/selected-raw.zip", async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (!roleHasCapability(c.get("user").role, "selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
   const db = createDb(c.env.DB);
-  const selected = await db.select({ r2Key: schema.assets.r2Key, originalFilename: schema.assets.originalFilename, bytes: schema.assets.bytes })
-    .from(schema.selections)
-    .innerJoin(schema.assets, eq(schema.selections.assetId, schema.assets.id))
-    .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, id), eq(schema.collections.kind, "raw")))
-    .where(eq(schema.selections.state, "selected_for_editing"))
-    .orderBy(asc(schema.assets.createdAt))
-    .all();
+  const selected = await selectedRawOf(c, id);
   if (!selected.length) return c.json({ error: "Select at least one RAW asset before downloading" }, 400);
   const project = await db.select({ street: schema.projects.street }).from(schema.projects).where(eq(schema.projects.id, id)).get();
   const filename = `${(project?.street || id).replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "") || id}-selected-raw.zip`;
