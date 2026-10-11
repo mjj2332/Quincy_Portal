@@ -97,12 +97,12 @@ describe("the delivery gate and the route order", () => {
     }
   });
 
-  it("checks the capability after the gate: shareVideo reads, releaseVideo records and releases, manageVideoPremium (Admin only) sets premium", async () => {
+  it("checks the capability after the gate: shareVideo reads, releaseVideo records and releases, manageVideoPremium (Admin and Editor, #787 owner Q1) sets premium", async () => {
     const cases: Array<[string, string, Json | undefined, Who[], Who[]]> = [
       ["GET", decisionsOf(v1.videoId), undefined, ["admin", "member"], ["photographer", "external", "externalOutsider"]],
       ["POST", recordPath(v1.assetId), { decision: "approved" }, ["admin", "member"], ["photographer", "external", "externalOutsider"]],
-      ["PUT", premiumPath(v1.videoId), { premium: true }, ["admin"], ["member", "photographer", "external", "externalOutsider"]],
-      ["PUT", unlockPath(v1.videoId), { unlocked: true }, ["admin"], ["member", "photographer", "external", "externalOutsider"]],
+      ["PUT", premiumPath(v1.videoId), { premium: true }, ["admin", "member"], ["photographer", "external", "externalOutsider"]],
+      ["PUT", unlockPath(v1.videoId), { unlocked: true }, ["admin", "member"], ["photographer", "external", "externalOutsider"]],
     ];
     for (const [method, path, body, allowed, denied] of cases) {
       for (const who of allowed) expect([200, 201], `${who} ${method} ${path}`).toContain((await request(path, who, method as "GET", body)).status);
@@ -280,18 +280,17 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 describe("premium and unlock", () => {
   const listed = async (videoId: string) => { const response = await request(p("/videos"), "admin"); expect(response.status).toBe(200); return videoListResponseSchema.parse(await response.json()).videos.find((video) => video.id === videoId)!; };
 
-  it("sets premium: Admin only, 200 with the state, idempotent (no audit when nothing changes), audited as a video", async () => {
+  it("sets premium: Admin and Editor, 200 with the state, idempotent (no audit when nothing changes), audited as a video", async () => {
     const response = await request(premiumPath(v1.videoId), "admin", "PUT", { premium: true });
     expect(response.status, await response.clone().text()).toBe(200);
     expect(videoPremiumResponseSchema.parse(await response.json())).toEqual({ premium: true, premiumUnlocked: false });
     expect(await premiumOf(v1.videoId)).toBe(1);
     expect((await request(premiumPath(v1.videoId), "admin", "PUT", { premium: true })).status).toBe(200);
     expect(await audits("video.premium_set")).toHaveLength(1);
-    expect((await request(premiumPath(v1.videoId), "member", "PUT", { premium: false })).status).toBe(403);
-    expect(await premiumOf(v1.videoId)).toBe(1);
-    expect((await request(premiumPath(v1.videoId), "admin", "PUT", { premium: false })).status).toBe(200);
+    expect((await request(premiumPath(v1.videoId), "member", "PUT", { premium: false })).status).toBe(200);
+    expect(await premiumOf(v1.videoId)).toBe(0);
     const rows = await audits("video.premium_set");
-    expect(rows).toHaveLength(2); expect(rows[0]).toMatchObject({ actor_id: ids.admin, target_type: "video", target_id: v1.videoId });
+    expect(rows).toHaveLength(2); expect(rows[0]).toMatchObject({ actor_id: ids.admin, target_type: "video", target_id: v1.videoId }); expect(rows[1]).toMatchObject({ actor_id: ids.member });
     expect(rows.map((row) => JSON.parse(row.meta_json).premium)).toEqual([true, false]);
   });
 
@@ -326,8 +325,13 @@ describe("premium and unlock", () => {
     expect((await audits("video.premium_relock"))).toHaveLength(1);
   });
 
-  it("refuses Editors and writes nothing", async () => {
-    for (const who of ["member", "photographer", "external"] as const) {
+  it("lets an Editor unlock and re-lock, and refuses a Photographer and an External, writing nothing", async () => {
+    expect((await request(unlockPath(v1.videoId), "member", "PUT", { unlocked: true, paymentRef: "INV-7" })).status).toBe(200);
+    expect(await unlockRow(v1.videoId)).toMatchObject({ unlocked_by: ids.member });
+    expect((await request(unlockPath(v1.videoId), "member", "PUT", { unlocked: false })).status).toBe(200);
+    expect(await unlockRow(v1.videoId)).toBeNull();
+    await database.DB.prepare("DELETE FROM audit_log WHERE action LIKE 'video.premium%'").run();
+    for (const who of ["photographer", "external"] as const) {
       expect((await request(unlockPath(v1.videoId), who, "PUT", { unlocked: true })).status).toBe(403);
       expect((await request(premiumPath(v1.videoId), who, "PUT", { premium: true })).status).toBe(403);
     }

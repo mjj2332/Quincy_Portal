@@ -4,6 +4,7 @@ import {
   type Role, type VideoRemovalImpact, type VideoRemoveInput, type VideoTrashItem, type VideoTrashResponse,
 } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
+import { firstInCurrentSet, inCurrentSetSql } from "./delivery-lock";
 import { newId } from "./ids";
 import { RECOMPUTE_CURRENT_SQL } from "./video-live-sql";
 
@@ -78,9 +79,20 @@ const fencedCollectionCount = (db: D1Database, collectionId: string, now: number
 
 // ---- notifications -----------------------------------------------------------------------------------------------------------------------------------
 
+// ---- Client Delivery guard (#787) --------------------------------------------------------------------------------------------------------------------------
+
+/**
+ * Whether removing the Version (or, with `removeVideo`, the Video) would take something out of a page's current set: the Version itself, or for a whole-Video removal any Version of the
+ * Video, in Trash or not. One rule with the Asset delete: a published Asset is not deleted or Trashed until a later set leaves it out.
+ */
+export async function deliveryPublishedBlock(db: D1Database, videoId: string, assetId: string, removeVideo: boolean): Promise<boolean> {
+  const assetIds = removeVideo ? (await db.prepare("SELECT asset_id AS id FROM video_version_meta WHERE video_id = ?1").bind(videoId).all<{ id: string }>()).results.map((row) => row.id) : [assetId];
+  return await firstInCurrentSet(db, assetIds) !== null;
+}
+
 // ---- remove ------------------------------------------------------------------------------------------------------------------------------------------
 
-export type RemoveOutcome = { kind: "removed" } | { kind: "archived" } | { kind: "not_found" } | { kind: RemovalRefusal; impact: VideoRemovalImpact };
+export type RemoveOutcome = { kind: "removed" } | { kind: "archived" } | { kind: "not_found" } | { kind: "delivery_published" } | { kind: RemovalRefusal; impact: VideoRemovalImpact };
 
 /**
  * Removes a Version (and, with `removeVideo`, the Video it is the last live Version of) in one batch. `target` is the read the handler built its answer from; the batch repeats every condition
@@ -98,6 +110,8 @@ export async function removeVersion(db: D1Database, input: { projectId: string; 
       WHERE asset_id = ?3 AND video_id = ?13 AND removed_at IS NULL
         AND EXISTS (SELECT 1 FROM videos v WHERE v.id = video_version_meta.video_id AND v.project_id = ?4 AND v.removed_at IS NULL)
         AND ${NOT_ARCHIVED("?4")}
+        AND NOT ${inCurrentSetSql("= ?3")}
+        AND (?6 = 0 OR NOT ${inCurrentSetSql("IN (SELECT dm.asset_id FROM video_version_meta dm WHERE dm.video_id = ?13)")})
         AND ${NOTES_SQL("?3")} = ?8 AND ${DECISIONS_SQL("?3")} = ?9 AND ${RELEASED_SQL("?3")} = ?10
         AND (SELECT COUNT(*) ${LINKS_FROM_SQL("?3", "?2")}) = ?11
         AND ${LAST_VERSION_SQL("?13")} = ?6
@@ -118,6 +132,7 @@ async function diagnoseRemoval(db: D1Database, projectId: string, assetId: strin
   if (await projectArchived(db, projectId)) return { kind: "archived" };
   const fresh = await readRemovalImpact(db, projectId, assetId, now);
   if (!fresh) return { kind: "not_found" };
+  if (await deliveryPublishedBlock(db, fresh.videoId, assetId, request.removeVideo)) return { kind: "delivery_published" };
   // Every condition now passes yet the batch refused: the state moved between the two reads, so the confirmation is stale.
   return { kind: removalRefusal(fresh.impact, request) ?? "impact_changed", impact: fresh.impact };
 }

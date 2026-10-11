@@ -73,5 +73,6 @@ export * from "./video-notes";
 export * from "./guest-review";
 export * from "./video-approval";
 export * from "./video-trash";
+export * from "./client-delivery";
 export * from "./email-send-errors";
 export * from "./freehand-strokes";

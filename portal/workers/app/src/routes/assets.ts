@@ -7,6 +7,7 @@ import type { AppEnv } from "../env";
 import { requireCapability } from "../middleware/capability";
 import { auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
+import { DELIVERY_PUBLISHED_BODY, firstInCurrentSet, inCurrentSetSql } from "../lib/delivery-lock";
 
 type DropboxOutcome = "removed" | "alreadyGone" | "claimLost" | "failed";
 
@@ -86,6 +87,9 @@ assetsRoutes.delete("/assets/:id", terminalRoute("/assets/:id", async (c) => {
   }
 
   const targetIds = targets.map((target) => target.id);
+  // A published Asset is refused before any job or Dropbox claim exists; the committing batch repeats the test for a Publish that lands in between.
+  const alreadyPublished = await firstInCurrentSet(c.env.DB, targetIds);
+  if (alreadyPublished) return c.json({ ...DELIVERY_PUBLISHED_BODY, blocker: "delivery_published", assetId: alreadyPublished }, 409);
   const idMarks = placeholders(targetIds.length);
   const needsClaim = targets.some((target) => target.source === "dropbox" && target.sourcePath !== null && target.sourcePathKey !== null);
   let claimId: string | null = null;
@@ -141,7 +145,7 @@ assetsRoutes.delete("/assets/:id", terminalRoute("/assets/:id", async (c) => {
       c.env.DB.prepare(`DELETE FROM assets
         WHERE id IN ${targetSql}
           AND (SELECT count(*) FROM assets WHERE id IN ${targetSql}) = ?
-          AND NOT EXISTS (SELECT 1 FROM premium_unlocks WHERE asset_id IN ${targetSql} AND scope = 'asset')
+          AND NOT ${inCurrentSetSql(`IN ${targetSql}`)}
           AND NOT EXISTS (SELECT 1 FROM edited_source_claims WHERE current_asset_id IN ${targetSql})
           AND NOT EXISTS (SELECT 1 FROM assets WHERE id IN ${targetSql} AND kind = 'video')`)
         .bind(...deleteParams),
@@ -176,8 +180,8 @@ assetsRoutes.delete("/assets/:id", terminalRoute("/assets/:id", async (c) => {
       if (nowVideo) return c.json(VIDEO_VERSION_IMMUTABLE_BODY, 409);
       const currentTargetCount = (await db.select({ count: sql<number>`count(*)` }).from(schema.assets).where(inArray(schema.assets.id, targetIds)).get())?.count ?? 0;
       if (currentTargetCount !== targetCount) return c.json({ error: "The floorplan pair changed during deletion — retry the delete.", blocker: "floorplan_pair" }, 409);
-      const premium = await db.select({ assetId: schema.premiumUnlocks.assetId }).from(schema.premiumUnlocks).where(and(inArray(schema.premiumUnlocks.assetId, targetIds), eq(schema.premiumUnlocks.scope, "asset"))).get();
-      if (premium) return c.json({ error: "This asset is protected by a premium unlock.", blocker: "premium_unlock", assetId: premium.assetId }, 409);
+      const published = await firstInCurrentSet(c.env.DB, targetIds);
+      if (published) return c.json({ ...DELIVERY_PUBLISHED_BODY, blocker: "delivery_published", assetId: published }, 409);
       const editedClaim = await db.select({ assetId: schema.editedSourceClaims.currentAssetId }).from(schema.editedSourceClaims).where(inArray(schema.editedSourceClaims.currentAssetId, targetIds)).get();
       if (editedClaim) return c.json({ error: "This asset is the current edited source and cannot be deleted.", blocker: "edited_source_claim", assetId: editedClaim.assetId }, 409);
       return c.json({ error: "Asset deletion was blocked by a concurrent change — retry the delete." }, 409);

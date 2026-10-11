@@ -4,6 +4,7 @@ import { app } from "../src/index";
 import type { Env } from "../src/env";
 import { baseEnv, cookie, database, ids, request, seedFixture, type Who } from "./embedded-media-support";
 import { addMember, clearGuestRows, grant, seedGuestLink } from "./guest-support";
+import { seedPage, wipeDelivery } from "./delivery-support";
 import { clearVideoFlags, clearVideoNotes, currentVersions, seedReservation, seedVideoNote, seedVideoVersion, setVideoFlags } from "./video-review-support";
 
 /**
@@ -679,5 +680,74 @@ describe("concurrency: the fence repeats in the committing batch", () => {
       expect(await collectionStamp(a!.videoId), "collections.updated_at").toBe(stamp);
       expect(await assetStamps(a!.videoId), "assets").toEqual(assets);
     } finally { await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run(); }
+  });
+});
+
+// ---- Client Delivery guard (#787 slice 2) -----------------------------------------------------------------------------------------------------------------
+
+describe("a Version in a Delivery page's current set cannot be Trashed", () => {
+  const ZERO = { notes: 0, decisions: 0, release: false, links: 0 };
+  afterEach(async () => { await wipeDelivery(); });
+  const refusedBody = { code: "delivery_published" };
+  const expectUntouched = async (seeds: Seeded[]) => {
+    for (const seed of seeds) expect(await first("SELECT removed_at FROM video_version_meta WHERE asset_id = ?", seed.assetId)).toEqual({ removed_at: null });
+    expect(await first("SELECT removed_at FROM videos WHERE id = ?", seeds[0]!.videoId)).toEqual({ removed_at: null });
+    expect(await audits(...AUDIT_ACTIONS)).toEqual([]);
+  };
+
+  it("refuses removing a Version that is in the current set with 409 delivery_published, and writes nothing", async () => {
+    const [v1, v2] = await seedVideo(2);
+    await seedPage({ assetIds: [v1!.assetId] });
+    const response = await remove(v1!.assetId, { expected: ZERO, removeVideo: false });
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject(refusedBody);
+    await expectUntouched([v1!, v2!]);
+  });
+
+  it("allows removing a Version that is only in an older set, and a sibling Version when another is published", async () => {
+    const [v1, v2] = await seedVideo(2);
+    await seedPage({ assetIds: [v2!.assetId], olderSets: [[v1!.assetId]] });
+    expect((await remove(v1!.assetId, { expected: ZERO, removeVideo: false })).status).toBe(200);
+    const [w1, w2] = await seedVideo(2);
+    await wipeDelivery(); await seedPage({ assetIds: [w2!.assetId] });
+    expect((await remove(w1!.assetId, { expected: ZERO, removeVideo: false })).status).toBe(200);
+  });
+
+  it("refuses a whole-Video removal when the last Version is in the current set", async () => {
+    const [v1] = await seedVideo(1);
+    await seedPage({ assetIds: [v1!.assetId] });
+    const response = await remove(v1!.assetId, { expected: ZERO, removeVideo: true });
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject(refusedBody);
+    await expectUntouched([v1!]);
+  });
+
+  it("refuses a whole-Video removal when another Version of the Video is in the current set, even one already in Trash", async () => {
+    const [v1, v2] = await seedVideo(2);
+    expect((await remove(v1!.assetId, { expected: ZERO, removeVideo: false })).status).toBe(200);
+    await seedPage({ assetIds: [v1!.assetId] });
+    const response = await remove(v2!.assetId, { expected: ZERO, removeVideo: true });
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject(refusedBody);
+    expect(await first("SELECT removed_at FROM videos WHERE id = ?", v2!.videoId)).toEqual({ removed_at: null });
+    expect(await first("SELECT removed_at FROM video_version_meta WHERE asset_id = ?", v2!.assetId)).toEqual({ removed_at: null });
+  });
+
+  it("answers delivery_published ahead of a stale impact", async () => {
+    const [v1] = await seedVideo(1); await seedPage({ assetIds: [v1!.assetId] });
+    const response = await remove(v1!.assetId, { expected: { ...ZERO, notes: 5 }, removeVideo: true });
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject(refusedBody);
+  });
+
+  it("a Publish that lands after the read still refuses the removal in the committing batch, and removes nothing", async () => {
+    const [v1, v2] = await seedVideo(2);
+    const response = await racing("POST", p(`/video-versions/${v2!.assetId}/remove`), { expected: ZERO, removeVideo: false }, async () => { await seedPage({ assetIds: [v2!.assetId] }); });
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject(refusedBody);
+    await expectUntouched([v1!, v2!]);
+    expect(await currentVersions(v2!.videoId)).toEqual([2]);
+  });
+
+  it("a Version removed before it was published can be restored, and publishing does not stop a restore", async () => {
+    const [v1, v2] = await seedVideo(2);
+    expect((await remove(v1!.assetId, { expected: ZERO, removeVideo: false })).status).toBe(200);
+    await seedPage({ assetIds: [v2!.assetId] });
+    expect((await restoreVersion(v1!.assetId)).status).toBe(200);
   });
 });

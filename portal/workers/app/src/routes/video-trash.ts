@@ -9,7 +9,8 @@ import { projectIsArchived } from "../lib/project-archive";
 import { terminalRoute } from "../lib/terminal-route";
 import { readVideoReviewGate } from "../lib/video-review-gate";
 import { loadVideoDtos } from "../lib/video-dto";
-import { findTrashedVersion, findTrashedVideo, listTrash, readRemovalImpact, removalRefusal, removeVersion, restoreVersion, restoreVideo, type Principal } from "../lib/video-trash";
+import { DELIVERY_PUBLISHED_BODY } from "../lib/delivery-lock";
+import { deliveryPublishedBlock, findTrashedVersion, findTrashedVideo, listTrash, readRemovalImpact, removalRefusal, removeVersion, restoreVersion, restoreVideo, type Principal } from "../lib/video-trash";
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
@@ -69,11 +70,13 @@ videoTrashRoutes.post("/projects/:projectId/video-versions/:assetId/remove", ter
       case "upload_in_progress": return c.json({ error: "A new Version is being uploaded to this Video; wait for it to finish or cancel it.", code: kind }, 409);
     }
   };
+  if (await deliveryPublishedBlock(c.env.DB, target.videoId, assetId, input.removeVideo)) return c.json(DELIVERY_PUBLISHED_BODY, 409);
   const early = removalRefusal(target.impact, input); if (early) return refuse(early, target.impact);
   const outcome = await removeVersion(c.env.DB, { projectId, assetId, target, principal: principalOf(c), request: input, now });
   switch (outcome.kind) {
     case "archived": return archivedResponse(c);
     case "not_found": return c.json({ error: "Version not found" }, 404);
+    case "delivery_published": return c.json(DELIVERY_PUBLISHED_BODY, 409);
     case "impact_changed": case "last_version": case "upload_in_progress": return refuse(outcome.kind, outcome.impact);
     case "removed": break;
   }
