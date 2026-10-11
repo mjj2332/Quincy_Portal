@@ -1,6 +1,7 @@
 import type { Context, Hono } from "hono";
 import { guestDecisionInputSchema, guestDecisionResponseSchema, guestOutboxActor, type VideoReviewPart } from "@quincy/shared";
 import { newId } from "../lib/ids";
+import { LIVE_VERSION, LIVE_VIDEO } from "../lib/video-live-sql";
 import { publishOutboxDetached } from "../lib/server-timing";
 import { videoReviewOutboxStatements } from "../lib/video-review-notifications";
 import type { AppEnv } from "../env";
@@ -74,8 +75,8 @@ async function decide(c: Handled): Promise<Response> {
         FROM guest_sessions s JOIN client_links l ON l.id = s.link_id
           JOIN review_link_version_grants g ON g.link_id = l.id AND g.asset_id = ?8 AND g.revoked_at IS NULL
           JOIN review_link_videos rv ON rv.link_id = g.link_id AND rv.video_id = g.video_id AND rv.removed_at IS NULL
-          JOIN videos v ON v.id = g.video_id AND v.project_id = l.project_id
-          JOIN video_version_meta m ON m.asset_id = g.asset_id AND m.video_id = g.video_id
+          JOIN videos v ON v.id = g.video_id AND v.project_id = l.project_id AND ${LIVE_VIDEO("v")}
+          JOIN video_version_meta m ON m.asset_id = g.asset_id AND m.video_id = g.video_id AND ${LIVE_VERSION("m")}
         WHERE s.id = ?5 AND s.guest_id IS NOT NULL AND s.verified_at IS NOT NULL AND l.allow_approve = 1 AND s.token_hash = ?6 AND s.guest_id IS ?7 AND ${committableSql("?4", PARTS)}`)
         .bind(eventId, parsed.data.decision, note, committedAt, session.id, session.tokenHash, guestId, assetId),
       c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)

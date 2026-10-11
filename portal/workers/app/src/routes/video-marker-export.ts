@@ -8,6 +8,7 @@ import { audit } from "../lib/audit";
 import { hasProjectAccess } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
 import { loadMarkerExportSnapshot } from "../lib/video-marker-export";
+import { versionIsLive } from "../lib/video-live-sql";
 import { readVideoReviewGate } from "../lib/video-review-gate";
 
 const uuid = z.string().uuid();
@@ -53,6 +54,8 @@ videoMarkerExportRoutes.get(PATH, terminalRoute(PATH, async (c) => {
     if (!edl.ok) return c.json({ error: "Resolve EDL supports at most 999 markers.", code: "too_many_markers", format: "edl", count: edl.count, limit: edl.limit }, 422);
     text = edl.text;
   } else text = toFcpxml19(markers, context);
+  // Final admission: a Version removed while the file was being built is a 404, and nothing is audited for a file that is not served.
+  if (!await versionIsLive(c.env.DB, projectId, assetId)) return c.json({ error: "Version not found" }, 404);
   // One row per successful GET (the file was prepared; not proof it reached an NLE). A HEAD prepares the same file but is not a download.
   if (c.req.method !== "HEAD")
     await audit(c.env, c.get("user"), "video_note.export", "asset", assetId, {
