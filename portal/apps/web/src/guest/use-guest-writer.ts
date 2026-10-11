@@ -15,13 +15,15 @@ export type WriterBinding = {
 
 export type GuestWriter = {
   run: Run;
+  /** Like `run`, for a write that applies to the whole link (the email-updates switch), not to one Version: the screen on show handles a page-level refusal whichever Version or screen the write started on. Only with no screen on show is the answer `stale`. */
+  runLink: Run;
   epoch: () => number;
   attach: (binding: WriterBinding) => void;
   detach: (binding: WriterBinding) => void;
 };
 
 /**
- * Serialises a guest's note writes (#741 13c). It is created by `GuestApp` and lives as long as the link's session does, not as long as the video screen: pending-write ownership that died
+ * Serialises a guest's writes (#741 13c): note writes, decisions, pastes and the email-updates subscription write. It is created by `GuestApp` and lives as long as the link's session does, not as long as the video screen: pending-write ownership that died
  * with the screen let a guest go to All videos and back during a slow Post and send the same note again (see docs/lessons.md, "Form lifetime is not component lifetime").
  *
  * One write per key is in flight at a time (a second for the same key answers `busy` without sending). An answer is checked against the screen binding and `scope` (the Version on screen) it
@@ -34,7 +36,7 @@ export function createGuestWriter(): GuestWriter {
   let epoch = 0;
   let bound: WriterBinding | null = null;
 
-  const run: Run = async <R extends { kind: string }>(key: string, call: () => Promise<R>, owns?: () => boolean): Promise<R | Skipped<R>> => {
+  const start = (linkScoped: boolean): Run => async <R extends { kind: string }>(key: string, call: () => Promise<R>, owns?: () => boolean): Promise<R | Skipped<R>> => {
     if (inflight.has(key)) return { kind: "busy" };
     inflight.add(key);
     epoch += 1;
@@ -44,8 +46,9 @@ export function createGuestWriter(): GuestWriter {
     try { result = await call(); } finally { inflight.delete(key); epoch += 1; }
     // A caller whose question was replaced while this one was out (a preview for a source no longer chosen) owns nothing: its refusal must not reach the page.
     if (owns !== undefined && !owns()) return { kind: "stale", result };
-    if (bound === null || bound !== startedBinding || bound.scope !== startedScope) {
-      if (bound !== null && bound !== startedBinding) bound.onLostSettle();
+    if (bound === null) return { kind: "stale", result };
+    if (!linkScoped && (bound !== startedBinding || bound.scope !== startedScope)) {
+      if (bound !== startedBinding) bound.onLostSettle();
       return { kind: "stale", result };
     }
     if (result.kind === "unverified") bound.effects.onUnverified();
@@ -54,7 +57,8 @@ export function createGuestWriter(): GuestWriter {
     return result;
   };
   return {
-    run,
+    run: start(false),
+    runLink: start(true),
     epoch: () => epoch,
     attach: (binding) => { bound = binding; },
     detach: (binding) => { if (bound === binding) bound = null; },

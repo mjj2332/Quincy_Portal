@@ -4,6 +4,7 @@ import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
 import { guestNoteGuard, reachSql, type GuestWriter } from "./guest-fence-sql";
 import { guestReplyInsertSql, projectFence, REPLY_INSERT_SQL, VERSION_FROM } from "./video-notes-sql";
+import { guestDigestStatements } from "./guest-digest";
 import { videoReviewOutboxStatements } from "./video-review-notifications";
 import type { VideoReviewGateState } from "./video-review-gate";
 
@@ -185,6 +186,8 @@ export async function createVideoNote<T = VideoNoteThreadDto>(db: D1Database, in
     // Markup follows the note it belongs to: nothing lands unless the note row did (so an archived Project or a failed rule leaves no orphan).
     ...(markup ? [db.prepare("INSERT INTO video_note_markup (note_id, strokes_json, created_at, updated_at) SELECT ?1, ?2, ?3, ?3 FROM video_notes WHERE id = ?1 AND parent_id IS NULL AND drawing_frame IS NOT NULL").bind(noteId, markup.json, input.now)] : []),
     ...notify.statements,
+    // 15b: a STAFF root note that is public goes to the client digest; an internal note and a guest's own note produce nothing.
+    ...(author.kind === "user" && input.visibility === "public" ? guestDigestStatements(db, { kind: "public_note", noteId }, auditId, input.now) : []),
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
   ]);
   const thread = await readerOf(db, input.projectId, input.read)(noteId);
@@ -207,6 +210,8 @@ export async function createVideoNoteReply<T = VideoNoteThreadDto>(db: D1Databas
       ? db.prepare(REPLY_INSERT_SQL).bind(replyId, author.principal.id, author.principal.role, input.body, input.now, input.parent.id, input.projectId, auditId)
       : db.prepare(guestReplyInsertSql(insertGuard.sql)).bind(replyId, author.guestId, "guest", input.body, input.now, input.parent.id, input.projectId, auditId, ...insertGuard.binds),
     ...notify.statements,
+    // 15b: a STAFF reply under a public root goes to the guests of that thread; a reply under an internal root and a guest's reply produce nothing.
+    ...(author.kind === "user" && input.parent.visibility === "public" ? guestDigestStatements(db, { kind: "staff_reply", replyId, rootId: input.parent.id }, auditId, input.now) : []),
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
   ]);
   const created = await db.prepare("SELECT id FROM video_notes WHERE id = ?1").bind(replyId).first();

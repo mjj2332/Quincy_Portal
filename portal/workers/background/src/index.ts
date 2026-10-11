@@ -52,6 +52,7 @@ import { processNotificationDlqMessage, processNotificationMessage, recoverNotif
 import { scanProjectDeadlineOccurrences } from "./project-deadline";
 import { reconcileSubtaskReminderOccurrences, scanSubtaskReminderOccurrences } from "./subtask-reminders";
 import { runEmailDigests } from "./email-digest";
+import { runGuestDigests, sweepGuestDigests } from "./guest-digest";
 import { sweepExternalEditedUploads } from "./external-upload-sweep";
 import { sweepVideoUploads } from "./video-upload-sweep";
 import { sweepEmbeddedMedia } from "./embedded-media-sweep";
@@ -246,6 +247,18 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       ]);
     } catch (error) {
       console.error("Guest session sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+    }
+    // Client hourly digest (#741 15b): stale pending rows and old unsubscribe tokens go first, so a week-old item is never mailed, then each subscribed guest gets at most one email an hour per link.
+    try {
+      await sweepGuestDigests(this.env.DB, controller.scheduledTime);
+    } catch (error) {
+      console.error("Guest digest sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+    }
+    try {
+      const summary = await runGuestDigests(this.env, controller.scheduledTime);
+      if (summary.candidates) console.log("Guest digest run", summary);
+    } catch (error) {
+      console.error("Guest digest run failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
     try {
       await pruneNotifications(this.env, controller.scheduledTime);

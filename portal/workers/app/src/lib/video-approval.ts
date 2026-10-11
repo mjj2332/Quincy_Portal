@@ -1,3 +1,4 @@
+import { guestDigestStatements } from "./guest-digest";
 import { ROLE_LABELS, type Role, type VideoDecisionEvent, type VideoRelease, type VideoVersionDecisions } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
@@ -113,7 +114,7 @@ export async function releaseVerdict(db: D1Database, assetId: string, expected: 
  * Returns the Release, the verdict that refused it, or `archived`.
  */
 export async function releaseVersion(db: D1Database, input: { projectId: string; assetId: string; principal: Principal; approvalRevision: number; now: number }): Promise<{ release: VideoRelease } | ReleaseVerdict | { kind: "archived" }> {
-  const releaseId = newId();
+  const releaseId = newId(); const auditId = newId();
   try {
     await db.batch([
       db.prepare(`INSERT INTO video_releases (id, project_id, video_id, asset_id, approval_event_id, approval_revision, released_by, released_at, withdrawn_at, withdrawn_by)
@@ -124,7 +125,9 @@ export async function releaseVersion(db: D1Database, input: { projectId: string;
         .bind(releaseId, input.principal.id, input.now, input.assetId, input.projectId, input.approvalRevision),
       db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?1, ?2, 'video_version.release', 'asset', r.asset_id, ${metaWith("?3", "json_object('projectId', r.project_id, 'videoId', r.video_id, 'releaseId', r.id, 'approvalRevision', r.approval_revision)")}, ?4
-        FROM video_releases r WHERE r.id = ?5`).bind(newId(), input.principal.id, auditMeta(input.principal), input.now, releaseId),
+        FROM video_releases r WHERE r.id = ?5`).bind(auditId, input.principal.id, auditMeta(input.principal), input.now, releaseId),
+      // 15b: subscribers of every live link that grants this Version with downloads on are told it is released; fenced on the audit row.
+      ...guestDigestStatements(db, { kind: "video_released", releaseId }, auditId, input.now),
     ]);
   } catch (error) { if (!isUnique(error)) throw error; }
   const release = await readRelease(db, releaseId);

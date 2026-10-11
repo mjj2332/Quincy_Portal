@@ -69,14 +69,14 @@ describe("the markup gate, read once and checked before capability, visibility a
     expect((await create("photographer", version.assetId, { markup: MARKUP, drawingFrame: 10 })).status).toBe(404);
   });
 
-  it("reads the gate once per request", async () => {
+  it("reads the gate once per request (the digest producer's INSERT embeds the gate as a fence, not a read)", async () => {
     const version = await seedVideoVersion();
     const statements: string[] = [];
     const real = database.DB.prepare.bind(database.DB);
     (database.DB as any).prepare = (sql: string) => { statements.push(sql); return real(sql); };
     try { expect((await create("member", version.assetId, { markup: MARKUP, drawingFrame: 10 })).status).toBe(201); }
     finally { (database.DB as any).prepare = real; }
-    expect(statements.filter((sql) => sql.includes("FROM feature_flags")).length).toBe(1);
+    expect(statements.filter((sql) => sql.includes("FROM feature_flags") && !/^\s*INSERT/i.test(sql)).length).toBe(1);
   });
 
   it("orders archived last: a staff write is 409 and an External's is a concealed 404, after the gate, capability and visibility", async () => {

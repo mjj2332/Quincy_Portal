@@ -8,7 +8,7 @@ import type { AppEnv } from "../env";
 import { committableSql } from "../lib/guest-fence-sql";
 import { guestNotFound, guestRoute, INVALID, readJson, sessionCookieHeader, TOO_LARGE, tooMany } from "./http";
 import { archivedRefusal, authenticateGuest, classifyRefusal as classifyFence } from "./fence";
-import { identityOf, sessionBody, type GuestSession } from "./link";
+import { identityOf, notificationsOf, sessionBody, type GuestSession } from "./link";
 import { clientAddress, emailBucket, GUEST_CODE_RESEND_MS, GUEST_DAY_MS, GUEST_LIMITS, ipBucket, reserveAttempts, windowStart } from "./rate-limit";
 
 /**
@@ -197,14 +197,14 @@ async function verifyCode(c: Handled<"/d/api/links/:linkId/email/verify">): Prom
     db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?1, NULL, 'review_link.email_verify', 'review_link', s.link_id, json_object('guest', json_object('guestId', s.guest_id, 'sessionId', s.id), 'linkId', s.link_id), ?2
       FROM guest_sessions s WHERE s.id = ?3 AND s.token_hash = ?4 AND s.guest_id IS NOT NULL`).bind(newId(), committedAt, session.id, tokenHash),
-    db.prepare(`SELECT s.expires_at, g.email_normalized, g.display_name FROM guest_sessions s JOIN guest_reviewers g ON g.id = s.guest_id WHERE s.id = ?1 AND s.token_hash = ?2`).bind(session.id, tokenHash),
+    db.prepare(`SELECT s.expires_at, s.guest_id, g.email_normalized, g.display_name FROM guest_sessions s JOIN guest_reviewers g ON g.id = s.guest_id WHERE s.id = ?1 AND s.token_hash = ?2`).bind(session.id, tokenHash),
   ]);
-  const stored = results[results.length - 1]!.results[0] as { expires_at: number; email_normalized: string; display_name: string | null } | undefined;
+  const stored = results[results.length - 1]!.results[0] as { expires_at: number; guest_id: string; email_normalized: string; display_name: string | null } | undefined;
   if (!stored) {
     // Nothing landed. A gone session, link or gate is the stub and an archived Project is 409; a session that is still live lost the race to a double-click, a newer code or an expiry: the code is spent.
     return await classifyRefusal(c as unknown as Context<AppEnv>, session, false) ?? c.json({ error: "code_expired" }, 401);
   }
-  const response = c.json(sessionBody(link, identityOf({ email: stored.email_normalized, name: stored.display_name })));
+  const response = c.json(sessionBody(link, identityOf({ email: stored.email_normalized, name: stored.display_name }), await notificationsOf(c.env.DB, link, stored.guest_id)));
   response.headers.append("set-cookie", sessionCookieHeader(c.env, link.id, token, (stored.expires_at - committedAt) / 1000));
   return response;
 }
