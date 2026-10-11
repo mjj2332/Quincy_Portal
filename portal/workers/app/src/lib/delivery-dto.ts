@@ -13,12 +13,19 @@ export type DeliveryUrlResolver = (row: DeliveryItemRow) => { url: string | null
 const KIND_LABEL: Record<DeliveryItemKind, string> = { photo: "Photo", floorplan: "Floorplan", copy: "Copy", video: "Video" };
 const KIND_OF_ASSET: Record<string, DeliveryItemKind> = { photo: "photo", floorplan_pdf: "floorplan", copy_pdf: "copy", video: "video" };
 
-/** The staff URLs of an item: behind the session, by Asset id. A Floorplan or Copy PDF is its original; a Video streams, with a poster. */
-export const staffDeliveryUrls: DeliveryUrlResolver = (row) => {
-  if (row.kind === "photo") return { url: `/media/asset/${row.assetId}/web`, thumbUrl: `/media/asset/${row.assetId}/thumb` };
-  if (row.kind === "video") return { url: `/media/video/${row.assetId}`, thumbUrl: `/media/video/${row.assetId}/poster` };
-  return { url: `/media/asset/${row.assetId}/original`, thumbUrl: null };
-};
+/**
+ * Staff URLs for a published set: by the item's handle, behind the session, and served while the item is in the page's CURRENT set (a superseded member included). A Floorplan or Copy PDF has
+ * no thumbnail.
+ */
+export const setItemUrls = (projectId: string): DeliveryUrlResolver => (row) => ({
+  url: `/api/projects/${projectId}/delivery/items/${row.handle}/media`,
+  thumbUrl: row.kind === "photo" || row.kind === "video" ? `/api/projects/${projectId}/delivery/items/${row.handle}/thumb` : null,
+});
+/** Staff URLs for an unpublished selection (Preview): by Asset id, gated by Client Delivery and the same eligibility as Publish. */
+export const previewItemUrls = (projectId: string): DeliveryUrlResolver => (row) => ({
+  url: `/api/projects/${projectId}/delivery/preview-media/${row.assetId}/media`,
+  thumbUrl: row.kind === "photo" || row.kind === "video" ? `/api/projects/${projectId}/delivery/preview-media/${row.assetId}/thumb` : null,
+});
 
 /** Labels count within a kind in page order and are zero-padded to the width of that kind's total, at least two ("Photo 07", "Photo 007"). */
 export function deliveryLabels(rows: readonly Pick<DeliveryItemRow, "kind">[]): string[] {
@@ -94,13 +101,13 @@ export async function readDeliveryState(db: D1Database, projectId: string, optio
   const rows = await readSetRows(db, set.id);
   const project = (await db.prepare("SELECT street, suburb FROM projects WHERE id = ?1").bind(projectId).first<{ street: string; suburb: string | null }>())!;
   const coverHandle = rows.find((row) => row.assetId === set.coverAssetId)?.handle ?? null;
-  const dto = buildDeliveryDto({ property: project, setNumber: set.setNumber, publishedAt: set.publishedAt, coverHandle, rows, urls: options.urls ?? staffDeliveryUrls });
+  const dto = buildDeliveryDto({ property: project, setNumber: set.setNumber, publishedAt: set.publishedAt, coverHandle, rows, urls: options.urls ?? setItemUrls(projectId) });
   const items = rows.map((row, index) => ({ assetId: row.assetId, handle: row.handle, kind: row.kind, label: dto.items[index]!.label, position: row.position, locked: row.locked })).filter((item) => STATE_KINDS.includes(item.kind));
   return { page: pageState, set: { setNumber: set.setNumber, publishedAt: set.publishedAt, coverAssetId: set.coverAssetId, items }, dto };
 }
 
 /** Preview: the page as it would be if this selection were published next. Reads only; handles are fresh and never stored. `invalid` carries the refusal. */
-export async function previewDelivery(db: D1Database, projectId: string, assetIds: readonly string[], coverAssetId: string | null, newHandle: () => string, urls: DeliveryUrlResolver = staffDeliveryUrls): Promise<{ ok: true; dto: DeliveryPageDto } | Exclude<SelectionVerdict, { ok: true }>> {
+export async function previewDelivery(db: D1Database, projectId: string, assetIds: readonly string[], coverAssetId: string | null, newHandle: () => string, urls: DeliveryUrlResolver = previewItemUrls(projectId)): Promise<{ ok: true; dto: DeliveryPageDto } | Exclude<SelectionVerdict, { ok: true }>> {
   const verdict = await checkSelection(db, projectId, assetIds, coverAssetId, newHandle);
   if (!verdict.ok) return verdict;
   const project = (await db.prepare("SELECT street, suburb FROM projects WHERE id = ?1").bind(projectId).first<{ street: string; suburb: string | null }>())!;

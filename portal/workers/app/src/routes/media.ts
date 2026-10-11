@@ -104,65 +104,7 @@ mediaRoutes.get("/asset/:assetId/:variant", terminalRoute("/asset/:assetId/:vari
   if (!await hasProjectAccess(c, row.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   {
     const user = c.get("user"); if (row.collectionKind !== "raw" && user.role === "photographer") return c.json({ error: "Photographers may only view RAW assets" }, 403); if (row.collectionKind !== "raw" && !roleHasCapability(user.role, "viewEdited")) return c.json({ error: "Forbidden", capability: "viewEdited" }, 403);
-    if (variant === "original") {
-      const object = await c.env.MEDIA.get(row.asset.r2Key); if (!object) return c.json({ error: "Media object not found" }, 404);
-      const contentType = sourceContentType(row.asset.kind, row.asset.originalFilename);
-      const headers: Record<string, string> = { "content-type": contentType, "cache-control": "private, no-store", "x-content-type-options": "nosniff" };
-      if (contentType === "application/pdf") {
-        const safeName = row.asset.originalFilename.replace(/[\x00-\x1f"\\]/g, "");
-        headers["content-disposition"] = `inline; filename="${safeName}"`;
-      }
-      return new Response(object.body, { headers });
-    }
-    // Authorization above applies equally to the durable cache. Never resolve its R2 key
-    // before project/role checks, even though the bytes are immutable.
-    const cached = await db.select().from(schema.assetRenditions).where(and(
-      eq(schema.assetRenditions.assetId, row.asset.id),
-      eq(schema.assetRenditions.variant, variant as "web" | "thumb"),
-      eq(schema.assetRenditions.specVersion, RENDITION_SPEC_VERSION),
-    )).get();
-    if (cached && (cached.contentType === "image/webp" || cached.contentType === "image/jpeg")) {
-      const object = await c.env.MEDIA.get(cached.r2Key);
-      if (object?.httpMetadata?.contentType === cached.contentType) {
-        const headers: Record<string, string> = {
-          "content-type": cached.contentType,
-          // #362: the viewer's own browser may reuse an authorised rendition for 5 minutes;
-          // `private` keeps every shared cache out and Vary: Cookie separates principals. After
-          // expiry the Worker re-runs session and project-access checks (docs/lessons.md).
-          ...RENDITION_CACHE_HEADERS,
-          "content-length": String(object.size),
-          "x-content-type-options": "nosniff",
-        };
-        if (object.httpEtag) headers.etag = object.httpEtag;
-        return new Response(object.body, { headers });
-      }
-    }
-    // Avoid turning a missing original into an opaque Images error. Both direct-dev and live
-    // transform fallbacks use the same source object after this check.
-    const original = await c.env.MEDIA.head(row.asset.r2Key);
-    if (!original) return c.json({ error: "Media object not found" }, 404);
-    const transformKey = dngSourceKey(row.asset.r2Key, row.asset.originalFilename);
-    if (transformKey !== row.asset.r2Key && !await c.env.MEDIA.head(transformKey)) return dngPreviewUnavailable(c);
-    // Dev retains a practical direct-original fallback when a cache has not been generated.
-    if (c.env.APP_ENV === "dev") {
-      const object = await c.env.MEDIA.get(transformKey); if (!object) return c.json({ error: "Media object not found" }, 404);
-      return new Response(object.body, { headers: { "content-type": "image/jpeg", "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
-    }
-    const issued = await issueTransformSource(c.env, transformKey, user.id, user.authorizationEpoch);
-    if (!issued) return c.json({ error: "Image transformations are not configured" }, 503);
-    // Redirect the authenticated client to the /cdn-cgi/image/ URL instead of proxying:
-    // a Worker's same-zone subrequest skips the entire Cloudflare pipeline (loop
-    // prevention) — both fetch(cf.image) and an in-Worker /cdn-cgi/image/ fetch dead-end
-    // at the assets layer with 404. As an eyeball request, /cdn-cgi/image/ runs the Images
-    // engine at the edge, whose source fetch re-enters this Worker's signed
-    // /__transform-source route. Both legs verified live 2026-07-19.
-    // Session auth gates this redirect; its versioned HMAC binds the exact key and a short
-    // expiry. The cache version makes prior cached 9401 failures a different URL after repair.
-    // width+height+fit=scale-down is a bounding box that preserves aspect ratio without
-    // upscaling — width alone lets a portrait exceed maxEdge on its long side.
-    const response = c.redirect(liveTransformLocation(c.req.url, transformKey, variant as "web" | "thumb", { ...issued, principalId: user.id, authorizationEpoch: user.authorizationEpoch }), 302);
-    response.headers.set("cache-control", "private, no-store");
-    return response;
+    return serveAssetRendition(c, row.asset, variant);
   }
 }));
 
@@ -286,9 +228,81 @@ mediaRoutes.get("/video/:assetId", terminalRoute("/video/:assetId", async (c) =>
 mediaRoutes.get("/video/:assetId/poster", terminalRoute("/video/:assetId/poster", async (c) => {
   const row = await readableVideoVersion(c, c.req.param("assetId")); if (row instanceof Response) return row;
   if (!row.posterKey) return c.json({ error: "Poster not found" }, 404);
-  const object = await c.env.MEDIA.get(row.posterKey);
-  if (!object || !await versionIsLive(c.env.DB, row.projectId, c.req.param("assetId"))) return c.json({ error: "Poster not found" }, 404);
+  return serveVideoPoster(c, row.posterKey, () => versionIsLive(c.env.DB, row.projectId, c.req.param("assetId")));
+}));
+
+/** A Version's poster frame (JPEG), 404 when the object is gone or `live` says the Version is no longer live. The caller has already admitted the request. */
+export async function serveVideoPoster(c: Context<AppEnv>, posterKey: string, live: () => Promise<boolean>): Promise<Response> {
+  const object = await c.env.MEDIA.get(posterKey);
+  if (!object || !await live()) return c.json({ error: "Poster not found" }, 404);
   const headers: Record<string, string> = { "content-type": "image/jpeg", "content-length": String(object.size), ...EMBEDDED_RESPONSE_HEADERS, "cross-origin-resource-policy": "same-origin" };
   if (object.httpEtag) headers.etag = object.httpEtag;
   return new Response(object.body, { headers });
-}));
+}
+
+/**
+  * Serves one Asset's `original`, `web` or `thumb` bytes (or the transform redirect). Access is the caller's job: the staff route above checks the Project and role, the Delivery media routes check the gate and the set.
+  * Takes the Asset row as is, so a superseded member of a published set is served like a current one.
+  */
+export async function serveAssetRendition(c: Context<AppEnv>, asset: typeof schema.assets.$inferSelect, variant: string): Promise<Response> {
+  const user = c.get("user"); const db = createDb(c.env.DB);
+  if (variant === "original") {
+    const object = await c.env.MEDIA.get(asset.r2Key); if (!object) return c.json({ error: "Media object not found" }, 404);
+    const contentType = sourceContentType(asset.kind, asset.originalFilename);
+    const headers: Record<string, string> = { "content-type": contentType, "cache-control": "private, no-store", "x-content-type-options": "nosniff" };
+    if (contentType === "application/pdf") {
+      const safeName = asset.originalFilename.replace(/[\x00-\x1f"\\]/g, "");
+      headers["content-disposition"] = `inline; filename="${safeName}"`;
+    }
+    return new Response(object.body, { headers });
+  }
+  // Authorization above applies equally to the durable cache. Never resolve its R2 key
+  // before project/role checks, even though the bytes are immutable.
+  const cached = await db.select().from(schema.assetRenditions).where(and(
+    eq(schema.assetRenditions.assetId, asset.id),
+    eq(schema.assetRenditions.variant, variant as "web" | "thumb"),
+    eq(schema.assetRenditions.specVersion, RENDITION_SPEC_VERSION),
+  )).get();
+  if (cached && (cached.contentType === "image/webp" || cached.contentType === "image/jpeg")) {
+    const object = await c.env.MEDIA.get(cached.r2Key);
+    if (object?.httpMetadata?.contentType === cached.contentType) {
+      const headers: Record<string, string> = {
+        "content-type": cached.contentType,
+        // #362: the viewer's own browser may reuse an authorised rendition for 5 minutes;
+        // `private` keeps every shared cache out and Vary: Cookie separates principals. After
+        // expiry the Worker re-runs session and project-access checks (docs/lessons.md).
+        ...RENDITION_CACHE_HEADERS,
+        "content-length": String(object.size),
+        "x-content-type-options": "nosniff",
+      };
+      if (object.httpEtag) headers.etag = object.httpEtag;
+      return new Response(object.body, { headers });
+    }
+  }
+  // Avoid turning a missing original into an opaque Images error. Both direct-dev and live
+  // transform fallbacks use the same source object after this check.
+  const original = await c.env.MEDIA.head(asset.r2Key);
+  if (!original) return c.json({ error: "Media object not found" }, 404);
+  const transformKey = dngSourceKey(asset.r2Key, asset.originalFilename);
+  if (transformKey !== asset.r2Key && !await c.env.MEDIA.head(transformKey)) return dngPreviewUnavailable(c);
+  // Dev retains a practical direct-original fallback when a cache has not been generated.
+  if (c.env.APP_ENV === "dev") {
+    const object = await c.env.MEDIA.get(transformKey); if (!object) return c.json({ error: "Media object not found" }, 404);
+    return new Response(object.body, { headers: { "content-type": "image/jpeg", "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
+  }
+  const issued = await issueTransformSource(c.env, transformKey, user.id, user.authorizationEpoch);
+  if (!issued) return c.json({ error: "Image transformations are not configured" }, 503);
+  // Redirect the authenticated client to the /cdn-cgi/image/ URL instead of proxying:
+  // a Worker's same-zone subrequest skips the entire Cloudflare pipeline (loop
+  // prevention) — both fetch(cf.image) and an in-Worker /cdn-cgi/image/ fetch dead-end
+  // at the assets layer with 404. As an eyeball request, /cdn-cgi/image/ runs the Images
+  // engine at the edge, whose source fetch re-enters this Worker's signed
+  // /__transform-source route. Both legs verified live 2026-07-19.
+  // Session auth gates this redirect; its versioned HMAC binds the exact key and a short
+  // expiry. The cache version makes prior cached 9401 failures a different URL after repair.
+  // width+height+fit=scale-down is a bounding box that preserves aspect ratio without
+  // upscaling — width alone lets a portrait exceed maxEdge on its long side.
+  const response = c.redirect(liveTransformLocation(c.req.url, transformKey, variant as "web" | "thumb", { ...issued, principalId: user.id, authorizationEpoch: user.authorizationEpoch }), 302);
+  response.headers.set("cache-control", "private, no-store");
+  return response;
+}

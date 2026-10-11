@@ -56,6 +56,9 @@ export async function seedOpenProject(input: { stageKey?: string; street?: strin
 export async function wipeDelivery() {
   await database.DB.batch([
     database.DB.prepare("DELETE FROM delivery_set_items"), database.DB.prepare("DELETE FROM delivery_sets"), database.DB.prepare("DELETE FROM delivery_pages"), database.DB.prepare("DELETE FROM asset_premium_unlocks"),
-    database.DB.prepare("DELETE FROM audit_log WHERE action LIKE 'asset.delivery_premium%' OR action LIKE 'asset.premium_%' OR action LIKE 'delivery.%'"),
+    database.DB.prepare("DELETE FROM audit_log WHERE action LIKE 'asset.delivery_premium%' OR action LIKE 'asset.premium_%' OR action LIKE 'delivery.%' OR action = 'stage.set'"),
+    database.DB.prepare("DELETE FROM notification_delivery_ledger WHERE outbox_id IN (SELECT id FROM notification_outbox WHERE source_key IN (SELECT id FROM project_activity_events WHERE event_type IN ('project.delivery.published', 'project.stage.changed')))"),
+    database.DB.prepare("DELETE FROM notification_outbox WHERE source_key IN (SELECT id FROM project_activity_events WHERE event_type IN ('project.delivery.published', 'project.stage.changed'))"),
+    database.DB.prepare("DELETE FROM project_activity_events WHERE event_type IN ('project.delivery.published', 'project.stage.changed')"),
   ]);
 }

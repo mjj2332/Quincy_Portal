@@ -2,6 +2,7 @@ import {
   boardContractEnabled,
   boardSchemaVariant,
   buildDeadlineSuppressionBundle,
+  buildProjectActivityStatements,
   buildStageActivityBundle,
   buildStageShootDateFill,
   buildStageWinner,
@@ -10,6 +11,7 @@ import {
   shootDateFillLanded,
   type CommittedStageFinalizerIntent,
 } from "@quincy/db";
+import { projectActivityDeepLink } from "@quincy/shared";
 import type { Env, SessionUser } from "../env";
 import { auditMeta } from "./audit";
 import { deliverySlugBase, randomItemHandle, randomSlugSuffix } from "./delivery-address";
@@ -39,7 +41,7 @@ export type PublishDeps = {
 };
 export type PublishRequest = { projectId: string; principal: Principal; assetIds: string[]; coverAssetId: string | null; expectedLatestSet: number | null; operationId: string; now?: number };
 export type PublishOutcome =
-  | { kind: "published"; setNumber: number; stageMoved: boolean; finalizer: CommittedStageFinalizerIntent | null; shootDateFilled: boolean; assetIds: string[] }
+  | { kind: "published"; setNumber: number; stageMoved: boolean; finalizer: CommittedStageFinalizerIntent | null; shootDateFilled: boolean; assetIds: string[]; /** Outbox ids committed by this batch (the Delivery activity's and the Stage move's), for dispatch after the commit. */ publicationIds: string[] }
   | { kind: "replayed"; setNumber: number }
   | { kind: "stale_set"; latestSetNumber: number | null }
   | { kind: "invalid_selection"; assetIds: string[] }
@@ -50,13 +52,11 @@ export type PublishOutcome =
 /** How many addresses Publish mints before it gives up. A collision is a 1-in-387-million event per base, so reaching this means the generator is broken. */
 export const MAX_ADDRESS_ATTEMPTS = 5;
 
-/** Slice 4 enqueues the `delivery_web` and `premium_preview` derivatives of a published set here. Deliberately a no-op until then; the route calls it after the batch commits. */
-export async function enqueueDeliveryDerivatives(_env: unknown, _publication: { projectId: string; setNumber: number; assetIds: readonly string[] }): Promise<void> {}
 /**
- * OPEN QUESTION (#787 plan "audit + outbox"): a Publish writes an audit row, but no notification outbox row of its own, because that needs a new project-activity type and its
- * registries, which the plan does not specify. The First-Publish Stage move still writes the `project.stage.changed` activity and outbox. A later change fills this in.
+ * Slice 4 enqueues the `delivery_web` and `premium_preview` derivatives of a published set here. Deliberately a no-op until then; the route calls it after the batch commits.
+ * RULE: slice 4 must land before the `client_delivery` gate is enabled for any Project. Until it does, a Published set has no derivatives, and the page would have nothing safe to serve.
  */
-export async function announceDeliveryPublished(_env: unknown, _publication: { projectId: string; setNumber: number; firstPublish: boolean }): Promise<void> {}
+export async function enqueueDeliveryDerivatives(_env: unknown, _publication: { projectId: string; setNumber: number; assetIds: readonly string[] }): Promise<void> {}
 
 type BoardSnapshot = NonNullable<Awaited<ReturnType<typeof readBoardProject>>>;
 type Inspected = { terminal: PublishOutcome } | { latest: number | null; project: { street: string; suburb: string | null }; board: BoardSnapshot | null; rows: Extract<SelectionVerdict, { ok: true }>["rows"] };
@@ -94,7 +94,7 @@ export async function publishDelivery(env: Pick<Env, "DB">, input: PublishReques
     const seen = await inspect(db, input);
     if ("terminal" in seen) return seen.terminal;
     if (attempt === 0) await deps.beforeBatch?.();
-    const now = input.now ?? Date.now(); const first = seen.latest === null; const setNumber = (seen.latest ?? 0) + 1; const setId = newId();
+    const now = input.now ?? Date.now(); const first = seen.latest === null; const setNumber = (seen.latest ?? 0) + 1; const setId = newId(); const auditId = newId(); const activityId = newId();
     const rows = seen.rows;
     const statements: D1PreparedStatement[] = [
       db.prepare(ABORT_SQL(`NOT (EXISTS (SELECT 1 FROM projects WHERE id = ?1 AND archived_at IS NULL)
@@ -117,8 +117,19 @@ export async function publishDelivery(env: Pick<Env, "DB">, input: PublishReques
       db.prepare("INSERT INTO delivery_set_items (set_id, asset_id, handle, position) SELECT ?1, json_extract(value, '$.a'), json_extract(value, '$.h'), CAST(key AS INTEGER) FROM json_each(?2)")
         .bind(setId, JSON.stringify(rows.map((row) => ({ a: row.assetId, h: row.handle })))),
       db.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?1, ?2, 'delivery.publish', 'project', ?3, ?4, ?5)")
-        .bind(newId(), input.principal.id, input.projectId, auditMeta(input.principal, { setNumber, itemCount: rows.length, firstPublish: first, hasCover: input.coverAssetId !== null }), now),
+        .bind(auditId, input.principal.id, input.projectId, auditMeta(input.principal, { setNumber, itemCount: rows.length, firstPublish: first, hasCover: input.coverAssetId !== null }), now),
     );
+    // The Delivery activity and its outbox rows ride the same batch, after every fence, keyed on the publish audit row above (every Publish, first or later). Internal Editors only; see the registry.
+    const activity = buildProjectActivityStatements({
+      db, winnerAuditId: auditId, createdAt: now,
+      intent: {
+        schemaVersion: 1,
+        activity: { id: activityId, type: "project.delivery.published", projectId: input.projectId, actorId: input.principal.id, actorKind: "user", occurredAt: now, source: { kind: "project_delivery", id: setId, key: `project-delivery:${setId}:published` }, safePayload: { setNumber, itemCount: rows.length, firstPublish: first }, deepLink: projectActivityDeepLink("project.delivery.published", input.projectId) },
+        broadDelivery: { registryKey: "project.delivery.published", sourceActivityId: activityId, coalesce: null },
+      },
+    });
+    const activityStart = statements.length;
+    statements.push(...activity.statements);
     const stage = seen.board ? await composeDeliveredMove(db, input, seen.board, now) : null;
     const stageStart = statements.length;
     if (stage) statements.push(...stage.statements);
@@ -139,7 +150,8 @@ export async function publishDelivery(env: Pick<Env, "DB">, input: PublishReques
       const fill = stage.indexes.shootDateFill;
       shootDateFilled = finalizer !== null && shootDateFillLanded(results, fill ? { update: at(fill.update), audit: at(fill.audit) } : undefined);
     }
-    return { kind: "published", setNumber, stageMoved: finalizer !== null, finalizer, shootDateFilled, assetIds: rows.map((row) => row.assetId) };
+    const deliveryIds = (results[activityStart + activity.broadOutboxIndex]?.results ?? []).map((row) => (row as { id?: unknown }).id).filter((id): id is string => typeof id === "string");
+    return { kind: "published", setNumber, stageMoved: finalizer !== null, finalizer, shootDateFilled, assetIds: rows.map((row) => row.assetId), publicationIds: [...deliveryIds, ...(finalizer?.publicationIds ?? [])] };
   }
   throw new Error(`Could not mint a Delivery address after ${MAX_ADDRESS_ATTEMPTS} attempts`);
 }

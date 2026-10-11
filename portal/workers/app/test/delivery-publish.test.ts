@@ -257,7 +257,7 @@ describe("Preview", () => {
     expect(dto).toMatchObject({ property: { street: "Media Street", suburb: null }, setNumber: 1, publishedAt: null });
     expect(dto.items.map((item: Json) => [item.kind, item.label])).toEqual([["photo", "Photo 01"], ["floorplan", "Floorplan 01"], ["copy", "Copy 01"], ["video", "Video 01"]]);
     expect(dto.coverHandle).toBe(dto.items[0].handle);
-    expect(dto.items.map((item: Json) => [item.url, item.thumbUrl])).toEqual([[`/media/asset/${photo.id}/web`, `/media/asset/${photo.id}/thumb`], [`/media/asset/${plan.id}/original`, null], [`/media/asset/${copy.id}/original`, null], [`/media/video/${video.assetId}`, `/media/video/${video.assetId}/poster`]]);
+    expect(dto.items.map((item: Json) => [item.url, item.thumbUrl])).toEqual([photo.id, plan.id, copy.id, video.assetId].map((assetId, index) => [`${d(`/preview-media/${assetId}/media`)}`, index === 0 || index === 3 ? d(`/preview-media/${assetId}/thumb`) : null]));
     expect(await counts()).toEqual(before); expect(await stageOf(ids.project)).toEqual(stage);
   });
 
@@ -310,5 +310,32 @@ describe("the page switch", () => {
 
   it("answers 404 no_page before the first Publish", async () => {
     const response = await switchPage(false); expect(response.status).toBe(404); expect(await response.json()).toMatchObject({ code: "no_page" });
+  });
+});
+
+describe("the Delivery activity (project.delivery.published)", () => {
+  const activities = (projectId: string) => database.DB.prepare("SELECT id, actor_id, safe_payload_json, deep_link_kind, deep_link_path, source_key FROM project_activity_events WHERE project_id = ? AND event_type = 'project.delivery.published' ORDER BY occurred_at, rowid").bind(projectId).all<Json>().then((r) => r.results);
+  const recipients = async (activityId: string) => (await database.DB.prepare("SELECT recipient_id FROM notification_outbox WHERE source_key = ?").bind(activityId).all<Json>()).results.map((row) => row.recipient_id as string);
+
+  it("writes the activity and its outbox rows on every Publish, first or later, to the Project's internal Editors only", async () => {
+    const a = await seedAsset("photo"); const b = await seedAsset("photo");
+    expect((await publish(body([a.id]))).status).toBe(201);
+    expect((await publish(body([a.id, b.id], { expectedLatestSet: 1 }))).status).toBe(201);
+    const rows = await activities(ids.project);
+    expect(rows.map((row) => JSON.parse(row.safe_payload_json))).toEqual([{ setNumber: 1, itemCount: 1, firstPublish: true }, { setNumber: 2, itemCount: 2, firstPublish: false }]);
+    for (const row of rows) {
+      expect(row).toMatchObject({ actor_id: ids.admin, deep_link_kind: "project", deep_link_path: `/projects/${ids.project}` });
+      const to = await recipients(row.id);
+      expect(to).toContain(ids.member); expect(to).not.toContain(ids.external); expect(to).not.toContain(ids.photographer);
+    }
+  });
+
+  it("writes nothing for a refused Publish and a replayed one", async () => {
+    const a = await seedAsset("photo"); const operationId = op();
+    expect((await publish(body([a.id, crypto.randomUUID()]))).status).toBe(400);
+    expect(await activities(ids.project)).toHaveLength(0);
+    const payload = { assetIds: [a.id], expectedLatestSet: null, operationId };
+    await publish(payload); await publish(payload);
+    expect(await activities(ids.project)).toHaveLength(1);
   });
 });

@@ -128,6 +128,7 @@ describe("a selection or Project that changes between the read and the batch", (
     const outcome = await send(projectId, [photo.id, video.assetId], {}, { beforeBatch: async () => { await database.DB.prepare("UPDATE video_version_meta SET removed_at = ? WHERE asset_id = ?").bind(Date.now(), video.assetId).run(); } });
     expect(outcome).toEqual({ kind: "invalid_selection", assetIds: [video.assetId] });
     expect(await setsOf(projectId)).toBe(0); expect(await stageOf(projectId)).toEqual(before);
+    expect(await n("SELECT count(*) AS n FROM project_activity_events WHERE project_id = ?", projectId)).toBe(0);
     expect(await n("SELECT count(*) AS n FROM audit_log WHERE target_id = ? AND action IN ('stage.set', 'delivery.publish')", projectId)).toBe(0);
   });
 
@@ -153,6 +154,18 @@ describe("a selection or Project that changes between the read and the batch", (
     expect(await setsOf(projectId)).toBe(1);
     expect(await n("SELECT count(*) AS n FROM audit_log WHERE target_id = ? AND action = 'stage.set'", projectId)).toBe(0);
     expect(await n("SELECT count(*) AS n FROM project_activity_events WHERE project_id = ? AND event_type = 'project.stage.changed'", projectId)).toBe(0);
+  });
+});
+
+describe("the committed publication ids", () => {
+  it("returns the Delivery activity's outbox ids with the Stage move's, for dispatch after the commit", async () => {
+    const photo = await seedAsset("photo");
+    const outcome = await send(ids.project, [photo.id]);
+    expect(outcome.kind).toBe("published");
+    if (outcome.kind !== "published") return;
+    const delivery = (await database.DB.prepare("SELECT o.id FROM notification_outbox o JOIN project_activity_events a ON a.id = o.source_key WHERE a.event_type = 'project.delivery.published'").all<Json>()).results.map((row) => row.id);
+    expect(delivery.length).toBeGreaterThan(0);
+    for (const id of delivery) expect(outcome.publicationIds).toContain(id);
   });
 });
 

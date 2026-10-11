@@ -8,7 +8,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import { clientDeliveryGate } from "../lib/client-delivery-gate";
 import { randomItemHandle } from "../lib/delivery-address";
 import { previewDelivery, readDeliveryState } from "../lib/delivery-dto";
-import { announceDeliveryPublished, enqueueDeliveryDerivatives, publishDelivery, setDeliveryPageEnabled } from "../lib/delivery-publish";
+import { enqueueDeliveryDerivatives, publishDelivery, setDeliveryPageEnabled } from "../lib/delivery-publish";
 import { publishOutboxDetached } from "../lib/server-timing";
 import { queueProjectShootDateFollowUps } from "../lib/project-shoot-date";
 import { jsonInput } from "./helpers";
@@ -26,7 +26,7 @@ type Ctx = Context<AppEnv>;
 const archivedResponse = (c: Ctx) => c.json({ error: "Archived projects are read-only; nothing can be published.", code: "project_archived" }, 409);
 
 /** Gate, capability, access and (for Publish) archived. Returns the refusal, or null to carry on. */
-async function admit(c: Ctx, projectId: string, capability: Capability, refuseArchived: boolean): Promise<Response | null> {
+export async function admitDelivery(c: Ctx, projectId: string, capability: Capability, refuseArchived: boolean): Promise<Response | null> {
   const user = c.get("user");
   if (!await clientDeliveryGate(c.env.DB, projectId)) return c.json({ error: "Not found" }, 404);
   if (!roleHasCapability(user.role, capability)) return c.json({ error: "Forbidden" }, 403);
@@ -38,14 +38,14 @@ async function admit(c: Ctx, projectId: string, capability: Capability, refuseAr
 deliveryRoutes.get("/projects/:projectId/delivery", terminalRoute("/projects/:projectId/delivery", async (c) => {
   const projectId = c.req.param("projectId");
   if (!uuid.safeParse(projectId).success) return c.json({ error: "Invalid id" }, 400);
-  const refused = await admit(c, projectId, "viewClientPreview", false); if (refused) return refused;
+  const refused = await admitDelivery(c, projectId, "viewClientPreview", false); if (refused) return refused;
   return c.json(deliveryStateSchema.parse(await readDeliveryState(c.env.DB, projectId)));
 }));
 
 deliveryRoutes.post("/projects/:projectId/delivery/preview", terminalRoute("/projects/:projectId/delivery/preview", async (c) => {
   const projectId = c.req.param("projectId");
   if (!uuid.safeParse(projectId).success) return c.json({ error: "Invalid id" }, 400);
-  const refused = await admit(c, projectId, "viewClientPreview", false); if (refused) return refused;
+  const refused = await admitDelivery(c, projectId, "viewClientPreview", false); if (refused) return refused;
   const input = await jsonInput(c, deliveryPreviewInputSchema); if (input instanceof Response) return input;
   const result = await previewDelivery(c.env.DB, projectId, input.assetIds, input.coverAssetId ?? null, randomItemHandle);
   if (result.ok) return c.json({ dto: result.dto });
@@ -55,7 +55,7 @@ deliveryRoutes.post("/projects/:projectId/delivery/preview", terminalRoute("/pro
 deliveryRoutes.post("/projects/:projectId/delivery/publish", terminalRoute("/projects/:projectId/delivery/publish", async (c) => {
   const projectId = c.req.param("projectId");
   if (!uuid.safeParse(projectId).success) return c.json({ error: "Invalid id" }, 400);
-  const refused = await admit(c, projectId, "publish", true); if (refused) return refused;
+  const refused = await admitDelivery(c, projectId, "publish", true); if (refused) return refused;
   const input = await jsonInput(c, deliveryPublishInputSchema); if (input instanceof Response) return input;
   const user = c.get("user");
   const outcome = await publishDelivery(c.env, { projectId, principal: { id: user.id, impersonatedBy: user.impersonatedBy, via: user.via }, assetIds: input.assetIds, coverAssetId: input.coverAssetId ?? null, expectedLatestSet: input.expectedLatestSet, operationId: input.operationId });
@@ -68,10 +68,9 @@ deliveryRoutes.post("/projects/:projectId/delivery/publish", terminalRoute("/pro
     case "replayed": return c.json({ replayed: true, ...deliveryStateSchema.parse(await readDeliveryState(c.env.DB, projectId, { setNumber: outcome.setNumber })) });
     case "published": {
       // After the commit, none of it able to fail the response: the Stage move's outbox publication and Shoot date follow-ups, then the slice-4 derivative hook.
-      if (outcome.finalizer?.publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, outcome.finalizer.publicationIds));
+      if (outcome.publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, outcome.publicationIds));
       if (outcome.shootDateFilled) c.executionCtx.waitUntil(queueProjectShootDateFollowUps(c.env, projectId));
       c.executionCtx.waitUntil(enqueueDeliveryDerivatives(c.env, { projectId, setNumber: outcome.setNumber, assetIds: outcome.assetIds }).catch((error) => console.error("Delivery derivative enqueue failed", { projectId, error })));
-      c.executionCtx.waitUntil(announceDeliveryPublished(c.env, { projectId, setNumber: outcome.setNumber, firstPublish: outcome.setNumber === 1 }).catch((error) => console.error("Delivery announcement failed", { projectId, error })));
       return c.json({ replayed: false, ...deliveryStateSchema.parse(await readDeliveryState(c.env.DB, projectId, { setNumber: outcome.setNumber })) }, 201);
     }
   }
@@ -80,7 +79,7 @@ deliveryRoutes.post("/projects/:projectId/delivery/publish", terminalRoute("/pro
 deliveryRoutes.put("/projects/:projectId/delivery/page", terminalRoute("/projects/:projectId/delivery/page", async (c) => {
   const projectId = c.req.param("projectId");
   if (!uuid.safeParse(projectId).success) return c.json({ error: "Invalid id" }, 400);
-  const refused = await admit(c, projectId, "switchDeliveryPage", false); if (refused) return refused;
+  const refused = await admitDelivery(c, projectId, "switchDeliveryPage", false); if (refused) return refused;
   const input = await jsonInput(c, deliveryPageSwitchInputSchema); if (input instanceof Response) return input;
   const user = c.get("user");
   const result = await setDeliveryPageEnabled(c.env.DB, { projectId, principal: { id: user.id, impersonatedBy: user.impersonatedBy, via: user.via }, enabled: input.enabled });
