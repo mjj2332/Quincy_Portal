@@ -18,7 +18,7 @@ async function executeSql(source: string): Promise<void> {
   }
 }
 const row = (key: string) => database.DB.prepare("SELECT r2_key, crc32, bytes, etag, computed_at FROM object_crc32 WHERE r2_key = ?").bind(key).first<{ r2_key: string; crc32: number; bytes: number; etag: string; computed_at: number }>();
-const work = (key: string) => database.DB.prepare('SELECT r2_key, etag, bytes, "offset", crc_partial, state, attempts, last_error, generation FROM object_crc32_work WHERE r2_key = ?').bind(key).first<{ r2_key: string; etag: string | null; bytes: number | null; offset: number; crc_partial: number; state: string; attempts: number; last_error: string | null; generation: number }>();
+const work = (key: string) => database.DB.prepare('SELECT r2_key, etag, bytes, "offset", crc_partial, state, attempts, last_error, claim_token FROM object_crc32_work WHERE r2_key = ?').bind(key).first<{ r2_key: string; etag: string | null; bytes: number | null; offset: number; crc_partial: number; state: string; attempts: number; last_error: string | null; claim_token: string | null }>();
 const random = (length: number) => { const out = new Uint8Array(length); for (let at = 0; at < length; at += 65_536) crypto.getRandomValues(out.subarray(at, Math.min(length, at + 65_536))); return out; };
 const start = (r2Key: string): ObjectCrcMessage => ({ type: "object_crc32", r2Key });
 
@@ -226,8 +226,8 @@ describe("processObjectCrc, failures", () => {
 });
 
 describe("processObjectCrc, ownership of a failure", () => {
-  const plant = (key: string, etag: string, offset: number, state = "queued", generation = 5, updatedAt = Date.now()) =>
-    database.DB.prepare(`INSERT INTO object_crc32_work (r2_key, etag, bytes, "offset", crc_partial, state, attempts, requested_at, updated_at, generation) VALUES (?1, ?2, 100, ?3, 0, ?4, 0, 1, ?6, ?5)`).bind(key, etag, offset, state, generation, updatedAt).run();
+  const plant = (key: string, etag: string, offset: number, state = "queued", token = "planted", updatedAt = Date.now()) =>
+    database.DB.prepare(`INSERT INTO object_crc32_work (r2_key, etag, bytes, "offset", crc_partial, state, attempts, requested_at, updated_at, claim_token) VALUES (?1, ?2, 100, ?3, 0, ?4, 0, 1, ?6, ?5)`).bind(key, etag, offset, state, token, updatedAt).run();
 
   it("a start that cannot claim a live run writes nothing, whatever it would have hit", async () => {
     const key = `${prefix}own-start`; await database.MEDIA.put(key, "x"); await plant(key, "newer-etag", 40, "running");
@@ -238,10 +238,10 @@ describe("processObjectCrc, ownership of a failure", () => {
 
   it("an owner displaced by a takeover cannot fail, advance or finish the run that took over", async () => {
     const key = `${prefix}own-displaced`; const data = random(2 * MIB); await database.MEDIA.put(key, data);
-    const takeover = { head: (k: string) => database.MEDIA.head(k), get: async () => { await database.DB.prepare("UPDATE object_crc32_work SET generation = generation + 1, attempts = 0 WHERE r2_key = ?").bind(key).run(); throw new Error("late failure"); } };
+    const takeover = { head: (k: string) => database.MEDIA.head(k), get: async () => { await database.DB.prepare("UPDATE object_crc32_work SET claim_token = 'takeover', attempts = 0 WHERE r2_key = ?").bind(key).run(); throw new Error("late failure"); } };
     expect(await processObjectCrc(jobEnv(undefined, takeover).env, start(key), { rangeBytes: MIB, attempts: 3 })).toBe("failed");
-    expect(await work(key)).toMatchObject({ state: "running", last_error: null, generation: 2 });
-    const slow = { head: (k: string) => database.MEDIA.head(k), get: async (k: string, o: R2GetOptions) => { await database.DB.prepare("UPDATE object_crc32_work SET generation = generation + 1 WHERE r2_key = ?").bind(key).run(); return database.MEDIA.get(k, o); } };
+    expect(await work(key)).toMatchObject({ state: "running", last_error: null, claim_token: "takeover" });
+    const slow = { head: (k: string) => database.MEDIA.head(k), get: async (k: string, o: R2GetOptions) => { await database.DB.prepare("UPDATE object_crc32_work SET claim_token = 'takeover' WHERE r2_key = ?").bind(key).run(); return database.MEDIA.get(k, o); } };
     const { env: job, queue } = jobEnv(undefined, slow); await database.DB.prepare("UPDATE object_crc32_work SET state = 'queued' WHERE r2_key = ?").bind(key).run();
     expect(await processObjectCrc(job, start(key), { rangeBytes: MIB })).toBe("stale");
     expect(queue.sent).toEqual([]); expect(await row(key)).toBeNull();
@@ -264,23 +264,23 @@ describe("processObjectCrc, ownership of a failure", () => {
 });
 
 describe("processObjectCrc, claim first (Sol r2)", () => {
-  const plant = (key: string, fields: { etag?: string | null; offset?: number; state?: string; updatedAt: number; generation?: number }) =>
-    database.DB.prepare(`INSERT INTO object_crc32_work (r2_key, etag, bytes, "offset", crc_partial, state, attempts, requested_at, updated_at, generation) VALUES (?1, ?2, ?3, ?4, 0, ?5, 0, 1, ?6, ?7)`)
-      .bind(key, fields.etag ?? null, fields.etag ? 100 : null, fields.offset ?? 0, fields.state ?? "queued", fields.updatedAt, fields.generation ?? 3).run();
+  const plant = (key: string, fields: { etag?: string | null; offset?: number; state?: string; updatedAt: number; token?: string }) =>
+    database.DB.prepare(`INSERT INTO object_crc32_work (r2_key, etag, bytes, "offset", crc_partial, state, attempts, requested_at, updated_at, claim_token) VALUES (?1, ?2, ?3, ?4, 0, ?5, 0, 1, ?6, ?7)`)
+      .bind(key, fields.etag ?? null, fields.etag ? 100 : null, fields.offset ?? 0, fields.state ?? "queued", fields.updatedAt, fields.token ?? "planted").run();
   const NOW = Date.now(); const QUIET = NOW - CRC_STALE_MS - 1;
 
   it("1. a start that finds a stored CRC does not delete the work row of a live run", async () => {
     const key = `${prefix}r2-cached`; await database.MEDIA.put(key, "done"); await runChain(key, { rangeBytes: MIB }); const stored = (await database.MEDIA.head(key))!.etag;
-    await plant(key, { etag: stored, offset: 0, state: "queued", updatedAt: NOW, generation: 9 }); const before = await work(key);
+    await plant(key, { etag: stored, offset: 0, state: "queued", updatedAt: NOW, token: "planted-9" }); const before = await work(key);
     expect(await processObjectCrc(jobEnv().env, start(key), { rangeBytes: MIB, now: NOW })).toBe("stale");
     expect(await work(key)).toEqual(before);
   });
 
   it("2. an owner whose HEAD sees the object gone after a takeover does not fail the run that took over", async () => {
     const key = `${prefix}r2-missing-displaced`; await database.MEDIA.put(key, random(2 * MIB));
-    const media = { head: async () => { await database.DB.prepare("UPDATE object_crc32_work SET generation = generation + 1 WHERE r2_key = ?").bind(key).run(); return null; }, get: async () => null };
+    const media = { head: async () => { await database.DB.prepare("UPDATE object_crc32_work SET claim_token = 'takeover' WHERE r2_key = ?").bind(key).run(); return null; }, get: async () => null };
     expect(await processObjectCrc(jobEnv(undefined, media).env, start(key), { rangeBytes: MIB })).toBe("missing");
-    expect(await work(key)).toMatchObject({ state: "running", last_error: null, generation: 2 });
+    expect(await work(key)).toMatchObject({ state: "running", last_error: null, claim_token: "takeover" });
   });
 
   it("3. a swept row whose HEAD keeps throwing ends failed, because the claim came first", async () => {
@@ -307,6 +307,28 @@ describe("processObjectCrc, claim first (Sol r2)", () => {
     expect(await processObjectCrc(jobEnv().env, start(key), { rangeBytes: MIB, attempts: 2 })).toBe("stored");
     await plant(`${key}-live`, { etag: "e", state: "running", updatedAt: Date.now() });
     expect(await processObjectCrc(jobEnv().env, start(`${key}-live`), { rangeBytes: MIB, attempts: 2 })).toBe("stale");
+  });
+});
+
+describe("processObjectCrc, a claim token never repeats (Sol r3)", () => {
+  it("r3-1: a stalled old owner cannot store a CRC into a new run made after its row was deleted", async () => {
+    const key = `${prefix}r3-reuse`; await database.MEDIA.put(key, "old bytes"); const { env: job } = jobEnv();
+    const media = { head: (k: string) => database.MEDIA.head(k), get: async (k: string, o: R2GetOptions) => {
+      // The old owner stalls in R2. Meanwhile its run finished elsewhere and the object was overwritten, so a new run began on the same key.
+      await database.DB.prepare("DELETE FROM object_crc32_work WHERE r2_key = ?").bind(key).run();
+      await database.DB.prepare(`INSERT INTO object_crc32_work (r2_key, etag, bytes, "offset", crc_partial, state, attempts, requested_at, updated_at, claim_token) VALUES (?, 'new-etag', 7, 0, 0, 'running', 1, 1, ?, 'new-owner')`).bind(key, Date.now()).run();
+      return database.MEDIA.get(k, o); } };
+    expect(await processObjectCrc({ ...job, MEDIA: media as never }, start(key), {})).toBe("stale");
+    expect(await row(key)).toBeNull(); expect(await work(key)).toMatchObject({ etag: "new-etag", state: "running", claim_token: "new-owner" });
+  });
+
+  it("every claim stamps a new random token, and a queued row holds none", async () => {
+    const key = `${prefix}r3-tokens`; await database.MEDIA.put(key, random(3 * MIB)); const { env: job, queue } = jobEnv(); const seen = new Set<string>();
+    const spy = vi.spyOn(crypto, "randomUUID");
+    await processObjectCrc(job, start(key), { rangeBytes: MIB }); expect(await work(key)).toMatchObject({ state: "queued", claim_token: null });
+    await processObjectCrc(job, queue.sent.shift()!, { rangeBytes: MIB }); await processObjectCrc(job, queue.sent.shift()!, { rangeBytes: MIB });
+    for (const result of spy.mock.results) seen.add(String(result.value)); spy.mockRestore();
+    expect(seen.size).toBe(3);
   });
 });
 

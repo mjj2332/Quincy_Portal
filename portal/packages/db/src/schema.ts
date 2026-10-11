@@ -2312,11 +2312,11 @@ export const objectCrc32Work = sqliteTable(
     requestedAt: intTime("requested_at").notNull(),
     updatedAt: intTime("updated_at").notNull(),
     lastError: text("last_error"),
-    generation: integer("generation").notNull().default(0),
+    claimToken: text("claim_token"),
   },
   (t) => [
     check("object_crc32_work_r2_key_check", sql`length(${t.r2Key}) >= 1`),
-    check("object_crc32_work_generation_check", sql`typeof(${t.generation}) = 'integer' AND ${t.generation} >= 0`),
+    check("object_crc32_work_claim_token_check", sql`${t.claimToken} IS NULL OR length(${t.claimToken}) >= 1`),
     check("object_crc32_work_state_check", sql`${t.state} IN ('queued', 'running', 'failed')`),
     check("object_crc32_work_offset_check", sql`typeof(${t.offset}) = 'integer' AND ${t.offset} >= 0`),
     check("object_crc32_work_crc_partial_check", sql`typeof(${t.crcPartial}) = 'integer' AND ${t.crcPartial} >= 0 AND ${t.crcPartial} <= 4294967295`),

@@ -6,7 +6,7 @@ import type { Env } from "./env";
  * The hourly object CRC sweep (#802): backfill, and the repair path for a lost send or a run that went quiet. It queues the CRC job for every original a zip route can include that has no stored CRC
  * and no live work row. Eligible, as the three zip routes include them (`selected-raw.zip` and `download-selection` in `routes/projects.ts`, Download all in `guest/download.ts`): photos in a RAW
  * collection, photos in an Edited collection once published (`ready`), and video Versions with a live Release whose Version and Video are not in Trash. Superseded photos are not offered by Download
- * Selection, so they are left out, except a superseded RAW that is still selected for editing, which `selected-raw.zip` includes. A `failed` work row is skipped for good, and a queued or running row is live until it has been quiet for ten minutes.
+ * Selection, so they are left out, except a superseded RAW that is still selected for editing, which `selected-raw.zip` includes. A `failed` work row is skipped for good, and a queued or running row is live until it has been quiet for ten minutes, and then a start message claims it (the sweep never changes an existing row).
  */
 export const OBJECT_CRC_SWEEP_LIMIT = 500;
 /** D1 statements per `batch`. */
@@ -23,15 +23,18 @@ const ELIGIBLE = `
     WHERE a.kind = 'video'`;
 
 export async function sweepObjectCrcs(env: Pick<Env, "DB" | "OBJECT_CRC_QUEUE">, now: number, limit = OBJECT_CRC_SWEEP_LIMIT): Promise<{ candidates: number; queued: number }> {
-  const found = await env.DB.prepare(`SELECT e.r2_key AS r2_key FROM (${ELIGIBLE}) e
+  // Keys nobody has a row for come first (newest first), then rows a start can claim: never begun, or quiet for ten minutes (oldest quiet first). A live or failed row is not a candidate.
+  const found = await env.DB.prepare(`SELECT e.r2_key AS r2_key, MAX(w.r2_key IS NULL) AS is_new FROM (${ELIGIBLE}) e LEFT JOIN object_crc32_work w ON w.r2_key = e.r2_key
       WHERE NOT EXISTS (SELECT 1 FROM object_crc32 x WHERE x.r2_key = e.r2_key)
-        AND NOT EXISTS (SELECT 1 FROM object_crc32_work w WHERE w.r2_key = e.r2_key AND (w.state = 'failed' OR w.updated_at > ?1))
-      GROUP BY e.r2_key ORDER BY MAX(e.at) DESC, e.r2_key LIMIT ?2`).bind(now - CRC_STALE_MS, limit).all<{ r2_key: string }>();
-  const keys = found.results.map((row) => row.r2_key);
-  // The work rows first, so a download that asks "is it being worked on?" sees the answer yes as soon as the send is made. A row gone quiet is handed back as queued, keeping its progress, so the start message can claim it.
-  for (let at = 0; at < keys.length; at += WORK_ROW_BATCH) {
-    await env.DB.batch(keys.slice(at, at + WORK_ROW_BATCH).map((key) => env.DB.prepare(`INSERT INTO object_crc32_work (r2_key, state, attempts, requested_at, updated_at) VALUES (?1, 'queued', 0, ?2, ?2)
-      ON CONFLICT(r2_key) DO UPDATE SET state = 'queued', updated_at = excluded.updated_at WHERE object_crc32_work.state != 'failed'`).bind(key, now)));
+        AND (w.r2_key IS NULL OR (w.state != 'failed' AND ((w.state = 'queued' AND w.etag IS NULL) OR w.updated_at <= ?1)))
+      GROUP BY e.r2_key ORDER BY is_new DESC, CASE WHEN MAX(w.r2_key IS NULL) = 1 THEN -MAX(e.at) ELSE MAX(w.updated_at) END, e.r2_key LIMIT ?2`).bind(now - CRC_STALE_MS, limit).all<{ r2_key: string; is_new: number }>();
+  const fresh = found.results.filter((row) => row.is_new === 1).map((row) => row.r2_key); const existing = found.results.filter((row) => row.is_new !== 1).map((row) => row.r2_key);
+  // The sweep only ever INSERTs, and never over a row that exists: it cannot undo a delivery that claimed one a moment ago. An existing row is recovered by the start message's own atomic claim.
+  const send = [...existing];
+  for (let at = 0; at < fresh.length; at += WORK_ROW_BATCH) {
+    const chunk = fresh.slice(at, at + WORK_ROW_BATCH);
+    const results = await env.DB.batch(chunk.map((key) => env.DB.prepare(`INSERT INTO object_crc32_work (r2_key, state, attempts, requested_at, updated_at) VALUES (?1, 'queued', 0, ?2, ?2) ON CONFLICT(r2_key) DO NOTHING`).bind(key, now)));
+    chunk.forEach((key, index) => { if (results[index]!.meta.changes === 1) send.push(key); });
   }
-  return { candidates: keys.length, queued: await enqueueObjectCrcs(env, keys, "object-crc-sweep") };
+  return { candidates: found.results.length, queued: await enqueueObjectCrcs(env, send, "object-crc-sweep") };
 }

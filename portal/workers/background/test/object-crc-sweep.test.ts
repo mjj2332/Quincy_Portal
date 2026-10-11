@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ObjectCrcMessage } from "@quincy/shared";
 import QuincyBackground from "../src";
-import { CRC_STALE_MS } from "../src/object-crc";
+import { CRC_STALE_MS, processObjectCrc } from "../src/object-crc";
 import { OBJECT_CRC_SWEEP_LIMIT, sweepObjectCrcs } from "../src/object-crc-sweep";
 
 /** The hourly object CRC sweep (#802): backfills and repairs the CRC of every zip-eligible original that has no stored CRC and no live work row. */
@@ -90,7 +90,7 @@ describe("sweepObjectCrcs", () => {
 
   it("picks only the keys with no stored CRC and no live work row", async () => {
     const stored = await asset({ collection: "raw" }); const live = await asset({ collection: "raw" }); const failed = await asset({ collection: "raw" }); const missing = await asset({ collection: "raw" });
-    await crcRow(stored.key); await workRow(live.key, "queued", NOW - 60_000); await workRow(failed.key, "failed", NOW - 99 * CRC_STALE_MS);
+    await crcRow(stored.key); await workRow(live.key, "queued", NOW - 60_000, "e-live"); await workRow(failed.key, "failed", NOW - 99 * CRC_STALE_MS);
     const queue = fakeQueue();
     expect(await sweepObjectCrcs({ DB: database.DB, OBJECT_CRC_QUEUE: queue as never }, NOW)).toEqual({ candidates: 1, queued: 1 });
     expect(keys(queue)).toEqual([missing.key]);
@@ -102,14 +102,45 @@ describe("sweepObjectCrcs", () => {
     expect(await workRows()).toEqual([{ r2_key: raw.key, etag: null, state: "queued", offset: 0, attempts: 0 }]);
   });
 
-  it("takes back a work row that has been quiet for ten minutes, keeping its progress", async () => {
-    const abandoned = await asset({ collection: "raw" }); const lost = await asset({ collection: "raw" });
-    await workRow(abandoned.key, "running", NOW - CRC_STALE_MS - 1, "e1"); await workRow(lost.key, "queued", NOW - CRC_STALE_MS - 1);
-    const queue = fakeQueue();
+  it("never mutates an existing work row, and sends a start for one a start can claim", async () => {
+    const abandoned = await asset({ collection: "raw" }); const lost = await asset({ collection: "raw" }); const live = await asset({ collection: "raw" });
+    await workRow(abandoned.key, "running", NOW - CRC_STALE_MS - 1, "e1"); await workRow(lost.key, "queued", NOW - CRC_STALE_MS - 1); await workRow(live.key, "running", NOW - 1000, "e2");
+    const before = await workRows(); const queue = fakeQueue();
     expect(await sweepObjectCrcs({ DB: database.DB, OBJECT_CRC_QUEUE: queue as never }, NOW)).toEqual({ candidates: 2, queued: 2 });
     expect(keys(queue)).toEqual([abandoned.key, lost.key].sort());
-    expect((await workRows()).map((row) => [row.state, row.etag])).toEqual(expect.arrayContaining([["queued", "e1"], ["queued", null]]));
-    expect(await database.DB.prepare("SELECT count(*) AS n FROM object_crc32_work WHERE updated_at = ?").bind(NOW).first()).toEqual({ n: 2 });
+    expect(await workRows()).toEqual(before);
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM object_crc32_work WHERE updated_at = ?").bind(NOW).first()).toEqual({ n: 0 });
+  });
+
+  it("r3-2: a start emitted for an abandoned, initialised row can claim it (the sweep did not refresh it)", async () => {
+    const lostContinuation = await asset({ collection: "raw" }); await database.MEDIA.put(lostContinuation.key, "bytes!");
+    await workRow(lostContinuation.key, "queued", NOW - CRC_STALE_MS - 1, "an-old-etag");
+    const queue = fakeQueue(); await sweepObjectCrcs({ DB: database.DB, OBJECT_CRC_QUEUE: queue as never }, NOW);
+    expect(queue.sent).toEqual([{ type: "object_crc32", r2Key: lostContinuation.key }]);
+    const outcome = await processObjectCrc({ DB: database.DB, MEDIA: database.MEDIA, OBJECT_CRC_QUEUE: queue as never }, queue.sent[0]!, { now: NOW });
+    expect(outcome).not.toBe("stale"); expect(["restarted", "advanced", "stored"]).toContain(outcome);
+  });
+
+  it("r3-3: a delivery that claims a row between the sweep's read and its write is not undone", async () => {
+    const raw = await asset({ collection: "raw" }); await workRow(raw.key, "running", NOW - CRC_STALE_MS - 1, "e1");
+    // The claim lands right after the sweep's read of its candidates, before anything it writes.
+    const racing = new Proxy(database.DB, { get(target, property) {
+      if (property === "prepare") return (sql: string) => { const statement = target.prepare(sql); if (!sql.includes("FROM (")) return statement;
+        return new Proxy(statement, { get(inner, key) { const value = Reflect.get(inner, key, inner); if (key === "bind") return (...binds: unknown[]) => { const bound = inner.bind(...binds); return new Proxy(bound, { get(b2, k2) { const v2 = Reflect.get(b2, k2, b2); return k2 === "all" ? async () => { const result = await b2.all(); await run("UPDATE object_crc32_work SET state = 'running', updated_at = ? WHERE r2_key = ?", NOW, raw.key); return result; } : typeof v2 === "function" ? v2.bind(b2) : v2; } }); }; return typeof value === "function" ? value.bind(inner) : value; } }); };
+      const value = Reflect.get(target, property, target); return typeof value === "function" ? value.bind(target) : value;
+    } });
+    await sweepObjectCrcs({ DB: racing as D1Database, OBJECT_CRC_QUEUE: fakeQueue() as never }, NOW);
+    expect(await workRows()).toEqual([expect.objectContaining({ r2_key: raw.key, state: "running" })]);
+    expect(await database.DB.prepare("SELECT updated_at FROM object_crc32_work WHERE r2_key = ?").bind(raw.key).first()).toEqual({ updated_at: NOW });
+  });
+
+  it("queues rows nobody has before rows that went quiet, and the oldest quiet first", async () => {
+    const quietOld = await asset({ collection: "raw", at: NOW + 9000 }); const quietNew = await asset({ collection: "raw", at: NOW + 9000 });
+    await workRow(quietOld.key, "queued", NOW - 5 * CRC_STALE_MS); await workRow(quietNew.key, "queued", NOW - 2 * CRC_STALE_MS);
+    const fresh = await asset({ collection: "raw", at: NOW + 1 }); const fresher = await asset({ collection: "raw", at: NOW + 2 });
+    const queue = fakeQueue();
+    expect(await sweepObjectCrcs({ DB: database.DB, OBJECT_CRC_QUEUE: queue as never }, NOW, 3)).toEqual({ candidates: 3, queued: 3 });
+    expect(keys(queue)).toEqual([fresh.key, fresher.key, quietOld.key].sort());
   });
 
   it("takes newest first and stops at the cap", async () => {
@@ -132,10 +163,10 @@ describe("sweepObjectCrcs", () => {
     expect(await sweepObjectCrcs({ DB: database.DB, OBJECT_CRC_QUEUE: fakeQueue(true) as never }, NOW)).toEqual({ candidates: 1, queued: 0 });
     expect(await workRows()).toHaveLength(1);
     const queue = fakeQueue();
-    expect(await sweepObjectCrcs({ DB: database.DB, OBJECT_CRC_QUEUE: queue as never }, NOW)).toEqual({ candidates: 0, queued: 0 });
-    expect(await sweepObjectCrcs({ DB: database.DB, OBJECT_CRC_QUEUE: queue as never }, NOW + CRC_STALE_MS + 1)).toEqual({ candidates: 1, queued: 1 });
+    // A row that was never begun is sent again at once (a start can claim it); the send that failed is the repair.
+    expect(await sweepObjectCrcs({ DB: database.DB, OBJECT_CRC_QUEUE: queue as never }, NOW)).toEqual({ candidates: 1, queued: 1 });
     expect(keys(queue)).toEqual([raw.key]);
-    expect(await sweepObjectCrcs({ DB: database.DB }, NOW)).toEqual({ candidates: 0, queued: 0 });
+    expect(await sweepObjectCrcs({ DB: database.DB }, NOW)).toEqual({ candidates: 1, queued: 0 });
   });
 });
 
