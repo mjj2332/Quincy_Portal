@@ -9,8 +9,8 @@ import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO } from "../lib/video-live
 import { VIDEO_STREAM_HEADERS, serveR2Object } from "../lib/r2-serve";
 import { attachment } from "../guest/download";
 import { INVALID, TOO_LARGE, guestNotFound, guestRoute, originRejection, readJson, tooMany } from "../guest/http";
-import { GUEST_DAY_MS, GUEST_LIMITS, clientAddress, ipBucket, refundAttempt, reserveAttempts, windowStart } from "../guest/rate-limit";
-import { publishUnlockOutbox, writeUnlockRequest } from "../lib/delivery-unlock-request";
+import { GUEST_DAY_MS, GUEST_LIMITS, clientAddress, ipBucket, reserveAttempts, windowStart } from "../guest/rate-limit";
+import { publishUnlockOutbox, unlockItemBucket, writeUnlockRequest } from "../lib/delivery-unlock-request";
 import { guestShell } from "../guest";
 
 /**
@@ -145,8 +145,8 @@ async function serveItem(c: Ctx, slug: string, handle: string, part: "media" | "
 /**
  * `POST .../items/:handle/unlock-request`, in this order (docs/plans/787.md section 1): the item resolves through the same admission as a read (any miss, the body and the Origin NOT looked at,
  * is the stub), the bounded body is READ (not judged), a fresh time is taken and the item admitted again, Origin and content type (403), the item must be locked (409 `not_locked`), the address
- * and page buckets are reserved (429, so an invalid body is charged to them), the body is judged (400, 413), then the item's own daily slot: a full one answers 202 `already_requested` and writes
- * nothing. The write is one fenced batch (`lib/delivery-unlock-request.ts`); when it lands nothing, the item's slot is given back and the answer is the state it found (stub or `not_locked`).
+ * and page buckets are reserved (429, so an invalid body is charged to them), the body is judged (400, 413), then the write: one fenced batch (`lib/delivery-unlock-request.ts`) that also takes the item's daily slot, so the slot and the request land together or not at all (no pre-batch reservation, no refund).
+ * When it lands nothing the answer is the state found: the stub, `not_locked`, or 202 `already_requested` when the slot was taken.
  */
 async function unlockLanded(db: D1Database, auditId: string): Promise<boolean> {
   await publicDeliveryTestHooks.beforeVerify?.();
@@ -167,16 +167,13 @@ async function requestUnlock(c: Ctx, slug: string, handle: string): Promise<Resp
   if (spent.limited) return tooMany(spent.retryAfterSeconds);
   if (raw === TOO_LARGE) return c.json({ error: "payload_too_large" }, 413);
   if (raw === INVALID || !deliveryUnlockRequestInputSchema.safeParse(raw).success) return c.json({ error: "invalid_request" }, 400);
-  const slotBucket = `unlock:item:${current.assetId}`;
-  const slot = await reserveAttempts(c.env.DB, [{ bucket: slotBucket, limit: GUEST_LIMITS.unlockItem, windowMs: GUEST_DAY_MS }], now);
-  if (slot.limited) return c.json({ status: "already_requested" }, 202);
-  // The item's daily slot is spent only by a request that lands: every other exit, a thrown read or a rolled-back batch included, gives it back.
+  // The item's daily slot is NOT reserved here: it is taken inside the write batch, with the audit and outbox rows, so it lands with the request or not at all (lib/delivery-unlock-request.ts).
   const auditId = newId();
   try {
     await publicDeliveryTestHooks.beforeWrite?.();
     const rows = await readSetRows(c.env.DB, current.setId);
     const label = deliveryLabels(rows)[rows.findIndex((row) => row.assetId === current.assetId)];
-    if (label === undefined) { await refundAttempt(c.env.DB, slotBucket, now, GUEST_DAY_MS); return guestNotFound(c); }
+    if (label === undefined) return guestNotFound(c);
     const written = await writeUnlockRequest(c.env.DB, { auditId, slug, handle, projectId: current.projectId, setId: current.setId, setNumber: current.setNumber, assetId: current.assetId, label, ipBucket: address, now });
     await publicDeliveryTestHooks.afterWrite?.();
     if (written.landed) {
@@ -184,20 +181,19 @@ async function requestUnlock(c: Ctx, slug: string, handle: string): Promise<Resp
       return c.json({ status: "requested" }, 202);
     }
   } catch (error) {
-    // A throw does not say whether D1 committed (the reply can be lost after the batch landed). The attempt's own audit row does: present, the request landed and keeps the slot (a retry must not notify staff twice);
-    // absent, nothing was stored and the slot is given back; a verification that cannot be read keeps the slot and fails.
-    const landed = await unlockLanded(c.env.DB, auditId).catch(() => "unknown" as const);
-    if (landed === false) await refundAttempt(c.env.DB, slotBucket, now, GUEST_DAY_MS).catch(() => undefined);
-    if (landed !== true) throw error;
+    // A throw does not say whether D1 committed (the reply can be lost after the batch landed). The attempt's own audit row does: present, the request landed (its slot is in the same batch) and staff are told once;
+    // absent, nothing was stored (a rolled-back batch takes its slot with it). A check that cannot be read fails the request; a retry then answers from what is stored.
+    if (!(await unlockLanded(c.env.DB, auditId).catch(() => false))) throw error;
     const pending = await c.env.DB.prepare("SELECT id FROM notification_outbox WHERE event_type = ? AND source_key = ? AND status = 'pending'").bind(DELIVERY_UNLOCK_NOTIFICATION_EVENT, deliveryUnlockSourceKey(auditId)).all<{ id: string }>().then((rows) => rows.results.map((row) => row.id)).catch(() => []);
     if (pending.length) c.executionCtx.waitUntil(publishUnlockOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, pending));
     return c.json({ status: "requested" }, 202);
   }
-  // The fence wrote nothing: the page, the gate, the set or the lock changed since admission. Give the item's slot back and answer what is true now.
-  await refundAttempt(c.env.DB, slotBucket, now, GUEST_DAY_MS);
+  // The fence wrote nothing: the page, the gate, the set or the lock changed since admission, or the item's slot is already taken today. Answer what is true now.
   const after = await admitItem(c.env.DB, slug, handle);
-  if (after && after.assetId === current.assetId && !after.locked) return c.json({ error: "not_locked" }, 409);
-  return guestNotFound(c);
+  if (!after || after.assetId !== current.assetId) return guestNotFound(c);
+  if (!after.locked) return c.json({ error: "not_locked" }, 409);
+  const taken = await c.env.DB.prepare("SELECT 1 AS taken FROM guest_rate_limits WHERE bucket = ? AND window_start = ?").bind(unlockItemBucket(current.assetId), windowStart(now, GUEST_DAY_MS)).first();
+  return taken ? c.json({ status: "already_requested" }, 202) : guestNotFound(c);
 }
 
 export function mountDelivery(app: Hono<AppEnv>): void {

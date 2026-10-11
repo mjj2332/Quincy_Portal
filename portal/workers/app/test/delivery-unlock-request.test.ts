@@ -20,6 +20,7 @@ const outbox = async () => (await database.DB.prepare("SELECT id, recipient_id A
 const ledger = async () => (await database.DB.prepare("SELECT channel, status, recipient_id AS recipientId FROM notification_delivery_ledger WHERE event_type = ?").bind(DELIVERY_UNLOCK_NOTIFICATION_EVENT).all<{ channel: string; status: string; recipientId: string }>()).results;
 const audits = async () => (await database.DB.prepare("SELECT actor_id AS actorId, action, target_type AS targetType, target_id AS targetId, meta_json AS meta FROM audit_log WHERE action = 'delivery.unlock_request'").all<{ actorId: string | null; action: string; targetType: string; targetId: string; meta: string }>()).results;
 const premiumState = async () => JSON.stringify([(await database.DB.prepare("SELECT id, delivery_premium AS p, updated_at AS u FROM assets ORDER BY id").all()).results, (await database.DB.prepare("SELECT * FROM asset_premium_unlocks ORDER BY asset_id").all()).results, (await database.DB.prepare("SELECT id, premium FROM videos ORDER BY id").all()).results]);
+const itemSlots = async () => (await database.DB.prepare("SELECT bucket FROM guest_rate_limits WHERE bucket LIKE 'unlock:item:%'").all()).results;
 const DEACTIVATED_ADMIN = "a7777777-7777-4777-8777-777777777777";
 
 beforeAll(async () => {
@@ -218,6 +219,7 @@ describe("rate limits", () => {
     expect(answers.map((response) => response.status)).toEqual([202, 202, 202, 202]);
     expect(bodies.filter((body) => body.status === "requested")).toHaveLength(2);
     expect(await audits()).toHaveLength(2);
+    expect(new Set((await outbox()).map((row) => row.sourceKey)).size).toBe(2); expect(await itemSlots()).toHaveLength(2);
   });
 
   it("a request refused by the IP or page bucket does not spend the item's daily slot, and an invalid body does not either", async () => {
@@ -249,7 +251,7 @@ describe("state that changes between admission and the write", () => {
     publicDeliveryTestHooks.beforeWrite = async () => { throw new Error("boom"); };
     expect((await post(handle)).status).toBe(500);
     publicDeliveryTestHooks.beforeWrite = undefined;
-    expect(await audits()).toEqual([]);
+    expect(await audits()).toEqual([]); expect(await itemSlots()).toEqual([]);
     expect(deliveryUnlockRequestResponseSchema.parse(await (await post(handle)).json())).toEqual({ status: "requested" });
     expect((await outbox()).length).toBeGreaterThan(0);
   });
@@ -258,7 +260,7 @@ describe("state that changes between admission and the write", () => {
     const { handle } = await lockedPage();
     publicDeliveryTestHooks.beforeWrite = async () => { await database.DB.exec("CREATE TRIGGER unlock_fault BEFORE INSERT ON notification_outbox BEGIN SELECT RAISE(ABORT, 'forced outbox fault'); END;"); };
     try { expect((await post(handle)).status).toBe(500); } finally { publicDeliveryTestHooks.beforeWrite = undefined; await database.DB.exec("DROP TRIGGER IF EXISTS unlock_fault;"); }
-    expect(await audits()).toEqual([]); expect(await outbox()).toEqual([]);
+    expect(await audits()).toEqual([]); expect(await outbox()).toEqual([]); expect(await itemSlots()).toEqual([]);
     expect(deliveryUnlockRequestResponseSchema.parse(await (await post(handle)).json())).toEqual({ status: "requested" });
     expect((await outbox()).length).toBeGreaterThan(0);
   });
@@ -269,7 +271,7 @@ describe("state that changes between admission and the write", () => {
     const first = await post(handle);
     publicDeliveryTestHooks.afterWrite = undefined;
     expect(first.status).toBe(202); expect(deliveryUnlockRequestResponseSchema.parse(await first.json())).toEqual({ status: "requested" });
-    const told = (await outbox()).length; expect(told).toBeGreaterThan(0); expect(await audits()).toHaveLength(1);
+    const told = (await outbox()).length; expect(told).toBeGreaterThan(0); expect(await audits()).toHaveLength(1); expect(await itemSlots()).toHaveLength(1);
     expect(deliveryUnlockRequestResponseSchema.parse(await (await post(handle)).json())).toEqual({ status: "already_requested" });
     expect(await audits()).toHaveLength(1); expect((await outbox()).length).toBe(told);
   });

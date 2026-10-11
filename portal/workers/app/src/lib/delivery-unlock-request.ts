@@ -3,6 +3,7 @@ import {
 } from "@quincy/shared";
 import { lockedSql } from "./delivery-lock";
 import { SQL_UUID_V4 } from "./sql-uuid";
+import { GUEST_DAY_MS, windowStart } from "../guest/rate-limit";
 import { LIVE_VERSION_EXISTS } from "./video-live-sql";
 import { publishOutboxDetached } from "./server-timing";
 
@@ -21,8 +22,10 @@ const ELIGIBLE_ROLES = ROLES.filter((role) => roleHasCapability(role, "manageExt
 const GATE = `(EXISTS (SELECT 1 FROM feature_flags WHERE key = '${CLIENT_DELIVERY_MASTER_FLAG}' AND enabled = 1)
   AND (EXISTS (SELECT 1 FROM feature_flags WHERE key = '${CLIENT_DELIVERY_ALL_PROJECTS_FLAG}' AND enabled = 1) OR EXISTS (SELECT 1 FROM feature_flags WHERE key = '${clientDeliveryPilotFlag("")}' || p.project_id AND enabled = 1)))`;
 
+export const unlockItemBucket = (assetId: string): string => `unlock:item:${assetId}`;
+
 export async function writeUnlockRequest(db: D1Database, input: UnlockRequest): Promise<{ landed: boolean; outboxIds: string[] }> {
-  const { auditId } = input; const sourceKey = deliveryUnlockSourceKey(auditId); const { now } = input;
+  const { auditId } = input; const bucket = unlockItemBucket(input.assetId); const day = windowStart(input.now, GUEST_DAY_MS); const sourceKey = deliveryUnlockSourceKey(auditId); const { now } = input;
   const meta = JSON.stringify({ via: "public_delivery", handle: input.handle, label: input.label, setNumber: input.setNumber, ipBucket: input.ipBucket });
   const results = await db.batch([
     db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
@@ -30,8 +33,12 @@ export async function writeUnlockRequest(db: D1Database, input: UnlockRequest): 
       FROM delivery_pages p JOIN delivery_sets s ON s.project_id = p.project_id AND s.set_number = p.latest_set_number
         JOIN delivery_set_items i ON i.set_id = s.id JOIN assets a ON a.id = i.asset_id
       WHERE p.slug = ?4 AND p.enabled = 1 AND s.id = ?5 AND i.handle = ?6 AND i.asset_id = ?7 AND ${GATE}
-        AND (a.kind <> 'video' OR ${LIVE_VERSION_EXISTS("a.id")}) AND ${lockedSql("a")} = 1`)
-      .bind(auditId, meta, now, input.slug, input.setId, input.handle, input.assetId),
+        AND (a.kind <> 'video' OR ${LIVE_VERSION_EXISTS("a.id")}) AND ${lockedSql("a")} = 1
+        AND NOT EXISTS (SELECT 1 FROM guest_rate_limits WHERE bucket = ?8 AND window_start = ?9)`)
+      .bind(auditId, meta, now, input.slug, input.setId, input.handle, input.assetId, bucket, day),
+    // The item's daily slot is taken in the SAME batch, only while this attempt's audit row landed: a request either lands with its slot or leaves nothing, and a lost reply can never leave a slot without a request.
+    db.prepare("INSERT INTO guest_rate_limits (bucket, window_start, count) SELECT ?1, ?2, 1 WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?3) ON CONFLICT (bucket, window_start) DO NOTHING")
+      .bind(bucket, day, auditId),
     db.prepare(`INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, recipient_authorization_epoch, payload_json, status, available_at, created_at, updated_at)
       SELECT ${SQL_UUID_V4}, 1, ?1, ?2, ?3, ?4, u.id, u.authorization_epoch,
         json_object('schemaVersion', 1, 'event', json_object('type', ?1, 'sourceKey', ?2, 'recipientId', u.id),
@@ -53,7 +60,7 @@ export async function writeUnlockRequest(db: D1Database, input: UnlockRequest): 
       .bind(DELIVERY_UNLOCK_NOTIFICATION_EVENT, sourceKey, now),
   ]);
   const landed = (results[0]?.meta.changes ?? 0) === 1;
-  const outboxIds = landed ? (results[1]?.results ?? []).map((row) => (row as { id?: unknown }).id).filter((id): id is string => typeof id === "string") : [];
+  const outboxIds = landed ? (results[2]?.results ?? []).map((row) => (row as { id?: unknown }).id).filter((id): id is string => typeof id === "string") : [];
   return { landed, outboxIds };
 }
 
