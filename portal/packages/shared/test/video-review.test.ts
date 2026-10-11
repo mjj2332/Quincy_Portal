@@ -3,12 +3,12 @@ import { CAPABILITIES } from "../src/capabilities";
 import { VIDEO_REVIEW_PARTS, VIDEO_REVIEW_PART_CAPABILITY, videoObjectKey, videoDtoSchema, videoPosterKey, videoReviewResponseSchema } from "../src/video-review";
 
 describe("video review parts (#741)", () => {
-  it("lists the eleven parts and maps each to a real capability", () => {
-    expect(VIDEO_REVIEW_PARTS).toEqual(["upload", "notes", "markup", "compare", "export", "links", "guest", "guest_comments", "delivery", "notify_staff", "notify_client"]);
+  it("lists the twelve parts and maps each to a real capability", () => {
+    expect(VIDEO_REVIEW_PARTS).toEqual(["upload", "notes", "markup", "compare", "export", "links", "guest", "guest_comments", "delivery", "notify_staff", "notify_client", "trash"]);
     for (const part of VIDEO_REVIEW_PARTS) expect(CAPABILITIES).toContain(VIDEO_REVIEW_PART_CAPABILITY[part]);
     expect(VIDEO_REVIEW_PART_CAPABILITY).toEqual({
       upload: "uploadVideo", notes: "annotateVideo", markup: "annotateVideo", compare: "viewVideo", export: "viewVideo", notify_staff: "viewVideo",
-      links: "shareVideo", guest: "shareVideo", guest_comments: "shareVideo", notify_client: "shareVideo", delivery: "releaseVideo",
+      links: "shareVideo", guest: "shareVideo", guest_comments: "shareVideo", notify_client: "shareVideo", delivery: "releaseVideo", trash: "manageVideoTrash",
     });
   });
 

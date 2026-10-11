@@ -72,5 +72,6 @@ export * from "./video-upload";
 export * from "./video-notes";
 export * from "./guest-review";
 export * from "./video-approval";
+export * from "./video-trash";
 export * from "./email-send-errors";
 export * from "./freehand-strokes";
