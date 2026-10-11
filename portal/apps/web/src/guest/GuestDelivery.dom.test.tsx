@@ -133,6 +133,15 @@ describe("Approve and Request changes", () => {
     expect(chipText()).toEqual(["Approved"]);
   });
 
+  it("labels the decision note with visible text", async () => {
+    await open();
+    await click(byId("guest-approve"));
+    const note = byId("guest-decision-note") as HTMLTextAreaElement;
+    const label = note.labels?.[0];
+    expect(label?.textContent).toBe("Note for the studio (optional)");
+    expect(note.getAttribute("aria-label")).toBeNull();
+  });
+
   it("Request changes sends the optional note, trimmed", async () => {
     extra = (url, init) => (url === decisionUrl(asset(10)) && init?.method === "POST" ? json({ decision: decisionOf("changes_requested") }, 201) : undefined);
     await open();
@@ -742,6 +751,19 @@ describe("Download all", () => {
     expect(byId("guest-download-all-start")).toBeNull();
     expect(byId("guest-download-all-problem")?.textContent).toMatch(/nothing/i);
     expect(allById("guest-download-leftout-item")).toHaveLength(2);
+  });
+
+  it("shows the zip description only when something is included", async () => {
+    manifest = { included: [], leftOut: [{ title: "Film 1", reason: "not_released" }], totalBytes: 0, tooLarge: false };
+    await open();
+    await click(byId("guest-download-all"));
+    expect(byId("guest-download-all-dialog")?.textContent).not.toContain("One zip with the released films below.");
+    expect(byId("guest-download-all-dialog")?.textContent).toContain("Nothing is ready to download yet.");
+    await act(async () => { root!.unmount(); }); root = null; host.remove(); document.body.innerHTML = "";
+    manifest = MANIFEST;
+    await open();
+    await click(byId("guest-download-all"));
+    expect(byId("guest-download-all-dialog")?.textContent).toContain("One zip with the released films below.");
   });
 
   it("reads the manifest fresh each time it opens", async () => {

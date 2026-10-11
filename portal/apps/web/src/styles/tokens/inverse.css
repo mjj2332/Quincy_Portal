@@ -14,7 +14,7 @@
    `data-surface="default"`, that restores every one of the same roles back
    to its normal `:root` value — otherwise a role the inverse block sets and
    the light panel doesn't re-set would inherit the dark value into the
-   light panel. The two blocks below therefore declare the same 24
+   light panel. The two blocks below therefore declare the same 28
    properties, one inverted, one restored. See
    docs/plans/TB8-09-Lightbox-Controls-Visual-Plan.md §2.3 and §2.3a for the
    full reasoning, including why both --ring and --focus-ring must be set
@@ -47,6 +47,12 @@
   --star-on:               var(--star-amber);     /*  9.20:1 — the paper ochre reads 2.98:1 here */
   --star-off:              var(--greige-400);     /*  5.55:1 — dimmer than the 9.20:1 amber, so the
                                                      unlit star recedes on ink as on paper (#306) */
+  /* Tone TEXT roles only (#741 14-ui-guest). The fill roles (--success, --warning, --info,
+     --destructive) stay put: a filled badge puts white text on them. */
+  --success-foreground:    var(--signal-positive-on-inverse);   /* 10.09:1 / 9.39:1 on ink-900 / ink-800 */
+  --warning-foreground:    var(--signal-caution-on-inverse);    /*  9.20:1 / 8.56:1 */
+  --info-foreground:       var(--signal-info-on-inverse);       /* 10.04:1 / 9.34:1 */
+  --destructive-wash-foreground: var(--signal-critical-on-inverse); /* 8.66:1 / 8.06:1 */
 }
 
 /* The light panel inside the dark stage. Must mirror the inverse block property-for-property;
@@ -76,4 +82,8 @@
   --focus-ring:            var(--ink-900);
   --star-on:               var(--signal-caution-text);
   --star-off:              var(--text-muted);
+  --success-foreground:    var(--signal-positive);
+  --warning-foreground:    var(--signal-caution-text);
+  --info-foreground:       var(--signal-info);
+  --destructive-wash-foreground: var(--signal-critical);
 }

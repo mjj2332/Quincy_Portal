@@ -64,7 +64,7 @@ export function GuestDownloadAll({ api, verify, session, onSession, onUnavailabl
       <DialogContent data-testid="guest-download-all-dialog" showCloseButton={false} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col sm:max-w-[520px]">
         <DialogHeader className="shrink-0">
           <DialogTitle>Download all</DialogTitle>
-          <DialogDescription>One zip with the released films below.</DialogDescription>
+          {!(loaded.kind === "ok" && loaded.manifest.included.length === 0) && <DialogDescription>One zip with the released films below.</DialogDescription>}
         </DialogHeader>
         <div data-testid="guest-download-all-body" className="min-h-0 flex-1 overflow-y-auto"><DownloadAllBody loaded={loaded} onRetry={load} /></div>
         <DialogFooter className="shrink-0">
