@@ -67,9 +67,8 @@ commands below leave `updated_by` null.
        ```
        Expect `[202, { sent: true, resendAfterSeconds: 60 }]`. A 403 `invalid_origin` means it was
        run from another tab; a 404 means one of the five flags is missing.
-     - Use a **second private window** for the second address: once a session has a code, a
-       different address on the same session needs a fresh session, and the same session can send
-       again only after 60 seconds.
+     - Wait 60 seconds (one send a minute per session), then run it again with the second address.
+       Don't verify either code: a verified session refuses a different address with 409.
      Use two addresses that are **not** verified Email Routing destinations (otherwise the probe
      proves nothing), and confirm both codes arrive in the inbox, not spam.
   3. Remove the temporary rows with the section 4 `DELETE`, using the same five keys.
