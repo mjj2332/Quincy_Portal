@@ -42,9 +42,10 @@ const retired = new WeakSet<object>();
 onPrincipalTerminal((queryClient) => { if (queryClient) retired.add(queryClient); });
 
 type Touches = "decisions" | "videos";
-const touchedKeys = (ctx: ApprovalWriteContext, touches: Touches) => (touches === "videos" ? [projectDataKeys.videos(ctx.projectId)] : [projectDataKeys.videoDecisions(ctx.projectId, ctx.videoId)]);
+const touchedKeys = (ctx: ApprovalWriteContext, touches: Touches) => (touches === "videos" ? [projectDataKeys.videos(ctx.projectId), projectDataKeys.delivery(ctx.projectId)] : [projectDataKeys.videoDecisions(ctx.projectId, ctx.videoId)]);
 
-const converge = (ctx: ApprovalWriteContext) => invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "video-decisions", videoId: ctx.videoId }, { kind: "videos" }], dashboard: false, calendar: false, gantt: false });
+/** A premium change (`touches` "videos") is also on the staff Delivery state a published Video Version is read from (#787 slice 10), so that is asked for again with it. */
+const converge = (ctx: ApprovalWriteContext, touches: Touches = "decisions") => invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "video-decisions", videoId: ctx.videoId }, { kind: "videos" }, ...(touches === "videos" ? [{ kind: "delivery" } as const] : [])], dashboard: false, calendar: false, gantt: false });
 
 /**
  * What a refusal changes locally, before the caller sees the error: a 401 ends the captured person's data; an access refusal (403, or a 404 that is not a missing Release) means the
@@ -65,7 +66,7 @@ async function onFailure(ctx: ApprovalWriteContext, error: unknown, touches: Tou
     // cancelled read is put back to idle, and only a converge asks for it again.
     await cancelStaleReads(ctx, touchedKeys(ctx, touches));
     if (retired.has(ctx.queryClient)) return;
-    await converge(ctx);
+    await converge(ctx, touches);
   }
 }
 
@@ -93,7 +94,7 @@ async function run<T>(ctx: ApprovalWriteContext, send: () => Promise<T>, apply?:
   try { value = await send(); } catch (error) { await onFailure(ctx, error, touches); throw error; }
   if (!retired.has(ctx.queryClient)) {
     await cancelStaleReads(ctx, touchedKeys(ctx, touches));
-    if (!retired.has(ctx.queryClient)) { apply?.(value); await converge(ctx); }
+    if (!retired.has(ctx.queryClient)) { apply?.(value); await converge(ctx, touches); }
   }
   return value;
 }

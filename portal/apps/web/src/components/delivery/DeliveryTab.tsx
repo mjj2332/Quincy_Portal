@@ -6,7 +6,7 @@ import { ApiError } from "../../lib/api";
 import { useCapabilities } from "../../lib/capabilities";
 import { buildDeliveryCandidates, type DeliveryCandidate } from "../../lib/delivery-candidates";
 import { deliveryErrorText, errorCode, previewDelivery, publishDelivery, refusedAssetIds, setAssetPremium, setAssetPremiumUnlock, setDeliveryPageEnabled, useProjectDeliveryQuery } from "../../lib/delivery-data";
-import { invalidateProjectSurfaces, projectDataKeys, useProjectAssetsQuery, useProjectVideosQuery, type ProjectDetail } from "../../lib/project-data";
+import { invalidateProjectSurfaces, projectDataKeys, useProjectAssetsQuery, useProjectDetailQuery, useProjectVideosQuery, type ProjectDetail } from "../../lib/project-data";
 import { setVideoPremium, setVideoPremiumUnlock } from "../../lib/video-approval-data";
 import { LazyImage } from "../LazyImage";
 import { Checkbox } from "../quincy/Checkbox";
@@ -49,7 +49,9 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
   const videos = useProjectVideosQuery(projectId, true, role);
   const state = delivery.data ?? null;
   const candidates = useMemo(() => buildDeliveryCandidates({ edited: edited.data ?? [], floorplan: floorplan.data ?? [], copy: copy.data ?? [], videos: videos.data ?? [] }), [edited.data, floorplan.data, copy.data, videos.data]);
-  const listsReady = [edited, floorplan, copy, videos].every((query) => !query.isPending);
+  const detail = useProjectDetailQuery(projectId, false, false, role); // observed only: the Workspace owns the read
+  // Usable data in every list. A list that failed (or is still loading) has none, and a selection seeded without it would silently drop its items.
+  const listsUsable = [edited, floorplan, copy, videos].every((query) => query.data !== undefined);
   const listsFailed = [edited, floorplan, copy, videos].find((query) => query.isError && !query.data);
 
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
@@ -62,21 +64,27 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
   const [rowBusy, setRowBusy] = useState<ReadonlySet<string>>(() => new Set());
   const [unlocking, setUnlocking] = useState<Unlocking>(null);
   const [paymentRef, setPaymentRef] = useState("");
-  const [archivedLatch, setArchivedLatch] = useState(false);
-  const seeded = useRef(false);
+  // After an archive refusal the tab is read-only before the Project is re-read: `Infinity` until that re-read answers, then the time of the answering read, which only a LATER read showing
+  // the Project unarchived (restored in another tab) may lift.
+  const [archivedLatch, setArchivedLatch] = useState<number | null>(null);
+  const [seeded, setSeeded] = useState(false);
   const pending = useRef<PendingPublish | null>(null);
   const [, rerender] = useState(0);
-  const isArchived = archived || archivedLatch;
-
-  // The first time both the page and the lists are in, start from the current set: re-publishing is usually an edit of what is there.
+  const isArchived = archived || archivedLatch !== null;
+  const detailArchivedAt = detail.data?.archivedAt;
   useEffect(() => {
-    if (seeded.current || !listsReady || delivery.isPending) return;
-    seeded.current = true;
+    if (archivedLatch !== null && detail.data && !detailArchivedAt && detail.dataUpdatedAt > archivedLatch) setArchivedLatch(null);
+  }, [archivedLatch, detail.data, detailArchivedAt, detail.dataUpdatedAt]);
+
+  // The first time the page and EVERY list are in, start from the current set: re-publishing is usually an edit of what is there. Until then Publish is off.
+  useEffect(() => {
+    if (seeded || !listsUsable || delivery.isPending) return;
+    setSeeded(true);
     const inSet = new Set(state?.set?.items.map((item) => item.assetId) ?? []);
     const start = candidates.filter((c) => inSet.has(c.assetId)).map((c) => c.assetId);
     setSelected(new Set(start));
     setCover(state?.set?.coverAssetId && start.includes(state.set.coverAssetId) ? state.set.coverAssetId : null);
-  }, [listsReady, delivery.isPending, candidates, state]);
+  }, [seeded, listsUsable, delivery.isPending, candidates, state]);
 
   const orderedIds = candidates.filter((c) => selected.has(c.assetId)).map((c) => c.assetId);
   const nameOf = (assetId: string) => candidates.find((c) => c.assetId === assetId)?.name ?? "an item";
@@ -102,10 +110,10 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
   }
   /** An archive refusal makes the tab read-only now; the Project is then re-read, and an authoritative "not archived" lifts it. */
   async function latchArchived() {
-    setArchivedLatch(true);
-    try { await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }], dashboard: false, calendar: false, gantt: false }); } catch { return; }
-    const current = queryClient.getQueryData<ProjectDetail>(projectDataKeys.detail(projectId));
-    if (current && !current.archivedAt) setArchivedLatch(false);
+    setArchivedLatch(Infinity);
+    try { await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }], dashboard: false, calendar: false, gantt: false }); } catch { setArchivedLatch(Date.now()); return; }
+    const answered = queryClient.getQueryState<ProjectDetail>(projectDataKeys.detail(projectId));
+    setArchivedLatch(answered?.data && !answered.data.archivedAt ? null : answered?.dataUpdatedAt ?? Date.now());
   }
   function refuse(error: unknown) {
     const code = errorCode(error);
@@ -195,9 +203,9 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
           <FrameTitle>What to publish</FrameTitle>
           <FrameDescription className="text-foreground-secondary">{`Choose the items for the client page, then a cover photo. ${orderedIds.length} selected.`}</FrameDescription>
         </FrameHeader>
-        {(!listsReady || delivery.isPending) && !listsFailed && <p role="status" className="m-0 text-foreground-secondary [font:var(--type-label)]">Loading what can be published…</p>}
+        {(!listsUsable || delivery.isPending) && !listsFailed && <p role="status" className="m-0 text-foreground-secondary [font:var(--type-label)]">Loading what can be published…</p>}
         {listsFailed && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>The items could not be loaded.</span><Button type="button" variant="outline" className={TOUCH} onClick={() => void listsFailed.refetch()}>Retry</Button></Notice>}
-        {listsReady && candidates.length === 0 && <p className="m-0 text-foreground-secondary [font:var(--type-label)]">Nothing is ready to publish yet. Edited photos, the Floorplan and Copy PDFs and Videos appear here once they are in.</p>}
+        {listsUsable && candidates.length === 0 && <p className="m-0 text-foreground-secondary [font:var(--type-label)]">Nothing is ready to publish yet. Edited photos, the Floorplan and Copy PDFs and Videos appear here once they are in.</p>}
         {GROUPS.map((group) => {
           const members = candidates.filter((c) => c.kind === group.kind);
           if (members.length === 0) return null;
@@ -247,7 +255,8 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
         </section>}
         <div className="flex flex-wrap items-center gap-[var(--space-2)]">
           <Button type="button" variant="outline" data-testid="delivery-preview" className={TOUCH} disabled={none || busy !== null} onClick={() => void runPreview()}>Preview</Button>
-          <Button type="button" data-testid="delivery-publish" className={TOUCH} disabled={(none && !pending.current) || busy !== null || isArchived} onClick={() => { setProblem(null); setConfirming(true); }}>{pending.current ? "Retry publish" : page ? "Publish a new set" : "Publish"}</Button>
+          <Button type="button" data-testid="delivery-publish" className={TOUCH} disabled={(none && !pending.current) || busy !== null || isArchived || !seeded} onClick={() => { setProblem(null); setConfirming(true); }}>{pending.current ? "Retry publish" : page ? "Publish a new set" : "Publish"}</Button>
+          {!seeded && <span data-testid="delivery-publish-reason" className="text-foreground-secondary [font:var(--type-label)]">{listsFailed ? "Publish is off because some items could not be loaded. Retry them above." : "Publish is off while the items are loading."}</span>}
           {pending.current && <Button type="button" variant="ghost" data-testid="delivery-discard-retry" className={TOUCH} disabled={busy !== null} onClick={() => { pending.current = null; setProblem(null); rerender((n) => n + 1); }}>Discard unfinished publish</Button>}
         </div>
       </FramePanel>

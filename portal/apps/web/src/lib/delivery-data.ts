@@ -9,6 +9,7 @@ import { ApiError, apiGet, apiPost, apiPut } from "./api";
 import { getProjectQueryRuntime } from "./project-query-sync";
 import { invalidateProjectSurfaces, projectDataKeys, projectQueryRetry, removedDataError, terminatePrincipalOnUnauthorized } from "./project-data";
 import type { WorkspaceAsset } from "../components/PhotoGrid";
+import { onPrincipalTerminal } from "./principal-terminal";
 import { classifyVideoApprovalError, videoApprovalErrorText } from "./video-approval-errors";
 
 /**
@@ -37,6 +38,12 @@ export function useProjectDeliveryQuery(projectId: string, enabled: boolean): Us
   });
 }
 
+/** Query clients whose person was signed out (a 401): an answer that lands late must not repopulate or refresh a session that is over (the same guard as `video-approval-data.ts`). */
+const retired = new WeakSet<object>();
+onPrincipalTerminal((queryClient) => { if (queryClient) retired.add(queryClient); });
+/** False once the session is over or the Project has been removed from this one: nothing the server answers after that may be written to its cache. */
+const live = (queryClient: QueryClient, projectId: string) => !retired.has(queryClient) && !getProjectQueryRuntime(queryClient)?.isProjectRemoved(projectId);
+
 const settle = (queryClient: QueryClient, projectId: string, collectionKind?: CollectionKind) =>
   invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "delivery" }, ...(collectionKind ? [{ kind: "assets", collectionKind } as const] : [])], dashboard: false, calendar: false, gantt: false });
 
@@ -44,8 +51,17 @@ const settle = (queryClient: QueryClient, projectId: string, collectionKind?: Co
 const settlePublished = (queryClient: QueryClient, projectId: string) =>
   invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "delivery" }, { kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
 
-/** Puts a state the server just answered into the cache, so the page does not wait on a re-read to show it. */
-const putState = (queryClient: QueryClient, projectId: string, state: DeliveryState) => queryClient.setQueryData<DeliveryState | null>(projectDataKeys.delivery(projectId), state);
+/**
+ * A write that answered with the page state: stop Delivery reads already in flight (they predate it), put the answer into the cache so the page does not wait on a re-read, then
+ * invalidate and broadcast the delivery resource. Nothing is written for a session that ended, or a Project that was removed, while the call was in flight.
+ */
+async function settleState(queryClient: QueryClient, projectId: string, state: DeliveryState, published: boolean): Promise<void> {
+  if (!live(queryClient, projectId)) return;
+  await queryClient.cancelQueries({ queryKey: projectDataKeys.delivery(projectId), exact: true });
+  if (!live(queryClient, projectId)) return;
+  queryClient.setQueryData<DeliveryState | null>(projectDataKeys.delivery(projectId), state);
+  void (published ? settlePublished(queryClient, projectId) : settle(queryClient, projectId)).catch(() => undefined);
+}
 
 /** Whatever a refusal or failure means for the session, whichever call made it: a 401 ends it. */
 async function guarded<T>(queryClient: QueryClient, call: () => Promise<T>): Promise<T> {
@@ -61,19 +77,19 @@ export type PublishInput = { assetIds: string[]; coverAssetId: string | null; ex
 export async function publishDelivery(queryClient: QueryClient, projectId: string, input: PublishInput): Promise<DeliveryPublishResponse> {
   const response = await guarded(queryClient, async () => deliveryPublishResponseSchema.parse(await apiPost<unknown, PublishInput>(`${deliveryPath(projectId)}/publish`, input)));
   const { replayed: _replayed, operationSetNumber: _operationSetNumber, ...state } = response;
-  putState(queryClient, projectId, state);
-  void settlePublished(queryClient, projectId).catch(() => undefined);
+  await settleState(queryClient, projectId, state, true);
   return response;
 }
 
 export async function setDeliveryPageEnabled(queryClient: QueryClient, projectId: string, enabled: boolean): Promise<DeliveryState> {
   const state = await guarded(queryClient, async () => deliveryStateSchema.parse(await apiPut<unknown, { enabled: boolean }>(`${deliveryPath(projectId)}/page`, { enabled })));
-  putState(queryClient, projectId, state);
+  await settleState(queryClient, projectId, state, false);
   return state;
 }
 
 /** Patches one Asset's premium flags into the cached Assets list and the cached page set, so the controls show the server's answer before the re-read lands. */
 function patchPremium(queryClient: QueryClient, projectId: string, assetId: string, collectionKind: CollectionKind, answer: AssetPremiumResponse) {
+  if (!live(queryClient, projectId)) return;
   queryClient.setQueryData<WorkspaceAsset[]>(projectDataKeys.assets(projectId, collectionKind), (list) => list?.map((asset) => (asset.id === assetId ? { ...asset, premium: answer.premium, premiumUnlocked: answer.premiumUnlocked } : asset)));
   queryClient.setQueryData<DeliveryState | null>(projectDataKeys.delivery(projectId), (current) => current?.set
     ? { ...current, set: { ...current.set, items: current.set.items.map((item) => (item.assetId === assetId ? { ...item, premium: answer.premium, premiumUnlocked: answer.premiumUnlocked, locked: answer.premium && !answer.premiumUnlocked } : item)) } }
@@ -86,7 +102,7 @@ async function premiumWrite(queryClient: QueryClient, projectId: string, assetId
     const answer = await guarded(queryClient, call);
     patchPremium(queryClient, projectId, assetId, collectionKind, answer);
     return answer;
-  } finally { void settle(queryClient, projectId, collectionKind); }
+  } finally { if (live(queryClient, projectId)) void settle(queryClient, projectId, collectionKind); }
 }
 
 /** Photo and document premium: mark or unmark. */

@@ -36,3 +36,8 @@ No new raw `<button>`, `<input>`, `<select>`, `<textarea>`, `<dialog>` or widget
 - Premium switch hit area: `reui/switch` wrapped in a native `label` (the hit target, `min-h-11` below 721px), matching the existing selection-checkbox label. No new raw primitive.
 - Page switch row: the existing `reui/switch` + `reui/label` row gains the same `min-h-11` touch class.
 - "Discard unfinished publish": `reui/button` (ghost), same as the other actions.
+
+## Sol round 2 additions
+
+- Publish-off reason (`delivery-publish-reason`): a plain `span` of label-type text beside the Publish `reui/button`, in the same row. Searched: `reui/notice`-style callouts (the tab's `quincy/Notice` is a block banner, too heavy for a one-line reason beside a button) and the ReUI `field` description; none is an inline hint. No new raw primitive.
+- Staff Delivery state now carries a Video Version's premium and unlock from its Video (`videos.premium`, `video_premium_unlocks`), so older served Video rows show the real state; a Video premium write also asks for the Delivery state again.

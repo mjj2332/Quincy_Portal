@@ -1,6 +1,6 @@
 import { DELIVERY_ITEM_KINDS, type DeliveryItemKind, type DeliveryItemDto, type DeliveryPageDto, type DeliveryState } from "@quincy/shared";
 import { lockedSql } from "./delivery-lock";
-import { LIVE_VERSION, LIVE_VERSION_EXISTS } from "./video-live-sql";
+import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VERSION_OF_VIDEO } from "./video-live-sql";
 
 /**
  * The Client Delivery page as data (#787 slice 5). One builder turns set rows into the strict DTO for staff Preview, the staff read and (slice 6) the public read; the caller supplies
@@ -86,12 +86,17 @@ export async function readSetRows(db: D1Database, setId: string): Promise<Delive
   return rows.map((row) => rowOf(row, row.handle, row.position));
 }
 
-/** The paid-extra flag and unlock of photos and documents among `assetIds`, by id. A Video is absent: its premium belongs to the Video. */
+/** The paid-extra flag and unlock of each of `assetIds`, by id. A photo or document carries its own; a Video Version has its Video's (`videos.premium`, `video_premium_unlocks`), never the Asset's. */
 async function readPremiumFlags(db: D1Database, assetIds: readonly string[]): Promise<Map<string, { premium: boolean; unlocked: boolean }>> {
   if (assetIds.length === 0) return new Map();
-  const found = (await db.prepare(`SELECT a.id AS id, a.delivery_premium AS premium, u.asset_id IS NOT NULL AS unlocked FROM assets a LEFT JOIN asset_premium_unlocks u ON u.asset_id = a.id
-      WHERE a.id IN (SELECT value FROM json_each(?1)) AND a.kind IN ('photo', 'floorplan_pdf', 'copy_pdf')`).bind(JSON.stringify(assetIds)).all<{ id: string; premium: number; unlocked: number }>()).results;
-  return new Map(found.map((row) => [row.id, { premium: row.premium === 1, unlocked: row.unlocked === 1 }]));
+  const json = JSON.stringify(assetIds);
+  const [assets, videos] = await Promise.all([
+    db.prepare(`SELECT a.id AS id, a.delivery_premium AS premium, u.asset_id IS NOT NULL AS unlocked FROM assets a LEFT JOIN asset_premium_unlocks u ON u.asset_id = a.id
+      WHERE a.id IN (SELECT value FROM json_each(?1)) AND a.kind IN ('photo', 'floorplan_pdf', 'copy_pdf')`).bind(json).all<{ id: string; premium: number; unlocked: number }>(),
+    db.prepare(`SELECT m.asset_id AS id, v.premium AS premium, vu.video_id IS NOT NULL AS unlocked FROM video_version_meta m JOIN videos v ON v.id = m.video_id LEFT JOIN video_premium_unlocks vu ON vu.video_id = v.id
+      WHERE m.asset_id IN (SELECT value FROM json_each(?1)) AND ${LIVE_VERSION_OF_VIDEO("m", "v")}`).bind(json).all<{ id: string; premium: number; unlocked: number }>(),
+  ]);
+  return new Map([...assets.results, ...videos.results].map((row) => [row.id, { premium: row.premium === 1, unlocked: row.unlocked === 1 }]));
 }
 
 const STATE_KINDS: readonly string[] = DELIVERY_ITEM_KINDS;

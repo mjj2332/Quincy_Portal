@@ -7,7 +7,9 @@ const api = vi.hoisted(() => ({ apiPost: vi.fn(), apiPut: vi.fn(), apiGet: vi.fn
 vi.mock("./api", async (importOriginal) => ({ ...(await importOriginal<typeof import("./api")>()), ...api }));
 const sync = vi.hoisted(() => ({ invalidateProjectSurfaces: vi.fn(async (..._args: unknown[]) => undefined), terminatePrincipalOnUnauthorized: vi.fn() }));
 vi.mock("./project-data", async (importOriginal) => ({ ...(await importOriginal<typeof import("./project-data")>()), ...sync }));
-import { previewDelivery, publishDelivery, setAssetPremium, setAssetPremiumUnlock } from "./delivery-data";
+import { announcePrincipalTerminal } from "./principal-terminal";
+import { ProjectQueryRuntime } from "./project-query-sync";
+import { previewDelivery, publishDelivery, setAssetPremium, setAssetPremiumUnlock, setDeliveryPageEnabled } from "./delivery-data";
 
 const P = "11111111-1111-4111-8111-111111111111"; const A = "22222222-2222-4222-8222-222222222222";
 const handle = "abcdefghijklmnop";
@@ -59,5 +61,37 @@ describe("a 401 from any delivery call ends the session", () => {
     api[method].mockRejectedValue(new ApiError("Session expired", 401));
     await expect(call()).rejects.toBeInstanceOf(ApiError);
     expect(sync.terminatePrincipalOnUnauthorized).toHaveBeenCalledWith(client, expect.any(ApiError));
+  });
+});
+
+describe("a success that lands after the session or the Project is gone writes nothing", () => {
+  const gone = {
+    "the session was terminated": () => announcePrincipalTerminal(client),
+    "the Project was removed": () => { new ProjectQueryRuntime(client, "tab").markProjectRemoved(P); },
+  } as const;
+  const writes = {
+    publish: () => { api.apiPost.mockImplementation(async () => { gone_(); return { ...state(2), replayed: false, operationSetNumber: 2 }; }); return publishDelivery(client, P, { assetIds: [A], coverAssetId: null, expectedLatestSet: null, operationId: "op" }); },
+    "page switch": () => { api.apiPut.mockImplementation(async () => { gone_(); return state(1); }); return setDeliveryPageEnabled(client, P, false); },
+    premium: () => { api.apiPut.mockImplementation(async () => { gone_(); return { premium: true, premiumUnlocked: false }; }); return setAssetPremium(client, P, A, "edited", true); },
+  } as const;
+  let gone_: () => void = () => undefined;
+  it.each(Object.keys(gone).flatMap((reason) => Object.keys(writes).map((write) => [reason, write] as const)))("%s, then %s answers", async (reason, write) => {
+    gone_ = gone[reason as keyof typeof gone];
+    client.setQueryData(projectDataKeys.assets(P, "edited"), [{ id: A, premium: false, premiumUnlocked: false }]);
+    await writes[write as keyof typeof writes]();
+    expect(client.getQueryData(projectDataKeys.delivery(P))).toBeUndefined();
+    if (reason === "the session was terminated") expect(client.getQueryData(projectDataKeys.assets(P, "edited"))).toEqual([{ id: A, premium: false, premiumUnlocked: false }]);
+    expect(sync.invalidateProjectSurfaces).not.toHaveBeenCalled();
+  });
+});
+
+describe("the page switch settles like the other writes", () => {
+  it("cancels stale Delivery reads, patches from the response, then invalidates and broadcasts the delivery resource", async () => {
+    const order: string[] = [];
+    vi.spyOn(client, "cancelQueries").mockImplementation(async () => { order.push("cancel"); });
+    sync.invalidateProjectSurfaces.mockImplementation(async (_c: unknown, input: unknown) => { order.push(`invalidate:${(input as { resources: Array<{ kind: string }> }).resources.map((r) => r.kind).join(",")}:${(client.getQueryData(projectDataKeys.delivery(P)) as { page: { enabled: boolean } } | undefined)?.page.enabled}`); });
+    api.apiPut.mockResolvedValue({ ...state(1), page: { ...state(1).page, enabled: false } });
+    await setDeliveryPageEnabled(client, P, false);
+    expect(order).toEqual(["cancel", "invalidate:delivery:false"]);
   });
 });
