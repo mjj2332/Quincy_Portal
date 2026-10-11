@@ -6187,3 +6187,11 @@ Tags: css-tokens, focus-overlays · #741
 - **Rule.** A dialog, alert dialog or sheet states its width explicitly (`sm:max-w-[460px]`) or uses a size whose container token is not redefined (`sm:max-w-3xl` is 48rem, as `VideoNotePasteDialog` does). Never `max-w-{sm,md,lg,xl}`, with or without a breakpoint prefix, on `DialogContent`, `AlertDialogContent` or `SheetContent`.
 
 Guards: `apps/web/src/styles/design-system-guards.test.ts` ("dialog and sheet content never uses a page-width max-w").
+
+## Don't retire user-typed state from list diffs (#776)
+Tags: search-filters · #776
+
+- **What bit.** The Films panel forgot a Version's note draft and decision drafts whenever the Version vanished from a successful read of the list. A list snapshot is not proof of removal: a restore answered from an older snapshot, landing after a newer one, made a live Version "disappear" for a moment and the diff deleted the draft the person had just typed. Four review rounds patched one race after another (stale restore, stalled refetch, lost response, delayed retirement).
+- **Rule.** Retire typed state (note drafts, decision drafts) only on the person's own confirmed local action: the Remove confirmation, which warns the draft will be discarded, calls `forgetSlot` / `forget` through `onRemoved`. A list diff may retire only state that holds nothing typed (the compare pair and offsets, where the worst case is leaving compare). A Version that vanishes any other way (another tab, a lost response, a stale snapshot) leaves its draft dormant, and it is still there if the Version comes back.
+
+Guards: `apps/web/src/components/video/VideoCollectionPanel.trash-retire.dom.test.tsx`, `VideoReviewViewer.trash.dom.test.tsx` ("retires the removed Version's form slot").

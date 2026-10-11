@@ -6,7 +6,7 @@ import { useOptionalProjectQueryClient, useProjectAccessTermination, useProjectV
 import { onPrincipalTerminal } from "../../lib/principal-terminal";
 import { createCompareStore, type CompareStore } from "../../lib/video-compare-store";
 import { createNoteFormStore, type NoteFormStore } from "../../lib/video-note-form-store";
-import { createVideoApprovalStore, versionSlot, videoSlot, type VideoApprovalStore } from "../../lib/video-approval-store";
+import { createVideoApprovalStore, type VideoApprovalStore } from "../../lib/video-approval-store";
 import { abortVideoReservation, cancelVideoUpload, removeVideoUpload, retryVideoUpload, startVideoUpload, uploadIdentityGeneration, useVideoUploads } from "../../lib/video-upload-store";
 import { checkVideoFile } from "../../lib/video-upload";
 import { ViewLoadBoundary } from "../ViewLoadBoundary";
@@ -73,8 +73,11 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     const off = onPrincipalTerminal((terminated) => { if (terminated === undefined || terminated === queryClient) forms.cancelAll(); });
     return () => { off(); forms.cancelAll(); };
   }, [forms, queryClient]);
-  // A Video or Version that disappears from a successful read of the list (removed here or in another tab, #776 E) loses everything held for it: form slot, paste clipboard, compare
-  // offsets, decision drafts. Done here, where the list lives, so it also works while the viewer is closed. A failed or loading read leaves `videos.data` as it was and retires nothing.
+  // A Version that disappears from a successful read of the list (removed in another tab, #776 E) loses the state that holds nothing the person typed: its compare pair and offsets.
+  // Typed state (a note draft, a decision draft) is NOT retired here. A list snapshot is not proof of removal: an older restore or removal answer can land after a newer one and make a
+  // live Version look gone for a moment. Typed state is retired only by the person's own confirmed removal (`VideoVersionMenu` -> the viewer's `onVersionRemoved`, after the "your draft
+  // will be discarded" warning). A Version that vanishes any other way (another tab, a lost response, a stale snapshot) leaves its draft dormant, and it is still there if the Version
+  // comes back. A failed or loading read leaves `videos.data` as it was and retires nothing. See docs/lessons.md "Don't retire user-typed state from list diffs".
   const known = useRef<{ projectId: string; videos: Map<string, string[]> } | null>(null);
   useEffect(() => {
     const data = videos.data;
@@ -84,16 +87,13 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     known.current = { projectId, videos: next };
     if (!before) return;
     const present = new Set([...next.values()].flat());
-    for (const [videoId, assetIds] of before) {
+    for (const assetIds of before.values()) {
       for (const assetId of assetIds) {
         if (present.has(assetId)) continue;
-        forms.forgetSlot(assetId);
         compareStore.dropVersion(assetId);
-        deliveryStore.forget(versionSlot(assetId));
       }
-      if (!next.has(videoId)) deliveryStore.forget(videoSlot(videoId));
     }
-  }, [videos.data, projectId, forms, compareStore, deliveryStore]);
+  }, [videos.data, projectId, compareStore]);
   // Review links (#741 11b): the store and the dialog live in `ReviewLinksScope`, above the tab switch; this reads them. Shipped dark behind the `links` part and `shareVideo`.
   const reviewLinks = useReviewLinksUi({ projectId, role, review, archived, store: useContext(ReviewLinkStoreContext) });
   // The fixed selection bar's measured height (0 while it is not shown), kept clear at the end of the collection.
