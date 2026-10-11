@@ -14,6 +14,7 @@ stubRailMedia(true);
 
 const authState = vi.hoisted(() => ({ role: "admin" }));
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1", role: authState.role } }, isPending: false }) }));
+vi.mock("embla-carousel-react", async () => (await import("../testing/delivery-fixtures")).fakeEmblaModule());
 vi.mock("../components/LazyImage", () => ({ LazyImage: ({ src, alt }: { src: string; alt: string }) => <img src={src} alt={alt} /> }));
 
 const apiGetMock = vi.fn<(path: string, init?: unknown) => Promise<unknown>>();
@@ -92,6 +93,7 @@ const byId = (id: string) => host.querySelector<HTMLElement>(`[data-testid="${id
 const allById = (id: string) => [...host.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`)];
 const byLabel = (label: string) => host.querySelector<HTMLElement>(`[aria-label="${label}"]`);
 const bodyById = (id: string) => document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+const previewTab = (within: ParentNode, name: string) => [...within.querySelectorAll<HTMLElement>('[role="tab"]')].find((element) => element.textContent === name);
 const gets = () => apiGetMock.mock.calls.map(([path]) => path);
 async function openDelivery(role: Role = "admin") { await mount(role); await click(tab("Delivery")); await flush(); }
 /** A first Publish starts with everything ticked (PRD §6.7); most tests build their own selection from nothing. */
@@ -171,7 +173,7 @@ describe("Preview", () => {
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}/delivery/preview`, { assetIds: [ids.photo1, ids.photo2], coverAssetId: ids.photo1 });
     const dialog = bodyById("delivery-preview-dialog")!;
     expect(dialog.textContent).toContain("Photo 01");
-    expect(dialog.textContent).toContain("Locked");
+    expect(dialog.textContent).toContain("Premium"); // the locked photo's tab on the shared client page
     expect(dialog.querySelector("h2")?.textContent).toBe("Preview");
     expect(dialog.textContent).toContain("12 Example St: how the client page will look as set 1.");
     expect(dialog.querySelector("img")?.getAttribute("src")).toContain("/delivery/preview-media/");
@@ -538,17 +540,17 @@ describe("round 4: fresh candidates, first-Publish defaults and Request unlock i
     apiPostMock.mockResolvedValue(lockedPreview);
     await openDelivery(); await click(byId("delivery-preview"));
     const dialog = bodyById("delivery-preview-dialog")!;
-    const buttons = () => [...dialog.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent?.includes("Request unlock") || button.textContent?.includes("Requested"));
+    await click(previewTab(dialog, "Premium")); // a locked extra lives on the Premium tab, as on the client page
+    const buttons = () => [...dialog.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent?.includes("Request unlock"));
     expect(buttons()).toHaveLength(1); // only the locked item
-    expect(buttons()[0]!.closest('[data-testid="delivery-preview-item"]')?.textContent).toContain("Photo 02");
+    expect(buttons()[0]!.getAttribute("aria-label")).toBe("Request unlock: Photo 02");
     const calls = [apiPostMock.mock.calls.length, apiPutMock.mock.calls.length, apiGetMock.mock.calls.length];
     await click(buttons()[0]);
-    expect(buttons()[0]!.textContent).toContain("Requested");
-    expect(buttons()[0]!.disabled).toBe(true);
+    expect(dialog.querySelector('[data-testid="delivery-unlock-status"]')?.textContent).toBe("Requested. The studio will be in touch.");
+    expect(buttons()).toHaveLength(0); // answered: the button is gone
     expect([apiPostMock.mock.calls.length, apiPutMock.mock.calls.length, apiGetMock.mock.calls.length]).toEqual(calls);
   });
 });
-
 
 describe("round 6: a pending Publish outlives the sheet, the cover follows its photo, Preview opens the media", () => {
   const treeOf = (show: boolean, role: Role = "admin") => <QuincyQueryProvider key={role} principalId="test-user" role={role}>{show && <ProjectWorkspace projectId={PROJECT_ID} onArrivalConsumed={() => undefined} />}</QuincyQueryProvider>;
@@ -633,33 +635,39 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
     { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, premium: true, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null },
     { handle: handle(3), kind: "floorplan", label: "Floorplan 01", position: 2, locked: false, premium: false, width: null, height: null, durationMs: null, url: "/pdf/1", thumbUrl: null },
     { handle: handle(4), kind: "video", label: "Video 01", position: 3, locked: false, premium: false, width: 1920, height: 1080, durationMs: 62000, url: "/video/1", thumbUrl: "/video/1/thumb" }] } };
-  it("lets staff open an unlocked photo full-size, play a Video and open a PDF, and nothing for a locked item", async () => {
+  it("lets staff open an unlocked photo in the viewer, play a Video and view a PDF in a new tab, with no download and nothing to open for a locked item", async () => {
     apiPostMock.mockResolvedValue(lockedPreviewDto);
     await openDelivery(); await click(byId("delivery-preview"));
     const dialog = bodyById("delivery-preview-dialog")!;
     const control = (name: string) => dialog.querySelector<HTMLElement>(`[aria-label="${name}"]`);
     expect(control("Open Photo 02")).toBeNull();
     await click(control("Open Photo 01"));
-    expect(dialog.querySelector('[data-testid="delivery-preview-inspect"] img')?.getAttribute("src")).toBe(`/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`);
-    await click(control("Play Video 01"));
-    expect(dialog.querySelector('[data-testid="delivery-preview-inspect"] video')?.getAttribute("src")).toBe("/video/1");
-    const pdf = control("Open Floorplan 01") as HTMLAnchorElement;
-    expect(pdf.getAttribute("href")).toBe("/pdf/1"); expect(pdf.getAttribute("target")).toBe("_blank"); expect(pdf.getAttribute("rel")).toContain("noopener");
+    const lightbox = bodyById("delivery-lightbox")!;
+    expect(lightbox.querySelector("img")?.getAttribute("src")).toBe(`/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`);
+    expect(lightbox.querySelectorAll("a")).toHaveLength(0); // Preview offers no download
+    await click(lightbox.querySelector('[aria-label="Close"]')); await flush();
+    expect(bodyById("delivery-lightbox")).toBeNull();
+    await click(previewTab(dialog, "Film"));
+    expect(dialog.querySelector("video")?.getAttribute("src")).toBe("/video/1");
+    await click(previewTab(dialog, "Floorplan"));
+    const pdf = control("View Floorplan 01") as HTMLAnchorElement;
+    expect(pdf.getAttribute("href")).toBe("/pdf/1"); expect(pdf.getAttribute("target")).toBe("_blank"); expect(pdf.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(dialog.querySelectorAll("a[download]")).toHaveLength(0);
   });
-  it("pauses a playing Preview Video when another item is inspected or Preview closes", async () => {
+  it("pauses a playing Preview Video when the tab changes or Preview closes", async () => {
     const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
     try {
       apiPostMock.mockResolvedValue(lockedPreviewDto);
       await openDelivery(); await click(byId("delivery-preview"));
       const dialog = bodyById("delivery-preview-dialog")!;
-      const control = (name: string) => dialog.querySelector<HTMLElement>(`[aria-label="${name}"]`);
-      await click(control("Play Video 01"));
-      const video = dialog.querySelector('[data-testid="delivery-preview-inspect"] video');
+      await click(previewTab(dialog, "Film"));
+      const video = dialog.querySelector("video");
+      expect(video).not.toBeNull();
       pause.mockClear();
-      await click(control("Open Photo 01"));
+      await click(previewTab(dialog, "Photos"));
       expect(pause.mock.contexts).toContain(video);
-      await click(control("Play Video 01"));
-      const again = dialog.querySelector('[data-testid="delivery-preview-inspect"] video');
+      await click(previewTab(dialog, "Film"));
+      const again = dialog.querySelector("video");
       pause.mockClear();
       await click(bodyById("delivery-preview-close")); await flush();
       expect(pause.mock.contexts).toContain(again);
