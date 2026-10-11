@@ -72,6 +72,15 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
     }
   }, [projectId, terminate, queryClient]);
 
+  // An upload that blocks removing the whole film ends (finished or cancelled) in the Video the list already observes: read the impact again, so Remove is offered without reopening.
+  const uploadKey = video.uploading?.reservationId ?? "";
+  const seenUploadKey = useRef(uploadKey);
+  useEffect(() => {
+    if (seenUploadKey.current === uploadKey) return;
+    seenUploadKey.current = uploadKey;
+    if (target && impact?.uploading === true && !pending) void load(target);
+  }, [uploadKey, target, impact, pending, load]);
+
   const open = () => {
     const next: Target = { assetId: version.assetId, version: version.version, videoId: video.id, title: video.title };
     setTarget(next); setPending(false); setDraft(hasDraft(next.assetId));

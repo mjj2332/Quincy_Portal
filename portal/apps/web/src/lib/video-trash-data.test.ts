@@ -150,6 +150,57 @@ describe("video trash data (#776 E)", () => {
     expect(client.getQueryData<VideoDto[]>(key)!.map((v) => v.id)).toEqual([V]);
   });
 
+  it("a restore that lands while the first decisions read is in flight is not overwritten by that older read", async () => {
+    const actual = await vi.importActual<typeof import("./project-data")>("./project-data");
+    vi.mocked(projectData.invalidateProjectSurfaces).mockImplementation(actual.invalidateProjectSurfaces);
+    const key = projectDataKeys.videoDecisions(P, V);
+    let resolveOld!: (value: unknown) => void;
+    api.apiGet.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+    api.apiGet.mockResolvedValueOnce({ fresh: true });
+    const observer = new QueryObserver(client, { queryKey: key, queryFn: async () => api.apiGet("/decisions"), staleTime: 15_000 });
+    const unsubscribe = observer.subscribe(() => {});
+    api.apiPost.mockResolvedValueOnce({ video: videoOf(V) });
+    const write = restoreVideoVersion({ ...ctx(), assetId: A });
+    await vi.waitFor(() => expect(api.apiPost).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveOld({ stale: true });
+    await write;
+    await vi.waitFor(() => expect(observer.getCurrentResult().fetchStatus).toBe("idle"));
+    unsubscribe();
+    expect(client.getQueryData(key)).toEqual({ fresh: true });
+  });
+
+  it("a failed write whose answer was lost also cancels the stale decisions read", async () => {
+    const actual = await vi.importActual<typeof import("./project-data")>("./project-data");
+    vi.mocked(projectData.invalidateProjectSurfaces).mockImplementation(actual.invalidateProjectSurfaces);
+    const key = projectDataKeys.videoDecisions(P, V);
+    let resolveOld!: (value: unknown) => void;
+    api.apiGet.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+    api.apiGet.mockResolvedValueOnce({ fresh: true });
+    const observer = new QueryObserver(client, { queryKey: key, queryFn: async () => api.apiGet("/decisions"), staleTime: 15_000 });
+    const unsubscribe = observer.subscribe(() => {});
+    api.apiPost.mockRejectedValueOnce(new ApiError("Failed to fetch", 0));
+    const write = restoreVideoVersion({ ...ctx(), assetId: A });
+    const settled = expect(write).rejects.toBeInstanceOf(ApiError);
+    await vi.waitFor(() => expect(api.apiPost).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveOld({ stale: true });
+    await settled;
+    await vi.waitFor(() => expect(observer.getCurrentResult().fetchStatus).toBe("idle"));
+    unsubscribe();
+    expect(client.getQueryData(key)).toEqual({ fresh: true });
+  });
+
+  it("a remove and a restore tell other windows about the Videos, the Trash and the Video's decisions", async () => {
+    vi.mocked(projectData.invalidateProjectSurfaces).mockClear();
+    api.apiPost.mockResolvedValueOnce({ video: null });
+    await removeVideoVersion({ ...ctx(), assetId: A }, { ...impact, lastVersion: true }, true);
+    api.apiPost.mockResolvedValueOnce({ video: videoOf(V) });
+    await restoreWholeVideo(ctx());
+    const calls = vi.mocked(projectData.invalidateProjectSurfaces).mock.calls.map(([, input]) => (input as { resources: Array<{ kind: string }> }).resources.map((r) => r.kind));
+    expect(calls).toEqual([["videos", "video-trash", "video-decisions"], ["videos", "video-trash", "video-decisions"]]);
+  });
+
   it("a read refusal runs the same recovery as a write refusal: a vanished Version refreshes the list, a lost access asks for the gate again", async () => {
     vi.mocked(projectData.invalidateProjectSurfaces).mockImplementation(async (_client: QueryClient, input: { resources: Array<{ kind: string }> }) => { surfaces.invalidated.push(input.resources.map((r) => r.kind).join(",")); });
     await refreshAfterRefusal(ctx(), new ApiError("Version not found", 404, { error: "Version not found" }), "remove");

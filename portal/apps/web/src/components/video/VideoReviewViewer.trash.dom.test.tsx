@@ -39,7 +39,9 @@ let root: Root | null = null; let host: HTMLElement;
 let versions: Array<{ assetId: string; version: number }>;
 let impact: VideoRemovalImpact;
 let removeOutcome: () => Promise<unknown>;
-const videoNow = (): VideoDto => fixtureVideo({ id: ids.video, versions: versions.map((v) => fixtureVersion(v)) });
+/** The film's upload reservation on the "server" (null: none). */
+let uploadingNow: VideoDto["uploading"] = null;
+const videoNow = (): VideoDto => fixtureVideo({ id: ids.video, versions: versions.map((v) => fixtureVersion(v)), uploading: uploadingNow });
 async function flush(times = 8) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
 async function mount(opts: { parts?: string[]; role?: Role; archived?: boolean } = {}) {
   api.apiGet.mockImplementation(async (path) => {
@@ -89,7 +91,7 @@ const versionLabel = () => tid("video-version-label")?.textContent ?? "";
 beforeEach(() => {
   stub = installVideoElementStub(); Object.values(api).forEach((m) => m.mockReset()); stores.made.length = 0; clearToasts();
   versions = [{ assetId: ids.asset2, version: 2 }, { assetId: ids.asset1, version: 1 }];
-  impact = impactOf();
+  impact = impactOf(); uploadingNow = null;
   removeOutcome = async () => ({ video: fixtureVideo({ id: ids.video, versions: [fixtureVersion({ assetId: ids.asset1, version: 1 })] }) });
   api.apiPost.mockImplementation(async (path) => { if (String(path).endsWith("/remove")) return removeOutcome(); throw new Error(`unrouted ${path}`); });
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } })));
@@ -374,6 +376,23 @@ describe("Remove a Version from the staff viewer (#776 E)", () => {
     await startRemove();
     expect(confirm()!.textContent).toMatch(/being uploaded/i);
     expect(confirmButton().hasAttribute("disabled")).toBe(true);
+  });
+
+  it("re-reads the impact when the upload that blocked the removal finishes, so Remove becomes available without reopening", async () => {
+    versions = [{ assetId: ids.asset2, version: 2 }];
+    impact = impactOf({ lastVersion: true, uploading: true });
+    uploadingNow = { reservationId: "99999999-9999-4999-8999-999999999999", version: 3, uploader: { id: auth.userId, name: "Ed", roleLabel: "Editor", isExternal: false, active: true }, expiresAt: "2026-10-09T02:00:00.000Z" };
+    await mount();
+    await openViewer();
+    await startRemove();
+    expect(confirmButton().hasAttribute("disabled")).toBe(true);
+    // The upload is cancelled from the card behind the dialog: the server holds no reservation and the Videos are read again.
+    vi.stubGlobal("fetch", vi.fn(async () => { uploadingNow = null; impact = impactOf({ lastVersion: true, uploading: false }); return new Response(null, { status: 204 }); }));
+    const cancel = [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === "Cancel upload")!;
+    await act(async () => { cancel.click(); });
+    await flush(10);
+    expect(confirm()!.textContent).not.toMatch(/being uploaded/i);
+    expect(confirmButton().hasAttribute("disabled")).toBe(false);
   });
 
   it("a failure to read the impact says so and offers a retry, and sends nothing", async () => {

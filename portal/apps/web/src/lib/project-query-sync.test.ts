@@ -438,6 +438,17 @@ describe("video-decisions resource (#741 14-ui-staff)", () => {
   });
 });
 
+describe("video-trash resource (#776 E)", () => {
+  it("resolves to the Project's Trash key and parses only with nothing else", () => {
+    expect(projectResourceKey("a", { kind: "video-trash" })).toEqual(projectDataKeys.videoTrash("a"));
+    const message = createProjectDataInvalidationMessage("a", [{ kind: "video-trash" }]);
+    const ok = parseProjectDataSyncMessage({ ...message, sourceTabId: "s" });
+    expect(ok && ok.type === "project-data-invalidated" ? ok.resources : []).toEqual([{ kind: "video-trash" }]);
+    const parse = (resources: unknown[]) => parseProjectDataSyncMessage({ ...message, sourceTabId: "s", resources });
+    expect(parse([{ kind: "video-trash", extra: 1 }])).toBeNull();
+  });
+});
+
 describe("video-notes resource (#741 5b)", () => {
   const asset = "77777777-7777-4777-8777-777777777777";
   it("resolves to the exact per-Version key and parses only with an asset id and nothing else", () => {
