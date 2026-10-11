@@ -37,7 +37,7 @@ type PendingPublish = { id: string; body: { assetIds: string[]; coverAssetId: st
 const uncertain = (error: unknown) => !(error instanceof ApiError) || error.status === 0 || error.status >= 500;
 type Unlocking = { candidate: DeliveryCandidate; mode: "unlock" | "relock" } | null;
 
-export function DeliveryTab({ projectId, role, archived }: { projectId: string; role: Role; archived: boolean }) {
+export function DeliveryTab({ projectId, role, archived, active }: { projectId: string; role: Role; archived: boolean; active: boolean }) {
   const { can } = useCapabilities();
   const queryClient = useQueryClient();
   const delivery = useProjectDeliveryQuery(projectId, true);
@@ -66,6 +66,12 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
   const pending = useRef<PendingPublish | null>(null);
   const [, rerender] = useState(0);
   const isArchived = archived || archivedLatch !== null;
+  // The tab stays mounted while hidden: coming back to it asks for the candidates again, so what was uploaded, replaced or trashed meanwhile is offered (or no longer offered).
+  const wasActive = useRef(active);
+  useEffect(() => {
+    if (active && !wasActive.current) void listed.refetch();
+    wasActive.current = active;
+  }, [active, listed]);
   const detailArchivedAt = detail.data?.archivedAt;
   useEffect(() => {
     if (archivedLatch !== null && detail.data && !detailArchivedAt && detail.dataUpdatedAt > archivedLatch) setArchivedLatch(null);
@@ -75,10 +81,16 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
   useEffect(() => {
     if (seeded || !listsUsable || delivery.isPending) return;
     setSeeded(true);
-    const inSet = new Set(state?.set?.items.map((item) => item.assetId) ?? []);
+    if (!state?.set) {
+      // A first Publish (PRD §6.7: all ticked by default): everything is in, and the first photo is the cover (the PRD names no default cover; the page needs one, and the person can change it).
+      setSelected(new Set(candidates.map((c) => c.assetId)));
+      setCover(candidates.find((c) => c.kind === "photo")?.assetId ?? null);
+      return;
+    }
+    const inSet = new Set(state.set.items.map((item) => item.assetId));
     const start = candidates.filter((c) => inSet.has(c.assetId)).map((c) => c.assetId);
     setSelected(new Set(start));
-    setCover(state?.set?.coverAssetId && start.includes(state.set.coverAssetId) ? state.set.coverAssetId : null);
+    setCover(state.set.coverAssetId && start.includes(state.set.coverAssetId) ? state.set.coverAssetId : null);
   }, [seeded, listsUsable, delivery.isPending, candidates, state]);
 
   const orderedIds = candidates.filter((c) => selected.has(c.assetId)).map((c) => c.assetId);

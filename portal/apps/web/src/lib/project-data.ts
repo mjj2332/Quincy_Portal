@@ -7,7 +7,7 @@ import { useNow } from "./use-now";
 import { externalApiGet, externalProjectDetailToWorkspace } from "./external-api-response";
 import { ZodError } from "zod";
 import { videoListResponseSchema, videoReviewResponseSchema, type ExternalProjectDetailDto, type VideoDto, type VideoReviewResponse } from "@quincy/shared";
-import { createActiveProjectDetailsInvalidatedMessage, createDashboardBoardInvalidatedMessage, createProductionCalendarInvalidatedMessage, createProductionGanttInvalidatedMessage, getProjectQueryRuntime, projectResourceKey, useProjectQueryRuntime, type ProjectDataResource, type ProjectQueryRuntime } from "./project-query-sync";
+import { createActiveProjectDetailsInvalidatedMessage, createDashboardBoardInvalidatedMessage, createProductionCalendarInvalidatedMessage, createProductionGanttInvalidatedMessage, getProjectQueryRuntime, projectResourceKey, useProjectQueryRuntime, withDependentResources, type ProjectDataResource, type ProjectQueryRuntime } from "./project-query-sync";
 import type { ReviewPatch, WorkspaceAsset, Review } from "../components/PhotoGrid";
 import type { ProjectStageKey } from "./stages";
 
@@ -442,7 +442,8 @@ export async function invalidateProjectResources(queryClient: QueryClient, inval
   const keys = resources.map((resource) => projectResourceKey(invalidation.projectId, resource));
   const queuedIndexes = new Set(resources.map((resource, index) => ((resource.kind === "assets" || resource.kind === "detail" || resource.kind === "collaboration-summary") && isProjectQueryLedgerPending(queryClient, keys[index]!)) ? index : -1).filter((index) => index >= 0));
   const queuedResources = resources.filter((_, index) => queuedIndexes.has(index));
-  const immediateResources = resources.filter((_, index) => !queuedIndexes.has(index));
+  // Dependents follow only what is invalidated NOW: a held (ledger-pending) Assets list is invalidated later by its own settle, which brings its dependents then.
+  const immediateResources = withDependentResources(resources.filter((_, index) => !queuedIndexes.has(index)));
   if (queuedResources.length) queueLedgerInvalidation(queryClient, { ...invalidation, resources: queuedResources }, publish);
   if (!immediateResources.length) return;
   const immediateKeys = immediateResources.map((resource) => projectResourceKey(invalidation.projectId, resource));

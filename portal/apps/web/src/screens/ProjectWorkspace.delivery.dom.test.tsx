@@ -94,6 +94,8 @@ const byLabel = (label: string) => host.querySelector<HTMLElement>(`[aria-label=
 const bodyById = (id: string) => document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const gets = () => apiGetMock.mock.calls.map(([path]) => path);
 async function openDelivery(role: Role = "admin") { await mount(role); await click(tab("Delivery")); await flush(); }
+/** A first Publish starts with everything ticked (PRD §6.7); most tests build their own selection from nothing. */
+async function startEmpty() { for (const box of [...host.querySelectorAll<HTMLInputElement>('input[type="checkbox"][aria-label^="Select "]')]) if (box.checked) await click(box); }
 const api = (status: number, body: Record<string, unknown>) => new ApiError(String(body.error ?? "x"), status, body);
 
 beforeEach(() => { archivedDetail = false; candidatesFail = false; candidatesHang = false; videoReviewOff = false; latchDetailFails = false; apiPostMock.mockReset(); apiPutMock.mockReset(); document.body.innerHTML = ""; delivery = NO_PAGE; photos = [asset(ids.photo1), asset(ids.photo2, { premium: true })]; Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn(() => Promise.resolve()) } }); });
@@ -138,6 +140,7 @@ describe("choosing what to publish", () => {
   });
   it("keeps Publish and Preview off until something is selected, and the cover must be a selected photo", async () => {
     await openDelivery();
+    await startEmpty();
     expect((byId("delivery-publish") as HTMLButtonElement).disabled).toBe(true);
     expect((byId("delivery-preview") as HTMLButtonElement).disabled).toBe(true);
     expect(byLabel("Cover 1.jpg")).toBeNull();
@@ -162,7 +165,7 @@ describe("Preview", () => {
     apiPostMock.mockResolvedValue({ dto: { property: { street: "12 Example St", suburb: "Suburbia" }, setNumber: 1, publishedAt: null, coverHandle: handle(1), items: [
       { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, width: 10, height: 10, durationMs: null, url: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`, thumbUrl: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/thumb` },
       { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null }] } });
-    await openDelivery();
+    await openDelivery(); await startEmpty();
     await click(byLabel("Select 1.jpg")); await click(byLabel("Select 2.jpg")); await click(byLabel("Cover 1.jpg"));
     await click(byId("delivery-preview"));
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}/delivery/preview`, { assetIds: [ids.photo1, ids.photo2], coverAssetId: ids.photo1 });
@@ -181,7 +184,7 @@ describe("Preview", () => {
 });
 
 describe("Publish", () => {
-  async function select() { await click(byLabel("Select 1.jpg")); await click(byLabel("Select 2.jpg")); await click(byLabel("Cover 1.jpg")); }
+  async function select() { await startEmpty(); await click(byLabel("Select 1.jpg")); await click(byLabel("Select 2.jpg")); await click(byLabel("Cover 1.jpg")); }
   const publishBody = () => apiPostMock.mock.calls.filter(([path]) => path.endsWith("/delivery/publish")).map(([, body]) => body as Record<string, unknown>);
 
   it("confirms, then posts the selection, the cover, the page the person saw and an operation id", async () => {
@@ -414,7 +417,7 @@ describe("round 1: older versions, 401 and hit areas", () => {
 });
 
 describe("round 2: the archive latch and the initial selection", () => {
-  async function select() { await click(byLabel("Select 1.jpg")); }
+  async function select() { await startEmpty(); await click(byLabel("Select 1.jpg")); }
   const publishBody = () => apiPostMock.mock.calls.filter(([path]) => path.endsWith("/delivery/publish"));
   it("lifts the archive latch when a later authoritative read shows the Project restored in another tab", async () => {
     apiPostMock.mockImplementation(async () => { archivedDetail = true; throw api(409, { error: "x", code: "project_archived" }); });
@@ -484,5 +487,56 @@ describe("round 3: the tab does not depend on Video Review", () => {
     channel.postMessage({ version: 1, type: "project-data-invalidated", projectId: PROJECT_ID, committedAt: new Date().toISOString(), sourceTabId: "other-tab", resources: [{ kind: "detail" }] });
     await flush(20); channel.close();
     expect(byId("delivery-archived")).toBeNull();
+  });
+});
+
+describe("round 4: fresh candidates, first-Publish defaults and Request unlock in Preview", () => {
+  const candidateReads = () => gets().filter((path) => path === `/api/projects/${PROJECT_ID}/delivery/candidates`).length;
+  const lockedPreview = { dto: { property: { street: "12 Example St", suburb: "Suburbia" }, setNumber: 1, publishedAt: null, coverHandle: handle(1), items: [
+    { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, width: 10, height: 10, durationMs: null, url: "/m/1", thumbUrl: "/t/1" },
+    { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null }] } };
+  const tellOthers = (resources: unknown[]) => {
+    const channel = new BroadcastChannel("quincy:project-data:v1");
+    channel.postMessage({ version: 1, type: "project-data-invalidated", projectId: PROJECT_ID, committedAt: new Date().toISOString(), sourceTabId: "other-tab", resources });
+    channel.close();
+  };
+  it("reads the candidates again when another tab uploads, so a new photo is offered", async () => {
+    await openDelivery();
+    expect(allById("delivery-item")).toHaveLength(4);
+    const before = candidateReads();
+    photos = [...photos, asset("44444444-4444-4444-8444-444444444443")];
+    tellOthers([{ kind: "assets", collectionKind: "edited" }]); await flush(20);
+    expect(candidateReads()).toBeGreaterThan(before);
+    expect(allById("delivery-item")).toHaveLength(5);
+  });
+  it("reads the candidates again when the person comes back to the Delivery tab", async () => {
+    await openDelivery();
+    const before = candidateReads();
+    await click(tab("Collaboration")); await flush(10);
+    expect(candidateReads()).toBe(before); // leaving does not read
+    await click(tab("Delivery")); await flush(10);
+    expect(candidateReads()).toBeGreaterThan(before);
+  });
+  it("starts a first Publish with every item ticked and the first photo as cover", async () => {
+    await openDelivery();
+    for (const label of ["Select 1.jpg", "Select 2.jpg", "Select plan.pdf", "Select Main walkthrough"]) expect((byLabel(label) as HTMLInputElement).checked, label).toBe(true);
+    expect(byLabel("Cover 1.jpg")?.getAttribute("aria-pressed")).toBe("true");
+    expect((byId("delivery-publish") as HTMLButtonElement).disabled).toBe(false);
+    apiPostMock.mockResolvedValue({ ...stateAfterPublish(1), replayed: false, operationSetNumber: 1 });
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}/delivery/publish`, expect.objectContaining({ assetIds: [ids.photo1, ids.photo2, ids.plan, ids.videoAsset], coverAssetId: ids.photo1, expectedLatestSet: null }));
+  });
+  it("shows Request unlock on a locked item in Preview and answers it locally without any request", async () => {
+    apiPostMock.mockResolvedValue(lockedPreview);
+    await openDelivery(); await click(byId("delivery-preview"));
+    const dialog = bodyById("delivery-preview-dialog")!;
+    const buttons = () => [...dialog.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent?.includes("Request unlock") || button.textContent?.includes("Requested"));
+    expect(buttons()).toHaveLength(1); // only the locked item
+    expect(buttons()[0]!.closest('[data-testid="delivery-preview-item"]')?.textContent).toContain("Photo 02");
+    const calls = [apiPostMock.mock.calls.length, apiPutMock.mock.calls.length, apiGetMock.mock.calls.length];
+    await click(buttons()[0]);
+    expect(buttons()[0]!.textContent).toContain("Requested");
+    expect(buttons()[0]!.disabled).toBe(true);
+    expect([apiPostMock.mock.calls.length, apiPutMock.mock.calls.length, apiGetMock.mock.calls.length]).toEqual(calls);
   });
 });

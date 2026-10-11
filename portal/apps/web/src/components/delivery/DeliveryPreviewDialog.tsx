@@ -1,8 +1,10 @@
+import { useEffect, useState } from "react";
 import type { DeliveryItemDto, DeliveryPageDto } from "@quincy/shared";
 import { FileTextIcon, FilmIcon } from "lucide-react";
 import { LazyImage } from "../LazyImage";
 import { SheetCloseButton } from "../quincy/SheetCloseButton";
 import { Badge } from "../reui/badge";
+import { Button } from "../reui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../reui/dialog";
 import { DIALOG_TITLE, ReviewLinkDialogFrame } from "../video/ReviewLinkDialogFrame";
 
@@ -10,9 +12,12 @@ const KIND_NOUN: Record<DeliveryItemDto["kind"], string> = { photo: "Photo", flo
 
 /**
  * Preview (#787 slice 10): the page DTO the server rendered for an unpublished selection, shown with the staff preview-media URLs it carries. Nothing is created. The frame is
- * `ReviewLinkDialogFrame` (header and footer fixed, body scrolls), as the Review links dialog. "Request unlock" is public-page only, so a locked item is shown as a locked tile here.
+ * `ReviewLinkDialogFrame` (header and footer fixed, body scrolls), as the Review links dialog. A locked item shows the client's "Request unlock" button so staff can try it: it only changes to "Requested" here and sends nothing (the real request is
+ * the public page's, and notifies Admins and Editors; Preview must not).
  */
 export function DeliveryPreviewDialog({ dto, onClose }: { dto: DeliveryPageDto | null; onClose: () => void }) {
+  const [requested, setRequested] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => { if (dto === null) setRequested(new Set()); }, [dto]);
   return <Dialog open={dto !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
     <DialogContent data-testid="delivery-preview-dialog" showCloseButton={false} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col gap-[var(--space-4)] sm:max-w-[720px]">
       {dto && <ReviewLinkDialogFrame
@@ -31,6 +36,7 @@ export function DeliveryPreviewDialog({ dto, onClose }: { dto: DeliveryPageDto |
               {item.locked && <Badge variant="warning-light">Locked</Badge>}
               <span className="sr-only">{KIND_NOUN[item.kind]}</span>
             </div>
+            {item.locked && <Button type="button" variant="outline" size="sm" disabled={requested.has(item.handle)} aria-label={`${requested.has(item.handle) ? "Requested" : "Request unlock"}: ${item.label}`} className="pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={() => setRequested((current) => new Set(current).add(item.handle))}>{requested.has(item.handle) ? "Requested" : "Request unlock"}</Button>}
           </li>)}
         </ul>
       </ReviewLinkDialogFrame>}

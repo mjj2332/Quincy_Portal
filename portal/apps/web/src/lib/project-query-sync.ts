@@ -317,7 +317,7 @@ export class ProjectQueryRuntime {
       }
       return;
     }
-    for (const resource of message.resources) {
+    for (const resource of withDependentResources(message.resources)) {
       const key = projectResourceKey(message.projectId, resource);
       // A first read already in flight predates this change and an invalidation would dedupe onto it: cancel it (with no data yet the query goes back to idle) so the refetch is new.
       if ((resource.kind === "videos" || resource.kind === "video-trash" || resource.kind === "video-decisions") && !this.isOwned(key) && !isProjectQueryLedgerPending(this.queryClient, key)) {
@@ -327,6 +327,16 @@ export class ProjectQueryRuntime {
       this.requestInvalidation(key);
     }
   }
+}
+
+/**
+ * Resources that change when another does. The Delivery tab's candidates are what Publish would accept (Assets other than RAW, Video Versions, Trash), so a change to any of those changes them. Applied
+ * where invalidation fans out, locally (`invalidateProjectResources`) and on a received cross-tab message, so a new writer inherits it without knowing about Delivery.
+ */
+export function withDependentResources(resources: readonly ProjectDataResource[]): ProjectDataResource[] {
+  const touchesCandidates = resources.some((resource) => (resource.kind === "assets" && resource.collectionKind !== "raw") || resource.kind === "videos" || resource.kind === "video-trash");
+  const all = touchesCandidates ? [...resources, { kind: "delivery-candidates" } as const] : [...resources];
+  return [...new Map(all.map((resource) => [JSON.stringify(resource), resource])).values()];
 }
 
 export function getProjectQueryRuntime(queryClient: QueryClient): ProjectQueryRuntime | undefined {

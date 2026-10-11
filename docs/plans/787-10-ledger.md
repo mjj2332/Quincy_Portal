@@ -49,3 +49,9 @@ No new raw `<button>`, `<input>`, `<select>`, `<textarea>`, `<dialog>` or widget
 - Page switch: the `reui/switch` and its text now sit inside one native `label` (`min-h-11`), so the whole row is the hit target (the previous `label htmlFor` pair only enlarged a div). The premium switches already wrapped their text in a `label`. No new raw primitive; the `reui/label` import stays for the payment reference field.
 - Archive latch: lifted only by a SUCCESSFUL Project read newer than the refusal that shows it unarchived; a failed refresh keeps it.
 - Known limit: a photo uploaded in another tab reaches the candidates on the next focus or after 15 seconds (the candidates read has its own `delivery-candidates` resource, invalidated by premium writes and failures here), not by the Assets list's invalidation.
+
+## Sol round 4 additions
+
+- Request unlock in Preview: the installed `reui/button` (outline, sm) under each locked tile in `DeliveryPreviewDialog`. Searched: `components/` and `components/quincy` for an existing request-unlock control (none; slice 9's public-page component does not exist in this branch). It switches to a disabled "Requested" label locally and sends nothing; the tab test asserts no POST, PUT or GET follows the click.
+- First Publish: every candidate ticked, first photo as cover (PRD §6.7 says "all ticked by default"; it names no default cover, so the first photo is a choice the person can change).
+- Candidates freshness: no new UI. `delivery-candidates` is invalidated wherever Assets, Videos or Video Trash are (`withDependentResources`, local and received), and when the Delivery tab is shown again.

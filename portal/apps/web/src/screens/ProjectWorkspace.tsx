@@ -256,20 +256,22 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
     try { return await queryClient.fetchQuery({ ...projectDetailQueryOptions(projectId), staleTime: 0 }); } catch (reason) { if (!isExpectedReadCancellation(reason)) accessFailure(reason, "detail"); throw reason; } finally { release(); }
   }, [accessFailure, isCurrent, projectId, queryClient, runtime]);
   const canReadCollection = useCallback((kind: CollectionKind) => kind === "raw" ? can("viewRaw") : canViewEdited, [can, canViewEdited]);
+  // A background refresh of a Collection (an ingest poll, a job, a hand-off) reads or invalidates its Assets directly, outside `invalidateProjectResources`; the Delivery candidates are those Assets, so they follow.
+  const refreshDeliveryCandidates = useCallback(() => queryClient.invalidateQueries({ queryKey: projectDataKeys.deliveryCandidates(projectId), exact: true, refetchType: "active" }), [projectId, queryClient]);
   const forceAssetsRead = useCallback(async (kind: CollectionKind) => {
     if (!isCurrent() || !canReadCollection(kind)) return undefined;
     const release = runtime.acquireOwner(projectDataKeys.assets(projectId, kind));
-    try { return await queryClient.fetchQuery({ ...projectAssetsQueryOptions(projectId, kind), staleTime: 0 }); } catch (reason) { if (!isExpectedReadCancellation(reason)) accessFailure(reason, "assets", kind); throw reason; } finally { release(); }
-  }, [accessFailure, canReadCollection, isCurrent, projectId, queryClient, runtime]);
+    try { const assets = await queryClient.fetchQuery({ ...projectAssetsQueryOptions(projectId, kind), staleTime: 0 }); void refreshDeliveryCandidates(); return assets; } catch (reason) { if (!isExpectedReadCancellation(reason)) accessFailure(reason, "assets", kind); throw reason; } finally { release(); }
+  }, [accessFailure, canReadCollection, isCurrent, projectId, queryClient, refreshDeliveryCandidates, runtime]);
   // A Collection's assets are read only while its tab is open. Any other refresh (a job poll, an AutoHDR
   // hand-off, a Dropbox sync) invalidates instead: that refetches an observed query and merely marks an
   // unobserved one stale, so it reads on its next open and no request fires from the Collaboration tab.
   const refreshCollectionAssets = useCallback(async (kind: CollectionKind) => {
     if (!isCurrent() || !canReadCollection(kind)) return undefined;
     if (activeTabRef.current === kind) return forceAssetsRead(kind);
-    await queryClient.invalidateQueries({ queryKey: projectDataKeys.assets(projectId, kind), exact: true, refetchType: "active" });
+    await Promise.all([queryClient.invalidateQueries({ queryKey: projectDataKeys.assets(projectId, kind), exact: true, refetchType: "active" }), refreshDeliveryCandidates()]);
     return undefined;
-  }, [canReadCollection, forceAssetsRead, isCurrent, projectId, queryClient]);
+  }, [canReadCollection, forceAssetsRead, isCurrent, projectId, queryClient, refreshDeliveryCandidates]);
   const refreshIngest = useCallback(async () => {
     const owner = manualOwnerRef.current; if (!isCurrent() || !owner) return;
     try { const response = await apiGet<IngestStatus>(`/api/projects/${encodeURIComponent(projectId)}/ingest-status`, { signal: owner.controller.signal }); if (isCurrent()) setIngest(response); } catch (reason) { if (!(reason instanceof Error && reason.name === "AbortError")) accessFailure(reason, "detail"); }
@@ -608,7 +610,7 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
         {props.collaborationUnavailable ? <CollaborationUnavailableSection /> : <ProjectCollaborationPanel projectId={project.id} archived={Boolean(project.archivedAt)} presented={activeTab === "collaboration"} jobs={props.canAdminBackend ? props.jobs : undefined} onRetryJob={props.onRetryAutoHdr} view={props.collaborationView} onViewChange={props.onCollaborationViewChange} showUnreadBadge={false} onUnreadCountChange={setCollaborationUnread} onAccessFailure={props.onAccessFailure} embedded />}
       </div>
       {props.deliveryOffered && (activeTab === "delivery" || deliveryOpened) && <div role="tabpanel" id="project-workspace-panel-delivery" aria-labelledby="project-workspace-tab-delivery" hidden={activeTab !== "delivery"}>
-        <DeliveryTab projectId={project.id} role={props.role} archived={Boolean(project.archivedAt)} />
+        <DeliveryTab projectId={project.id} role={props.role} archived={Boolean(project.archivedAt)} active={activeTab === "delivery"} />
       </div>}
       </ReviewLinksScope>
     </section>
