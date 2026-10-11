@@ -257,7 +257,7 @@ function PasteFlow({ opening, api, writer, video, target, markupAllowed, generat
       {overLimit && <p role="status" data-testid="guest-paste-limit" className="m-0 mt-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">{`Copy up to ${GUEST_NOTE_PASTE_MAX} notes at a time. Untick some to continue.`}</p>}
       {plan !== null && rows.length > 0 && <ItemGroup aria-label="Notes to copy" className={cn("gap-[var(--space-2)]", !settled && "opacity-60")}>
         {rows.map(({ id, mapped: row, note }) => <Item key={id} variant="outline" size="xs" data-testid="guest-paste-row" data-note-id={id} className={cn(TOUCH, "flex-nowrap items-start")}>
-          <Checkbox aria-label={`Copy note: ${row?.source.excerpt ?? note?.excerpt ?? ""}`} data-testid="guest-paste-tick" className="mt-0.5 pointer-coarse:after:-inset-3.5 max-[721px]:after:-inset-3.5 data-unchecked:border-[var(--control-off)]" checked={!unticked.has(id)} disabled={pending}
+          <Checkbox aria-label={`Copy note: ${row?.source.excerpt ?? note?.excerpt ?? ""}`} data-testid="guest-paste-tick" className="mt-0.5 pointer-coarse:after:-inset-[15px] max-[721px]:after:-inset-[15px] data-unchecked:border-[var(--control-off)]" checked={!unticked.has(id)} disabled={pending}
             onCheckedChange={(checked) => {
               // A tick on a note the plan on show never covered (a stale answer left it out) needs a plan of its own; past the cap the changed selection asks for it.
               if (checked && !overflow && !covered(view.ids, [id], new Set())) setPreviewAttempt((n) => n + 1);
