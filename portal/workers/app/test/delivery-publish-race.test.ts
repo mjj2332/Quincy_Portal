@@ -158,6 +158,27 @@ describe("a selection or Project that changes between the read and the batch", (
     } finally { await database.DB.prepare("UPDATE pipeline_stages SET active = 1 WHERE key = 'delivered'").run(); }
   });
 
+  describe("the batch's own Delivered fence (acting after the move is composed)", () => {
+    const flagOn = () => database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run();
+    const cases: Array<[string, string, () => Promise<unknown>]> = [
+      ["the Delivered Stage is deactivated", "UPDATE pipeline_stages SET active = 0 WHERE key = 'delivered'", () => database.DB.prepare("UPDATE pipeline_stages SET active = 1 WHERE key = 'delivered'").run()],
+      ["the board contract is turned off", "UPDATE feature_flags SET enabled = 0 WHERE key = 'tb5a_board_contract_enabled'", flagOn],
+    ];
+    for (const [name, change, restore] of cases) {
+      it(`refuses with delivered_stage_unavailable, writing nothing, when ${name} just before the batch`, async () => {
+        const projectId = await seedOpenProject({ stageKey: "edited_review" }); const photo = await seedAsset("photo", { projectId });
+        try {
+          const outcome = await send(projectId, [photo.id], {}, { beforeCommit: async () => { await database.DB.prepare(change).run(); } });
+          expect(outcome).toEqual({ kind: "delivered_stage_unavailable" });
+          expect(await setsOf(projectId)).toBe(0); expect((await stageOf(projectId)).stage).toBe("edited_review");
+          expect(await n("SELECT count(*) AS n FROM delivery_pages WHERE project_id = ?", projectId)).toBe(0);
+          expect(await n("SELECT count(*) AS n FROM audit_log WHERE target_id = ? AND action IN ('stage.set', 'delivery.publish')", projectId)).toBe(0);
+          expect(await n("SELECT count(*) AS n FROM project_activity_events WHERE project_id = ?", projectId)).toBe(0);
+        } finally { await restore(); }
+      });
+    }
+  });
+
   it("publishes and leaves the Stage where it is when another Stage move wins the compare-and-swap", async () => {
     const projectId = await seedOpenProject({ stageKey: "edited_review" }); const photo = await seedAsset("photo", { projectId });
     const outcome = await send(projectId, [photo.id], {}, { beforeBatch: async () => { await database.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr', board_revision = board_revision + 1 WHERE id = ?").bind(projectId).run(); } });

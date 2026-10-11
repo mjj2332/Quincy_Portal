@@ -39,6 +39,8 @@ export type PublishDeps = {
   slugSuffix?: () => string;
   /** Runs after Publish has read and validated, immediately before the batch. Tests hold a Publish here to let another writer in. */
   beforeBatch?: () => Promise<void>;
+  /** Runs after the Stage move has been composed, immediately before `db.batch`. Tests act here to reach the batch's own fences. */
+  beforeCommit?: () => Promise<void>;
 };
 export type PublishRequest = { projectId: string; principal: Principal; assetIds: string[]; coverAssetId: string | null; expectedLatestSet: number | null; operationId: string; now?: number };
 export type PublishOutcome =
@@ -107,8 +109,8 @@ export async function publishDelivery(env: Pick<Env, "DB">, input: PublishReques
         .bind(input.projectId, now, JSON.stringify(rows.map((row) => row.assetId)), rows.length),
     ];
     if (first && seen.board && seen.board.archivedAt === null && seen.board.stageKey !== "delivered") {
-      // The Delivered move was promised by the read above; if the Stage is deactivated before the batch commits, abort and let the re-read classify it.
-      statements.push(db.prepare(ABORT_SQL("NOT EXISTS (SELECT 1 FROM pipeline_stages WHERE key = 'delivered' AND active = 1) AND EXISTS (SELECT 1 FROM projects WHERE id = ?1 AND stage_key <> 'delivered')")).bind(input.projectId, now));
+      // The Delivered move was promised by the read above; if the Stage is deactivated or the board contract turned off before the batch commits, abort and let the re-read classify it.
+      statements.push(db.prepare(ABORT_SQL("EXISTS (SELECT 1 FROM projects WHERE id = ?1 AND stage_key <> 'delivered') AND (NOT EXISTS (SELECT 1 FROM pipeline_stages WHERE key = 'delivered' AND active = 1) OR NOT EXISTS (SELECT 1 FROM feature_flags WHERE key = 'tb5a_board_contract_enabled' AND enabled = 1))")).bind(input.projectId, now));
     }
     if (first) {
       const slug = `${deliverySlugBase(seen.project.street, seen.project.suburb)}-${suffix()}`;
@@ -142,6 +144,7 @@ export async function publishDelivery(env: Pick<Env, "DB">, input: PublishReques
     const composed = seen.board ? await composeDeliveredMove(db, input, seen.board, now) : null;
     if (composed === "unavailable") return { kind: "delivered_stage_unavailable" };
     const stage = composed;
+    if (attempt === 0) await deps.beforeCommit?.();
     const stageStart = statements.length;
     if (stage) statements.push(...stage.statements);
     let results: D1Result<unknown>[];
