@@ -1,0 +1,321 @@
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Role } from "@quincy/shared";
+import { ProjectWorkspace } from "./ProjectWorkspace";
+import type { WorkspaceAsset } from "../components/PhotoGrid";
+import { ApiError } from "../lib/api";
+import { QuincyQueryProvider } from "../lib/query-client";
+import { stubRailMedia } from "../testing/rail-media";
+
+// #787 slice 10: the Delivery tab on the Project sheet. Roles, labels and test ids only.
+stubRailMedia(true);
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const authState = vi.hoisted(() => ({ role: "admin" }));
+vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1", role: authState.role } }, isPending: false }) }));
+vi.mock("../components/LazyImage", () => ({ LazyImage: ({ src, alt }: { src: string; alt: string }) => <img src={src} alt={alt} /> }));
+
+const apiGetMock = vi.fn<(path: string, init?: unknown) => Promise<unknown>>();
+const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
+const apiPutMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
+vi.mock("../lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/api")>();
+  return { ...actual, apiGet: (path: string, init?: unknown) => apiGetMock(path, init), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiPut: (path: string, body: unknown) => apiPutMock(path, body) };
+});
+vi.mock("../lib/confirm", () => ({ confirm: () => Promise.resolve(true) }));
+
+const PROJECT_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const ids = { collEdited: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", collVideo: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", collPlan: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  photo1: "44444444-4444-4444-8444-444444444441", photo2: "44444444-4444-4444-8444-444444444442", plan: "55555555-5555-4555-8555-555555555555", video: "88888888-8888-4888-8888-888888888888", videoAsset: "77777777-7777-4777-8777-777777777777" };
+const collections = ["raw", "edited", "video", "floorplan", "copy"].map((kind) => ({ id: kind === "edited" ? ids.collEdited : kind === "video" ? ids.collVideo : kind === "floorplan" ? ids.collPlan : crypto.randomUUID(), kind, status: "received", expectedCount: null, receivedCount: 1 }));
+const detail = () => ({ id: PROJECT_ID, street: "12 Example St", suburb: "Suburbia", postcode: "2000", agencyName: "Example Agency", agentName: "Alex Agent", shootDate: "2026-07-20", stageKey: "raw_review", rawFolderPath: null, rawFolderLink: null, coverAssetId: null, effectiveCoverAssetId: null, archivedAt: null, contractEnabled: true, editedUploadAvailable: true, collections, members: [], deadlineSchedule: { version: 0, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false } });
+const asset = (id: string, over: Partial<WorkspaceAsset> & { premium?: boolean; premiumUnlocked?: boolean } = {}) => ({ id, section: null, collectionId: ids.collEdited, kind: "photo", originalFilename: `${id.slice(-1)}.jpg`, bytes: 1, width: 10, height: 10, ratingFromMetadata: null, renditionStatus: "ready", createdAt: "2026-07-21T00:00:00.000Z", sourceRawAssetId: null, version: 1, versionGroupId: null, supersedesAssetId: null, review: null, selected: false, premium: false, premiumUnlocked: false, ...over });
+const person = { id: "99999999-9999-4999-8999-999999999999", name: "Mia Chen", roleLabel: "Editor", isExternal: false, active: true };
+const version = { assetId: ids.videoAsset, version: 2, current: true, uploadedBy: person, createdAt: "2026-10-09T01:00:00.000Z", originalFilename: "film.mp4", bytes: 100, fps: { num: 30000, den: 1001 }, frameCount: 300, durationMs: 62000, width: 1080, height: 1920, codec: "avc1", startTimecodeFrames: null, tcNominalFps: 30, tcDropFrame: true, fastStart: true, hasAudio: false, hasPoster: false, streamUrl: `/media/video/${ids.videoAsset}`, posterUrl: null };
+const video = { id: ids.video, title: "Main walkthrough", premium: false, premiumUnlocked: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ids.videoAsset, latestNoteCount: null, uploading: null, versions: [version] };
+const handle = (n: number) => `abcdefghijklmnop`.slice(0, 15) + String(n);
+const stateAfterPublish = (setNumber = 1) => ({
+  page: { slug: "12-example-st-suburbia-k7m2qx", path: "/d/12-example-st-suburbia-k7m2qx", enabled: true, latestSetNumber: setNumber },
+  set: { setNumber, publishedAt: Date.UTC(2026, 9, 11, 3, 4), coverAssetId: ids.photo1, items: [
+    { assetId: ids.photo1, handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false },
+    { assetId: ids.plan, handle: handle(2), kind: "floorplan", label: "Floorplan 01", position: 1, locked: false }] },
+  dto: { property: { street: "12 Example St", suburb: "Suburbia" }, setNumber, publishedAt: Date.UTC(2026, 9, 11, 3, 4), coverHandle: handle(1), items: [] },
+});
+const NO_PAGE = { page: null, set: null, dto: null };
+
+let delivery: unknown = NO_PAGE; // an object is the 200 answer; an ApiError instance is thrown
+let photos = [asset(ids.photo1), asset(ids.photo2, { premium: true })];
+function install() {
+  apiGetMock.mockReset();
+  apiGetMock.mockImplementation((path: string) => {
+    if (path === `/api/projects/${PROJECT_ID}/delivery`) return delivery instanceof Error ? Promise.reject(delivery) : Promise.resolve(delivery);
+    if (path === `/api/projects/${PROJECT_ID}`) return Promise.resolve(detail());
+    if (path.endsWith("/video-review")) return Promise.resolve({ open: false, parts: [] });
+    if (path.endsWith("/videos")) return Promise.resolve({ videos: [video] });
+    if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: photos });
+    if (path.includes("/assets?collection=floorplan")) return Promise.resolve({ assets: [asset(ids.plan, { kind: "floorplan_pdf", collectionId: ids.collPlan, originalFilename: "plan.pdf" }), asset(crypto.randomUUID(), { kind: "floorplan_preview", collectionId: ids.collPlan, originalFilename: "plan-preview.png" })] });
+    if (path.includes("/assets?collection=")) return Promise.resolve({ assets: [] });
+    if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+    if (path.includes("/comments?")) return Promise.resolve({ project: { id: PROJECT_ID, street: "12 Example St" }, comments: [] });
+    if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: PROJECT_ID, marker: null, latest: null, unreadCount: 0 });
+    if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [], projectDefaultRange: { start: { localCivil: "2026-09-01T09:00", fold: 0 }, end: { localCivil: "2026-09-01T17:00", fold: 0 } } });
+    if (path.includes("/activity")) return Promise.resolve({ events: [], nextCursor: null });
+    if (path.includes("/collaboration-summary")) return Promise.resolve({ project: { id: PROJECT_ID, street: "12 Example St", stageKey: "raw_review", archived: false }, members: [] });
+    if (path === "/api/stages") return Promise.resolve({ stages: [] });
+    return Promise.resolve({});
+  });
+}
+
+let root: Root | null = null; let host: HTMLElement;
+async function flush(times = 12) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
+async function mount(role: Role, props: { arrivalSignal?: number; arrivalTab?: "delivery" } = {}) {
+  authState.role = role; install();
+  host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+  await act(async () => { root!.render(<QuincyQueryProvider key={role} principalId="test-user" role={role}><ProjectWorkspace projectId={PROJECT_ID} onArrivalConsumed={() => undefined} {...props} /></QuincyQueryProvider>); await Promise.resolve(); });
+  await flush();
+}
+async function click(el: Element | null | undefined) { if (!el) throw new Error("nothing to click"); await act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await Promise.resolve(); }); await flush(); }
+const tabs = () => [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
+const tab = (name: string) => tabs().find((item) => item.textContent?.startsWith(name));
+const byId = (id: string) => host.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+const allById = (id: string) => [...host.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`)];
+const byLabel = (label: string) => host.querySelector<HTMLElement>(`[aria-label="${label}"]`);
+const bodyById = (id: string) => document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+const gets = () => apiGetMock.mock.calls.map(([path]) => path);
+async function openDelivery(role: Role = "admin") { await mount(role); await click(tab("Delivery")); await flush(); }
+const api = (status: number, body: Record<string, unknown>) => new ApiError(String(body.error ?? "x"), status, body);
+
+beforeEach(() => { apiPostMock.mockReset(); apiPutMock.mockReset(); document.body.innerHTML = ""; delivery = NO_PAGE; photos = [asset(ids.photo1), asset(ids.photo2, { premium: true })]; Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn(() => Promise.resolve()) } }); });
+afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; document.body.innerHTML = ""; });
+
+describe("the Delivery tab's existence", () => {
+  it("is offered to an Admin and an Editor once the Delivery read answers", async () => {
+    for (const role of ["admin", "editor"] as const) { await mount(role); expect(tab("Delivery"), role).toBeDefined(); await act(async () => { root!.unmount(); }); root = null; document.body.innerHTML = ""; }
+  });
+  it("is absent, with the sheet intact, when the gate answers 404", async () => {
+    delivery = api(404, { error: "Not found" });
+    await mount("admin");
+    expect(tab("Delivery")).toBeUndefined();
+    expect(tab("Collaboration")).toBeDefined();
+    expect(host.textContent).not.toContain("Project unavailable");
+  });
+  it("is absent and never asked for by a Photographer or an External editor", async () => {
+    for (const role of ["photographer", "external_editor"] as const) {
+      await mount(role);
+      expect(tab("Delivery"), role).toBeUndefined();
+      expect(gets().some((path) => path.endsWith("/delivery")), role).toBe(false);
+      await act(async () => { root!.unmount(); }); root = null; document.body.innerHTML = "";
+    }
+  });
+  it("is selected by a ?tab=delivery arrival once the read has answered, and an arrival with the gate closed falls back to Collaboration", async () => {
+    await mount("admin", { arrivalSignal: 1, arrivalTab: "delivery" });
+    expect(tab("Delivery")?.getAttribute("aria-selected")).toBe("true");
+    await act(async () => { root!.unmount(); }); root = null; document.body.innerHTML = "";
+    delivery = api(404, { error: "Not found" });
+    await mount("admin", { arrivalSignal: 1, arrivalTab: "delivery" });
+    expect(tab("Collaboration")?.getAttribute("aria-selected")).toBe("true");
+  });
+});
+
+describe("choosing what to publish", () => {
+  it("lists Edited photos, the Floorplan PDF (never its preview) and one row per Video", async () => {
+    await openDelivery();
+    const rows = allById("delivery-item");
+    expect(rows.map((row) => row.getAttribute("data-kind"))).toEqual(["photo", "photo", "floorplan", "video"]);
+    expect(byLabel("Select Main walkthrough")).not.toBeNull();
+    expect(host.textContent).not.toContain("plan-preview.png");
+  });
+  it("keeps Publish and Preview off until something is selected, and the cover must be a selected photo", async () => {
+    await openDelivery();
+    expect((byId("delivery-publish") as HTMLButtonElement).disabled).toBe(true);
+    expect((byId("delivery-preview") as HTMLButtonElement).disabled).toBe(true);
+    expect(byLabel("Cover 1.jpg")).toBeNull();
+    await click(byLabel("Select 1.jpg"));
+    expect((byId("delivery-publish") as HTMLButtonElement).disabled).toBe(false);
+    await click(byLabel("Cover 1.jpg"));
+    expect(byLabel("Cover 1.jpg")?.getAttribute("aria-pressed")).toBe("true");
+    await click(byLabel("Select 1.jpg"));
+    expect(byLabel("Cover 1.jpg")).toBeNull();
+  });
+  it("starts from the current set when the page already has one", async () => {
+    delivery = stateAfterPublish(2);
+    await openDelivery();
+    expect((byLabel("Select 1.jpg") as HTMLInputElement).checked).toBe(true);
+    expect((byLabel("Select 2.jpg") as HTMLInputElement).checked).toBe(false);
+    expect(byLabel("Cover 1.jpg")?.getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+describe("Preview", () => {
+  it("posts the selection and renders the returned page with the staff preview media", async () => {
+    apiPostMock.mockResolvedValue({ dto: { property: { street: "12 Example St", suburb: "Suburbia" }, setNumber: 1, publishedAt: null, coverHandle: handle(1), items: [
+      { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, width: 10, height: 10, durationMs: null, url: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`, thumbUrl: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/thumb` },
+      { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null }] } });
+    await openDelivery();
+    await click(byLabel("Select 1.jpg")); await click(byLabel("Select 2.jpg")); await click(byLabel("Cover 1.jpg"));
+    await click(byId("delivery-preview"));
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}/delivery/preview`, { assetIds: [ids.photo1, ids.photo2], coverAssetId: ids.photo1 });
+    const dialog = bodyById("delivery-preview-dialog")!;
+    expect(dialog.textContent).toContain("Photo 01");
+    expect(dialog.textContent).toContain("Locked");
+    expect(dialog.querySelector("img")?.getAttribute("src")).toContain("/delivery/preview-media/");
+  });
+  it("says why when the server refuses the selection, and names the items", async () => {
+    apiPostMock.mockRejectedValue(api(400, { error: "x", code: "invalid_selection", assetIds: [ids.photo2] }));
+    await openDelivery();
+    await click(byLabel("Select 2.jpg")); await click(byId("delivery-preview"));
+    expect(byId("delivery-problem")?.textContent).toContain("can't be on a Delivery page");
+    expect(byId("delivery-problem")?.textContent).toContain("2.jpg");
+  });
+});
+
+describe("Publish", () => {
+  async function select() { await click(byLabel("Select 1.jpg")); await click(byLabel("Select 2.jpg")); await click(byLabel("Cover 1.jpg")); }
+  const publishBody = () => apiPostMock.mock.calls.filter(([path]) => path.endsWith("/delivery/publish")).map(([, body]) => body as Record<string, unknown>);
+
+  it("confirms, then posts the selection, the cover, the page the person saw and an operation id", async () => {
+    apiPostMock.mockResolvedValue({ ...stateAfterPublish(1), replayed: false, operationSetNumber: 1 });
+    await openDelivery(); await select();
+    await click(byId("delivery-publish"));
+    expect(apiPostMock).not.toHaveBeenCalled();
+    await click(bodyById("delivery-publish-confirm"));
+    const [body] = publishBody();
+    expect(body).toMatchObject({ assetIds: [ids.photo1, ids.photo2], coverAssetId: ids.photo1, expectedLatestSet: null });
+    expect(String(body!.operationId)).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
+  });
+  it("sends the saved page's set number as expectedLatestSet", async () => {
+    delivery = stateAfterPublish(3);
+    apiPostMock.mockResolvedValue({ ...stateAfterPublish(4), replayed: false, operationSetNumber: 4 });
+    await openDelivery(); await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    expect(publishBody()[0]).toMatchObject({ expectedLatestSet: 3 });
+  });
+  it("reuses the operation id when the same selection is retried after a lost response, and takes a new one when the selection changes", async () => {
+    apiPostMock.mockRejectedValueOnce(new ApiError("offline", 0));
+    apiPostMock.mockRejectedValueOnce(new ApiError("offline", 0));
+    await openDelivery(); await select();
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    expect(byId("delivery-problem")?.textContent).toContain("Couldn't reach the server");
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    const [first, second] = publishBody();
+    expect(second!.operationId).toBe(first!.operationId);
+    await click(byLabel("Select 2.jpg"));
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    expect(publishBody()[2]!.operationId).not.toBe(first!.operationId);
+  });
+  it("shows the address, set number and published time after a Publish, and copies the full address", async () => {
+    apiPostMock.mockImplementation(async () => { delivery = stateAfterPublish(1); return { ...stateAfterPublish(1), replayed: false, operationSetNumber: 1 }; });
+    await openDelivery(); await select();
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    expect(byId("delivery-address")?.textContent).toBe(`${window.location.origin}/d/12-example-st-suburbia-k7m2qx`);
+    expect(byId("delivery-set-number")?.textContent).toContain("Set 1");
+    expect(byId("delivery-published-at")?.textContent).toMatch(/2026/);
+    await click(byId("copy-text"));
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(`${window.location.origin}/d/12-example-st-suburbia-k7m2qx`);
+  });
+  it.each([
+    [409, { code: "stale_set", latestSetNumber: 5 }, "changed since you loaded it"],
+    [409, { code: "delivered_stage_unavailable" }, "can't be moved to Delivered"],
+    [409, { code: "project_archived" }, "archived"],
+    [400, { code: "invalid_cover" }, "cover must be one of the selected photos"],
+    [400, { code: "invalid_selection", assetIds: [ids.photo2] }, "can't be on a Delivery page"],
+  ])("answers %s %j with clear copy and publishes nothing", async (status, body, copy) => {
+    apiPostMock.mockRejectedValue(api(status, { error: "x", ...body }));
+    await openDelivery(); await select();
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    const problem = byId("delivery-problem")!;
+    expect(problem.getAttribute("role")).toBe("alert");
+    expect(problem.textContent).toContain(copy);
+    expect(byId("delivery-address")).toBeNull();
+  });
+  it("re-reads the page after a stale set so the next Publish carries the new set number", async () => {
+    apiPostMock.mockRejectedValueOnce(api(409, { error: "x", code: "stale_set", latestSetNumber: 5 }));
+    await openDelivery(); await select();
+    delivery = stateAfterPublish(5);
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    apiPostMock.mockResolvedValueOnce({ ...stateAfterPublish(6), replayed: false, operationSetNumber: 6 });
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    const bodies = publishBody();
+    expect(bodies[1]).toMatchObject({ expectedLatestSet: 5 });
+    expect(bodies[1]!.operationId).not.toBe(bodies[0]!.operationId);
+  });
+  it("is read-only while the Project is archived but keeps the address", async () => {
+    delivery = stateAfterPublish(1);
+    const base = apiGetMock.getMockImplementation();
+    await mount("admin");
+    apiGetMock.mockImplementation((path, init) => (path === `/api/projects/${PROJECT_ID}` ? Promise.resolve({ ...detail(), archivedAt: "2026-09-01T00:00:00.000Z" }) : base!(path, init)));
+    await act(async () => { root!.unmount(); }); root = null; document.body.innerHTML = "";
+    host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => { root!.render(<QuincyQueryProvider key="archived" principalId="test-user" role="admin"><ProjectWorkspace projectId={PROJECT_ID} /></QuincyQueryProvider>); await Promise.resolve(); });
+    await flush(); await click(tab("Delivery"));
+    expect((byId("delivery-publish") as HTMLButtonElement).disabled).toBe(true);
+    expect(byId("delivery-address")).not.toBeNull();
+    expect(byId("delivery-archived")?.textContent).toContain("archived");
+  });
+});
+
+describe("the page switch", () => {
+  it("is Admin only, and sends the new state", async () => {
+    delivery = stateAfterPublish(1);
+    apiPutMock.mockResolvedValue({ ...stateAfterPublish(1), page: { ...stateAfterPublish(1).page, enabled: false } });
+    await openDelivery("admin");
+    const toggle = host.querySelector<HTMLElement>('[role="switch"][aria-label="Client page"]')!;
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    await click(toggle);
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}/delivery/page`, { enabled: false });
+    expect(host.querySelector('[role="switch"][aria-label="Client page"]')?.getAttribute("aria-checked")).toBe("false");
+  });
+  it("is not offered to an Editor", async () => {
+    delivery = stateAfterPublish(1);
+    await openDelivery("editor");
+    expect(host.querySelector('[role="switch"][aria-label="Client page"]')).toBeNull();
+    expect(byId("delivery-address")).not.toBeNull();
+  });
+  it("is not offered before the first Publish", async () => {
+    await openDelivery("admin");
+    expect(host.querySelector('[role="switch"][aria-label="Client page"]')).toBeNull();
+  });
+});
+
+describe("premium controls", () => {
+  const photoPath = (id: string, part: string) => `/api/projects/${PROJECT_ID}/assets/${id}/${part}`;
+  it("shows each paid extra's state and marks a photo premium", async () => {
+    apiPutMock.mockResolvedValue({ premium: true, premiumUnlocked: false });
+    await openDelivery();
+    expect(byLabel("Premium 2.jpg")?.getAttribute("aria-checked")).toBe("true");
+    expect(byLabel("Premium 1.jpg")?.getAttribute("aria-checked")).toBe("false");
+    await click(byLabel("Premium 1.jpg"));
+    expect(apiPutMock).toHaveBeenCalledWith(photoPath(ids.photo1, "delivery-premium"), { premium: true });
+  });
+  it("explains a 409 premium_published when unmarking", async () => {
+    apiPutMock.mockRejectedValue(api(409, { error: "x", code: "premium_published" }));
+    await openDelivery();
+    await click(byLabel("Premium 2.jpg"));
+    expect(byId("delivery-problem")?.textContent).toContain("stays premium");
+    expect(byId("delivery-problem")?.textContent).toContain("Unlock or Re-lock");
+  });
+  it("unlocks with an optional payment reference, and re-locks", async () => {
+    apiPutMock.mockResolvedValue({ premium: true, premiumUnlocked: true });
+    await openDelivery();
+    await click(byLabel("Unlock 2.jpg"));
+    photos = [asset(ids.photo1), asset(ids.photo2, { premium: true, premiumUnlocked: true })]; // what the re-read after the write returns
+    const ref = bodyById("delivery-payment-ref") as HTMLInputElement;
+    await act(async () => { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!; set.call(ref, "INV-9"); ref.dispatchEvent(new Event("input", { bubbles: true })); });
+    await click(bodyById("delivery-unlock-confirm"));
+    expect(apiPutMock).toHaveBeenCalledWith(photoPath(ids.photo2, "delivery-premium-unlock"), { unlocked: true, paymentRef: "INV-9" });
+    apiPutMock.mockResolvedValue({ premium: true, premiumUnlocked: false });
+    await click(byLabel("Re-lock 2.jpg"));
+    await click(bodyById("delivery-relock-confirm"));
+    expect(apiPutMock).toHaveBeenLastCalledWith(photoPath(ids.photo2, "delivery-premium-unlock"), { unlocked: false });
+  });
+  it("sends a Video's premium through the Video routes", async () => {
+    apiPutMock.mockResolvedValue({ premium: true, premiumUnlocked: false });
+    await openDelivery();
+    await click(byLabel("Premium Main walkthrough"));
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}/videos/${ids.video}/premium`, { premium: true });
+  });
+  it("is read-only for a role without the capability is not reachable: Photographers never see the tab", async () => {
+    await mount("photographer");
+    expect(tab("Delivery")).toBeUndefined();
+  });
+});

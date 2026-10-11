@@ -14,6 +14,7 @@ import { newId } from "../lib/ids";
 import { jsonInput } from "./helpers";
 import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visibility";
 import { resolveVisibleProject, visibleProjectWhere } from "../lib/visible-project-scope";
+import { isPremiumEligible } from "../lib/asset-premium";
 
 const reviewInput = z.object({ stars: z.number().int().min(1).max(5).nullable().optional(), colorLabel: z.enum(["select", "maybe", "cut", "hero"]).nullable().optional(), decision: z.enum(["approved", "flagged"]).nullable().optional(), recommended: z.boolean().optional() });
 async function assetContext(c: Context<AppEnv>, assetId: string) { return createDb(c.env.DB).select({ projectId: schema.collections.projectId, kind: schema.collections.kind, publishStatus: schema.assets.publishStatus }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(and(eq(schema.assets.id, assetId), sql`${schema.assets.supersededAt} IS NULL`, ne(schema.assets.kind, "video"))).get(); }
@@ -73,7 +74,7 @@ reviewRoutes.get("/projects/:id/assets", terminalRoute("/projects/:id/assets", a
   if (kind === "raw" && !roleHasCapability(user.role, "viewRaw")) return c.json({ error: "Forbidden", capability: "viewRaw" }, 403);
   if (["video", "floorplan", "copy"].includes(kind) && !roleHasCapability(user.role, "viewEdited")) return c.json({ error: "Forbidden", capability: "viewEdited" }, 403);
 
-  const rows = await createDb(c.env.DB).select({ asset: schema.assets, review: schema.assetReviewState, selection: schema.selections.id, renditionVariant: schema.assetRenditions.variant })
+  const rows = await createDb(c.env.DB).select({ asset: schema.assets, review: schema.assetReviewState, selection: schema.selections.id, renditionVariant: schema.assetRenditions.variant, unlockId: schema.assetPremiumUnlocks.assetId })
     .from(schema.assets)
     .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, projectId), eq(schema.collections.kind, kind)))
     .where(kind === "edited"
@@ -87,6 +88,7 @@ reviewRoutes.get("/projects/:id/assets", terminalRoute("/projects/:id/assets", a
       sql`${schema.assetRenditions.contentType} in ('image/webp', 'image/jpeg')`,
     ))
     .leftJoin(schema.selections, eq(schema.selections.assetId, schema.assets.id))
+    .leftJoin(schema.assetPremiumUnlocks, eq(schema.assetPremiumUnlocks.assetId, schema.assets.id))
     .orderBy(asc(sql`lower(${schema.assets.originalFilename})`), asc(schema.assets.originalFilename), asc(schema.assets.id))
     .all();
   const readiness = new Map<string, Set<"thumb" | "web">>();
@@ -98,7 +100,7 @@ reviewRoutes.get("/projects/:id/assets", terminalRoute("/projects/:id/assets", a
   }
   const uniqueRows = rows.filter((row, index) => index === 0 || rows[index - 1]!.asset.id !== row.asset.id);
 
-  return c.json({ assets: uniqueRows.map(({ asset, review, selection }) => ({
+  return c.json({ assets: uniqueRows.map(({ asset, review, selection, unlockId }) => ({
     id: asset.id,
     collectionId: asset.collectionId,
     kind: asset.kind,
@@ -116,6 +118,9 @@ reviewRoutes.get("/projects/:id/assets", terminalRoute("/projects/:id/assets", a
     supersedesAssetId: asset.supersedesAssetId,
     review: review ? { stars: review.stars, colorLabel: review.colorLabel, decision: review.decision, recommended: review.recommended } : null,
     selected: selection !== null,
+    // #787 slice 10: a paid extra's state, for the Delivery tab. Only the kinds that can be marked carry it; a Floorplan preview answers for the PDF, which holds the state.
+    premium: isPremiumEligible(asset.kind) && asset.deliveryPremium,
+    premiumUnlocked: isPremiumEligible(asset.kind) && unlockId !== null,
   })) });
 }));
 reviewRoutes.post("/assets/:id/review", terminalRoute("/assets/:id/review", async (c) => {

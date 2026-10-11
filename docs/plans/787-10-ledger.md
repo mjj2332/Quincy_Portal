@@ -1,0 +1,31 @@
+# #787 slice 10: reuse ledger (staff Delivery tab)
+
+One line per UI element. Registry searches ran through the ReUI MCP (`mcp__ReUI__search`) on 2026-10-11; nothing was installed, because every element is already vendored.
+
+| Element | Item used |
+|---|---|
+| Tab trigger "Delivery" | `components/reui/tabs` `TabsTrigger` inside the existing `ProjectHeader` `TabsList` (same trigger as Collaboration) |
+| Tab panel surface | `components/reui/frame` (`Frame`, `FramePanel`, `FrameHeader`, `FrameTitle`, `FrameDescription`; ADR 0014) |
+| Item rows (select, thumbnail, name, actions) | `components/reui/item` (`Item`, `ItemMedia`, `ItemContent`, `ItemTitle`, `ItemDescription`, `ItemActions`, `ItemGroup`). MCP search "selectable image list rows with checkbox, thumbnail, switch and actions": `wishlist-1` (pro block, same `item` + `checkbox` + `badge`) is the closest; it is a shop layout with bulk-action toolbar, so only its primitives are used |
+| Row checkbox | `components/quincy/Checkbox` (the Quincy-owned real `<input type="checkbox">`; `reui/checkbox` is a `<span role="checkbox">`, see the header of `quincy/Checkbox.tsx`), in a 44px label hit area |
+| Cover control | `components/reui/toggle` (`Toggle`, `size="sm"`, 44px below 721px), `aria-pressed` |
+| Premium switch, Admin page switch | `components/reui/switch` with `components/reui/label` |
+| Premium / Page state chips | `components/reui/badge` (`success-light`, `warning-light`, `info-light`, `outline`) |
+| Preview, Publish, Unlock, Re-lock, Select all / Clear, Retry | `components/reui/button` |
+| Copy address | `components/video/CopyTextButton` (the `c-button-41` Copy to Copied swap on `reui/button`; MCP `c-input-group-40` "Share link input" also fits but needs a visibility `dropdown-menu` this page does not have, so only the copy action is reused) |
+| Address text | plain text in the `Frame` (a `readonly` input would hide it from `textContent` and add a raw input outside the allowlist) |
+| Preview dialog | `components/reui/dialog` composed per `video/ReviewLinkDialogFrame` + `quincy/SheetCloseButton` (the Review links dialog pattern) |
+| Preview tiles | `components/LazyImage`; locked and PDF tiles use `lucide-react` icons; chips are `reui/badge` |
+| Publish confirm, Unlock, Re-lock | `components/reui/alert-dialog` (`size="default"`, the `VideoDeliveryPanel` pattern, `ConfirmDeleteDialog` shape) |
+| Payment reference field | `components/reui/input` with `components/reui/label` (as `VideoDeliveryPanel`) |
+| Problem, receipt, archived messages | `components/quincy/Notice` (`critical` + `role="alert"`, `positive`, `caution` + `role="status"`) |
+| Group headings, loading line | hand-built `<h3>` and `<p>` text in tokens; no ReUI item for plain headings (searched `list`, `item`: only row components exist) |
+
+No new raw `<button>`, `<input>`, `<select>`, `<textarea>`, `<dialog>` or widget `role` outside `components/reui/` and `components/quincy/`; `config/ui-primitive-allowlist.ts` is unchanged.
+
+## Decisions taken for this slice
+
+- Premium state of a photo, Floorplan PDF or Copy PDF comes from the staff assets list (`premium`, `premiumUnlocked`), exposed only for those kinds; a Floorplan preview answers false/false because the PDF holds the state (the same rule `lockedSql` applies).
+- The activity row `project.delivery.published` keeps linking to the Project sheet: its `deep_link_path` is frozen (see `project-activity.ts`). `?tab=delivery` still opens the tab.
+- Selection order on the page is photos, Floorplans, Copy documents, then Videos, each in the order its list came. A Video row publishes its current Version.
+- The tab mounts on first open and then stays mounted (hidden), so a half-made selection survives a tab hop.

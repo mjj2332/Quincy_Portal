@@ -1,0 +1,239 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { FileTextIcon, FilmIcon } from "lucide-react";
+import type { DeliveryPageDto, Role } from "@quincy/shared";
+import { useCapabilities } from "../../lib/capabilities";
+import { buildDeliveryCandidates, type DeliveryCandidate } from "../../lib/delivery-candidates";
+import { deliveryErrorText, errorCode, previewDelivery, publishDelivery, refusedAssetIds, setAssetPremium, setAssetPremiumUnlock, setDeliveryPageEnabled, useProjectDeliveryQuery } from "../../lib/delivery-data";
+import { invalidateProjectSurfaces, useProjectAssetsQuery, useProjectVideosQuery } from "../../lib/project-data";
+import { setVideoPremium, setVideoPremiumUnlock } from "../../lib/video-approval-data";
+import { LazyImage } from "../LazyImage";
+import { Checkbox } from "../quincy/Checkbox";
+import { Notice } from "../quincy/Notice";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../reui/alert-dialog";
+import { Badge } from "../reui/badge";
+import { Button } from "../reui/button";
+import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "../reui/frame";
+import { Input } from "../reui/input";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "../reui/item";
+import { Label } from "../reui/label";
+import { Switch } from "../reui/switch";
+import { Toggle } from "../reui/toggle";
+import { CopyTextButton } from "../video/CopyTextButton";
+import { DeliveryPreviewDialog } from "./DeliveryPreviewDialog";
+
+/**
+ * The staff Delivery tab (#787 slice 10): choose what the client page shows, pick a cover, Preview, Publish, then the page's address, the Admin on/off switch and per-item premium. Reuse
+ * ledger: docs/plans/787-10-ledger.md. The tab exists only while `useProjectDeliveryQuery` answered with a page state (gate open, `viewClientPreview`), which the Workspace decides.
+ * Publish is idempotent by operation id: one id per (selection, cover, page the person saw), so a retry of the same attempt cannot publish twice and a changed attempt takes a new id.
+ */
+const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
+const GROUPS = [{ kind: "photo", title: "Edited photos", plural: "photos" }, { kind: "floorplan", title: "Floorplan PDF", plural: "Floorplan PDFs" }, { kind: "copy", title: "Copy PDF", plural: "Copy PDFs" }, { kind: "video", title: "Videos", plural: "Videos" }] as const;
+const when = (epoch: number) => new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(epoch));
+const thumbUrl = (projectId: string, c: DeliveryCandidate) => (c.kind === "photo" || c.kind === "video" ? `/api/projects/${projectId}/delivery/preview-media/${c.assetId}/thumb` : null);
+type Unlocking = { candidate: DeliveryCandidate; mode: "unlock" | "relock" } | null;
+
+export function DeliveryTab({ projectId, role, archived }: { projectId: string; role: Role; archived: boolean }) {
+  const { can } = useCapabilities();
+  const queryClient = useQueryClient();
+  const delivery = useProjectDeliveryQuery(projectId, true);
+  const edited = useProjectAssetsQuery(projectId, "edited", true, false, role);
+  const floorplan = useProjectAssetsQuery(projectId, "floorplan", true, false, role);
+  const copy = useProjectAssetsQuery(projectId, "copy", true, false, role);
+  const videos = useProjectVideosQuery(projectId, true, role);
+  const state = delivery.data ?? null;
+  const candidates = useMemo(() => buildDeliveryCandidates({ edited: edited.data ?? [], floorplan: floorplan.data ?? [], copy: copy.data ?? [], videos: videos.data ?? [] }), [edited.data, floorplan.data, copy.data, videos.data]);
+  const listsReady = [edited, floorplan, copy, videos].every((query) => !query.isPending);
+  const listsFailed = [edited, floorplan, copy, videos].find((query) => query.isError && !query.data);
+
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const [cover, setCover] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<string | null>(null);
+  const [preview, setPreview] = useState<DeliveryPageDto | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState<"preview" | "publish" | "switch" | null>(null);
+  const [rowBusy, setRowBusy] = useState<ReadonlySet<string>>(() => new Set());
+  const [unlocking, setUnlocking] = useState<Unlocking>(null);
+  const [paymentRef, setPaymentRef] = useState("");
+  const [archivedLatch, setArchivedLatch] = useState(false);
+  const seeded = useRef(false);
+  const operation = useRef<{ key: string; id: string } | null>(null);
+  const isArchived = archived || archivedLatch;
+
+  // The first time both the page and the lists are in, start from the current set: re-publishing is usually an edit of what is there.
+  useEffect(() => {
+    if (seeded.current || !listsReady || delivery.isPending) return;
+    seeded.current = true;
+    const inSet = new Set(state?.set?.items.map((item) => item.assetId) ?? []);
+    const start = candidates.filter((c) => inSet.has(c.assetId)).map((c) => c.assetId);
+    setSelected(new Set(start));
+    setCover(state?.set?.coverAssetId && start.includes(state.set.coverAssetId) ? state.set.coverAssetId : null);
+  }, [listsReady, delivery.isPending, candidates, state]);
+
+  const orderedIds = candidates.filter((c) => selected.has(c.assetId)).map((c) => c.assetId);
+  const nameOf = (assetId: string) => candidates.find((c) => c.assetId === assetId)?.name ?? "an item";
+  const expected = state?.page?.latestSetNumber ?? null;
+  const surfaces = (collection?: "edited" | "floorplan" | "copy" | null) => invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "delivery" }, ...(collection ? [{ kind: "assets", collectionKind: collection } as const] : [])], dashboard: false, calendar: false, gantt: false });
+
+  function toggleSelected(assetId: string, on: boolean) {
+    setSelected((current) => { const next = new Set(current); if (on) next.add(assetId); else next.delete(assetId); return next; });
+    if (!on && cover === assetId) setCover(null);
+  }
+  function toggleGroup(kind: DeliveryCandidate["kind"], on: boolean) {
+    const members = candidates.filter((c) => c.kind === kind).map((c) => c.assetId);
+    setSelected((current) => { const next = new Set(current); for (const id of members) { if (on) next.add(id); else next.delete(id); } return next; });
+    if (!on && cover && members.includes(cover)) setCover(null);
+  }
+  function refuse(error: unknown) {
+    const code = errorCode(error);
+    const refused = code === "invalid_selection" ? refusedAssetIds(error) : [];
+    if (refused.length) { setSelected((current) => new Set([...current].filter((id) => !refused.includes(id)))); if (cover && refused.includes(cover)) setCover(null); }
+    if (code === "project_archived") setArchivedLatch(true);
+    if (code === "stale_set") void surfaces();
+    setProblem(deliveryErrorText(error, refused.map(nameOf)));
+  }
+
+  async function runPreview() {
+    setBusy("preview"); setProblem(null); setReceipt(null);
+    try { setPreview(await previewDelivery(projectId, { assetIds: orderedIds, coverAssetId: cover })); } catch (error) { refuse(error); } finally { setBusy(null); }
+  }
+  async function runPublish() {
+    setConfirming(false); setBusy("publish"); setProblem(null); setReceipt(null);
+    const key = JSON.stringify([orderedIds, cover, expected]);
+    if (operation.current?.key !== key) operation.current = { key, id: crypto.randomUUID() };
+    try {
+      const response = await publishDelivery(queryClient, projectId, { assetIds: orderedIds, coverAssetId: cover, expectedLatestSet: expected, operationId: operation.current.id });
+      setReceipt(response.replayed ? `This was already published as set ${response.operationSetNumber}.` : `Published as set ${response.operationSetNumber}.`);
+    } catch (error) { refuse(error); } finally { setBusy(null); }
+  }
+  async function runSwitch(enabled: boolean) {
+    setBusy("switch"); setProblem(null);
+    try { await setDeliveryPageEnabled(queryClient, projectId, enabled); } catch (error) { setProblem(deliveryErrorText(error)); void surfaces(); } finally { setBusy(null); }
+  }
+  async function writeRow(c: DeliveryCandidate, write: () => Promise<unknown>) {
+    setProblem(null); setRowBusy((current) => new Set(current).add(c.assetId));
+    try { await write(); } catch (error) { if (errorCode(error) === "project_archived") setArchivedLatch(true); setProblem(deliveryErrorText(error)); void surfaces(c.collection === "edited" || c.collection === "floorplan" || c.collection === "copy" ? c.collection : null); }
+    finally { setRowBusy((current) => { const next = new Set(current); next.delete(c.assetId); return next; }); }
+  }
+  const videoContext = (c: DeliveryCandidate) => ({ queryClient, projectId, videoId: c.videoId!, assetId: c.assetId });
+  const canPremium = (c: DeliveryCandidate) => can(c.kind === "video" ? "manageVideoPremium" : "manageExtras");
+  const markPremium = (c: DeliveryCandidate, premium: boolean) => writeRow(c, () => (c.kind === "video" ? setVideoPremium(videoContext(c), premium) : setAssetPremium(queryClient, projectId, c.assetId, c.collection!, premium)));
+  const setUnlocked = (c: DeliveryCandidate, unlocked: boolean, ref: string) => writeRow(c, () => (c.kind === "video"
+    ? setVideoPremiumUnlock(videoContext(c), { unlocked, ...(unlocked && ref ? { paymentRef: ref } : {}) })
+    : setAssetPremiumUnlock(queryClient, projectId, c.assetId, c.collection!, { unlocked, ...(unlocked && ref ? { paymentRef: ref } : {}) })));
+
+  const page = state?.page ?? null;
+  const address = page ? `${window.location.origin}${page.path}` : null;
+  const none = orderedIds.length === 0;
+
+  return <div data-testid="delivery-tab" className="grid min-w-0 gap-[var(--space-4)] p-[var(--space-1)]">
+    {isArchived && <Notice tone="caution" role="status" data-testid="delivery-archived">This project is archived. Preview and the page address still work; publishing and premium are read-only until it is restored.</Notice>}
+    {problem && <Notice tone="critical" role="alert" data-testid="delivery-problem">{problem}</Notice>}
+    {receipt && <Notice tone="positive" role="status" data-testid="delivery-receipt">{receipt}</Notice>}
+
+    {page && address && <Frame data-surface="default" aria-label="Client page address" role="group">
+      <FramePanel className="grid gap-[var(--space-3)]">
+        <FrameHeader className="p-0">
+          <div className="flex flex-wrap items-center justify-between gap-[var(--space-2)]">
+            <FrameTitle>Client page</FrameTitle>
+            <Badge variant={page.enabled ? "success-light" : "outline"} data-testid="delivery-page-state">{page.enabled ? "On" : "Off"}</Badge>
+          </div>
+          <FrameDescription className="text-foreground-secondary">Share this address with the client. Premium items stay locked on it until you unlock them.</FrameDescription>
+        </FrameHeader>
+        <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+          <span data-testid="delivery-address" className="min-w-0 [overflow-wrap:anywhere] [font:var(--type-body)]">{address}</span>
+          <CopyTextButton text={address} label="Copy address" success="Address copied." failure="Couldn't copy the address." className={TOUCH} />
+        </div>
+        {state?.set && <p className="m-0 text-foreground-secondary [font:var(--type-label)]"><span data-testid="delivery-set-number">{`Set ${state.set.setNumber}`}</span> · <span data-testid="delivery-published-at">{`Published ${when(state.set.publishedAt)}`}</span></p>}
+        {can("switchDeliveryPage") && <div className="flex items-center gap-[var(--space-3)]">
+          <Switch id="delivery-page-switch" aria-label="Client page" checked={page.enabled} disabled={busy === "switch"} onCheckedChange={(next) => void runSwitch(next)} />
+          <Label htmlFor="delivery-page-switch">{page.enabled ? "Page is live for the client" : "Page is switched off"}</Label>
+        </div>}
+      </FramePanel>
+    </Frame>}
+
+    <Frame data-surface="default" aria-label="What to publish" role="group">
+      <FramePanel className="grid gap-[var(--space-4)]">
+        <FrameHeader className="p-0">
+          <FrameTitle>What to publish</FrameTitle>
+          <FrameDescription className="text-foreground-secondary">{`Choose the items for the client page, then a cover photo. ${orderedIds.length} selected.`}</FrameDescription>
+        </FrameHeader>
+        {(!listsReady || delivery.isPending) && !listsFailed && <p role="status" className="m-0 text-foreground-secondary [font:var(--type-label)]">Loading what can be published…</p>}
+        {listsFailed && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>The items could not be loaded.</span><Button type="button" variant="outline" className={TOUCH} onClick={() => void listsFailed.refetch()}>Retry</Button></Notice>}
+        {listsReady && candidates.length === 0 && <p className="m-0 text-foreground-secondary [font:var(--type-label)]">Nothing is ready to publish yet. Edited photos, the Floorplan and Copy PDFs and Videos appear here once they are in.</p>}
+        {GROUPS.map((group) => {
+          const members = candidates.filter((c) => c.kind === group.kind);
+          if (members.length === 0) return null;
+          const all = members.every((c) => selected.has(c.assetId));
+          return <section key={group.kind} aria-labelledby={`delivery-group-${group.kind}`} className="grid gap-[var(--space-2)]">
+            <div className="flex flex-wrap items-center justify-between gap-[var(--space-2)]">
+              <h3 id={`delivery-group-${group.kind}`} className="m-0 [font:var(--type-label)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">{group.title}</h3>
+              <Button type="button" variant="ghost" className={TOUCH} onClick={() => toggleGroup(group.kind, !all)}>{all ? `Clear ${group.plural.toLowerCase()}` : `Select all ${group.plural.toLowerCase()}`}</Button>
+            </div>
+            <ItemGroup>
+              {members.map((c) => {
+                const on = selected.has(c.assetId); const url = thumbUrl(projectId, c); const working = rowBusy.has(c.assetId);
+                return <Item key={c.assetId} size="xs" variant="outline" data-testid="delivery-item" data-kind={c.kind} className="flex-wrap">
+                  <label className="grid size-11 shrink-0 place-items-center"><Checkbox aria-label={`Select ${c.name}`} checked={on} onChange={(event) => toggleSelected(c.assetId, event.target.checked)} /></label>
+                  <ItemMedia variant="image" className="size-14 overflow-hidden bg-surface-sunken text-foreground-secondary">
+                    {url ? <LazyImage src={url} alt="" className="size-full object-cover" /> : c.kind === "video" ? <FilmIcon aria-hidden className="size-5" /> : <FileTextIcon aria-hidden className="size-5" />}
+                  </ItemMedia>
+                  <ItemContent className="min-w-0">
+                    <ItemTitle className="[overflow-wrap:anywhere]">{c.name}</ItemTitle>
+                    <ItemDescription className="flex flex-wrap items-center gap-[var(--space-2)]">
+                      {c.premium && <Badge variant={c.premiumUnlocked ? "success-light" : "warning-light"}>{c.premiumUnlocked ? "Premium · unlocked" : "Premium · locked"}</Badge>}
+                    </ItemDescription>
+                  </ItemContent>
+                  <ItemActions className="flex-wrap">
+                    {c.kind === "photo" && on && <Toggle variant="outline" size="sm" aria-label={`Cover ${c.name}`} pressed={cover === c.assetId} onPressedChange={(pressed) => setCover(pressed ? c.assetId : null)}>Cover</Toggle>}
+                    {canPremium(c) && <>
+                      <Switch aria-label={`Premium ${c.name}`} size="sm" checked={c.premium} disabled={isArchived || working} onCheckedChange={(next) => void markPremium(c, next)} />
+                      {c.premium && <Button type="button" variant="outline" className={TOUCH} aria-label={`${c.premiumUnlocked ? "Re-lock" : "Unlock"} ${c.name}`} disabled={isArchived || working} onClick={() => { setPaymentRef(""); setUnlocking({ candidate: c, mode: c.premiumUnlocked ? "relock" : "unlock" }); }}>{c.premiumUnlocked ? "Re-lock" : "Unlock"}</Button>}
+                    </>}
+                  </ItemActions>
+                </Item>;
+              })}
+            </ItemGroup>
+          </section>;
+        })}
+        <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+          <Button type="button" variant="outline" data-testid="delivery-preview" className={TOUCH} disabled={none || busy !== null} onClick={() => void runPreview()}>Preview</Button>
+          <Button type="button" data-testid="delivery-publish" className={TOUCH} disabled={none || busy !== null || isArchived} onClick={() => { setProblem(null); setConfirming(true); }}>{page ? "Publish a new set" : "Publish"}</Button>
+        </div>
+      </FramePanel>
+    </Frame>
+
+    <DeliveryPreviewDialog dto={preview} onClose={() => setPreview(null)} />
+
+    <AlertDialog open={confirming} onOpenChange={(open) => { if (!open) setConfirming(false); }}>
+      <AlertDialogContent size="default">
+        <AlertDialogHeader>
+          <AlertDialogTitle>{`Publish ${orderedIds.length} item${orderedIds.length === 1 ? "" : "s"}?`}</AlertDialogTitle>
+          <AlertDialogDescription>{page ? "This replaces what the client sees with this selection as the next set." : "This creates the client page. The first Publish also moves the Project to Delivered."}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction data-testid="delivery-publish-confirm" onClick={() => void runPublish()}>Publish</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <AlertDialog open={unlocking !== null} onOpenChange={(open) => { if (!open) setUnlocking(null); }}>
+      <AlertDialogContent size="default">
+        <AlertDialogHeader>
+          <AlertDialogTitle>{unlocking?.mode === "relock" ? `Re-lock ${unlocking.candidate.name}?` : `Unlock ${unlocking?.candidate.name ?? ""}?`}</AlertDialogTitle>
+          <AlertDialogDescription>{unlocking?.mode === "relock" ? "The client sees a locked preview again and downloads stop until it is unlocked." : "The client can open and download it on the page. Add a payment reference so the unlock can be traced."}</AlertDialogDescription>
+        </AlertDialogHeader>
+        {unlocking?.mode === "unlock" && <div className="grid gap-[var(--space-2)]">
+          <Label htmlFor="delivery-payment-ref">Payment reference (optional)</Label>
+          <Input id="delivery-payment-ref" data-testid="delivery-payment-ref" maxLength={200} autoComplete="off" value={paymentRef} onChange={(event) => setPaymentRef(event.target.value)} />
+        </div>}
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction variant={unlocking?.mode === "relock" ? "destructive" : "default"} data-testid={unlocking?.mode === "relock" ? "delivery-relock-confirm" : "delivery-unlock-confirm"} onClick={() => { if (unlocking) void setUnlocked(unlocking.candidate, unlocking.mode === "unlock", paymentRef.trim()); setUnlocking(null); }}>{unlocking?.mode === "relock" ? "Re-lock" : "Unlock"}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  </div>;
+}
