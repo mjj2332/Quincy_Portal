@@ -84,6 +84,13 @@
   /* A caution MARK on the root ink surface (the toast, #221), which has no data-surface
      ancestor and so never sees inverse.css's scoped roles. 9.20:1 on --ink-900. */
   --signal-caution-on-inverse: var(--star-amber);
+  /* The other tone TEXT steps on an ink surface (#741 14-ui-guest). inverse.css points the
+     --success/--info/--destructive-wash/--warning -foreground text roles here; the paper values
+     (deep olive, slate ink, oxblood) measure 1.57:1 to 2.59:1 on ink. Owner-reviewable hexes. */
+  --signal-positive-on-inverse: #9cc48f;  /* 10.09:1 on --ink-900, 9.39:1 on --ink-800 */
+  --signal-info-on-inverse:     #a9bad3;  /* 10.04:1 on --ink-900, 9.34:1 on --ink-800 */
+  --signal-critical-on-inverse: #e8968f;  /*  8.66:1 on --ink-900, 8.06:1 on --ink-800 */
+  /* caution reuses --signal-caution-on-inverse (star-amber): 9.20:1 / 8.56:1 */
 
   --border-hairline:  var(--greige-200);
   --border-strong:    var(--ink-900);

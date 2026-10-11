@@ -1585,3 +1585,60 @@ describe("guard: Admin inline editors keep their focus outline and value clear (
     expect(line).toMatch(/(?<![-\w:])relative(?![-\w])/);
   });
 });
+
+
+// #741 7c: the offset field sat white-on-white on the dark viewer because `--field-bg` (paper-000) was never re-scoped for the inverse
+// surface. The inverse and default blocks must mirror each other, and a field background must not stay paper on ink.
+describe("guard: inverse.css re-scopes --field-bg in both blocks", () => {
+  const css = stripCssComments(readFileSync(join(stylesDir, "tokens/inverse.css"), "utf8"));
+  const block = (name: string) => new RegExp(`\\[data-surface="${name}"\\]\\s*\\{([^}]*)\\}`).exec(css)?.[1] ?? "";
+  it("declares --field-bg in the inverse and the default block, dark in the first", () => {
+    const inverse = /--field-bg\s*:\s*([^;]+);/.exec(block("inverse"))?.[1]?.trim();
+    const restored = /--field-bg\s*:\s*([^;]+);/.exec(block("default"))?.[1]?.trim();
+    expect(inverse, "inverse block must set --field-bg").toBeDefined();
+    expect(restored, "default block must restore --field-bg").toBeDefined();
+    expect(inverse).toMatch(/--ink-/);
+  });
+});
+
+// #741 14-ui-guest: the tone TEXT roles (`--success-foreground` etc.) were never re-scoped for the inverse surface, so the
+// Badge `*-light` variants on the guest film header rendered deep olive/ochre/slate on ink (1.57:1 to 2.59:1). Each role must be
+// declared in both blocks, and its inverse value must reach 4.5:1 on both ink grounds.
+describe("guard: inverse.css re-scopes the tone text roles in both blocks", () => {
+  const raw = readFileSync(join(stylesDir, "tokens/inverse.css"), "utf8");
+  const css = stripCssComments(raw);
+  const colors = new Map(
+    [...stripCssComments(readFileSync(join(stylesDir, "tokens/colors.css"), "utf8")).matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)]
+      .map((m) => [m[1]!, m[2]!.trim()] as const),
+  );
+  const block = (name: string) => new RegExp(`\\[data-surface="${name}"\\]\\s*\\{([^}]*)\\}`).exec(css)?.[1] ?? "";
+  const declared = (b: string, prop: string) => new RegExp(`${prop}\\s*:\\s*([^;]+);`).exec(b)?.[1]?.trim();
+  const resolve = (value: string): string => {
+    const ref = /^var\((--[\w-]+)\)$/.exec(value);
+    return ref ? resolve(colors.get(ref[1]!) ?? "") : value;
+  };
+  const luminance = (hex: string) => {
+    const [r, g, b] = [1, 3, 5].map((i) => {
+      const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+  };
+  const contrast = (a: string, b: string) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi! + 0.05) / (lo! + 0.05);
+  };
+  const roles = ["--success-foreground", "--warning-foreground", "--info-foreground", "--destructive-wash-foreground"];
+  it.each(roles)("%s is declared in both blocks and reaches 4.5:1 on ink-900 and ink-800 inverted", (role) => {
+    const inverse = declared(block("inverse"), role);
+    const restored = declared(block("default"), role);
+    expect(inverse, `inverse block must set ${role}`).toBeDefined();
+    expect(restored, `default block must restore ${role}`).toBeDefined();
+    const value = resolve(inverse!);
+    expect(value, `${role} must resolve to a #rrggbb palette value`).toMatch(/^#[0-9a-f]{6}$/i);
+    for (const ground of ["--ink-900", "--ink-800"]) {
+      const ratio = contrast(value, resolve(colors.get(ground)!));
+      expect(ratio, `${role} on ${ground}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});

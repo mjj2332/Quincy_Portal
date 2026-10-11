@@ -21,10 +21,10 @@ export type GuestSessionInput = z.infer<typeof guestSessionInputSchema>;
 /**
  * `POST` and `GET /d/api/links/:linkId/session`, and the answer of `POST .../email/verify`. `verified`, `email` (the guest's own, normalised) and `name` are false, null and null until
  * the email step (13a) fills them. Each `allow` flag is the link's flag AND its Worker part (`guest_comments` for comments, `delivery` for approve and download), so the page never
- * renders a control whose POST would be the stub.
+ * renders a control whose POST would be the stub. `markup` is the Worker part alone (a drawing is a note field, so it needs `comments` too): with it off, a note that carries a drawing is the stub.
  */
 export const guestSessionResponseSchema = z.object({
-  link: z.object({ label: z.string().nullable(), expiresAt: iso, allow: z.object({ comments: z.boolean(), approve: z.boolean(), download: z.boolean() }).strict() }).strict(),
+  link: z.object({ label: z.string().nullable(), expiresAt: iso, allow: z.object({ comments: z.boolean(), approve: z.boolean(), download: z.boolean(), markup: z.boolean() }).strict() }).strict(),
   verified: z.boolean(),
   email: z.string().nullable(),
   name: z.string().nullable(),

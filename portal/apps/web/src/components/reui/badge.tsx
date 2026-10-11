@@ -6,7 +6,9 @@ import { cn } from "@/lib/utils"
 
 // Two corrections, marked inline below. Tones are deliberately NOT touched here — Stage B maps
 // Quincy's tones onto (or past) nova's semantic variants; see `tokens/reui.css`'s header for why
-// `destructive-light` and the `[data-surface="inverse"]` roles are not safe to reconcile yet.
+// `destructive-light` and the inverse FILL roles are not safe to reconcile yet. The inverse TEXT roles
+// (`--success/--warning/--info/--destructive-wash-foreground`) are re-scoped in tokens/inverse.css
+// (#741 14-ui-guest), so the `*-light` variants read on the guest film header; fills are not inverse-aware.
 const badgeVariants = cva(
   [
     // Correction 1: nova's `font-medium` is replaced by Quincy's small-caps badge typography,

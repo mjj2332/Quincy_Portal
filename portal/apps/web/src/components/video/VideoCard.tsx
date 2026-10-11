@@ -11,7 +11,10 @@ import { LazyImage } from "../LazyImage";
 import { Notice } from "../quincy/Notice";
 import { FilePickButton } from "../quincy/FileDropzone";
 import type { VideoUploadState } from "../../lib/video-upload";
+import { Checkbox } from "../quincy/Checkbox";
 import { formatDuration, formatFps, formatVideoDate } from "./video-format";
+import { ReviewLinkChips } from "./ReviewLinkChips";
+import type { ReviewLinkChip } from "./use-review-links-ui";
 
 const META = "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
 
@@ -22,7 +25,7 @@ export const VIDEO_ACCEPT = ".mp4,video/mp4";
  * the Video and the control that was pressed to `onOpen`; selection and note chips arrive in later slices. `onVersionFile` checks and
  * starts the upload and returns a message when the file is refused.
  */
-export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen }: {
+export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks }: {
   video: VideoDto;
   canUpload: boolean;
   currentUserId: string | null;
@@ -34,6 +37,8 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
   onCancelReservation: (reservationId: string) => Promise<void>;
   /** Opens the review player on this Video; `trigger` is where focus returns on close. */
   onOpen: (video: VideoDto, trigger: HTMLElement) => void;
+  /** Review links (#741 11b), present only when the links part is on and the role may share: the tick for a new link and the links this Video is on. */
+  reviewLinks?: { selected: boolean; /** Absent when the Project is archived: no new links. */ onToggle?: () => void; chips: ReviewLinkChip[]; onOpenChip: (linkId: string) => void; onOpenAll: () => void };
 }) {
   const [cancelling, setCancelling] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -59,7 +64,10 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
       </div>
       <div className="grid gap-[var(--space-3)] px-[var(--space-4)] pb-[var(--space-4)]">
         <div className="grid gap-[var(--space-1)]">
-          <h3 className="serif [font:var(--type-h3)]">{video.title}</h3>
+          <div className="flex items-start justify-between gap-[var(--space-2)]">
+            <h3 className="serif [font:var(--type-h3)]">{video.title}</h3>
+            {reviewLinks?.onToggle && <label className="-mr-[var(--space-2)] -mt-[var(--space-2)] flex size-11 shrink-0 cursor-pointer items-center justify-center"><Checkbox aria-label={`Select ${video.title}`} checked={reviewLinks.selected} onChange={reviewLinks.onToggle} /></label>}
+          </div>
           <div className="flex flex-col items-start gap-[var(--space-1)]">
             {/* The count sits on the versions row, so a card's height is the same with or without open notes. */}
             <div className="flex items-center gap-[var(--space-2)]" data-testid="video-card-versions-row">
@@ -79,6 +87,7 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
             </Popover>
             {video.latestNoteCount !== null && video.latestNoteCount > 0 && <Badge variant="info-light" size="sm" data-testid="video-card-open-notes" className="tabular-nums">{video.latestNoteCount === 1 ? "1 open note" : `${video.latestNoteCount} open notes`}</Badge>}
             </div>
+            {reviewLinks && reviewLinks.chips.length > 0 && <ReviewLinkChips chips={reviewLinks.chips} onOpenChip={reviewLinks.onOpenChip} onOpenAll={reviewLinks.onOpenAll} />}
             <p className={META} data-testid="video-card-meta">{`${count > 1 ? `v${newest.version} by` : "by"} ${newest.uploadedBy.name} · ${formatVideoDate(newest.createdAt)} · ${formatFps(newest.fps)}\u00a0fps`}</p>
           </div>
         </div>
