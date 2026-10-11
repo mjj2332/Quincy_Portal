@@ -1,7 +1,7 @@
 import {
-  guestEmailCodeErrorSchema, guestEmailCodeResponseSchema, guestNoteConflictSchema, guestNoteDeleteResponseSchema, guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNoteWriteResponseSchema,
+  guestDecisionResponseSchema, guestDownloadManifestSchema, guestEmailCodeErrorSchema, guestEmailCodeResponseSchema, guestNoteConflictSchema, guestNoteDeleteResponseSchema, guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNoteWriteResponseSchema,
   guestPasscodeErrorSchema, guestSessionResponseSchema, guestSubscriptionResponseSchema, guestVideoListResponseSchema,
-  type GuestNoteCreateInput, type GuestNoteEditInput, type GuestNoteMarkupResponse, type GuestNoteThreadDto, type GuestSessionResponse, type GuestVideoDto,
+  type GuestDecision, type GuestDecisionInput, type GuestDownloadManifest, type GuestNoteCreateInput, type GuestNoteEditInput, type GuestNoteMarkupResponse, type GuestNoteThreadDto, type GuestSessionResponse, type GuestVideoDto,
 } from "@quincy/shared";
 
 /**
@@ -10,6 +10,9 @@ import {
  * (404, a lost 401 session) is `gone` and the page never tries to say why. A network failure, a 5xx or a 429 is `transient`: it says nothing about the link, so the page offers a retry.
  */
 export type Read<T> = { kind: "ok"; value: T } | { kind: "gone" } | { kind: "transient" };
+
+/** The Download all manifest read: a 401 is `verify` (the guest has to confirm an email first; the link is fine), never `gone`. A 403 `download_disabled` is `disabled` (staff turned downloads off while the page was open; the review itself is fine). Only a 404 or the stub is `gone`. */
+export type DownloadsRead = Read<GuestDownloadManifest> | { kind: "verify" } | { kind: "disabled" };
 
 export type ExchangeResult =
   | { ok: true; session: GuestSessionResponse }
@@ -45,7 +48,27 @@ export type WriteResult =
   | { kind: "rejected"; error: string }
   | { kind: "unreachable" };
 
+/**
+ * A guest decision (#741 14-ui-guest): approve or ask for changes on one Version. `ok.decision` is the event just recorded. `conflict` is 409 `decision_conflict` (two decisions landed at once:
+ * try again); `disabled` is 403 `approve_disabled` (staff turned approving off while the page was open); `unverified` is 401; `gone` is the stub; `archived` is 409 `project_archived`;
+ * `rejected` is every other refusal of the request itself (400, 413).
+ */
+export type DecisionResult =
+  | { kind: "ok"; decision: GuestDecision }
+  | { kind: "conflict" }
+  | { kind: "disabled" }
+  | { kind: "unverified" }
+  | { kind: "gone" }
+  | { kind: "archived" }
+  | { kind: "limited"; retryAfterSeconds: number }
+  | { kind: "rejected"; error: string }
+  | { kind: "unreachable" };
+
 export type GuestApi = {
+  /** The Download all route (#741 14b). The page only ever links to it: a download is the browser's, so the page cannot read its status. */
+  downloadAllUrl: string;
+  decide(assetId: string, decision: GuestDecisionInput["decision"], note?: string): Promise<DecisionResult>;
+  downloads(): Promise<DownloadsRead>;
   exchange(token: string, passcode?: string): Promise<ExchangeResult>;
   session(): Promise<Read<GuestSessionResponse>>;
   videos(): Promise<Read<GuestVideoDto[]>>;
@@ -73,6 +96,9 @@ export function createGuestApi(linkId: string): GuestApi {
   const transient = (response: Response | null) => response === null || response.status >= 500 || response.status === 429;
   const read = async <T>(path: string, parse: (body: unknown) => T): Promise<Read<T>> => {
     const response = await send(path);
+    return readResponse(response, parse);
+  };
+  const readResponse = async <T>(response: Response | null, parse: (body: unknown) => T): Promise<Read<T>> => {
     if (transient(response)) return { kind: "transient" };
     if (!response?.ok) return { kind: "gone" };
     const read = await readJson(response);
@@ -111,6 +137,33 @@ export function createGuestApi(linkId: string): GuestApi {
     return { kind: "rejected", error };
   };
   return {
+    downloadAllUrl: `${base}/downloads/all.zip`,
+    async decide(assetId, decision, note) {
+      const response = await send(`/versions/${assetId}/decision`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(note === undefined ? { decision } : { decision, note }) });
+      if (response === null) return { kind: "unreachable" };
+      const read = await readJson(response);
+      const error = errorOf(read?.body);
+      if (response.ok) {
+        const parsed = read === null ? null : guestDecisionResponseSchema.safeParse(read.body);
+        return parsed?.success ? { kind: "ok", decision: parsed.data.decision } : { kind: "unreachable" };
+      }
+      if (response.status >= 500) return { kind: "unreachable" };
+      if (response.status === 429) return { kind: "limited", retryAfterSeconds: retryAfter(response, read?.body) };
+      if (response.status === 401) return { kind: "unverified" };
+      if (response.status === 403 && error === "approve_disabled") return { kind: "disabled" };
+      if (response.status === 404 || response.status === 403) return { kind: "gone" };
+      if (response.status === 409) {
+        if (error === "project_archived") return { kind: "archived" };
+        if (error === "decision_conflict") return { kind: "conflict" };
+      }
+      return { kind: "rejected", error };
+    },
+    async downloads() {
+      const response = await send("/downloads");
+      if (response?.status === 401) return { kind: "verify" };
+      if (response?.status === 403 && errorOf((await readJson(response.clone()))?.body) === "download_disabled") return { kind: "disabled" };
+      return readResponse(response, (body) => guestDownloadManifestSchema.parse(body));
+    },
     async sendCode(email) {
       const response = await send("/email/code", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ email }) });
       if (response === null) return { ok: false, reason: "unreachable" };

@@ -1,8 +1,9 @@
 import type { WriteResult } from "./guest-api";
 
 /** A write that was not sent because one for the same key is still out, or whose answer arrived after the screen or Version it was made in had gone. Neither changes anything. */
-export type Skipped = { kind: "busy" } | { kind: "stale"; /** What the write came to, which the caller may need even though the answer does not apply to the screen now on show (a reply that was saved must clear its draft). */ result: WriteResult };
-export type Run = (key: string, call: () => Promise<WriteResult>) => Promise<WriteResult | Skipped>;
+export type Skipped<R extends { kind: string } = WriteResult> = { kind: "busy" } | { kind: "stale"; /** What the write came to, which the caller may need even though the answer does not apply to the screen now on show (a reply that was saved must clear its draft). */ result: R };
+/** Any write result whose `kind` names the refusals that change the page (`unverified`, `gone`, `archived`): note writes and decisions both run through here. */
+export type Run = <R extends { kind: string }>(key: string, call: () => Promise<R>) => Promise<R | Skipped<R>>;
 
 /** What the screen on show tells the writer: the Version it is on, what a refusal that changes the page does, and what to do when a write started on an earlier screen settles. All three are read live. */
 export type WriterBinding = {
@@ -35,13 +36,13 @@ export function createGuestWriter(): GuestWriter {
   let epoch = 0;
   let bound: WriterBinding | null = null;
 
-  const start = (linkScoped: boolean): Run => async (key, call) => {
+  const start = (linkScoped: boolean): Run => async <R extends { kind: string }>(key: string, call: () => Promise<R>): Promise<R | Skipped<R>> => {
     if (inflight.has(key)) return { kind: "busy" };
     inflight.add(key);
     epoch += 1;
     const startedBinding = bound;
     const startedScope = bound?.scope ?? null;
-    let result: WriteResult;
+    let result: R;
     try { result = await call(); } finally { inflight.delete(key); epoch += 1; }
     if (bound === null) return { kind: "stale", result };
     if (!linkScoped && (bound !== startedBinding || bound.scope !== startedScope)) {

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { GuestSessionResponse, GuestVideoDto } from "@quincy/shared";
+import type { GuestDecision, GuestSessionResponse, GuestVideoDto } from "@quincy/shared";
 import { createGuestApi, type GuestApi } from "./guest-api";
 import { readLinkId } from "./link-fragment";
 import { GuestVideoScreen } from "./GuestVideoScreen";
 import { createGuestWriter } from "./use-guest-writer";
 import { createGuestDrafts } from "./guest-drafts";
 import { createGuestSubscription } from "./guest-subscription";
+import { GuestVerifyDialog } from "./GuestVerifyDialog";
+import { useGuestVerify } from "./use-guest-verify";
 import { LimitedScreen, PasscodeScreen, UnavailableScreen, UnreachableScreen, VideoListScreen } from "./GuestScreens";
 
 type Screen =
@@ -28,6 +30,11 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
   const [session, setSession] = useState<GuestSessionResponse | null>(null);
   const [videos, setVideos] = useState<GuestVideoDto[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  // The latest list and screen for async completions; `commitVideos` is the only writer of the list, so the ref is never behind a queued update.
+  const videosRef = useRef<GuestVideoDto[]>([]);
+  const screenRef = useRef<Screen>({ name: "boot" });
+  screenRef.current = screen;
+  const commitVideos = useCallback((next: GuestVideoDto[]) => { videosRef.current = next; setVideos(next); }, []);
   // A write found the Project archived: notes are read-only for the rest of this visit.
   const [archived, setArchived] = useState(false);
   // Owns the pending writes for the life of the link's session, so leaving the video screen mid-write and coming back cannot send the same note twice.
@@ -57,9 +64,9 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
     const list = await opened.videos();
     if (list.kind === "gone") { setScreen({ name: "unavailable" }); return; }
     if (list.kind === "transient") { fail(() => { void enter(opened, next); }); return; }
-    setVideos(list.value);
+    commitVideos(list.value);
     setScreen(list.value.length === 1 ? { name: "video", index: 0 } : { name: "list" });
-  }, [fail]);
+  }, [fail, commitVideos]);
 
   const exchange = useCallback(async (opened: GuestApi, tokenValue: string, passcode?: string) => {
     const result = await opened.exchange(tokenValue, passcode);
@@ -97,22 +104,61 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
     void exchange(api, token.current, passcode);
   };
   const unavailable = useCallback(() => { setScreen({ name: "unavailable" }); }, []);
+  // The one verify dialog for the page and its one continuation slot: Download all, a decision and the single Download all all ask it, so two of them can never each open their own.
+  const { verify, dialog: verifyDialog } = useGuestVerify(setSession, unavailable);
   // Staff took the displayed Video or Version off the link while it was open: show what is still granted, calmly, or nothing if nothing is.
   const grantsChanged = useCallback((fresh: GuestVideoDto[]) => {
     if (fresh.length === 0) { setScreen({ name: "unavailable" }); return; }
-    setVideos(fresh);
+    commitVideos(fresh);
     setNotice("That video was updated by the studio. Here is what's available now.");
     setScreen(fresh.length === 1 ? { name: "video", index: 0 } : { name: "list" });
-  }, []);
+  }, [commitVideos]);
 
+  // A decision lands on the Version it was sent for, by id: whichever Version the guest is looking at now is untouched.
+  // A response older than what the page already holds (a refresh showed a newer revision first) is dropped: revisions only move forward.
+  const decided = useCallback((assetId: string, decision: GuestDecision) => {
+    commitVideos(videosRef.current.map((video) => (video.versions.some((version) => version.assetId === assetId)
+      ? { ...video, versions: video.versions.map((version) => (version.assetId === assetId && decision.revision >= (version.decision?.revision ?? 0) ? { ...version, decision } : version)) } : video)));
+  }, [commitVideos]);
+  // The Version the video screen shows now, published by that screen. Read at apply time, never captured when a request starts.
+  const shownVersion = useRef<string | null>(null);
+  const onShownVersion = useCallback((assetId: string | null) => { shownVersion.current = assetId; }, []);
+  // A decision that may or may not have landed: read the list again. Only the newest re-read applies. The fresh list is authoritative for which Videos and Versions exist and their delivery fields; a local decision
+  // survives only where its revision is newer than the fresh one's. The screen is then reconciled against the screen as it is when the answer arrives.
+  const rereadSeq = useRef(0);
+  const resyncDelivery = useCallback(() => {
+    if (api === null) return;
+    rereadSeq.current += 1;
+    const mine = rereadSeq.current;
+    void api.videos().then((fresh) => {
+      if (rereadSeq.current !== mine) return;
+      if (fresh.kind === "gone") { setScreen({ name: "unavailable" }); return; }
+      if (fresh.kind !== "ok") return;
+      if (fresh.value.length === 0) { setScreen({ name: "unavailable" }); return; }
+      const local = new Map(videosRef.current.flatMap((video) => video.versions).map((version) => [version.assetId, version] as const));
+      const merged = fresh.value.map((video) => ({ ...video, versions: video.versions.map((version) => {
+        const kept = local.get(version.assetId)?.decision;
+        return kept && kept.revision > (version.decision?.revision ?? 0) ? { ...version, decision: kept } : version;
+      }) }));
+      const now = screenRef.current;
+      if (now.name !== "list" && now.name !== "video") return;
+      const onScreen = now.name === "video" ? videosRef.current[now.index] : undefined;
+      const index = onScreen ? merged.findIndex((video) => video.id === onScreen.id) : -1;
+      if (now.name === "video" && (index < 0 || (shownVersion.current !== null && !merged[index]!.versions.some((version) => version.assetId === shownVersion.current)))) { grantsChanged(merged); return; }
+      commitVideos(merged);
+      if (now.name === "video") setScreen({ name: "video", index });
+    });
+  }, [api, commitVideos, grantsChanged]);
   if (api === null || screen.name === "unavailable") return <UnavailableScreen />;
   if (screen.name === "unreachable") return <UnreachableScreen onRetry={() => { retry.current(); }} />;
   if (screen.name === "limited") return <LimitedScreen retryAfterSeconds={screen.retryAfterSeconds} onRetry={() => { retry.current(); }} />;
   if (screen.name === "boot") return <main className="min-h-dvh bg-background" aria-busy="true" />;
   if (screen.name === "passcode") return <PasscodeScreen error={screen.error} retryAfterSeconds={screen.retryAfterSeconds} pending={screen.pending} onSubmit={submitPasscode} />;
   if (session === null) return <UnavailableScreen />;
+  // Invariant: the video screen never renders without its Video. Reconciling keeps the index valid; this is the net under it.
+  if (screen.name === "video" && videos[screen.index] === undefined) return <UnavailableScreen />;
   const shown = screen.name === "list"
-    ? <VideoListScreen title={session?.link.label ?? null} videos={videos} onOpen={(index) => { setNotice(null); setScreen({ name: "video", index }); }} />
-    : <GuestVideoScreen api={api} writer={writer} drafts={drafts} subscription={subscription} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} />;
-  return <>{archived && <p role="status" data-testid="guest-archived-notice" className="m-0 bg-card px-[var(--space-5)] py-[var(--space-3)] text-center text-card-foreground [font:var(--type-label)]">This project was archived, so notes are read-only.</p>}{notice !== null && <p role="status" data-testid="guest-notice" className="m-0 bg-card px-[var(--space-5)] py-[var(--space-3)] text-center text-card-foreground [font:var(--type-label)]">{notice}</p>}{shown}</>;
+    ? <VideoListScreen api={api} title={session?.link.label ?? null} videos={videos} session={session} onSession={setSession} verify={verify} onOpen={(index) => { setNotice(null); setScreen({ name: "video", index }); }} onUnavailable={unavailable} />
+    : <GuestVideoScreen api={api} verify={verify} writer={writer} drafts={drafts} subscription={subscription} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} onDecided={decided} onResyncDelivery={resyncDelivery} onShownVersion={onShownVersion} />;
+  return <>{archived && <p role="status" data-testid="guest-archived-notice" className="m-0 bg-card px-[var(--space-5)] py-[var(--space-3)] text-center text-card-foreground [font:var(--type-label)]">This project was archived, so notes are read-only.</p>}{notice !== null && <p role="status" data-testid="guest-notice" className="m-0 bg-card px-[var(--space-5)] py-[var(--space-3)] text-center text-card-foreground [font:var(--type-label)]">{notice}</p>}{shown}<GuestVerifyDialog api={api} {...verifyDialog} /></>;
 }
