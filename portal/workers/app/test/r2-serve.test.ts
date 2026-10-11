@@ -8,6 +8,8 @@ const KEY = "r2-serve-test/object.bin";
 const BYTES = Uint8Array.from({ length: 100 }, (_, index) => index);
 const app = new Hono<AppEnv>();
 app.all("/o", (c) => serveR2Object(c, KEY, { "content-type": "video/mp4" }, "gone"));
+let allowed = true;
+app.all("/guarded", (c) => serveR2Object(c, KEY, { "content-type": "video/mp4" }, "gone", async () => allowed));
 app.all("/missing", (c) => serveR2Object(c, "r2-serve-test/none", {}, "gone"));
 const call = (path: string, init: RequestInit = {}) => app.fetch(new Request(`https://x.test${path}`, init), env as never);
 let etag = "";
@@ -62,5 +64,16 @@ describe("VIDEO_STREAM_HEADERS", () => {
   it("never offers a download and is not cacheable", () => {
     expect(VIDEO_STREAM_HEADERS).not.toHaveProperty("content-disposition");
     expect(VIDEO_STREAM_HEADERS["cache-control"]).toBe("private, no-store");
+  });
+  it("authorises before an unsatisfiable range is answered: a removed object is 404, never a 416 naming its size", async () => {
+    allowed = false;
+    try {
+      for (const init of [{ headers: { range: "bytes=500-600" } }, { headers: { range: "bytes=0-4" } }, {}, { method: "HEAD" }]) {
+        const response = await call("/guarded", init);
+        expect(response.status).toBe(404);
+        expect(response.headers.get("content-range")).toBeNull();
+      }
+    } finally { allowed = true; }
+    expect((await call("/guarded", { headers: { range: "bytes=500-600" } })).status).toBe(416);
   });
 });

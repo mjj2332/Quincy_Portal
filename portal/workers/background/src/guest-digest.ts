@@ -64,14 +64,14 @@ const SURVIVORS_SQL = `SELECT d.id, d.event_type, d.video_id, v.title AS video_t
   JOIN guest_link_members m ON m.guest_id = d.guest_id AND m.link_id = d.link_id AND m.unsubscribed_at IS NULL
   JOIN guest_reviewers gr ON gr.id = d.guest_id
   JOIN client_links l ON l.id = d.link_id AND l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ?2
-  JOIN videos v ON v.id = d.video_id AND v.project_id = l.project_id
+  JOIN videos v ON v.id = d.video_id AND v.project_id = l.project_id AND v.removed_at IS NULL
   JOIN review_link_videos rv ON rv.link_id = l.id AND rv.video_id = d.video_id AND rv.removed_at IS NULL
   LEFT JOIN assets a ON a.id = d.asset_id
-  LEFT JOIN video_version_meta vm ON vm.asset_id = d.asset_id
+  LEFT JOIN video_version_meta vm ON vm.asset_id = d.asset_id AND vm.removed_at IS NULL
   LEFT JOIN video_notes n ON n.id = d.note_id
   WHERE d.id IN (SELECT value FROM json_each(?1)) AND d.sent_at IS NULL AND ${GATE_SQL}
     AND (
-      (d.event_type = 'video_added' AND EXISTS (SELECT 1 FROM review_link_version_grants g WHERE g.link_id = l.id AND g.video_id = d.video_id AND g.revoked_at IS NULL))
+      (d.event_type = 'video_added' AND EXISTS (SELECT 1 FROM review_link_version_grants g JOIN video_version_meta gvm ON gvm.asset_id = g.asset_id AND gvm.removed_at IS NULL WHERE g.link_id = l.id AND g.video_id = d.video_id AND g.revoked_at IS NULL))
       OR (d.event_type = 'version_granted' AND vm.asset_id IS NOT NULL AND ${LIVE_GRANT})
       OR (d.event_type = 'public_note' AND vm.asset_id IS NOT NULL AND ${LIVE_GRANT} AND n.id IS NOT NULL AND n.asset_id = d.asset_id AND n.parent_id IS NULL AND n.visibility = 'public' AND n.author_user_id IS NOT NULL AND n.deleted_at IS NULL)
       OR (d.event_type = 'staff_reply' AND vm.asset_id IS NOT NULL AND ${LIVE_GRANT} AND n.id IS NOT NULL AND n.asset_id = d.asset_id AND n.parent_id IS NOT NULL AND n.visibility = 'public' AND n.author_user_id IS NOT NULL AND n.deleted_at IS NULL
@@ -86,9 +86,9 @@ const FENCED_ROWS_SQL = `SELECT d.id, d.event_type, d.video_id, v.title AS video
   FROM guest_notification_digest d
   JOIN guest_reviewers gr ON gr.id = d.guest_id
   JOIN client_links l ON l.id = d.link_id
-  JOIN videos v ON v.id = d.video_id
+  JOIN videos v ON v.id = d.video_id AND v.removed_at IS NULL
   LEFT JOIN assets a ON a.id = d.asset_id
-  LEFT JOIN video_version_meta vm ON vm.asset_id = d.asset_id
+  LEFT JOIN video_version_meta vm ON vm.asset_id = d.asset_id AND vm.removed_at IS NULL
   LEFT JOIN video_notes n ON n.id = d.note_id
   WHERE d.id IN (SELECT value FROM json_each(?1)) AND d.sent_at = ?2
   ORDER BY d.created_at, d.rowid`;

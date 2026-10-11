@@ -1,4 +1,5 @@
 import { videoReviewPartFlag, type VideoReviewPart } from "@quincy/shared";
+import { LIVE_VERSION, LIVE_VIDEO } from "./video-live-sql";
 
 /**
  * The SQL every guest write repeats at the moment it commits (#741 13a, 13b), as fragments over two aliases: `s` (guest_sessions) and `l` (client_links). Whatever the route
@@ -28,14 +29,14 @@ export const UNARCHIVED_SQL = "EXISTS (SELECT 1 FROM projects p WHERE p.id = l.p
 export const committableSql = (now: string, parts: readonly VideoReviewPart[] = ["guest"]): string => `${liveSql(now)} AND ${gateSql(parts)} AND ${UNARCHIVED_SQL}`;
 
 /**
- * The Version `asset` (a SQL expression) is reachable through the link: a LIVE member Video and a LIVE grant of this Version, in this Project. `link` and `project` are SQL
+ * The Version `asset` (a SQL expression) is reachable through the link: a LIVE member Video and a LIVE grant of this Version, in this Project, on a Video and a Version that are not in Trash (#776). `link` and `project` are SQL
  * expressions too (`l.id`, `l.project_id` in a fence; a bound parameter in a read). Removing a Video or revoking a grant is the very next statement's miss.
  */
 export const reachSql = (link: string, project: string, asset: string): string => `EXISTS (SELECT 1 FROM review_link_version_grants rg
     JOIN review_link_videos rv ON rv.link_id = rg.link_id AND rv.video_id = rg.video_id AND rv.removed_at IS NULL
-    JOIN videos rvid ON rvid.id = rg.video_id AND rvid.project_id = ${project}
+    JOIN videos rvid ON rvid.id = rg.video_id AND rvid.project_id = ${project} AND ${LIVE_VIDEO("rvid")}
     JOIN assets ra ON ra.id = rg.asset_id AND ra.kind = 'video'
-    JOIN video_version_meta rm ON rm.asset_id = ra.id AND rm.video_id = rg.video_id
+    JOIN video_version_meta rm ON rm.asset_id = ra.id AND rm.video_id = rg.video_id AND ${LIVE_VERSION("rm")}
     WHERE rg.link_id = ${link} AND rg.asset_id = ${asset} AND rg.revoked_at IS NULL)`;
 
 /** The identity a guest write was authenticated with: the exact session, its token hash, the verified guest and the link. */

@@ -34,6 +34,8 @@ export async function seedVideoVersion(input: VideoVersionInput = {}) {
   await database.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, version_group_id, version, publish_status, created_at, updated_at) VALUES (?, ?, 'video', ?, 'cut.mp4', 4096, 'upload', ?, ?, 'ready', ?, ?)").bind(assetId, collectionId, key, videoId, version, now, now).run();
   const posterKey = input.poster ? videoPosterKey(projectId, videoId, assetId, "seed") : null;
   await database.DB.prepare("INSERT INTO video_version_meta (asset_id, video_id, fps_num, fps_den, media_timescale, frame_delta, frame_count, duration_ms, width, height, codec, codec_string, start_tc_frames, tc_nominal_fps, tc_drop_frame, fast_start, has_audio, probe_version, poster_key, uploaded_by, created_at) VALUES (?, ?, 25, 1, 25000, 1000, 250, 10000, 1920, 1080, 'avc1', 'avc1.640028', NULL, 25, 0, 1, 1, 1, ?, ?, ?)").bind(assetId, videoId, posterKey, uploader, now).run();
+  // The high-water mark is the highest number ever reserved (migration 0070's backfill, and upload completion), so a seeded Version keeps it true.
+  await database.DB.prepare("UPDATE videos SET version_high_water = MAX(version_high_water, ?) WHERE id = ?").bind(version, videoId).run();
   if (input.object !== false) await database.MEDIA.put(key, mp4Bytes(4096), { httpMetadata: { contentType: "video/mp4" } });
   if (posterKey) await database.MEDIA.put(posterKey, jpegBytes(32), { httpMetadata: { contentType: "image/jpeg" } });
   return { projectId, collectionId, videoId, assetId, key, posterKey };
@@ -75,3 +77,27 @@ export async function seedVideoNote(input: NoteInput) {
 export const clearVideoNotes = async () => { await database.DB.batch([database.DB.prepare("DELETE FROM video_note_markup"), database.DB.prepare("DELETE FROM video_notes"), database.DB.prepare("DELETE FROM audit_log WHERE action LIKE 'video_note.%'")]); };
 export const noteRow = (id: string) => database.DB.prepare("SELECT * FROM video_notes WHERE id = ?").bind(id).first<Record<string, unknown>>();
 export const noteAudit = async (action?: string) => (await database.DB.prepare(`SELECT actor_id, action, target_id, meta_json FROM audit_log WHERE action LIKE 'video_note.%'${action ? " AND action = ?" : ""} ORDER BY created_at, id`).bind(...(action ? [action] : [])).all<{ actor_id: string; action: string; target_id: string; meta_json: string | null }>()).results;
+
+// ---- video Trash (#776 B): the routes arrive in slice C, so a case marks rows removed straight in SQL ----------------------------------------------------
+
+const TRASH_RETENTION_MS = 30 * 86_400_000;
+/**
+ * Puts one Version in Trash the way slice C will leave it: the meta row carries `removed_at` / `removed_by` / `purge_at`, and the Asset is superseded (the invariant `RECOMPUTE_CURRENT_SQL` keeps:
+ * a removed Version is never current). It does NOT promote an older Version; a case that needs one sets `superseded_at = NULL` itself.
+ */
+export async function markVersionRemoved(assetId: string, at: number = Date.now()) {
+  await database.DB.batch([
+    database.DB.prepare("UPDATE video_version_meta SET removed_at = ?, removed_by = ?, purge_at = ?, removed_with_video = 0 WHERE asset_id = ?").bind(at, ids.admin, at + TRASH_RETENTION_MS, assetId),
+    database.DB.prepare("UPDATE assets SET superseded_at = COALESCE(superseded_at, ?) WHERE id = ?").bind(at, assetId),
+  ]);
+}
+/** Puts a whole Video in Trash: its row, and every one of its Versions superseded (a removed Video has no current Version). Its Versions' own meta rows stay unmarked, as a Video removal leaves them. */
+export async function markVideoRemoved(videoId: string, at: number = Date.now()) {
+  await database.DB.batch([
+    database.DB.prepare("UPDATE videos SET removed_at = ?, removed_by = ?, purge_at = ? WHERE id = ?").bind(at, ids.admin, at + TRASH_RETENTION_MS, videoId),
+    database.DB.prepare("UPDATE assets SET superseded_at = COALESCE(superseded_at, ?) WHERE kind = 'video' AND version_group_id = ?").bind(at, videoId),
+  ]);
+}
+/** The Versions of a Video that are current (`superseded_at IS NULL`), by Version number. */
+export const currentVersions = async (videoId: string) =>
+  (await database.DB.prepare("SELECT version FROM assets WHERE kind = 'video' AND version_group_id = ? AND superseded_at IS NULL ORDER BY version").bind(videoId).all<{ version: number }>()).results.map((row) => row.version);

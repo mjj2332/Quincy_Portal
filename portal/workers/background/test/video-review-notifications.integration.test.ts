@@ -25,7 +25,7 @@ const setCadence = (userId: string, cadence: string) => database.DB.prepare("INS
 type Role = "admin" | "editor" | "external_editor" | "photographer";
 type Options = {
   kind?: VideoReviewNotificationType; actor?: "member" | "guest"; role?: Role; member?: boolean; recipientActive?: boolean; internal?: boolean; version?: number; decision?: "approved" | "changes_requested";
-  authorization?: "member" | "admin"; notifyStaff?: boolean; gateOpen?: boolean; archived?: boolean; cadence?: string | null; noSource?: boolean; deletedNote?: boolean; videoTitle?: string; guestName?: string;
+  authorization?: "member" | "admin"; notifyStaff?: boolean; gateOpen?: boolean; archived?: boolean; cadence?: string | null; noSource?: boolean; deletedNote?: boolean; /** #776 B: the Version, or its whole Video, is in Trash when the message is processed. */ removedVersion?: boolean; removedVideo?: boolean; videoTitle?: string; guestName?: string;
 };
 
 async function seed(options: Options = {}) {
@@ -77,6 +77,8 @@ async function seed(options: Options = {}) {
   const flags = options.gateOpen === false ? [] : ["video_review", "video_review_all_projects", ...(options.notifyStaff === false ? [] : ["video_review_notify_staff"])];
   for (const key of flags) statements.push(database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_at) VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1").bind(key, now));
   await database.DB.batch(statements);
+  if (options.removedVersion) await database.DB.prepare("UPDATE video_version_meta SET removed_at = ?, removed_by = ? WHERE asset_id = ?").bind(now, actorUserId, assetId).run();
+  if (options.removedVideo) await database.DB.prepare("UPDATE videos SET removed_at = ?, removed_by = ? WHERE id = ?").bind(now, actorUserId, videoId).run();
   if (options.cadence !== null) await setCadence(recipientId, options.cadence ?? "immediate");
   return { outboxId, recipientId, projectId, membershipId, sourceKey, actorId, guestId, assetId };
 }
@@ -186,6 +188,13 @@ describe("delivery: who still gets it", () => {
     ["a deleted note", { deletedNote: true }],
     ["a note that no longer exists", { noSource: true }],
     ["a decision that no longer exists", { kind: "video_decision", noSource: true }],
+    ["a note on a Version in Trash", { kind: "video_note", removedVersion: true }],
+    ["a reply on a Version in Trash", { kind: "video_reply", removedVersion: true }],
+    ["a decision on a Version in Trash", { kind: "video_decision", actor: "guest", removedVersion: true }],
+    ["an upload notice for a Version in Trash", { kind: "video_version_uploaded", removedVersion: true }],
+    ["a note on a Video in Trash", { kind: "video_note", removedVideo: true }],
+    ["a decision on a Video in Trash", { kind: "video_decision", actor: "guest", removedVideo: true }],
+    ["an upload notice for a Video in Trash", { kind: "video_version_uploaded", removedVideo: true }],
   ] as Array<[string, Options]>)("suppresses %s", async (_name, options) => {
     const fixture = await seed(options);
     const send = await deliver(fixture);
@@ -249,6 +258,8 @@ describe("digest: a deferred video-review email is re-authorized before it is se
     ["an assigned External is unassigned", { role: "external_editor", kind: "video_note", actor: "guest" }, (f: { membershipId: string }) => exec("DELETE FROM project_members WHERE id = ?", f.membershipId)],
     ["notify_staff is turned off for an External", { role: "external_editor", kind: "video_note", actor: "guest" }, () => exec("DELETE FROM feature_flags WHERE key = 'video_review_notify_staff'")],
     ["the note is deleted for an External", { role: "external_editor", kind: "video_note", actor: "guest" }, (f: { sourceKey: string }) => exec("UPDATE video_notes SET deleted_at = ? WHERE id = ?", Date.now(), f.sourceKey.split(":")[1])],
+    ["the Version goes to Trash", { kind: "video_note" }, (f: { assetId: string }) => exec("UPDATE video_version_meta SET removed_at = ? WHERE asset_id = ?", Date.now(), f.assetId)],
+    ["the Video goes to Trash", { kind: "video_decision", actor: "guest" }, (f: { assetId: string }) => exec("UPDATE videos SET removed_at = ? WHERE id = (SELECT video_id FROM video_version_meta WHERE asset_id = ?)", Date.now(), f.assetId)],
   ] as Array<[string, Options, (fixture: any) => Promise<unknown>]>)("%s: no email", async (_name, options, change) => {
     const { fixture, send } = await digestDefer(options);
     await change(fixture);

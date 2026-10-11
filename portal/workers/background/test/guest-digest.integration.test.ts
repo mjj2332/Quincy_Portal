@@ -192,6 +192,56 @@ describe("re-filtering at send time", () => {
     expect(mail.sent[0]!.text).toContain("Keep this one"); expect(mail.sent[0]!.text).not.toContain("Released and ready"); expect(mail.sent[0]!.text).not.toContain("Please trim the intro");
   });
 
+  describe("Trash (#776): a removed Video or Version is never emailed", () => {
+    const removeVersion = (assetId: string) => database.DB.prepare("UPDATE video_version_meta SET removed_at = ? WHERE asset_id = ?").bind(Date.now(), assetId).run();
+    const removeVideo = (videoId: string) => database.DB.prepare("UPDATE videos SET removed_at = ? WHERE id = ?").bind(Date.now(), videoId).run();
+
+    for (const event of ["version_granted", "public_note"] as const) {
+      it(`a ${event} item whose Version was removed before the flush is not emailed and its row ends marked`, async () => {
+        const t = await basic(); const note = event === "public_note" ? await seedNote(t.version) : null;
+        const removedId = await pend(t.member, t.link.id, event, t.version, note);
+        const second = await seedVideo("Garden tour"); await onLink(t.link.id, [second[0]!]);
+        const liveId = await pend(t.member, t.link.id, "version_granted", second[0]!);
+        await removeVersion(t.version.assetId);
+        const mail = mailer(); await runAt(mail.env, T0);
+        expect(mail.sent).toHaveLength(1);
+        expect(mail.sent[0]!.text).toContain("Garden tour"); expect(mail.sent[0]!.text).not.toContain("Kitchen walkthrough");
+        expect((await rowOf(removedId))!.sent_at).not.toBeNull(); expect((await rowOf(liveId))!.sent_at).not.toBeNull();
+      });
+    }
+
+    it("a video_added item whose Video was removed is not emailed", async () => {
+      const t = await basic(); const removedId = await pend(t.member, t.link.id, "video_added", t.version);
+      const second = await seedVideo("Garden tour"); await onLink(t.link.id, [second[0]!]);
+      await pend(t.member, t.link.id, "video_added", second[0]!);
+      await removeVideo(t.version.videoId);
+      const mail = mailer(); await runAt(mail.env, T0);
+      expect(mail.sent).toHaveLength(1);
+      expect(mail.sent[0]!.text).toContain("Garden tour"); expect(mail.sent[0]!.text).not.toContain("Kitchen walkthrough");
+      expect((await rowOf(removedId))!.sent_at).not.toBeNull();
+    });
+
+    it("a video_added item is not emailed when the only granted Version was removed, even though an ungranted Version is live", async () => {
+      const [v1, v2] = await seedVideo("Kitchen walkthrough", 2); const link = await seedLink(); await onLink(link.id, [v1!, v2!], [v1!]); const member = await seedMember(link.id);
+      const removedId = await pend(member, link.id, "video_added", v1!);
+      await removeVersion(v1!.assetId);
+      const mail = mailer(); await runAt(mail.env, T0);
+      expect(mail.sent).toHaveLength(0);
+      expect((await rowOf(removedId))!.sent_at).not.toBeNull();
+    });
+
+    for (const [label, remove] of [["Version", (t: Awaited<ReturnType<typeof basic>>) => removeVersion(t.version.assetId)], ["Video", (t: Awaited<ReturnType<typeof basic>>) => removeVideo(t.version.videoId)]] as const) {
+      it(`when every item's ${label} is removed, no email is sent, the rows are marked and the slot is given back`, async () => {
+        const t = await basic(); const ids2 = [await pend(t.member, t.link.id, label === "Video" ? "video_added" : "public_note", t.version, label === "Video" ? null : await seedNote(t.version)), await pend(t.member, t.link.id, "version_granted", t.version)];
+        await remove(t);
+        const mail = mailer(); const summary = await runAt(mail.env, T0);
+        expect(mail.sent).toHaveLength(0); expect(summary.sent).toBe(0);
+        for (const id of ids2) expect((await rowOf(id))!.sent_at).not.toBeNull();
+        expect(await lastDigest(t.member.memberId)).toBeNull();
+      });
+    }
+  });
+
   it("a Release on a link with downloads off is dropped", async () => {
     const [version] = await seedVideo("Final"); const link = await seedLink({ allowDownload: 0 }); await onLink(link.id, [version!]); const member = await seedMember(link.id);
     await release(version!);
