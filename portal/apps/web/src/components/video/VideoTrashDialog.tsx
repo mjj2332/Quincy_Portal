@@ -80,11 +80,11 @@ export function VideoTrashDialog({ projectId, archived, open, onOpenChange, retu
             const left = daysLeft(item.purgeAt, now);
             const blocked = item.kind === "version" && item.canRestore === false;
             return <Item key={keyOf(item)} variant="outline" data-testid="video-trash-row" className="flex-wrap">
-              <ItemContent>
+              <ItemContent className="min-w-[12rem]">
                 <ItemTitle className="font-normal">{item.title}</ItemTitle>
-                <ItemDescription>{item.kind === "version" ? `Version ${item.version}` : `Whole film · ${item.versionCount} version${item.versionCount === 1 ? "" : "s"}`}</ItemDescription>
-                <ItemDescription>{`Removed by ${item.removedBy.name} · ${formatVideoDate(item.removedAt)}`}</ItemDescription>
-                {blocked && <ItemDescription>Restore the film first.</ItemDescription>}
+                <ItemDescription className="line-clamp-none">{item.kind === "version" ? `Version ${item.version}` : `Whole film · ${item.versionCount} version${item.versionCount === 1 ? "" : "s"}`}</ItemDescription>
+                <ItemDescription className="line-clamp-none">{`Removed by ${item.removedBy.name} · ${formatVideoDate(item.removedAt)}`}</ItemDescription>
+                {blocked && <ItemDescription className="line-clamp-none">Restore the film first.</ItemDescription>}
               </ItemContent>
               <ItemActions>
                 <Badge variant={left <= 3 ? "warning-light" : "secondary"} size="sm">{left <= 0 ? "Due for deletion" : `${left} day${left === 1 ? "" : "s"} left`}</Badge>
