@@ -5,7 +5,7 @@ import { createDb, schema } from "@quincy/db";
 import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { CollectionKind } from "@quincy/shared";
-import { externalAssetListResponseSchema, externalAssetSchema, RENDITION_SPEC_VERSION } from "@quincy/shared";
+import { enqueueObjectCrcs, externalAssetListResponseSchema, externalAssetSchema, RENDITION_SPEC_VERSION } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, requireCapability } from "../middleware/capability";
 import { roleHasCapability } from "@quincy/shared";
@@ -17,7 +17,7 @@ import { resolveVisibleProject, visibleProjectWhere } from "../lib/visible-proje
 import { isPremiumEligible } from "../lib/asset-premium";
 
 const reviewInput = z.object({ stars: z.number().int().min(1).max(5).nullable().optional(), colorLabel: z.enum(["select", "maybe", "cut", "hero"]).nullable().optional(), decision: z.enum(["approved", "flagged"]).nullable().optional(), recommended: z.boolean().optional() });
-async function assetContext(c: Context<AppEnv>, assetId: string) { return createDb(c.env.DB).select({ projectId: schema.collections.projectId, kind: schema.collections.kind, publishStatus: schema.assets.publishStatus }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(and(eq(schema.assets.id, assetId), sql`${schema.assets.supersededAt} IS NULL`, ne(schema.assets.kind, "video"))).get(); }
+async function assetContext(c: Context<AppEnv>, assetId: string) { return createDb(c.env.DB).select({ projectId: schema.collections.projectId, kind: schema.collections.kind, publishStatus: schema.assets.publishStatus, r2Key: schema.assets.r2Key }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(and(eq(schema.assets.id, assetId), sql`${schema.assets.supersededAt} IS NULL`, ne(schema.assets.kind, "video"))).get(); }
 async function externalAssetContext(c: Context<AppEnv>, assetId: string) {
   const user = c.get("user");
   return createDb(c.env.DB).select({ id: schema.assets.id, projectId: schema.collections.projectId, kind: schema.assets.kind, collectionKind: schema.collections.kind, publishStatus: schema.assets.publishStatus })
@@ -153,6 +153,6 @@ reviewRoutes.post("/assets/:id/review", terminalRoute("/assets/:id/review", asyn
   }
 }));
 reviewRoutes.post("/assets/:id/select", requireCapability("selectForEditing"), terminalRoute("/assets/:id/select", async (c) => {
-  const id = c.req.param("id"); const asset = await assetContext(c, id); if (!asset) return c.json({ error: "Asset not found" }, 404); const unavailable = unavailableAsset(c, asset); if (unavailable) return unavailable; if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (asset.kind !== "raw") return c.json({ error: "Only RAW assets can be selected for editing" }, 400); const db = createDb(c.env.DB); await db.insert(schema.selections).values({ id: newId(), assetId: id, selectedBy: c.get("user").id, state: "selected_for_editing", createdAt: new Date() }).onConflictDoUpdate({ target: schema.selections.assetId, set: { selectedBy: c.get("user").id, state: "selected_for_editing" } }); await audit(c.env, c.get("user"), "asset.select", "asset", id); return c.json({ ok: true });
+  const id = c.req.param("id"); const asset = await assetContext(c, id); if (!asset) return c.json({ error: "Asset not found" }, 404); const unavailable = unavailableAsset(c, asset); if (unavailable) return unavailable; if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (asset.kind !== "raw") return c.json({ error: "Only RAW assets can be selected for editing" }, 400); const db = createDb(c.env.DB); await db.insert(schema.selections).values({ id: newId(), assetId: id, selectedBy: c.get("user").id, state: "selected_for_editing", createdAt: new Date() }).onConflictDoUpdate({ target: schema.selections.assetId, set: { selectedBy: c.get("user").id, state: "selected_for_editing" } }); await audit(c.env, c.get("user"), "asset.select", "asset", id); await enqueueObjectCrcs(c.env, [asset.r2Key], "select-for-editing"); return c.json({ ok: true });
 }));
 reviewRoutes.delete("/assets/:id/select", requireCapability("selectForEditing"), terminalRoute("/assets/:id/select", async (c) => { const id = c.req.param("id"); const asset = await assetContext(c, id); if (!asset) return c.json({ error: "Asset not found" }, 404); const unavailable = unavailableAsset(c, asset); if (unavailable) return unavailable; if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (asset.kind !== "raw") return c.json({ error: "Only RAW assets can be selected for editing" }, 400); await createDb(c.env.DB).delete(schema.selections).where(eq(schema.selections.assetId, id)); await audit(c.env, c.get("user"), "asset.unselect", "asset", id); return c.json({ ok: true }); }));

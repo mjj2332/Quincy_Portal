@@ -172,6 +172,19 @@ No deployed Worker reads `revoked` or `publish_version` (only `schema.ts` and tw
 
 Rollback: no Worker reads the dropped columns, so a code rollback is safe. Restoring the schema is a Time Travel restore, and a Time Travel restore loses every database write since the bookmark, including writes to existing tables.
 
+### Object CRC-32 queue and tables (0072, #802)
+
+Migration 0072 is **purely additive**: two new tables, `object_crc32` (the CRC-32, size and etag of an R2 object) and `object_crc32_work` (the resumable job's offset and running CRC). No column is added, nothing is rebuilt and no PRAGMA runs, so a code rollback is safe. Nothing reads `object_crc32` yet; PR A only fills it.
+
+The PR also binds a **new queue**, `quincy-object-crcs` (producer `OBJECT_CRC_QUEUE` in both Workers, consumer in the background Worker: batch 1, `max_concurrency` 4, `max_retries` 3, no DLQ). A missing queue fails the background deploy, so before merging:
+1. `npx wrangler queues create quincy-object-crcs`.
+2. Take a Time Travel bookmark (`npx wrangler d1 time-travel info DB`) and record the id in the PR.
+3. From `portal/workers/app`: `npx wrangler d1 migrations apply DB --remote`; the pending list must show only 0072.
+4. Re-run the deploy if it already ran (`gh run rerun <run-id> --failed`).
+5. Post-check: both tables exist, `object_crc32_work` is empty, and an hour later `SELECT state, COUNT(*) FROM object_crc32_work GROUP BY state` shows the sweep's backlog draining (at most 500 keys queued per hour).
+
+Rollback: a code rollback is safe, and the queue and tables can stay. A `failed` row in `object_crc32_work` (retries exhausted, or the object missing from R2) is skipped by the sweep for good; delete it once the cause is fixed and the sweep picks the key up again.
+
 ### Subtask presets (0052)
 
 0052 converts every date-only Subtask range to a 09:00 start and a 17:00 end (the presets, ADR 0016)

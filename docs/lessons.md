@@ -6161,6 +6161,8 @@ Tags: workers-runtime · #741
 - **Rule.** Declare the one function used in `src/node-zlib.d.ts`, the same way `src/node-async-hooks.d.ts` does, instead of adding `@types/node` (which would leak Node globals into Worker code). Run `npm run verify`, not just the tests, after adding a `node:` import.
 - **Why `crc32`.** The JS table loop cost ~1.1 s CPU per 256 MiB against a 30000 ms `cpu_ms`; native is ~6 ms for the same bytes in Node.
 
+- **Background Worker (#802).** It has its own `src/node-zlib.d.ts`, and its tsconfig also pulls in the DOM lib, whose `ReadableStreamBYOBReader` has no `readAtLeast` (workerd has it). `src/byob-read-at-least.d.ts` adds that one method; the code still checks for it at runtime and falls back to `read(view)`.
+
 Guards: `workers/app/test/zip-stream-crc.test.ts`.
 
 ## `input-otp`'s `onComplete` fires on reaching six digits, not on every six-digit value (#741 13c)

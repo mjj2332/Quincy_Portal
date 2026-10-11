@@ -1,4 +1,4 @@
-import type { NotificationOutboxMessage, RenditionMessage, Role } from "@quincy/shared";
+import type { NotificationOutboxMessage, ObjectCrcMessage, RenditionMessage, Role } from "@quincy/shared";
 import type { ProjectWhiteboardDO } from "./whiteboard/project-whiteboard-do";
 import type { QuincyBackground } from "../../background/src/rpc-types";
 
@@ -15,6 +15,8 @@ export interface Env {
   NOTIFICATION_QUEUE: Queue<NotificationOutboxMessage>;
   /** Bound only after the rendition queue has been provisioned and the red gate is green. */
   RENDITION_QUEUE?: Queue<RenditionMessage>;
+  /** The object CRC-32 job (#802). Optional like the rendition queue: a send is best effort and the hourly sweep repairs a lost one. */
+  OBJECT_CRC_QUEUE?: Queue<ObjectCrcMessage>;
   BACKGROUND: Service<QuincyBackground>;
   ASSETS: Fetcher;
   /** #498: one Project whiteboard Durable Object per Project, named by the Project id. */

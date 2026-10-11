@@ -33,12 +33,15 @@
       { "queue": "quincy-renditions", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 3, "dead_letter_queue": "quincy-renditions-dlq" },
       { "queue": "quincy-renditions-dlq", "max_batch_size": 10, "max_retries": 3 },
       { "queue": "quincy-notifications", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 3, "dead_letter_queue": "quincy-notifications-dlq" },
-      { "queue": "quincy-notifications-dlq", "max_batch_size": 10, "max_retries": 3 }
+      { "queue": "quincy-notifications-dlq", "max_batch_size": 10, "max_retries": 3 },
+      // #802: one message is one range (at most 512 MiB) of one object. No DLQ: the last attempt records `failed` in object_crc32_work and acks.
+      { "queue": "quincy-object-crcs", "max_batch_size": 1, "max_concurrency": 4, "max_retries": 3 }
     ],
     "producers": [
       { "binding": "INGEST_QUEUE", "queue": "quincy-ingest" },
       { "binding": "RENDITION_QUEUE", "queue": "quincy-renditions" },
-      { "binding": "NOTIFICATION_QUEUE", "queue": "quincy-notifications" }
+      { "binding": "NOTIFICATION_QUEUE", "queue": "quincy-notifications" },
+      { "binding": "OBJECT_CRC_QUEUE", "queue": "quincy-object-crcs" }
     ]
   },
   "workflows": [

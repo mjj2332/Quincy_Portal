@@ -38,7 +38,8 @@
     "producers": [
       { "binding": "INGEST_QUEUE", "queue": "quincy-ingest" },
       { "binding": "RENDITION_QUEUE", "queue": "quincy-renditions" },
-      { "binding": "NOTIFICATION_QUEUE", "queue": "quincy-notifications" }
+      { "binding": "NOTIFICATION_QUEUE", "queue": "quincy-notifications" },
+      { "binding": "OBJECT_CRC_QUEUE", "queue": "quincy-object-crcs" }
     ]
   },
   // #498 (ADR 0017): one Durable Object per Project holds its whiteboard. Migration tags are per

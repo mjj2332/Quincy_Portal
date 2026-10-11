@@ -1,7 +1,7 @@
 import type { DropboxSyncDO } from "./do/dropbox-sync";
 import type { TonomoProcessorDO } from "./do/tonomo-processor";
 import type { IngestMessage } from "./messages";
-import type { NotificationOutboxMessage, RenditionMessage } from "@quincy/shared";
+import type { NotificationOutboxMessage, ObjectCrcMessage, RenditionMessage } from "@quincy/shared";
 import type { AutoHdrInput, AutoHdrSend } from "./workflows/autohdr";
 import type { AutoHdrApiSendInput } from "./autohdr/api-send";
 import type { AutoHdrFetchInput } from "./workflows/autohdr-fetch";
@@ -17,6 +17,8 @@ export interface Env {
   NOTIFICATION_QUEUE: Queue<NotificationOutboxMessage>;
   /** Bound only after quincy-renditions is provisioned and the red gate is green. */
   RENDITION_QUEUE?: Queue<RenditionMessage>;
+  /** The object CRC-32 job (#802): consumed here, and the consumer re-sends itself for the next range. */
+  OBJECT_CRC_QUEUE?: Queue<ObjectCrcMessage>;
   /** Dedicated shared secret for app source signing and background generation only. */
   TRANSFORM_SOURCE_SECRET?: string;
   /** Active internal principal whose epoch authorizes background cold transforms. */
