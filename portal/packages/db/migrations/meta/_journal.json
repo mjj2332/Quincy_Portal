@@ -505,6 +505,13 @@
       "when": 1790500000000,
       "tag": "0071_delivery_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "6",
+      "when": 1790600000000,
+      "tag": "0072_object_crc32",
+      "breakpoints": true
     }
   ]
 }
