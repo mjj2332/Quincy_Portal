@@ -215,3 +215,18 @@ describe("a write that lands while the first decisions read is in flight (#741 1
     expect(observer.getCurrentResult().status).toBe("success");
   });
 });
+
+describe("a Video premium write refreshes the Delivery state too (#787 slice 10)", () => {
+  it("premium and unlock ask for the delivery read again; a decision does not", async () => {
+    vi.mocked(projectData.invalidateProjectSurfaces).mockImplementation(async (_client, input) => { order.push(`invalidate:${input.resources.map((r) => r.kind).join(",")}`); }); // earlier tests swap in the real one
+    api.apiPut.mockResolvedValueOnce({ premium: true, premiumUnlocked: false });
+    await setVideoPremium(ctx(), true);
+    api.apiPut.mockResolvedValueOnce({ premium: true, premiumUnlocked: true });
+    await setVideoPremiumUnlock(ctx(), { unlocked: true });
+    expect(order).toEqual(["invalidate:video-decisions,videos,delivery,delivery-candidates", "invalidate:video-decisions,videos,delivery,delivery-candidates"]);
+    order.length = 0;
+    api.apiPost.mockResolvedValueOnce({ decision: event });
+    await recordClientDecision(ctx(), { decision: "approved" });
+    expect(order).toEqual(["invalidate:video-decisions,videos"]);
+  });
+});

@@ -897,7 +897,7 @@ afterEach(async () => {
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.assets("p1", "raw"), exact: true, refetchType: "active" }));
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.detail("p1"), exact: true, refetchType: "active" }));
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.assets("p1", "edited"), exact: true, refetchType: "active" }));
-    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "assets", collectionKind: "raw" }, { kind: "detail" }, { kind: "assets", collectionKind: "edited" }] }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "assets", collectionKind: "raw" }, { kind: "detail" }, { kind: "assets", collectionKind: "edited" }, { kind: "delivery-candidates" }] }));
     vi.unstubAllGlobals();
   });
 
@@ -929,7 +929,7 @@ afterEach(async () => {
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.assets("p1", "copy"), exact: true, refetchType: "active" }));
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.detail("p1"), exact: true, refetchType: "active" }));
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.activity("p1"), exact: true, refetchType: "active" }));
-    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "assets", collectionKind: "copy" }, { kind: "detail" }, { kind: "activity" }] }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "assets", collectionKind: "copy" }, { kind: "detail" }, { kind: "activity" }, { kind: "delivery-candidates" }] }));
     vi.unstubAllGlobals();
   });
 

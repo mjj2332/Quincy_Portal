@@ -30,4 +30,10 @@ describe("#337 resolveArrivalTab", () => {
     expect(resolveArrivalTab("edited", true, new Set(["edited"]))).toBe("collaboration");
     expect(resolveArrivalTab("raw", true, new Set(["raw"]))).toBe("collaboration");
   });
+
+  it("keeps Delivery only while the Delivery tab is offered (#787)", () => {
+    expect(resolveArrivalTab("delivery", true, new Set(), true)).toBe("delivery");
+    expect(resolveArrivalTab("delivery", true, new Set(), false)).toBe("collaboration");
+    expect(resolveArrivalTab("delivery", true, new Set())).toBe("collaboration");
+  });
 });

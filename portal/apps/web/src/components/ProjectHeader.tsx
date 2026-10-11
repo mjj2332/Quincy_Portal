@@ -165,6 +165,7 @@ export function ProjectHeader({
   project,
   activeTab,
   availableTabs,
+  deliveryOffered = false,
   canUpload,
   canAdminBackend,
   canEdit,
@@ -188,6 +189,8 @@ export function ProjectHeader({
   whiteboardOpen?: boolean;
   activeTab: WorkspaceTab;
   availableTabs: CollectionKind[];
+  /** #787: the Delivery tab exists (gate open, `viewClientPreview`). It follows Collaboration. */
+  deliveryOffered?: boolean;
   canUpload: boolean;
   canAdminBackend: boolean;
   canEdit: boolean;
@@ -386,6 +389,7 @@ export function ProjectHeader({
               <span className="sr-only">, {collaborationUnread} unread comment{collaborationUnread === 1 ? "" : "s"}</span>
             </>}
           </TabsTrigger>
+          {deliveryOffered && <TabsTrigger value="delivery" id="project-workspace-tab-delivery" aria-controls="project-workspace-panel-delivery" ref={tabRef("delivery")} data-testid="project-overview-tab" className="gap-[var(--space-2)]">Delivery</TabsTrigger>}
         </TabsList>
       </Tabs>
     </div>
