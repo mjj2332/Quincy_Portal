@@ -110,15 +110,51 @@ describe("admin asset deletion", () => {
     await expect(database.DB.prepare("SELECT id FROM assets WHERE id IN (?, ?)").bind(secondPdf.id, secondPreview.id).all()).resolves.toMatchObject({ results: [{ id: expect.any(String) }, { id: expect.any(String) }] });
   });
 
-  it("returns 409 and leaves a floorplan pair untouched when either guard blocks", async () => {
+  /** A Delivery page for the Project whose latest set is the last of `sets` (each a list of Asset ids). */
+  async function seedPage(projectId: string, sets: string[][], enabled = true) {
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO delivery_pages (project_id, slug, enabled, latest_set_number, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(projectId, `page-${crypto.randomUUID().slice(0, 12)}`, enabled ? 1 : 0, sets.length, now, now).run();
+    for (const [index, members] of sets.entries()) {
+      const setId = crypto.randomUUID();
+      await database.DB.prepare("INSERT INTO delivery_sets (id, project_id, set_number, operation_id, published_by, published_at) VALUES (?, ?, ?, ?, ?, ?)").bind(setId, projectId, index + 1, crypto.randomUUID().slice(0, 32), seedAdminId, now).run();
+      for (const [position, assetId] of members.entries()) await database.DB.prepare("INSERT INTO delivery_set_items (set_id, asset_id, handle, position) VALUES (?, ?, ?, ?)").bind(setId, assetId, crypto.randomUUID().replaceAll("-", "").slice(0, 16), position).run();
+    }
+  }
+  const exists = (...ids: string[]) => database.DB.prepare(`SELECT id FROM assets WHERE id IN (${ids.map(() => "?").join(", ")})`).bind(...ids).all().then((rows) => rows.results.length);
+
+  it("refuses an Asset in a page's current set with 409 delivery_published, whatever the page's switch, and deletes nothing", async () => {
+    for (const enabled of [true, false]) {
+      const project = await seedProject(["edited"]); const asset = await seedAsset(project, "edited");
+      await seedPage(project.projectId, [[asset.id]], enabled);
+      const response = await deleteAsset(asset.id);
+      expect(response.status, `enabled ${enabled}`).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ code: "delivery_published", blocker: "delivery_published", assetId: asset.id });
+      expect(await exists(asset.id)).toBe(1);
+    }
+  });
+
+  it("deletes an Asset that is only in an older set, and the older membership goes with it", async () => {
+    const project = await seedProject(["edited"]); const old = await seedAsset(project, "edited"); const current = await seedAsset(project, "edited");
+    await seedPage(project.projectId, [[old.id], [current.id]]);
+    expect((await deleteAsset(old.id)).status).toBe(200);
+    expect(await exists(old.id)).toBe(0);
+    await expect(database.DB.prepare("SELECT COUNT(*) AS n FROM delivery_set_items WHERE asset_id = ?").bind(old.id).first()).resolves.toEqual({ n: 0 });
+    expect((await deleteAsset(current.id)).status).toBe(409);
+  });
+
+  it("refuses a Floorplan pair when either half is in the current set, from either half, and leaves both", async () => {
     const project = await seedProject(["floorplan"]); const group = crypto.randomUUID();
     const pdf = await seedAsset(project, "floorplan_pdf", { versionGroupId: group }); const preview = await seedAsset(project, "floorplan_preview", { versionGroupId: group });
-    const linkId = crypto.randomUUID(); await database.DB.prepare("INSERT INTO client_links (id, project_id, token_hash, publish_version, expires_at, created_at) VALUES (?, ?, ?, 1, ?, ?)").bind(linkId, project.projectId, crypto.randomUUID(), Date.now() + 10000, Date.now()).run();
-    await database.DB.prepare("INSERT INTO premium_unlocks (id, client_link_id, scope, asset_id, unlocked_at) VALUES (?, ?, 'asset', ?, ?)").bind(crypto.randomUUID(), linkId, preview.id, Date.now()).run();
-    const response = await deleteAsset(pdf.id); expect(response.status).toBe(409); await expect(response.json()).resolves.toMatchObject({ blocker: "premium_unlock" });
-    await expect(database.DB.prepare("SELECT id FROM assets WHERE id IN (?, ?)").bind(pdf.id, preview.id).all()).resolves.toMatchObject({ results: [{ id: expect.any(String) }, { id: expect.any(String) }] });
-    await database.DB.prepare("DELETE FROM premium_unlocks WHERE asset_id = ?").bind(preview.id).run();
-    expect((await deleteAsset(pdf.id)).status).toBe(200);
+    await seedPage(project.projectId, [[preview.id]]);
+    for (const target of [pdf, preview]) { const response = await deleteAsset(target.id); expect(response.status).toBe(409); await expect(response.json()).resolves.toMatchObject({ code: "delivery_published" }); }
+    expect(await exists(pdf.id, preview.id)).toBe(2);
+  });
+
+  it("no longer reads the legacy premium_unlocks table (#787): the delete route names neither the table nor its schema export", async () => {
+    const sources = import.meta.glob("../src/routes/assets.ts", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
+    const source = Object.values(sources)[0]!;
+    expect(source.length).toBeGreaterThan(1000);
+    expect(source).not.toMatch(/premium_unlocks|premiumUnlocks|premium_unlock\b/);
   });
 
   it("blocks an edited source claim, then succeeds after the claim is cleared", async () => {
