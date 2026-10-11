@@ -29,13 +29,15 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** Errors a second press of Remove cannot fix: the row is gone, the Project is archived, or access is lost. */
 const FINAL: ReadonlySet<ClassifiedVideoTrashError["kind"]> = new Set(["gone", "archived", "access"]);
 
-export function VideoVersionMenu({ projectId, archived, video, version, hasDraft, onRemoved }: {
+export function VideoVersionMenu({ projectId, archived, video, version, hasDraft, captureDrafts, onRemoved }: {
   projectId: string;
   archived: boolean;
   video: VideoDto;
   version: VideoDto["versions"][number];
   /** The Version has an unsent note or an open note form; the confirmation says it will go. */
-  hasDraft: (assetId: string) => boolean;
+  hasDraft: (assetId: string, videoId: string, whole: boolean) => boolean;
+  /** Notes what the slots the removal retires hold now; the returned function retires them (the Video's too when `whole`) only if they hold exactly that when the answer arrives. */
+  captureDrafts: (assetId: string, videoId: string) => (whole: boolean) => void;
   /** The removal went through: retire everything that points at that Version. */
   onRemoved: (removed: RemovedVersion) => void;
 }) {
@@ -46,7 +48,6 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
   const [loadFailure, setLoadFailure] = useState<string | null>(null);
   const [problem, setProblem] = useState<ClassifiedVideoTrashError | null>(null);
   const [pending, setPending] = useState(false);
-  const [draft, setDraft] = useState(false);
   // Each opening and each send owns the state it writes; a completion of an earlier one (a closed dialog's read, a Version left behind) applies nothing.
   const run = useRef(0);
   const alive = useRef(true);
@@ -89,7 +90,7 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
 
   const open = () => {
     const next: Target = { assetId: version.assetId, version: version.version, videoId: video.id, title: video.title };
-    setTarget(next); setPending(false); setDraft(hasDraft(next.assetId));
+    setTarget(next); setPending(false);
     void load(next);
   };
   const close = () => { run.current += 1; setTarget(null); setImpact(null); setLoadFailure(null); setProblem(null); setPending(false); };
@@ -115,10 +116,11 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
     if (!target || !impact || !queryClient) return;
     const mine = ++run.current;
     setPending(true); setProblem(null);
-    const sent = target; const confirmed = impact; const started = trashSession(queryClient);
+    const sent = target; const confirmed = impact; const retireDrafts = captureDrafts(sent.assetId, sent.videoId); const started = trashSession(queryClient);
     try {
       const response = await removeVideoVersion({ queryClient, projectId, videoId: sent.videoId, assetId: sent.assetId }, confirmed, confirmed.lastVersion, (applied) => {
         // The removal happened whatever this dialog has become since: retire the Version as the answer is applied, before the refetches (a restored Version may be drafted on meanwhile).
+        retireDrafts(applied.video === null);
         onRemoved({ assetId: sent.assetId, videoId: sent.videoId, video: applied.video });
       });
       // ...and say so.
@@ -135,6 +137,7 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
   };
 
   const last = impact?.lastVersion ?? false;
+  const draft = target !== null && hasDraft(target.assetId, target.videoId, last);
   const blockedByUpload = last && impact?.uploading === true;
   const title = last ? "Remove the whole film?" : `Remove version ${target?.version ?? ""}?`;
   const canConfirm = impact !== null && !pending && !blockedByUpload && queryClient !== undefined && !(problem && FINAL.has(problem.kind));
@@ -171,7 +174,7 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
             </ItemContent></Item>)}
         </ItemGroup>}
         {blockedByUpload && <Notice tone="caution" role="status">A new version is being uploaded to this film. Wait for it to finish or cancel it before removing the whole film.</Notice>}
-        {draft && <Notice tone="caution" role="status" data-testid="video-remove-draft">You have an unsent note on this version. It will be discarded.</Notice>}
+        {draft && <Notice tone="caution" role="status" data-testid="video-remove-draft">You have an unsent note or entry on this version. It will be discarded.</Notice>}
         {problem !== null && <Notice ref={problemRef} tabIndex={-1} tone="critical" role="alert" data-testid="video-remove-problem">{problem.message}</Notice>}
         <AlertDialogFooter>
           <AlertDialogCancel ref={cancelRef} data-testid="video-remove-cancel" disabled={pending}>{problem && FINAL.has(problem.kind) ? "Close" : "Cancel"}</AlertDialogCancel>

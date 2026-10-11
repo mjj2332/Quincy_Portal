@@ -167,15 +167,28 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       if (modeRef.current === "compare") exitCompare("dialog");
     }
   }, [versionIds, video.id, assetId, video.currentAssetId, compareStore, exitCompare]);
-  /** The Version was removed (#776 E): everything that kept state for it lets go, and the viewer moves to the Video's current Version. */
+  /** The Version was removed (#776 E): state that holds nothing typed lets go, and the viewer moves to the Video's current Version. Typed state goes through `captureDrafts`. */
   const onVersionRemoved = useCallback((removed: { assetId: string; videoId: string; video: VideoDto | null }) => {
-    forms?.forgetSlot(removed.assetId);
     compareStore?.dropVersion(removed.assetId);
-    delivery?.store.forget(versionSlot(removed.assetId));
-    if (removed.video === null) delivery?.store.forget(videoSlot(removed.videoId));
-    else { setResume(null); setAssetId(removed.video.currentAssetId); }
-  }, [forms, compareStore, delivery?.store]);
-  const hasDraft = useCallback((target: string) => forms?.hasUnsent(target) ?? false, [forms]);
+    if (removed.video !== null) { setResume(null); setAssetId(removed.video.currentAssetId); }
+  }, [compareStore]);
+  /**
+   * At the moment the person confirms Remove: notes what each slot the removal retires holds. The returned function, run when the answer is applied, retires a slot only if it still
+   * holds exactly that, so text typed after the confirmation (the answer was slow, the film came back and was drafted on) survives. `whole`: the Video went, so its payment reference too.
+   */
+  const captureDrafts = useCallback((assetId: string, videoId: string): ((whole: boolean) => void) => {
+    const noteKey = forms?.draftKey(assetId); const decisionKey = delivery?.store.draftKey(versionSlot(assetId)); const videoKey = delivery?.store.draftKey(videoSlot(videoId));
+    return (whole) => {
+      if (forms && forms.draftKey(assetId) === noteKey) forms.forgetSlot(assetId);
+      if (delivery) {
+        if (delivery.store.draftKey(versionSlot(assetId)) === decisionKey) delivery.store.forget(versionSlot(assetId));
+        if (whole && delivery.store.draftKey(videoSlot(videoId)) === videoKey) delivery.store.forget(videoSlot(videoId));
+      }
+    };
+  }, [forms, delivery?.store]);
+  /** Whether removing the Version (and, with `whole`, the Video) would discard something typed and not yet sent: a note, a decision note, a payment reference. */
+  const hasDraft = useCallback((target: string, videoId: string, whole: boolean) => (forms?.hasUnsent(target) ?? false)
+    || (delivery !== undefined && (delivery.store.getSlot(versionSlot(target)).note !== "" || (whole && delivery.store.getSlot(videoSlot(videoId)).paymentRef !== ""))), [forms, delivery]);
 
   const enterCompare = () => {
     if (!compareStore || mode === "compare") return;
@@ -258,7 +271,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
             {video.versions.map((candidate) => <SelectItem key={candidate.assetId} value={candidate.assetId} className="pointer-coarse:min-h-11 max-[721px]:min-h-11">{optionLabel(candidate)}</SelectItem>)}
           </SelectContent>
         </Select>
-        {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} onRemoved={onVersionRemoved} /></Suspense>}
+        {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} /></Suspense>}
       </div>}
       {(canCompare || comparing) && <Button
         ref={compareButtonRef}

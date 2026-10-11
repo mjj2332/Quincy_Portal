@@ -36,6 +36,8 @@ export function createVideoApprovalStore(key: string) {
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     setNote(slot: string, note: string) { write(slot, { note }); },
     setPaymentRef(slot: string, paymentRef: string) { write(slot, { paymentRef }); },
+    /** What the person has typed in `slot` (a decision note, a payment reference), as a string that changes with any edit. */
+    draftKey(slot: string): string { const held = get(slot); return JSON.stringify([held.note, held.paymentRef]); },
     clearProblem(slot: string) { write(slot, { problem: null }); },
     /**
      * Sends one write for `slot`. A slot with a write in flight refuses (`busy`) rather than queueing: the person decides again after reading the answer. The completion applies

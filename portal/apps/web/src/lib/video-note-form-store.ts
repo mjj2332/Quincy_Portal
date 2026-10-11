@@ -503,6 +503,8 @@ export function createNoteFormStore(key: string) {
     isDirty: (assetId: string): boolean => isDirty(slot(assetId)),
     /** Whether removing the Version would discard something not yet sent: the composer's draft and an open form's changes are each counted. Escape keeps using `isDirty`. */
     hasUnsent: (assetId: string): boolean => hasUnsent(slot(assetId)),
+    /** What the person has typed in the Version's slot, as a string that changes with any edit (the removal retires the slot only if this is what they agreed to discard). */
+    draftKey: (assetId: string): string => { const held = slot(assetId); return JSON.stringify([held.composer.body, held.markup.items, held.open ? [held.open.noteId, held.marks.value] : null, held.marks.touched]); },
     /** The first Escape of a dirty form is held (the text stays); the next one is not. A clean edit or reply closes. Nothing here moves focus: the answer says where it should go. */
     escape(assetId: string, { focusInForm }: { focusInForm: boolean }): { consumed: boolean; focus: "dialog" | "textarea" | "opener" | "draw" | null } {
       const held = slot(assetId);

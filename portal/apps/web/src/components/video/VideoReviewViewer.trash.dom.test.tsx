@@ -7,6 +7,7 @@ import { announcePrincipalTerminal } from "../../lib/principal-terminal";
 import { QuincyQueryProvider } from "../../lib/query-client";
 import { projectDataKeys } from "../../lib/project-data";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { versionSlot, videoSlot } from "../../lib/video-approval-store";
 import { clearToasts, getToasts } from "../../lib/toast-store";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
@@ -25,6 +26,11 @@ const stores = vi.hoisted(() => ({ made: [] as Array<import("../../lib/video-not
 vi.mock("../../lib/video-note-form-store", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/video-note-form-store")>();
   return { ...actual, createNoteFormStore: (key: string) => { const store = actual.createNoteFormStore(key); stores.made.push(store); return store; } };
+});
+const approvals = vi.hoisted(() => ({ made: [] as Array<import("../../lib/video-approval-store").VideoApprovalStore> }));
+vi.mock("../../lib/video-approval-store", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/video-approval-store")>();
+  return { ...actual, createVideoApprovalStore: (key: string) => { const store = actual.createVideoApprovalStore(key); approvals.made.push(store); return store; } };
 });
 const api = vi.hoisted(() => ({
   apiGet: vi.fn<(path: string) => Promise<unknown>>(),
@@ -101,7 +107,7 @@ const versionLabel = () => tid("video-version-label")?.textContent ?? "";
 
 beforeEach(() => {
   providerKey = 0;
-  stub = installVideoElementStub(); Object.values(api).forEach((m) => m.mockReset()); stores.made.length = 0; clearToasts();
+  stub = installVideoElementStub(); Object.values(api).forEach((m) => m.mockReset()); stores.made.length = 0; approvals.made.length = 0; clearToasts();
   versions = [{ assetId: ids.asset2, version: 2 }, { assetId: ids.asset1, version: 1 }];
   impact = impactOf(); uploadingNow = null;
   removeOutcome = async () => ({ video: fixtureVideo({ id: ids.video, versions: [fixtureVersion({ assetId: ids.asset1, version: 1 })] }) });
@@ -305,6 +311,61 @@ describe("Remove a Version from the staff viewer (#776 E)", () => {
     await act(async () => { releaseVideos(); });
     await flush(8);
     expect(forms.slot(ids.asset2).composer.body).toBe("a new draft");
+  });
+
+  it("a draft typed after the person confirmed (the response was slow) is not discarded by the late response; the plain case still clears", async () => {
+    await mount({ parts: ["trash", "notes", "delivery"] });
+    await openViewer();
+    const forms = stores.made.at(-1)!; const approval = approvals.made.at(-1)!;
+    forms.setBody(ids.asset2, "the draft they agreed to discard", 4);
+    approval.setNote(versionSlot(ids.asset2), "a decision note they agreed to discard");
+    await startRemove();
+    let answer!: () => void;
+    removeOutcome = async () => { await new Promise<void>((resolve) => { answer = resolve; }); versions = [{ assetId: ids.asset1, version: 1 }]; return { video: videoNow() }; };
+    await click(confirmButton());
+    await flush(4);
+    // Meanwhile the Version came back and the person typed again.
+    forms.setBody(ids.asset2, "a brand new draft", 4);
+    approval.setNote(versionSlot(ids.asset2), "a brand new decision note");
+    await act(async () => { answer(); });
+    await flush(8);
+    expect(forms.slot(ids.asset2).composer.body).toBe("a brand new draft");
+    expect(approval.getSlot(versionSlot(ids.asset2)).note).toBe("a brand new decision note");
+  });
+
+  it("the plain case clears the note draft and the decision note together", async () => {
+    await mount({ parts: ["trash", "notes", "delivery"] });
+    await openViewer();
+    const forms = stores.made.at(-1)!; const approval = approvals.made.at(-1)!;
+    forms.setBody(ids.asset2, "agreed to discard", 4);
+    approval.setNote(versionSlot(ids.asset2), "agreed too");
+    await startRemove();
+    removeOutcome = async () => { versions = [{ assetId: ids.asset1, version: 1 }]; return { video: videoNow() }; };
+    await click(confirmButton());
+    await flush(8);
+    expect(forms.slot(ids.asset2).composer.body).toBe("");
+    expect(approval.getSlot(versionSlot(ids.asset2)).note).toBe("");
+  });
+
+  it("the discard warning also shows for an unsent decision note, and for a payment reference only when the whole film goes", async () => {
+    await mount({ parts: ["trash", "delivery"] });
+    await openViewer();
+    const approval = approvals.made.at(-1)!;
+    approval.setNote(versionSlot(ids.asset2), "approved, pending call");
+    await startRemove();
+    expect(tid("video-remove-draft")).not.toBeNull();
+    await click(document.querySelector<HTMLElement>('[data-testid="video-remove-cancel"]')!);
+    await flush(6);
+    approval.setNote(versionSlot(ids.asset2), "");
+    approval.setPaymentRef(videoSlot(ids.video), "INV-0042");
+    await startRemove();
+    expect(tid("video-remove-draft"), "a payment reference is kept when only a Version goes").toBeNull();
+    await click(document.querySelector<HTMLElement>('[data-testid="video-remove-cancel"]')!);
+    await flush(6);
+    versions = [{ assetId: ids.asset2, version: 2 }];
+    impact = impactOf({ lastVersion: true });
+    await startRemove();
+    expect(tid("video-remove-draft")).not.toBeNull();
   });
 
   it("the discard warning also shows for an unsaved drawing with no text", async () => {
