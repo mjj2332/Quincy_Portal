@@ -1585,3 +1585,127 @@ describe("guard: Admin inline editors keep their focus outline and value clear (
     expect(line).toMatch(/(?<![-\w:])relative(?![-\w])/);
   });
 });
+
+
+// #741 7c: the offset field sat white-on-white on the dark viewer because `--field-bg` (paper-000) was never re-scoped for the inverse
+// surface. The inverse and default blocks must mirror each other, and a field background must not stay paper on ink.
+describe("guard: inverse.css re-scopes --field-bg in both blocks", () => {
+  const css = stripCssComments(readFileSync(join(stylesDir, "tokens/inverse.css"), "utf8"));
+  const block = (name: string) => new RegExp(`\\[data-surface="${name}"\\]\\s*\\{([^}]*)\\}`).exec(css)?.[1] ?? "";
+  it("declares --field-bg in the inverse and the default block, dark in the first", () => {
+    const inverse = /--field-bg\s*:\s*([^;]+);/.exec(block("inverse"))?.[1]?.trim();
+    const restored = /--field-bg\s*:\s*([^;]+);/.exec(block("default"))?.[1]?.trim();
+    expect(inverse, "inverse block must set --field-bg").toBeDefined();
+    expect(restored, "default block must restore --field-bg").toBeDefined();
+    expect(inverse).toMatch(/--ink-/);
+  });
+});
+
+/**
+ * Guard — a dialog or sheet never takes Quincy's page-container widths.
+ *
+ * `styles/tokens/spacing.css` redefines `--container-sm` … `--container-xl` as PAGE widths
+ * (`--container-sm` is 640px, `--container-xl` is 1320px), so Tailwind's `max-w-sm`…`max-w-xl`
+ * do not mean what they do in stock Tailwind. A dialog that reaches for them gets a page-sized
+ * surface: 13c's verify dialog came out at 640px and 13d's paste dialog at 1320px. Use an
+ * explicit width (`sm:max-w-[460px]`) or a size whose container token is not redefined
+ * (`max-w-3xl` is 48rem).
+ */
+describe("guard: dialog and sheet content never uses a page-width max-w-{sm..xl}", () => {
+  const CONTENT_OPEN = /<(?:AlertDialogContent|DialogContent|SheetContent)\b/g;
+  const PAGE_WIDTH = /(?<![\w[:-])(?:[a-z0-9]+:)?max-w-(?:sm|md|lg|xl)(?![\w-])/;
+
+  /** The opening tag of each matching element, read to its closing `>` (braces and strings respected). */
+  function openingTags(text: string): string[] {
+    const tags: string[] = [];
+    for (const match of text.matchAll(CONTENT_OPEN)) {
+      let depth = 0;
+      let quote = "";
+      let i = match.index!;
+      for (; i < text.length; i++) {
+        const ch = text[i]!;
+        if (quote) { if (ch === quote) quote = ""; continue; }
+        if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+        else if (ch === "{") depth++;
+        else if (ch === "}") depth--;
+        else if (ch === ">" && depth === 0) break;
+      }
+      tags.push(text.slice(match.index!, i + 1));
+    }
+    return tags;
+  }
+
+  function offences(text: string): string[] {
+    return openingTags(stripComments(text)).filter((tag) => PAGE_WIDTH.test(tag));
+  }
+
+  it("has no page-width max-w class on DialogContent, AlertDialogContent or SheetContent", () => {
+    const found: string[] = [];
+    for (const file of sourceFiles()) {
+      const path = rel(file);
+      if (path.startsWith("components/reui/")) continue;
+      const text = readFileSync(file, "utf8");
+      for (const tag of offences(text)) {
+        const line = text.slice(0, text.indexOf(tag)).split("\n").length;
+        found.push(`  ${path}:${line}`);
+      }
+    }
+    expect(found, [
+      "Quincy's --container-sm..xl are PAGE widths, not dialog widths. Use an explicit",
+      "`sm:max-w-[460px]` or `max-w-3xl` instead (docs/lessons.md).",
+      ...found,
+    ].join("\n")).toEqual([]);
+  });
+
+  it("proves the matcher on planted fixtures", () => {
+    expect(offences('<DialogContent className="flex sm:max-w-xl">').length).toBe(1);
+    expect(offences('<AlertDialogContent className="max-w-md" />').length).toBe(1);
+    expect(offences('<SheetContent\n  className="max-w-lg"\n>').length).toBe(1);
+    expect(offences('<DialogContent className="sm:max-w-3xl">').length).toBe(0);
+    expect(offences('<DialogContent className="sm:max-w-[460px]">').length).toBe(0);
+    expect(offences('<DialogContent className="sm:max-w-2xl">').length).toBe(0);
+    expect(offences('<div className="max-w-xl"><DialogContent className="x">').length).toBe(0);
+  });
+});
+
+// #741 14-ui-guest: the tone TEXT roles (`--success-foreground` etc.) were never re-scoped for the inverse surface, so the
+// Badge `*-light` variants on the guest film header rendered deep olive/ochre/slate on ink (1.57:1 to 2.59:1). Each role must be
+// declared in both blocks, and its inverse value must reach 4.5:1 on both ink grounds.
+describe("guard: inverse.css re-scopes the tone text roles in both blocks", () => {
+  const raw = readFileSync(join(stylesDir, "tokens/inverse.css"), "utf8");
+  const css = stripCssComments(raw);
+  const colors = new Map(
+    [...stripCssComments(readFileSync(join(stylesDir, "tokens/colors.css"), "utf8")).matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)]
+      .map((m) => [m[1]!, m[2]!.trim()] as const),
+  );
+  const block = (name: string) => new RegExp(`\\[data-surface="${name}"\\]\\s*\\{([^}]*)\\}`).exec(css)?.[1] ?? "";
+  const declared = (b: string, prop: string) => new RegExp(`${prop}\\s*:\\s*([^;]+);`).exec(b)?.[1]?.trim();
+  const resolve = (value: string): string => {
+    const ref = /^var\((--[\w-]+)\)$/.exec(value);
+    return ref ? resolve(colors.get(ref[1]!) ?? "") : value;
+  };
+  const luminance = (hex: string) => {
+    const [r, g, b] = [1, 3, 5].map((i) => {
+      const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+  };
+  const contrast = (a: string, b: string) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi! + 0.05) / (lo! + 0.05);
+  };
+  const roles = ["--success-foreground", "--warning-foreground", "--info-foreground", "--destructive-wash-foreground"];
+  it.each(roles)("%s is declared in both blocks and reaches 4.5:1 on ink-900 and ink-800 inverted", (role) => {
+    const inverse = declared(block("inverse"), role);
+    const restored = declared(block("default"), role);
+    expect(inverse, `inverse block must set ${role}`).toBeDefined();
+    expect(restored, `default block must restore ${role}`).toBeDefined();
+    const value = resolve(inverse!);
+    expect(value, `${role} must resolve to a #rrggbb palette value`).toMatch(/^#[0-9a-f]{6}$/i);
+    for (const ground of ["--ink-900", "--ink-800"]) {
+      const ratio = contrast(value, resolve(colors.get(ground)!));
+      expect(ratio, `${role} on ${ground}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});

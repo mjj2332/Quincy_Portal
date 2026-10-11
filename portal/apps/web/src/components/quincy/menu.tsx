@@ -50,7 +50,7 @@ export const MENU_ITEM =
   // utilities, and never `outline-none` — that is suppression. The ink colour stays: `--accent-on`
   // (select's ring) is paper on paper here and would vanish.
   "-outline-offset-4 focus-visible:!-outline-offset-4 " +
-  "data-[highlighted]:bg-secondary";
+  "data-[highlighted]:bg-secondary data-[disabled]:cursor-not-allowed data-[disabled]:opacity-60";
 
 export type MenuProps = {
   /**

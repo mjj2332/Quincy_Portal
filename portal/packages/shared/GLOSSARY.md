@@ -302,6 +302,34 @@ Staff's explicit act of making one specific approved Version downloadable on a R
 approval alone never releases anything.
 _Avoid_: Publish, deliver, approve (approval is the client's, informational decision)
 
+### Client delivery
+
+**Delivery page**:
+A Project's one public page, at a web address built from the property address, where its latest
+Published set is viewed and downloaded with no sign-in and no code. Receive-only: clients browse and
+download, and never comment or approve there. Unrelated to Review links.
+_Avoid_: Gallery (as a domain term; fine as page copy), client portal, client link, Review link
+
+**Publish**:
+Staff's explicit act of freezing a chosen set of a Project's Assets as the next Published set. Nothing a
+client sees changes until staff publish again.
+_Avoid_: Release (that is per Version on a Review link), deliver, share
+
+**Published set**:
+The numbered, frozen set of Assets one Publish produced, across photos, Videos, Floorplans and Copy. A
+later re-edit or re-upload never alters a Published set already made.
+_Avoid_: Delivery, gallery, live collection
+
+**Premium Asset**:
+An Asset staff have marked as a paid extra. It stays premium for good, and clients see it only as a
+watermarked preview until staff Unlock it.
+_Avoid_: Extra, add-on, paywalled (in staff-facing copy)
+
+**Unlock**:
+Staff's act of making one Premium Asset viewable and downloadable in full, for everyone who can reach it.
+There is no payment in the Portal; a client asks, staff decide.
+_Avoid_: Purchase, buy, release
+
 ### Notifications
 
 **Notification**:

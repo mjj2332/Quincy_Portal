@@ -641,6 +641,8 @@
 .workspace-intro { display: flex; align-items: end; justify-content: space-between; gap: var(--space-6); padding: var(--space-6) var(--space-6) var(--space-4); border-bottom: 1px solid var(--border-hairline); }
 .workspace-intro h1 { margin: 6px 0 0; font: var(--type-h2); letter-spacing: var(--tracking-tight); }
 .workspace-intro .muted { max-width: 42ch; font-size: 13.5px; line-height: 1.5; }
+/* Films header (VideoCollectionPanel): title, description and the Review links button stack on a phone so the description is not crushed into a sliver. A real rule, not utilities: `.workspace-intro` above is unlayered and beats them. */
+@media (max-width: 721px) { .workspace-intro--stack { flex-direction: column; align-items: flex-start; gap: var(--space-3); } .workspace-intro--stack .muted { max-width: none; } }
 .ingest-warning { display: flex; gap: 9px; padding: 12px var(--space-6); color: var(--signal-critical); background: color-mix(in srgb, var(--signal-critical) 8%, var(--paper-050)); border-bottom: 1px solid color-mix(in srgb, var(--signal-critical) 36%, var(--border-hairline)); }
 .later-phase { margin: var(--space-6); border: 1px dashed var(--greige-300); background: var(--paper-100); }
 .document-group { display: grid; grid-template-columns: minmax(0, 190px) minmax(0, 1fr); border: 1px solid var(--border-hairline); background: var(--paper-000); }

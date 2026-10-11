@@ -15,6 +15,13 @@ import { cn } from "@/lib/utils";
 const META_TEXT =
   "[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary";
 
+/**
+ * The eyebrow a form group's legend wears: the same typography and colour as `reui/field.tsx`'s FieldLabel, for a group heading that is not a
+ * `<label>` (a `role="group"` legend). One string here so a legend and a field label cannot drift apart.
+ */
+export const FIELD_LEGEND_TEXT =
+  "[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-[var(--text-secondary)]";
+
 export function Eyebrow({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span

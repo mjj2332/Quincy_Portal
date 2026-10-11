@@ -11,7 +11,7 @@ import { VideoNotesPanel } from "./VideoNotesPanel";
  * Project without notes never pays for it (and the notes-off viewer is exactly the 4d-ii viewer).
  */
 export default function VideoNotesHost({ notes, video, version, detailsRows, children }: {
-  notes: { projectId: string; role: Role; userId: string | null; archived: boolean; forms: NoteFormStore; /** The Project's `markup` part is on. */ markup?: boolean };
+  notes: { projectId: string; role: Role; userId: string | null; archived: boolean; forms: NoteFormStore; /** The Project's `markup` part is on. */ markup?: boolean; /** The Project's `export` part is on (#741 9). */ exportEnabled?: boolean };
   /** The Video the Version belongs to: copy and paste work between its Versions. */
   video: VideoDto;
   version: VideoVersionDto;
@@ -22,5 +22,5 @@ export default function VideoNotesHost({ notes, video, version, detailsRows, chi
   const session = useVideoNotes({ projectId: notes.projectId, version, role: notes.role, userId: notes.userId, archived: notes.archived, forms: notes.forms, markup: notes.markup === true });
   // The drawing surface, the Draw button and the drawing stack reach the player only as these slots, built here in the notes chunk: the player never imports them, so a Project without markup pays nothing.
   const { overlay, transportActions, transportReplacement } = useVideoMarkup(session);
-  return <>{children({ playerProps: { ...session.playerProps, ...(overlay ? { overlay } : {}), ...(transportActions ? { transportActions } : {}), ...(transportReplacement ? { transportReplacement } : {}) }, panel: <VideoNotesPanel key={version.assetId} session={session} video={video} detailsRows={detailsRows} /> })}</>;
+  return <>{children({ playerProps: { ...session.playerProps, ...(overlay ? { overlay } : {}), ...(transportActions ? { transportActions } : {}), ...(transportReplacement ? { transportReplacement } : {}) }, panel: <VideoNotesPanel key={version.assetId} session={session} video={video} detailsRows={detailsRows} exportEnabled={notes.exportEnabled === true} /> })}</>;
 }

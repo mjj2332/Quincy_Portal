@@ -11,6 +11,7 @@ import { mountGuestApproval } from "./approval";
 import { mountGuestDownloads } from "./download";
 import { mountGuestEmail } from "./email";
 import { mountGuestNotes } from "./notes-write";
+import { mountGuestPaste } from "./paste";
 import { guestGloballyOpen, identityOf, loadActiveLink, resolveSession, sessionBody } from "./link";
 import { clientAddress, GUEST_LIMITS, ipBucket, reserveAttempts, windowStart } from "./rate-limit";
 import { listGuestNotes, listGuestVideos, readGuestMarkup, resolveGrantedVersion } from "./read";
@@ -75,13 +76,15 @@ async function withSession(c: Context<AppEnv, string>, handler: (session: NonNul
 export function mountGuest(app: Hono<AppEnv>): void {
   mountGuestEmail(app);
   mountGuestNotes(app);
+  mountGuestPaste(app);
   mountGuestApproval(app);
   mountGuestDownloads(app);
   app.get("/d/review", guestRoute("/d/review", async (c) => {
     // Only `link` is accepted in the query, once, as a UUID: the token lives in the fragment, which never reaches the server, and anything else is not read.
     const params = [...new URL(c.req.url).searchParams];
     if (params.length !== 1 || params[0]![0] !== "link" || !UUID.test(params[0]![1])) return guestNotFound(c);
-    if (!await loadActiveLink(c, params[0]![1], Date.now())) return guestNotFound(c);
+    if (!await guestGloballyOpen(c.env.DB)) return guestNotFound(c);
+    // Any well-formed link id gets the same shell, live or not: the bytes reveal nothing, and the session API's stub is what tells the page the link is gone (it then shows the unavailable screen).
     const shell = await c.env.ASSETS.fetch(new Request(new URL("/", c.req.url), { method: "GET" }));
     if (!shell.ok) { await shell.body?.cancel(); return guestNotFound(c); }
     // The Worker answers first, so `_headers` never applies here: the shell is re-wrapped with its own framing policy.
