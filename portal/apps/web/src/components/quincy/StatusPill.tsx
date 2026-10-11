@@ -5,9 +5,12 @@ import { Badge } from "@/components/reui/badge";
 
 // Nova supplies the shape (Badge's box/typography, here forced to a pill via `radius="full"`);
 // Quincy supplies the tones. Nova's own semantic variants still aren't reused for status colour:
-// none of `--success/--info/--warning/--invert` are declared for `[data-surface="inverse"]`, so
-// they'd render their light-surface value on the Lightbox stage. Reconciling that is tracked as a
-// #57 entry for Stage C, not done here. (The other half of this note is resolved: #72 split
+// the FILL roles `--success/--info/--warning/--invert` are not declared for `[data-surface="inverse"]`,
+// so they'd render their light-surface value on the Lightbox stage. The TEXT roles
+// (`--success-foreground`, `--warning-foreground`, `--info-foreground`, `--destructive-wash-foreground`)
+// are re-scoped in tokens/inverse.css (#741 14-ui-guest), so the `*-light` Badge variants are legible
+// there; the fills are still not inverse-aware, so reconciling those stays a #57 entry for Stage C.
+// (The other half of this note is resolved: #72 split
 // `destructive-light`'s ink out as `--destructive-wash-foreground`, which is the same oxblood-on-
 // its-own-wash pairing the `critical` tone below already uses.)
 

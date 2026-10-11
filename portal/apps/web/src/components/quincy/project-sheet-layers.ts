@@ -73,7 +73,9 @@ export function hasOpenInnerLayer(popup: HTMLElement | null, slot: HTMLElement |
   if (popup.querySelector(MODAL_DIALOG)) return true;
   // Global modal: `ConfirmModalHost` and in-tree `Modal`s portal to `body` and carry `data-open`
   // only while open (`Modal.tsx`), so a closing one does not block.
-  for (const modal of doc.querySelectorAll<HTMLElement>(`${MODAL_DIALOG}[data-open]`)) {
+  // A registry dialog (`reui/dialog`: the Review links dialog, the Gantt deadline dialog) counts too: Base UI sets no `aria-modal` on it, so it is
+  // recognised by its slot, as `hasOpenModalAbove` does. Without that arm the sheet's Escape closed the sheet along with the dialog.
+  for (const modal of doc.querySelectorAll<HTMLElement>(OPEN_MODAL)) {
     if (modal === popup || modal.contains(popup) || popup.contains(modal)) continue;
     return true;
   }

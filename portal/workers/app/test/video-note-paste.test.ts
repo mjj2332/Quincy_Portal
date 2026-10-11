@@ -417,5 +417,5 @@ async function commitThroughRacingDb(nth: number, before: () => Promise<void>, i
     },
   }) as D1Database;
   void baseEnv;
-  return await commitNotePaste(db, { ...input, offsetFrames: 0, principal: { id: ids.member, role: "editor" }, now: Date.now() });
+  return await commitNotePaste(db, { ...input, offsetFrames: 0, principal: { id: ids.member, role: "editor" } });
 }
