@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { database, ids, request, seedFixture, type Who } from "./embedded-media-support";
+import { RENDITION_SPEC_VERSION } from "@quincy/shared";
+import { cookie, database, ids, pngBytes, request, seedFixture, type Who } from "./embedded-media-support";
 import { clearDeliveryFlags, openDelivery, seedAsset, seedOpenProject, seedPage, seedRawPhoto, seedUnlock, setDeliveryFlags, wipeDelivery } from "./delivery-support";
 import { seedVideoVersion } from "./video-review-support";
 
@@ -187,16 +188,35 @@ describe("Publish", () => {
     expect((await audits(ids.project, "delivery.publish")).map((row) => JSON.parse(row.meta_json).firstPublish)).toEqual([true, false]);
   });
 
+  it("answers a replay of an older Publish with the CURRENT set, usable URLs, and the set its operation landed as", async () => {
+    const photos = [await seedAsset("photo"), await seedAsset("photo"), await seedAsset("photo")];
+    for (const photo of photos) for (const variant of ["web", "thumb"] as const) {
+      const key = `renditions/${photo.id}/${variant}`; await database.MEDIA.put(key, pngBytes(40), { httpMetadata: { contentType: "image/webp" } });
+      await database.DB.prepare("INSERT INTO asset_renditions (id, asset_id, variant, r2_key, bytes, content_type, width, height, spec_version, created_at) VALUES (?, ?, ?, ?, 40, 'image/webp', 1, 1, ?, ?)").bind(crypto.randomUUID(), photo.id, variant, key, RENDITION_SPEC_VERSION, Date.now()).run();
+    }
+    const operationId = op();
+    expect((await publish({ assetIds: [photos[0]!.id], expectedLatestSet: null, operationId })).status).toBe(201);
+    expect((await publish(body([photos[1]!.id, photos[2]!.id], { expectedLatestSet: 1 }))).status).toBe(201);
+    const retry = await publish({ assetIds: [photos[0]!.id], expectedLatestSet: null, operationId }); expect(retry.status).toBe(200);
+    const json = await retry.json() as Json;
+    expect(json).toMatchObject({ replayed: true, operationSetNumber: 1, page: { latestSetNumber: 2 }, set: { setNumber: 2 }, dto: { setNumber: 2 } });
+    const { SELF } = await import("cloudflare:test"); const headers = { cookie: await cookie("admin") };
+    const urls = json.dto.items.flatMap((item: Json) => [item.url, item.thumbUrl].filter(Boolean)) as string[];
+    expect(urls).toHaveLength(4);
+    for (const url of urls) expect((await SELF.fetch(`https://portal.test${url}`, { headers })).status, url).toBe(200);
+  });
+
   it("answers a retried operation id with the original set, never a second one, even after a later Publish or with a stale expectation", async () => {
     const a = await seedAsset("photo"); const b = await seedAsset("photo");
     const operationId = op();
     const payload = { assetIds: [a.id], coverAssetId: a.id, expectedLatestSet: null, operationId };
     const first = await publish(payload); expect(first.status).toBe(201); const original = await first.json() as Json;
     const again = await publish(payload); expect(again.status).toBe(200);
+    expect(original.operationSetNumber).toBe(1);
     expect(await again.json()).toEqual({ ...original, replayed: true });
     expect((await publish(body([a.id, b.id], { expectedLatestSet: 1 }))).status).toBe(201);
     const late = await publish(payload); expect(late.status).toBe(200);
-    expect(((await late.json()) as Json).set.setNumber).toBe(1);
+    expect(((await late.json()) as Json)).toMatchObject({ replayed: true, operationSetNumber: 1, set: { setNumber: 2 } });
     expect(await counts()).toMatchObject({ sets: 2 });
     expect(await audits(ids.project, "delivery.publish")).toHaveLength(2);
   });

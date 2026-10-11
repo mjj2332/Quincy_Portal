@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import { deliveryPageSwitchInputSchema, deliveryPreviewInputSchema, deliveryPublishInputSchema, deliveryStateSchema, roleHasCapability, type Capability } from "@quincy/shared";
+import { deliveryPageSwitchInputSchema, deliveryPreviewInputSchema, deliveryPublishInputSchema, deliveryPublishResponseSchema, deliveryStateSchema, roleHasCapability, type Capability } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
 import { projectIsArchived } from "../lib/project-archive";
@@ -66,13 +66,14 @@ deliveryRoutes.post("/projects/:projectId/delivery/publish", terminalRoute("/pro
     case "delivered_stage_unavailable": return c.json({ error: "This Project can't be moved to Delivered right now, so it can't be published. Nothing was changed.", code: "delivered_stage_unavailable" }, 409);
     case "invalid_cover": return c.json({ error: "The cover must be one of the selected photos.", code: "invalid_cover" }, 400);
     case "invalid_selection": return c.json({ error: "Some selected items can't be on a Delivery page.", code: "invalid_selection", assetIds: outcome.assetIds }, 400);
-    case "replayed": return c.json({ replayed: true, ...deliveryStateSchema.parse(await readDeliveryState(c.env.DB, projectId, { setNumber: outcome.setNumber })) });
+    // A replay returns the CURRENT state: an older set's handle URLs are no longer served, so its DTO would be unusable. `operationSetNumber` says which set the retried operation landed as.
+    case "replayed": return c.json(deliveryPublishResponseSchema.parse({ replayed: true, operationSetNumber: outcome.setNumber, ...await readDeliveryState(c.env.DB, projectId) }));
     case "published": {
       // After the commit, none of it able to fail the response: the Stage move's outbox publication and Shoot date follow-ups, then the slice-4 derivative hook.
       if (outcome.publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, outcome.publicationIds));
       if (outcome.shootDateFilled) c.executionCtx.waitUntil(queueProjectShootDateFollowUps(c.env, projectId));
       c.executionCtx.waitUntil(enqueueDeliveryDerivatives(c.env, { projectId, setNumber: outcome.setNumber, assetIds: outcome.assetIds }).catch((error) => console.error("Delivery derivative enqueue failed", { projectId, error })));
-      return c.json({ replayed: false, ...deliveryStateSchema.parse(await readDeliveryState(c.env.DB, projectId, { setNumber: outcome.setNumber })) }, 201);
+      return c.json(deliveryPublishResponseSchema.parse({ replayed: false, operationSetNumber: outcome.setNumber, ...await readDeliveryState(c.env.DB, projectId, { setNumber: outcome.setNumber }) }), 201);
     }
   }
 }));

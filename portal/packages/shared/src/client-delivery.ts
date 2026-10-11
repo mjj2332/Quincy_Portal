@@ -82,3 +82,7 @@ export const deliveryStateSchema = z.object({
   dto: deliveryPageDtoSchema.nullable(),
 }).strict();
 export type DeliveryState = z.infer<typeof deliveryStateSchema>;
+
+/** The Publish response: the CURRENT state (the same shape as the staff read), the receipt for the operation, and whether this was a retry. `operationSetNumber` is the set the operation landed as, which on a replay may be older than `set.setNumber`. */
+export const deliveryPublishResponseSchema = deliveryStateSchema.extend({ replayed: z.boolean(), operationSetNumber: z.number().int().min(1) }).strict();
+export type DeliveryPublishResponse = z.infer<typeof deliveryPublishResponseSchema>;
