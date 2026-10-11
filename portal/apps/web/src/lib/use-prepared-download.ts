@@ -15,9 +15,14 @@ export type PrepareOutcome = { state: "ready" } | { state: "preparing" } | { sta
 export type PreparedStatus = "idle" | "checking" | "preparing" | "ready" | "unavailable" | "too_large" | "failed" | "timeout";
 export type PreparedDownload = { status: PreparedStatus; start: () => Promise<PrepareOutcome> };
 
-export function usePreparedDownload({ check, active }: { check: (reason: "start" | "poll") => Promise<PrepareOutcome>; active: boolean }): PreparedDownload {
+/** A check that rejects (a dropped connection, a 401) is a `failed` answer, so nothing waits on it forever; `onError` sees the reason first, so the caller can run its auth handling (401/403). */
+export function usePreparedDownload({ check, active, onError }: { check: (reason: "start" | "poll") => Promise<PrepareOutcome>; active: boolean; onError?: (reason: unknown) => void }): PreparedDownload {
   const [status, setStatus] = useState<PreparedStatus>("idle");
   const checkRef = useRef(check); checkRef.current = check;
+  const onErrorRef = useRef(onError); onErrorRef.current = onError;
+  const ask = useCallback(async (reason: "start" | "poll"): Promise<PrepareOutcome> => {
+    try { return await checkRef.current(reason); } catch (error) { onErrorRef.current?.(error); return { state: "failed" }; }
+  }, []);
   const generation = useRef(0);
   const startedAt = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -42,16 +47,16 @@ export function usePreparedDownload({ check, active }: { check: (reason: "start"
     if (!visible()) return;
     if (Date.now() - startedAt.current >= PREPARE_MAX_MS) { waiting.current = false; setStatus("timeout"); return; }
     lastAsk.current = Date.now();
-    settle(mine, await checkRef.current("poll"), "poll");
-  }, [settle]);
+    settle(mine, await ask("poll"), "poll");
+  }, [ask, settle]);
 
   const start = useCallback(async (): Promise<PrepareOutcome> => {
     stop(); const mine = generation.current; startedAt.current = Date.now(); setStatus("checking");
     lastAsk.current = Date.now();
-    const outcome = await checkRef.current("start");
+    const outcome = await ask("start");
     settle(mine, outcome, "start");
     return outcome;
-  }, [settle, stop]);
+  }, [ask, settle, stop]);
 
   useEffect(() => {
     if (!active) { stop(); setStatus("idle"); return undefined; }

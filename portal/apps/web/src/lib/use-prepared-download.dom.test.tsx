@@ -14,11 +14,11 @@ beforeEach(() => {
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers(); });
 
-function Harness({ check, active }: { check: (reason: "start" | "poll") => Promise<PrepareOutcome>; active: boolean }) {
-  latest = usePreparedDownload({ check, active });
+function Harness({ check, active, onError }: { check: (reason: "start" | "poll") => Promise<PrepareOutcome>; active: boolean; onError?: (reason: unknown) => void }) {
+  latest = usePreparedDownload({ check, active, ...(onError ? { onError } : {}) });
   return <p data-testid="status">{latest.status}</p>;
 }
-const mount = (check: (reason: "start" | "poll") => Promise<PrepareOutcome>, active = true) => act(async () => { root.render(<Harness check={check} active={active} />); });
+const mount = (check: (reason: "start" | "poll") => Promise<PrepareOutcome>, active = true, onError?: (reason: unknown) => void) => act(async () => { root.render(<Harness check={check} active={active} {...(onError ? { onError } : {})} />); });
 const status = () => host.querySelector("[data-testid=status]")!.textContent;
 const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 const start = () => act(async () => { await latest.start(); });
@@ -81,5 +81,22 @@ describe("usePreparedDownload", () => {
     const check = vi.fn(async () => answers.shift()!);
     await mount(check); await start(); await tick(PREPARE_POLL_MS); expect(status()).toBe("preparing");
     await tick(PREPARE_POLL_MS); expect(status()).toBe("ready");
+  });
+
+  it("a check that REJECTS is settled, not left hanging (Sol r1 #3): a rejected start is failed, a rejected Check again is failed too, and onError sees the reason", async () => {
+    const boom = new Error("network down"); const onError = vi.fn();
+    const check = vi.fn(async (): Promise<PrepareOutcome> => { throw boom; });
+    await mount(check, true, onError);
+    let outcome: PrepareOutcome | undefined; await act(async () => { outcome = await latest.start(); });
+    expect(outcome).toEqual({ state: "failed" }); expect(status()).toBe("failed"); expect(onError).toHaveBeenCalledWith(boom);
+    await act(async () => { await latest.start(); }); expect(status()).toBe("failed"); expect(onError).toHaveBeenCalledTimes(2);
+  });
+
+  it("a poll that REJECTS is one dropped request: it keeps waiting and reaches ready, and a poll that keeps rejecting ends in timeout, never 'preparing' forever", async () => {
+    let n = 0; const check = vi.fn(async (reason: "start" | "poll"): Promise<PrepareOutcome> => { n += 1; if (reason === "start") return { state: "preparing" }; if (n === 2) throw new Error("offline"); return { state: "ready" }; });
+    await mount(check); await start(); await tick(PREPARE_POLL_MS); expect(status()).toBe("preparing");
+    await tick(PREPARE_POLL_MS); expect(status()).toBe("ready");
+    const always = vi.fn(async (reason: "start" | "poll"): Promise<PrepareOutcome> => { if (reason === "start") return { state: "preparing" }; throw new Error("offline"); });
+    await mount(always, false); await mount(always, true); await start(); await tick(PREPARE_MAX_MS + PREPARE_POLL_MS); expect(status()).toBe("timeout");
   });
 });

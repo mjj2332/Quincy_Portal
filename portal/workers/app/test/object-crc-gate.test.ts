@@ -23,8 +23,8 @@ async function work(name: string, state: "queued" | "running" | "failed", update
   await database.DB.prepare("INSERT OR REPLACE INTO object_crc32_work (r2_key, state, attempts, requested_at, updated_at) VALUES (?, ?, 0, ?, ?)").bind(key(name), state, updatedAt, updatedAt).run();
 }
 const workRows = async () => (await database.DB.prepare("SELECT r2_key FROM object_crc32_work WHERE r2_key LIKE ?").bind(`${prefix}%`).all<{ r2_key: string }>()).results.map((r) => r.r2_key);
-async function assess(subjects: Array<{ name: string; bytes: number }>, media: ReturnType<typeof fakeMedia>, queue: ReturnType<typeof fakeQueue>, enqueue: "never" | "when_blocked" | "always" = "when_blocked", now = Date.now(), headWhenOff = false): Promise<ZipAssessment> {
-  return assessZip({ DB: database.DB, MEDIA: media as never, OBJECT_CRC_QUEUE: queue as never }, subjects.map((s) => ({ r2Key: key(s.name), bytes: s.bytes })), { source: "test", enqueue, now, headWhenOff });
+async function assess(subjects: Array<{ name: string; bytes: number }>, media: ReturnType<typeof fakeMedia>, queue: ReturnType<typeof fakeQueue>, enqueue: "never" | "when_blocked" | "always" = "when_blocked", now = Date.now(), headWhenOff?: boolean): Promise<ZipAssessment> {
+  return assessZip({ DB: database.DB, MEDIA: media as never, OBJECT_CRC_QUEUE: queue as never }, subjects.map((s) => ({ r2Key: key(s.name), bytes: s.bytes })), { source: "test", enqueue, now, ...(headWhenOff === undefined ? {} : { headWhenOff }) });
 }
 const setFlag = (on: boolean) => setVideoFlags([NATIVE_ZIP_FLAG, on]);
 
@@ -35,10 +35,14 @@ afterEach(async () => {
 });
 
 describe("flag off (missing = off)", () => {
-  it("is legacy up to 256 MiB and does not touch R2", async () => {
-    const media = fakeMedia({}); const queue = fakeQueue();
+  it("is legacy up to 256 MiB, after a HEAD that finds the object at its recorded size, and never queues", async () => {
+    const media = fakeMedia({ [key("a")]: { etag: "e", size: ZIP_LEGACY_MAX_BYTES } }); const queue = fakeQueue();
     expect(await assess([{ name: "a", bytes: ZIP_LEGACY_MAX_BYTES }], media, queue)).toEqual({ kind: "legacy" });
-    expect(media.heads).toEqual([]); expect(queue.sent).toEqual([]);
+    expect(media.heads).toEqual([key("a")]); expect(queue.sent).toEqual([]);
+  });
+  it("refuses a missing or resized object by default, flag off (Sol r1 #2)", async () => {
+    expect(await assess([{ name: "a", bytes: 10 }], fakeMedia({}), fakeQueue())).toEqual({ kind: "unavailable", reason: "missing" });
+    expect(await assess([{ name: "a", bytes: 10 }], fakeMedia({ [key("a")]: { etag: "e", size: 11 } }), fakeQueue())).toEqual({ kind: "unavailable", reason: "changed" });
   });
   it("is too_large one byte over 256 MiB, and a flag row that is present but off behaves the same", async () => {
     await setFlag(false);

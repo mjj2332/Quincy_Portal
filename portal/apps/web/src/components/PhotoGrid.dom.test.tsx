@@ -312,7 +312,7 @@ describe("PhotoGrid download selection", () => {
     expect(host.querySelector('[data-testid="photo-grid-actionbar"]')).not.toBeNull(); expect(isSelected(host, "one")).toBe(true);
   });
 
-  it("hides the control without capability and disables it for count or byte overages", async () => {
+  it("hides the control without capability and disables it only for a count overage; bytes are the server's call (Sol r1 #1)", async () => {
     await render(<PhotoGrid {...baseProps} assets={[asset("one")]} />);
     await click(selBox(host, "one"));
     expect(host.textContent).not.toContain("Download selection");
@@ -321,12 +321,12 @@ describe("PhotoGrid download selection", () => {
     await render(<PhotoGrid {...baseProps} canDownloadSelection onDownloadSelection={async () => undefined} assets={many} />);
     await click(selectAllButton(host));
     const tooMany = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((button) => button.textContent === "Download selection")!;
-    expect(tooMany.disabled).toBe(true); expect(tooMany.title).toContain("500 assets / 256 MiB");
+    expect(tooMany.disabled).toBe(true); expect(tooMany.title).toContain("500 assets"); expect(tooMany.title).not.toContain("MiB");
 
     await render(<PhotoGrid {...baseProps} canDownloadSelection onDownloadSelection={async () => undefined} assets={[asset("large", { bytes: 256 * 1024 * 1024 + 1 })]} />);
     await click(selBox(host, "large"));
     const tooLarge = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((button) => button.textContent === "Download selection")!;
-    expect(tooLarge.disabled).toBe(true);
+    expect(tooLarge.disabled).toBe(false);
   });
 });
 

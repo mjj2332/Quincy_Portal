@@ -39,14 +39,18 @@ export function GuestDownloadAll({ api, verify, session, onSession, onUnavailabl
   const generation = useRef(0);
   const loadRef = useRef<() => void>(() => undefined);
   // Starting is a POST (it queues the work); every later look is the read-only manifest. Anything that is not an answer about the archive re-reads the manifest, which sorts out verify, disabled and gone as it always did.
+  // Every answer is bound to the opening it was asked in: one that arrives after Close, or after a newer opening, touches nothing (no manifest, no re-read, no verify).
   const check = useCallback(async (reason: "start" | "poll"): Promise<PrepareOutcome> => {
+    const mine = generation.current;
     if (reason === "start") {
       const result = await api.prepareDownloads();
+      if (generation.current !== mine) return { state: "failed" };
       if (result.kind === "ok") return { state: result.value.state };
       if (result.kind === "verify" || result.kind === "disabled" || result.kind === "gone") { loadRef.current(); return { state: "failed" }; }
       return { state: "failed" };
     }
     const result = await api.downloads();
+    if (generation.current !== mine) return { state: "failed" };
     if (result.kind === "ok") { setLoaded({ kind: "ok", manifest: result.value }); return { state: result.value.archive.state }; }
     if (result.kind === "transient") return { state: "failed" };
     loadRef.current(); return { state: "failed" };

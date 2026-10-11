@@ -13,10 +13,11 @@ export const PREPARING_COPY = "Preparing this download. This may take a few minu
 export const PREPARE_FAILED_COPY = "Couldn't prepare this zip. Try again or download the files one at a time.";
 export const PREPARE_TOO_BIG_COPY = "This is too big to download as one zip. Download the files one at a time instead.";
 
-export function PreparedZipNotice({ ask, onDownload, onClose, label = "Download zip" }: { ask: () => Promise<PrepareOutcome>; onDownload: () => void; onClose: () => void; label?: string }) {
+export function PreparedZipNotice({ ask, onDownload, onClose, onError, label = "Download zip" }: { ask: () => Promise<PrepareOutcome>; onDownload: () => void; onClose: () => void; onError?: (reason: unknown) => void; label?: string }) {
   const first = useRef(true);
   const prepared = usePreparedDownload({
     active: true,
+    ...(onError ? { onError } : {}),
     check: async (reason) => {
       if (reason === "start" && first.current) { first.current = false; return { state: "preparing" }; }
       return ask();

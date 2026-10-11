@@ -1107,6 +1107,20 @@ describe("ProjectWorkspace selection download", () => {
       await act(async () => { download.click(); }); expect(anchorClick).toHaveBeenCalledTimes(1); expect(notice()).toBeNull();
     });
 
+    it("takes a fresh ticket on the Download click, so a ticket cached six minutes ago (5-minute life) is never redeemed (Sol r1 #5)", async () => {
+      const hrefs: string[] = [];
+      vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { hrefs.push(this.getAttribute("href") ?? ""); });
+      apiPostMock.mockRejectedValue(preparing());
+      await selectOneAndDownload();
+      apiPostMock.mockResolvedValue({ downloadUrl: "/api/projects/p1/download-selection/old/archive.zip" });
+      await tick(30_000);
+      const download = host.querySelector<HTMLButtonElement>('[data-testid="prepared-zip-download"]')!; expect(download).not.toBeNull();
+      await tick(6 * 60_000);
+      apiPostMock.mockResolvedValue({ downloadUrl: "/api/projects/p1/download-selection/fresh/archive.zip" });
+      await act(async () => { download.click(); }); await tick(0);
+      expect(hrefs).toEqual(["/api/projects/p1/download-selection/fresh/archive.zip"]); expect(notice()).toBeNull();
+    });
+
     it("stops polling when the notice is closed and when the workspace unmounts, and Check again asks once more after five minutes", async () => {
       apiPostMock.mockRejectedValue(preparing());
       await selectOneAndDownload();

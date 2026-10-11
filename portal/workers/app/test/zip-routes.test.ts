@@ -63,6 +63,16 @@ describe("GET /api/projects/:id/selected-raw.zip", () => {
     expect(await audits("project.download_selected")).toHaveLength(1);
   });
 
+  it("flag missing, a small archive whose object is missing or resized: 502 download_unavailable, no audit (Sol r1 #2)", async () => {
+    await raw("gone.dng", { object: false });
+    const missing = await call(path, "member"); expect(missing.response.status).toBe(502);
+    expect(await missing.response.json()).toMatchObject({ code: "download_unavailable" });
+    expect(await audits("project.download_selected")).toHaveLength(0);
+    const resized = await raw("resized.dng");
+    const changed = await call(path, "member", { heads: { [resized.key]: { etag: "e", size: resized.body.length + 5 } } }); expect(changed.response.status).toBe(502);
+    expect(await audits("project.download_selected")).toHaveLength(0);
+  });
+
   it("flag missing, over 256 MiB: 413 download_too_large, no audit, R2 untouched", async () => {
     await raw("big.dng", { bytes: BIG, object: false });
     const { response } = await call(path, "member"); expect(response.status).toBe(413);

@@ -821,6 +821,31 @@ describe("Download all", () => {
       expect(prepares()).toBe(2); expect(preparing()).not.toBeNull();
     });
 
+    /** Holds the next manifest read until `release` is called, so a poll can be in flight while the dialog closes or reopens. */
+    const holdNextManifestRead = () => {
+      let release!: (response: Response) => void; const gate = new Promise<Response>((resolve) => { release = resolve; }); let held = false; const before = extra;
+      extra = (url, init) => { if (!held && url === `${BASE}/downloads` && (init?.method ?? "GET") === "GET") { held = true; return gate; } return before?.(url, init); };
+      return { release, restore: () => { extra = before; } };
+    };
+
+    it("a poll answered after Close changes nothing: a late 401 does not re-read the manifest or open verify (Sol r1 #4)", async () => {
+      await openDialog(); const hold = holdNextManifestRead();
+      await settle(30_000); const reads = gets(`${BASE}/downloads`);
+      await act(async () => { byId("guest-download-all-close")!.click(); }); await settle(10);
+      hold.release(json({ error: "verification_required" }, 401)); await settle(10);
+      expect(gets(`${BASE}/downloads`)).toBe(reads); expect(byId("guest-verify-dialog")).toBeNull(); expect(byId("guest-download-all-dialog")).toBeNull();
+    });
+
+    it("a poll answered after a newer opening cannot overwrite what that opening loaded (Sol r1 #4)", async () => {
+      await openDialog(); const hold = holdNextManifestRead();
+      await settle(30_000);
+      await act(async () => { byId("guest-download-all-close")!.click(); }); await settle(10);
+      await act(async () => { byId("guest-download-all")!.click(); }); await settle(10);
+      expect(allById("guest-download-item")).toHaveLength(2);
+      hold.release(json({ ...READY, included: READY.included.slice(0, 1) })); await settle(10);
+      expect(allById("guest-download-item")).toHaveLength(2);
+    });
+
     it("does not poll while the page is hidden", async () => {
       await openDialog(); visible = "hidden"; const polls = gets(`${BASE}/downloads`);
       await settle(120_000); expect(gets(`${BASE}/downloads`)).toBe(polls);

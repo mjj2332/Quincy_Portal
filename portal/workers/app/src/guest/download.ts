@@ -280,7 +280,7 @@ async function downloadAll(c: Ctx): Promise<Response> {
   if (included.length === 0) return answer(c.json({ error: "nothing_to_download" }, 409));
   if (tooLarge(included)) return answer(c.json({ error: "zip_too_large", maxEntries: GUEST_ZIP_MAX_ENTRIES, maxBytes: GUEST_ZIP_MAX_BYTES }, 422));
   // The gate: a missing or resized object fails here, before byte 0 and before the audit row, and so does a set whose CRC-32s are still being prepared or that is too big for the old writer.
-  const assessed = await assessZip(c.env, included, { source: "guest-download-all", enqueue: "when_blocked", headWhenOff: true });
+  const assessed = await assessZip(c.env, included, { source: "guest-download-all", enqueue: "when_blocked" });
   const refusal = archiveRefusal(c, assessed); if (refusal) return answer(refusal);
   const notice = leftOutText(leftOut);
   // Plan before the audit row, so an archive that cannot be built leaves no audit row behind it.
