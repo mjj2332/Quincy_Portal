@@ -359,6 +359,14 @@ describe("the cooldown clock restarts when the send completes (#741 15b)", () =>
     return { sent, send, env: { DB: db, APP_ORIGIN: ORIGIN, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: SENDER } as unknown as Env };
   }
 
+  it("an ambiguous send that throws minutes after the stamp also moves the slot to the completion time, and its rows stay marked", async () => {
+    const t = await basic(); const id = await pend(t.member, t.link.id, "version_granted", t.version);
+    const send = vi.fn(async () => { vi.setSystemTime(T0 + 6 * MIN); throw new Error("socket closed"); });
+    await runAt({ DB: database.DB, APP_ORIGIN: ORIGIN, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: SENDER } as unknown as Env, T0);
+    expect((await rowOf(id))!.sent_at).not.toBeNull();
+    expect(await lastDigest(t.member.memberId)).toBe(T0 + 6 * MIN);
+  });
+
   it("a send that completes minutes after the stamp moves the slot to the completion time, so the next flush waits 55 minutes from the real send", async () => {
     const t = await basic(); await pend(t.member, t.link.id, "version_granted", t.version);
     await runAt(slowMailer(T0 + 6 * MIN).env, T0);

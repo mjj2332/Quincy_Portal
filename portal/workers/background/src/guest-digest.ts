@@ -194,6 +194,15 @@ async function flushMember(env: Env, candidate: Candidate): Promise<"sent" | "dr
     if (survivors.length === 0) { await giveBack.run(); return "dropped"; }
 
     const message = composeGuestDigest(survivors, link?.label ?? null, url);
+    // After a send that may have delivered (success or an ambiguous throw), restart the cooldown from now, so a slow send cannot shorten
+    // the 55 minutes. Best effort, and only while the slot still holds this run's stamp.
+    const restartCooldown = async () => {
+      try {
+        await db.prepare("UPDATE guest_link_members SET last_digest_sent_at = ?1 WHERE id = ?2 AND last_digest_sent_at = ?3").bind(Date.now(), candidate.member_id, now).run();
+      } catch {
+        console.error("Guest digest sent, but restarting the cooldown failed; the pre-send stamp stays", { code: "cooldown_stamp_failed" });
+      }
+    };
     try {
       await env.EMAIL!.send({ from: env.NOTIFICATIONS_FROM_ADDRESS!, to: survivors[0]!.email, subject: message.subject, text: message.text, html: message.html, headers: { "List-Unsubscribe": `<${url}>` } });
     } catch (error) {
@@ -201,6 +210,7 @@ async function flushMember(env: Env, candidate: Candidate): Promise<"sent" | "dr
       if (!isDefiniteRejection(error)) {
         // Ambiguous: it may have delivered, so the rows stay marked and are never resent. Only a whitelisted code is logged, never the message: it can carry the address.
         console.error("Guest digest send failed; the rows stay marked sent", { code });
+        await restartCooldown();
         return "sent";
       }
       // Proven rejection: nothing was sent. Return exactly this run's fenced rows to pending (still carrying this run's stamp) and the slot to its prior value (only while it still holds the stamp).
@@ -216,12 +226,7 @@ async function flushMember(env: Env, candidate: Candidate): Promise<"sent" | "dr
         return "sent";
       }
     }
-    // The send succeeded: restart the cooldown from now, so a slow send cannot shorten the 55 minutes. Best effort, and only while the slot still holds this run's stamp.
-    try {
-      await db.prepare("UPDATE guest_link_members SET last_digest_sent_at = ?1 WHERE id = ?2 AND last_digest_sent_at = ?3").bind(Date.now(), candidate.member_id, now).run();
-    } catch {
-      console.error("Guest digest sent, but restarting the cooldown failed; the pre-send stamp stays", { code: "cooldown_stamp_failed" });
-    }
+    await restartCooldown();
     return "sent";
   } catch (error) {
     if (!fenced) await giveBack.run().catch(() => undefined);
