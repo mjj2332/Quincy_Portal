@@ -17,6 +17,8 @@ export const GUEST_LIMITS = {
   zipGuest: 10, zipLink: 30,
   // Digest subscription (#741 15b): the unsubscribe link is 30 per address in 15 minutes (it carries no gate and no session), and a verified guest may flip the switch 30 times.
   unsubscribeIp: 30, subscriptionGuest: 30,
+  // Paste previews (#741 13d): a preview writes nothing, so it has its own buckets and never spends the note quota a commit needs; a guest may preview 60 times in 15 minutes and a link 300.
+  pastePreviewGuest: 60, pastePreviewLink: 300,
 } as const;
 export const GUEST_CODE_RESEND_MS = 60_000;
 

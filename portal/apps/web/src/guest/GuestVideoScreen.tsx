@@ -15,6 +15,7 @@ import type { ActionOutcome, NoteActions, Writing } from "./GuestNoteItem";
 import { GuestNotesPanel } from "./GuestNotesPanel";
 import { GuestSubscriptionRow } from "./GuestSubscriptionRow";
 import type { GuestSubscription } from "./guest-subscription";
+import { GuestPasteDialog } from "./GuestPasteDialog";
 import { GuestDecisionDialog, decisionDraftKey, type DecisionOutcome, type DecisionValue } from "./GuestDecisionDialog";
 import { GuestDeliveryChips } from "./GuestDeliveryChips";
 import { GuestDownload } from "./GuestDownload";
@@ -110,11 +111,20 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const [drawerOpen, setDrawerOpen] = useState(false);
   const phone = useMediaQuery("(max-width: 720px)");
 
+  // Copy my notes (13d): the dialog, and what the last paste came to for the Version on screen.
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasted, setPasted] = useState<string | null>(null);
+  const restorePasteDrawer = useRef(false);
   const resyncRef = useRef<() => void>(() => undefined);
   const binding = useRef<WriterBinding>({ scope: version.assetId, effects: { onUnverified: () => undefined, onGone: () => undefined, onArchived: () => undefined }, onLostSettle: () => undefined });
   binding.current.scope = version.assetId;
   binding.current.effects = {
-    onUnverified: () => { verify.request(); onSession({ ...session, verified: false, email: null, name: null, notifications: null }); },
+    onUnverified: () => {
+      // The paste dialog would sit over the verify dialog: close it (and give a phone its notes drawer back) before asking.
+      setPasteOpen(false);
+      if (restorePasteDrawer.current) { restorePasteDrawer.current = false; setDrawerOpen(true); }
+      verify.request(); onSession({ ...session, verified: false, email: null, name: null, notifications: null });
+    },
     onGone: onUnavailable,
     onArchived,
   };
@@ -257,6 +267,9 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const { close: closeComposer, editingId } = compose;
   useEffect(() => { closeComposer(); }, [version.assetId, closeComposer]);
   useEffect(() => { if (archived) closeComposer(); }, [archived, closeComposer]);
+  // A paste belongs to the Version it was made for.
+  useEffect(() => { setPasteOpen(false); setPasted(null); }, [version.assetId]);
+  useEffect(() => { if (archived) setPasteOpen(false); }, [archived]);
   // An edit of a note that has since been deleted (here or elsewhere) has nothing left to save to.
   // Only a notes read that has completed can say so: while a re-read is out (after re-verifying) `threads` is null, which is "not known yet", not "gone".
   const editedGone = editingId !== null && threads !== null && (latestOf(editingId)?.deleted ?? true);
@@ -289,8 +302,25 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     canWrite, verified: session.verified, actions, drafts, onNeedVerify: () => { requestVerify("none"); },
     composerOpen: compose.isOpen, editRoot: (thread) => { startDraft(() => { beginEdit(thread); }); },
   }), [canWrite, session.verified, actions, drafts, requestVerify, compose.isOpen, startDraft, beginEdit]);
+  const canPaste = canWrite && video.versions.length >= 2;
+  // On a phone the notes drawer would sit under the dialog: it steps aside and comes back when the dialog closes.
+  const openPaste = () => {
+    if (!session.verified) { requestVerify("none"); return; }
+    restorePasteDrawer.current = phone && drawerOpen;
+    if (restorePasteDrawer.current) setDrawerOpen(false);
+    setPasted(null);
+    setPasteOpen(true);
+  };
+  const changePasteOpen = (next: boolean) => {
+    setPasteOpen(next);
+    if (!next && restorePasteDrawer.current) { restorePasteDrawer.current = false; setDrawerOpen(true); }
+  };
   const addNote = canWrite
-    ? compose.isOpen ? compose.form : <Button type="button" variant="outline" data-testid="guest-add-note" className={TOUCH} onClick={() => { if (session.verified) startDraft(compose.begin); else requestVerify("compose"); }}>Add a note</Button>
+    ? compose.isOpen ? compose.form : <div className="flex flex-col items-start gap-[var(--space-2)]">
+      <Button type="button" variant="outline" data-testid="guest-add-note" className={TOUCH} onClick={() => { if (session.verified) startDraft(compose.begin); else requestVerify("compose"); }}>Add a note</Button>
+      {canPaste && <Button type="button" variant="ghost" data-testid="guest-paste-open" className={TOUCH} onClick={openPaste}>Copy my notes from another version</Button>}
+      {pasted !== null && <p role="status" data-testid="guest-paste-status" className="m-0 text-foreground-secondary [font:var(--type-label)]">{pasted}</p>}
+    </div>
     : null;
 
   // Approve / Request changes (#741 14-ui-guest). The note draft is in `drafts` and the write is the writer's, so both outlive this screen; the dialog is per Version and decision.
@@ -404,6 +434,9 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
         <SheetCloseButton label="Close notes" data-testid="guest-notes-close" />
       </SheetContent>
     </Sheet>}
+    {canPaste && <GuestPasteDialog api={api} writer={writer} open={pasteOpen} onOpenChange={changePasteOpen} video={video} target={version} markupAllowed={session.link.allow.markup}
+      onGone={onUnavailable}
+      onPasted={(landed) => { if (landed !== null) setPasted(landed.copied === 0 ? `Nothing new to copy from v${landed.sourceVersion}.` : `Copied ${landed.copied} ${landed.copied === 1 ? "note" : "notes"} from v${landed.sourceVersion}.`); resync(); }} />}
     {decideFor !== null && canDecide && <GuestDecisionDialog key={`${version.assetId}:${decideFor}`} value={decideFor} assetId={version.assetId} film={video.title} version={version.version} drafts={drafts} open onClose={() => { opening.current += 1; setDecideFor(null); }} onConfirm={(note) => confirmDecision(decideFor, note)} />}
   </div>;
 }

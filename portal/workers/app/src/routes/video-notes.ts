@@ -240,7 +240,7 @@ videoNotesRoutes.post(PASTE_COMMIT, terminalRoute(PASTE_COMMIT, async (c) => {
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(assetId).success) return c.json({ error: "Invalid id" }, 400);
   const refused = await admit(c, projectId, true); if (refused) return refused;
   const input = await jsonInput(c, videoNotePasteCommitInputSchema); if (input instanceof Response) return input;
-  const outcome = await commitNotePaste(c.env.DB, { projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, notes: input.notes, offsetFrames: input.offsetFrames, principal: principalOf(c), now: Date.now() });
+  const outcome = await commitNotePaste(c.env.DB, { projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, notes: input.notes, offsetFrames: input.offsetFrames, principal: principalOf(c) });
   switch (outcome.kind) {
     case "ok": return c.json(videoNotePasteCommitResponseSchema.parse(outcome.value));
     case "stale": return c.json({ error: "Some notes changed since the preview.", code: "paste_stale", preview: videoNotePastePreviewResponseSchema.parse(outcome.preview) }, 409);

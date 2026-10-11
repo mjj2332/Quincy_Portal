@@ -136,6 +136,54 @@ describe("postUnsubscribe: body read failures (#741 15b)", () => {
   });
 });
 
+const SOURCE = "00000000-0000-4000-8000-000000000011";
+const COPY = "33333333-3333-4333-8333-333333333333";
+const sourceRow = { revision: 1, visibility: "public", authorName: "Sam", excerpt: "Hi", from: { startFrame: 50, endFrame: null } };
+const plan = { sourceVersion: 1, targetVersion: 2, offsetFrames: 0, rows: [{ noteId: NOTE, status: "mapped", source: sourceRow, to: { startFrame: 50, endFrame: null }, shortened: false }] };
+const receipt = { sourceVersion: 1, targetVersion: 2, offsetFrames: 0, copied: 1, skipped: 0, rows: [{ noteId: NOTE, status: "copied", source: sourceRow, to: { startFrame: 50, endFrame: null }, shortened: false, copyId: COPY }] };
+
+describe("guest-api: note paste", () => {
+  it("posts the preview to the target Version's paste route and parses the plan", async () => {
+    answer(json(plan));
+    expect(await api().previewPaste(ASSET, { sourceAssetId: SOURCE, noteIds: [NOTE], offsetFrames: 3 })).toEqual({ kind: "ok", value: plan });
+    const { url, init } = lastCall();
+    expect([url, init.method, init.credentials]).toEqual([`/d/api/links/${LINK}/versions/${ASSET}/note-paste/preview`, "POST", "same-origin"]);
+    expect(JSON.parse(String(init.body))).toEqual({ sourceAssetId: SOURCE, noteIds: [NOTE], offsetFrames: 3 });
+  });
+  it("posts the commit to the note-paste route and parses the receipt", async () => {
+    answer(json(receipt));
+    expect(await api().commitPaste(ASSET, { sourceAssetId: SOURCE, notes: [{ noteId: NOTE, revision: 1 }], offsetFrames: 0 })).toEqual({ kind: "ok", value: receipt });
+    const { url, init } = lastCall();
+    expect([url, init.method]).toEqual([`/d/api/links/${LINK}/versions/${ASSET}/note-paste`, "POST"]);
+    expect(JSON.parse(String(init.body))).toEqual({ sourceAssetId: SOURCE, notes: [{ noteId: NOTE, revision: 1 }], offsetFrames: 0 });
+  });
+  it("classifies every refusal, and reads 409 paste_stale as the fresh plan", async () => {
+    const run = () => api().commitPaste(ASSET, { sourceAssetId: SOURCE, notes: [{ noteId: NOTE, revision: 1 }], offsetFrames: 0 });
+    answer(json({ error: "verification_required" }, 401));
+    expect(await run()).toEqual({ kind: "unverified" });
+    answer(new Response("Not found", { status: 404 }));
+    expect(await run()).toEqual({ kind: "gone" });
+    answer(json({ error: "comments_disabled" }, 403));
+    expect(await run()).toEqual({ kind: "gone" });
+    answer(json({ error: "project_archived" }, 409));
+    expect(await run()).toEqual({ kind: "archived" });
+    answer(json({ error: "paste_stale", preview: plan }, 409));
+    expect(await run()).toEqual({ kind: "changed", preview: plan });
+    answer(json({ error: "too_many_attempts", retryAfterSeconds: 30 }, 429, { "retry-after": "30" }));
+    expect(await run()).toEqual({ kind: "limited", retryAfterSeconds: 30 });
+    answer(json({ error: "same_version" }, 422));
+    expect(await run()).toEqual({ kind: "rejected", error: "same_version" });
+    answer(new Response("", { status: 500 }));
+    expect(await run()).toEqual({ kind: "unreachable" });
+    fetchMock.mockRejectedValue(new TypeError("offline"));
+    expect(await run()).toEqual({ kind: "unreachable" });
+  });
+  it("treats a success body that fails the schema as unreachable", async () => {
+    answer(json({ rows: "nope" }));
+    expect(await api().previewPaste(ASSET, { sourceAssetId: SOURCE, noteIds: [NOTE], offsetFrames: 0 })).toEqual({ kind: "unreachable" });
+  });
+});
+
 describe("guest-api: decisions and downloads (#741 14-ui-guest)", () => {
   const DECISION = { value: "approved", revision: 2, at: "2026-10-10T01:00:00.000Z", self: true };
   const run = () => api().decide(ASSET, "approved");

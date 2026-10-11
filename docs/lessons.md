@@ -6179,3 +6179,10 @@ Tags: notifications, d1-migrations · #741
 - **Cross-Worker token contract.** The unsubscribe token is minted by the background Worker and looked up by the app Worker, and the background Worker cannot import `workers/app/src`. Both store/compare plain SHA-256 hex of the base64url token; `guest-digest.integration.test.ts` checks the stored hash against an independent SHA-256 and `guest-subscription.test.ts` pins the app side, so a change to either hash fails a test.
 
 Guards: `workers/app/test/sql-uuid.test.ts`, `workers/app/test/guest-digest-producers.test.ts`, `workers/background/test/guest-digest.integration.test.ts`.
+## Quincy's `--container-*` tokens are page widths, not dialog widths (#741 13c, 13d)
+Tags: css-tokens, focus-overlays · #741
+
+- **What bit.** `styles/tokens/spacing.css` redefines `--container-sm` as 640px and `--container-xl` as 1320px, so Tailwind's `max-w-sm`…`max-w-xl` resolve to page widths. 13c's verify dialog took one and rendered 640px wide; 13d's paste dialog took `sm:max-w-xl` and rendered 1320px wide. Both passed every jsdom test (no layout) and were caught only by a design review of screenshots.
+- **Rule.** A dialog, alert dialog or sheet states its width explicitly (`sm:max-w-[460px]`) or uses a size whose container token is not redefined (`sm:max-w-3xl` is 48rem, as `VideoNotePasteDialog` does). Never `max-w-{sm,md,lg,xl}`, with or without a breakpoint prefix, on `DialogContent`, `AlertDialogContent` or `SheetContent`.
+
+Guards: `apps/web/src/styles/design-system-guards.test.ts` ("dialog and sheet content never uses a page-width max-w").

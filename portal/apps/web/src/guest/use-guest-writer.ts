@@ -2,8 +2,8 @@ import type { WriteResult } from "./guest-api";
 
 /** A write that was not sent because one for the same key is still out, or whose answer arrived after the screen or Version it was made in had gone. Neither changes anything. */
 export type Skipped<R extends { kind: string } = WriteResult> = { kind: "busy" } | { kind: "stale"; /** What the write came to, which the caller may need even though the answer does not apply to the screen now on show (a reply that was saved must clear its draft). */ result: R };
-/** Any write result whose `kind` names the refusals that change the page (`unverified`, `gone`, `archived`): note writes and decisions both run through here. */
-export type Run = <R extends { kind: string }>(key: string, call: () => Promise<R>) => Promise<R | Skipped<R>>;
+/** `R` is any answer with a `kind` whose refusals that change the page (`unverified`, `gone`, `archived`) mean the same for every write: a note write (`WriteResult`), a decision or a paste (`PasteResult`). `owns`, when given, says whether the caller still owns the answer once it arrives. */
+export type Run = <R extends { kind: string }>(key: string, call: () => Promise<R>, owns?: () => boolean) => Promise<R | Skipped<R>>;
 
 /** What the screen on show tells the writer: the Version it is on, what a refusal that changes the page does, and what to do when a write started on an earlier screen settles. All three are read live. */
 export type WriterBinding = {
@@ -23,7 +23,7 @@ export type GuestWriter = {
 };
 
 /**
- * Serialises a guest's note writes (#741 13c). It is created by `GuestApp` and lives as long as the link's session does, not as long as the video screen: pending-write ownership that died
+ * Serialises a guest's writes (#741 13c): note writes, decisions, pastes and the email-updates subscription write. It is created by `GuestApp` and lives as long as the link's session does, not as long as the video screen: pending-write ownership that died
  * with the screen let a guest go to All videos and back during a slow Post and send the same note again (see docs/lessons.md, "Form lifetime is not component lifetime").
  *
  * One write per key is in flight at a time (a second for the same key answers `busy` without sending). An answer is checked against the screen binding and `scope` (the Version on screen) it
@@ -36,7 +36,7 @@ export function createGuestWriter(): GuestWriter {
   let epoch = 0;
   let bound: WriterBinding | null = null;
 
-  const start = (linkScoped: boolean): Run => async <R extends { kind: string }>(key: string, call: () => Promise<R>): Promise<R | Skipped<R>> => {
+  const start = (linkScoped: boolean): Run => async <R extends { kind: string }>(key: string, call: () => Promise<R>, owns?: () => boolean): Promise<R | Skipped<R>> => {
     if (inflight.has(key)) return { kind: "busy" };
     inflight.add(key);
     epoch += 1;
@@ -44,6 +44,8 @@ export function createGuestWriter(): GuestWriter {
     const startedScope = bound?.scope ?? null;
     let result: R;
     try { result = await call(); } finally { inflight.delete(key); epoch += 1; }
+    // A caller whose question was replaced while this one was out (a preview for a source no longer chosen) owns nothing: its refusal must not reach the page.
+    if (owns !== undefined && !owns()) return { kind: "stale", result };
     if (bound === null) return { kind: "stale", result };
     if (!linkScoped && (bound !== startedBinding || bound.scope !== startedScope)) {
       if (bound !== startedBinding) bound.onLostSettle();

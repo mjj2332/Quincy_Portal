@@ -11,6 +11,7 @@ import { mountGuestApproval } from "./approval";
 import { mountGuestDownloads } from "./download";
 import { mountGuestEmail } from "./email";
 import { mountGuestNotes } from "./notes-write";
+import { mountGuestPaste } from "./paste";
 import { mountGuestSubscription } from "./subscription";
 import { guestGloballyOpen, identityOf, loadActiveLink, notificationsOf, resolveSession, sessionBody } from "./link";
 import { clientAddress, GUEST_LIMITS, ipBucket, reserveAttempts, windowStart } from "./rate-limit";
@@ -83,6 +84,7 @@ async function guestShell(c: Context<AppEnv, string>): Promise<Response> {
 export function mountGuest(app: Hono<AppEnv>): void {
   mountGuestEmail(app);
   mountGuestNotes(app);
+  mountGuestPaste(app);
   mountGuestApproval(app);
   mountGuestDownloads(app);
   mountGuestSubscription(app);
