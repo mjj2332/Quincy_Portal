@@ -21,6 +21,9 @@ const OFFSET_ID = "guest-paste-offset";
 /** How long the offset field rests before the preview is asked again (a preview spends one note attempt). */
 export const GUEST_PASTE_PREVIEW_DEBOUNCE_MS = 300;
 
+/** Skip reasons that depend on the frame offset (the other reasons in `VIDEO_NOTE_PASTE_SKIP_REASONS`, `already_copied`, `deleted` and `reply`, do not). */
+const OFFSET_DEPENDENT: ReadonlySet<string> = new Set(["out_of_range", "drawing_outside"]);
+
 type Version = GuestVideoDto["versions"][number];
 type Mapped = Extract<GuestNotePasteRow, { status: "mapped" }>;
 type Entry = { id: string; mapped: Mapped | null; note: PastableNote | null };
@@ -116,7 +119,8 @@ function PasteFlow({ opening, api, writer, video, target, markupAllowed, generat
   // The offset field is always live; the plan follows it once it has rested.
   useEffect(() => {
     if (offset === asked) return;
-    const timer = setTimeout(() => { setAsked(offset); }, GUEST_PASTE_PREVIEW_DEBOUNCE_MS);
+    // A note left out for where it lands (out of range, drawing outside) may fit at the new offset, so it is asked about again; the offset-independent reasons stay left out.
+    const timer = setTimeout(() => { setAsked(offset); setLeftOut((current) => { const next = new Map(current); for (const [id, row] of current) if (OFFSET_DEPENDENT.has(row.reason)) next.delete(id); return next; }); }, GUEST_PASTE_PREVIEW_DEBOUNCE_MS);
     return () => { clearTimeout(timer); };
   }, [offset, asked]);
 

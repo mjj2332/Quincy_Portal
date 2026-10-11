@@ -316,6 +316,35 @@ describe("notes the plan leaves out do not count toward the cap", () => {
   });
 });
 
+describe("a note left out for where it lands, past the cap", () => {
+  it("is asked about again, and can be pasted, once the frame offset puts it in range", async () => {
+    notes = { [SOURCE]: Array.from({ length: 61 }, (_, index) => mine(index + 1, { startFrame: 10 + index })) };
+    extra = (url, init) => {
+      if (init?.method !== "POST") return undefined;
+      if (url === PREVIEW_URL) {
+        const body = JSON.parse(String(init.body)) as { noteIds: string[]; offsetFrames: number };
+        return json(plan(body.noteIds.map((id) => { const n = Number(id.slice(-12)); return n === 1 && body.offsetFrames === 0 ? skipped(n, "out_of_range") : mapped(n); }), body.offsetFrames));
+      }
+      if (url === COMMIT_URL) return json(receipt([copied(1, 99)], 1, 2));
+      return undefined;
+    };
+    await open();
+    await openDialog();
+    expect(rowIds()).not.toContain(noteId(1));
+    await click(button("One frame later"));
+    await click(button("One frame later"));
+    await wait(400);
+    await wait(400);
+    await wait(400);
+    const latest = pasteCalls(PREVIEW_URL).at(-1)!.body as { noteIds: string[]; offsetFrames: number };
+    expect(latest.offsetFrames).toBe(2);
+    expect(latest.noteIds).toContain(noteId(1));
+    expect(rowIds()).toContain(noteId(1));
+    await click(byId("guest-paste-submit"));
+    expect((pasteCalls(COMMIT_URL)[0]?.body as { notes: Array<{ noteId: string }> }).notes.map((entry) => entry.noteId)).toContain(noteId(1));
+  });
+});
+
 describe("a preview that is no longer the current one", () => {
   const THREE = () => [videoOf(1, [versionOf(3), versionOf(2), versionOf(1)])];
   const URL3 = `${BASE}/versions/${asset(3)}/note-paste/preview`;
