@@ -3,7 +3,7 @@ import { crc32 } from "node:zlib";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ObjectCrcMessage } from "@quincy/shared";
 import QuincyBackground from "../src";
-import { CRC_MAX_ATTEMPTS, CRC_RANGE_BYTES, crcOfBody, processObjectCrc } from "../src/object-crc";
+import { CRC_MAX_ATTEMPTS, CRC_RANGE_BYTES, CRC_STALE_MS, crcOfBody, processObjectCrc } from "../src/object-crc";
 
 /** The resumable object CRC-32 job (#802): one queue message is one range of one object, the running CRC and offset live in object_crc32_work, and the last range upserts object_crc32. */
 declare const __PORTAL_MIGRATION_SQL__: string;
@@ -154,13 +154,13 @@ describe("processObjectCrc, duplicate and stale deliveries", () => {
     expect(await work(key)).toEqual(before); expect(await work(`${prefix}no-row`)).toBeNull(); expect(queue.sent).toEqual([]);
   });
 
-  it("a second start while a range is running is dropped, but a redelivery of the running range is allowed", async () => {
+  it("a second start while a range is running is dropped, even on a retry", async () => {
     const key = `${prefix}dedupe`; const stored = await database.MEDIA.put(key, random(2 * MIB));
     const { env: job } = jobEnv();
     await database.DB.prepare(`INSERT INTO object_crc32_work (r2_key, etag, bytes, "offset", crc_partial, state, attempts, requested_at, updated_at) VALUES (?1, ?2, ?3, 0, 0, 'running', 1, ?4, ?4)`).bind(key, stored.etag, 2 * MIB, Date.now()).run();
     expect(await processObjectCrc(job, start(key), { rangeBytes: MIB })).toBe("stale");
     expect(await work(key)).toMatchObject({ state: "running", offset: 0 });
-    expect(await processObjectCrc(job, start(key), { rangeBytes: MIB, attempts: 2 })).toBe("advanced");
+    expect(await processObjectCrc(job, start(key), { rangeBytes: MIB, attempts: 2 })).toBe("stale");
   });
 
   it("takes over a running row nobody has touched for ten minutes", async () => {
@@ -198,7 +198,7 @@ describe("processObjectCrc, failures", () => {
   it("rethrows on the first two attempts so the queue retries, and records the failure on the third", async () => {
     const key = `${prefix}fails`; await database.MEDIA.put(key, "abc"); const { env: job } = jobEnv(undefined, failingMedia("R2 is down"));
     await expect(processObjectCrc(job, start(key), { rangeBytes: MIB, attempts: 1 })).rejects.toThrow("R2 is down");
-    expect(await work(key)).toMatchObject({ state: "running", attempts: 1, last_error: "R2 is down" });
+    expect(await work(key)).toMatchObject({ state: "queued", attempts: 1, last_error: "R2 is down" });
     await expect(processObjectCrc(job, start(key), { rangeBytes: MIB, attempts: 2 })).rejects.toThrow("R2 is down");
     expect(await processObjectCrc(job, start(key), { rangeBytes: MIB, attempts: 3 })).toBe("failed");
     expect(await work(key)).toMatchObject({ state: "failed", attempts: 3, last_error: "R2 is down" }); expect(await row(key)).toBeNull();
@@ -226,13 +226,13 @@ describe("processObjectCrc, failures", () => {
 });
 
 describe("processObjectCrc, ownership of a failure", () => {
-  const plant = (key: string, etag: string, offset: number, state = "queued", generation = 5) =>
-    database.DB.prepare(`INSERT INTO object_crc32_work (r2_key, etag, bytes, "offset", crc_partial, state, attempts, requested_at, updated_at, generation) VALUES (?1, ?2, 100, ?3, 0, ?4, 0, 1, 1, ?5)`).bind(key, etag, offset, state, generation).run();
+  const plant = (key: string, etag: string, offset: number, state = "queued", generation = 5, updatedAt = Date.now()) =>
+    database.DB.prepare(`INSERT INTO object_crc32_work (r2_key, etag, bytes, "offset", crc_partial, state, attempts, requested_at, updated_at, generation) VALUES (?1, ?2, 100, ?3, 0, ?4, 0, 1, ?6, ?5)`).bind(key, etag, offset, state, generation, updatedAt).run();
 
-  it("a start that fails before it claims anything does not fail the run that holds the row", async () => {
+  it("a start that cannot claim a live run writes nothing, whatever it would have hit", async () => {
     const key = `${prefix}own-start`; await database.MEDIA.put(key, "x"); await plant(key, "newer-etag", 40, "running");
     const before = await work(key); const broken = { head: async () => { throw new Error("head failed"); }, get: async () => null };
-    expect(await processObjectCrc(jobEnv(undefined, broken).env, start(key), { rangeBytes: MIB, attempts: 3 })).toBe("failed");
+    expect(await processObjectCrc(jobEnv(undefined, broken).env, start(key), { rangeBytes: MIB, attempts: 3 })).toBe("stale");
     expect(await work(key)).toEqual(before);
   });
 
@@ -255,11 +255,58 @@ describe("processObjectCrc, ownership of a failure", () => {
     expect(await work(key)).toEqual(before);
   });
 
-  it("a start for a gone object fails only a row nobody has begun, and leaves a run in progress to its own continuation", async () => {
+  it("a start for a gone object fails a row nobody has begun, and leaves a live run to its own continuation", async () => {
     const fresh = `${prefix}own-gone-fresh`; await database.DB.prepare("INSERT INTO object_crc32_work (r2_key, state, requested_at, updated_at) VALUES (?, 'queued', 1, 1)").bind(fresh).run();
     expect(await processObjectCrc(jobEnv().env, start(fresh), { rangeBytes: MIB })).toBe("missing"); expect(await work(fresh)).toMatchObject({ state: "failed" });
     const running = `${prefix}own-gone-running`; await plant(running, "e", 40); const before = await work(running);
-    expect(await processObjectCrc(jobEnv().env, start(running), { rangeBytes: MIB })).toBe("missing"); expect(await work(running)).toEqual(before);
+    expect(await processObjectCrc(jobEnv().env, start(running), { rangeBytes: MIB })).toBe("stale"); expect(await work(running)).toEqual(before);
+  });
+});
+
+describe("processObjectCrc, claim first (Sol r2)", () => {
+  const plant = (key: string, fields: { etag?: string | null; offset?: number; state?: string; updatedAt: number; generation?: number }) =>
+    database.DB.prepare(`INSERT INTO object_crc32_work (r2_key, etag, bytes, "offset", crc_partial, state, attempts, requested_at, updated_at, generation) VALUES (?1, ?2, ?3, ?4, 0, ?5, 0, 1, ?6, ?7)`)
+      .bind(key, fields.etag ?? null, fields.etag ? 100 : null, fields.offset ?? 0, fields.state ?? "queued", fields.updatedAt, fields.generation ?? 3).run();
+  const NOW = Date.now(); const QUIET = NOW - CRC_STALE_MS - 1;
+
+  it("1. a start that finds a stored CRC does not delete the work row of a live run", async () => {
+    const key = `${prefix}r2-cached`; await database.MEDIA.put(key, "done"); await runChain(key, { rangeBytes: MIB }); const stored = (await database.MEDIA.head(key))!.etag;
+    await plant(key, { etag: stored, offset: 0, state: "queued", updatedAt: NOW, generation: 9 }); const before = await work(key);
+    expect(await processObjectCrc(jobEnv().env, start(key), { rangeBytes: MIB, now: NOW })).toBe("stale");
+    expect(await work(key)).toEqual(before);
+  });
+
+  it("2. an owner whose HEAD sees the object gone after a takeover does not fail the run that took over", async () => {
+    const key = `${prefix}r2-missing-displaced`; await database.MEDIA.put(key, random(2 * MIB));
+    const media = { head: async () => { await database.DB.prepare("UPDATE object_crc32_work SET generation = generation + 1 WHERE r2_key = ?").bind(key).run(); return null; }, get: async () => null };
+    expect(await processObjectCrc(jobEnv(undefined, media).env, start(key), { rangeBytes: MIB })).toBe("missing");
+    expect(await work(key)).toMatchObject({ state: "running", last_error: null, generation: 2 });
+  });
+
+  it("3. a swept row whose HEAD keeps throwing ends failed, because the claim came first", async () => {
+    const key = `${prefix}r2-sweep-head`; await plant(key, { updatedAt: NOW });
+    const broken = { head: async () => { throw new Error("head failed"); }, get: async () => null }; const { env: job } = jobEnv(undefined, broken);
+    await expect(processObjectCrc(job, start(key), { rangeBytes: MIB, attempts: 1, now: NOW })).rejects.toThrow("head failed");
+    await expect(processObjectCrc(job, start(key), { rangeBytes: MIB, attempts: 2, now: NOW })).rejects.toThrow("head failed");
+    expect(await processObjectCrc(job, start(key), { rangeBytes: MIB, attempts: 3, now: NOW })).toBe("failed");
+    expect(await work(key)).toMatchObject({ state: "failed", attempts: 3, last_error: "head failed" });
+  });
+
+  it("4. a start for a quiet, already initialised row whose object is gone fails it, and one for a live row leaves it alone", async () => {
+    const quiet = `${prefix}r2-quiet-gone`; await plant(quiet, { etag: "e", offset: 40, state: "queued", updatedAt: QUIET });
+    expect(await processObjectCrc(jobEnv().env, start(quiet), { rangeBytes: MIB, now: NOW })).toBe("missing"); expect(await work(quiet)).toMatchObject({ state: "failed", last_error: "The object is not in R2" });
+    const live = `${prefix}r2-live-gone`; await plant(live, { etag: "e", offset: 40, state: "queued", updatedAt: NOW }); const before = await work(live);
+    expect(await processObjectCrc(jobEnv().env, start(live), { rangeBytes: MIB, now: NOW })).toBe("stale"); expect(await work(live)).toEqual(before);
+  });
+
+  it("a start never claims a live run, even on a retry, but takes a failed attempt's row back at once", async () => {
+    const key = `${prefix}r2-retry`; await database.MEDIA.put(key, "abc");
+    const flaky = { head: (k: string) => database.MEDIA.head(k), get: async () => { throw new Error("blip"); } };
+    await expect(processObjectCrc(jobEnv(undefined, flaky).env, start(key), { rangeBytes: MIB, attempts: 1 })).rejects.toThrow("blip");
+    expect(await work(key)).toMatchObject({ state: "queued", attempts: 1, last_error: "blip" });
+    expect(await processObjectCrc(jobEnv().env, start(key), { rangeBytes: MIB, attempts: 2 })).toBe("stored");
+    await plant(`${key}-live`, { etag: "e", state: "running", updatedAt: Date.now() });
+    expect(await processObjectCrc(jobEnv().env, start(`${key}-live`), { rangeBytes: MIB, attempts: 2 })).toBe("stale");
   });
 });
 

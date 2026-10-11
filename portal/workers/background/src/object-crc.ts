@@ -19,7 +19,7 @@ export const CRC_STALE_MS = 10 * 60_000;
 export type ObjectCrcOutcome = "stored" | "advanced" | "restarted" | "skipped" | "stale" | "missing" | "failed";
 type JobEnv = Pick<Env, "DB" | "MEDIA" | "OBJECT_CRC_QUEUE">;
 type Options = { attempts?: number; now?: number; rangeBytes?: number; bufferBytes?: number };
-type Work = { etag: string | null; bytes: number | null; offset: number; crc_partial: number; state: "queued" | "running" | "failed"; updated_at: number; generation: number };
+type Claim = { generation: number; etag: string | null; bytes: number | null; offset: number; crc_partial: number };
 
 /** CRC-32 and byte count of a body, continuing from `previous`. BYOB with `readAtLeast` when the stream supports it, the default reader otherwise. */
 export async function crcOfBody(body: ReadableStream<Uint8Array>, expectedBytes: number, previous = 0, bufferBytes = CRC_READ_BYTES): Promise<{ crc: number; bytes: number }> {
@@ -50,25 +50,26 @@ export async function crcOfBody(body: ReadableStream<Uint8Array>, expectedBytes:
   return { crc, bytes };
 }
 
-const readWork = (db: D1Database, r2Key: string) => db.prepare('SELECT etag, bytes, "offset", crc_partial, state, updated_at, generation FROM object_crc32_work WHERE r2_key = ?1').bind(r2Key).first<Work>();
 const truncate = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 500);
 
-/** What a message holds once it has claimed a range: its failures, advances and finish are all fenced on this and nothing else. */
-type Owned = { etag: string; offset: number; generation: number };
+/**
+ * Claim first. Every delivery's first D1 write is one atomic claim of the row (no read, then write), which hands out the next generation and sets the row `running`; a claim that changes no row
+ * means another delivery owns the row, and the delivery returns `stale` having written nothing. After the claim every write is fenced on `r2_key AND generation = <mine> AND state = 'running'`: nothing
+ * that read the row earlier can act on a run that has moved on. A start claims a row nobody has begun (the sweep's, no etag yet) or one that has gone quiet for ten minutes, never a live run. A continuation
+ * claims the (etag, offset) it names. A failed attempt hands the row back (`queued`, quiet at once), so the queue's retry can claim it.
+ */
+const fenced = 'r2_key = ?1 AND generation = ?2 AND state = \'running\'';
 
 /** Processes one message: a start (no etag) or the next range of a run. Returns the outcome. Throws so the queue retries, until the last attempt, which records `failed` and returns. */
 export async function processObjectCrc(env: JobEnv, message: ObjectCrcMessage, options: Options = {}): Promise<ObjectCrcOutcome> {
-  const attempts = options.attempts ?? 1; const now = options.now ?? Date.now(); const owned: { current?: Owned } = {};
-  try { return await runRange(env, message, { ...options, attempts, now }, owned); }
+  const attempts = options.attempts ?? 1; const now = options.now ?? Date.now(); const mine: { generation?: number } = {};
+  try { return await runRange(env, message, { ...options, attempts, now }, mine); }
   catch (error) {
     const final = attempts >= CRC_MAX_ATTEMPTS; const text = truncate(error);
-    if (owned.current) {
-      // Fenced on the claim this delivery holds: a takeover or a restart moved the generation, and then this failure belongs to nobody.
-      const { etag, offset, generation } = owned.current;
-      await env.DB.prepare(`UPDATE object_crc32_work SET attempts = ?1, last_error = ?2, updated_at = ?3${final ? ", state = 'failed'" : ""} WHERE r2_key = ?4 AND etag = ?5 AND "offset" = ?6 AND generation = ?7 AND state = 'running'`).bind(attempts, text, now, message.r2Key, etag, offset, generation).run();
-    } else if (final && message.etag === undefined) {
-      // Nothing was claimed, so no existing row is touched. A start for a key with no row at all is recorded, so the failure is not silent.
-      await env.DB.prepare(`INSERT INTO object_crc32_work (r2_key, state, attempts, requested_at, updated_at, last_error) VALUES (?1, 'failed', ?2, ?3, ?3, ?4) ON CONFLICT(r2_key) DO NOTHING`).bind(message.r2Key, attempts, now, text).run();
+    // Only a delivery that claimed the row writes anything, and only under its own generation. A claim that itself threw owns nothing: the sweep takes the row back once it has been quiet.
+    if (mine.generation !== undefined) {
+      const state = final ? "failed" : "queued"; const quiet = final ? now : 0;
+      await env.DB.prepare(`UPDATE object_crc32_work SET state = ?3, attempts = ?4, last_error = ?5, updated_at = ?6 WHERE ${fenced}`).bind(message.r2Key, mine.generation, state, attempts, text, quiet).run();
     }
     if (!final) throw error;
     console.error("Object CRC failed for good", { r2Key: message.r2Key, attempts, error: text });
@@ -76,45 +77,53 @@ export async function processObjectCrc(env: JobEnv, message: ObjectCrcMessage, o
   }
 }
 
-async function runRange(env: JobEnv, message: ObjectCrcMessage, options: Required<Pick<Options, "attempts" | "now">> & Options, owned: { current?: Owned }): Promise<ObjectCrcOutcome> {
-  const { r2Key } = message; const { attempts, now } = options; const db = env.DB;
-  const rangeBytes = options.rangeBytes ?? CRC_RANGE_BYTES; const continuation = message.etag !== undefined;
-  let work = await readWork(db, r2Key);
-  // A continuation must still be the run the row is on before it looks at R2: an obsolete one that sees the object gone, or changed, must not act on a run that replaced it.
-  if (continuation && (!work || work.state === "failed" || work.etag !== message.etag || work.offset !== message.offset)) return "stale";
-  const head = await env.MEDIA.head(r2Key);
-  if (!head) return markMissing(db, r2Key, now, continuation ? { etag: message.etag!, offset: message.offset! } : undefined);
-  if (!continuation) {
-    const done = await db.prepare("SELECT etag, bytes FROM object_crc32 WHERE r2_key = ?1").bind(r2Key).first<{ etag: string; bytes: number }>();
-    if (done && done.etag === head.etag && done.bytes === head.size) { await db.prepare("DELETE FROM object_crc32_work WHERE r2_key = ?1 AND state != 'running'").bind(r2Key).run(); return "skipped"; }
-    work = await readWork(db, r2Key);
-    if (work?.state === "failed") return "stale";
-    if (!work) {
-      const created = await db.prepare(`INSERT INTO object_crc32_work (r2_key, etag, bytes, "offset", crc_partial, state, attempts, requested_at, updated_at) VALUES (?1, ?2, ?3, 0, 0, 'queued', 0, ?4, ?4) ON CONFLICT(r2_key) DO NOTHING`).bind(r2Key, head.etag, head.size, now).run();
-      if (created.meta.changes === 0) return "stale";
-      work = await readWork(db, r2Key); if (!work) return "stale";
-    } else if (work.etag === null) {
-      const set = await db.prepare(`UPDATE object_crc32_work SET etag = ?2, bytes = ?3, updated_at = ?4 WHERE r2_key = ?1 AND etag IS NULL AND "offset" = 0`).bind(r2Key, head.etag, head.size, now).run();
-      if (set.meta.changes === 0) return "stale";
-      work = await readWork(db, r2Key); if (!work) return "stale";
-    }
+async function claim(db: D1Database, message: ObjectCrcMessage, attempts: number, now: number): Promise<Claim | null> {
+  const stale = now - CRC_STALE_MS;
+  if (message.etag === undefined) {
+    return db.prepare(`INSERT INTO object_crc32_work (r2_key, state, attempts, requested_at, updated_at, generation) VALUES (?1, 'running', ?2, ?3, ?3, 1)
+      ON CONFLICT(r2_key) DO UPDATE SET generation = generation + 1, state = 'running', attempts = ?2, updated_at = ?3
+      WHERE (state = 'queued' AND etag IS NULL) OR (state IN ('queued', 'running') AND updated_at <= ?4)
+      RETURNING generation, etag, bytes, "offset", crc_partial`).bind(message.r2Key, attempts, now, stale).first<Claim>();
   }
-  if (!work || work.etag === null || work.bytes === null) return "stale";
-  if (head.etag !== work.etag) return restart(env, r2Key, work.etag, work.generation, head.etag, head.size, now);
-  const { etag, bytes: size } = work as Work & { etag: string; bytes: number };
-  // Claim the range. A queued row is claimable; a running one only by a retry of its own message or once it has gone quiet. The claim hands out the next generation.
-  const claimed = await db.prepare(`UPDATE object_crc32_work SET state = 'running', attempts = ?5, updated_at = ?4, generation = generation + 1 WHERE r2_key = ?1 AND etag = ?2 AND "offset" = ?3 AND (state = 'queued' OR (state = 'running' AND (?5 > 1 OR updated_at <= ?6))) RETURNING generation`)
-    .bind(r2Key, etag, work.offset, now, attempts, now - CRC_STALE_MS).first<{ generation: number }>();
+  return db.prepare(`UPDATE object_crc32_work SET generation = generation + 1, state = 'running', attempts = ?5, updated_at = ?4
+      WHERE r2_key = ?1 AND etag = ?2 AND "offset" = ?3 AND (state = 'queued' OR (state = 'running' AND updated_at <= ?6))
+      RETURNING generation, etag, bytes, "offset", crc_partial`).bind(message.r2Key, message.etag, message.offset, now, attempts, stale).first<Claim>();
+}
+
+async function runRange(env: JobEnv, message: ObjectCrcMessage, options: Required<Pick<Options, "attempts" | "now">> & Options, mine: { generation?: number }): Promise<ObjectCrcOutcome> {
+  const { r2Key } = message; const { attempts, now } = options; const db = env.DB; const rangeBytes = options.rangeBytes ?? CRC_RANGE_BYTES;
+  const claimed = await claim(db, message, attempts, now);
   if (!claimed) return "stale";
-  const generation = claimed.generation; const offset = work.offset;
-  owned.current = { etag, offset, generation };
-  const length = Math.min(rangeBytes, size - offset);
-  let crc = work.crc_partial;
+  const generation = claimed.generation; mine.generation = generation;
+  const write = (sql: string, ...binds: unknown[]) => db.prepare(sql).bind(r2Key, generation, ...binds);
+  const head = await env.MEDIA.head(r2Key);
+  if (!head) {
+    await write(`UPDATE object_crc32_work SET state = 'failed', updated_at = ?3, last_error = 'The object is not in R2' WHERE ${fenced}`, now).run();
+    return "missing";
+  }
+  if (message.etag === undefined) {
+    const done = await db.prepare("SELECT etag, bytes FROM object_crc32 WHERE r2_key = ?1").bind(r2Key).first<{ etag: string; bytes: number }>();
+    if (done && done.etag === head.etag && done.bytes === head.size) { await write(`DELETE FROM object_crc32_work WHERE ${fenced}`).run(); return "skipped"; }
+  }
+  let { offset, crc_partial: crc } = claimed;
+  if (claimed.etag !== head.etag || claimed.bytes !== head.size) {
+    // The row was never begun (no etag) or is for bytes that are gone. Under this claim, begin it on the object as it is now.
+    await write(`UPDATE object_crc32_work SET etag = ?3, bytes = ?4, "offset" = 0, crc_partial = 0, last_error = NULL WHERE ${fenced}`, head.etag, head.size).run();
+    offset = 0; crc = 0;
+    if (claimed.etag !== null) return restart(env, r2Key, generation, head.etag, now);
+  }
+  const etag = head.etag; const size = head.size; const length = Math.min(rangeBytes, size - offset);
   if (length > 0) {
     const object = await env.MEDIA.get(r2Key, { range: { offset, length }, onlyIf: { etagMatches: etag } });
-    if (!object) return markMissing(db, r2Key, now, { etag, offset, generation });
+    if (!object) {
+      await write(`UPDATE object_crc32_work SET state = 'failed', updated_at = ?3, last_error = 'The object is not in R2' WHERE ${fenced}`, now).run();
+      return "missing";
+    }
     // A failed precondition answers with the object's metadata and no body: it is no longer the object this run started on.
-    if (!("body" in object) || !object.body) return restart(env, r2Key, etag, generation, object.etag, object.size, now);
+    if (!("body" in object) || !object.body) {
+      await write(`UPDATE object_crc32_work SET etag = ?3, bytes = ?4, "offset" = 0, crc_partial = 0 WHERE ${fenced}`, object.etag, object.size).run();
+      return restart(env, r2Key, generation, object.etag, now);
+    }
     const read = await crcOfBody(object.body, length, crc, options.bufferBytes);
     // A short or long read is not a checksum of the range: throw, so the queue retries it.
     if (read.bytes !== length) throw new Error(`Object CRC read ${read.bytes} of ${length} bytes for ${r2Key} at ${offset}`);
@@ -122,37 +131,25 @@ async function runRange(env: JobEnv, message: ObjectCrcMessage, options: Require
   }
   const next = offset + length;
   if (next >= size) {
-    // The last range: the result and the end of the work row land together, and only for the owner that read it.
+    // The last range: the result and the end of the work row land together, under this claim.
     const [, removed] = await db.batch([
-      db.prepare(`INSERT INTO object_crc32 (r2_key, crc32, bytes, etag, computed_at) SELECT r2_key, ?5, bytes, etag, ?6 FROM object_crc32_work WHERE r2_key = ?1 AND etag = ?2 AND "offset" = ?3 AND generation = ?4 AND state = 'running'
-        ON CONFLICT(r2_key) DO UPDATE SET crc32 = excluded.crc32, bytes = excluded.bytes, etag = excluded.etag, computed_at = excluded.computed_at`).bind(r2Key, etag, offset, generation, crc, now),
-      db.prepare(`DELETE FROM object_crc32_work WHERE r2_key = ?1 AND etag = ?2 AND "offset" = ?3 AND generation = ?4 AND state = 'running'`).bind(r2Key, etag, offset, generation),
+      write(`INSERT INTO object_crc32 (r2_key, crc32, bytes, etag, computed_at) SELECT r2_key, ?3, bytes, etag, ?4 FROM object_crc32_work WHERE ${fenced}
+        ON CONFLICT(r2_key) DO UPDATE SET crc32 = excluded.crc32, bytes = excluded.bytes, etag = excluded.etag, computed_at = excluded.computed_at`, crc, now),
+      write(`DELETE FROM object_crc32_work WHERE ${fenced}`),
     ]);
     return removed!.meta.changes === 0 ? "stale" : "stored";
   }
-  const advanced = await db.prepare(`UPDATE object_crc32_work SET "offset" = ?5, crc_partial = ?6, state = 'queued', updated_at = ?7 WHERE r2_key = ?1 AND etag = ?2 AND "offset" = ?3 AND generation = ?4 AND state = 'running'`).bind(r2Key, etag, offset, generation, next, crc, now).run();
+  const advanced = await write(`UPDATE object_crc32_work SET "offset" = ?3, crc_partial = ?4, state = 'queued', updated_at = ?5 WHERE ${fenced}`, next, crc, now).run();
   if (advanced.meta.changes === 0) return "stale";
   // A lost send is repaired by the hourly sweep: the row goes quiet, and a row quiet for ten minutes counts as not live.
   await enqueueObjectCrcMessages(env, [{ type: "object_crc32", r2Key, etag, offset: next }], "object-crc-next-range");
   return "advanced";
 }
 
-/**
- * A queued key whose object is not in R2 is recorded as `failed`, not forgotten. Forgotten, the hourly sweep would queue it again every hour, and enough of them would fill its cap and starve the keys behind them.
- * A `failed` row is skipped by the sweep and answers a download with 502; deleting it (once the object is restored) is the way back.
- * Only the run that owns the row may record it: a claimed range by its generation, a validated continuation by its etag and offset. A start touches a row nobody has begun (no etag) or inserts one, and leaves a run in progress to its own continuation.
- */
-async function markMissing(db: D1Database, r2Key: string, now: number, run?: { etag: string; offset: number; generation?: number }): Promise<ObjectCrcOutcome> {
-  const error = "The object is not in R2";
-  if (!run) await db.prepare(`INSERT INTO object_crc32_work (r2_key, state, attempts, requested_at, updated_at, last_error) VALUES (?1, 'failed', 0, ?2, ?2, ?3) ON CONFLICT(r2_key) DO UPDATE SET state = 'failed', updated_at = excluded.updated_at, last_error = excluded.last_error WHERE object_crc32_work.etag IS NULL AND object_crc32_work.state = 'queued'`).bind(r2Key, now, error).run();
-  else await db.prepare(`UPDATE object_crc32_work SET state = 'failed', updated_at = ?3, last_error = ?4 WHERE r2_key = ?1 AND etag = ?2 AND "offset" = ?5 AND state != 'failed' AND (?6 IS NULL OR (generation = ?6 AND state = 'running'))`).bind(r2Key, run.etag, now, error, run.offset, run.generation ?? null).run();
-  return "missing";
-}
-
-/** The object changed under a run: start over from offset 0 on the new etag. Only the owner of `generation` may do it, and it takes the next generation, so anything still holding the old one is fenced out. */
-async function restart(env: JobEnv, r2Key: string, from: string, generation: number, etag: string, size: number, now: number): Promise<ObjectCrcOutcome> {
-  const reset = await env.DB.prepare(`UPDATE object_crc32_work SET etag = ?3, bytes = ?4, "offset" = 0, crc_partial = 0, state = 'queued', attempts = 0, last_error = NULL, updated_at = ?5, generation = generation + 1 WHERE r2_key = ?1 AND etag = ?2 AND generation = ?6 AND state != 'failed'`).bind(r2Key, from, etag, size, now, generation).run();
-  if (reset.meta.changes === 0) return "stale";
+/** The object changed under a run (the row is already reset to offset 0 on the new etag, under this claim): hand the row back and send the first range of the new run. */
+async function restart(env: JobEnv, r2Key: string, generation: number, etag: string, now: number): Promise<ObjectCrcOutcome> {
+  const queued = await env.DB.prepare(`UPDATE object_crc32_work SET state = 'queued', attempts = 0, last_error = NULL, updated_at = ?3 WHERE ${fenced}`).bind(r2Key, generation, now).run();
+  if (queued.meta.changes === 0) return "stale";
   await enqueueObjectCrcMessages(env, [{ type: "object_crc32", r2Key, etag, offset: 0 }], "object-crc-restart");
   return "restarted";
 }
