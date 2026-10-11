@@ -311,7 +311,7 @@ describe("premium and unlock", () => {
     expect(await premiumOf(v1.videoId)).toBe(1);
   });
 
-  it("an older Version of the Video in the current set pins premium too, and only the current set does", async () => {
+  it("any Version of the Video in any set pins premium, current or old; a Video never published can still be unmarked", async () => {
     await request(premiumPath(v1.videoId), "admin", "PUT", { premium: true });
     await seedPage({ assetIds: [v1.assetId] });
     expect((await request(premiumPath(v1.videoId), "admin", "PUT", { premium: false })).status).toBe(409);
@@ -319,6 +319,9 @@ describe("premium and unlock", () => {
     expect((await request(premiumPath(v1.videoId), "admin", "PUT", { premium: false })).status).toBe(409);
     await wipeDelivery(); const other = await seedVideoVersion({});
     await seedPage({ assetIds: [other.assetId], olderSets: [[v1.assetId]] });
+    const response = await request(premiumPath(v1.videoId), "admin", "PUT", { premium: false });
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ code: "premium_published" });
+    await wipeDelivery(); await seedPage({ assetIds: [other.assetId] });
     expect((await request(premiumPath(v1.videoId), "admin", "PUT", { premium: false })).status).toBe(200);
     expect(await premiumOf(v1.videoId)).toBe(0);
   });

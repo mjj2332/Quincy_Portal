@@ -322,7 +322,7 @@ _Avoid_: Delivery, gallery, live collection
 
 **Premium Asset**:
 An Asset staff have marked as a paid extra. Premium can be undone until the Asset is published to a
-Delivery page; after that it stays premium for good. Clients see it only as a watermarked preview
+Delivery page (in any set, current or old); after that it stays premium for good. Clients see it only as a watermarked preview
 until staff Unlock it.
 _Avoid_: Extra, add-on, paywalled (in staff-facing copy)
 

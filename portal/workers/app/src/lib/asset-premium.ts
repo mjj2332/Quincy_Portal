@@ -1,7 +1,7 @@
 import { DELIVERY_PREMIUM_KINDS, type AssetPremiumResponse } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
-import { inCurrentSetSql } from "./delivery-lock";
+import { everPublishedSql, inCurrentSetSql } from "./delivery-lock";
 
 /**
  * Photo and document premium and Unlock (#787 slice 2), the Asset counterpart of the Video premium in `video-approval.ts`. Every write is ONE `db.batch`: the committing statement carries
@@ -20,9 +20,9 @@ const OF_PROJECT = (asset: string, project: string) => `(${asset}.superseded_at 
 
 export type PremiumAsset = { kind: string; premium: boolean; unlocked: boolean; paymentRef: string | null; published: boolean };
 
-/** The Asset of the Project, or null when it is not one (unknown, another Project's, or superseded and not in a current set). `published` is whether it is in a page's current set. */
+/** The Asset of the Project, or null when it is not one (unknown, another Project's, or superseded and not in a current set). `published` is whether it has ever been in any set. */
 export async function findPremiumAsset(db: D1Database, projectId: string, assetId: string): Promise<PremiumAsset | null> {
-  const row = await db.prepare(`SELECT a.kind, a.delivery_premium AS premium, u.asset_id IS NOT NULL AS unlocked, u.payment_ref AS paymentRef, ${inCurrentSetSql("= a.id")} AS published
+  const row = await db.prepare(`SELECT a.kind, a.delivery_premium AS premium, u.asset_id IS NOT NULL AS unlocked, u.payment_ref AS paymentRef, ${everPublishedSql("= a.id")} AS published
       FROM assets a LEFT JOIN asset_premium_unlocks u ON u.asset_id = a.id WHERE a.id = ?1 AND ${OF_PROJECT("a", "?2")}`).bind(assetId, projectId)
     .first<{ kind: string; premium: number; unlocked: number; paymentRef: string | null; published: number }>();
   return row ? { kind: row.kind, premium: row.premium === 1, unlocked: row.unlocked === 1, paymentRef: row.paymentRef, published: row.published === 1 } : null;
@@ -46,7 +46,7 @@ async function settle(db: D1Database, projectId: string, assetId: string, landed
 }
 
 /**
- * Sets `assets.delivery_premium`. Idempotent: the same state writes nothing and audits nothing. Unmarking is refused (`published`) while the Asset is in a page's current set: a Premium Asset
+ * Sets `assets.delivery_premium`. Idempotent: the same state writes nothing and audits nothing. Unmarking is refused (`published`) once the Asset has been in any set, current or old: a Premium Asset
  * stays premium once published, and access is controlled with Unlock and Re-lock. The statement repeats that fence, so a Publish racing the request cannot slip through.
  */
 export async function setAssetPremium(db: D1Database, input: { projectId: string; assetId: string; principal: Principal; premium: boolean; now: number }): Promise<AssetPremiumResponse | "archived" | "not_found" | "published"> {
@@ -54,7 +54,7 @@ export async function setAssetPremium(db: D1Database, input: { projectId: string
   let landed = false;
   if (before.premium !== input.premium) {
     const [update] = await db.batch([
-      db.prepare(`UPDATE assets SET delivery_premium = ?1, updated_at = ?2 WHERE id = ?3 AND delivery_premium <> ?1 AND (?1 = 1 OR NOT ${inCurrentSetSql("= assets.id")}) AND kind IN (${ELIGIBLE_KINDS}) AND ${OF_PROJECT("assets", "?4")} AND ${NOT_ARCHIVED("?4")}`)
+      db.prepare(`UPDATE assets SET delivery_premium = ?1, updated_at = ?2 WHERE id = ?3 AND delivery_premium <> ?1 AND (?1 = 1 OR NOT ${everPublishedSql("= assets.id")}) AND kind IN (${ELIGIBLE_KINDS}) AND ${OF_PROJECT("assets", "?4")} AND ${NOT_ARCHIVED("?4")}`)
         .bind(input.premium ? 1 : 0, input.now, input.assetId, input.projectId),
       db.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?1, ?2, 'asset.delivery_premium_set', 'asset', ?3, ?4, ?5 WHERE changes() > 0")
         .bind(newId(), input.principal.id, input.assetId, auditMeta(input.principal, { projectId: input.projectId, premium: input.premium }), input.now),
@@ -87,7 +87,7 @@ export async function setAssetUnlock(db: D1Database, input: { projectId: string;
     landed = (write?.meta.changes ?? 0) > 0;
   } else if (!input.unlocked && before.unlocked) {
     const [write] = await db.batch([
-      db.prepare(`DELETE FROM asset_premium_unlocks WHERE asset_id = ?1 AND project_id = ?2 AND ${NOT_ARCHIVED("?2")}`).bind(input.assetId, input.projectId),
+      db.prepare(`DELETE FROM asset_premium_unlocks WHERE asset_id = ?1 AND project_id = ?2 AND EXISTS (SELECT 1 FROM assets a WHERE a.id = asset_premium_unlocks.asset_id AND ${OF_PROJECT("a", "?2")}) AND ${NOT_ARCHIVED("?2")}`).bind(input.assetId, input.projectId),
       db.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?1, ?2, 'asset.premium_relock', 'asset', ?3, ?4, ?5 WHERE changes() > 0")
         .bind(newId(), input.principal.id, input.assetId, auditMeta(input.principal, { projectId: input.projectId }), input.now),
     ]);

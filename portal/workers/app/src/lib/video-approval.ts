@@ -1,7 +1,7 @@
 import { guestDigestStatements } from "./guest-digest";
 import { ROLE_LABELS, type Role, type VideoDecisionEvent, type VideoRelease, type VideoVersionDecisions } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
-import { inCurrentSetSql } from "./delivery-lock";
+import { everPublishedSql } from "./delivery-lock";
 import { newId } from "./ids";
 import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO, LIVE_VIDEO_EXISTS } from "./video-live-sql";
 
@@ -165,15 +165,15 @@ async function projectArchived(db: D1Database, projectId: string): Promise<boole
 export type PremiumState = { premium: boolean; premiumUnlocked: boolean };
 const stateOf = (video: { premium: boolean; unlocked: boolean }): PremiumState => ({ premium: video.premium, premiumUnlocked: video.unlocked });
 
-/** Whether any Version of the Video, in Trash or not, is in a page's current set. Matched through a subquery, never bound ids (D1 allows 100 parameters). */
-const VIDEO_IN_CURRENT_SET = (videoParam: string) => inCurrentSetSql(`IN (SELECT dm.asset_id FROM video_version_meta dm WHERE dm.video_id = ${videoParam})`);
+/** Whether any Version of the Video, in Trash or not, has ever been in any set. Matched through a subquery, never bound ids (D1 allows 100 parameters). */
+const VIDEO_IN_CURRENT_SET = (videoParam: string) => everPublishedSql(`IN (SELECT dm.asset_id FROM video_version_meta dm WHERE dm.video_id = ${videoParam})`);
 export async function videoPublished(db: D1Database, videoId: string): Promise<boolean> {
   return (await db.prepare(`SELECT ${VIDEO_IN_CURRENT_SET("?1")} AS hit`).bind(videoId).first<{ hit: number }>())?.hit === 1;
 }
 
 /**
  * Sets `videos.premium`. Idempotent: the same state writes nothing and audits nothing. `archived` when the Project is. Unmarking is refused (`published`) while any Version of the Video is in
- * a page's current set, as for photos: access is then controlled with Unlock and Re-lock. The statement repeats that fence, so a Publish racing the request cannot slip through.
+ * any set, current or old, as for photos: access is then controlled with Unlock and Re-lock. The statement repeats that fence, so a Publish racing the request cannot slip through.
  */
 export async function setPremium(db: D1Database, input: { projectId: string; videoId: string; principal: Principal; premium: boolean; now: number }): Promise<PremiumState | "archived" | "not_found" | "published"> {
   const before = await findVideo(db, input.projectId, input.videoId); if (!before) return "not_found";

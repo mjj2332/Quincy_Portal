@@ -142,11 +142,12 @@ describe("mark and unmark", () => {
     expect((await flagOf(asset.id)).d).toBe(1);
   });
 
-  it("an older set does not pin premium: only the current set does", async () => {
+  it("an older set pins premium too: once published in any set, always premium", async () => {
     const asset = await seedAsset("photo", { deliveryPremium: true }); const other = await seedAsset("photo");
     await seedPage({ assetIds: [other.id], olderSets: [[asset.id]] });
-    expect((await mark(asset.id, false)).status).toBe(200);
-    expect((await flagOf(asset.id)).d).toBe(0);
+    const response = await mark(asset.id, false);
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ code: "premium_published" });
+    expect((await flagOf(asset.id)).d).toBe(1);
   });
 
   it("the mutation SQL repeats the published fence, so a Publish racing the request cannot slip through", async () => {
@@ -219,6 +220,19 @@ describe("Unlock and Re-lock", () => {
     expect(await unlockRow(a.id)).toBeNull();
     const gone = await seedAsset("photo", { superseded: true });
     expect((await unlock(gone.id, { unlocked: true })).status).toBe(404);
+  });
+
+  it("a Re-lock whose Asset stops being eligible between the read and the DELETE writes nothing: no delete, no audit", async () => {
+    const a = await seedAsset("photo", { deliveryPremium: true, superseded: true }); await seedPage({ assetIds: [a.id] });
+    await seedUnlock(a.id);
+    const { setAssetUnlock } = await import("../src/lib/asset-premium");
+    const racing = new Proxy(database.DB, { get(target, key) {
+      if (key === "batch") return async (statements: D1PreparedStatement[]) => { await wipeDelivery(); await seedUnlock(a.id); await seedPage({ assetIds: [] }); return target.batch(statements); };
+      const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value; } });
+    const result = await setAssetUnlock(racing as D1Database, { projectId: ids.project, assetId: a.id, principal: { id: ids.admin } as never, unlocked: false, paymentRef: null, now: Date.now() });
+    expect(result).toBe("not_found");
+    expect(await unlockRow(a.id)).not.toBeNull();
+    expect(await audits("asset.premium_relock")).toHaveLength(0);
   });
 
   it("is live on a published Asset and keeps the set as it was", async () => {

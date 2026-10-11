@@ -28,6 +28,12 @@ const CURRENT_SET_ITEMS = `FROM delivery_set_items cs_i JOIN delivery_sets cs_s 
  */
 export const inCurrentSetSql = (assetCondition: string): string => `EXISTS (SELECT 1 ${CURRENT_SET_ITEMS} WHERE cs_i.asset_id ${assetCondition})`;
 
+/**
+ * An EXISTS over **every** set of every page, current or old: "this Asset has ever been published". Old sets keep their `delivery_set_items` rows (nothing deletes a set; an item goes only with
+ * its Asset or Project through `ON DELETE CASCADE`), so this needs no column. Premium is permanent from the first Publish on.
+ */
+export const everPublishedSql = (assetCondition: string): string => `EXISTS (SELECT 1 FROM delivery_set_items ep_i WHERE ep_i.asset_id ${assetCondition})`;
+
 /** The first of these Assets that is in a page's current set, or null. Used to name the blocker once a guarded delete or Trash was refused. */
 export async function firstInCurrentSet(db: D1Database, assetIds: readonly string[]): Promise<string | null> {
   if (assetIds.length === 0) return null;
