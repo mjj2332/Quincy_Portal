@@ -56,6 +56,11 @@ export function DeliveryApp({ slug }: { slug: string }) {
   const unlockRef = useRef<UnlockStates>({});
   unlockRef.current = unlock;
 
+  /** Once gone, always gone: abort and retire any page read still out (a late 200 would resurrect stale content), and retire older unlock answers. */
+  const gone = useCallback(() => {
+    generation.current += 1; attempt.current += 1; controller.current?.abort();
+    setScreen({ name: "gone" });
+  }, []);
   /** `quiet` keeps the page on screen while it re-reads (after a 409): only a definite answer replaces it. */
   const load = useCallback(async (quiet: boolean) => {
     controller.current?.abort();
@@ -66,12 +71,12 @@ export function DeliveryApp({ slug }: { slug: string }) {
     if (!alive.current || attempt.current !== id || mine.signal.aborted) return;
     switch (read.kind) {
       case "ok": setScreen({ name: "ready", dto: read.dto }); break;
-      case "gone": setScreen({ name: "gone" }); break;
+      case "gone": gone(); break;
       case "outdated": setScreen({ name: "outdated" }); break;
       case "rateLimited": setScreen({ name: "rateLimited", until: Date.now() + read.retryAfterSeconds * 1000 }); break;
       case "transient": setScreen((current) => (quiet && current.name === "ready" ? current : { name: "transient" })); break;
     }
-  }, [api]);
+  }, [api, gone]);
 
   useEffect(() => {
     alive.current = true;
@@ -81,11 +86,6 @@ export function DeliveryApp({ slug }: { slug: string }) {
 
   useEffect(() => { if (screen.name === "ready") document.title = screen.dto.property.street; }, [screen]);
 
-  /** Once gone, always gone: abort and retire any page read still out (a late 200 would resurrect stale content), and retire older unlock answers. */
-  const gone = useCallback(() => {
-    generation.current += 1; attempt.current += 1; controller.current?.abort();
-    setScreen({ name: "gone" });
-  }, []);
   const setState = useCallback((handle: string, next: UnlockState) => { setUnlock((current) => ({ ...current, [handle]: next })); }, []);
   const requestUnlock = useCallback(async (handle: string) => {
     const current = unlockRef.current[handle];

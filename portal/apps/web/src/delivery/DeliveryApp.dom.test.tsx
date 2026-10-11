@@ -222,6 +222,26 @@ describe("request unlock", () => {
     expect(byTestId("delivery-gone")).not.toBeNull();
     expect(reads()).toHaveLength(1); // the stale 409 did not start another read
   });
+  it("stays gone when the re-read after one 409 answers 404 and another 409 lands later, even if every later read would fail", async () => {
+    let answerSecond!: (response: Response) => void; let reads = 0;
+    const two = () => page([photo(1), locked(2), locked(3)], { coverHandle: handle(1) });
+    route = (url, init) => {
+      if (init?.method === "POST") return url === unlockUrl(2) ? json({ error: "not_locked" }, 409) : new Promise<Response>((resolve) => { answerSecond = resolve; });
+      reads += 1;
+      if (reads === 1) return json(two());
+      if (reads === 2) return new Response("Not found", { status: 404 }); // the page was switched off: the re-read after the first 409 finds it gone
+      throw new TypeError("offline"); // any later read would show Unreachable
+    };
+    await open(); await click(tab("Premium"));
+    await click(byLabel("Request unlock: Photo 03")); // pending
+    await click(byLabel("Request unlock: Photo 02")); await flush(); // 409, then its re-read is a 404
+    expect(byTestId("delivery-gone")).not.toBeNull();
+    const before = reads;
+    await act(async () => { answerSecond(json({ error: "not_locked" }, 409)); }); await flush();
+    expect(reads).toBe(before); // the stale 409 started no read
+    expect(byTestId("delivery-gone")).not.toBeNull();
+    expect(text()).not.toMatch(/reach|offline|try again/i);
+  });
   it.each(["network", "500"])("says it couldn't send, and lets the person try again, on a %s failure", async (kind) => {
     route = (url, init) => { if (init?.method !== "POST") return json(dto()); if (kind === "network") throw new TypeError("offline"); return new Response("", { status: 500 }); };
     await open(); await request();
