@@ -230,13 +230,13 @@ describe("previewing a paste", () => {
     extra = (url, init) => {
       if (url !== PREVIEW_URL || init?.method !== "POST") return undefined;
       calls += 1;
-      return calls === 1 ? new Response("", { status: 503 }) : json(plan([mapped(1)]));
+      return calls === 1 ? new Response("", { status: 503 }) : json(plan([mapped(1), mapped(2)]));
     };
     await open();
     await openDialog();
     expect(byId("guest-paste-load-error")).not.toBeNull();
     await click(button("Try again"));
-    expect(rowIds()).toEqual([noteId(1)]);
+    expect(rowIds()).toEqual([noteId(1), noteId(2)]);
     expect(byId("guest-paste-load-error")).toBeNull();
   });
 });
@@ -290,6 +290,60 @@ describe("a guest with more notes than one paste may carry", () => {
     await wait(400);
     expect(byId("guest-paste-dialog")?.textContent).not.toContain(LIMIT_MESSAGE);
     expect(byId("guest-paste-submit")?.hasAttribute("disabled")).toBe(false);
+  });
+});
+
+describe("a ticked note the current plan does not cover", () => {
+  const LIMIT_MESSAGE = "Copy up to 60 notes at a time. Untick some to continue.";
+  const planFor = (init: RequestInit | undefined) => json(plan((JSON.parse(String(init?.body)) as { noteIds: string[] }).noteIds.map((id) => mapped(Number(id.slice(-12))))));
+  const asked = () => pasteCalls(PREVIEW_URL).map((call) => (call.body as { noteIds: string[] }).noteIds);
+  const tickOf = (n: number) => allById("guest-paste-row").find((row) => row.getAttribute("data-note-id") === noteId(n))?.querySelector<HTMLElement>('[data-testid="guest-paste-tick"]') ?? null;
+  const isChecked = (n: number) => tickOf(n)?.getAttribute("aria-checked") === "true";
+  const submitDisabled = () => byId("guest-paste-submit")?.hasAttribute("disabled");
+  const setUp = (count: number) => {
+    notes = { [SOURCE]: Array.from({ length: count }, (_, index) => mine(index + 1, { startFrame: 10 + index })) };
+    extra = (url, init) => (url === PREVIEW_URL && init?.method === "POST" ? planFor(init) : undefined);
+  };
+
+  it("keeps its checkbox, so a guest with 61 notes can untick note 61 after ticking it", async () => {
+    setUp(61);
+    await open();
+    await openDialog();
+    await click(tickOf(61));
+    await wait(400);
+    expect(tickOf(61)).not.toBeNull();
+    expect(isChecked(61)).toBe(true);
+    expect(submitDisabled()).toBe(true);
+    expect(byId("guest-paste-dialog")?.textContent).toContain(LIMIT_MESSAGE);
+    await click(tickOf(61));
+    await wait(400);
+    expect(isChecked(61)).toBe(false);
+    expect(byId("guest-paste-dialog")?.textContent).not.toContain(LIMIT_MESSAGE);
+    expect(submitDisabled()).toBe(false);
+    expect(byId("guest-paste-submit")?.textContent).toBe("Paste 60 notes");
+  });
+  it("lets a guest with 121 notes who ticked every extra and unticked the first 60 untick back to 60 and paste", async () => {
+    setUp(121);
+    await open();
+    await openDialog();
+    for (let n = 61; n <= 121; n += 1) await click(tickOf(n));
+    for (let n = 1; n <= 60; n += 1) await click(tickOf(n));
+    await wait(400);
+    expect(allById("guest-paste-tick")).toHaveLength(121);
+    expect(submitDisabled()).toBe(true);
+    expect(byId("guest-paste-dialog")?.textContent).toContain(LIMIT_MESSAGE);
+    const before = asked().length;
+    await click(tickOf(121));
+    await wait(400);
+    expect(isChecked(121)).toBe(false);
+    expect(byId("guest-paste-dialog")?.textContent).not.toContain(LIMIT_MESSAGE);
+    expect(asked().length).toBeGreaterThan(before);
+    const latest = asked().at(-1)!;
+    expect(latest).toHaveLength(60);
+    expect(latest).toContain(noteId(61));
+    expect(latest).not.toContain(noteId(121));
+    expect(submitDisabled()).toBe(false);
+    expect(byId("guest-paste-submit")?.textContent).toBe("Paste 60 notes");
   });
 });
 

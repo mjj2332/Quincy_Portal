@@ -195,16 +195,16 @@ function PasteFlow({ opening, api, writer, video, target, markupAllowed, generat
   }, [plan, leftOut]);
   const chosen = mapped.filter((row) => !unticked.has(row.noteId) && !leftOut.has(row.noteId));
   const settled = plan !== null && view.status === "ok" && plan.offsetFrames === offset && previewKey !== null && covered(view.ids, tickedIds, unticked);
-  // The rows follow the guest's own order. A note the plan was not asked about (unticked past the cap) is a row too, so it can be ticked; one the plan left out is under "Left out".
+  // The rows follow the guest's own order. Every own note that is not left out is a row, ticked or not and covered by the plan or not (one the plan does not cover has no target position yet), so it can always be unticked; one the plan left out is under "Left out".
   const rows = useMemo(() => {
     if (plan === null) return [] as Entry[];
     const byId = new Map(mapped.map((row) => [row.noteId, row]));
     const inPlan = new Set(plan.rows.map((row) => row.noteId));
     const items = own.status === "ready" ? own.items : [];
-    const ordered = items.flatMap((note): Entry[] => { const row = byId.get(note.id); return row ? [{ id: note.id, mapped: row, note }] : !inPlan.has(note.id) && unticked.has(note.id) ? [{ id: note.id, mapped: null, note }] : []; });
+    const ordered = items.flatMap((note): Entry[] => { const row = byId.get(note.id); return row ? [{ id: note.id, mapped: row, note }] : !inPlan.has(note.id) && !leftOut.has(note.id) ? [{ id: note.id, mapped: null, note }] : []; });
     const known = new Set(items.map((note) => note.id));
     return [...ordered, ...mapped.filter((row) => !known.has(row.noteId)).map((row): Entry => ({ id: row.noteId, mapped: row, note: null }))];
-  }, [plan, mapped, own, unticked]);
+  }, [plan, mapped, own, leftOut]);
   const sourceTc = useMemo(() => (source ? timecodeOf(source) : (frame: number) => String(frame)), [source]);
   const targetTc = useMemo(() => timecodeOf(target), [target]);
   const sourceLabel = source ? `v${source.version}` : "";
