@@ -11,6 +11,7 @@ import { Item, ItemContent } from "../components/reui/item";
 import { Textarea } from "../components/reui/textarea";
 import { ICON_BUTTON } from "../components/quincy/icon-button";
 import { Menu, MENU_ITEM, MenuPrimitive } from "../components/quincy/menu";
+import { ResolvedTick } from "../components/quincy/ResolvedTick";
 import { IconTip } from "../components/quincy/VideoPlayer";
 
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
@@ -174,11 +175,12 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
       </div>
       {body(thread)}
       {deleteConflict !== null && <p role="alert" data-testid="guest-note-problem" className={PROBLEM}>{deleteConflict}</p>}
-      {thread.resolved && <Badge variant="success" size="xs" data-testid="guest-note-resolved">Resolved</Badge>}
+      
       {thread.replies.map((reply) => <div key={reply.id} data-testid="guest-note-reply" className="flex flex-col gap-[var(--space-1)] border-l border-border ps-[var(--space-3)]">
         <div className="flex min-w-0 items-center gap-[var(--space-2)]"><Author note={reply} />{menu(reply)}</div>
         {body(reply)}
       </div>)}
+      {thread.resolved && <ResolvedTick data-testid="guest-note-resolved" />}
       {writing.canWrite && !thread.deleted && (replyDraft === null
         ? <div><Button type="button" variant="ghost" size="sm" data-testid="guest-note-reply-button" className={TOUCH} disabled={busy} onClick={() => { if (!writing.verified) writing.onNeedVerify(); else { setReplyStatus(IDLE); drafts.set(replyKey, { noteId: null, baseRevision: null, baseText: "", ackRevision: null, text: "" }); } }}>Reply</Button></div>
         : <form data-testid="guest-reply-form" aria-label="Reply" onSubmit={(event) => { void sendReply(event); }} noValidate className="flex flex-col gap-[var(--space-2)]">

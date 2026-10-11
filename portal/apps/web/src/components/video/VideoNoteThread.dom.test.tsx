@@ -164,16 +164,31 @@ describe("VideoNoteThread (#741 5b)", () => {
   it("15: Resolve asks for resolved: true; a resolved thread shows who and offers Reopen (resolved: false)", async () => {
     const t = thread();
     const { props, rerender } = await render(t);
-    expect(tid("video-note-resolve")!.textContent).toBe("Resolve");
+    const open = tid("video-note-resolve")!;
+    expect(open.getAttribute("aria-label")).toBe("Mark as complete");
+    expect(open.getAttribute("aria-pressed")).toBe("false");
+    expect(open.textContent).toBe("");
     await click(tid("video-note-resolve")!);
     await flush();
     expect(props.actions.resolve).toHaveBeenCalledWith(t.id, true);
     await rerender({ thread: { ...t, resolved: { at: T(9), by: mia } } as unknown as VideoNoteThreadDto });
     expect(host.textContent).toContain("Resolved by Mia Chen");
-    expect(tid("video-note-resolve")!.textContent).toBe("Reopen");
+    expect(tid("video-note-resolve")!.getAttribute("aria-label")).toBe("Reopen");
+    expect(tid("video-note-resolve")!.getAttribute("aria-pressed")).toBe("true");
+    expect(tid("video-note-resolve")!.querySelector("svg")!.getAttribute("class")).toContain("fill-success");
     await click(tid("video-note-resolve")!);
     await flush();
     expect(props.actions.resolve).toHaveBeenLastCalledWith(t.id, false);
+  });
+
+  it("read-only on a resolved thread shows a non-interactive Resolved tick and no button; an open one shows nothing", async () => {
+    const t = thread();
+    await render({ ...t, resolved: { at: T(9), by: mia } } as unknown as VideoNoteThreadDto, { readOnly: true });
+    expect(tid("video-note-resolve")).toBeNull();
+    const status = tid("video-note-resolved-status")!;
+    expect(status.tagName).not.toBe("BUTTON");
+    expect(status.textContent).toBe("Resolved");
+    expect(host.textContent).toContain("Resolved by Mia Chen");
   });
 
   it("15: read-only (archived) hides Reply, Resolve and the menu", async () => {

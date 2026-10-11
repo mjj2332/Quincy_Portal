@@ -98,6 +98,18 @@ afterEach(async () => {
   window.history.replaceState(null, "", "/");
 });
 
+describe("A resolved note", () => {
+  it("shows a non-interactive green tick status, not a badge or button; an open note shows none", async () => {
+    notes = { [asset(10)]: [note(1, { resolved: true }), note(2)] };
+    await open();
+    const ticks = allById("guest-note-resolved");
+    expect(ticks).toHaveLength(1);
+    expect(ticks[0]!.tagName).not.toBe("BUTTON");
+    expect(ticks[0]!.textContent).toBe("Resolved");
+    expect(ticks[0]!.querySelector("svg")!.getAttribute("class")).toContain("fill-success");
+  });
+});
+
 describe("Add a note", () => {
   it("is not offered when the link does not allow comments", async () => {
     session = SESSION_OFF;
