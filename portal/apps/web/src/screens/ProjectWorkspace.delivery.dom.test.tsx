@@ -163,8 +163,8 @@ describe("choosing what to publish", () => {
 describe("Preview", () => {
   it("posts the selection and renders the returned page with the staff preview media", async () => {
     apiPostMock.mockResolvedValue({ dto: { property: { street: "12 Example St", suburb: "Suburbia" }, setNumber: 1, publishedAt: null, coverHandle: handle(1), items: [
-      { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, width: 10, height: 10, durationMs: null, url: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`, thumbUrl: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/thumb` },
-      { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null }] } });
+      { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, premium: false, width: 10, height: 10, durationMs: null, url: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`, thumbUrl: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/thumb` },
+      { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, premium: true, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null }] } });
     await openDelivery(); await startEmpty();
     await click(byLabel("Select 1.jpg")); await click(byLabel("Select 2.jpg")); await click(byLabel("Cover 1.jpg"));
     await click(byId("delivery-preview"));
@@ -495,8 +495,8 @@ describe("round 3: the tab does not depend on Video Review", () => {
 describe("round 4: fresh candidates, first-Publish defaults and Request unlock in Preview", () => {
   const candidateReads = () => gets().filter((path) => path === `/api/projects/${PROJECT_ID}/delivery/candidates`).length;
   const lockedPreview = { dto: { property: { street: "12 Example St", suburb: "Suburbia" }, setNumber: 1, publishedAt: null, coverHandle: handle(1), items: [
-    { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, width: 10, height: 10, durationMs: null, url: "/m/1", thumbUrl: "/t/1" },
-    { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null }] } };
+    { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, premium: false, width: 10, height: 10, durationMs: null, url: "/m/1", thumbUrl: "/t/1" },
+    { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, premium: true, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null }] } };
   const tellOthers = (resources: unknown[]) => {
     const channel = new BroadcastChannel("quincy:project-data:v1");
     channel.postMessage({ version: 1, type: "project-data-invalidated", projectId: PROJECT_ID, committedAt: new Date().toISOString(), sourceTabId: "other-tab", resources });
@@ -629,10 +629,10 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
     expect(retry!.operationId).toBe(b!.operationId);
   });
   const lockedPreviewDto = { dto: { property: { street: "12 Example St", suburb: "Suburbia" }, setNumber: 1, publishedAt: null, coverHandle: null, items: [
-    { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, width: 10, height: 10, durationMs: null, url: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`, thumbUrl: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/thumb` },
-    { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null },
-    { handle: handle(3), kind: "floorplan", label: "Floorplan 01", position: 2, locked: false, width: null, height: null, durationMs: null, url: "/pdf/1", thumbUrl: null },
-    { handle: handle(4), kind: "video", label: "Video 01", position: 3, locked: false, width: 1920, height: 1080, durationMs: 62000, url: "/video/1", thumbUrl: "/video/1/thumb" }] } };
+    { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, premium: false, width: 10, height: 10, durationMs: null, url: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`, thumbUrl: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/thumb` },
+    { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, premium: true, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null },
+    { handle: handle(3), kind: "floorplan", label: "Floorplan 01", position: 2, locked: false, premium: false, width: null, height: null, durationMs: null, url: "/pdf/1", thumbUrl: null },
+    { handle: handle(4), kind: "video", label: "Video 01", position: 3, locked: false, premium: false, width: 1920, height: 1080, durationMs: 62000, url: "/video/1", thumbUrl: "/video/1/thumb" }] } };
   it("lets staff open an unlocked photo full-size, play a Video and open a PDF, and nothing for a locked item", async () => {
     apiPostMock.mockResolvedValue(lockedPreviewDto);
     await openDelivery(); await click(byId("delivery-preview"));
