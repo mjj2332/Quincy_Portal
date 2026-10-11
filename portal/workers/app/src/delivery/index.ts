@@ -1,13 +1,16 @@
 import type { Context, Hono } from "hono";
-import { DELIVERY_HANDLE_LENGTH, DELIVERY_SLUG_ALPHABET, DELIVERY_SLUG_SUFFIX_LENGTH, RENDITION_VARIANT_SPEC, deliveryPageDtoSchema, rawMediaContentType, type DeliveryItemKind } from "@quincy/shared";
+import { DELIVERY_HANDLE_LENGTH, DELIVERY_SLUG_ALPHABET, DELIVERY_SLUG_SUFFIX_LENGTH, DELIVERY_UNLOCK_NOTIFICATION_EVENT, RENDITION_VARIANT_SPEC, deliveryPageDtoSchema, deliveryUnlockRequestInputSchema, deliveryUnlockSourceKey, rawMediaContentType, type DeliveryItemKind } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { clientDeliveryGate } from "../lib/client-delivery-gate";
 import { deliveryLabels, readDeliveryState, readSetRows, type DeliveryUrlResolver } from "../lib/delivery-dto";
+import { newId } from "../lib/ids";
 import { lockedSql } from "../lib/delivery-lock";
 import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO } from "../lib/video-live-sql";
 import { VIDEO_STREAM_HEADERS, serveR2Object } from "../lib/r2-serve";
 import { attachment } from "../guest/download";
-import { guestNotFound, guestRoute } from "../guest/http";
+import { INVALID, TOO_LARGE, guestNotFound, guestRoute, originRejection, readJson, tooMany } from "../guest/http";
+import { GUEST_DAY_MS, GUEST_LIMITS, clientAddress, ipBucket, reserveAttempts, windowStart } from "../guest/rate-limit";
+import { publishUnlockOutbox, unlockItemBucket, writeUnlockRequest } from "../lib/delivery-unlock-request";
 import { guestShell } from "../guest";
 
 /**
@@ -16,16 +19,20 @@ import { guestShell } from "../guest";
  * - `GET /d/:slug`: the SPA shell for ANY well-formed slug, so the shell is never an oracle for whether a page exists.
  * - `GET /d/api/pages/:slug`: the strict DTO of the page's LATEST set, with handle URLs.
  * - `GET /d/api/pages/:slug/items/:handle/{media,thumb,download}`: one item. GET, HEAD and Range alike.
+ * - `POST /d/api/pages/:slug/items/:handle/unlock-request` (slice 8): a client asks for ONE locked item to be unlocked. It only notifies staff; see `requestUnlock`.
  * Every miss (malformed path, unknown slug, page off, Client Delivery gate shut, stale handle, a Video no longer live, a derivative that is not there) is `guestNotFound`: the same bytes as the `/d/*` fallback.
  * The slug is matched on the RAW path segment: no decoding, trailing slash or extra segment is normalised into a match. Every response is `private, no-store` with the guest hygiene headers.
  */
-export const publicDeliveryTestHooks: { beforeServe?: () => Promise<void> } = {};
+export const publicDeliveryTestHooks: { beforeServe?: () => Promise<void>; beforeWrite?: () => Promise<void>; afterWrite?: () => Promise<void>; beforeVerify?: () => Promise<void> } = {};
 
 const SLUG_PATTERN = `[a-z0-9]+(?:-[a-z0-9]+)*-[${DELIVERY_SLUG_ALPHABET}]{${DELIVERY_SLUG_SUFFIX_LENGTH}}`;
 const HANDLE_PATTERN = `[a-z0-9]{${DELIVERY_HANDLE_LENGTH}}`;
 const SHELL_PATH = new RegExp(`^/d/(${SLUG_PATTERN})$`);
 const PAGE_PATH = new RegExp(`^/d/api/pages/(${SLUG_PATTERN})$`);
 const ITEM_PATH = new RegExp(`^/d/api/pages/(${SLUG_PATTERN})/items/(${HANDLE_PATTERN})/(media|thumb|download)$`);
+const UNLOCK_PATH = new RegExp(`^/d/api/pages/(${SLUG_PATTERN})/items/(${HANDLE_PATTERN})/unlock-request$`);
+/** The request body is `{}`; anything over this is refused without being read further. */
+const UNLOCK_BODY_MAX = 1024;
 const SLUG_MAX = 96;
 /** Matches against the path exactly as the client sent it, never a decoded parameter. */
 const rawPath = (c: Context<AppEnv, string>): string => new URL(c.req.url).pathname;
@@ -135,6 +142,60 @@ async function serveItem(c: Ctx, slug: string, handle: string, part: "media" | "
   return response.status === 404 ? guestNotFound(c) : response;
 }
 
+/**
+ * `POST .../items/:handle/unlock-request`, in this order (docs/plans/787.md section 1): the item resolves through the same admission as a read (any miss, the body and the Origin NOT looked at,
+ * is the stub), the bounded body is READ (not judged), a fresh time is taken and the item admitted again, Origin and content type (403), the item must be locked (409 `not_locked`), the address
+ * and page buckets are reserved (429, so an invalid body is charged to them), the body is judged (400, 413), then the write: one fenced batch (`lib/delivery-unlock-request.ts`) that also takes the item's daily slot, so the slot and the request land together or not at all (no pre-batch reservation, no refund).
+ * When it lands nothing the answer is the state found: the stub, `not_locked`, or 202 `already_requested` when the slot was taken.
+ */
+async function unlockLanded(db: D1Database, auditId: string): Promise<boolean> {
+  await publicDeliveryTestHooks.beforeVerify?.();
+  return (await db.prepare("SELECT 1 AS present FROM audit_log WHERE id = ?").bind(auditId).first()) !== null;
+}
+
+async function requestUnlock(c: Ctx, slug: string, handle: string): Promise<Response> {
+  const item = await admitItem(c.env.DB, slug, handle);
+  if (!item) return guestNotFound(c);
+  const raw = await readJson(c as unknown as Context<AppEnv>, UNLOCK_BODY_MAX);
+  const now = Date.now();
+  const current = await admitItem(c.env.DB, slug, handle);
+  if (!current || current.assetId !== item.assetId) return guestNotFound(c);
+  const rejected = originRejection(c as unknown as Context<AppEnv>); if (rejected) return rejected;
+  if (!current.locked) return c.json({ error: "not_locked" }, 409);
+  const address = await ipBucket("unlock", clientAddress(c.req.raw), windowStart(now));
+  const spent = await reserveAttempts(c.env.DB, [{ bucket: address, limit: GUEST_LIMITS.unlockIp }, { bucket: `unlock:page:${current.projectId}`, limit: GUEST_LIMITS.unlockPage, windowMs: GUEST_DAY_MS }], now);
+  if (spent.limited) return tooMany(spent.retryAfterSeconds);
+  if (raw === TOO_LARGE) return c.json({ error: "payload_too_large" }, 413);
+  if (raw === INVALID || !deliveryUnlockRequestInputSchema.safeParse(raw).success) return c.json({ error: "invalid_request" }, 400);
+  // The item's daily slot is NOT reserved here: it is taken inside the write batch, with the audit and outbox rows, so it lands with the request or not at all (lib/delivery-unlock-request.ts).
+  const auditId = newId();
+  try {
+    await publicDeliveryTestHooks.beforeWrite?.();
+    const rows = await readSetRows(c.env.DB, current.setId);
+    const label = deliveryLabels(rows)[rows.findIndex((row) => row.assetId === current.assetId)];
+    if (label === undefined) return guestNotFound(c);
+    const written = await writeUnlockRequest(c.env.DB, { auditId, slug, handle, projectId: current.projectId, setId: current.setId, setNumber: current.setNumber, assetId: current.assetId, label, ipBucket: address, now });
+    await publicDeliveryTestHooks.afterWrite?.();
+    if (written.landed) {
+      if (written.outboxIds.length) c.executionCtx.waitUntil(publishUnlockOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, written.outboxIds));
+      return c.json({ status: "requested" }, 202);
+    }
+  } catch (error) {
+    // A throw does not say whether D1 committed (the reply can be lost after the batch landed). The attempt's own audit row does: present, the request landed (its slot is in the same batch) and staff are told once;
+    // absent, nothing was stored (a rolled-back batch takes its slot with it). A check that cannot be read fails the request; a retry then answers from what is stored.
+    if (!(await unlockLanded(c.env.DB, auditId).catch(() => false))) throw error;
+    const pending = await c.env.DB.prepare("SELECT id FROM notification_outbox WHERE event_type = ? AND source_key = ? AND status = 'pending'").bind(DELIVERY_UNLOCK_NOTIFICATION_EVENT, deliveryUnlockSourceKey(auditId)).all<{ id: string }>().then((rows) => rows.results.map((row) => row.id)).catch(() => []);
+    if (pending.length) c.executionCtx.waitUntil(publishUnlockOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, pending));
+    return c.json({ status: "requested" }, 202);
+  }
+  // The fence wrote nothing: the page, the gate, the set or the lock changed since admission, or the item's slot is already taken today. Answer what is true now.
+  const after = await admitItem(c.env.DB, slug, handle);
+  if (!after || after.assetId !== current.assetId) return guestNotFound(c);
+  if (!after.locked) return c.json({ error: "not_locked" }, 409);
+  const taken = await c.env.DB.prepare("SELECT 1 AS taken FROM guest_rate_limits WHERE bucket = ? AND window_start = ?").bind(unlockItemBucket(current.assetId), windowStart(now, GUEST_DAY_MS)).first();
+  return taken ? c.json({ status: "already_requested" }, 202) : guestNotFound(c);
+}
+
 export function mountDelivery(app: Hono<AppEnv>): void {
   app.get("/d/:slug", guestRoute("/d/:slug", (c) => (SHELL_PATH.test(rawPath(c)) ? guestShell(c) : guestNotFound(c))));
 
@@ -148,6 +209,12 @@ export function mountDelivery(app: Hono<AppEnv>): void {
     const again = await admitPage(c.env.DB, slug);
     if (!state.dto || !again || again.setNumber !== state.dto.setNumber) return guestNotFound(c);
     return c.json(deliveryPageDtoSchema.parse(state.dto));
+  }));
+
+  app.post("/d/api/pages/:slug/items/:handle/unlock-request", guestRoute("/d/api/pages/:slug/items/:handle/unlock-request", (c) => {
+    const match = UNLOCK_PATH.exec(rawPath(c));
+    if (!match || !slugOk(match[1])) return guestNotFound(c);
+    return requestUnlock(c, match[1], match[2]!);
   }));
 
   for (const part of ["media", "thumb", "download"] as const) {

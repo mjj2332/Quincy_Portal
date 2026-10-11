@@ -23,6 +23,8 @@ describe("the /d stub", () => {
       // The public Delivery routes (#787 slice 6): a slug nobody published, a bad slug, a bad handle and an unsupported method are the same stub.
       ["/d/no-such-page-bcdfgh/"], ["/d/api/pages/no-such-page-bcdfgh"], ["/d/api/pages/no-such-page-bcdfgh/items/0123456789abcdef/media"], ["/d/api/pages/no-such-page-bcdfgh/items/0123456789abcdef/download"],
       ["/d/api/pages/bad"], ["/d/api/pages/no-such-page-bcdfgh/items/short/thumb"], ["/d/api/pages/no-such-page-bcdfgh/items/0123456789abcdef/original"], ["/d/api/pages/no-such-page-bcdfgh", { method: "POST", body: {} }],
+      // Slice 8: the unlock request on a page nobody published (any body, any Origin), and a GET on its path.
+      ["/d/api/pages/no-such-page-bcdfgh/items/0123456789abcdef/unlock-request", { method: "POST", body: {} }], ["/d/api/pages/no-such-page-bcdfgh/items/0123456789abcdef/unlock-request", { method: "POST", body: { x: 1 }, origin: null }], ["/d/api/pages/no-such-page-bcdfgh/items/0123456789abcdef/unlock-request"],
     ];
     for (const [path, init] of probes) expect(await snapshot(await guestFetch(path, init)), path).toEqual(reference);
   });

@@ -48,6 +48,7 @@ describe("#337 notification type → Workspace tab", () => {
       video_note: "video",
       video_reply: "video",
       video_decision: "video",
+      delivery_unlock_requested: "edited",
     };
     expect({ ...NOTIFICATION_WORKSPACE_TAB }).toEqual(expected);
     for (const type of NOTIFICATION_TYPES) expect(notificationWorkspaceTab(type), type).toBe(expected[type]);

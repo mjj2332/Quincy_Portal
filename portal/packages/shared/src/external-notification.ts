@@ -79,6 +79,8 @@ const COPY: Record<ExternalAllowedNotificationType, NotificationCopy | null> = {
   video_note: { title: "Video review update", body: "A video in an assigned project has an update." },
   video_reply: { title: "Video review update", body: "A video in an assigned project has an update." },
   video_decision: { title: "Video review update", body: "A video in an assigned project has an update." },
+  // #787: a client's unlock request is the studio's business; an External never learns a client page exists.
+  delivery_unlock_requested: null,
   "project.team.member_added": { title: "Project team updated", body: "The assigned project team was updated." },
   "project.team.member_removed": { title: "Project team updated", body: "The assigned project team was updated." },
   "project.deadline.schedule_changed": { title: "Project details updated", body: "External-visible project details were updated." },
@@ -119,7 +121,7 @@ const CHANNELS: Record<ExternalAllowedNotificationType, readonly ("in_app" | "em
   delivered: ["in_app"], comment_added: ["in_app"], assigned_to_project: ["in_app", "email"], mentioned: ["in_app", "email"],
   subtask_assigned: ["in_app", "email"], subtask_due_today: ["in_app", "email"], subtask_reminder: ["in_app", "email"], project_deadline_reminder: ["in_app", "email"],
   project_activity: [], project_collaboration_activity: [],
-  video_version_uploaded: ["in_app", "email"], video_note: ["in_app", "email"], video_reply: ["in_app", "email"], video_decision: ["in_app", "email"],
+  video_version_uploaded: ["in_app", "email"], video_note: ["in_app", "email"], video_reply: ["in_app", "email"], video_decision: ["in_app", "email"], delivery_unlock_requested: [],
   "project.team.member_added": ["in_app"], "project.team.member_removed": ["in_app"], "project.deadline.schedule_changed": ["in_app"],
   "project.priority.changed": [], "project.details.changed": ["in_app"], "project.archived": [], "project.restored": [], "project.delivery.published": [],
   "project.checklist.item_created": ["in_app"], "project.checklist.item_updated": ["in_app"], "project.checklist.item_deleted": ["in_app"],

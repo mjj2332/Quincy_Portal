@@ -348,6 +348,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/d/api/pages/:slug/items/:handle/media", class: "delivery-public" },
   { method: "GET", path: "/d/api/pages/:slug/items/:handle/thumb", class: "delivery-public" },
   { method: "GET", path: "/d/api/pages/:slug/items/:handle/download", class: "delivery-public" },
+  { method: "POST", path: "/d/api/pages/:slug/items/:handle/unlock-request", class: "delivery-public" },
   { method: "ALL", path: "/d/*", class: "terminal-fallback" },
   { method: "ALL", path: "/d", class: "terminal-fallback" },
   { method: "ALL", path: "/media/*", class: "terminal-fallback" },

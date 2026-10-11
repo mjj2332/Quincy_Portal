@@ -46,6 +46,8 @@ export function notificationCopy(
     case "video_note":
     case "video_reply":
     case "video_decision": return { title: "Video review update", body: `${projectLabel} has a video review update.` };
+    // #787 slice 8: outbox path only; the resolver composes the title (naming the item), this is the neutral form.
+    case "delivery_unlock_requested": return { title: "Unlock requested", body: `A client asked to unlock an item on ${projectLabel}'s Delivery page.` };
   }
 }
 
