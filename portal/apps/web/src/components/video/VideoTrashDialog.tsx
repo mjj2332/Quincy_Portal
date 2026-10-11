@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { VIDEO_TRASH_RETENTION_DAYS, type VideoTrashItem } from "@quincy/shared";
 import { useOptionalProjectQueryClient, useProjectAccessTermination } from "../../lib/project-data";
 import { pushToast } from "../../lib/toast-store";
@@ -41,6 +41,8 @@ export function VideoTrashDialog({ projectId, archived, open, onOpenChange, retu
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [problem, setProblem] = useState<string | null>(null);
   const now = Date.now();
+  // Focus opens on the dialog itself: the list arrives after the dialog opens, so when it opened the only tabbable control was Close, and that took focus.
+  const popupRef = useRef<HTMLDivElement | null>(null);
 
   const restore = async (item: VideoTrashItem) => {
     const key = keyOf(item);
@@ -61,7 +63,7 @@ export function VideoTrashDialog({ projectId, archived, open, onOpenChange, retu
   const items = query.data?.items ?? [];
   return <Dialog open={open} onOpenChange={onOpenChange}>
     {/* `sm:max-w-[560px]`: `max-w-xl` is 1320px here (Quincy redefines `--container-xl`, see `reui/alert-dialog.tsx`). */}
-    <DialogContent data-testid="video-trash-dialog" showCloseButton={false} finalFocus={() => document.querySelector<HTMLElement>(`[data-testid="${returnFocusId}"]`) ?? true} className="flex max-h-[calc(100dvh-var(--space-6))] flex-col gap-[var(--space-4)] sm:max-w-[560px]">
+    <DialogContent data-testid="video-trash-dialog" ref={popupRef} initialFocus={popupRef} showCloseButton={false} finalFocus={() => document.querySelector<HTMLElement>(`[data-testid="${returnFocusId}"]`) ?? true} className="flex max-h-[calc(100dvh-var(--space-6))] flex-col gap-[var(--space-4)] sm:max-w-[560px]">
       <DialogHeader className={cn("border-b border-solid border-[var(--border-hairline)] pb-[var(--space-3)]", SHEET_CLOSE_CLEARANCE)}>
         <DialogTitle className={DIALOG_TITLE}>Trash</DialogTitle>
         <DialogDescription className="text-foreground-secondary">Removed films and versions are kept for {VIDEO_TRASH_RETENTION_DAYS} days, then deleted for good. Restoring one brings back its notes, releases and links.</DialogDescription>
@@ -91,7 +93,7 @@ export function VideoTrashDialog({ projectId, archived, open, onOpenChange, retu
           })}
         </ItemGroup>}
       </div>
-      {/* Last child, so the first tabbable (initial focus) is never the close control. */}
+      {/* Last child, so Close comes after the content in tab order; initial focus is the dialog itself (`initialFocus`). */}
       <SheetCloseButton label="Close" data-testid="video-trash-close" />
     </DialogContent>
   </Dialog>;
