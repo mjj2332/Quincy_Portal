@@ -1,4 +1,4 @@
-import { buildProjectActivityStatements, COLLECTION_RECEIVED_COUNT_SQL, RAW_CLAIM_LEASE_MS, collectionReceivedCountBindings, supersedeCarryStatements } from "@quincy/db";
+import { buildProjectActivityStatements, COLLECTION_RECEIVED_COUNT_SQL, RAW_CLAIM_LEASE_MS, collectionReceivedCountBindings, supersedeCarryStatements, supersedeCarryToSuccessorStatements } from "@quincy/db";
 import { assetIngestIdentities, assets, collections, jobs, projects, rawReconciliationClaims } from "@quincy/db/schema";
 import { enqueueRenditionSafely, isAcceptedPhotoFilename, isDngFilename, isRawMediaFilename, parseXmpRating, projectActivityDeepLink, publishNotificationOutbox, rawMediaContentType, XMP_SCAN_BYTES, xmpRatingToStars, type ProjectActivityIntent } from "@quincy/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
@@ -502,6 +502,9 @@ export async function syncProjectRawFolder(
               "UPDATE assets SET replaced_by_asset_id = COALESCE((SELECT winner.id FROM asset_ingest_identities winner_identity JOIN assets winner ON winner.id = winner_identity.asset_id WHERE winner_identity.collection_id = ? AND winner_identity.identity_key = ? AND winner.collection_id = ? AND winner.superseded_at IS NULL AND winner.id != ? LIMIT 1), replaced_by_asset_id), updated_at = ? WHERE id = ? AND collection_id = ? AND replaced_by_asset_id = ?",
             ).bind(collection.id, identityKey, collection.id, assetId, now.getTime(), staleOccupant.id, collection.id, assetId),
             env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime())),
+            // The candidate that received the carry above is gone; the paid extra follows the
+            // predecessor's repointed successor (#787). Last, after the repoint.
+            ...supersedeCarryToSuccessorStatements(env.DB, staleOccupant.id),
           ]);
           continue;
         }

@@ -311,6 +311,7 @@ describe("Dropbox RAW delete-then-reupload reconciliation", () => {
     // writer's registration having landed in between — exactly the race the retry batch's own
     // `changes() = 1` guard on the identity insert exists to catch.
     const context = await fixture();
+    await markPaid(context.oldAssetId, context.projectId);
     const winnerId = crypto.randomUUID();
     const identityKey = "hash:hash-b";
     const now = Date.now();
@@ -351,6 +352,8 @@ describe("Dropbox RAW delete-then-reupload reconciliation", () => {
     expect(result.results.find((row) => row.id === context.oldAssetId)).toMatchObject({ superseded_at: expect.any(Number), replaced_by_asset_id: winnerId });
     expect(result.results.find((row) => row.id === winnerId)).toMatchObject({ superseded_at: null });
     await expect(receivedCount(context.collectionId)).resolves.toEqual({ received_count: 1 });
+    // #787: the paid extra follows the picture to the real successor, not the deleted candidate.
+    await expect(paidState(winnerId)).resolves.toEqual({ premium: 1, by: "carry-admin", at: 1700000000000, ref: "inv-1" });
     // The decoy's own collection is untouched by any of this.
     await expect(bindings.DB.prepare("SELECT superseded_at FROM assets WHERE id = ?").bind(decoyAssetId).first())
       .resolves.toEqual({ superseded_at: null });
