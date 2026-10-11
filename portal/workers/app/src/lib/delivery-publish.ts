@@ -29,6 +29,7 @@ import { readBoardProject } from "./project-board-order";
  * no Stage: the Stage move is the LAST statement group, after every fence. A caught abort is classified by re-reading (stale set, replayed operation, invalid selection, archived), except a
  * slug collision, which is retried with a fresh suffix.
  *
+ * A first Publish on a Project not yet Delivered REFUSES (`delivered_stage_unavailable`, 409, nothing written) when the move is unavailable, and the batch carries a fence for the Stage going inactive after the read.
  * The Delivered Stage move (first Publish only) is the same bundle a manual move uses (`buildStageWinner` and its audit, activity and outbox, deadline suppression, Shoot date fill). It carries
  * its own compare-and-swap on the Stage and the board revision, so a lost race leaves Publish successful with the Stage as the other writer left it.
  */
@@ -47,6 +48,8 @@ export type PublishOutcome =
   | { kind: "invalid_selection"; assetIds: string[] }
   | { kind: "invalid_cover" }
   | { kind: "archived" }
+  /** A first Publish on a Project not yet Delivered, while the move to Delivered is unavailable (board contract off, pre-0037 schema, or the Delivered Stage inactive). Nothing was written. Mirrors `inactive_destination` in `project-stage.ts`. */
+  | { kind: "delivered_stage_unavailable" }
   | { kind: "not_found" };
 
 /** How many addresses Publish mints before it gives up. A collision is a 1-in-387-million event per base, so reaching this means the generator is broken. */
@@ -73,7 +76,9 @@ async function inspect(db: D1Database, input: PublishRequest): Promise<Inspected
   const verdict = await checkSelection(db, input.projectId, input.assetIds, input.coverAssetId, randomItemHandle);
   if (!verdict.ok) return { terminal: verdict.reason === "invalid_cover" ? { kind: "invalid_cover" } : { kind: "invalid_selection", assetIds: verdict.assetIds } };
   // The Stage the first Publish will move from is read here, before the gap, so a Stage move that lands in the gap wins the compare-and-swap, as it would against a manual move.
-  return { latest, project, board: latest === null ? await readBoardProject(db, input.projectId) : null, rows: verdict.rows };
+  const board = latest === null ? await readBoardProject(db, input.projectId) : null;
+  if (board && board.archivedAt === null && board.stageKey !== "delivered" && !await deliveredMoveAvailable(db)) return { terminal: { kind: "delivered_stage_unavailable" } };
+  return { latest, project, board, rows: verdict.rows };
 }
 
 /** The text of an error and every `cause` below it: D1 wraps the SQLite message, so a constraint name is only reliable here. */
@@ -101,6 +106,10 @@ export async function publishDelivery(env: Pick<Env, "DB">, input: PublishReques
           AND (SELECT count(*) FROM assets a JOIN collections c ON c.id = a.collection_id WHERE a.id IN (SELECT value FROM json_each(?3)) AND c.project_id = ?1 AND ${DELIVERY_ELIGIBLE_SQL}) = ?4)`))
         .bind(input.projectId, now, JSON.stringify(rows.map((row) => row.assetId)), rows.length),
     ];
+    if (first && seen.board && seen.board.archivedAt === null && seen.board.stageKey !== "delivered") {
+      // The Delivered move was promised by the read above; if the Stage is deactivated before the batch commits, abort and let the re-read classify it.
+      statements.push(db.prepare(ABORT_SQL("NOT EXISTS (SELECT 1 FROM pipeline_stages WHERE key = 'delivered' AND active = 1) AND EXISTS (SELECT 1 FROM projects WHERE id = ?1 AND stage_key <> 'delivered')")).bind(input.projectId, now));
+    }
     if (first) {
       const slug = `${deliverySlugBase(seen.project.street, seen.project.suburb)}-${suffix()}`;
       statements.push(db.prepare("INSERT INTO delivery_pages (project_id, slug, enabled, latest_set_number, created_at, updated_at) VALUES (?1, ?2, 1, 1, ?3, ?3)").bind(input.projectId, slug, now));
@@ -130,7 +139,9 @@ export async function publishDelivery(env: Pick<Env, "DB">, input: PublishReques
     });
     const activityStart = statements.length;
     statements.push(...activity.statements);
-    const stage = seen.board ? await composeDeliveredMove(db, input, seen.board, now) : null;
+    const composed = seen.board ? await composeDeliveredMove(db, input, seen.board, now) : null;
+    if (composed === "unavailable") return { kind: "delivered_stage_unavailable" };
+    const stage = composed;
     const stageStart = statements.length;
     if (stage) statements.push(...stage.statements);
     let results: D1Result<unknown>[];
@@ -156,13 +167,18 @@ export async function publishDelivery(env: Pick<Env, "DB">, input: PublishReques
   throw new Error(`Could not mint a Delivery address after ${MAX_ADDRESS_ATTEMPTS} attempts`);
 }
 
-/** The Delivered move for a first Publish, or null when there is nothing to move: the Project is already Delivered, the board contract is off, or the Stage is not active. */
+/** Whether a Stage move to Delivered can be made now: the board schema is past 0037, the board contract is on, and the Delivered Stage is active. */
+async function deliveredMoveAvailable(db: D1Database): Promise<boolean> {
+  const variant = await boardSchemaVariant(db);
+  if (variant === "pre_0037" || !await boardContractEnabled(db, variant)) return false;
+  const destination = await db.prepare("SELECT active FROM pipeline_stages WHERE key = 'delivered'").first<{ active: number | boolean }>();
+  return !!destination && (destination.active === 1 || destination.active === true);
+}
+
+/** The Delivered move for a first Publish: null when there is nothing to move (the Project is already Delivered or archived), "unavailable" when it is needed but cannot be made. */
 async function composeDeliveredMove(db: D1Database, input: PublishRequest, project: BoardSnapshot, now: number) {
   if (project.archivedAt !== null || project.stageKey === "delivered") return null;
-  const variant = await boardSchemaVariant(db);
-  if (variant === "pre_0037" || !await boardContractEnabled(db, variant)) return null;
-  const destination = await db.prepare("SELECT active FROM pipeline_stages WHERE key = 'delivered'").first<{ active: number | boolean }>();
-  if (!destination || !(destination.active === 1 || destination.active === true)) return null;
+  if (!await deliveredMoveAvailable(db)) return "unavailable" as const;
   const auditId = newId(); const principal = input.principal;
   const stage = buildStageWinner({
     db, projectId: input.projectId, sourceStageKey: project.stageKey, targetStageKey: "delivered", oldBoardRevision: project.boardRevision,

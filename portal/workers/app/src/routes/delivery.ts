@@ -63,6 +63,7 @@ deliveryRoutes.post("/projects/:projectId/delivery/publish", terminalRoute("/pro
     case "archived": return archivedResponse(c);
     case "not_found": return c.json({ error: "Project not found" }, 404);
     case "stale_set": return c.json({ error: "The Delivery page changed since you loaded it. Reload and publish again.", code: "stale_set", latestSetNumber: outcome.latestSetNumber }, 409);
+    case "delivered_stage_unavailable": return c.json({ error: "This Project can't be moved to Delivered right now, so it can't be published. Nothing was changed.", code: "delivered_stage_unavailable" }, 409);
     case "invalid_cover": return c.json({ error: "The cover must be one of the selected photos.", code: "invalid_cover" }, 400);
     case "invalid_selection": return c.json({ error: "Some selected items can't be on a Delivery page.", code: "invalid_selection", assetIds: outcome.assetIds }, 400);
     case "replayed": return c.json({ replayed: true, ...deliveryStateSchema.parse(await readDeliveryState(c.env.DB, projectId, { setNumber: outcome.setNumber })) });

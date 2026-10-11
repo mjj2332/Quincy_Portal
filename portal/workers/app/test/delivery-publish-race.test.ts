@@ -146,6 +146,18 @@ describe("a selection or Project that changes between the read and the batch", (
     expect(await setsOf(projectId)).toBe(0); expect(await n("SELECT count(*) AS n FROM audit_log WHERE target_id = ? AND action = 'stage.set'", projectId)).toBe(0);
   });
 
+  it("refuses with delivered_stage_unavailable, writing nothing, when the Delivered Stage is deactivated in the gap", async () => {
+    const projectId = await seedOpenProject({ stageKey: "edited_review" }); const photo = await seedAsset("photo", { projectId });
+    try {
+      const outcome = await send(projectId, [photo.id], {}, { beforeBatch: async () => { await database.DB.prepare("UPDATE pipeline_stages SET active = 0 WHERE key = 'delivered'").run(); } });
+      expect(outcome).toEqual({ kind: "delivered_stage_unavailable" });
+      expect(await setsOf(projectId)).toBe(0); expect((await stageOf(projectId)).stage).toBe("edited_review");
+      expect(await n("SELECT count(*) AS n FROM delivery_pages WHERE project_id = ?", projectId)).toBe(0);
+      expect(await n("SELECT count(*) AS n FROM audit_log WHERE target_id = ? AND action IN ('stage.set', 'delivery.publish')", projectId)).toBe(0);
+      expect(await n("SELECT count(*) AS n FROM project_activity_events WHERE project_id = ?", projectId)).toBe(0);
+    } finally { await database.DB.prepare("UPDATE pipeline_stages SET active = 1 WHERE key = 'delivered'").run(); }
+  });
+
   it("publishes and leaves the Stage where it is when another Stage move wins the compare-and-swap", async () => {
     const projectId = await seedOpenProject({ stageKey: "edited_review" }); const photo = await seedAsset("photo", { projectId });
     const outcome = await send(projectId, [photo.id], {}, { beforeBatch: async () => { await database.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr', board_revision = board_revision + 1 WHERE id = ?").bind(projectId).run(); } });

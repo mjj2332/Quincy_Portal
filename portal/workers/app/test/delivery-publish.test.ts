@@ -227,16 +227,51 @@ describe("the First-Publish Stage move", () => {
     expect((await stageOf(projectId)).stage).toBe("edited_review");
   });
 
-  it("does nothing for a Project already Delivered, and when the board contract is off", async () => {
+  const nothingWritten = async (projectId: string, before: Awaited<ReturnType<typeof counts>>, stage: string) => {
+    expect(await counts()).toEqual(before); expect(await pageRow(projectId)).toBeNull();
+    expect((await stageOf(projectId)).stage).toBe(stage);
+    expect((await database.DB.prepare("SELECT count(*) AS n FROM project_activity_events WHERE project_id = ?").bind(projectId).first<{ n: number }>())!.n).toBe(0);
+  };
+  const withDeliveredInactive = async (run: () => Promise<void>) => {
+    await database.DB.prepare("UPDATE pipeline_stages SET active = 0 WHERE key = 'delivered'").run();
+    try { await run(); } finally { await database.DB.prepare("UPDATE pipeline_stages SET active = 1 WHERE key = 'delivered'").run(); }
+  };
+
+  it("publishes a Project that is already Delivered without a move", async () => {
     const delivered = await seedOpenProject({ stageKey: "delivered" }); const a = await seedAsset("photo", { projectId: delivered });
     const response = await publish(body([a.id]), "admin", delivered); expect(response.status).toBe(201);
     expect(await audits(delivered, "stage.set")).toHaveLength(0);
+  });
+
+  it("refuses a first Publish with 409 delivered_stage_unavailable, writing nothing, when the board contract is off", async () => {
     await database.DB.prepare("UPDATE feature_flags SET enabled = 0 WHERE key = 'tb5a_board_contract_enabled'").run();
     try {
       const off = await seedOpenProject({ stageKey: "edited_review" }); const b = await seedAsset("photo", { projectId: off });
-      const result = await publish(body([b.id]), "admin", off); expect(result.status).toBe(201);
-      expect((await stageOf(off)).stage).toBe("edited_review"); expect(await audits(off, "stage.set")).toHaveLength(0);
+      const before = await counts();
+      const result = await publish(body([b.id]), "admin", off);
+      expect(result.status).toBe(409); expect(await result.json()).toMatchObject({ code: "delivered_stage_unavailable" });
+      await nothingWritten(off, before, "edited_review");
     } finally { await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run(); }
+  });
+
+  it("refuses a first Publish with 409 delivered_stage_unavailable, writing nothing, when the Delivered Stage is inactive", async () => {
+    await withDeliveredInactive(async () => {
+      const projectId = await seedOpenProject({ stageKey: "edited_review" }); const a = await seedAsset("photo", { projectId });
+      const before = await counts();
+      const result = await publish(body([a.id]), "admin", projectId);
+      expect(result.status).toBe(409); expect(await result.json()).toMatchObject({ code: "delivered_stage_unavailable" });
+      await nothingWritten(projectId, before, "edited_review");
+    });
+  });
+
+  it("still publishes an already-Delivered Project, and a re-Publish, while the Delivered Stage is inactive", async () => {
+    await withDeliveredInactive(async () => {
+      const delivered = await seedOpenProject({ stageKey: "delivered" }); const a = await seedAsset("photo", { projectId: delivered });
+      expect((await publish(body([a.id]), "admin", delivered)).status).toBe(201);
+      const other = await seedOpenProject({ stageKey: "edited_review" }); const b = await seedAsset("photo", { projectId: other });
+      await seedPage({ projectId: other, assetIds: [b.id] });
+      expect((await publish(body([b.id], { expectedLatestSet: 1 }), "admin", other)).status).toBe(201);
+    });
   });
 
   it("leaves the Stage alone, and writes no Stage audit, when a refused Publish would otherwise have moved it", async () => {
