@@ -449,6 +449,43 @@ describe("video-trash resource (#776 E)", () => {
   });
 });
 
+describe("a received Trash or decisions broadcast is not swallowed by a read already in flight (#776 E)", () => {
+  class FakeChannel {
+    static channels: FakeChannel[] = [];
+    readonly listeners = new Set<(event: MessageEvent<unknown>) => void>();
+    constructor(readonly name: string) { FakeChannel.channels.push(this); }
+    addEventListener(_type: string, listener: (event: MessageEvent<unknown>) => void) { this.listeners.add(listener); }
+    postMessage(data: unknown) { for (const channel of FakeChannel.channels.filter((item) => item.name === this.name)) for (const listener of channel.listeners) listener({ data } as MessageEvent<unknown>); }
+    close() { FakeChannel.channels = FakeChannel.channels.filter((item) => item !== this); this.listeners.clear(); }
+  }
+  const video = "88888888-8888-4888-8888-888888888888";
+  it.each([
+    ["video-trash", { kind: "video-trash" } as const, projectDataKeys.videoTrash("p")],
+    ["video-decisions", { kind: "video-decisions", videoId: video } as const, projectDataKeys.videoDecisions("p", video)],
+  ])("%s: the answer to the first read, issued before the broadcast, does not become the cache", async (_name, resource, key) => {
+    vi.stubGlobal("BroadcastChannel", FakeChannel);
+    const senderClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const receiverClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const sender = new ProjectQueryRuntime(senderClient, "sender"); const receiver = new ProjectQueryRuntime(receiverClient, "receiver");
+    sender.start(); receiver.start();
+    let resolveOld!: (value: string) => void;
+    const reads = vi.fn<() => Promise<string>>();
+    reads.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+    reads.mockResolvedValueOnce("fresh");
+    const observer = new QueryObserver(receiverClient, { queryKey: key, queryFn: reads, staleTime: 15_000 });
+    const unsubscribe = observer.subscribe(() => undefined);
+    await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(1));
+    sender.publish(createProjectDataInvalidationMessage("p", [resource]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveOld("stale");
+    await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(observer.getCurrentResult().fetchStatus).toBe("idle"));
+    expect(receiverClient.getQueryData(key)).toBe("fresh");
+    unsubscribe(); sender.dispose(); receiver.dispose(); senderClient.clear(); receiverClient.clear();
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("video-notes resource (#741 5b)", () => {
   const asset = "77777777-7777-4777-8777-777777777777";
   it("resolves to the exact per-Version key and parses only with an asset id and nothing else", () => {

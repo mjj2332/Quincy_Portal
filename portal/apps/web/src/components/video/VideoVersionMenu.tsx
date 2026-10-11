@@ -58,12 +58,19 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
   const problemRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => { if (problem) problemRef.current?.focus(); }, [problem]);
 
+  // The upload generation: each impact read is issued under one, and an answer that comes back under another predates the change and is read again.
+  const uploadKey = video.uploading?.reservationId ?? "";
+  const uploadKeyNow = useRef(uploadKey);
+  uploadKeyNow.current = uploadKey;
   const load = useCallback(async (next: Target) => {
     const mine = ++run.current;
+    const issuedUnder = uploadKeyNow.current;
     setImpact(null); setLoadFailure(null); setProblem(null);
     try {
       const read = await readRemovalImpact(projectId, next.assetId);
-      if (alive.current && run.current === mine) setImpact(read);
+      if (!alive.current || run.current !== mine) return;
+      if (uploadKeyNow.current !== issuedUnder) { void load(next); return; }
+      setImpact(read);
     } catch (error) {
       terminate(error);
       // A refusal here means what it means for the removal itself: the Version is gone, or the Project or gate is.
@@ -73,7 +80,6 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
   }, [projectId, terminate, queryClient]);
 
   // An upload that blocks removing the whole film ends (finished or cancelled) in the Video the list already observes: read the impact again, so Remove is offered without reopening.
-  const uploadKey = video.uploading?.reservationId ?? "";
   const seenUploadKey = useRef(uploadKey);
   useEffect(() => {
     if (seenUploadKey.current === uploadKey) return;

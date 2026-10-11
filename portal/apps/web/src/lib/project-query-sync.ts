@@ -315,6 +315,11 @@ export class ProjectQueryRuntime {
     }
     for (const resource of message.resources) {
       const key = projectResourceKey(message.projectId, resource);
+      // A first read already in flight predates this change and an invalidation would dedupe onto it: cancel it (with no data yet the query goes back to idle) so the refetch is new.
+      if ((resource.kind === "video-trash" || resource.kind === "video-decisions") && !this.isOwned(key) && !isProjectQueryLedgerPending(this.queryClient, key)) {
+        void this.queryClient.cancelQueries({ queryKey: key, exact: true }, { revert: true }).then(() => this.requestInvalidation(key));
+        continue;
+      }
       this.requestInvalidation(key);
     }
   }

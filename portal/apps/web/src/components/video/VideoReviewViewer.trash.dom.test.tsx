@@ -395,6 +395,34 @@ describe("Remove a Version from the staff viewer (#776 E)", () => {
     expect(confirmButton().hasAttribute("disabled")).toBe(false);
   });
 
+  it("an impact read issued before the upload ended is read again when it answers late, so Remove is not left disabled", async () => {
+    versions = [{ assetId: ids.asset2, version: 2 }];
+    impact = impactOf({ lastVersion: true, uploading: true });
+    uploadingNow = { reservationId: "99999999-9999-4999-8999-999999999999", version: 3, uploader: { id: auth.userId, name: "Ed", roleLabel: "Editor", isExternal: false, active: true }, expiresAt: "2026-10-09T02:00:00.000Z" };
+    await mount();
+    await openViewer();
+    const routed = api.apiGet.getMockImplementation()!;
+    let answerLate!: () => void;
+    let impactReads = 0;
+    api.apiGet.mockImplementation(async (path) => {
+      if (!path.endsWith("/removal-impact")) return routed(path);
+      impactReads += 1;
+      if (impactReads === 1) { const captured = impactOf({ lastVersion: true, uploading: true }); await new Promise<void>((resolve) => { answerLate = resolve; }); return captured; }
+      return impact;
+    });
+    await startRemove();
+    // The upload is cancelled and the Videos list updates while the first impact read is still out.
+    vi.stubGlobal("fetch", vi.fn(async () => { uploadingNow = null; impact = impactOf({ lastVersion: true, uploading: false }); return new Response(null, { status: 204 }); }));
+    const cancel = [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === "Cancel upload")!;
+    await act(async () => { cancel.click(); });
+    await flush(6);
+    await act(async () => { answerLate(); });
+    await flush(10);
+    expect(impactReads).toBeGreaterThanOrEqual(2);
+    expect(confirm()!.textContent).not.toMatch(/being uploaded/i);
+    expect(confirmButton().hasAttribute("disabled")).toBe(false);
+  });
+
   it("a failure to read the impact says so and offers a retry, and sends nothing", async () => {
     await mount();
     await openViewer();
