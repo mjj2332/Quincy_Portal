@@ -161,20 +161,29 @@ function timeOf(frames: number, fps: Rational): string {
   return frames === 0 ? "0s" : `${frames * fps.den}/${fps.num}s`;
 }
 
-/** FCP's format name, e.g. FFVideoFormat1080p2997 or FFVideoFormat3840x2160p25. */
-function formatName(ctx: ExportContext): string {
+/** Final Cut's own name for a frame size, where it has one: `720` and `1080` are named by height, UHD and DCI 4K by `WxH`. */
+const FCP_FORMAT_SIZE: Record<string, string> = { "1280x720": "720", "1920x1080": "1080", "3840x2160": "3840x2160", "4096x2160": "4096x2160" };
+
+/**
+ * FCP's format name, e.g. FFVideoFormat720p25, FFVideoFormat1080p2997 or FFVideoFormat3840x2160p25. Null for a size Final Cut
+ * has no named format for (a vertical 1080x1920, say): the `name` attribute is optional, and a made-up name makes Final Cut
+ * warn "Encountered an unexpected value" on the sequence's `format` (#741 NLE import, `FFVideoFormat1280x720p25`).
+ */
+function formatName(ctx: ExportContext): string | null {
   const { fps, width, height } = ctx;
+  const size = FCP_FORMAT_SIZE[`${width}x${height}`];
+  if (size === undefined) return null;
   const nominal = Math.round(fps.num / fps.den);
-  const ntsc = isNtscRate(fps);
-  const rate = ntsc ? String(Math.round((nominal * 100000) / 1001)) : String(nominal);
-  const size = width === 1920 && height === 1080 ? "1080" : `${width}x${height}`;
+  const rate = isNtscRate(fps) ? String(Math.round((nominal * 100000) / 1001)) : String(nominal);
   return `FFVideoFormat${size}p${rate}`;
 }
 
+const nameAttr = (name: string | null): string => (name === null ? "" : ` name="${name}"`);
+
 /**
  * FCPXML 1.9: one event/project/sequence with a single gap spanning the Version, markers on the gap.
- * UNVERIFIED until NLE import (Seam 3): the gap's offset = start = tcStart and the markers' start =
- * tcStart + frame. If Final Cut or Resolve reads those differently, this is the place to change.
+ * The gap's offset = start = tcStart and the markers' start = tcStart + frame. Final Cut import checked by the owner
+ * (2026-10-12, #741 Seam 3): a 25 fps file put its markers on 01:00:01:00 and 01:00:04:00 as written.
  */
 export function toFcpxml19(markers: Marker[], ctx: ExportContext): string {
   const { fps } = ctx;
@@ -195,7 +204,7 @@ export function toFcpxml19(markers: Marker[], ctx: ExportContext): string {
     "<!DOCTYPE fcpxml>",
     '<fcpxml version="1.9">',
     "  <resources>",
-    `    <format id="r1" name="${formatName(ctx)}" frameDuration="${fps.den}/${fps.num}s" width="${ctx.width}" height="${ctx.height}"/>`,
+    `    <format id="r1"${nameAttr(formatName(ctx))} frameDuration="${fps.den}/${fps.num}s" width="${ctx.width}" height="${ctx.height}"/>`,
     "  </resources>",
     "  <library>",
     '    <event name="Quincy Review Notes">',
