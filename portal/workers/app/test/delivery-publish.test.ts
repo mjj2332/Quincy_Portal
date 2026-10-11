@@ -1,6 +1,9 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { RENDITION_SPEC_VERSION } from "@quincy/shared";
-import { cookie, database, ids, pngBytes, request, seedFixture, type Who } from "./embedded-media-support";
+import app from "../src/index";
+import type { Env } from "../src/env";
+import { baseEnv, cookie, database, ids, pngBytes, request, seedFixture, type Who } from "./embedded-media-support";
+import { publishTestHooks } from "../src/routes/delivery";
 import { clearDeliveryFlags, openDelivery, seedAsset, seedOpenProject, seedPage, seedRawPhoto, seedUnlock, setDeliveryFlags, wipeDelivery } from "./delivery-support";
 import { seedVideoVersion } from "./video-review-support";
 
@@ -28,6 +31,14 @@ const wipe = async () => {
 };
 beforeEach(async () => { await wipe(); await clearDeliveryFlags(); await openDelivery(ids.project, ids.archivedProject); });
 afterEach(async () => { await wipe(); await clearDeliveryFlags(); });
+
+const seedRenditions = async (assetId: string) => {
+  for (const variant of ["web", "thumb"] as const) {
+    const key = `renditions/${assetId}/${variant}`; await database.MEDIA.put(key, pngBytes(40), { httpMetadata: { contentType: "image/webp" } });
+    await database.DB.prepare("INSERT INTO asset_renditions (id, asset_id, variant, r2_key, bytes, content_type, width, height, spec_version, created_at) VALUES (?, ?, ?, ?, 40, 'image/webp', 1, 1, ?, ?)").bind(crypto.randomUUID(), assetId, variant, key, RENDITION_SPEC_VERSION, Date.now()).run();
+  }
+};
+const staffGet = async (url: string, who: Who = "admin") => (await import("cloudflare:test")).SELF.fetch(`https://portal.test${url}`, { headers: { cookie: await cookie(who) } });
 
 const counts = async () => {
   const one = async (sql: string) => (await database.DB.prepare(sql).first<{ n: number }>())!.n;
@@ -190,20 +201,36 @@ describe("Publish", () => {
 
   it("answers a replay of an older Publish with the CURRENT set, usable URLs, and the set its operation landed as", async () => {
     const photos = [await seedAsset("photo"), await seedAsset("photo"), await seedAsset("photo")];
-    for (const photo of photos) for (const variant of ["web", "thumb"] as const) {
-      const key = `renditions/${photo.id}/${variant}`; await database.MEDIA.put(key, pngBytes(40), { httpMetadata: { contentType: "image/webp" } });
-      await database.DB.prepare("INSERT INTO asset_renditions (id, asset_id, variant, r2_key, bytes, content_type, width, height, spec_version, created_at) VALUES (?, ?, ?, ?, 40, 'image/webp', 1, 1, ?, ?)").bind(crypto.randomUUID(), photo.id, variant, key, RENDITION_SPEC_VERSION, Date.now()).run();
-    }
+    for (const photo of photos) await seedRenditions(photo.id);
     const operationId = op();
     expect((await publish({ assetIds: [photos[0]!.id], expectedLatestSet: null, operationId })).status).toBe(201);
     expect((await publish(body([photos[1]!.id, photos[2]!.id], { expectedLatestSet: 1 }))).status).toBe(201);
     const retry = await publish({ assetIds: [photos[0]!.id], expectedLatestSet: null, operationId }); expect(retry.status).toBe(200);
     const json = await retry.json() as Json;
     expect(json).toMatchObject({ replayed: true, operationSetNumber: 1, page: { latestSetNumber: 2 }, set: { setNumber: 2 }, dto: { setNumber: 2 } });
-    const { SELF } = await import("cloudflare:test"); const headers = { cookie: await cookie("admin") };
     const urls = json.dto.items.flatMap((item: Json) => [item.url, item.thumbUrl].filter(Boolean)) as string[];
     expect(urls).toHaveLength(4);
-    for (const url of urls) expect((await SELF.fetch(`https://portal.test${url}`, { headers })).status, url).toBe(200);
+    for (const url of urls) expect((await staffGet(url)).status, url).toBe(200);
+  });
+
+  it("answers a Publish that another Publish overtakes before its response is read with the CURRENT state, and its own set as the receipt", async () => {
+    const photos = [await seedAsset("photo"), await seedAsset("photo")];
+    for (const photo of photos) await seedRenditions(photo.id);
+    let release!: () => void; const held = new Promise<void>((resolve) => { release = resolve; }); let reached!: () => void; const arrived = new Promise<void>((resolve) => { reached = resolve; });
+    publishTestHooks.afterCommit = async () => { publishTestHooks.afterCommit = undefined; reached(); await held; };
+    try {
+      // In-process, so the hook (module state) is the one the route reads; the HTTP helper runs the worker in its own module graph.
+      const slow = (async () => app.fetch(new Request(`https://portal.test${d("/publish")}`, { method: "POST", headers: { cookie: await cookie("admin"), origin: baseEnv.APP_ORIGIN, "content-type": "application/json" }, body: JSON.stringify(body([photos[0]!.id])) }), baseEnv as Env, { waitUntil: () => undefined, passThroughOnException: () => undefined, props: undefined } as unknown as ExecutionContext))();
+      await arrived;
+      expect((await publish(body([photos[1]!.id], { expectedLatestSet: 1 }))).status).toBe(201);
+      release();
+      const response = await slow; expect(response.status).toBe(201);
+      const json = await response.json() as Json;
+      expect(json).toMatchObject({ replayed: false, operationSetNumber: 1, page: { latestSetNumber: 2 }, set: { setNumber: 2 }, dto: { setNumber: 2 } });
+      const urls = json.dto.items.flatMap((item: Json) => [item.url, item.thumbUrl].filter(Boolean)) as string[];
+      expect(urls).toHaveLength(2);
+      for (const url of urls) expect((await staffGet(url)).status, url).toBe(200);
+    } finally { publishTestHooks.afterCommit = undefined; }
   });
 
   it("answers a retried operation id with the original set, never a second one, even after a later Publish or with a stale expectation", async () => {

@@ -52,6 +52,9 @@ deliveryRoutes.post("/projects/:projectId/delivery/preview", terminalRoute("/pro
   return result.reason === "invalid_cover" ? c.json({ error: "The cover must be one of the selected photos.", code: "invalid_cover" }, 400) : c.json({ error: "Some selected items can't be on a Delivery page.", code: "invalid_selection", assetIds: result.assetIds }, 400);
 }));
 
+/** Test seam, unset in production: runs after Publish's batch has committed and before the response reads the page, so a test can let a second Publish land in between. */
+export const publishTestHooks: { afterCommit?: () => Promise<void> } = {};
+
 deliveryRoutes.post("/projects/:projectId/delivery/publish", terminalRoute("/projects/:projectId/delivery/publish", async (c) => {
   const projectId = c.req.param("projectId");
   if (!uuid.safeParse(projectId).success) return c.json({ error: "Invalid id" }, 400);
@@ -59,6 +62,7 @@ deliveryRoutes.post("/projects/:projectId/delivery/publish", terminalRoute("/pro
   const input = await jsonInput(c, deliveryPublishInputSchema); if (input instanceof Response) return input;
   const user = c.get("user");
   const outcome = await publishDelivery(c.env, { projectId, principal: { id: user.id, impersonatedBy: user.impersonatedBy, via: user.via }, assetIds: input.assetIds, coverAssetId: input.coverAssetId ?? null, expectedLatestSet: input.expectedLatestSet, operationId: input.operationId });
+  await publishTestHooks.afterCommit?.();
   switch (outcome.kind) {
     case "archived": return archivedResponse(c);
     case "not_found": return c.json({ error: "Project not found" }, 404);
@@ -73,7 +77,7 @@ deliveryRoutes.post("/projects/:projectId/delivery/publish", terminalRoute("/pro
       if (outcome.publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, outcome.publicationIds));
       if (outcome.shootDateFilled) c.executionCtx.waitUntil(queueProjectShootDateFollowUps(c.env, projectId));
       c.executionCtx.waitUntil(enqueueDeliveryDerivatives(c.env, { projectId, setNumber: outcome.setNumber, assetIds: outcome.assetIds }).catch((error) => console.error("Delivery derivative enqueue failed", { projectId, error })));
-      return c.json(deliveryPublishResponseSchema.parse({ replayed: false, operationSetNumber: outcome.setNumber, ...await readDeliveryState(c.env.DB, projectId, { setNumber: outcome.setNumber }) }), 201);
+      return c.json(deliveryPublishResponseSchema.parse({ replayed: false, operationSetNumber: outcome.setNumber, ...await readDeliveryState(c.env.DB, projectId) }), 201);
     }
   }
 }));

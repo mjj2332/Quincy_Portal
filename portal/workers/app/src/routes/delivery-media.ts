@@ -22,6 +22,13 @@ const HANDLE = /^[a-z0-9]{16}$/;
  */
 export const deliveryMediaRoutes = new Hono<AppEnv>();
 type Ctx = Context<AppEnv>;
+/** These `/api` routes sit outside `/media`'s cache default, so a refusal would carry no Cache-Control. Anything not already marked is `private, no-store`. Per route, not `.use(...)`, which leaks across sibling mounts. */
+async function withNoStoreDefault(response: Response): Promise<Response> {
+  if (response.headers.has("cache-control")) return response;
+  const marked = new Response(response.body, response);
+  marked.headers.set("cache-control", "private, no-store");
+  return marked;
+}
 const notFound = (c: Ctx) => c.json({ error: "Not found" }, 404);
 
 async function serveAsset(c: Ctx, projectId: string, assetId: string, part: "media" | "thumb"): Promise<Response> {
@@ -40,7 +47,7 @@ async function serveAsset(c: Ctx, projectId: string, assetId: string, part: "med
 
 function itemRoute(part: "media" | "thumb") {
   const path = `/projects/:projectId/delivery/items/:handle/${part}`;
-  deliveryMediaRoutes.get(path, terminalRoute(path, async (c) => {
+  deliveryMediaRoutes.get(path, terminalRoute(path, async (c) => withNoStoreDefault(await (async () => {
     const projectId = (c.req.param("projectId") ?? "");
     if (!uuid.safeParse(projectId).success) return c.json({ error: "Invalid id" }, 400);
     const refused = await admitDelivery(c, projectId, "viewClientPreview", false); if (refused) return refused;
@@ -49,16 +56,16 @@ function itemRoute(part: "media" | "thumb") {
     const row = await c.env.DB.prepare(`SELECT i.asset_id AS assetId FROM delivery_set_items i JOIN delivery_sets s ON s.id = i.set_id
         JOIN delivery_pages p ON p.project_id = s.project_id AND p.latest_set_number = s.set_number WHERE s.project_id = ?1 AND i.handle = ?2`).bind(projectId, handle).first<{ assetId: string }>();
     return row ? serveAsset(c, projectId, row.assetId, part) : notFound(c);
-  }));
+  })())));
 }
 function previewRoute(part: "media" | "thumb") {
   const path = `/projects/:projectId/delivery/preview-media/:assetId/${part}`;
-  deliveryMediaRoutes.get(path, terminalRoute(path, async (c) => {
+  deliveryMediaRoutes.get(path, terminalRoute(path, async (c) => withNoStoreDefault(await (async () => {
     const projectId = (c.req.param("projectId") ?? ""); const assetId = (c.req.param("assetId") ?? "");
     if (!uuid.safeParse(projectId).success || !uuid.safeParse(assetId).success) return c.json({ error: "Invalid id" }, 400);
     const refused = await admitDelivery(c, projectId, "viewClientPreview", false); if (refused) return refused;
     if (!(await readEligibleAssets(c.env.DB, projectId, [assetId])).has(assetId)) return notFound(c);
     return serveAsset(c, projectId, assetId, part);
-  }));
+  })())));
 }
 itemRoute("media"); itemRoute("thumb"); previewRoute("media"); previewRoute("thumb");

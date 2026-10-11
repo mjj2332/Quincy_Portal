@@ -82,6 +82,19 @@ describe("set item media", () => {
     expect((await item(handle, "media", "member")).status).toBe(200);
   });
 
+  it("marks every refusal private, no-store, and leaves a successful response's own header alone", async () => {
+    const photo = await photoWithRenditions(); await seedPage({ assetIds: [photo.id] }); const handle = await handleOf(photo.id);
+    const ok = await item(handle, "media"); expect(ok.status).toBe(200);
+    const okHeader = ok.headers.get("cache-control");
+    const missing = await item("0123456789abcdef", "media"); expect(missing.status).toBe(404); expect(missing.headers.get("cache-control")).toBe("private, no-store");
+    const forbidden = await item(handle, "media", "photographer"); expect(forbidden.status).toBe(403); expect(forbidden.headers.get("cache-control")).toBe("private, no-store");
+    const badId = await item(handle, "media", "admin", "not-a-uuid"); expect(badId.status).toBe(400); expect(badId.headers.get("cache-control")).toBe("private, no-store");
+    const noPoster = await item(handle, "thumb", "admin"); expect(noPoster.status).toBe(200);
+    const preview = await previewMedia(crypto.randomUUID(), "media"); expect(preview.status).toBe(404); expect(preview.headers.get("cache-control")).toBe("private, no-store");
+    expect(okHeader).not.toBeNull();
+    expect((await item(handle, "media")).headers.get("cache-control")).toBe(okHeader);
+  });
+
   it("serves from an archived Project", async () => {
     const photo = await photoWithRenditions(); await seedPage({ projectId: ids.archivedProject, assetIds: [photo.id] });
     expect((await item(await handleOf(photo.id), "media", "admin", ids.archivedProject)).status).toBe(200);
