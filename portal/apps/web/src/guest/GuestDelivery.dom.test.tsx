@@ -795,11 +795,27 @@ describe("Download all", () => {
       expect(byId("guest-download-all-start")).toBeNull(); expect(allById("guest-download-item")).toHaveLength(2);
     });
 
+    it("keeps one status region mounted from preparing to ready, above the list, and its text becomes the ready hint (a11y)", async () => {
+      await openDialog();
+      const region = preparing()!; expect(region.getAttribute("role")).toBe("status"); expect(region.textContent).toContain("Preparing this download.");
+      expect(region.compareDocumentPosition(byId("guest-download-item")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      manifest = READY; await settle(30_000);
+      expect(preparing()).toBe(region); expect(region.isConnected).toBe(true); expect(region.getAttribute("role")).toBe("status");
+      expect(region.textContent).toContain("The zip starts in your browser. If nothing downloads, wait a minute and try again.");
+      expect(region.textContent).not.toContain("Preparing this download.");
+      expect(region.querySelector('svg')).toBeNull();
+    });
+
+    it("aligns the spinner with the first line of a wrapped notice", async () => {
+      await openDialog();
+      const spinner = preparing()!.querySelector('svg')!; expect(spinner.getAttribute("class")).toMatch(/self-start/);
+    });
+
     it("polls the manifest every 30 s; when it reports ready the link appears, and nothing downloads by itself", async () => {
       await openDialog(); const before = gets(`${BASE}/downloads`);
       await settle(30_000); expect(gets(`${BASE}/downloads`)).toBe(before + 1); expect(byId("guest-download-all-start")).toBeNull();
       manifest = READY; await settle(30_000);
-      expect(preparing()).toBeNull();
+      expect(preparing()?.textContent).not.toContain("Preparing this download.");
       const start = byId("guest-download-all-start") as HTMLAnchorElement; expect(start.getAttribute("href")).toBe(`${BASE}/downloads/all.zip`);
       expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/all.zip"))).toBe(false);
       const polls = gets(`${BASE}/downloads`); await settle(120_000); expect(gets(`${BASE}/downloads`)).toBe(polls);
@@ -816,6 +832,7 @@ describe("Download all", () => {
     it("gives up after five minutes and offers Check again, which asks the server again", async () => {
       await openDialog(); for (let i = 0; i < 10; i += 1) await settle(30_000); await settle(1_000);
       expect(byId("guest-download-all-check-again")).not.toBeNull(); expect(byId("guest-download-all-start")).toBeNull();
+      expect(preparing()?.textContent).toContain("Still preparing. Check again in a minute."); expect(preparing()?.textContent).not.toContain("This may take a few minutes.");
       const polls = gets(`${BASE}/downloads`); await settle(120_000); expect(gets(`${BASE}/downloads`)).toBe(polls);
       await act(async () => { byId("guest-download-all-check-again")!.click(); }); await settle(10);
       expect(prepares()).toBe(2); expect(preparing()).not.toBeNull();
@@ -864,7 +881,7 @@ describe("Download all", () => {
 
     it("a ready archive is the plain link and writes no prepare request", async () => {
       manifest = READY; await openDialog();
-      expect(byId("guest-download-all-start")).not.toBeNull(); expect(prepares()).toBe(0); expect(preparing()).toBeNull();
+      expect(byId("guest-download-all-start")).not.toBeNull(); expect(prepares()).toBe(0); expect(preparing()?.textContent ?? "").not.toContain("Preparing this download.");
     });
   });
 

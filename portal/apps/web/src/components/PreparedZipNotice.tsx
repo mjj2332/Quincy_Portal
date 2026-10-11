@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { Notice } from "@/components/quincy/Notice";
 import { Button } from "@/components/reui/button";
 import { Spinner } from "@/components/reui/spinner";
-import { usePreparedDownload, type PrepareOutcome } from "../lib/use-prepared-download";
+import { NOTICE_SPINNER, PREPARE_TIMEOUT_COPY, usePreparedDownload, type PrepareOutcome } from "../lib/use-prepared-download";
 
 /**
  * The staff "this zip is being prepared" notice (#802). It opens when the server said `download_preparing` (or a prepare said `preparing`), polls every 30 s for five minutes while it is mounted
@@ -28,8 +28,8 @@ export function PreparedZipNotice({ ask, onDownload, onClose, onError, label = "
   const status = prepared.status;
   return (
     <Notice tone={status === "unavailable" || status === "failed" || status === "too_large" ? "critical" : "caution"} role="status" data-testid="prepared-zip-notice" className="flex flex-wrap items-center gap-[var(--space-2)]">
-      {(status === "idle" || status === "checking" || status === "preparing") && <><Spinner aria-hidden="true" role="presentation" /><span>{PREPARING_COPY}</span></>}
-      {status === "timeout" && <><span>{PREPARING_COPY}</span><Button type="button" variant="outline" data-testid="prepared-zip-check-again" onClick={() => void start()}>Check again</Button></>}
+      {(status === "idle" || status === "checking" || status === "preparing") && <><Spinner aria-hidden="true" role="presentation" className={NOTICE_SPINNER} /><span>{PREPARING_COPY}</span></>}
+      {status === "timeout" && <><span>{PREPARE_TIMEOUT_COPY}</span><Button type="button" variant="outline" data-testid="prepared-zip-check-again" onClick={() => void start()}>Check again</Button></>}
       {status === "ready" && <Button type="button" data-testid="prepared-zip-download" onClick={onDownload}>{label}</Button>}
       {(status === "unavailable" || status === "failed") && <><span>{PREPARE_FAILED_COPY}</span><Button type="button" variant="outline" data-testid="prepared-zip-check-again" onClick={() => void start()}>Check again</Button></>}
       {status === "too_large" && <span>{PREPARE_TOO_BIG_COPY}</span>}

@@ -4,7 +4,8 @@ One line per UI element added or changed. All reuse installed items; nothing is 
 
 | Element | Item | Where |
 |---|---|---|
-| Preparing / failed / over-size message (staff and guest) | `components/quincy/Notice` (`caution` while preparing, `critical` on failure) | `components/PreparedZipNotice.tsx`, `guest/GuestDownloadAll.tsx` |
+| Preparing / ready / timeout message (staff and guest) | `components/quincy/Notice` (`caution` while preparing, `critical` on staff failure; the guest dialog keeps one status Notice mounted from preparing to ready) | `components/PreparedZipNotice.tsx`, `guest/GuestDownloadAll.tsx` |
+| Guest failure / too-large messages | plain `<p role="alert">` with the `PROBLEM` class (not a critical Notice) | `guest/GuestDownloadAll.tsx` |
 | Spinner beside the preparing copy | `components/reui/spinner` | same two files |
 | "Download zip" (shown once ready), "Check again", "Close" | `components/reui/button` (`default`, `outline`, `ghost`) | `components/PreparedZipNotice.tsx`; the guest dialog's own "Check again" in `guest/GuestDownloadAll.tsx` |
 | Guest Download all container | existing `components/reui/dialog` already used by `GuestDownloadAll` (unchanged) | `guest/GuestDownloadAll.tsx` |

@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../components/reui/item";
 import { Spinner } from "../components/reui/spinner";
 import { Notice } from "../components/quincy/Notice";
-import { usePreparedDownload, type PrepareOutcome } from "../lib/use-prepared-download";
+import { NOTICE_SPINNER, PREPARE_TIMEOUT_COPY, usePreparedDownload, type PrepareOutcome } from "../lib/use-prepared-download";
 import type { GuestApi } from "./guest-api";
 import { formatBytes } from "./guest-format";
 import type { GuestVerify } from "./use-guest-verify";
@@ -116,6 +116,7 @@ export function GuestDownloadAll({ api, verify, session, onSession, onUnavailabl
 }
 
 const PREPARING_COPY = "Preparing this download. This may take a few minutes.";
+const READY_HINT_COPY = "The zip starts in your browser. If nothing downloads, wait a minute and try again.";
 const UNAVAILABLE_COPY = "Couldn't prepare this zip. Try again or download the files one at a time.";
 const ARCHIVE_TOO_BIG_COPY = "This is too big to download as one zip. Download the films one at a time instead.";
 
@@ -131,10 +132,13 @@ function DownloadAllBody({ loaded, onRetry, archive, onCheckAgain }: { loaded: L
   return <div className="flex flex-col gap-[var(--space-4)]">
     {included.length === 0 && <p role="status" data-testid="guest-download-all-problem" className={PROBLEM}>Nothing is ready to download yet.</p>}
     {tooLarge && <p role="alert" data-testid="guest-download-all-problem" className={PROBLEM}>{`This is more than one zip can hold (${GUEST_ZIP_MAX_ENTRIES} films or ${formatBytes(GUEST_ZIP_MAX_BYTES)}). Download the films one at a time instead.`}</p>}
-    {included.length > 0 && !tooLarge && (archive === "preparing" || archive === "checking") && <Notice tone="caution" role="status" data-testid="guest-download-all-preparing" className="flex items-center gap-[var(--space-2)]"><Spinner aria-hidden="true" role="presentation" />{PREPARING_COPY}</Notice>}
-    {included.length > 0 && !tooLarge && archive === "timeout" && <div className="flex flex-col items-start gap-[var(--space-2)]">
-      <Notice tone="caution" role="status" data-testid="guest-download-all-preparing" className="w-full">{PREPARING_COPY}</Notice>
-      <Button type="button" variant="outline" data-testid="guest-download-all-check-again" className={TOUCH} onClick={onCheckAgain}>Check again</Button>
+    {included.length > 0 && !tooLarge && (archive === "preparing" || archive === "checking" || archive === "timeout" || archive === "ready") && <div className="flex flex-col items-start gap-[var(--space-2)]">
+      {/* One status region for the whole wait: it stays mounted from preparing to ready, so a screen reader hears the text change. */}
+      <Notice tone={archive === "ready" ? "positive" : "caution"} role="status" data-testid="guest-download-all-preparing" className="flex w-full items-start gap-[var(--space-2)]">
+        {(archive === "preparing" || archive === "checking") && <Spinner aria-hidden="true" role="presentation" className={NOTICE_SPINNER} />}
+        {archive === "ready" ? READY_HINT_COPY : archive === "timeout" ? PREPARE_TIMEOUT_COPY : PREPARING_COPY}
+      </Notice>
+      {archive === "timeout" && <Button type="button" variant="outline" data-testid="guest-download-all-check-again" className={TOUCH} onClick={onCheckAgain}>Check again</Button>}
     </div>}
     {included.length > 0 && !tooLarge && (archive === "unavailable" || archive === "failed") && <div className="flex flex-col items-start gap-[var(--space-2)]">
       <p role="alert" data-testid="guest-download-all-problem" className={PROBLEM}>{UNAVAILABLE_COPY}</p>
@@ -157,6 +161,5 @@ function DownloadAllBody({ loaded, onRetry, archive, onCheckAgain }: { loaded: L
         </Item>)}
       </ItemGroup>
     </section>}
-    {included.length > 0 && !tooLarge && archive === "ready" && <p className={PROBLEM}>The zip starts in your browser. If nothing downloads, wait a minute and try again.</p>}
   </div>;
 }

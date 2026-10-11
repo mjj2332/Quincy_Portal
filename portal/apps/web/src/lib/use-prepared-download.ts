@@ -10,6 +10,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
  */
 export const PREPARE_POLL_MS = 30_000;
 export const PREPARE_MAX_MS = 5 * 60_000;
+/** What both surfaces say once the five minutes have run out and the archive is still not ready. */
+export const PREPARE_TIMEOUT_COPY = "Still preparing. Check again in a minute.";
+/** Lines the spinner up with the first line of a notice whose copy wraps to two (the call sites, not the shared Notice, own this). */
+export const NOTICE_SPINNER = "self-start mt-[var(--space-1)] shrink-0";
 
 export type PrepareOutcome = { state: "ready" } | { state: "preparing" } | { state: "unavailable" } | { state: "too_large" } | { state: "failed" };
 export type PreparedStatus = "idle" | "checking" | "preparing" | "ready" | "unavailable" | "too_large" | "failed" | "timeout";

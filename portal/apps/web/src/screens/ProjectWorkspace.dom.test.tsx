@@ -1248,6 +1248,7 @@ describe("ProjectWorkspace selection download", () => {
       for (let i = 0; i < 10; i += 1) await tick(30_000);
       await tick(1_000);
       const before = zipPosts(); const again = host.querySelector<HTMLButtonElement>('[data-testid="prepared-zip-check-again"]')!; expect(again).not.toBeNull();
+      expect(notice()?.textContent).toContain("Still preparing. Check again in a minute."); expect(notice()?.textContent).not.toContain("This may take a few minutes.");
       await tick(120_000); expect(zipPosts()).toBe(before);
       await act(async () => { again.click(); }); await tick(0); expect(zipPosts()).toBe(before + 1);
       await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="prepared-zip-close"]')!.click(); });
