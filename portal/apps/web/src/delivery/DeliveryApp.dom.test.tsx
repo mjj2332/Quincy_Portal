@@ -46,6 +46,9 @@ describe("fetch states", () => {
     await open();
     expect(byTestId("delivery-gone")!.textContent).toBe("This page isn't available.");
     expect(byTestId("delivery-page")).toBeNull();
+    const credit = byTestId("delivery-gone-credit")!;
+    expect(credit.textContent).toBe("Quincy Productions · info@quincyproductions.com.au");
+    expect(credit.querySelector("a")!.getAttribute("href")).toBe("mailto:info@quincyproductions.com.au");
   });
   it("offers a retry for a 5xx or a dropped connection, and the retry reads again", async () => {
     route = () => new Response("", { status: 503 });

@@ -46,7 +46,7 @@ export function LockedTile({ item, unlock, onRequestUnlock, noun }: { item: Deli
 }
 
 export function FilmList({ items, hrefs, unlock, onRequestUnlock }: { items: DeliveryItemDto[]; hrefs: DeliveryHrefs | null; unlock: UnlockStates; onRequestUnlock: (handle: string) => void }) {
-  return <ul aria-label="Film" data-testid="delivery-film" className="m-0 grid list-none grid-cols-2 gap-[var(--space-5)] p-0 @max-[721px]:grid-cols-1">
+  return <ul aria-label="Film" data-testid="delivery-film" className="m-0 grid list-none grid-cols-2 gap-[var(--space-5)] p-0 has-[>li:only-child]:grid-cols-1 @max-[721px]:grid-cols-1">
     {items.map((item) => <li key={item.handle} data-testid="delivery-film-item" data-handle={item.handle}>
       {item.locked ? <LockedTile item={item} unlock={unlock} onRequestUnlock={onRequestUnlock} noun="Film" /> : <FilmPlayer item={item} hrefs={hrefs} />}
     </li>)}

@@ -113,7 +113,7 @@ export function DeliveryLightbox({ title, items, startIndex, hrefs, unlock, onRe
       </div>
       <div className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-2)] px-[var(--space-4)] py-[var(--space-3)]">
         <span className="[font:var(--type-label)]">{item.label}</span>
-        {item.locked && <PremiumBadge />}
+        {item.locked && <PremiumBadge overPhoto />}
         {!item.locked && hrefs && <PhotoDownloads item={item} hrefs={hrefs} />}
         {item.locked && <UnlockControl label={item.label} state={unlockOf(unlock, item.handle)} onRequest={() => { onRequestUnlock(item.handle); }} />}
       </div>

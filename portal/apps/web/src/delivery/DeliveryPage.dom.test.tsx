@@ -105,9 +105,29 @@ describe("hero", () => {
     expect(byTestId("delivery-hero")!.querySelector("img")).toBeNull();
     expect(byTestId("delivery-hero")!.querySelector('[data-testid="delivery-processing"]')).not.toBeNull();
   });
-  it("prints the studio footer from the one constant", async () => {
+  it("prints the studio footer from the one constant, with the address as a mailto for this street", async () => {
     await show(page([photo(1)]));
-    expect(byTestId("delivery-footer")!.textContent).toBe("Quincy Productions · info@quincyproductions.com.au");
+    const footer = byTestId("delivery-footer")!;
+    expect(footer.textContent).toBe("Quincy Productions · info@quincyproductions.com.au");
+    const link = footer.querySelector("a")!;
+    expect(link.textContent).toBe("info@quincyproductions.com.au");
+    expect(link.getAttribute("href")).toBe("mailto:info@quincyproductions.com.au?subject=12%20Example%20St");
+  });
+  it("lets the tab list grow past its fixed 32px height, so a wrapped fifth tab is not hidden under the panel", async () => {
+    await show(page([photo(1), film(2), pdf(3, "floorplan"), pdf(4, "copy"), locked(5)]));
+    const list = document.querySelector("[data-slot=tabs-list]")!;
+    expect(list.className).toContain("flex-wrap");
+    expect(list.className).toContain("group-data-[orientation=horizontal]/tabs:h-auto");
+    expect(list.className).not.toContain("group-data-[orientation=horizontal]/tabs:h-8");
+  });
+  it("styles Ask the studio as a visible secondary button", async () => {
+    await show(page([photo(1)]));
+    const link = [...document.querySelectorAll("a")].find((a) => a.textContent === "Ask the studio")!;
+    expect(link.className).toContain("bg-secondary");
+  });
+  it("lets a lone film span the whole row", async () => {
+    await show(page([film(1)]));
+    expect(byTestId("delivery-film")!.className).toContain("has-[>li:only-child]:grid-cols-1");
   });
 });
 
@@ -404,6 +424,9 @@ describe("premium", () => {
     expect(placeholder.textContent).toContain("Video 02"); expect(placeholder.textContent).toContain("Premium");
     expect([...panel.querySelectorAll("[href], [src]")].map((el) => el.getAttribute("href") ?? el.getAttribute("src"))).toEqual([locked(1).thumbUrl]);
     expect(allByTestId("delivery-premium-badge", panel)).toHaveLength(3);
+    const [onPhoto, , inRow] = allByTestId("delivery-premium-badge", panel);
+    expect(onPhoto!.className).toContain("bg-warning "); expect(onPhoto!.className).not.toContain("bg-warning/10"); // solid over a photo
+    expect(inRow!.className).toContain("bg-warning/10"); // tinted in a document row
     expect([...panel.querySelectorAll("button")].filter((b) => b.textContent === "Request unlock")).toHaveLength(3);
   });
   it("sends the handle to onRequestUnlock and nothing else", async () => {

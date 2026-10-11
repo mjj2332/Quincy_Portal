@@ -35,7 +35,7 @@ function PhotoTile({ item, items, index, hrefs, unlock, onRequestUnlock, onOpen 
     <div style={{ aspectRatio: aspectOf(item) }} className="relative border border-solid border-[var(--border-hairline)] bg-surface-sunken">
       <div className="absolute inset-0 overflow-hidden"><TileImage key={`${item.locked}:${item.thumbUrl}`} item={item} /></div>
       <Button type="button" variant="ghost" aria-label={`Open ${item.label}`} className="absolute inset-0 h-full w-full rounded-none p-0 hover:bg-transparent" onClick={(event) => { onOpen(items, index, event.currentTarget); }} />
-      {item.locked && <span className="pointer-events-none absolute top-[var(--space-2)] left-[var(--space-2)]"><PremiumBadge /></span>}
+      {item.locked && <span className="pointer-events-none absolute top-[var(--space-2)] left-[var(--space-2)]"><PremiumBadge overPhoto /></span>}
     </div>
     <div className="flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-2)]">
       <span className="[font:var(--type-label)]">{item.label}</span>

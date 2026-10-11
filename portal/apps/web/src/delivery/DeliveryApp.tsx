@@ -8,6 +8,8 @@ import { createDeliveryApi } from "./delivery-api";
 import { useSecondsUntil } from "./delivery-hooks";
 import type { UnlockState, UnlockStates } from "./delivery-model";
 import { DeliveryPage } from "./DeliveryPage";
+import { STUDIO_EMAIL } from "./studio";
+import { StudioCredit } from "./StudioCredit";
 import { TOUCH } from "./UnlockControl";
 
 type Screen =
@@ -105,7 +107,7 @@ export function DeliveryApp({ slug }: { slug: string }) {
 
   switch (screen.name) {
     case "loading": return <LoadingScreen />;
-    case "gone": return <main className={shell}><EmptyState data-testid="delivery-gone" title="This page isn't available." /></main>;
+    case "gone": return <main className={shell}><div className="grid justify-items-center gap-[var(--space-3)]"><EmptyState data-testid="delivery-gone" title="This page isn't available." /><StudioCredit href={`mailto:${STUDIO_EMAIL}`} data-testid="delivery-gone-credit" className="text-center" /></div></main>;
     case "transient": return <UnreachableScreen onRetry={() => { void load(false); }} />;
     case "rateLimited": return <RateLimitedScreen until={screen.until} onRetry={() => { void load(false); }} />;
     case "outdated": return <main className={shell}>

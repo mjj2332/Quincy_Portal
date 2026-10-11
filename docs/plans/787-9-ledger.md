@@ -8,15 +8,16 @@ One line per UI element in the diff. Paths are under `portal/apps/web/src/`. No 
 | Tabs (Photos, Film, Floorplan, Description, Premium) | `components/reui/tabs` (`variant="line"`) |
 | Photo tile open control | `components/reui/button` ghost over `components/LazyImage` (the tile composition from slice 10's former Preview dialog) |
 | Hero image | Plain `<img>` (not a primitive): the page's `delivery_web` JPEG with `srcset` and `fetchpriority="high"`; `LazyImage` is lazy by design and would defeat the hero's priority |
-| "Ask the studio", Web-size, Full-res, Download, View, Download original | `buttonVariants` from `components/reui/button` on `<a>` (links, not buttons) |
+| "Ask the studio" (`secondary` variant), Web-size, Full-res, Download, View, Download original | `buttonVariants` from `components/reui/button` on `<a>` (links, not buttons) |
 | Request unlock, Reload, Dismiss, Try again, slideshow toggle, Previous and Next | `components/reui/button` (`Button`) |
 | Request unlock sending state | `components/reui/spinner` |
-| Premium badge | `components/reui/badge` (`warning-light`) |
+| Premium badge | `components/reui/badge` (`warning` solid over photos: tiles and lightbox; `warning-light` in document rows and beside film placeholders) |
 | PDF rows (Floorplan, Description) | `components/reui/item` (`Item`, `ItemMedia`, `ItemContent`, `ItemTitle`, `ItemDescription`, `ItemActions`, `ItemGroup`) |
 | Loading screen | `components/reui/skeleton` |
 | Empty page, gone, outdated, rate-limited | `components/quincy/EmptyState` |
 | Unreachable (transient) | `guest/GuestScreens` `UnreachableScreen` |
 | Chunk load failure | `guest/GuestLoadFailure` |
+| Footer credit (name text + mailto link) | plain `<a>` in `delivery/StudioCredit.tsx` (a text link, not a control) |
 | Footer rule | `components/reui/separator` |
 | Lightbox shell | `components/reui/dialog` (`Dialog`, `DialogContent`, `DialogTitle`, `DialogDescription`, `DialogClose`) |
 | Lightbox slides | `components/reui/carousel`, base-nova `carousel` vendored through the sandbox per `docs/reui-reuse.md` (embla-carousel-react 8.6.0); kept out of the entry and vendor chunks by `build/vendor-chunk-guard.ts` |

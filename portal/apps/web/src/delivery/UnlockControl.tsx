@@ -11,8 +11,9 @@ export const FAILED_TEXT = "Couldn't send. Try again.";
 const waitText = (seconds: number) => `Too many requests. Try again in ${seconds} ${seconds === 1 ? "second" : "seconds"}.`;
 
 /** The "Premium" mark on a paid extra. Signal-on-inverse tokens, so it reads on the lightbox's dark surface and on the page. */
-export function PremiumBadge() {
-  return <Badge variant="warning-light" data-testid="delivery-premium-badge">Premium</Badge>;
+export function PremiumBadge({ overPhoto = false }: { overPhoto?: boolean }) {
+  // Over a photo (a tile, the lightbox) the 10% tint is unreadable, so the mark is solid; in a document row or beside a placeholder it stays tinted.
+  return <Badge variant={overPhoto ? "warning" : "warning-light"} data-testid="delivery-premium-badge">Premium</Badge>;
 }
 
 /**

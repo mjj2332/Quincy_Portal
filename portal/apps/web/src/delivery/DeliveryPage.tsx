@@ -10,7 +10,8 @@ import { formatDelivered, heroOf, tabsOf, type DeliveryHrefs, type DeliveryTab, 
 import { DocRows } from "./DocRows";
 import { FilmList } from "./FilmList";
 import { PhotoGrid, ProcessingTile, type OpenViewer } from "./PhotoGrid";
-import { askTheStudioHref, STUDIO_FOOTER } from "./studio";
+import { askTheStudioHref } from "./studio";
+import { StudioCredit } from "./StudioCredit";
 import { TOUCH } from "./UnlockControl";
 
 // Loaded on first open: embla ships with the viewer and nothing else (`build/vendor-chunk-guard.ts`).
@@ -60,7 +61,7 @@ function Hero({ dto, hero }: { dto: DeliveryPageDto; hero: DeliveryItemDto | nul
     <div className="grid gap-[var(--space-2)]">
       <h1 className="m-0 [font:var(--type-h1)] tracking-[var(--tracking-tight)] text-pretty">{suburb ? `${street}, ${suburb}` : street}</h1>
       {delivered !== null && <p className="m-0 [font:var(--type-body)] text-foreground-secondary">{`Delivered ${delivered}`}</p>}
-      <div><a href={askTheStudioHref(street)} className={buttonVariants({ variant: "outline", className: `w-fit ${TOUCH}` })}>Ask the studio</a></div>
+      <div><a href={askTheStudioHref(street)} className={buttonVariants({ variant: "secondary", className: `w-fit ${TOUCH}` })}>Ask the studio</a></div>
     </div>
   </header>;
 }
@@ -117,14 +118,14 @@ export function DeliveryPage(props: DeliveryPageProps) {
       {active === null
         ? <EmptyState data-testid="delivery-empty" title="Nothing here yet.">The studio hasn't added anything to this page.</EmptyState>
         : <Tabs value={active} onValueChange={(value) => { setChosen(value as DeliveryTabId); }}>
-          <TabsList variant="line" aria-label="Delivery sections" className="h-auto max-w-full flex-wrap justify-start gap-[var(--space-1)]">
+          <TabsList variant="line" aria-label="Delivery sections" className="h-auto max-w-full group-data-[orientation=horizontal]/tabs:h-auto flex-wrap justify-start gap-[var(--space-1)]">
             {tabs.map((tab) => <TabsTrigger key={tab.id} value={tab.id} className={`flex-none px-[var(--space-3)] ${TOUCH}`}>{tab.label}</TabsTrigger>)}
           </TabsList>
           {tabs.map((tab) => <Panel key={tab.id} tab={tab} props={props} onOpen={open} />)}
         </Tabs>}
       <footer data-testid="delivery-footer" className="grid gap-[var(--space-4)]">
         <Separator />
-        <p className="m-0 [font:var(--type-label)] text-foreground-secondary">{STUDIO_FOOTER}</p>
+        <StudioCredit href={askTheStudioHref(street)} data-testid="delivery-footer-credit" />
       </footer>
     </div>
     {viewer && viewerItems && viewerItems.length > 0 && <ViewerBoundary onClose={() => { setViewer(null); }}>
