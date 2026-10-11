@@ -63,7 +63,7 @@ export function VideoTrashDialog({ projectId, archived, open, onOpenChange, retu
   const items = query.data?.items ?? [];
   return <Dialog open={open} onOpenChange={onOpenChange}>
     {/* `sm:max-w-[560px]`: `max-w-xl` is 1320px here (Quincy redefines `--container-xl`, see `reui/alert-dialog.tsx`). */}
-    <DialogContent data-testid="video-trash-dialog" ref={popupRef} initialFocus={popupRef} showCloseButton={false} finalFocus={() => document.querySelector<HTMLElement>(`[data-testid="${returnFocusId}"]`) ?? true} className="flex max-h-[calc(100dvh-var(--space-6))] flex-col gap-[var(--space-4)] sm:max-w-[560px]">
+    <DialogContent data-testid="video-trash-dialog" ref={popupRef} initialFocus={popupRef} showCloseButton={false} finalFocus={() => document.querySelector<HTMLElement>(`[data-testid="${returnFocusId}"]`) ?? true} className="flex max-h-[calc(100dvh-var(--space-6))] flex-col focus-visible:!outline-none gap-[var(--space-4)] sm:max-w-[560px]">
       <DialogHeader className={cn("border-b border-solid border-[var(--border-hairline)] pb-[var(--space-3)]", SHEET_CLOSE_CLEARANCE)}>
         <DialogTitle className={DIALOG_TITLE}>Trash</DialogTitle>
         <DialogDescription className="text-foreground-secondary">Removed films and versions are kept for {VIDEO_TRASH_RETENTION_DAYS} days, then deleted for good. Restoring one brings back its notes, releases and links.</DialogDescription>

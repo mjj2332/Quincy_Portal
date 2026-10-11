@@ -385,4 +385,32 @@ describe("Remove a Version from the staff viewer (#776 E)", () => {
     expect(confirmButton().hasAttribute("disabled")).toBe(true);
     expect(posts()).toEqual([]);
   });
+
+  it("a Version removed elsewhere is found out when its impact is read: the list refreshes, and the viewer shows what is left", async () => {
+    await mount();
+    await openViewer();
+    versions = [{ assetId: ids.asset1, version: 1 }];
+    api.apiGet.mockImplementation(async (path) => {
+      if (path.endsWith("/removal-impact")) throw new ApiError("Version not found", 404, { error: "Version not found" });
+      if (path.endsWith("/videos")) return { videos: [videoNow()] };
+      if (path.endsWith("/video-trash")) return { retentionDays: 30, items: [] };
+      return { notes: [], versions: [] };
+    });
+    await startRemove();
+    await flush(8);
+    expect(confirm()!.querySelector('[role="alert"]')?.textContent).toMatch(/already removed/i);
+    expect(versionLabel()).toContain("v1");
+  });
+
+  it("a refused removal brings focus back into the confirmation, onto the problem", async () => {
+    await mount();
+    await openViewer();
+    await startRemove();
+    removeOutcome = async () => { throw new ApiError("uploading", 409, { error: "uploading", code: "upload_in_progress" }); };
+    await click(confirmButton());
+    await flush(8);
+    const problem = tid("video-remove-problem");
+    expect(problem, "the problem notice").not.toBeNull();
+    expect(document.activeElement).toBe(problem);
+  });
 });

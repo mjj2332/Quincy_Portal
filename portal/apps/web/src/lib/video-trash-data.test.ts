@@ -20,7 +20,7 @@ vi.mock("./project-data", async (importOriginal) => {
 });
 import * as projectData from "./project-data";
 import { projectDataKeys } from "./project-data";
-import { readRemovalImpact, removeVideoVersion, restoreVideoVersion, restoreWholeVideo } from "./video-trash-data";
+import { readRemovalImpact, refreshAfterRefusal, removeVideoVersion, restoreVideoVersion, restoreWholeVideo } from "./video-trash-data";
 
 const P = "11111111-1111-4111-8111-111111111111";
 const V = "88888888-8888-4888-8888-888888888888";
@@ -125,5 +125,37 @@ describe("video trash data (#776 E)", () => {
     await vi.waitFor(() => expect(observer.getCurrentResult().fetchStatus).toBe("idle"));
     unsubscribe();
     expect(client.getQueryData<VideoDto[]>(key)!.map((v) => v.id)).toEqual([V]);
+  });
+
+  it("a failed restore whose answer was lost still shows the film when the first Videos read was in flight", async () => {
+    const actual = await vi.importActual<typeof import("./project-data")>("./project-data");
+    vi.mocked(projectData.invalidateProjectSurfaces).mockImplementation(actual.invalidateProjectSurfaces);
+    const key = projectDataKeys.videos(P);
+    const restored = videoOf(V);
+    let resolveOld!: (value: unknown) => void;
+    api.apiGet.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+    api.apiGet.mockResolvedValueOnce([restored]);
+    const observer = new QueryObserver(client, { queryKey: key, queryFn: async () => api.apiGet("/videos"), staleTime: 15_000 });
+    const unsubscribe = observer.subscribe(() => {});
+    // The restore committed on the server, but its response never arrived.
+    api.apiPost.mockRejectedValueOnce(new ApiError("Failed to fetch", 0));
+    const write = restoreWholeVideo(ctx());
+    const settled = expect(write).rejects.toBeInstanceOf(ApiError);
+    await vi.waitFor(() => expect(api.apiPost).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveOld([]);
+    await settled;
+    await vi.waitFor(() => expect(observer.getCurrentResult().fetchStatus).toBe("idle"));
+    unsubscribe();
+    expect(client.getQueryData<VideoDto[]>(key)!.map((v) => v.id)).toEqual([V]);
+  });
+
+  it("a read refusal runs the same recovery as a write refusal: a vanished Version refreshes the list, a lost access asks for the gate again", async () => {
+    vi.mocked(projectData.invalidateProjectSurfaces).mockImplementation(async (_client: QueryClient, input: { resources: Array<{ kind: string }> }) => { surfaces.invalidated.push(input.resources.map((r) => r.kind).join(",")); });
+    await refreshAfterRefusal(ctx(), new ApiError("Version not found", 404, { error: "Version not found" }), "remove");
+    expect(surfaces.invalidated.some((entry) => entry.includes("videos"))).toBe(true);
+    surfaces.invalidated.length = 0;
+    await refreshAfterRefusal(ctx(), new ApiError("Forbidden", 403, { error: "Forbidden" }), "remove");
+    expect(surfaces.invalidated).toContain("video-review,detail");
   });
 });

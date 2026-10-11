@@ -28,6 +28,8 @@ export function ToastViewport({ testId = "toast-viewport", toastTestId = "toast"
   const toasts = useSyncExternalStore(subscribeToasts, getToasts, getToasts);
   // An open modal (the staff video viewer) may host the viewport so its Undo stays inside the focus trap; `display: contents` keeps the fixed layout, and `data-surface="default"` keeps the toast off the modal's inverse roles.
   const host = useToastHost();
+  // A host change remounts the toast nodes, and a node removed while focused fires no blur: a toast paused by that focus (Undo, then Escape) would stay paused for good.
+  useEffect(() => { for (const item of getToasts()) resumeToast(item.id); }, [host]);
   const viewport = (
     <div
       aria-live="polite"

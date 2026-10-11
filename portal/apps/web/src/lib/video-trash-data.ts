@@ -63,9 +63,9 @@ const converge = (ctx: TrashWriteContext) => Promise.all([
 /**
  * What a refusal changes locally before the caller sees it: a 401 ends the captured person's data; an access refusal means the Project or the gate is gone (both are asked again); an
  * archive is recorded; a missing row, a lost connection or a server error (where the write may have landed) brings the Videos and the Trash up to date. A changed impact is the dialog's
- * to show, so nothing is refreshed for it.
+ * to show, so nothing is refreshed for it. Also the recovery for a refused removal-impact read (the same refusals mean the same thing there).
  */
-async function onFailure(ctx: TrashWriteContext, error: unknown, op: "remove" | "restore"): Promise<void> {
+export async function refreshAfterRefusal(ctx: TrashWriteContext, error: unknown, op: "remove" | "restore"): Promise<void> {
   terminatePrincipalOnUnauthorized(ctx.queryClient, error);
   if (retired.has(ctx.queryClient)) return;
   const { kind } = classifyVideoTrashError(error, op);
@@ -73,7 +73,12 @@ async function onFailure(ctx: TrashWriteContext, error: unknown, op: "remove" | 
   else if (kind === "archived") {
     await recordProjectArchivedRefusal(ctx.queryClient, ctx.projectId);
     await invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "detail" }], dashboard: false, calendar: false, gantt: false });
-  } else if (kind === "gone" || kind === "network" || kind === "uncertain" || kind === "video_in_trash") await converge(ctx);
+  } else if (kind === "gone" || kind === "network" || kind === "uncertain" || kind === "video_in_trash") {
+    // A write whose answer was lost may have landed, and a read still in flight predates it: it must not become the cache (as on the success path).
+    await cancelStaleReads(ctx);
+    if (retired.has(ctx.queryClient)) return;
+    await converge(ctx);
+  }
 }
 
 /** Puts a Video the server returned into the list: replaced where it is, appended where it is not (the refetch that follows puts it in order). */
@@ -90,7 +95,7 @@ export async function removeVideoVersion(ctx: TrashWriteContext & { assetId: str
   try {
     response = videoRemoveResponseSchema.parse(await apiPost<unknown, VideoRemoveInput>(removePath(ctx.projectId, ctx.assetId), body));
   } catch (error) {
-    await onFailure(ctx, error, "remove");
+    await refreshAfterRefusal(ctx, error, "remove");
     throw error;
   }
   if (retired.has(ctx.queryClient)) return response;
@@ -109,7 +114,7 @@ async function restore(ctx: TrashWriteContext, path: string): Promise<VideoResto
   try {
     response = videoRestoreResponseSchema.parse(await apiPost<unknown, Record<string, never>>(path, {}));
   } catch (error) {
-    await onFailure(ctx, error, "restore");
+    await refreshAfterRefusal(ctx, error, "restore");
     throw error;
   }
   if (retired.has(ctx.queryClient)) return response;

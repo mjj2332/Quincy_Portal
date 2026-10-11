@@ -3,7 +3,7 @@ import { VIDEO_TRASH_RETENTION_DAYS, type VideoDto, type VideoRemovalImpact } fr
 import { useOptionalProjectQueryClient, useProjectAccessTermination } from "../../lib/project-data";
 import { pushToast } from "../../lib/toast-store";
 import { UNDO_TOAST_TTL_MS } from "../../lib/use-scheduling-undo-toast";
-import { readRemovalImpact, removeVideoVersion, restoreVideoVersion, restoreWholeVideo } from "../../lib/video-trash-data";
+import { readRemovalImpact, refreshAfterRefusal, removeVideoVersion, restoreVideoVersion, restoreWholeVideo } from "../../lib/video-trash-data";
 import { classifyVideoTrashError, type ClassifiedVideoTrashError } from "../../lib/video-trash-errors";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../reui/alert-dialog";
 import { Badge } from "../reui/badge";
@@ -54,6 +54,9 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
   // The menu closes before the dialog has focus: while Remove is handing off, the menu moves no focus (#463); the dialog returns focus to the trigger itself.
   const handOff = useRef(false);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
+  // Both buttons are disabled while Removing, so focus drops to <body>; a refusal keeps the dialog open, so the problem takes focus (#568).
+  const problemRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { if (problem) problemRef.current?.focus(); }, [problem]);
 
   const load = useCallback(async (next: Target) => {
     const mine = ++run.current;
@@ -63,9 +66,11 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
       if (alive.current && run.current === mine) setImpact(read);
     } catch (error) {
       terminate(error);
+      // A refusal here means what it means for the removal itself: the Version is gone, or the Project or gate is.
+      if (queryClient) void refreshAfterRefusal({ queryClient, projectId, videoId: next.videoId }, error, "remove");
       if (alive.current && run.current === mine) setLoadFailure(classifyVideoTrashError(error, "remove").message);
     }
-  }, [projectId, terminate]);
+  }, [projectId, terminate, queryClient]);
 
   const open = () => {
     const next: Target = { assetId: version.assetId, version: version.version, videoId: video.id, title: video.title };
@@ -149,7 +154,7 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
         </ItemGroup>}
         {blockedByUpload && <Notice tone="caution" role="status">A new version is being uploaded to this film. Wait for it to finish or cancel it before removing the whole film.</Notice>}
         {draft && <Notice tone="caution" role="status" data-testid="video-remove-draft">You have an unsent note on this version. It will be discarded.</Notice>}
-        {problem !== null && <Notice tone="critical" role="alert" data-testid="video-remove-problem">{problem.message}</Notice>}
+        {problem !== null && <Notice ref={problemRef} tabIndex={-1} tone="critical" role="alert" data-testid="video-remove-problem">{problem.message}</Notice>}
         <AlertDialogFooter>
           <AlertDialogCancel ref={cancelRef} data-testid="video-remove-cancel" disabled={pending}>{problem && FINAL.has(problem.kind) ? "Close" : "Cancel"}</AlertDialogCancel>
           {loadFailure !== null && target !== null && <Button type="button" variant="secondary" data-testid="video-remove-retry" onClick={() => { void load(target); }}>Retry</Button>}
