@@ -323,7 +323,7 @@ export function GuestVideoScreen({ api, writer, drafts, subscription, session, o
       {!phone && <aside data-surface="default" className="flex flex-[1_1_360px] flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-hidden min-[721px]:flex-[0_0_clamp(240px,28vw,360px)]">{panel}</aside>}
     </div>
     {phone && <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
-      <SheetContent side="bottom" showCloseButton={false} data-testid="guest-notes-drawer" className="h-[80dvh] max-h-[80dvh] p-[var(--space-4)]">
+      <SheetContent side="bottom" showCloseButton={false} data-testid="guest-notes-drawer" className="data-[side=bottom]:h-[80dvh] max-h-[80dvh] p-[var(--space-4)]">
         <SheetHeader className={`p-0 ${SHEET_CLOSE_CLEARANCE}`}><SheetTitle data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</SheetTitle></SheetHeader>
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{panel}</div>
         <SheetCloseButton label="Close notes" data-testid="guest-notes-close" />
