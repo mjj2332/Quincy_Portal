@@ -498,6 +498,13 @@
       "when": 1790400000000,
       "tag": "0070_video_trash",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "6",
+      "when": 1790500000000,
+      "tag": "0071_delivery_schema",
+      "breakpoints": true
     }
   ]
 }
