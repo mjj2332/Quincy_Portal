@@ -4,10 +4,9 @@ import { FileTextIcon, FilmIcon } from "lucide-react";
 import type { DeliveryPageDto, Role } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
 import { useCapabilities } from "../../lib/capabilities";
-import { buildDeliveryCandidates, type DeliveryCandidate } from "../../lib/delivery-candidates";
-import { deliveryErrorText, errorCode, previewDelivery, publishDelivery, refusedAssetIds, setAssetPremium, setAssetPremiumUnlock, setDeliveryPageEnabled, useProjectDeliveryQuery } from "../../lib/delivery-data";
-import { invalidateProjectSurfaces, projectDataKeys, useProjectAssetsQuery, useProjectDetailQuery, useProjectVideosQuery, type ProjectDetail } from "../../lib/project-data";
-import { setVideoPremium, setVideoPremiumUnlock } from "../../lib/video-approval-data";
+import { COLLECTION_OF_KIND, toDeliveryCandidates, type DeliveryCandidate } from "../../lib/delivery-candidates";
+import { deliveryErrorText, errorCode, previewDelivery, publishDelivery, refusedAssetIds, setAssetPremium, setAssetPremiumUnlock, setDeliveryPageEnabled, setDeliveryVideoPremium, setDeliveryVideoPremiumUnlock, useDeliveryCandidatesQuery, useProjectDeliveryQuery } from "../../lib/delivery-data";
+import { invalidateProjectSurfaces, projectDataKeys, useProjectDetailQuery, type ProjectDetail } from "../../lib/project-data";
 import { LazyImage } from "../LazyImage";
 import { Checkbox } from "../quincy/Checkbox";
 import { Notice } from "../quincy/Notice";
@@ -32,7 +31,6 @@ const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const GROUPS = [{ kind: "photo", title: "Edited photos", plural: "photos" }, { kind: "floorplan", title: "Floorplan PDF", plural: "Floorplan PDFs" }, { kind: "copy", title: "Copy PDF", plural: "Copy PDFs" }, { kind: "video", title: "Videos", plural: "Videos" }] as const;
 const when = (epoch: number) => new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(epoch));
 const thumbUrl = (projectId: string, c: DeliveryCandidate) => (c.kind === "photo" || c.kind === "video" ? `/api/projects/${projectId}/delivery/preview-media/${c.assetId}/thumb` : null);
-const COLLECTION_OF = { photo: "edited", floorplan: "floorplan", copy: "copy", video: null } as const;
 /** What a Publish is, from the moment it is first tried until it is answered. A lost response leaves it unanswered, so a retry must send exactly this, never a rebuilt body. */
 type PendingPublish = { id: string; body: { assetIds: string[]; coverAssetId: string | null; expectedLatestSet: number | null } };
 /** A refusal the server gave is definite; no answer at all, or a server fault, may still have committed. */
@@ -43,16 +41,13 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
   const { can } = useCapabilities();
   const queryClient = useQueryClient();
   const delivery = useProjectDeliveryQuery(projectId, true);
-  const edited = useProjectAssetsQuery(projectId, "edited", true, false, role);
-  const floorplan = useProjectAssetsQuery(projectId, "floorplan", true, false, role);
-  const copy = useProjectAssetsQuery(projectId, "copy", true, false, role);
-  const videos = useProjectVideosQuery(projectId, true, role);
+  const listed = useDeliveryCandidatesQuery(projectId, true);
   const state = delivery.data ?? null;
-  const candidates = useMemo(() => buildDeliveryCandidates({ edited: edited.data ?? [], floorplan: floorplan.data ?? [], copy: copy.data ?? [], videos: videos.data ?? [] }), [edited.data, floorplan.data, copy.data, videos.data]);
+  const candidates = useMemo(() => toDeliveryCandidates(listed.data?.candidates ?? []), [listed.data]);
   const detail = useProjectDetailQuery(projectId, false, false, role); // observed only: the Workspace owns the read
-  // Usable data in every list. A list that failed (or is still loading) has none, and a selection seeded without it would silently drop its items.
-  const listsUsable = [edited, floorplan, copy, videos].every((query) => query.data !== undefined);
-  const listsFailed = [edited, floorplan, copy, videos].find((query) => query.isError && !query.data);
+  // A list that failed (or is still loading) has no data, and a selection seeded without it would silently drop its items.
+  const listsUsable = listed.data !== undefined;
+  const listsFailed = listed.isError && !listed.data ? listed : undefined;
 
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [cover, setCover] = useState<string | null>(null);
@@ -93,11 +88,10 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
   const served = useMemo<DeliveryCandidate[]>(() => {
     const known = new Set(candidates.map((c) => c.assetId));
     return (state?.set?.items ?? []).filter((item) => !known.has(item.assetId)).map((item) => ({
-      assetId: item.assetId, kind: item.kind, name: `${item.label} (older version)`, collection: COLLECTION_OF[item.kind], premium: item.premium, premiumUnlocked: item.premiumUnlocked,
-      videoId: item.kind === "video" ? videos.data?.find((video) => video.versions.some((v) => v.assetId === item.assetId))?.id ?? null : null,
+      assetId: item.assetId, kind: item.kind, name: `${item.label} (older version)`, collection: COLLECTION_OF_KIND[item.kind], premium: item.premium, premiumUnlocked: item.premiumUnlocked, videoId: item.videoId,
     }));
-  }, [candidates, state, videos.data]);
-  const surfaces = (collection?: "edited" | "floorplan" | "copy" | null) => invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "delivery" }, ...(collection ? [{ kind: "assets", collectionKind: collection } as const] : [])], dashboard: false, calendar: false, gantt: false });
+  }, [candidates, state]);
+  const surfaces = (collection?: "edited" | "floorplan" | "copy" | null) => invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "delivery" }, { kind: "delivery-candidates" }, ...(collection ? [{ kind: "assets", collectionKind: collection } as const] : [])], dashboard: false, calendar: false, gantt: false });
 
   function toggleSelected(assetId: string, on: boolean) {
     setSelected((current) => { const next = new Set(current); if (on) next.add(assetId); else next.delete(assetId); return next; });
@@ -110,10 +104,13 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
   }
   /** An archive refusal makes the tab read-only now; the Project is then re-read, and an authoritative "not archived" lifts it. */
   async function latchArchived() {
+    const refusedAt = Date.now();
     setArchivedLatch(Infinity);
-    try { await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }], dashboard: false, calendar: false, gantt: false }); } catch { setArchivedLatch(Date.now()); return; }
+    try { await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }], dashboard: false, calendar: false, gantt: false }); } catch { /* the read below says whether it answered */ }
+    // Only a read that SUCCEEDED after the refusal is authoritative. A failed refresh leaves the older cached Project (which may say "not archived") in place, so it keeps the latch; any later successful read decides.
     const answered = queryClient.getQueryState<ProjectDetail>(projectDataKeys.detail(projectId));
-    setArchivedLatch(answered?.data && !answered.data.archivedAt ? null : answered?.dataUpdatedAt ?? Date.now());
+    const authoritative = answered?.status === "success" && answered.dataUpdatedAt >= refusedAt && answered.data;
+    setArchivedLatch(authoritative ? (authoritative.archivedAt ? answered.dataUpdatedAt : null) : Date.now());
   }
   function refuse(error: unknown) {
     const code = errorCode(error);
@@ -148,11 +145,10 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
     try { await write(); } catch (error) { if (errorCode(error) === "project_archived") void latchArchived(); setProblem(deliveryErrorText(error)); void surfaces(c.collection === "edited" || c.collection === "floorplan" || c.collection === "copy" ? c.collection : null); }
     finally { setRowBusy((current) => { const next = new Set(current); next.delete(c.assetId); return next; }); }
   }
-  const videoContext = (c: DeliveryCandidate) => ({ queryClient, projectId, videoId: c.videoId!, assetId: c.assetId });
   const canPremium = (c: DeliveryCandidate) => can(c.kind === "video" ? "manageVideoPremium" : "manageExtras");
-  const markPremium = (c: DeliveryCandidate, premium: boolean) => writeRow(c, () => (c.kind === "video" ? setVideoPremium(videoContext(c), premium) : setAssetPremium(queryClient, projectId, c.assetId, c.collection!, premium)));
+  const markPremium = (c: DeliveryCandidate, premium: boolean) => writeRow(c, () => (c.kind === "video" ? setDeliveryVideoPremium(queryClient, projectId, c.videoId!, premium) : setAssetPremium(queryClient, projectId, c.assetId, c.collection!, premium)));
   const setUnlocked = (c: DeliveryCandidate, unlocked: boolean, ref: string) => writeRow(c, () => (c.kind === "video"
-    ? setVideoPremiumUnlock(videoContext(c), { unlocked, ...(unlocked && ref ? { paymentRef: ref } : {}) })
+    ? setDeliveryVideoPremiumUnlock(queryClient, projectId, c.videoId!, { unlocked, ...(unlocked && ref ? { paymentRef: ref } : {}) })
     : setAssetPremiumUnlock(queryClient, projectId, c.assetId, c.collection!, { unlocked, ...(unlocked && ref ? { paymentRef: ref } : {}) })));
 
   const premiumControls = (c: DeliveryCandidate) => {
@@ -190,10 +186,10 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
           <CopyTextButton text={address} label="Copy address" success="Address copied." failure="Couldn't copy the address." className={TOUCH} />
         </div>
         {state?.set && <p className="m-0 text-foreground-secondary [font:var(--type-label)]"><span data-testid="delivery-set-number">{`Set ${state.set.setNumber}`}</span> · <span data-testid="delivery-published-at">{`Published ${when(state.set.publishedAt)}`}</span></p>}
-        {can("switchDeliveryPage") && <div data-testid="delivery-page-hit" className={`flex items-center gap-[var(--space-3)] ${TOUCH}`}>
-          <Switch id="delivery-page-switch" aria-label="Client page" checked={page.enabled} disabled={busy === "switch"} onCheckedChange={(next) => void runSwitch(next)} />
-          <Label htmlFor="delivery-page-switch">{page.enabled ? "Page is live for the client" : "Page is switched off"}</Label>
-        </div>}
+        {can("switchDeliveryPage") && <label data-testid="delivery-page-hit" className={`flex w-fit items-center gap-[var(--space-3)] [font:var(--type-label)] ${TOUCH}`}>
+          <Switch aria-label="Client page" checked={page.enabled} disabled={busy === "switch"} onCheckedChange={(next) => void runSwitch(next)} />
+          {page.enabled ? "Page is live for the client" : "Page is switched off"}
+        </label>}
       </FramePanel>
     </Frame>}
 

@@ -20,7 +20,7 @@ describe("premium state on the staff Delivery read", () => {
     expect(response.status).toBe(200);
     const items = ((await response.json()) as { set: { items: Array<Record<string, unknown>> } }).set.items;
     const of = (id: string) => items.find((item) => item.assetId === id)!;
-    expect(of(plain.id)).toMatchObject({ premium: false, premiumUnlocked: false });
+    expect(of(plain.id)).toMatchObject({ premium: false, premiumUnlocked: false, videoId: null });
     expect(of(locked.id)).toMatchObject({ premium: true, premiumUnlocked: false, locked: true });
     expect(of(old.id)).toMatchObject({ premium: true, premiumUnlocked: true, locked: false });
   });
@@ -35,8 +35,8 @@ describe("premium state on the staff Delivery read", () => {
     const response = await request(`/api/projects/${ids.project}/delivery`, "admin");
     const items = ((await response.json()) as { set: { items: Array<Record<string, unknown>> } }).set.items;
     const of = (id: string) => items.find((item) => item.assetId === id)!;
-    expect(of(locked.assetId)).toMatchObject({ premium: true, premiumUnlocked: false, locked: true });
+    expect(of(locked.assetId)).toMatchObject({ premium: true, premiumUnlocked: false, locked: true, videoId: locked.videoId });
     expect(of(open.assetId)).toMatchObject({ premium: true, premiumUnlocked: true, locked: false });
-    expect(of(plain.assetId)).toMatchObject({ premium: false, premiumUnlocked: false });
+    expect(of(plain.assetId)).toMatchObject({ premium: false, premiumUnlocked: false, videoId: plain.videoId });
   });
 });

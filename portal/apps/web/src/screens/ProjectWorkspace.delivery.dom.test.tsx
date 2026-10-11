@@ -38,25 +38,32 @@ const handle = (n: number) => `abcdefghijklmnop`.slice(0, 15) + String(n);
 const stateAfterPublish = (setNumber = 1) => ({
   page: { slug: "12-example-st-suburbia-k7m2qx", path: "/d/12-example-st-suburbia-k7m2qx", enabled: true, latestSetNumber: setNumber },
   set: { setNumber, publishedAt: Date.UTC(2026, 9, 11, 3, 4), coverAssetId: ids.photo1, items: [
-    { assetId: ids.photo1, handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, premium: false, premiumUnlocked: false },
-    { assetId: ids.plan, handle: handle(2), kind: "floorplan", label: "Floorplan 01", position: 1, locked: false, premium: false, premiumUnlocked: false }] },
+    { assetId: ids.photo1, handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, premium: false, premiumUnlocked: false, videoId: null },
+    { assetId: ids.plan, handle: handle(2), kind: "floorplan", label: "Floorplan 01", position: 1, locked: false, premium: false, premiumUnlocked: false, videoId: null }] },
   dto: { property: { street: "12 Example St", suburb: "Suburbia" }, setNumber, publishedAt: Date.UTC(2026, 9, 11, 3, 4), coverHandle: handle(1), items: [] },
 });
 const NO_PAGE = { page: null, set: null, dto: null };
 
 let archivedDetail = false;
-let floorplanFails = false; let videosHang = false;
+let candidatesFail = false; let candidatesHang = false; let videoReviewOff = false; let latchDetailFails = false;
 let delivery: unknown = NO_PAGE; // an object is the 200 answer; an ApiError instance is thrown
 let photos = [asset(ids.photo1), asset(ids.photo2, { premium: true })];
+/** What `GET /delivery/candidates` answers: Publish-eligible items, photos then the Floorplan then the Video. */
+const candidatesBody = () => ({ candidates: [
+  ...photos.filter((item) => item.kind === "photo").map((item) => ({ assetId: item.id, kind: "photo", name: item.originalFilename, videoId: null, premium: item.premium === true, premiumUnlocked: item.premiumUnlocked === true })),
+  { assetId: ids.plan, kind: "floorplan", name: "plan.pdf", videoId: null, premium: false, premiumUnlocked: false },
+  { assetId: ids.videoAsset, kind: "video", name: "Main walkthrough", videoId: ids.video, premium: false, premiumUnlocked: false },
+] });
 function install() {
   apiGetMock.mockReset();
   apiGetMock.mockImplementation((path: string) => {
     if (path === `/api/projects/${PROJECT_ID}/delivery`) return delivery instanceof Error ? Promise.reject(delivery) : Promise.resolve(delivery);
+    if (path === `/api/projects/${PROJECT_ID}/delivery/candidates`) return candidatesHang ? new Promise(() => undefined) : candidatesFail ? Promise.reject(new ApiError("bad", 400)) : Promise.resolve(candidatesBody());
+    if (path === `/api/projects/${PROJECT_ID}` && latchDetailFails) return Promise.reject(new ApiError("bad", 400));
     if (path === `/api/projects/${PROJECT_ID}`) return Promise.resolve(archivedDetail ? { ...detail(), archivedAt: "2026-09-01T00:00:00.000Z" } : detail());
     if (path.endsWith("/video-review")) return Promise.resolve({ open: false, parts: [] });
-    if (path.endsWith("/videos")) return videosHang ? new Promise(() => undefined) : Promise.resolve({ videos: [video] });
+    if (path.endsWith("/videos")) return videoReviewOff ? Promise.reject(new ApiError("Not found", 404)) : Promise.resolve({ videos: [video] });
     if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: photos });
-    if (path.includes("/assets?collection=floorplan") && floorplanFails) return Promise.reject(new ApiError("bad", 400));
     if (path.includes("/assets?collection=floorplan")) return Promise.resolve({ assets: [asset(ids.plan, { kind: "floorplan_pdf", collectionId: ids.collPlan, originalFilename: "plan.pdf" }), asset(crypto.randomUUID(), { kind: "floorplan_preview", collectionId: ids.collPlan, originalFilename: "plan-preview.png" })] });
     if (path.includes("/assets?collection=")) return Promise.resolve({ assets: [] });
     if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
@@ -89,7 +96,7 @@ const gets = () => apiGetMock.mock.calls.map(([path]) => path);
 async function openDelivery(role: Role = "admin") { await mount(role); await click(tab("Delivery")); await flush(); }
 const api = (status: number, body: Record<string, unknown>) => new ApiError(String(body.error ?? "x"), status, body);
 
-beforeEach(() => { archivedDetail = false; floorplanFails = false; videosHang = false; apiPostMock.mockReset(); apiPutMock.mockReset(); document.body.innerHTML = ""; delivery = NO_PAGE; photos = [asset(ids.photo1), asset(ids.photo2, { premium: true })]; Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn(() => Promise.resolve()) } }); });
+beforeEach(() => { archivedDetail = false; candidatesFail = false; candidatesHang = false; videoReviewOff = false; latchDetailFails = false; apiPostMock.mockReset(); apiPutMock.mockReset(); document.body.innerHTML = ""; delivery = NO_PAGE; photos = [asset(ids.photo1), asset(ids.photo2, { premium: true })]; Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn(() => Promise.resolve()) } }); });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; document.body.innerHTML = ""; });
 
 describe("the Delivery tab's existence", () => {
@@ -359,7 +366,7 @@ describe("premium controls", () => {
     apiPutMock.mockResolvedValue({ premium: true, premiumUnlocked: false });
     await openDelivery();
     await click(byLabel("Premium Main walkthrough"));
-    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}/videos/${ids.video}/premium`, { premium: true });
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}/delivery/videos/${ids.video}/premium`, { premium: true });
   });
   it("is read-only for a role without the capability is not reachable: Photographers never see the tab", async () => {
     await mount("photographer");
@@ -369,7 +376,7 @@ describe("premium controls", () => {
 
 describe("round 1: older versions, 401 and hit areas", () => {
   const OLD = "99999999-9999-4999-8999-999999999991";
-  const withOld = () => { const state = stateAfterPublish(2); state.set.items.push({ assetId: OLD, handle: handle(3), kind: "photo", label: "Photo 03", position: 2, locked: true, premium: true, premiumUnlocked: false } as never); return state; };
+  const withOld = () => { const state = stateAfterPublish(2); state.set.items.push({ assetId: OLD, handle: handle(3), kind: "photo", label: "Photo 03", position: 2, locked: true, premium: true, premiumUnlocked: false, videoId: null } as never); return state; };
   it("lists a superseded item still on the page as an older version and unlocks that very Asset", async () => {
     delivery = withOld();
     apiPutMock.mockResolvedValue({ premium: true, premiumUnlocked: true });
@@ -399,7 +406,10 @@ describe("round 1: older versions, 401 and hit areas", () => {
     delivery = stateAfterPublish(1);
     await openDelivery();
     for (const label of ["Premium 1.jpg"]) expect(byLabel(label)!.closest('[data-testid="delivery-premium-hit"]')).not.toBeNull();
-    expect(host.querySelector('[role="switch"][aria-label="Client page"]')!.closest('[data-testid="delivery-page-hit"]')).not.toBeNull();
+    const hit = host.querySelector('[role="switch"][aria-label="Client page"]')!.closest('[data-testid="delivery-page-hit"]')!;
+    expect(hit.tagName).toBe("LABEL"); // the text is part of the control's label, so the whole row is the target
+    expect(hit.textContent).toContain("Page is live for the client");
+    expect(byLabel("Premium 1.jpg")!.closest('[data-testid="delivery-premium-hit"]')!.tagName).toBe("LABEL");
   });
 });
 
@@ -421,11 +431,11 @@ describe("round 2: the archive latch and the initial selection", () => {
   });
   it("does not seed the selection from a partial candidate list, and says why Publish is off until the failed list loads", async () => {
     delivery = stateAfterPublish(2);
-    floorplanFails = true;
+    candidatesFail = true;
     await openDelivery();
     expect((byId("delivery-publish") as HTMLButtonElement).disabled).toBe(true);
     expect(byId("delivery-publish-reason")?.textContent).toContain("could not be loaded");
-    floorplanFails = false;
+    candidatesFail = false;
     await click(host.querySelector<HTMLElement>('[role="alert"] button')); await flush(20);
     expect(byId("delivery-publish-reason")).toBeNull();
     expect((byLabel("Select plan.pdf") as HTMLInputElement).checked).toBe(true);
@@ -436,10 +446,43 @@ describe("round 2: the archive latch and the initial selection", () => {
     expect((publishBody()[0]![1] as { assetIds: string[] }).assetIds).toEqual([ids.photo1, ids.plan]);
   });
   it("keeps Publish off, with the reason, while any initial list is still loading", async () => {
-    videosHang = true;
+    candidatesHang = true;
     await openDelivery();
-    await select();
     expect((byId("delivery-publish") as HTMLButtonElement).disabled).toBe(true);
     expect(byId("delivery-publish-reason")?.textContent).toContain("loading");
+  });
+});
+
+describe("round 3: the tab does not depend on Video Review", () => {
+  it("lists the candidates and publishes a photo with Video Review closed", async () => {
+    videoReviewOff = true;
+    apiPostMock.mockResolvedValue({ ...stateAfterPublish(1), replayed: false, operationSetNumber: 1 });
+    await openDelivery();
+    expect(gets()).toContain(`/api/projects/${PROJECT_ID}/delivery/candidates`);
+    expect(allById("delivery-item")).toHaveLength(4);
+    await click(byLabel("Select 1.jpg"));
+    expect((byId("delivery-publish") as HTMLButtonElement).disabled).toBe(false);
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    expect(apiPostMock.mock.calls.filter(([path]) => path.endsWith("/delivery/publish"))).toHaveLength(1);
+  });
+  it("sends a Video's premium and unlock through the Client Delivery routes with Video Review closed", async () => {
+    videoReviewOff = true;
+    apiPutMock.mockResolvedValue({ premium: true, premiumUnlocked: false });
+    await openDelivery();
+    await click(byLabel("Premium Main walkthrough"));
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}/delivery/videos/${ids.video}/premium`, { premium: true });
+    expect(apiPutMock.mock.calls.every(([path]) => !path.includes("/videos/") || path.includes("/delivery/videos/"))).toBe(true);
+  });
+  it("keeps the archive latch when the refresh after the refusal fails, and lifts it on a later successful read", async () => {
+    apiPostMock.mockImplementation(async () => { latchDetailFails = true; throw api(409, { error: "x", code: "project_archived" }); });
+    await openDelivery(); await click(byLabel("Select 1.jpg"));
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm")); await flush(20);
+    expect((byId("delivery-publish") as HTMLButtonElement).disabled).toBe(true);
+    expect(byId("delivery-archived")).not.toBeNull();
+    latchDetailFails = false; // the Project was never archived, or was restored: the next read says so
+    const channel = new BroadcastChannel("quincy:project-data:v1");
+    channel.postMessage({ version: 1, type: "project-data-invalidated", projectId: PROJECT_ID, committedAt: new Date().toISOString(), sourceTabId: "other-tab", resources: [{ kind: "detail" }] });
+    await flush(20); channel.close();
+    expect(byId("delivery-archived")).toBeNull();
   });
 });

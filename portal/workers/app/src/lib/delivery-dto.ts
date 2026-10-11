@@ -1,4 +1,4 @@
-import { DELIVERY_ITEM_KINDS, type DeliveryItemKind, type DeliveryItemDto, type DeliveryPageDto, type DeliveryState } from "@quincy/shared";
+import { DELIVERY_ITEM_KINDS, type DeliveryCandidateDto, type DeliveryItemKind, type DeliveryItemDto, type DeliveryPageDto, type DeliveryState } from "@quincy/shared";
 import { lockedSql } from "./delivery-lock";
 import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VERSION_OF_VIDEO } from "./video-live-sql";
 
@@ -87,16 +87,37 @@ export async function readSetRows(db: D1Database, setId: string): Promise<Delive
 }
 
 /** The paid-extra flag and unlock of each of `assetIds`, by id. A photo or document carries its own; a Video Version has its Video's (`videos.premium`, `video_premium_unlocks`), never the Asset's. */
-async function readPremiumFlags(db: D1Database, assetIds: readonly string[]): Promise<Map<string, { premium: boolean; unlocked: boolean }>> {
+async function readPremiumFlags(db: D1Database, assetIds: readonly string[]): Promise<Map<string, { premium: boolean; unlocked: boolean; videoId: string | null }>> {
   if (assetIds.length === 0) return new Map();
   const json = JSON.stringify(assetIds);
   const [assets, videos] = await Promise.all([
     db.prepare(`SELECT a.id AS id, a.delivery_premium AS premium, u.asset_id IS NOT NULL AS unlocked FROM assets a LEFT JOIN asset_premium_unlocks u ON u.asset_id = a.id
       WHERE a.id IN (SELECT value FROM json_each(?1)) AND a.kind IN ('photo', 'floorplan_pdf', 'copy_pdf')`).bind(json).all<{ id: string; premium: number; unlocked: number }>(),
-    db.prepare(`SELECT m.asset_id AS id, v.premium AS premium, vu.video_id IS NOT NULL AS unlocked FROM video_version_meta m JOIN videos v ON v.id = m.video_id LEFT JOIN video_premium_unlocks vu ON vu.video_id = v.id
-      WHERE m.asset_id IN (SELECT value FROM json_each(?1)) AND ${LIVE_VERSION_OF_VIDEO("m", "v")}`).bind(json).all<{ id: string; premium: number; unlocked: number }>(),
+    db.prepare(`SELECT m.asset_id AS id, v.id AS videoId, v.premium AS premium, vu.video_id IS NOT NULL AS unlocked FROM video_version_meta m JOIN videos v ON v.id = m.video_id LEFT JOIN video_premium_unlocks vu ON vu.video_id = v.id
+      WHERE m.asset_id IN (SELECT value FROM json_each(?1)) AND ${LIVE_VERSION_OF_VIDEO("m", "v")}`).bind(json).all<{ id: string; videoId: string; premium: number; unlocked: number }>(),
   ]);
-  return new Map([...assets.results, ...videos.results].map((row) => [row.id, { premium: row.premium === 1, unlocked: row.unlocked === 1 }]));
+  return new Map([...assets.results.map((row) => ({ ...row, videoId: null as string | null })), ...videos.results].map((row) => [row.id, { premium: row.premium === 1, unlocked: row.unlocked === 1, videoId: row.videoId }]));
+}
+
+/**
+ * What the staff Delivery tab may offer: every Asset of the Project that `DELIVERY_ELIGIBLE_SQL` accepts (the predicate Publish checks, so the two cannot drift), in page order. A Video
+ * Version is eligible only while current and live, so each Video appears once, at its current Version. Names and premium state ride along; nothing here needs Video Review.
+ */
+export async function readDeliveryCandidates(db: D1Database, projectId: string): Promise<DeliveryCandidateDto[]> {
+  const assets = (await db.prepare(`SELECT a.id AS assetId, a.kind AS assetKind, a.original_filename AS name, a.delivery_premium AS premium, u.asset_id IS NOT NULL AS unlocked
+      FROM assets a JOIN collections c ON c.id = a.collection_id LEFT JOIN asset_premium_unlocks u ON u.asset_id = a.id
+      WHERE c.project_id = ?1 AND ${DELIVERY_ELIGIBLE_SQL} ORDER BY a.created_at, a.id`).bind(projectId).all<{ assetId: string; assetKind: string; name: string; premium: number; unlocked: number }>()).results;
+  const videoAssetIds = assets.filter((row) => row.assetKind === "video").map((row) => row.assetId);
+  const films = videoAssetIds.length === 0 ? [] : (await db.prepare(`SELECT m.asset_id AS assetId, v.id AS videoId, v.title AS title, v.premium AS premium, vu.video_id IS NOT NULL AS unlocked
+      FROM video_version_meta m JOIN videos v ON v.id = m.video_id LEFT JOIN video_premium_unlocks vu ON vu.video_id = v.id
+      WHERE v.project_id = ?2 AND m.asset_id IN (SELECT value FROM json_each(?1)) AND ${LIVE_VERSION_OF_VIDEO("m", "v")} ORDER BY v.position, v.created_at, v.id`)
+    .bind(JSON.stringify(videoAssetIds), projectId).all<{ assetId: string; videoId: string; title: string; premium: number; unlocked: number }>()).results;
+  const of = (kind: string) => assets.filter((row) => row.assetKind === kind);
+  const doc = (kind: DeliveryItemKind) => (row: (typeof assets)[number]): DeliveryCandidateDto => ({ assetId: row.assetId, kind, name: row.name, videoId: null, premium: row.premium === 1, premiumUnlocked: row.unlocked === 1 });
+  return [
+    ...of("photo").map(doc("photo")), ...of("floorplan_pdf").map(doc("floorplan")), ...of("copy_pdf").map(doc("copy")),
+    ...films.map((film): DeliveryCandidateDto => ({ assetId: film.assetId, kind: "video", name: film.title, videoId: film.videoId, premium: film.premium === 1, premiumUnlocked: film.unlocked === 1 })),
+  ];
 }
 
 const STATE_KINDS: readonly string[] = DELIVERY_ITEM_KINDS;
@@ -116,7 +137,7 @@ export async function readDeliveryState(db: D1Database, projectId: string, optio
   const coverHandle = rows.find((row) => row.assetId === set.coverAssetId)?.handle ?? null;
   const dto = buildDeliveryDto({ property: project, setNumber: set.setNumber, publishedAt: set.publishedAt, coverHandle, rows, urls: options.urls ?? setItemUrls(projectId) });
   const flags = await readPremiumFlags(db, rows.map((row) => row.assetId));
-  const items = rows.map((row, index) => ({ assetId: row.assetId, handle: row.handle, kind: row.kind, label: dto.items[index]!.label, position: row.position, locked: row.locked, premium: flags.get(row.assetId)?.premium ?? false, premiumUnlocked: flags.get(row.assetId)?.unlocked ?? false })).filter((item) => STATE_KINDS.includes(item.kind));
+  const items = rows.map((row, index) => ({ assetId: row.assetId, handle: row.handle, kind: row.kind, label: dto.items[index]!.label, position: row.position, locked: row.locked, premium: flags.get(row.assetId)?.premium ?? false, premiumUnlocked: flags.get(row.assetId)?.unlocked ?? false, videoId: flags.get(row.assetId)?.videoId ?? null })).filter((item) => STATE_KINDS.includes(item.kind));
   return { page: pageState, set: { setNumber: set.setNumber, publishedAt: set.publishedAt, coverAssetId: set.coverAssetId, items }, dto };
 }
 

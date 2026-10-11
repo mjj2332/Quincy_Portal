@@ -9,8 +9,9 @@ const sync = vi.hoisted(() => ({ invalidateProjectSurfaces: vi.fn(async (..._arg
 vi.mock("./project-data", async (importOriginal) => ({ ...(await importOriginal<typeof import("./project-data")>()), ...sync }));
 import { announcePrincipalTerminal } from "./principal-terminal";
 import { ProjectQueryRuntime } from "./project-query-sync";
-import { previewDelivery, publishDelivery, setAssetPremium, setAssetPremiumUnlock, setDeliveryPageEnabled } from "./delivery-data";
+import { previewDelivery, publishDelivery, setAssetPremium, setAssetPremiumUnlock, setDeliveryPageEnabled, setDeliveryVideoPremium, setDeliveryVideoPremiumUnlock } from "./delivery-data";
 
+const V = "88888888-8888-4888-8888-888888888888";
 const P = "11111111-1111-4111-8111-111111111111"; const A = "22222222-2222-4222-8222-222222222222";
 const handle = "abcdefghijklmnop";
 const state = (setNumber = 1) => ({ page: { slug: "s-abc", path: "/d/s-abc", enabled: true, latestSetNumber: setNumber }, set: { setNumber, publishedAt: 1, coverAssetId: null, items: [] }, dto: { property: { street: "1 A St", suburb: null }, setNumber, publishedAt: 1, coverHandle: null, items: [] } });
@@ -73,6 +74,7 @@ describe("a success that lands after the session or the Project is gone writes n
     publish: () => { api.apiPost.mockImplementation(async () => { gone_(); return { ...state(2), replayed: false, operationSetNumber: 2 }; }); return publishDelivery(client, P, { assetIds: [A], coverAssetId: null, expectedLatestSet: null, operationId: "op" }); },
     "page switch": () => { api.apiPut.mockImplementation(async () => { gone_(); return state(1); }); return setDeliveryPageEnabled(client, P, false); },
     premium: () => { api.apiPut.mockImplementation(async () => { gone_(); return { premium: true, premiumUnlocked: false }; }); return setAssetPremium(client, P, A, "edited", true); },
+    "video premium": () => { api.apiPut.mockImplementation(async () => { gone_(); return { premium: true, premiumUnlocked: false }; }); return setDeliveryVideoPremium(client, P, V, true); },
   } as const;
   let gone_: () => void = () => undefined;
   it.each(Object.keys(gone).flatMap((reason) => Object.keys(writes).map((write) => [reason, write] as const)))("%s, then %s answers", async (reason, write) => {
@@ -93,5 +95,36 @@ describe("the page switch settles like the other writes", () => {
     api.apiPut.mockResolvedValue({ ...state(1), page: { ...state(1).page, enabled: false } });
     await setDeliveryPageEnabled(client, P, false);
     expect(order).toEqual(["cancel", "invalidate:delivery:false"]);
+  });
+});
+
+describe("Video premium from the Delivery tab uses the Client Delivery routes", () => {
+  const FILM = "77777777-7777-4777-8777-777777777777";
+  const candidate = (over: Record<string, unknown> = {}) => ({ assetId: FILM, kind: "video", name: "Hero", videoId: V, premium: false, premiumUnlocked: false, ...over });
+  it("marks premium through /delivery/videos, patches the candidate, and settles delivery, candidates and videos", async () => {
+    client.setQueryData(projectDataKeys.deliveryCandidates(P), { candidates: [candidate(), candidate({ assetId: A, videoId: null, kind: "photo" })] });
+    api.apiPut.mockResolvedValue({ premium: true, premiumUnlocked: false });
+    await setDeliveryVideoPremium(client, P, V, true);
+    expect(api.apiPut).toHaveBeenCalledWith(`/api/projects/${P}/delivery/videos/${V}/premium`, { premium: true });
+    const cached = client.getQueryData<{ candidates: Array<{ assetId: string; premium: boolean }> }>(projectDataKeys.deliveryCandidates(P))!.candidates;
+    expect(cached.map((c) => c.premium)).toEqual([true, false]);
+    const kinds = sync.invalidateProjectSurfaces.mock.calls.map(([, input]) => (input as { resources: Array<{ kind: string }> }).resources.map((r) => r.kind).sort());
+    expect(kinds).toEqual([["delivery", "delivery-candidates", "videos"]]);
+  });
+  it("unlocks and re-locks through /premium-unlock, sending the payment reference only when unlocking", async () => {
+    client.setQueryData(projectDataKeys.deliveryCandidates(P), { candidates: [candidate({ premium: true })] });
+    api.apiPut.mockResolvedValue({ premium: true, premiumUnlocked: true });
+    await setDeliveryVideoPremiumUnlock(client, P, V, { unlocked: true, paymentRef: "INV-1" });
+    expect(api.apiPut).toHaveBeenLastCalledWith(`/api/projects/${P}/delivery/videos/${V}/premium-unlock`, { unlocked: true, paymentRef: "INV-1" });
+    expect(client.getQueryData<{ candidates: Array<{ premiumUnlocked: boolean }> }>(projectDataKeys.deliveryCandidates(P))!.candidates[0]!.premiumUnlocked).toBe(true);
+  });
+  it("patches the served set items of that Video, so an older Version on the page shows the answer", async () => {
+    client.setQueryData(projectDataKeys.deliveryCandidates(P), { candidates: [candidate()] });
+    const item = (assetId: string, videoId: string | null) => ({ assetId, handle, kind: "video", label: "Video 01", position: 0, locked: true, premium: true, premiumUnlocked: false, videoId });
+    client.setQueryData(projectDataKeys.delivery(P), { ...state(1), set: { ...state(1).set, items: [item("55555555-5555-4555-8555-555555555555", V), item(A, null)] } });
+    api.apiPut.mockResolvedValue({ premium: true, premiumUnlocked: true });
+    await setDeliveryVideoPremiumUnlock(client, P, V, { unlocked: true });
+    const items = (client.getQueryData(projectDataKeys.delivery(P)) as { set: { items: Array<{ premiumUnlocked: boolean; locked: boolean }> } }).set.items;
+    expect(items.map((i) => [i.premiumUnlocked, i.locked])).toEqual([[true, false], [false, true]]);
   });
 });

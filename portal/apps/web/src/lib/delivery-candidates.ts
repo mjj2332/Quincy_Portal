@@ -1,10 +1,8 @@
-import type { CollectionKind, DeliveryItemKind, VideoDto } from "@quincy/shared";
-import type { WorkspaceAsset } from "../components/PhotoGrid";
+import type { CollectionKind, DeliveryCandidateDto, DeliveryItemKind } from "@quincy/shared";
 
 /**
- * What the Delivery tab offers to publish (#787 slice 10), composed client-side from the lists the Project already reads: current Edited photos, the Floorplan and Copy PDFs, and one row per
- * Video at its current Version. It mirrors Publish's eligibility (never RAW, never a Floorplan preview); the server's 400 `invalid_selection` stays the authority. Page order is photos, Floorplans,
- * Copy documents, then Videos, each in the order its list came.
+ * What the Delivery tab offers to publish (#787 slice 10). The list comes from the server (`GET /delivery/candidates`), which applies Publish's own eligibility behind the Client Delivery gate
+ * alone; the server's 400 `invalid_selection` stays the authority. This adds only what the tab needs to re-read after a premium write.
  */
 export type DeliveryCandidate = {
   /** The Asset id Publish takes: for a Video, its current Version. */
@@ -18,13 +16,6 @@ export type DeliveryCandidate = {
   premiumUnlocked: boolean;
 };
 
-export function buildDeliveryCandidates(input: { edited: readonly WorkspaceAsset[]; floorplan: readonly WorkspaceAsset[]; copy: readonly WorkspaceAsset[]; videos: readonly VideoDto[] }): DeliveryCandidate[] {
-  const ofAsset = (asset: WorkspaceAsset, kind: DeliveryItemKind, collection: CollectionKind): DeliveryCandidate =>
-    ({ assetId: asset.id, kind, name: asset.originalFilename, collection, videoId: null, premium: asset.premium === true, premiumUnlocked: asset.premiumUnlocked === true });
-  return [
-    ...input.edited.filter((asset) => asset.kind === "photo").map((asset) => ofAsset(asset, "photo", "edited")),
-    ...input.floorplan.filter((asset) => asset.kind === "floorplan_pdf").map((asset) => ofAsset(asset, "floorplan", "floorplan")),
-    ...input.copy.filter((asset) => asset.kind === "copy_pdf").map((asset) => ofAsset(asset, "copy", "copy")),
-    ...input.videos.map((video): DeliveryCandidate => ({ assetId: video.currentAssetId, kind: "video", name: video.title, collection: null, videoId: video.id, premium: video.premium, premiumUnlocked: video.premiumUnlocked })),
-  ];
-}
+export const COLLECTION_OF_KIND = { photo: "edited", floorplan: "floorplan", copy: "copy", video: null } as const satisfies Record<DeliveryItemKind, CollectionKind | null>;
+
+export const toDeliveryCandidates = (dtos: readonly DeliveryCandidateDto[]): DeliveryCandidate[] => dtos.map((dto) => ({ ...dto, collection: COLLECTION_OF_KIND[dto.kind] }));

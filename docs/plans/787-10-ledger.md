@@ -41,3 +41,11 @@ No new raw `<button>`, `<input>`, `<select>`, `<textarea>`, `<dialog>` or widget
 
 - Publish-off reason (`delivery-publish-reason`): a plain `span` of label-type text beside the Publish `reui/button`, in the same row. Searched: `reui/notice`-style callouts (the tab's `quincy/Notice` is a block banner, too heavy for a one-line reason beside a button) and the ReUI `field` description; none is an inline hint. No new raw primitive.
 - Staff Delivery state now carries a Video Version's premium and unlock from its Video (`videos.premium`, `video_premium_unlocks`), so older served Video rows show the real state; a Video premium write also asks for the Delivery state again.
+
+## Sol round 3 additions
+
+- Candidates come from `GET /delivery/candidates` (Client Delivery gate alone), not from the Assets and Videos lists, so Video Review being closed hides nothing. No new UI element: the rows are unchanged.
+- Video premium and Unlock go to `PUT /delivery/videos/:videoId/premium[-unlock]` (same handlers as the Video Review routes, Client Delivery admission). The tab no longer imports `video-approval-data`.
+- Page switch: the `reui/switch` and its text now sit inside one native `label` (`min-h-11`), so the whole row is the hit target (the previous `label htmlFor` pair only enlarged a div). The premium switches already wrapped their text in a `label`. No new raw primitive; the `reui/label` import stays for the payment reference field.
+- Archive latch: lifted only by a SUCCESSFUL Project read newer than the refusal that shows it unarchived; a failed refresh keeps it.
+- Known limit: a photo uploaded in another tab reaches the candidates on the next focus or after 15 seconds (the candidates read has its own `delivery-candidates` resource, invalidated by premium writes and failures here), not by the Assets list's invalidation.

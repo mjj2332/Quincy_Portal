@@ -1,17 +1,18 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import { deliveryPageSwitchInputSchema, deliveryPreviewInputSchema, deliveryPublishInputSchema, deliveryPublishResponseSchema, deliveryStateSchema, roleHasCapability, type Capability } from "@quincy/shared";
+import { deliveryCandidatesResponseSchema, deliveryPageSwitchInputSchema, deliveryPreviewInputSchema, deliveryPublishInputSchema, deliveryPublishResponseSchema, deliveryStateSchema, roleHasCapability, type Capability } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
 import { projectIsArchived } from "../lib/project-archive";
 import { terminalRoute } from "../lib/terminal-route";
 import { clientDeliveryGate } from "../lib/client-delivery-gate";
 import { randomItemHandle } from "../lib/delivery-address";
-import { previewDelivery, readDeliveryState } from "../lib/delivery-dto";
+import { previewDelivery, readDeliveryCandidates, readDeliveryState } from "../lib/delivery-dto";
 import { enqueueDeliveryDerivatives, publishDelivery, setDeliveryPageEnabled } from "../lib/delivery-publish";
 import { publishOutboxDetached } from "../lib/server-timing";
 import { queueProjectShootDateFollowUps } from "../lib/project-shoot-date";
 import { jsonInput } from "./helpers";
+import { putVideoPremium, putVideoPremiumUnlock } from "./video-approval";
 
 const uuid = z.string().uuid();
 
@@ -41,6 +42,19 @@ deliveryRoutes.get("/projects/:projectId/delivery", terminalRoute("/projects/:pr
   const refused = await admitDelivery(c, projectId, "viewClientPreview", false); if (refused) return refused;
   return c.json(deliveryStateSchema.parse(await readDeliveryState(c.env.DB, projectId)));
 }));
+
+/** What the tab may offer to publish: Publish's own eligibility, behind the Client Delivery gate alone (Video Review may be closed). */
+deliveryRoutes.get("/projects/:projectId/delivery/candidates", terminalRoute("/projects/:projectId/delivery/candidates", async (c) => {
+  const projectId = c.req.param("projectId");
+  if (!uuid.safeParse(projectId).success) return c.json({ error: "Invalid id" }, 400);
+  const refused = await admitDelivery(c, projectId, "viewClientPreview", false); if (refused) return refused;
+  return c.json(deliveryCandidatesResponseSchema.parse({ candidates: await readDeliveryCandidates(c.env.DB, projectId) }));
+}));
+
+/** A Video's premium and Unlock from the Delivery tab: the Video Review routes' handlers over the Client Delivery gate (same capability, `manageVideoPremium`; archived 409). */
+const admitVideoPremium = (c: Ctx, projectId: string) => admitDelivery(c, projectId, "manageVideoPremium", true);
+deliveryRoutes.put("/projects/:projectId/delivery/videos/:videoId/premium", terminalRoute("/projects/:projectId/delivery/videos/:videoId/premium", (c) => putVideoPremium(c, admitVideoPremium)));
+deliveryRoutes.put("/projects/:projectId/delivery/videos/:videoId/premium-unlock", terminalRoute("/projects/:projectId/delivery/videos/:videoId/premium-unlock", (c) => putVideoPremiumUnlock(c, admitVideoPremium)));
 
 deliveryRoutes.post("/projects/:projectId/delivery/preview", terminalRoute("/projects/:projectId/delivery/preview", async (c) => {
   const projectId = c.req.param("projectId");

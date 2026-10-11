@@ -42,10 +42,10 @@ const retired = new WeakSet<object>();
 onPrincipalTerminal((queryClient) => { if (queryClient) retired.add(queryClient); });
 
 type Touches = "decisions" | "videos";
-const touchedKeys = (ctx: ApprovalWriteContext, touches: Touches) => (touches === "videos" ? [projectDataKeys.videos(ctx.projectId), projectDataKeys.delivery(ctx.projectId)] : [projectDataKeys.videoDecisions(ctx.projectId, ctx.videoId)]);
+const touchedKeys = (ctx: ApprovalWriteContext, touches: Touches) => (touches === "videos" ? [projectDataKeys.videos(ctx.projectId), projectDataKeys.delivery(ctx.projectId), projectDataKeys.deliveryCandidates(ctx.projectId)] : [projectDataKeys.videoDecisions(ctx.projectId, ctx.videoId)]);
 
-/** A premium change (`touches` "videos") is also on the staff Delivery state a published Video Version is read from (#787 slice 10), so that is asked for again with it. */
-const converge = (ctx: ApprovalWriteContext, touches: Touches = "decisions") => invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "video-decisions", videoId: ctx.videoId }, { kind: "videos" }, ...(touches === "videos" ? [{ kind: "delivery" } as const] : [])], dashboard: false, calendar: false, gantt: false });
+/** A premium change (`touches` "videos") is also on the staff Delivery state and candidates (#787 slice 10), so those are asked for again with it. */
+const converge = (ctx: ApprovalWriteContext, touches: Touches = "decisions") => invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "video-decisions", videoId: ctx.videoId }, { kind: "videos" }, ...(touches === "videos" ? [{ kind: "delivery" } as const, { kind: "delivery-candidates" } as const] : [])], dashboard: false, calendar: false, gantt: false });
 
 /**
  * What a refusal changes locally, before the caller sees the error: a 401 ends the captured person's data; an access refusal (403, or a 404 that is not a missing Release) means the

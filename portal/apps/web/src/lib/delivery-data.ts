@@ -1,12 +1,12 @@
 import { useQuery, type QueryClient, type QueryFunctionContext, type UseQueryResult } from "@tanstack/react-query";
 import { z } from "zod";
 import {
-  assetPremiumResponseSchema, deliveryPageDtoSchema, deliveryPublishResponseSchema, deliveryStateSchema,
-  type AssetPremiumResponse, type CollectionKind, type DeliveryPageDto, type DeliveryPublishResponse, type DeliveryState,
+  assetPremiumResponseSchema, deliveryCandidatesResponseSchema, deliveryPageDtoSchema, deliveryPublishResponseSchema, deliveryStateSchema, videoPremiumResponseSchema,
+  type AssetPremiumResponse, type DeliveryCandidatesResponse, type CollectionKind, type DeliveryPageDto, type DeliveryPublishResponse, type DeliveryState, type VideoDto,
 } from "@quincy/shared";
 import { ZodError } from "zod";
 import { ApiError, apiGet, apiPost, apiPut } from "./api";
-import { getProjectQueryRuntime } from "./project-query-sync";
+import { getProjectQueryRuntime, type ProjectDataResource } from "./project-query-sync";
 import { invalidateProjectSurfaces, projectDataKeys, projectQueryRetry, removedDataError, terminatePrincipalOnUnauthorized } from "./project-data";
 import type { WorkspaceAsset } from "../components/PhotoGrid";
 import { onPrincipalTerminal } from "./principal-terminal";
@@ -44,8 +44,20 @@ onPrincipalTerminal((queryClient) => { if (queryClient) retired.add(queryClient)
 /** False once the session is over or the Project has been removed from this one: nothing the server answers after that may be written to its cache. */
 const live = (queryClient: QueryClient, projectId: string) => !retired.has(queryClient) && !getProjectQueryRuntime(queryClient)?.isProjectRemoved(projectId);
 
-const settle = (queryClient: QueryClient, projectId: string, collectionKind?: CollectionKind) =>
-  invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "delivery" }, ...(collectionKind ? [{ kind: "assets", collectionKind } as const] : [])], dashboard: false, calendar: false, gantt: false });
+/** What the tab may offer to publish, or `null` when the tab is not offered. Behind the Client Delivery gate alone, so Video Review being closed does not hide anything (#787 slice 10 round 3). */
+export function useDeliveryCandidatesQuery(projectId: string, enabled: boolean): UseQueryResult<DeliveryCandidatesResponse, Error> {
+  return useQuery<DeliveryCandidatesResponse, Error>({
+    queryKey: projectDataKeys.deliveryCandidates(projectId), enabled, staleTime: 15_000, retry: (count, error) => (error instanceof ZodError ? false : projectQueryRetry(count, error)),
+    queryFn: async ({ signal, client }: QueryFunctionContext) => {
+      const response = deliveryCandidatesResponseSchema.parse(await apiGet<unknown>(`${deliveryPath(projectId)}/candidates`, { signal }));
+      if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
+      return response;
+    },
+  });
+}
+
+const settle = (queryClient: QueryClient, projectId: string, extra: ProjectDataResource[] = []) =>
+  invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "delivery" }, ...extra], dashboard: false, calendar: false, gantt: false });
 
 /** A Publish can move the Project to Delivered: the same surfaces a stage move settles (Project detail and activity, Dashboard Board, Production Calendar and Gantt), here and in the other tabs. */
 const settlePublished = (queryClient: QueryClient, projectId: string) =>
@@ -87,30 +99,45 @@ export async function setDeliveryPageEnabled(queryClient: QueryClient, projectId
   return state;
 }
 
-/** Patches one Asset's premium flags into the cached Assets list and the cached page set, so the controls show the server's answer before the re-read lands. */
-function patchPremium(queryClient: QueryClient, projectId: string, assetId: string, collectionKind: CollectionKind, answer: AssetPremiumResponse) {
+type PremiumTarget = { assetId: string; collectionKind: CollectionKind } | { videoId: string };
+type Flags = { premium: boolean; premiumUnlocked: boolean };
+
+/** Patches one item's premium flags into every cache that shows them (the candidates, the served set, the Assets or Videos list), so the controls show the server's answer before the re-read lands. */
+function patchPremium(queryClient: QueryClient, projectId: string, target: PremiumTarget, answer: Flags) {
   if (!live(queryClient, projectId)) return;
-  queryClient.setQueryData<WorkspaceAsset[]>(projectDataKeys.assets(projectId, collectionKind), (list) => list?.map((asset) => (asset.id === assetId ? { ...asset, premium: answer.premium, premiumUnlocked: answer.premiumUnlocked } : asset)));
+  const matches = (item: { assetId: string; videoId: string | null }) => ("videoId" in target ? item.videoId === target.videoId : item.assetId === target.assetId);
+  queryClient.setQueryData<DeliveryCandidatesResponse>(projectDataKeys.deliveryCandidates(projectId), (old) => old && { candidates: old.candidates.map((item) => (matches(item) ? { ...item, ...answer } : item)) });
   queryClient.setQueryData<DeliveryState | null>(projectDataKeys.delivery(projectId), (current) => current?.set
-    ? { ...current, set: { ...current.set, items: current.set.items.map((item) => (item.assetId === assetId ? { ...item, premium: answer.premium, premiumUnlocked: answer.premiumUnlocked, locked: answer.premium && !answer.premiumUnlocked } : item)) } }
+    ? { ...current, set: { ...current.set, items: current.set.items.map((item) => (matches(item) ? { ...item, ...answer, locked: answer.premium && !answer.premiumUnlocked } : item)) } }
     : current);
+  if ("videoId" in target) queryClient.setQueryData<VideoDto[]>(projectDataKeys.videos(projectId), (list) => list?.map((video) => (video.id === target.videoId ? { ...video, ...answer } : video)));
+  else queryClient.setQueryData<WorkspaceAsset[]>(projectDataKeys.assets(projectId, target.collectionKind), (list) => list?.map((asset) => (asset.id === target.assetId ? { ...asset, ...answer } : asset)));
 }
 /** A premium write: stop reads already in flight (they predate it), patch the caches from the answer, then re-read. */
-async function premiumWrite(queryClient: QueryClient, projectId: string, assetId: string, collectionKind: CollectionKind, call: () => Promise<AssetPremiumResponse>): Promise<AssetPremiumResponse> {
-  await Promise.all([queryClient.cancelQueries({ queryKey: projectDataKeys.assets(projectId, collectionKind) }), queryClient.cancelQueries({ queryKey: projectDataKeys.delivery(projectId) })]);
+async function premiumWrite<T extends Flags>(queryClient: QueryClient, projectId: string, target: PremiumTarget, call: () => Promise<T>): Promise<T> {
+  const own = "videoId" in target ? projectDataKeys.videos(projectId) : projectDataKeys.assets(projectId, target.collectionKind);
+  await Promise.all([own, projectDataKeys.delivery(projectId), projectDataKeys.deliveryCandidates(projectId)].map((queryKey) => queryClient.cancelQueries({ queryKey })));
   try {
     const answer = await guarded(queryClient, call);
-    patchPremium(queryClient, projectId, assetId, collectionKind, answer);
+    patchPremium(queryClient, projectId, target, answer);
     return answer;
-  } finally { if (live(queryClient, projectId)) void settle(queryClient, projectId, collectionKind); }
+  } finally { if (live(queryClient, projectId)) void settle(queryClient, projectId, [{ kind: "delivery-candidates" }, ("videoId" in target ? { kind: "videos" } : { kind: "assets", collectionKind: target.collectionKind })]); }
 }
 
 /** Photo and document premium: mark or unmark. */
 export function setAssetPremium(queryClient: QueryClient, projectId: string, assetId: string, collectionKind: CollectionKind, premium: boolean): Promise<AssetPremiumResponse> {
-  return premiumWrite(queryClient, projectId, assetId, collectionKind, async () => assetPremiumResponseSchema.parse(await apiPut<unknown, { premium: boolean }>(`${assetPath(projectId, assetId)}/delivery-premium`, { premium })));
+  return premiumWrite(queryClient, projectId, { assetId, collectionKind }, async () => assetPremiumResponseSchema.parse(await apiPut<unknown, { premium: boolean }>(`${assetPath(projectId, assetId)}/delivery-premium`, { premium })));
 }
 export function setAssetPremiumUnlock(queryClient: QueryClient, projectId: string, assetId: string, collectionKind: CollectionKind, input: { unlocked: boolean; paymentRef?: string }): Promise<AssetPremiumResponse> {
-  return premiumWrite(queryClient, projectId, assetId, collectionKind, async () => assetPremiumResponseSchema.parse(await apiPut<unknown, typeof input>(`${assetPath(projectId, assetId)}/delivery-premium-unlock`, input)));
+  return premiumWrite(queryClient, projectId, { assetId, collectionKind }, async () => assetPremiumResponseSchema.parse(await apiPut<unknown, typeof input>(`${assetPath(projectId, assetId)}/delivery-premium-unlock`, input)));
+}
+/** A Video's premium and Unlock, on the Client Delivery routes (the Video Review routes need Video Review open). */
+const videoPath = (projectId: string, videoId: string) => `${deliveryPath(projectId)}/videos/${enc(videoId)}`;
+export function setDeliveryVideoPremium(queryClient: QueryClient, projectId: string, videoId: string, premium: boolean) {
+  return premiumWrite(queryClient, projectId, { videoId }, async () => videoPremiumResponseSchema.parse(await apiPut<unknown, { premium: boolean }>(`${videoPath(projectId, videoId)}/premium`, { premium })));
+}
+export function setDeliveryVideoPremiumUnlock(queryClient: QueryClient, projectId: string, videoId: string, input: { unlocked: boolean; paymentRef?: string }) {
+  return premiumWrite(queryClient, projectId, { videoId }, async () => videoPremiumResponseSchema.parse(await apiPut<unknown, typeof input>(`${videoPath(projectId, videoId)}/premium-unlock`, input)));
 }
 
 const detailsOf = (error: unknown): Record<string, unknown> => (error instanceof ApiError && error.details && typeof error.details === "object" ? error.details as Record<string, unknown> : {});

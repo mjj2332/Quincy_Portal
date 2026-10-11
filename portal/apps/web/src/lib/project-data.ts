@@ -52,6 +52,8 @@ export const projectDataKeys = {
   videos: (projectId: string) => ["project-data", projectId, "videos"] as const,
   /** The Project's Client Delivery page state (#787 slice 10); its answer is also whether the Delivery tab exists. */
   delivery: (projectId: string) => ["project-data", projectId, "delivery"] as const,
+  /** What the Delivery tab may offer to publish (#787 slice 10): Publish's own eligibility, behind the Client Delivery gate alone. */
+  deliveryCandidates: (projectId: string) => ["project-data", projectId, "delivery-candidates"] as const,
   /** Every note thread on one Video Version (#741 5b). Under the Project root, so `project-data-removed` clears it; keyed by the Version's Asset id. */
   videoNotes: (projectId: string, assetId: string) => ["project-data", projectId, "video-notes", assetId] as const,
   /** Every Version's client decisions and live Release for one Video (#741 14-ui-staff). */
