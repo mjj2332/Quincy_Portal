@@ -6,6 +6,7 @@ import { ApiError } from "../../lib/api";
 import { useCapabilities } from "../../lib/capabilities";
 import { COLLECTION_OF_KIND, toDeliveryCandidates, type DeliveryCandidate } from "../../lib/delivery-candidates";
 import { deliveryErrorText, errorCode, previewDelivery, publishDelivery, refusedAssetIds, setAssetPremium, setAssetPremiumUnlock, setDeliveryPageEnabled, setDeliveryVideoPremium, setDeliveryVideoPremiumUnlock, useDeliveryCandidatesQuery, useProjectDeliveryQuery } from "../../lib/delivery-data";
+import { readPendingPublish, writePendingPublish } from "../../lib/delivery-pending-store";
 import { invalidateProjectSurfaces, projectDataKeys, useProjectDetailQuery, type ProjectDetail } from "../../lib/project-data";
 import { LazyImage } from "../LazyImage";
 import { Checkbox } from "../quincy/Checkbox";
@@ -31,8 +32,6 @@ const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const GROUPS = [{ kind: "photo", title: "Edited photos", plural: "photos" }, { kind: "floorplan", title: "Floorplan PDF", plural: "Floorplan PDFs" }, { kind: "copy", title: "Copy PDF", plural: "Copy PDFs" }, { kind: "video", title: "Videos", plural: "Videos" }] as const;
 const when = (epoch: number) => new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(epoch));
 const thumbUrl = (projectId: string, c: DeliveryCandidate) => (c.kind === "photo" || c.kind === "video" ? `/api/projects/${projectId}/delivery/preview-media/${c.assetId}/thumb` : null);
-/** What a Publish is, from the moment it is first tried until it is answered. A lost response leaves it unanswered, so a retry must send exactly this, never a rebuilt body. */
-type PendingPublish = { id: string; body: { assetIds: string[]; coverAssetId: string | null; expectedLatestSet: number | null } };
 /** A refusal the server gave is definite; no answer at all, or a server fault, may still have committed. */
 const uncertain = (error: unknown) => !(error instanceof ApiError) || error.status === 0 || error.status >= 500;
 type Unlocking = { candidate: DeliveryCandidate; mode: "unlock" | "relock" } | null;
@@ -63,7 +62,8 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
   // the Project unarchived (restored in another tab) may lift.
   const [archivedLatch, setArchivedLatch] = useState<number | null>(null);
   const [seeded, setSeeded] = useState(false);
-  const pending = useRef<PendingPublish | null>(null);
+  // What a Publish is, from the moment it is first tried until it is answered, lives in a store owned by the session and Project (not this component): a lost response leaves it unanswered, and a retry sends exactly this.
+  const pending = { get current() { return readPendingPublish(queryClient, projectId); }, set current(value) { writePendingPublish(queryClient, projectId, value); } };
   const [, rerender] = useState(0);
   const isArchived = archived || archivedLatch !== null;
   // The tab stays mounted while hidden: coming back to it asks for the candidates again, so what was uploaded, replaced or trashed meanwhile is offered (or no longer offered).
@@ -94,6 +94,10 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
   }, [seeded, listsUsable, delivery.isPending, candidates, state]);
 
   const orderedIds = candidates.filter((c) => selected.has(c.assetId)).map((c) => c.assetId);
+  // The cover sent is null unless it is still a selected, eligible photo; a candidate refresh that drops it clears it here too.
+  const coverIsValid = cover !== null && orderedIds.includes(cover) && candidates.some((c) => c.assetId === cover && c.kind === "photo");
+  const sentCover = coverIsValid ? cover : null;
+  useEffect(() => { if (seeded && cover !== null && listsUsable && !coverIsValid) setCover(null); }, [seeded, cover, listsUsable, coverIsValid]);
   const nameOf = (assetId: string) => candidates.find((c) => c.assetId === assetId)?.name ?? "an item";
   const expected = state?.page?.latestSetNumber ?? null;
   // Items the client page serves that are no longer candidates (a newer version replaced them): the page still shows THESE Assets, so their premium state is theirs to change.
@@ -135,12 +139,12 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
 
   async function runPreview() {
     setBusy("preview"); setProblem(null); setReceipt(null);
-    try { setPreview(await previewDelivery(queryClient, projectId, { assetIds: orderedIds, coverAssetId: cover })); } catch (error) { refuse(error); } finally { setBusy(null); }
+    try { setPreview(await previewDelivery(queryClient, projectId, { assetIds: orderedIds, coverAssetId: sentCover })); } catch (error) { refuse(error); } finally { setBusy(null); }
   }
   async function runPublish() {
     setConfirming(false); setBusy("publish"); setProblem(null); setReceipt(null);
     // An unanswered Publish keeps its id and body whatever has changed since; only an answer releases it.
-    if (!pending.current) pending.current = { id: crypto.randomUUID(), body: { assetIds: orderedIds, coverAssetId: cover, expectedLatestSet: expected } };
+    if (!pending.current) pending.current = { id: crypto.randomUUID(), body: { assetIds: orderedIds, coverAssetId: sentCover, expectedLatestSet: expected } };
     const attempt = pending.current;
     try {
       const response = await publishDelivery(queryClient, projectId, { ...attempt.body, operationId: attempt.id });

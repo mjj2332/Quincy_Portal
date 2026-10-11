@@ -461,6 +461,14 @@ export async function invalidateProjectResources(queryClient: QueryClient, inval
   if (publish) runtime?.publish({ version: 1, type: "project-data-invalidated", projectId: invalidation.projectId, committedAt: new Date().toISOString(), resources: immediateResources });
 }
 
+/** Ask for the Delivery candidates again without publishing: a background refresh that bypasses resource invalidation. It cancels a read already in flight (whose snapshot may predate the change) before invalidating. */
+export function refreshDeliveryCandidates(queryClient: QueryClient, projectId: string): Promise<void> {
+  const queryKey = projectDataKeys.deliveryCandidates(projectId);
+  const runtime = getProjectQueryRuntime(queryClient);
+  if (runtime) return runtime.requestFreshInvalidation(queryKey);
+  return queryClient.invalidateQueries({ queryKey, exact: true, refetchType: "active" });
+}
+
 export async function invalidateProjectSurfaces(queryClient: QueryClient, input: {
   projectId: string;
   resources: ProjectDataResource[];

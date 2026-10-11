@@ -540,3 +540,78 @@ describe("round 4: fresh candidates, first-Publish defaults and Request unlock i
     expect([apiPostMock.mock.calls.length, apiPutMock.mock.calls.length, apiGetMock.mock.calls.length]).toEqual(calls);
   });
 });
+
+
+describe("round 6: a pending Publish outlives the sheet, the cover follows its photo, Preview opens the media", () => {
+  const treeOf = (show: boolean, role: Role = "admin") => <QuincyQueryProvider key={role} principalId="test-user" role={role}>{show && <ProjectWorkspace projectId={PROJECT_ID} onArrivalConsumed={() => undefined} />}</QuincyQueryProvider>;
+  const publishCalls = () => apiPostMock.mock.calls.filter(([path]) => path.endsWith("/delivery/publish")).map(([, body]) => body as { operationId: string; assetIds: string[]; coverAssetId: string | null });
+  it("keeps the unfinished Publish when the sheet is closed and reopened, retries it with the same operation id, and the server holds one set", async () => {
+    const committed = new Map<string, number>(); let lost = true;
+    apiPostMock.mockImplementation(async (path, body) => {
+      if (!path.endsWith("/delivery/publish")) return {};
+      const { operationId } = body as { operationId: string };
+      if (committed.has(operationId)) return { ...stateAfterPublish(1), replayed: true, operationSetNumber: committed.get(operationId) };
+      committed.set(operationId, 1);
+      if (lost) { lost = false; throw new ApiError("offline", 0); } // committed, but the answer never arrived
+      return { ...stateAfterPublish(1), replayed: false, operationSetNumber: 1 };
+    });
+    await openDelivery();
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    expect(byId("delivery-publish")?.textContent).toBe("Retry publish");
+    await act(async () => { root!.render(treeOf(false)); }); await flush();
+    expect(byId("delivery-tab")).toBeNull();
+    await act(async () => { root!.render(treeOf(true)); }); await flush();
+    await click(tab("Delivery")); await flush();
+    expect(byId("delivery-publish")?.textContent).toBe("Retry publish");
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    const [first, second] = publishCalls();
+    expect(second!.operationId).toBe(first!.operationId); expect(second).toEqual(first);
+    expect(committed.size).toBe(1);
+    expect(byId("delivery-receipt")?.textContent).toContain("already published as set 1");
+    expect(byId("delivery-publish")?.textContent).not.toBe("Retry publish");
+  });
+  it("does not show it to another signed-in session", async () => {
+    apiPostMock.mockRejectedValueOnce(new ApiError("offline", 0));
+    await openDelivery();
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    expect(byId("delivery-publish")?.textContent).toBe("Retry publish");
+    await act(async () => { root!.unmount(); }); root = null; document.body.innerHTML = "";
+    await openDelivery(); // a new session has its own query client
+    expect(byId("delivery-publish")?.textContent).toBe("Publish");
+  });
+  it("sends no cover once its photo has left the candidates, in Preview and in Publish", async () => {
+    apiPostMock.mockImplementation(async (path) => path.endsWith("/preview") ? lockedPreviewDto : { ...stateAfterPublish(1), replayed: false, operationSetNumber: 1 });
+    await openDelivery();
+    expect(byLabel("Cover 1.jpg")?.getAttribute("aria-pressed")).toBe("true");
+    photos = [asset(ids.photo2)]; // photo 1 is replaced or trashed in another tab
+    const channel = new BroadcastChannel("quincy:project-data:v1");
+    channel.postMessage({ version: 1, type: "project-data-invalidated", projectId: PROJECT_ID, committedAt: new Date().toISOString(), sourceTabId: "other-tab", resources: [{ kind: "assets", collectionKind: "edited" }] });
+    await flush(20); channel.close();
+    expect(byLabel("Select 1.jpg")).toBeNull();
+    expect(byLabel("Select plan.pdf")).not.toBeNull();
+    await click(byId("delivery-preview"));
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}/delivery/preview`, expect.objectContaining({ coverAssetId: null }));
+    await click(bodyById("delivery-preview-close"));
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    expect(publishCalls()[0]).toMatchObject({ coverAssetId: null });
+    expect(publishCalls()[0]!.assetIds).not.toContain(ids.photo1);
+  });
+  const lockedPreviewDto = { dto: { property: { street: "12 Example St", suburb: "Suburbia" }, setNumber: 1, publishedAt: null, coverHandle: null, items: [
+    { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, width: 10, height: 10, durationMs: null, url: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`, thumbUrl: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/thumb` },
+    { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null },
+    { handle: handle(3), kind: "floorplan", label: "Floorplan 01", position: 2, locked: false, width: null, height: null, durationMs: null, url: "/pdf/1", thumbUrl: null },
+    { handle: handle(4), kind: "video", label: "Video 01", position: 3, locked: false, width: 1920, height: 1080, durationMs: 62000, url: "/video/1", thumbUrl: "/video/1/thumb" }] } };
+  it("lets staff open an unlocked photo full-size, play a Video and open a PDF, and nothing for a locked item", async () => {
+    apiPostMock.mockResolvedValue(lockedPreviewDto);
+    await openDelivery(); await click(byId("delivery-preview"));
+    const dialog = bodyById("delivery-preview-dialog")!;
+    const control = (name: string) => dialog.querySelector<HTMLElement>(`[aria-label="${name}"]`);
+    expect(control("Open Photo 02")).toBeNull();
+    await click(control("Open Photo 01"));
+    expect(dialog.querySelector('[data-testid="delivery-preview-inspect"] img')?.getAttribute("src")).toBe(`/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`);
+    await click(control("Play Video 01"));
+    expect(dialog.querySelector('[data-testid="delivery-preview-inspect"] video')?.getAttribute("src")).toBe("/video/1");
+    const pdf = control("Open Floorplan 01") as HTMLAnchorElement;
+    expect(pdf.getAttribute("href")).toBe("/pdf/1"); expect(pdf.getAttribute("target")).toBe("_blank"); expect(pdf.getAttribute("rel")).toContain("noopener");
+  });
+});

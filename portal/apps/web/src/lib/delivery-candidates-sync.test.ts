@@ -1,6 +1,6 @@
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
-import { invalidateProjectResources, invalidateProjectSurfaces, projectDataKeys } from "./project-data";
+import { invalidateProjectResources, invalidateProjectSurfaces, projectDataKeys, refreshDeliveryCandidates } from "./project-data";
 import { createProjectDataInvalidationMessage, ProjectQueryRuntime, type ProjectDataResource } from "./project-query-sync";
 
 /**
@@ -75,5 +75,22 @@ describe("a read already in flight when the change lands cannot become the cache
     await vi.waitFor(() => expect(starts).toBe(1));
     (runtime as unknown as { receive: (value: unknown) => void }).receive({ ...createProjectDataInvalidationMessage(OTHER, [{ kind: "video-trash" }]), sourceTabId: "other-tab" });
     await settleBoth();
+  });
+});
+
+describe("a background refresh of a Collection", () => {
+  it("cancels a candidates read already in flight before asking again, so the older snapshot cannot win", async () => {
+    const OTHER = "44444444-4444-4444-8444-444444444444";
+    const release: Array<(value: { candidates: Array<{ assetId: string }> }) => void> = []; let starts = 0;
+    const blocked = new QueryObserver<{ candidates: Array<{ assetId: string }> }, Error, { candidates: Array<{ assetId: string }> }, { candidates: Array<{ assetId: string }> }, readonly unknown[]>(client, {
+      queryKey: projectDataKeys.deliveryCandidates(OTHER), staleTime: 60_000, queryFn: () => { starts += 1; return new Promise((resolve) => { release.push(resolve); }); },
+    });
+    const off = blocked.subscribe(() => undefined);
+    await vi.waitFor(() => expect(starts).toBe(1));
+    void refreshDeliveryCandidates(client, OTHER);
+    await vi.waitFor(() => expect(starts).toBe(2));
+    release[1]!({ candidates: [{ assetId: "after" }] }); release[0]!({ candidates: [{ assetId: "before" }] });
+    await vi.waitFor(() => expect(client.getQueryData<{ candidates: Array<{ assetId: string }> }>(projectDataKeys.deliveryCandidates(OTHER))?.candidates[0]?.assetId).toBe("after"));
+    off();
   });
 });

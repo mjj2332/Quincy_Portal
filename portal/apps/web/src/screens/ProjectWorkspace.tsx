@@ -30,7 +30,7 @@ import { EmptyState } from "../components/quincy/EmptyState";
 import {
   beginAssetOptimisticMutation, classifyProjectAccessError, discardAssetLedgerForResource, invalidateProjectResources, invalidateProjectSurfaces,
   projectAssetsQueryOptions, projectCollaborationSummaryQueryOptions, projectDataKeys, projectDetailQueryOptions, purgeProjectCollaborationData, purgeProjectData,
-  clearPrincipalProjectData, usePassiveRawAssetsQuery, useProjectAssetsQuery, useProjectDetailQuery,
+  clearPrincipalProjectData, refreshDeliveryCandidates, usePassiveRawAssetsQuery, useProjectAssetsQuery, useProjectDetailQuery,
   useProjectCollaborationSummaryQuery,
   useProjectAccessTermination,
   type ProjectDetail,
@@ -257,21 +257,21 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
   }, [accessFailure, isCurrent, projectId, queryClient, runtime]);
   const canReadCollection = useCallback((kind: CollectionKind) => kind === "raw" ? can("viewRaw") : canViewEdited, [can, canViewEdited]);
   // A background refresh of a Collection (an ingest poll, a job, a hand-off) reads or invalidates its Assets directly, outside `invalidateProjectResources`; the Delivery candidates are those Assets, so they follow.
-  const refreshDeliveryCandidates = useCallback(() => queryClient.invalidateQueries({ queryKey: projectDataKeys.deliveryCandidates(projectId), exact: true, refetchType: "active" }), [projectId, queryClient]);
+  const refreshCandidates = useCallback(() => refreshDeliveryCandidates(queryClient, projectId), [projectId, queryClient]);
   const forceAssetsRead = useCallback(async (kind: CollectionKind) => {
     if (!isCurrent() || !canReadCollection(kind)) return undefined;
     const release = runtime.acquireOwner(projectDataKeys.assets(projectId, kind));
-    try { const assets = await queryClient.fetchQuery({ ...projectAssetsQueryOptions(projectId, kind), staleTime: 0 }); void refreshDeliveryCandidates(); return assets; } catch (reason) { if (!isExpectedReadCancellation(reason)) accessFailure(reason, "assets", kind); throw reason; } finally { release(); }
-  }, [accessFailure, canReadCollection, isCurrent, projectId, queryClient, refreshDeliveryCandidates, runtime]);
+    try { const assets = await queryClient.fetchQuery({ ...projectAssetsQueryOptions(projectId, kind), staleTime: 0 }); void refreshCandidates(); return assets; } catch (reason) { if (!isExpectedReadCancellation(reason)) accessFailure(reason, "assets", kind); throw reason; } finally { release(); }
+  }, [accessFailure, canReadCollection, isCurrent, projectId, queryClient, refreshCandidates, runtime]);
   // A Collection's assets are read only while its tab is open. Any other refresh (a job poll, an AutoHDR
   // hand-off, a Dropbox sync) invalidates instead: that refetches an observed query and merely marks an
   // unobserved one stale, so it reads on its next open and no request fires from the Collaboration tab.
   const refreshCollectionAssets = useCallback(async (kind: CollectionKind) => {
     if (!isCurrent() || !canReadCollection(kind)) return undefined;
     if (activeTabRef.current === kind) return forceAssetsRead(kind);
-    await Promise.all([queryClient.invalidateQueries({ queryKey: projectDataKeys.assets(projectId, kind), exact: true, refetchType: "active" }), refreshDeliveryCandidates()]);
+    await Promise.all([queryClient.invalidateQueries({ queryKey: projectDataKeys.assets(projectId, kind), exact: true, refetchType: "active" }), refreshCandidates()]);
     return undefined;
-  }, [canReadCollection, forceAssetsRead, isCurrent, projectId, queryClient, refreshDeliveryCandidates]);
+  }, [canReadCollection, forceAssetsRead, isCurrent, projectId, queryClient, refreshCandidates]);
   const refreshIngest = useCallback(async () => {
     const owner = manualOwnerRef.current; if (!isCurrent() || !owner) return;
     try { const response = await apiGet<IngestStatus>(`/api/projects/${encodeURIComponent(projectId)}/ingest-status`, { signal: owner.controller.signal }); if (isCurrent()) setIngest(response); } catch (reason) { if (!(reason instanceof Error && reason.name === "AbortError")) accessFailure(reason, "detail"); }

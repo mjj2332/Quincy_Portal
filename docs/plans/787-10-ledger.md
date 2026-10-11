@@ -55,3 +55,12 @@ No new raw `<button>`, `<input>`, `<select>`, `<textarea>`, `<dialog>` or widget
 - Request unlock in Preview: the installed `reui/button` (outline, sm) under each locked tile in `DeliveryPreviewDialog`. Searched: `components/` and `components/quincy` for an existing request-unlock control (none; slice 9's public-page component does not exist in this branch). It switches to a disabled "Requested" label locally and sends nothing; the tab test asserts no POST, PUT or GET follows the click.
 - First Publish: every candidate ticked, first photo as cover (PRD §6.7 says "all ticked by default"; it names no default cover, so the first photo is a choice the person can change).
 - Candidates freshness: no new UI. `delivery-candidates` is invalidated wherever Assets, Videos or Video Trash are (`withDependentResources`, local and received), and when the Delivery tab is shown again.
+
+## Sol round 6 additions
+
+- Preview inspect (photo full-size): `reui/button` (ghost) around the existing tile, opening an `<img>` in the inspect panel above the grid. Searched `components/quincy/` and `components/` for a lightbox: `Lightbox.tsx` is review-specific (annotations, ratings, keyboard scope) and takes review assets, not DTO URLs.
+- Preview inspect (Video): a raw `<video controls>` (not an ratchet-listed primitive, so no allowlist entry). `quincy/VideoPlayer` was considered and fails: it needs a Version's fps, frame count and timecode metadata, which the page DTO does not carry, and is a frame-accurate review player (inverse surface). Slice 9 will swap this body for the shared public-page presentation.
+- Preview inspect (Floorplan/Copy PDF): an `<a target="_blank" rel="noopener noreferrer">` styled with `buttonVariants` from `reui/button`; a new tab uses the browser's own PDF viewer.
+- "Close <label>" for the inspect panel: `reui/button` (outline, sm).
+- Pending Publish: no UI; `lib/delivery-pending-store.ts` (session + Project keyed, retired by `onPrincipalTerminal`).
+- Cover is derived (null unless a selected, eligible photo); no UI change.
