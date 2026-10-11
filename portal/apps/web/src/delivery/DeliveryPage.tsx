@@ -118,8 +118,8 @@ export function DeliveryPage(props: DeliveryPageProps) {
       {active === null
         ? <EmptyState data-testid="delivery-empty" title="Nothing here yet.">The studio hasn't added anything to this page.</EmptyState>
         : <Tabs value={active} onValueChange={(value) => { setChosen(value as DeliveryTabId); }}>
-          <TabsList variant="line" data-testid="delivery-tabs-list" aria-label="Delivery sections" className="h-auto max-w-full group-data-[orientation=horizontal]/tabs:h-auto flex-wrap justify-start gap-[var(--space-1)]">
-            {tabs.map((tab) => <TabsTrigger key={tab.id} value={tab.id} className={`flex-none px-[var(--space-3)] ${TOUCH}`}>{tab.label}</TabsTrigger>)}
+          <TabsList variant="line" data-testid="delivery-tabs-list" aria-label="Delivery sections" className="h-auto max-w-full group-data-[orientation=horizontal]/tabs:h-auto flex-wrap justify-start gap-x-[var(--space-1)] gap-y-[var(--space-3)]">
+            {tabs.map((tab) => <TabsTrigger key={tab.id} value={tab.id} className={`h-auto flex-none px-[var(--space-3)] ${TOUCH}`}>{tab.label}</TabsTrigger>)}
           </TabsList>
           {tabs.map((tab) => <Panel key={tab.id} tab={tab} props={props} onOpen={open} />)}
         </Tabs>}
