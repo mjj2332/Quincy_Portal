@@ -14,6 +14,7 @@ import { createJob, setJobStatus } from "./lib/jobs";
 import type { DropboxSyncMessage, IngestMessage } from "./messages";
 import { generateRenditions } from "./renditions";
 import { processObjectCrc } from "./object-crc";
+import { sweepObjectCrcs } from "./object-crc-sweep";
 import { generateEmbeddedDisplayCopy } from "./embedded-display";
 import { recoverEmbeddedRenditions } from "./embedded-display-recovery";
 import { publishStatusAfterWorkflowCreateFailure } from "./manual-edited-renditions";
@@ -274,6 +275,13 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       if (purged.scanned > 0) console.log("Video Trash purge", purged);
     } catch (error) {
       console.error("Video Trash purge failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+    }
+    // Object CRC sweep (#802): queues the CRC job for zip-eligible originals that have none and no live work row. Its own try/catch: it is a repair path, so it never hides or blocks the jobs around it.
+    try {
+      const swept = await sweepObjectCrcs(this.env, controller.scheduledTime);
+      if (swept.candidates > 0) console.log("Object CRC sweep", swept);
+    } catch (error) {
+      console.error("Object CRC sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
     // Daily, on the hourly trigger at 03:00 Malaysia time (19:00 UTC) rather than a new cron trigger (#493).
     if (new Date(controller.scheduledTime).getUTCHours() === EMBEDDED_MEDIA_SWEEP_UTC_HOUR) {

@@ -78,9 +78,16 @@ describe("processObjectCrc, one range", () => {
     get.mockRestore();
   });
 
-  it("writes nothing for an object that is gone", async () => {
+  it("stores no CRC for an object that is gone, and records it as failed so the sweep does not queue it every hour", async () => {
     expect(await runChain(`${prefix}gone`, { rangeBytes: CRC_RANGE_BYTES })).toEqual(["missing"]);
-    expect(await row(`${prefix}gone`)).toBeNull(); expect(await work(`${prefix}gone`)).toBeNull();
+    expect(await row(`${prefix}gone`)).toBeNull(); expect(await work(`${prefix}gone`)).toMatchObject({ state: "failed", last_error: "The object is not in R2" });
+  });
+
+  it("records an object deleted between ranges as failed too", async () => {
+    const key = `${prefix}deleted-midway`; await database.MEDIA.put(key, random(2 * MIB)); const { env: job, queue } = jobEnv();
+    await processObjectCrc(job, start(key), { rangeBytes: MIB }); await database.MEDIA.delete(key);
+    expect(await processObjectCrc(job, queue.sent.shift()!, { rangeBytes: MIB })).toBe("missing");
+    expect(await work(key)).toMatchObject({ state: "failed" }); expect(await row(key)).toBeNull();
   });
 });
 

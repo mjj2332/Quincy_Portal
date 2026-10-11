@@ -74,7 +74,7 @@ async function runRange(env: JobEnv, message: ObjectCrcMessage, options: Require
   const { r2Key } = message; const { attempts, now } = options; const db = env.DB;
   const rangeBytes = options.rangeBytes ?? CRC_RANGE_BYTES; const continuation = message.etag !== undefined;
   const head = await env.MEDIA.head(r2Key);
-  if (!head) { await db.prepare("DELETE FROM object_crc32_work WHERE r2_key = ?1 AND state != 'failed'").bind(r2Key).run(); return "missing"; }
+  if (!head) return markMissing(db, r2Key, now);
   let work = await readWork(db, r2Key);
   if (continuation && (!work || work.state === "failed" || work.etag !== message.etag || work.offset !== message.offset)) return "stale";
   if (!continuation) {
@@ -102,7 +102,7 @@ async function runRange(env: JobEnv, message: ObjectCrcMessage, options: Require
   let crc = work.crc_partial;
   if (length > 0) {
     const object = await env.MEDIA.get(r2Key, { range: { offset: work.offset, length }, onlyIf: { etagMatches: etag } });
-    if (!object) { await db.prepare("DELETE FROM object_crc32_work WHERE r2_key = ?1 AND etag = ?2").bind(r2Key, etag).run(); return "missing"; }
+    if (!object) return markMissing(db, r2Key, now);
     // A failed precondition answers with the object's metadata and no body: it is no longer the object this run started on.
     if (!("body" in object) || !object.body) return restart(env, r2Key, etag, object.etag, object.size, now);
     const read = await crcOfBody(object.body, length, crc, options.bufferBytes);
@@ -125,6 +125,15 @@ async function runRange(env: JobEnv, message: ObjectCrcMessage, options: Require
   // A lost send is repaired by the hourly sweep: the row goes quiet, and a row quiet for ten minutes counts as not live.
   await enqueueObjectCrcMessages(env, [{ type: "object_crc32", r2Key, etag, offset: next }], "object-crc-next-range");
   return "advanced";
+}
+
+/**
+ * A queued key whose object is not in R2 is recorded as `failed`, not forgotten. Forgotten, the hourly sweep would queue it again every hour, and enough of them would fill its cap and starve the keys behind them.
+ * A `failed` row is skipped by the sweep and answers a download with 502; deleting it (once the object is restored) is the way back.
+ */
+async function markMissing(db: D1Database, r2Key: string, now: number): Promise<ObjectCrcOutcome> {
+  await db.prepare(`INSERT INTO object_crc32_work (r2_key, state, attempts, requested_at, updated_at, last_error) VALUES (?1, 'failed', 0, ?2, ?2, 'The object is not in R2') ON CONFLICT(r2_key) DO UPDATE SET state = 'failed', updated_at = excluded.updated_at, last_error = excluded.last_error`).bind(r2Key, now).run();
+  return "missing";
 }
 
 /** The object changed under a run: start over from offset 0 on the new etag. Only the run that holds `from` may do it. */
