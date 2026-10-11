@@ -152,15 +152,21 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   useEffect(() => { if (phone && mode === "compare") exitCompare("dialog"); }, [phone, mode, exitCompare]);
   // A Version left the list (removed here, or in another tab: #776 E). The one on show goes to the current Version; a Compare that had it as a side forgets it and leaves for the single view.
   const versionIds = video.versions.map((candidate) => candidate.assetId).join(",");
+  // Only a Version that was in THIS film's list and is now missing is retired here; one that is not this film's (a pair kept from another film) is not gone, and the collection panel retires what left the whole list.
+  const previousVersions = useRef<{ videoId: string; ids: ReadonlySet<string> } | null>(null);
   useEffect(() => {
     const present = new Set(versionIds.split(","));
+    const previous = previousVersions.current;
+    previousVersions.current = { videoId: video.id, ids: present };
     if (!present.has(assetId)) { setResume(null); setAssetId(video.currentAssetId); }
+    if (previous === null || previous.videoId !== video.id) return;
+    const gone = new Set([...previous.ids].filter((id) => !present.has(id)));
     const pair = compareStore?.getState().pair;
-    if (compareStore && pair && (!present.has(pair.a) || !present.has(pair.b))) {
-      for (const side of [pair.a, pair.b]) if (!present.has(side)) compareStore.dropVersion(side);
+    if (compareStore && pair && (gone.has(pair.a) || gone.has(pair.b))) {
+      for (const side of [pair.a, pair.b]) if (gone.has(side)) compareStore.dropVersion(side);
       if (modeRef.current === "compare") exitCompare("dialog");
     }
-  }, [versionIds, assetId, video.currentAssetId, compareStore, exitCompare]);
+  }, [versionIds, video.id, assetId, video.currentAssetId, compareStore, exitCompare]);
   /** The Version was removed (#776 E): everything that kept state for it lets go, and the viewer moves to the Video's current Version. */
   const onVersionRemoved = useCallback((removed: { assetId: string; videoId: string; video: VideoDto | null }) => {
     forms?.forgetSlot(removed.assetId);
