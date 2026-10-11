@@ -10,7 +10,7 @@ const payload = () => ({
   schemaVersion: 1,
   event: { type: DELIVERY_UNLOCK_NOTIFICATION_EVENT, sourceKey: `delivery_unlock_request:${ID}`, recipientId: ID },
   authorizationAtOccurrence: { kind: "project_member", membershipIds: [ID] },
-  delivery: { projectId: ID, setId: ID, assetId: ID, handle: "0123456789abcdef", label: "Photo 07" },
+  delivery: { projectId: ID, setId: ID, setNumber: 1, assetId: ID, handle: "0123456789abcdef", label: "Photo 07" },
 });
 
 describe("delivery unlock notification transport", () => {

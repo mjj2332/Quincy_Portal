@@ -3,7 +3,7 @@ import { z } from "zod";
 /**
  * The Client Delivery unlock request (#787 slice 8): a client asks, from the public page, for one locked premium item to be unlocked. ONE durable outbox event, `project.delivery.unlock_requested`,
  * carries one notification type, `delivery_unlock_requested`, to internal staff only (Admins; Editors with a membership on the Project). The payload names the item by its random handle and its
- * page label ("Photo 07"), composed by the public route from the same labels the page shows; no filename, no address, no client identity: the request carries none.
+ * page label ("Photo 07") and the number of the set the request was made on (the label is only true of that set), composed by the public route from the same labels the page shows; no filename, no address, no client identity: the request carries none.
  */
 export const DELIVERY_UNLOCK_NOTIFICATION_EVENT = "project.delivery.unlock_requested" as const;
 export const DELIVERY_UNLOCK_NOTIFICATION_TYPE = "delivery_unlock_requested" as const;
@@ -26,7 +26,7 @@ export const deliveryUnlockNotificationPayloadSchema = z.object({
     z.object({ kind: z.literal("admin") }).strict(),
     z.object({ kind: z.literal("project_member"), membershipIds: z.array(id) }).strict(),
   ]),
-  delivery: z.object({ projectId: id, setId: id, assetId: id, handle: z.string().regex(/^[a-z0-9]{16}$/), label: z.string().min(1).max(40) }).strict(),
+  delivery: z.object({ projectId: id, setId: id, setNumber: z.number().int().min(1), assetId: id, handle: z.string().regex(/^[a-z0-9]{16}$/), label: z.string().min(1).max(40) }).strict(),
 }).strict();
 export type DeliveryUnlockNotificationPayload = z.infer<typeof deliveryUnlockNotificationPayloadSchema>;
 

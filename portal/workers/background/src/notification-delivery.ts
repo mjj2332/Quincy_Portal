@@ -687,7 +687,7 @@ async function resolveVideoReviewRecipient(env: Env, outbox: OutboxRow): Promise
  * The Client Delivery unlock request (#787 slice 8): a client asked for one locked item to be unlocked. In app only (the producer writes no email ledger row, so `finishEmail` can never send it),
  * to Admins and to Editors with a membership on the Project, never an External or a Photographer. Everything the emitter checked is checked again at delivery: the recipient is active and holds
  * `manageExtras`, is an Admin or still holds a snapshotted membership, the Project is live, the Client Delivery gate is open, the request's audit row is there, and the item is STILL in the page's
- * latest set and STILL locked (an unlocked item, or one a newer Publish dropped, is no longer news). A page switched off since does not suppress: the studio should still hear it.
+ * latest set, that latest set is STILL the one the request was made on (`set_replaced` otherwise: the label would no longer be reliable) and STILL locked (an unlocked item, or one a newer Publish dropped, is no longer news). A page switched off since does not suppress: the studio should still hear it.
  */
 const DELIVERY_UNLOCK_ROLES_SQL = ROLES.filter((role) => roleHasCapability(role, "manageExtras")).map((role) => `'${role}'`).join(", ");
 const DELIVERY_UNLOCK_SOURCE_PREFIX = deliveryUnlockSourceKey("");
@@ -702,6 +702,8 @@ const DELIVERY_UNLOCK_IN_LATEST_SET_SQL = `EXISTS (SELECT 1 FROM delivery_pages 
   JOIN delivery_sets ds ON ds.project_id = dp.project_id AND ds.set_number = dp.latest_set_number
   JOIN delivery_set_items di ON di.set_id = ds.id
   WHERE dp.project_id = o.project_id AND di.asset_id = json_extract(o.payload_json, '$.delivery.assetId'))`;
+/** The page's latest set is still the one the request was made on. The label in the copy ("Photo 07") is only true of that set: a newer Publish may relabel the asset or reuse the label for another item. */
+const DELIVERY_UNLOCK_SET_CURRENT_SQL = `EXISTS (SELECT 1 FROM delivery_pages dp WHERE dp.project_id = o.project_id AND dp.latest_set_number = json_extract(o.payload_json, '$.delivery.setNumber'))`;
 const DELIVERY_UNLOCK_LOCKED_SQL = `EXISTS (SELECT 1 FROM assets da WHERE da.id = json_extract(o.payload_json, '$.delivery.assetId') AND ${deliveryLockedSql("da")} = 1)`;
 const DELIVERY_UNLOCK_MEMBER_SQL = `(recipient.role = 'admin' OR EXISTS (
   SELECT 1 FROM project_members member WHERE member.project_id = o.project_id AND member.user_id = o.recipient_id
@@ -714,6 +716,7 @@ export const DELIVERY_UNLOCK_AUTHORIZED_SQL = `(
   AND ${DELIVERY_UNLOCK_MEMBER_SQL}
   AND ${DELIVERY_GATE_SQL}
   AND ${DELIVERY_UNLOCK_AUDIT_SQL}
+  AND ${DELIVERY_UNLOCK_SET_CURRENT_SQL}
   AND ${DELIVERY_UNLOCK_IN_LATEST_SET_SQL}
   AND ${DELIVERY_UNLOCK_LOCKED_SQL}
 )`;
@@ -761,11 +764,12 @@ async function resolveDeliveryUnlockRecipient(env: Env, outbox: OutboxRow): Prom
     if (!payload.authorizationAtOccurrence.membershipIds.some((id) => memberships.includes(id))) return suppressed("membership_cycle_changed");
   }
   const facts = await env.DB.prepare(`
-    SELECT ${DELIVERY_GATE_SQL} AS gate, ${DELIVERY_UNLOCK_AUDIT_SQL} AS audited, ${DELIVERY_UNLOCK_IN_LATEST_SET_SQL} AS published, ${DELIVERY_UNLOCK_LOCKED_SQL} AS locked
+    SELECT ${DELIVERY_GATE_SQL} AS gate, ${DELIVERY_UNLOCK_AUDIT_SQL} AS audited, ${DELIVERY_UNLOCK_SET_CURRENT_SQL} AS setCurrent, ${DELIVERY_UNLOCK_IN_LATEST_SET_SQL} AS published, ${DELIVERY_UNLOCK_LOCKED_SQL} AS locked
     FROM notification_outbox o WHERE o.id = ?
-  `).bind(outbox.id).first<{ gate: number; audited: number; published: number; locked: number }>();
+  `).bind(outbox.id).first<{ gate: number; audited: number; setCurrent: number; published: number; locked: number }>();
   if (!facts || facts.gate !== 1) return suppressed("delivery_closed");
   if (facts.audited !== 1) return suppressed("source_missing");
+  if (facts.setCurrent !== 1) return suppressed("set_replaced");
   if (facts.published !== 1) return suppressed("item_not_published");
   if (facts.locked !== 1) return suppressed("item_unlocked");
   const title = `A client asked to unlock ${payload.delivery.label}`;

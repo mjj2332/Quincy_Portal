@@ -38,7 +38,7 @@ export async function writeUnlockRequest(db: D1Database, input: UnlockRequest): 
         json_object('schemaVersion', 1, 'event', json_object('type', ?1, 'sourceKey', ?2, 'recipientId', u.id),
           'authorizationAtOccurrence', CASE WHEN u.role = 'admin' THEN json_object('kind', 'admin')
             ELSE json_object('kind', 'project_member', 'membershipIds', json((SELECT json_group_array(m.id) FROM (SELECT id FROM project_members WHERE project_id = ?3 AND user_id = u.id AND role_on_project = 'editor' ORDER BY id) m))) END,
-          'delivery', json_object('projectId', ?3, 'setId', ?5, 'assetId', ?6, 'handle', ?7, 'label', ?8)),
+          'delivery', json_object('projectId', ?3, 'setId', ?5, 'setNumber', ?11, 'assetId', ?6, 'handle', ?7, 'label', ?8)),
         'pending', ?9, ?9, ?9
       FROM user u
       WHERE u.active = 1 AND u.role IN (${ELIGIBLE_ROLES})
@@ -46,7 +46,7 @@ export async function writeUnlockRequest(db: D1Database, input: UnlockRequest): 
         AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?10)
       ON CONFLICT (event_type, source_key, recipient_id) DO NOTHING
       RETURNING id`)
-      .bind(DELIVERY_UNLOCK_NOTIFICATION_EVENT, sourceKey, input.projectId, DELIVERY_CLIENT_OUTBOX_ACTOR, input.setId, input.assetId, input.handle, input.label, now, auditId),
+      .bind(DELIVERY_UNLOCK_NOTIFICATION_EVENT, sourceKey, input.projectId, DELIVERY_CLIENT_OUTBOX_ACTOR, input.setId, input.assetId, input.handle, input.label, now, auditId, input.setNumber),
     db.prepare(`INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, created_at, updated_at)
       SELECT ${SQL_UUID_V4}, o.id, o.event_type, o.source_key, o.recipient_id, 'in_app', 'pending', ?3, ?3
       FROM notification_outbox o WHERE o.event_type = ?1 AND o.source_key = ?2 AND o.status = 'pending'

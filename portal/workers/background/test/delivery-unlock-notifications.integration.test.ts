@@ -33,7 +33,7 @@ async function seed(options: Options = {}) {
     schemaVersion: 1,
     event: { type: DELIVERY_UNLOCK_NOTIFICATION_EVENT, sourceKey, recipientId },
     authorizationAtOccurrence: options.authorization === "admin" || (role === "admin" && options.authorization !== "member") ? { kind: "admin" } : { kind: "project_member", membershipIds: [membershipId] },
-    delivery: { projectId, setId, assetId, handle, label: "Photo 07" },
+    delivery: { projectId, setId, setNumber: 1, assetId, handle, label: "Photo 07" },
   };
   const statements: D1PreparedStatement[] = [
     database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Recipient Person', ?, 1, ?, ?, ?, ?)").bind(recipientId, `${recipientId}@example.test`, role, options.recipientActive === false ? 0 : 1, now, now),
@@ -162,6 +162,20 @@ describe("is it still news", () => {
     expect(await stored(fixture.recipientId)).toEqual([]);
     expect(send).not.toHaveBeenCalled();
     expect(await outbox(fixture.outboxId)).toMatchObject({ status: "suppressed", reason });
+  });
+
+  it("suppresses once a newer set replaced the one the request was made on, even though the asset is still in the new latest set under another label", async () => {
+    const fixture = await seed({ role: "admin", member: false });
+    const set2 = crypto.randomUUID(); const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO delivery_sets (id, project_id, set_number, operation_id, published_by, published_at) VALUES (?, ?, 2, ?, ?, ?)").bind(set2, fixture.projectId, crypto.randomUUID().slice(0, 32), fixture.recipientId, now),
+      database.DB.prepare("INSERT INTO delivery_set_items (set_id, asset_id, handle, position) VALUES (?, ?, ?, 1)").bind(set2, fixture.assetId, crypto.randomUUID().replaceAll("-", "").slice(0, 16)),
+      database.DB.prepare("UPDATE delivery_pages SET latest_set_number = 2 WHERE project_id = ?").bind(fixture.projectId),
+    ]);
+    const send = await deliver(fixture);
+    expect(await stored(fixture.recipientId)).toEqual([]);
+    expect(send).not.toHaveBeenCalled();
+    expect(await outbox(fixture.outboxId)).toMatchObject({ status: "suppressed", reason: "set_replaced" });
   });
 
   it("delivers for an archived Project to an active Admin and to a member Editor: the page keeps serving, so the studio still hears", async () => {

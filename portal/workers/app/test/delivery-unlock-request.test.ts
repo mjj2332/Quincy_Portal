@@ -65,7 +65,7 @@ describe("a request that lands", () => {
     for (const row of rows) {
       expect(row).toMatchObject({ actorId: DELIVERY_CLIENT_OUTBOX_ACTOR, projectId: ids.project, status: expect.stringMatching(/^(pending|queued)$/) });
       expect(row.sourceKey).toBe(`delivery_unlock_request:${(await database.DB.prepare("SELECT id FROM audit_log WHERE action = 'delivery.unlock_request'").first<{ id: string }>())!.id}`);
-      const payload = parseDeliveryUnlockNotificationPayload(JSON.parse(row.payload))!; expect(payload).not.toBeNull();
+      const payload = parseDeliveryUnlockNotificationPayload(JSON.parse(row.payload))!; expect(payload).not.toBeNull(); expect(payload.delivery.setNumber).toBe(1);
       expect(payload.delivery).toMatchObject({ projectId: ids.project, assetId: asset.id, handle, label: "Photo 01" });
       expect(payload.event.recipientId).toBe(row.recipientId);
       expect(payload.authorizationAtOccurrence.kind).toBe(admins.includes(row.recipientId) ? "admin" : "project_member");
