@@ -117,6 +117,18 @@ async function rows(fixtureData: Fixture) {
     }>();
 }
 
+/** #787 supersede carry: marks `assetId` a paid extra with an Unlock, as the Delivery API will. */
+async function markPaid(assetId: string, projectId: string, ref = "inv-1") {
+  await bindings.DB.batch([
+    bindings.DB.prepare("INSERT OR IGNORE INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES ('carry-admin', 'Carry Admin', 'carry-admin@test.invalid', 1, 'admin', 1, 1, 1)"),
+    bindings.DB.prepare("UPDATE assets SET delivery_premium = 1 WHERE id = ?").bind(assetId),
+    bindings.DB.prepare("INSERT INTO asset_premium_unlocks (asset_id, project_id, unlocked_by, unlocked_at, payment_ref) VALUES (?, ?, 'carry-admin', 1700000000000, ?)").bind(assetId, projectId, ref),
+  ]);
+}
+async function paidState(assetId: string) {
+  return bindings.DB.prepare("SELECT a.delivery_premium AS premium, u.unlocked_by AS by, u.unlocked_at AS at, u.payment_ref AS ref FROM assets a LEFT JOIN asset_premium_unlocks u ON u.asset_id = a.id WHERE a.id = ?").bind(assetId).first();
+}
+
 async function receivedCount(collectionId: string) {
   return bindings.DB.prepare("SELECT received_count FROM collections WHERE id = ?")
     .bind(collectionId).first<{ received_count: number }>();
@@ -164,6 +176,37 @@ describe("Dropbox RAW delete-then-reupload reconciliation", () => {
     await expect(receivedCount(context.collectionId)).resolves.toEqual({ received_count: 1 });
     await expect(bindings.DB.prepare("SELECT count(*) count FROM audit_log WHERE target_id = ? AND action = 'asset.ingested'").bind(replacement.id).first<{ count: number }>())
       .resolves.toEqual({ count: 1 });
+  });
+
+  it("carries delivery_premium and the Unlock to the replacement (#787)", async () => {
+    const context = await fixture();
+    await markPaid(context.oldAssetId, context.projectId);
+    configureDropbox([fileFor(context, "hash-b")]);
+    await expect(syncProjectRawFolder(localEnv(), context.projectId)).resolves.toMatchObject({ newlyImported: 1 });
+    const replacement = (await rows(context)).results.find((row) => row.id !== context.oldAssetId)!;
+    await expect(paidState(replacement.id)).resolves.toEqual({ premium: 1, by: "carry-admin", at: 1700000000000, ref: "inv-1" });
+    await expect(paidState(context.oldAssetId)).resolves.toMatchObject({ premium: 1, ref: "inv-1" });
+  });
+
+  it("leaves a non-premium replacement unpaid (#787)", async () => {
+    const context = await fixture();
+    configureDropbox([fileFor(context, "hash-b")]);
+    await syncProjectRawFolder(localEnv(), context.projectId);
+    const replacement = (await rows(context)).results.find((row) => row.id !== context.oldAssetId)!;
+    await expect(paidState(replacement.id)).resolves.toEqual({ premium: 0, by: null, at: null, ref: null });
+  });
+
+  it("does not reset delivery_premium or the Unlock when a sync re-sees or moves a premium asset (#787)", async () => {
+    const context = await fixture();
+    await markPaid(context.oldAssetId, context.projectId);
+    await bindings.DB.prepare("UPDATE assets SET is_premium = 1 WHERE id = ?").bind(context.oldAssetId).run();
+    const moved = fileFor(context, "hash-a", "renamed.jpg");
+    moved.path_lower = `${context.root}/renamed.jpg`.toLowerCase();
+    moved.path_display = `${context.root}/renamed.jpg`;
+    configureDropbox([moved]);
+    await syncProjectRawFolder(localEnv(), context.projectId);
+    await expect(bindings.DB.prepare("SELECT is_premium, source_path FROM assets WHERE id = ?").bind(context.oldAssetId).first()).resolves.toEqual({ is_premium: 0, source_path: `${context.root}/renamed.jpg` });
+    await expect(paidState(context.oldAssetId)).resolves.toMatchObject({ premium: 1, ref: "inv-1" });
   });
 
   it("keeps ordinary new-file and ordinary update paths unchanged", async () => {
