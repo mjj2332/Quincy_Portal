@@ -75,7 +75,7 @@ async function withSession(c: Context<AppEnv, string>, handler: (session: NonNul
 }
 
 /** The SPA shell for a guest page, re-wrapped with its own framing policy (the Worker answers first, so `_headers` never applies). A missing shell is the stub. */
-async function guestShell(c: Context<AppEnv, string>): Promise<Response> {
+export async function guestShell(c: Context<AppEnv, string>): Promise<Response> {
   const shell = await c.env.ASSETS.fetch(new Request(new URL("/", c.req.url), { method: "GET" }));
   if (!shell.ok) { await shell.body?.cancel(); return guestNotFound(c); }
   return new Response(shell.body, { status: 200, headers: { "content-type": shell.headers.get("content-type") ?? "text/html; charset=utf-8", "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" } });

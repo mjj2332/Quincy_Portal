@@ -51,6 +51,7 @@ import { connectedAppsRoutes } from "./routes/connected-apps";
 import { mountMcp } from "./mcp";
 import { mountMcpDownloads } from "./mcp/downloads";
 import { guestNotFound, mountGuest } from "./guest";
+import { mountDelivery } from "./delivery";
 import { verifyTransformSource } from "./lib/transform-source";
 import { requireAppOrigin } from "./middleware/origin";
 import { safeStaffDestination } from "@quincy/shared";
@@ -127,6 +128,8 @@ mountMcpDownloads(app, (request, env, ctx) => app.fetch(request, env, ctx));
 // unauthenticated and must run before the static-asset SPA fallback.
 // The guest surface (#741 12a) mounts first; everything it does not answer falls through to the stub below (same bytes, hygiene headers included).
 mountGuest(app);
+// The public Delivery page (#787 slice 6) mounts after the Review routes and before the stubs.
+mountDelivery(app);
 app.all("/d", terminalRoute("/d", (c) => guestNotFound(c)));
 app.all("/d/*", terminalRoute("/d/*", (c) => guestNotFound(c)));
 // #359: `/assets/*` is content-hashed and served `immutable` for a year (`apps/web/public/_headers`).
