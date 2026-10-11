@@ -48,6 +48,12 @@ describe("programmatically focused containers carry focus-visible:!outline-none"
     expect(body, "dead `focus:outline-none` loses to the unlayered ring").not.toMatch(/(?<![-\w])focus:outline-none/);
   });
 
+  it("VideoTrashDialog's DialogContent (opens focused on the dialog itself, #776 E)", () => {
+    const tag = openingTag(read("components/video/VideoTrashDialog.tsx"), "DialogContent", 'data-testid="video-trash-dialog"');
+    expect(tag, "VideoTrashDialog's DialogContent not found").not.toBeNull();
+    expect(tag).toContain(RING_OFF);
+  });
+
   describe("function-body extractor fixtures", () => {
     const BROKEN = 'function panelClasses(a: X | undefined, b: boolean): string {\n  return cn("w-full", "focus:outline-none");\n}\nfunction other() { return "focus-visible:!outline-none"; }';
     const FIXED = 'function panelClasses(a: X | undefined, b: boolean): string {\n  return cn("w-full", "focus-visible:!outline-none");\n}';

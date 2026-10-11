@@ -133,6 +133,9 @@ export function writeFailure(error: unknown, fallback: string, noteId = "", touc
 /** Whether leaving the form would lose something: an edit's text or frames changed, a reply or composer with text, or a composer with marks set. */
 const isDirty = (slot: Slot) => (slot.open ? (slot.open.kind === "reply" ? slot.open.text !== "" : slot.open.text !== slot.open.base.body || slot.marks.touched || slot.open.drawing.touched) : slot.composer.body !== "" || slot.marks.touched || slot.markup.items.length > 0);
 
+/** What Remove would discard: the composer's text and drawing (kept while an edit or reply is open) and, independently, the open form's own changes. */
+const hasUnsent = (slot: Slot) => slot.composer.body !== "" || slot.markup.items.length > 0 || (slot.open ? isDirty(slot) : slot.marks.touched);
+
 /** The frame a drawing may be on: a point note's frame, or any frame of a range (`end` is exclusive). */
 const inFrames = (frame: number, start: number, end: number | null) => frame >= start && frame < (end ?? start + 1);
 const clampFrame = (frame: number, low: number, high: number) => Math.min(high, Math.max(low, frame));
@@ -144,6 +147,9 @@ async function confirmed(clock: NoteClock): Promise<number | "timeout"> {
   try { return await Promise.race([clock.awaitConfirmedFrame(), timedOut]); } finally { clearTimeout(timer); }
 }
 
+/** Paste-preview generations come from one counter for every store and slot: a slot that is forgotten and recreated (a removed Version restored) never reuses a generation an old request still holds. */
+let previewGeneration = 0;
+
 export function createNoteFormStore(key: string) {
   const slots = new Map<string, Slot>();
   // The clipboard is per Video, not per Version: it must outlive switching Versions, and no slot rewrite touches it.
@@ -154,8 +160,12 @@ export function createNoteFormStore(key: string) {
   let seq = 0;
   let dead = false;
   const slot = (assetId: string): Slot => slots.get(assetId) ?? EMPTY_SLOT;
+  // Per Version, never reset: every write of editable state goes through `put`, which is the only place a slot is written.
+  const revisions = new Map<string, number>();
+  const EDITABLE: ReadonlyArray<keyof Slot> = ["composer", "markup", "open", "marks", "paste"];
   const put = (assetId: string, patch: Partial<Slot>) => {
     if (dead) return;
+    if (EDITABLE.some((key) => key in patch)) revisions.set(assetId, (revisions.get(assetId) ?? 0) + 1);
     const prev = slot(assetId);
     // The edit's steps belong to the note being edited: another note, or none, starts clean.
     const sameEdit = !("open" in patch) || prev.open?.noteId === patch.open?.noteId;
@@ -166,7 +176,7 @@ export function createNoteFormStore(key: string) {
     if (dead) return;
     pasteRuns.set(assetId, run);
     const held = slot(assetId).pasteView;
-    const generation = held.generation + 1;
+    const generation = ++previewGeneration;
     put(assetId, { pasteView: { ...held, generation, status: "loading", error: null } });
     const current = () => slot(assetId).pasteView.generation === generation;
     run(offset).then(
@@ -493,6 +503,15 @@ export function createNoteFormStore(key: string) {
     setHistory(assetId: string, form: DrawForm, steps: MarkupHistory, frame: number | null) { put(assetId, { history: { ...slot(assetId).history, [form]: { steps, frame } } }); },
     setTool(assetId: string, patch: Partial<MarkupTool>) { put(assetId, { tool: { ...slot(assetId).tool, ...patch } }); },
 
+    /** Whether the Version's form holds anything not yet sent: text, a drawing, or a frame/range edit. The same check Escape uses. */
+    isDirty: (assetId: string): boolean => isDirty(slot(assetId)),
+    /** Whether removing the Version would discard something not yet sent: the composer's draft and an open form's changes are each counted. Escape keeps using `isDirty`. */
+    hasUnsent: (assetId: string): boolean => hasUnsent(slot(assetId)),
+    /**
+     * A counter that goes up on every change to what the person may have typed in the Version's slot (composer text, drawing and frame marks; an open reply or edit's text, drawing and
+     * marks), whoever made it. A removal notes it when the person confirms and retires the slot only if it is unchanged. It never goes back, and survives `forgetSlot`.
+     */
+    draftRevision: (assetId: string): number => revisions.get(assetId) ?? 0,
     /** The first Escape of a dirty form is held (the text stays); the next one is not. A clean edit or reply closes. Nothing here moves focus: the answer says where it should go. */
     escape(assetId: string, { focusInForm }: { focusInForm: boolean }): { consumed: boolean; focus: "dialog" | "textarea" | "opener" | "draw" | null } {
       const held = slot(assetId);
@@ -554,7 +573,7 @@ export function createNoteFormStore(key: string) {
       if (open) { put(assetId, { pasteOpen: true, pasteResult: null }); return; }
       // Closing forgets what the server said (and voids any request out); the offset and the ticks stay.
       pasteRuns.delete(assetId);
-      put(assetId, { pasteOpen: false, pasteView: { ...EMPTY_PASTE_VIEW, generation: held.pasteView.generation + 1 } });
+      put(assetId, { pasteOpen: false, pasteView: { ...EMPTY_PASTE_VIEW, generation: ++previewGeneration } });
     },
     clearPasteResult(assetId: string) { if (slot(assetId).pasteResult !== null) put(assetId, { pasteResult: null }); },
     /** Asks for the plan at `offset`. Starting bumps the generation, so anything asked earlier is discarded when it lands. */
@@ -570,7 +589,7 @@ export function createNoteFormStore(key: string) {
         const result = await commit();
         if (!mine()) return;
         pasteRuns.delete(assetId);
-        put(assetId, { paste: EMPTY_PASTE, pasteOpen: false, pasteResult: `Pasted ${result.copied} ${result.copied === 1 ? "note" : "notes"}${result.skipped > 0 ? ` · ${result.skipped} left out` : ""}`, pasteOp: { opId, status: "idle" }, pasteView: { ...EMPTY_PASTE_VIEW, generation: slot(assetId).pasteView.generation + 1 } });
+        put(assetId, { paste: EMPTY_PASTE, pasteOpen: false, pasteResult: `Pasted ${result.copied} ${result.copied === 1 ? "note" : "notes"}${result.skipped > 0 ? ` · ${result.skipped} left out` : ""}`, pasteOp: { opId, status: "idle" }, pasteView: { ...EMPTY_PASTE_VIEW, generation: ++previewGeneration } });
       } catch (error) {
         if (!mine()) return;
         const classified = classifyVideoNoteError(error);
@@ -596,6 +615,16 @@ export function createNoteFormStore(key: string) {
         const held = slot(assetId).pasteOp;
         if (held.status === "committing") put(assetId, { pasteOp: { ...held, opId: ++seq, status: "idle" } });
       }
+    },
+    /**
+     * A Version was removed (#776 E): its slot, paste state, thread list and any clipboard copied from it go, so nothing keeps pointing at it. A request already sent is not touched,
+     * but with the slot gone it no longer owns it (`owns` compares the slot's op), so its completion writes nothing back.
+     */
+    forgetSlot(assetId: string) {
+      if (dead) return;
+      slots.delete(assetId); pasteRuns.delete(assetId); latest.delete(assetId);
+      for (const [videoId, clip] of [...clipboards]) if (clip.sourceAssetId === assetId) clipboards.delete(videoId);
+      listeners.forEach((listener) => { listener(); });
     },
     /** This store is being replaced (another person or Project): nothing it started may write or send again. */
     retire() { dead = true; slots.clear(); clipboards.clear(); pasteRuns.clear(); listeners.clear(); },

@@ -6142,9 +6142,10 @@ Tags: focus-overlays, media-renditions · #741
 - **Same rule again for the paste dialog (#741 5c-ui).** Pruning unticks after a stale refresh re-ticked notes the person had refused, and a commit's `pending` and completion lived in the dialog, so a late success after a remount cleared a newer draft. The store owns a per-Version paste op (`opId`, `status`, `previewRevision`); a completion acts only while its `opId` still owns it, and a stale refresh keeps Paste off until a fresh preview succeeds. Unticks are never pruned.
 - **Same rule again for the guest page (#741 13c, round 2).** The guest writer's in-flight set lived in the video screen, so All videos and back during a slow Post sent the note twice. It is created by `GuestApp` (`createGuestWriter`) and the screen only attaches to it; an answer for a screen that has gone applies nothing and tells the screen now on show to read the list again. A `null` list means "not read yet", never "the edited note is gone": judge that only after a completed read.
 - **Same rule again for the guest inline drafts (#741 13c, round 3).** Reply and reply-edit text lived in `GuestThreadItem` state, so closing the phone drawer or a re-verification (both unmount the list) lost it. `GuestApp` creates `createGuestDrafts` (`guest/guest-drafts.ts`); a draft is removed only by Cancel or a successful submit, and a completion clears it only if its `rev` is still the one it sent. Likewise a history keyed to a frame (the drawing undo stack) must remember its frame through the off / confirming phases, and a control that reads the live frame (Mark in / out) is off while a save is pending.
+- **Same rule again for Remove (#776 E).** A removed Version's state is retired by the store that owns it, not by the component that happened to show it: `forms.forgetSlot` (slot, paste state, thread list, any clipboard copied from it), `compare.dropVersion` (the open pair and every remembered offset of a pair that had it) and the approval store's `forget`. It runs from the removal's own completion using the target the confirmation captured when it opened, so a Version switch while the dialog is open cannot retire the wrong slot. A Post still out completes against a slot it no longer owns and writes nothing back. The player, the marker export and the notes panel are keyed by Asset id, so moving the viewer to the current Version unmounts them.
 - Related: "Don't mirror server reservation state on the client (#751)" is the same rule for uploads: state that outlives the view belongs to one owner, not the component.
 
-Guards: `lib/video-note-form-store.test.ts`, `components/video/VideoNotes.dom.test.tsx` ("form lifetime").
+Guards: `lib/video-note-form-store.test.ts`, `lib/video-note-form-store.forget.test.ts`, `lib/video-compare-store.drop.test.ts`, `components/video/VideoNotes.dom.test.tsx` ("form lifetime"), `components/video/VideoReviewViewer.trash.dom.test.tsx`.
 
 ## `node:zlib` is runtime-only in the app Worker (#741 14-0)
 Tags: workers-runtime · #741
@@ -6186,6 +6187,14 @@ Tags: css-tokens, focus-overlays · #741
 - **Rule.** A dialog, alert dialog or sheet states its width explicitly (`sm:max-w-[460px]`) or uses a size whose container token is not redefined (`sm:max-w-3xl` is 48rem, as `VideoNotePasteDialog` does). Never `max-w-{sm,md,lg,xl}`, with or without a breakpoint prefix, on `DialogContent`, `AlertDialogContent` or `SheetContent`.
 
 Guards: `apps/web/src/styles/design-system-guards.test.ts` ("dialog and sheet content never uses a page-width max-w").
+
+## Don't retire user-typed state from list diffs (#776)
+Tags: search-filters · #776
+
+- **What bit.** The Films panel forgot a Version's note draft and decision drafts whenever the Version vanished from a successful read of the list. A list snapshot is not proof of removal: a restore answered from an older snapshot, landing after a newer one, made a live Version "disappear" for a moment and the diff deleted the draft the person had just typed. Four review rounds patched one race after another (stale restore, stalled refetch, lost response, delayed retirement).
+- **Rule.** Retire typed state (note drafts, decision drafts) only on the person's own confirmed local action: the Remove confirmation, which warns the draft will be discarded, calls `forgetSlot` / `forget` through `onRemoved`. A list diff may retire only state that holds nothing typed (the compare pair and offsets, where the worst case is leaving compare). A Version that vanishes any other way (another tab, a lost response, a stale snapshot) leaves its draft dormant, and it is still there if the Version comes back.
+
+Guards: `apps/web/src/components/video/VideoCollectionPanel.trash-retire.dom.test.tsx`, `VideoReviewViewer.trash.dom.test.tsx` ("retires the removed Version's form slot").
 ## A flag that lives on the file row dies when a writer swaps the file (#787)
 Tags: d1-migrations, dropbox · #787
 

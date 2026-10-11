@@ -37,6 +37,10 @@ function updateUnloadGuard() {
   if (!any && guarded) { window.removeEventListener("beforeunload", beforeUnload); guarded = false; }
 }
 
+const identityHandlers = new Set<() => void>();
+/** Told (after render) each time the signed-in person changes or signs out. */
+export function onUploadIdentityChange(handler: () => void): () => void { identityHandlers.add(handler); return () => { identityHandlers.delete(handler); }; }
+
 /** The identity generation a caller captures before an async step (a file probe) and hands back to `startVideoUpload`. */
 export const uploadIdentityGeneration = () => generation;
 
@@ -45,6 +49,8 @@ export function syncUploadPrincipal(userId: string | null): void {
   if (principal === userId) return;
   principal = userId;
   generation += 1;
+  // After render: a handler may touch other stores (toasts) whose subscribers must not be told mid-render.
+  queueMicrotask(() => { for (const handler of [...identityHandlers]) handler(); });
   // Render-time: no subscriber may be told while React is rendering, so the cancels are silent and the subscribers are told after.
   quiet = true;
   try { for (const entry of [...entries.values()]) void entry.job.cancel(); } finally { quiet = false; }
