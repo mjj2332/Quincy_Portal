@@ -173,16 +173,16 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     if (removed.video !== null) { setResume(null); setAssetId(removed.video.currentAssetId); }
   }, [compareStore]);
   /**
-   * At the moment the person confirms Remove: notes what each slot the removal retires holds. The returned function, run when the answer is applied, retires a slot only if it still
-   * holds exactly that, so text typed after the confirmation (the answer was slow, the film came back and was drafted on) survives. `whole`: the Video went, so its payment reference too.
+   * At the moment the person confirms Remove: notes the edit revision of each slot the removal retires. The returned function, run when the answer is applied, retires a slot only if it has not
+   * been edited since, so anything typed after the confirmation (the answer was slow, the film came back and was drafted on) survives. `whole`: the Video went, so its payment reference too.
    */
   const captureDrafts = useCallback((assetId: string, videoId: string): ((whole: boolean) => void) => {
-    const noteKey = forms?.draftKey(assetId); const decisionKey = delivery?.store.draftKey(versionSlot(assetId)); const videoKey = delivery?.store.draftKey(videoSlot(videoId));
+    const noteRev = forms?.draftRevision(assetId); const decisionRev = delivery?.store.draftRevision(versionSlot(assetId)); const videoRev = delivery?.store.draftRevision(videoSlot(videoId));
     return (whole) => {
-      if (forms && forms.draftKey(assetId) === noteKey) forms.forgetSlot(assetId);
+      if (forms && forms.draftRevision(assetId) === noteRev) forms.forgetSlot(assetId);
       if (delivery) {
-        if (delivery.store.draftKey(versionSlot(assetId)) === decisionKey) delivery.store.forget(versionSlot(assetId));
-        if (whole && delivery.store.draftKey(videoSlot(videoId)) === videoKey) delivery.store.forget(videoSlot(videoId));
+        if (delivery.store.draftRevision(versionSlot(assetId)) === decisionRev) delivery.store.forget(versionSlot(assetId));
+        if (whole && delivery.store.draftRevision(videoSlot(videoId)) === videoRev) delivery.store.forget(videoSlot(videoId));
       }
     };
   }, [forms, delivery?.store]);

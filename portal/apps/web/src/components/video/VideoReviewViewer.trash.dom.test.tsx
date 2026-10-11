@@ -333,6 +333,40 @@ describe("Remove a Version from the staff viewer (#776 E)", () => {
     expect(approval.getSlot(versionSlot(ids.asset2)).note).toBe("a brand new decision note");
   });
 
+  describe("a change made after the person confirmed Remove survives the late response (#776 E)", () => {
+    const clock = { getState: () => ({ frame: 10, targetFrame: null, playing: false }), seekToFrame: () => {}, awaitConfirmedFrame: () => Promise.resolve(10) } as never;
+    const note = { id: "55555555-5555-4555-8555-555555555551", body: "old text", revision: 1, startFrame: null, endFrame: null, hasMarkup: false, drawingFrame: null } as never;
+    const stroke = (x: number) => [{ color: "#e64b3c", width: 4, points: [{ x, y: 0.2 }, { x: x + 0.1, y: 0.3 }] }] as never;
+    async function slowRemoval(prepare: (forms: import("../../lib/video-note-form-store").NoteFormStore) => void, change: (forms: import("../../lib/video-note-form-store").NoteFormStore) => void, check: (forms: import("../../lib/video-note-form-store").NoteFormStore) => void) {
+      await mount({ parts: ["trash", "notes"] });
+      await openViewer();
+      const forms = stores.made.at(-1)!;
+      forms.setBody(ids.asset2, "a note", 4);
+      prepare(forms);
+      await startRemove();
+      let answer!: () => void;
+      removeOutcome = async () => { await new Promise<void>((resolve) => { answer = resolve; }); versions = [{ assetId: ids.asset1, version: 1 }]; return { video: videoNow() }; };
+      await click(confirmButton());
+      await flush(4);
+      act(() => { change(forms); });
+      await act(async () => { answer(); });
+      await flush(8);
+      check(forms);
+    }
+    it("a reply draft", async () => {
+      await slowRemoval((f) => { f.openReply(ids.asset2, "55555555-5555-4555-8555-555555555551"); f.setOpenText(ids.asset2, "first reply"); }, (f) => { f.setOpenText(ids.asset2, "a newer reply"); }, (f) => { expect(f.slot(ids.asset2).open?.text).toBe("a newer reply"); });
+    });
+    it("an edit draft", async () => {
+      await slowRemoval((f) => { f.openEdit(ids.asset2, note, "55555555-5555-4555-8555-555555555551"); f.setOpenText(ids.asset2, "edited once"); }, (f) => { f.setOpenText(ids.asset2, "edited again"); }, (f) => { expect(f.slot(ids.asset2).open?.text).toBe("edited again"); });
+    });
+    it("an edit's drawing", async () => {
+      await slowRemoval((f) => { f.openEdit(ids.asset2, note, "55555555-5555-4555-8555-555555555551"); f.setItems(ids.asset2, "edit", stroke(0.1)); }, (f) => { f.setItems(ids.asset2, "edit", stroke(0.5)); }, (f) => { expect(f.slot(ids.asset2).open?.drawing.items).toEqual(stroke(0.5)); });
+    });
+    it("a frame mark", async () => {
+      await slowRemoval((f) => { f.mark(ids.asset2, "in", 10, clock); }, (f) => { f.mark(ids.asset2, "in", 20, clock); }, (f) => { expect(f.slot(ids.asset2).marks.value.in).toBe(20); });
+    });
+  });
+
   it("the plain case clears the note draft and the decision note together", async () => {
     await mount({ parts: ["trash", "notes", "delivery"] });
     await openViewer();

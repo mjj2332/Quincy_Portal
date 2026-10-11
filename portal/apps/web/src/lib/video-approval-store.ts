@@ -20,12 +20,14 @@ export function createVideoApprovalStore(key: string) {
   const listeners = new Set<() => void>();
   let dead = false;
   let seq = 0;
+  const revisions = new Map<string, number>();
   const get = (slot: string): ApprovalSlot => slots.get(slot) ?? EMPTY;
   const write = (slot: string, next: Partial<ApprovalSlot>) => {
     if (dead) return;
     const current = get(slot);
     const merged = { ...current, ...next };
     if ((Object.keys(merged) as Array<keyof ApprovalSlot>).every((k) => merged[k] === current[k])) return;
+    if (merged.note !== current.note || merged.paymentRef !== current.paymentRef) revisions.set(slot, (revisions.get(slot) ?? 0) + 1);
     slots.set(slot, Object.freeze(merged));
     for (const listener of [...listeners]) listener();
   };
@@ -36,8 +38,8 @@ export function createVideoApprovalStore(key: string) {
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     setNote(slot: string, note: string) { write(slot, { note }); },
     setPaymentRef(slot: string, paymentRef: string) { write(slot, { paymentRef }); },
-    /** What the person has typed in `slot` (a decision note, a payment reference), as a string that changes with any edit. */
-    draftKey(slot: string): string { const held = get(slot); return JSON.stringify([held.note, held.paymentRef]); },
+    /** Goes up on every change to the slot's decision note or payment reference, whoever made it, and never goes back (it survives `forget`). */
+    draftRevision(slot: string): number { return revisions.get(slot) ?? 0; },
     clearProblem(slot: string) { write(slot, { problem: null }); },
     /**
      * Sends one write for `slot`. A slot with a write in flight refuses (`busy`) rather than queueing: the person decides again after reading the answer. The completion applies

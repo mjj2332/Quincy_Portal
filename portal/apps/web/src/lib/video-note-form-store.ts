@@ -160,8 +160,12 @@ export function createNoteFormStore(key: string) {
   let seq = 0;
   let dead = false;
   const slot = (assetId: string): Slot => slots.get(assetId) ?? EMPTY_SLOT;
+  // Per Version, never reset: every write of editable state goes through `put`, which is the only place a slot is written.
+  const revisions = new Map<string, number>();
+  const EDITABLE: ReadonlyArray<keyof Slot> = ["composer", "markup", "open", "marks", "paste"];
   const put = (assetId: string, patch: Partial<Slot>) => {
     if (dead) return;
+    if (EDITABLE.some((key) => key in patch)) revisions.set(assetId, (revisions.get(assetId) ?? 0) + 1);
     const prev = slot(assetId);
     // The edit's steps belong to the note being edited: another note, or none, starts clean.
     const sameEdit = !("open" in patch) || prev.open?.noteId === patch.open?.noteId;
@@ -503,8 +507,11 @@ export function createNoteFormStore(key: string) {
     isDirty: (assetId: string): boolean => isDirty(slot(assetId)),
     /** Whether removing the Version would discard something not yet sent: the composer's draft and an open form's changes are each counted. Escape keeps using `isDirty`. */
     hasUnsent: (assetId: string): boolean => hasUnsent(slot(assetId)),
-    /** What the person has typed in the Version's slot, as a string that changes with any edit (the removal retires the slot only if this is what they agreed to discard). */
-    draftKey: (assetId: string): string => { const held = slot(assetId); return JSON.stringify([held.composer.body, held.markup.items, held.open ? [held.open.noteId, held.marks.value] : null, held.marks.touched]); },
+    /**
+     * A counter that goes up on every change to what the person may have typed in the Version's slot (composer text, drawing and frame marks; an open reply or edit's text, drawing and
+     * marks), whoever made it. A removal notes it when the person confirms and retires the slot only if it is unchanged. It never goes back, and survives `forgetSlot`.
+     */
+    draftRevision: (assetId: string): number => revisions.get(assetId) ?? 0,
     /** The first Escape of a dirty form is held (the text stays); the next one is not. A clean edit or reply closes. Nothing here moves focus: the answer says where it should go. */
     escape(assetId: string, { focusInForm }: { focusInForm: boolean }): { consumed: boolean; focus: "dialog" | "textarea" | "opener" | "draw" | null } {
       const held = slot(assetId);
