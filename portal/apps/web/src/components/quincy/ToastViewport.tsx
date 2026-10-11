@@ -1,6 +1,8 @@
 import { useEffect, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "../../lib/utils";
 import { buttonClasses } from "./Button";
+import { useToastHost } from "../../lib/toast-host";
 import { dismissToast, getToasts, pauseToast, registerToastViewport, resumeToast, subscribeToasts, type Toast } from "../../lib/toast-store";
 
 /**
@@ -24,7 +26,11 @@ function activateToastAction(item: Toast): void {
 export function ToastViewport({ testId = "toast-viewport", toastTestId = "toast" }: { testId?: string; toastTestId?: string }) {
   useEffect(() => registerToastViewport(), []);
   const toasts = useSyncExternalStore(subscribeToasts, getToasts, getToasts);
-  return (
+  // An open modal (the staff video viewer) may host the viewport so its Undo stays inside the focus trap; `display: contents` keeps the fixed layout, and `data-surface="default"` keeps the toast off the modal's inverse roles.
+  const host = useToastHost();
+  // A host change remounts the toast nodes, and a node removed while focused fires no blur: a toast paused by that focus (Undo, then Escape) would stay paused for good.
+  useEffect(() => { for (const item of getToasts()) resumeToast(item.id); }, [host]);
+  const viewport = (
     <div
       aria-live="polite"
       data-testid={testId}
@@ -89,4 +95,5 @@ export function ToastViewport({ testId = "toast-viewport", toastTestId = "toast"
       ))}
     </div>
   );
+  return host ? createPortal(<div data-surface="default" className="contents">{viewport}</div>, host) : viewport;
 }

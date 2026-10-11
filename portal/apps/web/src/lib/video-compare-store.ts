@@ -52,6 +52,11 @@ export function createCompareStore(key: string) {
       write({ pair: Object.freeze({ a, b }), audible, activeTab: "a" });
     },
     clearPair() { write({ pair: null }); },
+    /** A Version was removed (#776 E): the open pair goes if it involves it, and so does every remembered offset of a pair that did. */
+    dropVersion(assetId: string) {
+      const offsets = Object.fromEntries(Object.entries(state.offsets).filter(([key]) => !key.split(":").includes(assetId)));
+      write({ ...(state.pair && (state.pair.a === assetId || state.pair.b === assetId) ? { pair: null } : {}), ...(Object.keys(offsets).length === Object.keys(state.offsets).length ? {} : { offsets }) });
+    },
     /** Stores the offset of the open pair. The transport has already checked it against `offsetBounds`. */
     setOffset(offset: number) {
       if (!state.pair || !Number.isInteger(offset)) return;
