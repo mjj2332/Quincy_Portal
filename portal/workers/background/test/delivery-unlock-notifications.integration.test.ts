@@ -152,7 +152,6 @@ describe("who is told", () => {
 describe("is it still news", () => {
   it.each([
     ["the Client Delivery gate shut", { gateOpen: false }, "delivery_closed"],
-    ["an archived Project", { archived: true }, "project_no_longer_visible"],
     ["the item unlocked meanwhile", { unlocked: true }, "item_unlocked"],
     ["the item no longer premium", { notPremium: true }, "item_unlocked"],
     ["the item gone from the latest set (a newer Publish dropped it)", { notInLatestSet: true }, "item_not_published"],
@@ -163,6 +162,12 @@ describe("is it still news", () => {
     expect(await stored(fixture.recipientId)).toEqual([]);
     expect(send).not.toHaveBeenCalled();
     expect(await outbox(fixture.outboxId)).toMatchObject({ status: "suppressed", reason });
+  });
+
+  it("delivers for an archived Project to an active Admin and to a member Editor: the page keeps serving, so the studio still hears", async () => {
+    const admin = await seed({ role: "admin", member: false, archived: true }); const editor = await seed({ role: "editor", archived: true });
+    await deliver(admin); await deliver(editor);
+    expect(await stored(admin.recipientId)).toHaveLength(1); expect(await stored(editor.recipientId)).toHaveLength(1);
   });
 
   it("still delivers when the page was switched off after the request: the studio should still hear it", async () => {

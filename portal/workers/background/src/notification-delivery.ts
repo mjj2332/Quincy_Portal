@@ -569,10 +569,10 @@ const VIDEO_REVIEW_MEMBER_SQL = `(recipient.role = 'admin' OR EXISTS (
 
 /**
  * The whole video-review authorization as one SQL predicate over `o` (the outbox row), `recipient` (its user) and `p` (its Project): the recipient is active and holds `viewVideo`, the epoch matches,
- * Admin-or-snapshotted-member, the Project is unarchived, the gate is open with `notify_staff`, and the source row is live. Channel admission and the digest (email-digest.ts) both use this one text.
+ * Admin-or-snapshotted-member, the gate is open with `notify_staff`, and the source row is live. Channel admission and the digest (email-digest.ts) both use this one text.
  */
 export const VIDEO_REVIEW_AUTHORIZED_SQL = `(
-  p.archived_at IS NULL AND recipient.active = 1 AND recipient.role IN (${VIDEO_VIEWER_ROLES_SQL})
+  recipient.active = 1 AND recipient.role IN (${VIDEO_VIEWER_ROLES_SQL})
   AND ${AUTHORIZATION_EPOCH_MATCH}
   AND ${VIDEO_REVIEW_MEMBER_SQL}
   AND ${VIDEO_REVIEW_GATE_SQL}
@@ -709,7 +709,7 @@ const DELIVERY_UNLOCK_MEMBER_SQL = `(recipient.role = 'admin' OR EXISTS (
 ))`;
 /** The whole authorization as one predicate over `o` (the outbox row), `recipient` (its user) and `p` (its Project). Channel admission uses this one text. */
 export const DELIVERY_UNLOCK_AUTHORIZED_SQL = `(
-  p.archived_at IS NULL AND recipient.active = 1 AND recipient.role IN (${DELIVERY_UNLOCK_ROLES_SQL})
+  recipient.active = 1 AND recipient.role IN (${DELIVERY_UNLOCK_ROLES_SQL})
   AND ${AUTHORIZATION_EPOCH_MATCH}
   AND ${DELIVERY_UNLOCK_MEMBER_SQL}
   AND ${DELIVERY_GATE_SQL}
@@ -749,7 +749,6 @@ async function resolveDeliveryUnlockRecipient(env: Env, outbox: OutboxRow): Prom
   `).bind(outbox.id).first<ResolverRow>();
   if (!row) return suppressed("outbox_missing");
   if (row.projectStreet === null) return suppressed("project_missing");
-  if (row.projectArchivedAt !== null) return suppressed("project_no_longer_visible");
   const role = row.recipientRole as Role;
   // An External editor and a Photographer never hold `manageExtras`, whatever a planted row says.
   if (row.recipientActive !== 1 || !roleHasCapability(role, "manageExtras")) return suppressed("recipient_ineligible");

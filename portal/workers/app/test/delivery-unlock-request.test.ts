@@ -95,8 +95,12 @@ describe("a request that lands", () => {
 
   it("an archived Project's page keeps accepting the request", async () => {
     const projectId = await seedOpenProject({ archived: true }); const asset = await lockedPhoto({ projectId });
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, ids.member, Date.now()).run();
     await seedPage({ projectId, slug: "9-archived-road-cdfghj", assetIds: [asset.id] });
     expect((await post(await handleOf(asset.id), {}, "9-archived-road-cdfghj")).status).toBe(202);
+    // The studio is still told: an archived Project does not veto the notification.
+    const recipients = (await outbox()).map((row) => row.recipientId);
+    expect(recipients).toContain(ids.admin); expect(recipients).toContain(ids.member);
   });
 
   it("with no one to tell it still lands (the audit row is the record) and writes no notification", async () => {
@@ -238,6 +242,25 @@ describe("state that changes between admission and the write", () => {
     publicDeliveryTestHooks.beforeWrite = undefined; await database.DB.prepare("UPDATE delivery_pages SET enabled = 1").run();
     expect(deliveryUnlockRequestResponseSchema.parse(await (await post(handle)).json())).toEqual({ status: "requested" });
     expect(await audits()).toHaveLength(1);
+  });
+
+  it("a read that throws before the write leaves the item's daily slot free: the retry lands and notifies", async () => {
+    const { handle } = await lockedPage();
+    publicDeliveryTestHooks.beforeWrite = async () => { throw new Error("boom"); };
+    expect((await post(handle)).status).toBe(500);
+    publicDeliveryTestHooks.beforeWrite = undefined;
+    expect(await audits()).toEqual([]);
+    expect(deliveryUnlockRequestResponseSchema.parse(await (await post(handle)).json())).toEqual({ status: "requested" });
+    expect((await outbox()).length).toBeGreaterThan(0);
+  });
+
+  it("a batch that rolls back leaves the item's daily slot free: nothing is stored, the retry lands and notifies", async () => {
+    const { handle } = await lockedPage();
+    publicDeliveryTestHooks.beforeWrite = async () => { await database.DB.exec("CREATE TRIGGER unlock_fault BEFORE INSERT ON notification_outbox BEGIN SELECT RAISE(ABORT, 'forced outbox fault'); END;"); };
+    try { expect((await post(handle)).status).toBe(500); } finally { publicDeliveryTestHooks.beforeWrite = undefined; await database.DB.exec("DROP TRIGGER IF EXISTS unlock_fault;"); }
+    expect(await audits()).toEqual([]); expect(await outbox()).toEqual([]);
+    expect(deliveryUnlockRequestResponseSchema.parse(await (await post(handle)).json())).toEqual({ status: "requested" });
+    expect((await outbox()).length).toBeGreaterThan(0);
   });
 
   it("the Client Delivery gate shut in the gap writes nothing and answers the stub", async () => {

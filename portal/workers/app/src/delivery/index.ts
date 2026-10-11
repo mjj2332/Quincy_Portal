@@ -164,14 +164,20 @@ async function requestUnlock(c: Ctx, slug: string, handle: string): Promise<Resp
   const slotBucket = `unlock:item:${current.assetId}`;
   const slot = await reserveAttempts(c.env.DB, [{ bucket: slotBucket, limit: GUEST_LIMITS.unlockItem, windowMs: GUEST_DAY_MS }], now);
   if (slot.limited) return c.json({ status: "already_requested" }, 202);
-  await publicDeliveryTestHooks.beforeWrite?.();
-  const rows = await readSetRows(c.env.DB, current.setId);
-  const label = deliveryLabels(rows)[rows.findIndex((row) => row.assetId === current.assetId)];
-  if (label === undefined) { await refundAttempt(c.env.DB, slotBucket, now, GUEST_DAY_MS); return guestNotFound(c); }
-  const written = await writeUnlockRequest(c.env.DB, { slug, handle, projectId: current.projectId, setId: current.setId, setNumber: current.setNumber, assetId: current.assetId, label, ipBucket: address, now });
-  if (written.landed) {
-    if (written.outboxIds.length) c.executionCtx.waitUntil(publishUnlockOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, written.outboxIds));
-    return c.json({ status: "requested" }, 202);
+  // The item's daily slot is spent only by a request that lands: every other exit, a thrown read or a rolled-back batch included, gives it back.
+  try {
+    await publicDeliveryTestHooks.beforeWrite?.();
+    const rows = await readSetRows(c.env.DB, current.setId);
+    const label = deliveryLabels(rows)[rows.findIndex((row) => row.assetId === current.assetId)];
+    if (label === undefined) { await refundAttempt(c.env.DB, slotBucket, now, GUEST_DAY_MS); return guestNotFound(c); }
+    const written = await writeUnlockRequest(c.env.DB, { slug, handle, projectId: current.projectId, setId: current.setId, setNumber: current.setNumber, assetId: current.assetId, label, ipBucket: address, now });
+    if (written.landed) {
+      if (written.outboxIds.length) c.executionCtx.waitUntil(publishUnlockOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, written.outboxIds));
+      return c.json({ status: "requested" }, 202);
+    }
+  } catch (error) {
+    await refundAttempt(c.env.DB, slotBucket, now, GUEST_DAY_MS).catch(() => undefined);
+    throw error;
   }
   // The fence wrote nothing: the page, the gate, the set or the lock changed since admission. Give the item's slot back and answer what is true now.
   await refundAttempt(c.env.DB, slotBucket, now, GUEST_DAY_MS);
