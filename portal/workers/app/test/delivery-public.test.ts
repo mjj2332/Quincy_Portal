@@ -255,6 +255,13 @@ describe("leak sweep", () => {
       for (const [name, value] of Object.entries(HYGIENE)) expect(response.headers.get(name), `${path} ${name}`).toBe(value);
     }
     expect(served).toBeGreaterThan(10);
+    // The unlock request (slice 8) answers through the same hygiene and leaks nothing either, for a locked item, an unlocked one and a miss.
+    for (const handle of [...handles, "0123456789abcdef"]) {
+      const response = await guestFetch(`${pageUrl()}/items/${handle}/unlock-request`, { method: "POST", body: {} });
+      const haystack = `${[...response.headers].map(([name, value]) => `${name}: ${value}`).join("\n")}\n${await response.text()}`;
+      for (const secret of secrets) expect(haystack, `unlock-request ${handle} leaks ${secret}`).not.toContain(secret);
+      for (const [name, value] of Object.entries(HYGIENE)) expect(response.headers.get(name), `unlock-request ${name}`).toBe(value);
+    }
     // Locked items yield preview bytes only, on every route that serves bytes.
     for (const route of ["media", "thumb"] as const) expect(await body(await get(itemUrl(handles[1]!, route)))).toBe(PREVIEW);
     expect((await get(itemUrl(handles[1]!, "download"))).status).toBe(403);

@@ -32,6 +32,11 @@ import {
   guestIdOfOutboxActor,
   parseVideoReviewNotificationPayload,
   videoReviewNotificationSourceKey,
+  CLIENT_DELIVERY_ALL_PROJECTS_FLAG,
+  CLIENT_DELIVERY_MASTER_FLAG,
+  clientDeliveryPilotFlag,
+  parseDeliveryUnlockNotificationPayload,
+  deliveryUnlockSourceKey,
   isProjectAssignmentEligible,
   staffPathFor,
   projectNotificationRoute,
@@ -45,8 +50,10 @@ import {
   type ExternalNotificationOutboxPayload,
   type NotificationType,
   type VideoReviewNotificationPayload,
+  type DeliveryUnlockNotificationPayload,
 } from "@quincy/shared";
 import type { Env } from "./env";
+import { deliveryLockedSql } from "./delivery-lock-sql";
 
 export const NOTIFICATION_DELIVERY_LEASE_MS = 10 * 60_000;
 export const NOTIFICATION_QUEUE_STUCK_MS = 30 * 60_000;
@@ -254,7 +261,7 @@ type LegacyResolvedRecipient = {
   ok: true;
   kind: "legacy";
   row: ResolverRow | ReminderResolverRow;
-  payload: ProjectCommentMentionPayload | ProjectAssignmentCreatedPayload | ProjectDeadlineReminderOutboxPayload | ExternalNotificationOutboxPayload | StaffSubtaskAssignedPayload | SubtaskReminderOutboxPayload | VideoReviewNotificationPayload;
+  payload: ProjectCommentMentionPayload | ProjectAssignmentCreatedPayload | ProjectDeadlineReminderOutboxPayload | ExternalNotificationOutboxPayload | StaffSubtaskAssignedPayload | SubtaskReminderOutboxPayload | VideoReviewNotificationPayload | DeliveryUnlockNotificationPayload;
   commentPath: string;
   delivery: ResolvedDelivery;
 };
@@ -672,6 +679,115 @@ async function resolveVideoReviewRecipient(env: Env, outbox: OutboxRow): Promise
       emailSubject: copy.title,
       emailText: `${copy.title}\n\n${projectPath}`,
       emailHtml: `<p>${htmlEscape(copy.title)}</p><p><a href="${htmlEscape(projectPath)}">View project</a></p>`,
+    },
+  };
+}
+
+/**
+ * The Client Delivery unlock request (#787 slice 8): a client asked for one locked item to be unlocked. In app only (the producer writes no email ledger row, so `finishEmail` can never send it),
+ * to Admins and to Editors with a membership on the Project, never an External or a Photographer. Everything the emitter checked is checked again at delivery: the recipient is active and holds
+ * `manageExtras`, is an Admin or still holds a snapshotted membership, the Project is live, the Client Delivery gate is open, the request's audit row is there, and the item is STILL in the page's
+ * latest set, that latest set is STILL the one the request was made on (`set_replaced` otherwise: the label would no longer be reliable) and STILL locked (an unlocked item, or one a newer Publish dropped, is no longer news). A page switched off since does not suppress: the studio should still hear it.
+ */
+const DELIVERY_UNLOCK_ROLES_SQL = ROLES.filter((role) => roleHasCapability(role, "manageExtras")).map((role) => `'${role}'`).join(", ");
+const DELIVERY_UNLOCK_SOURCE_PREFIX = deliveryUnlockSourceKey("");
+/** The Client Delivery gate as SQL over the outbox row `o`: master on, and all Projects or this Project's pilot row on. A missing row is off. */
+const DELIVERY_GATE_SQL = `(
+  EXISTS (SELECT 1 FROM feature_flags WHERE key = '${CLIENT_DELIVERY_MASTER_FLAG}' AND enabled = 1)
+  AND (EXISTS (SELECT 1 FROM feature_flags WHERE key = '${CLIENT_DELIVERY_ALL_PROJECTS_FLAG}' AND enabled = 1)
+    OR EXISTS (SELECT 1 FROM feature_flags WHERE key = '${clientDeliveryPilotFlag("")}' || o.project_id AND enabled = 1))
+)`;
+const DELIVERY_UNLOCK_AUDIT_SQL = `EXISTS (SELECT 1 FROM audit_log au WHERE au.id = substr(o.source_key, ${DELIVERY_UNLOCK_SOURCE_PREFIX.length + 1}) AND au.action = 'delivery.unlock_request' AND au.target_id = o.project_id)`;
+const DELIVERY_UNLOCK_IN_LATEST_SET_SQL = `EXISTS (SELECT 1 FROM delivery_pages dp
+  JOIN delivery_sets ds ON ds.project_id = dp.project_id AND ds.set_number = dp.latest_set_number
+  JOIN delivery_set_items di ON di.set_id = ds.id
+  WHERE dp.project_id = o.project_id AND di.asset_id = json_extract(o.payload_json, '$.delivery.assetId'))`;
+/** The page's latest set is still the one the request was made on. The label in the copy ("Photo 07") is only true of that set: a newer Publish may relabel the asset or reuse the label for another item. */
+const DELIVERY_UNLOCK_SET_CURRENT_SQL = `EXISTS (SELECT 1 FROM delivery_pages dp WHERE dp.project_id = o.project_id AND dp.latest_set_number = json_extract(o.payload_json, '$.delivery.setNumber'))`;
+const DELIVERY_UNLOCK_LOCKED_SQL = `EXISTS (SELECT 1 FROM assets da WHERE da.id = json_extract(o.payload_json, '$.delivery.assetId') AND ${deliveryLockedSql("da")} = 1)`;
+const DELIVERY_UNLOCK_MEMBER_SQL = `(recipient.role = 'admin' OR EXISTS (
+  SELECT 1 FROM project_members member WHERE member.project_id = o.project_id AND member.user_id = o.recipient_id
+    AND EXISTS (SELECT 1 FROM json_each(o.payload_json, '$.authorizationAtOccurrence.membershipIds') cycle WHERE cycle.value = member.id)
+))`;
+/** The whole authorization as one predicate over `o` (the outbox row), `recipient` (its user) and `p` (its Project). Channel admission uses this one text. */
+export const DELIVERY_UNLOCK_AUTHORIZED_SQL = `(
+  recipient.active = 1 AND recipient.role IN (${DELIVERY_UNLOCK_ROLES_SQL})
+  AND ${AUTHORIZATION_EPOCH_MATCH}
+  AND ${DELIVERY_UNLOCK_MEMBER_SQL}
+  AND ${DELIVERY_GATE_SQL}
+  AND ${DELIVERY_UNLOCK_AUDIT_SQL}
+  AND ${DELIVERY_UNLOCK_SET_CURRENT_SQL}
+  AND ${DELIVERY_UNLOCK_IN_LATEST_SET_SQL}
+  AND ${DELIVERY_UNLOCK_LOCKED_SQL}
+)`;
+
+function deliveryUnlockPayload(outbox: OutboxRow): DeliveryUnlockNotificationPayload | null {
+  if (outbox.schema_version !== 1 || outbox.event_type !== NOTIFICATION_OUTBOX_EVENT_TYPES.deliveryUnlockRequested) return null;
+  let decoded: unknown;
+  try { decoded = JSON.parse(outbox.payload_json); } catch { return null; }
+  const payload = parseDeliveryUnlockNotificationPayload(decoded);
+  if (!payload) return null;
+  if (payload.event.sourceKey !== outbox.source_key || payload.event.recipientId !== outbox.recipient_id || payload.delivery.projectId !== outbox.project_id) return null;
+  if (!outbox.source_key.startsWith(DELIVERY_UNLOCK_SOURCE_PREFIX) || outbox.source_key.length === DELIVERY_UNLOCK_SOURCE_PREFIX.length) return null;
+  return payload;
+}
+
+async function resolveDeliveryUnlockRecipient(env: Env, outbox: OutboxRow): Promise<LegacyResolvedRecipient | Extract<ResolvedRecipient, { ok: false }>> {
+  const payload = deliveryUnlockPayload(outbox);
+  if (!payload) return suppressed("payload_invalid");
+  const row = await env.DB.prepare(`
+    SELECT o.id AS outboxId, o.schema_version AS schemaVersion, o.event_type AS eventType,
+      o.source_key AS sourceKey, o.project_id AS projectId, o.actor_id AS actorId,
+      o.recipient_id AS recipientId, o.payload_json AS payloadJson,
+      o.recipient_authorization_epoch AS recipientAuthorizationEpoch,
+      o.recipient_membership_cycle_id AS recipientMembershipCycleId,
+      recipient.authorization_epoch AS currentAuthorizationEpoch,
+      recipient.active AS recipientActive, recipient.role AS recipientRole,
+      recipient.name AS recipientName, recipient.email AS recipientEmail,
+      project.street AS projectStreet, project.archived_at AS projectArchivedAt
+    FROM notification_outbox o
+    INNER JOIN user recipient ON recipient.id = o.recipient_id
+    LEFT JOIN projects project ON project.id = o.project_id
+    WHERE o.id = ?
+  `).bind(outbox.id).first<ResolverRow>();
+  if (!row) return suppressed("outbox_missing");
+  if (row.projectStreet === null) return suppressed("project_missing");
+  const role = row.recipientRole as Role;
+  // An External editor and a Photographer never hold `manageExtras`, whatever a planted row says.
+  if (row.recipientActive !== 1 || !roleHasCapability(role, "manageExtras")) return suppressed("recipient_ineligible");
+  if (authorizationEpochMismatch(row)) return suppressed("authorization_epoch_changed");
+  if (payload.authorizationAtOccurrence.kind === "admin") {
+    if (role !== "admin") return suppressed("admin_authorization_changed");
+  } else if (role !== "admin") {
+    const memberships = (await env.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ?").bind(row.projectId, row.recipientId).all<{ id: string }>()).results.map((member) => member.id);
+    if (!memberships.length) return suppressed("membership_removed");
+    if (!payload.authorizationAtOccurrence.membershipIds.some((id) => memberships.includes(id))) return suppressed("membership_cycle_changed");
+  }
+  const facts = await env.DB.prepare(`
+    SELECT ${DELIVERY_GATE_SQL} AS gate, ${DELIVERY_UNLOCK_AUDIT_SQL} AS audited, ${DELIVERY_UNLOCK_SET_CURRENT_SQL} AS setCurrent, ${DELIVERY_UNLOCK_IN_LATEST_SET_SQL} AS published, ${DELIVERY_UNLOCK_LOCKED_SQL} AS locked
+    FROM notification_outbox o WHERE o.id = ?
+  `).bind(outbox.id).first<{ gate: number; audited: number; setCurrent: number; published: number; locked: number }>();
+  if (!facts || facts.gate !== 1) return suppressed("delivery_closed");
+  if (facts.audited !== 1) return suppressed("source_missing");
+  if (facts.setCurrent !== 1) return suppressed("set_replaced");
+  if (facts.published !== 1) return suppressed("item_not_published");
+  if (facts.locked !== 1) return suppressed("item_unlocked");
+  const title = `A client asked to unlock ${payload.delivery.label}`;
+  const body = `On the Delivery page for ${row.projectStreet}. Open the Project to unlock it.`;
+  const projectPath = projectNotificationUrl(env, row.projectId, "delivery_unlock_requested");
+  return {
+    ok: true,
+    kind: "legacy",
+    row,
+    payload,
+    commentPath: projectPath,
+    delivery: {
+      notificationType: "delivery_unlock_requested",
+      title,
+      body,
+      emailSubject: title,
+      emailText: `${title}\n\n${projectPath}`,
+      emailHtml: `<p>${htmlEscape(title)}</p><p><a href="${htmlEscape(projectPath)}">View project</a></p>`,
     },
   };
 }
@@ -1136,6 +1252,7 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
   // #424: the 08:00 due-today pass is retired. A job already queued when 0053 applied is refused rather than sent beside the new reminder.
   if (outbox.event_type === "project.subtask.due_today") return suppressed("legacy_due_today_retired");
   if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectVideoReview) return resolveVideoReviewRecipient(env, outbox);
+  if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.deliveryUnlockRequested) return resolveDeliveryUnlockRecipient(env, outbox);
   if (outbox.event_type === "project.external_safe.direct") return resolveExternalSafeDirectRecipient(env, outbox);
   if (outbox.event_type === "project.subtask.assigned" && outbox.recipient_membership_cycle_id === null) return resolveStaffSubtaskAssignedRecipient(env, outbox);
   if (outbox.event_type === "project.subtask.assigned" || outbox.event_type === "project.subtask.due_today") return resolveExternalSubtaskRecipient(env, outbox);
@@ -1647,6 +1764,19 @@ function legacyAdmission(outbox: OutboxRow, resolved: LegacyResolvedRecipient, t
         JOIN projects p ON p.id = o.project_id
         WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ? AND o.recipient_id = ?
           AND ${VIDEO_REVIEW_AUTHORIZED_SQL}
+      )`,
+      values: [outbox.id, token, outbox.recipient_id],
+    };
+  }
+  // #787 slice 8: a Delivery unlock request re-checks the whole authorization at the channel write, so a member removed, an item unlocked or a gate shut in the gap writes nothing.
+  if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.deliveryUnlockRequested) {
+    return {
+      sql: `EXISTS (
+        SELECT 1 FROM notification_outbox o
+        JOIN user recipient ON recipient.id = o.recipient_id
+        JOIN projects p ON p.id = o.project_id
+        WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ? AND o.recipient_id = ?
+          AND ${DELIVERY_UNLOCK_AUTHORIZED_SQL}
       )`,
       values: [outbox.id, token, outbox.recipient_id],
     };

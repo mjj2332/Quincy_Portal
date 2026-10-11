@@ -259,6 +259,7 @@ describe("digest: a deferred video-review email is re-authorized before it is se
     ["notify_staff is turned off for an External", { role: "external_editor", kind: "video_note", actor: "guest" }, () => exec("DELETE FROM feature_flags WHERE key = 'video_review_notify_staff'")],
     ["the note is deleted for an External", { role: "external_editor", kind: "video_note", actor: "guest" }, (f: { sourceKey: string }) => exec("UPDATE video_notes SET deleted_at = ? WHERE id = ?", Date.now(), f.sourceKey.split(":")[1])],
     ["the Version goes to Trash", { kind: "video_note" }, (f: { assetId: string }) => exec("UPDATE video_version_meta SET removed_at = ? WHERE asset_id = ?", Date.now(), f.assetId)],
+    ["the Project is archived after the email was deferred", { role: "editor" }, (f: { projectId: string }) => exec("UPDATE projects SET archived_at = ? WHERE id = ?", Date.now(), f.projectId)],
     ["the Video goes to Trash", { kind: "video_decision", actor: "guest" }, (f: { assetId: string }) => exec("UPDATE videos SET removed_at = ? WHERE id = (SELECT video_id FROM video_version_meta WHERE asset_id = ?)", Date.now(), f.assetId)],
   ] as Array<[string, Options, (fixture: any) => Promise<unknown>]>)("%s: no email", async (_name, options, change) => {
     const { fixture, send } = await digestDefer(options);
