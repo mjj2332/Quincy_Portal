@@ -1,6 +1,7 @@
 import { guestDigestStatements } from "./guest-digest";
 import { ROLE_LABELS, type Role, type VideoDecisionEvent, type VideoRelease, type VideoVersionDecisions } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
+import { inCurrentSetSql } from "./delivery-lock";
 import { newId } from "./ids";
 import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO, LIVE_VIDEO_EXISTS } from "./video-live-sql";
 
@@ -164,18 +165,28 @@ async function projectArchived(db: D1Database, projectId: string): Promise<boole
 export type PremiumState = { premium: boolean; premiumUnlocked: boolean };
 const stateOf = (video: { premium: boolean; unlocked: boolean }): PremiumState => ({ premium: video.premium, premiumUnlocked: video.unlocked });
 
-/** Sets `videos.premium`. Idempotent: the same state writes nothing and audits nothing. `archived` when the Project is. */
-export async function setPremium(db: D1Database, input: { projectId: string; videoId: string; principal: Principal; premium: boolean; now: number }): Promise<PremiumState | "archived" | "not_found"> {
+/** Whether any Version of the Video, in Trash or not, is in a page's current set. Matched through a subquery, never bound ids (D1 allows 100 parameters). */
+const VIDEO_IN_CURRENT_SET = (videoParam: string) => inCurrentSetSql(`IN (SELECT dm.asset_id FROM video_version_meta dm WHERE dm.video_id = ${videoParam})`);
+export async function videoPublished(db: D1Database, videoId: string): Promise<boolean> {
+  return (await db.prepare(`SELECT ${VIDEO_IN_CURRENT_SET("?1")} AS hit`).bind(videoId).first<{ hit: number }>())?.hit === 1;
+}
+
+/**
+ * Sets `videos.premium`. Idempotent: the same state writes nothing and audits nothing. `archived` when the Project is. Unmarking is refused (`published`) while any Version of the Video is in
+ * a page's current set, as for photos: access is then controlled with Unlock and Re-lock. The statement repeats that fence, so a Publish racing the request cannot slip through.
+ */
+export async function setPremium(db: D1Database, input: { projectId: string; videoId: string; principal: Principal; premium: boolean; now: number }): Promise<PremiumState | "archived" | "not_found" | "published"> {
   const before = await findVideo(db, input.projectId, input.videoId); if (!before) return "not_found";
   let landed = false;
   if (before.premium !== input.premium) {
     const [update] = await db.batch([
-      db.prepare(`UPDATE videos SET premium = ?1, updated_at = ?2 WHERE id = ?3 AND project_id = ?4 AND premium <> ?1 AND ${LIVE_VIDEO("videos")} AND ${NOT_ARCHIVED("?4")}`).bind(input.premium ? 1 : 0, input.now, input.videoId, input.projectId),
+      db.prepare(`UPDATE videos SET premium = ?1, updated_at = ?2 WHERE id = ?3 AND project_id = ?4 AND premium <> ?1 AND (?1 = 1 OR NOT ${VIDEO_IN_CURRENT_SET("?3")}) AND ${LIVE_VIDEO("videos")} AND ${NOT_ARCHIVED("?4")}`).bind(input.premium ? 1 : 0, input.now, input.videoId, input.projectId),
       db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?1, ?2, 'video.premium_set', 'video', ?3, ${metaWith("?4", "json_object('projectId', ?5, 'premium', json(?6))")}, ?7 WHERE changes() > 0`)
         .bind(newId(), input.principal.id, input.videoId, auditMeta(input.principal), input.projectId, input.premium ? "true" : "false", input.now),
     ]);
     landed = (update?.meta.changes ?? 0) > 0;
+    if (!landed && !input.premium && !await projectArchived(db, input.projectId) && (await findVideo(db, input.projectId, input.videoId))?.premium && await videoPublished(db, input.videoId)) return "published";
   }
   return settle(db, input.projectId, landed, () => findVideo(db, input.projectId, input.videoId));
 }

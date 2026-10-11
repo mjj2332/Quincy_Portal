@@ -5,6 +5,7 @@ import { baseEnv, cookie, database, ids, request, seedFixture, type Who } from "
 import { addMember, clearGuestRows, linkPath, openGuestGate, seedGuestLink, startSession } from "./guest-support";
 import { hashToken } from "../src/lib/opaque-token";
 import { guestFetch } from "./guest-support";
+import { seedPage, wipeDelivery } from "./delivery-support";
 import { clearVideoFlags, seedVideoVersion, setVideoFlags } from "./video-review-support";
 
 /** Staff approval, Release and premium (#741 14a): the order matrix, the Release CAS, withdraw, premium and unlock, and the audit rows. */
@@ -20,6 +21,7 @@ const unlockPath = (videoId: string, projectId?: string) => p(`/videos/${videoId
 
 beforeAll(async () => { await seedFixture(); });
 const wipe = async () => {
+  await wipeDelivery();
   await database.DB.batch([
     database.DB.prepare("DELETE FROM video_releases"), database.DB.prepare("DELETE FROM video_approval_events"), database.DB.prepare("DELETE FROM video_premium_unlocks"),
     database.DB.prepare("DELETE FROM audit_log WHERE action LIKE 'video_version.%' OR action LIKE 'video.premium%'"),
@@ -292,6 +294,44 @@ describe("premium and unlock", () => {
     const rows = await audits("video.premium_set");
     expect(rows).toHaveLength(2); expect(rows[0]).toMatchObject({ actor_id: ids.admin, target_type: "video", target_id: v1.videoId }); expect(rows[1]).toMatchObject({ actor_id: ids.member });
     expect(rows.map((row) => JSON.parse(row.meta_json).premium)).toEqual([true, false]);
+  });
+
+  it("refuses unmarking a premium Video with a Version in the current set: 409 premium_published, nothing written, Unlock and Re-lock still work", async () => {
+    await request(premiumPath(v1.videoId), "admin", "PUT", { premium: true });
+    await seedPage({ assetIds: [v1.assetId] });
+    for (const who of ["admin", "member"] as const) {
+      const response = await request(premiumPath(v1.videoId), who, "PUT", { premium: false });
+      expect(response.status, who).toBe(409); expect(await response.json()).toMatchObject({ code: "premium_published" });
+    }
+    expect(await premiumOf(v1.videoId)).toBe(1);
+    expect(await audits("video.premium_set")).toHaveLength(1);
+    expect((await request(premiumPath(v1.videoId), "admin", "PUT", { premium: true })).status).toBe(200);
+    expect((await request(unlockPath(v1.videoId), "admin", "PUT", { unlocked: true })).status).toBe(200);
+    expect((await request(unlockPath(v1.videoId), "admin", "PUT", { unlocked: false })).status).toBe(200);
+    expect(await premiumOf(v1.videoId)).toBe(1);
+  });
+
+  it("an older Version of the Video in the current set pins premium too, and only the current set does", async () => {
+    await request(premiumPath(v1.videoId), "admin", "PUT", { premium: true });
+    await seedPage({ assetIds: [v1.assetId] });
+    expect((await request(premiumPath(v1.videoId), "admin", "PUT", { premium: false })).status).toBe(409);
+    await wipeDelivery(); await seedPage({ assetIds: [v2.assetId], olderSets: [[v1.assetId]] });
+    expect((await request(premiumPath(v1.videoId), "admin", "PUT", { premium: false })).status).toBe(409);
+    await wipeDelivery(); const other = await seedVideoVersion({});
+    await seedPage({ assetIds: [other.assetId], olderSets: [[v1.assetId]] });
+    expect((await request(premiumPath(v1.videoId), "admin", "PUT", { premium: false })).status).toBe(200);
+    expect(await premiumOf(v1.videoId)).toBe(0);
+  });
+
+  it("the Video UPDATE repeats the published fence, so a Publish racing the request cannot slip through", async () => {
+    await request(premiumPath(v1.videoId), "admin", "PUT", { premium: true });
+    const { setPremium } = await import("../src/lib/video-approval");
+    const racing = new Proxy(database.DB, { get(target, key) {
+      if (key === "batch") return async (statements: D1PreparedStatement[]) => { await seedPage({ assetIds: [v1.assetId] }); return target.batch(statements); };
+      const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value; } });
+    const result = await setPremium(racing as D1Database, { projectId: ids.project, videoId: v1.videoId, principal: { id: ids.admin } as never, premium: false, now: Date.now() });
+    expect(result).toBe("published");
+    expect(await premiumOf(v1.videoId)).toBe(1);
   });
 
   it("unlocks idempotently: one row, premiumUnlocked on the Video DTO and the guest DTO, a payment reference change audited, a relock deleting the row", async () => {
