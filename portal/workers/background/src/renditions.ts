@@ -203,7 +203,7 @@ export async function resolveTransformPrincipal(env: RenditionGenerationEnv): Pr
 /**
  * Builds the requested variants of one photo, in the canonical order (`thumb`, `web`, `delivery_web`, `premium_preview`). With no `variants` it builds the QA pair, as before #787.
  * Each variant is skipped when a row at ITS OWN spec version (`RENDITION_VARIANT_SPEC`) and its object exist, so a Delivery spec bump regenerates only that variant.
- * `premium_preview` is derived from the asset's own current `web` rendition, never from the original: when that rendition is missing or stale it throws and the queue retries (web is enqueued at ingest).
+ * `premium_preview` is derived from the asset's own current `web` rendition, never from the original: when that rendition is missing or stale it first makes that `web` in the same invocation.
  */
 export async function generateRenditions(
   env: RenditionGenerationEnv,
@@ -219,10 +219,17 @@ export async function generateRenditions(
   const asset = await resolvedDependencies.store.getAsset(assetId);
   if (!asset) return { generated: [], skipped: wanted };
   const existing = new Map((await resolvedDependencies.store.getRenditions(assetId)).map((row) => [row.variant, row]));
+  // The preview is drawn over `web`. When that row is missing or stale (right after a supersede carry, say) make it first, in this invocation, rather than throwing into retries and the DLQ.
+  // A current `web` is left alone, and unreported, so the result still names only what was asked for.
+  const currentWeb = existing.get("web");
+  const webUsable = currentWeb?.specVersion === RENDITION_VARIANT_SPEC.web && Boolean(await env.MEDIA.head(currentWeb.r2Key));
+  const work = wanted.includes("premium_preview") && !wanted.includes("web") && !webUsable
+    ? ANY_RENDITION_VARIANTS.filter((variant) => variant === "web" || wanted.includes(variant))
+    : wanted;
   const generated: AnyRenditionVariant[] = []; const skipped: AnyRenditionVariant[] = [];
   let principal: TransformPrincipal | null = null;
   let sourceKey: string | null = null;
-  for (const variant of wanted) {
+  for (const variant of work) {
     const previous = existing.get(variant);
     const spec = RENDITION_VARIANT_SPEC[variant];
     if (previous?.specVersion === spec && await env.MEDIA.head(previous.r2Key)) { skipped.push(variant); continue; }

@@ -119,12 +119,47 @@ describe("premium_preview", () => {
     expect(new Set(h.saved.map((row) => row.r2Key)).size).toBe(2);
   });
 
-  it("throws, writing nothing, when the asset has no current web rendition (the queue retries it)", async () => {
+  const webFetcher = (requests: string[]) => (async (url: string) => { requests.push(url); return new Response(tinyWebp, { headers: { "content-type": "image/webp", "cf-resized": "internal=ok" } }); }) as typeof fetch;
+
+  it("makes the missing web rendition first, in the same invocation, then draws the preview over it", async () => {
+    const h = harness(); const requests: string[] = [];
+    const result = await generateRenditions(h.env as never, asset.id, { store: h.store, fetch: webFetcher(requests) }, ["premium_preview"]);
+    expect(result).toEqual({ generated: ["web", "premium_preview"], skipped: [] });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatch(/format=webp/);
+    expect(h.saved.map((row) => row.variant)).toEqual(["web", "premium_preview"]);
+    const webRow = h.saved[0]!;
+    expect(webRow).toMatchObject({ specVersion: RENDITION_VARIANT_SPEC.web, contentType: "image/webp" });
+    expect(h.objects.has(webRow.r2Key)).toBe(true);
+    expect(h.objects.has(h.saved[1]!.r2Key)).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.calls.map((call) => call.op)).toEqual(["input", "transform", "input", "draw", "output"]);
+    expect(h.inputs[0]!.bytes).toEqual(tinyWebp);
+  });
+
+  it("regenerates a stale-spec web rendition first, then draws over the fresh one", async () => {
     const h = harness();
-    await expect(generateRenditions(h.env as never, asset.id, { store: h.store, fetch: (async () => { throw new Error("no fetch"); }) as typeof fetch }, ["premium_preview"])).rejects.toThrow(/web rendition/);
-    h.stored.push({ variant: "web", r2Key: "renditions/web.webp", specVersion: "v0" });
-    await expect(generateRenditions(h.env as never, asset.id, { store: h.store, fetch: (async () => { throw new Error("no fetch"); }) as typeof fetch }, ["premium_preview"])).rejects.toThrow(/web rendition/);
-    expect(h.saved).toEqual([]); expect(h.objects.size).toBe(0); expect(h.calls).toEqual([]);
+    h.stored.push({ variant: "web", r2Key: "renditions/old-web.webp", specVersion: "v0" });
+    h.objects.set("renditions/old-web.webp", { body: new Uint8Array([1, 2, 3]), size: 3 });
+    const requests: string[] = [];
+    const result = await generateRenditions(h.env as never, asset.id, { store: h.store, fetch: webFetcher(requests) }, ["premium_preview"]);
+    expect(result.generated).toEqual(["web", "premium_preview"]);
+    expect(requests).toHaveLength(1);
+    expect(h.saved[0]!.r2Key).not.toBe("renditions/old-web.webp");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.inputs[0]!.bytes).toEqual(tinyWebp);
+  });
+
+  it("does not remake a current web rendition, and does not report it", async () => {
+    const h = harness(); web(h);
+    const result = await generateRenditions(h.env as never, asset.id, { store: h.store, fetch: (async () => { throw new Error("no fetch"); }) as typeof fetch }, ["premium_preview"]);
+    expect(result).toEqual({ generated: ["premium_preview"], skipped: [] });
+  });
+
+  it("writes nothing for the preview when the freshly made web is invalid", async () => {
+    const h = harness();
+    await expect(generateRenditions(h.env as never, asset.id, { store: h.store, fetch: (async () => new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "image/webp", "cf-resized": "internal=ok" } })) as typeof fetch }, ["premium_preview"])).rejects.toThrow(/Invalid WebP/);
+    expect(h.saved).toEqual([]); expect(h.calls).toEqual([]);
   });
 
   it("refuses a web rendition over the 20 MB Images input cap", async () => {
