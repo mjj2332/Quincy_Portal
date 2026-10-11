@@ -29,3 +29,10 @@ No new raw `<button>`, `<input>`, `<select>`, `<textarea>`, `<dialog>` or widget
 - The activity row `project.delivery.published` keeps linking to the Project sheet: its `deep_link_path` is frozen (see `project-activity.ts`). `?tab=delivery` still opens the tab.
 - Selection order on the page is photos, Floorplans, Copy documents, then Videos, each in the order its list came. A Video row publishes its current Version.
 - The tab mounts on first open and then stays mounted (hidden), so a half-made selection survives a tab hop.
+
+## Sol round 1 additions
+
+- Older-version rows ("Older versions on the page now"): `reui/item` (`Item`, `ItemContent`, `ItemTitle`, `ItemDescription`, `ItemActions`) + `reui/badge`, same composition as the candidate rows. Searched: the ReUI `item` examples; no candidate differs.
+- Premium switch hit area: `reui/switch` wrapped in a native `label` (the hit target, `min-h-11` below 721px), matching the existing selection-checkbox label. No new raw primitive.
+- Page switch row: the existing `reui/switch` + `reui/label` row gains the same `min-h-11` touch class.
+- "Discard unfinished publish": `reui/button` (ghost), same as the other actions.

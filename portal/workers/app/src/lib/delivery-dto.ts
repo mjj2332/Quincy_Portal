@@ -86,6 +86,14 @@ export async function readSetRows(db: D1Database, setId: string): Promise<Delive
   return rows.map((row) => rowOf(row, row.handle, row.position));
 }
 
+/** The paid-extra flag and unlock of photos and documents among `assetIds`, by id. A Video is absent: its premium belongs to the Video. */
+async function readPremiumFlags(db: D1Database, assetIds: readonly string[]): Promise<Map<string, { premium: boolean; unlocked: boolean }>> {
+  if (assetIds.length === 0) return new Map();
+  const found = (await db.prepare(`SELECT a.id AS id, a.delivery_premium AS premium, u.asset_id IS NOT NULL AS unlocked FROM assets a LEFT JOIN asset_premium_unlocks u ON u.asset_id = a.id
+      WHERE a.id IN (SELECT value FROM json_each(?1)) AND a.kind IN ('photo', 'floorplan_pdf', 'copy_pdf')`).bind(JSON.stringify(assetIds)).all<{ id: string; premium: number; unlocked: number }>()).results;
+  return new Map(found.map((row) => [row.id, { premium: row.premium === 1, unlocked: row.unlocked === 1 }]));
+}
+
 const STATE_KINDS: readonly string[] = DELIVERY_ITEM_KINDS;
 /**
  * The staff read of a Project's Delivery page: the page, the set (the latest, or the numbered one for a replayed Publish) with the Asset behind each handle, and the page as a viewer sees
@@ -102,7 +110,8 @@ export async function readDeliveryState(db: D1Database, projectId: string, optio
   const project = (await db.prepare("SELECT street, suburb FROM projects WHERE id = ?1").bind(projectId).first<{ street: string; suburb: string | null }>())!;
   const coverHandle = rows.find((row) => row.assetId === set.coverAssetId)?.handle ?? null;
   const dto = buildDeliveryDto({ property: project, setNumber: set.setNumber, publishedAt: set.publishedAt, coverHandle, rows, urls: options.urls ?? setItemUrls(projectId) });
-  const items = rows.map((row, index) => ({ assetId: row.assetId, handle: row.handle, kind: row.kind, label: dto.items[index]!.label, position: row.position, locked: row.locked })).filter((item) => STATE_KINDS.includes(item.kind));
+  const flags = await readPremiumFlags(db, rows.map((row) => row.assetId));
+  const items = rows.map((row, index) => ({ assetId: row.assetId, handle: row.handle, kind: row.kind, label: dto.items[index]!.label, position: row.position, locked: row.locked, premium: flags.get(row.assetId)?.premium ?? false, premiumUnlocked: flags.get(row.assetId)?.unlocked ?? false })).filter((item) => STATE_KINDS.includes(item.kind));
   return { page: pageState, set: { setNumber: set.setNumber, publishedAt: set.publishedAt, coverAssetId: set.coverAssetId, items }, dto };
 }
 

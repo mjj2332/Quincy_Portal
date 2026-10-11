@@ -38,19 +38,20 @@ const handle = (n: number) => `abcdefghijklmnop`.slice(0, 15) + String(n);
 const stateAfterPublish = (setNumber = 1) => ({
   page: { slug: "12-example-st-suburbia-k7m2qx", path: "/d/12-example-st-suburbia-k7m2qx", enabled: true, latestSetNumber: setNumber },
   set: { setNumber, publishedAt: Date.UTC(2026, 9, 11, 3, 4), coverAssetId: ids.photo1, items: [
-    { assetId: ids.photo1, handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false },
-    { assetId: ids.plan, handle: handle(2), kind: "floorplan", label: "Floorplan 01", position: 1, locked: false }] },
+    { assetId: ids.photo1, handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, premium: false, premiumUnlocked: false },
+    { assetId: ids.plan, handle: handle(2), kind: "floorplan", label: "Floorplan 01", position: 1, locked: false, premium: false, premiumUnlocked: false }] },
   dto: { property: { street: "12 Example St", suburb: "Suburbia" }, setNumber, publishedAt: Date.UTC(2026, 9, 11, 3, 4), coverHandle: handle(1), items: [] },
 });
 const NO_PAGE = { page: null, set: null, dto: null };
 
+let archivedDetail = false;
 let delivery: unknown = NO_PAGE; // an object is the 200 answer; an ApiError instance is thrown
 let photos = [asset(ids.photo1), asset(ids.photo2, { premium: true })];
 function install() {
   apiGetMock.mockReset();
   apiGetMock.mockImplementation((path: string) => {
     if (path === `/api/projects/${PROJECT_ID}/delivery`) return delivery instanceof Error ? Promise.reject(delivery) : Promise.resolve(delivery);
-    if (path === `/api/projects/${PROJECT_ID}`) return Promise.resolve(detail());
+    if (path === `/api/projects/${PROJECT_ID}`) return Promise.resolve(archivedDetail ? { ...detail(), archivedAt: "2026-09-01T00:00:00.000Z" } : detail());
     if (path.endsWith("/video-review")) return Promise.resolve({ open: false, parts: [] });
     if (path.endsWith("/videos")) return Promise.resolve({ videos: [video] });
     if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: photos });
@@ -86,7 +87,7 @@ const gets = () => apiGetMock.mock.calls.map(([path]) => path);
 async function openDelivery(role: Role = "admin") { await mount(role); await click(tab("Delivery")); await flush(); }
 const api = (status: number, body: Record<string, unknown>) => new ApiError(String(body.error ?? "x"), status, body);
 
-beforeEach(() => { apiPostMock.mockReset(); apiPutMock.mockReset(); document.body.innerHTML = ""; delivery = NO_PAGE; photos = [asset(ids.photo1), asset(ids.photo2, { premium: true })]; Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn(() => Promise.resolve()) } }); });
+beforeEach(() => { archivedDetail = false; apiPostMock.mockReset(); apiPutMock.mockReset(); document.body.innerHTML = ""; delivery = NO_PAGE; photos = [asset(ids.photo1), asset(ids.photo2, { premium: true })]; Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn(() => Promise.resolve()) } }); });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; document.body.innerHTML = ""; });
 
 describe("the Delivery tab's existence", () => {
@@ -190,18 +191,34 @@ describe("Publish", () => {
     await openDelivery(); await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
     expect(publishBody()[0]).toMatchObject({ expectedLatestSet: 3 });
   });
-  it("reuses the operation id when the same selection is retried after a lost response, and takes a new one when the selection changes", async () => {
+  it("keeps the original body and operation id after a lost response, whatever the person changes, until the retry is answered", async () => {
     apiPostMock.mockRejectedValueOnce(new ApiError("offline", 0));
-    apiPostMock.mockRejectedValueOnce(new ApiError("offline", 0));
+    apiPostMock.mockRejectedValueOnce(new ApiError("down", 503));
     await openDelivery(); await select();
     await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
     expect(byId("delivery-problem")?.textContent).toContain("Couldn't reach the server");
+    expect(byId("delivery-publish")?.textContent).toBe("Retry publish");
+    await click(byLabel("Select 2.jpg")); // a changed selection does not change the unfinished Publish
     await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
-    const [first, second] = publishBody();
-    expect(second!.operationId).toBe(first!.operationId);
-    await click(byLabel("Select 2.jpg"));
+    apiPostMock.mockResolvedValueOnce({ ...stateAfterPublish(1), replayed: true, operationSetNumber: 1 });
     await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
-    expect(publishBody()[2]!.operationId).not.toBe(first!.operationId);
+    const [first, second, third] = publishBody();
+    expect(second).toEqual(first); expect(third).toEqual(first);
+    expect(byId("delivery-receipt")?.textContent).toContain("already published as set 1");
+    // Acknowledged: the next Publish is a new attempt.
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    expect(publishBody()[3]!.operationId).not.toBe(first!.operationId);
+  });
+  it("lets the person discard an unfinished Publish, and a definite refusal releases it", async () => {
+    apiPostMock.mockRejectedValueOnce(new ApiError("offline", 0));
+    await openDelivery(); await select();
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    await click(byId("delivery-discard-retry"));
+    expect(byId("delivery-publish")?.textContent).toBe("Publish");
+    apiPostMock.mockRejectedValueOnce(api(400, { error: "x", code: "invalid_cover" }));
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    expect(byId("delivery-publish")?.textContent).toBe("Publish");
+    expect(publishBody()[1]!.operationId).not.toBe(publishBody()[0]!.operationId);
   });
   it("shows the address, set number and published time after a Publish, and copies the full address", async () => {
     apiPostMock.mockImplementation(async () => { delivery = stateAfterPublish(1); return { ...stateAfterPublish(1), replayed: false, operationSetNumber: 1 }; });
@@ -241,16 +258,44 @@ describe("Publish", () => {
   });
   it("is read-only while the Project is archived but keeps the address", async () => {
     delivery = stateAfterPublish(1);
-    const base = apiGetMock.getMockImplementation();
-    await mount("admin");
-    apiGetMock.mockImplementation((path, init) => (path === `/api/projects/${PROJECT_ID}` ? Promise.resolve({ ...detail(), archivedAt: "2026-09-01T00:00:00.000Z" }) : base!(path, init)));
-    await act(async () => { root!.unmount(); }); root = null; document.body.innerHTML = "";
-    host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
-    await act(async () => { root!.render(<QuincyQueryProvider key="archived" principalId="test-user" role="admin"><ProjectWorkspace projectId={PROJECT_ID} /></QuincyQueryProvider>); await Promise.resolve(); });
-    await flush(); await click(tab("Delivery"));
+    archivedDetail = true;
+    await mount("admin"); await click(tab("Delivery"));
     expect((byId("delivery-publish") as HTMLButtonElement).disabled).toBe(true);
     expect(byId("delivery-address")).not.toBeNull();
     expect(byId("delivery-archived")?.textContent).toContain("archived");
+  });
+  it("turns read-only on an archive refusal, and lifts it when the re-read Project is not archived", async () => {
+    apiPostMock.mockRejectedValue(api(409, { error: "x", code: "project_archived" }));
+    await openDelivery(); await select();
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    expect(byId("delivery-problem")?.textContent).toContain("archived");
+    await flush(20);
+    expect((byId("delivery-publish") as HTMLButtonElement).disabled).toBe(false);
+    expect(byId("delivery-archived")).toBeNull();
+  });
+  it("stays read-only after an archive refusal when the re-read Project really is archived", async () => {
+    apiPostMock.mockImplementation(async () => { archivedDetail = true; throw api(409, { error: "x", code: "project_archived" }); });
+    await openDelivery(); await select();
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    await flush(20);
+    expect((byId("delivery-publish") as HTMLButtonElement).disabled).toBe(true);
+    expect(byId("delivery-archived")).not.toBeNull();
+  });
+  it("re-reads the Project after a Publish, the stage move's surface", async () => {
+    apiPostMock.mockResolvedValue({ ...stateAfterPublish(1), replayed: false, operationSetNumber: 1 });
+    await openDelivery(); await select();
+    const count = (match: (path: string) => boolean) => gets().filter(match).length;
+    const before = [count((p) => p === `/api/projects/${PROJECT_ID}`)];
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm")); await flush(20);
+    expect(count((p) => p === `/api/projects/${PROJECT_ID}`)).toBeGreaterThan(before[0]!);
+  });
+  it.each(["preview", "publish"] as const)("ends the session on a 401 from %s", async (which) => {
+    apiPostMock.mockRejectedValue(new ApiError("Session expired", 401));
+    await openDelivery(); await select();
+    await click(byId(which === "preview" ? "delivery-preview" : "delivery-publish"));
+    if (which === "publish") await click(bodyById("delivery-publish-confirm"));
+    await flush(20);
+    expect(host.textContent).toContain("Project unavailable");
   });
 });
 
@@ -317,5 +362,41 @@ describe("premium controls", () => {
   it("is read-only for a role without the capability is not reachable: Photographers never see the tab", async () => {
     await mount("photographer");
     expect(tab("Delivery")).toBeUndefined();
+  });
+});
+
+describe("round 1: older versions, 401 and hit areas", () => {
+  const OLD = "99999999-9999-4999-8999-999999999991";
+  const withOld = () => { const state = stateAfterPublish(2); state.set.items.push({ assetId: OLD, handle: handle(3), kind: "photo", label: "Photo 03", position: 2, locked: true, premium: true, premiumUnlocked: false } as never); return state; };
+  it("lists a superseded item still on the page as an older version and unlocks that very Asset", async () => {
+    delivery = withOld();
+    apiPutMock.mockResolvedValue({ premium: true, premiumUnlocked: true });
+    await openDelivery();
+    const row = byId("delivery-served-item")!;
+    expect(row.textContent).toContain("Photo 03");
+    expect(row.textContent).toContain("older version");
+    await click(byLabel("Unlock Photo 03 (older version)"));
+    await click(bodyById("delivery-unlock-confirm"));
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}/assets/${OLD}/delivery-premium-unlock`, { unlocked: true });
+    expect(allById("delivery-served-item")).toHaveLength(1); // the current set's other members are ordinary rows
+  });
+  it("marks and re-locks the served Asset, not its replacement", async () => {
+    const state = withOld(); state.set.items[2] = { ...state.set.items[2]!, premiumUnlocked: true, locked: false } as never; delivery = state;
+    apiPutMock.mockResolvedValue({ premium: true, premiumUnlocked: false });
+    await openDelivery();
+    await click(byLabel("Re-lock Photo 03 (older version)")); await click(bodyById("delivery-relock-confirm"));
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}/assets/${OLD}/delivery-premium-unlock`, { unlocked: false });
+  });
+  it("ends the session on a 401 from a premium write", async () => {
+    apiPutMock.mockRejectedValue(new ApiError("Session expired", 401));
+    await openDelivery();
+    await click(byLabel("Premium 1.jpg")); await flush(20);
+    expect(host.textContent).toContain("Project unavailable");
+  });
+  it("gives the switches a 44px-high row as their hit area", async () => {
+    delivery = stateAfterPublish(1);
+    await openDelivery();
+    for (const label of ["Premium 1.jpg"]) expect(byLabel(label)!.closest('[data-testid="delivery-premium-hit"]')).not.toBeNull();
+    expect(host.querySelector('[role="switch"][aria-label="Client page"]')!.closest('[data-testid="delivery-page-hit"]')).not.toBeNull();
   });
 });

@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { FileTextIcon, FilmIcon } from "lucide-react";
 import type { DeliveryPageDto, Role } from "@quincy/shared";
+import { ApiError } from "../../lib/api";
 import { useCapabilities } from "../../lib/capabilities";
 import { buildDeliveryCandidates, type DeliveryCandidate } from "../../lib/delivery-candidates";
 import { deliveryErrorText, errorCode, previewDelivery, publishDelivery, refusedAssetIds, setAssetPremium, setAssetPremiumUnlock, setDeliveryPageEnabled, useProjectDeliveryQuery } from "../../lib/delivery-data";
-import { invalidateProjectSurfaces, useProjectAssetsQuery, useProjectVideosQuery } from "../../lib/project-data";
+import { invalidateProjectSurfaces, projectDataKeys, useProjectAssetsQuery, useProjectVideosQuery, type ProjectDetail } from "../../lib/project-data";
 import { setVideoPremium, setVideoPremiumUnlock } from "../../lib/video-approval-data";
 import { LazyImage } from "../LazyImage";
 import { Checkbox } from "../quincy/Checkbox";
@@ -31,6 +32,11 @@ const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const GROUPS = [{ kind: "photo", title: "Edited photos", plural: "photos" }, { kind: "floorplan", title: "Floorplan PDF", plural: "Floorplan PDFs" }, { kind: "copy", title: "Copy PDF", plural: "Copy PDFs" }, { kind: "video", title: "Videos", plural: "Videos" }] as const;
 const when = (epoch: number) => new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(epoch));
 const thumbUrl = (projectId: string, c: DeliveryCandidate) => (c.kind === "photo" || c.kind === "video" ? `/api/projects/${projectId}/delivery/preview-media/${c.assetId}/thumb` : null);
+const COLLECTION_OF = { photo: "edited", floorplan: "floorplan", copy: "copy", video: null } as const;
+/** What a Publish is, from the moment it is first tried until it is answered. A lost response leaves it unanswered, so a retry must send exactly this, never a rebuilt body. */
+type PendingPublish = { id: string; body: { assetIds: string[]; coverAssetId: string | null; expectedLatestSet: number | null } };
+/** A refusal the server gave is definite; no answer at all, or a server fault, may still have committed. */
+const uncertain = (error: unknown) => !(error instanceof ApiError) || error.status === 0 || error.status >= 500;
 type Unlocking = { candidate: DeliveryCandidate; mode: "unlock" | "relock" } | null;
 
 export function DeliveryTab({ projectId, role, archived }: { projectId: string; role: Role; archived: boolean }) {
@@ -58,7 +64,8 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
   const [paymentRef, setPaymentRef] = useState("");
   const [archivedLatch, setArchivedLatch] = useState(false);
   const seeded = useRef(false);
-  const operation = useRef<{ key: string; id: string } | null>(null);
+  const pending = useRef<PendingPublish | null>(null);
+  const [, rerender] = useState(0);
   const isArchived = archived || archivedLatch;
 
   // The first time both the page and the lists are in, start from the current set: re-publishing is usually an edit of what is there.
@@ -74,6 +81,14 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
   const orderedIds = candidates.filter((c) => selected.has(c.assetId)).map((c) => c.assetId);
   const nameOf = (assetId: string) => candidates.find((c) => c.assetId === assetId)?.name ?? "an item";
   const expected = state?.page?.latestSetNumber ?? null;
+  // Items the client page serves that are no longer candidates (a newer version replaced them): the page still shows THESE Assets, so their premium state is theirs to change.
+  const served = useMemo<DeliveryCandidate[]>(() => {
+    const known = new Set(candidates.map((c) => c.assetId));
+    return (state?.set?.items ?? []).filter((item) => !known.has(item.assetId)).map((item) => ({
+      assetId: item.assetId, kind: item.kind, name: `${item.label} (older version)`, collection: COLLECTION_OF[item.kind], premium: item.premium, premiumUnlocked: item.premiumUnlocked,
+      videoId: item.kind === "video" ? videos.data?.find((video) => video.versions.some((v) => v.assetId === item.assetId))?.id ?? null : null,
+    }));
+  }, [candidates, state, videos.data]);
   const surfaces = (collection?: "edited" | "floorplan" | "copy" | null) => invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "delivery" }, ...(collection ? [{ kind: "assets", collectionKind: collection } as const] : [])], dashboard: false, calendar: false, gantt: false });
 
   function toggleSelected(assetId: string, on: boolean) {
@@ -85,27 +100,36 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
     setSelected((current) => { const next = new Set(current); for (const id of members) { if (on) next.add(id); else next.delete(id); } return next; });
     if (!on && cover && members.includes(cover)) setCover(null);
   }
+  /** An archive refusal makes the tab read-only now; the Project is then re-read, and an authoritative "not archived" lifts it. */
+  async function latchArchived() {
+    setArchivedLatch(true);
+    try { await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }], dashboard: false, calendar: false, gantt: false }); } catch { return; }
+    const current = queryClient.getQueryData<ProjectDetail>(projectDataKeys.detail(projectId));
+    if (current && !current.archivedAt) setArchivedLatch(false);
+  }
   function refuse(error: unknown) {
     const code = errorCode(error);
     const refused = code === "invalid_selection" ? refusedAssetIds(error) : [];
     if (refused.length) { setSelected((current) => new Set([...current].filter((id) => !refused.includes(id)))); if (cover && refused.includes(cover)) setCover(null); }
-    if (code === "project_archived") setArchivedLatch(true);
+    if (code === "project_archived") void latchArchived();
     if (code === "stale_set") void surfaces();
     setProblem(deliveryErrorText(error, refused.map(nameOf)));
   }
 
   async function runPreview() {
     setBusy("preview"); setProblem(null); setReceipt(null);
-    try { setPreview(await previewDelivery(projectId, { assetIds: orderedIds, coverAssetId: cover })); } catch (error) { refuse(error); } finally { setBusy(null); }
+    try { setPreview(await previewDelivery(queryClient, projectId, { assetIds: orderedIds, coverAssetId: cover })); } catch (error) { refuse(error); } finally { setBusy(null); }
   }
   async function runPublish() {
     setConfirming(false); setBusy("publish"); setProblem(null); setReceipt(null);
-    const key = JSON.stringify([orderedIds, cover, expected]);
-    if (operation.current?.key !== key) operation.current = { key, id: crypto.randomUUID() };
+    // An unanswered Publish keeps its id and body whatever has changed since; only an answer releases it.
+    if (!pending.current) pending.current = { id: crypto.randomUUID(), body: { assetIds: orderedIds, coverAssetId: cover, expectedLatestSet: expected } };
+    const attempt = pending.current;
     try {
-      const response = await publishDelivery(queryClient, projectId, { assetIds: orderedIds, coverAssetId: cover, expectedLatestSet: expected, operationId: operation.current.id });
+      const response = await publishDelivery(queryClient, projectId, { ...attempt.body, operationId: attempt.id });
+      pending.current = null;
       setReceipt(response.replayed ? `This was already published as set ${response.operationSetNumber}.` : `Published as set ${response.operationSetNumber}.`);
-    } catch (error) { refuse(error); } finally { setBusy(null); }
+    } catch (error) { if (!uncertain(error)) pending.current = null; refuse(error); } finally { setBusy(null); rerender((n) => n + 1); }
   }
   async function runSwitch(enabled: boolean) {
     setBusy("switch"); setProblem(null);
@@ -113,7 +137,7 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
   }
   async function writeRow(c: DeliveryCandidate, write: () => Promise<unknown>) {
     setProblem(null); setRowBusy((current) => new Set(current).add(c.assetId));
-    try { await write(); } catch (error) { if (errorCode(error) === "project_archived") setArchivedLatch(true); setProblem(deliveryErrorText(error)); void surfaces(c.collection === "edited" || c.collection === "floorplan" || c.collection === "copy" ? c.collection : null); }
+    try { await write(); } catch (error) { if (errorCode(error) === "project_archived") void latchArchived(); setProblem(deliveryErrorText(error)); void surfaces(c.collection === "edited" || c.collection === "floorplan" || c.collection === "copy" ? c.collection : null); }
     finally { setRowBusy((current) => { const next = new Set(current); next.delete(c.assetId); return next; }); }
   }
   const videoContext = (c: DeliveryCandidate) => ({ queryClient, projectId, videoId: c.videoId!, assetId: c.assetId });
@@ -122,6 +146,18 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
   const setUnlocked = (c: DeliveryCandidate, unlocked: boolean, ref: string) => writeRow(c, () => (c.kind === "video"
     ? setVideoPremiumUnlock(videoContext(c), { unlocked, ...(unlocked && ref ? { paymentRef: ref } : {}) })
     : setAssetPremiumUnlock(queryClient, projectId, c.assetId, c.collection!, { unlocked, ...(unlocked && ref ? { paymentRef: ref } : {}) })));
+
+  const premiumControls = (c: DeliveryCandidate) => {
+    if (!canPremium(c)) return null;
+    const working = rowBusy.has(c.assetId);
+    return <>
+      <label data-testid="delivery-premium-hit" className={`inline-flex items-center gap-[var(--space-2)] [font:var(--type-label)] text-foreground-secondary ${TOUCH}`}>
+        <Switch aria-label={`Premium ${c.name}`} size="sm" checked={c.premium} disabled={isArchived || working} onCheckedChange={(next) => void markPremium(c, next)} />
+        Premium
+      </label>
+      {c.premium && <Button type="button" variant="outline" className={TOUCH} aria-label={`${c.premiumUnlocked ? "Re-lock" : "Unlock"} ${c.name}`} disabled={isArchived || working} onClick={() => { setPaymentRef(""); setUnlocking({ candidate: c, mode: c.premiumUnlocked ? "relock" : "unlock" }); }}>{c.premiumUnlocked ? "Re-lock" : "Unlock"}</Button>}
+    </>;
+  };
 
   const page = state?.page ?? null;
   const address = page ? `${window.location.origin}${page.path}` : null;
@@ -146,7 +182,7 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
           <CopyTextButton text={address} label="Copy address" success="Address copied." failure="Couldn't copy the address." className={TOUCH} />
         </div>
         {state?.set && <p className="m-0 text-foreground-secondary [font:var(--type-label)]"><span data-testid="delivery-set-number">{`Set ${state.set.setNumber}`}</span> · <span data-testid="delivery-published-at">{`Published ${when(state.set.publishedAt)}`}</span></p>}
-        {can("switchDeliveryPage") && <div className="flex items-center gap-[var(--space-3)]">
+        {can("switchDeliveryPage") && <div data-testid="delivery-page-hit" className={`flex items-center gap-[var(--space-3)] ${TOUCH}`}>
           <Switch id="delivery-page-switch" aria-label="Client page" checked={page.enabled} disabled={busy === "switch"} onCheckedChange={(next) => void runSwitch(next)} />
           <Label htmlFor="delivery-page-switch">{page.enabled ? "Page is live for the client" : "Page is switched off"}</Label>
         </div>}
@@ -187,19 +223,32 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
                   </ItemContent>
                   <ItemActions className="flex-wrap">
                     {c.kind === "photo" && on && <Toggle variant="outline" size="sm" aria-label={`Cover ${c.name}`} pressed={cover === c.assetId} onPressedChange={(pressed) => setCover(pressed ? c.assetId : null)}>Cover</Toggle>}
-                    {canPremium(c) && <>
-                      <Switch aria-label={`Premium ${c.name}`} size="sm" checked={c.premium} disabled={isArchived || working} onCheckedChange={(next) => void markPremium(c, next)} />
-                      {c.premium && <Button type="button" variant="outline" className={TOUCH} aria-label={`${c.premiumUnlocked ? "Re-lock" : "Unlock"} ${c.name}`} disabled={isArchived || working} onClick={() => { setPaymentRef(""); setUnlocking({ candidate: c, mode: c.premiumUnlocked ? "relock" : "unlock" }); }}>{c.premiumUnlocked ? "Re-lock" : "Unlock"}</Button>}
-                    </>}
+                    {premiumControls(c)}
                   </ItemActions>
                 </Item>;
               })}
             </ItemGroup>
           </section>;
         })}
+        {served.length > 0 && <section aria-labelledby="delivery-group-served" className="grid gap-[var(--space-2)]">
+          <h3 id="delivery-group-served" className="m-0 [font:var(--type-label)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">Older versions on the page now</h3>
+          <p className="m-0 text-foreground-secondary [font:var(--type-label)]">The client page still shows these, because a newer version has not been published. Locking and unlocking here changes what the client sees.</p>
+          <ItemGroup>
+            {served.map((c) => <Item key={c.assetId} size="xs" variant="outline" data-testid="delivery-served-item" data-kind={c.kind} className="flex-wrap">
+              <ItemContent className="min-w-0">
+                <ItemTitle className="[overflow-wrap:anywhere]">{c.name}</ItemTitle>
+                <ItemDescription className="flex flex-wrap items-center gap-[var(--space-2)]">
+                  {c.premium && <Badge variant={c.premiumUnlocked ? "success-light" : "warning-light"}>{c.premiumUnlocked ? "Premium · unlocked" : "Premium · locked"}</Badge>}
+                </ItemDescription>
+              </ItemContent>
+              <ItemActions className="flex-wrap">{premiumControls(c)}</ItemActions>
+            </Item>)}
+          </ItemGroup>
+        </section>}
         <div className="flex flex-wrap items-center gap-[var(--space-2)]">
           <Button type="button" variant="outline" data-testid="delivery-preview" className={TOUCH} disabled={none || busy !== null} onClick={() => void runPreview()}>Preview</Button>
-          <Button type="button" data-testid="delivery-publish" className={TOUCH} disabled={none || busy !== null || isArchived} onClick={() => { setProblem(null); setConfirming(true); }}>{page ? "Publish a new set" : "Publish"}</Button>
+          <Button type="button" data-testid="delivery-publish" className={TOUCH} disabled={(none && !pending.current) || busy !== null || isArchived} onClick={() => { setProblem(null); setConfirming(true); }}>{pending.current ? "Retry publish" : page ? "Publish a new set" : "Publish"}</Button>
+          {pending.current && <Button type="button" variant="ghost" data-testid="delivery-discard-retry" className={TOUCH} disabled={busy !== null} onClick={() => { pending.current = null; setProblem(null); rerender((n) => n + 1); }}>Discard unfinished publish</Button>}
         </div>
       </FramePanel>
     </Frame>
@@ -209,8 +258,8 @@ export function DeliveryTab({ projectId, role, archived }: { projectId: string; 
     <AlertDialog open={confirming} onOpenChange={(open) => { if (!open) setConfirming(false); }}>
       <AlertDialogContent size="default">
         <AlertDialogHeader>
-          <AlertDialogTitle>{`Publish ${orderedIds.length} item${orderedIds.length === 1 ? "" : "s"}?`}</AlertDialogTitle>
-          <AlertDialogDescription>{page ? "This replaces what the client sees with this selection as the next set." : "This creates the client page. The first Publish also moves the Project to Delivered."}</AlertDialogDescription>
+          <AlertDialogTitle>{pending.current ? `Retry the unfinished publish (${pending.current.body.assetIds.length} item${pending.current.body.assetIds.length === 1 ? "" : "s"})?` : `Publish ${orderedIds.length} item${orderedIds.length === 1 ? "" : "s"}?`}</AlertDialogTitle>
+          <AlertDialogDescription>{pending.current ? "The earlier attempt may or may not have gone through. This sends it again exactly as it was; the server publishes it only once." : page ? "This replaces what the client sees with this selection as the next set." : "This creates the client page. The first Publish also moves the Project to Delivered."}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>

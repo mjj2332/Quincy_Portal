@@ -77,7 +77,9 @@ export const deliveryStateSchema = z.object({
     setNumber: z.number().int().min(1),
     publishedAt: z.number().int(),
     coverAssetId: z.string().uuid().nullable(),
-    items: z.array(z.object({ assetId: z.string().uuid(), handle: z.string().length(DELIVERY_HANDLE_LENGTH), kind: z.enum(DELIVERY_ITEM_KINDS), label: z.string(), position: z.number().int().nonnegative(), locked: z.boolean() }).strict()),
+    items: z.array(z.object({ assetId: z.string().uuid(), handle: z.string().length(DELIVERY_HANDLE_LENGTH), kind: z.enum(DELIVERY_ITEM_KINDS), label: z.string(), position: z.number().int().nonnegative(), locked: z.boolean(),
+    /** The Asset's own paid-extra state, for photos and documents (a Video's lives on the Video, so it reads false here). `locked` is the live answer; these say how to change it. */
+    premium: z.boolean(), premiumUnlocked: z.boolean() }).strict()),
   }).strict().nullable(),
   dto: deliveryPageDtoSchema.nullable(),
 }).strict();
