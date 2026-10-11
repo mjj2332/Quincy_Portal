@@ -49,3 +49,31 @@ describe("a message from another tab", () => {
     expect(reads).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("a read already in flight when the change lands cannot become the cache", () => {
+  type Reply = { candidates: Array<{ assetId: string }> };
+  let release: Array<(value: Reply) => void>; let starts: number; let fresh: QueryObserver<Reply, Error, Reply, Reply, readonly unknown[]>; let off: () => void;
+  const OTHER = "33333333-3333-4333-8333-333333333333";
+  beforeEach(() => {
+    release = []; starts = 0;
+    fresh = new QueryObserver<Reply, Error, Reply, Reply, readonly unknown[]>(client, { queryKey: projectDataKeys.deliveryCandidates(OTHER), staleTime: 60_000, queryFn: () => { starts += 1; return new Promise<Reply>((resolve) => { release.push(resolve); }); } });
+    off = fresh.subscribe(() => undefined);
+  });
+  afterEach(() => off());
+  const settleBoth = async () => {
+    await vi.waitFor(() => expect(starts).toBe(2)); // the change started a second read
+    release[1]!({ candidates: [{ assetId: "after" }] });
+    release[0]!({ candidates: [{ assetId: "before" }] }); // the snapshot taken before the change lands late
+    await vi.waitFor(() => expect(client.getQueryData<Reply>(projectDataKeys.deliveryCandidates(OTHER))?.candidates[0]?.assetId).toBe("after"));
+  };
+  it("after a local invalidation of Assets", async () => {
+    await vi.waitFor(() => expect(starts).toBe(1));
+    void invalidateProjectResources(client, { projectId: OTHER, resources: [{ kind: "assets", collectionKind: "edited" }] }, false);
+    await settleBoth();
+  });
+  it("after a message from another tab", async () => {
+    await vi.waitFor(() => expect(starts).toBe(1));
+    (runtime as unknown as { receive: (value: unknown) => void }).receive({ ...createProjectDataInvalidationMessage(OTHER, [{ kind: "video-trash" }]), sourceTabId: "other-tab" });
+    await settleBoth();
+  });
+});

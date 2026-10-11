@@ -261,6 +261,15 @@ export class ProjectQueryRuntime {
     return this.queryClient.invalidateQueries({ queryKey, exact: true, refetchType: "active" });
   }
 
+  /**
+   * An invalidation that must not dedupe onto a read already in flight: that read predates the change. TanStack only supersedes an in-flight fetch on refetch when data exists, so with no
+   * entry yet the older read would become the cache. Cancel it (`revert` puts the query back to idle) and only then invalidate. Owned and ledger-held keys are deferred as usual.
+   */
+  requestFreshInvalidation(queryKey: QueryKey): Promise<void> {
+    if (this.isOwned(queryKey) || isProjectQueryLedgerPending(this.queryClient, queryKey)) return this.requestInvalidation(queryKey);
+    return this.queryClient.cancelQueries({ queryKey, exact: true }, { revert: true }).then(() => this.requestInvalidation(queryKey));
+  }
+
   publish(message: ProjectDataOutgoingMessage) {
     if (!this.channel || this.disposed) return;
     this.channel.postMessage({ ...message, sourceTabId: this.sourceTabId });
@@ -320,10 +329,7 @@ export class ProjectQueryRuntime {
     for (const resource of withDependentResources(message.resources)) {
       const key = projectResourceKey(message.projectId, resource);
       // A first read already in flight predates this change and an invalidation would dedupe onto it: cancel it (with no data yet the query goes back to idle) so the refetch is new.
-      if ((resource.kind === "videos" || resource.kind === "video-trash" || resource.kind === "video-decisions") && !this.isOwned(key) && !isProjectQueryLedgerPending(this.queryClient, key)) {
-        void this.queryClient.cancelQueries({ queryKey: key, exact: true }, { revert: true }).then(() => this.requestInvalidation(key));
-        continue;
-      }
+      if (invalidatesPastPendingRead(resource)) { void this.requestFreshInvalidation(key); continue; }
       this.requestInvalidation(key);
     }
   }
@@ -338,6 +344,9 @@ export function withDependentResources(resources: readonly ProjectDataResource[]
   const all = touchesCandidates ? [...resources, { kind: "delivery-candidates" } as const] : [...resources];
   return [...new Map(all.map((resource) => [JSON.stringify(resource), resource])).values()];
 }
+
+/** Resources whose first read can be in flight when they change (#776 for the Video lists, #787 for the Delivery candidates). */
+export const invalidatesPastPendingRead = (resource: ProjectDataResource) => resource.kind === "videos" || resource.kind === "video-trash" || resource.kind === "video-decisions" || resource.kind === "delivery-candidates";
 
 export function getProjectQueryRuntime(queryClient: QueryClient): ProjectQueryRuntime | undefined {
   return runtimes.get(queryClient);

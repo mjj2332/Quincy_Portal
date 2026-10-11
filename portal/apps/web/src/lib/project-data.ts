@@ -448,8 +448,8 @@ export async function invalidateProjectResources(queryClient: QueryClient, inval
   if (!immediateResources.length) return;
   const immediateKeys = immediateResources.map((resource) => projectResourceKey(invalidation.projectId, resource));
   const directInvalidations: Promise<unknown>[] = [];
-  for (const queryKey of immediateKeys) {
-    if (runtime) directInvalidations.push(runtime.requestInvalidation(queryKey));
+  for (const [index, queryKey] of immediateKeys.entries()) {
+    if (runtime) directInvalidations.push(immediateResources[index]!.kind === "delivery-candidates" ? runtime.requestFreshInvalidation(queryKey) : runtime.requestInvalidation(queryKey));
     else directInvalidations.push(queryClient.invalidateQueries({ queryKey, exact: true, refetchType: "active" }));
   }
   await Promise.all(directInvalidations);
