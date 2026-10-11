@@ -213,6 +213,18 @@ describe("toFcpxml19", () => {
     expect(xml).not.toContain("1920");
   });
 
+  it("names 1280x720 as FCP's 720p format, not its pixel size (Final Cut warned on FFVideoFormat1280x720p25)", () => {
+    const xml = toFcpxml19([], ctx({ width: 1280, height: 720 }));
+    expect(xml).toContain('name="FFVideoFormat720p25"');
+    expect(xml).toContain('width="1280" height="720"');
+  });
+
+  it("leaves the format unnamed for a size Final Cut has no named format for", () => {
+    const xml = toFcpxml19([], ctx({ width: 1080, height: 1920 }));
+    expect(xml).toMatch(/<format id="r1" frameDuration="1\/25s" width="1080" height="1920"\/>/);
+    expect(xml).not.toContain("FFVideoFormat");
+  });
+
   it.each([
     [24000, 2398],
     [30000, 2997],
