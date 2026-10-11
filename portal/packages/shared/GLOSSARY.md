@@ -321,8 +321,9 @@ later re-edit or re-upload never alters a Published set already made.
 _Avoid_: Delivery, gallery, live collection
 
 **Premium Asset**:
-An Asset staff have marked as a paid extra. It stays premium for good, and clients see it only as a
-watermarked preview until staff Unlock it.
+An Asset staff have marked as a paid extra. Premium can be undone until the Asset is published to a
+Delivery page; after that it stays premium for good. Clients see it only as a watermarked preview
+until staff Unlock it.
 _Avoid_: Extra, add-on, paywalled (in staff-facing copy)
 
 **Unlock**:

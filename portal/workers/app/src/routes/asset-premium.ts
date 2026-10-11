@@ -14,7 +14,7 @@ const uuid = z.string().uuid();
 /**
  * Photo and document premium and Unlock (#787 slice 2). Every route checks inline, in this order: malformed id 400, the Client Delivery gate (closed 404, the same body for a real and an
  * unknown id), `manageExtras` 403 (Admin and Editor), Project visibility (an External outside the Project 404, staff 403), archived 409 `project_archived`, the Asset 404 (not of this
- * Project, or not the current copy), the body (`.strict()`), then the state (409 `not_premium_eligible` for a Video Version or a Floorplan preview). No `.use(...)`: router-wide
+ * Project, or neither current nor in a current set), the body (`.strict()`), then the state (409 `not_premium_eligible` for a Video Version or a Floorplan preview; 409 `premium_published` for unmarking an Asset in a current set). No `.use(...)`: router-wide
  * middleware leaks across sibling mounts (docs/lessons.md). Video premium keeps its own routes in `video-approval.ts`.
  */
 export const assetPremiumRoutes = new Hono<AppEnv>();
@@ -22,6 +22,7 @@ export const assetPremiumRoutes = new Hono<AppEnv>();
 type Ctx = Context<AppEnv>;
 const archivedResponse = (c: Ctx) => c.json({ error: "Archived projects are read-only; premium can't be changed.", code: "project_archived" }, 409);
 const notEligible = (c: Ctx) => c.json({ error: "Only a photo, a Floorplan PDF or a Copy document can be a paid extra.", code: "not_premium_eligible" }, 409);
+const publishedResponse = (c: Ctx) => c.json({ error: "This Asset is on a published Client Delivery page, so it stays premium. Use Unlock or Re-lock instead.", code: "premium_published" }, 409);
 const assetNotFound = (c: Ctx) => c.json({ error: "Asset not found" }, 404);
 const principalOf = (c: Ctx): Principal => { const user = c.get("user"); return { id: user.id, impersonatedBy: user.impersonatedBy, via: user.via }; };
 
@@ -42,8 +43,10 @@ assetPremiumRoutes.put("/projects/:projectId/assets/:assetId/delivery-premium", 
   const asset = await findPremiumAsset(c.env.DB, projectId, assetId); if (!asset) return assetNotFound(c);
   const input = await jsonInput(c, assetPremiumInputSchema); if (input instanceof Response) return input;
   if (!isPremiumEligible(asset.kind)) return notEligible(c);
+  if (!input.premium && asset.premium && asset.published) return publishedResponse(c);
   const result = await setAssetPremium(c.env.DB, { projectId, assetId, principal: principalOf(c), premium: input.premium, now: Date.now() });
   if (result === "archived") return archivedResponse(c);
+  if (result === "published") return publishedResponse(c);
   return result === "not_found" ? assetNotFound(c) : c.json(assetPremiumResponseSchema.parse(result));
 }));
 

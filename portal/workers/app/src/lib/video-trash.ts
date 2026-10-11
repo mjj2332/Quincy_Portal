@@ -86,8 +86,9 @@ const fencedCollectionCount = (db: D1Database, collectionId: string, now: number
  * Video, in Trash or not. One rule with the Asset delete: a published Asset is not deleted or Trashed until a later set leaves it out.
  */
 export async function deliveryPublishedBlock(db: D1Database, videoId: string, assetId: string, removeVideo: boolean): Promise<boolean> {
-  const assetIds = removeVideo ? (await db.prepare("SELECT asset_id AS id FROM video_version_meta WHERE video_id = ?1").bind(videoId).all<{ id: string }>()).results.map((row) => row.id) : [assetId];
-  return await firstInCurrentSet(db, assetIds) !== null;
+  if (!removeVideo) return await firstInCurrentSet(db, [assetId]) !== null;
+  // The Video's Versions are matched through a subquery, never bound one by one: D1 allows 100 parameters per statement.
+  return (await db.prepare(`SELECT ${inCurrentSetSql("IN (SELECT dm.asset_id FROM video_version_meta dm WHERE dm.video_id = ?1)")} AS hit`).bind(videoId).first<{ hit: number }>())?.hit === 1;
 }
 
 // ---- remove ------------------------------------------------------------------------------------------------------------------------------------------

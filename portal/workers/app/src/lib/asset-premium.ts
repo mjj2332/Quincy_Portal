@@ -1,6 +1,7 @@
 import { DELIVERY_PREMIUM_KINDS, type AssetPremiumResponse } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
+import { inCurrentSetSql } from "./delivery-lock";
 
 /**
  * Photo and document premium and Unlock (#787 slice 2), the Asset counterpart of the Video premium in `video-approval.ts`. Every write is ONE `db.batch`: the committing statement carries
@@ -11,17 +12,20 @@ import { newId } from "./ids";
 export type Principal = NonNullable<AuditPrincipal>;
 const NOT_ARCHIVED = (param: string) => `EXISTS (SELECT 1 FROM projects WHERE id = ${param} AND archived_at IS NULL)`;
 const ELIGIBLE_KINDS = DELIVERY_PREMIUM_KINDS.map((kind) => `'${kind}'`).join(", ");
-/** The Asset belongs to the Project (through its collection) and is the current copy. */
-const OF_PROJECT = (asset: string, project: string) => `${asset}.superseded_at IS NULL AND EXISTS (SELECT 1 FROM collections c WHERE c.id = ${asset}.collection_id AND c.project_id = ${project})`;
+/**
+ * The Asset belongs to the Project (through its collection) and is either the current copy or still a member of a page's current (frozen) set: a superseded Asset that is published
+ * is still served, so its lock state must stay controllable.
+ */
+const OF_PROJECT = (asset: string, project: string) => `(${asset}.superseded_at IS NULL OR ${inCurrentSetSql(`= ${asset}.id`)}) AND EXISTS (SELECT 1 FROM collections c WHERE c.id = ${asset}.collection_id AND c.project_id = ${project})`;
 
-export type PremiumAsset = { kind: string; premium: boolean; unlocked: boolean; paymentRef: string | null };
+export type PremiumAsset = { kind: string; premium: boolean; unlocked: boolean; paymentRef: string | null; published: boolean };
 
-/** The current Asset of the Project, or null when it is not one (unknown, another Project's, or superseded). */
+/** The Asset of the Project, or null when it is not one (unknown, another Project's, or superseded and not in a current set). `published` is whether it is in a page's current set. */
 export async function findPremiumAsset(db: D1Database, projectId: string, assetId: string): Promise<PremiumAsset | null> {
-  const row = await db.prepare(`SELECT a.kind, a.delivery_premium AS premium, u.asset_id IS NOT NULL AS unlocked, u.payment_ref AS paymentRef
+  const row = await db.prepare(`SELECT a.kind, a.delivery_premium AS premium, u.asset_id IS NOT NULL AS unlocked, u.payment_ref AS paymentRef, ${inCurrentSetSql("= a.id")} AS published
       FROM assets a LEFT JOIN asset_premium_unlocks u ON u.asset_id = a.id WHERE a.id = ?1 AND ${OF_PROJECT("a", "?2")}`).bind(assetId, projectId)
-    .first<{ kind: string; premium: number; unlocked: number; paymentRef: string | null }>();
-  return row ? { kind: row.kind, premium: row.premium === 1, unlocked: row.unlocked === 1, paymentRef: row.paymentRef } : null;
+    .first<{ kind: string; premium: number; unlocked: number; paymentRef: string | null; published: number }>();
+  return row ? { kind: row.kind, premium: row.premium === 1, unlocked: row.unlocked === 1, paymentRef: row.paymentRef, published: row.published === 1 } : null;
 }
 
 export const isPremiumEligible = (kind: string): boolean => (DELIVERY_PREMIUM_KINDS as readonly string[]).includes(kind);
@@ -41,18 +45,25 @@ async function settle(db: D1Database, projectId: string, assetId: string, landed
   return after ? stateOf(after) : "not_found";
 }
 
-/** Sets `assets.delivery_premium`. Idempotent: the same state writes nothing and audits nothing. */
-export async function setAssetPremium(db: D1Database, input: { projectId: string; assetId: string; principal: Principal; premium: boolean; now: number }): Promise<AssetPremiumResponse | "archived" | "not_found"> {
+/**
+ * Sets `assets.delivery_premium`. Idempotent: the same state writes nothing and audits nothing. Unmarking is refused (`published`) while the Asset is in a page's current set: a Premium Asset
+ * stays premium once published, and access is controlled with Unlock and Re-lock. The statement repeats that fence, so a Publish racing the request cannot slip through.
+ */
+export async function setAssetPremium(db: D1Database, input: { projectId: string; assetId: string; principal: Principal; premium: boolean; now: number }): Promise<AssetPremiumResponse | "archived" | "not_found" | "published"> {
   const before = await findPremiumAsset(db, input.projectId, input.assetId); if (!before) return "not_found";
   let landed = false;
   if (before.premium !== input.premium) {
     const [update] = await db.batch([
-      db.prepare(`UPDATE assets SET delivery_premium = ?1, updated_at = ?2 WHERE id = ?3 AND delivery_premium <> ?1 AND kind IN (${ELIGIBLE_KINDS}) AND ${OF_PROJECT("assets", "?4")} AND ${NOT_ARCHIVED("?4")}`)
+      db.prepare(`UPDATE assets SET delivery_premium = ?1, updated_at = ?2 WHERE id = ?3 AND delivery_premium <> ?1 AND (?1 = 1 OR NOT ${inCurrentSetSql("= assets.id")}) AND kind IN (${ELIGIBLE_KINDS}) AND ${OF_PROJECT("assets", "?4")} AND ${NOT_ARCHIVED("?4")}`)
         .bind(input.premium ? 1 : 0, input.now, input.assetId, input.projectId),
       db.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?1, ?2, 'asset.delivery_premium_set', 'asset', ?3, ?4, ?5 WHERE changes() > 0")
         .bind(newId(), input.principal.id, input.assetId, auditMeta(input.principal, { projectId: input.projectId, premium: input.premium }), input.now),
     ]);
     landed = (update?.meta.changes ?? 0) > 0;
+    if (!landed && !input.premium && await projectArchived(db, input.projectId) === false) {
+      const now = await findPremiumAsset(db, input.projectId, input.assetId);
+      if (now?.premium && now.published) return "published";
+    }
   }
   return settle(db, input.projectId, input.assetId, landed);
 }

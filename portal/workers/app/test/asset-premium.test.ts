@@ -130,6 +130,37 @@ describe("mark and unmark", () => {
     expect(await database.DB.prepare("SELECT COUNT(*) AS n FROM delivery_set_items WHERE asset_id = ?").bind(asset.id).first()).toEqual({ n: 1 });
   });
 
+  it("unmarking is refused with 409 premium_published once the Asset is in the current set; Unlock and Re-lock still work, and a mis-mark before publishing can be undone", async () => {
+    const asset = await seedAsset("photo", { deliveryPremium: true }); await seedPage({ assetIds: [asset.id] });
+    const response = await mark(asset.id, false);
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ code: "premium_published" });
+    expect((await flagOf(asset.id)).d).toBe(1);
+    expect(await audits("asset.delivery_premium_set")).toHaveLength(0);
+    expect((await mark(asset.id, true)).status).toBe(200);
+    expect((await unlock(asset.id, { unlocked: true })).status).toBe(200);
+    expect((await unlock(asset.id, { unlocked: false })).status).toBe(200);
+    expect((await flagOf(asset.id)).d).toBe(1);
+  });
+
+  it("an older set does not pin premium: only the current set does", async () => {
+    const asset = await seedAsset("photo", { deliveryPremium: true }); const other = await seedAsset("photo");
+    await seedPage({ assetIds: [other.id], olderSets: [[asset.id]] });
+    expect((await mark(asset.id, false)).status).toBe(200);
+    expect((await flagOf(asset.id)).d).toBe(0);
+  });
+
+  it("the mutation SQL repeats the published fence, so a Publish racing the request cannot slip through", async () => {
+    const asset = await seedAsset("photo", { deliveryPremium: true });
+    const { setAssetPremium } = await import("../src/lib/asset-premium");
+    const db = database.DB;
+    const racing = new Proxy(db, { get(target, key) {
+      if (key === "batch") return async (statements: D1PreparedStatement[]) => { await seedPage({ assetIds: [asset.id] }); return target.batch(statements); };
+      const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value; } });
+    const result = await setAssetPremium(racing as D1Database, { projectId: ids.project, assetId: asset.id, principal: { id: ids.admin } as never, premium: false, now: Date.now() });
+    expect(result).toBe("published");
+    expect((await flagOf(asset.id)).d).toBe(1);
+  });
+
   it("unmarking keeps an existing unlock row and reports it", async () => {
     const asset = await seedAsset("photo", { deliveryPremium: true }); await seedUnlock(asset.id);
     const response = await mark(asset.id, false);
@@ -176,6 +207,18 @@ describe("Unlock and Re-lock", () => {
     const asset = await seedAsset("photo");
     expect((await unlock(asset.id, { unlocked: true })).status).toBe(200);
     expect(await unlockRow(asset.id)).not.toBeNull();
+  });
+
+  it("Unlocks and Re-locks a superseded Asset that is still a member of the current set; a superseded Asset outside it stays 404", async () => {
+    const a = await seedAsset("photo", { deliveryPremium: true, superseded: true }); await seedPage({ assetIds: [a.id] });
+    const response = await unlock(a.id, { unlocked: true });
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(await response.json()).toEqual({ premium: true, premiumUnlocked: true });
+    expect(await unlockRow(a.id)).not.toBeNull();
+    expect((await unlock(a.id, { unlocked: false })).status).toBe(200);
+    expect(await unlockRow(a.id)).toBeNull();
+    const gone = await seedAsset("photo", { superseded: true });
+    expect((await unlock(gone.id, { unlocked: true })).status).toBe(404);
   });
 
   it("is live on a published Asset and keeps the set as it was", async () => {

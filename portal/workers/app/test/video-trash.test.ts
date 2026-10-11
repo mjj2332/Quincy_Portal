@@ -730,6 +730,17 @@ describe("a Version in a Delivery page's current set cannot be Trashed", () => {
     expect(await first("SELECT removed_at FROM video_version_meta WHERE asset_id = ?", v2!.assetId)).toEqual({ removed_at: null });
   });
 
+  it("removes the last Version of a Video with more than 100 Versions in Trash (the guard binds no per-Version ids)", async () => {
+    const seeds = await seedVideo(102);
+    const now = Date.now();
+    for (const seed of seeds.slice(0, 101)) await database.DB.prepare("UPDATE video_version_meta SET removed_at = ?, removed_by = ?, purge_at = ? WHERE asset_id = ?").bind(now, ids.admin, now + DAY, seed.assetId).run();
+    const last = seeds[101]!; const impact = await impactOf(last.assetId);
+    expect(impact.lastVersion).toBe(true);
+    const response = await remove(last.assetId, { expected: expectedOf(impact), removeVideo: true });
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(await first("SELECT removed_at IS NOT NULL AS gone FROM videos WHERE id = ?", last.videoId)).toEqual({ gone: 1 });
+  });
+
   it("answers delivery_published ahead of a stale impact", async () => {
     const [v1] = await seedVideo(1); await seedPage({ assetIds: [v1!.assetId] });
     const response = await remove(v1!.assetId, { expected: { ...ZERO, notes: 5 }, removeVideo: true });
