@@ -7,7 +7,7 @@ import type { AppEnv } from "../src/env";
 import { hashToken } from "../src/lib/opaque-token";
 import { baseEnv, database, ids, mp4Bytes, seedFixture } from "./embedded-media-support";
 import { addMember, clearGuestRows, grant, guestFetch, HYGIENE, linkPath, openGuestGate, seedGuestLink, startSession, type LinkInput } from "./guest-support";
-import { clearVideoFlags, seedVideoVersion, setVideoFlags } from "./video-review-support";
+import { clearVideoFlags, markVersionRemoved, seedVideoVersion, setVideoFlags } from "./video-review-support";
 
 /**
  * Guest downloads (#741 14b): one Version, the manifest and Download all. Rules: docs/plans/741-13-15.md section 4 and settled decision 8. A download is a READ, but every gate runs before
@@ -524,5 +524,24 @@ describe("a long CJK title stays inside the 255-byte filename limit", () => {
     expect(names).toHaveLength(2); expect(names.some((name) => / v1\.mp4$/.test(name))).toBe(true); expect(names.some((name) => / v1 \(2\)\.mp4$/.test(name))).toBe(true);
     for (const name of names) { expect(new TextEncoder().encode(name).length, name).toBeLessThanOrEqual(255); expect(name).not.toContain("\uFFFD"); }
     expect(safeFileName(title)).toMatch(/^漢+$/);
+  });
+});
+
+describe("zipEntries", () => {
+  it("re-authorises after the R2 fetch: a Version removed during MEDIA.get is cancelled, never yielded, and the archive errors", async () => {
+    const { link, version } = await setup({}, "Hero");
+    const { zipEntries } = await import("../src/guest/download");
+    const row = (await database.DB.prepare("SELECT id FROM guest_sessions WHERE token_hash = ?").bind(await hashToken(link.cookie.split("=")[1]!)).first<{ id: string }>())!;
+    const session = { id: row.id, tokenHash: await hashToken(link.cookie.split("=")[1]!), guestId: link.guestId } as never;
+    let cancelled = false;
+    const media = { get: async (key: string) => {
+      await markVersionRemoved(version.assetId);
+      const object = (await database.MEDIA.get(key))!;
+      const [kept, spare] = object.body.tee(); void spare.cancel();
+      return { size: object.size, body: Object.assign(kept, { cancel: async () => { cancelled = true; await kept.cancel(); } }) };
+    } };
+    const entries = zipEntries({ DB: database.DB, MEDIA: media } as never, session, [{ videoId: version.videoId, title: "Hero", assetId: version.assetId, version: 1, bytes: 4096, r2Key: version.key }], null);
+    await expect(entries.next()).rejects.toThrow("download access lost");
+    expect(cancelled).toBe(true);
   });
 });

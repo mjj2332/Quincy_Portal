@@ -1,4 +1,5 @@
 import { ROLE_LABELS, videoDtoSchema, type Role, type VideoDto } from "@quincy/shared";
+import { LIVE_VERSION, LIVE_VIDEO } from "./video-live-sql";
 
 /**
  * The one place a Video row becomes a `VideoDto` (#741 4b and 4c): the list route reads every Video of a Project, the upload completion reads the one it
@@ -26,18 +27,18 @@ export async function loadVideoDtos(db: D1Database, projectId: string, videoId: 
   // With a Video the second parameter is its id and any later one shifts by one, so number them explicitly.
   const countStatement = withNoteCounts ? [bindScoped(db.prepare(
     `SELECT n.asset_id, COUNT(*) AS open_count
-     FROM video_notes n JOIN videos v ON v.id = n.video_id AND v.project_id = n.project_id JOIN assets a ON a.id = n.asset_id AND a.kind = 'video'
+     FROM video_notes n JOIN videos v ON v.id = n.video_id AND v.project_id = n.project_id AND ${LIVE_VIDEO("v")} JOIN assets a ON a.id = n.asset_id AND a.kind = 'video'
      WHERE n.project_id = ?1${only} AND a.superseded_at IS NULL AND n.parent_id IS NULL AND n.resolved_at IS NULL
        AND (n.deleted_at IS NULL OR EXISTS (SELECT 1 FROM video_notes r WHERE r.parent_id = n.id))
      GROUP BY n.asset_id`))] : [];
   const [videoResult, versionResult, uploadingResult, countResult] = await db.batch([
-    bindScoped(db.prepare(`SELECT v.id, v.title, v.premium, (p.video_id IS NOT NULL) AS premium_unlocked, v.position, v.created_at FROM videos v LEFT JOIN video_premium_unlocks p ON p.video_id = v.id WHERE v.project_id = ?1${only} ORDER BY v.position, v.created_at, v.id`)),
+    bindScoped(db.prepare(`SELECT v.id, v.title, v.premium, (p.video_id IS NOT NULL) AS premium_unlocked, v.position, v.created_at FROM videos v LEFT JOIN video_premium_unlocks p ON p.video_id = v.id WHERE v.project_id = ?1 AND ${LIVE_VIDEO("v")}${only} ORDER BY v.position, v.created_at, v.id`)),
     bindScoped(db.prepare(
       `SELECT a.id AS asset_id, m.video_id, a.version, a.superseded_at, a.original_filename, a.bytes, m.created_at, m.fps_num, m.fps_den, m.frame_count, m.duration_ms,
               m.width, m.height, m.codec, m.start_tc_frames, m.tc_nominal_fps, m.tc_drop_frame, m.fast_start, m.has_audio, m.poster_key,
               u.id AS user_id, u.name AS user_name, u.role AS user_role, u.active AS user_active
        FROM video_version_meta m JOIN assets a ON a.id = m.asset_id AND a.kind = 'video' JOIN videos v ON v.id = m.video_id JOIN user u ON u.id = m.uploaded_by
-       WHERE v.project_id = ?1${only} ORDER BY a.version DESC`)),
+       WHERE v.project_id = ?1 AND ${LIVE_VERSION("m")} AND ${LIVE_VIDEO("v")}${only} ORDER BY a.version DESC`)),
     bindScoped(db.prepare(
       `SELECT r.id AS reservation_id, r.video_id, r.version, r.expires_at, u.id AS user_id, u.name AS user_name, u.role AS user_role, u.active AS user_active
        FROM video_upload_reservations r JOIN user u ON u.id = r.created_by

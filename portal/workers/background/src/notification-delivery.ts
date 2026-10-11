@@ -542,13 +542,18 @@ const VIDEO_REVIEW_GATE_SQL = `(
     OR EXISTS (SELECT 1 FROM feature_flags WHERE key = '${videoReviewPilotFlag("")}' || o.project_id AND enabled = 1))
   AND EXISTS (SELECT 1 FROM feature_flags WHERE key = '${NOTIFY_STAFF_FLAG}' AND enabled = 1)
 )`;
-/** The source row, as SQL over the outbox row `o`, by the payload's kind. */
+/**
+ * The source row, as SQL over the outbox row `o`, by the payload's kind, AND the Version and Video it belongs to are not in Trash (#776): a removal suppresses every delivery and
+ * digest item for its subjects, and a restore never replays them. The background Worker cannot import the app's `video-live-sql.ts`, so the two predicates are written out.
+ */
 const VIDEO_REVIEW_SOURCE_SQL = `(CASE json_extract(o.payload_json, '$.video.kind')
   WHEN 'video_note' THEN EXISTS (SELECT 1 FROM video_notes n WHERE n.id = json_extract(o.payload_json, '$.video.sourceId') AND n.project_id = o.project_id AND n.parent_id IS NULL AND n.deleted_at IS NULL)
   WHEN 'video_reply' THEN EXISTS (SELECT 1 FROM video_notes n WHERE n.id = json_extract(o.payload_json, '$.video.sourceId') AND n.project_id = o.project_id AND n.parent_id IS NOT NULL AND n.deleted_at IS NULL)
   WHEN 'video_decision' THEN EXISTS (SELECT 1 FROM video_approval_events e WHERE e.id = json_extract(o.payload_json, '$.video.sourceId') AND e.project_id = o.project_id)
-  WHEN 'video_version_uploaded' THEN EXISTS (SELECT 1 FROM video_version_meta m JOIN videos v ON v.id = m.video_id WHERE m.asset_id = json_extract(o.payload_json, '$.video.assetId') AND v.project_id = o.project_id)
-  ELSE 0 END)`;
+  WHEN 'video_version_uploaded' THEN EXISTS (SELECT 1 FROM video_version_meta m JOIN videos v ON v.id = m.video_id WHERE m.asset_id = json_extract(o.payload_json, '$.video.assetId') AND v.project_id = o.project_id AND m.removed_at IS NULL AND v.removed_at IS NULL)
+  ELSE 0 END
+  AND EXISTS (SELECT 1 FROM video_version_meta lm JOIN videos lv ON lv.id = lm.video_id WHERE lm.asset_id = json_extract(o.payload_json, '$.video.assetId') AND lv.project_id = o.project_id
+    AND lm.removed_at IS NULL AND lv.removed_at IS NULL))`;
 /** The Admin-or-member test as SQL over `o` and `recipient`: an Admin, or someone holding a membership the occurrence snapshotted. */
 const VIDEO_REVIEW_MEMBER_SQL = `(recipient.role = 'admin' OR EXISTS (
   SELECT 1 FROM project_members member WHERE member.project_id = o.project_id AND member.user_id = o.recipient_id
@@ -601,7 +606,7 @@ async function videoReviewFacts(env: Env, outbox: OutboxRow, payload: VideoRevie
         WHEN 'video_decision' THEN EXISTS (SELECT 1 FROM video_approval_events e WHERE e.id = ?4 AND e.project_id = ?5 AND e.asset_id = ?6)
         ELSE 1 END AS sourceOk
     FROM videos v JOIN assets a ON a.id = ?6 AND a.version_group_id = v.id AND a.kind = 'video' JOIN video_version_meta m ON m.asset_id = a.id AND m.video_id = v.id
-    WHERE v.id = ?7 AND v.project_id = ?5
+    WHERE v.id = ?7 AND v.project_id = ?5 AND m.removed_at IS NULL AND v.removed_at IS NULL
   `).bind(guestId, outbox.actor_id, kind, sourceId, projectId, assetId, videoId).first<VideoReviewFacts>();
 }
 

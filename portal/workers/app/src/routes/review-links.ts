@@ -181,7 +181,9 @@ reviewLinksRoutes.put("/projects/:projectId/review-links/:linkId/videos/:videoId
   if (!await isLiveMember(c.env.DB, linkId, videoId)) return missing();
   if (input.assetIds.length === 0) return grantRequired(c);
   const assetIds = unique(input.assetIds);
-  const versions = (await versionsByVideo(c.env.DB, projectId, [videoId])).get(videoId) ?? [];
+  // A member Video in Trash has no live Versions to list: it is as absent as one that is not on the link.
+  const versions = (await versionsByVideo(c.env.DB, projectId, [videoId])).get(videoId);
+  if (!versions) return missing();
   if (assetIds.some((assetId) => !versions.some((version) => version.assetId === assetId))) return notVersion(c);
   const now = Date.now();
   const ok = await setLinkGrants(c.env.DB, { projectId, linkId, principal: principalOf(c), videoId, assetIds, now });
