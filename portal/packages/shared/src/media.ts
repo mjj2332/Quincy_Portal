@@ -13,6 +13,13 @@ export type RenditionVariant = (typeof RENDITION_VARIANTS)[number];
 
 /** Bump when rendition options or validation requirements change. */
 export const RENDITION_SPEC_VERSION = "v1";
+/**
+ * Per-variant spec versions (#787). `RENDITION_SPEC_VERSION` is deliberately NOT bumped for the Delivery variants: that would regenerate every thumb and web rendition in production. The Delivery
+ * page reads `delivery_web` (a client-sized JPEG) and `premium_preview` (the watermarked image shown for a locked Premium Asset) at the version named here, and a watermark redesign later bumps only `premium_preview`.
+ */
+export const DELIVERY_RENDITION_VARIANTS = ["delivery_web", "premium_preview"] as const;
+export type DeliveryRenditionVariant = (typeof DELIVERY_RENDITION_VARIANTS)[number];
+export const RENDITION_VARIANT_SPEC = { thumb: "v1", web: "v1", delivery_web: "v1", premium_preview: "v1" } as const;
 /** Bump to make a repaired transform URL distinct from previously cached failures. */
 export const TRANSFORM_CACHE_VERSION = "v2";
 

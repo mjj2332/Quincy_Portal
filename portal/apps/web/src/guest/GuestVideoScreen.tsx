@@ -178,7 +178,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     if (!list.value.some((candidate) => candidate.versions.some((granted) => granted.assetId === shownAssetId))) { onGrantsChanged(list.value); return "handled"; }
     return "valid";
   }, [api, onUnavailable, onGrantsChanged, shownAssetId]);
-  const onMediaError = useCallback(() => { void recheckAccess(); }, [recheckAccess]);
+  // A stream that fails while the Version is still granted: another Version of this film may have been removed (#776 E), so the picker is read again. Quietly: no notice, no navigation unless the page decides the shown Version left.
+  const onMediaError = useCallback(() => { void recheckAccess().then((outcome) => { if (outcome === "valid") onResyncDelivery(); }); }, [recheckAccess, onResyncDelivery]);
   // A markup read answered with the stub is not proof the link is gone: the drawing note may just have been deleted. Recheck access; if it is fine, drop the stale note and re-read the list.
   // The recovery also ends if the guest picks another note while it is in flight (`noteGeneration` moves on every selection), so it never deselects or refetches over a newer choice.
   const noteGeneration = useRef(0);

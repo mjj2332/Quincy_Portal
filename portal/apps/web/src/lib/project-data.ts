@@ -56,6 +56,8 @@ export const projectDataKeys = {
   videoNotes: (projectId: string, assetId: string) => ["project-data", projectId, "video-notes", assetId] as const,
   /** Every Version's client decisions and live Release for one Video (#741 14-ui-staff). */
   videoDecisions: (projectId: string, videoId: string) => ["project-data", projectId, "video-decisions", videoId] as const,
+  /** The Project's Video Trash (#776 E): what was removed and is waiting out its retention. Read afresh on every open. */
+  videoTrash: (projectId: string) => ["project-data", projectId, "video-trash"] as const,
   /** One note's drawing at one revision (#741 6b-ui). The revision is in the key, so an edited drawing is a different entry and a cached one is never stale. */
   videoNoteMarkup: (projectId: string, noteId: string, revision: number) => ["project-data", projectId, "video-note-markup", noteId, revision] as const,
 };

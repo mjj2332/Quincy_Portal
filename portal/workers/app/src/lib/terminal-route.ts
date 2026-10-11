@@ -34,6 +34,7 @@ export type SecurityRouteClass =
   | "bearer-protocol"
   | "withheld"
   | "guest-link"
+  | "delivery-public"
   | "terminal-fallback";
 export type SecurityRouteScope = "assigned-project" | "global-self" | "capability" | "none";
 export type SecurityRouteProjection = "external-safe" | "internal" | "guest-public" | "none";
@@ -47,7 +48,7 @@ export type SecurityRouteRegistration = {
   response: SecurityRouteResponse;
   externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar" | "gantt" | "video-review" | "video-list" | "video-note-list";
 };
-type LegacySecurityRouteClass = "bearer-protocol" | "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "guest-link" | "terminal-fallback";
+type LegacySecurityRouteClass = "bearer-protocol" | "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "guest-link" | "delivery-public" | "terminal-fallback";
 type LegacySecurityRouteRegistrationSeed = { method: string; path: string; class: LegacySecurityRouteClass; externalSurface?: SecurityRouteRegistration["externalSurface"] };
 
 function securityContractForClass(routeClass: SecurityRouteClass): Omit<SecurityRouteRegistration, "method" | "path" | "class"> {
@@ -61,6 +62,8 @@ function securityContractForClass(routeClass: SecurityRouteClass): Omit<Security
     case "withheld": return { scope: "none", projection: "internal", response: "constant-403" };
     // A Review link guest (#741 12a): no staff principal and no Project scope; the link, its live members and live grants are the scope, and every miss is the one stub.
     case "guest-link": return { scope: "none", projection: "guest-public", response: "protocol-404" };
+    // The public Client Delivery page (#787 slice 6): no principal and no Project scope in the request; the slug, the enabled page, the Client Delivery gate and the latest set are the scope, and every miss is the one `/d` stub.
+    case "delivery-public": return { scope: "none", projection: "guest-public", response: "protocol-404" };
     case "terminal-fallback": return { scope: "none", projection: "none", response: "fallback" };
   }
 }
@@ -337,6 +340,11 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/d/api/links/:linkId/downloads/all.zip", class: "guest-link" },
   { method: "POST", path: "/d/api/unsubscribe", class: "guest-link" },
   { method: "PUT", path: "/d/api/links/:linkId/subscription", class: "guest-link" },
+  { method: "GET", path: "/d/:slug", class: "delivery-public" },
+  { method: "GET", path: "/d/api/pages/:slug", class: "delivery-public" },
+  { method: "GET", path: "/d/api/pages/:slug/items/:handle/media", class: "delivery-public" },
+  { method: "GET", path: "/d/api/pages/:slug/items/:handle/thumb", class: "delivery-public" },
+  { method: "GET", path: "/d/api/pages/:slug/items/:handle/download", class: "delivery-public" },
   { method: "ALL", path: "/d/*", class: "terminal-fallback" },
   { method: "ALL", path: "/d", class: "terminal-fallback" },
   { method: "ALL", path: "/media/*", class: "terminal-fallback" },
@@ -376,6 +384,7 @@ function securityClassForSeed(route: LegacySecurityRouteRegistrationSeed): Secur
   }
   if (route.class === "bearer-protocol") return "bearer-protocol";
   if (route.class === "guest-link") return "guest-link";
+  if (route.class === "delivery-public") return "delivery-public";
   if (route.class === "global-self") return "principal-global";
   if (route.class === "terminal-fallback") return "terminal-fallback";
   return "withheld";
