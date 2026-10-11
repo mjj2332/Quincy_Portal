@@ -2,7 +2,7 @@ import type { WriteResult } from "./guest-api";
 
 /** A write that was not sent because one for the same key is still out, or whose answer arrived after the screen or Version it was made in had gone. Neither changes anything. */
 export type Skipped<R extends { kind: string } = WriteResult> = { kind: "busy" } | { kind: "stale"; /** What the write came to, which the caller may need even though the answer does not apply to the screen now on show (a reply that was saved must clear its draft). */ result: R };
-/** `R` is any answer with a `kind`: a note write (`WriteResult`) or a paste (`PasteResult`). The page-level refusals (`unverified`, `gone`, `archived`) mean the same for both. */
+/** `R` is any answer with a `kind` whose refusals that change the page (`unverified`, `gone`, `archived`) mean the same for every write: a note write (`WriteResult`), a decision or a paste (`PasteResult`). `owns`, when given, says whether the caller still owns the answer once it arrives. */
 export type Run = <R extends { kind: string }>(key: string, call: () => Promise<R>, owns?: () => boolean) => Promise<R | Skipped<R>>;
 
 /** What the screen on show tells the writer: the Version it is on, what a refusal that changes the page does, and what to do when a write started on an earlier screen settles. All three are read live. */

@@ -681,11 +681,14 @@ describe("Sol round 7", () => {
       deleteNote: async () => ({ kind: "gone" }),
       previewPaste: async () => ({ kind: "gone" }),
       commitPaste: async () => ({ kind: "gone" }),
+      decide: async () => ({ kind: "gone" }),
+      downloads: async () => ({ kind: "gone" }),
+      downloadAllUrl: `/d/api/links/${LINK}/downloads/all.zip`,
     };
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
-    await act(async () => { root!.render(<GuestVideoScreen api={api} writer={createGuestWriter()} drafts={createGuestDrafts()} session={SESSION} onSession={() => undefined} archived={false} onArchived={() => undefined} videos={videos} index={0} onIndex={() => undefined} onBack={null} onUnavailable={onUnavailable} onGrantsChanged={onGrantsChanged} />); });
+    await act(async () => { root!.render(<GuestVideoScreen api={api} verify={{ request: () => undefined }} writer={createGuestWriter()} drafts={createGuestDrafts()} session={SESSION} onSession={() => undefined} archived={false} onArchived={() => undefined} videos={videos} index={0} onIndex={() => undefined} onBack={null} onUnavailable={onUnavailable} onGrantsChanged={onGrantsChanged} onDecided={() => undefined} onResyncDelivery={() => undefined} onShownVersion={() => undefined} />); });
     await flush();
     await act(async () => { stub.fireError(host.querySelector("video")!); });
     await act(async () => { root!.unmount(); });

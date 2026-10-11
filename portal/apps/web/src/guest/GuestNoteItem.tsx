@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNoteDraft, type GuestDrafts } from "./guest-drafts";
 import { PencilIcon } from "lucide-react";
 import type { GuestNoteDto, GuestNoteThreadDto } from "@quincy/shared";
@@ -109,16 +109,22 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
     const outcome = await writing.actions.reply(thread, text);
     if (outcome.ok || outcome.saved === true) { drafts.clearIf(replyKey, sent.rev); setReplyStatus(IDLE); } else setReplyStatus({ pending: false, problem: outcome.message });
   };
+  // A hard-deleted root unmounts this whole thread, the confirm with it, so `finalFocus` never runs. When the unmount actually happens
+  // (the list may drop the thread a tick or a refetch later), park focus on the survivor if it fell to the page.
+  const afterDelete = useRef<(() => HTMLElement | null) | null>(null);
+  useEffect(() => () => {
+    const fallback = afterDelete.current;
+    if (fallback === null) return;
+    window.setTimeout(() => { const active = document.activeElement; if (active === null || active === document.body || !active.isConnected) fallback()?.focus(); }, 0);
+  }, []);
   const confirmDelete = async () => {
     if (!writing.canWrite || deleting === null || deletingNote === null || deleting.pending) return;
     setDeleting({ ...deleting, pending: true, problem: null });
     // The revision the confirm opened on, never the list's, which may have moved unseen.
     const outcome = await writing.actions.remove(thread, deletingNote, deleting.baseRevision);
     if (outcome.ok) {
+      afterDelete.current = deleteFallbackFocus();
       setDeleting(null);
-      // A hard-deleted root unmounts this whole thread, the confirm with it, so `finalFocus` never runs: park focus on the survivor once the DOM has settled.
-      const fallback = deleteFallbackFocus();
-      window.setTimeout(() => { const active = document.activeElement; if (active === null || active === document.body || !active.isConnected) fallback()?.focus(); }, 0);
       return;
     }
     // A conflict closes the confirm without acknowledging anything: the note row shows the latest text, and deleting again snapshots that revision.

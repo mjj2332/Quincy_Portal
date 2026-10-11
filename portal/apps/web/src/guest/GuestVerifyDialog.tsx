@@ -129,8 +129,8 @@ function VerifyFlow({ api, generation, onCancel, onVerified, onGone }: { api: Gu
   if (step === "identity") {
     return <>
       <DialogHeader>
-        <DialogTitle className={DIALOG_TITLE}>Add a note</DialogTitle>
-        <DialogDescription className="text-foreground-secondary">Enter your email and we'll send a six-digit code. Your name is shown on the notes you add.</DialogDescription>
+        <DialogTitle className={DIALOG_TITLE}>Verify your email</DialogTitle>
+        <DialogDescription className="text-foreground-secondary">Enter your email and we'll send a six-digit code. Your name is shown to the studio on your notes and decisions.</DialogDescription>
       </DialogHeader>
       <form data-testid="guest-verify-identity-form" onSubmit={(event) => { void submitIdentity(event); }} noValidate>
         <FieldGroup>
