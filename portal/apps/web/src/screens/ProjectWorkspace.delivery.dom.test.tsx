@@ -642,6 +642,7 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
     const control = (name: string) => dialog.querySelector<HTMLElement>(`[aria-label="${name}"]`);
     expect(control("Open Photo 02")).toBeNull();
     await click(control("Open Photo 01"));
+    for (let tries = 0; tries < 40 && !bodyById("delivery-lightbox"); tries += 1) await flush(2); // the viewer is a lazy chunk
     const lightbox = bodyById("delivery-lightbox")!;
     expect(lightbox.querySelector("img")?.getAttribute("src")).toBe(`/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`);
     expect(lightbox.querySelectorAll("a")).toHaveLength(0); // Preview offers no download
