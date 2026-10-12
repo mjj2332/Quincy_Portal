@@ -585,6 +585,15 @@ const counter = () => byTestId("delivery-lightbox-counter")!.textContent;
 const tick = async (ms: number) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
 const playToggle = () => [...byTestId("delivery-lightbox")!.querySelectorAll<HTMLElement>("button")].find((b) => /slideshow/i.test(b.textContent ?? ""))!;
 
+describe("hero action order", () => {
+  it("puts Download all first, then Slideshow, then Share (the prototype's order)", async () => {
+    await show(page([photo(1)]), { downloadAllSlot: <span data-testid="slot">Download all</span>, shareUrl: "https://quincy.example/d/x" });
+    const order = [byTestId("slot")!, byTestId("delivery-slideshow")!, byTestId("delivery-share")!];
+    expect(order[0]!.compareDocumentPosition(order[1]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(order[1]!.compareDocumentPosition(order[2]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
 describe("slideshow", () => {
   it("is a hero button beside the hero's other actions, and is absent when the tab has no eligible photo", async () => {
     await show(page([photo(1), film(2)]), { downloadAllSlot: <span data-testid="slot">Download all</span> });
@@ -743,6 +752,25 @@ describe("share", () => {
     await click(retry); await flush();
     expect(writeText).toHaveBeenCalledWith(URL_);
     expect(status()).toBe("Link copied.");
+  });
+  it("returns focus to Share when the Copy link button unmounts after a copy", async () => {
+    setNav("share", vi.fn(async () => { throw new DOMException("no", "NotAllowedError"); })); setNav("clipboard", { writeText: vi.fn(async () => undefined) });
+    await show(page([photo(1)]), { shareUrl: URL_ });
+    await click(shareButton()); await flush();
+    const retry = byTestId("delivery-share-copy")!; retry.focus();
+    await click(retry); await flush();
+    expect(byTestId("delivery-share-copy")).toBeNull();
+    expect(document.activeElement).toBe(shareButton());
+  });
+  it("clears the Link copied status after a few seconds, inside a live region", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    setNav("clipboard", { writeText: vi.fn(async () => undefined) });
+    await show(page([photo(1)]), { shareUrl: URL_ });
+    await click(shareButton()); await tick(10);
+    expect(status()).toBe("Link copied.");
+    await tick(1500); expect(status()).toBe("Link copied.");
+    await tick(3000); expect(status()).toBe("");
+    expect(byTestId("delivery-share-status")!.getAttribute("role")).toBe("status");
   });
   it("shows an inline error, never a success, when the clipboard rejects or is absent", async () => {
     setNav("clipboard", { writeText: vi.fn(async () => { throw new Error("denied"); }) });

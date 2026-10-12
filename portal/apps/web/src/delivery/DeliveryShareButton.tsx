@@ -3,6 +3,7 @@ import { Share2Icon } from "lucide-react";
 import { Button } from "../components/reui/button";
 import { TOUCH } from "./UnlockControl";
 
+const COPIED_MS = 3000;
 type Status = "idle" | "copied" | "copy-failed" | "share-failed";
 const MESSAGE: Record<Status, string> = { idle: "", copied: "Link copied.", "copy-failed": "Couldn't copy the link. Copy it from the address bar.", "share-failed": "Couldn't share." };
 
@@ -14,8 +15,16 @@ export function DeliveryShareButton({ url, title }: { url: string; title: string
   const [status, setStatus] = useState<Status>("idle");
   const pending = useRef(false);
   const alive = useRef(true);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  const settle = (next: Status) => { if (alive.current) setStatus(next); };
+  const shareRef = useRef<HTMLButtonElement>(null);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; window.clearTimeout(timer.current); }; }, []);
+  const settle = (next: Status) => {
+    if (!alive.current) return;
+    setStatus(next);
+    window.clearTimeout(timer.current);
+    // The "Link copied." confirmation is transient; failures stay until the next attempt.
+    if (next === "copied") timer.current = window.setTimeout(() => { setStatus("idle"); }, COPIED_MS);
+  };
   const copy = async () => {
     try {
       if (typeof navigator.clipboard?.writeText !== "function") throw new Error("no clipboard");
@@ -34,8 +43,8 @@ export function DeliveryShareButton({ url, title }: { url: string; title: string
     catch (error) { settle(error instanceof DOMException && error.name === "AbortError" ? "idle" : "share-failed"); }
   });
   return <>
-    <Button type="button" variant="outline" size="lg" data-testid="delivery-share" className={TOUCH} onClick={() => { void share(); }}><Share2Icon aria-hidden />Share</Button>
-    {status === "share-failed" && <Button type="button" variant="ghost" size="lg" data-testid="delivery-share-copy" className={TOUCH} onClick={() => { void run(copy); }}>Copy link</Button>}
+    <Button ref={shareRef} type="button" variant="outline" size="lg" data-testid="delivery-share" className={TOUCH} onClick={() => { void share(); }}><Share2Icon aria-hidden />Share</Button>
+    {status === "share-failed" && <Button type="button" variant="ghost" size="lg" data-testid="delivery-share-copy" className={TOUCH} onClick={() => { void run(copy).then(() => { shareRef.current?.focus(); }); }}>Copy link</Button>}
     <span data-testid="delivery-share-status" role="status" className="self-center [font:var(--type-body-sm)] text-on-inverse-muted">{MESSAGE[status]}</span>
   </>;
 }

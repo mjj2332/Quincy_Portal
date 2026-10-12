@@ -169,8 +169,8 @@ export function DeliveryPage(props: DeliveryPageProps) {
   const heroHasAction = slideshowItems.length > 0 || (props.downloadAllSlot !== undefined && props.downloadAllSlot !== null) || props.shareUrl !== undefined;
   return <article aria-label={`Delivery: ${street}`} data-testid="delivery-page" className="@container w-full bg-background text-foreground">
     <Hero key={hero?.url ?? ""} dto={dto} hero={hero} action={heroHasAction ? <>
-      {slideshowItems.length > 0 && <Button type="button" variant="outline" size="lg" data-testid="delivery-slideshow" className={TOUCH} onClick={(event) => { startSlideshow(slideshowItems, 0, event.currentTarget); }}><PlayIcon aria-hidden />Slideshow</Button>}
       {props.downloadAllSlot}
+      {slideshowItems.length > 0 && <Button type="button" variant="outline" size="lg" data-testid="delivery-slideshow" className={TOUCH} onClick={(event) => { startSlideshow(slideshowItems, 0, event.currentTarget); }}><PlayIcon aria-hidden />Slideshow</Button>}
       {props.shareUrl !== undefined && <DeliveryShareButton url={props.shareUrl} title={street} />}
     </> : undefined} />
     {active === null
