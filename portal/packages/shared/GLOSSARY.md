@@ -110,7 +110,7 @@ position already used this word.
 
 Since #470 a column's order is derived, never stored or hand-arranged. Since #830 the viewer
 chooses the date that orders every column, from the Display menu's Sort group: Shoot date
-(the default) or Deadline, oldest first, Projects with no such date last, then street and id.
+(the default) or Deadline, oldest first (Delivered newest first, #832), Projects with no such date last, then street and id.
 Priority orders no column. The choice is remembered per browser. Dragging a card to another
 column, or Move to in its menu, changes its Stage only, and the card lands where the chosen sort
 puts it. A drop inside its own column is refused.

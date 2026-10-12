@@ -7,8 +7,9 @@ import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardViewBar } from "./DashboardViewBar";
+import { DEFAULT_STAGES } from "@quincy/shared";
 import { BoardDisplayContent, CalendarDisplayContent, TableDisplayContent, TimelineDisplayContent } from "./DashboardDisplay";
-import { checkedSortLabel, chooseGroupBy, columnCheckboxLabels, columnCheckboxes, displayGroup, displayMenu, groupCheckboxes, displayTrigger, groupByRadios, openDisplay, sortRadioLabels, sortRadios, toggleColumn } from "./dashboard-display-test-helpers";
+import { checkedSortLabel, chooseGroupBy, columnCheckboxLabels, columnCheckboxes, displayGroup, displayMenu, groupCheckboxes, displayTrigger, groupByRadios, openDisplay, sortHint, sortHintDescribedBy, sortRadioLabels, sortRadios, toggleColumn } from "./dashboard-display-test-helpers";
 import type { KanbanSortMode } from "./dashboard-helpers";
 import { hideableColumnsFor, tablePrefsKey, type TableGroupBy, type HideableColumnId } from "../lib/dashboard-table-model";
 import { useDashboardTablePrefs } from "../lib/use-dashboard-table-prefs";
@@ -33,14 +34,14 @@ function installStorage() {
   });
 }
 
-function Bar({ principalId, role = "admin", view = "table" }: { principalId: string; role?: "admin" | "external_editor"; view?: "table" | "board" | "calendar" }) {
+function Bar({ principalId, role = "admin", view = "table", sortDisabled = false }: { principalId: string; role?: "admin" | "external_editor"; view?: "table" | "board" | "calendar"; sortDisabled?: boolean }) {
   const { prefs, update } = useDashboardTablePrefs(principalId);
   const [sort, setSort] = useState<KanbanSortMode>("shoot-date");
   const hideable = hideableColumnsFor(role);
   const display = view === "table"
     ? <TableDisplayContent groupBy={prefs.groupBy} onGroupByChange={(groupBy: TableGroupBy) => update({ groupBy })} hiddenColumns={prefs.hiddenColumns} hideableColumns={hideable}
         onColumnVisibilityChange={(column: HideableColumnId, visible) => update({ hiddenColumns: visible ? prefs.hiddenColumns.filter((id) => id !== column) : [...prefs.hiddenColumns, column] })} />
-    : view === "board" ? <BoardDisplayContent value={sort} onChange={setSort} /> : undefined;
+    : view === "board" ? <BoardDisplayContent value={sort} onChange={setSort} stages={DEFAULT_STAGES} disabled={sortDisabled} /> : undefined;
   return (
     <div>
       <DashboardViewBar renderedView={view} canViewProductionCalendar disabled={false} onSelectView={() => undefined} principalId={principalId} searchFocusRequest={null} onSearchFocusHandled={() => undefined} display={display} />
@@ -138,6 +139,23 @@ describe("Display menu content and Table preferences (#431)", () => {
     expect(checkedSortLabel()).toBe("Shoot date");
     expect(displayMenu()?.textContent).not.toMatch(/priority|Sorted by|Due date/i);
     expect(groupByRadios()).toHaveLength(0);
+  });
+
+  it("explains the direction under the Sort heading for either choice, and the radio group is described by it (#833)", async () => {
+    await render(<Bar principalId="u1" view="board" />);
+    await openDisplay();
+    expect(sortHint()).toBe("Oldest first · Delivered newest first");
+    expect(sortHintDescribedBy()).toBe("Oldest first · Delivered newest first");
+    const deadline = sortRadios().find((item) => item.textContent === "Deadline")!;
+    await act(async () => { deadline.click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(checkedSortLabel()).toBe("Deadline");
+    expect(sortHint()).toBe("Oldest first · Delivered newest first");
+  });
+
+  it("keeps the direction hint while the Sort radios are disabled (#833)", async () => {
+    await render(<Bar principalId="u1" view="board" sortDisabled />);
+    await openDisplay();
+    expect(sortHint()).toBe("Oldest first · Delivered newest first");
   });
 
   it("choosing Deadline calls onChange with due-date and leaves the menu open; choosing Shoot date goes back (#830)", async () => {

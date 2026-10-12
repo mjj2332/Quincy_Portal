@@ -5312,6 +5312,21 @@ Tags: board-dnd · #830
   render of a remount already uses the saved mode and no card jumps. Legacy spellings (`priority-shoot-date`, `board`, ...) read as
   `shoot-date` and are rewritten once. The choice is refused mid-drag, mid-confirmation and while a move is pending or settling.
 - **The label is "Deadline".** The glossary lists "Due date" under Avoid; the stored value `due-date` is a storage spelling only.
+- **Delivered runs the other way (#832):** see "Delivered sorts newest first (#832)".
+
+## Delivered sorts newest first (#832)
+Tags: board-dnd · #832
+
+- **Direction is a per-Stage fact with one source.** `boardSortDirectionFor(stageKey)` in `@quincy/shared` returns "desc" for `delivered`
+  only. `compareBoardCards` takes `direction` and applies it to the date step alone, so undated cards stay last and equal dates stay
+  street then id ascending. Never `reverse()` the sorted column: that puts undated first and flips the ties.
+- **`stageKey` is a required argument of `sortKanbanProjects`.** A missed call site is a compile error instead of Delivered silently
+  sorting oldest first. `boardLandingSlot` sorts the target column with the target Stage, so the position, the successor and the
+  indicator all follow the newest-first order.
+- **The Sort hint is built from the same source (#833).** `boardSortHint(stages)` names the default direction and then each Stage that
+  differs, by its live label from `useStages`, so renaming Delivered renames the hint and the hint cannot drift from the Board. It is
+  always rendered (also while the radios are disabled) and the radio group's `aria-describedby` points at it.
+- **Do not assert the client slot equals the refetched order** for a move out of Awaiting RAW: the server can fill the Shoot date.
 
 ## Calendar and Timeline item menu (#463)
 Tags: gantt-calendar · #463

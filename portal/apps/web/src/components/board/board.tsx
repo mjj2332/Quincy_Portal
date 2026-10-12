@@ -198,6 +198,7 @@ export function ProjectKanbanBoard2({
       record[stage.key] = sortKanbanProjects(
         projects.filter((project) => semanticStageKey(project.stageKey as ProjectStageKey) === key),
         sortMode,
+        key,
       );
     }
     return record;
