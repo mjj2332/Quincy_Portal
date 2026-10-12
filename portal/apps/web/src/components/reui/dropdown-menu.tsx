@@ -1,6 +1,7 @@
 import * as React from "react"
 import { Menu as MenuPrimitive } from "@base-ui/react/menu"
 import { cn } from "@/lib/utils"
+import { OverlayContainerContext } from "@/components/OverlayContainerContext"
 import { ChevronRightIcon, CheckIcon } from "lucide-react"
 
 /**
@@ -24,13 +25,25 @@ import { ChevronRightIcon, CheckIcon } from "lucide-react"
  * QUINCY ADAPTATION (#463): Positioner and Popup `z-50` → `z-[var(--z-menu)]` (92: above `--z-popover` 90,
  * below `--z-dialog` 95) so the item menu clears the Calendar's "+N more" popover. Pinned by
  * `styles/overlay-stacking.guard.test.ts`.
+ *
+ * QUINCY ADAPTATION (#826): `DropdownMenuContent` (and `DropdownMenuPortal`) portal into `OverlayContainerContext`
+ * (`container={useContext(OverlayContainerContext) ?? undefined}`), the same normalisation as
+ * `reui/popover.tsx`, `reui/select.tsx` and `reui/tooltip.tsx` — `null` is read by Base UI's Portal as
+ * "wait forever", so an explicit `undefined` falls back to `document.body`. Without it a menu opened
+ * inside the Project sheet (the rich-text heading menu) landed on `body` at `--z-menu` (92), under the
+ * sheet's `--z-dialog` (95), and its items were covered by the editor. The z-index values are
+ * unchanged. `positionMethod` is left at Base UI's default, as in `Select` and `Popover`: the sheet's
+ * slot creates no containing block, and Floating UI resolves the offset parent either way. Submenus
+ * go through `DropdownMenuContent` and so inherit the container. Pinned by
+ * `dropdown-menu-container.dom.test.tsx`.
  */
 function DropdownMenu({ ...props }: MenuPrimitive.Root.Props) {
   return <MenuPrimitive.Root data-slot="dropdown-menu" {...props} />
 }
 
-function DropdownMenuPortal({ ...props }: MenuPrimitive.Portal.Props) {
-  return <MenuPrimitive.Portal data-slot="dropdown-menu-portal" {...props} />
+function DropdownMenuPortal({ container: containerProp, ...props }: MenuPrimitive.Portal.Props) {
+  const container = React.useContext(OverlayContainerContext) ?? undefined
+  return <MenuPrimitive.Portal data-slot="dropdown-menu-portal" container={containerProp ?? container} {...props} />
 }
 
 function DropdownMenuTrigger({ ...props }: MenuPrimitive.Trigger.Props) {
@@ -50,8 +63,9 @@ function DropdownMenuContent({
     MenuPrimitive.Positioner.Props,
     "align" | "alignOffset" | "side" | "sideOffset" | "anchor"
   >) {
+  const container = React.useContext(OverlayContainerContext) ?? undefined
   return (
-    <MenuPrimitive.Portal>
+    <MenuPrimitive.Portal container={container}>
       <MenuPrimitive.Positioner
         className="isolate z-[var(--z-menu)] outline-none"
         align={align}
