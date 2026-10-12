@@ -101,7 +101,7 @@ describe("the delivery gate and the route order", () => {
 
   it("checks the capability after the gate: shareVideo reads, releaseVideo records and releases, manageVideoPremium (Admin and Editor, #787 owner Q1) sets premium", async () => {
     const cases: Array<[string, string, Json | undefined, Who[], Who[]]> = [
-      ["GET", decisionsOf(v1.videoId), undefined, ["admin", "member"], ["photographer", "external", "externalOutsider"]],
+      ["GET", decisionsOf(v1.videoId), undefined, ["admin", "member", "external"], ["photographer"]],
       ["POST", recordPath(v1.assetId), { decision: "approved" }, ["admin", "member"], ["photographer", "external", "externalOutsider"]],
       ["PUT", premiumPath(v1.videoId), { premium: true }, ["admin", "member"], ["photographer", "external", "externalOutsider"]],
       ["PUT", unlockPath(v1.videoId), { unlocked: true }, ["admin", "member"], ["photographer", "external", "externalOutsider"]],
@@ -110,6 +110,11 @@ describe("the delivery gate and the route order", () => {
       for (const who of allowed) expect([200, 201], `${who} ${method} ${path}`).toContain((await request(path, who, method as "GET", body)).status);
       for (const who of denied) expect((await request(path, who, method as "GET", body)).status, `${who} ${method} ${path}`).toBe(403);
     }
+    expect((await request(decisionsOf(v1.videoId), "externalOutsider")).status).toBe(404);
+    for (const [method, path, body] of [["POST", recordPath(v1.assetId), { decision: "approved" }], ["PUT", premiumPath(v1.videoId), { premium: true }], ["PUT", unlockPath(v1.videoId), { unlocked: true }]] as Array<[string, string, Json?]>) {
+      for (const who of ["external", "externalOutsider"] as const) expect((await request(path, who, method as "POST", body)).status, `${who} ${method} ${path}`).toBe(403);
+    }
+    for (const who of ["external", "externalOutsider"] as const) { expect((await release(v1.assetId, 1, who)).status, who).toBe(403); expect((await withdraw(v1.assetId, who)).status, who).toBe(403); }
     expect((await release(v1.assetId, 99, "member")).status).toBe(409);
     for (const who of ["photographer", "external"] as const) { expect((await release(v1.assetId, 1, who)).status).toBe(403); expect((await withdraw(v1.assetId, who)).status).toBe(403); }
   });

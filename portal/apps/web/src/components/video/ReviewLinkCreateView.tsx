@@ -28,7 +28,9 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
   const { store, actions } = ui;
   const state = useReviewLinkState(store);
   const draft = state.create;
-  const selected = useMemo(() => videos.filter((video) => state.selection.has(video.id)), [videos, state.selection]);
+  const only = state.view.kind === "create" ? state.view.only : undefined;
+  // A single-film create (#834) is its own intent: it shows that film whatever is ticked, and never changes the ticks.
+  const selected = useMemo(() => videos.filter((video) => (only ? video.id === only : state.selection.has(video.id))), [videos, state.selection, only]);
   const now = useNow();
   const versionsLegend = useId();
   const expiryDay = draft.expiryDay ?? defaultExpiryDay(now);
@@ -59,7 +61,7 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
       ...(passcode ? { passcode } : {}),
       allow: draft.allow,
     };
-    const sent = { videoIds: body.videoIds, draft: structuredClone(draft), selectionRevs: store.selectionRevisions(body.videoIds), draftRevs: store.draftRevisions() };
+    const sent = { videoIds: body.videoIds, draft: structuredClone(draft), selectionRevs: store.selectionRevisions(body.videoIds), draftRevs: store.draftRevisions(), ...(only ? { keepSelection: true as const } : {}) };
     void store.run("create", () => actions.create(body), (result) => store.showReveal({ url: result.url, linkId: result.link.id, label: result.link.label, origin: "create" }, sent));
   }
 
@@ -75,7 +77,7 @@ export function ReviewLinkCreateView({ ui, videos }: { ui: ReviewLinksUi; videos
   >
     <div className="grid gap-[var(--space-4)]">
       {tooMany && <Notice tone="caution" role="status">{`A link can hold at most ${REVIEW_LINK_MAX_VIDEOS} films. Untick ${selected.length - REVIEW_LINK_MAX_VIDEOS} to continue.`}</Notice>}
-      {selected.length === 0 && <Notice tone="caution" role="status">Tick at least one film on the page first.</Notice>}
+      {selected.length === 0 && <Notice tone="caution" role="status">{only ? "This film is no longer in the Project." : "Tick at least one film on the page first."}</Notice>}
       <QuincyField id="review-link-label" label="Label (optional)" placeholder="e.g. Smith family" maxLength={REVIEW_LINK_LABEL_MAX} autoComplete="off" value={draft.label} onChange={(event) => store.patchCreate({ label: event.target.value })} />
       <div className="grid gap-[var(--space-1)]">
         <DateTimeField variant="date" id="review-link-expiry" label="Expires" value={expiryDay} popupAlign="start" positionerClassName={DIALOG_FIELD_LAYER} onApply={(next) => { if (next) store.patchCreate({ expiryDay: next === defaultExpiryDay(now) ? null : next }); }} description="The link stops working at the end of this day." />

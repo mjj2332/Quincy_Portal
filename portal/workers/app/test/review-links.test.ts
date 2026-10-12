@@ -115,14 +115,63 @@ describe("the links gate and the route order", () => {
     expect((await request(`${base()}/${crypto.randomUUID()}/videos/nope`, "admin", "DELETE")).status).toBe(400);
   });
 
-  it("checks the capability after the gate: Admin and Editors pass, a Photographer and every External get 403 (and the closed gate wins over the capability)", async () => {
-    for (const who of ["admin", "member", "other"] as const) expect((await request(base(), who)).status, who).toBe(200);
-    for (const who of ["photographer", "external", "externalOutsider"] as const) {
-      expect((await request(base(), who)).status, `list ${who}`).toBe(403);
-      expect((await create({ videoIds: [v1.videoId] }, who)).status, `create ${who}`).toBe(403);
-      expect((await request(`${base()}/${crypto.randomUUID()}/revoke`, who, "POST", {})).status, `revoke ${who}`).toBe(403);
-    }
+  it("checks the capability after the gate: Admin, Editors and an assigned External pass, a Photographer gets 403 (and the closed gate wins over the capability)", async () => {
+    for (const who of ["admin", "member", "other", "external"] as const) expect((await request(base(), who)).status, who).toBe(200);
+    expect((await request(base(), "photographer")).status, "list photographer").toBe(403);
+    expect((await create({ videoIds: [v1.videoId] }, "photographer")).status, "create photographer").toBe(403);
+    expect((await request(`${base()}/${crypto.randomUUID()}/revoke`, "photographer", "POST", {})).status, "revoke photographer").toBe(403);
     expect(await audits()).toEqual([]);
+  });
+
+  it("#834: an External outsider gets 404 'Project not found' on all eight routes, before any link is looked up", async () => {
+    const { link } = await createOk({ videoIds: [v1.videoId] });
+    const id = link.id; const videoId = v1.videoId;
+    const calls: Array<[string, string, Json?]> = [
+      ["GET", base()], ["POST", base(), { videoIds: [videoId] }], ["PATCH", `${base()}/${id}`, { label: "x" }],
+      ["POST", `${base()}/${id}/videos`, { videoId, assetIds: [v1.assetId] }], ["DELETE", `${base()}/${id}/videos/${videoId}`],
+      ["PUT", `${base()}/${id}/videos/${videoId}/grants`, { assetIds: [v1.assetId] }], ["POST", `${base()}/${id}/revoke`, {}], ["POST", `${base()}/${id}/replace`, {}],
+    ];
+    for (const [method, path, body] of calls) {
+      const response = await request(path, "externalOutsider", method as "GET", body);
+      expect(response.status, `${method} ${path}`).toBe(404); expect(await json(response)).toEqual({ error: "Project not found" });
+    }
+    expect(await audits()).toHaveLength(1);
+  });
+
+  it("#834: an assigned External lists, creates, edits, adds/removes Videos, sets grants, replaces and revokes, and each write is audited under the External", async () => {
+    const created = await createOk({ videoIds: [v1.videoId] }, "external");
+    expect(created.link.createdBy.isExternal).toBe(true);
+    expect(created.link.createdBy.id).toBe(ids.external);
+    expect((await listOk("external")).map((link) => link.id)).toEqual([created.link.id]);
+    const path = `${base()}/${created.link.id}`;
+    const patched = await request(path, "external", "PATCH", { label: "Cut for Mia" }); expect(patched.status).toBe(200);
+    const added = await request(`${path}/videos`, "external", "POST", { videoId: v2.videoId, assetIds: [v2.assetId] }); expect(added.status).toBe(201);
+    const granted = await request(`${path}/videos/${v2.videoId}/grants`, "external", "PUT", { assetIds: [v2.assetId, v2b.assetId] }); expect(granted.status).toBe(200);
+    const removed = await request(`${path}/videos/${v2.videoId}`, "external", "DELETE"); expect(removed.status).toBe(204);
+    const replaced = await request(`${path}/replace`, "external", "POST", {}); expect(replaced.status).toBe(200);
+    const revoked = await request(`${path}/revoke`, "external", "POST", {}); expect(revoked.status).toBe(200);
+    const log = await audits();
+    expect(log.length).toBeGreaterThanOrEqual(4);
+    expect(log.every((entry) => entry.actor_id === ids.external)).toBe(true);
+    const actions = new Set(log.map((entry) => entry.action));
+    for (const action of ["review_link.create", "review_link.update", "review_link.replace", "review_link.revoke"]) expect(actions, action).toContain(action);
+  });
+
+  it("#834 D2: an External is refused (404) on an archived Project, revoke included; revoking there stays a staff action", async () => {
+    await setVideoFlags(`video_review_pilot:${ids.archivedProject}`);
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), ids.archivedProject, ids.external, Date.now()).run();
+    try {
+      const archivedPath = base(ids.archivedProject); const unknown = crypto.randomUUID();
+      const calls: Array<[string, string, Json?]> = [
+        ["GET", archivedPath], ["POST", archivedPath, { videoIds: [unknown] }], ["PATCH", `${archivedPath}/${unknown}`, { label: "x" }],
+        ["POST", `${archivedPath}/${unknown}/videos`, { videoId: unknown, assetIds: [unknown] }], ["DELETE", `${archivedPath}/${unknown}/videos/${unknown}`],
+        ["PUT", `${archivedPath}/${unknown}/videos/${unknown}/grants`, { assetIds: [unknown] }], ["POST", `${archivedPath}/${unknown}/revoke`, {}], ["POST", `${archivedPath}/${unknown}/replace`, {}],
+      ];
+      for (const [method, path, body] of calls) {
+        const response = await request(path, "external", method as "GET", body);
+        expect(response.status, `${method} ${path}`).toBe(404);
+      }
+    } finally { await database.DB.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?").bind(ids.archivedProject, ids.external).run(); }
   });
 
   it("refuses an archived Project's writes 409 project_archived, but still reads and revokes", async () => {

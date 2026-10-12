@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, Columns2, DownloadIcon } from "lucide-react";
+import { ChevronLeft, Columns2, DownloadIcon, Link2 } from "lucide-react";
 import { framesToTimecode, videoVersionDownloadUrl, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
 import { registerToastHost } from "../../lib/toast-host";
 import { hasOpenAlertDialog } from "../../lib/alert-dialog-press";
@@ -41,7 +41,7 @@ const VERSION_SELECT_ID = "video-review-version";
  * With `notes` (the Project's `notes` part is on, #741 5b) the Version details column becomes the notes panel, and the Version details
  * move behind a button in its header; without it the viewer is exactly the 4d-ii viewer.
  */
-export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, deepLink }: {
+export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, reviewLinks, deepLink }: {
   video: VideoDto;
   onClose: () => void;
   /** The control that opened the viewer; focus goes back to it on close. */
@@ -56,6 +56,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   trash?: { projectId: string; archived: boolean };
   /** Present only when the Project's `download` part is on and the role holds `downloadVideo` (#818): the Download link in the header (single view only). */
   download?: { projectId: string };
+  /** Present only when new Review links may be made (#834): the header's Create Review link, which hands over the Version to grant (the one on screen; side A in Compare). */
+  reviewLinks?: { onCreate: (assetId: string) => void };
   /** Present when the URL names this film (#819, staff Project route): `version` is the Version number it names (absent = the current one), `href` the absolute link to a Version, `onVersionShown` how the viewer reports the Version on show. */
   deepLink?: { version?: number; /** The list this Video came from is a settled, successful read: only then is an unknown Version normalised in the URL. */ settled: boolean; href: (version: number) => string; onVersionShown: (version: number) => void };
 }) {
@@ -310,6 +312,11 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       <div data-testid="video-header-actions" className="ml-auto flex flex-wrap items-center justify-end gap-x-[var(--space-4)] gap-y-[var(--space-2)] max-[721px]:ml-0 max-[721px]:justify-start">
       {deepLink && !comparing && <CopyTextButton text={deepLink.href(version.version)} label="Copy link" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}
       {download && !comparing && <Button variant="outline" nativeButton={false} data-testid="video-download" aria-label={`Download version ${version.version}`} className="pointer-coarse:min-h-11 max-[721px]:min-h-11" render={<a href={videoVersionDownloadUrl(download.projectId, version.assetId)} download />}><DownloadIcon aria-hidden="true" />Download</Button>}
+      {reviewLinks && <Button type="button" variant="outline" data-testid="video-create-review-link" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={() => {
+        // Compare grants side A, read at click time; a side A that is no longer a Version of this film falls back to the one on screen.
+        const sideA = comparing ? compareStore?.getState().pair?.a : undefined;
+        reviewLinks.onCreate(sideA && video.versions.some((candidate) => candidate.assetId === sideA) ? sideA : version.assetId);
+      }}><Link2 aria-hidden="true" />Create Review link</Button>}
       {(canCompare || comparing) && <Button
         ref={compareButtonRef}
         type="button"

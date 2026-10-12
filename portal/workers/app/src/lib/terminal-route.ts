@@ -46,7 +46,7 @@ export type SecurityRouteRegistration = {
   scope: SecurityRouteScope;
   projection: SecurityRouteProjection;
   response: SecurityRouteResponse;
-  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar" | "gantt" | "video-review" | "video-list" | "video-note-list";
+  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar" | "gantt" | "video-review" | "video-list" | "review-link-list" | "video-note-list";
 };
 type LegacySecurityRouteClass = "bearer-protocol" | "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "guest-link" | "delivery-public" | "terminal-fallback";
 type LegacySecurityRouteRegistrationSeed = { method: string; path: string; class: LegacySecurityRouteClass; externalSurface?: SecurityRouteRegistration["externalSurface"] };
@@ -236,7 +236,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "PATCH", path: "/api/projects/:projectId/video-notes/:noteId", class: "scoped" },
   { method: "DELETE", path: "/api/projects/:projectId/video-notes/:noteId", class: "scoped" },
   { method: "PUT", path: "/api/projects/:projectId/video-notes/:noteId/resolution", class: "scoped" },
-  { method: "GET", path: "/api/projects/:projectId/review-links", class: "scoped" },
+  { method: "GET", path: "/api/projects/:projectId/review-links", class: "scoped", externalSurface: "review-link-list" },
   { method: "POST", path: "/api/projects/:projectId/review-links", class: "scoped" },
   { method: "PATCH", path: "/api/projects/:projectId/review-links/:linkId", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/review-links/:linkId/videos", class: "scoped" },

@@ -51,11 +51,13 @@ describe("gating: shipped dark, behind the links part and shareVideo", () => {
     expect(checkbox("Select Main walkthrough")).toBeNull();
     expect(apiGetMock.mock.calls.some(([path]) => path.endsWith("/review-links"))).toBe(false);
   });
-  it("shows nothing to an External editor even with the part on, and never asks", async () => {
+  it("shows an External editor the button, the ticks and the chips, and reads the list (#834)", async () => {
+    state.links = [linkOf()];
     await mount({ role: "external_editor" });
-    expect(q('[data-testid="review-links-open"]')).toBeNull();
-    expect(checkbox("Select Main walkthrough")).toBeNull();
-    expect(apiGetMock.mock.calls.some(([path]) => path.endsWith("/review-links"))).toBe(false);
+    expect(q('[data-testid="review-links-open"]')?.textContent).toContain("Review links");
+    expect(checkbox("Select Main walkthrough")).not.toBeNull();
+    expect(text(q('[data-testid="video-card-grid"]'))).toContain("Smith family");
+    expect(apiGetMock.mock.calls.some(([path]) => path.endsWith("/review-links"))).toBe(true);
   });
   it("shows nothing to a Photographer (no shareVideo)", async () => {
     await mount({ role: "photographer" });
@@ -66,6 +68,65 @@ describe("gating: shipped dark, behind the links part and shareVideo", () => {
     expect(q('[data-testid="review-links-open"]')?.textContent).toContain("Review links");
     expect(checkbox("Select Main walkthrough")).not.toBeNull();
     expect(checkbox("Select Teaser")).not.toBeNull();
+  });
+});
+
+const cardMenu = (videoId: string) => q(`[data-testid="video-card-menu"][data-video-id="${videoId}"]`);
+const menuItemCreate = () => q('[data-testid="video-card-create-review-link"]');
+async function openCardMenu(videoId: string) {
+  await act(async () => { cardMenu(videoId)!.focus(); await Promise.resolve(); });
+  await act(async () => { cardMenu(videoId)!.click(); await Promise.resolve(); await Promise.resolve(); });
+  await flush(20);
+}
+
+describe("create from a Video card's menu (#834)", () => {
+  it("opens the create dialog for that film alone with its current Version, leaves the ticks, and posts exactly that", async () => {
+    apiPostMock.mockResolvedValue({ link: linkOf(), url: `https://quincy.test/d/review?link=${L1}#t=tok123` });
+    await mount(); await selectFilms("Teaser");
+    await openCardMenu(V1);
+    expect(menuItemCreate()?.textContent).toBe("Create Review link");
+    await act(async () => { menuItemCreate()!.click(); await Promise.resolve(); });
+    await flush(20);
+    const d = dialog()!;
+    expect(all('[data-testid="review-link-create-video"]', d)).toHaveLength(1);
+    expect(text(d)).toContain("Main walkthrough");
+    expect(text(d)).not.toContain("Teaser");
+    expect(checkbox("Main walkthrough v2", d)!.checked).toBe(true);
+    expect(checkbox("Main walkthrough v1", d)!.checked).toBe(false);
+    await press(buttonIn(d, "Create link"));
+    const [, body] = apiPostMock.mock.calls[0]!;
+    expect(body).toMatchObject({ videoIds: [V1], grants: { [V1]: [A2] } });
+    expect(checkbox("Select Teaser")!.checked).toBe(true); // the ticks survive
+    expect(checkbox("Select Main walkthrough")!.checked).toBe(false);
+  });
+  it("shows the ticked films again when the selection bar opens the dialog afterwards", async () => {
+    await mount(); await selectFilms("Teaser");
+    await openCardMenu(V1);
+    await act(async () => { menuItemCreate()!.click(); await Promise.resolve(); });
+    await flush(20);
+    await press(buttonIn(dialog(), "Cancel"));
+    await press(buttonIn(q('[data-testid="review-link-selection-bar"]'), "Create Review link"));
+    expect(all('[data-testid="review-link-create-video"]', dialog())).toHaveLength(1);
+    expect(text(dialog())).toContain("Teaser");
+  });
+  it("returns focus to that card's menu button when the dialog closes", async () => {
+    await mount();
+    await openCardMenu(V1);
+    await act(async () => { menuItemCreate()!.click(); await Promise.resolve(); });
+    await flush(20);
+    await press(buttonIn(dialog(), "Cancel"));
+    await flush(20);
+    expect(document.activeElement).toBe(cardMenu(V1));
+  });
+  it("is offered to an External editor, and hidden from a Photographer, with the links part off, and on an archived Project", async () => {
+    await mount({ role: "external_editor" });
+    expect(cardMenu(V1)).not.toBeNull();
+    await unmount();
+    await mount({ role: "photographer" }); expect(cardMenu(V1)).toBeNull();
+    await unmount();
+    await mount({ parts: ["upload"] }); expect(cardMenu(V1)).toBeNull();
+    await unmount();
+    await mount({ archived: true }); expect(cardMenu(V1)).toBeNull();
   });
 });
 

@@ -37,10 +37,13 @@ export function ReviewLinksDialogHost({ store, projectId, role, archived }: { st
     document.addEventListener("click", remember, true);
     return () => { document.removeEventListener("click", remember, true); };
   }, [closed]);
+  // `returnFocus` is cleared in the same update that closes the dialog, so the selector is kept here for the close's own focus return.
+  const returnTo = useRef<string | null>(null);
+  if (state.returnFocus) returnTo.current = state.returnFocus;
   if (!ui.enabled) return null;
   return <Dialog open={view.kind !== "closed"} onOpenChange={(open) => { if (!open) store.closeDialog(); }} disablePointerDismissal={view.kind === "reveal"}>
     {/* `sm:max-w-[560px]`, Modal's "wide": `max-w-xl` is 1320px here (Quincy redefines `--container-xl`, see `reui/alert-dialog.tsx`). */}
-    <DialogContent data-testid="review-links-dialog" showCloseButton={false} finalFocus={() => (opener.current?.isConnected ? opener.current : document.querySelector<HTMLElement>('[data-testid="review-links-open"]') ?? true)} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col gap-[var(--space-4)] sm:max-w-[560px]">
+    <DialogContent data-testid="review-links-dialog" showCloseButton={false} finalFocus={() => (returnTo.current && document.querySelector<HTMLElement>(returnTo.current)) || (opener.current?.isConnected ? opener.current : document.querySelector<HTMLElement>('[data-testid="review-links-open"]') ?? true)} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col gap-[var(--space-4)] sm:max-w-[560px]">
       <OverlayContainerContext.Provider value={slot}>
         {view.kind === "list" && <ReviewLinkList ui={ui} />}
         {view.kind === "create" && (ui.canWrite
