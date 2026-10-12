@@ -51,6 +51,7 @@ export const CAPABILITIES = [
   "releaseVideo",
   "manageVideoPremium",
   "manageVideoTrash",
+  "downloadVideo",
   "switchDeliveryPage",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
@@ -71,6 +72,7 @@ export const EXTERNAL_EDITOR_CAPABILITIES = [
   "viewVideo",
   "uploadVideo",
   "annotateVideo",
+  "downloadVideo",
 ] as const satisfies readonly Capability[];
 
 /** Foreground ZIP-selection limits shared by the API and its preflight UI. */
@@ -121,6 +123,7 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "releaseVideo",
     "manageVideoPremium",
     "manageVideoTrash",
+    "downloadVideo",
     "switchDeliveryPage",
   ],
   editor: [
@@ -150,6 +153,7 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "releaseVideo",
     "manageVideoPremium",
     "manageVideoTrash",
+    "downloadVideo",
   ],
   external_editor: EXTERNAL_EDITOR_CAPABILITIES,
   photographer: [

@@ -9,7 +9,7 @@ import { clearVideoFlags, setVideoFlags } from "./video-review-support";
 const photoProject = "b4444444-4444-4444-8444-444444444444";
 const project = ids.project;
 const ALL_PARTS = VIDEO_REVIEW_PARTS.map((part) => `video_review_${part}`);
-const EXTERNAL_PARTS = ["upload", "notes", "markup", "compare", "export", "notify_staff"];
+const EXTERNAL_PARTS = ["upload", "notes", "markup", "compare", "export", "notify_staff", "download"];
 
 beforeAll(async () => {
   await seedFixture();

@@ -2,7 +2,7 @@ import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
 import { Hono } from "hono";
 import { beforeAll, describe, expect, it } from "vitest";
-import { EXTERNAL_API_RESPONSE_SCHEMAS, moveProjectStageResponseSchema } from "@quincy/shared";
+import { EXTERNAL_API_RESPONSE_SCHEMAS, moveProjectStageResponseSchema, videoVersionDownloadUrl } from "@quincy/shared";
 import { app } from "../src/index";
 import { createAuth } from "../src/auth";
 import {
@@ -404,6 +404,23 @@ describe("terminal route manifest", () => {
     expect(exported.status).toBe(200);
     expect(exported.headers.get("content-disposition")).toContain("attachment");
     expect(await exported.text()).toContain("Manifest note");
+    // The staff Version download (#818) is a scoped file response too. Its part is off on this Project (so the `video-review` projection above stays as is): 404 first, then, with the part on and an object stored, the assigned External downloads an attachment.
+    const downloadUrl = (assetId: string) => `https://portal.test${videoVersionDownloadUrl(manifestProjectId, assetId)}`;
+    expect((await SELF.fetch(downloadUrl(manifestVideoAssetId), { headers: { cookie } })).status).toBe(404);
+    const downloadObjectKey = `projects/${manifestProjectId}/video/${manifestVideoId}/${manifestVideoAssetId}/original.mp4`;
+    await database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_at) VALUES ('video_review_download', 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1").bind(Date.now()).run();
+    await database.MEDIA.put(downloadObjectKey, new Uint8Array(16));
+    try {
+      expect((await SELF.fetch(downloadUrl(crypto.randomUUID()), { headers: { cookie } })).status).toBe(404);
+      const downloaded = await SELF.fetch(downloadUrl(manifestVideoAssetId), { headers: { cookie } });
+      expect(downloaded.status).toBe(200);
+      expect(downloaded.headers.get("content-disposition")).toContain("attachment");
+      await downloaded.arrayBuffer();
+    } finally {
+      await database.DB.prepare("DELETE FROM feature_flags WHERE key = 'video_review_download'").run();
+      await database.DB.prepare("DELETE FROM audit_log WHERE action = 'video_version.download'").run();
+      await database.MEDIA.delete(downloadObjectKey);
+    }
     expect((await send("PATCH", `${base}/video-notes/${thread.id}`, { expectedRevision: 1, markup: [{ points: [{ x: 0.1, y: 0.1 }], color: "#e64b3c", width: 4 }], drawingFrame: 3 })).status).toBe(404);
     expect((await send("PATCH", `${base}/video-notes/${thread.id}`, { expectedRevision: 1, body: "Manifest edit" })).status).toBe(200);
     expect((await send("PUT", `${base}/video-notes/${thread.id}/resolution`, { resolved: true })).status).toBe(200);

@@ -6,7 +6,7 @@ import type { Capability } from "./capabilities";
  * `video_review_<part>` and is guarded by the capability below, so a part is only offered to a
  * caller who both has the flag on and holds the capability.
  */
-export const VIDEO_REVIEW_PARTS = ["upload", "notes", "markup", "compare", "export", "links", "guest", "guest_comments", "delivery", "notify_staff", "notify_client", "trash"] as const;
+export const VIDEO_REVIEW_PARTS = ["upload", "notes", "markup", "compare", "export", "links", "guest", "guest_comments", "delivery", "notify_staff", "notify_client", "trash", "download"] as const;
 export type VideoReviewPart = (typeof VIDEO_REVIEW_PARTS)[number];
 
 export const VIDEO_REVIEW_PART_CAPABILITY = {
@@ -22,11 +22,15 @@ export const VIDEO_REVIEW_PART_CAPABILITY = {
   notify_client: "shareVideo",
   delivery: "releaseVideo",
   trash: "manageVideoTrash",
+  download: "downloadVideo",
 } as const satisfies Record<VideoReviewPart, Capability>;
 
 export const VIDEO_REVIEW_MASTER_FLAG = "video_review";
 export const VIDEO_REVIEW_ALL_PROJECTS_FLAG = "video_review_all_projects";
 export const videoReviewPilotFlag = (projectId: string): string => `video_review_pilot:${projectId}`;
+/** The staff Version download route (#818): the original bytes of one live Version, as an attachment. */
+export const videoVersionDownloadUrl = (projectId: string, assetId: string): string => `/api/projects/${projectId}/video-versions/${assetId}/download`;
+
 export const videoReviewPartFlag = (part: VideoReviewPart): string => `video_review_${part}`;
 
 /** `GET /api/projects/:id/video-review`. Closed is 200 with no parts, so the web needs no 404 branch. */
