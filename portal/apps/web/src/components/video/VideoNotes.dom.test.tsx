@@ -198,6 +198,19 @@ describe("Video notes panel (#741 5b)", () => {
     expect(threadOf(s.n2.id).dataset.selected).toBe("false");
   });
 
+  it("a link to a note that has since been resolved still shows it: the filters open up so the thread is listed, selected and scrolled to", async () => {
+    const s = seed();
+    await mount({ link: { note: s.n4.id } });
+    const deadline = Date.now() + 10_000;
+    while (!playerVideo()) { if (Date.now() > deadline) throw new Error("the review player never mounted"); await flush(1); }
+    await flush(4);
+    await loadFilm(0);
+    await flush(6);
+    expect(noteIds()).toContain(s.n4.id);
+    expect(threadOf(s.n4.id).dataset.selected).toBe("true");
+    expect(playerVideo()!.currentTime).toBe(frameSeekSeconds(200, { num: 25, den: 1 }));
+  });
+
   it("shows a point as one timecode and a range as start → last included frame", async () => {
     const s = seed();
     await openFilm();

@@ -106,8 +106,11 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
     const key = openNoteId ? `${assetId}:${openNoteId}` : null;
     if (!key || landedNote.current === key || !clock || !threads?.some((thread) => thread.id === openNoteId)) return;
     landedNote.current = key;
+    // A note resolved or made internal since the link was sent is hidden by the default filters; open them so the thread the link names is listed to be selected and scrolled to.
+    const target = threads.find((thread) => thread.id === openNoteId)!;
+    if (!visibleThreads([target], filters).length) setFilters({ status: "all", visibility: "all" });
     onMarkerSelect(openNoteId!);
-  }, [openNoteId, assetId, clock, threads, onMarkerSelect]);
+  }, [openNoteId, assetId, clock, threads, filters, onMarkerSelect]);
 
   // A note posted with a drawing becomes the selected one, so its drawing stays on the picture (the display rule shows the selected note's).
   const post = useCallback((input: VideoNoteCreateInput) => withCtx((context) => createVideoNote(context, input)).then((created) => { if (markup && input.markup !== undefined) select(created.id); return created; }), [withCtx, markup, select]);

@@ -549,3 +549,24 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(cls).toContain("max-[721px]:min-h-11");
   });
 });
+
+describe("VideoNoteThread rich fields (#835)", () => {
+  const rich = { projectId: "11111111-1111-4111-8111-111111111111", role: "editor" as const };
+
+  it("Edit from the note's menu puts focus in the editor's field, not on the wrapper or back on the menu", async () => {
+    await render(thread({ author: { kind: "staff", person: me } }), { rich });
+    await chooseAction("Terry", "Edit");
+    const field = tid("video-note-edit-body")!.querySelector("textarea, [contenteditable='true']");
+    expect(field).not.toBeNull();
+    expect(document.activeElement).toBe(field);
+  });
+
+  it("Reply puts focus in the editor's field, as the plain reply box did", async () => {
+    await render(thread(), { rich });
+    await click(tid("video-note-reply-button")!);
+    await flush();
+    const field = tid("video-note-reply-body")!.querySelector("textarea, [contenteditable='true']");
+    expect(field).not.toBeNull();
+    expect(document.activeElement).toBe(field);
+  });
+});
