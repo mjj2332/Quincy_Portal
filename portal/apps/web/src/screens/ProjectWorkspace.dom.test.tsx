@@ -1189,12 +1189,77 @@ describe("ProjectWorkspace selection download", () => {
       rawSetup(); apiPostMock.mockResolvedValue({ state: "preparing", pending: 1, retryAfterSeconds: 30 });
       await render(<ProjectWorkspace projectId="p1" />); await flush(); await openTab(host, "RAW");
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-      await act(async () => { rawToolbar().click(); }); await tick(0);
+      await act(async () => { rawToolbar().focus(); rawToolbar().click(); }); await tick(0);
       apiPostMock.mockResolvedValue({ state: "ready" }); await tick(30_000);
     };
     const prepares = () => apiPostMock.mock.calls.filter(([path]) => path === "/api/projects/p1/selected-raw/prepare").length;
     const readyDownload = () => host.querySelector<HTMLButtonElement>('[data-testid="prepared-zip-download"]')!;
     const closeNotice = async () => { await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="prepared-zip-close"]')!.click(); }); await tick(0); };
+
+    const trigger = () => [...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((item) => item.textContent === "Download selection")!;
+    const unavailable = () => new ApiError("Unavailable", 502, { code: "download_unavailable" });
+
+    it("design review: preparing is a caution status with the copy beside an aligned spinner; ready is a positive status that SAYS it is ready, with an outline Download zip", async () => {
+      apiPostMock.mockRejectedValue(preparing()); await selectOneAndDownload();
+      expect(notice()!.getAttribute("role")).toBe("status"); expect(notice()!.getAttribute("data-tone")).toBe("caution");
+      const spinner = notice()!.querySelector('[role="presentation"]')!; expect(spinner).not.toBeNull(); expect(spinner.parentElement!.textContent).toContain("Preparing this download."); expect(spinner.parentElement).not.toBe(notice());
+      apiPostMock.mockResolvedValue({ downloadUrl: "/api/projects/p1/download-selection/a/archive.zip" }); await tick(30_000);
+      expect(notice()!.getAttribute("role")).toBe("status"); expect(notice()!.getAttribute("data-tone")).toBe("positive");
+      expect(notice()!.textContent).toContain("The zip starts in your browser. If nothing downloads, wait a minute and try again.");
+      expect(readyDownload().classList.contains("bg-primary")).toBe(false);
+    });
+
+    it("design review: a failure or a too-large zip is announced as an alert, not a status", async () => {
+      apiPostMock.mockRejectedValue(preparing()); await selectOneAndDownload();
+      apiPostMock.mockRejectedValue(unavailable()); await tick(30_000);
+      expect(notice()!.getAttribute("role")).toBe("alert"); expect(notice()!.textContent).toContain("Couldn't prepare this zip."); expect(notice()!.getAttribute("data-tone")).toBe("critical");
+    });
+
+    it("design review: Close and Download zip return focus to the trigger that opened the notice (selection)", async () => {
+      vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+      apiPostMock.mockRejectedValue(preparing());
+      await render(<ProjectWorkspace projectId="p1" />); await flush(); await openTab(host, "RAW");
+      await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[0]!);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      await act(async () => { trigger().focus(); trigger().click(); }); await tick(0);
+      await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="prepared-zip-close"]')!.focus(); host.querySelector<HTMLButtonElement>('[data-testid="prepared-zip-close"]')!.click(); }); await tick(0);
+      expect(notice()).toBeNull(); expect(document.activeElement).toBe(trigger());
+      await act(async () => { trigger().focus(); trigger().click(); }); await tick(0);
+      apiPostMock.mockResolvedValue({ downloadUrl: "/api/projects/p1/download-selection/a/archive.zip" }); await tick(30_000);
+      await act(async () => { readyDownload().focus(); readyDownload().click(); }); await tick(0);
+      expect(notice()).toBeNull(); expect(document.activeElement).toBe(trigger());
+    });
+
+    it("design review: Close and Download zip return focus to the selected-RAW button", async () => {
+      vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+      await rawReadyNotice();
+      await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="prepared-zip-close"]')!.focus(); host.querySelector<HTMLButtonElement>('[data-testid="prepared-zip-close"]')!.click(); }); await tick(0);
+      expect(notice()).toBeNull(); expect(document.activeElement).toBe(rawToolbar());
+      apiPostMock.mockResolvedValue({ state: "preparing", pending: 1, retryAfterSeconds: 30 });
+      await act(async () => { rawToolbar().focus(); rawToolbar().click(); }); await tick(0);
+      apiPostMock.mockResolvedValue({ state: "ready" }); await tick(30_000);
+      await act(async () => { readyDownload().focus(); readyDownload().click(); }); await tick(0);
+      expect(notice()).toBeNull(); expect(document.activeElement).toBe(rawToolbar());
+    });
+
+    it("design review: on the Edited tab the notice follows the AutoHDR status card, on the RAW tab it follows the hand-off bar", async () => {
+      authState.role = "admin";
+      apiGetMock.mockImplementation((path: string) => {
+        if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), stageKey: "awaiting_raw" });
+        if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+        if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-selected", { selected: true })] });
+        if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: [workspaceAsset("edited-1")] });
+        if (path.includes("/jobs")) return Promise.resolve({ jobs: [] });
+        return Promise.resolve({});
+      });
+      apiPostMock.mockRejectedValue(preparing());
+      await render(<ProjectWorkspace projectId="p1" />); await flush(); await openTab(host, "Edited");
+      await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[0]!);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      await act(async () => { trigger().click(); }); await tick(0);
+      const card = [...host.querySelectorAll<HTMLElement>("strong")].find((item) => item.textContent === "AutoHDR status")!.parentElement!.parentElement!;
+      expect(notice()).not.toBeNull(); expect(card.compareDocumentPosition(notice()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
 
     it("selection: a Download recheck answered after Close does not reopen the notice or restart polling (Sol r3)", async () => {
       const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);

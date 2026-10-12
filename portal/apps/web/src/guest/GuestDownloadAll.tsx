@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../components/reui/item";
 import { Spinner } from "../components/reui/spinner";
 import { Notice } from "../components/quincy/Notice";
-import { NOTICE_SPINNER, PREPARE_TIMEOUT_COPY, usePreparedDownload, type PrepareOutcome } from "../lib/use-prepared-download";
+import { NOTICE_SPINNER, PREPARE_TIMEOUT_COPY, READY_HINT_COPY, usePreparedDownload, type PrepareOutcome } from "../lib/use-prepared-download";
 import type { GuestApi } from "./guest-api";
 import { formatBytes } from "./guest-format";
 import type { GuestVerify } from "./use-guest-verify";
@@ -116,7 +116,6 @@ export function GuestDownloadAll({ api, verify, session, onSession, onUnavailabl
 }
 
 const PREPARING_COPY = "Preparing this download. This may take a few minutes.";
-const READY_HINT_COPY = "The zip starts in your browser. If nothing downloads, wait a minute and try again.";
 const UNAVAILABLE_COPY = "Couldn't prepare this zip. Try again or download the files one at a time.";
 const ARCHIVE_TOO_BIG_COPY = "This is too big to download as one zip. Download the films one at a time instead.";
 

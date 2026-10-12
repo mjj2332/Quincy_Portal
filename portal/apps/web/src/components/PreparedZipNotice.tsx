@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { Notice } from "@/components/quincy/Notice";
 import { Button } from "@/components/reui/button";
 import { Spinner } from "@/components/reui/spinner";
-import { NOTICE_SPINNER, PREPARE_TIMEOUT_COPY, usePreparedDownload, type PrepareOutcome } from "../lib/use-prepared-download";
+import { NOTICE_SPINNER, PREPARE_TIMEOUT_COPY, READY_HINT_COPY, usePreparedDownload, type PrepareOutcome } from "../lib/use-prepared-download";
 
 /**
  * The staff "this zip is being prepared" notice (#802). It opens when the server said `download_preparing` (or a prepare said `preparing`), polls every 30 s for five minutes while it is mounted
@@ -26,14 +26,28 @@ export function PreparedZipNotice({ ask, onDownload, onClose, onError, label = "
   const { start } = prepared;
   useEffect(() => { void start(); }, [start]);
   const status = prepared.status;
+  const failed = status === "unavailable" || status === "failed" || status === "too_large";
+  const close = <Button type="button" variant="ghost" data-testid="prepared-zip-close" className="ml-auto" onClick={onClose}>Close</Button>;
+  // A failure is announced as an alert, like the guest side; preparing, timeout and ready share one status region (a distinct element, so the role change is announced).
+  if (failed) {
+    return (
+      <Notice key="alert" tone="critical" role="alert" data-tone="critical" data-testid="prepared-zip-notice" className="flex flex-wrap items-start gap-[var(--space-2)]">
+        <span className="min-w-0 flex-1">{status === "too_large" ? PREPARE_TOO_BIG_COPY : PREPARE_FAILED_COPY}</span>
+        {status !== "too_large" && <Button type="button" variant="outline" data-testid="prepared-zip-check-again" onClick={() => void start()}>Check again</Button>}
+        {close}
+      </Notice>
+    );
+  }
+  const tone = status === "ready" ? "positive" : "caution";
   return (
-    <Notice tone={status === "unavailable" || status === "failed" || status === "too_large" ? "critical" : "caution"} role="status" data-testid="prepared-zip-notice" className="flex flex-wrap items-center gap-[var(--space-2)]">
-      {(status === "idle" || status === "checking" || status === "preparing") && <><Spinner aria-hidden="true" role="presentation" className={NOTICE_SPINNER} /><span>{PREPARING_COPY}</span></>}
-      {status === "timeout" && <><span>{PREPARE_TIMEOUT_COPY}</span><Button type="button" variant="outline" data-testid="prepared-zip-check-again" onClick={() => void start()}>Check again</Button></>}
-      {status === "ready" && <Button type="button" data-testid="prepared-zip-download" onClick={onDownload}>{label}</Button>}
-      {(status === "unavailable" || status === "failed") && <><span>{PREPARE_FAILED_COPY}</span><Button type="button" variant="outline" data-testid="prepared-zip-check-again" onClick={() => void start()}>Check again</Button></>}
-      {status === "too_large" && <span>{PREPARE_TOO_BIG_COPY}</span>}
-      <Button type="button" variant="ghost" data-testid="prepared-zip-close" className="ml-auto" onClick={onClose}>Close</Button>
+    <Notice key="status" tone={tone} role="status" data-tone={tone} data-testid="prepared-zip-notice" className="flex flex-wrap items-start gap-[var(--space-2)]">
+      <span className="flex min-w-0 flex-1 items-start gap-[var(--space-2)]">
+        {(status === "idle" || status === "checking" || status === "preparing") && <Spinner aria-hidden="true" role="presentation" className={NOTICE_SPINNER} />}
+        {status === "ready" ? READY_HINT_COPY : status === "timeout" ? PREPARE_TIMEOUT_COPY : PREPARING_COPY}
+      </span>
+      {status === "timeout" && <Button type="button" variant="outline" data-testid="prepared-zip-check-again" onClick={() => void start()}>Check again</Button>}
+      {status === "ready" && <Button type="button" variant="outline" data-testid="prepared-zip-download" onClick={onDownload}>{label}</Button>}
+      {close}
     </Notice>
   );
 }

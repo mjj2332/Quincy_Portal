@@ -12,6 +12,8 @@ export const PREPARE_POLL_MS = 30_000;
 export const PREPARE_MAX_MS = 5 * 60_000;
 /** What both surfaces say once the five minutes have run out and the archive is still not ready. */
 export const PREPARE_TIMEOUT_COPY = "Still preparing. Check again in a minute.";
+/** What both surfaces say once the archive is ready and the person presses the download. */
+export const READY_HINT_COPY = "The zip starts in your browser. If nothing downloads, wait a minute and try again.";
 /** Lines the spinner up with the first line of a notice whose copy wraps to two (the call sites, not the shared Notice, own this). */
 export const NOTICE_SPINNER = "self-start mt-[var(--space-1)] shrink-0";
 
