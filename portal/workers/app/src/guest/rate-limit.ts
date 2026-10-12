@@ -71,10 +71,6 @@ export async function refundAttempt(db: D1Database, bucket: string, now: number,
 }
 
 /**
- * Like `reserveAttempts`, but both or neither: when any bucket is full, the buckets that did take the attempt are given it back, so a request refused by one limit never drains another (a client over its
- * address limit cannot fill the page's bucket). The give-back is a second batch, so a crash between the two can only over-charge, never under-charge.
- */
-/**
  * Like `reserveAttempts`, but both or neither, in ONE batch (one serialised transaction): nothing is ever taken from a bucket and given back, so a request refused by one limit changes no row, and a
  * concurrent request that fits is never refused by a slot a doomed one briefly held. Statement 0 upserts the first bucket guarded on EVERY bucket having room (read before anything changes); each later
  * statement runs only while the one before it changed a row (`changes() = 1`), so the buckets move together or not at all.
