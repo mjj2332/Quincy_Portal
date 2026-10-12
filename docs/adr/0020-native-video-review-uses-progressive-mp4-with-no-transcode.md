@@ -56,3 +56,7 @@ this decision.
 - The pure frame, timecode and probe logic is shared and testable without a browser. jsdom cannot decode
   video, so frame accuracy is proven in a real-browser pass with a burned-in frame counter.
 - Frame and timecode logic is ported from the MIT-licensed FreeFrame project; see `THIRD_PARTY_NOTICES.md`.
+
+## Amendment (#818): staff download
+
+The stream stays disposition-free (decision 6). Staff who need the original file get it from a separate, audited route, `GET /api/projects/:projectId/video-versions/:assetId/download`, behind the `download` review part and the `downloadVideo` capability (admin, editor, assigned External). It serves the same stored bytes as an attachment named `<Title> v<N>.mp4`, and writes a `video_version.download` audit row per full download. It is not a transcode and not a second copy: the file is the one under review.
