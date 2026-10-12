@@ -7,6 +7,7 @@ import type { AppEnv } from "../src/env";
 import { hashToken } from "../src/lib/opaque-token";
 import { baseEnv, database, ids, mp4Bytes, seedFixture } from "./embedded-media-support";
 import { addMember, clearGuestRows, grant, guestFetch, HYGIENE, linkPath, openGuestGate, seedGuestLink, startSession, type LinkInput } from "./guest-support";
+import { box, buildMp4, videoTrack } from "../../../packages/shared/src/testing/mp4-builder";
 import { clearVideoFlags, markVersionRemoved, seedVideoVersion, setVideoFlags } from "./video-review-support";
 import { NATIVE_ZIP_FLAG, ZIP_LEGACY_MAX_BYTES } from "../src/lib/object-crc";
 import { crc32 } from "node:zlib";
@@ -78,6 +79,7 @@ async function another(linkId: string, title: string, options: { released?: bool
 }
 const get = (link: { id: string }, cookie: string | null, assetId: string, headers: Record<string, string> = {}, method = "GET") => guestFetch(downloadPath(link.id, assetId), { method, cookie, headers });
 
+const quickTimeBytes = async () => { const source = buildMp4({ tracks: [videoTrack({ timescale: 25000, stts: [[300, 1000]] })], ftyp: "qt  ", leading: [box("wide")] }); return new Uint8Array(await source.read(0, source.size)); };
 const probe = async (response: Response) => ({ status: response.status, body: await response.text() });
 const stubBody = async () => probe(await guestFetch("/d"));
 const dispose = (response: Response) => response.body?.cancel().catch(() => undefined);
@@ -113,6 +115,16 @@ describe("GET and HEAD .../versions/:assetId/download", () => {
     const [entry, ...rest] = await audits(); expect(rest).toEqual([]);
     expect(entry).toMatchObject({ actor_id: null, target_type: "review_link", target_id: link.id });
     expect(JSON.parse(entry!.meta_json)).toMatchObject({ guest: { guestId: link.guestId }, linkId: link.id, assetId: version.assetId, videoId: version.videoId, version: 1, bytes: 4096 });
+  });
+
+  it("downloads a QuickTime-container upload as an .mp4, bytes unchanged (#813)", async () => {
+    const { link, version } = await setup({}, "Interview"); const file = await quickTimeBytes();
+    await database.MEDIA.put(version.key, file, { httpMetadata: { contentType: "video/mp4" } }); await setBytes(version.assetId, file.byteLength);
+    const response = await get(link, link.cookie, version.assetId);
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(response.headers.get("content-type")).toBe("video/mp4");
+    expect(response.headers.get("content-disposition")).toContain("filename*=UTF-8''Interview%20v1.mp4");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(file);
   });
 
   it("answers a Range with 206, keeps the disposition and writes no audit row; `bytes=0-` counts as a download", async () => {
@@ -293,6 +305,14 @@ describe("GET .../downloads/all.zip", () => {
     const link = await verifiedLink(); const version = await seedVideoVersion(); await addMember(link.id, version.videoId, [version.assetId]);
     const response = await guestFetch(zipPath(link.id), { cookie: link.cookie }); expect(response.status).toBe(409); expect(await response.json()).toEqual({ error: "nothing_to_download" });
     expect(await allAudits()).toHaveLength(0);
+  });
+
+  it("puts a QuickTime-container upload in the ZIP as an .mp4 entry, bytes unchanged (#813)", async () => {
+    const { link, version } = await setup({}, "Interview"); const file = await quickTimeBytes();
+    await database.MEDIA.put(version.key, file, { httpMetadata: { contentType: "video/mp4" } }); await setBytes(version.assetId, file.byteLength);
+    const files = await unzip(await guestFetch(zipPath(link.id), { cookie: link.cookie }));
+    expect([...files.keys()].sort()).toEqual(["Interview v1.mp4"]);
+    expect(files.get("Interview v1.mp4")).toEqual(file);
   });
 
   it("allows 20 entries and refuses 21 with 422 zip_too_large", async () => {

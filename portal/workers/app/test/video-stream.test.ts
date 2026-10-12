@@ -6,6 +6,7 @@ import { createAuth } from "../src/auth";
 import { app } from "../src/index";
 import type { Env } from "../src/env";
 import { baseEnv, cookie, database, ids, mp4Bytes, seedFixture, tokens, type Who } from "./embedded-media-support";
+import { box, buildMp4, videoTrack } from "../../../packages/shared/src/testing/mp4-builder";
 import { clearVideoFlags, ensureCollection, seedVideoVersion, setVideoFlags } from "./video-review-support";
 
 /** Staff video review (#741, 4c): the Video list, the Version stream (range, HEAD, If-Range) and the poster. */
@@ -29,6 +30,7 @@ async function recorded(path: string, who: Who, method: "GET" | "HEAD", headers:
   const response = await app.fetch(new Request(`https://portal.test${path}`, { method, headers: { cookie: cookieValue, ...headers } }), environment, createExecutionContext());
   return { response, calls };
 }
+const quickTimeBytes = async () => { const source = buildMp4({ tracks: [videoTrack({ timescale: 25000, stts: [[300, 1000]] })], ftyp: "qt  ", leading: [box("wide")] }); return new Uint8Array(await source.read(0, source.size)); };
 const consume = async (response: Response) => new Uint8Array(await response.arrayBuffer());
 
 beforeAll(async () => { await seedFixture(); });
@@ -143,6 +145,21 @@ describe("GET /media/video/:assetId", () => {
       expect(response.headers.get("content-disposition")).toBeNull();
       expect(await consume(response)).toEqual(BYTES);
     }
+  });
+
+  it("streams a QuickTime-container upload exactly as an .mp4: video/mp4, no disposition, the bytes unchanged (#813)", async () => {
+    const { assetId, key } = await seedVideoVersion(); const file = await quickTimeBytes();
+    await database.MEDIA.put(key, file, { httpMetadata: { contentType: "video/mp4" } });
+    await database.DB.prepare("UPDATE assets SET bytes = ?, original_filename = 'interview.mp4' WHERE id = ?").bind(file.byteLength, assetId).run();
+    const response = await get(`/media/video/${assetId}?download=1`, "member");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("video/mp4");
+    expect(response.headers.get("content-length")).toBe(String(file.byteLength));
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect(await consume(response)).toEqual(file);
+    const ranged = await get(`/media/video/${assetId}`, "member", { range: "bytes=0-15" });
+    expect(ranged.status).toBe(206); expect(ranged.headers.get("content-type")).toBe("video/mp4");
+    expect(await consume(ranged)).toEqual(file.slice(0, 16));
   });
 
   it("answers a range with 206 and the exact bytes, including a suffix range", async () => {

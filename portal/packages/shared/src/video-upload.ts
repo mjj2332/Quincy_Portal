@@ -11,7 +11,10 @@ export const VIDEO_UPLOAD_EXPIRY_MS = 7 * 60 * 60 * 1000;
 export const VIDEO_UPLOAD_COMPLETION_LEASE_MS = 15 * 60 * 1000;
 /** Active (pending, completing or aborting) reservations one person may hold in one Project. */
 export const VIDEO_UPLOAD_MAX_ACTIVE_PER_USER = 3;
+/** What is stored and served, always. */
 export const VIDEO_UPLOAD_CONTENT_TYPE = "video/mp4";
+/** What a browser may declare at reserve: a QuickTime `.mov` arrives as `video/quicktime`. */
+export const VIDEO_UPLOAD_DECLARED_CONTENT_TYPES: readonly string[] = ["video/mp4", "video/quicktime"];
 export const VIDEO_UPLOAD_ACTIVE_STATUSES = ["pending", "completing", "aborting"] as const;
 export const VIDEO_CLIENT_PROBE_MAX_BYTES = 8 * 1024;
 
@@ -21,6 +24,11 @@ export function videoUploadRejectMessage(reason: string): string {
   if (reason === "size_mismatch") return "The uploaded file is not the size that was reserved. Upload it again.";
   if (reason === "content_type") return "The uploaded file is not stored as video/mp4. Upload it again as an .mp4.";
   return mp4RejectMessage(reason as Mp4RejectReason);
+}
+
+/** A QuickTime `.mov` is stored and shown as `.mp4`: the bytes are unchanged and the player, stream and downloads treat it as MP4. */
+export function normalizeVideoUploadFilename(filename: string): string {
+  return filename.replace(/\.mov$/i, ".mp4");
 }
 
 const uuid = z.string().uuid();
@@ -33,7 +41,7 @@ const isoTimestamp = z.string().datetime();
 export const videoUploadReserveInputSchema = z.object({
   videoId: uuid.optional(),
   title: z.string().trim().min(1).max(200).optional(),
-  filename: z.string().min(1).max(255).regex(/\.mp4$/i, "Only .mp4 files can be uploaded"),
+  filename: z.string().min(1).max(255).regex(/\.(mp4|mov)$/i, "Only MP4 or MOV files can be uploaded"),
   bytes: z.number().int().positive(),
   contentType: z.string(),
   clientProbe: z.record(z.string(), z.unknown()).optional(),

@@ -10,8 +10,9 @@ const fileOf = async (spec: Mp4Spec, name = "film.mp4") => { const source = buil
 const GOOD_25 = () => fileOf({ tracks: [videoTrack({ timescale: 25000, stts: [[300, 1000]] })] });
 
 describe("checkVideoFile (#741 4d-i)", () => {
-  it("refuses a name that is not .mp4 and a file over 2,000,000,000 bytes before any read", async () => {
-    expect(await checkVideoFile(new File([new Uint8Array(4)], "film.mov"))).toEqual({ ok: false, message: NOT_MP4_NAME_MESSAGE });
+  it("refuses a name that is neither .mp4 nor .mov and a file over 2,000,000,000 bytes before any read", async () => {
+    for (const name of ["film.mkv", "film.avi", "film.mov.txt", "film"]) expect(await checkVideoFile(new File([new Uint8Array(4)], name)), name).toEqual({ ok: false, message: NOT_MP4_NAME_MESSAGE });
+    expect(NOT_MP4_NAME_MESSAGE).toContain("MP4 or MOV");
     const big = new File([new Uint8Array(4)], "film.mp4");
     Object.defineProperty(big, "size", { value: 2_000_000_001 });
     const slice = vi.spyOn(big, "slice");
@@ -36,8 +37,32 @@ describe("checkVideoFile (#741 4d-i)", () => {
     expect(TIMECODE_MISMATCH_CAUTION).toMatch(/timecode/);
   });
 
-  it("titles a new film from the filename without .mp4", () => {
+  it("titles a new film from the filename without .mp4 or .mov", () => {
     expect(defaultFilmTitle("  Main walkthrough.MP4")).toBe("Main walkthrough");
+    expect(defaultFilmTitle("Main walkthrough.mov")).toBe("Main walkthrough");
+    expect(defaultFilmTitle("Main walkthrough.MOV ")).toBe("Main walkthrough");
+    expect(defaultFilmTitle("take.mov.mp4")).toBe("take.mov");
+  });
+
+  it.each([
+    ["video/quicktime", "Interview.mov"],
+    ["", "Interview.MOV"],
+    ["video/mp4", "Interview.mov"],
+  ])("accepts an H.264 QuickTime file named %s / %s, whatever type the browser gave it (#813)", async (type, name) => {
+    const source = buildMp4({ tracks: [videoTrack({ timescale: 25000, stts: [[300, 1000]] }), { handler: "soun", audioCodec: "sowt" }], ftyp: "qt  " });
+    const file = new File([new Uint8Array(await source.read(0, source.size))], name, { type });
+    expect(await checkVideoFile(file)).toMatchObject({ ok: true, cautions: [], probe: { fps: { num: 25, den: 1 }, hasAudio: true } });
+  });
+
+  it.each([["HEVC", { codec: "hvc1" }, "hevc"], ["ProRes", { codec: "apcn", avcC: false }, "unsupported_codec"]] as const)("still refuses a %s .mov with the plain copy (#813)", async (_label, track, reason) => {
+    const source = buildMp4({ tracks: [videoTrack(track)], ftyp: "qt  " });
+    const file = new File([new Uint8Array(await source.read(0, source.size))], "master.mov", { type: "video/quicktime" });
+    expect(await checkVideoFile(file)).toEqual({ ok: false, message: mp4RejectMessage(reason) });
+  });
+
+  it("words the fast-start caution for MP4 and MOV alike (#813)", () => {
+    expect(NOT_FAST_START_CAUTION).not.toMatch(/This MP4/);
+    expect(NOT_FAST_START_CAUTION).toMatch(/fast.start/i);
   });
 });
 
@@ -108,6 +133,21 @@ describe("VideoUpload (#741 4d-i)", () => {
     return { job, states, settled };
   }
   const until = async (job: VideoUpload, phase: string) => { for (let i = 0; i < 200 && job.state.phase !== phase; i += 1) await new Promise((resolve) => setTimeout(resolve, 2)); expect(job.state.phase).toBe(phase); };
+
+  it("reserves a .mov with an empty or video/quicktime type as video/mp4 and sends its own name (#813)", async () => {
+    poster.blob = new Blob(["jpg"], { type: "image/jpeg" });
+    routes[RESERVE] = () => json(devReserve, 201);
+    routes["PUT /api/projects/:p/video-uploads/:r/direct"] = () => new Response(null, { status: 200 });
+    routes[COMPLETE] = () => json(completeBody(), 201);
+    routes[POSTER] = () => new Response(null, { status: 200 });
+    for (const type of ["", "video/quicktime"]) {
+      calls.length = 0;
+      const check = await checkVideoFile(await GOOD_25()); if (!check.ok) throw new Error("fixture");
+      const job = new VideoUpload(1, { projectId: ids.video, role: "editor", file: new File([new Uint8Array(10)], "Interview.MOV", { type }), target: { kind: "new", title: "Interview" }, probe: check.probe, cautions: check.cautions, onChange: () => undefined, completeDelaysMs: [0, 0, 0], partDelaysMs: [0, 0, 0] });
+      job.start(); await until(job, "done");
+      expect(calls.find((call) => call.url.endsWith("/video-uploads"))!.body, type).toMatchObject({ filename: "Interview.MOV", contentType: "video/mp4" });
+    }
+  });
 
   it("reserves with the probe's own shapes, sends the dev file, completes and puts the poster", async () => {
     poster.blob = new Blob(["jpg"], { type: "image/jpeg" });

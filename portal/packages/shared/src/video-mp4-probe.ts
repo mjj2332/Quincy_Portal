@@ -51,17 +51,17 @@ export type Mp4ProbeResult = { ok: true; probe: Mp4Probe } | { ok: false; reason
 
 const REJECT_MESSAGES: Record<Mp4RejectReason, string> = {
   too_large: "This video is over 2 GB. Export it at a lower bitrate or a shorter length, then upload it again.",
-  not_mp4: "This is not an MP4 file. Export it as an H.264 .mp4 and upload it again.",
+  not_mp4: "This is not an MP4 or MOV file. Export it as H.264 in an .mp4 or .mov and upload it again.",
   truncated: "The file ends early or could not be read in full. Export it again and re-upload it.",
-  box_size_invalid: "The MP4 structure is damaged. Export it again as H.264 .mp4 and re-upload it.",
-  moov_missing: "The MP4 has no index. Export it again as H.264 .mp4 and re-upload it.",
-  moov_too_large: "The MP4 index is unusually large. Export it again as H.264 with standard settings.",
-  read_budget_exceeded: "The MP4 structure is too fragmented to read. Export it again as a standard H.264 .mp4.",
-  fragmented: "Fragmented MP4 is not supported. Export as a standard (non-fragmented) H.264 .mp4.",
-  no_video_track: "The file has no video track. Export a video as H.264 .mp4 and upload it again.",
+  box_size_invalid: "The file structure is damaged. Export it again as H.264 .mp4 or .mov and re-upload it.",
+  moov_missing: "The file has no index. Export it again as H.264 .mp4 or .mov and re-upload it.",
+  moov_too_large: "The file index is unusually large. Export it again as H.264 with standard settings.",
+  read_budget_exceeded: "The file structure is too fragmented to read. Export it again as a standard H.264 .mp4 or .mov.",
+  fragmented: "Fragmented video files are not supported. Export as a standard (non-fragmented) H.264 .mp4 or .mov.",
+  no_video_track: "The file has no video track. Export a video as H.264 .mp4 or .mov and upload it again.",
   multiple_video_tracks: "The file has more than one video track. Export with a single video track.",
   hevc: "HEVC (H.265) video is not supported. Export as H.264.",
-  unsupported_codec: "This video codec is not supported. Export as H.264 (AVC) in an .mp4.",
+  unsupported_codec: "This video codec is not supported. Export as H.264 (AVC) in an .mp4 or .mov.",
   variable_frame_rate: "Variable frame rate is not supported. Export as H.264 with a constant frame rate.",
   unsupported_frame_rate: "This frame rate is not supported. Export at a standard rate such as 24, 25, 29.97, 30, 50 or 60 fps.",
   unsupported_edit_list: "This video has a complex edit list. Export it again as a single, untrimmed clip.",
@@ -85,6 +85,8 @@ class ProbeReject extends Error {
 const reject = (reason: Mp4RejectReason, detail?: string) => new ProbeReject(reason, detail);
 
 const MAX_DEPTH = 12;
+/** The boxes a file may open with: ISO's `ftyp`, or the legacy QuickTime openings (`wide`, `mdat`, `moov`) that .mov files from older tools use. */
+const OPENING_BOXES: ReadonlySet<string> = new Set(["ftyp", "wide", "mdat", "moov"]);
 
 type MBox = { type: string; start: number; end: number }; // payload [start, end)
 
@@ -189,7 +191,7 @@ async function run(
     let boxSize = dv.getUint32(0);
     const type = fourcc(h, 4);
     let hdr = 8;
-    if (first && type !== "ftyp") throw reject("not_mp4", "no ftyp");
+    if (first && !OPENING_BOXES.has(type)) throw reject("not_mp4", "no ftyp");
     first = false;
     if (boxSize === 1) {
       if (remaining < 16) throw reject("box_size_invalid", `${type} largesize`);

@@ -2,7 +2,7 @@ import { createExecutionContext } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { EXTERNAL_API_RESPONSE_SCHEMAS, PHOTOGRAPHER_VISIBLE_STAGES, videoObjectKey, videoUploadCompleteResponseSchema, videoUploadReserveResponseSchema, type VideoUploadCompleteResponse } from "@quincy/shared";
-import { buildMp4, videoTrack, type Mp4Spec } from "../../../packages/shared/src/testing/mp4-builder";
+import { box, buildMp4, videoTrack, type Mp4Spec } from "../../../packages/shared/src/testing/mp4-builder";
 import { createAuth } from "../src/auth";
 import { app } from "../src/index";
 import type { Env } from "../src/env";
@@ -61,9 +61,9 @@ function stubS3(options: { abortStatus?: number; completeStatus?: number; onCrea
 
 type Reserved = { reservationId: string; videoId: string; version: number; key: string; assetId: string; bytes: number };
 /** Reserves a Version (a new Video unless `videoId` is given) and stores `file` at the reserved key, as the browser's parts would have. */
-async function reserveAndStore(who: Who, options: { file?: Uint8Array; videoId?: string; title?: string; clientProbe?: unknown; projectId?: string; store?: boolean; contentType?: string } = {}): Promise<Reserved> {
+async function reserveAndStore(who: Who, options: { file?: Uint8Array; videoId?: string; title?: string; clientProbe?: unknown; projectId?: string; store?: boolean; contentType?: string; filename?: string; declaredType?: string } = {}): Promise<Reserved> {
   const file = options.file ?? await GOOD_25();
-  const response = await reserve(who, { ...(options.videoId ? { videoId: options.videoId } : { title: options.title ?? "Walkthrough" }), filename: "cut.mp4", bytes: file.byteLength, contentType: "video/mp4", ...(options.clientProbe ? { clientProbe: options.clientProbe } : {}) }, S3_ENV, options.projectId);
+  const response = await reserve(who, { ...(options.videoId ? { videoId: options.videoId } : { title: options.title ?? "Walkthrough" }), filename: options.filename ?? "cut.mp4", bytes: file.byteLength, contentType: options.declaredType ?? "video/mp4", ...(options.clientProbe ? { clientProbe: options.clientProbe } : {}) }, S3_ENV, options.projectId);
   expect(response.status, await response.clone().text()).toBe(201);
   const body = videoUploadReserveResponseSchema.parse(await response.json());
   const row = (await database.DB.prepare("SELECT r2_key AS key, asset_id AS assetId FROM video_upload_reservations WHERE id = ?").bind(body.reservationId).first<{ key: string; assetId: string }>())!;
@@ -163,11 +163,20 @@ describe("POST /video-uploads (reserve)", () => {
     expect(await count("video_upload_reservations")).toBe(before + 1);
   });
 
+  it.each([["video/mp4", "Cut.MOV", "Cut.mp4"], ["video/quicktime", "cut.mov", "cut.mp4"], ["video/quicktime", "Reel.mp4", "Reel.mp4"], ["video/mp4", "keep.MP4", "keep.MP4"]])("reserves a %s declared %s as the canonical video/mp4 named %s (#813)", async (contentType, filename, stored) => {
+    stubS3();
+    const response = await reserve("member", { title: `QT ${filename}`, filename, bytes: 3_000_000, contentType });
+    expect(response.status, await response.clone().text()).toBe(201);
+    const body = videoUploadReserveResponseSchema.parse(await response.json());
+    expect(await reservation(body.reservationId)).toMatchObject({ original_filename: stored, content_type: "video/mp4" });
+    await database.DB.prepare(`UPDATE video_upload_reservations SET status = 'failed' WHERE id = ?`).bind(body.reservationId).run();
+  });
+
   it("refuses a bad body with 400, a wrong content type with 415 and an unknown Video with 404, leaving no row", async () => {
     stubS3(); const before = await count("video_upload_reservations"); const good = { title: "Cut", filename: "cut.mp4", bytes: 1000, contentType: "video/mp4" };
-    for (const bad of [{ ...good, title: undefined }, { ...good, videoId: crypto.randomUUID() }, { ...good, filename: "cut.mov" }, { ...good, bytes: 0 }, { ...good, bytes: 1.5 }, { ...good, title: "   " }, { ...good, extra: 1 }, { ...good, clientProbe: { blob: "x".repeat(9000) } }])
+    for (const bad of [{ ...good, title: undefined }, { ...good, videoId: crypto.randomUUID() }, { ...good, filename: "cut.mkv" }, { ...good, filename: "cut.mov.txt" }, { ...good, bytes: 0 }, { ...good, bytes: 1.5 }, { ...good, title: "   " }, { ...good, extra: 1 }, { ...good, clientProbe: { blob: "x".repeat(9000) } }])
       expect((await reserve("member", bad)).status, JSON.stringify(bad).slice(0, 80)).toBe(400);
-    for (const contentType of ["video/quicktime", "video/webm", "VIDEO/MP4", "application/octet-stream"]) expect((await reserve("member", { ...good, contentType })).status, contentType).toBe(415);
+    for (const contentType of ["video/webm", "VIDEO/MP4", "application/octet-stream", "video/x-matroska"]) expect((await reserve("member", { ...good, contentType })).status, contentType).toBe(415);
     expect((await reserve("member", { videoId: crypto.randomUUID(), filename: "cut.mp4", bytes: 1000, contentType: "video/mp4" })).status).toBe(404);
     expect(await count("video_upload_reservations")).toBe(before);
   });
@@ -364,6 +373,43 @@ describe("POST …/complete", () => {
     expect(again.status).toBe(200); expect(await again.json()).toEqual(body);
     expect(await count("assets WHERE version_group_id = ?", reserved.videoId)).toBe(1);
     expect(await count("audit_log WHERE action = 'video.version.upload' AND target_id = ?", reserved.assetId)).toBe(1);
+  });
+
+  it("completes QuickTime-container H.264 bytes uploaded as a .mov: stored and named as .mp4, bytes unchanged (#813)", async () => {
+    stubS3();
+    const file = await buildFile({ tracks: [videoTrack({ timescale: 25000, stts: [[300, 1000]] }), { handler: "soun", audioCodec: "sowt" }], ftyp: "qt  ", leading: [box("wide")] });
+    const reserved = await reserveAndStore("member", { title: "From a MOV", file, filename: "Interview.MOV", declaredType: "video/quicktime" });
+    const response = await complete("member", reserved.reservationId);
+    expect(response.status, await response.clone().text()).toBe(201);
+    const body = await completeBody(response);
+    expect(body.version).toMatchObject({ originalFilename: "Interview.mp4", codec: "avc1", fps: { num: 25, den: 1 }, hasAudio: true, bytes: file.byteLength, streamUrl: `/media/video/${reserved.assetId}` });
+    expect(body.warnings).toEqual([]);
+    expect(await database.DB.prepare("SELECT original_filename AS name, r2_key AS key FROM assets WHERE id = ?").bind(reserved.assetId).first()).toEqual({ name: "Interview.mp4", key: videoObjectKey(ids.project, reserved.videoId, reserved.assetId) });
+    expect(reserved.key).toMatch(/original\.mp4$/);
+    const stored = await database.MEDIA.get(reserved.key); expect(new Uint8Array(await stored!.arrayBuffer())).toEqual(file);
+    expect(stored!.httpMetadata?.contentType).toBe("video/mp4");
+  });
+
+  it("accepts a legacy QuickTime opening (no ftyp, mdat first) and warns not_fast_start (#813)", async () => {
+    stubS3();
+    const file = await buildFile({ tracks: [videoTrack({ timescale: 25000, stts: [[300, 1000]] })], ftyp: false, moovFirst: false });
+    const reserved = await reserveAndStore("member", { title: "Legacy QT", file, filename: "old.mov", declaredType: "video/quicktime" });
+    const response = await complete("member", reserved.reservationId);
+    expect(response.status, await response.clone().text()).toBe(201);
+    expect((await completeBody(response)).warnings).toEqual(["not_fast_start"]);
+  });
+
+  it.each<[string, string]>([["HEVC", "hevc"], ["ProRes", "unsupported_codec"]])("rejects a %s .mov on the server even when the client probe claims H.264 (#813)", async (label, reason) => {
+    stubS3();
+    const track = label === "HEVC" ? videoTrack({ timescale: 25000, stts: [[300, 1000]], codec: "hvc1" }) : videoTrack({ timescale: 25000, stts: [[300, 1000]], codec: "apcn", avcC: false });
+    const file = await buildFile({ tracks: [track], ftyp: "qt  " });
+    const forged = { fps: { num: 25, den: 1 }, frameCount: 300, width: 1920, height: 1080, durationMs: 12000, codec: "avc1" };
+    const reserved = await reserveAndStore("member", { title: `Forged ${label}`, file, filename: "forged.mov", declaredType: "video/quicktime", clientProbe: forged });
+    const response = await complete("member", reserved.reservationId);
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ code: "video_rejected", reason });
+    expect(await database.MEDIA.head(reserved.key)).toBeNull();
+    expect(await count("videos WHERE id = ?", reserved.videoId)).toBe(0);
   });
 
   it("answers the Video exactly as the list route does: one builder for both", async () => {

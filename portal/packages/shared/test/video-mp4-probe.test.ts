@@ -422,6 +422,77 @@ describe("probeMp4 sample descriptions and short boxes", () => {
   });
 });
 
+describe("probeMp4 QuickTime containers (#813)", () => {
+  const wide = () => box("wide");
+  const openings: Array<[string, Partial<Mp4Spec>]> = [
+    ["a `qt  ` ftyp brand", { ftyp: "qt  " }],
+    ["a leading wide then ftyp", { leading: [wide()] }],
+    ["a leading wide and no ftyp", { ftyp: false, leading: [wide()] }],
+    ["moov as the first box", { ftyp: false }],
+    ["mdat as the first box", { ftyp: false, moovFirst: false }],
+    ["wide then mdat first", { ftyp: false, leading: [wide()], moovFirst: false }],
+  ];
+
+  it.each(openings)("accepts H.264 opening with %s", async (_name, extra) => {
+    const p = await probeOf(one(videoTrack(), extra));
+    expect(p).toMatchObject({ codec: "avc1", frameCount: 300, width: 1920, height: 1080 });
+  });
+
+  it("an mdat-first file still reports not_fast_start; a moov-first one does not", async () => {
+    expect((await probeOf(one(videoTrack(), { ftyp: false, moovFirst: false }))).warnings).toEqual(["not_fast_start"]);
+    expect((await probeOf(one(videoTrack(), { ftyp: false }))).warnings).toEqual([]);
+  });
+
+  it("moov-last behind a qt ftyp is still not_fast_start", async () => {
+    const p = await probeOf(one(videoTrack(), { ftyp: "qt  ", moovFirst: false }));
+    expect(p.fastStart).toBe(false);
+    expect(p.warnings).toEqual(["not_fast_start"]);
+  });
+
+  it("avc3 is accepted in a QuickTime opening", async () => {
+    const p = await probeOf(one(videoTrack({ codec: "avc3", avcC: { profile: 0x4d, compat: 0x40, level: 0x28 } }), { ftyp: false, leading: [wide()] }));
+    expect(p.codecString).toBe("avc3.4D4028");
+  });
+
+  it.each(["lpcm", "sowt", "twos"])("%s PCM audio passes with no warning", async (audioCodec) => {
+    const p = await probeOf({ tracks: [videoTrack(), { handler: "soun", audioCodec }], ftyp: "qt  " });
+    expect(p.hasAudio).toBe(true);
+    expect(p.warnings).toEqual([]);
+  });
+
+  it("reads a tmcd start timecode when chunk offsets sit behind a leading wide and no ftyp", async () => {
+    const tmcd: TrackSpec = { handler: "tmcd", timescale: 30000, tmcd: { flags: 1, timescale: 30000, frameDuration: 1001, numberOfFrames: 30, startFrame: 107892 } };
+    const p = await probeOf({ tracks: [videoTrack({ tref: [2] }), tmcd], ftyp: false, leading: [wide()] });
+    expect(p.startTimecode).toEqual({ frames: 107892, dropFrame: true, nominalFps: 30 });
+  });
+
+  it.each<[string, Partial<TrackSpec>, Mp4RejectReason]>([
+    ["HEVC", { codec: "hvc1", avcC: false }, "hevc"],
+    ["ProRes", { codec: "apcn", avcC: false }, "unsupported_codec"],
+    ["avc1 without avcC", { avcC: false }, "unsupported_codec"],
+    ["variable frame rate", { stts: [[100, 1001], [100, 1002]] }, "variable_frame_rate"],
+    ["a skewed matrix", { matrix: SKEW }, "unsupported_transform"],
+    ["a complex edit list", { elst: [{ segmentDuration: 1, mediaTime: 0 }, { segmentDuration: 1, mediaTime: 0 }] }, "unsupported_edit_list"],
+  ])("still rejects %s with QuickTime openings", async (_name, track, reason) => {
+    for (const [, extra] of openings) expect(await reasonOf(buildMp4(one(videoTrack(track), extra))), JSON.stringify(Object.keys(extra))).toBe(reason);
+  });
+
+  it("still rejects fragmented files and a missing moov behind a QuickTime opening", async () => {
+    expect(await reasonOf(buildMp4(one(videoTrack(), { ftyp: false, mvex: true })))).toBe("fragmented");
+    expect(await reasonOf(sourceFrom([wide(), box("mdat", new Uint8Array(8))]))).toBe("moov_missing");
+  });
+
+  it("anything else opening the file is still not_mp4", async () => {
+    expect(await reasonOf(sourceFrom([box("free", new Uint8Array(8)), box("mdat", new Uint8Array(8))]))).toBe("not_mp4");
+    expect(await reasonOf(sourceFrom([box("skip", new Uint8Array(8)), goodMoovBox()]))).toBe("not_mp4");
+  });
+});
+
+const goodMoovBox = () => {
+  const body = moovBody(one(videoTrack()), 100, 100);
+  return concat(u32(8 + body.length), new TextEncoder().encode("moov"), body);
+};
+
 describe("mp4RejectMessage", () => {
   it("gives a plain instruction for every reason", () => {
     const reasons: Mp4RejectReason[] = [
