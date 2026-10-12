@@ -44,6 +44,9 @@ export function heroOf(dto: DeliveryPageDto): DeliveryItemDto | null {
   return dto.items.find(usable) ?? null;
 }
 
+/** The photos a slideshow may show: unlocked, with a page-sized derivative to show, in the order given. A paid extra the client has unlocked belongs; a locked one never does (it is only a watermarked preview). Never filter on `premium`. */
+export const slideshowPhotosOf = (items: readonly DeliveryItemDto[]): DeliveryItemDto[] => items.filter((item) => item.kind === "photo" && !item.locked && item.url !== null);
+
 /** What the hero prints besides the street: the eyebrow parts (suburb, postcode, delivered date; whichever exist), the agency, and the counts. Frames are the Gallery's photos (paid extras live on Premium); films are every film. */
 export function heroMetaOf(dto: DeliveryPageDto): { eyebrow: string[]; agency: string | null; frames: number; films: number } {
   const { suburb, postcode, agency } = dto.property;

@@ -4,7 +4,7 @@ import { ChevronLeftIcon, ChevronRightIcon, PauseIcon, PlayIcon, XIcon } from "l
 import { Button } from "../components/reui/button";
 import { Carousel, CarouselContent, CarouselItem, type CarouselApi } from "../components/reui/carousel";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "../components/reui/dialog";
-import { unlockOf, type DeliveryHrefs, type UnlockStates } from "./delivery-model";
+import { slideshowPhotosOf, unlockOf, type DeliveryHrefs, type UnlockStates } from "./delivery-model";
 import { useNeighbourPreload, usePrefersReducedMotion } from "./delivery-hooks";
 import { PhotoDownloads, ProcessingTile } from "./PhotoGrid";
 import { PremiumBadge, TOUCH, UnlockControl } from "./UnlockControl";
@@ -28,15 +28,18 @@ function Slide({ item, near }: { item: DeliveryItemDto; near: boolean }) {
  * is told where to go (`scrollTo`) and reports where a swipe landed (`select`). Controls: swipe, previous / next, ← →, Esc (the dialog's), a slideshow the person starts and pauses, and a live "Photo 7 of 42".
  * Under `prefers-reduced-motion` embla jumps instead of sliding, and the slideshow cuts. Focus returns to the tile that opened it. Loaded lazily (`DeliveryPage`), so embla ships with nothing else.
  */
-export function DeliveryLightbox({ title, items, startIndex, hrefs, unlock, onRequestUnlock, onClose, returnFocus }: {
+export function DeliveryLightbox({ title, items, startIndex, hrefs, unlock, onRequestUnlock, onClose, returnFocus, mode = "photo", onStartSlideshow }: {
   title: string; items: DeliveryItemDto[]; startIndex: number; hrefs: DeliveryHrefs | null; unlock: UnlockStates;
   onRequestUnlock: (handle: string) => void; onClose: () => void; returnFocus: () => HTMLElement | null;
+  /** `slideshow` (#837) is over the unlocked photos only and starts playing (a lone photo stays still); it carries no download or unlock controls. `photo` is the normal viewer, whose Start action hands over to the slideshow via `onStartSlideshow`. */
+  mode?: "photo" | "slideshow"; onStartSlideshow?: (handle: string) => void;
 }) {
+  const slideshow = mode === "slideshow";
   const count = items.length;
   const [api, setApi] = useState<CarouselApi>();
   const [initial] = useState(() => Math.min(Math.max(startIndex, 0), Math.max(count - 1, 0)));
   const [index, setIndex] = useState(initial);
-  const [playing, setPlaying] = useState(false);
+  const [playing, setPlaying] = useState(slideshow && count > 1);
   const reduced = usePrefersReducedMotion();
   // Embla re-initialises when its options change, so they are fixed per mount and per motion preference, never per photo. When the preference flips mid-view it re-initialises AT the photo on screen (`indexRef`), not the one that opened.
   const indexRef = useRef(initial);
@@ -45,6 +48,7 @@ export function DeliveryLightbox({ title, items, startIndex, hrefs, unlock, onRe
   const at = Math.min(index, Math.max(count - 1, 0));
   const item = items[at];
   indexRef.current = at;
+  const startable = useMemo(() => slideshowPhotosOf(items).length, [items]);
   const urls = useMemo(() => items.map((entry) => entry.url), [items]);
   useNeighbourPreload(urls, at);
 
@@ -93,14 +97,18 @@ export function DeliveryLightbox({ title, items, startIndex, hrefs, unlock, onRe
       className="inset-0 top-0 left-0 flex h-dvh max-h-none w-dvw max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none bg-background p-0 text-foreground ring-0 focus-visible:!outline-none motion-reduce:animate-none sm:max-w-none"
     >
       <DialogTitle className="sr-only">{`${title}: photos`}</DialogTitle>
-      <DialogDescription className="sr-only">Use the arrow keys to move between photos and Escape to close.</DialogDescription>
+      <DialogDescription className="sr-only">{slideshow ? "Photos advance on their own. Use the arrow keys to move between photos and Escape to exit." : "Use the arrow keys to move between photos and Escape to close."}</DialogDescription>
       <div className="flex items-center justify-between gap-[var(--space-3)] px-[var(--space-4)] py-[var(--space-3)]">
         <p data-testid="delivery-lightbox-counter" aria-live="polite" aria-atomic="true" className="m-0 [font:var(--type-label)]">{`Photo ${at + 1} of ${count}`}</p>
         <div className="flex items-center gap-[var(--space-2)]">
-          <Button type="button" variant="ghost" aria-pressed={playing} className={TOUCH} disabled={count < 2} onClick={() => { setPlaying((current) => !current); }}>
-            {playing ? <PauseIcon aria-hidden /> : <PlayIcon aria-hidden />}{playing ? "Pause slideshow" : "Start slideshow"}
-          </Button>
-          <DialogClose render={<Button type="button" variant="ghost" size="icon" aria-label="Close" className="max-[721px]:size-11" />}><XIcon aria-hidden /></DialogClose>
+          {slideshow
+            ? <Button type="button" variant="ghost" aria-pressed={playing} className={TOUCH} disabled={count < 2} onClick={() => { setPlaying((current) => !current); }}>
+              {playing ? <PauseIcon aria-hidden /> : <PlayIcon aria-hidden />}{playing ? "Pause slideshow" : "Start slideshow"}
+            </Button>
+            : <Button type="button" variant="ghost" className={TOUCH} disabled={!onStartSlideshow || startable === 0} onClick={() => { if (item) onStartSlideshow?.(item.handle); }}>
+              <PlayIcon aria-hidden />Start slideshow
+            </Button>}
+          <DialogClose render={<Button type="button" variant="ghost" size="icon" aria-label={slideshow ? "Exit slideshow" : "Close"} className="max-[721px]:size-11" />}><XIcon aria-hidden /></DialogClose>
         </div>
       </div>
       <div className="relative min-h-0 flex-1">
@@ -114,9 +122,9 @@ export function DeliveryLightbox({ title, items, startIndex, hrefs, unlock, onRe
       </div>
       <div className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-2)] px-[var(--space-4)] py-[var(--space-3)]">
         <span className="[font:var(--type-label)]">{item.label}</span>
-        {item.locked && <PremiumBadge overPhoto />}
-        {!item.locked && hrefs && <PhotoDownloads item={item} hrefs={hrefs} />}
-        {item.locked && <UnlockControl label={item.label} state={unlockOf(unlock, item.handle)} onRequest={() => { onRequestUnlock(item.handle); }} />}
+        {!slideshow && item.locked && <PremiumBadge overPhoto />}
+        {!slideshow && !item.locked && hrefs && <PhotoDownloads item={item} hrefs={hrefs} />}
+        {!slideshow && item.locked && <UnlockControl label={item.label} state={unlockOf(unlock, item.handle)} onRequest={() => { onRequestUnlock(item.handle); }} />}
       </div>
     </DialogContent>
   </Dialog>;

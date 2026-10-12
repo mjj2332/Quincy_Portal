@@ -51,7 +51,7 @@ describe("tabs", () => {
     expect(byTestId("delivery-panel-premium")).not.toBeNull();
     expect(allByTestId("delivery-tile").map((tile) => tile.dataset.handle)).toEqual([handle(2)]);
     expect(byTestId("delivery-premium-badge")).toBeNull();
-    expect(byTestId("delivery-panel-premium")!.querySelectorAll("a[download]")).toHaveLength(2);
+    expect(byTestId("delivery-panel-premium")!.querySelectorAll("a[download]")).toHaveLength(1);
   });
   it("keeps the chosen tab in memory while the page re-renders and falls back to the first tab when it disappears", async () => {
     mounted = await render(<Harness initial={page([photo(1), film(2)])} after={page([photo(1)])} />);
@@ -246,10 +246,32 @@ describe("photo grid", () => {
 });
 
 describe("downloads", () => {
-  it("offers Web-size (the media URL) and Full-res (the download URL) as same-origin download anchors on an unlocked photo", async () => {
+  it("gives each unlocked photo exactly one always-visible Download of the original, named for the photo, outside the open button", async () => {
+    await show(page([photo(1), photo(2)]));
+    for (const [n, tile] of allByTestId("delivery-tile").entries()) {
+      const links = [...tile.querySelectorAll<HTMLAnchorElement>("a")];
+      expect(links).toHaveLength(1);
+      expect(links[0]!.getAttribute("href")).toBe(hrefs.download(handle(n + 1)));
+      expect(links[0]!.hasAttribute("download")).toBe(true);
+      expect(links[0]!.getAttribute("aria-label")).toBe(`Download Photo 0${n + 1}`);
+      expect(links[0]!.className).toContain("max-[721px]:min-h-11");
+      expect(links[0]!.closest("button")).toBeNull();
+      expect(links[0]!.className).not.toMatch(/\bhidden\b|opacity-0|group-hover/);
+    }
+    expect(document.body.textContent).not.toMatch(/Web-size|Full-res/);
+  });
+  it("does not open the viewer when a tile's Download is activated", async () => {
     await show(page([photo(1)]));
-    const links = [...allByTestId("delivery-tile")[0]!.querySelectorAll<HTMLAnchorElement>("a")];
-    expect(links.map((a) => [a.textContent, a.getAttribute("href"), a.hasAttribute("download")])).toEqual([["Web-size", hrefs.media(handle(1))], ["Full-res", hrefs.download(handle(1))]].map(([text, href]) => [text, href, true]));
+    const link = byLabel("Download Photo 01") as HTMLAnchorElement;
+    link.addEventListener("click", (event) => { event.preventDefault(); });
+    await click(link); await flush();
+    expect(byTestId("delivery-lightbox")).toBeNull();
+  });
+  it("keeps the lightbox's Web-size and Full-res pair", async () => {
+    await show(page([photo(1)]));
+    await click(byLabel("Open Photo 01")); await until(() => byTestId("delivery-lightbox"));
+    const links = [...byTestId("delivery-lightbox")!.querySelectorAll<HTMLAnchorElement>("a")];
+    expect(links.map((a) => [a.textContent, a.getAttribute("href")])).toEqual([["Web-size", hrefs.media(handle(1))], ["Full-res", hrefs.download(handle(1))]]);
   });
   it("never links a download for a locked item, anywhere: grid, film, documents or the viewer", async () => {
     await show(page([locked(1), locked(2, { kind: "video", url: null, thumbUrl: null }), locked(3, { kind: "floorplan", url: null, thumbUrl: null }), locked(4, { kind: "copy", url: null, thumbUrl: null })]));
@@ -555,5 +577,221 @@ describe("download all", () => {
     await click(tab("Premium"));
     expect(byTestId("delivery-hero")!.contains(byTestId("slot"))).toBe(true);
     expect(allByTestId("slot")).toHaveLength(1);
+  });
+});
+
+const slideshowButton = () => byTestId("delivery-slideshow");
+const counter = () => byTestId("delivery-lightbox-counter")!.textContent;
+const tick = async (ms: number) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
+const playToggle = () => [...byTestId("delivery-lightbox")!.querySelectorAll<HTMLElement>("button")].find((b) => /slideshow/i.test(b.textContent ?? ""))!;
+
+describe("hero action order", () => {
+  it("puts Download all first, then Slideshow, then Share (the prototype's order)", async () => {
+    await show(page([photo(1)]), { downloadAllSlot: <span data-testid="slot">Download all</span>, shareUrl: "https://quincy.example/d/x" });
+    const order = [byTestId("slot")!, byTestId("delivery-slideshow")!, byTestId("delivery-share")!];
+    expect(order[0]!.compareDocumentPosition(order[1]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(order[1]!.compareDocumentPosition(order[2]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe("slideshow", () => {
+  it("is a hero button beside the hero's other actions, and is absent when the tab has no eligible photo", async () => {
+    await show(page([photo(1), film(2)]), { downloadAllSlot: <span data-testid="slot">Download all</span> });
+    expect(byTestId("delivery-hero")!.contains(slideshowButton())).toBe(true);
+    expect(slideshowButton()!.textContent).toBe("Slideshow");
+    await click(tab("Film"));
+    expect(slideshowButton()).toBeNull();
+    await mounted!.unmount();
+    await show(page([locked(1), film(2)]));
+    expect(slideshowButton()).toBeNull();
+    await click(tab("Premium"));
+    expect(slideshowButton()).toBeNull();
+    await mounted!.unmount();
+    await show(page([photo(1, { url: null, thumbUrl: null })]));
+    expect(slideshowButton()).toBeNull();
+  });
+  it("opens playing from the first photo, advances once per hold, pauses and resumes, and stops on the last", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    await show(page([photo(1), photo(2), photo(3)]));
+    await click(slideshowButton()); await tick(50);
+    expect(byTestId("delivery-lightbox")).not.toBeNull();
+    expect(counter()).toBe("Photo 1 of 3");
+    expect(playToggle().textContent).toBe("Pause slideshow");
+    await tick(SLIDE_MS); expect(counter()).toBe("Photo 2 of 3");
+    await click(playToggle()); expect(playToggle().textContent).toBe("Start slideshow");
+    await tick(SLIDE_MS * 3); expect(counter()).toBe("Photo 2 of 3");
+    await click(playToggle());
+    await tick(SLIDE_MS); expect(counter()).toBe("Photo 3 of 3");
+    await tick(SLIDE_MS); expect(playToggle().textContent).toBe("Start slideshow");
+  });
+  it("steps with previous, next and the arrow keys, and shows no download or unlock controls", async () => {
+    await show(page([photo(1), photo(2), photo(3)]));
+    await click(slideshowButton()); await until(() => byTestId("delivery-lightbox"));
+    await click(byLabel("Next photo")); expect(counter()).toBe("Photo 2 of 3");
+    await press("ArrowRight", byTestId("delivery-lightbox")!); expect(counter()).toBe("Photo 3 of 3");
+    await click(byLabel("Previous photo")); expect(counter()).toBe("Photo 2 of 3");
+    expect(byTestId("delivery-lightbox")!.querySelectorAll("a")).toHaveLength(0);
+  });
+  it("exits with Exit and with Escape, returns focus to the hero button and stops its timer", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    await show(page([photo(1), photo(2)]));
+    slideshowButton()!.focus();
+    await click(slideshowButton()); await tick(50);
+    await click(byLabel("Exit slideshow")); await tick(500);
+    expect(byTestId("delivery-lightbox")).toBeNull();
+    expect(document.activeElement).toBe(slideshowButton());
+    expect(vi.getTimerCount()).toBe(0);
+    await click(slideshowButton()); await tick(50);
+    await press("Escape", byTestId("delivery-lightbox")!); await tick(500);
+    expect(byTestId("delivery-lightbox")).toBeNull();
+    expect(document.activeElement).toBe(slideshowButton());
+  });
+  it("covers the active tab only, in order, and leaves locked photos out while keeping unlocked Premium ones", async () => {
+    await show(page([photo(1), photo(2, { premium: true }), locked(3), photo(4, { premium: true }), photo(5, { url: null, thumbUrl: null }), photo(6)]));
+    await click(slideshowButton()); await until(() => byTestId("delivery-lightbox"));
+    expect(counter()).toBe("Photo 1 of 2");
+    expect(byTestId("delivery-lightbox")!.querySelectorAll('[aria-roledescription="slide"]')).toHaveLength(2);
+    await click(byLabel("Exit slideshow")); await flush(8);
+    await click(tab("Premium"));
+    await click(slideshowButton()); await until(() => byTestId("delivery-lightbox"));
+    expect(counter()).toBe("Photo 1 of 2");
+    const names = [...byTestId("delivery-lightbox")!.querySelectorAll<HTMLImageElement>("img")].map((img) => img.alt);
+    expect(names).not.toContain("Photo 03");
+  });
+  it("opens a single eligible photo static, with playback disabled", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    await show(page([photo(1), locked(2, { premium: true })]));
+    await click(slideshowButton()); await tick(50);
+    expect(counter()).toBe("Photo 1 of 1");
+    expect((playToggle() as HTMLButtonElement).disabled).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("is entered from the normal viewer's Start action over the eligible photos only, at the photo on screen", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    await show(page([photo(1, { premium: true }), locked(2), photo(3, { premium: true }), photo(4, { premium: true })]));
+    await click(tab("Premium")); await click(byLabel("Open Photo 04")); await tick(50);
+    expect(counter()).toBe("Photo 4 of 4"); // the normal viewer still holds the locked photo
+    await click(playToggle()); await tick(50);
+    expect(counter()).toBe("Photo 3 of 3"); // Photo 04 of the three eligible
+    expect(byTestId("delivery-lightbox")!.querySelectorAll('[aria-roledescription="slide"]')).toHaveLength(3);
+    expect(byLabel("Exit slideshow")).not.toBeNull();
+  });
+  it("starts from the first eligible photo when the normal viewer is on a locked one", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    await show(page([photo(1, { premium: true }), locked(2)]));
+    await click(tab("Premium")); await click(byLabel("Open Photo 02")); await tick(50);
+    await click(playToggle()); await tick(50);
+    expect(counter()).toBe("Photo 1 of 1");
+  });
+  it("re-applies eligibility when the page refetches: a re-locked photo drops out, and an emptied slideshow closes", async () => {
+    mounted = await render(<Harness initial={page([photo(1), photo(2)])} after={page([photo(1), locked(2)])} />);
+    await click(slideshowButton()); await until(() => byTestId("delivery-lightbox"));
+    expect(counter()).toBe("Photo 1 of 2");
+    await click(byTestId("swap")); await flush();
+    expect(counter()).toBe("Photo 1 of 1");
+    await mounted.unmount();
+    mounted = await render(<Harness initial={page([photo(1)])} after={page([locked(1)])} />);
+    await click(slideshowButton()); await until(() => byTestId("delivery-lightbox"));
+    await click(byTestId("swap")); await flush(8);
+    expect(byTestId("delivery-lightbox")).toBeNull();
+  });
+  it("labels every control and shows Slideshow in Preview", async () => {
+    await show(page([photo(1), photo(2)]), { hrefs: null });
+    expect(slideshowButton()).not.toBeNull();
+    await click(slideshowButton()); await until(() => byTestId("delivery-lightbox"));
+    for (const control of byTestId("delivery-lightbox")!.querySelectorAll<HTMLElement>("button")) expect((control.getAttribute("aria-label") ?? control.textContent ?? "").trim(), control.outerHTML).not.toBe("");
+  });
+});
+
+describe("share", () => {
+  const URL_ = "https://quincy.example/d/12-example-st-23456b";
+  const setNav = (key: "share" | "clipboard", value: unknown) => { Object.defineProperty(navigator, key, { value, configurable: true }); };
+  const shareButton = () => byTestId("delivery-share");
+  const status = () => byTestId("delivery-share-status")!.textContent;
+  afterEach(() => { Reflect.deleteProperty(navigator, "share"); Reflect.deleteProperty(navigator, "clipboard"); });
+  it("is a hero button, and Preview (no share address) has none", async () => {
+    await show(page([photo(1)]), { shareUrl: URL_ });
+    expect(byTestId("delivery-hero")!.contains(shareButton())).toBe(true);
+    expect(shareButton()!.textContent).toContain("Share");
+    await mounted!.unmount();
+    await show(page([photo(1)]));
+    expect(shareButton()).toBeNull();
+  });
+  it("calls the native share sheet with the page address from the click, and copies nothing", async () => {
+    const share = vi.fn(async () => undefined); const writeText = vi.fn(async () => undefined);
+    setNav("share", share); setNav("clipboard", { writeText });
+    await show(page([photo(1)]), { shareUrl: URL_ });
+    await click(shareButton());
+    expect(share).toHaveBeenCalledWith({ title: "12 Example St", url: URL_ });
+    expect(writeText).not.toHaveBeenCalled();
+  });
+  it("copies the address and says so where there is no native share", async () => {
+    const writeText = vi.fn(async () => undefined); setNav("clipboard", { writeText });
+    await show(page([photo(1)]), { shareUrl: URL_ });
+    await click(shareButton()); await flush();
+    expect(writeText).toHaveBeenCalledWith(URL_);
+    expect(status()).toBe("Link copied.");
+    expect(byTestId("delivery-share-status")!.getAttribute("role")).toBe("status");
+  });
+  it("treats cancelling the share sheet as nothing: no copy and no message", async () => {
+    const writeText = vi.fn(async () => undefined);
+    setNav("share", vi.fn(async () => { throw new DOMException("cancelled", "AbortError"); })); setNav("clipboard", { writeText });
+    await show(page([photo(1)]), { shareUrl: URL_ });
+    await click(shareButton()); await flush();
+    expect(writeText).not.toHaveBeenCalled();
+    expect(status()).toBe("");
+  });
+  it("offers an explicit Copy link when the native share fails, and copies on that press", async () => {
+    const writeText = vi.fn(async () => undefined);
+    setNav("share", vi.fn(async () => { throw new DOMException("no", "NotAllowedError"); })); setNav("clipboard", { writeText });
+    await show(page([photo(1)]), { shareUrl: URL_ });
+    await click(shareButton()); await flush();
+    expect(writeText).not.toHaveBeenCalled();
+    const retry = byTestId("delivery-share-copy")!;
+    expect(retry.textContent).toBe("Copy link");
+    await click(retry); await flush();
+    expect(writeText).toHaveBeenCalledWith(URL_);
+    expect(status()).toBe("Link copied.");
+  });
+  it("returns focus to Share when the Copy link button unmounts after a copy", async () => {
+    setNav("share", vi.fn(async () => { throw new DOMException("no", "NotAllowedError"); })); setNav("clipboard", { writeText: vi.fn(async () => undefined) });
+    await show(page([photo(1)]), { shareUrl: URL_ });
+    await click(shareButton()); await flush();
+    const retry = byTestId("delivery-share-copy")!; retry.focus();
+    await click(retry); await flush();
+    expect(byTestId("delivery-share-copy")).toBeNull();
+    expect(document.activeElement).toBe(shareButton());
+  });
+  it("clears the Link copied status after a few seconds, inside a live region", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    setNav("clipboard", { writeText: vi.fn(async () => undefined) });
+    await show(page([photo(1)]), { shareUrl: URL_ });
+    await click(shareButton()); await tick(10);
+    expect(status()).toBe("Link copied.");
+    await tick(1500); expect(status()).toBe("Link copied.");
+    await tick(3000); expect(status()).toBe("");
+    expect(byTestId("delivery-share-status")!.getAttribute("role")).toBe("status");
+  });
+  it("shows an inline error, never a success, when the clipboard rejects or is absent", async () => {
+    setNav("clipboard", { writeText: vi.fn(async () => { throw new Error("denied"); }) });
+    await show(page([photo(1)]), { shareUrl: URL_ });
+    await click(shareButton()); await flush();
+    expect(status()).toMatch(/couldn't copy/i);
+    await mounted!.unmount();
+    setNav("clipboard", undefined);
+    await show(page([photo(1)]), { shareUrl: URL_ });
+    await click(shareButton()); await flush();
+    expect(status()).toMatch(/couldn't copy/i);
+  });
+  it("ignores a second press while one is pending, and a completion after unmount", async () => {
+    let finish: () => void = () => undefined;
+    const share = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; })); setNav("share", share);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await show(page([photo(1)]), { shareUrl: URL_ });
+    await click(shareButton()); await click(shareButton());
+    expect(share).toHaveBeenCalledTimes(1);
+    await mounted!.unmount(); mounted = null;
+    await act(async () => { finish(); await Promise.resolve(); });
+    expect(errors).not.toHaveBeenCalled(); errors.mockRestore();
   });
 });

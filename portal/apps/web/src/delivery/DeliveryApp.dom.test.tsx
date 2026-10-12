@@ -109,12 +109,23 @@ describe("fetch states", () => {
   });
 });
 
+describe("share", () => {
+  it("shares the page's own absolute address, on the current origin, with no query or hash", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    await open();
+    await click(byTestId("delivery-share")); await flush();
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/d/${SLUG}`);
+    Reflect.deleteProperty(navigator, "clipboard");
+  });
+});
+
 describe("downloads", () => {
-  it("links Web-size to the media URL and Full-res to the download URL of an unlocked photo", async () => {
+  it("links one Download, to the original, on an unlocked photo", async () => {
     await open();
     const tile = document.querySelector(`[data-handle="${handle(1)}"]`)!;
     const links = [...tile.querySelectorAll<HTMLAnchorElement>("a")];
-    expect(links.map((a) => a.getAttribute("href"))).toEqual([mediaUrl(1), downloadUrl(1)]);
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([downloadUrl(1)]);
     expect(links.every((a) => a.hasAttribute("download"))).toBe(true);
   });
   it("never links a download for the locked item, and keeps Download all in the hero, not the Premium panel", async () => {
@@ -172,7 +183,7 @@ describe("request unlock", () => {
     expect(tabNames()).toContain("Premium");
     expect(byLabel("Request unlock: Photo 02")).toBeNull();
     const tile = document.querySelector(`[data-handle="${handle(2)}"]`)!;
-    expect([...tile.querySelectorAll("a")].map((a) => a.getAttribute("href"))).toEqual([mediaUrl(2), downloadUrl(2)]);
+    expect([...tile.querySelectorAll("a")].map((a) => a.getAttribute("href"))).toEqual([downloadUrl(2)]);
     expect(byTestId("delivery-page")).not.toBeNull();
   });
   it("counts a 429 down from Retry-After and lets the person try again at zero", async () => {

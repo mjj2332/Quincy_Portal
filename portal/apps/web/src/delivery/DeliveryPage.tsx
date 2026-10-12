@@ -1,13 +1,14 @@
-import { Component, lazy, Suspense, useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { RENDITION_SPECS, DELIVERY_RENDITION_SPECS, type DeliveryItemDto, type DeliveryPageDto } from "@quincy/shared";
-import { LockIcon } from "lucide-react";
+import { LockIcon, PlayIcon } from "lucide-react";
 import { EmptyState } from "../components/quincy/EmptyState";
 import { Eyebrow } from "../components/quincy/Eyebrow";
 import { Button } from "../components/reui/button";
 import { Frame, FramePanel } from "../components/reui/frame";
 import { Separator } from "../components/reui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/reui/tabs";
-import { heroMetaOf, heroOf, tabsOf, type DeliveryHrefs, type DeliveryTab, type DeliveryTabId, type UnlockStates } from "./delivery-model";
+import { heroMetaOf, heroOf, slideshowPhotosOf, tabsOf, type DeliveryHrefs, type DeliveryTab, type DeliveryTabId, type UnlockStates } from "./delivery-model";
+import { DeliveryShareButton } from "./DeliveryShareButton";
 import { DocRows } from "./DocRows";
 import { FilmList } from "./FilmList";
 import { PhotoGrid, ProcessingTile, type OpenViewer } from "./PhotoGrid";
@@ -39,9 +40,11 @@ export type DeliveryPageProps = {
   unlockState: UnlockStates;
   /** The hero's action (Download all). Nothing is rendered or requested without it. */
   downloadAllSlot?: ReactNode;
+  /** The page's own public address, for the hero's Share (#837). Absent in Preview, which is not published and has nothing to share. */
+  shareUrl?: string;
 };
 
-type Viewer = { items: DeliveryItemDto[]; index: number; opener: HTMLElement };
+type Viewer = { items: DeliveryItemDto[]; index: number; opener: HTMLElement; mode: "photo" | "slideshow" };
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -142,16 +145,34 @@ export function DeliveryPage(props: DeliveryPageProps) {
   const active = tabs.some((tab) => tab.id === chosen) ? chosen : (tabs[0]?.id ?? null);
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const opener = useRef<HTMLElement | null>(null);
-  const open = useCallback<OpenViewer>((items, index, element) => { opener.current = element; setViewer({ items, index, opener: element }); }, []);
+  const open = useCallback<OpenViewer>((items, index, element) => { opener.current = element; setViewer({ items, index, opener: element, mode: "photo" }); }, []);
+  /** The slideshow runs over the active tab's unlocked photos (never a locked one, though an unlocked Premium photo belongs). */
+  const activeItems = useMemo(() => tabs.find((entry) => entry.id === active)?.items ?? [], [tabs, active]);
+  const slideshowItems = useMemo(() => slideshowPhotosOf(activeItems), [activeItems]);
+  const startSlideshow = useCallback((items: DeliveryItemDto[], index: number, element: HTMLElement) => {
+    const photos = slideshowPhotosOf(items);
+    if (photos.length === 0) return;
+    opener.current = element;
+    setViewer({ items: photos, index, opener: element, mode: "slideshow" });
+  }, []);
   // The open viewer shows the CURRENT items for its handles, so a refetch (an unlock) updates it in place.
   const viewerItems = useMemo(() => {
     if (!viewer) return null;
     const current = new Map(dto.items.map((item) => [item.handle, item]));
-    return viewer.items.flatMap((item) => current.get(item.handle) ?? []);
+    const now = viewer.items.flatMap((item) => current.get(item.handle) ?? []);
+    return viewer.mode === "slideshow" ? slideshowPhotosOf(now) : now;
   }, [viewer, dto]);
+  // A refetch that leaves nothing to show closes the viewer through the normal path, so focus returns to where it opened.
+  const emptied = viewer !== null && viewerItems !== null && viewerItems.length === 0;
+  useEffect(() => { if (emptied) setViewer(null); }, [emptied]);
   const { street } = dto.property;
+  const heroHasAction = slideshowItems.length > 0 || (props.downloadAllSlot !== undefined && props.downloadAllSlot !== null) || props.shareUrl !== undefined;
   return <article aria-label={`Delivery: ${street}`} data-testid="delivery-page" className="@container w-full bg-background text-foreground">
-    <Hero key={hero?.url ?? ""} dto={dto} hero={hero} action={props.downloadAllSlot} />
+    <Hero key={hero?.url ?? ""} dto={dto} hero={hero} action={heroHasAction ? <>
+      {props.downloadAllSlot}
+      {slideshowItems.length > 0 && <Button type="button" variant="outline" size="lg" data-testid="delivery-slideshow" className={TOUCH} onClick={(event) => { startSlideshow(slideshowItems, 0, event.currentTarget); }}><PlayIcon aria-hidden />Slideshow</Button>}
+      {props.shareUrl !== undefined && <DeliveryShareButton url={props.shareUrl} title={street} />}
+    </> : undefined} />
     {active === null
       ? <div className="mx-auto w-full max-w-[var(--container-page)] px-[var(--space-7)] py-[var(--space-7)] @max-[721px]:px-[var(--space-4)]"><EmptyState data-testid="delivery-empty" title="Nothing here yet.">The studio hasn't added anything to this page.</EmptyState></div>
       : <Tabs value={active} onValueChange={(value) => { setChosen(value as DeliveryTabId); }}>
@@ -174,7 +195,8 @@ export function DeliveryPage(props: DeliveryPageProps) {
     {viewer && viewerItems && viewerItems.length > 0 && <ViewerBoundary onClose={() => { setViewer(null); }}>
       <Suspense fallback={null}>
         <DeliveryLightbox
-          title={street} items={viewerItems} startIndex={viewer.index} hrefs={props.hrefs} unlock={props.unlockState} onRequestUnlock={props.onRequestUnlock}
+          key={viewer.mode} mode={viewer.mode} title={street} items={viewerItems} startIndex={viewer.index}
+          onStartSlideshow={(handle) => { const at = slideshowPhotosOf(viewerItems).findIndex((item) => item.handle === handle); startSlideshow(viewerItems, Math.max(at, 0), opener.current ?? viewer.opener); }} hrefs={props.hrefs} unlock={props.unlockState} onRequestUnlock={props.onRequestUnlock}
           returnFocus={() => opener.current} onClose={() => { setViewer(null); }} />
       </Suspense>
     </ViewerBoundary>}
