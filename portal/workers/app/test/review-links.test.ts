@@ -168,7 +168,8 @@ describe("POST create", () => {
     const token = parsed.hash.slice(3); expect(parsed.hash.startsWith("#t=")).toBe(true); expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const stored = (await row(link.id))!;
     expect(stored.token_hash).toBe(await hashToken(token));
-    expect(JSON.stringify(stored)).not.toContain(token);
+    expect(stored.token_secret).toBe(token);
+    expect(link.url).toBe(url);
     expect(stored).toMatchObject({ kind: "video_review", project_id: ids.project, label: "Smith family", created_by: ids.admin, token_generation: 1, publish_version: null, revoked_at: null, revoked_by: null, passcode_hash: null, allow_comments: 1, allow_approve: 1, allow_download: 1 });
     expect(stored.updated_at).toBe(stored.created_at);
     expect(link).toMatchObject({ label: "Smith family", status: "active", hasPasscode: false, allow: { comments: true, approve: true, download: true }, createdBy: { id: ids.admin } });
@@ -236,6 +237,14 @@ describe("POST create", () => {
     expect(rowA).toMatchObject({ allow_comments: 1, allow_approve: 0, allow_download: 0 });
   });
 
+  it("serves the same link again on a later GET, with the same URL the create returned", async () => {
+    const { link, url } = await createOk({ videoIds: [v1.videoId] });
+    expect(link.url).toBe(url);
+    expect((await linkOf(link.id)).url).toBe(url);
+    const one = await request(`${base()}/${link.id}`, "admin", "PATCH", { label: "x" });
+    expect(reviewLinkResponseSchema.parse(await one.json()).link.url).toBe(url);
+  });
+
   it("writes one review_link.create audit row with ids and no secret", async () => {
     const { link, token } = await createOk({ videoIds: [v1.videoId, v2.videoId], passcode: "secret-pass" });
     const rows = await audits();
@@ -244,6 +253,44 @@ describe("POST create", () => {
     const meta = JSON.parse(rows[0]!.meta_json!);
     expect(meta).toMatchObject({ projectId: ids.project, linkId: link.id, videoIds: [v1.videoId, v2.videoId], hasPasscode: true });
     expect(rows[0]!.meta_json).not.toContain(token); expect(rows[0]!.meta_json).not.toContain(await hashToken(token)); expect(rows[0]!.meta_json).not.toContain("secret-pass");
+  });
+});
+
+describe("link URL on read (#815)", () => {
+  it("rebuilds the URL from the stored secret for an active link and keeps it once expired", async () => {
+    const { link, url } = await createOk({ videoIds: [v1.videoId] });
+    expect((await linkOf(link.id)).url).toBe(url);
+    await database.DB.prepare("UPDATE client_links SET expires_at = ? WHERE id = ?").bind(Date.now() - 1000, link.id).run();
+    const expired = await linkOf(link.id);
+    expect(expired.status).toBe("expired"); expect(expired.url).toBe(url);
+  });
+
+  it("answers url null for a legacy link with no stored secret", async () => {
+    const { link } = await createOk({ videoIds: [v1.videoId] });
+    await database.DB.prepare("UPDATE client_links SET token_secret = NULL WHERE id = ?").bind(link.id).run();
+    expect((await linkOf(link.id)).url).toBeNull();
+  });
+
+  it("answers url null for a revoked link even if a secret were still stored", async () => {
+    const { link } = await createOk({ videoIds: [v1.videoId] });
+    await database.DB.prepare("UPDATE client_links SET revoked_at = ?, revoked_by = ? WHERE id = ?").bind(Date.now(), ids.admin, link.id).run();
+    expect((await linkOf(link.id)).url).toBeNull();
+  });
+
+  it("sends Cache-Control private, no-store on every review-link route", async () => {
+    const { link } = await createOk({ videoIds: [v1.videoId] });
+    const noStore = (response: Response) => expect(response.headers.get("cache-control")).toBe("private, no-store");
+    noStore(await request(base(), "admin"));
+    noStore(await request(`${base()}/${link.id}`, "admin", "PATCH", { label: "x" }));
+    noStore(await request(`${base()}/${link.id}/videos`, "admin", "POST", { videoId: v2.videoId, assetIds: [v2.assetId] }));
+    noStore(await request(`${base()}/${link.id}/videos/${v2.videoId}/grants`, "admin", "PUT", { assetIds: [v2.assetId, v2b.assetId] }));
+    noStore(await request(`${base()}/${link.id}/videos/${v2.videoId}`, "admin", "DELETE"));
+    noStore(await request(`${base()}/${link.id}/replace`, "admin", "POST", {}));
+    noStore(await request(`${base()}/${link.id}/revoke`, "admin", "POST", {}));
+    noStore(await request(base(), "admin", "POST", { videoIds: [] }));
+    noStore(await request(base(), "photographer"));
+    noStore(await request(`${base()}/${crypto.randomUUID()}`, "admin", "PATCH", { label: "x" }));
+    noStore(await request(`${base("not-a-uuid")}`, "admin"));
   });
 });
 
@@ -260,7 +307,9 @@ describe("GET list", () => {
     expect(links.map((link) => link.id)).toEqual([b.link.id, a.link.id]);
     expect(links.map((link) => link.status)).toEqual(["active", "expired"]);
     expect(text).not.toContain(deliveryId);
-    for (const secret of [a.token, b.token, await hashToken(a.token), await hashToken(b.token), (await row(a.link.id))!.passcode_hash, "token_hash", "passcode_hash", "tokenHash"]) expect(text, String(secret)).not.toContain(secret);
+    // The URL may carry the token. Hashes, the passcode hash and the stored-secret key name never appear.
+    for (const secret of [await hashToken(a.token), await hashToken(b.token), (await row(a.link.id))!.passcode_hash, "token_hash", "passcode_hash", "tokenHash", "token_secret", "tokenSecret"]) expect(text, String(secret)).not.toContain(secret);
+    expect(links.map((link) => link.url)).toEqual([b.url, a.url]);
     expect(links[1]!.hasPasscode).toBe(true);
     expect(links[0]!.activity).toEqual({ openSessions: 0, lastOpenedAt: null, verifiedGuests: [] });
     const revoked = await request(`${base()}/${b.link.id}/revoke`, "admin", "POST", {}); expect(revoked.status).toBe(200);
@@ -427,6 +476,8 @@ describe("revoke", () => {
     const stored = (await row(link.id))!;
     expect(stored).toMatchObject({ revoked_by: ids.member, token_generation: 2 }); expect(stored.revoked_at).not.toBeNull(); expect(stored.updated_at).toBeGreaterThanOrEqual(stored.revoked_at);
     expect(await sessionCount(link.id)).toBe(0);
+    expect(stored.token_secret).toBeNull();
+    expect((await linkOf(link.id)).url).toBeNull();
     const second = await request(`${base()}/${link.id}/revoke`, "admin", "POST", {});
     expect(second.status).toBe(200);
     expect(await row(link.id)).toMatchObject({ revoked_by: ids.member, revoked_at: stored.revoked_at, token_generation: 2 });
@@ -463,15 +514,18 @@ describe("replace", () => {
     const after = (await row(link.id))!;
     expect(after.token_hash).toBe(await hashToken(newToken)); expect(after.token_hash).not.toBe(before.token_hash);
     expect(await database.DB.prepare("SELECT 1 FROM client_links WHERE token_hash = ?").bind(before.token_hash).first()).toBeNull();
-    expect(JSON.stringify(after)).not.toContain(newToken);
+    expect(after.token_secret).toBe(newToken); expect(before.token_secret).toBe(token);
+    expect(dto.url).toBe(url);
+    expect((await linkOf(link.id)).url).toBe(url);
     expect(after).toMatchObject({ token_generation: 2, passcode_hash: before.passcode_hash, created_by: ids.admin, revoked_at: null, label: before.label });
     expect(after.updated_at).toBeGreaterThanOrEqual(before.updated_at);
     expect(await sessionCount(link.id)).toBe(0);
     expect(dto.status).toBe("active");
     const rows = await audits("review_link.replace");
     expect(rows).toHaveLength(1); expect(rows[0]!.meta_json).not.toContain(newToken); expect(rows[0]!.meta_json).not.toContain(after.token_hash);
-    // The list never shows the new token either.
-    expect(await (await request(base(), "admin")).text()).not.toContain(newToken);
+    // The old URL appears nowhere: not in the list, not in any row.
+    expect(await (await request(base(), "admin")).text()).not.toContain(token);
+    expect(JSON.stringify((await database.DB.prepare("SELECT * FROM client_links").all()).results)).not.toContain(token);
   });
 
   it("is refused on a revoked link (409 link_revoked) and an expired one (409 link_expired)", async () => {
@@ -481,6 +535,20 @@ describe("replace", () => {
     const b = await request(`${base()}/${expired.link.id}/replace`, "admin", "POST", {}); expect(b.status).toBe(409); expect(await json(b)).toMatchObject({ code: "link_expired" });
     expect(await audits("review_link.replace")).toEqual([]);
     expect((await row(expired.link.id))!.token_generation).toBe(1);
+    expect((await row(expired.link.id))!.token_secret).toBe(expired.token);
+    expect((await row(revoked.link.id))!.token_secret).toBeNull();
+  });
+
+  it("changes nothing when the guard refuses (archived Project): token, secret and generation stay", async () => {
+    const { link } = await createOk({ videoIds: [v1.videoId] });
+    const before = (await row(link.id))!;
+    await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), ids.project).run();
+    try {
+      const response = await request(`${base()}/${link.id}/replace`, "admin", "POST", {});
+      expect(response.status).toBe(409);
+    } finally { await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run(); }
+    expect(await row(link.id)).toEqual(before);
+    expect(await audits("review_link.replace")).toEqual([]);
   });
 });
 
@@ -506,7 +574,12 @@ describe("cross-column invariants (0069 leaves them to route SQL)", () => {
     const { link, token } = await createOk({ videoIds: [v1.videoId], passcode: "secret-pass" });
     const replaced = await request(`${base()}/${link.id}/replace`, "admin", "POST", {}); const { url } = reviewLinkRevealResponseSchema.parse(await replaced.json());
     const tokens = [token, new URL(url).hash.slice(3)];
-    const dump = JSON.stringify((await database.DB.prepare("SELECT * FROM audit_log").all()).results) + await (await request(base(), "admin")).text();
-    for (const secret of [...tokens, ...await Promise.all(tokens.map(hashToken)), "secret-pass"]) expect(dump).not.toContain(secret);
+    const hashes = await Promise.all(tokens.map(hashToken));
+    const audit = JSON.stringify((await database.DB.prepare("SELECT * FROM audit_log").all()).results);
+    for (const secret of [...tokens, ...hashes, "secret-pass"]) expect(audit).not.toContain(secret);
+    // The list may carry the current URL (and so the current token), never a hash, the passcode, the old token or a secret key name.
+    const listed = await (await request(base(), "admin")).text();
+    for (const secret of [...hashes, "secret-pass", tokens[0]!, "token_secret", "tokenSecret", "token_hash"]) expect(listed).not.toContain(secret);
+    expect(listed).toContain(tokens[1]!);
   });
 });

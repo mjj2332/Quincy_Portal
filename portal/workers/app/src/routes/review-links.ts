@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import {
-  REVIEW_LINK_DEFAULT_EXPIRY_MS, REVIEW_LINK_MAX_EXPIRY_MS, REVIEW_LINK_MIN_EXPIRY_MS, roleHasCapability,
+  REVIEW_LINK_DEFAULT_EXPIRY_MS, REVIEW_LINK_MAX_EXPIRY_MS, REVIEW_LINK_MIN_EXPIRY_MS, roleHasCapability, type ReviewLinkDto,
   reviewLinkAddVideoInputSchema, reviewLinkCreateInputSchema, reviewLinkDtoSchema, reviewLinkGrantsInputSchema, reviewLinkListResponseSchema, reviewLinkPatchInputSchema, reviewLinkResponseSchema, reviewLinkRevealResponseSchema,
 } from "@quincy/shared";
 import type { AppEnv } from "../env";
@@ -26,8 +26,10 @@ const uuid = z.string().uuid();
  * check alone (`null` part), so a security cut never depends on the `links` part being on, and it is allowed on an archived Project. No `.use(...)`:
  * router-wide middleware leaks across sibling mounts (docs/lessons.md).
  *
- * The token appears in the create and replace responses only (`Cache-Control: no-store`, in the URL fragment, never a query string), the database
- * keeps its SHA-256, and no audit row, log line or DTO carries the token, its hash or the passcode.
+ * The link's address (#815) is `url` on every DTO while the link is not revoked, so staff can copy it again: it carries the secret in the fragment, never a
+ * query string, and every handler sends `Cache-Control: private, no-store` first, per handler because router-wide middleware leaks across sibling mounts.
+ * The database keeps the secret in plain text beside its SHA-256 (owner decision, ADR 0021), verification uses the hash only, and no audit row, log line
+ * or DTO field other than `url` carries the secret, its hash or the passcode.
  */
 export const reviewLinksRoutes = new Hono<AppEnv>();
 
@@ -60,13 +62,14 @@ function boundedExpiry(value: string, now: number): number | null {
   return Number.isFinite(ms) && ms >= now + REVIEW_LINK_MIN_EXPIRY_MS && ms <= now + REVIEW_LINK_MAX_EXPIRY_MS ? ms : null;
 }
 const unique = <T,>(values: T[]): T[] => [...new Set(values)];
-const linkUrl = (c: Ctx, linkId: string, token: string) => `${c.env.APP_ORIGIN}/d/review?link=${linkId}#t=${token}`;
 const noStore = (c: Ctx) => c.header("Cache-Control", "private, no-store");
 
 async function oneLink(c: Ctx, projectId: string, linkId: string, now: number) {
-  const [link] = await loadReviewLinkDtos(c.env.DB, projectId, now, linkId);
+  const [link] = await loadReviewLinkDtos(c.env.DB, projectId, now, c.env.APP_ORIGIN, linkId);
   return reviewLinkDtoSchema.parse(link);
 }
+/** The create and replace body: the link and, from the same DTO, its address. A link just written always has one. */
+function revealOf(link: ReviewLinkDto) { return reviewLinkRevealResponseSchema.parse({ link, url: link.url }); }
 /** After a refused guard: why, from a fresh read. Only reached on a race (the route pre-checked), so a generic answer is fine for the rest. */
 async function refusedBecause(c: Ctx, projectId: string, linkId: string, extra?: () => Promise<Response | null>): Promise<Response> {
   if (await projectIsArchived(c.env, projectId)) return archivedResponse(c);
@@ -84,13 +87,15 @@ async function liveLink(c: Ctx, projectId: string, linkId: string): Promise<Link
 }
 
 reviewLinksRoutes.get("/projects/:projectId/review-links", terminalRoute("/projects/:projectId/review-links", async (c) => {
+  noStore(c);
   const projectId = c.req.param("projectId");
   if (!uuid.safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
   const refused = await admit(c, projectId, { write: false, part: "links" }); if (refused) return refused;
-  return c.json(reviewLinkListResponseSchema.parse({ links: await loadReviewLinkDtos(c.env.DB, projectId, Date.now()) }));
+  return c.json(reviewLinkListResponseSchema.parse({ links: await loadReviewLinkDtos(c.env.DB, projectId, Date.now(), c.env.APP_ORIGIN) }));
 }));
 
 reviewLinksRoutes.post("/projects/:projectId/review-links", terminalRoute("/projects/:projectId/review-links", async (c) => {
+  noStore(c);
   const projectId = c.req.param("projectId");
   if (!uuid.safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
   const refused = await admit(c, projectId, { write: true, part: "links" }); if (refused) return refused;
@@ -114,16 +119,16 @@ reviewLinksRoutes.post("/projects/:projectId/review-links", terminalRoute("/proj
   }
   const token = randomToken();
   const linkId = await createReviewLink(c.env.DB, {
-    projectId, principal: principalOf(c), videoIds, grants, label: input.label ?? null, expiresAt, now, tokenHash: await hashToken(token),
+    projectId, principal: principalOf(c), videoIds, grants, label: input.label ?? null, expiresAt, now, tokenHash: await hashToken(token), tokenSecret: token,
     passcodeHash: input.passcode === undefined ? null : await hashPasscode(input.passcode),
     allow: { comments: input.allow?.comments ?? true, approve: input.allow?.approve ?? true, download: input.allow?.download ?? true },
   });
   if (linkId === false) return await projectIsArchived(c.env, projectId) ? archivedResponse(c) : otherProject(c);
-  noStore(c);
-  return c.json(reviewLinkRevealResponseSchema.parse({ link: await oneLink(c, projectId, linkId, now), url: linkUrl(c, linkId, token) }), 201);
+  return c.json(revealOf(await oneLink(c, projectId, linkId, now)), 201);
 }));
 
 reviewLinksRoutes.patch("/projects/:projectId/review-links/:linkId", terminalRoute("/projects/:projectId/review-links/:linkId", async (c) => {
+  noStore(c);
   const projectId = c.req.param("projectId"); const linkId = c.req.param("linkId");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(linkId).success) return c.json({ error: "Invalid id" }, 400);
   const refused = await admit(c, projectId, { write: true, part: "links" }); if (refused) return refused;
@@ -141,6 +146,7 @@ reviewLinksRoutes.patch("/projects/:projectId/review-links/:linkId", terminalRou
 }));
 
 reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/videos", terminalRoute("/projects/:projectId/review-links/:linkId/videos", async (c) => {
+  noStore(c);
   const projectId = c.req.param("projectId"); const linkId = c.req.param("linkId");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(linkId).success) return c.json({ error: "Invalid id" }, 400);
   const refused = await admit(c, projectId, { write: true, part: "links" }); if (refused) return refused;
@@ -160,6 +166,7 @@ reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/videos", termi
 }));
 
 reviewLinksRoutes.delete("/projects/:projectId/review-links/:linkId/videos/:videoId", terminalRoute("/projects/:projectId/review-links/:linkId/videos/:videoId", async (c) => {
+  noStore(c);
   const projectId = c.req.param("projectId"); const linkId = c.req.param("linkId"); const videoId = c.req.param("videoId");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(linkId).success || !uuid.safeParse(videoId).success) return c.json({ error: "Invalid id" }, 400);
   const refused = await admit(c, projectId, { write: true, part: "links" }); if (refused) return refused;
@@ -172,6 +179,7 @@ reviewLinksRoutes.delete("/projects/:projectId/review-links/:linkId/videos/:vide
 }));
 
 reviewLinksRoutes.put("/projects/:projectId/review-links/:linkId/videos/:videoId/grants", terminalRoute("/projects/:projectId/review-links/:linkId/videos/:videoId/grants", async (c) => {
+  noStore(c);
   const projectId = c.req.param("projectId"); const linkId = c.req.param("linkId"); const videoId = c.req.param("videoId");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(linkId).success || !uuid.safeParse(videoId).success) return c.json({ error: "Invalid id" }, 400);
   const refused = await admit(c, projectId, { write: true, part: "links" }); if (refused) return refused;
@@ -192,6 +200,7 @@ reviewLinksRoutes.put("/projects/:projectId/review-links/:linkId/videos/:videoId
 }));
 
 reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/revoke", terminalRoute("/projects/:projectId/review-links/:linkId/revoke", async (c) => {
+  noStore(c);
   const projectId = c.req.param("projectId"); const linkId = c.req.param("linkId");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(linkId).success) return c.json({ error: "Invalid id" }, 400);
   const refused = await admit(c, projectId, { write: true, part: null, allowArchived: true }); if (refused) return refused;
@@ -206,6 +215,7 @@ reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/revoke", termi
 }));
 
 reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/replace", terminalRoute("/projects/:projectId/review-links/:linkId/replace", async (c) => {
+  noStore(c);
   const projectId = c.req.param("projectId"); const linkId = c.req.param("linkId");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(linkId).success) return c.json({ error: "Invalid id" }, 400);
   const refused = await admit(c, projectId, { write: true, part: "links" }); if (refused) return refused;
@@ -214,8 +224,7 @@ reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/replace", term
   const expired = () => c.json({ error: "This Review link has expired. Extend its expiry first.", code: "link_expired" }, 409);
   if (head.expires_at <= now) return expired();
   const token = randomToken();
-  const ok = await replaceReviewLinkToken(c.env.DB, { projectId, linkId, principal: principalOf(c), tokenHash: await hashToken(token), now });
+  const ok = await replaceReviewLinkToken(c.env.DB, { projectId, linkId, principal: principalOf(c), tokenHash: await hashToken(token), tokenSecret: token, now });
   if (!ok) return refusedBecause(c, projectId, linkId, async () => (await findLinkHead(c.env.DB, projectId, linkId))!.expires_at <= Date.now() ? expired() : null);
-  noStore(c);
-  return c.json(reviewLinkRevealResponseSchema.parse({ link: await oneLink(c, projectId, linkId, now), url: linkUrl(c, linkId, token) }));
+  return c.json(revealOf(await oneLink(c, projectId, linkId, now)));
 }));

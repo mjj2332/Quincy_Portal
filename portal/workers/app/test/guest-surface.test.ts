@@ -191,6 +191,13 @@ describe("GET /d/api/links/:linkId/versions/:assetId/notes", () => {
     const all = (await Promise.all(responses.map((response) => response.text()))).join("\n");
     const forbidden = [INTERNAL_BODY, INTERNAL_REPLY, w.internalRoot.id, w.internalReply.id, w.a2.assetId, w.b.assetId, w.c.assetId, w.d.assetId, w.a.key, w.a.posterKey!, "projects/", "cut.mp4", ids.member, ids.admin, ids.external, "@example.test", "@guest.test", w.guestRoot.guestId!, "author_user_id", "r2_key", "uploadedBy", "originalFilename", "bytes"];
     for (const needle of forbidden) expect(all, needle).not.toContain(needle);
+    // A link that has a stored secret (#815) still exposes it to no guest read.
+    await database.DB.prepare("UPDATE client_links SET token_secret = ? WHERE id = ?").bind(w.session.token, w.session.id).run();
+    const withSecret = (await Promise.all([
+      guestFetch(linkPath(w.session.id, "/session"), { cookie: w.session.cookie }), guestFetch(linkPath(w.session.id, "/videos"), { cookie: w.session.cookie }),
+      guestFetch(linkPath(w.session.id, `/versions/${w.a.assetId}/notes`), { cookie: w.session.cookie }),
+    ].map(async (pending) => (await pending).text()))).join("\n");
+    for (const needle of [w.session.token, w.session.tokenHash, "token_secret", "tokenSecret", "tokenHash"]) expect(withSecret, needle).not.toContain(needle);
   });
 
   it("is the stub for an ungranted Version, a removed member, an unknown Version and no session", async () => {

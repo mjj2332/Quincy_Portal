@@ -366,6 +366,38 @@ describe("staff create and guest exchange together (11a + 12a)", () => {
   });
 });
 
+describe("the stored link secret never verifies (#815)", () => {
+  it("still exchanges a legacy link that has no stored secret", async () => {
+    const link = await seedGuestLink();
+    expect((await database.DB.prepare("SELECT token_secret FROM client_links WHERE id = ?").bind(link.id).first<{ token_secret: string | null }>())!.token_secret).toBeNull();
+    expect((await startSession(link)).response.status).toBe(200);
+  });
+
+  it("follows the hash alone: a stored secret that does not match the hash neither blocks the real token nor admits itself", async () => {
+    const link = await seedGuestLink();
+    await database.DB.prepare("UPDATE client_links SET token_secret = ? WHERE id = ?").bind("not-the-real-token", link.id).run();
+    expect((await startSession(link)).response.status).toBe(200);
+    const reference = await stubOf(await guestFetch("/d/api/x"));
+    const forged = await guestFetch(linkPath(link.id, "/session"), { method: "POST", body: { token: "not-the-real-token" } });
+    expect(await stubOf(forged)).toEqual(reference);
+  });
+
+  it("fails the old token after a staff replace and exchanges the new one", async () => {
+    await setVideoFlags("video_review_links");
+    const video = await seedVideoVersion({});
+    const created = await staffRequest(`/api/projects/${ids.project}/review-links`, "admin", "POST", { videoIds: [video.videoId] });
+    const { link, url } = await created.json() as { link: { id: string }; url: string };
+    const oldToken = new URL(url).hash.slice(3);
+    expect((await startSession({ id: link.id, token: oldToken })).response.status).toBe(200);
+    const replaced = await staffRequest(`/api/projects/${ids.project}/review-links/${link.id}/replace`, "admin", "POST", {});
+    expect(replaced.status).toBe(200);
+    const newToken = new URL((await replaced.json() as { url: string }).url).hash.slice(3);
+    const reference = await stubOf(await guestFetch("/d/api/x"));
+    expect(await stubOf((await startSession({ id: link.id, token: oldToken })).response)).toEqual(reference);
+    expect((await startSession({ id: link.id, token: newToken })).response.status).toBe(200);
+  });
+});
+
 describe("Sol round 1 fixes", () => {
   /** An env whose DB runs `before` ahead of the Nth multi-statement batch (the rate-limit reservation or the session INSERT), standing in for staff acting mid-exchange. */
   async function exchangeWithRace(link: { id: string; token: string }, passcode: string | undefined, nth: number, before: () => Promise<void>) {
