@@ -117,6 +117,8 @@ export type TrackSpec = {
   stszRaw?: Uint8Array;
   /** Replaces the main stsd sample entry. */
   entryRaw?: Uint8Array;
+  /** Sample entry fourcc for soun (default mp4a), e.g. `sowt`, `twos`, `lpcm`. */
+  audioCodec?: string;
 };
 
 export type Mp4Spec = {
@@ -129,6 +131,10 @@ export type Mp4Spec = {
   /** Whole-box mvhd override, for malformed-box tests. */
   mvhdRaw?: Uint8Array;
   mdat?: { payload?: number; use64?: boolean; sizeZero?: boolean; tmcdAtEnd?: boolean };
+  /** The ftyp brand (default `isom`), or `false` to omit ftyp, as legacy QuickTime files do. */
+  ftyp?: string | false;
+  /** Raw top-level boxes placed before everything else, e.g. a leading QuickTime `wide`. */
+  leading?: Uint8Array[];
   /** Raw top-level boxes placed after ftyp (before moov/mdat). */
   before?: Uint8Array[];
   /** Raw top-level boxes placed at the very end. */
@@ -141,8 +147,8 @@ export const ROTATE_180 = [-0x10000, 0, 0, 0, -0x10000, 0, 0, 0, 0x40000000];
 export const ROTATE_270 = [0, -0x10000, 0, 0x10000, 0, 0, 0, 0, 0x40000000];
 export const SKEW = [0x10000, 0x4000, 0, 0, 0x10000, 0, 0, 0, 0x40000000];
 
-export function ftyp(): Uint8Array {
-  return box("ftyp", enc.encode("isom"), u32(512), enc.encode("isomavc1"));
+export function ftyp(brand = "isom"): Uint8Array {
+  return box("ftyp", enc.encode(brand), u32(512), enc.encode(brand === "isom" ? "isomavc1" : brand));
 }
 
 function trak(t: TrackSpec, i: number, chunkOffset: number): Uint8Array {
@@ -197,7 +203,7 @@ function trak(t: TrackSpec, i: number, chunkOffset: number): Uint8Array {
     const c = t.tmcd ?? { flags: 0, timescale: 30, frameDuration: 1, numberOfFrames: 30, startFrame: 0 };
     entry = box("tmcd", zeros(6), u16(1), u32(0), u32(c.flags), u32(c.timescale), u32(c.frameDuration), u8(c.numberOfFrames, 0));
   } else {
-    entry = box("mp4a", zeros(6), u16(1), zeros(20));
+    entry = box(t.audioCodec ?? "mp4a", zeros(6), u16(1), zeros(20));
   }
   if (t.entryRaw) entry = t.entryRaw;
   extraEntries = [...extraEntries, ...(t.stsdExtraRaw ?? [])];
@@ -246,7 +252,8 @@ export function buildMp4(spec: Mp4Spec): BuiltSource {
   const before = spec.before ?? [];
   const after = spec.after ?? [];
   const startFrame = spec.tracks.find((t) => t.handler === "tmcd")?.tmcd?.startFrame ?? 0;
-  const lead = segLen([ftyp(), ...before]);
+  const prefix: Uint8Array[] = [...(spec.leading ?? []), ...(spec.ftyp === false ? [] : [ftyp(spec.ftyp)]), ...before];
+  const lead = segLen(prefix);
   const moovLen = segLen(moovSegments(spec, 0, 0));
   const payloadOffset = lead + (moovFirst ? moovLen : 0) + headerLen;
   const tmcdOffset = m.tmcdAtEnd ? payloadOffset + payload - 4 : payloadOffset;
@@ -262,8 +269,7 @@ export function buildMp4(spec: Mp4Spec): BuiltSource {
     : [mdatHeader, sample, { zeros: payload - 4 }];
   const moov = moovSegments(spec, payloadOffset, tmcdOffset);
   return sourceFrom([
-    ftyp(),
-    ...before,
+    ...prefix,
     ...(moovFirst ? moov : []),
     ...mdatSegs,
     ...(moovFirst ? [] : moov),

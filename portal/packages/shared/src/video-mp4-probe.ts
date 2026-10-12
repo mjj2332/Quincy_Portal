@@ -51,7 +51,7 @@ export type Mp4ProbeResult = { ok: true; probe: Mp4Probe } | { ok: false; reason
 
 const REJECT_MESSAGES: Record<Mp4RejectReason, string> = {
   too_large: "This video is over 2 GB. Export it at a lower bitrate or a shorter length, then upload it again.",
-  not_mp4: "This is not an MP4 file. Export it as an H.264 .mp4 and upload it again.",
+  not_mp4: "This is not an MP4 or MOV file. Export it as H.264 in an .mp4 or .mov and upload it again.",
   truncated: "The file ends early or could not be read in full. Export it again and re-upload it.",
   box_size_invalid: "The MP4 structure is damaged. Export it again as H.264 .mp4 and re-upload it.",
   moov_missing: "The MP4 has no index. Export it again as H.264 .mp4 and re-upload it.",
@@ -85,6 +85,8 @@ class ProbeReject extends Error {
 const reject = (reason: Mp4RejectReason, detail?: string) => new ProbeReject(reason, detail);
 
 const MAX_DEPTH = 12;
+/** The boxes a file may open with: ISO's `ftyp`, or the legacy QuickTime openings (`wide`, `mdat`, `moov`) that .mov files from older tools use. */
+const OPENING_BOXES: ReadonlySet<string> = new Set(["ftyp", "wide", "mdat", "moov"]);
 
 type MBox = { type: string; start: number; end: number }; // payload [start, end)
 
@@ -189,7 +191,7 @@ async function run(
     let boxSize = dv.getUint32(0);
     const type = fourcc(h, 4);
     let hdr = 8;
-    if (first && type !== "ftyp") throw reject("not_mp4", "no ftyp");
+    if (first && !OPENING_BOXES.has(type)) throw reject("not_mp4", "no ftyp");
     first = false;
     if (boxSize === 1) {
       if (remaining < 16) throw reject("box_size_invalid", `${type} largesize`);
