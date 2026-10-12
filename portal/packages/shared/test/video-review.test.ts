@@ -1,15 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { CAPABILITIES } from "../src/capabilities";
-import { VIDEO_REVIEW_PARTS, VIDEO_REVIEW_PART_CAPABILITY, videoObjectKey, videoDtoSchema, videoPosterKey, videoReviewResponseSchema } from "../src/video-review";
+import { VIDEO_REVIEW_PARTS, VIDEO_REVIEW_PART_CAPABILITY, videoObjectKey, videoDtoSchema, videoPosterKey, videoReviewResponseSchema, videoVersionDownloadUrl } from "../src/video-review";
 
 describe("video review parts (#741)", () => {
-  it("lists the twelve parts and maps each to a real capability", () => {
-    expect(VIDEO_REVIEW_PARTS).toEqual(["upload", "notes", "markup", "compare", "export", "links", "guest", "guest_comments", "delivery", "notify_staff", "notify_client", "trash"]);
+  it("lists the thirteen parts and maps each to a real capability", () => {
+    expect(VIDEO_REVIEW_PARTS).toEqual(["upload", "notes", "markup", "compare", "export", "links", "guest", "guest_comments", "delivery", "notify_staff", "notify_client", "trash", "download"]);
+    expect(VIDEO_REVIEW_PART_CAPABILITY.download).toBe("downloadVideo");
     for (const part of VIDEO_REVIEW_PARTS) expect(CAPABILITIES).toContain(VIDEO_REVIEW_PART_CAPABILITY[part]);
     expect(VIDEO_REVIEW_PART_CAPABILITY).toEqual({
       upload: "uploadVideo", notes: "annotateVideo", markup: "annotateVideo", compare: "viewVideo", export: "viewVideo", notify_staff: "viewVideo",
-      links: "shareVideo", guest: "shareVideo", guest_comments: "shareVideo", notify_client: "shareVideo", delivery: "releaseVideo", trash: "manageVideoTrash",
+      links: "shareVideo", guest: "shareVideo", guest_comments: "shareVideo", notify_client: "shareVideo", delivery: "releaseVideo", trash: "manageVideoTrash", download: "downloadVideo",
     });
+  });
+
+  it("builds the staff Version download url", () => {
+    expect(videoVersionDownloadUrl("p1", "a1")).toBe("/api/projects/p1/video-versions/a1/download");
   });
 
   it("builds object keys inside the project prefix", () => {

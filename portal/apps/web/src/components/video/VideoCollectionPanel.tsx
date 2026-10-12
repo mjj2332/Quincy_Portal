@@ -65,6 +65,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   const deliveryStore = deliveryRef.current;
   const deliveryEnabled = review.parts.includes("delivery");
   // Remove, restore and the Trash (#776 E): the `trash` part and the capability (Admin and Editor), dark otherwise.
+  const downloadEnabled = review.parts.includes("download") && roleHasCapability(role, "downloadVideo");
   const trashEnabled = review.parts.includes("trash") && roleHasCapability(role, "manageVideoTrash");
   const [trashOpen, setTrashOpen] = useState(false);
   const [trashMounted, setTrashMounted] = useState(false);
@@ -176,7 +177,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     </ViewLoadBoundary>}
     {openVideo && <ViewLoadBoundary viewLabel="video player">
       <Suspense fallback={null}>
-        <Viewer video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => { const card = opener.current; return card?.isConnected ? card : document.querySelector<HTMLElement>(`[data-testid="${TRASH_OPEN_ID}"]`); }} {...(notesEnabled ? { notes: { projectId, role, userId, archived, forms, markup: markupEnabled, exportEnabled } } : {})} {...(compareEnabled ? { compare: { store: compareStore } } : {})} {...(deliveryEnabled ? { delivery: { projectId, role, archived, store: deliveryStore } } : {})} {...(trashEnabled ? { trash: { projectId, archived } } : {})} />
+        <Viewer video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => { const card = opener.current; return card?.isConnected ? card : document.querySelector<HTMLElement>(`[data-testid="${TRASH_OPEN_ID}"]`); }} {...(notesEnabled ? { notes: { projectId, role, userId, archived, forms, markup: markupEnabled, exportEnabled } } : {})} {...(compareEnabled ? { compare: { store: compareStore } } : {})} {...(deliveryEnabled ? { delivery: { projectId, role, archived, store: deliveryStore } } : {})} {...(trashEnabled ? { trash: { projectId, archived } } : {})} {...(downloadEnabled ? { download: { projectId } } : {})} />
       </Suspense>
     </ViewLoadBoundary>}
   </section>;

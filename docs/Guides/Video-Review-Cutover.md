@@ -33,9 +33,10 @@ with `enabled = 1`.
 | `video_review_notify_staff` | Staff notifications for video events |
 | `video_review_notify_client` | Client hourly digest email |
 | `video_review_trash` | Video trash (`manageVideoTrash`) |
+| `video_review_download` | Staff Version download (`downloadVideo`: admin, editor, assigned External) |
 
-The part list is `VIDEO_REVIEW_PARTS` (`shared/src/video-review.ts:9`). It has 12 parts: `trash`
-is not in the part list of `docs/plans/741.md` (11 parts).
+The part list is `VIDEO_REVIEW_PARTS` (`shared/src/video-review.ts:9`). It has 13 parts: `trash`
+and `download` are not in the part list of `docs/plans/741.md` (11 parts).
 
 Table shape (`portal/packages/db/src/schema.ts:59-71`): `key` text primary key, `enabled` integer
 0/1, `updated_by` nullable user id, `updated_at` integer epoch milliseconds, not null. The
@@ -102,7 +103,7 @@ npx wrangler d1 execute DB --remote --command "INSERT INTO feature_flags (key, e
 Suggested order of parts (one `INSERT` per step, same shape; only `key` changes):
 
 1. `upload`, `notes`, `markup`, `compare`, `export` (staff only; also `trash` here, suggested, so a
-   removed Video can be recovered).
+   removed Video can be recovered, and `download`, so staff can take the original file).
 2. Wait for the pre-flight probes, then `links`, `guest`.
 3. `guest_comments` and `notify_client` only after the email probe passed.
 4. `notify_staff` once staff are ready to receive the emails.

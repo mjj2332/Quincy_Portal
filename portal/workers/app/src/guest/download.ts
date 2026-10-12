@@ -1,6 +1,7 @@
 import type { Context, Hono } from "hono";
 import { GUEST_ZIP_MAX_BYTES, GUEST_ZIP_MAX_ENTRIES, guestDownloadManifestSchema, type GuestArchiveState, type GuestDownloadManifest, type VideoReviewPart } from "@quincy/shared";
 import { auditMeta } from "../lib/audit";
+import { attachment, safeFileName, videoVersionFileName } from "../lib/download-name";
 import { newId } from "../lib/ids";
 import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO } from "../lib/video-live-sql";
 import { gateSql, liveSql, reachSql } from "../lib/guest-fence-sql";
@@ -33,27 +34,8 @@ const plain = <C>(c: C) => c as unknown as Ctx;
 const open = (link: GuestLink | null): link is GuestLink => link !== null && PARTS.every((part) => link.parts.includes(part));
 const SECURITY_HEADERS = { "cache-control": "private, no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox", "cross-origin-resource-policy": "same-origin" } as const;
 
-/** A file name with nothing in it that a path, a header or an archive could read as structure. */
-export function safeFileName(title: string): string {
-  // Lone surrogates (a stored title can hold one) become U+FFFD, and the cut is by code point, so `encodeURIComponent` never throws.
-  const cleaned = title.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD").replace(/[\u0000-\u001f\u007f\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
-  return cutUtf8([...cleaned].slice(0, 120), TITLE_MAX_BYTES).trim() || "Video";
-}
-/** Most filesystems cap a name at 255 UTF-8 bytes. The title gets 200, which leaves room for ` v` + a version, `.mp4` and a ` (n)` dedupe suffix (the marker export's `boundedTitle` makes the same cut at 120, but it is private to that builder and rewrites more than a download should). */
-const TITLE_MAX_BYTES = 200;
-/** The code points that fit in `max` UTF-8 bytes, never splitting one. */
-function cutUtf8(points: string[], max: number): string {
-  const encoder = new TextEncoder(); let out = ""; let bytes = 0;
-  for (const ch of points) { const size = encoder.encode(ch).length; if (bytes + size > max) break; out += ch; bytes += size; }
-  return out;
-}
-/** `attachment` with a quoted ASCII fallback and the RFC 5987 UTF-8 name. Never interpolates an unsanitised title. */
-export function attachment(filename: string): string {
-  const fallback = [...filename].map((ch) => (/^[\x20-\x7e]$/.test(ch) && ch !== "%" && ch !== '"' && ch !== "\\" ? ch : "_")).join("");
-  const encoded = encodeURIComponent(filename).replace(/['()*]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
-  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
-}
-const entryName = (title: string, version: number): string => `${safeFileName(title)} v${version}.mp4`;
+const entryName = videoVersionFileName;
+export { attachment, safeFileName };
 
 // -- SQL: the fence a committing statement and every zip entry repeat. Aliases: `s` guest_sessions, `l` client_links. Downloads read, so there is NO unarchived test here. --
 type Binds = { session: string; token: string; guest: string; now: string };

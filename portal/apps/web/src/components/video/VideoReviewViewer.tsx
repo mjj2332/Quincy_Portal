@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, Columns2 } from "lucide-react";
-import { framesToTimecode, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
+import { ChevronLeft, Columns2, DownloadIcon } from "lucide-react";
+import { framesToTimecode, videoVersionDownloadUrl, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
 import { registerToastHost } from "../../lib/toast-host";
 import { hasOpenAlertDialog } from "../../lib/alert-dialog-press";
 import { useMediaQuery } from "../../lib/use-media-query";
@@ -40,7 +40,7 @@ const VERSION_SELECT_ID = "video-review-version";
  * With `notes` (the Project's `notes` part is on, #741 5b) the Version details column becomes the notes panel, and the Version details
  * move behind a button in its header; without it the viewer is exactly the 4d-ii viewer.
  */
-export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash }: {
+export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download }: {
   video: VideoDto;
   onClose: () => void;
   /** The control that opened the viewer; focus goes back to it on close. */
@@ -53,6 +53,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   delivery?: { projectId: string; role: Role; archived: boolean; store: VideoApprovalStore };
   /** Present only when the Project's `trash` part is on and the role may manage the Trash (#776 E): the Version menu with Remove. */
   trash?: { projectId: string; archived: boolean };
+  /** Present only when the Project's `download` part is on and the role holds `downloadVideo` (#818): the Download link in the header (single view only). */
+  download?: { projectId: string };
 }) {
   const [assetId, setAssetId] = useState(video.currentAssetId);
   const playerRef = useRef<VideoPlayerControl>(null);
@@ -273,6 +275,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         </Select>
         {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} /></Suspense>}
       </div>}
+      {download && !comparing && <Button variant="outline" nativeButton={false} data-testid="video-download" aria-label={`Download version ${version.version}`} className="pointer-coarse:min-h-11 max-[721px]:min-h-11" render={<a href={videoVersionDownloadUrl(download.projectId, version.assetId)} download />}><DownloadIcon aria-hidden="true" />Download</Button>}
       {(canCompare || comparing) && <Button
         ref={compareButtonRef}
         type="button"
