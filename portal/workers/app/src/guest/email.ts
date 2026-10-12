@@ -1,4 +1,5 @@
 import type { Context, Hono } from "hono";
+import { guestHeicAvailable } from "../lib/embedded-heic";
 import { EMAIL_SEND_ERROR_CODES, GUEST_CODE_RESEND_SECONDS, guestEmailCodeInputSchema, guestEmailVerifyInputSchema } from "@quincy/shared";
 import { auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
@@ -204,7 +205,7 @@ async function verifyCode(c: Handled<"/d/api/links/:linkId/email/verify">): Prom
     // Nothing landed. A gone session, link or gate is the stub and an archived Project is 409; a session that is still live lost the race to a double-click, a newer code or an expiry: the code is spent.
     return await classifyRefusal(c as unknown as Context<AppEnv>, session, false) ?? c.json({ error: "code_expired" }, 401);
   }
-  const response = c.json(sessionBody(link, identityOf({ email: stored.email_normalized, name: stored.display_name }), await notificationsOf(c.env.DB, link, stored.guest_id)));
+  const response = c.json(sessionBody(link, identityOf({ email: stored.email_normalized, name: stored.display_name }), await notificationsOf(c.env.DB, link, stored.guest_id), await guestHeicAvailable(c.env)));
   response.headers.append("set-cookie", sessionCookieHeader(c.env, link.id, token, (stored.expires_at - committedAt) / 1000));
   return response;
 }

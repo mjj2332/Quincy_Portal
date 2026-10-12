@@ -244,6 +244,84 @@ describe("guest serve", () => {
   });
 });
 
+describe("guest media review findings (#835 C)", () => {
+  const guestMedia = (input: Parameters<typeof seedMedia>[0] = {}) => seedMedia({ ownerKind: "video_note", ...input });
+
+  it("does not fall back to uploader authorization for attached media whose note the link no longer reaches", async () => {
+    const w = await world();
+    const other = await seedVideoVersion({ title: "Not on this link" });
+    const note = await seedVideoNote({ assetId: other.assetId, visibility: "public" });
+    const image = await guestMedia({ state: "attached", ownerId: note.id });
+    await database.DB.prepare("UPDATE embedded_media SET uploader_id = NULL, uploader_guest_id = ? WHERE id = ?").bind(w.guest!.guestId, image.id).run();
+    await STUB(await read(w, image.id));
+    // The same for a note that has since turned internal, and for a deleted one.
+    const mine = await seedVideoNote({ assetId: w.a.assetId, visibility: "public" });
+    const own = await guestMedia({ state: "attached", ownerId: mine.id });
+    await database.DB.prepare("UPDATE embedded_media SET uploader_id = NULL, uploader_guest_id = ? WHERE id = ?").bind(w.guest!.guestId, own.id).run();
+    expect((await read(w, own.id)).status).toBe(200);
+    await database.DB.prepare("UPDATE video_notes SET visibility = 'internal' WHERE id = ?").bind(mine.id).run();
+    await STUB(await read(w, own.id));
+  });
+
+  /** An env whose MEDIA.get runs `change` after R2 has answered and before the Worker sends a byte. */
+  const changingAfterGet = (change: () => Promise<unknown>): Env => ({
+    ...DEV_ENV,
+    MEDIA: new Proxy(DEV_ENV.MEDIA, { get(target, property) {
+      const value = Reflect.get(target, property) as unknown;
+      if (property === "get") return async (...args: Parameters<R2Bucket["get"]>) => { const object = await target.get(...args); await change(); return object; };
+      return typeof value === "function" ? value.bind(target) : value;
+    } }),
+  });
+  const ends: Array<[string, (w: World) => Promise<unknown>]> = [
+    ["the link is revoked", (w) => database.DB.prepare("UPDATE client_links SET revoked_at = ? WHERE id = ?").bind(Date.now(), w.link.id).run()],
+    ["the link is replaced", (w) => database.DB.prepare("UPDATE client_links SET token_generation = token_generation + 1 WHERE id = ?").bind(w.link.id).run()],
+  ];
+  for (const [what, end] of ends) {
+    it(`serves no media bytes when ${what} while R2 answers`, async () => {
+      const w = await world();
+      const mediaId = await uploadImage(w);
+      expect((await read(w, mediaId)).status).toBe(200);
+      const response = await guestApp(changingAfterGet(() => end(w)), mediaUrl(w, `/${mediaId}`), { cookie: w.link.cookie });
+      expect(response.status).toBe(404);
+    });
+    it(`serves no poster when ${what} while R2 answers`, async () => {
+      const w = await world();
+      const note = await seedVideoNote({ assetId: w.a.assetId, visibility: "public" });
+      const video = await guestMedia({ state: "attached", ownerId: note.id, kind: "video", poster: true });
+      expect((await read(w, video.id, w.link.cookie, "/poster")).status).toBe(200);
+      const response = await guestApp(changingAfterGet(() => end(w)), mediaUrl(w, `/${video.id}/poster`), { cookie: w.link.cookie });
+      expect(response.status).toBe(404);
+    });
+  }
+
+  it("stops reading a chunked poster body at the 2 MB cap", async () => {
+    const w = await world();
+    const bytes = mp4Bytes(4096);
+    const { mediaId } = externalEmbeddedMediaPresignSchema.parse(await (await presign(w, { contentType: "video/mp4", bytes: bytes.byteLength })).json());
+    expect((await guestApp(DEV_ENV, mediaUrl(w, `/${mediaId}/direct`), { method: "PUT", cookie: w.link.cookie, raw: bytes, contentType: "video/mp4" })).status).toBe(204);
+    expect((await guestApp(DEV_ENV, mediaUrl(w, `/${mediaId}/complete`), { method: "POST", cookie: w.link.cookie, body: {} })).status).toBe(200);
+    let pulled = 0;
+    const stream = new ReadableStream<Uint8Array>({ pull(controller) { pulled += 1; if (pulled > 200) controller.close(); else controller.enqueue(new Uint8Array(256 * 1024)); } });
+    const response = await guestApp(DEV_ENV, mediaUrl(w, `/${mediaId}/poster`), { method: "PUT", cookie: w.link.cookie, raw: stream, contentType: "image/jpeg" });
+    expect(response.status).toBe(413);
+    // 2 MB is 8 chunks; a bounded reader stops within a few of that, an arrayBuffer() read takes all 200.
+    expect(pulled).toBeLessThan(20);
+  });
+
+  it("tells the guest page whether HEIC is open to it, from the same gates the upload applies", async () => {
+    const w = await world();
+    const setFlag = (enabled: boolean) => database.DB.prepare("UPDATE feature_flags SET enabled = ?, updated_by = NULL WHERE key = 'embedded_heic_uploads'").bind(enabled ? 1 : 0).run();
+    const session = async (env: Env) => (await json(await guestApp(env, linkPath(w.link.id, "/session"), { cookie: w.link.cookie }))).media;
+    await setFlag(false);
+    expect(await session({ ...DEV_ENV, RENDITIONS_ENABLED: true })).toEqual({ heic: false });
+    await setFlag(true);
+    try {
+      expect(await session({ ...DEV_ENV, RENDITIONS_ENABLED: true })).toEqual({ heic: true });
+      expect(await session({ ...DEV_ENV, RENDITIONS_ENABLED: false })).toEqual({ heic: false });
+    } finally { await setFlag(false); }
+  });
+});
+
 describe("guest media and notes", () => {
   it("attaches an uploaded image to a note, then everyone who reads the note reads the image", async () => {
     const w = await world();

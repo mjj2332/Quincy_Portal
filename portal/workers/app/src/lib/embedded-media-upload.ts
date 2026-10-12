@@ -123,15 +123,14 @@ export async function completeEmbeddedMedia(
  * uploading and is not yet in a note, only once. The write order leaves no orphan whichever way a race goes: the key is queued first, then written, then one batch sets it on the row and unqueues it,
  * but only if the row still wants it. A batch that loses deletes the object, and if R2 refuses, the queued key is left for the daily sweep.
  */
-export async function posterEmbeddedMedia(scope: UploadScope, mediaId: string, request: { contentLength: string | undefined; body: () => Promise<ArrayBuffer> }): Promise<Response> {
+export async function posterEmbeddedMedia(scope: UploadScope, mediaId: string, request: { body: (max: number) => Promise<Uint8Array | null> }): Promise<Response> {
   const { env, projectId, uploader } = scope;
   const row = await getEmbeddedMedia(env.DB, mediaId);
   if (!row || row.projectId !== projectId || !isUploadedBy(row, uploader) || row.kind !== "video") return stray();
   if (row.state !== "pending" || row.posterKey) return reply(409, { error: "This video cannot take a poster", code: "poster_unavailable" });
-  const declared = Number(request.contentLength ?? "0");
-  if (declared > EMBEDDED_POSTER_MAX_BYTES) return reply(413, { error: "The poster is larger than 2 MB" });
-  const body = new Uint8Array(await request.body());
-  if (body.byteLength > EMBEDDED_POSTER_MAX_BYTES) return reply(413, { error: "The poster is larger than 2 MB" });
+  // Read with the cap (a declared length over it is refused unread, an undeclared one is cut off at it), so no body can make the Worker buffer more than 2 MB.
+  const body = await request.body(EMBEDDED_POSTER_MAX_BYTES);
+  if (body === null) return reply(413, { error: "The poster is larger than 2 MB" });
   if (!isJpeg(body)) return reply(400, { error: "The poster must be a JPEG image" });
   const posterKey = embeddedMediaPosterKey(projectId, mediaId, newId());
   // The queue entry is the fence: the adopting batch needs it to exist, unchanged and unleased, and removes it in the same batch. A sweep that leased it (even a lease since expired), finished and dequeued it, or a re-queue that bumped it all make the adoption lose.

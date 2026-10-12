@@ -5,6 +5,7 @@ import {
   isEmbeddedHeicContentType, renditionsEnabled, requireBothImageDimensions,
 } from "@quincy/shared";
 import { auditMeta } from "../lib/audit";
+import { readBoundedBytes } from "../lib/bounded-body";
 import { heicFlagEnabled } from "../lib/embedded-heic";
 import { getEmbeddedMedia, type EmbeddedMediaRow } from "../lib/embedded-media";
 import { embeddedServeTarget } from "../lib/embedded-media-serve";
@@ -16,7 +17,7 @@ import { attachedVideoNote } from "../lib/video-note-media";
 import type { AppEnv } from "../env";
 import { classifyRefusal } from "./fence";
 import { guestNotFound, guestRoute, INVALID, originRejection, readJson, TOO_LARGE, tooMany, UUID } from "./http";
-import { loadActiveLink, resolveSession, type GuestSession } from "./link";
+import { loadActiveLink, resolveSession, sessionStillValid, type GuestSession } from "./link";
 import { GUEST_LIMITS, reserveAttempts } from "./rate-limit";
 import { resolveGrantedVersion } from "./read";
 
@@ -124,7 +125,7 @@ async function complete(c: Handled<`${typeof MEDIA_BASE}/:mediaId/complete`>): P
 
 async function poster(c: Handled<`${typeof MEDIA_BASE}/:mediaId/poster`>): Promise<Response> {
   const admitted = await admit(c, { mediaId: true, writes: true, json: false }); if ("response" in admitted) return admitted.response;
-  const response = await posterEmbeddedMedia(scopeOf(c, admitted), c.req.param("mediaId"), { contentLength: c.req.header("content-length"), body: () => c.req.arrayBuffer() });
+  const response = await posterEmbeddedMedia(scopeOf(c, admitted), c.req.param("mediaId"), { body: (max) => readBoundedBytes(c.req.raw, max) });
   return response.ok ? response : answerOf(c, admitted.session, true)(response);
 }
 
@@ -136,17 +137,22 @@ async function abort(c: Handled<`${typeof MEDIA_BASE}/:mediaId/abort`>): Promise
 
 /**
  * The row when THIS session may read it, else null (the one stub). A video note's medium of this link's Project, never one still `uploading`. Attached: the owner note is live on a live Version, is PUBLIC,
- * and the Version is one this link reaches (staff public media and other guests' media both qualify; an internal note's does not). Otherwise (pending, detached, an owner that is gone): the reading guest's own upload.
+ * and the Version is one this link reaches (staff public media and other guests' media both qualify; an internal note's does not). Otherwise (pending, detached): the reading guest's own upload. An attached row that fails the note test is a miss for everyone.
  */
 export async function readableGuestMedia(db: D1Database, session: Pick<GuestSession, "guestId" | "link">, mediaId: string): Promise<EmbeddedMediaRow | null> {
   const row = await getEmbeddedMedia(db, mediaId);
   if (!row || row.ownerKind !== "video_note" || row.projectId !== session.link.projectId || row.state === "uploading") return null;
   if (row.state === "attached") {
+    // An attached row follows its note and nothing else: once the note is not public, live and on a Version this link grants, the uploader has no claim on it.
     const note = await attachedVideoNote(db, row);
-    if (note?.visibility === "public" && await resolveGrantedVersion(db, session.link.id, session.link.projectId, note.assetId) !== null) return row;
+    return note?.visibility === "public" && await resolveGrantedVersion(db, session.link.id, session.link.projectId, note.assetId) !== null ? row : null;
   }
   return session.guestId !== null && row.uploaderGuestId === session.guestId ? row : null;
 }
+
+/** The last admission, after R2 has answered and before a byte leaves: the exact session is still live (link not revoked or replaced, gate open) AND it may still read this medium. */
+const stillReadable = async (db: D1Database, session: GuestSession, mediaId: string): Promise<boolean> =>
+  await sessionStillValid(db, session, Date.now()) && await readableGuestMedia(db, session, mediaId) !== null;
 
 async function withMedia<P extends string>(c: Handled<P>, handler: (row: EmbeddedMediaRow, session: GuestSession) => Response | Promise<Response>): Promise<Response> {
   const mediaId = c.req.param("mediaId" as never) as string;
@@ -162,7 +168,7 @@ async function serve(c: Handled<`${typeof MEDIA_BASE}/:mediaId`>): Promise<Respo
     const target = embeddedServeTarget(row);
     if ("status" in target) return target.status === 404 ? guestNotFound(asApp(c)) : c.json(target.body, target.status, target.retryAfter ? { "retry-after": target.retryAfter } : {});
     // The last admission, after R2 has answered and before a byte leaves: revoking the link or removing the Version meanwhile is a miss.
-    const served = await serveR2Object(asApp(c), target.key, { "content-type": target.contentType, ...MEDIA_HEADERS }, "Media object not found", async () => await readableGuestMedia(c.env.DB, session, row.id) !== null);
+    const served = await serveR2Object(asApp(c), target.key, { "content-type": target.contentType, ...MEDIA_HEADERS }, "Media object not found", () => stillReadable(c.env.DB, session, row.id));
     return served.status === 404 ? guestNotFound(asApp(c)) : served;
   });
 }
@@ -171,7 +177,8 @@ async function servePoster(c: Handled<`${typeof MEDIA_BASE}/:mediaId/poster`>): 
   return withMedia(c, async (row, session) => {
     if (row.kind !== "video" || !row.posterKey) return guestNotFound(asApp(c));
     const object = await c.env.MEDIA.get(row.posterKey);
-    if (!object || await readableGuestMedia(c.env.DB, session, row.id) === null) return guestNotFound(asApp(c));
+    if (!object) return guestNotFound(asApp(c));
+    if (!await stillReadable(c.env.DB, session, row.id)) { await object.body.cancel().catch(() => undefined); return guestNotFound(asApp(c)); }
     return new Response(object.body, { headers: { ...POSTER_HEADERS, "content-length": String(object.size) } });
   });
 }
