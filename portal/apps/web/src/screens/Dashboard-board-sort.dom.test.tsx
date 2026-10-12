@@ -29,7 +29,10 @@ vi.mock("../lib/capabilities", () => ({
 vi.mock("../lib/stages", () => ({
   presentationStages: (stages: readonly unknown[]) => stages,
   useStages: () => ({
-    stages: [{ key: "awaiting_raw", label: "Awaiting RAW", displayOrder: 0, active: true }],
+    stages: [
+      { key: "awaiting_raw", label: "Awaiting RAW", displayOrder: 0, active: true },
+      { key: "delivered", label: "Delivered", displayOrder: 1, active: true },
+    ],
     presentationStageKey: (stageKey: string) => stageKey,
   }),
 }));
@@ -106,6 +109,22 @@ describe("Dashboard Kanban sort control", () => {
     expect(order()).toEqual(["Bravo", "Delta", "Alpha", "Charlie"]);
     await openDisplay();
     expect(checkedSortLabel()).toBe("Shoot date");
+  });
+
+  it("runs Delivered newest first and Awaiting RAW oldest first, undated last, under either choice (#832)", async () => {
+    const delivered = (id: string, street: string, over: Record<string, unknown>) => mk(id, street, { stageKey: "delivered", ...over });
+    await loadBoard([
+      mk("a1", "1 Alpha Street", { shootDate: "2026-01-01", deadlineAt: 1000 }),
+      mk("b1", "2 Bravo Street", { shootDate: "2026-09-01", deadlineAt: 3000 }),
+      delivered("c1", "3 Charlie Street", { shootDate: "2026-01-01", deadlineAt: 1000 }),
+      delivered("d1", "4 Delta Street", { shootDate: "2026-09-01", deadlineAt: 3000 }),
+      delivered("e1", "5 Echo Street", {}),
+    ]);
+    const columns = () => [...document.querySelectorAll('[data-testid="board-column"]')].map((column) =>
+      [...column.querySelectorAll('[data-testid="board-card"]')].map((card) => (card.textContent ?? "").match(/(Alpha|Bravo|Charlie|Delta|Echo)/)?.[1]));
+    expect(columns()).toEqual([["Alpha", "Bravo"], ["Delta", "Charlie", "Echo"]]);
+    await chooseSort("Deadline");
+    expect(columns()).toEqual([["Alpha", "Bravo"], ["Delta", "Charlie", "Echo"]]);
   });
 
   it("picking Deadline reorders by deadline, undated last, and stores the choice (#830)", async () => {

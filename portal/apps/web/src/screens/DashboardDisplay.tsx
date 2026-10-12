@@ -6,7 +6,8 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
 } from "../components/reui/dropdown-menu";
-import { PRODUCTION_CALENDAR_LAYERS, type ProductionCalendarLayer } from "@quincy/shared";
+import { useId } from "react";
+import { PRODUCTION_CALENDAR_LAYERS, boardSortHint, type ProductionCalendarLayer, type StageKey } from "@quincy/shared";
 import {
   TABLE_COLUMN_LABELS,
   TABLE_GROUP_BY_LABELS,
@@ -31,17 +32,28 @@ import { KANBAN_SORT_MODES, type KanbanSortMode } from "./dashboard-helpers";
  * Group by and several columns in one visit.
  */
 
+/** The one-line explanation under a Display menu group heading (#833), shared with the Table's narrow note. */
+const DISPLAY_NOTE_CLASS = "m-0 px-1.5 pb-[var(--space-2)] text-[length:var(--text-xs)] text-muted-foreground";
+
 const KANBAN_SORT_LABELS: Record<KanbanSortMode, string> = { "shoot-date": "Shoot date", "due-date": "Deadline" };
 
 /**
- * The Board's Sort group (#830): which date orders every column, oldest first. Priority no longer
+ * The Board's Sort group (#830): which date orders every column, oldest first (Delivered newest first, #832). Priority no longer
  * orders cards. The same for every role (an External Editor's cards carry the Deadline too).
  */
-export function BoardDisplayContent({ value, onChange, disabled = false }: { value: KanbanSortMode; onChange: (next: KanbanSortMode) => void; disabled?: boolean }) {
+export function BoardDisplayContent({ value, onChange, stages, disabled = false }: {
+  value: KanbanSortMode;
+  onChange: (next: KanbanSortMode) => void;
+  /** The live Stage labels (the column headings): the direction hint names a Stage by them (#833). */
+  stages: readonly { key: StageKey; label: string }[];
+  disabled?: boolean;
+}) {
+  const hintId = useId();
   return (
     <DropdownMenuGroup>
       <DropdownMenuLabel>Sort</DropdownMenuLabel>
-      <DropdownMenuRadioGroup value={value} onValueChange={(next) => { if (KANBAN_SORT_MODES.includes(next as KanbanSortMode)) onChange(next as KanbanSortMode); }}>
+      <p id={hintId} data-testid="board-sort-hint" className={DISPLAY_NOTE_CLASS}>{boardSortHint(stages)}</p>
+      <DropdownMenuRadioGroup aria-describedby={hintId} value={value} onValueChange={(next) => { if (KANBAN_SORT_MODES.includes(next as KanbanSortMode)) onChange(next as KanbanSortMode); }}>
         {KANBAN_SORT_MODES.map((mode) => (
           <DropdownMenuRadioItem key={mode} value={mode} disabled={disabled}>{KANBAN_SORT_LABELS[mode]}</DropdownMenuRadioItem>
         ))}
@@ -73,7 +85,7 @@ export function TableDisplayContent({ groupBy, onGroupByChange, hiddenColumns, h
       <DropdownMenuSeparator />
       <DropdownMenuGroup>
         <DropdownMenuLabel>Columns</DropdownMenuLabel>
-        {narrow && <p data-testid="table-display-narrow-note" className="m-0 px-[var(--space-2)] pb-[var(--space-2)] text-[length:var(--text-xs)] text-foreground-secondary">On narrow screens the Table shows Address and Deadline only.</p>}
+        {narrow && <p data-testid="table-display-narrow-note" className={DISPLAY_NOTE_CLASS}>On narrow screens the Table shows Address and Deadline only.</p>}
         {hideableColumns.map((column) => (
           <DropdownMenuCheckboxItem key={column} checked={!hiddenColumns.includes(column)} onCheckedChange={(checked) => onColumnVisibilityChange(column, checked)}>
             {TABLE_COLUMN_LABELS[column]}

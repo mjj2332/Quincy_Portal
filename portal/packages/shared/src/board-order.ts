@@ -1,4 +1,5 @@
 import { compareByStreetThenId } from "./dashboard-order";
+import type { StageKey } from "./stages";
 
 /** What the fixed Board order reads off a card. Nothing else may influence column order. */
 export type BoardCardOrderKey = {
@@ -20,7 +21,27 @@ export type BoardCardOrderOptions = {
    * #476), which keep the #470 rule.
    */
   date?: "shoot" | "due";
+  /**
+   * #832: which way the chosen date runs. Omitted = "asc" (oldest first). Applies to the date step
+   * only: undated cards stay last and equal dates stay street then id ascending in both directions.
+   */
+  direction?: "asc" | "desc";
 };
+
+/** #832: the one per-Stage source for the date direction (and #833's hint wording). Delivered runs newest first. */
+export function boardSortDirectionFor(stageKey: StageKey): "asc" | "desc" {
+  return stageKey === "delivered" ? "desc" : "asc";
+}
+
+/**
+ * #833: the Sort menu's one-line direction hint, built from the same per-Stage source as the order
+ * itself and the LIVE Stage labels (the column headings). "Oldest first" is the default direction;
+ * each Stage that runs the other way follows by label.
+ */
+export function boardSortHint(stages: readonly { key: StageKey; label: string }[]): string {
+  const reversed = stages.filter((stage) => boardSortDirectionFor(stage.key) === "desc").map((stage) => `${stage.label} newest first`);
+  return ["Oldest first", ...reversed].join(" · ");
+}
 
 function isLeapYear(year: number) {
   return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
@@ -43,16 +64,17 @@ function isFiniteDeadline(value: number | null | undefined): value is number {
 }
 
 /**
- * The Board column order (#470, #830): by default priority 5 down to 1 then unset, then Shoot date oldest first
+ * The Board column order (#470, #830): by default priority 5 down to 1 then unset, then Shoot date oldest first (newest first with `direction: "desc"`, #832)
  * (missing or invalid last), then street and id; with `date` the chosen date alone, then street and id. The server builds the authorised order map with
  * this and the client renders with it, so both sides agree by construction.
  */
 export function compareBoardCards(left: BoardCardOrderKey, right: BoardCardOrderKey, options: BoardCardOrderOptions): number {
+  const flip = options.direction === "desc" ? -1 : 1;
   if (options.date === "due") {
     const leftDue = isFiniteDeadline(left.deadlineAt);
     const rightDue = isFiniteDeadline(right.deadlineAt);
     if (leftDue !== rightDue) return leftDue ? -1 : 1;
-    if (leftDue && rightDue && left.deadlineAt !== right.deadlineAt) return left.deadlineAt! < right.deadlineAt! ? -1 : 1;
+    if (leftDue && rightDue && left.deadlineAt !== right.deadlineAt) return (left.deadlineAt! < right.deadlineAt! ? -1 : 1) * flip;
     return compareByStreetThenId(left, right);
   }
   if (options.priorityVisible && options.date === undefined) {
@@ -62,6 +84,6 @@ export function compareBoardCards(left: BoardCardOrderKey, right: BoardCardOrder
   const leftDated = isCivilShootDate(left.shootDate);
   const rightDated = isCivilShootDate(right.shootDate);
   if (leftDated !== rightDated) return leftDated ? -1 : 1;
-  if (leftDated && rightDated && left.shootDate !== right.shootDate) return left.shootDate! < right.shootDate! ? -1 : 1;
+  if (leftDated && rightDated && left.shootDate !== right.shootDate) return (left.shootDate! < right.shootDate! ? -1 : 1) * flip;
   return compareByStreetThenId(left, right);
 }

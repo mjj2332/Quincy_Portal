@@ -3,7 +3,7 @@ import { CAPABILITIES, EXTERNAL_EDITOR_CAPABILITIES, ROLE_CAPABILITIES, ROLE_LAB
 import { PHOTOGRAPHER_VISIBLE_STAGES, STAGE_KEYS, STAGE_TRANSITIONS } from "../src/stages";
 
 describe("PRD §4 capability matrix", () => {
-  it("keeps the External Editor role and exact sixteen-capability allow-list closed", () => {
+  it("keeps the External Editor role and exact seventeen-capability allow-list closed", () => {
     expect(ROLES).toEqual(["admin", "photographer", "editor", "external_editor"]);
     expect(ROLE_LABELS.external_editor).toBe("External editor");
     expect(EXTERNAL_EDITOR_CAPABILITIES).toEqual([
@@ -12,10 +12,10 @@ describe("PRD §4 capability matrix", () => {
       "moveProjectStage",
       "viewProductionCalendar",
       "uploadExtras",
-      "viewVideo", "uploadVideo", "annotateVideo", "downloadVideo",
+      "viewVideo", "uploadVideo", "annotateVideo", "shareVideo", "downloadVideo",
     ]);
     expect(ROLE_CAPABILITIES.external_editor).toEqual(EXTERNAL_EDITOR_CAPABILITIES);
-    expect(EXTERNAL_EDITOR_CAPABILITIES).toHaveLength(16);
+    expect(EXTERNAL_EDITOR_CAPABILITIES).toHaveLength(17);
     expect(ROLE_CAPABILITIES.external_editor.every((capability) => CAPABILITIES.includes(capability))).toBe(true);
     expect(roleHasCapability("external_editor", "moveProjectStage")).toBe(true);
     expect(roleHasCapability("external_editor", "viewProductionCalendar")).toBe(true);
@@ -116,12 +116,12 @@ describe("video review capabilities (#741)", () => {
     for (const capability of VIDEO) expect(CAPABILITIES).toContain(capability);
   });
 
-  it("grants view, upload and annotate to admin, editor and External; share and release to admin and editor; premium to admin and editor (#787 owner Q1), and Trash to admin and editor", () => {
+  it("grants view, upload, annotate and share (#834) to admin, editor and External; release to admin and editor; premium to admin and editor (#787 owner Q1), and Trash to admin and editor", () => {
     const grants: Record<(typeof VIDEO)[number], readonly string[]> = {
       viewVideo: ["admin", "editor", "external_editor"],
       uploadVideo: ["admin", "editor", "external_editor"],
       annotateVideo: ["admin", "editor", "external_editor"],
-      shareVideo: ["admin", "editor"],
+      shareVideo: ["admin", "editor", "external_editor"],
       releaseVideo: ["admin", "editor"],
       manageVideoPremium: ["admin", "editor"],
       manageVideoTrash: ["admin", "editor"],
@@ -132,9 +132,9 @@ describe("video review capabilities (#741)", () => {
     }
   });
 
-  it("gives photographers none of the eight and Externals never share, release, premium or Trash", () => {
+  it("gives photographers none of the eight and Externals never release, premium or Trash (#834: they share)", () => {
     for (const capability of VIDEO) expect(roleHasCapability("photographer", capability)).toBe(false);
-    for (const capability of ["shareVideo", "releaseVideo", "manageVideoPremium", "manageVideoTrash"] as const) expect(EXTERNAL_EDITOR_CAPABILITIES as readonly string[]).not.toContain(capability);
+    for (const capability of ["releaseVideo", "manageVideoPremium", "manageVideoTrash"] as const) expect(EXTERNAL_EDITOR_CAPABILITIES as readonly string[]).not.toContain(capability);
   });
 });
 

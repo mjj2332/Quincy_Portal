@@ -64,7 +64,7 @@ describe("Kanban interaction model", () => {
       project("p5-late", "awaiting_raw", { priority: 5, shootDate: "2026-12-31" }),
       project("p5-early", "awaiting_raw", { priority: 5, shootDate: "2026-02-01" }),
     ];
-    expect(sortKanbanProjects(rows, "shoot-date").map((row) => row.id)).toEqual(["none-early", "p1", "p5-early", "p5-late"]);
+    expect(sortKanbanProjects(rows, "shoot-date", "awaiting_raw").map((row) => row.id)).toEqual(["none-early", "p1", "p5-early", "p5-late"]);
   });
 
   it("sorts by Deadline ascending, undated last, ignoring Shoot date and priority (#830)", () => {
@@ -74,7 +74,7 @@ describe("Kanban interaction model", () => {
       project("early", "awaiting_raw", { deadlineAt: 1000, shootDate: "2026-12-31" }),
       project("nan", "awaiting_raw", { deadlineAt: Number.NaN }),
     ];
-    expect(sortKanbanProjects(rows, "due-date").map((row) => row.id)).toEqual(["early", "late", "nan", "none"]);
+    expect(sortKanbanProjects(rows, "due-date", "awaiting_raw").map((row) => row.id)).toEqual(["early", "late", "nan", "none"]);
   });
 
   it("puts unusable shoot dates last, then breaks ties by street and id", () => {
@@ -86,15 +86,15 @@ describe("Kanban interaction model", () => {
       project("accent", "awaiting_raw", { street: "10 Élan Street", shootDate: "2026-01-01" }),
       project("other", "awaiting_raw", { street: "2 Apple Street", shootDate: "2026-01-01" }),
     ];
-    expect(sortKanbanProjects(rows, "shoot-date").map((row) => row.id)).toEqual(["accent", "a", "b", "other", "undated", "invalid"]);
+    expect(sortKanbanProjects(rows, "shoot-date", "awaiting_raw").map((row) => row.id)).toEqual(["accent", "a", "b", "other", "undated", "invalid"]);
   });
 
   it("does not mutate its input and is independent of input order", () => {
     const rows = [project("b", "awaiting_raw", { deadlineAt: 2 }), project("a", "awaiting_raw", { deadlineAt: 1 })];
     const copy = [...rows];
-    expect(sortKanbanProjects(rows, "due-date").map((row) => row.id)).toEqual(["a", "b"]);
+    expect(sortKanbanProjects(rows, "due-date", "awaiting_raw").map((row) => row.id)).toEqual(["a", "b"]);
     expect(rows).toEqual(copy);
-    expect(sortKanbanProjects([...rows].reverse(), "due-date").map((row) => row.id)).toEqual(["a", "b"]);
+    expect(sortKanbanProjects([...rows].reverse(), "due-date", "awaiting_raw").map((row) => row.id)).toEqual(["a", "b"]);
   });
 
   it("computes the landing slot by sorting the mover into the target column, per mode", () => {
@@ -115,6 +115,57 @@ describe("Kanban interaction model", () => {
     const empty = board([project("mover", "awaiting_raw")]);
     expect(boardLandingSlot(empty.projects, "mover", "raw_review", "shoot-date")).toEqual({ gap: { targetStageKey: "raw_review", successor: "end" }, position: 1, count: 1 });
     expect(boardLandingSlot(empty.projects, "missing", "raw_review", "shoot-date")).toBeNull();
+  });
+
+  describe("Delivered runs newest first (#832)", () => {
+    const delivered = () => [
+      project("old", "delivered", { shootDate: "2026-01-01", deadlineAt: 1000 }),
+      project("none", "delivered", { street: "0 Zero Street" }),
+      project("new", "delivered", { shootDate: "2026-09-01", deadlineAt: 3000 }),
+      project("mid", "delivered", { shootDate: "2026-05-01", deadlineAt: 2000 }),
+    ];
+
+    it("sorts Delivered newest first in both modes, undated last", () => {
+      expect(sortKanbanProjects(delivered(), "shoot-date", "delivered").map((row) => row.id)).toEqual(["new", "mid", "old", "none"]);
+      expect(sortKanbanProjects(delivered(), "due-date", "delivered").map((row) => row.id)).toEqual(["new", "mid", "old", "none"]);
+    });
+
+    it("breaks equal dates by street then id ascending", () => {
+      const rows = [
+        project("b", "delivered", { street: "2 B St", shootDate: "2026-01-01" }),
+        project("a2", "delivered", { street: "1 A St", shootDate: "2026-01-01" }),
+        project("a1", "delivered", { street: "1 A St", shootDate: "2026-01-01" }),
+      ];
+      expect(sortKanbanProjects(rows, "shoot-date", "delivered").map((row) => row.id)).toEqual(["a1", "a2", "b"]);
+    });
+
+    it("leaves every other Stage oldest first", () => {
+      for (const stage of ["awaiting_raw", "raw_review", "editing_autohdr", "edited_review"] as const) {
+        expect(sortKanbanProjects(delivered(), "shoot-date", stage).map((row) => row.id)).toEqual(["old", "mid", "new", "none"]);
+      }
+    });
+
+    it("lands a mover from another Stage at its newest-first slot, successor included", () => {
+      const land = (shootDate: string | null) => boardLandingSlot(
+        [project("mover", "edited_review", { shootDate }), ...delivered().filter((row) => row.id !== "none")],
+        "mover", "delivered", "shoot-date",
+      );
+      expect(land("2026-12-01")).toEqual({ gap: { targetStageKey: "delivered", successor: "new" }, position: 1, count: 4 });
+      expect(land("2026-06-01")).toEqual({ gap: { targetStageKey: "delivered", successor: "mid" }, position: 2, count: 4 });
+      expect(land("2025-01-01")).toEqual({ gap: { targetStageKey: "delivered", successor: "end" }, position: 4, count: 4 });
+      expect(land(null)).toEqual({ gap: { targetStageKey: "delivered", successor: "end" }, position: 4, count: 4 });
+    });
+
+    it("lands into an empty Delivered column at position 1", () => {
+      expect(boardLandingSlot([project("mover", "edited_review")], "mover", "delivered", "shoot-date"))
+        .toEqual({ gap: { targetStageKey: "delivered", successor: "end" }, position: 1, count: 1 });
+    });
+
+    it("reports a Delivered card's source index in newest-first order", () => {
+      const model = board(delivered());
+      const old = model.projects.find((row) => row.id === "old")!;
+      expect(focusDescriptorFor("keyboard", old, model, "shoot-date").sourceIndex).toBe(2);
+    });
   });
 
   it("maps the Editing transport spelling when computing a landing slot", () => {
@@ -150,7 +201,7 @@ describe("Kanban interaction model", () => {
     expect(overlay.projects.find((item) => item.id === "source")).toMatchObject({ stageKey: "raw_review", boardRevision: 3 });
     expect(overlay.projects.find((item) => item.id === "first")?.boardRevision).toBe(8);
     // The card renders at its sorted slot, not at a requested one: the overlay carries no position.
-    expect(sortKanbanProjects(overlay.projects.filter((item) => item.stageKey === "raw_review"), "shoot-date").map((item) => item.id)).toEqual(["first", "last", "middle", "source"]);
+    expect(sortKanbanProjects(overlay.projects.filter((item) => item.stageKey === "raw_review"), "shoot-date", "raw_review").map((item) => item.id)).toEqual(["first", "last", "middle", "source"]);
     expect(rollbackToBaseline(baseline)).toEqual(baseline);
     expect(JSON.stringify(rollbackToBaseline(baseline))).toBe(JSON.stringify(baseline));
     expect(baseline.projects.find((item) => item.id === "source")?.stageKey).toBe("awaiting_raw");
@@ -172,7 +223,7 @@ describe("Kanban interaction model", () => {
     expect(settled.sourceProvisional).toBe(true);
     expect(settled.model.projects.find((item) => item.id === "source")).toMatchObject({ stageKey: "raw_review", boardRevision: 11 });
     expect(settled.model.projects.find((item) => item.id === "first")?.boardRevision).toBe(8);
-    expect(sortKanbanProjects(settled.model.projects.filter((item) => item.stageKey === "raw_review"), "shoot-date").map((item) => item.id)).toEqual(["first", "last", "middle", "source"]);
+    expect(sortKanbanProjects(settled.model.projects.filter((item) => item.stageKey === "raw_review"), "shoot-date", "raw_review").map((item) => item.id)).toEqual(["first", "last", "middle", "source"]);
     // The response omits the deprecated field entirely: the same settle.
     const bare = reconcileAuthoritativeResponse(baseline, "source", { ...response, board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review" } });
     expect(bare.sourceProvisional).toBe(true);

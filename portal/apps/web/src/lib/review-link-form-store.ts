@@ -19,7 +19,7 @@ export type CreateDraft = { label: string; passcode: string; expiryDay: string |
 /** An edit of one link: `null` / `{}` mean untouched. `removePasscode` and a typed `passcode` are exclusive. */
 export type DetailDraft = { label: string | null; expiryDay: string | null; passcode: string; removePasscode: boolean; allow: Partial<Allow> };
 export type Reveal = { url: string; linkId: string; label: string | null; origin: "create" | "replace" };
-export type ReviewLinkView = { kind: "closed" } | { kind: "list" } | { kind: "create" } | { kind: "detail"; linkId: string } | { kind: "reveal" };
+export type ReviewLinkView = { kind: "closed" } | { kind: "list" } | { kind: "create"; /** A single-film create (the review page, a card menu): only this film, whatever is ticked. */ only?: string } | { kind: "detail"; linkId: string } | { kind: "reveal" };
 export type Problem = { text: string; action: ReviewLinkErrorAction };
 
 export type ReviewLinkStoreState = {
@@ -35,13 +35,15 @@ export type ReviewLinkStoreState = {
   pending: ReadonlySet<string>;
   /** The last refusal per scope. */
   problems: Readonly<Record<string, Problem>>;
+  /** A selector for the control to focus when the dialog closes, set by an entry point whose control unmounts on click (a menu item); never a node. Cleared when the dialog closes. */
+  returnFocus: string | null;
 };
 
 const emptyCreate = (): CreateDraft => ({ label: "", passcode: "", expiryDay: null, allow: { ...DEFAULT_ALLOW }, grants: {} });
 export const emptyDetail = (): DetailDraft => ({ label: null, expiryDay: null, passcode: "", removePasscode: false, allow: {} });
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((value, index) => value === b[index]);
 const queued = (reveals: readonly Reveal[]): Pick<ReviewLinkStoreState, "reveals" | "reveal"> => ({ reveals, reveal: reveals[0] ?? null });
-const initial = (): ReviewLinkStoreState => ({ selection: new Set(), view: { kind: "closed" }, create: emptyCreate(), details: {}, reveals: [], reveal: null, pending: new Set(), problems: {} });
+const initial = (): ReviewLinkStoreState => ({ selection: new Set(), view: { kind: "closed" }, create: emptyCreate(), details: {}, reveals: [], reveal: null, pending: new Set(), problems: {}, returnFocus: null });
 
 export type ReviewLinkStore = ReturnType<typeof createReviewLinkStore>;
 
@@ -85,13 +87,21 @@ export function createReviewLinkStore(key: string) {
 
     openList() { update(() => ({ view: { kind: "list" } })); },
     openCreate() { update(() => ({ view: { kind: "create" } })); },
+    /**
+     * A single-film create (#834): opens the create step for this film alone with `assetIds` granted. It never touches the ticks, and it
+     * overwrites only this film's grant draft, so a half-built multi-select and its other grants survive.
+     */
+    openCreateFor(videoId: string, assetIds: readonly string[], returnFocus?: string) {
+      touch([`grant:${videoId}`]);
+      update((s) => ({ create: { ...s.create, grants: { ...s.create.grants, [videoId]: assetIds } }, view: { kind: "create", only: videoId }, returnFocus: returnFocus ?? null }));
+    },
     openDetail(linkId: string) { update(() => ({ view: { kind: "detail", linkId } })); },
     /** Closing never cancels a request and never discards a draft; it does discard the reveal on screen. */
     closeDialog() {
       update((s) => {
         // On a reveal, closing dismisses the URL on screen and nothing else: a second one waiting is still unread.
         if (s.view.kind === "reveal" && s.reveals.length > 1) return queued(s.reveals.slice(1));
-        return { view: { kind: "closed" }, ...queued([]) };
+        return { view: { kind: "closed" }, returnFocus: null, ...queued([]) };
       });
     },
 
@@ -122,7 +132,7 @@ export function createReviewLinkStore(key: string) {
      * The create or replace answered: show the URL once. A created link clears what it was made from, and only that: with `submitted`
      * (the Videos and the draft as sent), a tick or field the person changed while the request was out stays. Without it, everything goes.
      */
-    showReveal(reveal: Reveal, submitted?: { videoIds: readonly string[]; draft: CreateDraft; /** `selectionRevisions` at submit; a tick changed since stays. */ selectionRevs?: Readonly<Record<string, number>>; draftRevs?: Readonly<Record<string, number>> }) {
+    showReveal(reveal: Reveal, submitted?: { videoIds: readonly string[]; draft: CreateDraft; /** `selectionRevisions` at submit; a tick changed since stays. */ selectionRevs?: Readonly<Record<string, number>>; draftRevs?: Readonly<Record<string, number>>; /** A single-film create leaves every tick alone. */ keepSelection?: true }) {
       update((s) => {
         const reveals = queued([...s.reveals, reveal]);
         if (reveal.origin !== "create") return { ...reveals, view: { kind: "reveal" } };
@@ -145,7 +155,7 @@ export function createReviewLinkStore(key: string) {
           allow: unchanged("allow", now.allow.comments === sent.allow.comments && now.allow.approve === sent.allow.approve && now.allow.download === sent.allow.download) ? { ...DEFAULT_ALLOW } : now.allow,
           grants,
         };
-        return { ...reveals, view: { kind: "reveal" }, selection: new Set([...s.selection].filter((id) => !submitted.videoIds.includes(id) || (submitted.selectionRevs !== undefined && (tickRevs.get(id) ?? 0) !== submitted.selectionRevs[id]))), create };
+        return { ...reveals, view: { kind: "reveal" }, selection: submitted.keepSelection ? s.selection : new Set([...s.selection].filter((id) => !submitted.videoIds.includes(id) || (submitted.selectionRevs !== undefined && (tickRevs.get(id) ?? 0) !== submitted.selectionRevs[id]))), create };
       });
     },
     dismissReveal() {

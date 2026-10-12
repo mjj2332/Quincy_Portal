@@ -141,6 +141,7 @@ function postSuccessRefetchFailureAnnouncement(recovery: MovementRecovery | null
   const targetColumn = sortKanbanProjects(
     recovery.model.projects.filter((project) => canonicalStageKey(project.stageKey) === recovery.settledStageKey),
     sortMode,
+    recovery.settledStageKey,
   );
   const index = targetColumn.findIndex((project) => project.id === recovery.projectId);
   return announce({ type: "post-success-refetch-failure" }, {
@@ -1323,6 +1324,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     const targetColumn = sortKanbanProjects(
       model.projects.filter((item) => canonicalStageKey(item.stageKey) === targetStageKey),
       kanbanSortMode,
+      targetStageKey,
     );
     const position = targetColumn.findIndex((item) => item.id === project.id);
     const message = announce(event, {
@@ -1643,7 +1645,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           searchFocusRequest={searchFocusRequest}
           onSearchFocusHandled={handleSearchFocusHandled}
           display={renderedView === "board"
-            ? <BoardDisplayContent value={kanbanSortMode} onChange={changeKanbanSort} disabled={kanbanSortLocked} />
+            ? <BoardDisplayContent value={kanbanSortMode} onChange={changeKanbanSort} stages={activeStages.map((stage) => ({ key: canonicalStageKey(stage.key), label: stage.label }))} disabled={kanbanSortLocked} />
             : renderedView === "table"
               ? <TableDisplayContent
                   groupBy={tablePrefs.groupBy}
