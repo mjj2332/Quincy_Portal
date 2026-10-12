@@ -1,13 +1,13 @@
 import { CircleCheck } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { IconTip } from "./VideoPlayer";
 
-/** The filled green tick: a success-token disc with the check cut out in the page colour. Shared by the staff toggle and the status-only views. */
-export const RESOLVED_TICK = "fill-success text-background [&>circle]:stroke-success";
+/** The filled green tick: a success-token disc with the check cut out in the card colour. Shared by the staff toggle and the status-only views. */
+export const RESOLVED_TICK = "fill-success text-card [&>circle]:stroke-success";
 
-/** A resolved note, as status only (read-only staff viewers and guests): a green tick with an sr-only "Resolved", in the note's bottom-right. */
-export function ResolvedTick({ "data-testid": testId }: { "data-testid": string }) {
-  return <div className="flex justify-end">
-    <IconTip label="Resolved"><span tabIndex={0} data-testid={testId} className="inline-flex rounded-[var(--radius-xs)]"><CircleCheck aria-hidden="true" className={cn("size-5", RESOLVED_TICK)} /><span className="sr-only">Resolved</span></span></IconTip>
-  </div>;
+/**
+ * A resolved note, as status only (read-only staff viewers and guests): a green tick with an sr-only "Resolved". 32px square so its glyph centre matches the staff toggle. The caller places it
+ * (`ms-auto` in the Reply row, or alone in a right-aligned row). Not focusable: the sr-only text carries the meaning, so there is no extra tab stop.
+ */
+export function ResolvedTick({ "data-testid": testId, className }: { "data-testid": string; className?: string }) {
+  return <span data-testid={testId} className={cn("inline-flex size-8 items-center justify-center", className)}><CircleCheck aria-hidden="true" className={cn("size-5", RESOLVED_TICK)} /><span className="sr-only">Resolved</span></span>;
 }

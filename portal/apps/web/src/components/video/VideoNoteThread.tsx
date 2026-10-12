@@ -246,11 +246,11 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
         {!thread.deleted && <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-reply-button" disabled={busy || blocked} onClick={() => { setResolveNotice(null); store.openReply(assetId, thread.id); }}>Reply</Button>}
         <span className="ms-auto"><IconTip label={thread.resolved ? "Reopen" : "Mark as complete"}>
           <ReuiButton type="button" variant="ghost" size="icon" className={RESOLVE_TICK} data-testid="video-note-resolve" aria-label={thread.resolved ? "Reopen" : "Mark as complete"} aria-pressed={thread.resolved !== null} disabled={busy} onClick={() => { void toggleResolved(); }}>
-            <CircleCheck aria-hidden="true" className={cn("size-5", thread.resolved ? RESOLVED_TICK : "text-foreground-secondary")} />
+            <CircleCheck aria-hidden="true" className={cn("size-5", thread.resolved ? RESOLVED_TICK : "text-muted-foreground")} />
           </ReuiButton>
         </IconTip></span>
       </div>}
-      {readOnly && thread.resolved && <ResolvedTick data-testid="video-note-resolved-status" />}
+      {readOnly && thread.resolved && <div className="flex justify-end"><ResolvedTick data-testid="video-note-resolved-status" /></div>}
     </div>
   </Item>;
 }

@@ -175,14 +175,13 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
       </div>
       {body(thread)}
       {deleteConflict !== null && <p role="alert" data-testid="guest-note-problem" className={PROBLEM}>{deleteConflict}</p>}
-      
       {thread.replies.map((reply) => <div key={reply.id} data-testid="guest-note-reply" className="flex flex-col gap-[var(--space-1)] border-l border-border ps-[var(--space-3)]">
         <div className="flex min-w-0 items-center gap-[var(--space-2)]"><Author note={reply} />{menu(reply)}</div>
         {body(reply)}
       </div>)}
-      {thread.resolved && <ResolvedTick data-testid="guest-note-resolved" />}
+      {thread.resolved && (!writing.canWrite || thread.deleted) && <div className="flex justify-end"><ResolvedTick data-testid="guest-note-resolved" /></div>}
       {writing.canWrite && !thread.deleted && (replyDraft === null
-        ? <div><Button type="button" variant="ghost" size="sm" data-testid="guest-note-reply-button" className={TOUCH} disabled={busy} onClick={() => { if (!writing.verified) writing.onNeedVerify(); else { setReplyStatus(IDLE); drafts.set(replyKey, { noteId: null, baseRevision: null, baseText: "", ackRevision: null, text: "" }); } }}>Reply</Button></div>
+        ? <div className="flex items-center"><Button type="button" variant="ghost" size="sm" data-testid="guest-note-reply-button" className={TOUCH} disabled={busy} onClick={() => { if (!writing.verified) writing.onNeedVerify(); else { setReplyStatus(IDLE); drafts.set(replyKey, { noteId: null, baseRevision: null, baseText: "", ackRevision: null, text: "" }); } }}>Reply</Button>{thread.resolved && <ResolvedTick data-testid="guest-note-resolved" className="ms-auto" />}</div>
         : <form data-testid="guest-reply-form" aria-label="Reply" onSubmit={(event) => { void sendReply(event); }} noValidate className="flex flex-col gap-[var(--space-2)]">
           <Textarea data-testid="guest-reply-body" aria-label="Your reply" autoFocus value={replyDraft.text} disabled={replyStatus.pending || !writing.canWrite} onChange={(event) => { drafts.set(replyKey, { ...replyDraft, text: event.target.value }); }} />
           {replyStatus.problem !== null && <p role="alert" data-testid="guest-reply-problem" className={PROBLEM}>{replyStatus.problem}</p>}

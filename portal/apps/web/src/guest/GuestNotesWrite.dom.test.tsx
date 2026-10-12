@@ -108,6 +108,17 @@ describe("A resolved note", () => {
     expect(ticks[0]!.textContent).toBe("Resolved");
     expect(ticks[0]!.querySelector("svg")!.getAttribute("class")).toContain("fill-success");
   });
+  it("sits in the Reply row, bottom-right, when the guest can reply; on its own row when they cannot", async () => {
+    notes = { [asset(10)]: [note(1, { resolved: true })] };
+    await open();
+    expect(byId("guest-note-resolved")!.parentElement).toBe(byId("guest-note-reply-button")!.parentElement);
+    expect(byId("guest-note-resolved")!.className).toContain("ms-auto");
+    await act(async () => { root!.unmount(); }); root = null; host.remove();
+    session = SESSION_OFF;
+    await open();
+    expect(byId("guest-note-reply-button")).toBeNull();
+    expect(byId("guest-note-resolved")).not.toBeNull();
+  });
 });
 
 describe("Add a note", () => {
