@@ -1,15 +1,15 @@
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { PencilIcon } from "lucide-react";
-import { VIDEO_NOTE_BODY_MAX, type VideoNoteCreateInput, type VideoNoteVisibility } from "@quincy/shared";
+import { VIDEO_NOTE_BODY_MAX, type Role, type VideoNoteCreateInput, type VideoNoteVisibility } from "@quincy/shared";
 import { useFrameClockSelector, type VideoFrameClock } from "../../lib/video-frame-clock";
-import { effectiveMarks, frameOnScreen, type NoteFormStore } from "../../lib/video-note-form-store";
+import { draftDoc, effectiveMarks, frameOnScreen, type NoteFormStore } from "../../lib/video-note-form-store";
 import { EMPTY_MARKS, marksToFrames } from "../../lib/video-note-marks";
 import { cn } from "../../lib/utils";
 import { Button } from "../quincy/Button";
 import { Notice } from "../quincy/Notice";
-import { Textarea } from "../reui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
 import { Kbd } from "../reui/kbd";
+import { VideoNoteEditor } from "./VideoNoteEditor";
 
 const HINT: Record<VideoNoteVisibility, string> = {
   internal: "Studio only — never shown on the client link.",
@@ -17,7 +17,6 @@ const HINT: Record<VideoNoteVisibility, string> = {
 };
 const MONO = "[font:var(--type-mono)] tabular-nums";
 // On a short window the list needs the height: two rows until the field is focused or holds text (the 800px query is the window's height).
-const SHORT_TEXTAREA = "[@media(max-height:800px)]:min-h-16 [@media(max-height:800px)]:focus:min-h-24 [@media(max-height:800px)]:[&:not(:placeholder-shown)]:min-h-24";
 /** The anchor chip, shared with the edit form. */
 export const ANCHOR_CHIP_ROW = "@max-[280px]:basis-full";
 export const ANCHOR_CHIP = "rounded-md bg-muted px-[var(--space-2)] py-[var(--space-1)] text-foreground [font:var(--type-mono)] tabular-nums";
@@ -32,7 +31,7 @@ const SMALL_BUTTON = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[7
  * is kept and the person refreshes. Visibility starts Internal every time the composer is empty and is never sticky; it is immutable once posted.
  * The draft, the marks and the request all live in the Video tab's form store, so this component only renders them and sends commands.
  */
-export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode, post, onRefresh, markup = false }: {
+export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode, post, onRefresh, markup = false, rich }: {
   store: NoteFormStore;
   assetId: string;
   clock: VideoFrameClock | null;
@@ -42,7 +41,10 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   onRefresh: () => void;
   /** The Project's `markup` part is on: a drawing in the draft shows as a chip, and Post sends it. */
   markup?: boolean;
+  /** The rich field (#835): the Project and the person's role, which the @ list and the upload routes need. */
+  rich: { projectId: string; role: Role };
 }) {
+  const [uploading, setUploading] = useState(false);
   const slot = useSyncExternalStore(store.subscribe, () => store.slot(assetId));
   const { composer, open, op } = slot;
   const liveFrame = useFrameClockSelector(clock, (state) => state.targetFrame ?? state.frame, 0);
@@ -57,7 +59,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   const drawingNow = markup && slot.draw !== null;
   const pendingFrames = marksToFrames(marks, frameCount);
   const tooLong = composer.body.length > VIDEO_NOTE_BODY_MAX;
-  const canPost = clock !== null && op === null && otherForm === null && composer.body.trim() !== "" && !tooLong;
+  const canPost = clock !== null && op === null && otherForm === null && composer.body.trim() !== "" && !tooLong && !uploading;
   const frozen = phase !== "idle";
   const submit = () => { if (canPost && clock) void store.post(assetId, { clock, frameCount, send: post, markup }); };
   const mark = (kind: "in" | "out") => { if (clock) store.mark(assetId, kind, frameOnScreen(clock.getState()), clock); };
@@ -89,15 +91,10 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
       <Button type="button" variant="text" data-testid="video-note-remove-drawing" className={SMALL_BUTTON} disabled={frozen} onClick={() => { store.clearMarkup(assetId); }}>Remove drawing</Button>
     </div>}
     <label className="sr-only" htmlFor="video-note-body">Add a note</label>
-    <Textarea
-      id="video-note-body"
-      value={composer.body}
-      placeholder="Add a note at this frame…"
-      readOnly={frozen}
-      className={SHORT_TEXTAREA}
-      onChange={(event) => { if (!frozen) store.setBody(assetId, event.target.value, clock ? frameOnScreen(clock.getState()) : 0); }}
-      onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } }}
-    />
+    <div data-testid="video-note-editor" onKeyDownCapture={(event) => { if (frozen) event.preventDefault(); }}>
+      <VideoNoteEditor id="video-note-body" projectId={rich.projectId} role={rich.role} value={draftDoc(composer.content, composer.body)} disabled={frozen} placeholder="Add a note at this frame… Use @ to mention a colleague."
+        onChange={(doc) => { if (!frozen) store.setContent(assetId, doc, clock ? frameOnScreen(clock.getState()) : 0); }} onSubmit={submit} onUploadingChange={setUploading} />
+    </div>
     {tooLong && <Notice tone="critical" role="alert">{`Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.`}</Notice>}
     {problem && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{problem.text}</span>{problem.refresh && <Button type="button" variant="text" data-testid="video-note-refresh" onClick={onRefresh}>Refresh notes</Button>}</Notice>}
     <div className="grid gap-[var(--space-1)]">

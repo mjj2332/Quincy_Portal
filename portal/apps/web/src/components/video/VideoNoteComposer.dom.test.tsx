@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { VideoFrameClock, FrameClockState } from "../../lib/video-frame-clock";
 import { ApiError } from "../../lib/api";
 import { createNoteFormStore, type NoteFormStore } from "../../lib/video-note-form-store";
+vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 import { VideoNoteComposer } from "./VideoNoteComposer";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -27,6 +28,7 @@ function fakeClock(initial: Partial<FrameClockState> = {}) {
   };
 }
 
+const para = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
 const tc = (frame: number) => `TC${frame}`;
 let root: Root | null = null; let host: HTMLElement;
 type Props = Omit<React.ComponentProps<typeof VideoNoteComposer>, "store" | "assetId">;
@@ -34,7 +36,7 @@ type Props = Omit<React.ComponentProps<typeof VideoNoteComposer>, "store" | "ass
 let store: NoteFormStore;
 const A = "asset";
 async function render(over: Partial<Props> = {}) {
-  const props: Props = { clock: null, frameCount: 300, timecode: tc, post: vi.fn(async () => ({})), onRefresh: vi.fn(), ...over };
+  const props: Props = { clock: null, frameCount: 300, timecode: tc, post: vi.fn(async () => ({})), onRefresh: vi.fn(), rich: { projectId: "p1", role: "editor" }, ...over };
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   const tree = () => <VideoNoteComposer {...props} store={store} assetId={A} />;
   const rerender = async (next: Partial<Props>) => { Object.assign(props, next); await act(async () => { root!.render(tree()); }); };
@@ -78,7 +80,7 @@ describe("VideoNoteComposer (#741 5b)", () => {
     await click(postButton());
     f.confirm(12);
     await flush();
-    expect(props.post).toHaveBeenCalledWith({ startFrame: 12, visibility: "public", body: "for the client" });
+    expect(props.post).toHaveBeenCalledWith({ startFrame: 12, visibility: "public", content: para("for the client") });
     expect(textarea().value).toBe("");
     expect(visibilityItem("internal").getAttribute("aria-pressed")).toBe("true");
   });
@@ -113,14 +115,14 @@ describe("VideoNoteComposer (#741 5b)", () => {
     expect(props.post).not.toHaveBeenCalled();
     f.confirm(20);
     await flush();
-    expect(props.post).toHaveBeenCalledWith({ startFrame: 20, visibility: "internal", body: "a" });
+    expect(props.post).toHaveBeenCalledWith({ startFrame: 20, visibility: "internal", content: para("a") });
   });
 
   it("posts frame 0 as startFrame 0", async () => {
     const f = fakeClock({ frame: 0 });
     const { props } = await render({ clock: f.clock });
     await type("first frame"); await click(postButton()); f.confirm(0); await flush();
-    expect(props.post).toHaveBeenCalledWith({ startFrame: 0, visibility: "internal", body: "first frame" });
+    expect(props.post).toHaveBeenCalledWith({ startFrame: 0, visibility: "internal", content: para("first frame") });
   });
 
   it("a confirmation that never lands in 10 seconds keeps the draft, posts nothing and offers Retry", async () => {
@@ -156,7 +158,7 @@ describe("VideoNoteComposer (#741 5b)", () => {
     await click(postButton());
     f.confirm(10);
     await flush();
-    expect(props.post).toHaveBeenCalledWith({ startFrame: 10, endFrame: 21, visibility: "internal", body: "range" });
+    expect(props.post).toHaveBeenCalledWith({ startFrame: 10, endFrame: 21, visibility: "internal", content: para("range") });
     f.set({ frame: 40 });
     await click(byTestId("video-note-set-in")!);
     expect(byTestId("video-note-anchor")!.textContent).toBe("In TC40");
@@ -245,7 +247,7 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     expect(textarea().value).toBe("first");
     f.confirm(12);
     await flush();
-    expect(props.post).toHaveBeenCalledWith({ startFrame: 12, visibility: "internal", body: "first" });
+    expect(props.post).toHaveBeenCalledWith({ startFrame: 12, visibility: "internal", content: para("first") });
   });
 
   it("finding 3: the text stays read-only while the request is out, and the form reopens when it settles", async () => {
@@ -278,7 +280,7 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     await click(postButton());
     f.confirm(20);
     await flush();
-    expect(props.post).toHaveBeenCalledWith({ startFrame: 20, visibility: "internal", body: "anchored at 20" });
+    expect(props.post).toHaveBeenCalledWith({ startFrame: 20, visibility: "internal", content: para("anchored at 20") });
   });
 
   it("finding 5: cancelling the confirmation (the viewer's Escape) returns the form to idle with its text, and nothing posts", async () => {
@@ -370,7 +372,7 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     expect(postButton().textContent).toBe("Confirming…");
     expect(props.post).not.toHaveBeenCalled();
     f.confirm(10); await flush();
-    expect(props.post).toHaveBeenCalledWith({ startFrame: 10, endFrame: 21, visibility: "internal", body: "marked" });
+    expect(props.post).toHaveBeenCalledWith({ startFrame: 10, endFrame: 21, visibility: "internal", content: para("marked") });
   });
 
   it("round 2 (4): a marked note whose confirmed frame is not its start shows 'Frame moved' and keeps the draft; the 10 s timeout and Escape cancel it too", async () => {

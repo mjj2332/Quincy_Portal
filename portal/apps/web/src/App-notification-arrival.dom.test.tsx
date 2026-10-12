@@ -37,6 +37,8 @@ const EXPECTED_TAB: Record<NotificationType, "RAW" | "Edited" | "Collaboration" 
   video_note: "Video",
   video_reply: "Video",
   video_decision: "Video",
+  video_released: "Video",
+  video_mention: "Video",
   delivery_unlock_requested: "Edited",
 };
 

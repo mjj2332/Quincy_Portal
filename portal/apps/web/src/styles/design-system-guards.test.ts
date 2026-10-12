@@ -1362,7 +1362,7 @@ const FIELD_PRIMITIVES = [
   "components/reui/select.tsx",
   "components/reui/combobox.tsx",
   "components/quincy/NativeSelect.tsx",
-  "components/QuincyRichTextEditor.tsx",
+  "components/QuincyRichTextEditorBase.tsx",
   "lib/rail-field.ts",
   // #633 item 1: controls that kept `focus-visible:border-ring` beside the global outline.
   "components/reui/checkbox.tsx",

@@ -65,7 +65,7 @@ describe("rich-text editor layout contracts", () => {
   });
 
   it("mounts the floating table bar only when the phone path is off, and the toolbar group on the phone or when the bar has no room (tier none)", () => {
-    const source = readFileSync(new URL("../../QuincyRichTextEditor.tsx", import.meta.url), "utf8");
+    const source = readFileSync(new URL("../../QuincyRichTextEditorBase.tsx", import.meta.url), "utf8");
     expect(source).toContain("useMediaQuery(RICH_TEXT_PHONE_QUERY)");
     expect(source).toMatch(/!phone && <RichTextTableBubble/);
     expect(source).toMatch(/const presentation = phone \? "tools" : tableTier === "none" \? "menu" : "bubble"/);
@@ -79,7 +79,7 @@ describe("rich-text editor layout contracts", () => {
   });
 
   it("the composer toolbar is sticky on the document preset only, and the table bar takes its bottom as a ceiling (#594)", () => {
-    const source = readFileSync(new URL("../../QuincyRichTextEditor.tsx", import.meta.url), "utf8");
+    const source = readFileSync(new URL("../../QuincyRichTextEditorBase.tsx", import.meta.url), "utf8");
     expect(source).toMatch(/isDocument && "rich-text-toolbar-sticky"/);
     expect(source).toMatch(/ceiling=\{/);
     const table = read("rich-text-table.tsx");
@@ -131,7 +131,7 @@ describe("rich-text editor layout contracts", () => {
   });
 
   it("gives the heading trigger a fixed width so its label never shifts the toolbar", () => {
-    const source = readFileSync(new URL("../../QuincyRichTextEditor.tsx", import.meta.url), "utf8");
+    const source = readFileSync(new URL("../../QuincyRichTextEditorBase.tsx", import.meta.url), "utf8");
     expect(source).toContain("min-w-[8.5rem]");
     expect(source).not.toContain("min-w-[112px]");
   });

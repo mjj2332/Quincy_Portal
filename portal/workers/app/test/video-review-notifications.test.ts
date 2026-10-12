@@ -56,14 +56,14 @@ describe("staff notes", () => {
     expect(text).not.toContain(SENTINEL);
   });
 
-  it("an Admin who is a member is told with an admin snapshot; one who is not a member is not told", async () => {
+  it("an Admin who is a member is told with a membership snapshot; one who is not a member is not told", async () => {
     await addProjectMember(ids.admin);
     try {
       const v = await seedVideoVersion();
       const noteId = ((await (await note("member", v.assetId)).json()) as Json).id as string;
       const rows = await outbox(`video_note:${noteId}`);
       expect(rows.map((row) => row.recipient_id).sort()).toEqual(sorted(ids.admin, ids.other, ids.external));
-      expect(JSON.parse(rows.find((row) => row.recipient_id === ids.admin)!.payload_json).authorizationAtOccurrence).toEqual({ kind: "admin" });
+      expect(JSON.parse(rows.find((row) => row.recipient_id === ids.admin)!.payload_json).authorizationAtOccurrence).toEqual({ kind: "project_member", membershipIds: [expect.any(String)] });
     } finally { await dropProjectMember(ids.admin); }
   });
 
@@ -88,7 +88,7 @@ describe("staff notes", () => {
     expect(await outbox()).toEqual([]);
   });
 
-  it("a reply tells the thread's authors and the Version's uploader, never the actor, and never a guest", async () => {
+  it("a reply tells every other Project member who can view video, whoever wrote in the thread, never the actor", async () => {
     const v = await seedVideoVersion({ uploader: ids.member });
     const root = await seedVideoNote({ assetId: v.assetId, author: ids.external, role: "external_editor" });
     await seedVideoNote({ assetId: v.assetId, author: ids.other, parentId: root.id });
@@ -100,15 +100,15 @@ describe("staff notes", () => {
     expect(first!.actor_id).toBe(ids.admin);
   });
 
-  it("a reply by the uploader tells only the other thread authors", async () => {
+  it("a reply by a member tells the other members, even those who never wrote in the thread", async () => {
     const v = await seedVideoVersion({ uploader: ids.member });
     const root = await seedVideoNote({ assetId: v.assetId, author: ids.external, role: "external_editor" });
     const response = await reply("member", root.id); expect(response.status).toBe(201);
     const replyId = (((await response.json()) as Json).replies as Json[]).at(-1)!.id as string;
-    expect(await recipients(`video_reply:${replyId}`)).toEqual([ids.external]);
+    expect(await recipients(`video_reply:${replyId}`)).toEqual(sorted(ids.other, ids.external));
   });
 
-  it("a reply never reaches a Photographer author, a guest author, or a thread author who has left the Project", async () => {
+  it("a reply never reaches a Photographer author, a guest author, a thread author who has left the Project, or an Admin outside the Project", async () => {
     const v = await seedVideoVersion({ uploader: ids.member });
     const guestRoot = await seedVideoNote({ assetId: v.assetId, guest: true });
     await seedVideoNote({ assetId: v.assetId, author: ids.photographer, role: "photographer", parentId: guestRoot.id });
@@ -140,6 +140,54 @@ describe("staff notes", () => {
   });
 });
 
+describe("Release", () => {
+  const OPEN_DELIVERY = [...OPEN, "video_review_delivery"] as const;
+  async function approved() {
+    await clearVideoFlags(); await setVideoFlags(...OPEN_DELIVERY);
+    const v = await seedVideoVersion();
+    expect((await request(`/api/projects/${ids.project}/video-versions/${v.assetId}/decisions`, "admin", "POST", { decision: "approved" })).status).toBe(201);
+    return v;
+  }
+  const releaseOf = (assetId: string, who: Parameters<typeof request>[1]) => request(`/api/projects/${ids.project}/video-versions/${assetId}/release`, who, "POST", { approvalRevision: 1 });
+
+  it("tells every Project member who can view video, never the actor, a Photographer or an Admin outside the Project", async () => {
+    const v = await approved();
+    const response = await releaseOf(v.assetId, "admin"); expect(response.status).toBe(201);
+    const releaseId = ((await response.json()) as Json).release.id as string;
+    expect(await recipients(`video_released:${releaseId}`)).toEqual(sorted(ids.member, ids.other, ids.external));
+    const [first] = await outbox(`video_released:${releaseId}`);
+    expect(first).toMatchObject({ actor_id: ids.admin, event_type: VIDEO_REVIEW_NOTIFICATION_EVENT });
+    expect(JSON.parse(first!.payload_json).video).toEqual({ kind: "video_released", projectId: ids.project, videoId: v.videoId, assetId: v.assetId, sourceId: releaseId });
+  });
+
+  it("a member who releases is not told of it; an Admin member is told with a project_member snapshot", async () => {
+    await addProjectMember(ids.admin);
+    try {
+      const v = await approved();
+      const releaseId = ((await (await releaseOf(v.assetId, "member")).json()) as Json).release.id as string;
+      const rows = await outbox(`video_released:${releaseId}`);
+      expect(rows.map((row) => row.recipient_id).sort()).toEqual(sorted(ids.admin, ids.other, ids.external));
+      expect(JSON.parse(rows.find((row) => row.recipient_id === ids.admin)!.payload_json).authorizationAtOccurrence).toEqual({ kind: "project_member", membershipIds: [expect.any(String)] });
+    } finally { await dropProjectMember(ids.admin); }
+  });
+
+  it("a refused Release (already released) and a withdraw leave no second row", async () => {
+    const v = await approved();
+    expect((await releaseOf(v.assetId, "admin")).status).toBe(201);
+    const count = (await outbox()).length;
+    expect((await releaseOf(v.assetId, "admin")).status).toBe(409);
+    expect((await request(`/api/projects/${ids.project}/video-versions/${v.assetId}/release`, "admin", "DELETE")).status).toBe(200);
+    expect((await outbox()).length).toBe(count);
+  });
+
+  it("writes nothing while notify_staff is off, and the Release still lands", async () => {
+    const v = await approved();
+    await database.DB.prepare("UPDATE feature_flags SET enabled = 0 WHERE key = 'video_review_notify_staff'").run();
+    expect((await releaseOf(v.assetId, "admin")).status).toBe(201);
+    expect(await outbox()).toEqual([]);
+  });
+});
+
 describe("guest writes", () => {
   async function guestWorld() {
     await clearVideoFlags(); await openGuestGate(); await setVideoFlags("video_review_notes", "video_review_notify_staff");
@@ -160,13 +208,13 @@ describe("guest writes", () => {
     expect(JSON.stringify(await outbox())).not.toContain(SENTINEL);
   });
 
-  it("a guest reply to a staff note tells that note's authors and the uploader", async () => {
+  it("a guest reply to a staff note tells every Project member who can view video", async () => {
     const w = await guestWorld();
     const root = await seedVideoNote({ assetId: w.a.assetId, author: ids.other, visibility: "public" });
     const response = await guestFetch(linkPath(w.link.id, `/notes/${root.id}/replies`), { method: "POST", cookie: w.link.cookie, body: { body: SENTINEL } });
     expect(response.status).toBe(201);
     const replyId = (((await response.json()) as Json).replies as Json[]).at(-1)!.id as string;
-    expect(await recipients(`video_reply:${replyId}`)).toEqual(sorted(ids.other, ids.member));
+    expect(await recipients(`video_reply:${replyId}`)).toEqual(sorted(ids.member, ids.other, ids.external));
     expect((await outbox(`video_reply:${replyId}`))[0]!.actor_id).toBe(`guest:${w.guest!.guestId}`);
   });
 

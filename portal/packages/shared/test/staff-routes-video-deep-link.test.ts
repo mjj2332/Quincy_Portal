@@ -70,3 +70,24 @@ describe("#819 video deep link", () => {
     expect(safeStaffDestination(location)).toBe(location);
   });
 });
+
+describe("#835 note deep link", () => {
+  const noteId = "5b2f6c1e-7a3d-4e5f-8a1b-2c3d4e5f6a7b";
+  it("round-trips &note=<uuid> after the version", () => {
+    const location = `${base}?tab=video&video=${videoId}&version=2&note=${noteId}`;
+    expect(parseStaffLocation(location)).toEqual({ kind: "project", projectId, arrivalTab: "video", video: { id: videoId, version: 2, note: noteId } });
+    const route = parseStaffLocation(location) as Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>;
+    expect(staffPathFor(route)).toBe(location);
+    expect(safeStaffDestination(location)).toBe(location);
+  });
+  it("needs a version and rejects non-canonical spellings", () => {
+    for (const bad of [
+      `${base}?tab=video&video=${videoId}&note=${noteId}`,
+      `${base}?tab=video&video=${videoId}&note=${noteId}&version=2`,
+      `${base}?tab=video&video=${videoId}&version=2&note=`,
+      `${base}?tab=video&video=${videoId}&version=2&note=not-a-uuid`,
+      `${base}?tab=video&video=${videoId}&version=2&note=${noteId.toUpperCase()}`,
+      `${base}?tab=video&video=${videoId}&version=2&note=${noteId}&`,
+    ]) expect(parseStaffLocation(bad)).toEqual({ kind: "not-found" });
+  });
+});

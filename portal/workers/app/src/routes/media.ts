@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import { and, eq, isNull, ne } from "drizzle-orm";
-import { isEmbeddedHeicContentType, isEmbeddedMediaContentType, DNG_CONTENT_TYPE, RENDITION_SPECS, RENDITION_SPEC_VERSION, TRANSFORM_CACHE_VERSION, dngPreviewKey, rawMediaContentType } from "@quincy/shared";
+import { DNG_CONTENT_TYPE, RENDITION_SPECS, RENDITION_SPEC_VERSION, TRANSFORM_CACHE_VERSION, dngPreviewKey, rawMediaContentType } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectCollaborationAccess } from "../middleware/capability";
@@ -11,7 +11,9 @@ import { issueTransformSource } from "../lib/transform-source";
 import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visibility";
 import { visibleProjectWhere } from "../lib/visible-project-scope";
 import { getEmbeddedMedia } from "../lib/embedded-media";
-import { videoReviewGate } from "../lib/video-review-gate";
+import { embeddedServeTarget } from "../lib/embedded-media-serve";
+import { attachedVideoNote } from "../lib/video-note-media";
+import { readVideoReviewGate, videoReviewGate } from "../lib/video-review-gate";
 import { LIVE_VERSION, LIVE_VIDEO, versionIsLive } from "../lib/video-live-sql";
 import { serveR2Object, VIDEO_STREAM_HEADERS } from "../lib/r2-serve";
 
@@ -157,6 +159,13 @@ async function readableEmbeddedMedia(c: Context<AppEnv>, mediaId: string): Promi
     // Admin impersonating one, is told nothing exists). Then an attached image follows its post; pending and detached ones are the uploader's.
     if (!roleHasCapability(user.role, "viewNoticeBoard")) return c.json({ error: "Media not found" }, 404);
     if (row.state !== "attached" && row.uploaderId !== user.id) return c.json({ error: "Media not found" }, 404);
+  } else if (row.ownerKind === "video_note") {
+    // A video note's media (#835). The viewer must pass the `notes` gate, `viewVideo` and Project access whatever the row's state; an attached row then follows its note (live, on a live Version), and
+    // every other state (pending, detached, an owner that is gone) is the uploader's alone. Every refusal is the same 404, so an id tells nothing.
+    if (!row.projectId) return c.json({ error: "Media not found" }, 404);
+    if (!(await readVideoReviewGate(c.env.DB, row.projectId)).parts.includes("notes") || !roleHasCapability(user.role, "viewVideo") || !await hasProjectAccess(c, row.projectId)) return c.json({ error: "Media not found" }, 404);
+    const note = row.state === "attached" ? await attachedVideoNote(c.env.DB, row) : null;
+    if (!note && row.uploaderId !== user.id) return c.json({ error: "Media not found" }, 404);
   } else if (row.ownerKind === "whiteboard") {
     if (!row.projectId) return c.json({ error: "Media not found" }, 404);
     if (!await hasProjectCollaborationAccess(c, row.projectId)) return user.role === "external_editor" ? c.json({ error: "Media not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -174,18 +183,12 @@ mediaRoutes.get("/embedded/:mediaId", terminalRoute("/embedded/:mediaId", async 
   if (!z.string().uuid().safeParse(mediaId).success) return c.json({ error: "Invalid media id" }, 400);
   const row = await readableEmbeddedMedia(c, mediaId); if (row instanceof Response) return row;
   // A HEIC image (#495) is served as its JPEG display copy and never as the original: pending is 409 (the whiteboard resolver retries it), failed is a final 404.
-  let objectKey = row.originalKey; let storedType = row.contentType;
-  // Defence in depth: a HEIC row that somehow says `not_required` would otherwise stream the original.
-  if (row.kind === "image" && row.renditionStatus === "not_required" && isEmbeddedHeicContentType(row.contentType)) return c.json({ error: "Media not found" }, 404);
-  if (row.kind === "image" && row.renditionStatus !== "not_required") {
-    if (row.renditionStatus === "pending") return c.json({ error: "This image is still being prepared", code: "rendition_pending" }, 409, { "retry-after": "5" });
-    if (row.renditionStatus === "failed" || !row.displayKey || !row.displayContentType) return c.json({ error: "This image could not be prepared", code: "rendition_failed" }, 404);
-    objectKey = row.displayKey; storedType = row.displayContentType;
-  }
+  const target = embeddedServeTarget(row);
+  if ("status" in target) return c.json(target.body, target.status, target.retryAfter ? { "retry-after": target.retryAfter } : {});
   // The viewer's fallback when a video cannot play in its browser (#494): the file itself, named by its type.
   const extra: Record<string, string> = {};
   if (c.req.query("download") === "1" && row.kind === "video") extra["content-disposition"] = `attachment; filename="video.${row.contentType === "video/quicktime" ? "mov" : "mp4"}"`;
-  return serveR2Object(c, objectKey, { "content-type": isEmbeddedMediaContentType(storedType) ? storedType : "application/octet-stream", ...EMBEDDED_RESPONSE_HEADERS, ...extra }, "Media object not found");
+  return serveR2Object(c, target.key, { "content-type": target.contentType, ...EMBEDDED_RESPONSE_HEADERS, ...extra }, "Media object not found");
 }));
 
 /** A video's poster frame (#494), under the video's own access rules. */

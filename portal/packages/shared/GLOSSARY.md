@@ -410,8 +410,9 @@ post.
 _Avoid_: Unfurl, embed, OG card
 
 **Embedded media**:
-An image or video placed inside a post (a Project discussion comment or a Notice board post) or
-on a Project whiteboard. Belongs to what holds it: deleted with its post, with its Project, or
+An image or video placed inside a post (a Project discussion comment, a Notice board post or a
+note on a Video) or on a Project whiteboard. A public note's media is seen by Guest reviewers on
+the Review link. Belongs to what holds it: deleted with its post, with its Project, or
 a week after it is removed or left unposted. Not an Asset: it is never delivered.
 _Avoid_: Attachment, upload, Asset
 

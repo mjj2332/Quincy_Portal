@@ -526,6 +526,13 @@
       "when": 1790800000000,
       "tag": "0074_film_title_from_latest_version",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "6",
+      "when": 1790900000000,
+      "tag": "0075_video_note_rich_media",
+      "breakpoints": true
     }
   ]
 }

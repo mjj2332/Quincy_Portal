@@ -3,7 +3,9 @@ import {
   guestNotePastePreviewResponseSchema, guestNotePasteStaleSchema, guestNoteWriteResponseSchema, guestPasscodeErrorSchema, guestSessionResponseSchema, guestSubscriptionResponseSchema, guestVideoListResponseSchema,
   type GuestArchivePrepareResponse, type GuestDecision, type GuestDecisionInput, type GuestDownloadManifest, type GuestNoteCreateInput, type GuestNoteEditInput, type GuestNoteMarkupResponse, type GuestNotePasteCommitInput, type GuestNotePasteCommitResponse,
   type GuestNotePastePreviewInput, type GuestNotePastePreviewResponse, type GuestNoteThreadDto, type GuestSessionResponse, type GuestVideoDto,
+  type RichTextDoc,
 } from "@quincy/shared";
+import { uploadImageVia, uploadVideoVia, type EditorMediaTransport, type MediaIo } from "../lib/embedded-media-core";
 
 /**
  * The guest page's own fetch wrapper (#741 12b). It is not `lib/api`: it carries no staff session, base URL or error type, only relative `/d/api/links/<linkId>/...` paths with
@@ -82,7 +84,57 @@ export type DecisionResult =
   | { kind: "rejected"; error: string }
   | { kind: "unreachable" };
 
+/** In words for the guest: why a media upload was refused. The status rides on the error so the upload flow can tell a refusal from a blip. */
+async function mediaRefusal(response: Response): Promise<Error> {
+  let code = "";
+  try { const body = await response.json() as { error?: unknown }; if (typeof body.error === "string") code = body.error; } catch { /* a body that does not read says nothing more */ }
+  const message = response.status === 401 ? "Verify your email again to keep going."
+    : response.status === 403 && code === "comments_disabled" ? "Comments are turned off on this link."
+    : response.status === 409 && code === "project_archived" ? "This project was archived, so notes are read-only."
+    : response.status === 429 ? "You're uploading too quickly. Try again in a few minutes."
+    : response.status === 404 ? "This link isn't available."
+    : response.status >= 500 ? "Quincy couldn't be reached. Try again."
+    : "That file can't be uploaded.";
+  return Object.assign(new Error(message), { status: response.status });
+}
+
+/**
+ * The guest's media routes (`/d/api/links/:linkId/media`, #835 C) as the shared upload flows run them, and the editor transport built on them: images and videos, and HEIC only while the session read says the owner has it open (`heicEnabled`; the server applies the same two gates). Same-origin cookies only, like every other call here.
+ */
+export function createGuestMediaTransport(linkId: string, heicEnabled: () => boolean = () => false): EditorMediaTransport {
+  const base = `/d/api/links/${linkId}/media`;
+  const at = (mediaId: string) => `${base}/${encodeURIComponent(mediaId)}`;
+  const post = async (url: string, body: unknown): Promise<unknown> => {
+    const response = await fetch(url, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    if (!response.ok) throw await mediaRefusal(response);
+    return response.json();
+  };
+  const io: MediaIo = {
+    presign: (body) => post(base, body),
+    directUrl: (mediaId) => `${at(mediaId)}/direct`,
+    complete: (mediaId, body) => post(`${at(mediaId)}/complete`, body),
+    rendition: async (mediaId, signal) => {
+      const response = await fetch(`${at(mediaId)}/rendition`, { credentials: "same-origin", ...(signal ? { signal } : {}) });
+      if (!response.ok) throw await mediaRefusal(response);
+      return response.json();
+    },
+    abort: (mediaId) => fetch(`${at(mediaId)}/abort`, { method: "POST", credentials: "same-origin", keepalive: true, headers: { "content-type": "application/json" }, body: "{}" }).catch(() => undefined),
+    putPoster: (mediaId, frame, signal) => fetch(`${at(mediaId)}/poster`, { method: "PUT", credentials: "same-origin", headers: { "content-type": "image/jpeg" }, body: frame, ...(signal ? { signal } : {}) }).then((response) => response.ok, () => false),
+  };
+  return {
+    get heicEnabled() { return heicEnabled(); },
+    video: true,
+    mediaUrl: at,
+    posterUrl: (mediaId) => `${at(mediaId)}/poster`,
+    uploadImage: (file, onProgress, options) => uploadImageVia(io, file, onProgress, options),
+    uploadVideo: (file, options) => uploadVideoVia(io, file, options),
+    abort: (mediaId) => io.abort(mediaId),
+  };
+}
+
 export type GuestApi = {
+  /** The link's media (#835 C): where a note's pictures are read from, and what the editor uploads through. One per page, so its identity is stable. */
+  media: EditorMediaTransport;
   /** The Download all route (#741 14b). The page only ever links to it: a download is the browser's, so the page cannot read its status. */
   downloadAllUrl: string;
   decide(assetId: string, decision: GuestDecisionInput["decision"], note?: string): Promise<DecisionResult>;
@@ -97,7 +149,7 @@ export type GuestApi = {
   sendCode(email: string): Promise<SendCodeResult>;
   verifyCode(code: string, name: string): Promise<VerifyResult>;
   createNote(assetId: string, input: GuestNoteCreateInput): Promise<WriteResult>;
-  replyToNote(noteId: string, body: string): Promise<WriteResult>;
+  replyToNote(noteId: string, content: RichTextDoc): Promise<WriteResult>;
   editNote(noteId: string, input: GuestNoteEditInput): Promise<WriteResult>;
   deleteNote(noteId: string, expectedRevision: number): Promise<WriteResult>;
   /** `PUT .../subscription` (#741 15b): the verified guest's own email-updates switch. `ok.thread` is always null; `ok.subscribed` is the server's answer. */
@@ -108,6 +160,9 @@ export type GuestApi = {
 
 export function createGuestApi(linkId: string): GuestApi {
   const base = `/d/api/links/${linkId}`;
+  /** Whether the owner has HEIC open to guests, as the latest session body said (exchange, verify or a session read); the transport reads it at use. */
+  let heic = false;
+  const learn = (session: GuestSessionResponse): GuestSessionResponse => { heic = session.media.heic; return session; };
   const send = async (path: string, init?: RequestInit): Promise<Response | null> => {
     try { return await fetch(`${base}${path}`, { credentials: "same-origin", ...init }); } catch { return null; }
   };
@@ -180,6 +235,7 @@ export function createGuestApi(linkId: string): GuestApi {
     return { kind: "rejected", error: errorOf(parsedBody) };
   };
   return {
+    media: createGuestMediaTransport(linkId, () => heic),
     downloadAllUrl: `${base}/downloads/all.zip`,
     async decide(assetId, decision, note) {
       const response = await send(`/versions/${assetId}/decision`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(note === undefined ? { decision } : { decision, note }) });
@@ -235,7 +291,7 @@ export function createGuestApi(linkId: string): GuestApi {
       const read = await readJson(response);
       if (response.ok) {
         const parsed = read === null ? null : guestSessionResponseSchema.safeParse(read.body);
-        return parsed?.success ? { ok: true, session: parsed.data } : { ok: false, reason: "unreachable" };
+        return parsed?.success ? { ok: true, session: learn(parsed.data) } : { ok: false, reason: "unreachable" };
       }
       if (response.status >= 500) return { ok: false, reason: "unreachable" };
       if (response.status === 429) return { ok: false, reason: "limited", retryAfterSeconds: retryAfter(response, read?.body) };
@@ -249,7 +305,7 @@ export function createGuestApi(linkId: string): GuestApi {
       return { ok: false, reason: "gone" };
     },
     createNote: (assetId, input) => write(`/versions/${assetId}/notes`, "POST", input, (body) => guestNoteWriteResponseSchema.parse(body)),
-    replyToNote: (noteId, body) => write(`/notes/${noteId}/replies`, "POST", { body }, (parsed) => guestNoteWriteResponseSchema.parse(parsed)),
+    replyToNote: (noteId, content) => write(`/notes/${noteId}/replies`, "POST", { content }, (parsed) => guestNoteWriteResponseSchema.parse(parsed)),
     editNote: (noteId, input) => write(`/notes/${noteId}`, "PATCH", input, (body) => guestNoteWriteResponseSchema.parse(body)),
     deleteNote: (noteId, expectedRevision) => write(`/notes/${noteId}`, "DELETE", { expectedRevision }, (body) => guestNoteDeleteResponseSchema.parse(body).thread),
     setSubscription: (subscribed) => write("/subscription", "PUT", { subscribed }, () => null, (body) => ({ subscribed: guestSubscriptionResponseSchema.parse(body).subscribed })),
@@ -262,7 +318,7 @@ export function createGuestApi(linkId: string): GuestApi {
         const read = await readJson(response);
         if (read === null) return { ok: false, reason: "unreachable" };
         const parsed = guestSessionResponseSchema.safeParse(read.body);
-        return parsed.success ? { ok: true, session: parsed.data } : { ok: false, reason: "unavailable" };
+        return parsed.success ? { ok: true, session: learn(parsed.data) } : { ok: false, reason: "unavailable" };
       }
       if (response.status === 401 || response.status === 429) {
         const read = await readJson(response);
@@ -274,7 +330,7 @@ export function createGuestApi(linkId: string): GuestApi {
       if (response.status >= 500 || response.status === 429) return { ok: false, reason: "unreachable" };
       return { ok: false, reason: "unavailable" };
     },
-    session: () => read("/session", (body) => guestSessionResponseSchema.parse(body)),
+    session: () => read("/session", (body) => learn(guestSessionResponseSchema.parse(body))),
     videos: () => read("/videos", (body) => guestVideoListResponseSchema.parse(body).videos),
     notes: (assetId) => read(`/versions/${assetId}/notes`, (body) => guestNoteListResponseSchema.parse(body).notes),
     markup: (noteId) => read(`/notes/${noteId}/markup`, (body) => guestNoteMarkupResponseSchema.parse(body)),

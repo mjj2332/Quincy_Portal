@@ -137,9 +137,15 @@ export type NotificationRowProps = {
   onDismiss: (notification: NotificationListItem) => void;
 };
 
-export function NotificationRow({ notification, now, showThumbnail, scale, onActivate, onDismiss }: NotificationRowProps) {
-  const { id, projectId, type, title, body, readAt, createdAt, projectStreet, coverAssetId, actor, assetId } = notification;
+/** The row's destination: the tab, or (#835) the exact Video, Version and note when the server resolved one. */
+function notificationRoute(projectId: string | null, type: string, video: NotificationListItem["video"]) {
   const route = projectNotificationRoute(projectId, type);
+  return route?.kind === "project" && video ? { ...route, arrivalTab: "video" as const, video: { id: video.id, version: video.version, note: video.note } } : route;
+}
+
+export function NotificationRow({ notification, now, showThumbnail, scale, onActivate, onDismiss }: NotificationRowProps) {
+  const { id, projectId, type, title, body, readAt, createdAt, projectStreet, coverAssetId, actor, assetId, video } = notification;
+  const route = notificationRoute(projectId, type, video);
   const thumbnailAssetId = assetId ?? coverAssetId;
   const caution = isCautionNotificationType(type);
   const sizes = SCALE[scale];

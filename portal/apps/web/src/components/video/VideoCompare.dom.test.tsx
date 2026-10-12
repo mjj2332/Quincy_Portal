@@ -1,3 +1,4 @@
+import { legacyBodyToRichTextDoc } from "@quincy/shared";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +10,7 @@ import { resetVideoUploadStore } from "../../lib/video-upload-store";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
 import { mockViewport, type MockViewport } from "../../testing/viewport";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
+vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -919,7 +921,7 @@ describe("Compare: notes, one column with a tab per side (#741 7c)", () => {
     await click(tid("video-note-post")!);
     await land(5);
     await flush(4);
-    expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 5, visibility: "internal", body: "On the second cut" });
+    expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 5, visibility: "internal", content: legacyBodyToRichTextDoc("On the second cut") });
   });
 
   it("I marks the active side; O after it makes the range; neither is bound while that side is parked", async () => {

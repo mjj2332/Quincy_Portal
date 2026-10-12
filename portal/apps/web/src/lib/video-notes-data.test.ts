@@ -31,7 +31,7 @@ const person = { id: "99999999-9999-4999-8999-999999999999", name: "Mia", roleLa
 let n = 0;
 const thread = (over: Record<string, unknown> = {}): VideoNoteThreadDto => ({
   id: `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`, assetId: A, parentId: null, author: { kind: "staff", person }, authorRole: "editor", visibility: "internal",
-  startFrame: 10, endFrame: null, drawingFrame: null, hasMarkup: false, body: "hi", deleted: false, resolved: null, revision: 1, createdAt: "2026-10-10T00:00:00.000Z", editedAt: null, copiedFrom: null, replies: [], ...over,
+  startFrame: 10, endFrame: null, drawingFrame: null, hasMarkup: false, mediaCount: 0, body: "hi", deleted: false, resolved: null, revision: 1, createdAt: "2026-10-10T00:00:00.000Z", editedAt: null, copiedFrom: null, replies: [], ...over,
 }) as VideoNoteThreadDto;
 
 let client: QueryClient;
@@ -92,8 +92,9 @@ describe("video notes data (#741 5b)", () => {
     const t = thread();
     client.setQueryData(projectDataKeys.videoNotes(P, A), [t]);
     api.apiPost.mockResolvedValue(t); api.apiPatch.mockResolvedValue(t); api.apiPut.mockResolvedValue(t);
-    await replyToVideoNote(ctx(), t.id, "re");
-    expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${P}/video-notes/${t.id}/replies`, { body: "re" });
+    const doc = { type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "re" }] }] };
+    await replyToVideoNote(ctx(), t.id, doc);
+    expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${P}/video-notes/${t.id}/replies`, { content: doc });
     await editVideoNote(ctx(), t.id, { expectedRevision: 3, body: "b", startFrame: 2, endFrame: null });
     expect(api.apiPatch).toHaveBeenCalledWith(`/api/projects/${P}/video-notes/${t.id}`, { expectedRevision: 3, body: "b", startFrame: 2, endFrame: null });
     await setVideoNoteResolution(ctx(), t.id, true);
@@ -150,7 +151,7 @@ describe("video notes data (#741 5b)", () => {
 describe("video notes data: access errors are handled where the write is made (#741 5b form-state re-plan)", () => {
   const writes: Array<[string, (c: ReturnType<typeof ctx>) => Promise<unknown>, keyof typeof api]> = [
     ["create", (c) => createVideoNote(c, { startFrame: 1, visibility: "internal", body: "x" }), "apiPost"],
-    ["reply", (c) => replyToVideoNote(c, "r", "x"), "apiPost"],
+    ["reply", (c) => replyToVideoNote(c, "r", { type: "doc", content: [{ type: "paragraph" }] }), "apiPost"],
     ["edit", (c) => editVideoNote(c, "r", { expectedRevision: 1, body: "x" }), "apiPatch"],
     ["resolve", (c) => setVideoNoteResolution(c, "r", true), "apiPut"],
     ["delete", (c) => deleteVideoNote(c, { id: "r", parentId: null }, 1), "apiDeleteWithBody"],

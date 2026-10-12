@@ -4,9 +4,11 @@ import {
   type GuestNoteThreadDto,
 } from "@quincy/shared";
 import { noteWriteParts, type GuestWriter } from "../lib/guest-fence-sql";
+import { preflightOwnedMedia } from "../lib/embedded-media";
+import { prepareGuestNoteContent } from "../lib/video-note-content";
 import {
   canonicalMarkup, createVideoNote, createVideoNoteReply, deleteVideoNote, drawingFrameFits, editVideoNote, findNoteHeadForLink, readNoteMarkup, versionFrameCount,
-  type MarkupEdit, type MarkupWrite, type NoteAuthor, type NoteHead,
+  type MarkupEdit, type MarkupWrite, type NoteAuthor, type NoteHead, type NoteRich,
 } from "../lib/video-notes";
 import type { AppEnv } from "../env";
 import { classifyRefusal } from "./fence";
@@ -114,6 +116,20 @@ export async function reservePreview<P extends string>(c: Handled<P>, v: Verifie
   return attempt.limited ? tooMany(attempt.retryAfterSeconds) : null;
 }
 
+const CONTENT_ERRORS = ["invalid_content", "content_too_large", "mentions_not_allowed", "too_many_media", "body_too_long"] as const;
+
+/**
+ * A guest write's rich `content` (#835 C), parsed and checked: the video-note profile, no mention of any kind (400 `mentions_not_allowed`), at most ten media, the body derived, and the media
+ * pre-checked as THIS guest's own fresh uploads or the note's own (advisory only: the batch re-validates every id in SQL, fenced on the guest). A refusal is the answer.
+ */
+async function richOf<P extends string>(c: Handled<P>, v: Verified, projectId: string, content: unknown, ownerId: string): Promise<{ rich: NoteRich; body: string } | Response> {
+  const prepared = prepareGuestNoteContent(content);
+  if ("error" in prepared) return c.json({ error: CONTENT_ERRORS.includes(prepared.error) ? prepared.error : "invalid_request" }, 400);
+  const uploader = { guestId: v.guestId };
+  if (!await preflightOwnedMedia(c.env.DB, { ownerKind: "video_note", ownerId, projectId, uploader, ids: prepared.mediaIds, videoIds: prepared.videoIds })) return c.json({ error: "media_unavailable" }, 409);
+  return { rich: { contentJson: prepared.contentJson, mentionUserIds: [], mediaIds: prepared.mediaIds, videoIds: prepared.videoIds, uploader }, body: prepared.body };
+}
+
 const tooLarge = <P extends string>(c: Handled<P>) => c.json({ error: "markup_too_large", maxBytes: VIDEO_MARKUP_MAX_BYTES }, 413);
 const drawingOutside = <P extends string>(c: Handled<P>) => c.json({ error: "drawing_frame_outside" }, 422);
 
@@ -132,8 +148,10 @@ async function createNote(c: Handled<"/d/api/links/:linkId/versions/:assetId/not
   if (input.startFrame >= frameCount || (endFrame !== null && endFrame > frameCount)) return ctx.answer(c.json({ error: "frame_out_of_range", frameCount }, 422));
   if (stored && !drawingFrameFits(input.drawingFrame!, input.startFrame, endFrame)) return ctx.answer(drawingOutside(c));
   const markup: MarkupWrite | undefined = stored ? { ...stored, drawingFrame: input.drawingFrame! } : undefined;
-  const outcome = await createVideoNote<GuestNoteThreadDto>(c.env.DB, { projectId: v.link.projectId, assetId, author: writerOf(v, body.markup), visibility: "public", startFrame: input.startFrame, endFrame, body: input.body, markup, now: Date.now(), read: (rootId) => readGuestThread(c.env.DB, v.link, rootId, v.guestId) });
+  const written = input.content === undefined ? null : await richOf(c, v, v.link.projectId, input.content, crypto.randomUUID()); if (written instanceof Response) return ctx.answer(written);
+  const outcome = await createVideoNote<GuestNoteThreadDto>(c.env.DB, { projectId: v.link.projectId, assetId, author: writerOf(v, body.markup), visibility: "public", startFrame: input.startFrame, endFrame, body: written ? written.body : input.body!, rich: written?.rich, markup, now: Date.now(), read: (rootId) => readGuestThread(c.env.DB, v.link, rootId, v.guestId) });
   if (outcome.kind === "ok") { publish(c, outcome.outboxIds); return c.json(outcome.value, 201); }
+  if (outcome.kind === "media") return ctx.answer(c.json({ error: "media_unavailable" }, 409));
   return ctx.answer(guestNotFound(asApp(c)));
 }
 
@@ -148,8 +166,10 @@ async function replyToNote(c: Handled<"/d/api/links/:linkId/notes/:noteId/replie
   const parent = await findNoteHeadForLink(c.env.DB, v.link, noteId);
   if (!parent || parent.deleted_at !== null) return ctx.answer(guestNotFound(asApp(c)));
   if (parent.parent_id !== null) return ctx.answer(c.json({ error: "not_a_thread" }, 422));
-  const outcome = await createVideoNoteReply<GuestNoteThreadDto>(c.env.DB, { projectId: v.link.projectId, parent, author: writerOf(v, false), body: judged.data.body, now: Date.now(), read: (rootId) => readGuestThread(c.env.DB, v.link, rootId, v.guestId) });
+  const written = judged.data.content === undefined ? null : await richOf(c, v, v.link.projectId, judged.data.content, crypto.randomUUID()); if (written instanceof Response) return ctx.answer(written);
+  const outcome = await createVideoNoteReply<GuestNoteThreadDto>(c.env.DB, { projectId: v.link.projectId, parent, author: writerOf(v, false), body: written ? written.body : judged.data.body!, rich: written?.rich, now: Date.now(), read: (rootId) => readGuestThread(c.env.DB, v.link, rootId, v.guestId) });
   if (outcome.kind === "ok") { publish(c, outcome.outboxIds); return c.json(outcome.value, 201); }
+  if (outcome.kind === "media") return ctx.answer(c.json({ error: "media_unavailable" }, 409));
   return ctx.answer(guestNotFound(asApp(c)));
 }
 
@@ -172,7 +192,9 @@ async function editNote(c: Handled<"/d/api/links/:linkId/notes/:noteId">): Promi
   const isReply = note.parent_id !== null;
   if (isReply && input.markup !== undefined) return ctx.answer(c.json({ error: "markup_on_reply" }, 422));
   if (isReply && (input.startFrame !== undefined || input.endFrame !== undefined)) return ctx.answer(c.json({ error: "reply_has_no_frames" }, 422));
-  const text = input.body ?? note.body;
+  if (input.body !== undefined && note.content_json !== null) return ctx.answer(c.json({ error: "use_content" }, 422));
+  const written = input.content === undefined ? null : await richOf(c, v, v.link.projectId, input.content, note.id); if (written instanceof Response) return ctx.answer(written);
+  const text = written ? written.body : input.body ?? note.body;
   const startFrame = isReply ? null : input.startFrame ?? note.start_frame;
   const endFrame = isReply ? null : input.endFrame === undefined ? note.end_frame : input.endFrame;
   const framesChanged = startFrame !== note.start_frame || endFrame !== note.end_frame;
@@ -192,7 +214,7 @@ async function editNote(c: Handled<"/d/api/links/:linkId/notes/:noteId">): Promi
     const existing = note.has_markup === 1 ? await readNoteMarkup(c.env.DB, v.link.projectId, note.id) : null;
     if (existing?.strokes_json !== stored.json || note.drawing_frame !== drawingFrame) markup = { kind: "set", ...stored, drawingFrame };
   }
-  const outcome = await editVideoNote<GuestNoteThreadDto>(c.env.DB, { projectId: v.link.projectId, note, author: writerOf(v, body.markup), expectedRevision: input.expectedRevision, body: text, startFrame, endFrame, markup, now: Date.now(), read });
+  const outcome = await editVideoNote<GuestNoteThreadDto>(c.env.DB, { projectId: v.link.projectId, note, author: writerOf(v, body.markup), expectedRevision: input.expectedRevision, body: text, rich: written?.rich, startFrame, endFrame, markup, now: Date.now(), read });
   if (outcome.kind === "ok") return c.json(outcome.value);
   // Anything but a landed write is classified first: a fence that failed mid-request must not be mistaken for a 422 or a no-op.
   return ctx.answer(editFailure(c, outcome));
@@ -209,6 +231,8 @@ function editFailure<P extends string>(c: Handled<P>, outcome: Exclude<Awaited<R
     case "markup": return c.json({ error: "markup_locks_frames" }, 422);
     case "drawing_outside": return c.json({ error: "drawing_frame_outside" }, 422);
     case "out_of_range": return c.json({ error: "frame_out_of_range" }, 422);
+    // The lib answers `media` only for a write that names some; the batch re-validated every id in SQL.
+    case "media": return c.json({ error: "media_unavailable" }, 409);
   }
 }
 

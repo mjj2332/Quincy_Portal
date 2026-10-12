@@ -349,10 +349,12 @@ export const embeddedMedia = sqliteTable(
   "embedded_media",
   {
     id: id(),
-    ownerKind: text("owner_kind", { enum: ["project_comment", "notice_post", "whiteboard"] as const }).notNull(),
+    ownerKind: text("owner_kind", { enum: ["project_comment", "notice_post", "whiteboard", "video_note"] as const }).notNull(),
     ownerId: text("owner_id"),
     projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
-    uploaderId: text("uploader_id").notNull().references(() => user.id),
+    // Exactly one of `uploaderId` (staff) and `uploaderGuestId` (a guest reviewer) is set (migration 0075).
+    uploaderId: text("uploader_id").references(() => user.id),
+    uploaderGuestId: text("uploader_guest_id").references(() => guestReviewers.id),
     kind: text("kind", { enum: ["image", "video", "preview_image"] as const }).notNull(),
     contentType: text("content_type").notNull(),
     bytes: integer("bytes").notNull(),
@@ -386,14 +388,17 @@ export const embeddedMedia = sqliteTable(
     index("embedded_media_state_created_idx").on(t.state, t.createdAt),
     index("embedded_media_project_idx").on(t.projectId),
     index("embedded_media_rendition_idx").on(t.renditionStatus, t.renditionRequestedAt),
+    index("embedded_media_uploader_guest_idx").on(t.uploaderGuestId),
     check("embedded_media_rendition_status_check", sql`${t.renditionStatus} IN ('not_required','pending','ready','failed')`),
-    check("embedded_media_owner_kind_check", sql`${t.ownerKind} IN ('project_comment','notice_post','whiteboard')`),
+    check("embedded_media_owner_kind_check", sql`${t.ownerKind} IN ('project_comment','notice_post','whiteboard','video_note')`),
     check("embedded_media_kind_check", sql`${t.kind} IN ('image','video','preview_image')`),
     check("embedded_media_bytes_check", sql`${t.bytes} > 0`),
     check("embedded_media_state_check", sql`${t.state} IN ('uploading','pending','attached','detached')`),
     check("embedded_media_owner_state_check", sql`(${t.state} IN ('uploading','pending')) = (${t.ownerId} IS NULL)`),
     check("embedded_media_detached_check", sql`(${t.state} = 'detached') = (${t.detachedAt} IS NOT NULL)`),
     check("embedded_media_project_check", sql`(${t.ownerKind} = 'notice_post') = (${t.projectId} IS NULL)`),
+    check("embedded_media_video_note_project_check", sql`${t.ownerKind} <> 'video_note' OR ${t.projectId} IS NOT NULL`),
+    check("embedded_media_one_uploader_check", sql`(${t.uploaderId} IS NULL) <> (${t.uploaderGuestId} IS NULL)`),
   ],
 );
 
@@ -1918,6 +1923,8 @@ export const videoNotes = sqliteTable(
     endFrame: integer("end_frame"),
     drawingFrame: integer("drawing_frame"),
     body: text("body").notNull(),
+    // The rich note document (migration 0075), at most 32768 bytes. Null for legacy notes, which render from `body`.
+    contentJson: text("content_json"),
     resolvedAt: integer("resolved_at"),
     resolvedBy: text("resolved_by").references(() => user.id),
     revision: integer("revision").notNull().default(1),
@@ -1940,6 +1947,7 @@ export const videoNotes = sqliteTable(
     check("video_notes_start_frame_check", sql`${t.startFrame} IS NULL OR ${t.startFrame} >= 0`),
     check("video_notes_drawing_frame_check", sql`${t.drawingFrame} IS NULL OR ${t.drawingFrame} >= 0`),
     check("video_notes_body_check", sql`length(${t.body}) <= 10000`),
+    check("video_notes_content_json_check", sql`${t.contentJson} IS NULL OR length(CAST(${t.contentJson} AS BLOB)) <= 32768`),
     check("video_notes_revision_check", sql`${t.revision} >= 1`),
     check("video_notes_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
     check("video_notes_one_author_check", sql`(${t.authorUserId} IS NULL) <> (${t.authorGuestId} IS NULL)`),
@@ -1965,6 +1973,22 @@ export const videoNoteMarkup = sqliteTable(
     check("video_note_markup_strokes_check", sql`length(CAST(${t.strokesJson} AS BLOB)) <= 524288`),
     check("video_note_markup_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
     check("video_note_markup_updated_at_check", sql`typeof(${t.updatedAt}) = 'integer'`),
+  ],
+);
+
+/** Who a video note mentions (#835, migration 0075). Cascades with the note. */
+export const videoNoteMentions = sqliteTable(
+  "video_note_mentions",
+  {
+    id: id(),
+    noteId: text("note_id").notNull().references(() => videoNotes.id, { onDelete: "cascade" }),
+    mentionedUserId: text("mentioned_user_id").notNull().references(() => user.id),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    unique("video_note_mentions_note_user_unique").on(t.noteId, t.mentionedUserId),
+    index("video_note_mentions_user_idx").on(t.mentionedUserId),
+    check("video_note_mentions_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
   ],
 );
 

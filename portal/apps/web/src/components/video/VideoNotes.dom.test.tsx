@@ -1,3 +1,4 @@
+import { legacyBodyToRichTextDoc } from "@quincy/shared";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +13,7 @@ import "../../testing/dom-polyfills";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
+vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -89,7 +91,7 @@ async function type(el: HTMLTextAreaElement, text: string) {
   await act(async () => { setter.call(el, text); el.dispatchEvent(new Event("input", { bubbles: true })); });
 }
 
-async function mount(opts: { role?: Role; parts?: string[]; archivedProject?: boolean; latch?: boolean; notes?: Record<string, VideoNoteThreadDto[]> } = {}) {
+async function mount(opts: { role?: Role; parts?: string[]; archivedProject?: boolean; latch?: boolean; notes?: Record<string, VideoNoteThreadDto[]>; link?: { note: string } } = {}) {
   served = opts.notes ?? { [ids.asset2]: seed().all, [ids.asset1]: [note({ assetId: ids.asset1, body: "Version one note", startFrame: 5 })] };
   archived = opts.archivedProject ?? false;
   api.apiGet.mockImplementation(async (path) => {
@@ -103,7 +105,7 @@ async function mount(opts: { role?: Role; parts?: string[]; archivedProject?: bo
   const review = { open: true, parts: (opts.parts ?? ["notes"]) as never };
   await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role={role}><Probe />{opts.latch
     ? <ArchivedFromCache projectId={PROJECT} archived={archived}>{(latched) => <VideoCollectionPanel projectId={PROJECT} role={role} archived={latched} review={review} />}</ArchivedFromCache>
-    : <VideoCollectionPanel projectId={PROJECT} role={role} archived={archived} review={review} />}</QuincyQueryProvider>); });
+    : <VideoCollectionPanel projectId={PROJECT} role={role} archived={archived} review={review} {...(opts.link ? { deepLink: { selection: { id: ids.video, version: 2, note: opts.link.note }, onChange: vi.fn() } } : {})} />}</QuincyQueryProvider>); });
   await flush();
 }
 async function openViewer() {
@@ -179,6 +181,36 @@ describe("Video notes panel (#741 5b)", () => {
     expect(threadOf(s.n2.id).dataset.selected).toBe("true");
   });
 
+  it("a link to a note (#835) lands on it: the film seeks to its frame and its thread is selected, once", async () => {
+    const s = seed();
+    await mount({ link: { note: s.n2.id } });
+    const deadline = Date.now() + 10_000;
+    while (!playerVideo()) { if (Date.now() > deadline) throw new Error("the review player never mounted"); await flush(1); }
+    await flush(4);
+    await loadFilm(0);
+    await flush(6);
+    expect(threadOf(s.n2.id).dataset.selected).toBe("true");
+    expect(playerVideo()!.currentTime).toBe(frameSeekSeconds(50, { num: 25, den: 1 }));
+    // Choosing another note afterwards is not undone by the link.
+    await click(tid("video-note-anchor-button", threadOf(s.n1.id))!);
+    await flush(4);
+    expect(threadOf(s.n1.id).dataset.selected).toBe("true");
+    expect(threadOf(s.n2.id).dataset.selected).toBe("false");
+  });
+
+  it("a link to a note that has since been resolved still shows it: the filters open up so the thread is listed, selected and scrolled to", async () => {
+    const s = seed();
+    await mount({ link: { note: s.n4.id } });
+    const deadline = Date.now() + 10_000;
+    while (!playerVideo()) { if (Date.now() > deadline) throw new Error("the review player never mounted"); await flush(1); }
+    await flush(4);
+    await loadFilm(0);
+    await flush(6);
+    expect(noteIds()).toContain(s.n4.id);
+    expect(threadOf(s.n4.id).dataset.selected).toBe("true");
+    expect(playerVideo()!.currentTime).toBe(frameSeekSeconds(200, { num: 25, den: 1 }));
+  });
+
   it("shows a point as one timecode and a range as start → last included frame", async () => {
     const s = seed();
     await openFilm();
@@ -223,7 +255,7 @@ describe("Video notes panel (#741 5b)", () => {
     await type(form.querySelector<HTMLElement>("textarea") as HTMLTextAreaElement, "On it");
     await click(tid("video-note-reply-post", form)!);
     await flush(4);
-    expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n1.id}/replies`, { body: "On it" });
+    expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n1.id}/replies`, { content: legacyBodyToRichTextDoc("On it") });
     expect(tid("video-note-body", [...threadOf(s.n1.id).querySelectorAll<HTMLElement>('[data-testid="video-note-reply"]')][0]!)!.textContent).toBe("On it");
     expect(threadOf(s.n1.id).querySelector<HTMLElement>('[data-notes-form="reply"]')).toBeNull();
   });
@@ -335,7 +367,7 @@ describe("Composer through the player (tests 9-12, 25)", () => {
     await click(tid("video-note-post")!);
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 12 / 25); });
     await flush(4);
-    expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 12, endFrame: 21, visibility: "internal", body: "Range" });
+    expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 12, endFrame: 21, visibility: "internal", content: legacyBodyToRichTextDoc("Range") });
     expect(tid("video-pending-band")).toBeNull();
   });
 
@@ -350,7 +382,7 @@ describe("Composer through the player (tests 9-12, 25)", () => {
     expect(api.apiPost).not.toHaveBeenCalled();
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 7 / 25); });
     await flush(4);
-    expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 7, visibility: "public", body: "Point note" });
+    expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 7, visibility: "public", content: legacyBodyToRichTextDoc("Point note") });
     expect(tid("video-note-visibility-hint")!.textContent).toContain("Studio only");
   });
 
@@ -511,7 +543,7 @@ describe("External role (test 22)", () => {
     await click(tid("video-note-post")!);
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 5 / 25); });
     await flush(4);
-    expect(api.apiPost.mock.calls[0]![1]).toMatchObject({ visibility: "internal", body: "External note" });
+    expect(api.apiPost.mock.calls[0]![1]).toMatchObject({ visibility: "internal", content: legacyBodyToRichTextDoc("External note") });
   });
 
   it("a 404 on a write (the Project is gone) re-asks the gate and the Project, keeps the draft and shows the server's message", async () => {
@@ -725,14 +757,14 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await click(tid("video-note-edit-save")!);
     await flush(4);
     expect(api.apiPatch).toHaveBeenCalledTimes(1);
-    expect(api.apiPatch.mock.calls[0]![1]).toEqual({ expectedRevision: 1, body: "My edit" });
+    expect(api.apiPatch.mock.calls[0]![1]).toEqual({ expectedRevision: 1, content: legacyBodyToRichTextDoc("My edit") });
     expect(tid("video-note-conflict")!.textContent).toContain("Changed in another tab");
     expect(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("My edit");
     expect(tid("video-note-edit-save")!.textContent).toBe("Save anyway");
     api.apiPatch.mockResolvedValueOnce(commit({ ...elsewhere, body: "My edit", revision: 3 } as VideoNoteThreadDto));
     await click(tid("video-note-edit-save")!);
     await flush(4);
-    expect(api.apiPatch.mock.calls[1]![1]).toEqual({ expectedRevision: 2, body: "My edit" });
+    expect(api.apiPatch.mock.calls[1]![1]).toEqual({ expectedRevision: 2, content: legacyBodyToRichTextDoc("My edit") });
   });
 
   it("finding 2: opening a second edit closes the first; I and O then mark the second, and Save sends its frames", async () => {
@@ -982,7 +1014,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     api.apiPatch.mockResolvedValueOnce(commit({ ...resolvedElsewhere, body: "My edit", revision: 4 } as VideoNoteThreadDto));
     await click(tid("video-note-edit-save")!);
     await flush(6);
-    expect(api.apiPatch.mock.calls[1]![1]).toEqual({ expectedRevision: 2, body: "My edit" });
+    expect(api.apiPatch.mock.calls[1]![1]).toEqual({ expectedRevision: 2, content: legacyBodyToRichTextDoc("My edit") });
   });
 
   it("form lifetime: Escape with focus on the player holds a dirty composer's first Escape and focuses its text field; the second closes the viewer", async () => {

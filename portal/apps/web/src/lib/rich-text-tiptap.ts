@@ -11,7 +11,7 @@ import { ListItem, TaskItem, TaskList } from "@tiptap/extension-list";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
 import { TableMap } from "@tiptap/pm/tables";
 import { TextAlign } from "@tiptap/extension-text-align";
-import { embeddedMediaPosterUrl, embeddedMediaUrl } from "./embedded-media";
+import { embeddedMediaPosterUrl, embeddedMediaUrl } from "./embedded-media-core";
 import { RICH_TEXT_HIGHLIGHT_COLORS, RICH_TEXT_MAX_NESTING, RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS, type RichTextDoc } from "@quincy/shared";
 
 // The Tiptap <-> stored RichTextDoc contract for `QuincyRichTextEditor`, in its two presets:
@@ -180,11 +180,13 @@ export const EmbeddedImage = TiptapNode.create({
   draggable: true,
   selectable: true,
   // `alt` (#553) is the author's description, defaulting to the cleaned file name; absent on older images, which fall back to "Embedded image".
+  /** `mediaUrl` (#835) is where a medium's bytes are read from: the staff route by default, a Review link's own for a guest. */
+  addOptions() { return { mediaUrl: embeddedMediaUrl as (mediaId: string) => string }; },
   addAttributes() { return { mediaId: { default: null }, alt: { default: null, rendered: false } }; },
   parseHTML() { return []; },
   renderHTML({ node, HTMLAttributes }) {
     const mediaId = String(node.attrs.mediaId ?? "");
-    return ["img", mergeAttributes(HTMLAttributes, { src: embeddedMediaUrl(mediaId), alt: typeof node.attrs.alt === "string" && node.attrs.alt ? node.attrs.alt : "Embedded image", "data-media-id": mediaId, class: "rich-text__embedded-image" })];
+    return ["img", mergeAttributes(HTMLAttributes, { src: this.options.mediaUrl(mediaId), alt: typeof node.attrs.alt === "string" && node.attrs.alt ? node.attrs.alt : "Embedded image", "data-media-id": mediaId, class: "rich-text__embedded-image" })];
   },
 });
 
@@ -200,11 +202,12 @@ export const EmbeddedVideo = TiptapNode.create({
   draggable: true,
   selectable: true,
   // `hasPoster` (#556) is whether the server kept a poster frame; `null` (an older node, a draft) means unknown, which asks for the poster as before. Never stored.
+  addOptions() { return { mediaUrl: embeddedMediaUrl as (mediaId: string) => string, posterUrl: embeddedMediaPosterUrl as (mediaId: string) => string }; },
   addAttributes() { return { mediaId: { default: null }, hasPoster: { default: null, rendered: false } }; },
   parseHTML() { return []; },
   renderHTML({ node, HTMLAttributes }) {
     const mediaId = String(node.attrs.mediaId ?? "");
-    return ["video", mergeAttributes(HTMLAttributes, { src: embeddedMediaUrl(mediaId), ...(node.attrs.hasPoster === false ? {} : { poster: embeddedMediaPosterUrl(mediaId) }), preload: "metadata", muted: "", playsinline: "", "data-media-id": mediaId, class: "rich-text__embedded-video" })];
+    return ["video", mergeAttributes(HTMLAttributes, { src: this.options.mediaUrl(mediaId), ...(node.attrs.hasPoster === false ? {} : { poster: this.options.posterUrl(mediaId) }), preload: "metadata", muted: "", playsinline: "", "data-media-id": mediaId, class: "rich-text__embedded-video" })];
   },
 });
 

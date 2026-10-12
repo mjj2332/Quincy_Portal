@@ -21,6 +21,8 @@ export type NotificationListItem = {
   actor: NotificationActor | null;
   subject: NotificationSubject | null;
   assetId: string | null;
+  /** #835: where a video note, reply or mention lands in the Video tab; absent for everything else (and for Externals). */
+  video?: { id: string; version: number; note: string } | null;
 };
 
 export type NotificationFilter = "all" | "unread";

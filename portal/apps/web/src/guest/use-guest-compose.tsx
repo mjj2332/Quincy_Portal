@@ -1,19 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { PencilIcon } from "lucide-react";
-import { STROKE_LIMITS, VIDEO_MARKUP_MAX_BYTES, type Box, type FreehandPoint, type GuestNoteCreateInput, type GuestNoteThreadDto, type MarkupItem } from "@quincy/shared";
+import { STROKE_LIMITS, VIDEO_MARKUP_MAX_BYTES, legacyBodyToRichTextDoc, type Box, type FreehandPoint, type GuestNoteCreateInput, type GuestNoteThreadDto, type MarkupItem, type RichTextDoc } from "@quincy/shared";
+import type { EditorMediaTransport } from "../lib/embedded-media-core";
 import { useFrameClockSelector, type FrameClockState, type VideoFrameClock } from "../lib/video-frame-clock";
 import { useMediaQuery } from "../lib/use-media-query";
 import { useMarkup, type MarkupTool, type PointerSample } from "../lib/use-markup";
 import { EMPTY_MARKS, markFrame, marksToFrames, type NoteMarks } from "../lib/video-note-marks";
 import { Button } from "../components/reui/button";
-import { Textarea } from "../components/reui/textarea";
 import { MarkupToolbar } from "../components/quincy/markup-toolbar";
 import { MarkupLayer, StrokeVisible } from "../components/quincy/freehand-strokes";
 import { composeInput, editPatch, type EditBaseline, type EditPatch } from "./guest-compose";
+import { GuestNoteField } from "./GuestNoteField";
 
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const LIMITS = { items: STROKE_LIMITS.strokes, bytes: VIDEO_MARKUP_MAX_BYTES };
 const NO_ITEMS: MarkupItem[] = [];
+const EMPTY_DOC: RichTextDoc = { type: "doc", content: [{ type: "paragraph" }] };
+/** The document a saved note stands for: its rich content, or its plain text as one paragraph. */
+const docOf = (thread: Pick<GuestNoteThreadDto, "content" | "body">): RichTextDoc => thread.content ?? legacyBodyToRichTextDoc(thread.body);
 const PEN: MarkupTool = { kind: "freehand", color: "#e64b3c", width: 4 };
 const FRAME_CONFIRM_TIMEOUT_MS = 10_000;
 const FIELD = "input, textarea, select, [contenteditable]:not([contenteditable='false'])";
@@ -49,11 +53,13 @@ async function confirmedFrame(clock: VideoFrameClock): Promise<number | "timeout
  *   together with a drawing change, and frames on a note that has a drawing, so the two are never offered together. A redraw starts from a blank page (the old strokes are not loaded).
  * - `markupAllowed` is the Worker's `markup` part: with it off a note carrying a drawing, or a removal of one, is the stub, so no drawing control is shown.
  */
-export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, post, edit, latestOf, onDrawingChange }: {
+export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, media, post, edit, latestOf, onDrawingChange }: {
   clock: VideoFrameClock | null;
   frameCount: number;
   timecode: (frame: number) => string;
   markupAllowed: boolean;
+  /** The note field's media routes (#835): the link's own, so a picture uploads and shows from there. */
+  media: EditorMediaTransport;
   post: (input: GuestNoteCreateInput) => Promise<PostOutcome>;
   /** Saves the edit draft of the note `id`, sending `expectedRevision`: the revision the draft was opened on, or the one a conflict showed the guest (never the list's, which may have moved unseen). */
   edit: (id: string, patch: EditPatch, expectedRevision: number) => Promise<PostOutcome>;
@@ -70,7 +76,9 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
   onMark: ((kind: "in" | "out", frame: number) => void) | undefined;
 } {
   const [isOpen, setOpen] = useState(false);
-  const [body, setBody] = useState("");
+  const [doc, setDoc] = useState<RichTextDoc>(EMPTY_DOC);
+  // A picture still going up holds Post / Save: the note would go without it.
+  const [uploading, setUploading] = useState(false);
   const [marks, setMarks] = useState<NoteMarks>(EMPTY_MARKS);
   const [items, setItems] = useState<MarkupItem[]>(NO_ITEMS);
   const [drawFrame, setDrawFrame] = useState<number | null>(null);
@@ -83,7 +91,6 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
   const [removed, setRemoved] = useState(false);
   const compact = useMediaQuery("(max-width: 720px)");
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
   const opId = useRef(0);
   // The frame the drawing history was built on; it survives the off / confirming phases so a later start on another frame can tell.
   const drawingFor = useRef<number | null>(null);
@@ -98,14 +105,14 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
   const reset = useCallback(() => {
     opId.current += 1;
     resetHistoryRef.current(); // a new draft starts with no undo / redo steps from the last one
-    setBody(""); setMarks(EMPTY_MARKS); setItems(NO_ITEMS); setDrawFrame(null); setPhase("off"); setProblem(null); setPending(false); setRefusedFor(null); setTarget(null); setRemoved(false); drawingFor.current = null;
+    setDoc(EMPTY_DOC); setUploading(false); setMarks(EMPTY_MARKS); setItems(NO_ITEMS); setDrawFrame(null); setPhase("off"); setProblem(null); setPending(false); setRefusedFor(null); setTarget(null); setRemoved(false); drawingFor.current = null;
   }, []);
   const begin = useCallback(() => { reset(); setMarks({ in: here(), out: null }); setOpen(true); }, [reset, here]);
   const beginEdit = useCallback((thread: GuestNoteThreadDto) => {
     if (thread.startFrame === null) return;
     reset();
-    setTarget({ id: thread.id, baseRevision: thread.revision, ackRevision: null, baseline: { body: thread.body, startFrame: thread.startFrame, endFrame: thread.endFrame, hadDrawing: thread.hasMarkup } });
-    setBody(thread.body);
+    setTarget({ id: thread.id, baseRevision: thread.revision, ackRevision: null, baseline: { doc: docOf(thread), startFrame: thread.startFrame, endFrame: thread.endFrame, hadDrawing: thread.hasMarkup } });
+    setDoc(docOf(thread));
     setMarks({ in: thread.startFrame, out: thread.endFrame === null ? null : thread.endFrame - 1 });
     setOpen(true);
   }, [reset]);
@@ -186,14 +193,14 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (pending || phase !== "off") return;
+    if (pending || phase !== "off" || uploading) return;
     let send: () => Promise<PostOutcome>;
     if (target === null) {
-      const built = composeInput({ body, marks, frameCount, items, drawingFrame: drawFrame });
+      const built = composeInput({ doc, marks, frameCount, items, drawingFrame: drawFrame });
       if (!built.ok) { setProblem(built.problem); return; }
       send = () => post(built.input);
     } else {
-      const built = editPatch({ body, marks, frameCount, items, drawingFrame: drawFrame, drawingRemoved: removed, baseline: target.baseline });
+      const built = editPatch({ doc, marks, frameCount, items, drawingFrame: drawFrame, drawingRemoved: removed, baseline: target.baseline });
       if (!built.ok) { setProblem(built.problem); return; }
       if (built.patch === null) { close(); return; }
       const { patch } = built;
@@ -264,12 +271,12 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, po
       <span>{items.length > 0 ? `Drawing attached (${items.length} ${items.length === 1 ? "mark" : "marks"})` : keptDrawing ? "This note has a drawing" : "The drawing will be removed when you save"}</span>
       {markupAllowed && (items.length > 0 || keptDrawing) && <Button type="button" variant="ghost" size="sm" data-testid="guest-composer-remove-drawing" className={TOUCH} disabled={pending} onClick={() => { setItems(NO_ITEMS); setDrawFrame(null); if (hadDrawing) setRemoved(true); }}>Remove drawing</Button>}
     </p>}
-    <Textarea ref={bodyRef} data-testid="guest-composer-body" aria-label="Your note" placeholder="Add a note at this frame…" value={body} disabled={pending} onChange={(event) => { setBody(event.target.value); }} />
+    <GuestNoteField testId="guest-composer-body" label="Your note" placeholder="Add a note at this frame…" media={media} value={doc} disabled={pending} onChange={setDoc} onUploadingChange={setUploading} />
     {target !== null && latest !== null && latest.revision !== target.baseRevision && <p data-testid="guest-composer-latest" className="m-0 whitespace-pre-wrap text-foreground-secondary [font:var(--type-body-sm)] [overflow-wrap:anywhere]">{`Latest saved version: ${latest.body}`}</p>}
     {problem !== null && <p role="alert" data-testid="guest-composer-problem" className="m-0 text-destructive [font:var(--type-body-sm)]">{problem}</p>}
     <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
       <Button type="button" variant="ghost" data-testid="guest-composer-cancel" className={TOUCH} disabled={pending} onClick={close}>Cancel</Button>
-      <Button type="submit" data-testid="guest-composer-post" className={TOUCH} disabled={pending || phase !== "off"}>{target === null ? "Post note" : "Save"}</Button>
+      <Button type="submit" data-testid="guest-composer-post" className={TOUCH} disabled={pending || phase !== "off" || uploading}>{target === null ? "Post note" : "Save"}</Button>
     </div>
   </form>;
 

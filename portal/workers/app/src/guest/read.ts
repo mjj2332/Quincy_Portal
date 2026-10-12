@@ -1,6 +1,7 @@
 import { reachSql } from "../lib/guest-fence-sql";
 import { LIVE_VERSION, LIVE_VIDEO } from "../lib/video-live-sql";
 import {
+  VIDEO_NOTE_RICH_TEXT_PROFILE, parseRichTextDoc, richTextMediaRefs, richTextMentionsToText, type RichTextDoc,
   guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNoteThreadDtoSchema, guestVideoListResponseSchema,
   type GuestNoteListResponse, type GuestNoteMarkupResponse, type GuestNoteThreadDto, type GuestNoteDto, type GuestVideoListResponse,
 } from "@quincy/shared";
@@ -76,18 +77,28 @@ export async function resolveGrantedVersion(db: D1Database, linkId: string, proj
 }
 
 type NoteRow = {
-  id: string; parent_id: string | null; author_guest_id: string | null; start_frame: number | null; end_frame: number | null; drawing_frame: number | null; body: string; revision: number;
+  id: string; parent_id: string | null; author_guest_id: string | null; start_frame: number | null; end_frame: number | null; drawing_frame: number | null; body: string; content_json: string | null; revision: number;
   resolved_at: number | null; deleted_at: number | null; created_at: number; edited_at: number | null; u_name: string | null; g_name: string | null; has_markup: number;
 };
+
+/**
+ * A note's rich document as a guest sees it (#835 C): mention nodes become the plain text "@Name", so no user id reaches a guest (story 9). A stored document that no longer parses is left out, and the note
+ * reads from its `body`, which already carries the "@Name" text and the media count hint.
+ */
+function guestContent(json: string | null): RichTextDoc | null {
+  if (json === null) return null;
+  try { return richTextMentionsToText(parseRichTextDoc(JSON.parse(json), VIDEO_NOTE_RICH_TEXT_PROFILE)); } catch { return null; }
+}
 
 /** `viewer` is the guest id of the session reading (null while unverified): `self` is true only for the viewer's own notes, and no guest is ever shown another's email or id. */
 function noteDto(row: NoteRow, viewer: string | null): GuestNoteDto {
   const deleted = row.deleted_at !== null;
+  const content = deleted ? null : guestContent(row.content_json);
   return {
     id: row.id, parentId: row.parent_id,
     author: row.author_guest_id !== null ? { kind: "guest", name: row.g_name ?? "Client reviewer", self: viewer !== null && row.author_guest_id === viewer } : { kind: "studio", name: row.u_name ?? "Studio" },
     startFrame: row.start_frame, endFrame: row.end_frame, drawingFrame: deleted ? null : row.drawing_frame, hasMarkup: deleted ? false : row.has_markup === 1,
-    body: deleted ? "" : row.body, deleted, revision: row.revision, resolved: row.resolved_at !== null, createdAt: iso(row.created_at), editedAt: row.edited_at === null ? null : iso(row.edited_at),
+    body: deleted ? "" : row.body, ...(content ? { content } : {}), mediaCount: content ? richTextMediaRefs(content).length : 0, deleted, revision: row.revision, resolved: row.resolved_at !== null, createdAt: iso(row.created_at), editedAt: row.edited_at === null ? null : iso(row.edited_at),
   };
 }
 
@@ -96,7 +107,7 @@ function noteDto(row: NoteRow, viewer: string | null): GuestNoteDto {
  * replies are both covered, the Version is REACHED through the link in the same statement (a removal between the resolver and this read lists nothing), and `has_markup` is read off the public rows alone. A root deleted with no reply left is not shown (a tombstone is shown only while it holds a thread).
  */
 export async function listGuestNotes(db: D1Database, link: { id: string; projectId: string }, assetId: string, viewer: string | null): Promise<GuestNoteListResponse> {
-  const rows = (await db.prepare(`SELECT n.id, n.parent_id, n.author_guest_id, n.start_frame, n.end_frame, n.drawing_frame, n.body, n.revision, n.resolved_at, n.deleted_at, n.created_at, n.edited_at,
+  const rows = (await db.prepare(`SELECT n.id, n.parent_id, n.author_guest_id, n.start_frame, n.end_frame, n.drawing_frame, n.body, n.content_json, n.revision, n.resolved_at, n.deleted_at, n.created_at, n.edited_at,
       u.name AS u_name, g.display_name AS g_name, (k.note_id IS NOT NULL) AS has_markup
     FROM video_notes n LEFT JOIN user u ON u.id = n.author_user_id LEFT JOIN guest_reviewers g ON g.id = n.author_guest_id LEFT JOIN video_note_markup k ON k.note_id = n.id
     WHERE n.asset_id = ?1 AND n.project_id = ?2 AND n.visibility = 'public' AND ${reachSql("?3", "?2", "?1")} ORDER BY (n.parent_id IS NOT NULL), n.start_frame, n.created_at, n.id`).bind(assetId, link.projectId, link.id).all<NoteRow>()).results;
@@ -127,7 +138,7 @@ export async function readGuestMarkup(db: D1Database, linkId: string, projectId:
  * that lost the Version between the write and this read gets null (the caller answers the stub).
  */
 export async function readGuestThread(db: D1Database, link: { id: string; projectId: string }, rootId: string, viewer: string | null): Promise<GuestNoteThreadDto | null> {
-  const rows = (await db.prepare(`SELECT n.id, n.parent_id, n.author_guest_id, n.start_frame, n.end_frame, n.drawing_frame, n.body, n.revision, n.resolved_at, n.deleted_at, n.created_at, n.edited_at,
+  const rows = (await db.prepare(`SELECT n.id, n.parent_id, n.author_guest_id, n.start_frame, n.end_frame, n.drawing_frame, n.body, n.content_json, n.revision, n.resolved_at, n.deleted_at, n.created_at, n.edited_at,
       u.name AS u_name, g.display_name AS g_name, (k.note_id IS NOT NULL) AS has_markup
     FROM video_notes n LEFT JOIN user u ON u.id = n.author_user_id LEFT JOIN guest_reviewers g ON g.id = n.author_guest_id LEFT JOIN video_note_markup k ON k.note_id = n.id
     WHERE n.project_id = ?2 AND (n.id = ?3 OR n.parent_id = ?3) AND n.visibility = 'public' AND ${reachSql("?1", "?2", "n.asset_id")}

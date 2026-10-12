@@ -243,7 +243,7 @@ describe("POST .../email/verify", () => {
     const before = Date.now(); const response = await verify(link, session.cookie, code, "  Gina   Guest ");
     expect(response.status).toBe(200);
     const body = guestSessionResponseSchema.parse(await response.json());
-    expect(body).toEqual({ link: { label: "Smith family", expiresAt: expect.any(String), allow: { comments: true, approve: true, download: true, markup: false } }, verified: true, email: EMAIL, name: "Gina   Guest", notifications: { available: false, subscribed: true } });
+    expect(body).toEqual({ link: { label: "Smith family", expiresAt: expect.any(String), allow: { comments: true, approve: true, download: true, markup: false } }, verified: true, email: EMAIL, name: "Gina   Guest", notifications: { available: false, subscribed: true }, media: { heic: false } });
     for (const [name, value] of Object.entries(HYGIENE)) expect(response.headers.get(name), name).toBe(value);
     const rotated = sessionCookie(response, link.id)!;
     expect(rotated).not.toBe(session.cookie);

@@ -32,7 +32,7 @@ function mediaStatements(db: D1Database, postId: string, authorId: string, media
   const guardId = `notice-${postId}-${now}`;
   const previews = media?.previewIds ?? [];
   return [
-    ...ownedMediaStatements(db, { ownerKind: "notice_post", ownerId: postId, projectId: null, uploaderId: authorId, ids: media?.ids ?? [], now, fence: postFence(postId, authorId), guardId }),
+    ...ownedMediaStatements(db, { ownerKind: "notice_post", ownerId: postId, projectId: null, uploader: { userId: authorId }, ids: media?.ids ?? [], now, fence: postFence(postId, authorId), guardId }),
     // A new post holds no previews yet, so only an edit has anything to drop.
     ...(includePreviews || previews.length ? linkPreviewStatements(db, { ownerKind: "notice_post", ownerId: postId, projectId: null, requesterId: authorId, ids: previews, now, fence: postFence(postId, authorId), guardId }) : []),
   ];

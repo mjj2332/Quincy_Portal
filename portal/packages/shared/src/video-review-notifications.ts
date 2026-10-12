@@ -1,25 +1,27 @@
 import { z } from "zod";
 
 /**
- * Staff video-review notifications (#741 15a): ONE durable outbox event carrying four notification types. The payload names the source row and nothing else; the title is composed at
+ * Staff video-review notifications (#741 15a): ONE durable outbox event carrying six notification types. The payload names the source row and nothing else; the title is composed at
  * delivery, and no staff notification carries note text (docs/plans/741-13-15.md section 1.7), so there is no field here that could hold any.
  */
 export const VIDEO_REVIEW_NOTIFICATION_EVENT = "project.video_review.notification" as const;
-export const VIDEO_REVIEW_NOTIFICATION_TYPES = ["video_version_uploaded", "video_note", "video_reply", "video_decision"] as const;
+export const VIDEO_REVIEW_NOTIFICATION_TYPES = ["video_version_uploaded", "video_note", "video_reply", "video_decision", "video_released", "video_mention"] as const;
 export type VideoReviewNotificationType = (typeof VIDEO_REVIEW_NOTIFICATION_TYPES)[number];
 
 export function isVideoReviewNotificationType(value: string): value is VideoReviewNotificationType {
   return (VIDEO_REVIEW_NOTIFICATION_TYPES as readonly string[]).includes(value);
 }
 
-const SOURCE_PREFIX: Record<VideoReviewNotificationType, string> = {
+export const SOURCE_PREFIX: Record<VideoReviewNotificationType, string> = {
   video_version_uploaded: "video_version",
   video_note: "video_note",
   video_reply: "video_reply",
   video_decision: "video_decision",
+  video_released: "video_released",
+  video_mention: "video_mention",
 };
 
-/** `video_version:<assetId>`, `video_note:<noteId>`, `video_reply:<replyId>`, `video_decision:<eventId>`. */
+/** `video_version:<assetId>`, `video_note:<noteId>`, `video_reply:<replyId>`, `video_decision:<eventId>`, `video_released:<releaseId>`, `video_mention:<mentionRowId>` (the row in `video_note_mentions`, so a mention removed and added again is a new notification). */
 export function videoReviewNotificationSourceKey(kind: VideoReviewNotificationType, sourceId: string): string {
   return `${SOURCE_PREFIX[kind]}:${sourceId}`;
 }

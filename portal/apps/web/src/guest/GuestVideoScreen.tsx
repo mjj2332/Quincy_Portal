@@ -257,13 +257,13 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   }, [api, writer, settle]);
   const latestOf = useCallback((id: string) => threads?.find((thread) => thread.id === id) ?? null, [threads]);
   const actions = useMemo<NoteActions>(() => ({
-    reply: async (root, body) => settle(await writer.run(root.id, () => api.replyToNote(root.id, body)), root.id),
-    edit: async (root, note, body, expectedRevision) => settle(await writer.run(root.id, () => api.editNote(note.id, { expectedRevision, body })), root.id),
+    reply: async (root, content) => settle(await writer.run(root.id, () => api.replyToNote(root.id, content)), root.id),
+    edit: async (root, note, content, expectedRevision) => settle(await writer.run(root.id, () => api.editNote(note.id, { expectedRevision, content })), root.id),
     remove: async (root, note, expectedRevision) => settle(await writer.run(root.id, () => api.deleteNote(note.id, expectedRevision)), note.id === root.id ? root.id : null),
   }), [api, writer, settle]);
 
   const onDrawingChange = useCallback((drawing: boolean) => { if (phone) setDrawerOpen(!drawing); }, [phone]);
-  const compose = useGuestCompose({ clock, frameCount: version.frameCount, timecode, markupAllowed: session.link.allow.markup, post, edit: editRoot, latestOf, onDrawingChange });
+  const compose = useGuestCompose({ clock, frameCount: version.frameCount, timecode, markupAllowed: session.link.allow.markup, media: api.media, post, edit: editRoot, latestOf, onDrawingChange });
   // A draft belongs to the Version it was made on; an archived Project takes it away.
   const { close: closeComposer, editingId } = compose;
   useEffect(() => { closeComposer(); }, [version.assetId, closeComposer]);
@@ -300,9 +300,9 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   useEffect(() => { if (session.verified && !wasVerified.current) setNotesAttempt((n) => n + 1); wasVerified.current = session.verified; }, [session.verified]);
   const { beginEdit } = compose;
   const writing = useMemo<Writing>(() => ({
-    canWrite, verified: session.verified, actions, drafts, onNeedVerify: () => { requestVerify("none"); },
+    canWrite, verified: session.verified, media: api.media, actions, drafts, onNeedVerify: () => { requestVerify("none"); },
     composerOpen: compose.isOpen, editRoot: (thread) => { startDraft(() => { beginEdit(thread); }); },
-  }), [canWrite, session.verified, actions, drafts, requestVerify, compose.isOpen, startDraft, beginEdit]);
+  }), [canWrite, session.verified, api, actions, drafts, requestVerify, compose.isOpen, startDraft, beginEdit]);
   const canPaste = canWrite && video.versions.length >= 2;
   // On a phone the notes drawer would sit under the dialog: it steps aside and comes back when the dialog closes.
   const openPaste = () => {

@@ -12,19 +12,19 @@ export const projectFence = (n: number): string => `EXISTS (SELECT 1 FROM projec
 /** A LIVE Version (one video-kind Asset with its probed meta, not in Trash) joined to its LIVE Video. Every user of this fragment inherits the Trash filter (#776 B). */
 export const VERSION_FROM = `video_version_meta m JOIN assets a ON a.id = m.asset_id AND a.kind = 'video' AND ${LIVE_VERSION("m")} JOIN videos v ON v.id = m.video_id AND ${LIVE_VIDEO("v")}`;
 
-/** Binds: ?1 reply id, ?2 user id, ?3 role, ?4 body, ?5 now, ?6 parent id, ?7 Project id, ?8 audit id. Note: no visibility bind. */
-export const REPLY_INSERT_SQL = `INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_guest_id, author_role, visibility, start_frame, end_frame, drawing_frame, body, revision, created_at)
-  SELECT ?1, p.project_id, p.video_id, p.asset_id, p.id, ?2, NULL, ?3, p.visibility, NULL, NULL, NULL, ?4, 1, ?5
+/** Binds: ?1 reply id, ?2 user id, ?3 role, ?4 body, ?5 now, ?6 parent id, ?7 Project id, ?8 audit id, ?9 the rich document (#835), or null. Note: no visibility bind. */
+export const REPLY_INSERT_SQL = `INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_guest_id, author_role, visibility, start_frame, end_frame, drawing_frame, body, content_json, revision, created_at)
+  SELECT ?1, p.project_id, p.video_id, p.asset_id, p.id, ?2, NULL, ?3, p.visibility, NULL, NULL, NULL, ?4, ?9, 1, ?5
   FROM video_notes p WHERE p.id = ?6 AND p.project_id = ?7 AND p.parent_id IS NULL AND p.deleted_at IS NULL
     AND ${LIVE_VERSION_EXISTS("p.asset_id")} AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?8)`;
 
 /**
  * A guest's reply (#741 13b). Same shape as `REPLY_INSERT_SQL`, with the guest as author (`author_user_id` NULL, `author_role` the literal 'guest') and the extra rule that the root must be
  * PUBLIC: visibility is still read off the root row, never a bind, and a guest can only attach to what a guest can see. `guard` is the guest fence (`guestNoteGuard`), appended to the WHERE.
- * Binds: ?1 reply id, ?2 guest id, ?3 unused (the role), ?4 body, ?5 now, ?6 parent id, ?7 Project id, ?8 audit id, then the guard's.
+ * Binds: ?1 reply id, ?2 guest id, ?3 unused (the role), ?4 body, ?5 now, ?6 parent id, ?7 Project id, ?8 audit id, ?9 the rich document (#835 C) or null, then the guard's (from ?10).
  */
-export const guestReplyInsertSql = (guard: string): string => `INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_guest_id, author_role, visibility, start_frame, end_frame, drawing_frame, body, revision, created_at)
-  SELECT ?1, p.project_id, p.video_id, p.asset_id, p.id, NULL, ?2, 'guest', p.visibility, NULL, NULL, NULL, ?4, 1, ?5
+export const guestReplyInsertSql = (guard: string): string => `INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_guest_id, author_role, visibility, start_frame, end_frame, drawing_frame, body, content_json, revision, created_at)
+  SELECT ?1, p.project_id, p.video_id, p.asset_id, p.id, NULL, ?2, 'guest', p.visibility, NULL, NULL, NULL, ?4, ?9, 1, ?5
   FROM video_notes p WHERE p.id = ?6 AND p.project_id = ?7 AND p.parent_id IS NULL AND p.deleted_at IS NULL AND p.visibility = 'public'
     AND ${LIVE_VERSION_EXISTS("p.asset_id")} AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?8)${guard}`;
 

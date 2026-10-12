@@ -1,4 +1,4 @@
-import { strokesJsonBytes, STROKE_LIMITS, VIDEO_MARKUP_MAX_BYTES, VIDEO_NOTE_PASTE_MAX, VIDEO_NOTE_PASTE_OFFSET_MAX, type MarkupItem, type VideoMarkup, type VideoNoteCreateInput, type VideoNotePasteCommitResponse, type VideoNotePastePreviewResponse, VideoNoteDto, VideoNoteEditInput, VideoNoteThreadDto, VideoNoteVisibility } from "@quincy/shared";
+import { legacyBodyToRichTextDoc, videoNoteBody, strokesJsonBytes, STROKE_LIMITS, VIDEO_MARKUP_MAX_BYTES, VIDEO_NOTE_PASTE_MAX, VIDEO_NOTE_PASTE_OFFSET_MAX, type MarkupItem, type RichTextDoc, type VideoMarkup, type VideoNoteCreateInput, type VideoNotePasteCommitResponse, type VideoNotePastePreviewResponse, VideoNoteDto, VideoNoteEditInput, VideoNoteThreadDto, VideoNoteVisibility } from "@quincy/shared";
 import type { FrameClockState } from "./video-frame-clock";
 import type { MarkupTool } from "./use-markup";
 import type { MarkupHistory } from "./markup-history";
@@ -24,10 +24,16 @@ export type NoteClock = { getState(): FrameClockState; seekToFrame(frame: number
 export const frameOnScreen = (state: Pick<FrameClockState, "playing" | "frame" | "targetFrame">): number => (state.playing ? state.frame : (state.targetFrame ?? state.frame));
 
 export type Problem = { text: string; refresh?: boolean; retry?: boolean };
-export type Composer = { body: string; visibility: VideoNoteVisibility; anchorFrame: number | null; /** Advances with every edit of the draft. */ revision: number; problem: Problem | null };
-type Opened = Pick<VideoNoteDto, "revision" | "body" | "startFrame" | "endFrame">;
+export type Composer = { body: string; /** The rich draft (#835). Null for a draft set as plain text (`setBody`); the draft then posts as a plain `body`. */ content: RichTextDoc | null; visibility: VideoNoteVisibility; anchorFrame: number | null; /** Advances with every edit of the draft. */ revision: number; problem: Problem | null };
+type Opened = Pick<VideoNoteDto, "revision" | "body" | "startFrame" | "endFrame"> & { content?: RichTextDoc | null };
+/** The document an Opened note stands for: its rich content, or its plain text as one. */
+const docOf = (opened: { body: string; content?: RichTextDoc | null }): RichTextDoc => opened.content ?? legacyBodyToRichTextDoc(opened.body);
+/** What the rich field shows for a form: its document, or its plain text as one (an empty paragraph for no text). */
+export const draftDoc = (content: RichTextDoc | null | undefined, text: string): RichTextDoc => content ?? (text === "" ? { type: "doc", content: [{ type: "paragraph" }] } : legacyBodyToRichTextDoc(text));
+const sameDoc = (a: RichTextDoc, b: RichTextDoc) => JSON.stringify(a) === JSON.stringify(b);
+const noteOpened = (note: VideoNoteDto): Opened => ({ revision: note.revision, body: note.body, content: note.content ?? null, startFrame: note.startFrame, endFrame: note.endFrame });
 export type OpenForm = {
-  kind: "edit" | "reply"; noteId: string; rootId: string; text: string; revision: number;
+  kind: "edit" | "reply"; noteId: string; rootId: string; text: string; /** The rich document behind `text` (#835); null for a form that has only been given plain text. */ content?: RichTextDoc | null; revision: number;
   /** What the form was opened with: Save sends this revision, never the live cache value. */
   base: Opened;
   /** An edit of a plain root: the frame controls show. */
@@ -79,7 +85,7 @@ const NO_DRAWING: EditDrawing = Object.freeze({ hadDrawing: false, baseFrame: nu
 const EMPTY_MARKUP: ComposerMarkup = Object.freeze({ items: Object.freeze([]) as unknown as MarkupItem[], drawingFrame: null, revision: 0 });
 export const DEFAULT_PEN: MarkupTool = Object.freeze({ kind: "freehand", color: "#e64b3c", width: 4 });
 const NO_MARKS: StoredMarks = { clock: null, value: EMPTY_MARKS, touched: false, seed: EMPTY_MARKS };
-const EMPTY_COMPOSER: Composer = { body: "", visibility: "internal", anchorFrame: null, revision: 0, problem: null };
+const EMPTY_COMPOSER: Composer = { body: "", content: null, visibility: "internal", anchorFrame: null, revision: 0, problem: null };
 const EMPTY_PASTE: PasteDraft = Object.freeze({ offset: 0, unticked: Object.freeze([]) as readonly string[] });
 const EMPTY_PASTE_OP: PasteOp = Object.freeze({ opId: 0, status: "idle" });
 const EMPTY_PASTE_VIEW: PastePreview = Object.freeze({ generation: 0, status: "idle", plan: null, error: null, notice: null, failure: null });
@@ -131,7 +137,7 @@ export function writeFailure(error: unknown, fallback: string, noteId = "", touc
 }
 
 /** Whether leaving the form would lose something: an edit's text or frames changed, a reply or composer with text, or a composer with marks set. */
-const isDirty = (slot: Slot) => (slot.open ? (slot.open.kind === "reply" ? slot.open.text !== "" : slot.open.text !== slot.open.base.body || slot.marks.touched || slot.open.drawing.touched) : slot.composer.body !== "" || slot.marks.touched || slot.markup.items.length > 0);
+const isDirty = (slot: Slot) => (slot.open ? (slot.open.kind === "reply" ? slot.open.text !== "" : !sameDoc(slot.open.content ?? legacyBodyToRichTextDoc(slot.open.text), docOf(slot.open.base)) || slot.marks.touched || slot.open.drawing.touched) : slot.composer.body !== "" || slot.marks.touched || slot.markup.items.length > 0);
 
 /** What Remove would discard: the composer's text and drawing (kept while an edit or reply is open) and, independently, the open form's own changes. */
 const hasUnsent = (slot: Slot) => slot.composer.body !== "" || slot.markup.items.length > 0 || (slot.open ? isDirty(slot) : slot.marks.touched);
@@ -247,7 +253,14 @@ export function createNoteFormStore(key: string) {
       const composer = slot(assetId).composer;
       // Composing starts at the first character: the frame on screen then is the anchor, until the text is gone again.
       const anchorFrame = body === "" ? null : composer.body === "" && composer.anchorFrame === null ? frameNow : composer.anchorFrame;
-      put(assetId, { composer: { ...composer, body, anchorFrame, visibility: body === "" ? "internal" : composer.visibility, revision: composer.revision + 1 }, spent: false });
+      put(assetId, { composer: { ...composer, body, content: null, anchorFrame, visibility: body === "" ? "internal" : composer.visibility, revision: composer.revision + 1 }, spent: false });
+    },
+    /** The rich draft (#835): the text the draft reads as (mentions as @Name, a count hint for media) drives Post, the anchor and the length, the document is what is sent. */
+    setContent(assetId: string, content: RichTextDoc, frameNow: number) {
+      const composer = slot(assetId).composer;
+      const body = videoNoteBody(content);
+      const anchorFrame = body === "" ? null : composer.body === "" && composer.anchorFrame === null ? frameNow : composer.anchorFrame;
+      put(assetId, { composer: { ...composer, body, content, anchorFrame, visibility: body === "" ? "internal" : composer.visibility, revision: composer.revision + 1 }, spent: false });
     },
     setVisibility(assetId: string, visibility: VideoNoteVisibility) {
       const composer = slot(assetId).composer;
@@ -259,7 +272,7 @@ export function createNoteFormStore(key: string) {
       const frames = note.id === rootId && !note.hasMarkup && note.startFrame !== null;
       const seed: NoteMarks = frames ? { in: note.startFrame, out: note.endFrame === null ? null : note.endFrame - 1 } : EMPTY_MARKS;
       const drawing: EditDrawing = note.id === rootId && note.hasMarkup ? { ...NO_DRAWING, hadDrawing: true, baseFrame: note.drawingFrame, drawingFrame: note.drawingFrame } : NO_DRAWING;
-      return open(assetId, { kind: "edit", noteId: note.id, rootId, text: note.body, base: { revision: note.revision, body: note.body, startFrame: note.startFrame, endFrame: note.endFrame }, frames, drawing, focusOnOpen: true }, seed);
+      return open(assetId, { kind: "edit", noteId: note.id, rootId, text: note.body, content: docOf(note), base: noteOpened(note), frames, drawing, focusOnOpen: true }, seed);
     },
     /**
      * The note's drawing could not be read at the revision the edit was opened on, because the list now shows a newer one (another session saved in between). With nothing changed
@@ -272,8 +285,8 @@ export function createNoteFormStore(key: string) {
       if (!form || form.kind !== "edit" || form.noteId !== fresh.id || form.rootId !== fresh.id || held.op) return null;
       if (fresh.revision === form.base.revision || form.conflict?.revision === fresh.revision) return null;
       // Only an untouched form follows the note silently; anything the person changed (text, frames, drawing) asks first, exactly as a 409 would.
-      if (form.drawing.touched || held.marks.touched || form.text !== form.base.body) {
-        const current: Opened = { revision: fresh.revision, body: fresh.body, startFrame: fresh.startFrame, endFrame: fresh.endFrame };
+      if (form.drawing.touched || held.marks.touched || !sameDoc(form.content ?? legacyBodyToRichTextDoc(form.text), docOf(form.base))) {
+        const current: Opened = noteOpened(fresh);
         put(assetId, { open: { ...form, conflict: current, problem: { text: "This note changed since you opened it. Its current text is shown below; Save anyway replaces it with your edit." } } });
         return "conflict";
       }
@@ -281,7 +294,7 @@ export function createNoteFormStore(key: string) {
       const seed: NoteMarks = frames ? { in: fresh.startFrame, out: fresh.endFrame === null ? null : fresh.endFrame - 1 } : EMPTY_MARKS;
       const drawing: EditDrawing = fresh.hasMarkup ? { ...NO_DRAWING, hadDrawing: true, baseFrame: fresh.drawingFrame, drawingFrame: fresh.drawingFrame } : NO_DRAWING;
       put(assetId, {
-        open: { ...form, text: fresh.body, base: { revision: fresh.revision, body: fresh.body, startFrame: fresh.startFrame, endFrame: fresh.endFrame }, frames, drawing, conflict: null, problem: null },
+        open: { ...form, text: fresh.body, content: docOf(fresh), base: noteOpened(fresh), frames, drawing, conflict: null, problem: null },
         history: { ...held.history, edit: null },
         marks: { ...NO_MARKS, value: seed, seed },
       });
@@ -294,11 +307,16 @@ export function createNoteFormStore(key: string) {
       put(assetId, { open: { ...form, focusOnOpen: false } });
       return true;
     },
-    openReply: (assetId: string, rootId: string): boolean => open(assetId, { kind: "reply", noteId: rootId, rootId, text: "", base: { revision: 0, body: "", startFrame: null, endFrame: null }, frames: false }, EMPTY_MARKS),
+    openReply: (assetId: string, rootId: string): boolean => open(assetId, { kind: "reply", noteId: rootId, rootId, text: "", content: null, base: { revision: 0, body: "", startFrame: null, endFrame: null }, frames: false }, EMPTY_MARKS),
     close,
     setOpenText(assetId: string, text: string) {
       const form = slot(assetId).open;
-      if (form) put(assetId, { open: { ...form, text, revision: form.revision + 1 }, spent: false });
+      if (form) put(assetId, { open: { ...form, text, content: null, revision: form.revision + 1 }, spent: false });
+    },
+    /** The rich edit or reply (#835): the document drives what is sent, the text it reads as drives the empty check and the length. */
+    setOpenContent(assetId: string, content: RichTextDoc) {
+      const form = slot(assetId).open;
+      if (form) put(assetId, { open: { ...form, text: videoNoteBody(content), content, revision: form.revision + 1 }, spent: false });
     },
 
     mark: (assetId: string, kind: "in" | "out", frame: number, clock: object) => { takeMark(assetId, clock, (marks) => markFrame(marks, kind, frame)); },
@@ -334,7 +352,7 @@ export function createNoteFormStore(key: string) {
       if (landed !== anchor) return stop({ text: "Frame moved — Post again" });
       put(assetId, { op: { ...op, phase: "posting" } });
       const frames = withDrawing && !marked ? { startFrame: anchor, endFrame: null } : marked ?? { startFrame: anchor, endFrame: null };
-      try { await send({ startFrame: frames.startFrame, ...(frames.endFrame !== null ? { endFrame: frames.endFrame } : {}), visibility: draft.visibility, body: text, ...(withDrawing ? { markup: drawn.items as VideoMarkup, drawingFrame: drawn.drawingFrame! } : {}) }); }
+      try { await send({ startFrame: frames.startFrame, ...(frames.endFrame !== null ? { endFrame: frames.endFrame } : {}), visibility: draft.visibility, ...(draft.content ? { content: draft.content } : { body: text }), ...(withDrawing ? { markup: drawn.items as VideoMarkup, drawingFrame: drawn.drawingFrame! } : {}) }); }
       catch (error) { stop(composerProblem(error, withDrawing)); return; }
       if (!owns(assetId, op)) return;
       const now = slot(assetId).composer;
@@ -357,8 +375,9 @@ export function createNoteFormStore(key: string) {
       if (dropped) put(assetId, { open: form, history: { ...held.history, edit: null }, ...endEditDraw(assetId) });
       const say = () => { if (dropped && slot(assetId).open === null) put(assetId, { notice: { text: MARKUP_OFF_DROPPED, rootId: form.rootId } }); };
       const against = form.conflict ?? form.base;
-      const input: { expectedRevision: number; body?: string; startFrame?: number; endFrame?: number | null; markup?: VideoMarkup | null; drawingFrame?: number } = { expectedRevision: against.revision };
-      if (text !== against.body) input.body = text;
+      const input: { expectedRevision: number; body?: string; content?: RichTextDoc; startFrame?: number; endFrame?: number | null; markup?: VideoMarkup | null; drawingFrame?: number } = { expectedRevision: against.revision };
+      if (form.content) { if (!sameDoc(form.content, docOf(against))) input.content = form.content; }
+      else if (text !== against.body) input.body = text;
       const marks = effectiveMarks(held.marks, clock);
       const frames = form.frames && marks.touched ? marksToFrames(marks.value, frameCount) : null;
       if (frames && (frames.startFrame !== against.startFrame || frames.endFrame !== against.endFrame)) { input.startFrame = frames.startFrame; input.endFrame = frames.endFrame; }
@@ -368,7 +387,7 @@ export function createNoteFormStore(key: string) {
         if (items && !drawing.remove) { input.markup = items as VideoMarkup; input.drawingFrame = drawing.drawingFrame ?? against.startFrame ?? 0; }
         else if (drawing.hadDrawing) input.markup = null;
       }
-      if (input.body === undefined && input.startFrame === undefined && input.markup === undefined) { close(assetId); say(); return; }
+      if (input.body === undefined && input.content === undefined && input.startFrame === undefined && input.markup === undefined) { close(assetId); say(); return; }
       if (held.draw) put(assetId, { draw: null }); // saving ends draw mode; the strokes go with the save
       const fail = (problem: string) => { put(assetId, { open: { ...form, problem: { text: problem } } }); };
       if (input.markup !== undefined && input.startFrame !== undefined) return fail(MARKUP_ERROR_TEXT.markup_and_frames);
@@ -391,12 +410,12 @@ export function createNoteFormStore(key: string) {
       if (landed !== target) return stop({ text: "Frame moved — Save again" });
       await send_();
     },
-    async reply(assetId: string, { send }: { send: (rootId: string, body: string) => Promise<unknown> }) {
+    async reply(assetId: string, { send }: { send: (rootId: string, content: RichTextDoc) => Promise<unknown> }) {
       const held = slot(assetId);
       const form = held.open;
       const text = form?.text.trim();
       if (!form || form.kind !== "reply" || held.op || !text) return;
-      await submitOpen(assetId, form, () => send(form.rootId, text), "The reply could not be posted.");
+      await submitOpen(assetId, form, () => send(form.rootId, form.content ?? legacyBodyToRichTextDoc(text)), "The reply could not be posted.");
     },
 
     cancelConfirmation,

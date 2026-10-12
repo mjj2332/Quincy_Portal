@@ -1,3 +1,4 @@
+import { legacyBodyToRichTextDoc } from "@quincy/shared";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +8,7 @@ import type { VideoFrameClock } from "../../lib/video-frame-clock";
 import { createNoteFormStore, type NoteFormStore } from "../../lib/video-note-form-store";
 import { TICK_SIZE } from "../quincy/ResolvedTick";
 import { VideoNoteThread, type ThreadActions } from "./VideoNoteThread";
+vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 
 // Written AFTER VideoNoteThread.tsx (the component was committed untested): these tests were run against existing code and what
 // failed was fixed. They are not red-first evidence.
@@ -27,6 +29,7 @@ const base = (over: Record<string, unknown> = {}) => ({
 const thread = (over: Record<string, unknown> = {}, replies: VideoNoteDto[] = []) => ({ ...base(over), replies }) as unknown as VideoNoteThreadDto;
 const reply = (root: VideoNoteDto, over: Record<string, unknown> = {}) => base({ parentId: root.id, startFrame: null, visibility: root.visibility, createdAt: T(2), ...over });
 
+const para = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
 const tc = (frame: number) => `TC${frame}`;
 let root: Root | null = null; let host: HTMLElement;
 type Props = Omit<React.ComponentProps<typeof VideoNoteThread>, "store" | "assetId" | "clock">;
@@ -42,7 +45,7 @@ function actionsMock(): ThreadActions {
   return { reply: vi.fn(async () => ({})), edit: vi.fn(async () => ({})), resolve: vi.fn(async () => ({})), requestDelete: vi.fn(), refresh: vi.fn() };
 }
 async function render(t: VideoNoteThreadDto, over: Partial<Props> = {}) {
-  const props: Props = { thread: t, selected: false, userId: ME, readOnly: false, now: Date.parse(T(30)), timecode: tc, frameCount: 300, actions: actionsMock(), onSeek: vi.fn(), ...over };
+  const props: Props = { thread: t, selected: false, userId: ME, readOnly: false, now: Date.parse(T(30)), timecode: tc, frameCount: 300, actions: actionsMock(), onSeek: vi.fn(), rich: { projectId: "11111111-1111-4111-8111-111111111111", role: "editor" }, ...over };
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   const rerender = async (next: Partial<Props>) => { Object.assign(props, next); await act(async () => { root!.render(<Harness {...props} />); }); };
   await act(async () => { root!.render(<Harness {...props} />); });
@@ -156,10 +159,11 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(form.querySelector('[role="group"]')).toBeNull();
     expect((tid("video-note-reply-post", form) as HTMLButtonElement).disabled).toBe(true);
     await type(form.querySelector("textarea")!, "  On it  ");
-    expect(store.slot("asset").open?.text).toBe("  On it  ");
+    // The stored plain body is trimmed (5b07446a: `videoNoteBody`), while the document posted below keeps what was typed.
+    expect(store.slot("asset").open?.text).toBe("On it");
     await click(tid("video-note-reply-post", form)!);
     await flush();
-    expect(props.actions.reply).toHaveBeenCalledWith(t.id, "On it");
+    expect(props.actions.reply).toHaveBeenCalledWith(t.id, legacyBodyToRichTextDoc("  On it  "));
     expect(host.querySelector('[data-notes-form="reply"]')).toBeNull();
     expect(document.activeElement).toBe(tid("video-note-reply-button"));
   });
@@ -368,7 +372,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(store.slot("asset").open?.text).toBe("A better note");
     await click(tid("video-note-edit-save", form)!);
     await flush();
-    expect(props.actions.edit).toHaveBeenCalledWith(t.id, { expectedRevision: 3, body: "A better note" });
+    expect(props.actions.edit).toHaveBeenCalledWith(t.id, { expectedRevision: 3, content: para("A better note") });
     expect(host.querySelector('[data-notes-form="edit"]')).toBeNull();
     expect(store.slot("asset").open).toBeNull();
   });
@@ -408,7 +412,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     await type(host.querySelector("textarea")!, "Changed");
     await click(tid("video-note-edit-save")!);
     await flush();
-    expect(props.actions.edit).toHaveBeenCalledWith(t.id, { expectedRevision: 4, body: "Changed" });
+    expect(props.actions.edit).toHaveBeenCalledWith(t.id, { expectedRevision: 4, content: para("Changed") });
   });
 
   it("18: editing a reply sends the body only, with the reply's own revision, and has no frame controls", async () => {
@@ -420,7 +424,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     await type(host.querySelector("textarea")!, "Reply body 2");
     await click(tid("video-note-edit-save")!);
     await flush();
-    expect(props.actions.edit).toHaveBeenCalledWith(r.id, { expectedRevision: 7, body: "Reply body 2" });
+    expect(props.actions.edit).toHaveBeenCalledWith(r.id, { expectedRevision: 7, content: para("Reply body 2") });
   });
 
   it("19: a 409 note_conflict keeps the draft, shows the message and the server's current text, and only Save anyway then sends the NEW revision", async () => {
@@ -436,7 +440,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     await click(tid("video-note-edit-save")!);
     await flush();
     expect(tid("video-note-notice")!.textContent).toContain("This note changed since you opened it.");
-    expect(actions.edit).toHaveBeenLastCalledWith(t.id, { expectedRevision: 1, body: "My edit" });
+    expect(actions.edit).toHaveBeenLastCalledWith(t.id, { expectedRevision: 1, content: para("My edit") });
     expect(host.querySelector("textarea")!.value).toBe("My edit");
     // The panel has written the server's thread into the cache; the thread re-renders with it.
     await rerender({ thread: serverThread });
@@ -445,7 +449,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(tid("video-note-edit-save")!.textContent).toBe("Save anyway");
     await click(tid("video-note-edit-save")!);
     await flush();
-    expect(actions.edit).toHaveBeenLastCalledWith(t.id, { expectedRevision: 2, body: "My edit" });
+    expect(actions.edit).toHaveBeenLastCalledWith(t.id, { expectedRevision: 2, content: para("My edit") });
     expect(host.querySelector('[data-notes-form="edit"]')).toBeNull();
   });
 
@@ -493,7 +497,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     await type(host.querySelector("textarea")!, "Mine");
     await click(tid("video-note-edit-save")!);
     await flush();
-    expect(actions.edit).toHaveBeenCalledWith(t.id, { expectedRevision: 3, body: "Mine" });
+    expect(actions.edit).toHaveBeenCalledWith(t.id, { expectedRevision: 3, content: para("Mine") });
   });
 
   it("finding 1: an edit left unchanged is judged against the text it was opened with, so a refreshed thread does not turn it into a write", async () => {
@@ -545,5 +549,26 @@ describe("VideoNoteThread (#741 5b)", () => {
     const cls = tid("video-note-anchor-button")!.className;
     expect(cls).toContain("pointer-coarse:min-h-11");
     expect(cls).toContain("max-[721px]:min-h-11");
+  });
+});
+
+describe("VideoNoteThread rich fields (#835)", () => {
+  const rich = { projectId: "11111111-1111-4111-8111-111111111111", role: "editor" as const };
+
+  it("Edit from the note's menu puts focus in the editor's field, not on the wrapper or back on the menu", async () => {
+    await render(thread({ author: { kind: "staff", person: me } }), { rich });
+    await chooseAction("Terry", "Edit");
+    const field = tid("video-note-edit-body")!.querySelector("textarea, [contenteditable='true']");
+    expect(field).not.toBeNull();
+    expect(document.activeElement).toBe(field);
+  });
+
+  it("Reply puts focus in the editor's field, as the plain reply box did", async () => {
+    await render(thread(), { rich });
+    await click(tid("video-note-reply-button")!);
+    await flush();
+    const field = tid("video-note-reply-body")!.querySelector("textarea, [contenteditable='true']");
+    expect(field).not.toBeNull();
+    expect(document.activeElement).toBe(field);
   });
 });

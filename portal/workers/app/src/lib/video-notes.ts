@@ -1,25 +1,27 @@
-import { ROLE_LABELS, VIDEO_MARKUP_MAX_BYTES, guestOutboxActor, videoNoteListResponseSchema, videoNoteThreadDtoSchema, type Role, type VideoNoteDto, type VideoNoteThreadDto, type VideoNoteVisibility } from "@quincy/shared";
+import { ROLE_LABELS, VIDEO_MARKUP_MAX_BYTES, guestOutboxActor, richTextMediaIds, videoNoteListResponseSchema, videoNoteThreadDtoSchema, type RichTextDoc, type Role, type VideoNoteDto, type VideoNoteThreadDto, type VideoNoteVisibility } from "@quincy/shared";
 import { archivedInSnapshot, ARCHIVED_SNAPSHOT_SQL } from "./project-archive";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
+import { fillLinkPreviews } from "./link-previews";
 import { guestNoteGuard, reachSql, type GuestWriter } from "./guest-fence-sql";
 import { LIVE_VERSION_EXISTS } from "./video-live-sql";
 import { guestReplyInsertSql, projectFence, REPLY_INSERT_SQL, VERSION_FROM } from "./video-notes-sql";
 import { guestDigestStatements } from "./guest-digest";
 import { videoReviewOutboxStatements } from "./video-review-notifications";
+import { isMediaGuardFailure, ownedMediaStatements, type MediaUploader } from "./embedded-media";
 import type { VideoReviewGateState } from "./video-review-gate";
 
 /** Notes and replies on a Video Version (#741, 5a): scoped reads and the atomic writes. Routes decide who may call; every write repeats its fence in SQL. */
 
 type NoteRow = {
   id: string; asset_id: string; parent_id: string | null; author_user_id: string | null; author_guest_id: string | null; author_role: string; visibility: VideoNoteVisibility;
-  start_frame: number | null; end_frame: number | null; drawing_frame: number | null; body: string; resolved_at: number | null; revision: number; deleted_at: number | null;
+  start_frame: number | null; end_frame: number | null; drawing_frame: number | null; body: string; content_json: string | null; resolved_at: number | null; revision: number; deleted_at: number | null;
   copied_from_version: number | null; original_author_name: string | null; original_author_role: string | null; created_at: number; edited_at: number | null;
   u_name: string | null; u_role: Role | null; u_active: number | null; g_name: string | null; g_email: string | null;
   r_id: string | null; r_name: string | null; r_role: Role | null; r_active: number | null; has_markup: number;
 };
 
-const NOTE_SELECT = `SELECT n.id, n.asset_id, n.parent_id, n.author_user_id, n.author_guest_id, n.author_role, n.visibility, n.start_frame, n.end_frame, n.drawing_frame, n.body,
+const NOTE_SELECT = `SELECT n.id, n.asset_id, n.parent_id, n.author_user_id, n.author_guest_id, n.author_role, n.visibility, n.start_frame, n.end_frame, n.drawing_frame, n.body, n.content_json,
        n.resolved_at, n.revision, n.deleted_at, n.copied_from_version, n.original_author_name, n.original_author_role, n.created_at, n.edited_at,
        u.name AS u_name, u.role AS u_role, u.active AS u_active, g.display_name AS g_name, g.email_normalized AS g_email,
        ru.id AS r_id, ru.name AS r_name, ru.role AS r_role, ru.active AS r_active, (k.note_id IS NOT NULL) AS has_markup
@@ -30,6 +32,13 @@ const NOTE_ORDER = "ORDER BY (n.parent_id IS NOT NULL), n.start_frame, n.created
 
 const person = (id: string, name: string, role: Role, active: number) => ({ id, name, roleLabel: ROLE_LABELS[role], isExternal: role === "external_editor", active: Boolean(active) });
 const iso = (ms: number) => new Date(ms).toISOString();
+
+/** The rich document (#835) and its media count; a legacy note and a tombstone have neither (they read from `body`). */
+function contentOf(row: NoteRow, deleted: boolean): { content?: RichTextDoc; mediaCount: number } {
+  if (deleted || row.content_json === null) return { mediaCount: 0 };
+  const content = JSON.parse(row.content_json) as RichTextDoc;
+  return { content, mediaCount: richTextMediaIds(content).length };
+}
 
 /** `showGuestEmail` is true for a viewer who holds `shareVideo` (Admin, Editor): an External editor sees a guest author's name and nothing more (#741 13b). */
 function noteDto(row: NoteRow, showGuestEmail: boolean): VideoNoteDto {
@@ -42,7 +51,7 @@ function noteDto(row: NoteRow, showGuestEmail: boolean): VideoNoteDto {
     authorRole: row.author_role as VideoNoteDto["authorRole"], visibility: row.visibility,
     startFrame: row.start_frame, endFrame: row.end_frame,
     drawingFrame: deleted ? null : row.drawing_frame, hasMarkup: deleted ? false : row.has_markup === 1,
-    body: deleted ? "" : row.body, deleted,
+    body: deleted ? "" : row.body, ...contentOf(row, deleted), deleted,
     resolved: row.resolved_at !== null && row.r_id !== null ? { at: iso(row.resolved_at), by: person(row.r_id, row.r_name!, row.r_role!, row.r_active!) } : null,
     revision: row.revision, createdAt: iso(row.created_at), editedAt: row.edited_at === null ? null : iso(row.edited_at),
     copiedFrom: row.copied_from_version !== null ? { version: row.copied_from_version, authorName: row.original_author_name!, authorRole: row.original_author_role! } : null,
@@ -54,6 +63,18 @@ function threads(rows: NoteRow[], showGuestEmail: boolean): VideoNoteThreadDto[]
   for (const row of rows) if (row.parent_id === null) { const thread = { ...noteDto(row, showGuestEmail), replies: [] as VideoNoteDto[] }; roots.push(thread); byId.set(row.id, thread); }
   for (const row of rows) if (row.parent_id !== null) byId.get(row.parent_id)?.replies.push(noteDto(row, showGuestEmail));
   return roots;
+}
+
+/**
+ * Fills the display facts a document does not store (a video's `hasPoster`, an image's pixel size) on every root and reply, the way Project comments and Notice Board posts are filled
+ * (`fillLinkPreviews`, #556/#611). Without them a posterless video asks for a poster that is not there and an image has no reserved box. One batched read per kind, none for a note without media.
+ */
+async function withMediaFacts(db: D1Database, roots: VideoNoteThreadDto[]): Promise<VideoNoteThreadDto[]> {
+  const dtos = roots.flatMap((root) => [root, ...root.replies]).filter((dto): dto is VideoNoteDto & { content: RichTextDoc } => dto.content !== undefined);
+  if (!dtos.length) return roots;
+  const filled = new Map((await fillLinkPreviews(db, dtos)).map((dto) => [dto.id, dto.content]));
+  const apply = <T extends VideoNoteDto>(dto: T): T => (filled.has(dto.id) ? { ...dto, content: filled.get(dto.id)! } : dto);
+  return roots.map((root) => ({ ...apply(root), replies: root.replies.map(apply) }));
 }
 
 /** The Version's frame count, or null when the Asset is not a video Version of this Project. */
@@ -69,21 +90,21 @@ export async function listVideoNotes(db: D1Database, projectId: string, assetId:
     db.prepare(`${NOTE_SELECT} WHERE n.asset_id = ?1 AND n.project_id = ?2 ${NOTE_ORDER}`).bind(assetId, projectId),
   ]);
   if ((version!.results as unknown[]).length === 0) return null;
-  return videoNoteListResponseSchema.parse({ notes: threads(notes!.results as NoteRow[], showGuestEmail) }).notes;
+  return videoNoteListResponseSchema.parse({ notes: await withMediaFacts(db, threads(notes!.results as NoteRow[], showGuestEmail)) }).notes;
 }
 
 /** One root with its replies, or null when no such root in the Project. */
 export async function readThread(db: D1Database, projectId: string, rootId: string, showGuestEmail = false): Promise<VideoNoteThreadDto | null> {
   const rows = (await db.prepare(`${NOTE_SELECT} WHERE n.project_id = ?1 AND (n.id = ?2 OR n.parent_id = ?2) AND ${LIVE_VERSION_EXISTS("n.asset_id")} ${NOTE_ORDER}`).bind(projectId, rootId).all<NoteRow>()).results;
-  const thread = threads(rows, showGuestEmail)[0];
+  const [thread] = await withMediaFacts(db, threads(rows, showGuestEmail));
   return thread ? videoNoteThreadDtoSchema.parse(thread) : null;
 }
 
 export type NoteHead = {
   id: string; project_id: string; video_id: string; asset_id: string; parent_id: string | null; author_user_id: string | null; author_guest_id: string | null; visibility: VideoNoteVisibility;
-  body: string; start_frame: number | null; end_frame: number | null; drawing_frame: number | null; revision: number; deleted_at: number | null; resolved_at: number | null; has_markup: number;
+  body: string; content_json: string | null; start_frame: number | null; end_frame: number | null; drawing_frame: number | null; revision: number; deleted_at: number | null; resolved_at: number | null; has_markup: number;
 };
-const HEAD_COLUMNS = `n.id, n.project_id, n.video_id, n.asset_id, n.parent_id, n.author_user_id, n.author_guest_id, n.visibility, n.body, n.start_frame, n.end_frame, n.drawing_frame, n.revision, n.deleted_at, n.resolved_at,
+const HEAD_COLUMNS = `n.id, n.project_id, n.video_id, n.asset_id, n.parent_id, n.author_user_id, n.author_guest_id, n.visibility, n.body, n.content_json, n.start_frame, n.end_frame, n.drawing_frame, n.revision, n.deleted_at, n.resolved_at,
       (EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = n.id)) AS has_markup`;
 /** The columns the routes decide on, for a note scoped to the Project. */
 export async function findNoteHead(db: D1Database, projectId: string, noteId: string): Promise<NoteHead | null> {
@@ -154,13 +175,40 @@ export async function readNoteMarkupSnapshot(db: D1Database, projectId: string, 
       FROM video_notes n LEFT JOIN video_note_markup k ON k.note_id = n.id WHERE n.id = ?1 AND n.project_id = ?2 AND ${LIVE_VERSION_EXISTS("n.asset_id")}`).bind(noteId, projectId).first<{ revision: number; strokes_json: string | null }>() ?? null;
 }
 
-/** `outboxIds` are the staff notification rows this write appended (15a): the caller publishes them after the response is decided. Empty when `notify_staff` is off. */
-export type WriteOutcome<T> = { kind: "ok"; value: T; outboxIds?: string[] } | { kind: "archived" } | { kind: "gone" };
+/** `outboxIds` are the staff notification rows this write appended (15a): the caller publishes them after the response is decided. Empty when `notify_staff` is off. `media`: an attachment was not available at write time; nothing was written. */
+export type WriteOutcome<T> = { kind: "ok"; value: T; outboxIds?: string[] } | { kind: "archived" } | { kind: "gone" } | { kind: "media" };
+
+/**
+ * A staff note's rich content (#835), already parsed and checked by `prepareNoteContent` (lib/video-note-content.ts). `mentionUserIds` is every person the document mentions; the write turns them
+ * into `video_note_mentions` rows (an edit: only the ones the note did not hold) and into `video_mention` notifications. `uploader` is who the attached media must belong to.
+ */
+export type NoteRich = { contentJson: string; mentionUserIds: string[]; mediaIds: string[]; videoIds: string[]; uploader: MediaUploader };
+export type StoredMention = { id: string; userId: string };
+
+/** The mention rows a note holds. */
+export async function readNoteMentions(db: D1Database, noteId: string): Promise<StoredMention[]> {
+  return (await db.prepare("SELECT id, mentioned_user_id AS userId FROM video_note_mentions WHERE note_id = ?1 ORDER BY id").bind(noteId).all<StoredMention>()).results;
+}
+
+const AUDIT_FENCE = (auditId: string) => ({ sql: "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)", binds: [auditId] });
+/** The note's media statements, fenced on the winner's audit row. Appended after every statement whose result is read by position. */
+function richMediaStatements(db: D1Database, input: { projectId: string; noteId: string; rich: NoteRich; now: number; auditId: string }): D1PreparedStatement[] {
+  return ownedMediaStatements(db, { ownerKind: "video_note", ownerId: input.noteId, projectId: input.projectId, uploader: input.rich.uploader, ids: input.rich.mediaIds, videoIds: input.rich.videoIds, now: input.now, fence: AUDIT_FENCE(input.auditId), guardId: input.auditId });
+}
+const mentionInserts = (db: D1Database, noteId: string, mentions: StoredMention[], now: number, auditId: string): D1PreparedStatement[] =>
+  mentions.map((mention) => db.prepare("INSERT INTO video_note_mentions (id, note_id, mentioned_user_id, created_at) SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?5) AND EXISTS (SELECT 1 FROM video_notes WHERE id = ?2)")
+    .bind(mention.id, noteId, mention.userId, now, auditId));
+/** A batch that tripped the media guard's CHECK, which rolled the whole write back. Anything else is rethrown. */
+function mediaFailure(error: unknown, rich: NoteRich | undefined): "media" {
+  if (rich && isMediaGuardFailure(error, rich.mediaIds)) return "media";
+  throw error;
+}
 const outboxActor = (author: NoteAuthor): { actorId: string; excludeUserId: string | null } =>
   author.kind === "user" ? { actorId: author.principal.id, excludeUserId: author.principal.id } : { actorId: guestOutboxActor(author.guestId), excludeUserId: null };
 
-export async function createVideoNote<T = VideoNoteThreadDto>(db: D1Database, input: { projectId: string; assetId: string; author: NoteAuthor; visibility: VideoNoteVisibility; startFrame: number; endFrame: number | null; body: string; markup?: MarkupWrite; now: number; read?: ThreadReader<T>; gate?: VideoReviewGateState }): Promise<WriteOutcome<T>> {
-  const noteId = newId(); const auditId = newId(); const { author } = input; const guest = author.kind === "guest";
+export async function createVideoNote<T = VideoNoteThreadDto>(db: D1Database, input: { projectId: string; assetId: string; author: NoteAuthor; visibility: VideoNoteVisibility; startFrame: number; endFrame: number | null; body: string; rich?: NoteRich; markup?: MarkupWrite; now: number; read?: ThreadReader<T>; gate?: VideoReviewGateState }): Promise<WriteOutcome<T>> {
+  const noteId = newId(); const auditId = newId(); const { author, rich } = input; const guest = author.kind === "guest";
+  const mentions: StoredMention[] = (rich?.mentionUserIds ?? []).map((userId) => ({ id: newId(), userId }));
   const video = await db.prepare(`SELECT v.id FROM ${VERSION_FROM} WHERE m.asset_id = ?1 AND v.project_id = ?2`).bind(input.assetId, input.projectId).first<{ id: string }>();
   if (!video) return { kind: "gone" };
   const { markup } = input;
@@ -170,9 +218,9 @@ export async function createVideoNote<T = VideoNoteThreadDto>(db: D1Database, in
   });
   const drawingFrame = markup?.drawingFrame ?? null;
   // A guest's writes carry the guest fence (`guestNoteGuard`): the session, link, gate and Version are re-checked in THIS statement at `input.now`, so a revoke or an ungrant that lands after the route's checks writes nothing.
-  const auditGuard = guardOf(author, 11, "?5", "?7"); const insertGuard = guardOf(author, 13, "?8", "?9");
+  const auditGuard = guardOf(author, 11, "?5", "?7"); const insertGuard = guardOf(author, 14, "?8", "?9");
   // 15a: staff are told of a new root note (public or internal), with no text; appended to this batch and fenced on its audit row.
-  const notify = await videoReviewOutboxStatements(db, { kind: "video_note", projectId: input.projectId, videoId: video.id, assetId: input.assetId, sourceId: noteId, ...outboxActor(author), auditId, occurredAt: input.now, gate: input.gate });
+  const notify = await videoReviewOutboxStatements(db, { kind: "video_note", projectId: input.projectId, videoId: video.id, assetId: input.assetId, sourceId: noteId, ...outboxActor(author), auditId, occurredAt: input.now, gate: input.gate, mentions });
   const results = await db.batch([
     // The drawing-frame rule rides the audit statement, so a drawing outside the note inserts nothing at all.
     db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.create', 'video_note', ?3, ?4, ?5
@@ -180,57 +228,68 @@ export async function createVideoNote<T = VideoNoteThreadDto>(db: D1Database, in
         AND (?10 IS NULL OR ${drawingFrameRule("?10", "?8", "?9")})${auditGuard.sql}`)
       .bind(auditId, actorOf(author), noteId, meta, input.now, input.projectId, input.assetId, input.startFrame, input.endFrame, drawingFrame, ...auditGuard.binds),
     // Author columns, role and visibility are SQL literals for a guest, never binds: 0068's CHECK is the backstop, and the statement does not depend on what the route passed.
-    db.prepare(`INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_guest_id, author_role, visibility, start_frame, end_frame, drawing_frame, body, revision, created_at)
-      SELECT ?1, v.project_id, v.id, m.asset_id, NULL, ${guest ? "NULL, ?2, 'guest', 'public'" : "?2, NULL, ?3, ?4"}, ?5, ?6, ?12, ?7, 1, ?8
+    db.prepare(`INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_guest_id, author_role, visibility, start_frame, end_frame, drawing_frame, body, content_json, revision, created_at)
+      SELECT ?1, v.project_id, v.id, m.asset_id, NULL, ${guest ? "NULL, ?2, 'guest', 'public'" : "?2, NULL, ?3, ?4"}, ?5, ?6, ?12, ?7, ?13, 1, ?8
       FROM ${VERSION_FROM} WHERE m.asset_id = ?9 AND v.project_id = ?10 AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?11)${insertGuard.sql}`)
-      .bind(noteId, authorId(author), author.kind === "user" ? author.principal.role : "guest", input.visibility, input.startFrame, input.endFrame, input.body, input.now, input.assetId, input.projectId, auditId, drawingFrame, ...insertGuard.binds),
+      .bind(noteId, authorId(author), author.kind === "user" ? author.principal.role : "guest", input.visibility, input.startFrame, input.endFrame, input.body, input.now, input.assetId, input.projectId, auditId, drawingFrame, rich?.contentJson ?? null, ...insertGuard.binds),
     // Markup follows the note it belongs to: nothing lands unless the note row did (so an archived Project or a failed rule leaves no orphan).
     ...(markup ? [db.prepare("INSERT INTO video_note_markup (note_id, strokes_json, created_at, updated_at) SELECT ?1, ?2, ?3, ?3 FROM video_notes WHERE id = ?1 AND parent_id IS NULL AND drawing_frame IS NOT NULL").bind(noteId, markup.json, input.now)] : []),
+    ...mentionInserts(db, noteId, mentions, input.now, auditId),
     ...notify.statements,
     // 15b: a STAFF root note that is public goes to the client digest; an internal note and a guest's own note produce nothing.
     ...(author.kind === "user" && input.visibility === "public" ? guestDigestStatements(db, { kind: "public_note", noteId }, auditId, input.now) : []),
+    ...(rich ? richMediaStatements(db, { projectId: input.projectId, noteId, rich, now: input.now, auditId }) : []),
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
-  ]);
+  ]).catch((error) => mediaFailure(error, rich));
+  if (results === "media") return { kind: "media" };
   const thread = await readerOf(db, input.projectId, input.read)(noteId);
   if (thread) return { kind: "ok", value: thread, outboxIds: notify.outboxIds };
   return archivedInSnapshot(results.at(-1)) ? { kind: "archived" } : { kind: "gone" };
 }
 
-export async function createVideoNoteReply<T = VideoNoteThreadDto>(db: D1Database, input: { projectId: string; parent: NoteHead; author: NoteAuthor; body: string; now: number; read?: ThreadReader<T>; gate?: VideoReviewGateState }): Promise<WriteOutcome<T>> {
-  const replyId = newId(); const auditId = newId(); const { author } = input;
+export async function createVideoNoteReply<T = VideoNoteThreadDto>(db: D1Database, input: { projectId: string; parent: NoteHead; author: NoteAuthor; body: string; rich?: NoteRich; now: number; read?: ThreadReader<T>; gate?: VideoReviewGateState }): Promise<WriteOutcome<T>> {
+  const replyId = newId(); const auditId = newId(); const { author, rich } = input;
+  const mentions: StoredMention[] = (rich?.mentionUserIds ?? []).map((userId) => ({ id: newId(), userId }));
   const meta = metaOf(author, { projectId: input.projectId, videoId: input.parent.video_id, assetId: input.parent.asset_id, parentId: input.parent.id, visibility: input.parent.visibility });
   const rootAsset = "(SELECT x.asset_id FROM video_notes x WHERE x.id = ?7)";
-  const auditGuard = guardOf(author, 8, "?5", rootAsset); const insertGuard = guardOf(author, 9, "?5", "p.asset_id");
+  const auditGuard = guardOf(author, 8, "?5", rootAsset); const insertGuard = guardOf(author, author.kind === "guest" ? 10 : 9, "?5", "p.asset_id");
   // 15a: the thread's authors and the Version's uploader are told of a reply (no text); read before the batch, fenced on its audit row.
-  const notify = await videoReviewOutboxStatements(db, { kind: "video_reply", projectId: input.projectId, videoId: input.parent.video_id, assetId: input.parent.asset_id, sourceId: replyId, threadRootId: input.parent.id, ...outboxActor(author), auditId, occurredAt: input.now, gate: input.gate });
+  const notify = await videoReviewOutboxStatements(db, { kind: "video_reply", projectId: input.projectId, videoId: input.parent.video_id, assetId: input.parent.asset_id, sourceId: replyId, ...outboxActor(author), auditId, occurredAt: input.now, gate: input.gate, mentions });
   const results = await db.batch([
     db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.reply', 'video_note', ?3, ?4, ?5
       WHERE ${projectFence(6)} AND EXISTS (SELECT 1 FROM video_notes p WHERE p.id = ?7 AND p.project_id = ?6 AND p.parent_id IS NULL AND p.deleted_at IS NULL AND ${LIVE_VERSION_EXISTS("p.asset_id")}${author.kind === "guest" ? " AND p.visibility = 'public'" : ""})${auditGuard.sql}`)
       .bind(auditId, actorOf(author), replyId, meta, input.now, input.projectId, input.parent.id, ...auditGuard.binds),
     author.kind === "user"
-      ? db.prepare(REPLY_INSERT_SQL).bind(replyId, author.principal.id, author.principal.role, input.body, input.now, input.parent.id, input.projectId, auditId)
-      : db.prepare(guestReplyInsertSql(insertGuard.sql)).bind(replyId, author.guestId, "guest", input.body, input.now, input.parent.id, input.projectId, auditId, ...insertGuard.binds),
+      ? db.prepare(REPLY_INSERT_SQL).bind(replyId, author.principal.id, author.principal.role, input.body, input.now, input.parent.id, input.projectId, auditId, rich?.contentJson ?? null)
+      : db.prepare(guestReplyInsertSql(insertGuard.sql)).bind(replyId, author.guestId, "guest", input.body, input.now, input.parent.id, input.projectId, auditId, rich?.contentJson ?? null, ...insertGuard.binds),
+    ...mentionInserts(db, replyId, mentions, input.now, auditId),
     ...notify.statements,
     // 15b: a STAFF reply under a public root goes to the guests of that thread; a reply under an internal root and a guest's reply produce nothing.
     ...(author.kind === "user" && input.parent.visibility === "public" ? guestDigestStatements(db, { kind: "staff_reply", replyId, rootId: input.parent.id }, auditId, input.now) : []),
+    ...(rich ? richMediaStatements(db, { projectId: input.projectId, noteId: replyId, rich, now: input.now, auditId }) : []),
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
-  ]);
+  ]).catch((error) => mediaFailure(error, rich));
+  if (results === "media") return { kind: "media" };
   const created = await db.prepare("SELECT id FROM video_notes WHERE id = ?1").bind(replyId).first();
   if (created) { const thread = await readerOf(db, input.projectId, input.read)(input.parent.id); if (thread) return { kind: "ok", value: thread, outboxIds: notify.outboxIds }; }
   return archivedInSnapshot(results.at(-1)) ? { kind: "archived" } : { kind: "gone" };
 }
 
 export type EditOutcome<T = VideoNoteThreadDto> =
-  | { kind: "ok"; value: T } | { kind: "noop"; value: T } | { kind: "archived" } | { kind: "gone" }
-  | { kind: "forbidden" } | { kind: "deleted" } | { kind: "conflict"; value: T } | { kind: "markup" } | { kind: "out_of_range" } | { kind: "drawing_outside" };
+  | { kind: "ok"; value: T; outboxIds?: string[] } | { kind: "noop"; value: T } | { kind: "archived" } | { kind: "gone" }
+  | { kind: "forbidden" } | { kind: "deleted" } | { kind: "conflict"; value: T } | { kind: "markup" } | { kind: "out_of_range" } | { kind: "drawing_outside" } | { kind: "media" };
 
 /**
  * Edit body, frames and/or markup of the author's own note. Author, revision, frame bounds, the drawing-frame rule and the markup lock are all in the UPDATE, which bumps the
  * revision ONCE however many of body/markup changed. `markup` is only passed when the route found a real change; the UPDATE's change predicate still repeats it, so a write that
  * bypasses the route cannot bump the revision for nothing. The markup row follows the audit row, which exists only if the UPDATE landed. A guest's UPDATE carries the guest fence.
  */
-export async function editVideoNote<T = VideoNoteThreadDto>(db: D1Database, input: { projectId: string; note: NoteHead; author: NoteAuthor; expectedRevision: number; body: string; startFrame: number | null; endFrame: number | null; markup?: MarkupEdit; now: number; read?: ThreadReader<T> }): Promise<EditOutcome<T>> {
-  const auditId = newId(); const { note, markup, author } = input; const read = readerOf(db, input.projectId, input.read);
+export async function editVideoNote<T = VideoNoteThreadDto>(db: D1Database, input: { projectId: string; note: NoteHead; author: NoteAuthor; expectedRevision: number; body: string; rich?: NoteRich; held?: StoredMention[]; startFrame: number | null; endFrame: number | null; markup?: MarkupEdit; now: number; read?: ThreadReader<T> }): Promise<EditOutcome<T>> {
+  const auditId = newId(); const { note, markup, author, rich } = input; const read = readerOf(db, input.projectId, input.read);
+  // Mentions: the rows the note holds (`held`, read by the route) against the people the new document names. Only an ADDED person gets a row and a notification.
+  const held = input.held ?? []; const wanted = new Set(rich?.mentionUserIds ?? []);
+  const removed = rich ? held.filter((mention) => !wanted.has(mention.userId)) : [];
+  const added: StoredMention[] = rich ? rich.mentionUserIds.filter((userId) => !held.some((mention) => mention.userId === userId)).map((userId) => ({ id: newId(), userId })) : [];
   const meta = metaOf(author, {
     projectId: input.projectId, assetId: note.asset_id, revision: input.expectedRevision + 1,
     ...(markup?.kind === "set" ? { markup: note.has_markup === 1 ? "replace" : "add", strokeCount: markup.items, markupBytes: markup.bytes, drawingFrame: markup.drawingFrame } : {}),
@@ -248,11 +307,19 @@ export async function editVideoNote<T = VideoNoteThreadDto>(db: D1Database, inpu
       guard += ` AND ${drawingFrameRule("?9", "start_frame", "end_frame")}`;
     } else changed = " OR EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = video_notes.id)";
   }
+  if (rich) {
+    binds.push(rich.contentJson);
+    set += `, content_json = ?${binds.length}`;
+    changed += ` OR content_json IS NOT ?${binds.length}`;
+  }
   const fence = guardOf(author, binds.length + 1, "?4", "video_notes.asset_id"); binds.push(...fence.binds);
   const write = markup?.kind === "set"
     ? [db.prepare(`INSERT INTO video_note_markup (note_id, strokes_json, created_at, updated_at) SELECT ?1, ?2, ?3, ?3 WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?4)
         ON CONFLICT (note_id) DO UPDATE SET strokes_json = excluded.strokes_json, updated_at = excluded.updated_at`).bind(note.id, markup.json, input.now, auditId)]
     : markup ? [db.prepare("DELETE FROM video_note_markup WHERE note_id = ?1 AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?2)").bind(note.id, auditId)] : [];
+  // An edit tells only the people it newly mentions (story 8); the ordinary kind goes to nobody.
+  const notify = added.length ? await videoReviewOutboxStatements(db, { kind: note.parent_id === null ? "video_note" : "video_reply", projectId: input.projectId, videoId: note.video_id, assetId: note.asset_id, sourceId: note.id, ...outboxActor(author), auditId, occurredAt: input.now, mentions: added, mentionsOnly: true })
+    : { statements: [] as D1PreparedStatement[], outboxIds: [] as string[] };
   const results = await db.batch([
     db.prepare(`UPDATE video_notes SET body = ?1, start_frame = ?2, end_frame = ?3, revision = revision + 1, edited_at = ?4${set}
       WHERE id = ?5 AND project_id = ?6 AND ${authorPredicate(author, "", "?7")} AND deleted_at IS NULL AND revision = ?8
@@ -268,10 +335,15 @@ export async function editVideoNote<T = VideoNoteThreadDto>(db: D1Database, inpu
         .bind(auditId, actorOf(author), note.id, meta, input.now, note.drawing_frame)
       : db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.edit', 'video_note', ?3, ?4, ?5 WHERE changes() = 1`).bind(auditId, actorOf(author), note.id, meta, input.now),
     ...write,
+    ...removed.map((mention) => db.prepare("DELETE FROM video_note_mentions WHERE id = ?1 AND note_id = ?2 AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?3)").bind(mention.id, note.id, auditId)),
+    ...mentionInserts(db, note.id, added, input.now, auditId),
+    ...notify.statements,
+    ...(rich ? richMediaStatements(db, { projectId: input.projectId, noteId: note.id, rich, now: input.now, auditId }) : []),
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
-  ]);
+  ]).catch((error) => mediaFailure(error, rich));
+  if (results === "media") return { kind: "media" };
   const rootId = note.parent_id ?? note.id;
-  if ((results[0]?.meta.changes ?? 0) === 1) { const thread = await read(rootId); return thread ? { kind: "ok", value: thread } : { kind: "gone" }; }
+  if ((results[0]?.meta.changes ?? 0) === 1) { const thread = await read(rootId); return thread ? { kind: "ok", value: thread, outboxIds: notify.outboxIds } : { kind: "gone" }; }
   if (archivedInSnapshot(results.at(-1))) return { kind: "archived" };
   const current = await findNoteHead(db, input.projectId, note.id);
   if (!current) return { kind: "gone" };
@@ -281,7 +353,7 @@ export async function editVideoNote<T = VideoNoteThreadDto>(db: D1Database, inpu
   if (current.revision !== input.expectedRevision) return { kind: "conflict", value: thread };
   const stored = markup ? await readNoteMarkup(db, input.projectId, note.id) : null;
   const markupSame = !markup || (markup.kind === "remove" ? current.has_markup === 0 : stored?.strokes_json === markup.json && current.drawing_frame === markup.drawingFrame);
-  if (current.body === input.body && current.start_frame === input.startFrame && current.end_frame === input.endFrame && markupSame) return { kind: "noop", value: thread };
+  if (current.body === input.body && (!rich || current.content_json === rich.contentJson) && current.start_frame === input.startFrame && current.end_frame === input.endFrame && markupSame) return { kind: "noop", value: thread };
   if (markup) return { kind: "drawing_outside" };
   return current.has_markup === 1 ? { kind: "markup" } : { kind: "out_of_range" };
 }
@@ -309,19 +381,23 @@ export async function deleteVideoNote<T = VideoNoteThreadDto>(db: D1Database, in
     // The audit goes first so the author's replies are counted before the DELETE cascades them: the winning audit records what was actually removed.
     db.prepare(`${AUDIT_INSERT} SELECT ?5, ?8, 'video_note.delete', 'video_note', ?1, json_set(?6, '$.ownRepliesRemoved', (SELECT COUNT(*) FROM video_notes r WHERE r.parent_id = ?1 AND ${authorPredicate(author, "r", "?3")}), '$.hadMarkup', json(CASE WHEN EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = ?1) THEN 'true' ELSE 'false' END)), ?7 ${hardWhere}${hardAuditGuard.sql}`)
       .bind(note.id, input.projectId, me, input.expectedRevision, hardAudit, metaOf(author, { ...base, mode: "removed" }), input.now, actorOf(author), ...hardAuditGuard.binds),
+    // #835: the media of the note and of the replies the DELETE is about to cascade is detached and due now, before they go (a polymorphic owner has no foreign key to carry the delete).
+    db.prepare("UPDATE embedded_media SET state = 'detached', detached_at = 0, updated_at = ?1 WHERE owner_kind = 'video_note' AND state IN ('attached', 'detached') AND owner_id IN (SELECT id FROM video_notes WHERE id = ?2 OR parent_id = ?2) AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?3)")
+      .bind(input.now, note.id, hardAudit),
     db.prepare(`DELETE FROM video_notes WHERE id = ?1 AND project_id = ?2 AND ${authorPredicate(author, "", "?3")} AND revision = ?4 AND deleted_at IS NULL AND ${projectFence(2)} AND ${LIVE_VERSION_EXISTS("video_notes.asset_id")}
       AND NOT EXISTS (SELECT 1 FROM video_notes c WHERE c.parent_id = ?1 AND ${notAuthorPredicate(author, "c", "?3")}) AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?5)${hardDeleteGuard.sql}`)
       .bind(...deleteBinds, ...hardDeleteGuard.binds),
-    db.prepare(`UPDATE video_notes SET deleted_at = ?1, body = '', drawing_frame = NULL, revision = revision + 1
+    db.prepare(`UPDATE video_notes SET deleted_at = ?1, body = '', content_json = NULL, drawing_frame = NULL, revision = revision + 1
       WHERE id = ?2 AND project_id = ?3 AND ${authorPredicate(author, "", "?4")} AND revision = ?5 AND deleted_at IS NULL AND ${projectFence(3)} AND ${LIVE_VERSION_EXISTS("video_notes.asset_id")}${tombGuard.sql}`)
       .bind(input.now, note.id, input.projectId, me, input.expectedRevision, ...tombGuard.binds),
     // The markup row is still there (it is deleted by the statement after this one), so the audit can say whether the tombstoned note had a drawing.
     db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.delete', 'video_note', ?3, json_set(?4, '$.hadMarkup', json(CASE WHEN EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = ?3) THEN 'true' ELSE 'false' END)), ?5 WHERE changes() = 1`)
       .bind(tombAudit, actorOf(author), note.id, metaOf(author, { ...base, mode: "tombstone", ownRepliesRemoved: 0 }), input.now),
     db.prepare("DELETE FROM video_note_markup WHERE note_id = ?1 AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?2)").bind(note.id, tombAudit),
+    db.prepare("UPDATE embedded_media SET state = 'detached', detached_at = 0, updated_at = ?1 WHERE owner_kind = 'video_note' AND owner_id = ?2 AND state IN ('attached', 'detached') AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?3)").bind(input.now, note.id, tombAudit),
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
   ]);
-  const removed = (results[1]?.meta.changes ?? 0) >= 1; const tombstoned = !removed && (results[2]?.meta.changes ?? 0) === 1;
+  const removed = (results[2]?.meta.changes ?? 0) >= 1; const tombstoned = !removed && (results[3]?.meta.changes ?? 0) === 1;
   const rootId = note.parent_id ?? note.id;
   if (removed || tombstoned) return { kind: "ok", mode: removed ? "removed" : "tombstone", value: removed && note.parent_id === null ? null : await read(rootId) };
   if (archivedInSnapshot(results.at(-1))) return { kind: "archived" };
@@ -333,8 +409,13 @@ export async function deleteVideoNote<T = VideoNoteThreadDto>(db: D1Database, in
   return thread ? { kind: "conflict", value: thread } : { kind: "gone" };
 }
 
+/** The note and the replies a hard delete of it would take, for the media purge that follows (the route runs `purgeDetachedOwnerMedia` for each). */
+export async function noteAndReplyIds(db: D1Database, noteId: string): Promise<string[]> {
+  return (await db.prepare("SELECT id FROM video_notes WHERE id = ?1 OR parent_id = ?1").bind(noteId).all<{ id: string }>()).results.map((row) => row.id);
+}
+
 /** Resolve or reopen a root. Not author-only and not revisioned (resolving must never conflict with an author's edit). Already in the target state changes nothing and writes no audit. */
-export async function setVideoNoteResolution<T = VideoNoteThreadDto>(db: D1Database, input: { projectId: string; note: NoteHead; principal: Principal; resolved: boolean; now: number; read?: ThreadReader<T> }): Promise<WriteOutcome<T>> {
+export async function setVideoNoteResolution<T = VideoNoteThreadDto>(db: D1Database, input: { projectId: string; note: NoteHead; principal: Principal; resolved: boolean; now: number; read?: ThreadReader<T> }): Promise<Exclude<WriteOutcome<T>, { kind: "media" }>> {
   const { note, principal } = input; const auditId = newId();
   const meta = auditMeta(principal, { projectId: input.projectId, assetId: note.asset_id });
   const update = input.resolved

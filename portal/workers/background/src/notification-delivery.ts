@@ -63,8 +63,9 @@ export const PROJECT_DEADLINE_OPERATIONAL_TARGET_MS = 120_000;
 /** #337: every Project notification email links to the Workspace tab its type maps to, through the
  * same `projectNotificationRoute` + `staffPathFor` the in-app list uses, so the two cannot drift.
  * (Persisted activity deep links are not rebuilt here -- see the broad-activity resolver.) */
-function projectNotificationUrl(env: Pick<Env, "APP_ORIGIN">, projectId: string, type: NotificationType): string {
-  const route = projectNotificationRoute(projectId, type);
+function projectNotificationUrl(env: Pick<Env, "APP_ORIGIN">, projectId: string, type: NotificationType, video: { id: string; version: number; note: string } | null = null): string {
+  const base = projectNotificationRoute(projectId, type);
+  const route = base?.kind === "project" && video ? { ...base, arrivalTab: "video" as const, video } : base;
   // Unreachable for a non-empty projectId: `projectNotificationRoute` returns a project route for it.
   if (route?.kind !== "project") throw new Error(`No project route for a ${type} notification.`);
   return `${env.APP_ORIGIN}${staffPathFor(route)}`;
@@ -557,12 +558,14 @@ const VIDEO_REVIEW_SOURCE_SQL = `(CASE json_extract(o.payload_json, '$.video.kin
   WHEN 'video_note' THEN EXISTS (SELECT 1 FROM video_notes n WHERE n.id = json_extract(o.payload_json, '$.video.sourceId') AND n.project_id = o.project_id AND n.parent_id IS NULL AND n.deleted_at IS NULL)
   WHEN 'video_reply' THEN EXISTS (SELECT 1 FROM video_notes n WHERE n.id = json_extract(o.payload_json, '$.video.sourceId') AND n.project_id = o.project_id AND n.parent_id IS NOT NULL AND n.deleted_at IS NULL)
   WHEN 'video_decision' THEN EXISTS (SELECT 1 FROM video_approval_events e WHERE e.id = json_extract(o.payload_json, '$.video.sourceId') AND e.project_id = o.project_id)
+  WHEN 'video_released' THEN EXISTS (SELECT 1 FROM video_releases r WHERE r.id = json_extract(o.payload_json, '$.video.sourceId') AND r.project_id = o.project_id AND r.withdrawn_at IS NULL)
+  WHEN 'video_mention' THEN EXISTS (SELECT 1 FROM video_note_mentions mm JOIN video_notes n ON n.id = mm.note_id WHERE mm.id = json_extract(o.payload_json, '$.video.sourceId') AND n.project_id = o.project_id AND n.deleted_at IS NULL)
   WHEN 'video_version_uploaded' THEN EXISTS (SELECT 1 FROM video_version_meta m JOIN videos v ON v.id = m.video_id WHERE m.asset_id = json_extract(o.payload_json, '$.video.assetId') AND v.project_id = o.project_id AND m.removed_at IS NULL AND v.removed_at IS NULL)
   ELSE 0 END
   AND EXISTS (SELECT 1 FROM video_version_meta lm JOIN videos lv ON lv.id = lm.video_id WHERE lm.asset_id = json_extract(o.payload_json, '$.video.assetId') AND lv.project_id = o.project_id
     AND lm.removed_at IS NULL AND lv.removed_at IS NULL))`;
-/** The Admin-or-member test as SQL over `o` and `recipient`: an Admin, or someone holding a membership the occurrence snapshotted. */
-const VIDEO_REVIEW_MEMBER_SQL = `(recipient.role = 'admin' OR EXISTS (
+/** The Admin-or-member test as SQL over `o` and `recipient`: an Admin on a legacy `admin` snapshot, or someone holding a membership the occurrence snapshotted (an Admin included, #835). */
+const VIDEO_REVIEW_MEMBER_SQL = `((recipient.role = 'admin' AND json_extract(o.payload_json, '$.authorizationAtOccurrence.kind') = 'admin') OR EXISTS (
   SELECT 1 FROM project_members member WHERE member.project_id = o.project_id AND member.user_id = o.recipient_id
     AND EXISTS (SELECT 1 FROM json_each(o.payload_json, '$.authorizationAtOccurrence.membershipIds') cycle WHERE cycle.value = member.id)
 ))`;
@@ -597,7 +600,7 @@ async function videoReviewGateOpen(env: Env, projectId: string): Promise<boolean
   return on.has(VIDEO_REVIEW_MASTER_FLAG) && (on.has(VIDEO_REVIEW_ALL_PROJECTS_FLAG) || on.has(videoReviewPilotFlag(projectId))) && on.has(NOTIFY_STAFF_FLAG);
 }
 
-type VideoReviewFacts = { title: string; version: number; actorName: string | null; decision: string | null; sourceOk: number };
+type VideoReviewFacts = { title: string; version: number; actorName: string | null; decision: string | null; sourceOk: number; noteId: string | null };
 
 /** The Video, the Version, the actor's name and whether the source row is still live, in one read. A guest actor is named from `guest_reviewers` and never looked up as a user. */
 async function videoReviewFacts(env: Env, outbox: OutboxRow, payload: VideoReviewNotificationPayload): Promise<VideoReviewFacts | null> {
@@ -611,7 +614,12 @@ async function videoReviewFacts(env: Env, outbox: OutboxRow, payload: VideoRevie
         WHEN 'video_note' THEN EXISTS (SELECT 1 FROM video_notes n WHERE n.id = ?4 AND n.project_id = ?5 AND n.asset_id = ?6 AND n.parent_id IS NULL AND n.deleted_at IS NULL)
         WHEN 'video_reply' THEN EXISTS (SELECT 1 FROM video_notes n WHERE n.id = ?4 AND n.project_id = ?5 AND n.asset_id = ?6 AND n.parent_id IS NOT NULL AND n.deleted_at IS NULL)
         WHEN 'video_decision' THEN EXISTS (SELECT 1 FROM video_approval_events e WHERE e.id = ?4 AND e.project_id = ?5 AND e.asset_id = ?6)
-        ELSE 1 END AS sourceOk
+        WHEN 'video_released' THEN EXISTS (SELECT 1 FROM video_releases r WHERE r.id = ?4 AND r.project_id = ?5 AND r.asset_id = ?6 AND r.withdrawn_at IS NULL)
+        WHEN 'video_mention' THEN EXISTS (SELECT 1 FROM video_note_mentions mm JOIN video_notes n ON n.id = mm.note_id WHERE mm.id = ?4 AND n.project_id = ?5 AND n.asset_id = ?6 AND n.deleted_at IS NULL)
+        ELSE 1 END AS sourceOk,
+      -- The thread to open (#835): the root of the note, reply or mention.
+      CASE WHEN ?3 IN ('video_note', 'video_reply') THEN (SELECT COALESCE(n.parent_id, n.id) FROM video_notes n WHERE n.id = ?4)
+        WHEN ?3 = 'video_mention' THEN (SELECT COALESCE(n.parent_id, n.id) FROM video_note_mentions mm JOIN video_notes n ON n.id = mm.note_id WHERE mm.id = ?4) END AS noteId
     FROM videos v JOIN assets a ON a.id = ?6 AND a.version_group_id = v.id AND a.kind = 'video' JOIN video_version_meta m ON m.asset_id = a.id AND m.video_id = v.id
     WHERE v.id = ?7 AND v.project_id = ?5 AND m.removed_at IS NULL AND v.removed_at IS NULL
   `).bind(guestId, outbox.actor_id, kind, sourceId, projectId, assetId, videoId).first<VideoReviewFacts>();
@@ -624,6 +632,8 @@ function videoReviewCopy(kind: VideoReviewNotificationPayload["video"]["kind"], 
     case "video_version_uploaded": return { title: `New Version ${facts.version} of “${facts.title}”`, body: "A new Version is ready to review." };
     case "video_note": return { title: `${who} left a note on ${video}`, body: "Open the Project's Video tab to read it." };
     case "video_reply": return { title: `${who} replied on ${video}`, body: "Open the Project's Video tab to read it." };
+    case "video_released": return { title: `${who} released ${video}`, body: "Open the Project's Video tab to see it." };
+    case "video_mention": return { title: `${who} mentioned you on ${video}`, body: "Open the Project's Video tab to read it." };
     case "video_decision": return { title: `${who} ${facts.decision === "approved" ? "approved" : "requested changes on"} ${video}`, body: "Open the Project's Video tab to see it." };
   }
 }
@@ -655,7 +665,7 @@ async function resolveVideoReviewRecipient(env: Env, outbox: OutboxRow): Promise
   if (authorizationEpochMismatch(row)) return suppressed("authorization_epoch_changed");
   if (payload.authorizationAtOccurrence.kind === "admin") {
     if (role !== "admin") return suppressed("admin_authorization_changed");
-  } else if (role !== "admin") {
+  } else {
     const memberships = (await env.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ?").bind(row.projectId, row.recipientId).all<{ id: string }>()).results.map((member) => member.id);
     if (!memberships.length) return suppressed("membership_removed");
     if (!payload.authorizationAtOccurrence.membershipIds.some((id) => memberships.includes(id))) return suppressed("membership_cycle_changed");
@@ -664,8 +674,12 @@ async function resolveVideoReviewRecipient(env: Env, outbox: OutboxRow): Promise
   const facts = await videoReviewFacts(env, outbox, payload);
   if (!facts) return suppressed("source_missing");
   if (facts.sourceOk !== 1) return suppressed("source_removed");
-  const copy = videoReviewCopy(payload.video.kind, facts, guestIdOfOutboxActor(outbox.actor_id) !== null);
-  const projectPath = projectNotificationUrl(env, row.projectId, payload.video.kind);
+  // #835: an External reads the narrowed copy for the two kinds that name a person (a Release, a mention); no Video, Version or name.
+  const narrowed = role === "external_editor" && (payload.video.kind === "video_released" || payload.video.kind === "video_mention") ? externalNotificationCopy({ type: payload.video.kind }) : null;
+  const copy = narrowed ?? videoReviewCopy(payload.video.kind, facts, guestIdOfOutboxActor(outbox.actor_id) !== null);
+  // #835: a staff recipient lands on the exact Video, Version and note; an External keeps the tab (ADR 0007/0008).
+  const selection = role !== "external_editor" && facts.noteId ? { id: payload.video.videoId, version: facts.version, note: facts.noteId } : null;
+  const projectPath = projectNotificationUrl(env, row.projectId, payload.video.kind, selection);
   return {
     ok: true,
     kind: "legacy",
@@ -677,8 +691,9 @@ async function resolveVideoReviewRecipient(env: Env, outbox: OutboxRow): Promise
       title: copy.title,
       body: copy.body,
       emailSubject: copy.title,
-      emailText: `${copy.title}\n\n${projectPath}`,
-      emailHtml: `<p>${htmlEscape(copy.title)}</p><p><a href="${htmlEscape(projectPath)}">View project</a></p>`,
+      // The narrowed External copy carries its message in the body; the staff copy's body names a Video, so staff email stays title-only.
+      emailText: narrowed ? `${copy.title}\n\n${copy.body}\n\n${projectPath}` : `${copy.title}\n\n${projectPath}`,
+      emailHtml: `<p>${htmlEscape(copy.title)}</p>${narrowed ? `<p>${htmlEscape(copy.body)}</p>` : ""}<p><a href="${htmlEscape(projectPath)}">View project</a></p>`,
     },
   };
 }

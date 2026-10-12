@@ -185,6 +185,26 @@ The PR also binds a **new queue**, `quincy-object-crcs` (producer `OBJECT_CRC_QU
 
 Rollback: a code rollback is safe, and the queue and tables can stay. A `failed` row in `object_crc32_work` (retries exhausted, or the object missing from R2) is skipped by the sweep for good; delete it once the cause is fixed and the sweep picks the key up again.
 
+### Video note rich media (0075, #835)
+
+Migration 0075 adds the schema, and the Worker in this PR reads and writes the new columns and tables, so production stays on the old Worker until the owner applies 0075 and re-runs the deploy (the "A PR that adds a D1 migration" flow above). It contains the Portal's **one reviewed table rebuild**, owner-approved 2026-10-12:
+- `embedded_media` is rebuilt once, so `owner_kind` admits `video_note`, `uploader_id` becomes nullable, and `uploader_guest_id` (references `guest_reviewers`) is added, with a CHECK that exactly one uploader is set. A `video_note` row must carry a `project_id`. A new index, `embedded_media_uploader_guest_idx`, joins the six existing ones.
+- `video_notes` gains `content_json` (nullable, at most 32768 bytes) and `video_note_mentions` is created (cascades with the note, unique per note and person).
+
+**Why this is safe where 0020 failed.** 0020 relied on `PRAGMA foreign_keys=OFF`, which D1 does not honour remotely, and dropped a parent with CASCADE children. 0075 never touches the pragma: foreign keys stay ON throughout, there is no `__new_` name, and the only table referencing `embedded_media` is `link_previews`, whose FK is `ON DELETE SET NULL` (no CASCADE child). Because `DROP TABLE` would fire that SET NULL and wipe `image_media_id`, the values are stashed first in `link_previews.image_media_id_0075` (a plain column) and restored afterwards, then the stash column is dropped. `migration-fk-safety.guard.test.ts` keeps its rule unchanged and does not fire on this file. `migration-0075.test.ts` pins that 0075 has no PRAGMA and drops exactly one table.
+
+At planning time production had 5 `embedded_media` rows and 0 `link_previews.image_media_id` references. A failed D1 migration is not recorded, so an error leaves the schema untouched. Apply checklist (from `portal/workers/app`, `--remote`, owner's go-ahead):
+
+1. Pre-check, recording each count: `SELECT name,type FROM sqlite_master WHERE sql LIKE '%embedded_media%'` (the table, its indexes, `link_previews`, and `embedded_media_cleanup` by name only), `SELECT COUNT(*) FROM embedded_media`, `SELECT COUNT(*) FROM link_previews WHERE image_media_id IS NOT NULL`, and `PRAGMA foreign_key_check` (expect empty).
+2. Take a Time Travel bookmark (`npx wrangler d1 time-travel info DB`) and record the id in the PR.
+3. `npx wrangler d1 migrations apply DB --remote`; the pending list must show only 0075.
+4. Post-check: both counts equal the pre-check, `PRAGMA foreign_key_check` is empty, `PRAGMA index_list(embedded_media)` lists the seven `embedded_media_*` indexes, `PRAGMA table_info(link_previews)` has no `image_media_id_0075`, and `video_note_mentions` exists.
+5. Re-run the deploy (`gh run rerun <run-id> --failed`).
+
+Rehearsed locally (`wrangler d1 migrations apply DB --local` over a seeded 0074 database): 3 `embedded_media` rows and 2 non-null `image_media_id` before and after. Rehearse on a scratch remote D1 as well before the real apply (lesson 0020).
+
+**Rollback.** The old Worker reads `embedded_media` columns that still exist, so a code rollback is safe. Restoring the old schema is a Time Travel restore, which loses every write since the bookmark.
+
 ### Subtask presets (0052)
 
 0052 converts every date-only Subtask range to a 09:00 start and a 17:00 end (the presets, ADR 0016)

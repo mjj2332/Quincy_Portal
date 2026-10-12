@@ -91,6 +91,59 @@ const queued = async () => (await database.DB.prepare("SELECT storage_key AS k F
 const audits = async (action?: string) => (await database.DB.prepare(`SELECT actor_id AS actor, action, target_type AS targetType, target_id AS targetId, meta_json AS meta, created_at AS at FROM audit_log WHERE action LIKE 'video%.purge'${action ? " AND action = ?" : ""} ORDER BY action, target_id`).bind(...(action ? [action] : [])).all<{ actor: string | null; action: string; targetType: string; targetId: string; meta: string; at: number }>()).results;
 const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
+/** Media a video note embeds (#835): an attached row owned by the note. No FK ties it to the note, so the purge detaches it explicitly. */
+async function seedNoteMedia(fixture: Fixture, target: Version) {
+  const noteId = id(); const mediaId = id(); const key = `projects/${fixture.projectId}/embedded/${mediaId}/original.png`;
+  await run("INSERT INTO video_notes (id, project_id, video_id, asset_id, parent_id, author_user_id, author_role, visibility, start_frame, body, revision, created_at) VALUES (?, ?, ?, ?, NULL, ?, 'editor', 'public', 5, 'Note [1 image]', 1, ?)", noteId, fixture.projectId, fixture.videoId, target.assetId, userId, NOW);
+  await run("INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at) VALUES (?, 'video_note', ?, ?, ?, 'image', 'image/png', 4, ?, 'attached', ?, ?)", mediaId, noteId, fixture.projectId, userId, key, NOW, NOW);
+  await database.MEDIA.put(key, "png!");
+  return { noteId, mediaId, key };
+}
+const mediaState = async (mediaId: string) => (await database.DB.prepare("SELECT state, detached_at AS at FROM embedded_media WHERE id = ?").bind(mediaId).first<{ state: string; at: number }>()) ?? null;
+
+describe("media of video notes (#835)", () => {
+  it("stays attached while the Version is in Trash, and a restore keeps it", async () => {
+    const fixture = await seedVideo({ count: 2 }); const v1 = fixture.versions[0]!;
+    const media = await seedNoteMedia(fixture, v1);
+    await trashVersion(v1.assetId);
+    await purgeVideoTrash(database, NOW - 29 * DAY);
+    expect(await mediaState(media.mediaId)).toMatchObject({ state: "attached" });
+    await run("UPDATE video_version_meta SET removed_at = NULL, removed_by = NULL, purge_at = NULL WHERE asset_id = ?", v1.assetId);
+    await sweepEmbeddedMedia(database, NOW + 60 * DAY);
+    expect(await mediaState(media.mediaId)).toMatchObject({ state: "attached" });
+    expect(await objectExists(media.key)).toBe(true);
+  });
+
+  it("a Version purge detaches it, and the sweep then deletes the object and the row", async () => {
+    const fixture = await seedVideo({ count: 2 }); const v1 = fixture.versions[0]!;
+    const media = await seedNoteMedia(fixture, v1);
+    await trashVersion(v1.assetId);
+    await expect(purgeVideoTrash(database, NOW)).resolves.toMatchObject({ purged: 1 });
+    expect(await mediaState(media.mediaId)).toEqual({ state: "detached", at: 0 });
+    await sweepEmbeddedMedia(database, NOW);
+    expect(await mediaState(media.mediaId)).toBeNull();
+    expect(await objectExists(media.key)).toBe(false);
+  });
+
+  it("a Video purge does the same for every Version", async () => {
+    const fixture = await seedVideo({ count: 2 });
+    const first = await seedNoteMedia(fixture, fixture.versions[0]!); const second = await seedNoteMedia(fixture, fixture.versions[1]!);
+    await trashVideo(fixture.videoId);
+    await expect(purgeVideoTrash(database, NOW)).resolves.toMatchObject({ purged: 1 });
+    await sweepEmbeddedMedia(database, NOW);
+    expect(await mediaState(first.mediaId)).toBeNull(); expect(await mediaState(second.mediaId)).toBeNull();
+  });
+
+  it("the sweep's backstop detaches an attached row whose note is gone, and leaves one whose note is there", async () => {
+    const fixture = await seedVideo({ count: 1 }); const v1 = fixture.versions[0]!;
+    const live = await seedNoteMedia(fixture, v1); const orphan = await seedNoteMedia(fixture, v1);
+    await run("DELETE FROM video_notes WHERE id = ?", orphan.noteId);
+    await sweepEmbeddedMedia(database, NOW);
+    expect(await mediaState(orphan.mediaId)).toBeNull();
+    expect(await mediaState(live.mediaId)).toMatchObject({ state: "attached" });
+  });
+});
+
 describe("purging a Version", () => {
   it("keeps a Version before its cutoff, and one that was never removed", async () => {
     const fixture = await seedVideo({ count: 3 }); const [early, never] = [fixture.versions[0]!, fixture.versions[1]!];

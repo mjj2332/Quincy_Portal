@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { videoNoteBody, type RichTextDoc } from "@quincy/shared";
 import app from "../src/index";
 import { baseEnv, cookie, database, ids, request, seedFixture, type Who } from "./embedded-media-support";
 import { clearVideoFlags, clearVideoNotes, noteAudit, seedVideoNote, seedVideoVersion, setVideoFlags } from "./video-review-support";
@@ -228,6 +229,20 @@ describe("the response", () => {
     const body = await xml.text();
     expect(body.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true);
     expect(body).toContain("Café &lt;b&gt; &amp; 日本語"); expect(body).toContain('project name="Walk through · v1"');
+  });
+
+  it("exports a rich note's text plus a media count hint, never the media itself (#835)", async () => {
+    const version = await seedVideoVersion({ title: "Rich cut" });
+    const doc = { type: "doc", content: [
+      { type: "paragraph", content: [{ type: "text", text: "Check the grade" }] },
+      { type: "video", attrs: { mediaId: crypto.randomUUID() } },
+      { type: "video", attrs: { mediaId: crypto.randomUUID() } },
+    ] } as unknown as RichTextDoc;
+    const body = videoNoteBody(doc);
+    expect(body).toBe("Check the grade [2 videos]");
+    await seedVideoNote({ assetId: version.assetId, startFrame: 25, body, role: "editor" });
+    expect(await (await exportAs("admin", version.assetId)).text()).toContain("Check the grade [2 videos]");
+    expect(await (await exportAs("admin", version.assetId, "format=fcpxml")).text()).toContain("Check the grade [2 videos]");
   });
 
   it("sanitises the title in the header", async () => {

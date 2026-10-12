@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { STROKE_LIMITS } from "./freehand-strokes";
 import { VIDEO_NOTE_PASTE_OFFSET_MAX, VIDEO_NOTE_PASTE_SKIP_REASONS, videoNotePasteRowSchema } from "./video-note-paste-api";
+import type { RichTextDoc } from "./rich-text";
 import { videoNoteBodySchema, videoNoteCreateFields, videoNoteRevisionSchema, videoMarkupSchema, videoNoteFrameSchema, withVideoNoteCreateRules } from "./video-notes";
 
 /**
@@ -31,6 +32,8 @@ export const guestSessionResponseSchema = z.object({
   name: z.string().nullable(),
   /** The client email-updates switch (#741 15b): null until verified. `available` is the `notify_client` part on for a live link and a membership to flip; `subscribed` is that membership being subscribed. */
   notifications: z.object({ available: z.boolean(), subscribed: z.boolean() }).strict().nullable(),
+  /** What the guest's note editor may upload (#835 C): `heic` is renditions on AND the owner's HEIC flag on, the same two gates the upload route applies. */
+  media: z.object({ heic: z.boolean() }).strict(),
 }).strict();
 export type GuestSessionResponse = z.infer<typeof guestSessionResponseSchema>;
 
@@ -167,6 +170,10 @@ export const guestNoteDtoSchema = z.object({
   hasMarkup: z.boolean(),
   /** A tombstone is `deleted: true` with an empty body. */
   body: z.string(),
+  /** The rich document (#835), omitted for a legacy plain-text note and a tombstone. A mention node is already a plain "@Name" text node here: a guest never sees a user id. */
+  content: z.custom<RichTextDoc>((value) => typeof value === "object" && value !== null && (value as { type?: unknown }).type === "doc").optional(),
+  /** Images and videos in the note; the server always sends it, a reader treats a missing one as 0. */
+  mediaCount: z.number().int().nonnegative().optional(),
   deleted: z.boolean(),
   /** The compare-and-set token of an edit or delete (#741 13b). */
   revision: z.number().int().positive(),
@@ -193,20 +200,26 @@ export type GuestNoteMarkupResponse = z.infer<typeof guestNoteMarkupResponseSche
  * `.strict()` makes a body that names one a 400. Markup is gated by its Worker part at the route, not here.
  */
 export const GUEST_NOTE_BODY_MAX_BYTES = 600 * 1024;
-export const GUEST_REPLY_BODY_MAX_BYTES = 16 * 1024;
-export const guestNoteCreateInputSchema = withVideoNoteCreateRules(z.object({ ...videoNoteCreateFields }).strict());
+/** 64 KB since #835: a rich reply is a document (32 KB of content at most) and not a line of text. */
+export const GUEST_REPLY_BODY_MAX_BYTES = 64 * 1024;
+/** A guest note carries `content` (a rich document, #835: images and videos, never a mention) XOR the legacy `body` (an old tab still posts text). The server parses `content` against the video-note profile. */
+const guestBodyXorContent = (value: { body?: string | undefined; content?: unknown }) => (value.body === undefined) !== (value.content === undefined);
+const GUEST_BODY_XOR_CONTENT = { message: "Send either body or content", path: ["content"] };
+export const guestNoteCreateInputSchema = withVideoNoteCreateRules(z.object({ ...videoNoteCreateFields, body: videoNoteBodySchema.optional(), content: z.unknown().optional() }).strict()).refine(guestBodyXorContent, GUEST_BODY_XOR_CONTENT);
 export type GuestNoteCreateInput = z.infer<typeof guestNoteCreateInputSchema>;
-export const guestNoteReplyInputSchema = z.object({ body: videoNoteBodySchema }).strict();
+export const guestNoteReplyInputSchema = z.object({ body: videoNoteBodySchema.optional(), content: z.unknown().optional() }).strict().refine(guestBodyXorContent, GUEST_BODY_XOR_CONTENT);
 export type GuestNoteReplyInput = z.infer<typeof guestNoteReplyInputSchema>;
 export const guestNoteEditInputSchema = z.object({
   expectedRevision: videoNoteRevisionSchema,
   body: videoNoteBodySchema.optional(),
+  content: z.unknown().optional(),
   startFrame: videoNoteFrameSchema.optional(),
   endFrame: videoNoteFrameSchema.nullable().optional(),
   markup: videoMarkupSchema.nullable().optional(),
   drawingFrame: videoNoteFrameSchema.optional(),
 }).strict()
-  .refine((value) => value.body !== undefined || value.startFrame !== undefined || value.endFrame !== undefined || value.markup !== undefined, { message: "Nothing to change" })
+  .refine((value) => value.body === undefined || value.content === undefined, GUEST_BODY_XOR_CONTENT)
+  .refine((value) => value.body !== undefined || value.content !== undefined || value.startFrame !== undefined || value.endFrame !== undefined || value.markup !== undefined, { message: "Nothing to change" })
   .refine((value) => value.drawingFrame === undefined || (value.markup !== undefined && value.markup !== null), { message: "drawingFrame goes with a markup envelope", path: ["drawingFrame"] });
 export type GuestNoteEditInput = z.infer<typeof guestNoteEditInputSchema>;
 export const guestNoteDeleteInputSchema = z.object({ expectedRevision: videoNoteRevisionSchema }).strict();

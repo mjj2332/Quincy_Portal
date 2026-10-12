@@ -75,6 +75,9 @@ export const NOTICE_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: NOTICE_RICH
 /** Project discussion (#493, #494): the comment profile plus embedded images and videos. The Notice board's profile takes images too (#496), never video. */
 export const COMMENT_MEDIA_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_RICH_TEXT_PROFILE, allowMedia: true, allowVideo: true, allowLinkPreviews: true };
 
+/** Video notes (#835): the discussion's profile without link previews (`link_previews.owner_kind` has no video-note value, and a note is a reference, not a post). */
+export const VIDEO_NOTE_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_MEDIA_RICH_TEXT_PROFILE, allowLinkPreviews: false };
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const encoder = new TextEncoder();
 
@@ -425,6 +428,19 @@ export function normalizeRichTextMentionLabels(doc: RichTextDoc, namesById: Read
     return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, key === "content" && Array.isArray(value) ? value.map(normalize) : value])) as RichTextBlock | RichTextListItem;
   };
   return { type: "doc", content: doc.content.map(normalize) as RichTextBlock[] };
+}
+
+/**
+ * The document with every mention turned into the plain text "@Name" (#835 C): what a guest is shown. A guest never learns a user id, so the node, its id and its marks go and the label stays as text.
+ * Any other node is carried over untouched.
+ */
+export function richTextMentionsToText(doc: RichTextDoc): RichTextDoc {
+  const flatten = (node: RichTextTreeNode): RichTextTreeNode => {
+    if (node.type === "mention") return { type: "text", text: `@${node.attrs.label}` };
+    if (node.type === "text" || node.type === "hardBreak" || node.type === "image" || node.type === "video" || node.type === "linkPreview") return node;
+    return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, key === "content" && Array.isArray(value) ? value.map(flatten) : value])) as RichTextTreeNode;
+  };
+  return { type: "doc", content: doc.content.map(flatten) as RichTextBlock[] };
 }
 
 /** Presents old plain-text rows through the same DTO without a migration backfill. */

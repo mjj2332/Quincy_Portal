@@ -25,16 +25,16 @@ const setCadence = (userId: string, cadence: string) => database.DB.prepare("INS
 type Role = "admin" | "editor" | "external_editor" | "photographer";
 type Options = {
   kind?: VideoReviewNotificationType; actor?: "member" | "guest"; role?: Role; member?: boolean; recipientActive?: boolean; internal?: boolean; version?: number; decision?: "approved" | "changes_requested";
-  authorization?: "member" | "admin"; notifyStaff?: boolean; gateOpen?: boolean; archived?: boolean; cadence?: string | null; noSource?: boolean; deletedNote?: boolean; /** #776 B: the Version, or its whole Video, is in Trash when the message is processed. */ removedVersion?: boolean; removedVideo?: boolean; videoTitle?: string; guestName?: string;
+  authorization?: "member" | "admin"; notifyStaff?: boolean; gateOpen?: boolean; archived?: boolean; cadence?: string | null; noSource?: boolean; deletedNote?: boolean; withdrawnRelease?: boolean; /** #776 B: the Version, or its whole Video, is in Trash when the message is processed. */ removedVersion?: boolean; removedVideo?: boolean; videoTitle?: string; guestName?: string;
 };
 
 async function seed(options: Options = {}) {
   const kind = options.kind ?? "video_note"; const now = Date.now();
   const id = () => crypto.randomUUID();
   const projectId = id(); const collectionId = id(); const videoId = id(); const assetId = id(); const recipientId = id(); const actorUserId = id(); const guestId = id(); const membershipId = id(); const outboxId = id();
-  const noteId = id(); const rootId = id(); const eventId = id();
+  const noteId = id(); const rootId = id(); const eventId = id(); const releaseId = id(); const mentionId = id();
   const role = options.role ?? "editor";
-  const sourceId = kind === "video_version_uploaded" ? assetId : kind === "video_note" ? noteId : kind === "video_reply" ? noteId : eventId;
+  const sourceId = kind === "video_version_uploaded" ? assetId : kind === "video_mention" ? mentionId : kind === "video_note" || kind === "video_reply" ? noteId : kind === "video_released" ? releaseId : eventId;
   const guestActor = (options.actor ?? "member") === "guest";
   const actorId = guestActor ? `guest:${guestId}` : actorUserId;
   const statements: D1PreparedStatement[] = [
@@ -49,11 +49,18 @@ async function seed(options: Options = {}) {
   if (options.member !== false) statements.push(database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(membershipId, projectId, recipientId, role === "photographer" ? "photographer" : "editor", now));
   const noteColumns = "(id, project_id, video_id, asset_id, parent_id, author_user_id, author_guest_id, author_role, visibility, start_frame, end_frame, drawing_frame, body, revision, deleted_at, created_at)";
   if (!options.noSource) {
-    if (kind === "video_note" || kind === "video_reply") {
+    if (kind === "video_note" || kind === "video_reply" || kind === "video_mention") {
       const parent = kind === "video_reply" ? rootId : null;
       if (parent) statements.push(database.DB.prepare(`INSERT INTO video_notes ${noteColumns} VALUES (?, ?, ?, ?, NULL, ?, NULL, 'editor', 'public', 5, NULL, NULL, 'Root', 1, NULL, ?)`).bind(rootId, projectId, videoId, assetId, recipientId, now - 10));
       statements.push(database.DB.prepare(`INSERT INTO video_notes ${noteColumns} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, 1, ?, ?)`)
         .bind(noteId, projectId, videoId, assetId, parent, guestActor ? null : actorUserId, guestActor ? guestId : null, guestActor ? "guest" : "editor", guestActor ? "public" : options.internal ? "internal" : "public", parent ? null : 10, SENTINEL, options.deletedNote ? now : null, now));
+    }
+    if (kind === "video_mention") statements.push(database.DB.prepare("INSERT INTO video_note_mentions (id, note_id, mentioned_user_id, created_at) VALUES (?, ?, ?, ?)").bind(mentionId, noteId, recipientId, now));
+    if (kind === "video_released") {
+      statements.push(
+        database.DB.prepare("INSERT INTO video_approval_events (id, project_id, video_id, asset_id, link_id, revision, decision, note, actor_guest_id, actor_user_id, created_at) VALUES (?, ?, ?, ?, NULL, 1, 'approved', NULL, NULL, ?, ?)").bind(eventId, projectId, videoId, assetId, actorUserId, now),
+        database.DB.prepare("INSERT INTO video_releases (id, project_id, video_id, asset_id, approval_event_id, approval_revision, released_by, released_at, withdrawn_at, withdrawn_by) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)").bind(releaseId, projectId, videoId, assetId, eventId, actorUserId, now, options.withdrawnRelease ? now : null, options.withdrawnRelease ? actorUserId : null),
+      );
     }
     if (kind === "video_decision") {
       // A guest's decision names its link (a CHECK); a staff-recorded one has none.
@@ -80,7 +87,7 @@ async function seed(options: Options = {}) {
   if (options.removedVersion) await database.DB.prepare("UPDATE video_version_meta SET removed_at = ?, removed_by = ? WHERE asset_id = ?").bind(now, actorUserId, assetId).run();
   if (options.removedVideo) await database.DB.prepare("UPDATE videos SET removed_at = ?, removed_by = ? WHERE id = ?").bind(now, actorUserId, videoId).run();
   if (options.cadence !== null) await setCadence(recipientId, options.cadence ?? "immediate");
-  return { outboxId, recipientId, projectId, membershipId, sourceKey, actorId, guestId, assetId };
+  return { outboxId, recipientId, projectId, membershipId, sourceKey, actorId, guestId, assetId, videoId, noteId, rootId };
 }
 
 async function deliver(fixture: { outboxId: string }, send: ReturnType<typeof vi.fn> | undefined = vi.fn().mockResolvedValue({ messageId: "m-1" })) {
@@ -103,6 +110,8 @@ describe("delivery: copy and the sentinel", () => {
     ["a staff reply", { kind: "video_reply", actor: "member" }, "Alex Actor replied on “Kitchen walkthrough” v3"],
     ["a guest reply", { kind: "video_reply", actor: "guest" }, "Jane Smith (client) replied on “Kitchen walkthrough” v3"],
     ["an upload", { kind: "video_version_uploaded", actor: "member", version: 4 }, "New Version 4 of “Kitchen walkthrough”"],
+    ["a release", { kind: "video_released", actor: "member" }, "Alex Actor released “Kitchen walkthrough” v3"],
+    ["a mention", { kind: "video_mention", actor: "member" }, "Alex Actor mentioned you on “Kitchen walkthrough” v3"],
     ["an approval", { kind: "video_decision", actor: "guest", decision: "approved" }, "Jane Smith (client) approved “Kitchen walkthrough” v3"],
     ["a change request", { kind: "video_decision", actor: "guest", decision: "changes_requested" }, "Jane Smith (client) requested changes on “Kitchen walkthrough” v3"],
   ] as Array<[string, Options, string]>)("%s: composes the title at delivery, emails it, and carries no note text anywhere", async (_name, options, title) => {
@@ -137,6 +146,35 @@ describe("delivery: copy and the sentinel", () => {
   });
 });
 
+describe("delivery: the link lands on the note (#835)", () => {
+  const link = (fixture: { projectId: string; videoId: string }, note: string) => `https://portal.test/projects/${fixture.projectId}?tab=video&video=${fixture.videoId}&version=3&note=${note}`;
+  it.each(["video_note", "video_mention"] as const)("a staff %s emails a link to the Video, the Version and the note", async (kind) => {
+    const fixture = await seed({ kind, actor: "member" });
+    const send = await deliver(fixture);
+    expect(send!.mock.calls[0]![0].text).toContain(link(fixture, fixture.noteId));
+  });
+  it("a reply links to the thread's root", async () => {
+    const fixture = await seed({ kind: "video_reply", actor: "member" });
+    const send = await deliver(fixture);
+    expect(send!.mock.calls[0]![0].text).toContain(link(fixture, fixture.rootId));
+  });
+  it("a Release, a decision and an upload stay at the Video tab", async () => {
+    const fixture = await seed({ kind: "video_released", actor: "member" });
+    const send = await deliver(fixture);
+    expect(send!.mock.calls[0]![0].text).toContain(`https://portal.test/projects/${fixture.projectId}?tab=video`);
+    expect(send!.mock.calls[0]![0].text).not.toContain("note=");
+  });
+  it("an External keeps the tab-level link, and a mention whose row is gone is not delivered", async () => {
+    const external = await seed({ kind: "video_mention", actor: "member", role: "external_editor" });
+    expect((await deliver(external))!.mock.calls[0]![0].text).not.toContain("note=");
+    const gone = await seed({ kind: "video_mention", actor: "member" });
+    await database.DB.prepare("DELETE FROM video_note_mentions WHERE id = (SELECT substr(?, 15))").bind(gone.sourceKey).run();
+    const send = await deliver(gone);
+    expect(send).not.toHaveBeenCalled();
+    expect(await stored(gone.recipientId)).toEqual([]);
+  });
+});
+
 describe("delivery: who still gets it", () => {
   it("an Admin with an admin snapshot is delivered without a membership", async () => {
     const fixture = await seed({ role: "admin", member: false });
@@ -146,6 +184,30 @@ describe("delivery: who still gets it", () => {
 
   it("an Admin who was demoted is suppressed", async () => {
     const fixture = await seed({ role: "editor", authorization: "admin", member: true });
+    await deliver(fixture);
+    expect(await stored(fixture.recipientId)).toEqual([]);
+    expect(await outboxStatus(fixture.outboxId)).toBe("suppressed");
+  });
+
+  it.each([
+    ["a Release", "video_released", "A video in an assigned project has an update."],
+    ["a mention", "video_mention", "You were mentioned in a video note."],
+  ] as const)("an assigned External is told of %s with the narrowed copy, naming no Video, Version or person", async (_name, kind, body) => {
+    const fixture = await seed({ role: "external_editor", kind, actor: "member" });
+    const send = await deliver(fixture);
+    expect(await stored(fixture.recipientId)).toEqual([{ type: kind, title: "Video review update", body, sourceKey: fixture.sourceKey, projectId: fixture.projectId }]);
+    expect(send).toHaveBeenCalledTimes(1);
+    const mail = send!.mock.calls[0]![0] as { text: string; html: string };
+    expect(mail.text).toContain(body);
+    expect(mail.html).toContain(body);
+    expect(emailText(send!)).not.toContain("Kitchen walkthrough");
+    expect(emailText(send!)).not.toContain("Alex Actor");
+  });
+
+  it("an Admin snapshotted as a project member is suppressed once its snapshotted membership is gone, even after a rejoin", async () => {
+    const fixture = await seed({ role: "admin", authorization: "member", kind: "video_released" });
+    await database.DB.prepare("DELETE FROM project_members WHERE id = ?").bind(fixture.membershipId).run();
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), fixture.projectId, fixture.recipientId, Date.now()).run();
     await deliver(fixture);
     expect(await stored(fixture.recipientId)).toEqual([]);
     expect(await outboxStatus(fixture.outboxId)).toBe("suppressed");
@@ -186,6 +248,10 @@ describe("delivery: who still gets it", () => {
     ["notify_staff off", { notifyStaff: false }],
     ["an archived Project", { archived: true }],
     ["a deleted note", { deletedNote: true }],
+    ["a withdrawn Release", { kind: "video_released", withdrawnRelease: true }],
+    ["a Release that no longer exists", { kind: "video_released", noSource: true }],
+    ["a mention on a deleted note", { kind: "video_mention", deletedNote: true }],
+    ["a mention on a note that no longer exists", { kind: "video_mention", noSource: true }],
     ["a note that no longer exists", { noSource: true }],
     ["a decision that no longer exists", { kind: "video_decision", noSource: true }],
     ["a note on a Version in Trash", { kind: "video_note", removedVersion: true }],
@@ -248,11 +314,23 @@ describe("digest: a deferred video-review email is re-authorized before it is se
     expect(await ledger(fixture.outboxId)).toMatchObject({ email: "sent" });
   });
 
+  it("a video_mention deferred to the digest is sent end to end with the mention copy and no note text (#835)", async () => {
+    const { fixture, send } = await digestDefer({ kind: "video_mention" });
+    await flush(send);
+    const mine = send.mock.calls.filter(([mail]) => mail.to === `${fixture.recipientId}@example.test`);
+    expect(mine).toHaveLength(1);
+    expect(JSON.stringify(mine[0])).toContain("Kitchen walkthrough");
+    expect(JSON.stringify(mine[0])).toContain("mentioned you on");
+    expect(JSON.stringify(mine[0])).not.toContain(SENTINEL);
+    expect(await ledger(fixture.outboxId)).toMatchObject({ email: "sent" });
+  });
+
   it.each([
     ["membership removed", { role: "editor" }, (f: { membershipId: string }) => exec("DELETE FROM project_members WHERE id = ?", f.membershipId)],
     ["the role loses viewVideo", { role: "editor" }, (f: { recipientId: string }) => exec("UPDATE user SET role = 'photographer' WHERE id = ?", f.recipientId)],
     ["the epoch is bumped", { role: "editor" }, (f: { recipientId: string }) => exec("UPDATE user SET authorization_epoch = authorization_epoch + 1 WHERE id = ?", f.recipientId)],
     ["notify_staff is turned off", { role: "editor" }, () => exec("DELETE FROM feature_flags WHERE key = 'video_review_notify_staff'")],
+    ["the mentioned note is deleted", { kind: "video_mention" }, (f: { noteId: string }) => exec("UPDATE video_notes SET deleted_at = ? WHERE id = ?", Date.now(), f.noteId)],
     ["the note is deleted", { kind: "video_note" }, (f: { sourceKey: string }) => exec("UPDATE video_notes SET deleted_at = ? WHERE id = ?", Date.now(), f.sourceKey.split(":")[1])],
     ["the decision row is removed", { kind: "video_decision", actor: "guest" }, (f: { sourceKey: string }) => exec("DELETE FROM video_approval_events WHERE id = ?", f.sourceKey.split(":")[1])],
     ["an assigned External is unassigned", { role: "external_editor", kind: "video_note", actor: "guest" }, (f: { membershipId: string }) => exec("DELETE FROM project_members WHERE id = ?", f.membershipId)],
