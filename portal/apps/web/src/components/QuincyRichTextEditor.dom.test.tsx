@@ -8,6 +8,7 @@ import { createRichTextEditorExtensions, exceedsTableLimit, shouldBlockListInden
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import { RichTextContent } from "./RichTextContent";
 import { getActiveCellElement } from "./reui/rich-text-editor/rich-text-table";
+import { OverlayContainerContext } from "./OverlayContainerContext";
 import { RICH_TEXT_PHONE_QUERY } from "./reui/rich-text-editor/rich-text-toolbar";
 
 let root: Root | null = null;
@@ -1978,5 +1979,26 @@ describe("selection scrolling clears the stuck composer toolbar (#594, Sol r3)",
     const host = mount();
     await act(async () => { root!.render(<EditorUnderTest value={doc()} onChange={vi.fn()} limit={2_000} loadMentionables={mentionables} />); await Promise.resolve(); await Promise.resolve(); });
     expect(margin(host.querySelector<HTMLElement>('[contenteditable="true"]')!)).toBeUndefined();
+  });
+});
+
+describe("QuincyRichTextEditor heading menu inside an overlay container (#826)", () => {
+  beforeEach(() => { variant = "composer"; });
+  it("opens the heading menu inside the container, and choosing Section makes the block an h2", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const host = mount(); const onChange = vi.fn();
+    await act(async () => {
+      root!.render(<OverlayContainerContext.Provider value={container}><EditorUnderTest value={text("Convert me")} onChange={onChange} limit={2_000} loadMentionables={mentionables} /></OverlayContainerContext.Provider>);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await click(host.querySelector<HTMLElement>('[data-testid="rich-text-heading-menu"]')!);
+    const items = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+    expect(items.map((item) => item.textContent)).toEqual(["Paragraph", "Section", "Subsection"]);
+    for (const item of items) expect(container.contains(item)).toBe(true);
+    await click(items.find((item) => item.textContent === "Section")!);
+    expect(editor.querySelector("h2")?.textContent).toBe("Convert me");
+    expect(onChange).toHaveBeenLastCalledWith({ type: "doc", content: [{ type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Convert me" }] }] });
   });
 });
