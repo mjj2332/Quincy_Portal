@@ -38,7 +38,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   projectId: string; role: Role; review: VideoReviewResponse;
   /** The Project is archived: notes are read-only. */ archived?: boolean;
   /** #819: present when the URL owns the open film (the staff Project route). `selection` is what the URL names now; `onChange` writes it back by replace. Absent (a harness, another caller): the open film is local state and the viewer offers no link. */
-  deepLink?: { selection: ProjectVideoSelection | null; onChange: (selection: ProjectVideoSelection | null) => void };
+  deepLink?: { selection: ProjectVideoSelection | null; onChange: (selection: ProjectVideoSelection | null, from: string | null) => void };
 }) {
   const session = useSession();
   const userId = session.data?.user.id ?? null;
@@ -117,7 +117,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   const Viewer = (deepLink ? frozenViewer.current : opened?.Viewer) ?? LazyViewer;
   const deepLinkChange = deepLink?.onChange;
   const setOpenVideoId = (id: string | null, version?: number) => {
-    if (deepLinkChange) { deepLinkChange(id ? { id, ...(version !== undefined ? { version } : {}) } : null); return; }
+    if (deepLinkChange) { deepLinkChange(id ? { id, ...(version !== undefined ? { version } : {}) } : null, openVideoId); return; }
     // Once preloaded the component renders directly: `lazy` would suspend for a task even with the module in hand.
     setOpened(id ? { id, Viewer: loadedViewer ?? LazyViewer } : null);
   };
@@ -193,7 +193,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     </ViewLoadBoundary>}
     {openVideo && <ViewLoadBoundary viewLabel="video player">
       <Suspense fallback={null}>
-        <Viewer key={openVideo.id} video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => { const card = opener.current?.isConnected && openerVideoId.current === openVideo.id ? opener.current : document.querySelector<HTMLElement>(`[data-testid="video-card-open"][data-video-id="${openVideo.id}"]`); return card ?? document.querySelector<HTMLElement>(`[data-testid="${TRASH_OPEN_ID}"]`); }} {...(deepLink?.selection ? { deepLink: { settled: videos.isSuccess && !videos.isFetching, ...(deepLink.selection.version !== undefined ? { version: deepLink.selection.version } : {}), href: (version: number) => new URL(staffPathFor({ kind: "project", projectId, arrivalTab: "video", video: { id: openVideo.id, version } }), window.location.origin).href, onVersionShown: (version: number) => deepLink.onChange({ id: openVideo.id, version }) } } : {})} {...(notesEnabled ? { notes: { projectId, role, userId, archived, forms, markup: markupEnabled, exportEnabled } } : {})} {...(compareEnabled ? { compare: { store: compareStore } } : {})} {...(deliveryEnabled ? { delivery: { projectId, role, archived, store: deliveryStore } } : {})} {...(trashEnabled ? { trash: { projectId, archived } } : {})} {...(downloadEnabled ? { download: { projectId } } : {})} />
+        <Viewer key={openVideo.id} video={openVideo} onClose={() => setOpenVideoId(null)} returnFocusTo={() => { const card = opener.current?.isConnected && openerVideoId.current === openVideo.id ? opener.current : document.querySelector<HTMLElement>(`[data-testid="video-card-open"][data-video-id="${openVideo.id}"]`); return card ?? document.querySelector<HTMLElement>(`[data-testid="${TRASH_OPEN_ID}"]`); }} {...(deepLink?.selection ? { deepLink: { settled: videos.isSuccess && !videos.isFetching, ...(deepLink.selection.version !== undefined ? { version: deepLink.selection.version } : {}), href: (version: number) => new URL(staffPathFor({ kind: "project", projectId, arrivalTab: "video", video: { id: openVideo.id, version } }), window.location.origin).href, onVersionShown: (version: number) => deepLink.onChange({ id: openVideo.id, version }, openVideo.id) } } : {})} {...(notesEnabled ? { notes: { projectId, role, userId, archived, forms, markup: markupEnabled, exportEnabled } } : {})} {...(compareEnabled ? { compare: { store: compareStore } } : {})} {...(deliveryEnabled ? { delivery: { projectId, role, archived, store: deliveryStore } } : {})} {...(trashEnabled ? { trash: { projectId, archived } } : {})} {...(downloadEnabled ? { download: { projectId } } : {})} />
       </Suspense>
     </ViewLoadBoundary>}
   </section>;

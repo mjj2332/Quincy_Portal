@@ -67,7 +67,11 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   deepLinkRef.current = deepLink;
   const versionsRef = useRef(video.versions);
   versionsRef.current = video.versions;
+  // A callback this viewer handed out (a pending Version removal) can outlive it: once unmounted, choosing a Version writes nothing.
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const setAssetId = useCallback((next: string) => {
+    if (!mounted.current) return;
     const link = deepLinkRef.current;
     const target = versionsRef.current.find((candidate) => candidate.assetId === next);
     if (link && target) link.onVersionShown(target.version); else setLocalAssetId(next);

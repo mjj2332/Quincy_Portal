@@ -25,7 +25,9 @@ vi.mock("./lib/auth", () => ({
 vi.mock("./components/LazyImage", () => ({ LazyImage: ({ src, alt, className }: { src: string; alt: string; className?: string }) => <img src={src} alt={alt} className={className} /> }));
 vi.mock("./lib/video-poster", () => ({ captureVideoPoster: () => Promise.resolve(null) }));
 
-const list = vi.hoisted(() => ({ mode: "ok" as "ok" | "fail" | "pending", videos: [] as unknown[] }));
+const list = vi.hoisted(() => ({ mode: "ok" as "ok" | "fail" | "pending", videos: [] as unknown[], parts: [] as string[] }));
+const removed = vi.hoisted(() => ({ callbacks: [] as Array<(removal: { assetId: string; videoId: string; video: unknown }) => void> }));
+vi.mock("./components/video/VideoVersionMenu", () => ({ VideoVersionMenu: (props: { onRemoved: (removal: { assetId: string; videoId: string; video: unknown }) => void }) => { removed.callbacks.push(props.onRemoved); return null; } }));
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string, init?: unknown) => Promise<unknown>>());
 vi.mock("./lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/api")>();
@@ -46,7 +48,7 @@ function serveApi(path: string): Promise<unknown> {
     rawFolderPath: null, rawFolderLink: null, coverAssetId: null, effectiveCoverAssetId: null, collections: COLLECTIONS, members: [],
     deadlineSchedule: { version: 0, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false },
   });
-  if (path.endsWith("/video-review")) return Promise.resolve({ open: true, parts: [] });
+  if (path.endsWith("/video-review")) return Promise.resolve({ open: true, parts: list.parts });
   if (path.endsWith("/videos")) {
     if (list.mode === "fail") return Promise.reject(new Error("Films could not be loaded."));
     if (list.mode === "pending") return new Promise(() => undefined);
@@ -73,6 +75,8 @@ beforeEach(() => {
   stub = installVideoElementStub();
   list.mode = "ok";
   list.videos = [videoOf()];
+  list.parts = [];
+  removed.callbacks.length = 0;
   apiGetMock.mockReset().mockImplementation(serveApi);
 });
 afterEach(async () => {
@@ -204,6 +208,21 @@ describe("#819: a link to a film and Version", () => {
     const raw = [...document.querySelectorAll<HTMLElement>('[data-testid="project-overview-tab"]')].find((t) => t.textContent?.trim().startsWith("RAW"))!;
     await click(raw);
     await flushUntil(() => currentLocation() === `${base}?tab=raw`, "the RAW tab");
+  });
+
+  it("a Version removal that completes after Back to another film does not reopen the removed film", async () => {
+    const filmA = { ...videoOf(), id: OTHER_VIDEO, title: "Second", currentAssetId: "44444444-4444-4444-8444-444444444441", versions: videoOf().versions.map((v, i) => ({ ...v, assetId: `44444444-4444-4444-8444-44444444444${i + 1}` })) };
+    list.videos = [videoOf(), filmA];
+    list.parts = ["trash"];
+    await mountAt(`${base}?tab=video&video=${VIDEO_ID}&version=2`);
+    await flushUntil(() => viewerEl() !== null && shownVersion() !== null && removed.callbacks.length > 0, "the viewer with its Version menu");
+    const finishRemoval = removed.callbacks[0]!;
+    const location = `${base}?tab=video&video=${OTHER_VIDEO}&version=2`;
+    await act(async () => { window.history.pushState(null, "", location); window.dispatchEvent(new PopStateEvent("popstate")); });
+    await flushUntil(() => shownVersion()?.startsWith("v2") === true && removed.callbacks.length > 1, "film A on show");
+    await act(async () => { finishRemoval({ assetId: ASSET_2, videoId: VIDEO_ID, video: { ...videoOf(), currentAssetId: ASSET_1, versions: [videoOf().versions[1]] } }); });
+    await settle();
+    expect(currentLocation()).toBe(location);
   });
 
   it("Back and Forward render the entry's selection", async () => {

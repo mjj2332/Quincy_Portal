@@ -100,7 +100,7 @@ type ShellState = {
   acknowledgeArrivalSignal: (projectId: string, signal: number) => void;
   syncProjectTab: (projectId: string, tab: WorkspaceTab) => void;
   /** #819: the Video viewer's selection (or none) written to `?tab=video&video=…&version=…` by `replace`. */
-  syncProjectVideo: (projectId: string, selection: ProjectVideoSelection | null) => void;
+  syncProjectVideo: (projectId: string, selection: ProjectVideoSelection | null, from: string | null) => void;
   /** #498: the Project whiteboard's link. Open pushes `?whiteboard=open`; close returns to `tab`. */
   openProjectWhiteboard: (projectId: string) => void;
   closeProjectWhiteboard: (projectId: string, tab: WorkspaceTab) => void;
@@ -289,9 +289,10 @@ function ShellRoute() {
 
   // #819: the Video viewer opens, closes and switches Version by `replace` (no sheet depth, and a push would bump the navigation epoch).
   // Checked against the live location, not the render-time route, so a late callback from a viewer that has since gone away writes nothing.
-  const syncProjectVideo = (projectId: string, selection: ProjectVideoSelection | null) => {
+  const syncProjectVideo = (projectId: string, selection: ProjectVideoSelection | null, from: string | null) => {
     const live = parseStaffLocation(history.getLocation());
-    if (live.kind !== "project" || live.projectId !== projectId || live.whiteboard || live.arrivalTab !== "video") return;
+    // `from` is the film the caller believes is open (null for an open): a write for a film the address bar no longer names is dropped.
+    if (live.kind !== "project" || live.projectId !== projectId || live.whiteboard || live.arrivalTab !== "video" || (live.video?.id ?? null) !== from) return;
     const target = staffPathFor({ kind: "project", projectId, arrivalTab: "video", ...(selection ? { video: selection } : {}) });
     if (target === history.getLocation()) return;
     history.replace(target);
@@ -610,7 +611,7 @@ const projectRoute = createRoute({
       urlTab={route.arrivalTab}
       onTabShown={(tab) => syncProjectTab(route.projectId, tab)}
       {...(route.video ? { urlVideo: route.video } : {})}
-      onVideoChange={(selection) => syncProjectVideo(route.projectId, selection)}
+      onVideoChange={(selection, from) => syncProjectVideo(route.projectId, selection, from)}
       whiteboardOpen={route.whiteboard === true}
       onOpenWhiteboard={() => openProjectWhiteboard(route.projectId)}
       onCloseWhiteboard={(tab) => closeProjectWhiteboard(route.projectId, tab)}
