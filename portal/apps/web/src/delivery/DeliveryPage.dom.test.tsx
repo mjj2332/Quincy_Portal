@@ -487,4 +487,18 @@ describe("download all", () => {
     await show(page([photo(1)]), { downloadAllSlot: <span data-testid="slot">Download all</span> });
     expect(byTestId("slot")!.closest('[data-slot="section-head"]')).not.toBeNull();
   });
+  it("puts the slot in the Photos panel when there is a Photos tab, not in the Premium panel", async () => {
+    await show(page([photo(1), photo(2, { premium: true })]), { downloadAllSlot: <span data-testid="slot">Download all</span> });
+    expect(tabNames()).toEqual(["Photos", "Premium"]);
+    expect(byTestId("delivery-panel-photos")!.contains(byTestId("slot"))).toBe(true);
+    await click(tab("Premium"));
+    expect(byTestId("delivery-panel-premium")!.querySelector('[data-testid="slot"]')).toBeNull();
+  });
+  it("puts the slot in the Premium panel when the only photos are unlocked extras and there is no Photos tab", async () => {
+    await show(page([photo(1, { premium: true }), film(2)]), { downloadAllSlot: <span data-testid="slot">Download all</span> });
+    expect(tabNames()).toEqual(["Film", "Premium"]);
+    expect(byTestId("delivery-panel-film")!.querySelector('[data-testid="slot"]')).toBeNull();
+    await click(tab("Premium"));
+    expect(byTestId("delivery-panel-premium")!.contains(byTestId("slot"))).toBe(true);
+  });
 });

@@ -1,4 +1,4 @@
-import { deliveryPageDtoSchema, type DeliveryPageDto } from "@quincy/shared";
+import { deliveryPageDtoSchema, deliveryZipManifestSchema, deliveryZipPrepareResponseSchema, type DeliveryPageDto, type DeliveryZipManifest, type DeliveryZipPrepareResponse, type DeliveryZipSize } from "@quincy/shared";
 import type { DeliveryHrefs } from "./delivery-model";
 
 /**
@@ -23,12 +23,35 @@ export type UnlockResult =
   | { kind: "gone" }
   | { kind: "failed" };
 
+/** `GET .../zips/:size` (#787 slice 7). A 404 is the page gone (the same stub as every miss). */
+export type ZipRead =
+  | { kind: "ok"; manifest: DeliveryZipManifest }
+  | { kind: "gone" }
+  | { kind: "limited"; retryAfterSeconds: number }
+  | { kind: "transient" }
+  | { kind: "outdated" };
+
+/** `POST .../zips/:size/prepare`: queues the missing work and says where the archive stands. */
+export type ZipPrepare =
+  | { kind: "ok"; value: DeliveryZipPrepareResponse }
+  | { kind: "gone" }
+  | { kind: "limited"; retryAfterSeconds: number }
+  /** 409 `nothing_to_download`. */
+  | { kind: "nothing" }
+  /** 422 `zip_too_large`. */
+  | { kind: "tooLarge" }
+  | { kind: "failed" };
+
 export type DeliveryApi = {
   hrefs: DeliveryHrefs;
   unlockRequestUrl(handle: string): string;
   /** An aborted read comes back `transient`; the caller checks its own signal and ignores it. */
   page(signal?: AbortSignal): Promise<PageRead>;
   requestUnlock(handle: string): Promise<UnlockResult>;
+  /** The zip itself is only ever an `<a href download>` target; nothing here fetches it. */
+  zipUrl(size: DeliveryZipSize): string;
+  zipManifest(size: DeliveryZipSize): Promise<ZipRead>;
+  prepareZip(size: DeliveryZipSize): Promise<ZipPrepare>;
 };
 
 const DEFAULT_WAIT_SECONDS = 60;
@@ -51,6 +74,7 @@ export function createDeliveryApi(slug: string): DeliveryApi {
   return {
     hrefs: { media: (handle) => item(handle, "media"), thumb: (handle) => item(handle, "thumb"), download: (handle) => item(handle, "download") },
     unlockRequestUrl: (handle) => item(handle, "unlock-request"),
+    zipUrl: (size) => `${base}/zips/${size}/photos.zip`,
     async page(signal) {
       const response = await send(base, signal ? { signal } : {});
       if (response === null || response.status >= 500) return { kind: "transient" };
@@ -73,6 +97,29 @@ export function createDeliveryApi(slug: string): DeliveryApi {
       if (response.status === 404) return { kind: "gone" };
       if (response.status === 409 && typeof read?.body === "object" && read.body !== null && (read.body as { error?: unknown }).error === "not_locked") return { kind: "notLocked" };
       return { kind: "failed" };
+    },
+    async zipManifest(size) {
+      const response = await send(`${base}/zips/${size}`, {});
+      if (response === null || response.status >= 500) return { kind: "transient" };
+      if (response.status === 429) return { kind: "limited", retryAfterSeconds: retryAfter(response, (await readBody(response))?.body) };
+      if (!response.ok) return { kind: "gone" };
+      const read = await readBody(response);
+      if (read === null) return { kind: "transient" };
+      const parsed = deliveryZipManifestSchema.safeParse(read.body);
+      return parsed.success ? { kind: "ok", manifest: parsed.data } : { kind: "outdated" };
+    },
+    async prepareZip(size) {
+      const response = await send(`${base}/zips/${size}/prepare`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      if (response === null || response.status >= 500) return { kind: "failed" };
+      const read = await readBody(response);
+      if (response.status === 404) return { kind: "gone" };
+      if (response.status === 429) return { kind: "limited", retryAfterSeconds: retryAfter(response, read?.body) };
+      const error = typeof read?.body === "object" && read.body !== null ? (read.body as { error?: unknown }).error : undefined;
+      if (response.status === 409 && error === "nothing_to_download") return { kind: "nothing" };
+      if (response.status === 422 && error === "zip_too_large") return { kind: "tooLarge" };
+      if (!response.ok || read === null) return { kind: "failed" };
+      const parsed = deliveryZipPrepareResponseSchema.safeParse(read.body);
+      return parsed.success ? { kind: "ok", value: parsed.data } : { kind: "failed" };
     },
   };
 }
