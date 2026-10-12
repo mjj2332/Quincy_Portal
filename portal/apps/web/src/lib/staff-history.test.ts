@@ -166,6 +166,8 @@ describe("the property the read-only history rests on", () => {
     `/projects/${projectId}?tab=raw`,
     `/projects/${projectId}?tab=edited`,
     `/projects/${projectId}?tab=video`,
+    `/projects/${projectId}?tab=video&video=9b2f6c1e-7a3d-4e5f-8a1b-2c3d4e5f6a7b`,
+    `/projects/${projectId}?tab=video&video=9b2f6c1e-7a3d-4e5f-8a1b-2c3d4e5f6a7b&version=2`,
     `/projects/${projectId}?tab=floorplan`,
     `/projects/${projectId}?tab=copy`,
     `/projects/${projectId}/edit`,

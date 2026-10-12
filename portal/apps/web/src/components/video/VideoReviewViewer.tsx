@@ -9,6 +9,7 @@ import { OverlayContainerContext } from "../OverlayContainerContext";
 import { Button } from "../reui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "../reui/dialog";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
+import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
@@ -34,13 +35,13 @@ const VERSION_SELECT_ID = "video-review-version";
 
 /**
  * The staff review viewer (#741 4d-ii): a collection-local, full-viewport dialog on the inverse surface that plays one Video, one
- * Version at a time. It changes no URL. The dialog popup owns the keyboard scope, so the shortcuts never reach the Project sheet
+ * Version at a time. It changes no URL of its own: with `deepLink` (#819) it reports the Version on show and offers Copy link. The dialog popup owns the keyboard scope, so the shortcuts never reach the Project sheet
  * underneath and stop when it closes; the player's own handler does the work. Switching Version remounts the player (keyed by
  * Asset id): paused, at frame 0, with that Version's own clock, timecode and streaming URL. A superseded Version still plays.
  * With `notes` (the Project's `notes` part is on, #741 5b) the Version details column becomes the notes panel, and the Version details
  * move behind a button in its header; without it the viewer is exactly the 4d-ii viewer.
  */
-export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download }: {
+export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, deepLink }: {
   video: VideoDto;
   onClose: () => void;
   /** The control that opened the viewer; focus goes back to it on close. */
@@ -55,8 +56,26 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   trash?: { projectId: string; archived: boolean };
   /** Present only when the Project's `download` part is on and the role holds `downloadVideo` (#818): the Download link in the header (single view only). */
   download?: { projectId: string };
+  /** Present when the URL names this film (#819, staff Project route): `version` is the Version number it names (absent = the current one), `href` the absolute link to a Version, `onVersionShown` how the viewer reports the Version on show. */
+  deepLink?: { version?: number; /** The list this Video came from is a settled, successful read: only then is an unknown Version normalised in the URL. */ settled: boolean; href: (version: number) => string; onVersionShown: (version: number) => void };
 }) {
-  const [assetId, setAssetId] = useState(video.currentAssetId);
+  // With a `deepLink` the URL is the only source of the Version on show (no local copy): `deepLink.version` if the list has it, else the current Version. Every choice writes the URL and the display follows it.
+  const [localAssetId, setLocalAssetId] = useState(video.currentAssetId);
+  const urlAsset = deepLink ? (deepLink.version === undefined ? undefined : video.versions.find((candidate) => candidate.version === deepLink.version)) ?? video.versions.find((candidate) => candidate.assetId === video.currentAssetId) ?? video.versions[0]! : undefined;
+  const assetId = urlAsset?.assetId ?? localAssetId;
+  const deepLinkRef = useRef(deepLink);
+  deepLinkRef.current = deepLink;
+  const versionsRef = useRef(video.versions);
+  versionsRef.current = video.versions;
+  // A callback this viewer handed out (a pending Version removal) can outlive it: once unmounted, choosing a Version writes nothing.
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const setAssetId = useCallback((next: string) => {
+    if (!mounted.current) return;
+    const link = deepLinkRef.current;
+    const target = versionsRef.current.find((candidate) => candidate.assetId === next);
+    if (link && target) link.onVersionShown(target.version); else setLocalAssetId(next);
+  }, []);
   const playerRef = useRef<VideoPlayerControl>(null);
   const compareRef = useRef<VideoPlayerControl>(null);
   const compareButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -160,7 +179,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     const present = new Set(versionIds.split(","));
     const previous = previousVersions.current;
     previousVersions.current = { videoId: video.id, ids: present };
-    if (!present.has(assetId)) { setResume(null); setAssetId(video.currentAssetId); }
+    if (!present.has(assetId)) { setResume(null); setLocalAssetId(video.currentAssetId); }
     if (previous === null || previous.videoId !== video.id) return;
     const gone = new Set([...previous.ids].filter((id) => !present.has(id)));
     const pair = compareStore?.getState().pair;
@@ -227,6 +246,19 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   };
 
   const version = video.versions.find((candidate) => candidate.assetId === assetId) ?? video.versions[0]!;
+  // #819: the one normalisation rule. A settled, successful list read that lacks the URL's Version (omitted, unknown, or one a refresh removed) gets the fresh current Version written; never while unsettled.
+  const urlVersion = deepLink?.version;
+  const settled = deepLink?.settled ?? false;
+  const currentVersion = video.versions.find((candidate) => candidate.assetId === video.currentAssetId)?.version;
+  useEffect(() => {
+    if (!settled || currentVersion === undefined) return;
+    if (urlVersion === undefined || !versionsRef.current.some((candidate) => candidate.version === urlVersion)) deepLinkRef.current?.onVersionShown(currentVersion);
+  }, [settled, urlVersion, currentVersion, video.versions]);
+  // Back/Forward (or any write that did not come from this viewer) to a different Version while comparing leaves Compare; a side A change made here already moved the pair.
+  useEffect(() => {
+    if (!deepLinkRef.current || modeRef.current !== "compare") return;
+    if (compareStore?.getState().pair?.a !== assetId) exitCompare("dialog");
+  }, [assetId, compareStore, exitCompare]);
   const base = { nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame };
   const startLabel = framesToTimecode(0, base, version.startTimecodeFrames ?? 0);
   const newest = Math.max(...video.versions.map((candidate) => candidate.version));
@@ -275,6 +307,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         </Select>
         {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} /></Suspense>}
       </div>}
+      <div data-testid="video-header-actions" className="ml-auto flex flex-wrap items-center justify-end gap-x-[var(--space-4)] gap-y-[var(--space-2)] max-[721px]:ml-0 max-[721px]:justify-start">
+      {deepLink && !comparing && <CopyTextButton text={deepLink.href(version.version)} label="Copy link" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}
       {download && !comparing && <Button variant="outline" nativeButton={false} data-testid="video-download" aria-label={`Download version ${version.version}`} className="pointer-coarse:min-h-11 max-[721px]:min-h-11" render={<a href={videoVersionDownloadUrl(download.projectId, version.assetId)} download />}><DownloadIcon aria-hidden="true" />Download</Button>}
       {(canCompare || comparing) && <Button
         ref={compareButtonRef}
@@ -287,6 +321,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         onFocus={() => { preloadCompare(notesOn); }}
         onClick={() => { if (comparing) exitCompare("button"); else enterCompare(); }}
       ><Columns2 aria-hidden="true" />{comparing ? "Single view" : "Compare"}</Button>}
+      </div>
     </header>;
   const layout = (slots: { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode } | null): ReactNode => <>
     <div className="flex min-h-0 flex-1 flex-wrap overflow-y-auto min-[721px]:flex-nowrap min-[721px]:overflow-hidden">

@@ -179,6 +179,9 @@ export type DashboardRoute =
   | DashboardViewRoute
   | DashboardCalendarFacetRoute;
 
+/** #819: which film (and optionally which Version number) the Video viewer shows. */
+export type ProjectVideoSelection = { id: string; version?: number };
+
 export type StaffRoute =
   | DashboardRoute
   | { kind: "create-project" }
@@ -187,7 +190,9 @@ export type StaffRoute =
   /** `whiteboard` (#498): the Project whiteboard (`?whiteboard=open`) replaces the sheet's body.
    * Exclusive with `arrivalTab` -- the board is not a Workspace tab, so the parser never yields
    * both and a URL naming both is not-found. */
-  | { kind: "project"; projectId: string; arrivalTab?: WorkspaceTab; whiteboard?: true }
+  /** `video` (#819): the staff Video viewer deep link, only ever with `arrivalTab: "video"`.
+   * `version` omitted = the film's current Version. */
+  | { kind: "project"; projectId: string; arrivalTab?: WorkspaceTab; whiteboard?: true; video?: ProjectVideoSelection }
   | { kind: "edit-project"; projectId: string }
   | { kind: "admin" }
   | { kind: "notices" }
@@ -220,6 +225,19 @@ export const PROJECT_WHITEBOARD_QUERY = "whiteboard=open";
 const PROJECT_ARRIVAL_BY_QUERY: ReadonlyMap<string, WorkspaceTab> = new Map(
   WORKSPACE_TABS.map((tab) => [projectArrivalQuery(tab), tab]),
 );
+const VIDEO_VERSION = /^[1-9][0-9]{0,5}$/u;
+/** #819: `tab=video&video=<uuid>[&version=<N>]`, strictly in that order. `null` = not this spelling. */
+function parseProjectVideoQuery(query: string): ProjectVideoSelection | null {
+  const parts = query.split("&");
+  if (parts.length < 2 || parts.length > 3 || parts[0] !== "tab=video") return null;
+  if (!parts[1]!.startsWith("video=")) return null;
+  const id = parts[1]!.slice("video=".length);
+  if (!UUID.test(id)) return null;
+  if (parts.length === 2) return { id };
+  if (!parts[2]!.startsWith("version=")) return null;
+  const version = parts[2]!.slice("version=".length);
+  return VIDEO_VERSION.test(version) ? { id, version: Number(version) } : null;
+}
 const calendarParameterNames = new Set([
   "view", "date", "sub", "layers", "editors", "unassigned", "stages", "priority", "archived", "shoot", "deadline", "completed", "delivered", "overdue", "mine", "q", "f", "forder", "focus",
 ]);
@@ -629,7 +647,9 @@ export function parseStaffLocation(location: string): StaffRoute {
   if (route.kind === "project") {
     if (query === PROJECT_WHITEBOARD_QUERY) return { ...route, whiteboard: true };
     const arrivalTab = PROJECT_ARRIVAL_BY_QUERY.get(query);
-    return arrivalTab ? { ...route, arrivalTab } : { kind: "not-found" };
+    if (arrivalTab) return { ...route, arrivalTab };
+    const video = parseProjectVideoQuery(query);
+    return video ? { ...route, arrivalTab: "video", video } : { kind: "not-found" };
   }
   if (route.kind !== "dashboard" || pathname !== "/") return { kind: "not-found" };
   const params = parseDashboardQuery(query);
@@ -899,7 +919,7 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
       return qs ? `/?${qs}` : "/";
     }
     case "create-project": return "/projects/new";
-    case "project": return `/projects/${encodeURIComponent(route.projectId)}${route.whiteboard ? `?${PROJECT_WHITEBOARD_QUERY}` : route.arrivalTab ? `?${projectArrivalQuery(route.arrivalTab)}` : ""}`;
+    case "project": return `/projects/${encodeURIComponent(route.projectId)}${route.whiteboard ? `?${PROJECT_WHITEBOARD_QUERY}` : route.arrivalTab === "video" && route.video ? `?tab=video&video=${route.video.id}${route.video.version ? `&version=${route.video.version}` : ""}` : route.arrivalTab ? `?${projectArrivalQuery(route.arrivalTab)}` : ""}`;
     case "edit-project": return `/projects/${encodeURIComponent(route.projectId)}/edit`;
     case "admin": return "/admin";
     case "notices": return "/notices";
