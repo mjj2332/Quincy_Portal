@@ -61,12 +61,12 @@ export async function reserveAttempts(db: D1Database, reservations: Reservation[
   return { limited, retryAfterSeconds: Math.max(1, Math.ceil(retry / 1000)) };
 }
 
-/** Gives back one attempt in a bucket (a request that reserved its slot and then found nothing to write must not spend the slot for the rest of the window). The table requires `count >= 1`, so the last one deletes the row. */
+/** Gives back one attempt in a bucket (a request that reserved its slot and then found nothing to write must not spend the slot for the rest of the window). The table requires `count >= 1`, so the last one deletes the row. Exactly one is given back: the delete runs first, so a count of 2 becomes 1, never 0. */
 export async function refundAttempt(db: D1Database, bucket: string, now: number, windowMs: number = GUEST_WINDOW_MS): Promise<void> {
   const start = windowStart(now, windowMs);
   await db.batch([
-    db.prepare("UPDATE guest_rate_limits SET count = count - 1 WHERE bucket = ?1 AND window_start = ?2 AND count > 1").bind(bucket, start),
     db.prepare("DELETE FROM guest_rate_limits WHERE bucket = ?1 AND window_start = ?2 AND count <= 1").bind(bucket, start),
+    db.prepare("UPDATE guest_rate_limits SET count = count - 1 WHERE bucket = ?1 AND window_start = ?2 AND count > 1").bind(bucket, start),
   ]);
 }
 
@@ -74,13 +74,33 @@ export async function refundAttempt(db: D1Database, bucket: string, now: number,
  * Like `reserveAttempts`, but both or neither: when any bucket is full, the buckets that did take the attempt are given it back, so a request refused by one limit never drains another (a client over its
  * address limit cannot fill the page's bucket). The give-back is a second batch, so a crash between the two can only over-charge, never under-charge.
  */
+/**
+ * Like `reserveAttempts`, but both or neither, in ONE batch (one serialised transaction): nothing is ever taken from a bucket and given back, so a request refused by one limit changes no row, and a
+ * concurrent request that fits is never refused by a slot a doomed one briefly held. Statement 0 upserts the first bucket guarded on EVERY bucket having room (read before anything changes); each later
+ * statement runs only while the one before it changed a row (`changes() = 1`), so the buckets move together or not at all.
+ */
 export async function reserveAllOrNone(db: D1Database, reservations: Reservation[], now: number): Promise<{ limited: boolean; retryAfterSeconds: number }> {
   const windows = reservations.map((entry) => entry.windowMs ?? GUEST_WINDOW_MS);
-  const results = await db.batch(reservations.map((entry, index) => db.prepare(RESERVE_SQL).bind(entry.bucket, windowStart(now, windows[index]), entry.limit, entry.amount ?? 1)));
-  const took = results.map((result) => result.results.length > 0);
-  if (took.every(Boolean)) return { limited: false, retryAfterSeconds: 1 };
+  const starts = reservations.map((_, index) => windowStart(now, windows[index]));
+  const amounts = reservations.map((entry) => entry.amount ?? 1);
+  // Parameters of bucket j are ?(4j+1) bucket, ?(4j+2) window start, ?(4j+3) limit, ?(4j+4) amount; every statement binds them all so the placeholders line up.
+  const params = reservations.flatMap((entry, index) => [entry.bucket, starts[index]!, entry.limit, amounts[index]!]);
+  const room = (j: number) => `COALESCE((SELECT count FROM guest_rate_limits WHERE bucket = ?${4 * j + 1} AND window_start = ?${4 * j + 2}), 0) + ?${4 * j + 4} <= ?${4 * j + 3}`;
+  const allRoom = reservations.map((_, j) => room(j)).join(" AND ");
+  const statements = reservations.map((_, j) => {
+    const b = 4 * j;
+    const guard = j === 0 ? allRoom : `changes() = 1 AND ${room(j)}`;
+    return db.prepare(`INSERT INTO guest_rate_limits (bucket, window_start, count) SELECT ?${b + 1}, ?${b + 2}, ?${b + 4} WHERE ${guard}
+      ON CONFLICT (bucket, window_start) DO UPDATE SET count = count + ?${b + 4} WHERE count + ?${b + 4} <= ?${b + 3} RETURNING count`).bind(...params);
+  });
+  const results = await db.batch(statements);
+  if (results.every((result) => result.results.length > 0)) return { limited: false, retryAfterSeconds: 1 };
+  // Refused, and nothing was written. The wait is the longest remaining time among the buckets that were full.
+  const counts = await db.batch(reservations.map((entry, index) => db.prepare("SELECT count FROM guest_rate_limits WHERE bucket = ?1 AND window_start = ?2").bind(entry.bucket, starts[index])));
   let retry = 0;
-  results.forEach((result, index) => { if (!took[index]) retry = Math.max(retry, windowStart(now, windows[index]) + windows[index]! - now); });
-  for (const [index, entry] of reservations.entries()) if (took[index]) await refundAttempt(db, entry.bucket, now, windows[index]);
+  counts.forEach((result, index) => {
+    const used = (result.results[0] as { count: number } | undefined)?.count ?? 0;
+    if (used + amounts[index]! > reservations[index]!.limit) retry = Math.max(retry, starts[index]! + windows[index]! - now);
+  });
   return { limited: true, retryAfterSeconds: Math.max(1, Math.ceil(retry / 1000)) };
 }

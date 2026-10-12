@@ -64,6 +64,9 @@ export function DeliveryDownloadAll({ api, onGone }: { api: Pick<DeliveryApi, "z
 function ZipPanel({ api, size, onClose, onGone }: { api: Pick<DeliveryApi, "zipManifest" | "prepareZip" | "zipUrl">; size: DeliveryZipSize; onClose: () => void; onGone: () => void }) {
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
   const [prepareWait, setPrepareWait] = useState<number | null>(null);
+  // A polled manifest that answered 429: the cooldown is shown and no poll asks again until Retry-After has passed.
+  const [pollWait, setPollWait] = useState<number | null>(null);
+  const cooldownUntil = useRef(0);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const goneRef = useRef(onGone); goneRef.current = onGone;
@@ -78,9 +81,11 @@ function ZipPanel({ api, size, onClose, onGone }: { api: Pick<DeliveryApi, "zipM
       if (result.kind === "limited") setPrepareWait(result.retryAfterSeconds);
       return { state: "failed" };
     }
+    if (Date.now() < cooldownUntil.current) return { state: "preparing" };
     const result = await api.zipManifest(size);
     if (!alive.current) return { state: "failed" };
-    if (result.kind === "ok") { setLoaded({ kind: "ok", manifest: result.manifest }); return { state: result.manifest.archive.state }; }
+    if (result.kind === "limited") { cooldownUntil.current = Date.now() + result.retryAfterSeconds * 1000; setPollWait(result.retryAfterSeconds); return { state: "preparing" }; }
+    if (result.kind === "ok") { cooldownUntil.current = 0; setPollWait(null); setLoaded({ kind: "ok", manifest: result.manifest }); return { state: result.manifest.archive.state }; }
     if (result.kind === "gone") goneRef.current();
     return { state: "failed" };
   }, [api, size]);
@@ -108,7 +113,7 @@ function ZipPanel({ api, size, onClose, onGone }: { api: Pick<DeliveryApi, "zipM
   const archive = prepared.status === "idle" || prepared.status === "checking" ? (manifest?.archive.state ?? "ready") : prepared.status;
   const canDownload = manifest !== null && manifest.photos > 0 && !manifest.tooLarge && archive === "ready";
   return <>
-    <div data-testid="delivery-zip-body" className="min-h-0 flex-1 overflow-y-auto"><ZipBody loaded={loaded} archive={archive} prepareWait={prepareWait} onRetry={load} onCheckAgain={() => void startPrepared()} /></div>
+    <div data-testid="delivery-zip-body" className="min-h-0 flex-1 overflow-y-auto"><ZipBody loaded={loaded} archive={archive} prepareWait={prepareWait} pollWait={pollWait} onRetry={load} onCheckAgain={() => void startPrepared()} /></div>
     <DialogFooter className="shrink-0">
       <Button type="button" variant="outline" data-testid="delivery-zip-close" className={TOUCH} onClick={onClose}>Close</Button>
       {canDownload && <Button nativeButton={false} data-testid="delivery-zip-start" className={TOUCH} render={<a href={api.zipUrl(size)} download />}><DownloadIcon aria-hidden="true" />Download zip</Button>}
@@ -116,7 +121,7 @@ function ZipPanel({ api, size, onClose, onGone }: { api: Pick<DeliveryApi, "zipM
   </>;
 }
 
-function ZipBody({ loaded, archive, prepareWait, onRetry, onCheckAgain }: { loaded: Loaded; archive: string; prepareWait: number | null; onRetry: () => void; onCheckAgain: () => void }) {
+function ZipBody({ loaded, archive, prepareWait, pollWait, onRetry, onCheckAgain }: { loaded: Loaded; archive: string; prepareWait: number | null; pollWait: number | null; onRetry: () => void; onCheckAgain: () => void }) {
   if (loaded.kind === "loading") return <p role="status" className={PROBLEM}>Checking what's ready…</p>;
   if (loaded.kind === "failed" || loaded.kind === "limited") {
     return <div className="flex flex-col items-start gap-[var(--space-2)]">
@@ -134,7 +139,7 @@ function ZipBody({ loaded, archive, prepareWait, onRetry, onCheckAgain }: { load
       {/* One status region for the whole wait: it stays mounted from preparing to ready, so a screen reader hears the text change. */}
       <Notice tone={archive === "ready" ? "positive" : "caution"} role="status" data-testid="delivery-zip-status" className="flex w-full items-start gap-[var(--space-2)]">
         {(archive === "preparing" || archive === "checking") && <Spinner aria-hidden="true" role="presentation" className={NOTICE_SPINNER} />}
-        {archive === "ready" ? READY_HINT_COPY : archive === "timeout" ? PREPARE_TIMEOUT_COPY : PREPARING_COPY}
+        {archive === "ready" ? READY_HINT_COPY : archive === "timeout" ? PREPARE_TIMEOUT_COPY : pollWait !== null ? waitCopy(pollWait) : PREPARING_COPY}
       </Notice>
       {archive === "timeout" && <Button type="button" variant="outline" data-testid="delivery-zip-check-again" className={TOUCH} onClick={onCheckAgain}>Check again</Button>}
     </div>}

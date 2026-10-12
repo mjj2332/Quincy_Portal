@@ -127,6 +127,22 @@ describe("preparing", () => {
     await act(async () => { byTestId("delivery-zip-check-again")!.click(); await vi.advanceTimersByTimeAsync(10); });
     expect(posts()).toHaveLength(2);
   });
+  it("a manifest 429 while polling shows the cooldown and suspends polling until Retry-After passes", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    await show();
+    await act(async () => { byTestId("delivery-download-all")!.click(); await vi.advanceTimersByTimeAsync(10); });
+    const before = reads().length;
+    answers.web = () => json({ error: "too_many_attempts" }, 429, { "retry-after": "90" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(reads()).toHaveLength(before + 1);
+    expect(status()!.textContent).toContain("Too many requests. Try again in 90 seconds.");
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(reads()).toHaveLength(before + 1);
+    answers.web = () => json(manifest());
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(reads()).toHaveLength(before + 2);
+    expect(status()!.textContent).toContain("Your zip is ready");
+  });
   it("closing stops the polling", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     await show();
