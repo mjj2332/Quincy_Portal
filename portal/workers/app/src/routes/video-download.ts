@@ -45,8 +45,10 @@ videoDownloadRoutes.get(PATH, terminalRoute(PATH, async (c) => {
   const range = c.req.header("range")?.trim();
   const wholeFile = c.req.method === "GET" && (range === undefined || range === "bytes=0-");
   let audited = false;
-  // The last admission, after R2 answered and before a header or byte leaves: a Version removed meanwhile is a 404 and is never audited.
+  // The last admission, after R2 answered and before a header or byte leaves (a 416 and a HEAD included): the gate, the capability and Project visibility are repeated, then the Version's liveness.
+  // A revocation or a removal meanwhile is the same 404 as a missing object, and is never audited.
   const authorize = async (): Promise<boolean> => {
+    if (await admit(c, projectId) !== null) return false;
     if (!await versionIsLive(c.env.DB, projectId, assetId)) return false;
     if (wholeFile && !audited) {
       audited = true;

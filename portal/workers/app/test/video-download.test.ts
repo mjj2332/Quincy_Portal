@@ -19,16 +19,17 @@ async function get(path: string, who: Who, headers: Record<string, string> = {},
 }
 const bytesOf = async (response: Response) => new Uint8Array(await response.arrayBuffer());
 const audits = async () => (await database.DB.prepare("SELECT actor_id, action, target_type, target_id, meta_json FROM audit_log WHERE action = ? ORDER BY created_at, id").bind(AUDIT).all<{ actor_id: string; action: string; target_type: string; target_id: string; meta_json: string }>()).results;
-/** The real app against a bucket whose `get` runs `after` once the object has been read, so a Trash can land between R2 answering and the first byte leaving. */
-async function racing(path: string, who: Who, after: () => Promise<void>) {
+/** The real app against a bucket whose `get` and `head` run `after` once R2 has answered, so a Trash or a revocation can land between R2 answering and the first byte. */
+async function racing(path: string, who: Who, after: () => Promise<void>, init: { method?: "GET" | "HEAD"; headers?: Record<string, string> } = {}) {
   const environment: Env = { ...baseEnv, MEDIA: new Proxy(baseEnv.MEDIA, { get: (target, property) => {
     const value = Reflect.get(target, property);
-    if (property !== "get" || typeof value !== "function") return typeof value === "function" ? value.bind(target) : value;
+    if (typeof value !== "function") return value;
+    if (property !== "get" && property !== "head") return value.bind(target);
     return async (...args: unknown[]) => { const result = await (value as (...a: unknown[]) => Promise<unknown>).apply(target, args); await after(); return result; };
   } }) };
   const context = await createAuth(environment).$context;
   const cookieValue = `${context.authCookies.sessionToken.name}=${tokens[who]}.${await makeSignature(tokens[who], authSecret)}`;
-  return app.fetch(new Request(`https://portal.test${path}`, { headers: { cookie: cookieValue } }), environment, createExecutionContext());
+  return app.fetch(new Request(`https://portal.test${path}`, { method: init.method ?? "GET", headers: { cookie: cookieValue, ...init.headers } }), environment, createExecutionContext());
 }
 
 beforeAll(async () => { await seedFixture(); });
@@ -112,6 +113,24 @@ describe("GET /api/projects/:projectId/video-versions/:assetId/download", () => 
     const response = await racing(videoVersionDownloadUrl(ids.project, assetId), "admin", () => markVersionRemoved(assetId));
     expect(response.status).toBe(404);
     expect(await audits()).toHaveLength(0);
+  });
+
+  describe("a revocation that lands while R2 is answering is a 404 with no audit row", () => {
+    const unassign = () => database.DB.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?").bind(ids.project, ids.external).run();
+    const reassign = () => database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), ids.project, ids.external, Date.now()).run();
+    const partOff = () => setVideoFlags(["video_review_download", false]);
+    const shapes: Array<[string, "GET" | "HEAD", Record<string, string>]> = [["GET", "GET", {}], ["HEAD", "HEAD", {}], ["unsatisfiable Range", "GET", { range: `bytes=${SIZE + 10}-` }]];
+    for (const [revocation, revoke, restore] of [["assignment removed", unassign, reassign], ["download part turned off", partOff, async () => {}]] as const)
+      for (const [label, method, headers] of shapes) it(`${revocation}: ${label}`, async () => {
+        const { assetId } = await seedVideoVersion();
+        try {
+          const response = await racing(videoVersionDownloadUrl(ids.project, assetId), "external", revoke, { method, headers });
+          expect(response.status).toBe(404);
+          expect(response.headers.get("content-range")).toBeNull();
+          expect(response.headers.get("etag")).toBeNull();
+        } finally { await restore(); }
+        expect(await audits()).toHaveLength(0);
+      });
   });
 
   it("answers a Range with 206 and no audit row, counts `bytes=0-` as a download, and answers HEAD with no body and no audit row", async () => {
