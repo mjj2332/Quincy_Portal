@@ -230,11 +230,11 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
             </div>
             <ItemGroup>
               {members.map((c) => {
-                const on = selected.has(c.assetId); const url = thumbUrl(projectId, c); const working = rowBusy.has(c.assetId);
+                const on = selected.has(c.assetId); const isLocked = c.premium && !c.premiumUnlocked; const url = isLocked && c.kind === "video" ? null : thumbUrl(projectId, c); // a locked film has no poster to show staff (the server refuses it), so it is the icon tile const working = rowBusy.has(c.assetId);
                 return <Item key={c.assetId} size="xs" variant="outline" data-testid="delivery-item" data-kind={c.kind} className="flex-wrap">
                   <label className="grid size-11 shrink-0 place-items-center"><Checkbox aria-label={`Select ${c.name}`} checked={on} onChange={(event) => toggleSelected(c.assetId, event.target.checked)} /></label>
                   <ItemMedia variant="image" className="size-14 overflow-hidden bg-surface-sunken text-foreground-secondary group-data-[size=xs]/item:size-14 group-has-data-[slot=item-description]/item:translate-y-0 group-has-data-[slot=item-description]/item:self-center">
-                    {url ? <LazyImage src={url} alt="" className="size-full object-cover" /> : c.kind === "video" ? <FilmIcon aria-hidden className="size-5" /> : <FileTextIcon aria-hidden className="size-5" />}
+                    {url ? <LazyImage key={`${isLocked}:${url}`} src={url} alt="" className="size-full object-cover" /> : c.kind === "video" ? <FilmIcon aria-hidden className="size-5" /> : <FileTextIcon aria-hidden className="size-5" />}
                   </ItemMedia>
                   <ItemContent className="min-w-0 flex-[1_1_12rem]">
                     <ItemTitle className="line-clamp-none [overflow-wrap:anywhere]">{c.name}</ItemTitle>

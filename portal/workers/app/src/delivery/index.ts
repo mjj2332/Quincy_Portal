@@ -1,5 +1,5 @@
 import type { Context, Hono } from "hono";
-import { DELIVERY_HANDLE_LENGTH, DELIVERY_SLUG_ALPHABET, DELIVERY_SLUG_SUFFIX_LENGTH, DELIVERY_UNLOCK_NOTIFICATION_EVENT, RENDITION_VARIANT_SPEC, deliveryPageDtoSchema, deliveryUnlockRequestInputSchema, deliveryUnlockSourceKey, rawMediaContentType, type DeliveryItemKind } from "@quincy/shared";
+import { DELIVERY_HANDLE_LENGTH, DELIVERY_SLUG_PATTERN as SLUG_PATTERN, DELIVERY_SLUG_SUFFIX_LENGTH, DELIVERY_UNLOCK_NOTIFICATION_EVENT, RENDITION_VARIANT_SPEC, deliveryPageDtoSchema, isDeliveryPagePath, deliveryUnlockRequestInputSchema, deliveryUnlockSourceKey, rawMediaContentType, type DeliveryItemKind } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { clientDeliveryGate } from "../lib/client-delivery-gate";
 import { deliveryLabels, readDeliveryState, readSetRows, type DeliveryUrlResolver } from "../lib/delivery-dto";
@@ -25,9 +25,7 @@ import { guestShell } from "../guest";
  */
 export const publicDeliveryTestHooks: { beforeServe?: () => Promise<void>; beforeWrite?: () => Promise<void>; afterWrite?: () => Promise<void>; beforeVerify?: () => Promise<void> } = {};
 
-const SLUG_PATTERN = `[a-z0-9]+(?:-[a-z0-9]+)*-[${DELIVERY_SLUG_ALPHABET}]{${DELIVERY_SLUG_SUFFIX_LENGTH}}`;
 const HANDLE_PATTERN = `[a-z0-9]{${DELIVERY_HANDLE_LENGTH}}`;
-const SHELL_PATH = new RegExp(`^/d/(${SLUG_PATTERN})$`);
 const PAGE_PATH = new RegExp(`^/d/api/pages/(${SLUG_PATTERN})$`);
 const ITEM_PATH = new RegExp(`^/d/api/pages/(${SLUG_PATTERN})/items/(${HANDLE_PATTERN})/(media|thumb|download)$`);
 const UNLOCK_PATH = new RegExp(`^/d/api/pages/(${SLUG_PATTERN})/items/(${HANDLE_PATTERN})/unlock-request$`);
@@ -197,7 +195,7 @@ async function requestUnlock(c: Ctx, slug: string, handle: string): Promise<Resp
 }
 
 export function mountDelivery(app: Hono<AppEnv>): void {
-  app.get("/d/:slug", guestRoute("/d/:slug", (c) => (SHELL_PATH.test(rawPath(c)) ? guestShell(c) : guestNotFound(c))));
+  app.get("/d/:slug", guestRoute("/d/:slug", (c) => (isDeliveryPagePath(rawPath(c)) ? guestShell(c) : guestNotFound(c))));
 
   app.get("/d/api/pages/:slug", guestRoute("/d/api/pages/:slug", async (c) => {
     const match = PAGE_PATH.exec(rawPath(c)); const slug = match?.[1];

@@ -125,8 +125,17 @@ describe("single items", () => {
   it("shows a locked photo only as premium_preview on media and thumb, and refuses download with 403 premium_locked", async () => {
     const locked = await photo({ premium: true, preview: true }); await seedPage({ slug: SLUG, assetIds: [locked.id] }); const handle = await handleOf(locked.id);
     expect(await body(await get(itemUrl(handle, "media")))).toBe(PREVIEW); expect(await body(await get(itemUrl(handle, "thumb")))).toBe(PREVIEW);
+    // The item address is the same locked or open, so nothing about it may be cached: a browser must ask again after an Unlock.
+    for (const part of ["media", "thumb"] as const) expect((await get(itemUrl(handle, part))).headers.get("cache-control")).toBe("private, no-store");
     const refused = await get(itemUrl(handle, "download")); expect(refused.status).toBe(403); expect(await refused.json()).toEqual({ error: "premium_locked" });
-    const dto = deliveryPageDtoSchema.parse(await (await get(pageUrl())).json()); expect(dto.items[0]!.locked).toBe(true);
+    const dto = deliveryPageDtoSchema.parse(await (await get(pageUrl())).json()); expect(dto.items[0]!.locked).toBe(true); expect(dto.items[0]!.premium).toBe(true);
+  });
+
+  it("keeps `premium` true after an Unlock while `locked` goes false, and leaks nothing about the unlock", async () => {
+    const paid = await photo({ premium: true, unlocked: true, preview: true }); const free = await photo(); await seedPage({ slug: SLUG, assetIds: [paid.id, free.id] });
+    const text_ = await body(await get(pageUrl())); const dto = deliveryPageDtoSchema.parse(JSON.parse(text_));
+    expect(dto.items.map((item) => [item.locked, item.premium])).toEqual([[false, true], [false, false]]);
+    expect(text_).not.toMatch(/unlock|payment|paymentRef/i);
   });
 
   it("never serves a locked photo's web, thumb or original when premium_preview is missing", async () => {

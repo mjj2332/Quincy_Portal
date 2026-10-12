@@ -364,10 +364,12 @@ describe("the staff read and the public DTO", () => {
     expect(state.page).toMatchObject({ latestSetNumber: 2, enabled: true }); expect(state.set.setNumber).toBe(2); expect(state.set.items).toHaveLength(4);
     expect(state.set.items.map((item: Json) => [item.label, item.locked])).toEqual([["Photo 01", false], ["Video 01", false], ["Photo 02", true], ["Photo 03", false]]);
     expect(state.dto.items.map((item: Json) => item.locked)).toEqual([false, false, true, false]);
+    // `premium` is the item's own paid-extra flag and survives an Unlock (the Premium tab keeps listing an unlocked item); it says nothing about unlocks or payment.
+    expect(state.dto.items.map((item: Json) => item.premium)).toEqual([false, false, true, true]);
     const wire = JSON.stringify({ ...state.dto, items: state.dto.items.map((item: Json) => ({ ...item, url: null, thumbUrl: null })) });
     for (const secret of [photo.id, video.assetId, video.videoId, premium.id, "Secret Walkthrough", ".bin", "projects/", "delivery-test", ids.admin, "Admin Person", ids.project]) expect(wire, secret).not.toContain(secret);
     expect(Object.keys(state.dto).sort()).toEqual(["coverHandle", "items", "property", "publishedAt", "setNumber"]);
-    expect(Object.keys(state.dto.items[0]).sort()).toEqual(["durationMs", "handle", "height", "kind", "label", "locked", "position", "thumbUrl", "url", "width"]);
+    expect(Object.keys(state.dto.items[0]).sort()).toEqual(["durationMs", "handle", "height", "kind", "label", "locked", "position", "premium", "thumbUrl", "url", "width"]);
     expect(state.dto.coverHandle).toBe(state.set.items[0].handle);
   });
 
