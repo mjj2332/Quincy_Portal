@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { byLabel, byTestId, click, flush, photo, page, press, render, until, type Mounted } from "../testing/delivery-fixtures";
+import { byLabel, byTestId, click, flush, locked, photo, page, press, render, until, type Mounted } from "../testing/delivery-fixtures";
 import { DeliveryPage } from "./DeliveryPage";
 
 // Real embla, no fake: happy-dom has no layout, so this only proves the vendored carousel mounts, reports no error and does not fight the page's own index.
@@ -20,6 +20,18 @@ describe("the lightbox with the real carousel", () => {
     await click(byLabel("Next photo"));
     expect(byTestId("delivery-lightbox-counter")!.textContent).toBe("Photo 3 of 3");
     await click(byLabel("Close")); await flush(8);
+    expect(byTestId("delivery-lightbox")).toBeNull();
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
+  it("opens the slideshow from the hero over the real carousel, playing, and exits without an error", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mounted = await render(<DeliveryPage dto={page([photo(1), locked(2), photo(3)])} hrefs={null} onRequestUnlock={() => undefined} unlockState={{}} />);
+    await click(byTestId("delivery-slideshow"));
+    await until(() => byTestId("delivery-lightbox"));
+    expect(byTestId("delivery-lightbox")!.querySelectorAll('[aria-roledescription="slide"]')).toHaveLength(2);
+    expect(byTestId("delivery-lightbox-counter")!.textContent).toBe("Photo 1 of 2");
+    await click(byLabel("Exit slideshow")); await flush(8);
     expect(byTestId("delivery-lightbox")).toBeNull();
     expect(errors).not.toHaveBeenCalled();
     errors.mockRestore();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DeliveryItemDto, DeliveryPageDto } from "@quincy/shared";
-import { aspectOf, formatDelivered, formatDuration, heroMetaOf, heroOf, isExtra, tabsOf } from "./delivery-model";
+import { aspectOf, formatDelivered, formatDuration, heroMetaOf, heroOf, isExtra, slideshowPhotosOf, tabsOf } from "./delivery-model";
 import { STUDIO_EMAIL, STUDIO_WEBSITE, studioEmailHref } from "./studio";
 
 const handle = (n: number) => `h${String(n).padStart(15, "0")}`;
@@ -79,5 +79,12 @@ describe("formatting", () => {
     expect(STUDIO_EMAIL).toBe("info@quincyproductions.com.au");
     expect(STUDIO_WEBSITE).toBe("https://quincyproductions.com.au");
     expect(studioEmailHref("12 Example St & Co")).toBe("mailto:info@quincyproductions.com.au?subject=12%20Example%20St%20%26%20Co");
+  });
+});
+
+describe("slideshowPhotosOf", () => {
+  it("keeps unlocked photos that have a picture, in order, including an unlocked Premium one, and drops locked, unavailable and non-photo items", () => {
+    const items = [item(1), item(2, { locked: true, premium: true }), item(3, { premium: true }), item(4, { url: null }), item(5, { kind: "video" }), item(6)];
+    expect(slideshowPhotosOf(items).map((entry) => entry.handle)).toEqual([handle(1), handle(3), handle(6)]);
   });
 });

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { DownloadIcon } from "lucide-react";
 import type { DeliveryItemDto } from "@quincy/shared";
 import { LazyImage } from "../components/LazyImage";
 import { Button, buttonVariants } from "../components/reui/button";
@@ -40,8 +41,9 @@ function PhotoTile({ item, items, index, hrefs, unlock, onRequestUnlock, onOpen 
       <div className="absolute inset-0 overflow-hidden"><TileImage key={`${item.locked}:${item.thumbUrl}`} item={item} /></div>
       <Button type="button" variant="ghost" aria-label={`Open ${item.label}`} className="absolute inset-0 h-full w-full rounded-none p-0 hover:bg-transparent" onClick={(event) => { onOpen(items, index, event.currentTarget); }} />
       {item.locked && <span className="pointer-events-none absolute top-[var(--space-2)] left-[var(--space-2)]"><PremiumBadge overPhoto /></span>}
+      {/* One always-visible Download of the original (#837). A sibling of the open button, never inside it, and above it. The prototype reveals it on hover, which a phone has no equivalent of. */}
+      {!item.locked && hrefs && <a href={hrefs.download(item.handle)} download aria-label={`Download ${item.label}`} className={buttonVariants({ variant: "secondary", size: "icon", className: `absolute top-[var(--space-2)] right-[var(--space-2)] z-10 ${TOUCH} max-[721px]:size-11` })}><DownloadIcon aria-hidden /></a>}
     </div>
-    {!item.locked && hrefs && <PhotoDownloads item={item} hrefs={hrefs} />}
     {item.locked && <UnlockControl label={item.label} state={unlockOf(unlock, item.handle)} onRequest={() => { onRequestUnlock(item.handle); }} />}
   </li>;
 }
