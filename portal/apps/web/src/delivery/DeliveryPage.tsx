@@ -155,9 +155,9 @@ export function DeliveryPage(props: DeliveryPageProps) {
     {active === null
       ? <div className="mx-auto w-full max-w-[var(--container-page)] px-[var(--space-7)] py-[var(--space-7)] @max-[721px]:px-[var(--space-4)]"><EmptyState data-testid="delivery-empty" title="Nothing here yet.">The studio hasn't added anything to this page.</EmptyState></div>
       : <Tabs value={active} onValueChange={(value) => { setChosen(value as DeliveryTabId); }}>
-        <div data-testid="delivery-tabs-bar" className="sticky top-0 z-20 border-0 border-b border-solid border-[var(--border-hairline)] bg-[color-mix(in_srgb,var(--background)_92%,transparent)] backdrop-blur-[10px]">
-          <div className="mx-auto w-full max-w-[var(--container-page)] px-[var(--space-7)] pt-[var(--space-4)] pb-[var(--space-2)] @max-[721px]:px-[var(--space-4)]">
-            <TabsList variant="line" data-testid="delivery-tabs-list" aria-label="Delivery sections" className="h-auto max-w-full group-data-[orientation=horizontal]/tabs:h-auto flex-nowrap justify-start gap-[var(--space-3)] overflow-x-auto pb-[var(--space-2)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div data-testid="delivery-tabs-bar" className="sticky top-0 z-20 border-0 border-b border-solid border-[var(--border-hairline)] bg-[color-mix(in_srgb,var(--paper-050)_90%,transparent)] backdrop-blur-[8px]">
+          <div className="mx-auto w-full max-w-[var(--container-page)] px-[var(--space-7)] pt-[var(--space-4)] pb-[var(--space-2)] @max-[721px]:px-[var(--space-4)] @max-[721px]:pt-[var(--space-2)]">
+            <TabsList variant="line" data-testid="delivery-tabs-list" aria-label="Delivery sections" className="h-auto max-w-full group-data-[orientation=horizontal]/tabs:h-auto flex-nowrap justify-start gap-[var(--space-3)] overflow-x-auto pb-[var(--space-2)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden @max-[721px]:[mask-image:linear-gradient(to_right,black_calc(100%-var(--space-6)),transparent)]">
               {tabs.map((tab) => <TabsTrigger key={tab.id} value={tab.id} className={`h-auto shrink-0 flex-none gap-[var(--space-2)] px-[var(--space-2)] [font:var(--type-label)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary data-active:text-foreground ${TOUCH}`}>
                 {tab.id === "premium" && <LockIcon aria-hidden className="size-3.5" />}
                 <span data-testid="delivery-tab-label">{tab.label}</span>
