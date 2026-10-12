@@ -1,17 +1,17 @@
 import { Component, lazy, Suspense, useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { RENDITION_SPECS, DELIVERY_RENDITION_SPECS, type DeliveryItemDto, type DeliveryPageDto } from "@quincy/shared";
+import { LockIcon } from "lucide-react";
 import { EmptyState } from "../components/quincy/EmptyState";
-import { SectionHead } from "../components/quincy/SectionHead";
-import { buttonVariants, Button } from "../components/reui/button";
+import { Eyebrow } from "../components/quincy/Eyebrow";
+import { Button } from "../components/reui/button";
 import { Frame, FramePanel } from "../components/reui/frame";
 import { Separator } from "../components/reui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/reui/tabs";
-import { formatDelivered, heroOf, tabsOf, type DeliveryHrefs, type DeliveryTab, type DeliveryTabId, type UnlockStates } from "./delivery-model";
+import { heroMetaOf, heroOf, tabsOf, type DeliveryHrefs, type DeliveryTab, type DeliveryTabId, type UnlockStates } from "./delivery-model";
 import { DocRows } from "./DocRows";
 import { FilmList } from "./FilmList";
 import { PhotoGrid, ProcessingTile, type OpenViewer } from "./PhotoGrid";
-import { askTheStudioHref } from "./studio";
-import { StudioCredit } from "./StudioCredit";
+import { STUDIO_EMAIL, STUDIO_NAME, STUDIO_WEBSITE, studioEmailHref } from "./studio";
 import { TOUCH } from "./UnlockControl";
 
 // Loaded on first open: embla ships with the viewer and nothing else (`build/vendor-chunk-guard.ts`).
@@ -37,7 +37,7 @@ export type DeliveryPageProps = {
   hrefs: DeliveryHrefs | null;
   onRequestUnlock: (handle: string) => void;
   unlockState: UnlockStates;
-  /** Beside the Photos heading (the Premium heading when the page has no Photos tab). Nothing is rendered or requested without it. */
+  /** The hero's action (Download all). Nothing is rendered or requested without it. */
   downloadAllSlot?: ReactNode;
 };
 
@@ -45,23 +45,31 @@ type Viewer = { items: DeliveryItemDto[]; index: number; opener: HTMLElement };
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-function Hero({ dto, hero }: { dto: DeliveryPageDto; hero: DeliveryItemDto | null }) {
-  const { street, suburb } = dto.property;
-  const delivered = formatDelivered(dto.publishedAt);
+/** The hero's photo scrim and the Q watermark sit under the text; `data-surface="inverse"` gives the ink ground, the paper text and the paper focus ring (`styles/tokens/inverse.css`). */
+function Hero({ dto, hero, action }: { dto: DeliveryPageDto; hero: DeliveryItemDto | null; action: ReactNode }) {
+  const { street } = dto.property;
+  const { eyebrow, agency, frames, films } = heroMetaOf(dto);
+  const counts = [frames > 0 ? count(frames, "frame", "frames") : null, films > 0 ? count(films, "film", "films") : null].filter((part) => part !== null).join(" · ");
   const [failed, setFailed] = useState(false);
-  return <header data-testid="delivery-hero" className="grid gap-[var(--space-5)]">
-    {hero && hero.url !== null && (failed
-      ? <div className="aspect-[16/9] @max-[721px]:aspect-[4/3]"><ProcessingTile label={hero.label} /></div>
-      : <div className="aspect-[16/9] overflow-hidden bg-surface-sunken @max-[721px]:aspect-[4/3]">
-        <img
-          src={hero.url} alt={hero.label} fetchPriority="high" onError={() => { setFailed(true); }}
-          srcSet={hero.thumbUrl ? `${hero.thumbUrl} ${RENDITION_SPECS.thumb.maxEdge}w, ${hero.url} ${DELIVERY_RENDITION_SPECS.delivery_web.maxEdge}w` : undefined}
-          sizes="(min-width: 1280px) 1280px, 100vw" className="size-full object-cover" />
-      </div>)}
-    <div className="grid gap-[var(--space-2)]">
-      <h1 className="m-0 [font:var(--type-h1)] tracking-[var(--tracking-tight)] text-pretty">{suburb ? `${street}, ${suburb}` : street}</h1>
-      {delivered !== null && <p className="m-0 [font:var(--type-body)] text-foreground-secondary">{`Delivered ${delivered}`}</p>}
-      <div><a href={askTheStudioHref(street)} className={buttonVariants({ variant: "secondary", className: `w-fit ${TOUCH}` })}>Ask the studio</a></div>
+  return <header data-testid="delivery-hero" data-surface="inverse" className="relative flex min-h-[min(78svh,880px)] items-end overflow-clip bg-background text-foreground @max-[721px]:min-h-[min(78svh,560px)]">
+    {hero && hero.url !== null && !failed && <img
+      data-testid="delivery-hero-photo" src={hero.url} alt={hero.label} fetchPriority="high" onError={() => { setFailed(true); }}
+      srcSet={hero.thumbUrl ? `${hero.thumbUrl} ${RENDITION_SPECS.thumb.maxEdge}w, ${hero.url} ${DELIVERY_RENDITION_SPECS.delivery_web.maxEdge}w` : undefined}
+      sizes="100vw" className="absolute inset-0 size-full object-cover" />}
+    <div aria-hidden className="pointer-events-none absolute inset-0 bg-[var(--scrim-hero)]" />
+    <img src="/brand/Quincy-HERO-Q-WHITE-1.png" alt="" aria-hidden className="pointer-events-none absolute -top-[12%] left-1/2 h-[125%] -translate-x-1/2 opacity-15 select-none" />
+    <div data-testid="delivery-hero-credit" aria-hidden className="pointer-events-none absolute top-[var(--space-7)] right-[var(--space-7)] z-10 @max-[721px]:top-[var(--space-4)] @max-[721px]:right-[var(--space-4)]">
+      <img src="/brand/quincy-wordmark-white.png" alt="" className="h-[var(--space-5)] w-auto select-none" />
+    </div>
+    <div className="relative z-10 mx-auto w-full max-w-[var(--container-page)] px-[var(--space-7)] pt-[var(--space-9)] pb-[var(--space-8)] @max-[721px]:px-[var(--space-4)] @max-[721px]:pt-[var(--space-7)] @max-[721px]:pb-[var(--space-6)]">
+      {eyebrow.length > 0 && <p data-testid="delivery-hero-eyebrow" className="m-0 mb-[var(--space-4)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-on-inverse-muted">{eyebrow.join(" · ")}</p>}
+      <h1 className="m-0 max-w-[14ch] [font:400_clamp(var(--text-3xl),6cqw,var(--text-5xl))/0.98_var(--font-display)] tracking-[var(--tracking-tightest)] text-balance">{street}</h1>
+      {(agency !== null || counts !== "") && <p data-testid="delivery-hero-meta" className="m-0 mt-[var(--space-5)] flex flex-wrap items-center gap-[var(--space-4)] [font:var(--type-body-lg)]">
+        {agency !== null && <span>{agency}</span>}
+        {agency !== null && counts !== "" && <span aria-hidden className="opacity-40">—</span>}
+        {counts !== "" && <span className="text-on-inverse-muted">{counts}</span>}
+      </p>}
+      {action !== undefined && action !== null && <div className="mt-[var(--space-7)] flex flex-wrap gap-[var(--space-3)]">{action}</div>}
     </div>
   </header>;
 }
@@ -71,37 +79,65 @@ function Groups({ items, props, onOpen, headings }: { items: DeliveryItemDto[]; 
   const { hrefs, onRequestUnlock, unlockState } = props;
   const of = (kind: DeliveryItemDto["kind"]) => items.filter((item) => item.kind === kind);
   const photos = of("photo"); const films = of("video"); const plans = of("floorplan"); const copy = of("copy");
-  const heading = (text: string) => headings ? <h3 className="m-0 mb-[var(--space-3)] [font:var(--type-label)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">{text}</h3> : null;
+  const heading = (text: string, n: number) => headings ? <h3 className="m-0 mb-[var(--space-3)] flex items-baseline gap-[var(--space-2)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">{text}<span className="tabular-nums">{n}</span></h3> : null;
   return <div className="grid gap-[var(--space-6)]">
-    {photos.length > 0 && <section aria-label="Photos">{heading("Photos")}<PhotoGrid items={photos} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} onOpen={onOpen} /></section>}
-    {films.length > 0 && <section aria-label="Film">{heading("Film")}<FilmList items={films} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} /></section>}
-    {plans.length > 0 && <section aria-label="Floorplan">{heading("Floorplan")}<DocRows items={plans} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} label="Floorplan" /></section>}
-    {copy.length > 0 && <section aria-label="Description">{heading("Description")}<DocRows items={copy} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} label="Description" /></section>}
+    {photos.length > 0 && <section aria-label="Photos">{heading("Photos", photos.length)}<PhotoGrid items={photos} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} onOpen={onOpen} /></section>}
+    {films.length > 0 && <section aria-label="Film">{heading("Film", films.length)}<FilmList items={films} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} /></section>}
+    {plans.length > 0 && <section aria-label="Floorplan">{heading("Floorplan", plans.length)}<DocRows items={plans} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} label="Floorplan" /></section>}
+    {copy.length > 0 && <section aria-label="Copywriting">{heading("Copywriting", copy.length)}<DocRows items={copy} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} label="Copywriting" /></section>}
   </div>;
 }
 
-function Panel({ tab, props, onOpen, slotTab }: { tab: DeliveryTab; props: DeliveryPageProps; onOpen: OpenViewer; slotTab: DeliveryTabId }) {
-  const noun: Record<DeliveryTabId, string> = { photos: count(tab.items.length, "photo", "photos"), film: count(tab.items.length, "film", "films"), floorplan: count(tab.items.length, "floorplan", "floorplans"), description: count(tab.items.length, "document", "documents"), premium: count(tab.items.length, "extra", "extras") };
-  return <TabsContent value={tab.id} data-testid={`delivery-panel-${tab.id}`} className="pt-[var(--space-5)]">
-    <Frame><FramePanel>
-      <SectionHead eyebrow={noun[tab.id]} actions={tab.id === slotTab ? props.downloadAllSlot : undefined}>{tab.label}</SectionHead>
-      {tab.id === "premium" && <p className="m-0 mb-[var(--space-5)] max-w-[60ch] [font:var(--type-body)] text-foreground-secondary">Extras from the studio. A locked extra shows a preview; ask the studio to unlock it.</p>}
-      <Groups items={tab.items} props={props} onOpen={onOpen} headings={tab.id === "premium"} />
-    </FramePanel></Frame>
+/** The Premium tab's lead-in (the prototype's `.premium-intro`): what Premium is, and how many extras are still locked. One Frame (ADR 0014). */
+function PremiumIntro({ items }: { items: DeliveryItemDto[] }) {
+  const lockedCount = items.filter((item) => item.locked).length;
+  return <Frame className="mb-[var(--space-6)]"><FramePanel className="flex flex-wrap items-end justify-between gap-[var(--space-6)]">
+    <div className="grid gap-[var(--space-2)]">
+      <Eyebrow>Premium</Eyebrow>
+      <h2 className="m-0 [font:var(--type-h1)] tracking-[var(--tracking-tight)] text-pretty">Paid extras</h2>
+      <p className="m-0 max-w-[60ch] [font:var(--type-body)] text-foreground-secondary">Extras from the studio. A locked extra shows a preview; ask the studio to unlock it.</p>
+    </div>
+    <div className="text-right">
+      <p className="m-0 [font:var(--type-h1)] tabular-nums">{lockedCount}</p>
+      <p className="m-0 [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">{lockedCount === 1 ? "item to unlock" : "items to unlock"}</p>
+    </div>
+  </FramePanel></Frame>;
+}
+
+function Panel({ tab, props, onOpen }: { tab: DeliveryTab; props: DeliveryPageProps; onOpen: OpenViewer }) {
+  return <TabsContent value={tab.id} data-testid={`delivery-panel-${tab.id}`}>
+    {tab.id === "premium" && <PremiumIntro items={tab.items} />}
+    <Groups items={tab.items} props={props} onOpen={onOpen} headings={tab.id === "premium"} />
   </TabsContent>;
 }
 
+/** The inverse band at the foot: the studio's wordmark and name, its email (a mailto carrying the street) and website, and the copyright line. */
+function Footer({ street }: { street: string }) {
+  const link = "text-on-inverse-muted no-underline hover:text-on-inverse";
+  return <footer data-testid="delivery-footer" data-surface="inverse" className="mt-[var(--space-9)] bg-background text-foreground">
+    <div className="mx-auto grid w-full max-w-[var(--container-page)] gap-[var(--space-6)] px-[var(--space-7)] pt-[var(--space-8)] pb-[var(--space-6)] @max-[721px]:px-[var(--space-4)]">
+      <div className="flex flex-wrap items-end justify-between gap-[var(--space-6)]">
+        <div><img src="/brand/quincy-wordmark-white.png" alt="" aria-hidden className="h-[22px] w-auto" /><span className="sr-only">{STUDIO_NAME}</span></div>
+        <div className="grid gap-[var(--space-2)] [font:var(--type-body-sm)] sm:text-right">
+          <a href={studioEmailHref(street)} className={link}>{STUDIO_EMAIL}</a>
+          <a href={STUDIO_WEBSITE} target="_blank" rel="noopener noreferrer" className={link}>{STUDIO_WEBSITE.replace("https://", "")}</a>
+        </div>
+      </div>
+      <Separator />
+      <Eyebrow className="text-on-inverse-muted">{`© ${STUDIO_NAME} ${new Date().getFullYear()}`}</Eyebrow>
+    </div>
+  </footer>;
+}
+
 /**
- * The Client Delivery page (#787 slice 9, PRD 6.7), as pure presentation: hero, tabs, lightbox, footer. It owns only what a viewer does to it (which tab, which photo is open); the data, the links and the unlock
- * requests come in as props, so the same component is the public page (`DeliveryApp`) and slice 10's staff Preview. It is sized by CONTAINER queries (`@container`), not the window, so it holds its layout at 720 px in a dialog.
- * Tabs: Photos, Film, Floorplan, Description, and Premium when anything is a paid extra; empty ones are left out. State is in memory only.
+ * The Client Delivery page (#787 slice 9, PRD 6.7; redesigned in #836 to the prototype's Client view), as pure presentation: a full-bleed hero, an underlined tab bar, the panels, the lightbox and the footer. It owns only what a viewer does to it
+ * (which tab, which photo is open); the data, the links and the unlock requests come in as props, so the same component is the public page (`DeliveryApp`) and slice 10's staff Preview. It is sized by CONTAINER queries (`@container`),
+ * not the window, so it holds its layout at 720 px in a dialog. Tabs: Gallery, Film, Floorplan, Copywriting, and Premium when anything is a paid extra; empty ones are left out. State is in memory only.
  */
 export function DeliveryPage(props: DeliveryPageProps) {
   const { dto } = props;
   const tabs = useMemo(() => tabsOf(dto), [dto]);
   const hero = useMemo(() => heroOf(dto), [dto]);
-  // Download all sits on the Photos tab; a page whose photos are all paid extras has no Photos tab, so it sits on Premium, where those photos are.
-  const slotTab: DeliveryTabId = tabs.some((tab) => tab.id === "photos") ? "photos" : "premium";
   const [chosen, setChosen] = useState<DeliveryTabId | null>(null);
   const active = tabs.some((tab) => tab.id === chosen) ? chosen : (tabs[0]?.id ?? null);
   const [viewer, setViewer] = useState<Viewer | null>(null);
@@ -115,21 +151,26 @@ export function DeliveryPage(props: DeliveryPageProps) {
   }, [viewer, dto]);
   const { street } = dto.property;
   return <article aria-label={`Delivery: ${street}`} data-testid="delivery-page" className="@container w-full bg-background text-foreground">
-    <div className="mx-auto grid w-full max-w-[var(--container-page)] gap-[var(--space-6)] px-[var(--space-4)] py-[var(--space-5)]">
-      <Hero key={hero?.url ?? ""} dto={dto} hero={hero} />
-      {active === null
-        ? <EmptyState data-testid="delivery-empty" title="Nothing here yet.">The studio hasn't added anything to this page.</EmptyState>
-        : <Tabs value={active} onValueChange={(value) => { setChosen(value as DeliveryTabId); }}>
-          <TabsList variant="line" data-testid="delivery-tabs-list" aria-label="Delivery sections" className="h-auto max-w-full group-data-[orientation=horizontal]/tabs:h-auto flex-wrap justify-start gap-x-[var(--space-1)] gap-y-[var(--space-3)]">
-            {tabs.map((tab) => <TabsTrigger key={tab.id} value={tab.id} className={`h-auto flex-none px-[var(--space-3)] ${TOUCH}`}>{tab.label}</TabsTrigger>)}
-          </TabsList>
-          {tabs.map((tab) => <Panel key={tab.id} tab={tab} props={props} onOpen={open} slotTab={slotTab} />)}
-        </Tabs>}
-      <footer data-testid="delivery-footer" className="grid gap-[var(--space-4)]">
-        <Separator />
-        <StudioCredit href={askTheStudioHref(street)} data-testid="delivery-footer-credit" />
-      </footer>
-    </div>
+    <Hero key={hero?.url ?? ""} dto={dto} hero={hero} action={props.downloadAllSlot} />
+    {active === null
+      ? <div className="mx-auto w-full max-w-[var(--container-page)] px-[var(--space-7)] py-[var(--space-7)] @max-[721px]:px-[var(--space-4)]"><EmptyState data-testid="delivery-empty" title="Nothing here yet.">The studio hasn't added anything to this page.</EmptyState></div>
+      : <Tabs value={active} onValueChange={(value) => { setChosen(value as DeliveryTabId); }}>
+        <div className="border-0 border-b border-solid border-[var(--border-hairline)]">
+          <div className="mx-auto w-full max-w-[var(--container-page)] px-[var(--space-7)] py-[var(--space-4)] @max-[721px]:px-[var(--space-4)]">
+            <TabsList variant="line" data-testid="delivery-tabs-list" aria-label="Delivery sections" className="h-auto max-w-full group-data-[orientation=horizontal]/tabs:h-auto flex-wrap justify-start gap-x-[var(--space-3)] gap-y-[var(--space-3)]">
+              {tabs.map((tab) => <TabsTrigger key={tab.id} value={tab.id} className={`h-auto flex-none gap-[var(--space-2)] px-[var(--space-2)] [font:var(--type-label)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary data-active:text-foreground ${TOUCH}`}>
+                {tab.id === "premium" && <LockIcon aria-hidden className="size-3.5" />}
+                <span data-testid="delivery-tab-label">{tab.label}</span>
+                <span data-testid="delivery-tab-count" className="tabular-nums text-foreground-secondary">{tab.items.length}</span>
+              </TabsTrigger>)}
+            </TabsList>
+          </div>
+        </div>
+        <div className="mx-auto w-full max-w-[var(--container-page)] p-[var(--space-7)] @max-[721px]:p-[var(--space-4)]">
+          {tabs.map((tab) => <Panel key={tab.id} tab={tab} props={props} onOpen={open} />)}
+        </div>
+      </Tabs>}
+    <Footer street={street} />
     {viewer && viewerItems && viewerItems.length > 0 && <ViewerBoundary onClose={() => { setViewer(null); }}>
       <Suspense fallback={null}>
         <DeliveryLightbox

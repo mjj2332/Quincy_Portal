@@ -32,22 +32,21 @@ function TileImage({ item }: { item: DeliveryItemDto }) {
 function PhotoTile({ item, items, index, hrefs, unlock, onRequestUnlock, onOpen }: { item: DeliveryItemDto; items: DeliveryItemDto[]; index: number; hrefs: DeliveryHrefs | null; unlock: UnlockStates; onRequestUnlock: (handle: string) => void; onOpen: OpenViewer }) {
   return <li data-testid="delivery-tile" data-handle={item.handle} className="grid content-start gap-[var(--space-2)]">
     {/* The clip is on the picture's own wrapper, not on the tile: the open button's focus outline is drawn outward and an ancestor with overflow-hidden would cut it off. */}
-    <div style={{ aspectRatio: aspectOf(item) }} className="relative border border-solid border-[var(--border-hairline)] bg-surface-sunken">
+    <div style={{ aspectRatio: aspectOf(item) }} className="relative bg-surface-sunken">
       <div className="absolute inset-0 overflow-hidden"><TileImage key={`${item.locked}:${item.thumbUrl}`} item={item} /></div>
       <Button type="button" variant="ghost" aria-label={`Open ${item.label}`} className="absolute inset-0 h-full w-full rounded-none p-0 hover:bg-transparent" onClick={(event) => { onOpen(items, index, event.currentTarget); }} />
+      {/* Always visible (the prototype reveals it on hover, which a phone has no equivalent of), and it never takes a click from the open button under it. */}
+      <span data-testid="delivery-tile-caption" className="pointer-events-none absolute inset-x-0 bottom-0 bg-[var(--scrim-caption)] px-[var(--space-3)] pt-[var(--space-6)] pb-[var(--space-2)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-on-inverse">{item.label}</span>
       {item.locked && <span className="pointer-events-none absolute top-[var(--space-2)] left-[var(--space-2)]"><PremiumBadge overPhoto /></span>}
     </div>
-    <div className="flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-2)]">
-      <span className="[font:var(--type-label)]">{item.label}</span>
-      {!item.locked && hrefs && <PhotoDownloads item={item} hrefs={hrefs} />}
-    </div>
+    {!item.locked && hrefs && <PhotoDownloads item={item} hrefs={hrefs} />}
     {item.locked && <UnlockControl label={item.label} state={unlockOf(unlock, item.handle)} onRequest={() => { onRequestUnlock(item.handle); }} />}
   </li>;
 }
 
 /** The thumbnails: four columns, two once the page itself (not the window) is 721 px or narrower, so it holds its shape inside Preview's 720 px dialog. Boxes carry the photo's own ratio, so nothing shifts as images load. */
 export function PhotoGrid({ items, hrefs, unlock, onRequestUnlock, onOpen, label = "Photos" }: { items: DeliveryItemDto[]; hrefs: DeliveryHrefs | null; unlock: UnlockStates; onRequestUnlock: (handle: string) => void; onOpen: OpenViewer; label?: string }) {
-  return <ul aria-label={label} data-testid="delivery-grid" className="m-0 grid list-none grid-cols-4 gap-[var(--space-3)] p-0 @max-[721px]:grid-cols-2">
+  return <ul aria-label={label} data-testid="delivery-grid" className="m-0 grid list-none grid-cols-4 gap-[var(--space-4)] p-0 @max-[721px]:grid-cols-2 @max-[721px]:gap-[var(--space-2)]">
     {items.map((item, index) => <PhotoTile key={item.handle} item={item} items={items} index={index} hrefs={hrefs} unlock={unlock} onRequestUnlock={onRequestUnlock} onOpen={onOpen} />)}
   </ul>;
 }
