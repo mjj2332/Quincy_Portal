@@ -59,7 +59,19 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   /** Present when the URL names this film (#819, staff Project route): `version` is the Version number it names (absent = the current one), `href` the absolute link to a Version, `onVersionShown` how the viewer reports the Version on show. */
   deepLink?: { version?: number; /** The list this Video came from is a settled, successful read: only then is an unknown Version normalised in the URL. */ settled: boolean; href: (version: number) => string; onVersionShown: (version: number) => void };
 }) {
-  const [assetId, setAssetId] = useState(() => (deepLink?.version === undefined ? undefined : video.versions.find((candidate) => candidate.version === deepLink.version)?.assetId) ?? video.currentAssetId);
+  // With a `deepLink` the URL is the only source of the Version on show (no local copy): `deepLink.version` if the list has it, else the current Version. Every choice writes the URL and the display follows it.
+  const [localAssetId, setLocalAssetId] = useState(video.currentAssetId);
+  const urlAsset = deepLink ? (deepLink.version === undefined ? undefined : video.versions.find((candidate) => candidate.version === deepLink.version)) ?? video.versions.find((candidate) => candidate.assetId === video.currentAssetId) ?? video.versions[0]! : undefined;
+  const assetId = urlAsset?.assetId ?? localAssetId;
+  const deepLinkRef = useRef(deepLink);
+  deepLinkRef.current = deepLink;
+  const versionsRef = useRef(video.versions);
+  versionsRef.current = video.versions;
+  const setAssetId = useCallback((next: string) => {
+    const link = deepLinkRef.current;
+    const target = versionsRef.current.find((candidate) => candidate.assetId === next);
+    if (link && target) link.onVersionShown(target.version); else setLocalAssetId(next);
+  }, []);
   const playerRef = useRef<VideoPlayerControl>(null);
   const compareRef = useRef<VideoPlayerControl>(null);
   const compareButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -163,7 +175,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     const present = new Set(versionIds.split(","));
     const previous = previousVersions.current;
     previousVersions.current = { videoId: video.id, ids: present };
-    if (!present.has(assetId)) { setResume(null); setAssetId(video.currentAssetId); }
+    if (!present.has(assetId)) { setResume(null); setLocalAssetId(video.currentAssetId); }
     if (previous === null || previous.videoId !== video.id) return;
     const gone = new Set([...previous.ids].filter((id) => !present.has(id)));
     const pair = compareStore?.getState().pair;
@@ -230,41 +242,19 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   };
 
   const version = video.versions.find((candidate) => candidate.assetId === assetId) ?? video.versions[0]!;
-  // #819: the URL follows the Version on show (this also rewrites a missing or unknown Version to the one shown), and a change of the URL's Version from outside
-  // (Back/Forward) is taken once. The report is guarded by the URL's own value, so the two never chase each other.
+  // #819: the one normalisation rule. A settled, successful list read that lacks the URL's Version (omitted, unknown, or one a refresh removed) gets the fresh current Version written; never while unsettled.
   const urlVersion = deepLink?.version;
-  const reportVersion = deepLink?.onVersionShown;
-  const reportRef = useRef(reportVersion);
-  reportRef.current = reportVersion;
-  const urlVersionRef = useRef(urlVersion);
-  urlVersionRef.current = urlVersion;
-  // Keyed on the Version on show only: a URL that moved on its own is followed by the effect below, never overwritten by this one.
-  // Until the list read has settled the requested Version is kept (the cached list may simply predate it): the Version shown meanwhile is not written. Once settled, the requested
-  // Version is shown if the list has it (once per opening, never over the person's own choice), else the one on show is reported.
-  const settled = deepLink?.settled ?? true;
-  const resolvedRef = useRef(false);
-  const shownRef = useRef({ assetId, versions: video.versions });
-  shownRef.current = { assetId, versions: video.versions };
+  const settled = deepLink?.settled ?? false;
+  const currentVersion = video.versions.find((candidate) => candidate.assetId === video.currentAssetId)?.version;
   useEffect(() => {
-    if (reportRef.current === undefined || !settled) return;
-    if (!resolvedRef.current) {
-      resolvedRef.current = true;
-      const wanted = urlVersionRef.current === undefined ? undefined : shownRef.current.versions.find((candidate) => candidate.version === urlVersionRef.current);
-      if (wanted && wanted.assetId !== shownRef.current.assetId) { exitCompare("dialog"); setResume(null); setAssetId(wanted.assetId); return; }
-    }
-    if (urlVersionRef.current !== version.version) reportRef.current(version.version);
-  }, [version.version, settled, exitCompare]);
-  const seededUrlVersion = useRef(urlVersion);
+    if (!settled || currentVersion === undefined) return;
+    if (urlVersion === undefined || !versionsRef.current.some((candidate) => candidate.version === urlVersion)) deepLinkRef.current?.onVersionShown(currentVersion);
+  }, [settled, urlVersion, currentVersion, video.versions]);
+  // Back/Forward (or any write that did not come from this viewer) to a different Version while comparing leaves Compare; a side A change made here already moved the pair.
   useEffect(() => {
-    if (seededUrlVersion.current === urlVersion) return;
-    seededUrlVersion.current = urlVersion;
-    const known = urlVersion !== undefined && video.versions.some((candidate) => candidate.version === urlVersion);
-    if (!known && !settled) { resolvedRef.current = false; return; } // the settled read decides what an unknown Version becomes
-    // An omitted or unknown Version resolves to the current one, and that Version is reported back even when it is already on show.
-    const target = (urlVersion === undefined ? undefined : video.versions.find((candidate) => candidate.version === urlVersion)) ?? video.versions.find((candidate) => candidate.assetId === video.currentAssetId) ?? video.versions[0]!;
-    if (target.assetId !== assetId) { exitCompare("dialog"); setResume(null); setAssetId(target.assetId); }
-    if (target.version !== urlVersion) reportRef.current?.(target.version);
-  }, [urlVersion, video.versions, video.currentAssetId, assetId, exitCompare, settled]);
+    if (!deepLinkRef.current || modeRef.current !== "compare") return;
+    if (compareStore?.getState().pair?.a !== assetId) exitCompare("dialog");
+  }, [assetId, compareStore, exitCompare]);
   const base = { nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame };
   const startLabel = framesToTimecode(0, base, version.startTimecodeFrames ?? 0);
   const newest = Math.max(...video.versions.map((candidate) => candidate.version));
@@ -303,7 +293,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       </div>
       {!comparing && <div data-testid="video-version-group" className="flex min-w-0 max-w-full items-center gap-[var(--space-2)]">
         <label htmlFor={VERSION_SELECT_ID} className="shrink-0 text-foreground-secondary [font:var(--type-label)]">Version</label>
-        <Select value={version.assetId} onValueChange={(next) => { if (typeof next === "string") { resolvedRef.current = true; setResume(null); setAssetId(next); } }}>
+        <Select value={version.assetId} onValueChange={(next) => { if (typeof next === "string") { setResume(null); setAssetId(next); } }}>
           <SelectTrigger id={VERSION_SELECT_ID} data-testid="video-version-trigger" className="pointer-coarse:min-h-11 max-[721px]:min-h-11 min-w-0 max-w-full">
             <SelectValue>{() => <span data-testid="video-version-label" className="block truncate">{optionLabel(version)}</span>}</SelectValue>
           </SelectTrigger>

@@ -186,16 +186,68 @@ describe("the viewer's deep link (#819)", () => {
   describe("a Version the cached list lacks while a refresh is in flight", () => {
     const asset3 = "33333333-3333-4333-8333-333333333333";
     const withV3 = (): VideoDto => { const base = videoOf(); return { ...base, currentAssetId: asset3, versions: [versionOf({ assetId: asset3, version: 3, current: true, streamUrl: `/media/video/${asset3}` }), ...base.versions.map((v) => ({ ...v, current: false }))] } as VideoDto; };
-    async function openOnStaleCache(refreshed: () => VideoDto[]) {
-      await mount(null);
+    async function openOnStaleCache(refreshed: () => VideoDto[], opts: { cached?: () => VideoDto[]; version?: number; parts?: VideoReviewPart[] } = {}) {
+      if (opts.cached) videoList = opts.cached;
+      await mount(null, opts.parts);
       await act(async () => { setShown(false); }); await flush(2);
       await act(async () => { await client!.invalidateQueries({ refetchType: "none" }); });
       let release!: () => void;
       listGate = new Promise<void>((resolve) => { release = resolve; });
       videoList = refreshed;
-      await act(async () => { setSelection({ id: ids.video, version: 3 }); setShown(true); }); await flush(6);
+      await act(async () => { setSelection({ id: ids.video, version: opts.version ?? 3 }); setShown(true); }); await flush(6);
       return release;
     }
+    const withVersions = (count: number): VideoDto => {
+      const all = [1, 2, 3, 4].slice(0, count).map((n) => versionOf({ assetId: `33333333-3333-4333-8333-33333333333${n}`, version: n, current: n === count, streamUrl: `/media/video/${n}` }));
+      return { ...videoOf(), currentAssetId: all.at(-1)!.assetId, versions: all.reverse() } as VideoDto;
+    };
+    const settleOn = async (predicate: () => boolean, what: string) => { const deadline = Date.now() + 10_000; while (!predicate()) { if (Date.now() > deadline) throw new Error(`never ${what} (${label()}; ${JSON.stringify(written)})`); await flush(1); } await flush(4); };
+    it.each([["v9", { id: ids.video, version: 9 }], ["an omitted Version", { id: ids.video }]])("a refresh in flight while the URL moves to %s: the settled read's current Version is shown and written", async (_name, next) => {
+      videoList = () => [{ ...videoOf(), currentAssetId: ids.asset1, versions: [{ ...videoOf().versions[1]!, current: true }] } as VideoDto];
+      await mount({ id: ids.video, version: 1 });
+      let release!: () => void;
+      listGate = new Promise<void>((resolve) => { release = resolve; });
+      videoList = () => [videoOf()];
+      await act(async () => { void client!.invalidateQueries(); }); await flush(4);
+      await act(async () => { setSelection(next); }); await flush(6);
+      expect(written).toEqual([]);
+      await act(async () => { release(); });
+      await settleOn(() => written.length > 0, "wrote");
+      expect(written.at(-1)).toEqual({ id: ids.video, version: 2 });
+      expect(label()).toMatch(/^v2/);
+    });
+    it("a refresh that changes the current Version re-resolves an omitted Version to the new one", async () => {
+      videoList = () => [withVersions(2)];
+      await mount(null);
+      let release!: () => void;
+      listGate = new Promise<void>((resolve) => { release = resolve; });
+      videoList = () => [withVersions(3)];
+      await act(async () => { void client!.invalidateQueries(); }); await flush(4);
+      await act(async () => { setSelection({ id: ids.video }); }); await flush(6);
+      expect(label()).toMatch(/^v2/);
+      expect(written).toEqual([]);
+      await act(async () => { release(); });
+      await settleOn(() => written.length > 0, "wrote");
+      expect(written.at(-1)).toEqual({ id: ids.video, version: 3 });
+      expect(label()).toMatch(/^v3/);
+    });
+    it("Compare side A changed during a refresh stays the reviewer's pick when the refresh returns the requested Version", async () => {
+      const release = await openOnStaleCache(() => [withVersions(4)], { cached: () => [withVersions(3)], version: 4, parts: ["compare"] });
+      const video = dialog()!.querySelector("video")!;
+      await act(async () => { stub.loadMetadata(video, { duration: 12, videoWidth: 1920, videoHeight: 1080 }); });
+      await act(async () => { stub.finishSeek(video); stub.presentFrame(video, 0); }); await flush(2);
+      await click(tid("video-compare-toggle")!);
+      await settleOn(() => tid("video-compare-select-a") !== null, "compared");
+      const trigger = tid("video-compare-select-a")!;
+      await act(async () => { trigger.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); trigger.click(); });
+      await flush(6);
+      await act(async () => { [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent?.startsWith("v1"))!.click(); }); await flush(8);
+      expect(written.at(-1)).toEqual({ id: ids.video, version: 1 });
+      await act(async () => { release(); }); await flush(10);
+      expect(written.at(-1)).toEqual({ id: ids.video, version: 1 });
+      expect(tid("video-compare")).not.toBeNull();
+      expect(tid("video-compare-select-a")!.textContent).toMatch(/v1/);
+    });
     it("keeps the requested Version in the URL, and shows it once the settled read has it", async () => {
       const release = await openOnStaleCache(() => [withV3()]);
       expect(written).toEqual([]);
