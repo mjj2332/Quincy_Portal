@@ -68,8 +68,11 @@ async function oneLink(c: Ctx, projectId: string, linkId: string, now: number) {
   const [link] = await loadReviewLinkDtos(c.env.DB, projectId, now, c.env.APP_ORIGIN, linkId);
   return reviewLinkDtoSchema.parse(link);
 }
-/** The create and replace body: the link and, from the same DTO, its address. A link just written always has one. */
-function revealOf(link: ReviewLinkDto) { return reviewLinkRevealResponseSchema.parse({ link, url: link.url }); }
+/** The create and replace body: the link and, from the same DTO, its address. A revoke can land between the write and this reload; the link then has no address, so answer as revoked. */
+function reveal(c: Ctx, link: ReviewLinkDto, status: 200 | 201 = 200): Response {
+  if (link.url === null) return revokedResponse(c);
+  return c.json(reviewLinkRevealResponseSchema.parse({ link, url: link.url }), status);
+}
 /** After a refused guard: why, from a fresh read. Only reached on a race (the route pre-checked), so a generic answer is fine for the rest. */
 async function refusedBecause(c: Ctx, projectId: string, linkId: string, extra?: () => Promise<Response | null>): Promise<Response> {
   if (await projectIsArchived(c.env, projectId)) return archivedResponse(c);
@@ -124,7 +127,7 @@ reviewLinksRoutes.post("/projects/:projectId/review-links", terminalRoute("/proj
     allow: { comments: input.allow?.comments ?? true, approve: input.allow?.approve ?? true, download: input.allow?.download ?? true },
   });
   if (linkId === false) return await projectIsArchived(c.env, projectId) ? archivedResponse(c) : otherProject(c);
-  return c.json(revealOf(await oneLink(c, projectId, linkId, now)), 201);
+  return reveal(c, await oneLink(c, projectId, linkId, now), 201);
 }));
 
 reviewLinksRoutes.patch("/projects/:projectId/review-links/:linkId", terminalRoute("/projects/:projectId/review-links/:linkId", async (c) => {
@@ -226,5 +229,5 @@ reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/replace", term
   const token = randomToken();
   const ok = await replaceReviewLinkToken(c.env.DB, { projectId, linkId, principal: principalOf(c), tokenHash: await hashToken(token), tokenSecret: token, now });
   if (!ok) return refusedBecause(c, projectId, linkId, async () => (await findLinkHead(c.env.DB, projectId, linkId))!.expires_at <= Date.now() ? expired() : null);
-  return c.json(revealOf(await oneLink(c, projectId, linkId, now)));
+  return reveal(c, await oneLink(c, projectId, linkId, now));
 }));

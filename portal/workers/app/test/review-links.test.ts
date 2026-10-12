@@ -550,6 +550,22 @@ describe("replace", () => {
     expect(await row(link.id)).toEqual(before);
     expect(await audits("review_link.replace")).toEqual([]);
   });
+
+  it("answers 409 link_revoked, not 500, when a revoke lands between the replace and its reload", async () => {
+    const { link } = await createOk({ videoIds: [v1.videoId] });
+    const db = database.DB; const prepare = db.prepare.bind(db); const batch = db.batch.bind(db); let armed = false; let raced = false;
+    // The reload is the batch that reads token_secret; revoke the link just before it runs, as a second staff member would.
+    db.prepare = ((sql: string) => { if (!raced && sql.includes("l.token_secret")) armed = true; return prepare(sql); }) as typeof db.prepare;
+    db.batch = (async (statements: D1PreparedStatement[]) => {
+      if (armed && !raced) { raced = true; await prepare("UPDATE client_links SET revoked_at = ?, revoked_by = ?, token_secret = NULL WHERE id = ?").bind(Date.now(), ids.admin, link.id).run(); }
+      return batch(statements);
+    }) as typeof db.batch;
+    try {
+      const response = await request(`${base()}/${link.id}/replace`, "admin", "POST", {});
+      expect(raced).toBe(true);
+      expect(response.status, await response.clone().text()).toBe(409); expect(await json(response)).toMatchObject({ code: "link_revoked" });
+    } finally { db.prepare = prepare; db.batch = batch; }
+  });
 });
 
 describe("cross-column invariants (0069 leaves them to route SQL)", () => {
