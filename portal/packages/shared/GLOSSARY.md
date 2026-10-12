@@ -293,9 +293,30 @@ _Avoid_: Notes export, NLE export (in staff-facing copy)
 
 **Review link**:
 A private link giving Guest reviewers access to one or more Videos from a single Project, with an
-expiry, an optional passcode and the Versions granted on it. Delivers released video only.
-Created and managed by Admin, Editor and, on Projects they are assigned to, External editors (#834); Release stays a studio decision.
-_Avoid_: Client link, share link, delivery link (the delivery page is a different, unbuilt surface)
+expiry, an optional passcode and the Versions granted on it. Delivers released video only. Staff
+make it themselves (Admin, Editor and, on Projects they are assigned to, External editors, #834), and
+may Revoke or Delete it; the one exception is the Delivery review link. Release stays a studio decision.
+_Avoid_: Client link, share link, delivery link (the Delivery page is a different surface)
+
+**Delivery review link**:
+The one Review link per Project that the system makes and keeps for its Delivery page: every film
+tile on the Delivery page opens it. It carries each film in the latest Published set, at its published
+Version and every older one, until a later Publish leaves the film out. The published Version is
+downloadable there because it is published, not because of a Release; older Versions behave as on any
+Review link. It lives as long as the Delivery page does, has no passcode, always allows comments and
+approval, and staff can neither Revoke nor Delete it. A locked Premium film has no way onto it until
+staff Unlock it.
+_Avoid_: Default link, system link, delivery link
+
+**Revoke**:
+Ending a Review link's access at once. The link stays in staff's list, marked revoked, with its
+history.
+_Avoid_: Disable, expire
+
+**Delete (Review link)**:
+Removing an already-revoked Review link from staff's list. Its notes, approvals and audit trail stay,
+and it cannot be restored. Anyone who may Revoke a link may Delete it.
+_Avoid_: Purge, remove
 
 **Guest reviewer**:
 A client with no Portal account who reviews through a Review link, identified by an email verified
@@ -317,8 +338,9 @@ _Avoid_: Export (that is the NLE marker export), Release (a Release makes a Vers
 
 **Delivery page**:
 A Project's one public page, at a web address built from the property address, where its latest
-Published set is viewed and downloaded with no sign-in and no code. Receive-only: clients browse and
-download, and never comment or approve there. Unrelated to Review links.
+Published set is viewed and downloaded with no sign-in and no code. Clients browse and download there;
+to comment on or approve a film they open it on the Project's Delivery review link, which asks them to
+verify their email.
 _Avoid_: Gallery (as a domain term; fine as page copy), client portal, client link, Review link
 
 **Publish**:
