@@ -167,6 +167,9 @@ describe("delivery: who still gets it", () => {
     const send = await deliver(fixture);
     expect(await stored(fixture.recipientId)).toEqual([{ type: kind, title: "Video review update", body, sourceKey: fixture.sourceKey, projectId: fixture.projectId }]);
     expect(send).toHaveBeenCalledTimes(1);
+    const mail = send!.mock.calls[0]![0] as { text: string; html: string };
+    expect(mail.text).toContain(body);
+    expect(mail.html).toContain(body);
     expect(emailText(send!)).not.toContain("Kitchen walkthrough");
     expect(emailText(send!)).not.toContain("Alex Actor");
   });
