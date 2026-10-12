@@ -1,18 +1,27 @@
-import { VIDEO_NOTE_BODY_MAX, type GuestNoteCreateInput, type GuestNoteEditInput, type GuestNoteThreadDto, type MarkupItem } from "@quincy/shared";
+import { VIDEO_NOTE_BODY_MAX, videoNoteBody, type GuestNoteCreateInput, type GuestNoteEditInput, type GuestNoteThreadDto, type MarkupItem, type RichTextDoc } from "@quincy/shared";
 import { marksToFrames, type NoteMarks } from "../lib/video-note-marks";
 import { waitPhrase } from "./GuestVerifyDialog";
 import type { DecisionResult, WriteResult } from "./guest-api";
 
-/** Everything a create sends, built from the composer's draft; or the one thing wrong with it, in words for the guest. */
-export function composeInput({ body, marks, frameCount, items, drawingFrame }: {
-  body: string; marks: NoteMarks; frameCount: number; items: readonly MarkupItem[]; drawingFrame: number | null;
+/**
+ * A note's plain text, what the server stores as its `body` (#835): a picture or video reads as a count hint, so a note that is only media is a note. Empty means there is nothing to post.
+ * The same words are used wherever a draft is judged, so the composer, a reply and an edit agree.
+ */
+export const noteText = (doc: RichTextDoc): string => videoNoteBody(doc).trim();
+
+/** Whether two documents are the same note. The editor re-serialises what it is given, so equality is by value. */
+export const sameDoc = (a: RichTextDoc, b: RichTextDoc): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+/** Everything a create sends, built from the composer's draft; or the one thing wrong with it, in words for the guest. The note travels as `content`, a rich document (images and videos, never a mention). */
+export function composeInput({ doc, marks, frameCount, items, drawingFrame }: {
+  doc: RichTextDoc; marks: NoteMarks; frameCount: number; items: readonly MarkupItem[]; drawingFrame: number | null;
 }): { ok: true; input: GuestNoteCreateInput } | { ok: false; problem: string } {
-  const text = body.trim();
+  const text = noteText(doc);
   if (text === "") return { ok: false, problem: "Write a note first." };
   if (text.length > VIDEO_NOTE_BODY_MAX) return { ok: false, problem: "That note is too long." };
   const frames = marksToFrames(marks, frameCount);
   if (frames === null) return { ok: false, problem: "Mark the frame the note is about." };
-  const input: GuestNoteCreateInput = { startFrame: frames.startFrame, ...(frames.endFrame === null ? {} : { endFrame: frames.endFrame }), body: text };
+  const input: GuestNoteCreateInput = { startFrame: frames.startFrame, ...(frames.endFrame === null ? {} : { endFrame: frames.endFrame }), content: doc };
   if (items.length === 0 || drawingFrame === null) return { ok: true, input };
   // The server's rule: a point note's drawing is on its frame, a range note's anywhere in [start, end).
   const fits = frames.endFrame === null ? drawingFrame === frames.startFrame : drawingFrame >= frames.startFrame && drawingFrame < frames.endFrame;
@@ -45,29 +54,29 @@ export function failureText(result: WriteResult): string | null {
     case "rejected":
       if (result.error === "not_author") return "You can only change your own notes.";
       if (result.error === "frame_out_of_range" || result.error === "drawing_frame_outside") return "Those frames are outside this film.";
-      if (result.error === "markup_too_large" || result.error === "payload_too_large") return "That note is too large to send. Try a shorter note or a simpler drawing.";
+      if (result.error === "markup_too_large" || result.error === "payload_too_large" || result.error === "content_too_large") return "That note is too large to send. Try a shorter note or a simpler drawing.";
       return "That couldn't be saved. Check it and try again.";
   }
 }
 
 /** What an edit started from, so only what the guest really changed is sent. `hadDrawing` is whether the note carried a drawing when the edit opened. */
-export type EditBaseline = { body: string; startFrame: number; endFrame: number | null; hadDrawing: boolean };
+export type EditBaseline = { doc: RichTextDoc; startFrame: number; endFrame: number | null; hadDrawing: boolean };
 export type EditPatch = Omit<GuestNoteEditInput, "expectedRevision">;
 
 /**
  * The fields of a PATCH built from an edit draft; `patch` is null when nothing differs from the baseline. The server refuses frames together with a drawing change (`markup_and_frames`),
  * and refuses frames on a note that has a drawing (`markup_locks_frames`); the composer prevents both, and this is the second line, in words, rather than a 422 the guest cannot read.
  */
-export function editPatch({ body, marks, frameCount, items, drawingFrame, drawingRemoved, baseline }: {
-  body: string; marks: NoteMarks; frameCount: number; items: readonly MarkupItem[]; drawingFrame: number | null; drawingRemoved: boolean; baseline: EditBaseline;
+export function editPatch({ doc, marks, frameCount, items, drawingFrame, drawingRemoved, baseline }: {
+  doc: RichTextDoc; marks: NoteMarks; frameCount: number; items: readonly MarkupItem[]; drawingFrame: number | null; drawingRemoved: boolean; baseline: EditBaseline;
 }): { ok: true; patch: EditPatch | null } | { ok: false; problem: string } {
-  const text = body.trim();
+  const text = noteText(doc);
   if (text === "") return { ok: false, problem: "A note can't be empty." };
   if (text.length > VIDEO_NOTE_BODY_MAX) return { ok: false, problem: "That note is too long." };
   const frames = marksToFrames(marks, frameCount);
   if (frames === null) return { ok: false, problem: "Mark the frame the note is about." };
   const patch: EditPatch = {};
-  if (text !== baseline.body) patch.body = text;
+  if (!sameDoc(doc, baseline.doc)) patch.content = doc;
   const framesChanged = frames.startFrame !== baseline.startFrame || frames.endFrame !== baseline.endFrame;
   const drawingChanged = items.length > 0 || (drawingRemoved && baseline.hadDrawing);
   if (framesChanged && drawingChanged) return { ok: false, problem: "Save the new frames first, then change the drawing (or the other way round)." };

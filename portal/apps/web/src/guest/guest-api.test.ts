@@ -77,8 +77,9 @@ describe("guest-api: note writes", () => {
   });
   it("replies, edits and deletes on the note's own routes", async () => {
     answer(json(thread({ replies: [] }), 201));
-    await api().replyToNote(NOTE, "Thanks");
-    expect([lastCall().url, lastCall().init.method, lastCall().init.body]).toEqual([`/d/api/links/${LINK}/notes/${NOTE}/replies`, "POST", JSON.stringify({ body: "Thanks" })]);
+    const doc = { type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Thanks" }] }] };
+    await api().replyToNote(NOTE, doc);
+    expect([lastCall().url, lastCall().init.method, lastCall().init.body]).toEqual([`/d/api/links/${LINK}/notes/${NOTE}/replies`, "POST", JSON.stringify({ content: doc })]);
     answer(json(thread({ revision: 2 })));
     expect(await api().editNote(NOTE, { expectedRevision: 1, body: "New" })).toEqual({ kind: "ok", thread: thread({ revision: 2 }) });
     expect([lastCall().url, lastCall().init.method]).toEqual([`/d/api/links/${LINK}/notes/${NOTE}`, "PATCH"]);

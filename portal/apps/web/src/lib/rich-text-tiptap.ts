@@ -11,7 +11,7 @@ import { ListItem, TaskItem, TaskList } from "@tiptap/extension-list";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
 import { TableMap } from "@tiptap/pm/tables";
 import { TextAlign } from "@tiptap/extension-text-align";
-import { embeddedMediaPosterUrl, embeddedMediaUrl } from "./embedded-media";
+import { embeddedMediaPosterUrl, embeddedMediaUrl } from "./embedded-media-core";
 import { RICH_TEXT_HIGHLIGHT_COLORS, RICH_TEXT_MAX_NESTING, RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS, type RichTextDoc } from "@quincy/shared";
 
 // The Tiptap <-> stored RichTextDoc contract for `QuincyRichTextEditor`, in its two presets:
@@ -202,12 +202,12 @@ export const EmbeddedVideo = TiptapNode.create({
   draggable: true,
   selectable: true,
   // `hasPoster` (#556) is whether the server kept a poster frame; `null` (an older node, a draft) means unknown, which asks for the poster as before. Never stored.
-  addOptions() { return { mediaUrl: embeddedMediaUrl as (mediaId: string) => string }; },
+  addOptions() { return { mediaUrl: embeddedMediaUrl as (mediaId: string) => string, posterUrl: embeddedMediaPosterUrl as (mediaId: string) => string }; },
   addAttributes() { return { mediaId: { default: null }, hasPoster: { default: null, rendered: false } }; },
   parseHTML() { return []; },
   renderHTML({ node, HTMLAttributes }) {
     const mediaId = String(node.attrs.mediaId ?? "");
-    return ["video", mergeAttributes(HTMLAttributes, { src: this.options.mediaUrl(mediaId), ...(node.attrs.hasPoster === false ? {} : { poster: embeddedMediaPosterUrl(mediaId) }), preload: "metadata", muted: "", playsinline: "", "data-media-id": mediaId, class: "rich-text__embedded-video" })];
+    return ["video", mergeAttributes(HTMLAttributes, { src: this.options.mediaUrl(mediaId), ...(node.attrs.hasPoster === false ? {} : { poster: this.options.posterUrl(mediaId) }), preload: "metadata", muted: "", playsinline: "", "data-media-id": mediaId, class: "rich-text__embedded-video" })];
   },
 });
 

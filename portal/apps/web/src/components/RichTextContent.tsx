@@ -38,41 +38,45 @@ const alignClass = (align: string | undefined) => align ? `rich-text__align-${al
 /** Matches Tiptap's `cellMinWidth` (96px per column): the table overflows its scroller below that. */
 const TABLE_CELL_MIN_WIDTH = 96;
 
-function block(node: RichTextBlock | RichTextListItem | RichTextTaskItem | RichTextTableRow | RichTextTableCell, key: number): ReactNode {
+/** Where embedded media is read from (#835): the staff routes by default, a Review link's own for a guest. */
+export type RichTextMediaUrls = { mediaUrl?: (mediaId: string) => string; posterUrl?: (mediaId: string) => string };
+
+function block(node: RichTextBlock | RichTextListItem | RichTextTaskItem | RichTextTableRow | RichTextTableCell, key: number, urls: RichTextMediaUrls): ReactNode {
   if (node.type === "paragraph") return <p key={key} className={alignClass(node.attrs?.textAlign)}>{(node.content ?? []).map(inline)}</p>;
   if (node.type === "heading") {
     const Heading = node.attrs.level === 2 ? "h2" : "h3";
     return <Heading key={key} className={alignClass(node.attrs.textAlign)}>{(node.content ?? []).map(inline)}</Heading>;
   }
-  if (node.type === "image") return <EmbeddedImage key={key} mediaId={node.attrs.mediaId} alt={node.attrs.alt} width={node.attrs.width} height={node.attrs.height} />;
-  if (node.type === "video") return <EmbeddedVideo key={`video-${node.attrs.mediaId}`} mediaId={node.attrs.mediaId} hasPoster={node.attrs.hasPoster} />;
-  if (node.type === "linkPreview") return <LinkPreviewCard key={`link-preview-${node.attrs.previewId}`} attrs={node.attrs} />;
+  if (node.type === "image") return <EmbeddedImage key={key} mediaId={node.attrs.mediaId} alt={node.attrs.alt} width={node.attrs.width} height={node.attrs.height} mediaUrl={urls.mediaUrl} />;
+  if (node.type === "video") return <EmbeddedVideo key={`video-${node.attrs.mediaId}`} mediaId={node.attrs.mediaId} hasPoster={node.attrs.hasPoster} mediaUrl={urls.mediaUrl} posterUrl={urls.posterUrl} />;
+  if (node.type === "linkPreview") return <LinkPreviewCard key={`link-preview-${node.attrs.previewId}`} attrs={node.attrs} mediaUrl={urls.mediaUrl} />;
   if (node.type === "table") {
     const columns = Math.max(...node.content.map((row) => row.content.reduce((sum, cell) => sum + (cell.attrs?.colspan ?? 1), 0)));
-    return <div key={key} className="rich-text__table-scroll"><table style={{ minWidth: columns * TABLE_CELL_MIN_WIDTH }}><tbody>{node.content.map(block)}</tbody></table></div>;
+    return <div key={key} className="rich-text__table-scroll"><table style={{ minWidth: columns * TABLE_CELL_MIN_WIDTH }}><tbody>{node.content.map((child, index) => block(child, index, urls))}</tbody></table></div>;
   }
-  if (node.type === "tableRow") return <tr key={key}>{node.content.map(block)}</tr>;
+  if (node.type === "tableRow") return <tr key={key}>{node.content.map((child, index) => block(child, index, urls))}</tr>;
   if (node.type === "tableCell" || node.type === "tableHeader") {
     const Cell = node.type === "tableHeader" ? "th" : "td";
-    return <Cell key={key} colSpan={node.attrs?.colspan} rowSpan={node.attrs?.rowspan}>{node.content.map(block)}</Cell>;
+    return <Cell key={key} colSpan={node.attrs?.colspan} rowSpan={node.attrs?.rowspan}>{node.content.map((child, index) => block(child, index, urls))}</Cell>;
   }
-  if (node.type === "listItem") return <li key={key}>{(node.content ?? []).map(block)}</li>;
+  if (node.type === "listItem") return <li key={key}>{(node.content ?? []).map((child, index) => block(child, index, urls))}</li>;
   if (node.type === "bulletList" || node.type === "orderedList") {
     const List = node.type === "bulletList" ? "ul" : "ol";
-    return <List key={key}>{(node.content ?? []).map(block)}</List>;
+    return <List key={key}>{(node.content ?? []).map((child, index) => block(child, index, urls))}</List>;
   }
-  if (node.type === "taskList") return <ul key={key} className="rich-text__task-list">{node.content.map(block)}</ul>;
+  if (node.type === "taskList") return <ul key={key} className="rich-text__task-list">{node.content.map((child, index) => block(child, index, urls))}</ul>;
   if (node.type === "taskItem") {
     const completed = node.attrs.checked;
     return <li key={key} className={`rich-text__task-item${completed ? " is-checked" : ""}`}>
       <span className="rich-text__task-indicator" data-testid="rich-text-task-indicator" aria-hidden="true">{completed ? "✓" : ""}</span>
-      <div className="rich-text__task-content"><span className="sr-only" data-testid="rich-text-task-status">{completed ? "Completed" : "Not completed"}</span>{node.content.map(block)}</div>
+      <div className="rich-text__task-content"><span className="sr-only" data-testid="rich-text-task-status">{completed ? "Completed" : "Not completed"}</span>{node.content.map((child, index) => block(child, index, urls))}</div>
     </li>;
   }
   return <Fragment key={key}>{fallbackText(node)}</Fragment>;
 }
 
 /** Safe renderer for the deliberately narrow shared document model. */
-export function RichTextContent({ content, className = "" }: { content: RichTextDoc; className?: string }) {
-  return <div className={`rich-text${className ? ` ${className}` : ""}`}>{content.content.map(block)}</div>;
+export function RichTextContent({ content, className = "", mediaUrl, posterUrl }: { content: RichTextDoc; className?: string } & RichTextMediaUrls) {
+  const urls: RichTextMediaUrls = { mediaUrl, posterUrl };
+  return <div className={`rich-text${className ? ` ${className}` : ""}`}>{content.content.map((child, index) => block(child, index, urls))}</div>;
 }

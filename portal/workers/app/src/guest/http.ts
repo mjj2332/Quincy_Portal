@@ -30,11 +30,11 @@ export function guestRoute<P extends string>(path: P, handler: (c: Context<AppEn
   });
 }
 
-/** Unsafe methods need the app Origin and a JSON content type, else 403 `invalid_origin`. The staff `requireAppOrigin` is mounted on `/api` only, so the guest surface has its own. */
-export function originRejection(c: Context<AppEnv>): Response | null {
+/** Unsafe methods need the app Origin and a JSON content type, else 403 `invalid_origin`. `requireJson` false is for a route whose body is bytes (an upload's PUT, #835 C): the Origin alone is checked there. The staff `requireAppOrigin` is mounted on `/api` only, so the guest surface has its own. */
+export function originRejection(c: Context<AppEnv>, requireJson = true): Response | null {
   const method = c.req.method;
   if (method === "GET" || method === "HEAD") return null;
-  const jsonBody = /^application\/json(\s*;|$)/i.test(c.req.header("content-type") ?? "");
+  const jsonBody = !requireJson || /^application\/json(\s*;|$)/i.test(c.req.header("content-type") ?? "");
   if (c.req.header("origin") !== c.env.APP_ORIGIN || !jsonBody) return c.json({ error: "invalid_origin" }, 403);
   return null;
 }

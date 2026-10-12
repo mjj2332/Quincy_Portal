@@ -52,3 +52,18 @@ export async function prepareNoteContent(db: D1Database, projectId: string, raw:
   if (body.length > VIDEO_NOTE_BODY_MAX) return { error: "body_too_long" };
   return { content, contentJson, body, mentionIds, mediaIds: refs.map((ref) => ref.id), videoIds: refs.filter((ref) => ref.kind === "video").map((ref) => ref.id) };
 }
+
+/**
+ * A GUEST's note `content` (#835 C): the same document as a staff note's, minus the people. Parsed against the video-note profile; a mention node of any kind is `mentions_not_allowed` (a guest
+ * has no audience to mention). Media is counted, the body derived and bounded like the staff path.
+ */
+export function prepareGuestNoteContent(raw: unknown): PreparedNoteContent | PrepareFailure {
+  let content: RichTextDoc;
+  try { content = parseRichTextDoc(raw, VIDEO_NOTE_RICH_TEXT_PROFILE); } catch { return { error: "invalid_content" }; }
+  if (richTextMentionIds(content).length) return { error: "mentions_not_allowed" };
+  const refs = richTextMediaRefs(content);
+  if (refs.length > EMBEDDED_MEDIA_MAX_PER_POST) return { error: "too_many_media" };
+  const body = videoNoteBody(content);
+  if (body.length > VIDEO_NOTE_BODY_MAX) return { error: "body_too_long" };
+  return { content, contentJson: JSON.stringify(content), body, mentionIds: [], mediaIds: refs.map((ref) => ref.id), videoIds: refs.filter((ref) => ref.kind === "video").map((ref) => ref.id) };
+}

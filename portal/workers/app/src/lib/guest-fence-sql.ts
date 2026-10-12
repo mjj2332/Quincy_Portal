@@ -59,3 +59,17 @@ export function guestNoteGuard(writer: GuestWriter, first: number, now: string, 
     binds: [writer.sessionId, writer.tokenHash, writer.guestId, writer.linkId],
   };
 }
+
+/**
+ * The fence of a guest MEDIA write (#835 C), as ` AND EXISTS (...)` to append to a statement's WHERE: `guestNoteGuard` without the Version, because an upload names none. The session row with the exact
+ * token hash and verified guest, the link live with comments on at `now`, the gate with `guest` and `guest_comments`, and an unarchived Project. Placeholders are numbered from `first`; `now` is a SQL expression.
+ */
+export function guestMediaGuard(writer: Pick<GuestWriter, "guestId" | "sessionId" | "linkId" | "tokenHash">, first: number, now: string): { sql: string; binds: unknown[] } {
+  const [session, token, guest, link] = [first, first + 1, first + 2, first + 3].map((index) => `?${index}`);
+  return {
+    sql: ` AND EXISTS (SELECT 1 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id
+      WHERE s.id = ${session} AND s.token_hash = ${token} AND s.guest_id = ${guest} AND s.verified_at IS NOT NULL AND l.id = ${link} AND l.allow_comments = 1
+        AND ${committableSql(now, noteWriteParts(false))})`,
+    binds: [writer.sessionId, writer.tokenHash, writer.guestId, writer.linkId],
+  };
+}

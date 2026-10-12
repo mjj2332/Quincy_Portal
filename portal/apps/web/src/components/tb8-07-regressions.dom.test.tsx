@@ -110,7 +110,7 @@ describe("TB8-07 — retired classes that are still load-bearing", () => {
     // inside the composer while leaving them correct in the posted comment — the exact
     // two-renderer divergence the retained CSS block exists to prevent.
     // `QuincyRichTextEditor` (both presets) builds on this class (#491; the legacy editor was retired in #492).
-    expect(read("./QuincyRichTextEditor.tsx")).toContain('class: "rich-text__editor-content "');
+    expect(read("./QuincyRichTextEditorBase.tsx")).toContain('class: "rich-text__editor-content "');
     expect(read("../styles/app.css")).toContain(".rich-text__editor-content ul[data-type=\"taskList\"]");
   });
 });
@@ -121,7 +121,7 @@ describe("#491 — editor content rules in app.css", () => {
     expect(css).toContain(".rich-text__editor-content:has(> p:only-child > br.ProseMirror-trailingBreak:only-child)::before { content: attr(data-placeholder)");
     expect(css).toMatch(/\.rich-text__editor-content a \{ color: var\(--signal-info\); text-decoration: underline;/);
     // The dead `.is-editor-empty` utilities must not come back as the only placeholder rule.
-    expect(read("./QuincyRichTextEditor.tsx")).not.toContain("is-editor-empty");
+    expect(read("./QuincyRichTextEditorBase.tsx")).not.toContain("is-editor-empty");
   });
 });
 
@@ -129,7 +129,7 @@ describe("TB8-07 — ARIA that was deliberately NOT changed", () => {
   it("keeps the rich-text validation region polite, never an alert", () => {
     // `FieldError` would have been the tidy substitution, but it injects `role="alert"`, turning
     // a polite live region into an assertive one that interrupts a screen-reader user mid-typing.
-    const source = read("./QuincyRichTextEditor.tsx");
+    const source = read("./QuincyRichTextEditorBase.tsx");
     // The region is the `liveMessage` div (it is `sr-only` while empty, so it takes no space).
     const validation = source.slice(source.indexOf("<div className={liveMessage"));
     expect(validation.slice(0, 300)).toContain('aria-live="polite"');

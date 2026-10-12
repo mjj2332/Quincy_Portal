@@ -252,7 +252,7 @@ export async function createVideoNoteReply<T = VideoNoteThreadDto>(db: D1Databas
   const mentions: StoredMention[] = (rich?.mentionUserIds ?? []).map((userId) => ({ id: newId(), userId }));
   const meta = metaOf(author, { projectId: input.projectId, videoId: input.parent.video_id, assetId: input.parent.asset_id, parentId: input.parent.id, visibility: input.parent.visibility });
   const rootAsset = "(SELECT x.asset_id FROM video_notes x WHERE x.id = ?7)";
-  const auditGuard = guardOf(author, 8, "?5", rootAsset); const insertGuard = guardOf(author, 9, "?5", "p.asset_id");
+  const auditGuard = guardOf(author, 8, "?5", rootAsset); const insertGuard = guardOf(author, author.kind === "guest" ? 10 : 9, "?5", "p.asset_id");
   // 15a: the thread's authors and the Version's uploader are told of a reply (no text); read before the batch, fenced on its audit row.
   const notify = await videoReviewOutboxStatements(db, { kind: "video_reply", projectId: input.projectId, videoId: input.parent.video_id, assetId: input.parent.asset_id, sourceId: replyId, ...outboxActor(author), auditId, occurredAt: input.now, gate: input.gate, mentions });
   const results = await db.batch([
@@ -261,7 +261,7 @@ export async function createVideoNoteReply<T = VideoNoteThreadDto>(db: D1Databas
       .bind(auditId, actorOf(author), replyId, meta, input.now, input.projectId, input.parent.id, ...auditGuard.binds),
     author.kind === "user"
       ? db.prepare(REPLY_INSERT_SQL).bind(replyId, author.principal.id, author.principal.role, input.body, input.now, input.parent.id, input.projectId, auditId, rich?.contentJson ?? null)
-      : db.prepare(guestReplyInsertSql(insertGuard.sql)).bind(replyId, author.guestId, "guest", input.body, input.now, input.parent.id, input.projectId, auditId, ...insertGuard.binds),
+      : db.prepare(guestReplyInsertSql(insertGuard.sql)).bind(replyId, author.guestId, "guest", input.body, input.now, input.parent.id, input.projectId, auditId, rich?.contentJson ?? null, ...insertGuard.binds),
     ...mentionInserts(db, replyId, mentions, input.now, auditId),
     ...notify.statements,
     // 15b: a STAFF reply under a public root goes to the guests of that thread; a reply under an internal root and a guest's reply produce nothing.
