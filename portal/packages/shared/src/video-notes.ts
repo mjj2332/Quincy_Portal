@@ -29,7 +29,7 @@ export function videoNoteBody(doc: RichTextDoc): string {
   const text = richTextPlainText({ type: "doc", content: doc.content.filter((block) => block.type !== "image" && block.type !== "video").map((block) => strip(block) as RichTextBlock) });
   const images = refs.filter((ref) => ref.kind === "image").length; const videos = refs.length - images;
   const hints = [images ? `[${images} image${images === 1 ? "" : "s"}]` : "", videos ? `[${videos} video${videos === 1 ? "" : "s"}]` : ""].filter(Boolean).join(" ");
-  return [text, hints].filter(Boolean).join(" ");
+  return [text.trim(), hints].filter(Boolean).join(" ");
 }
 
 export const VIDEO_NOTE_VISIBILITIES = ["public", "internal"] as const;
