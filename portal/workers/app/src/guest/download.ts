@@ -13,7 +13,7 @@ import type { AppEnv, Env } from "../env";
 import { classifyRefusal, type RefusalScope } from "./fence";
 import { guestNotFound, guestRoute, originRejection, tooMany, UUID } from "./http";
 import { loadActiveLink, resolveSession, type GuestLink, type GuestSession } from "./link";
-import { GUEST_LIMITS, reserveAttempts } from "./rate-limit";
+import { GUEST_LIMITS, refundAttempt, reserveAllOrNone, reserveAttempts } from "./rate-limit";
 
 /**
  * Guest downloads (#741 14b): one released Version, the manifest of Download all, and the streaming zip. A download is a READ, so there is no body and no Origin step (the shared check passes
@@ -273,16 +273,19 @@ async function downloadAll(c: Ctx): Promise<Response> {
   })() : null;
   // Starting a zip is the costly thing, so it is the only download with a quota. It is spent only here, on a start that has passed every check and is about to be audited: preparing, a refusal or a
   // failed plan never costs a start.
-  const attempt = await reserveAttempts(c.env.DB, [{ bucket: `zip:guest:${guestId}`, limit: GUEST_LIMITS.zipGuest }, { bucket: `zip:link:${session.link.id}`, limit: GUEST_LIMITS.zipLink }], Date.now());
-  if (attempt.limited) return answer(tooMany(attempt.retryAfterSeconds));
+  // Both buckets are taken together or not at all (#824), so a refused start changes neither; a start that then fails gives back exactly one slot in each, as the Delivery zips do.
   const at = Date.now();
+  const guestBucket = `zip:guest:${guestId}`; const linkBucket = `zip:link:${session.link.id}`;
+  const attempt = await reserveAllOrNone(c.env.DB, [{ bucket: guestBucket, limit: GUEST_LIMITS.zipGuest }, { bucket: linkBucket, limit: GUEST_LIMITS.zipLink }], at);
+  if (attempt.limited) return answer(tooMany(attempt.retryAfterSeconds));
+  const refund = async () => { await refundAttempt(c.env.DB, guestBucket, at); await refundAttempt(c.env.DB, linkBucket, at); };
   const written = await c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?1, NULL, 'review_link.download_all', 'review_link', l.id, ?2, ?3 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE ${sessionFence({ session: "?4", token: "?5", guest: "?6", now: "?3" })}`)
     .bind(newId(), auditMeta(null, {
       guest: { guestId, sessionId: session.id }, linkId: session.link.id, projectId: session.link.projectId,
       assetIds: included.map((entry) => entry.assetId), leftOut: leftOut.map(({ videoId, reason }) => ({ videoId, reason })), totalBytes: totalOf(included),
-    }), at, session.id, session.tokenHash, guestId).run();
-  if (written.meta.changes === 0) return refusedBecause(c, session, undefined);
+    }), at, session.id, session.tokenHash, guestId).run().catch(async (error: unknown) => { await refund(); throw error; });
+  if (written.meta.changes === 0) { await refund(); return refusedBecause(c, session, undefined); }
   const filename = attachment(`${safeFileName(session.link.label ?? "Videos")}.zip`);
   if (planned) return nativeZipResponse(planned.open(), (promise) => c.executionCtx.waitUntil(promise), { ...SECURITY_HEADERS, "content-disposition": filename });
   const stream = createZipStream(zipEntries(c.env, session, included, notice));

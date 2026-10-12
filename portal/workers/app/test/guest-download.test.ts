@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { guestVideoListResponseSchema } from "@quincy/shared";
 import { GUEST_WINDOW_MS } from "../src/guest/rate-limit";
 import { attachment, mountGuestDownloads, safeFileName } from "../src/guest/download";
@@ -274,6 +274,10 @@ describe("GET .../downloads (the manifest)", () => {
   });
 });
 
+const zipCounts = async (link: { id: string; guestId: string }) => {
+  const count = async (bucket: string) => (await database.DB.prepare("SELECT COALESCE(SUM(count), 0) AS n FROM guest_rate_limits WHERE bucket = ?").bind(bucket).first<Json>())!.n as number;
+  return { guest: await count(`zip:guest:${link.guestId}`), link: await count(`zip:link:${link.id}`) };
+};
 describe("GET .../downloads/all.zip", () => {
   it("streams exactly the released, unlocked live members, with Left out.txt naming the rest, and audits once", async () => {
     const { link, version } = await setup({}, "Hero");
@@ -350,9 +354,58 @@ describe("GET .../downloads/all.zip", () => {
     expect(limited.status).toBe(429); expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0); expect(Number(limited.headers.get("retry-after"))).toBeLessThanOrEqual(GUEST_WINDOW_MS / 1000);
     expect(await limited.json()).toMatchObject({ error: "too_many_attempts" });
     expect(await audits("review_link.download_all")).toHaveLength(10);
-    // The refused start still spends the link bucket (both reservations go in one batch, as for every guest limit).
-    const bucket = (await database.DB.prepare("SELECT bucket, count FROM guest_rate_limits WHERE bucket LIKE 'zip:%' ORDER BY bucket").all<Json>()).results;
-    expect(bucket.map((row) => [row.bucket.startsWith(`zip:guest:`) ? "guest" : "link", row.count]).sort()).toEqual([["guest", 10], ["link", 11]]);
+    // The refused start spends nothing: both buckets are taken together or not at all (#824).
+    expect(await zipCounts(link)).toEqual({ guest: 10, link: 10 });
+  });
+
+  describe("the guest and link buckets are taken together or not at all (#824)", () => {
+    // The fixtures and the handler read the same frozen clock, one second before a window boundary, so no run can straddle two windows.
+    const PINNED = (Math.floor(Date.now() / GUEST_WINDOW_MS) + 1) * GUEST_WINDOW_MS - 1000;
+    const START = Math.floor(PINNED / GUEST_WINDOW_MS) * GUEST_WINDOW_MS;
+    beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(PINNED); });
+    afterEach(() => { vi.useRealTimers(); });
+    const put = (bucket: string, count: number) => database.DB.prepare("INSERT INTO guest_rate_limits (bucket, window_start, count) VALUES (?, ?, ?)").bind(bucket, START, count).run();
+    it("a start refused by the guest bucket leaves the link bucket untouched", async () => {
+      const { link } = await setup(); await put(`zip:guest:${link.guestId}`, 10); await put(`zip:link:${link.id}`, 5);
+      const limited = await guestFetch(zipPath(link.id), { cookie: link.cookie });
+      expect(limited.status).toBe(429); await dispose(limited);
+      expect(await zipCounts(link)).toEqual({ guest: 10, link: 5 });
+    });
+    it("a start refused by the link bucket leaves the guest bucket untouched", async () => {
+      const { link } = await setup(); await put(`zip:guest:${link.guestId}`, 3); await put(`zip:link:${link.id}`, 30);
+      const limited = await guestFetch(zipPath(link.id), { cookie: link.cookie });
+      expect(limited.status).toBe(429); await dispose(limited);
+      expect(await zipCounts(link)).toEqual({ guest: 3, link: 30 });
+    });
+    it("a refusal by the link bucket does not spend a slot of a guest with no row yet", async () => {
+      const { link } = await setup(); await put(`zip:link:${link.id}`, 30);
+      await dispose(await guestFetch(zipPath(link.id), { cookie: link.cookie }));
+      expect(await zipCounts(link)).toEqual({ guest: 0, link: 30 });
+    });
+    it("two guests racing for the last slot of a link: exactly one is admitted", async () => {
+      const { link } = await setup(); await put(`zip:link:${link.id}`, 29);
+      const { cookie } = await startSession(link); if (!cookie) throw new Error("no session"); await verifyCookie(cookie, "Second Guest");
+      const responses = await Promise.all([guestFetch(zipPath(link.id), { cookie: link.cookie }), guestFetch(zipPath(link.id), { cookie })]);
+      expect(responses.map((response) => response.status).sort()).toEqual([200, 429]);
+      for (const response of responses) await dispose(response);
+      expect((await database.DB.prepare("SELECT count FROM guest_rate_limits WHERE bucket = ?").bind(`zip:link:${link.id}`).first<Json>())!.count).toBe(30);
+      expect((await database.DB.prepare("SELECT COALESCE(SUM(count), 0) AS n FROM guest_rate_limits WHERE bucket LIKE 'zip:guest:%'").first<Json>())!.n).toBe(1);
+      expect(await audits("review_link.download_all")).toHaveLength(1);
+    });
+    it("a start that fails after the reservation gives back exactly one slot in each bucket", async () => {
+      const { link } = await setup(); await put(`zip:guest:${link.guestId}`, 3); await put(`zip:link:${link.id}`, 5);
+      const { call } = interposed({ before: [[/INSERT INTO audit_log/, () => database.DB.prepare("UPDATE client_links SET allow_download = 0 WHERE id = ?").bind(link.id).run()]] });
+      const response = await call(zipPath(link.id), link.cookie, "GET"); await dispose(response);
+      expect(response.status).not.toBe(200); expect(response.status).not.toBe(429);
+      expect(await audits("review_link.download_all")).toHaveLength(0);
+      expect(await zipCounts(link)).toEqual({ guest: 3, link: 5 });
+    });
+    it("a failed start with no earlier usage leaves no bucket rows behind", async () => {
+      const { link } = await setup();
+      const { call } = interposed({ before: [[/INSERT INTO audit_log/, () => database.DB.prepare("UPDATE client_links SET allow_download = 0 WHERE id = ?").bind(link.id).run()]] });
+      await dispose(await call(zipPath(link.id), link.cookie, "GET"));
+      expect(await zipCounts(link)).toEqual({ guest: 0, link: 0 });
+    });
   });
 
   it("limits a link to 30 starts across its guests", async () => {
