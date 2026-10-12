@@ -1,4 +1,5 @@
 import type { ReviewLinkDto } from "@quincy/shared";
+import { cn } from "@/lib/utils";
 import { formatCivilDay, formatRelativeTime, sydneyDayKey } from "../../lib/date-format";
 import { useNow } from "../../lib/use-now";
 import { Button } from "../quincy/Button";
@@ -36,7 +37,7 @@ export function ReviewLinkList({ ui }: { ui: ReviewLinksUi }) {
     {links.data && links.data.length === 0 && <EmptyState title="No Review links yet.">Tick films on the page, then choose Create Review link.</EmptyState>}
     {links.data && links.data.length > 0 && <ItemGroup className="gap-[var(--space-2)]">
       {links.data.map((link) => <Item key={link.id} variant="outline" data-testid="review-link-row" className="max-[721px]:flex-wrap">
-        <ItemContent className={link.status === "revoked" ? "opacity-60" : undefined}>
+        <ItemContent className={cn("max-[721px]:basis-full", link.status === "revoked" && "opacity-60")}>
           <ItemTitle className={link.status === "revoked" ? "text-foreground-secondary" : undefined}>{linkName(link)}<ReviewLinkStatusBadge status={link.status} /></ItemTitle>
           <ItemDescription className="text-foreground-secondary">{`${expiryLine(link)} · ${plural(link.videos.length, "film")} · ${activityLine(link, now)}`}</ItemDescription>
         </ItemContent>

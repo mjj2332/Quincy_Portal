@@ -206,8 +206,8 @@ describe("create", () => {
     await press(buttonIn(q('[data-testid="review-link-selection-bar"]'), "Create Review link"));
     await press(buttonIn(dialog(), "Create link"));
     const reveal = q('[data-testid="review-link-reveal"]')!;
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]', reveal)!.value).toBe(url);
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]', reveal)!.readOnly).toBe(true);
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]', reveal)!.value).toBe(url);
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]', reveal)!.readOnly).toBe(true);
     expect(text(reveal)).toContain("You can copy this link again from its settings.");
     expect(text(reveal)).not.toContain("only time");
     expect(writeText).not.toHaveBeenCalled(); // no auto-copy
@@ -257,7 +257,7 @@ describe("create", () => {
     expect(dialog()).toBeNull();
     await act(async () => { finish({ link: linkOf(), url: `https://quincy.test/d/review?link=${L1}#t=late` }); });
     await flush();
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')?.value).toContain("#t=late");
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]')?.value).toContain("#t=late");
   });
   it("a create that lands after switching to another Collection tab still shows its URL", async () => {
     let finish!: (value: unknown) => void;
@@ -270,7 +270,7 @@ describe("create", () => {
     expect(q('[data-testid="other-tab"]')).not.toBeNull();
     await act(async () => { finish({ link: linkOf(), url: `https://quincy.test/d/review?link=${L1}#t=elsewhere` }); });
     await flush();
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')?.value).toContain("#t=elsewhere");
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]')?.value).toContain("#t=elsewhere");
   });
   it("a Replace that lands after switching tab still shows its URL", async () => {
     state.links = [linkOf()];
@@ -283,7 +283,7 @@ describe("create", () => {
     await showTab("floorplan");
     await act(async () => { finish({ link: linkOf(), url: `https://quincy.test/d/review?link=${L1}#t=replaced` }); });
     await flush();
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')?.value).toContain("#t=replaced");
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]')?.value).toContain("#t=replaced");
   });
   it("an archive that lands while Create is open shows a titled notice and keeps the draft", async () => {
     await mount(); await selectFilms("Teaser");

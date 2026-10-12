@@ -209,7 +209,7 @@ describe("detail: revoke and replace", () => {
     expect(text(q('[data-testid="review-link-confirm"]'))).toContain("stops working at once");
     await press(buttonIn(q('[data-testid="review-link-confirm"]'), "Replace"));
     expect(apiPostMock).toHaveBeenCalledWith(`${base}/replace`, {});
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toBe(url);
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]')!.value).toBe(url);
     await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
     expect(document.body.textContent).not.toContain("fresh456");
     expect(q('[data-testid="review-link-detail"]')).not.toBeNull();
@@ -224,13 +224,14 @@ describe("detail: revoke and replace", () => {
 });
 
 describe("detail: the link itself (#815)", () => {
-  const urlInput = () => q<HTMLInputElement>('input[aria-label="Review link URL"]', detail());
+  const urlInput = () => q<HTMLInputElement>('[data-testid="review-link-url"]', detail());
   it("shows the full link as the first row of Settings, above Label, read-only, and Copy writes that exact string", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const link = linkOf(); state.links = [link];
     await mount(); await openDetailOf("Smith family");
     expect(urlInput()!.value).toBe(link.url); expect(urlInput()!.readOnly).toBe(true);
+    expect(text(q(`label[for="${urlInput()!.id}"]`, detail()))).toBe("Link");
     const settings = q('section[aria-label="Settings"]', detail())!;
     const inputs = all<HTMLInputElement>("input", settings);
     expect(inputs[0]).toBe(urlInput());
@@ -504,13 +505,13 @@ describe("one-time URLs are never overwritten", () => {
     await press(buttonIn(dialog(), "Close"));
     await openList(); await press(button("Manage Jones"));
     await confirm("Replace link", "Replace");
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toContain("#t=replaced");
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]')!.value).toContain("#t=replaced");
     await act(async () => { created.resolve({ link: linkOf({ id: L1 }), url: `https://quincy.test/d/review?link=${L1}#t=created` }); });
     await flush();
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toContain("#t=replaced");
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]')!.value).toContain("#t=replaced");
     expect(text(q('[data-testid="review-link-reveal"]'))).toContain("1 of 2");
     await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toContain("#t=created");
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]')!.value).toContain("#t=created");
     expect(text(q('[data-testid="review-link-reveal"]'))).not.toContain("of 2");
     await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
     expect(q('[data-testid="review-link-reveal"]')).toBeNull();
@@ -542,7 +543,7 @@ describe("one-time URLs are never overwritten", () => {
     await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Copy link"));
     expect(text(copyButton())).toContain("Copied");
     await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toContain("#t=created");
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]')!.value).toContain("#t=created");
     expect(text(copyButton())).toContain("Copy link");
     expect(text(copyButton())).not.toContain("Copied");
   });
@@ -555,7 +556,7 @@ describe("one-time URLs are never overwritten", () => {
     await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
     await act(async () => { slow.resolve(undefined); });
     await flush();
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toContain("#t=created");
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]')!.value).toContain("#t=created");
     expect(text(copyButton())).toContain("Copy link");
     expect(text(copyButton())).not.toContain("Copied");
   });
