@@ -478,10 +478,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // only the saving card locks (see `runBoardMovement` and `moveProjectPosition`).
   const movementInteractionActive = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || activeConfirm);
   // A sort change is refused mid-drag, mid-confirmation and while a move is pending or settling (#830). One boolean
-  // feeds both the disabled Sort radios and the handler guard, so they cannot drift.
+  // feeds both the disabled Sort radios and the handler guard, so they cannot drift. The handler also reads
+  // `movementBusyRef`: a move marks it synchronously, before the state behind `kanbanSortLocked` has rendered.
   const kanbanSortLocked = movementInteractionActive || movementSettlePending;
   const changeKanbanSort = (next: KanbanSortMode) => {
-    if (kanbanSortLocked) return;
+    if (kanbanSortLocked || movementBusyRef.current) return;
     setKanbanSortMode(next);
     writeKanbanSortPreference({ write: (value) => window.localStorage.setItem(KANBAN_SORT_KEY, value) }, next);
   };
