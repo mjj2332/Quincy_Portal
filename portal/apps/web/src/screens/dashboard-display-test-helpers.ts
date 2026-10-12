@@ -65,6 +65,17 @@ export function sortRadioLabels(): (string | null)[] {
   return sortRadios().map((radio) => radio.textContent);
 }
 
+/** The Sort group's direction hint (#833) and the text the Sort radio group's `aria-describedby` points at. */
+export function sortHint(): string | null {
+  return document.querySelector('[data-testid="board-sort-hint"]')?.textContent ?? null;
+}
+
+export function sortHintDescribedBy(): string | null {
+  const described = displayGroup("Sort")?.querySelector<HTMLElement>("[aria-describedby]");
+  const id = described?.getAttribute("aria-describedby");
+  return id ? document.getElementById(id)?.textContent ?? null : null;
+}
+
 export function checkedSortLabel(): string | null | undefined {
   return sortRadios().find((radio) => radio.getAttribute("aria-checked") === "true")?.textContent;
 }

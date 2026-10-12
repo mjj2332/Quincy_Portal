@@ -522,6 +522,33 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       expect(onDragOver(over("t2"))).toBe(first);
     });
 
+    // #832: Delivered runs newest first, so a drop there lands at the newest-first slot.
+    describe("into Delivered (#832)", () => {
+      const withDelivered = { activeStages: [...stages, { key: "delivered" as const, label: "Delivered", displayOrder: 3, active: true }] };
+      const deliveredTargets = () => [
+        project("source", "awaiting_raw", { shootDate: "2026-06-01" }),
+        project("d-old", "delivered", { shootDate: "2026-01-01" }),
+        project("d-new", "delivered", { shootDate: "2026-09-01" }),
+        project("d-none", "delivered"),
+      ];
+
+      it("narrates position N of M in newest-first order", async () => {
+        await renderBoard({ projects: deliveredTargets(), ...withDelivered });
+        expect(capturedAnnouncements().onDragOver({ active: { id: "source" }, over: { id: "d-none" } }))
+          .toBe("source Street is over Delivered; it will land at position 2 of 4.");
+      });
+
+      it("marks the indicator ahead of the older card, not the newer one", async () => {
+        await renderBoard({ projects: deliveredTargets(), ...withDelivered });
+        await fireDnd("onDragStart", { active: { id: "source" } });
+        await fireDnd("onDragOver", { active: { id: "source" }, over: { id: "d-new" } });
+        const marks = [...host.querySelectorAll<HTMLElement>('[data-testid="board-drop-indicator"]')];
+        expect(marks).toHaveLength(1);
+        expect(marks[0]!.parentElement!.textContent).toContain("d-old Street");
+        await fireDnd("onDragCancel", { active: { id: "source" } });
+      });
+    });
+
     // An undated mover sorts after every dated card, and ties break on street.
     const endTargets = () => [project("source", "awaiting_raw"), project("t1", "raw_review", { shootDate: "2026-01-01" }), project("a3", "raw_review")];
 
