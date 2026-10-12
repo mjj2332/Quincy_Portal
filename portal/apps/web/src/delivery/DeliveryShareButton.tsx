@@ -44,7 +44,7 @@ export function DeliveryShareButton({ url, title }: { url: string; title: string
   });
   return <>
     <Button ref={shareRef} type="button" variant="outline" size="lg" data-testid="delivery-share" className={TOUCH} onClick={() => { void share(); }}><Share2Icon aria-hidden />Share</Button>
-    {status === "share-failed" && <Button type="button" variant="ghost" size="lg" data-testid="delivery-share-copy" className={TOUCH} onClick={() => { void run(copy).then(() => { shareRef.current?.focus(); }); }}>Copy link</Button>}
+    {status === "share-failed" && <Button type="button" variant="outline" size="lg" data-testid="delivery-share-copy" className={TOUCH} onClick={() => { void run(copy).then(() => { shareRef.current?.focus(); }); }}>Copy link</Button>}
     <span data-testid="delivery-share-status" role="status" className="self-center [font:var(--type-body-sm)] text-on-inverse-muted">{MESSAGE[status]}</span>
   </>;
 }
