@@ -18,7 +18,7 @@ import { captureVideoPoster } from "./video-poster";
 
 /** Staff video upload (#741 4d-i): the browser's checks, then reserve, bytes, complete, poster. The server re-checks and re-probes everything; the checks here only save a doomed 2 GB upload. */
 
-export const NOT_FAST_START_CAUTION = "This MP4 isn't fast-start, so playback may take a moment to begin. Re-export with “Fast start” (or “Optimise for web”) turned on.";
+export const NOT_FAST_START_CAUTION = "This file isn't fast-start, so playback may take a moment to begin. Re-export with “Fast start” (or “Optimise for web”) turned on.";
 export const TIMECODE_MISMATCH_CAUTION = "The file's timecode track doesn't match its frame rate, so it is ignored and timecode starts at 00:00:00:00.";
 export const NOT_MP4_NAME_MESSAGE = mp4RejectMessage("not_mp4");
 const UPLOADS_UNAVAILABLE = "Uploads aren't available right now.";
@@ -36,7 +36,7 @@ export function videoCautions(input: { fastStart?: boolean; warnings: readonly s
 
 /** Name, size, then the probe over `File.slice`. Nothing is requested from the server. */
 export async function checkVideoFile(file: File): Promise<VideoFileCheck> {
-  if (!/\.mp4$/i.test(file.name)) return { ok: false, message: NOT_MP4_NAME_MESSAGE };
+  if (!/\.(mp4|mov)$/i.test(file.name)) return { ok: false, message: NOT_MP4_NAME_MESSAGE };
   if (file.size > VIDEO_MAX_BYTES) return { ok: false, message: mp4RejectMessage("too_large") };
   try {
     const result = await probeMp4({ size: file.size, read: async (offset, length) => new Uint8Array(await file.slice(offset, offset + length).arrayBuffer()) });
@@ -47,8 +47,8 @@ export async function checkVideoFile(file: File): Promise<VideoFileCheck> {
   }
 }
 
-/** The title a new film starts with: the filename without `.mp4`, trimmed, at most 200 characters. */
-export function defaultFilmTitle(filename: string): string { return filename.replace(/\.mp4$/i, "").trim().slice(0, 200); }
+/** The title a new film starts with: the filename without `.mp4` or `.mov`, trimmed, at most 200 characters. */
+export function defaultFilmTitle(filename: string): string { return filename.trim().replace(/\.(mp4|mov)$/i, "").trim().slice(0, 200); }
 
 export type VideoUploadTarget = { kind: "new"; title: string } | { kind: "version"; videoId: string; title: string };
 export type VideoUploadPhase = "reserving" | "uploading" | "finishing" | "done" | "failed";

@@ -157,14 +157,44 @@ describe("Video cards (#741 4d-i)", () => {
   it("shows the empty state, with the first-film prompt only when uploads are on", async () => {
     await mount([], ["upload"]);
     expect(host.textContent).toContain("No films yet.");
-    expect(host.textContent).toContain("Drop the first MP4 above");
+    expect(host.textContent).toContain("Drop the first MP4 or MOV above");
   });
 });
 
 describe("Uploader (#741 4d-i)", () => {
-  it("refuses a non-mp4 name and an over-2 GB file before any request", async () => {
+  it("offers MP4 and MOV on both pickers and says so in its copy (#813)", async () => {
+    await mount([videoOf()], ["upload"]);
+    const accepts = [...host.querySelectorAll<HTMLInputElement>('[data-testid="file-pick-input"]')].map((input) => input.getAttribute("accept"));
+    expect(accepts).toHaveLength(2);
+    for (const accept of accepts) expect(accept).toBe(".mp4,.mov,video/mp4,video/quicktime");
+    const uploader = host.querySelector('[data-testid="new-film-uploader"]')!.textContent ?? "";
+    expect(uploader).toContain("Drop an MP4 or MOV to start a new film");
+    expect(host.textContent).toContain("H.264 MP4 or MOV");
+  });
+
+  it("takes an H.264 .mov, titles the film without .mov, and reserves it as video/mp4 (#813)", async () => {
     await mount([]);
-    await pick(new File([new Uint8Array(4)], "cut.mov"), host.querySelector('[data-testid="new-film-uploader"]')!);
+    const source = buildMp4({ tracks: [videoTrack({ timescale: 25000, stts: [[300, 1000]] })], ftyp: "qt  " });
+    const file = new File([new Uint8Array(await source.read(0, source.size))], "Site visit.MOV", { type: "video/quicktime" });
+    await pick(file, host.querySelector('[data-testid="new-film-uploader"]')!);
+    expect(host.querySelector('[data-testid="new-film-problem"]')).toBeNull();
+    expect((host.querySelector("input[type=text], input:not([type])") as HTMLInputElement).value).toBe("Site visit");
+    apiPostMock.mockImplementation(() => new Promise(() => undefined));
+    await press(button("Upload"));
+    expect(apiPostMock.mock.calls[0]![1]).toMatchObject({ title: "Site visit", filename: "Site visit.MOV", contentType: "video/mp4" });
+  });
+
+  it("still refuses a ProRes .mov with the plain copy and reserves nothing (#813)", async () => {
+    await mount([]);
+    const source = buildMp4({ tracks: [videoTrack({ codec: "apcn", avcC: false })], ftyp: "qt  " });
+    await pick(new File([new Uint8Array(await source.read(0, source.size))], "master.mov", { type: "video/quicktime" }), host.querySelector('[data-testid="new-film-uploader"]')!);
+    expect(host.querySelector('[data-testid="new-film-problem"]')?.textContent).toBe(mp4RejectMessage("unsupported_codec"));
+    expect(apiPostMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a name that is neither .mp4 nor .mov and an over-2 GB file before any request", async () => {
+    await mount([]);
+    await pick(new File([new Uint8Array(4)], "cut.mkv"), host.querySelector('[data-testid="new-film-uploader"]')!);
     expect(host.querySelector('[data-testid="new-film-problem"]')?.textContent).toBe(mp4RejectMessage("not_mp4"));
     const big = new File([new Uint8Array(4)], "big.mp4"); Object.defineProperty(big, "size", { value: 2_000_000_001 });
     await pick(big, host.querySelector('[data-testid="new-film-uploader"]')!);

@@ -153,7 +153,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   return <section aria-labelledby="video-films-heading" data-testid="video-films">
     <div className="workspace-intro workspace-intro--stack" data-testid="video-films-header">
       <div><div className="ey">Video review</div><h1 className="serif" id="video-films-heading">Films</h1></div>
-      <div className="muted">Upload web-ready H.264 MP4 cuts. A re-cut becomes a new version of the same film; notes stay with the version they were made on.</div>
+      <div className="muted">Upload web-ready H.264 MP4 or MOV cuts. A re-cut becomes a new version of the same film; notes stay with the version they were made on.</div>
       {trashEnabled
         ? <div className="flex flex-wrap items-center gap-[var(--space-3)]">
           <ReviewLinksOpenButton ui={reviewLinks} />
@@ -166,7 +166,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
       {canUpload && <NewFilmUploader onStart={({ title, ...picked }) => start({ ...picked, target: { kind: "new", title } })} />}
       <EmbeddedUploadTray uploads={rows} errors={[]} onCancel={(key) => void cancelVideoUpload(key, queryClient)} onRemove={(key) => removeVideoUpload(key)} onRetry={(key) => retryVideoUpload(key)} testId="video-upload-tray" />
       {videos.isError && !videos.data && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{videos.error.message || "Films could not be loaded."}</span><Button type="button" variant="text" onClick={() => { terminate(videos.error); void videos.refetch(); }}>Retry</Button></Notice>}
-      {videos.data && videos.data.length === 0 && <EmptyState title="No films yet.">{canUpload ? "Drop the first MP4 above to begin." : "Uploaded films will appear here."}</EmptyState>}
+      {videos.data && videos.data.length === 0 && <EmptyState title="No films yet.">{canUpload ? "Drop the first MP4 or MOV above to begin." : "Uploaded films will appear here."}</EmptyState>}
       {videos.data && videos.data.length > 0 && <div className="grid gap-[var(--space-5)] [grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr))]" data-testid="video-card-grid" onFocusCapture={() => { preloadViewer(); if (notesEnabled) preloadNotes(); }} onPointerOverCapture={() => { preloadViewer(); if (notesEnabled) preloadNotes(); }}>
         {videos.data.map((video) => <VideoCard key={video.id} video={video} canUpload={canUpload} currentUserId={userId} myUpload={myVersionUpload(video)} onVersionFile={versionFile} onCancelReservation={(reservationId) => abortVideoReservation(queryClient, projectId, reservationId)} onOpen={(picked, trigger) => { opener.current = trigger; setOpenVideoId(picked.id); }} {...(reviewLinks.enabled ? { reviewLinks: { selected: reviewLinks.selection.has(video.id), ...(reviewLinks.canWrite ? { onToggle: () => reviewLinks.store.toggleSelect(video.id) } : {}), chips: reviewLinks.chipsFor(video.id), onOpenChip: reviewLinks.store.openDetail, onOpenAll: reviewLinks.store.openList } } : {})} />)}
       </div>}

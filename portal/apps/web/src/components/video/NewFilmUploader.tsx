@@ -59,7 +59,7 @@ export function NewFilmUploader({ onStart }: {
     >
       <Film aria-hidden="true" className="size-7 shrink-0 text-foreground-secondary" />
       <div className="grid min-w-[16rem] flex-1 gap-[var(--space-1)]">
-        <strong className="[font:var(--weight-medium)_var(--text-base)/var(--leading-normal)_var(--font-sans)]">Drop an MP4 to start a new film</strong>
+        <strong className="[font:var(--weight-medium)_var(--text-base)/var(--leading-normal)_var(--font-sans)]">Drop an MP4 or MOV to start a new film</strong>
         <span className={HINT}>H.264, constant frame rate, up to 2 GB. Frame rate and timecode are read from the file.</span>
       </div>
       <FilePickButton accept={VIDEO_ACCEPT} variant="primary" className="min-h-[44px]" disabled={checking || starting} onFile={(file) => void receive(file)}>{checking ? "Checking…" : "Upload new film"}</FilePickButton>

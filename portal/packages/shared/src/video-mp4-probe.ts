@@ -61,7 +61,7 @@ const REJECT_MESSAGES: Record<Mp4RejectReason, string> = {
   no_video_track: "The file has no video track. Export a video as H.264 .mp4 and upload it again.",
   multiple_video_tracks: "The file has more than one video track. Export with a single video track.",
   hevc: "HEVC (H.265) video is not supported. Export as H.264.",
-  unsupported_codec: "This video codec is not supported. Export as H.264 (AVC) in an .mp4.",
+  unsupported_codec: "This video codec is not supported. Export as H.264 (AVC) in an .mp4 or .mov.",
   variable_frame_rate: "Variable frame rate is not supported. Export as H.264 with a constant frame rate.",
   unsupported_frame_rate: "This frame rate is not supported. Export at a standard rate such as 24, 25, 29.97, 30, 50 or 60 fps.",
   unsupported_edit_list: "This video has a complex edit list. Export it again as a single, untrimmed clip.",

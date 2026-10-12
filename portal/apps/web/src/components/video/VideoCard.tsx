@@ -18,7 +18,7 @@ import type { ReviewLinkChip } from "./use-review-links-ui";
 
 const META = "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
 
-export const VIDEO_ACCEPT = ".mp4,video/mp4";
+export const VIDEO_ACCEPT = ".mp4,.mov,video/mp4,video/quicktime";
 
 /**
  * One Video as a card (#741 4d-i): poster, newest Version, duration, a Versions list, and who is uploading. Open review (4d-ii) hands
