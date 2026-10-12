@@ -33,7 +33,7 @@ import { KANBAN_SORT_MODES, type KanbanSortMode } from "./dashboard-helpers";
  */
 
 /** The one-line explanation under a Display menu group heading (#833), shared with the Table's narrow note. */
-const DISPLAY_NOTE_CLASS = "m-0 px-[var(--space-2)] pb-[var(--space-2)] text-[length:var(--text-xs)] text-foreground-secondary";
+const DISPLAY_NOTE_CLASS = "m-0 px-1.5 pb-[var(--space-2)] text-[length:var(--text-xs)] text-muted-foreground";
 
 const KANBAN_SORT_LABELS: Record<KanbanSortMode, string> = { "shoot-date": "Shoot date", "due-date": "Deadline" };
 
