@@ -11,7 +11,7 @@ import {
   shootDateFillLanded,
   type CommittedStageFinalizerIntent,
 } from "@quincy/db";
-import { enqueueDeliveryDerivativesSafely, projectActivityDeepLink } from "@quincy/shared";
+import { enqueueDeliveryDerivativesSafely, enqueueObjectCrcs, projectActivityDeepLink } from "@quincy/shared";
 import type { Env, SessionUser } from "../env";
 import { auditMeta } from "./audit";
 import { deliverySlugBase, randomItemHandle, randomSlugSuffix } from "./delivery-address";
@@ -64,6 +64,16 @@ export const MAX_ADDRESS_ATTEMPTS = 5;
  */
 export async function enqueueDeliveryDerivatives(env: Pick<Env, "DB" | "RENDITIONS_ENABLED" | "RENDITION_QUEUE">, publication: { projectId: string; setNumber: number; assetIds: readonly string[] }): Promise<void> {
   await enqueueDeliveryDerivativesSafely(env, publication.assetIds, "delivery-publish");
+}
+
+/**
+ * Hands the CRC-32 job (#802) the originals of a published set's photos, so a Full-res zip on the public page is ready before a client asks (#787 slice 7). Locked photos are included: an Unlock needs no second wait.
+ * The route calls it after the batch commits, detached, and a failure only costs the hourly sweep a repair: `enqueueObjectCrcs` never throws, and a failed key lookup is the caller's `catch`.
+ */
+export async function enqueueDeliveryOriginalCrcs(env: Pick<Env, "DB" | "OBJECT_CRC_QUEUE">, assetIds: readonly string[]): Promise<void> {
+  if (assetIds.length === 0) return;
+  const rows = (await env.DB.prepare("SELECT r2_key AS r2Key FROM assets WHERE kind = 'photo' AND id IN (SELECT value FROM json_each(?1))").bind(JSON.stringify([...new Set(assetIds)])).all<{ r2Key: string }>()).results;
+  await enqueueObjectCrcs(env, rows.map((row) => row.r2Key), "delivery-publish");
 }
 
 type BoardSnapshot = NonNullable<Awaited<ReturnType<typeof readBoardProject>>>;

@@ -23,6 +23,9 @@ export const GUEST_LIMITS = {
   pastePreviewGuest: 60, pastePreviewLink: 300,
   // Delivery unlock request (#787 slice 8): an address may ask 5 times in 15 minutes and a page 30 in a day (a request costs one in each, valid or not); one item is asked about once a day.
   unlockIp: 5, unlockPage: 30, unlockItem: 1,
+  // Delivery photo zips (#787 slice 7), per 15 minutes. A zip start costs the most (an address 10, a page 60); preparing queues work but streams nothing (20, 120); a check is a manifest read or a zip GET that
+  // HEADs every object, spent before the first HEAD (60, 300). Preparing and refusals never spend a start.
+  deliveryZipIp: 10, deliveryZipPage: 60, deliveryPrepareIp: 20, deliveryPreparePage: 120, deliveryCheckIp: 60, deliveryCheckPage: 300,
 } as const;
 export const GUEST_CODE_RESEND_MS = 60_000;
 
@@ -37,7 +40,7 @@ async function sha256Hex(value: string): Promise<string> {
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 export const clientAddress = (request: Request): string => request.headers.get("cf-connecting-ip") ?? "unknown";
-export const ipBucket = async (kind: "passcode" | "exchange" | "codesend" | "codeverify" | "unsubscribe" | "unlock", ip: string, start: number): Promise<string> => `${kind}:ip:${await sha256Hex(`${ip}|${start}`)}`;
+export const ipBucket = async (kind: "passcode" | "exchange" | "codesend" | "codeverify" | "unsubscribe" | "unlock" | "dlzip" | "dlprep" | "dlcheck", ip: string, start: number): Promise<string> => `${kind}:ip:${await sha256Hex(`${ip}|${start}`)}`;
 /** An email bucket is keyed by the SHA-256 of `email|window`, never the address itself (the table holds no address, raw or plain). `codesend24h` is the daily one. */
 export const emailBucket = async (kind: "codesend" | "codesend24h", email: string, start: number): Promise<string> => `${kind}:email:${await sha256Hex(`${email}|${start}`)}`;
 

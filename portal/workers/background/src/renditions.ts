@@ -1,3 +1,4 @@
+import { crc32 } from "node:zlib";
 import { assetRenditions, assets } from "@quincy/db/schema";
 import {
   ANY_RENDITION_VARIANTS,
@@ -276,14 +277,32 @@ export async function generateRenditions(
     const r2Key = renditionR2Key(asset.id, asset.contentHash, variant, outputDigest, contentType);
     // Never overwrite an immutable rendition object. If a prior attempt wrote R2 then lost its
     // D1 update, the deterministic digest key is adopted below; an untracked orphan is safe.
-    if (!await env.MEDIA.head(r2Key)) {
-      await env.MEDIA.put(r2Key, body, { httpMetadata: { contentType }, customMetadata: { specVersion: spec, assetId, variant, outputDigest } });
+    let stored = await env.MEDIA.head(r2Key);
+    if (!stored) {
+      stored = await env.MEDIA.put(r2Key, body, { httpMetadata: { contentType }, customMetadata: { specVersion: spec, assetId, variant, outputDigest } });
     }
+    // The Web-size zip (#787 slice 7) needs this object's CRC-32 before its first byte. We hold the bytes now, so it costs nothing to record it here instead of reading the object back in a second job.
+    if (variant === "delivery_web") await recordObjectCrc(env, r2Key, body, stored?.etag);
     await resolvedDependencies.store.save({ assetId, variant, r2Key, specVersion: spec, bytes: body.byteLength, contentType, width, height });
     existing.set(variant, { variant, r2Key, specVersion: spec });
     generated.push(variant);
   }
   return { generated, skipped };
+}
+
+/**
+ * Upserts `object_crc32` for a rendition object this run just wrote or adopted: the CRC-32 of the bytes in hand, their length and the R2 etag of the stored object. Best effort: a failed write is logged and
+ * the rendition still stands, because the hourly object CRC sweep queues the same key for the background job. Skipped when there is no `DB` binding or R2 gave no etag.
+ */
+async function recordObjectCrc(env: RenditionGenerationEnv, r2Key: string, body: Uint8Array, etag: string | undefined): Promise<void> {
+  if (!env.DB || !etag) return;
+  try {
+    await env.DB.prepare(`INSERT INTO object_crc32 (r2_key, crc32, bytes, etag, computed_at) VALUES (?1, ?2, ?3, ?4, ?5)
+      ON CONFLICT (r2_key) DO UPDATE SET crc32 = excluded.crc32, bytes = excluded.bytes, etag = excluded.etag, computed_at = excluded.computed_at`)
+      .bind(r2Key, crc32(body), body.byteLength, etag, Date.now()).run();
+  } catch (error) {
+    console.error("Delivery web CRC-32 write failed; the object CRC sweep repairs it", { r2Key, error });
+  }
 }
 
 /**

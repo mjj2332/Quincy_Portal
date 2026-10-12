@@ -23,8 +23,8 @@ async function work(name: string, state: "queued" | "running" | "failed", update
   await database.DB.prepare("INSERT OR REPLACE INTO object_crc32_work (r2_key, state, attempts, requested_at, updated_at) VALUES (?, ?, 0, ?, ?)").bind(key(name), state, updatedAt, updatedAt).run();
 }
 const workRows = async () => (await database.DB.prepare("SELECT r2_key FROM object_crc32_work WHERE r2_key LIKE ?").bind(`${prefix}%`).all<{ r2_key: string }>()).results.map((r) => r.r2_key);
-async function assess(subjects: Array<{ name: string; bytes: number }>, media: ReturnType<typeof fakeMedia>, queue: ReturnType<typeof fakeQueue>, enqueue: "never" | "when_blocked" | "always" = "when_blocked", now = Date.now(), headWhenOff?: boolean): Promise<ZipAssessment> {
-  return assessZip({ DB: database.DB, MEDIA: media as never, OBJECT_CRC_QUEUE: queue as never }, subjects.map((s) => ({ r2Key: key(s.name), bytes: s.bytes })), { source: "test", enqueue, now, ...(headWhenOff === undefined ? {} : { headWhenOff }) });
+async function assess(subjects: Array<{ name: string; bytes: number }>, media: ReturnType<typeof fakeMedia>, queue: ReturnType<typeof fakeQueue>, enqueue: "never" | "when_blocked" | "always" = "when_blocked", now = Date.now(), headWhenOff?: boolean, nativeOnly?: boolean): Promise<ZipAssessment> {
+  return assessZip({ DB: database.DB, MEDIA: media as never, OBJECT_CRC_QUEUE: queue as never }, subjects.map((s) => ({ r2Key: key(s.name), bytes: s.bytes })), { source: "test", enqueue, now, ...(headWhenOff === undefined ? {} : { headWhenOff }), ...(nativeOnly === undefined ? {} : { nativeOnly }) });
 }
 const setFlag = (on: boolean) => setVideoFlags([NATIVE_ZIP_FLAG, on]);
 
@@ -147,5 +147,37 @@ describe("pending objects", () => {
     await setFlag(true); const queue = fakeQueue();
     expect((await assess([{ name: "a", bytes: big }], fakeMedia(objects), queue, "never")).kind).toBe("preparing");
     expect(queue.sent).toEqual([]); expect(await workRows()).toEqual([]);
+  });
+});
+
+describe("nativeOnly (the Client Delivery photo zips, #787 slice 7)", () => {
+  const tiny = { [key("a")]: { etag: "ea", size: 10 } };
+  it("flag off is unavailable, before any HEAD, and queues nothing", async () => {
+    const media = fakeMedia(tiny); const queue = fakeQueue();
+    expect(await assess([{ name: "a", bytes: 10 }], media, queue, "always", Date.now(), undefined, true)).toEqual({ kind: "unavailable", reason: "disabled" });
+    await setFlag(false);
+    expect(await assess([{ name: "a", bytes: 10 }], media, queue, "when_blocked", Date.now(), true, true)).toEqual({ kind: "unavailable", reason: "disabled" });
+    expect(media.heads).toEqual([]); expect(queue.sent).toEqual([]);
+  });
+  it("a missing CRC on a SMALL set is preparing, and queues work on when_blocked (never legacy)", async () => {
+    await setFlag(true); const queue = fakeQueue();
+    expect(await assess([{ name: "a", bytes: 10 }], fakeMedia(tiny), queue, "when_blocked", Date.now(), undefined, true)).toEqual({ kind: "preparing", pending: [key("a")], retryAfterSeconds: 30 });
+    expect(queue.sent).toEqual([{ type: "object_crc32", r2Key: key("a") }]); expect(await workRows()).toEqual([key("a")]);
+  });
+  it("'never' stays read-only and still answers preparing", async () => {
+    await setFlag(true); const queue = fakeQueue();
+    expect((await assess([{ name: "a", bytes: 10 }], fakeMedia(tiny), queue, "never", Date.now(), undefined, true)).kind).toBe("preparing");
+    expect(queue.sent).toEqual([]); expect(await workRows()).toEqual([]);
+  });
+  it("is native when every row matches, and keeps refusing a missing, resized or failed object", async () => {
+    await setFlag(true); await row("a", "ea", 10);
+    expect((await assess([{ name: "a", bytes: 10 }], fakeMedia(tiny), fakeQueue(), "never", Date.now(), undefined, true)).kind).toBe("native");
+    expect(await assess([{ name: "a", bytes: 10 }], fakeMedia({}), fakeQueue(), "never", Date.now(), undefined, true)).toEqual({ kind: "unavailable", reason: "missing" });
+    expect(await assess([{ name: "a", bytes: 11 }], fakeMedia(tiny), fakeQueue(), "never", Date.now(), undefined, true)).toEqual({ kind: "unavailable", reason: "changed" });
+    await database.DB.prepare("DELETE FROM object_crc32 WHERE r2_key = ?").bind(key("a")).run(); await work("a", "failed", Date.now());
+    expect(await assess([{ name: "a", bytes: 10 }], fakeMedia(tiny), fakeQueue(), "never", Date.now(), undefined, true)).toEqual({ kind: "unavailable", reason: "failed" });
+  });
+  it("a big set with the flag off is unavailable too, not too_large (a delivery zip has one answer)", async () => {
+    expect(await assess([{ name: "a", bytes: ZIP_LEGACY_MAX_BYTES + 1 }], fakeMedia({}), fakeQueue(), "never", Date.now(), undefined, true)).toEqual({ kind: "unavailable", reason: "disabled" });
   });
 });

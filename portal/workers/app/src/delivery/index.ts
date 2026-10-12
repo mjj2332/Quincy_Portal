@@ -12,6 +12,8 @@ import { INVALID, TOO_LARGE, guestNotFound, guestRoute, originRejection, readJso
 import { GUEST_DAY_MS, GUEST_LIMITS, clientAddress, ipBucket, reserveAttempts, windowStart } from "../guest/rate-limit";
 import { publishUnlockOutbox, unlockItemBucket, writeUnlockRequest } from "../lib/delivery-unlock-request";
 import { guestShell } from "../guest";
+import { admitPage, rawPath, slugOk } from "./admit";
+import { mountDeliveryZips } from "./zips";
 
 /**
  * The public Client Delivery page (#787 slice 6): no session, no cookie, no staff principal (`test/delivery-public-boundary.guard.test.ts` scans this directory). It shares a Worker with the staff app and
@@ -31,21 +33,9 @@ const ITEM_PATH = new RegExp(`^/d/api/pages/(${SLUG_PATTERN})/items/(${HANDLE_PA
 const UNLOCK_PATH = new RegExp(`^/d/api/pages/(${SLUG_PATTERN})/items/(${HANDLE_PATTERN})/unlock-request$`);
 /** The request body is `{}`; anything over this is refused without being read further. */
 const UNLOCK_BODY_MAX = 1024;
-const SLUG_MAX = 96;
-/** Matches against the path exactly as the client sent it, never a decoded parameter. */
-const rawPath = (c: Context<AppEnv, string>): string => new URL(c.req.url).pathname;
-const slugOk = (slug: string | undefined): slug is string => slug !== undefined && slug.length <= SLUG_MAX;
 
 type Ctx = Context<AppEnv, string>;
 type ItemFacts = { projectId: string; setId: string; setNumber: number; assetId: string; assetKind: string; r2Key: string; originalFilename: string; locked: boolean };
-
-/** The page behind a slug: enabled, its Client Delivery gate open, and the latest set. Null is every kind of miss. */
-async function admitPage(db: D1Database, slug: string): Promise<{ projectId: string; setNumber: number } | null> {
-  const page = await db.prepare(`SELECT p.project_id AS projectId, s.set_number AS setNumber FROM delivery_pages p
-      JOIN delivery_sets s ON s.project_id = p.project_id AND s.set_number = p.latest_set_number WHERE p.slug = ?1 AND p.enabled = 1`).bind(slug).first<{ projectId: string; setNumber: number }>();
-  if (!page || !await clientDeliveryGate(db, page.projectId)) return null;
-  return page;
-}
 
 /**
  * One item of the page's LATEST set by handle, with its live lock state. A Video Version that is not live (#776, Trash) is not there; a locked answer is read in the same statement as the rest,
@@ -195,6 +185,7 @@ async function requestUnlock(c: Ctx, slug: string, handle: string): Promise<Resp
 }
 
 export function mountDelivery(app: Hono<AppEnv>): void {
+  mountDeliveryZips(app);
   app.get("/d/:slug", guestRoute("/d/:slug", (c) => (isDeliveryPagePath(rawPath(c)) ? guestShell(c) : guestNotFound(c))));
 
   app.get("/d/api/pages/:slug", guestRoute("/d/api/pages/:slug", async (c) => {

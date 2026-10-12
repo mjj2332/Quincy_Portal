@@ -8,7 +8,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import { clientDeliveryGate } from "../lib/client-delivery-gate";
 import { randomItemHandle } from "../lib/delivery-address";
 import { previewDelivery, readDeliveryCandidates, readDeliveryState } from "../lib/delivery-dto";
-import { enqueueDeliveryDerivatives, publishDelivery, setDeliveryPageEnabled } from "../lib/delivery-publish";
+import { enqueueDeliveryDerivatives, enqueueDeliveryOriginalCrcs, publishDelivery, setDeliveryPageEnabled } from "../lib/delivery-publish";
 import { publishOutboxDetached } from "../lib/server-timing";
 import { queueProjectShootDateFollowUps } from "../lib/project-shoot-date";
 import { jsonInput } from "./helpers";
@@ -91,6 +91,7 @@ deliveryRoutes.post("/projects/:projectId/delivery/publish", terminalRoute("/pro
       if (outcome.publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, outcome.publicationIds));
       if (outcome.shootDateFilled) c.executionCtx.waitUntil(queueProjectShootDateFollowUps(c.env, projectId));
       c.executionCtx.waitUntil(enqueueDeliveryDerivatives(c.env, { projectId, setNumber: outcome.setNumber, assetIds: outcome.assetIds }).catch((error) => console.error("Delivery derivative enqueue failed", { projectId, error })));
+      c.executionCtx.waitUntil(enqueueDeliveryOriginalCrcs(c.env, outcome.assetIds).catch((error) => console.error("Delivery original CRC enqueue failed", { projectId, error })));
       return c.json(deliveryPublishResponseSchema.parse({ replayed: false, operationSetNumber: outcome.setNumber, ...await readDeliveryState(c.env.DB, projectId) }), 201);
     }
   }

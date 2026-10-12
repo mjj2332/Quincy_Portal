@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { env } from "cloudflare:test";
+import { crc32 } from "node:zlib";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+declare const __PORTAL_MIGRATION_SQL__: string;
 import { DELIVERY_RENDITION_VARIANTS, RENDITION_SPEC_VERSION, RENDITION_VARIANT_SPEC } from "@quincy/shared";
 import { generateRenditions, type MeasuredRendition, type RenditionStore } from "../src/renditions";
 import { parseQueueBody, RENDITION_DLQ_QUEUE_NAME, RENDITION_QUEUE_NAME } from "../src/queue-dispatch";
@@ -183,5 +187,71 @@ describe("generate_renditions message", () => {
   it("carries a valid variants list through and rejects an unknown or malformed one", () => {
     expect(parseQueueBody(RENDITION_QUEUE_NAME, { ...legacy, variants: ["delivery_web", "premium_preview"] })).toEqual({ queue: RENDITION_QUEUE_NAME, body: { ...legacy, variants: ["delivery_web", "premium_preview"] } });
     for (const variants of [["huge"], "web", [], [1], ["web", "web"]]) expect(parseQueueBody(RENDITION_QUEUE_NAME, { ...legacy, variants }), JSON.stringify(variants)).toBeNull();
+  });
+});
+
+describe("delivery_web CRC-32 (#787 slice 7)", () => {
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  beforeAll(async () => {
+    for (const chunk of __PORTAL_MIGRATION_SQL__.split("--> statement-breakpoint")) {
+      const sql = chunk.split("\n").filter((line) => !line.trim().startsWith("--")).join("\n");
+      for (const statement of sql.split(";")) { const flat = statement.replace(/\s+/g, " ").trim(); if (flat) await (env as unknown as { DB: D1Database }).DB.exec(`${flat};`); }
+    }
+  });
+  beforeAll(async () => {
+    const now = Date.now();
+    await (env as unknown as { DB: D1Database }).DB.prepare("INSERT OR IGNORE INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES ('d3333333-3333-4333-8333-333333333333', 'Transform Editor', 'transform-editor@example.test', 1, 'editor', 1, ?, ?)").bind(now, now).run();
+  });
+  beforeEach(async () => { await (env as unknown as { DB: D1Database }).DB.prepare("DELETE FROM object_crc32").run(); consoleError.mockClear(); });
+  const DB = () => (env as unknown as { DB: D1Database }).DB;
+  /** The harness with a real D1 and an R2 fake that reports an etag, as the real bucket does. */
+  function withCrc(options: { db?: unknown; preexisting?: boolean } = {}) {
+    const h = harness(); const etags = new Map<string, string>();
+    const base = h.env.MEDIA;
+    const media = {
+      ...base,
+      head: async (key: string) => (h.objects.has(key) ? { etag: etags.get(key) ?? "adopted-etag" } : null),
+      put: async (key: string, body: Uint8Array, opts?: unknown) => { await base.put(key, body, opts as never); etags.set(key, `etag-of-${key.slice(-12)}`); return { etag: etags.get(key)! }; },
+    };
+    const env2 = { get APP_ORIGIN() { return h.env.APP_ORIGIN; }, get TRANSFORM_SOURCE_SECRET() { return h.env.TRANSFORM_SOURCE_SECRET; }, MEDIA: media, DB: options.db ?? DB() };
+    return { h, env: env2, etags };
+  }
+  const run = (e: unknown, h: ReturnType<typeof harness>, body = jpeg(2048, 1365)) => generateRenditions(e as never, asset.id, { store: h.store, fetch: (async () => new Response(body, { headers: transformOk })) as typeof fetch }, ["delivery_web"]);
+  const row = (key: string) => DB().prepare("SELECT crc32, bytes, etag FROM object_crc32 WHERE r2_key = ?").bind(key).first<{ crc32: number; bytes: number; etag: string }>();
+
+  it("records the CRC-32, length and R2 etag of the object it wrote", async () => {
+    const { h, env: e, etags } = withCrc(); const body = jpeg(2048, 1365);
+    await run(e, h, body);
+    const key = h.saved[0]!.r2Key;
+    expect(await row(key)).toEqual({ crc32: crc32(Buffer.from(body)), bytes: body.byteLength, etag: etags.get(key) });
+  });
+  it("records an adopted object (an earlier attempt wrote it) with the etag R2 reports", async () => {
+    const { h, env: e, etags } = withCrc(); const body = jpeg(2048, 1365);
+    await run(e, h, body); const key = h.saved[0]!.r2Key; await DB().prepare("DELETE FROM object_crc32").run(); h.saved.length = 0; etags.delete(key);
+    await run(e, h, body);
+    expect(h.puts).toHaveLength(1);
+    expect(await row(key)).toEqual({ crc32: crc32(Buffer.from(body)), bytes: body.byteLength, etag: "adopted-etag" });
+  });
+  it("replaces a stale row for the same key", async () => {
+    const { h, env: e, etags } = withCrc(); const body = jpeg(2048, 1365);
+    await run(e, h, body); const key = h.saved[0]!.r2Key;
+    await DB().prepare("UPDATE object_crc32 SET crc32 = 1, bytes = 1, etag = 'old' WHERE r2_key = ?").bind(key).run();
+    h.objects.delete(key); h.saved.length = 0; await run(e, h, body);
+    expect(await row(key)).toMatchObject({ crc32: crc32(Buffer.from(body)), etag: etags.get(key) });
+  });
+  it("a failing CRC write keeps the rendition and logs", async () => {
+    // Only the CRC upsert fails; the transform principal is still read from the real D1.
+    const failing = { prepare: (sql: string) => (sql.includes("object_crc32") ? { bind: () => ({ run: async () => { throw new Error("D1 down"); } }) } : DB().prepare(sql)) };
+    const { h, env: e } = withCrc({ db: failing });
+    expect(await run(e, h)).toEqual({ generated: ["delivery_web"], skipped: [] });
+    expect(h.saved).toHaveLength(1); expect(consoleError).toHaveBeenCalled();
+  });
+  it("records nothing for another variant, and skips quietly with no DB binding or no etag", async () => {
+    const { h, env: e } = withCrc();
+    await generateRenditions(e as never, asset.id, { store: h.store, fetch: (async () => new Response(tinyWebp, { headers: { "content-type": "image/webp", "cf-resized": "internal=ok" } })) as typeof fetch }, ["thumb"]).catch(() => undefined);
+    expect((await DB().prepare("SELECT COUNT(*) AS n FROM object_crc32").first<{ n: number }>())!.n).toBe(0);
+    const plain = harness(); await run(plain.env, plain);
+    expect(plain.saved).toHaveLength(1);
+    expect((await DB().prepare("SELECT COUNT(*) AS n FROM object_crc32").first<{ n: number }>())!.n).toBe(0);
   });
 });

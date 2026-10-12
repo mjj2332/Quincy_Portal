@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ObjectCrcMessage } from "@quincy/shared";
+import { RENDITION_VARIANT_SPEC, type ObjectCrcMessage } from "@quincy/shared";
 import QuincyBackground from "../src";
 import { CRC_STALE_MS, processObjectCrc } from "../src/object-crc";
 import { OBJECT_CRC_SWEEP_LIMIT, sweepObjectCrcs } from "../src/object-crc-sweep";
@@ -34,7 +34,7 @@ beforeAll(async () => {
   await run("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Sweep Editor', 'sweep-editor@example.test', 1, 'editor', 1, ?, ?)", userId, NOW, NOW);
 });
 beforeEach(async () => {
-  await database.DB.batch(["projects", "audit_log", "object_crc32", "object_crc32_work"].map((table) => database.DB.prepare(`DELETE FROM ${table}`)));
+  await database.DB.batch(["asset_renditions", "delivery_set_items", "delivery_sets", "delivery_pages", "projects", "audit_log", "object_crc32", "object_crc32_work"].map((table) => database.DB.prepare(`DELETE FROM ${table}`)));
   projectId = id();
   await run("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Sweep Street', 'editing_autohdr', ?, ?)", projectId, NOW, NOW);
   for (const kind of ["raw", "edited", "video", "floorplan"]) { collections[kind] = id(); await run("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, ?, 'received', 1, ?, ?)", collections[kind], projectId, kind, NOW, NOW); }
@@ -178,5 +178,45 @@ describe("the hourly cron", () => {
     expect(queue.sent).toEqual([]);
     await service.scheduled({ cron: "0 * * * *", scheduledTime: NOW } as never);
     expect(keys(queue)).toEqual([raw.key]);
+  });
+});
+
+describe("sweepObjectCrcs: Client Delivery photos (#787 slice 7)", () => {
+  /** A page whose current set is `members` (older sets hold `older`). `edited` photos are what Publish accepts, but the sweep trusts the set rows alone. */
+  async function page(members: string[], older: string[] = [], enabled = true) {
+    await run("INSERT INTO delivery_pages (project_id, slug, enabled, latest_set_number, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", projectId, `sweep-${id().slice(0, 12)}`, enabled ? 1 : 0, older.length ? 2 : 1, NOW, NOW);
+    for (const [index, set] of (older.length ? [older, members] : [members]).entries()) {
+      const setId = id();
+      await run("INSERT INTO delivery_sets (id, project_id, set_number, operation_id, published_by, published_at) VALUES (?, ?, ?, ?, ?, ?)", setId, projectId, index + 1, id().slice(0, 32), userId, NOW);
+      for (const [position, assetId] of set.entries()) await run("INSERT INTO delivery_set_items (set_id, asset_id, handle, position) VALUES (?, ?, ?, ?)", setId, assetId, id().replaceAll("-", "").slice(0, 16), position);
+    }
+  }
+  async function rendition(assetId: string, key: string, spec: string = RENDITION_VARIANT_SPEC.delivery_web, variant = "delivery_web") {
+    await run("INSERT INTO asset_renditions (id, asset_id, variant, r2_key, bytes, content_type, width, height, spec_version, created_at) VALUES (?, ?, ?, ?, 4, 'image/jpeg', 1, 1, ?, ?)", id(), assetId, variant, key, spec, NOW);
+  }
+  const sweep = async () => { const queue = fakeQueue(); const result = await sweepObjectCrcs({ DB: database.DB, OBJECT_CRC_QUEUE: queue as never }, NOW); return { queue, result }; };
+
+  it("picks the original and the current-spec delivery_web key of every photo in the current set", async () => {
+    // A pending Edited photo would not be eligible on its own; membership of the current set is what makes it so.
+    const a = await asset({ collection: "edited", publish: "pending" }); const b = await asset({ collection: "edited", publish: "pending" });
+    await rendition(a.id, `renditions/${a.id}/web.jpg`); await page([a.id, b.id]);
+    const { queue, result } = await sweep();
+    expect(keys(queue)).toEqual([a.key, `renditions/${a.id}/web.jpg`, b.key].sort()); expect(result).toEqual({ candidates: 3, queued: 3 });
+  });
+  it("includes a superseded member and a locked one (an Unlock needs no second wait), and a page that is switched off", async () => {
+    const old = await asset({ collection: "edited", superseded: true }); const premium = await asset({ collection: "edited" });
+    await run("UPDATE assets SET delivery_premium = 1 WHERE id = ?", premium.id); await page([old.id, premium.id], [], false);
+    expect(keys((await sweep()).queue)).toEqual([old.key, premium.key].sort());
+  });
+  it("leaves out a photo only in an older set, a stale-spec or other-variant rendition, and non-photos", async () => {
+    const oldOnly = await asset({ collection: "edited", publish: "pending" }); const kept = await asset({ collection: "edited", publish: "pending" }); const pdf = await asset({ collection: "floorplan", kind: "floorplan_pdf" });
+    await rendition(kept.id, `renditions/${kept.id}/old.jpg`, "v0"); await rendition(kept.id, `renditions/${kept.id}/thumb.webp`, RENDITION_VARIANT_SPEC.delivery_web, "thumb"); await rendition(oldOnly.id, `renditions/${oldOnly.id}/web.jpg`);
+    await page([kept.id, pdf.id], [oldOnly.id]);
+    expect(keys((await sweep()).queue)).toEqual([kept.key]);
+  });
+  it("skips a key that already has a stored CRC or a live work row, like every other arm", async () => {
+    const a = await asset({ collection: "edited", publish: "pending" }); await rendition(a.id, `renditions/${a.id}/web.jpg`); await page([a.id]);
+    await crcRow(`renditions/${a.id}/web.jpg`); await workRow(a.key, "queued", NOW - 1000, "e");
+    const { queue, result } = await sweep(); expect(queue.sent).toEqual([]); expect(result.queued).toBe(0);
   });
 });

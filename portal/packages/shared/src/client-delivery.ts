@@ -105,3 +105,31 @@ export type DeliveryCandidatesResponse = z.infer<typeof deliveryCandidatesRespon
 /** The Publish response: the CURRENT state (the same shape as the staff read), the receipt for the operation, and whether this was a retry. `operationSetNumber` is the set the operation landed as, which on a replay may be older than `set.setNumber`. */
 export const deliveryPublishResponseSchema = deliveryStateSchema.extend({ replayed: z.boolean(), operationSetNumber: z.number().int().min(1) }).strict();
 export type DeliveryPublishResponse = z.infer<typeof deliveryPublishResponseSchema>;
+
+/**
+ * Download all photos on the public Client Delivery page (#787 slice 7): one zip of the page's CURRENT set of photos, in `web` (the Web-size derivative) or `full` (the originals). A locked premium photo
+ * is left out and named by its public label only. The caps are checked from D1 before any R2 call.
+ */
+export const DELIVERY_ZIP_SIZES = ["web", "full"] as const;
+export type DeliveryZipSize = (typeof DELIVERY_ZIP_SIZES)[number];
+export const DELIVERY_ZIP_MAX_PHOTOS = 300;
+export const DELIVERY_ZIP_MAX_BYTES = 8 * 1024 ** 3;
+export const DELIVERY_ZIP_ARCHIVE_STATES = ["ready", "preparing", "unavailable", "too_large"] as const;
+/** Whether a click downloads now (`ready`), or the zip is still being prepared (`pending` objects, ask again after `retryAfterSeconds`), cannot be served (`unavailable`), or is over the caps (`too_large`). */
+export const deliveryZipArchiveSchema = z.object({ state: z.enum(DELIVERY_ZIP_ARCHIVE_STATES), pending: z.number().int().nonnegative(), retryAfterSeconds: z.number().int().positive().optional() }).strict();
+/** `GET .../zips/:size`: read-only, never queues work. */
+export const deliveryZipManifestSchema = z.object({
+  size: z.enum(DELIVERY_ZIP_SIZES),
+  setNumber: z.number().int().min(1),
+  photos: z.number().int().nonnegative(),
+  totalBytes: z.number().int().nonnegative(),
+  tooLarge: z.boolean(),
+  leftOut: z.array(z.object({ label: z.string().min(1).max(40), reason: z.literal("premium_locked") }).strict()),
+  archive: deliveryZipArchiveSchema,
+}).strict();
+/** `POST .../zips/:size/prepare`: the body is exactly `{}`. */
+export const deliveryZipPrepareInputSchema = z.object({}).strict();
+export const deliveryZipPrepareResponseSchema = deliveryZipArchiveSchema;
+export type DeliveryZipArchive = z.infer<typeof deliveryZipArchiveSchema>;
+export type DeliveryZipManifest = z.infer<typeof deliveryZipManifestSchema>;
+export type DeliveryZipPrepareResponse = z.infer<typeof deliveryZipPrepareResponseSchema>;

@@ -1,11 +1,12 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createExecutionContext } from "cloudflare:test";
+import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import type { ObjectCrcMessage } from "@quincy/shared";
 import app from "../src/index";
 import { releaseVersion } from "../src/lib/video-approval";
 import type { Principal } from "../src/lib/video-notes";
 import { baseEnv, cookie, database, ids, seedFixture } from "./embedded-media-support";
 import { clearVideoFlags, ensureCollection, seedVideoVersion, setVideoFlags } from "./video-review-support";
+import { clearDeliveryFlags, openDelivery, seedAsset, wipeDelivery } from "./delivery-support";
 
 /** The object CRC PRODUCERS in the app (#802): the RAW "select for editing" write and a video Version release each queue the CRC job for the object they commit, best effort. */
 const staff = { id: ids.member, role: "editor" } as unknown as Principal;
@@ -97,5 +98,32 @@ describe("video Version release", () => {
     const response = await post(`/api/projects/${ids.project}/video-versions/${version.assetId}/release`, "admin", queue, { approvalRevision: 1 });
     expect(response.status).toBe(201);
     expect(queue.sent).toEqual([{ type: "object_crc32", r2Key: version.key }]);
+  });
+});
+
+describe("Client Delivery Publish (#787 slice 7)", () => {
+  beforeEach(async () => { await openDelivery(ids.project); await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run(); });
+  afterEach(async () => { await wipeDelivery(); await clearDeliveryFlags(); await database.DB.prepare("DELETE FROM assets WHERE r2_key LIKE '%delivery-test%'").run(); });
+  async function publish(assetIds: string[], queue: ReturnType<typeof fakeQueue> | undefined) {
+    const ctx = context(); const headers = new Headers({ cookie: await cookie("admin"), origin: baseEnv.APP_ORIGIN, "content-type": "application/json" });
+    const response = await app.fetch(new Request(`https://portal.test/api/projects/${ids.project}/delivery/publish`, { method: "POST", headers, body: JSON.stringify({ assetIds, expectedLatestSet: null, operationId: crypto.randomUUID() }) }), { ...baseEnv, OBJECT_CRC_QUEUE: queue as never }, ctx);
+    await waitOnExecutionContext(ctx);
+    return response;
+  }
+  const keyOf = async (id: string) => (await database.DB.prepare("SELECT r2_key FROM assets WHERE id = ?").bind(id).first<{ r2_key: string }>())!.r2_key;
+
+  it("queues the CRC job for the originals of the published photos, locked ones included, and nothing for a PDF", async () => {
+    const a = await seedAsset("photo"); const locked = await seedAsset("photo", { deliveryPremium: true }); const pdf = await seedAsset("floorplan_pdf"); const queue = fakeQueue();
+    expect((await publish([a.id, locked.id, pdf.id], queue)).status).toBe(201);
+    expect(queue.sent.map((message) => message.r2Key).sort()).toEqual([await keyOf(a.id), await keyOf(locked.id)].sort());
+  });
+  it("a failing queue, or no binding, never fails Publish", async () => {
+    const a = await seedAsset("photo"); const failing = fakeQueue(true);
+    expect((await publish([a.id], failing)).status).toBe(201); expect(failing.sendBatch).toHaveBeenCalled();
+    await wipeDelivery(); const b = await seedAsset("photo");
+    expect((await publish([b.id], undefined)).status).toBe(201);
+  });
+  it("queues nothing for a refused Publish", async () => {
+    const queue = fakeQueue(); expect((await publish([crypto.randomUUID()], queue)).status).toBe(400); expect(queue.sendBatch).not.toHaveBeenCalled();
   });
 });

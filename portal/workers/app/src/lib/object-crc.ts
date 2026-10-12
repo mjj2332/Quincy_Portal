@@ -28,7 +28,7 @@ export type ZipAssessment =
   | { kind: "too_large" }
   | { kind: "native"; ready: Map<string, ObjectCrc> }
   | { kind: "preparing"; pending: string[]; retryAfterSeconds: number }
-  | { kind: "unavailable"; reason: "missing" | "changed" | "failed" };
+  | { kind: "unavailable"; reason: "missing" | "changed" | "failed" | "disabled" };
 /** Whether the gate queues the CRC job for what is pending: never (a read-only poll), only when it is about to answer `preparing`, or always (a preparation request). */
 export type EnqueueMode = "never" | "when_blocked" | "always";
 type GateEnv = Pick<Env, "DB" | "OBJECT_CRC_QUEUE"> & { MEDIA: Pick<R2Bucket, "head"> };
@@ -86,10 +86,12 @@ async function queuePending(env: GateEnv, keys: readonly string[], work: Map<str
  * With the flag on, EVERY object is HEADed: Dropbox RAW keys are reused across revisions, so a stored row can describe bytes that are gone, and only R2's etag now says whether it still matches.
  * An object is pending when it has no row or its row's etag differs from R2's. The row's own size is not compared with D1's: the etag decides, and the writer checks the size again as it reads.
  */
-export async function assessZip(env: GateEnv, subjects: readonly CrcSubject[], options: { source: string; enqueue: EnqueueMode; now?: number; /** Default true: HEAD even with the flag off. */ headWhenOff?: boolean }): Promise<ZipAssessment> {
+export async function assessZip(env: GateEnv, subjects: readonly CrcSubject[], options: { source: string; enqueue: EnqueueMode; now?: number; /** Default true: HEAD even with the flag off. */ headWhenOff?: boolean;
+  /** Default false. The native writer is the ONLY writer (Client Delivery zips, #787 slice 7): the flag off is `unavailable` (reason `disabled`), and a missing CRC is `preparing` however small the set, never `legacy`. */ nativeOnly?: boolean }): Promise<ZipAssessment> {
   const now = options.now ?? Date.now();
   const small = subjects.reduce((total, subject) => total + subject.bytes, 0) <= ZIP_LEGACY_MAX_BYTES;
   const enabled = await nativeZipEnabled(env.DB);
+  if (!enabled && options.nativeOnly) return { kind: "unavailable", reason: "disabled" };
   if (!enabled && !small) return { kind: "too_large" };
   // With the flag off every route still HEADs: a missing or resized object must fail before the audit row and byte 0, not stream a broken 200. Only the read-only manifest opts out (`headWhenOff: false`).
   if (!enabled && options.headWhenOff === false) return { kind: "legacy" };
@@ -114,7 +116,7 @@ export async function assessZip(env: GateEnv, subjects: readonly CrcSubject[], o
 
   const work = await loadWork(env.DB, pending);
   if (pending.some((key) => work.get(key)?.state === "failed")) return { kind: "unavailable", reason: "failed" };
-  const blocked = !small;
+  const blocked = !small || options.nativeOnly === true;
   if (options.enqueue === "always" || (options.enqueue === "when_blocked" && blocked)) await queuePending(env, pending, work, options.source, now);
   return blocked ? { kind: "preparing", pending, retryAfterSeconds: ZIP_RETRY_AFTER_SECONDS } : { kind: "legacy" };
 }
