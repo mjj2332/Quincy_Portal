@@ -70,16 +70,30 @@ export async function resolveSession(c: Context<AppEnv>, linkId: string, now: nu
 }
 
 /**
+ * Whether `session` is still the live one, asked again after an await (R2 answering): the same row `resolveSession` read, not expired, its link not revoked or replaced (the generation still
+ * matches), the same guest, and the `guest` gate still open. A request that waited on R2 holds a session from before the wait; this is the check that it was not ended meanwhile.
+ */
+export async function sessionStillValid(db: D1Database, session: GuestSession, now: number): Promise<boolean> {
+  const row = await db.prepare(`SELECT 1 AS ok FROM guest_sessions s JOIN client_links l ON l.id = s.link_id
+      WHERE s.id = ?1 AND s.token_hash = ?2 AND s.link_id = ?3 AND s.guest_id IS ?4 AND s.expires_at > ?5 AND l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ?5 AND s.link_generation = l.token_generation`)
+    .bind(session.id, session.tokenHash, session.link.id, session.guestId, now).first();
+  if (!row) return false;
+  const parts = await guestGateParts(db, session.link.projectId);
+  return parts !== null && parts.includes("guest");
+}
+
+/**
  * What the page is told. Each `allow` flag is the link's flag AND its Worker part (`guest_comments` for comments, `delivery` for approve and download), from the gate state already
  * read for this request. `verified`, `email` and `name` are false, null and null until the session is verified.
  */
-export const sessionBody = (link: GuestLink, identity: { email: string; name: string | null } | null = null, notifications: GuestSessionResponse["notifications"] = null): GuestSessionResponse => ({
+export const sessionBody = (link: GuestLink, identity: { email: string; name: string | null } | null = null, notifications: GuestSessionResponse["notifications"] = null, heic = false): GuestSessionResponse => ({
   link: {
     label: link.label, expiresAt: new Date(link.expiresAt).toISOString(),
     allow: { comments: link.allowComments && link.parts.includes("guest_comments"), approve: link.allowApprove && link.parts.includes("delivery"), download: link.allowDownload && link.parts.includes("delivery"), markup: link.parts.includes("markup") },
   },
   verified: identity !== null, email: identity?.email ?? null, name: identity?.name ?? null,
   notifications: identity === null ? null : notifications,
+  media: { heic },
 });
 /** The identity of a session for `sessionBody`, or null while it is unverified. */
 export const identityOf = (session: Pick<GuestSession, "email" | "name">): { email: string; name: string | null } | null => (session.email === null ? null : { email: session.email, name: session.name });

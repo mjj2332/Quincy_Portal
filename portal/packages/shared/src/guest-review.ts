@@ -32,6 +32,8 @@ export const guestSessionResponseSchema = z.object({
   name: z.string().nullable(),
   /** The client email-updates switch (#741 15b): null until verified. `available` is the `notify_client` part on for a live link and a membership to flip; `subscribed` is that membership being subscribed. */
   notifications: z.object({ available: z.boolean(), subscribed: z.boolean() }).strict().nullable(),
+  /** What the guest's note editor may upload (#835 C): `heic` is renditions on AND the owner's HEIC flag on, the same two gates the upload route applies. */
+  media: z.object({ heic: z.boolean() }).strict(),
 }).strict();
 export type GuestSessionResponse = z.infer<typeof guestSessionResponseSchema>;
 

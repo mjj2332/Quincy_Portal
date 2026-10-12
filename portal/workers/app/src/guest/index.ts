@@ -1,4 +1,5 @@
 import type { Context, Hono } from "hono";
+import { guestHeicAvailable } from "../lib/embedded-heic";
 import { guestSessionInputSchema } from "@quincy/shared";
 import { VIDEO_STREAM_HEADERS, serveR2Object } from "../lib/r2-serve";
 import { verifyPasscode } from "../lib/review-passcode";
@@ -64,7 +65,7 @@ async function startSession(c: Context<AppEnv, "/d/api/links/:linkId/session">):
   ]);
   const row = stored?.results[0] as { session_expires_at: number; label: string | null; expires_at: number; allow_comments: number; allow_approve: number; allow_download: number } | undefined;
   if (!inserted || inserted.meta.changes === 0 || !row) return guestNotFound(c);
-  const response = c.json(sessionBody({ ...link, label: row.label, expiresAt: row.expires_at, allowComments: row.allow_comments === 1, allowApprove: row.allow_approve === 1, allowDownload: row.allow_download === 1 }));
+  const response = c.json(sessionBody({ ...link, label: row.label, expiresAt: row.expires_at, allowComments: row.allow_comments === 1, allowApprove: row.allow_approve === 1, allowDownload: row.allow_download === 1 }, null, null, await guestHeicAvailable(c.env)));
   response.headers.append("set-cookie", sessionCookieHeader(c.env, link.id, sessionToken, (row.session_expires_at - now) / 1000));
   return response;
 }
@@ -102,7 +103,7 @@ export function mountGuest(app: Hono<AppEnv>): void {
   app.get("/d/unsubscribe", guestRoute("/d/unsubscribe", (c) => guestShell(c)));
 
   app.post("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", startSession));
-  app.get("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", (c) => withSession(c, async (session) => c.json(sessionBody(session.link, identityOf(session), await notificationsOf(c.env.DB, session.link, session.guestId))))));
+  app.get("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", (c) => withSession(c, async (session) => c.json(sessionBody(session.link, identityOf(session), await notificationsOf(c.env.DB, session.link, session.guestId), await guestHeicAvailable(c.env))))));
   app.delete("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", async (c) => {
     // Resolve the session first: only a live credential for this link can leave, anything else is the stub.
     const session = await resolveSession(c, c.req.param("linkId"), Date.now());

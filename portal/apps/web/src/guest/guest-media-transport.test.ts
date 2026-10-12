@@ -33,6 +33,18 @@ describe("the guest's media transport (#835 C)", () => {
     expect(transport.heicEnabled).toBe(false);
   });
 
+  it("offers HEIC once a session read says the owner has it open, and withdraws it when a later read says not", async () => {
+    const SESSION = { link: { label: null, expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: true, approve: false, download: false, markup: true } }, verified: true, email: "sam@example.com", name: "Sam", notifications: null };
+    const api = createGuestApi(LINK);
+    expect(api.media.heicEnabled).toBe(false);
+    fetchMock.mockImplementation(async () => json({ ...SESSION, media: { heic: true } }));
+    await api.session();
+    expect(api.media.heicEnabled).toBe(true);
+    fetchMock.mockImplementation(async () => json({ ...SESSION, media: { heic: false } }));
+    await api.session();
+    expect(api.media.heicEnabled).toBe(false);
+  });
+
   it("uploads an image: presign, bytes to the link's direct route, complete; no owner and no staff path", async () => {
     await expect(media().uploadImage(png(), () => undefined, {})).resolves.toBe(MEDIA);
     const [presign, complete] = calls();

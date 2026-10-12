@@ -9,6 +9,11 @@ export async function heicFlagEnabled(db: D1Database): Promise<boolean> {
   return row?.enabled === 1;
 }
 
+/** HEIC is open to a guest when renditions are on and the owner's flag is on: no Admin bypass, because a guest is not staff. The guest upload refuses on exactly this, and the guest session tells the page the same answer. */
+export async function guestHeicAvailable(env: Pick<Env, "DB" | "RENDITIONS_ENABLED">): Promise<boolean> {
+  return renditionsEnabled(env) && await heicFlagEnabled(env.DB);
+}
+
 /** An Admin always may (the slice that proves it in production), everyone else only once the owner has turned the flag on. Read on the effective user, so an impersonating Admin is the staff they act as. */
 export async function heicUploadsAllowed(env: Pick<Env, "DB">, user: Pick<SessionUser, "role">): Promise<boolean> {
   return user.role === "admin" || await heicFlagEnabled(env.DB);

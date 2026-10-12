@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { readBoundedBytes } from "../lib/bounded-body";
 import { z } from "zod";
 import { createDb, schema } from "@quincy/db";
 import { eq } from "drizzle-orm";
@@ -116,7 +117,7 @@ embeddedMediaRoutes.put("/projects/:projectId/embedded-media/:mediaId/poster", t
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(mediaId).success) return c.json({ error: "Invalid media upload" }, 400);
   const project = await gateForRow(c, projectId, mediaId); if (project instanceof Response) return project;
   if (project.archivedAt) return c.json({ error: "Archived projects cannot accept media", code: "project_archived" }, 409);
-  return posterEmbeddedMedia(scopeOf(c, projectId), mediaId, { contentLength: c.req.header("content-length"), body: () => c.req.arrayBuffer() });
+  return posterEmbeddedMedia(scopeOf(c, projectId), mediaId, { body: (max) => readBoundedBytes(c.req.raw, max) });
 }));
 
 /** A cancelled upload (#494): see `abortEmbeddedMedia`. The uploader's alone, in any Project state, since cleaning up is never harmful. */

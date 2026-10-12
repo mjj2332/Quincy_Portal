@@ -99,10 +99,9 @@ async function mediaRefusal(response: Response): Promise<Error> {
 }
 
 /**
- * The guest's media routes (`/d/api/links/:linkId/media`, #835 C) as the shared upload flows run them, and the editor transport built on them: images and videos, never HEIC (a guest has no
- * settings route to ask, and the server refuses it unless the owner turned it on). Same-origin cookies only, like every other call here.
+ * The guest's media routes (`/d/api/links/:linkId/media`, #835 C) as the shared upload flows run them, and the editor transport built on them: images and videos, and HEIC only while the session read says the owner has it open (`heicEnabled`; the server applies the same two gates). Same-origin cookies only, like every other call here.
  */
-export function createGuestMediaTransport(linkId: string): EditorMediaTransport {
+export function createGuestMediaTransport(linkId: string, heicEnabled: () => boolean = () => false): EditorMediaTransport {
   const base = `/d/api/links/${linkId}/media`;
   const at = (mediaId: string) => `${base}/${encodeURIComponent(mediaId)}`;
   const post = async (url: string, body: unknown): Promise<unknown> => {
@@ -123,7 +122,7 @@ export function createGuestMediaTransport(linkId: string): EditorMediaTransport 
     putPoster: (mediaId, frame, signal) => fetch(`${at(mediaId)}/poster`, { method: "PUT", credentials: "same-origin", headers: { "content-type": "image/jpeg" }, body: frame, ...(signal ? { signal } : {}) }).then((response) => response.ok, () => false),
   };
   return {
-    heicEnabled: false,
+    get heicEnabled() { return heicEnabled(); },
     video: true,
     mediaUrl: at,
     posterUrl: (mediaId) => `${at(mediaId)}/poster`,
@@ -161,6 +160,9 @@ export type GuestApi = {
 
 export function createGuestApi(linkId: string): GuestApi {
   const base = `/d/api/links/${linkId}`;
+  /** Whether the owner has HEIC open to guests, as the latest session body said (exchange, verify or a session read); the transport reads it at use. */
+  let heic = false;
+  const learn = (session: GuestSessionResponse): GuestSessionResponse => { heic = session.media.heic; return session; };
   const send = async (path: string, init?: RequestInit): Promise<Response | null> => {
     try { return await fetch(`${base}${path}`, { credentials: "same-origin", ...init }); } catch { return null; }
   };
@@ -233,7 +235,7 @@ export function createGuestApi(linkId: string): GuestApi {
     return { kind: "rejected", error: errorOf(parsedBody) };
   };
   return {
-    media: createGuestMediaTransport(linkId),
+    media: createGuestMediaTransport(linkId, () => heic),
     downloadAllUrl: `${base}/downloads/all.zip`,
     async decide(assetId, decision, note) {
       const response = await send(`/versions/${assetId}/decision`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(note === undefined ? { decision } : { decision, note }) });
@@ -289,7 +291,7 @@ export function createGuestApi(linkId: string): GuestApi {
       const read = await readJson(response);
       if (response.ok) {
         const parsed = read === null ? null : guestSessionResponseSchema.safeParse(read.body);
-        return parsed?.success ? { ok: true, session: parsed.data } : { ok: false, reason: "unreachable" };
+        return parsed?.success ? { ok: true, session: learn(parsed.data) } : { ok: false, reason: "unreachable" };
       }
       if (response.status >= 500) return { ok: false, reason: "unreachable" };
       if (response.status === 429) return { ok: false, reason: "limited", retryAfterSeconds: retryAfter(response, read?.body) };
@@ -316,7 +318,7 @@ export function createGuestApi(linkId: string): GuestApi {
         const read = await readJson(response);
         if (read === null) return { ok: false, reason: "unreachable" };
         const parsed = guestSessionResponseSchema.safeParse(read.body);
-        return parsed.success ? { ok: true, session: parsed.data } : { ok: false, reason: "unavailable" };
+        return parsed.success ? { ok: true, session: learn(parsed.data) } : { ok: false, reason: "unavailable" };
       }
       if (response.status === 401 || response.status === 429) {
         const read = await readJson(response);
@@ -328,7 +330,7 @@ export function createGuestApi(linkId: string): GuestApi {
       if (response.status >= 500 || response.status === 429) return { ok: false, reason: "unreachable" };
       return { ok: false, reason: "unavailable" };
     },
-    session: () => read("/session", (body) => guestSessionResponseSchema.parse(body)),
+    session: () => read("/session", (body) => learn(guestSessionResponseSchema.parse(body))),
     videos: () => read("/videos", (body) => guestVideoListResponseSchema.parse(body).videos),
     notes: (assetId) => read(`/versions/${assetId}/notes`, (body) => guestNoteListResponseSchema.parse(body).notes),
     markup: (noteId) => read(`/notes/${noteId}/markup`, (body) => guestNoteMarkupResponseSchema.parse(body)),
