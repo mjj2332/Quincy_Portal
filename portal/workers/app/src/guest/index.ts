@@ -10,6 +10,7 @@ import { guestNotFound, guestRoute, INVALID, originRejection, readJson, SESSION_
 import { mountGuestApproval } from "./approval";
 import { mountGuestDownloads } from "./download";
 import { mountGuestEmail } from "./email";
+import { mountGuestMedia } from "./media";
 import { mountGuestNotes } from "./notes-write";
 import { mountGuestPaste } from "./paste";
 import { mountGuestSubscription } from "./subscription";
@@ -84,6 +85,7 @@ export async function guestShell(c: Context<AppEnv, string>): Promise<Response> 
 export function mountGuest(app: Hono<AppEnv>): void {
   mountGuestEmail(app);
   mountGuestNotes(app);
+  mountGuestMedia(app);
   mountGuestPaste(app);
   mountGuestApproval(app);
   mountGuestDownloads(app);

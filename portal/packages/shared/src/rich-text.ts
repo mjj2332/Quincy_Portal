@@ -430,6 +430,19 @@ export function normalizeRichTextMentionLabels(doc: RichTextDoc, namesById: Read
   return { type: "doc", content: doc.content.map(normalize) as RichTextBlock[] };
 }
 
+/**
+ * The document with every mention turned into the plain text "@Name" (#835 C): what a guest is shown. A guest never learns a user id, so the node, its id and its marks go and the label stays as text.
+ * Any other node is carried over untouched.
+ */
+export function richTextMentionsToText(doc: RichTextDoc): RichTextDoc {
+  const flatten = (node: RichTextTreeNode): RichTextTreeNode => {
+    if (node.type === "mention") return { type: "text", text: `@${node.attrs.label}` };
+    if (node.type === "text" || node.type === "hardBreak" || node.type === "image" || node.type === "video" || node.type === "linkPreview") return node;
+    return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, key === "content" && Array.isArray(value) ? value.map(flatten) : value])) as RichTextTreeNode;
+  };
+  return { type: "doc", content: doc.content.map(flatten) as RichTextBlock[] };
+}
+
 /** Presents old plain-text rows through the same DTO without a migration backfill. */
 export function legacyBodyToRichTextDoc(body: string): RichTextDoc {
   return { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: body }] }] };

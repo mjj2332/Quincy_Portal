@@ -4,7 +4,7 @@ import { guestNoteDeleteResponseSchema, guestNoteListResponseSchema, guestNoteMa
 import { reserveAttempts } from "../src/guest/rate-limit";
 import { hashToken } from "../src/lib/opaque-token";
 import { createVideoNote, createVideoNoteReply, deleteVideoNote, editVideoNote, findNoteHead, type NoteAuthor } from "../src/lib/video-notes";
-import { cookie as staffCookie, database, ids, seedFixture } from "./embedded-media-support";
+import { cookie as staffCookie, database, ids, imageDoc, mediaRow, seedFixture, seedMedia } from "./embedded-media-support";
 import {
   addMember, clearGuestRows, GUEST_WINDOW_MS, grant, guestFetch, guestOrigin, linkPath, linkWithSession, openGuestGate, slowRequest, verifySession, type LinkInput,
 } from "./guest-support";
@@ -25,6 +25,7 @@ afterEach(async () => {
   await clearVideoNotes(); await clearGuestRows(); await clearVideoFlags();
   await database.DB.prepare("DELETE FROM audit_log WHERE action LIKE 'review_link.%'").run();
   await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run();
+  await database.DB.prepare("DELETE FROM embedded_media").run(); await database.DB.prepare("DELETE FROM embedded_media_cleanup").run();
   await database.DB.prepare("DELETE FROM guest_reviewers WHERE email_normalized LIKE '%@guest-13b.test' OR email_normalized LIKE '%@guest.test'").run();
 });
 
@@ -179,10 +180,10 @@ describe("POST .../notes/:noteId/replies", () => {
     expect(await noteCount()).toBe(5);
   });
 
-  it("401s an unverified session, 403s a link without comments, 400s a bad body and 413s one over 16 KiB", async () => {
+  it("401s an unverified session, 403s a link without comments, 400s a bad body and 413s one over 64 KiB", async () => {
     const w = await world(); const root = await staffNote(w);
     for (const bad of [{ body: "" }, { body: "x", visibility: "internal" }, { extra: 1 }]) expect((await reply(w, root.id, bad)).status).toBe(400);
-    const huge = await reply(w, root.id, {}, { body: JSON.stringify({ body: "x".repeat(17 * 1024) }) }); expect(huge.status).toBe(413);
+    const huge = await reply(w, root.id, {}, { body: JSON.stringify({ body: "x".repeat(65 * 1024) }) }); expect(huge.status).toBe(413);
     const unverified = await world({ verified: false }); const unverifiedRoot = await staffNote(unverified);
     expect((await reply(unverified, unverifiedRoot.id)).status).toBe(401);
     const noComments = await world({ link: { allow: [0, 1, 1] } }); const noCommentsRoot = await staffNote(noComments);
@@ -698,5 +699,88 @@ describe("the SQL fence on its own (a write that bypasses the route inserts, cha
     expect((await editVideoNote(database.DB, { projectId, note: head, author: await writerOf(w), expectedRevision: 1, body: "x", startFrame: 10, endFrame: null, now: Date.now() })).kind).toBe("forbidden");
     expect((await deleteVideoNote(database.DB, { projectId, note: head, author: await writerOf(w), expectedRevision: 1, now: Date.now() })).kind).toBe("forbidden");
     expect(await noteRow(theirs.id)).toMatchObject({ body: "Seeded note", revision: 1, deleted_at: null });
+  });
+});
+
+describe("rich content (#835 C)", () => {
+  const para = (...content: unknown[]) => ({ type: "paragraph", content });
+  const text = (value: string) => ({ type: "text", text: value });
+  const doc = (...content: unknown[]) => ({ type: "doc", content });
+  const guestImage = async (w: World, input: Parameters<typeof seedMedia>[0] = {}) => {
+    const media = await seedMedia({ ownerKind: "video_note", state: "pending", ownerId: null, ...input });
+    await database.DB.prepare("UPDATE embedded_media SET uploader_id = NULL, uploader_guest_id = ? WHERE id = ?").bind(w.guest!.guestId, media.id).run();
+    return media.id;
+  };
+
+  it("400s a mention node, whoever it names, and writes nothing", async () => {
+    const w = await world();
+    const mention = { type: "mention", attrs: { id: ids.member, label: "Member Person" } };
+    for (const body of [doc(para(text("Hi "), mention))]) {
+      const response = await create(w, { body: undefined, content: body }); expect(response.status).toBe(400); expect(await json(response)).toEqual({ error: "mentions_not_allowed" });
+    }
+    const root = await staffNote(w);
+    const replyResponse = await reply(w, root.id, { body: undefined, content: doc(para(mention)) }); expect(replyResponse.status).toBe(400); expect(await json(replyResponse)).toEqual({ error: "mentions_not_allowed" });
+    expect(await noteCount()).toBe(1);
+    expect((await database.DB.prepare("SELECT count(*) AS n FROM video_note_mentions").first<{ n: number }>())!.n).toBe(0);
+  });
+
+  it("stores content with its derived body, attaches the guest's own media, and answers content and mediaCount", async () => {
+    const w = await world(); const imageId = await guestImage(w);
+    const response = await create(w, { body: undefined, content: imageDoc(imageId) });
+    const created = await thread(response, 201);
+    expect(created).toMatchObject({ body: "Photos [1 image]", mediaCount: 1, content: imageDoc(imageId) });
+    expect(await mediaRow(imageId)).toMatchObject({ state: "attached", owner_id: created.id, uploader_guest_id: w.guest!.guestId });
+    expect((await noteRow(created.id))!.content_json).toBe(JSON.stringify(imageDoc(imageId)));
+  });
+
+  it("409s media that is not the guest's own fresh upload, and attaches none of it", async () => {
+    const w = await world();
+    const staffs = await seedMedia({ ownerKind: "video_note", state: "pending", ownerId: null });
+    const response = await create(w, { body: undefined, content: imageDoc(staffs.id) });
+    expect(response.status).toBe(409); expect(await json(response)).toEqual({ error: "media_unavailable" });
+    expect(await noteCount()).toBe(0); expect(await mediaRow(staffs.id)).toMatchObject({ state: "pending", owner_id: null });
+  });
+
+  it("400s an 11th attachment", async () => {
+    const w = await world(); const ids11: string[] = [];
+    for (let i = 0; i < 11; i += 1) ids11.push(await guestImage(w));
+    const response = await create(w, { body: undefined, content: imageDoc(...ids11) });
+    expect(response.status).toBe(400); expect(await json(response)).toEqual({ error: "too_many_media" });
+    expect(await noteCount()).toBe(0);
+  });
+
+  it("400s body and content together, neither, and a document the profile refuses", async () => {
+    const w = await world();
+    expect((await create(w, { content: doc(para(text("x"))) })).status).toBe(400);
+    expect((await create(w, { body: undefined })).status).toBe(400);
+    expect((await create(w, { body: undefined, content: { type: "doc", content: [{ type: "linkPreview", attrs: { previewId: crypto.randomUUID() } }] } })).status).toBe(400);
+    expect(await noteCount()).toBe(0);
+  });
+
+  it("edits a rich note: a new document swaps the media, a plain body edit of it is 422, and another guest cannot touch it", async () => {
+    const w = await world(); const first = await guestImage(w); const second = await guestImage(w);
+    const created = await thread(await create(w, { body: undefined, content: imageDoc(first) }), 201);
+    const edited = await edit(w, created.id, { expectedRevision: 1, content: imageDoc(second) });
+    expect((await thread(edited, 200))).toMatchObject({ revision: 2, mediaCount: 1, content: imageDoc(second) });
+    expect(await mediaRow(second)).toMatchObject({ state: "attached", owner_id: created.id });
+    expect(await mediaRow(first)).toMatchObject({ state: "detached" });
+    const plain = await edit(w, created.id, { expectedRevision: 2, body: "plain" }); expect(plain.status).toBe(422); expect(await json(plain)).toEqual({ error: "use_content" });
+  });
+
+  it("replies with content and media", async () => {
+    const w = await world(); const imageId = await guestImage(w); const root = await staffNote(w);
+    const created = await thread(await reply(w, root.id, { body: undefined, content: imageDoc(imageId) }), 201);
+    expect(created.replies[0]).toMatchObject({ body: "Photos [1 image]", mediaCount: 1, content: imageDoc(imageId) });
+  });
+
+  it("shows a staff note's mention as the plain text '@Name', and no user id anywhere in the response", async () => {
+    const w = await world();
+    const staff = await seedVideoNote({ assetId: w.a.assetId, visibility: "public", body: "Hi @Other Person" });
+    const content = doc(para(text("Hi "), { type: "mention", attrs: { id: ids.other, label: "Other Person" } }, text(" look")));
+    await database.DB.prepare("UPDATE video_notes SET content_json = ? WHERE id = ?").bind(JSON.stringify(content), staff.id).run();
+    const raw = await (await guestFetch(notesUrl(w), { cookie: w.link.cookie })).text();
+    const note = guestNoteListResponseSchema.parse(JSON.parse(raw)).notes.find((item) => item.id === staff.id)!;
+    expect(note.content).toEqual(doc(para(text("Hi "), text("@Other Person"), text(" look"))));
+    expect(raw).not.toContain(ids.other); expect(raw).not.toContain('"mention"');
   });
 });

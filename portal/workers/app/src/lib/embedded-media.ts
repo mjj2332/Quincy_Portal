@@ -135,8 +135,10 @@ export async function deleteEmbeddedMediaObjects(env: Pick<Env, "MEDIA">, rows: 
 export type OwnedMediaOwner = { ownerKind: "project_comment" | "notice_post" | "video_note"; ownerId: string; projectId: string | null };
 /** Who uploaded the media a save wants (#835): a staff user, or a guest reviewer on a Review link. Exactly one of the row's two uploader columns is set (migration 0075). */
 export type MediaUploader = { userId: string } | { guestId: string };
-const uploaderColumn = (uploader: MediaUploader): "uploader_id" | "uploader_guest_id" => ("userId" in uploader ? "uploader_id" : "uploader_guest_id");
-const uploaderValue = (uploader: MediaUploader): string => ("userId" in uploader ? uploader.userId : uploader.guestId);
+export const uploaderColumn = (uploader: MediaUploader): "uploader_id" | "uploader_guest_id" => ("userId" in uploader ? "uploader_id" : "uploader_guest_id");
+export const uploaderValue = (uploader: MediaUploader): string => ("userId" in uploader ? uploader.userId : uploader.guestId);
+/** Whether `row` was uploaded by `uploader`: the matching uploader column, never the other one. */
+export const isUploadedBy = (row: Pick<EmbeddedMediaRow, "uploaderId" | "uploaderGuestId">, uploader: MediaUploader): boolean => ("userId" in uploader ? row.uploaderId === uploader.userId : row.uploaderGuestId === uploader.guestId);
 
 type OwnedMediaRow = { id: string; state: EmbeddedMediaState; owner_id: string | null; uploader_id: string | null; uploader_guest_id: string | null; project_id: string | null; owner_kind: string; kind: string; created_at: number; detached_at: number | null; rendition_status: EmbeddedRenditionStatus };
 
