@@ -246,6 +246,9 @@ staff member.
 **Video**:
 A titled item in a Project's Video Collection. Its Versions are its cuts; reviewing it is separate
 from the photo Stages.
+Its title is the file name of its latest live Version (spaces trimmed, `.mp4` or `.mov` dropped, 200
+characters at most, "Untitled film" if nothing is left). Nobody types it, and it moves when a Version
+is uploaded, removed or restored (#828).
 _Avoid_: Asset (a Video is the group of its Versions)
 
 **Version**:

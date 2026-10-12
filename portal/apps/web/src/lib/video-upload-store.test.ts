@@ -27,7 +27,7 @@ import { abortReservation } from "./video-upload";
 import { abortVideoReservation, cancelVideoUpload, removeVideoUpload, resetVideoUploadStore, startVideoUpload } from "./video-upload-store";
 
 const queryClient = {} as QueryClient;
-const start = () => startVideoUpload({ userId: "u1", queryClient, projectId: "p1", role: "editor", file: new File([], "a.mp4"), target: { kind: "new", title: "Film" }, probe: {} as never, cautions: [] })!;
+const start = () => startVideoUpload({ userId: "u1", queryClient, projectId: "p1", role: "editor", file: new File([], "a.mp4"), target: { kind: "new" }, probe: {} as never, cautions: [] })!;
 const resourcesOf = () => (invalidate.mock.calls.at(-1) as unknown as [unknown, { resources: { kind: string }[] }])[1].resources.map((r) => r.kind);
 
 afterEach(() => { resetVideoUploadStore(); invalidate.mockClear(); toast.mockClear(); made.opts.length = 0; made.jobs.length = 0; });

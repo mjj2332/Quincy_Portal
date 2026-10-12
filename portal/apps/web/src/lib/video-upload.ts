@@ -1,6 +1,7 @@
 import {
   VIDEO_MAX_BYTES,
   VIDEO_UPLOAD_CONTENT_TYPE,
+  filmTitleFromFilename,
   mp4RejectMessage,
   probeMp4,
   videoUploadCompleteResponseSchema,
@@ -47,10 +48,8 @@ export async function checkVideoFile(file: File): Promise<VideoFileCheck> {
   }
 }
 
-/** The title a new film starts with: the filename without `.mp4` or `.mov`, trimmed, at most 200 characters. */
-export function defaultFilmTitle(filename: string): string { return filename.trim().replace(/\.(mp4|mov)$/i, "").trim().slice(0, 200); }
-
-export type VideoUploadTarget = { kind: "new"; title: string } | { kind: "version"; videoId: string; title: string };
+/** A new film, or a new Version of one. A new film is titled by its file name and the server derives that title itself (#828), so only a Version carries a `title`, for the tray label. */
+export type VideoUploadTarget = { kind: "new" } | { kind: "version"; videoId: string; title: string };
 export type VideoUploadPhase = "reserving" | "uploading" | "finishing" | "done" | "failed";
 /** What a failed row offers: send the failed part again, or ask the server to finish again (no re-upload). */
 export type VideoUploadRetry = "upload" | "finish" | null;
@@ -134,7 +133,7 @@ export class VideoUpload {
   readonly reserved: Promise<string | null> = new Promise((resolve) => { this.resolveReserved = resolve; });
 
   constructor(readonly id: number, private readonly options: VideoUploadOptions) {
-    this.state = { id, projectId: options.projectId, fileName: options.file.name, title: options.target.title, videoId: options.target.kind === "version" ? options.target.videoId : null, version: null, percent: 0, phase: "reserving", error: null, retry: null, cautions: options.cautions };
+    this.state = { id, projectId: options.projectId, fileName: options.file.name, title: options.target.kind === "new" ? filmTitleFromFilename(options.file.name) : options.target.title, videoId: options.target.kind === "version" ? options.target.videoId : null, version: null, percent: 0, phase: "reserving", error: null, retry: null, cautions: options.cautions };
   }
 
   private get base() { return `/api/projects/${encodeURIComponent(this.options.projectId)}/video-uploads`; }
@@ -204,7 +203,7 @@ export class VideoUpload {
   private async reserve(): Promise<void> {
     const { options } = this;
     const body = {
-      ...(options.target.kind === "new" ? { title: options.target.title } : { videoId: options.target.videoId }),
+      ...(options.target.kind === "version" ? { videoId: options.target.videoId } : {}),
       filename: options.file.name,
       bytes: options.file.size,
       contentType: VIDEO_UPLOAD_CONTENT_TYPE,

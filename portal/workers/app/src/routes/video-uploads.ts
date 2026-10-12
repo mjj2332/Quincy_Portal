@@ -3,7 +3,7 @@ import { z } from "zod";
 import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
 import {
   EMBEDDED_POSTER_MAX_BYTES, EMBEDDED_VIDEO_PART_URL_TTL_SECONDS, VIDEO_UPLOAD_ACTIVE_STATUSES, VIDEO_UPLOAD_CONTENT_TYPE, VIDEO_UPLOAD_DECLARED_CONTENT_TYPES, VIDEO_UPLOAD_EXPIRY_MS, VIDEO_UPLOAD_MAX_ACTIVE_PER_USER, VIDEO_MAX_BYTES,
-  isJpeg, mp4RejectMessage, normalizeVideoUploadFilename, probeMp4, roleHasCapability, timecodeBaseFor, videoObjectKey, videoPosterKey, videoUploadCompleteInputSchema, videoUploadCompleteResponseSchema,
+  filmTitleFromFilename, isJpeg, mp4RejectMessage, normalizeVideoUploadFilename, probeMp4, roleHasCapability, timecodeBaseFor, videoObjectKey, videoPosterKey, videoUploadCompleteInputSchema, videoUploadCompleteResponseSchema,
   videoUploadRejectMessage, videoUploadReserveInputSchema, videoUploadReserveResponseSchema, type Mp4Probe, type Mp4ProbeWarning, type VideoUploadRejectReason,
 } from "@quincy/shared";
 import { terminalRoute } from "../lib/terminal-route";
@@ -113,9 +113,11 @@ videoUploadsRoutes.post("/projects/:projectId/video-uploads", terminalRoute("/pr
   if (data.bytes > VIDEO_MAX_BYTES) return c.json({ error: mp4RejectMessage("too_large"), code: "too_large", message: mp4RejectMessage("too_large") }, 413);
   const user = c.get("user"); const reservationId = newId(); const assetId = newId(); const videoId = data.videoId ?? newId(); const now = Date.now();
   const key = videoObjectKey(projectId, videoId, assetId); const expiresAt = now + VIDEO_UPLOAD_EXPIRY_MS;
+  // A new film (no videoId) is titled by its file name (#828), as stored: the .mov-as-.mp4 form the Version's asset row will carry. A client `title` is read by nothing.
+  const filename = normalizeVideoUploadFilename(data.filename); const newVideoTitle = data.videoId === undefined ? filmTitleFromFilename(filename) : null;
   let inserted: D1Result<{ version: number }>;
   try {
-    inserted = await c.env.DB.prepare(`${RESERVE_SQL} RETURNING version`).bind(reservationId, user.id, videoId, data.title ?? null, assetId, key, normalizeVideoUploadFilename(data.filename), data.bytes, data.clientProbe === undefined ? null : JSON.stringify(data.clientProbe), expiresAt, newId(), now, projectId).all<{ version: number }>();
+    inserted = await c.env.DB.prepare(`${RESERVE_SQL} RETURNING version`).bind(reservationId, user.id, videoId, newVideoTitle, assetId, key, filename, data.bytes, data.clientProbe === undefined ? null : JSON.stringify(data.clientProbe), expiresAt, newId(), now, projectId).all<{ version: number }>();
   } catch (error) {
     if (/UNIQUE constraint failed/i.test(errorText(error)) && /video_id/.test(errorText(error))) return uploadInProgress(c, videoId);
     throw error;

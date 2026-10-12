@@ -17,10 +17,10 @@ const p = (rest: string, projectId: string = ids.project) => `/api/projects/${pr
 const DAY = 86_400_000;
 
 type Seeded = Awaited<ReturnType<typeof seedVideoVersion>>;
-/** A Video with `count` Versions, the newest current and every older one superseded (as upload completion leaves it). */
+/** A Video with `count` Versions, the newest current and every older one superseded (as upload completion leaves it). A given `title` is also every Version's file name, because the title follows the newest live one (#828). */
 async function seedVideo(count: number, input: { projectId?: string; title?: string } = {}): Promise<Seeded[]> {
   const out: Seeded[] = [];
-  for (let version = 1; version <= count; version += 1) out.push(await seedVideoVersion({ projectId: input.projectId, videoId: out[0]?.videoId, version, title: input.title, poster: true }));
+  for (let version = 1; version <= count; version += 1) out.push(await seedVideoVersion({ projectId: input.projectId, videoId: out[0]?.videoId, version, title: input.title, filename: input.title ? `${input.title}.mp4` : undefined, poster: true }));
   const now = Date.now();
   for (let i = 0; i < out.length - 1; i += 1) await database.DB.prepare("UPDATE assets SET superseded_at = ?, replaced_by_asset_id = ? WHERE id = ?").bind(now, out[i + 1]!.assetId, out[i]!.assetId).run();
   return out;

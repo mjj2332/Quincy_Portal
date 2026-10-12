@@ -31,22 +31,40 @@ export function normalizeVideoUploadFilename(filename: string): string {
   return filename.replace(/\.mov$/i, ".mp4");
 }
 
+/** The title a film shows when it has no other: the placeholder for a file name that is nothing but an extension and spaces. */
+export const FILM_TITLE_FALLBACK = "Untitled film";
+export const FILM_TITLE_MAX_CODE_POINTS = 200;
+const trimSpaces = (value: string): string => value.replace(/^ +/, "").replace(/ +$/, "");
+
+/**
+ * A film's title is its latest live Version's file name (#828): spaces trimmed, one trailing `.mp4` or `.mov` dropped, trimmed again, cut to 200 code points, trimmed again, and
+ * "Untitled film" when nothing is left. The SQL twin is `FILM_TITLE_SQL` (workers/app `video-live-sql.ts`) and the two are held equal by a parity test. Match SQLite exactly:
+ * `trim()` takes spaces only (not tabs, not NBSP), `substr()` counts code points, and only the ASCII letters of the extension fold case.
+ */
+export function filmTitleFromFilename(filename: string): string {
+  const trimmed = trimSpaces(filename);
+  const tail = trimmed.slice(-4).replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+  const stem = tail === ".mp4" || tail === ".mov" ? trimmed.slice(0, -4) : trimmed;
+  const title = trimSpaces(Array.from(trimSpaces(stem)).slice(0, FILM_TITLE_MAX_CODE_POINTS).join(""));
+  return title === "" ? FILM_TITLE_FALLBACK : title;
+}
+
 const uuid = z.string().uuid();
 const isoTimestamp = z.string().datetime();
 
 /**
  * `POST /api/projects/:projectId/video-uploads`. `contentType` stays a plain string so the route answers a wrong one with 415 rather than 400.
- * Exactly one of `videoId` (a new Version of that Video) and `title` (a new Video, Version 1).
+ * `videoId` present is a new Version of that Video; absent is a new film, Version 1, whose title the server derives from `filename` (#828). `title` is no longer read: an older tab that
+ * still sends one is accepted and the value dropped, for one release.
  */
 export const videoUploadReserveInputSchema = z.object({
   videoId: uuid.optional(),
-  title: z.string().trim().min(1).max(200).optional(),
+  title: z.unknown().transform(() => undefined).optional(),
   filename: z.string().min(1).max(255).regex(/\.(mp4|mov)$/i, "Only MP4 or MOV files can be uploaded"),
   bytes: z.number().int().positive(),
   contentType: z.string(),
   clientProbe: z.record(z.string(), z.unknown()).optional(),
 }).strict().superRefine((value, context) => {
-  if ((value.videoId === undefined) === (value.title === undefined)) context.addIssue({ code: "custom", path: ["videoId"], message: "Send exactly one of videoId and title" });
   if (value.clientProbe !== undefined && new TextEncoder().encode(JSON.stringify(value.clientProbe)).byteLength > VIDEO_CLIENT_PROBE_MAX_BYTES) context.addIssue({ code: "custom", path: ["clientProbe"], message: "The client probe is too large" });
 });
 

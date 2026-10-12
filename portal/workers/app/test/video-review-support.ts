@@ -23,7 +23,7 @@ export async function ensureCollection(projectId: string, kind: string): Promise
   return id;
 }
 
-export type VideoVersionInput = { projectId?: string; videoId?: string; assetId?: string; version?: number; poster?: boolean; uploader?: string; object?: boolean; title?: string };
+export type VideoVersionInput = { projectId?: string; videoId?: string; assetId?: string; version?: number; poster?: boolean; uploader?: string; object?: boolean; title?: string; filename?: string };
 /** A committed Video Version: the Video (first Version only), its video-kind Asset, the probed meta row and the stored object. */
 export async function seedVideoVersion(input: VideoVersionInput = {}) {
   const projectId = input.projectId ?? ids.project; const collectionId = await ensureCollection(projectId, "video");
@@ -31,7 +31,7 @@ export async function seedVideoVersion(input: VideoVersionInput = {}) {
   const key = videoObjectKey(projectId, videoId, assetId);
   if (!await database.DB.prepare("SELECT 1 FROM videos WHERE id = ?").bind(videoId).first())
     await database.DB.prepare("INSERT INTO videos (id, project_id, collection_id, title, premium, position, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)").bind(videoId, projectId, collectionId, input.title ?? "Walkthrough", uploader, now, now).run();
-  await database.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, version_group_id, version, publish_status, created_at, updated_at) VALUES (?, ?, 'video', ?, 'cut.mp4', 4096, 'upload', ?, ?, 'ready', ?, ?)").bind(assetId, collectionId, key, videoId, version, now, now).run();
+  await database.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, version_group_id, version, publish_status, created_at, updated_at) VALUES (?, ?, 'video', ?, ?, 4096, 'upload', ?, ?, 'ready', ?, ?)").bind(assetId, collectionId, key, input.filename ?? "cut.mp4", videoId, version, now, now).run();
   const posterKey = input.poster ? videoPosterKey(projectId, videoId, assetId, "seed") : null;
   await database.DB.prepare("INSERT INTO video_version_meta (asset_id, video_id, fps_num, fps_den, media_timescale, frame_delta, frame_count, duration_ms, width, height, codec, codec_string, start_tc_frames, tc_nominal_fps, tc_drop_frame, fast_start, has_audio, probe_version, poster_key, uploaded_by, created_at) VALUES (?, ?, 25, 1, 25000, 1000, 250, 10000, 1920, 1080, 'avc1', 'avc1.640028', NULL, 25, 0, 1, 1, 1, ?, ?, ?)").bind(assetId, videoId, posterKey, uploader, now).run();
   // The high-water mark is the highest number ever reserved (migration 0070's backfill, and upload completion), so a seeded Version keeps it true.

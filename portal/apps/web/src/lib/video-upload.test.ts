@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mp4RejectMessage } from "@quincy/shared";
 import { buildMp4, videoTrack, type Mp4Spec } from "../../../../packages/shared/src/testing/mp4-builder";
-import { ABORT_UNREACHABLE_MESSAGE, NOT_FAST_START_CAUTION, NOT_MP4_NAME_MESSAGE, TIMECODE_MISMATCH_CAUTION, VideoUpload, checkVideoFile, defaultFilmTitle, type VideoUploadDone, type VideoUploadState } from "./video-upload";
+import { ABORT_UNREACHABLE_MESSAGE, NOT_FAST_START_CAUTION, NOT_MP4_NAME_MESSAGE, TIMECODE_MISMATCH_CAUTION, VideoUpload, checkVideoFile, type VideoUploadDone, type VideoUploadState } from "./video-upload";
 
 const poster = vi.hoisted(() => ({ blob: null as Blob | null }));
 vi.mock("./video-poster", () => ({ captureVideoPoster: () => Promise.resolve(poster.blob) }));
@@ -35,13 +35,6 @@ describe("checkVideoFile (#741 4d-i)", () => {
     const slow = await checkVideoFile(await fileOf({ tracks: [videoTrack({ timescale: 25000, stts: [[300, 1000]] })], moovFirst: false }));
     expect(slow).toMatchObject({ ok: true, cautions: [NOT_FAST_START_CAUTION] });
     expect(TIMECODE_MISMATCH_CAUTION).toMatch(/timecode/);
-  });
-
-  it("titles a new film from the filename without .mp4 or .mov", () => {
-    expect(defaultFilmTitle("  Main walkthrough.MP4")).toBe("Main walkthrough");
-    expect(defaultFilmTitle("Main walkthrough.mov")).toBe("Main walkthrough");
-    expect(defaultFilmTitle("Main walkthrough.MOV ")).toBe("Main walkthrough");
-    expect(defaultFilmTitle("take.mov.mp4")).toBe("take.mov");
   });
 
   it.each([
@@ -124,12 +117,12 @@ describe("VideoUpload (#741 4d-i)", () => {
   const ABORT = "POST /api/projects/:p/video-uploads/:r/abort";
   const POSTER = "PUT /api/projects/:p/video-versions/:a/poster";
 
-  async function make(over: { target?: VideoUpload["state"] extends never ? never : { kind: "new"; title: string } | { kind: "version"; videoId: string; title: string }; completeDelaysMs?: number[]; role?: "editor" | "external_editor" } = {}) {
+  async function make(over: { target?: VideoUpload["state"] extends never ? never : { kind: "new" } | { kind: "version"; videoId: string; title: string }; completeDelaysMs?: number[]; role?: "editor" | "external_editor" } = {}) {
     const file = new File([new Uint8Array(10)], "film.mp4", { type: "video/mp4" });
     const check = await checkVideoFile(await GOOD_25());
     if (!check.ok) throw new Error("fixture");
     const states: VideoUploadState[] = []; const settled: VideoUploadDone[] = [];
-    const job = new VideoUpload(1, { projectId: ids.video, role: over.role ?? "editor", file, target: over.target ?? { kind: "new", title: "Film" }, probe: check.probe, cautions: check.cautions, onChange: (s) => states.push(s), onDone: (r) => settled.push(r), completeDelaysMs: over.completeDelaysMs ?? [0, 0, 0], partDelaysMs: [0, 0, 0] });
+    const job = new VideoUpload(1, { projectId: ids.video, role: over.role ?? "editor", file, target: over.target ?? { kind: "new" }, probe: check.probe, cautions: check.cautions, onChange: (s) => states.push(s), onDone: (r) => settled.push(r), completeDelaysMs: over.completeDelaysMs ?? [0, 0, 0], partDelaysMs: [0, 0, 0] });
     return { job, states, settled };
   }
   const until = async (job: VideoUpload, phase: string) => { for (let i = 0; i < 200 && job.state.phase !== phase; i += 1) await new Promise((resolve) => setTimeout(resolve, 2)); expect(job.state.phase).toBe(phase); };
@@ -143,7 +136,8 @@ describe("VideoUpload (#741 4d-i)", () => {
     for (const type of ["", "video/quicktime"]) {
       calls.length = 0;
       const check = await checkVideoFile(await GOOD_25()); if (!check.ok) throw new Error("fixture");
-      const job = new VideoUpload(1, { projectId: ids.video, role: "editor", file: new File([new Uint8Array(10)], "Interview.MOV", { type }), target: { kind: "new", title: "Interview" }, probe: check.probe, cautions: check.cautions, onChange: () => undefined, completeDelaysMs: [0, 0, 0], partDelaysMs: [0, 0, 0] });
+      const job = new VideoUpload(1, { projectId: ids.video, role: "editor", file: new File([new Uint8Array(10)], "Interview.MOV", { type }), target: { kind: "new" }, probe: check.probe, cautions: check.cautions, onChange: () => undefined, completeDelaysMs: [0, 0, 0], partDelaysMs: [0, 0, 0] });
+      expect(job.state.title, "the tray label is the file name without .MOV").toBe("Interview");
       job.start(); await until(job, "done");
       expect(calls.find((call) => call.url.endsWith("/video-uploads"))!.body, type).toMatchObject({ filename: "Interview.MOV", contentType: "video/mp4" });
     }
@@ -159,7 +153,8 @@ describe("VideoUpload (#741 4d-i)", () => {
     job.start();
     await until(job, "done");
     const reserve = calls.find((call) => call.url.endsWith("/video-uploads"))!;
-    expect(reserve.body).toMatchObject({ title: "Film", filename: "film.mp4", bytes: 10, contentType: "video/mp4", clientProbe: { fps: { num: 25, den: 1 }, frameCount: 300, width: 1920, height: 1080, codec: "avc1" } });
+    expect(reserve.body).not.toHaveProperty("title");
+    expect(reserve.body).toMatchObject({ filename: "film.mp4", bytes: 10, contentType: "video/mp4", clientProbe: { fps: { num: 25, den: 1 }, frameCount: 300, width: 1920, height: 1080, codec: "avc1" } });
     expect(calls.some((call) => call.method === "PUT" && call.url.includes("/poster"))).toBe(true);
     expect(settled).toEqual([expect.objectContaining({ version: 4, videoId: ids.video })]);
   });
@@ -286,7 +281,7 @@ describe("VideoUpload (#741 4d-i)", () => {
     routes[RESERVE] = () => json(multipartReserve, 201); routes[ABORT] = () => json({ ok: true });
     FakeXhr.script = [500];
     const file = new File([new Uint8Array(10)], "film.mp4"); const check = await checkVideoFile(await GOOD_25()); if (!check.ok) throw new Error("fixture");
-    const job = new VideoUpload(1, { projectId: ids.video, role: "editor", file, target: { kind: "new", title: "F" }, probe: check.probe, cautions: [], onChange: () => undefined, partDelaysMs: [60_000] });
+    const job = new VideoUpload(1, { projectId: ids.video, role: "editor", file, target: { kind: "new" }, probe: check.probe, cautions: [], onChange: () => undefined, partDelaysMs: [60_000] });
     job.start();
     for (let i = 0; i < 100 && FakeXhr.instances.length < 1; i += 1) await new Promise((resolve) => setTimeout(resolve, 2));
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -302,7 +297,7 @@ describe("VideoUpload (#741 4d-i)", () => {
     routes[ABORT] = () => json({ error: "pending", code: "abort_pending" }, 503);
     let cleaned = 0;
     const file = new File([new Uint8Array(10)], "film.mp4"); const check = await checkVideoFile(await GOOD_25()); if (!check.ok) throw new Error("fixture");
-    const job = new VideoUpload(1, { projectId: ids.video, role: "editor", file, target: { kind: "new", title: "F" }, probe: check.probe, cautions: [], onChange: () => undefined, onServerCleaned: () => { cleaned += 1; }, completeDelaysMs: [0], partDelaysMs: [0] });
+    const job = new VideoUpload(1, { projectId: ids.video, role: "editor", file, target: { kind: "new" }, probe: check.probe, cautions: [], onChange: () => undefined, onServerCleaned: () => { cleaned += 1; }, completeDelaysMs: [0], partDelaysMs: [0] });
     job.start(); await until(job, "failed");
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(calls.filter((call) => call.url.endsWith("/abort"))).toHaveLength(1); // no retry loop: the server sweep reclaims it

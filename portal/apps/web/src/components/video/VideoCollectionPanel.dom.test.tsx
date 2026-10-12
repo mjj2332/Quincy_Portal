@@ -172,16 +172,16 @@ describe("Uploader (#741 4d-i)", () => {
     expect(host.textContent).toContain("H.264 MP4 or MOV");
   });
 
-  it("takes an H.264 .mov, titles the film without .mov, and reserves it as video/mp4 (#813)", async () => {
+  it("takes an H.264 .mov and reserves it as video/mp4 with its own name and no title (#813, #828)", async () => {
     await mount([]);
     const source = buildMp4({ tracks: [videoTrack({ timescale: 25000, stts: [[300, 1000]] })], ftyp: "qt  " });
     const file = new File([new Uint8Array(await source.read(0, source.size))], "Site visit.MOV", { type: "video/quicktime" });
     await pick(file, host.querySelector('[data-testid="new-film-uploader"]')!);
     expect(host.querySelector('[data-testid="new-film-problem"]')).toBeNull();
-    expect((host.querySelector("input[type=text], input:not([type])") as HTMLInputElement).value).toBe("Site visit");
     apiPostMock.mockImplementation(() => new Promise(() => undefined));
     await press(button("Upload"));
-    expect(apiPostMock.mock.calls[0]![1]).toMatchObject({ title: "Site visit", filename: "Site visit.MOV", contentType: "video/mp4" });
+    expect(apiPostMock.mock.calls[0]![1]).toMatchObject({ filename: "Site visit.MOV", contentType: "video/mp4" });
+    expect(apiPostMock.mock.calls[0]![1]).not.toHaveProperty("title");
   });
 
   it("still refuses a ProRes .mov with the plain copy and reserves nothing (#813)", async () => {
@@ -219,12 +219,12 @@ describe("Uploader (#741 4d-i)", () => {
     await pick(await mp4({ tracks: [videoTrack({ timescale: 25000, stts: [[300, 1000]] })], moovFirst: false }));
     expect(host.querySelector('[data-testid="new-film-form"]')?.textContent).toContain(NOT_FAST_START_CAUTION);
     expect(host.querySelector('[data-testid="new-film-probe"]')?.textContent).toContain("25 fps · 1920×1080 · 0:12");
-    expect((host.querySelector("input[type=text], input:not([type])") as HTMLInputElement).value).toBe("Main cut");
     apiPostMock.mockImplementation(() => new Promise(() => undefined));
     await press(button("Upload"));
     expect(apiPostMock).toHaveBeenCalledTimes(1);
     expect(apiPostMock.mock.calls[0]![0]).toBe(`/api/projects/${PROJECT}/video-uploads`);
-    expect(apiPostMock.mock.calls[0]![1]).toMatchObject({ title: "Main cut", filename: "Main cut.mp4", clientProbe: { fps: { num: 25, den: 1 } } });
+    expect(apiPostMock.mock.calls[0]![1]).toMatchObject({ filename: "Main cut.mp4", clientProbe: { fps: { num: 25, den: 1 } } });
+    expect(apiPostMock.mock.calls[0]![1]).not.toHaveProperty("title");
   });
 
   it("shows progress while the file goes up and Cancel removes the row and aborts the reservation", async () => {
@@ -242,13 +242,10 @@ describe("Uploader (#741 4d-i)", () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/abort"))).toHaveLength(1);
   });
 
-  it("a 409 or 429 on reserve shows the server's words, keeps the file and the person's title, and leaves no row", async () => {
+  it("a 409 or 429 on reserve shows the server's words, keeps the file, and leaves no row", async () => {
     const { ApiError } = await import("../../lib/api");
     await mount([]);
     await pick(await good(), host.querySelector('[data-testid="new-film-uploader"]')!);
-    const input = host.querySelector<HTMLInputElement>('[data-testid="new-film-form"] input')!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    await act(async () => { setter.call(input, "My title"); input.dispatchEvent(new Event("input", { bubbles: true })); });
     const refusals = [
       new ApiError("Mia Chen is already uploading a new version of this video", 409, { code: "upload_in_progress" }),
       new ApiError("You already have three uploads in progress in this project. Finish or cancel one first.", 429, { code: "too_many_uploads" }),
@@ -258,13 +255,13 @@ describe("Uploader (#741 4d-i)", () => {
       await press(button("Upload"));
       expect(host.querySelector('[data-testid="new-film-refusal"]')?.textContent).toBe(refusal.message);
       expect(host.querySelector('[data-testid="video-upload-tray"]')).toBeNull();
-      expect((host.querySelector('[data-testid="new-film-form"] input') as HTMLInputElement).value).toBe("My title");
+      expect(host.querySelector('[data-testid="new-film-probe"]')?.textContent).toContain("Main cut.mp4");
       expect((button("Upload") as HTMLButtonElement).disabled).toBe(false);
     }
-    // The same file and title go up once the server allows it.
+    // The same file goes up once the server allows it.
     apiPostMock.mockResolvedValueOnce(RESERVED());
     await press(button("Upload"));
-    expect(apiPostMock.mock.calls.at(-1)![1]).toMatchObject({ title: "My title" });
+    expect(apiPostMock.mock.calls.at(-1)![1]).toMatchObject({ filename: "Main cut.mp4" });
     expect(host.querySelector('[data-testid="new-film-form"]')).toBeNull();
     expect(host.querySelector('[data-testid="video-upload-tray"]')?.textContent).toContain("Main cut.mp4");
   });
@@ -305,12 +302,20 @@ describe("Uploader (#741 4d-i)", () => {
     expect(button(/^Upload v/)).toBeUndefined();
   });
 
-  it("while a submit is starting the picker and the title are locked, so a newer film cannot be replaced by the old one's success", async () => {
+  it("has no Film title field: the form is the file's facts, the cautions and the two buttons (#828)", async () => {
+    await mount([]);
+    await pick(await good(), host.querySelector('[data-testid="new-film-uploader"]')!);
+    const form = host.querySelector('[data-testid="new-film-form"]')!;
+    expect(form.querySelector("input, textarea")).toBeNull();
+    expect(form.textContent).not.toContain("Film title");
+    expect(button("Upload")).toBeDefined(); expect(button("Cancel")).toBeDefined();
+  });
+
+  it("while a submit is starting the picker is locked, so a newer film cannot be replaced by the old one's success", async () => {
     await mount([]);
     await pick(await good(), host.querySelector('[data-testid="new-film-uploader"]')!);
     apiPostMock.mockImplementation(() => new Promise(() => undefined));
     await press(button("Upload"));
-    expect((host.querySelector('[data-testid="new-film-form"] input') as HTMLInputElement).disabled).toBe(true);
     expect((button("Upload new film") as HTMLButtonElement).disabled).toBe(true);
     expect((button("Starting…") as HTMLButtonElement).disabled).toBe(true);
   });

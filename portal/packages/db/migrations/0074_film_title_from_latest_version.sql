@@ -1,0 +1,11 @@
+-- A film is titled by its latest live Version's file name (#828). Data only: no column, no index, no table, no trigger, so a Worker older than this change keeps running and a code rollback is safe.
+-- Backfills videos.title once for every Video that is not in Trash and has a live Version. From here RECOMPUTE_CURRENT_SQL keeps it true on every upload, remove and restore.
+-- The rule is FILM_TITLE_SQL in workers/app/src/lib/video-live-sql.ts: trim spaces, drop one trailing .mp4 or .mov of any case, trim, cut to 200 code points, trim, else Untitled film.
+-- A guard test holds the SQL below equal to FILM_TITLE_SQL, so the two cannot drift.
+-- Idempotent: a second run changes no row. A Video in Trash keeps the title it had, and so does a Video with no live Version.
+-- Rollback: nothing structural to undo. The old titles were typed by hand and are not kept, so a D1 Time Travel restore is the only way back to them.
+-- The owner re-runs this same UPDATE once after the deploy, to retitle any Video whose Version landed between the migration and the new Worker.
+-- No semicolon inside a comment: the worker test harness splits this file on semicolons.
+UPDATE videos SET title = COALESCE((SELECT COALESCE(NULLIF(trim(substr(trim(CASE WHEN lower(substr(trim(ta.original_filename), -4)) IN ('.mp4', '.mov') THEN substr(trim(ta.original_filename), 1, length(trim(ta.original_filename)) - 4) ELSE trim(ta.original_filename) END), 1, 200)), ''), 'Untitled film') FROM assets ta JOIN video_version_meta tm ON tm.asset_id = ta.id AND tm.video_id = videos.id WHERE ta.kind = 'video' AND ta.version_group_id = videos.id AND tm.removed_at IS NULL ORDER BY ta.version DESC LIMIT 1), title)
+WHERE removed_at IS NULL
+  AND title IS NOT COALESCE((SELECT COALESCE(NULLIF(trim(substr(trim(CASE WHEN lower(substr(trim(ta.original_filename), -4)) IN ('.mp4', '.mov') THEN substr(trim(ta.original_filename), 1, length(trim(ta.original_filename)) - 4) ELSE trim(ta.original_filename) END), 1, 200)), ''), 'Untitled film') FROM assets ta JOIN video_version_meta tm ON tm.asset_id = ta.id AND tm.video_id = videos.id WHERE ta.kind = 'video' AND ta.version_group_id = videos.id AND tm.removed_at IS NULL ORDER BY ta.version DESC LIMIT 1), title);
