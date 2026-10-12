@@ -124,6 +124,15 @@ describe("the viewer's deep link (#819)", () => {
     expect(tid("copy-text")!.className).toContain("max-[721px]:min-h-11");
   });
 
+  it("keeps Copy link, Download and Compare together in one right-aligned cluster", async () => {
+    await mount({ id: ids.video, version: 2 }, ["download", "compare"]);
+    const cluster = tid("video-header-actions");
+    expect(cluster).not.toBeNull();
+    for (const id of ["copy-text", "video-download", "video-compare-toggle"]) expect(tid(id)!.parentElement, id).toBe(cluster);
+    expect(cluster!.className).toContain("ml-auto");
+    expect(cluster!.className).toContain("max-[721px]:ml-0");
+  });
+
   it("takes a change of the URL's Version once, without writing it back", async () => {
     await mount({ id: ids.video, version: 1 });
     await act(async () => { setSelection({ id: ids.video, version: 2 }); }); await flush(6);
