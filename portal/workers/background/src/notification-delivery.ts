@@ -685,8 +685,9 @@ async function resolveVideoReviewRecipient(env: Env, outbox: OutboxRow): Promise
       title: copy.title,
       body: copy.body,
       emailSubject: copy.title,
-      emailText: `${copy.title}\n\n${projectPath}`,
-      emailHtml: `<p>${htmlEscape(copy.title)}</p><p><a href="${htmlEscape(projectPath)}">View project</a></p>`,
+      // The narrowed External copy carries its message in the body; the staff copy's body names a Video, so staff email stays title-only.
+      emailText: narrowed ? `${copy.title}\n\n${copy.body}\n\n${projectPath}` : `${copy.title}\n\n${projectPath}`,
+      emailHtml: `<p>${htmlEscape(copy.title)}</p>${narrowed ? `<p>${htmlEscape(copy.body)}</p>` : ""}<p><a href="${htmlEscape(projectPath)}">View project</a></p>`,
     },
   };
 }
