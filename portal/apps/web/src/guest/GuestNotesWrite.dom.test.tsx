@@ -98,6 +98,40 @@ afterEach(async () => {
   window.history.replaceState(null, "", "/");
 });
 
+describe("A resolved note", () => {
+  it("shows a non-interactive green tick status, not a badge or button; an open note shows none", async () => {
+    notes = { [asset(10)]: [note(1, { resolved: true }), note(2)] };
+    await open();
+    const ticks = allById("guest-note-resolved");
+    expect(ticks).toHaveLength(1);
+    expect(ticks[0]!.tagName).not.toBe("BUTTON");
+    expect(ticks[0]!.textContent).toBe("Resolved");
+    expect(ticks[0]!.querySelector("svg")!.getAttribute("class")).toContain("fill-success");
+  });
+  it("sits in the Reply row, bottom-right, when the guest can reply; on its own row when they cannot", async () => {
+    notes = { [asset(10)]: [note(1, { resolved: true })] };
+    await open();
+    expect(byId("guest-note-resolved")!.parentElement).toBe(byId("guest-note-reply-button")!.parentElement);
+    expect(byId("guest-note-resolved")!.className).toContain("ms-auto");
+    expect(byId("guest-note-reply-button")!.parentElement!.className).toContain("min-h-8"); // open and resolved cards share one row height
+    await act(async () => { root!.unmount(); }); root = null; host.remove();
+    session = SESSION_OFF;
+    await open();
+    expect(byId("guest-note-reply-button")).toBeNull();
+    expect(byId("guest-note-resolved")).not.toBeNull();
+  });
+  it("stays visible while a reply to the resolved note is being written", async () => {
+    notes = { [asset(10)]: [note(1, { resolved: true })] };
+    await open();
+    await click(byId("guest-note-reply-button"));
+    expect(byId("guest-reply-form")).not.toBeNull();
+    expect(byId("guest-note-resolved")).not.toBeNull();
+    expect(byId("guest-note-resolved")!.textContent).toBe("Resolved");
+    // Bottom-right, as on the staff card: the tick follows the reply form, not sits above it.
+    expect(byId("guest-reply-form")!.compareDocumentPosition(byId("guest-note-resolved")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
 describe("Add a note", () => {
   it("is not offered when the link does not allow comments", async () => {
     session = SESSION_OFF;

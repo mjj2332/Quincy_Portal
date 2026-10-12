@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { Lock, PencilIcon } from "lucide-react";
+import { CircleCheck, Lock, PencilIcon } from "lucide-react";
 import { VIDEO_NOTE_BODY_MAX, type Role, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto } from "@quincy/shared";
 import { cn } from "../../lib/utils";
 import { isOwnNote, noteAnchorLabel } from "../../lib/video-note-view";
@@ -14,6 +14,7 @@ import { ICON_BUTTON } from "../quincy/icon-button";
 import { InitialsAvatar } from "../quincy/InitialsAvatar";
 import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
 import { Notice } from "../quincy/Notice";
+import { RESOLVED_TICK, ResolvedTick, TICK_SIZE } from "../quincy/ResolvedTick";
 import { StatusPill } from "../quincy/StatusPill";
 import { Badge } from "../reui/badge";
 import { Button as ReuiButton } from "../reui/button";
@@ -242,8 +243,13 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
       </form>}
       {!readOnly && !replying && editing === null && <div className="flex flex-wrap items-center gap-[var(--space-3)]">
         {!thread.deleted && <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-reply-button" disabled={busy || blocked} onClick={() => { setResolveNotice(null); store.openReply(assetId, thread.id); }}>Reply</Button>}
-        <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-resolve" disabled={busy} onClick={() => { void toggleResolved(); }}>{thread.resolved ? "Reopen" : "Resolve"}</Button>
+        <span className="ms-auto"><IconTip label={thread.resolved ? "Reopen" : "Mark as complete"}>
+          <ReuiButton type="button" variant="ghost" size="icon" className={TICK_SIZE} data-testid="video-note-resolve" aria-label={thread.resolved ? "Reopen" : "Mark as complete"} aria-pressed={thread.resolved !== null} disabled={busy} onClick={() => { void toggleResolved(); }}>
+            <CircleCheck aria-hidden="true" className={cn("size-5", thread.resolved ? RESOLVED_TICK : "text-muted-foreground")} />
+          </ReuiButton>
+        </IconTip></span>
       </div>}
+      {thread.resolved && (readOnly || replying || editing !== null) && <div className="flex justify-end"><ResolvedTick data-testid="video-note-resolved-status" /></div>}
     </div>
   </Item>;
 }

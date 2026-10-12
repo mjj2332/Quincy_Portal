@@ -5,6 +5,7 @@ import type { VideoNoteDto, VideoNoteThreadDto } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
 import type { VideoFrameClock } from "../../lib/video-frame-clock";
 import { createNoteFormStore, type NoteFormStore } from "../../lib/video-note-form-store";
+import { TICK_SIZE } from "../quincy/ResolvedTick";
 import { VideoNoteThread, type ThreadActions } from "./VideoNoteThread";
 
 // Written AFTER VideoNoteThread.tsx (the component was committed untested): these tests were run against existing code and what
@@ -111,7 +112,38 @@ describe("VideoNoteThread (#741 5b)", () => {
 
   it("every link-style thread control keeps the 44px phone target (LINK_BUTTON carries max-[721px]:min-h-11)", async () => {
     await render(thread({ visibility: "public" }));
-    for (const id of ["video-note-reply-button", "video-note-resolve"]) expect(tid(id)!.className).toContain("max-[721px]:min-h-11");
+    expect(tid("video-note-reply-button")!.className).toContain("max-[721px]:min-h-11");
+    expect(tid("video-note-resolve")!.className).toContain("max-[721px]:size-11");
+  });
+
+  it("the toggle and the status tick share one size class set, so they cannot drift", async () => {
+    const resolved = { at: T(9), by: mia };
+    await render(thread({ resolved }));
+    const toggle = tid("video-note-resolve")!.className;
+    await act(async () => { root!.unmount(); }); host.remove();
+    await render(thread({ resolved }), { readOnly: true });
+    const status = tid("video-note-resolved-status")!.className;
+    for (const cls of TICK_SIZE.split(" ")) { expect(toggle).toContain(cls); expect(status).toContain(cls); }
+  });
+
+  it("a resolved thread keeps its tick, as status, while a reply form is open and while an edit form is open", async () => {
+    const resolved = { at: T(9), by: mia };
+    await render(thread({ resolved }));
+    await click(tid("video-note-reply-button")!);
+    expect(tid("video-note-resolve")).toBeNull();
+    expect(tid("video-note-resolved-status")!.textContent).toBe("Resolved");
+    await click(tid("video-note-reply-cancel")!);
+    expect(tid("video-note-resolve")).not.toBeNull();
+    expect(tid("video-note-resolved-status")).toBeNull();
+    await chooseAction("Terry", "Edit");
+    expect(tid("video-note-resolve")).toBeNull();
+    expect(tid("video-note-resolved-status")!.textContent).toBe("Resolved");
+  });
+
+  it("an open thread shows no status tick while a form is open", async () => {
+    await render(thread());
+    await click(tid("video-note-reply-button")!);
+    expect(tid("video-note-resolved-status")).toBeNull();
   });
 
   it("14: Reply opens a form that names the inherited visibility, has no visibility control, posts the body only and returns focus to Reply", async () => {
@@ -164,16 +196,31 @@ describe("VideoNoteThread (#741 5b)", () => {
   it("15: Resolve asks for resolved: true; a resolved thread shows who and offers Reopen (resolved: false)", async () => {
     const t = thread();
     const { props, rerender } = await render(t);
-    expect(tid("video-note-resolve")!.textContent).toBe("Resolve");
+    const open = tid("video-note-resolve")!;
+    expect(open.getAttribute("aria-label")).toBe("Mark as complete");
+    expect(open.getAttribute("aria-pressed")).toBe("false");
+    expect(open.textContent).toBe("");
     await click(tid("video-note-resolve")!);
     await flush();
     expect(props.actions.resolve).toHaveBeenCalledWith(t.id, true);
     await rerender({ thread: { ...t, resolved: { at: T(9), by: mia } } as unknown as VideoNoteThreadDto });
     expect(host.textContent).toContain("Resolved by Mia Chen");
-    expect(tid("video-note-resolve")!.textContent).toBe("Reopen");
+    expect(tid("video-note-resolve")!.getAttribute("aria-label")).toBe("Reopen");
+    expect(tid("video-note-resolve")!.getAttribute("aria-pressed")).toBe("true");
+    expect(tid("video-note-resolve")!.querySelector("svg")!.getAttribute("class")).toContain("fill-success");
     await click(tid("video-note-resolve")!);
     await flush();
     expect(props.actions.resolve).toHaveBeenLastCalledWith(t.id, false);
+  });
+
+  it("read-only on a resolved thread shows a non-interactive Resolved tick and no button; an open one shows nothing", async () => {
+    const t = thread();
+    await render({ ...t, resolved: { at: T(9), by: mia } } as unknown as VideoNoteThreadDto, { readOnly: true });
+    expect(tid("video-note-resolve")).toBeNull();
+    const status = tid("video-note-resolved-status")!;
+    expect(status.tagName).not.toBe("BUTTON");
+    expect(status.textContent).toBe("Resolved");
+    expect(host.textContent).toContain("Resolved by Mia Chen");
   });
 
   it("15: read-only (archived) hides Reply, Resolve and the menu", async () => {
