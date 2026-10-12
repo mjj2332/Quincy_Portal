@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { readRememberedDashboardView, writeDashboardViewPreference, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, isCanonicalCalendarDate, isCanonicalShootDate, normalizeDashboardCalendarSearch, normalizeDashboardCalendarSubview, normalizeDashboardView, normalizeKanbanSortMode, sanitizeDashboardCalendarSearch, DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY } from "./dashboard-helpers";
+import { readRememberedDashboardView, writeDashboardViewPreference, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, isCanonicalCalendarDate, isCanonicalShootDate, normalizeDashboardCalendarSearch, normalizeDashboardCalendarSubview, normalizeDashboardView, normalizeKanbanSortMode, writeKanbanSortPreference, sanitizeDashboardCalendarSearch, DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY } from "./dashboard-helpers";
 
 describe("dashboard view preferences", () => {
   it("keeps supported views and migrates grid, missing, and invalid values to board", () => {
@@ -118,20 +118,29 @@ describe("Calendar initial state", () => {
 });
 
 describe("Kanban sort preferences", () => {
-  it("maps every stored value, including the retired Board order, to the one fixed Board rule (#470)", () => {
-    for (const stored of ["board", "priority", "shootDate-asc", "shootDate-desc", "other", "", null]) {
-      expect(normalizeKanbanSortMode(stored)).toBe("priority-shoot-date");
+  it("keeps the two choices and reads every legacy or unknown value as shoot-date (#830)", () => {
+    expect(normalizeKanbanSortMode("shoot-date")).toBe("shoot-date");
+    expect(normalizeKanbanSortMode("due-date")).toBe("due-date");
+    for (const stored of ["priority-shoot-date", "board", "priority", "shootDate-asc", "shootDate-desc", "other", "", null]) {
+      expect(normalizeKanbanSortMode(stored)).toBe("shoot-date");
     }
   });
 
-  it("rewrites a retired stored sort as the fixed rule, and still answers when the write is rejected", () => {
+  it("initializes from storage, rewrites a legacy value, and still answers when storage fails", () => {
     const write = vi.fn();
-    expect(initializeKanbanSortMode({ read: () => "board", write })).toBe("priority-shoot-date");
-    expect(write).toHaveBeenCalledWith("priority-shoot-date");
+    expect(initializeKanbanSortMode({ read: () => "due-date", write })).toBe("due-date");
+    expect(initializeKanbanSortMode({ read: () => "priority-shoot-date", write })).toBe("shoot-date");
+    expect(write).toHaveBeenCalledWith("shoot-date");
     const rejecting = vi.fn(() => { throw new Error("storage is read-only"); });
-    expect(initializeKanbanSortMode({ read: () => "shootDate-desc", write: rejecting })).toBe("priority-shoot-date");
-    expect(rejecting).toHaveBeenCalledWith("priority-shoot-date");
-    expect(initializeKanbanSortMode({ read: () => { throw new Error("denied"); }, write })).toBe("priority-shoot-date");
+    expect(initializeKanbanSortMode({ read: () => "due-date", write: rejecting })).toBe("due-date");
+    expect(initializeKanbanSortMode({ read: () => { throw new Error("denied"); }, write })).toBe("shoot-date");
+  });
+
+  it("writes a choice best-effort and swallows a rejected write", () => {
+    const write = vi.fn();
+    writeKanbanSortPreference({ write }, "due-date");
+    expect(write).toHaveBeenCalledWith("due-date");
+    expect(() => writeKanbanSortPreference({ write: () => { throw new Error("quota"); } }, "shoot-date")).not.toThrow();
   });
 });
 

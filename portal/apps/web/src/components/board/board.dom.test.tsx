@@ -148,6 +148,7 @@ function baseProps(overrides: Partial<ProjectKanbanBoardProps> = {}): ProjectKan
     pendingMoves: new Set(),
     pendingOrdering: new Set(),
     terminal: false,
+    sortMode: "shoot-date",
     onBoardMove: vi.fn(),
     onPriorityChange: vi.fn(),
     onMoveStage: vi.fn(),
@@ -475,11 +476,12 @@ describe("ProjectKanbanBoard2 (#80)", () => {
   // #470: columns are sorted by data, so a drop names a Stage and never a position. Dropping on any
   // card, or on the column, is the same move, and the card lands at its sorted slot.
   describe("cross-Stage drops land at the sorted slot (#470)", () => {
-    // t1 priority 5, t2 priority 3, t3 unset: sorted t1, t2, t3. The mover (priority 4) sorts between t1 and t2.
-    const targets = (moverPriority: number | null = 4) => [
-      project("source", "awaiting_raw", { priority: moverPriority }),
-      project("t1", "raw_review", { priority: 5 }),
-      project("t2", "raw_review", { priority: 3 }),
+    // t1 shoots Jan, t2 Mar, t3 undated: sorted t1, t2, t3. The mover (Feb) sorts between t1 and t2. Deadlines run the
+    // other way round (t2 first, then t1, then the mover, t3 undated), so the chosen mode decides the slot.
+    const targets = (moverDate: string | null = "2026-02-01") => [
+      project("source", "awaiting_raw", { shootDate: moverDate, deadlineAt: 3_500 }),
+      project("t1", "raw_review", { shootDate: "2026-01-01", deadlineAt: 3_000 }),
+      project("t2", "raw_review", { shootDate: "2026-03-01", deadlineAt: 1_000 }),
       project("t3", "raw_review"),
     ];
     const moveCalls = (props: ProjectKanbanBoardProps) => (props.onBoardMove as ReturnType<typeof vi.fn>).mock.calls;
@@ -503,6 +505,12 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       expect(onDragOver(over("raw_review"))).toBeUndefined();
     });
 
+    it("narrates the slot of the chosen date: the same hover lands elsewhere by Deadline (#830)", async () => {
+      await renderBoard({ projects: targets(), sortMode: "due-date" });
+      expect(capturedAnnouncements().onDragOver({ active: { id: "source" }, over: { id: "t3" } }))
+        .toBe("source Street is over RAW review; it will land at position 3 of 4.");
+    });
+
     it("speaks the slot again after passing over a refused one", async () => {
       await renderBoard({ projects: [...targets(), project("sibling", "awaiting_raw")] });
       const { onDragOver } = capturedAnnouncements();
@@ -514,10 +522,10 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       expect(onDragOver(over("t2"))).toBe(first);
     });
 
-    // An unset-priority mover sorts after every prioritised card, and ties break on street.
-    const endTargets = () => [project("source", "awaiting_raw"), project("t1", "raw_review", { priority: 5 }), project("a3", "raw_review")];
+    // An undated mover sorts after every dated card, and ties break on street.
+    const endTargets = () => [project("source", "awaiting_raw"), project("t1", "raw_review", { shootDate: "2026-01-01" }), project("a3", "raw_review")];
 
-    it("lands an unset-priority mover after the prioritised cards, at the end", async () => {
+    it("lands an undated mover after the dated cards, at the end", async () => {
       await renderBoard({ projects: endTargets() });
       expect(capturedAnnouncements().onDragOver({ active: { id: "source" }, over: { id: "t1" } }))
         .toBe("source Street is over RAW review; it will land at position 3 of 3.");
@@ -541,6 +549,18 @@ describe("ProjectKanbanBoard2 (#80)", () => {
           expect(item.firstElementChild).toBe(indicators()[0]);
           await fireDnd("onDragCancel", { active: { id: "source" } });
         }
+      });
+
+      it("marks the slot of the chosen date: by Deadline the mover sorts ahead of t3, not t2 (#830)", async () => {
+        await renderBoard({ projects: targets(), sortMode: "due-date" });
+        await fireDnd("onDragStart", { active: { id: "source" } });
+        await hover("t3");
+        expect(indicators()).toHaveLength(1);
+        expect(indicators()[0]!.parentElement!.textContent).toContain("t3 Street");
+        await fireDnd("onDragCancel", { active: { id: "source" } });
+        await renderBoard({ projects: targets(), sortMode: "shoot-date" });
+        await hover("t3");
+        expect(indicators()[0]!.parentElement!.textContent).toContain("t2 Street");
       });
 
       it("marks the end of the column when the card sorts last", async () => {
@@ -608,9 +628,15 @@ describe("ProjectKanbanBoard2 (#80)", () => {
         const handle = host.querySelector<HTMLAnchorElement>('[data-focus-key="card:s1"]');
         await endDrag("s1", over);
         expect(props.onBoardMove, `the drop on ${over} went through`).not.toHaveBeenCalled();
-        expect(props.onAnnounce).toHaveBeenCalledWith("s1 Street stays in Awaiting RAW. Columns are sorted by priority and shoot date.");
+        expect(props.onAnnounce).toHaveBeenCalledWith("s1 Street stays in Awaiting RAW. Columns are sorted by shoot date.");
         expect(document.activeElement).toBe(handle);
       }
+    });
+
+    it("names the chosen date in the refusal (#830)", async () => {
+      const props = await renderBoard({ projects: column(), sortMode: "due-date" });
+      await endDrag("s1", "s2");
+      expect(props.onAnnounce).toHaveBeenCalledWith("s1 Street stays in Awaiting RAW. Columns are sorted by deadline.");
     });
 
     it("offers no indicator and no narration over the card's own Stage", async () => {
@@ -1065,7 +1091,7 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
 
       expect(props.onBoardMove).not.toHaveBeenCalled();
       expect(props.onAnnounce).toHaveBeenCalledTimes(1);
-      expect(props.onAnnounce).toHaveBeenCalledWith("source Street stays in Awaiting RAW. Columns are sorted by priority and shoot date.");
+      expect(props.onAnnounce).toHaveBeenCalledWith("source Street stays in Awaiting RAW. Columns are sorted by shoot date.");
       expect(document.activeElement).toBe(handle);
     });
 
@@ -1240,17 +1266,18 @@ describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#3
     vi.restoreAllMocks();
   });
 
-  // Priority sort, one column: a(3) b(2) c(1). Raising c to 5 re-sorts it to the top.
-  const column = (cPriority: number) => [
-    project("a", "awaiting_raw", { priority: 3 }),
-    project("b", "awaiting_raw", { priority: 2 }),
-    project("c", "awaiting_raw", { priority: cPriority }),
+  // Shoot-date sort, one column: a, b, c. `column(true)` moves c's shoot date to the front, which re-sorts it to the top
+  // (a refetch or another editor's change: a star click itself no longer moves a card, #830).
+  const column = (cFirst: boolean) => [
+    project("a", "awaiting_raw", { priority: 3, shootDate: "2026-01-02" }),
+    project("b", "awaiting_raw", { priority: 2, shootDate: "2026-01-03" }),
+    project("c", "awaiting_raw", { priority: cFirst ? 5 : 1, shootDate: cFirst ? "2026-01-01" : "2026-01-09" }),
   ];
   /** A pointer commit on c's 5th star, then the optimistic re-sort that lifts c to the top. */
   async function commitAndResort(props: ProjectKanbanBoardProps, at = { x: 200, y: 230 }) {
     await clickStar("c Street", 5, at);
     now += 50;
-    await renderBoard({ ...props, projects: column(5) });
+    await renderBoard({ ...props, projects: column(true) });
   }
   const played = () => flip.played.map(({ element, dx, dy }) => ({ id: element.dataset.flipId, dx, dy }));
 
@@ -1266,8 +1293,8 @@ describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#3
   }
 
   it("slides the re-sorted card from its old slot and the cards it passed, on the Board-owned wrapper", async () => {
-    await renderBoard({ canPrioritize: true, projects: column(1) });
-    await renderBoard({ canPrioritize: true, projects: column(5) });
+    await renderBoard({ canPrioritize: true, projects: column(false) });
+    await renderBoard({ canPrioritize: true, projects: column(true) });
     expect(played()).toEqual([
       { id: "c", dx: 0, dy: 200 },
       { id: "a", dx: 0, dy: -100 },
@@ -1280,15 +1307,15 @@ describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#3
   });
 
   it("animates a two-card swap from a data change the same way", async () => {
-    const pair = (aPriority: number, bPriority: number) => [project("a", "awaiting_raw", { priority: aPriority }), project("b", "awaiting_raw", { priority: bPriority })];
-    await renderBoard({ projects: pair(2, 1) });
-    await renderBoard({ projects: pair(2, 3) });
+    const pair = (aDate: string, bDate: string) => [project("a", "awaiting_raw", { shootDate: aDate }), project("b", "awaiting_raw", { shootDate: bDate })];
+    await renderBoard({ projects: pair("2026-01-01", "2026-01-02") });
+    await renderBoard({ projects: pair("2026-01-01", "2025-12-01") });
     expect(played()).toEqual([{ id: "b", dx: 0, dy: 100 }, { id: "a", dx: 0, dy: -100 }]);
   });
 
   it("lifts only the card travelling farthest, so the one moving up passes over the ones moving down", async () => {
-    await renderBoard({ canPrioritize: true, projects: column(1) });
-    await renderBoard({ canPrioritize: true, projects: column(5) });
+    await renderBoard({ canPrioritize: true, projects: column(false) });
+    await renderBoard({ canPrioritize: true, projects: column(true) });
     expect(flip.played.map(({ element, lift }) => ({ id: element.dataset.flipId, lift }))).toEqual([
       { id: "c", lift: true },
       { id: "a", lift: false },
@@ -1299,7 +1326,7 @@ describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#3
   it("does not animate under reduced motion, but still guards the click that lands on the card that jumped in", async () => {
     const restore = mockMatchMedia(true);
     try {
-      const props = await renderBoard({ canPrioritize: true, projects: column(1) });
+      const props = await renderBoard({ canPrioritize: true, projects: column(false) });
       await commitAndResort(props);
       expect(played()).toEqual([]);
       now += 200;
@@ -1312,16 +1339,43 @@ describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#3
 
   it("does not animate during a drag, nor in the drop's own commit — dnd-kit owns those", async () => {
     const { act } = await import("react");
-    await renderBoard({ canPrioritize: true, projects: column(1) });
+    await renderBoard({ canPrioritize: true, projects: column(false) });
     await fireDnd("onDragStart", { active: { id: "c" } });
-    await renderBoard({ canPrioritize: true, projects: column(4) });
-    const props = baseProps({ canPrioritize: true, projects: column(5) });
+    await renderBoard({ canPrioritize: true, projects: column(true) });
+    const props = baseProps({ canPrioritize: true, projects: column(true) });
     await act(async () => {
       (dnd.handlers.at(-1)?.props?.onDragEnd as (event: unknown) => void)({ active: { id: "c" }, over: null });
       root.render(createElement(ProjectKanbanBoard2, props));
       await Promise.resolve();
     });
     expect(played()).toEqual([]);
+  });
+
+  it("a sort-mode change snaps into place: no FLIP, and a flight in progress is cancelled (#830)", async () => {
+    // Shoot-date order a, b, c; Deadline order c, a, b: switching the mode moves c to the top.
+    const withDeadlines = (cDeadline: number) => column(false).map((item) => ({ ...item, deadlineAt: item.id === "c" ? cDeadline : item.id === "a" ? 5 : 6 }));
+    const ids = () => [...host.querySelectorAll<HTMLElement>("[data-flip-id]")].map((node) => node.dataset.flipId);
+    await renderBoard({ projects: withDeadlines(1), sortMode: "shoot-date" });
+    expect(ids(), "anchor: shoot-date order").toEqual(["a", "b", "c"]);
+    await renderBoard({ projects: withDeadlines(1), sortMode: "due-date" });
+    expect(ids()).toEqual(["c", "a", "b"]);
+    expect(played(), "the mode change must not play a FLIP").toEqual([]);
+    // A data-driven re-sort inside one mode still animates.
+    await renderBoard({ projects: withDeadlines(9), sortMode: "due-date" });
+    expect(ids()).toEqual(["a", "b", "c"]);
+    expect(played().map((entry) => entry.id)).toContain("c");
+  });
+
+  it("a star click updates the stars and never moves a card (#830)", async () => {
+    const props = await renderBoard({ canPrioritize: true, projects: column(false) });
+    const order = () => [...host.querySelectorAll<HTMLElement>("[data-flip-id]")].map((node) => node.dataset.flipId);
+    const before = order();
+    await clickStar("c Street", 5, { x: 200, y: 230 });
+    expect(props.onPriorityChange).toHaveBeenCalledTimes(1);
+    await renderBoard({ ...props, projects: column(false).map((item) => (item.id === "c" ? { ...item, priority: 5 } : item)) });
+    expect(order()).toEqual(before);
+    expect(played()).toEqual([]);
+    expect(host.querySelector('[aria-label="Priority for c Street"] [role="radio"][aria-checked="true"]')).not.toBeNull();
   });
 
   it("does not fly a card that changed column", async () => {
@@ -1331,7 +1385,7 @@ describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#3
   });
 
   it("drops a quick second click at the same spot when it lands on the card that slid under it", async () => {
-    const props = await renderBoard({ canPrioritize: true, projects: column(1) });
+    const props = await renderBoard({ canPrioritize: true, projects: column(false) });
     await commitAndResort(props);
     expect(props.onPriorityChange).toHaveBeenCalledTimes(1);
     expect(played().length, "no re-sort played — the guard below would be vacuous").toBeGreaterThan(0);
@@ -1342,12 +1396,12 @@ describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#3
   });
 
   it("lets a deliberate click elsewhere and a later click through", async () => {
-    const props = await renderBoard({ canPrioritize: true, projects: column(1) });
+    const props = await renderBoard({ canPrioritize: true, projects: column(false) });
     await commitAndResort(props);
     await clickStar("b Street", 4, { x: 200, y: 330 });
     expect(props.onPriorityChange).toHaveBeenCalledTimes(2);
 
-    await renderBoard({ ...props, projects: column(1) });
+    await renderBoard({ ...props, projects: column(false) });
     await commitAndResort(props);
     now += STAR_GUARD_WINDOW_MS + 100;
     await clickStar("b Street", 4, { x: 200, y: 230 });
@@ -1356,7 +1410,7 @@ describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#3
 
   it("never treats a keyboard commit as a pointer one, even after a click that stopped short of the Board", async () => {
     const { act } = await import("react");
-    const props = await renderBoard({ canPrioritize: true, projects: column(1) });
+    const props = await renderBoard({ canPrioritize: true, projects: column(false) });
     await commitAndResort(props);
     // A click inside the Board whose bubble never reaches it leaves its capture-phase point behind.
     const heading = host.querySelector('[data-focus-key="stage-heading:awaiting_raw"]') as HTMLElement;
@@ -1375,11 +1429,11 @@ describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#3
   });
 
   it("does not arm when the move that played did not carry the committed card", async () => {
-    const props = await renderBoard({ canPrioritize: true, projects: column(1) });
+    const props = await renderBoard({ canPrioritize: true, projects: column(false) });
     // a stays first at 4 stars, while b and c swap in the same render (a refetch landing).
     await clickStar("a Street", 4, { x: 200, y: 230 });
     now += 50;
-    await renderBoard({ ...props, projects: [project("a", "awaiting_raw", { priority: 4 }), project("b", "awaiting_raw", { priority: 1 }), project("c", "awaiting_raw", { priority: 2 })] });
+    await renderBoard({ ...props, projects: [project("a", "awaiting_raw", { priority: 4, shootDate: "2026-01-02" }), project("b", "awaiting_raw", { priority: 1, shootDate: "2026-01-09" }), project("c", "awaiting_raw", { priority: 2, shootDate: "2026-01-03" })] });
     expect(played().map((entry) => entry.id), "no move played — the assertion below would be vacuous").toEqual(["c", "b"]);
     await clickStar("c Street", 3, { x: 200, y: 230 });
     expect(props.onPriorityChange).toHaveBeenCalledTimes(2);
@@ -1387,7 +1441,7 @@ describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#3
 
   it("disarms the guard on any scroll", async () => {
     const { act } = await import("react");
-    const props = await renderBoard({ canPrioritize: true, projects: column(1) });
+    const props = await renderBoard({ canPrioritize: true, projects: column(false) });
     await commitAndResort(props);
     const viewport = host.querySelector('[data-testid="board-scroll-viewport"]') as HTMLElement;
     await act(async () => {
@@ -1400,7 +1454,7 @@ describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#3
 
   it("disarms the guard once the pointer moves away", async () => {
     const { act } = await import("react");
-    const props = await renderBoard({ canPrioritize: true, projects: column(1) });
+    const props = await renderBoard({ canPrioritize: true, projects: column(false) });
     await commitAndResort(props);
     const board = host.querySelector('[data-focus-key="board"]') as HTMLElement;
     await act(async () => {

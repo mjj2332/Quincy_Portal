@@ -253,7 +253,7 @@ describe("Dashboard Board seam (#98)", () => {
       await act(async () => { handler!({ active: { id: "kb2-c" }, over: { id: "kb2-b" } }); await Promise.resolve(); });
       await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
       expect(apiPostMock).not.toHaveBeenCalled();
-      expect(document.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toBe("kb2-c Street stays in Awaiting RAW. Columns are sorted by priority and shoot date.");
+      expect(document.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toBe("kb2-c Street stays in Awaiting RAW. Columns are sorted by shoot date.");
     });
   });
 

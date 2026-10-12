@@ -11,6 +11,7 @@ import {
   type StageMoveConfirmationReason,
   type StageTransportKey,
 } from "@quincy/shared";
+import type { KanbanSortMode } from "../screens/dashboard-helpers";
 import type { PipelineStage } from "./stages";
 
 /**
@@ -100,6 +101,8 @@ export type ProjectKanbanBoardProps = {
   pendingMoves: ReadonlySet<string>;
   pendingOrdering: ReadonlySet<string>;
   terminal: boolean;
+  /** The viewer's chosen sort (#830): orders every column, the landing slot and the same-column refusal copy. */
+  sortMode: KanbanSortMode;
   /** A drop into another column (#470). A same-column drop never reaches this: the Board refuses it. */
   onBoardMove?: (projectId: string, targetStageKey: StageKey, focusDescriptor: FocusDescriptor) => void;
   onPriorityChange: (project: ProjectSummary, priority: number | null) => void;
@@ -127,15 +130,14 @@ function projectStageKey(project: ProjectSummary): CanonicalStageKey | null {
 }
 
 /**
- * The one Board column order (#470): priority 5 down to 1 then unset, then the oldest Shoot date
- * (missing or invalid last), then street and id. The server builds its authorised map with the same
- * comparator (`compareBoardCards`), so a fetched Board and a locally re-sorted one agree.
- *
- * Priority is always "visible" here: an External Editor's summaries carry `priority: null` for every
- * card, so the tier is simply flat for them, exactly as the server's priority-free map for that role.
+ * The Board column order (#470, #830): the viewer's chosen date (`shoot-date` or `due-date`) oldest
+ * first, undated last, then street and id. Priority does not order cards. `mode` is required so no
+ * caller can silently fall back to a default. The server's deprecated order maps keep the #470 rule
+ * until #476 removes them; the client never reads them.
  */
-export function sortKanbanProjects(projects: ProjectSummary[]): ProjectSummary[] {
-  return [...projects].sort((left, right) => compareBoardCards(left, right, { priorityVisible: true }));
+export function sortKanbanProjects(projects: ProjectSummary[], mode: KanbanSortMode): ProjectSummary[] {
+  const date = mode === "due-date" ? "due" : "shoot";
+  return [...projects].sort((left, right) => compareBoardCards(left, right, { priorityVisible: false, date }));
 }
 
 /**
@@ -146,6 +148,7 @@ export function boardLandingSlot(
   projects: ProjectSummary[],
   projectId: string,
   targetStageKey: StageKey | "editing",
+  mode: KanbanSortMode,
 ): { gap: SemanticGap; position: number; count: number } | null {
   const target = canonicalStageKey(targetStageKey);
   const mover = projects.find((project) => project.id === projectId);
@@ -153,7 +156,7 @@ export function boardLandingSlot(
   const column = sortKanbanProjects([
     ...projects.filter((project) => project.id !== projectId && projectStageKey(project) === target),
     mover,
-  ]);
+  ], mode);
   const index = column.findIndex((project) => project.id === projectId);
   return {
     gap: { targetStageKey: target, successor: column[index + 1]?.id ?? "end" },
@@ -345,10 +348,11 @@ export function focusDescriptorFor(
   origin: BoardInteractionOrigin,
   project: ProjectSummary,
   model: BoardModel,
+  mode: KanbanSortMode,
   control?: FocusDescriptor["control"],
 ): FocusDescriptor {
   const sourceStageKey = projectStageKey(project) ?? "awaiting_raw";
-  const sourceIndex = sortKanbanProjects(model.projects.filter((candidate) => projectStageKey(candidate) === sourceStageKey))
+  const sourceIndex = sortKanbanProjects(model.projects.filter((candidate) => projectStageKey(candidate) === sourceStageKey), mode)
     .findIndex((candidate) => candidate.id === project.id);
   const resolvedControl = control ?? (origin === "move-to"
     ? "move-to"
@@ -406,6 +410,8 @@ export type BoardAnnouncementEvent = {
 
 export type BoardAnnouncementContext = {
   terminal: boolean;
+  /** The viewer's chosen sort; the same-column refusal names it (#830). */
+  sortMode: KanbanSortMode;
   street?: string;
   stageLabel?: string;
   sourceStageLabel?: string;
@@ -427,6 +433,7 @@ function announcementValue(event: BoardAnnouncementEvent, ctx: BoardAnnouncement
 export function announce(event: BoardAnnouncementEvent, ctx: BoardAnnouncementContext): string | undefined {
   if (ctx.terminal) return undefined;
   const { street, stageLabel, sourceStageLabel, position, count } = announcementValue(event, ctx);
+  const { sortMode } = ctx;
   switch (event.type) {
     case "start": return `Picked up ${street}. Current Stage: ${stageLabel}. Position ${position} of ${count}.`;
     case "over-stage": return `${street} is over ${stageLabel}; it will land at position ${position} of ${count}.`;
@@ -434,7 +441,7 @@ export function announce(event: BoardAnnouncementEvent, ctx: BoardAnnouncementCo
     case "dnd-cancel":
     case "drop-outside":
     case "invalid-keyboard-target": return `Cancelled moving ${street}. It remains in ${sourceStageLabel}.`;
-    case "same-stage-refused": return `${street} stays in ${sourceStageLabel}. Columns are sorted by priority and shoot date.`;
+    case "same-stage-refused": return `${street} stays in ${sourceStageLabel}. Columns are sorted by ${sortMode === "due-date" ? "deadline" : "shoot date"}.`;
     case "stale-move-to": return "That position changed. Reloading the latest Board; no move was made.";
     case "confirmation-required": return `Move needs confirmation. ${street} remains in ${sourceStageLabel}.`;
     case "modal-cancel": return `Stage move cancelled. ${street} remains in ${sourceStageLabel}.`;

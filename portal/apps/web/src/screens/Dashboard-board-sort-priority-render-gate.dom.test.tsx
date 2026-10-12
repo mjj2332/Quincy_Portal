@@ -1,7 +1,6 @@
-// #470: the Board has one fixed order, so no principal is offered a sort choice. This is the former
-// Priority render-gate's absence half, re-stated for the fixed rule: an unauthorized user (no
-// `prioritizeProjects`) sees the explanation and no radio items at all, and the cards are still
-// ordered by the data (priority is visible to every internal role).
+// #830: the Board's sort is every viewer's choice of date, and Priority no longer orders cards. The former
+// Priority render-gate, re-stated: a user without `prioritizeProjects` gets the same Sort radios as an
+// Admin, no explanation line, and cards ordered by Shoot date whatever their priority.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,7 +36,7 @@ let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const testNow = new Date("2026-08-27T00:00:00.000Z");
 
-describe("Dashboard Kanban sort control — Priority gate (render-gate absence half)", () => {
+describe("Dashboard Kanban sort control — Priority gate (#830)", () => {
   beforeEach(() => {
     vi.useFakeTimers({ now: testNow });
     window.history.replaceState(null, "", "/");
@@ -69,12 +68,18 @@ describe("Dashboard Kanban sort control — Priority gate (render-gate absence h
     vi.useRealTimers();
   });
 
-  it("offers no sort choice in the real Display menu to an unauthorized user, only the fixed rule's explanation", async () => {
+  it("offers the same Shoot date / Deadline choice to a user without Priority, with no explanation line, and orders by Shoot date not priority", async () => {
+    const mk = (id: string, street: string, priority: number, shootDate: string) => ({
+      id, street, suburb: null, postcode: null, agencyName: null, agentName: null,
+      stageKey: "awaiting_raw", shootDate, coverAssetId: null, receivedCount: 0,
+      expectedCount: null, priority, boardPosition: 0, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null, boardRevision: 0,
+    });
+    apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({ projects: [mk("a", "1 Alpha Street", 5, "2026-09-01"), mk("b", "2 Bravo Street", 1, "2026-01-01")] }) : Promise.resolve({ stages: [] }));
     await act(async () => { root!.render(<Dashboard currentUserId="photographer-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
     await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
+    expect([...document.querySelectorAll('[data-testid="board-card"]')].map((card) => card.textContent?.includes("Alpha") ? "alpha" : "bravo")).toEqual(["bravo", "alpha"]);
     await openDisplay();
-    expect(sortRadios()).toHaveLength(0);
-    expect(displayMenu()!.textContent).toContain("Sorted by priority, then shoot date, then street");
-    expect(displayMenu()!.textContent).not.toContain("Board order");
+    expect(sortRadios().map((radio) => radio.textContent)).toEqual(["Shoot date", "Deadline"]);
+    expect(displayMenu()!.textContent).not.toMatch(/priority|Sorted by/i);
   });
 });

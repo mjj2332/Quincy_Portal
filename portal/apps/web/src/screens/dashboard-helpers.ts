@@ -21,10 +21,13 @@ import {
  */
 export type DashboardView = "table" | "board" | "calendar" | "timeline";
 /**
- * The Board has ONE fixed order (#470): priority, then shoot date. Retired spellings ("board",
- * "priority", "shootDate-asc", "shootDate-desc") may still sit in a viewer's storage; every one maps here.
+ * The Board's sort is the viewer's choice of date (#830): Shoot date (default) or Deadline. Priority no
+ * longer orders cards. Retired spellings ("priority-shoot-date", "board", "priority", "shootDate-asc",
+ * "shootDate-desc") may still sit in a viewer's storage; every one reads as "shoot-date".
  */
-export type KanbanSortMode = "priority-shoot-date";
+export type KanbanSortMode = "shoot-date" | "due-date";
+export const KANBAN_SORT_MODES: readonly KanbanSortMode[] = ["shoot-date", "due-date"];
+export const KANBAN_SORT_KEY = "quincy:dashboard:kanbanSort";
 
 export const DASHBOARD_CALENDAR_SUBVIEW_KEY = "quincy:dashboard:calendar:subview";
 export const DASHBOARD_CALENDAR_LAST_DATE_KEY = "quincy:dashboard:calendar:last-date";
@@ -129,13 +132,13 @@ export function initializeDashboardView(storage: DashboardPreferenceStorage): Da
   return view;
 }
 
-export function normalizeKanbanSortMode(_value: string | null): KanbanSortMode {
-  return "priority-shoot-date";
+export function normalizeKanbanSortMode(value: string | null): KanbanSortMode {
+  return value === "due-date" ? "due-date" : "shoot-date";
 }
 
-/** Rewrites a retired stored sort as the fixed rule; a failed read or write changes nothing the viewer sees. */
+/** Reads the stored sort (a legacy or unknown value reads as shoot-date, and is rewritten); a failed read or write changes nothing the viewer sees. */
 export function initializeKanbanSortMode(storage: KanbanSortPreferenceStorage): KanbanSortMode {
-  let mode: KanbanSortMode = "priority-shoot-date";
+  let mode: KanbanSortMode = "shoot-date";
   try {
     mode = normalizeKanbanSortMode(storage.read());
   } catch {
@@ -147,6 +150,15 @@ export function initializeKanbanSortMode(storage: KanbanSortPreferenceStorage): 
     // Storage quotas/privacy settings can reject writes after a successful read.
   }
   return mode;
+}
+
+/** Best-effort write of the viewer's choice; the in-memory choice is already made. */
+export function writeKanbanSortPreference(storage: Pick<KanbanSortPreferenceStorage, "write">, mode: KanbanSortMode): void {
+  try {
+    storage.write(mode);
+  } catch {
+    // Storage quotas/privacy settings can reject writes.
+  }
 }
 
 export function normalizeDashboardCalendarSubview(value: string | null): DashboardCalendarState["subview"] | null {

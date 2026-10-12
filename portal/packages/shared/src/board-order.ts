@@ -7,11 +7,19 @@ export type BoardCardOrderKey = {
   priority: number | null;
   /** Civil `YYYY-MM-DD`; anything else (null, malformed, impossible date) sorts as "no date". */
   shootDate: string | null;
+  /** Epoch ms of the Deadline (#830); null, undefined and non-finite sort as "no deadline". */
+  deadlineAt?: number | null;
 };
 
 export type BoardCardOrderOptions = {
   /** `false` for viewers whose DTO carries no priority (External Editor): priority must not leak into the order. */
   priorityVisible: boolean;
+  /**
+   * #830: the viewer's chosen date. When given, Priority does not order the column at all and the
+   * chosen date runs oldest first. Omitted only by the deprecated server order maps (removed under
+   * #476), which keep the #470 rule.
+   */
+  date?: "shoot" | "due";
 };
 
 function isLeapYear(year: number) {
@@ -30,13 +38,24 @@ function isCivilShootDate(value: string | null): value is string {
   return day <= days;
 }
 
+function isFiniteDeadline(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
 /**
- * The one Board column order (#470): priority 5 down to 1 then unset, then Shoot date oldest first
- * (missing or invalid last), then street and id. The server builds the authorised order map with
+ * The Board column order (#470, #830): by default priority 5 down to 1 then unset, then Shoot date oldest first
+ * (missing or invalid last), then street and id; with `date` the chosen date alone, then street and id. The server builds the authorised order map with
  * this and the client renders with it, so both sides agree by construction.
  */
 export function compareBoardCards(left: BoardCardOrderKey, right: BoardCardOrderKey, options: BoardCardOrderOptions): number {
-  if (options.priorityVisible) {
+  if (options.date === "due") {
+    const leftDue = isFiniteDeadline(left.deadlineAt);
+    const rightDue = isFiniteDeadline(right.deadlineAt);
+    if (leftDue !== rightDue) return leftDue ? -1 : 1;
+    if (leftDue && rightDue && left.deadlineAt !== right.deadlineAt) return left.deadlineAt! < right.deadlineAt! ? -1 : 1;
+    return compareByStreetThenId(left, right);
+  }
+  if (options.priorityVisible && options.date === undefined) {
     const byPriority = (right.priority ?? 0) - (left.priority ?? 0);
     if (byPriority !== 0) return byPriority;
   }

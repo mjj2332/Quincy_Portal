@@ -9,6 +9,10 @@ import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit
  * this (see `boardAnimateLayoutChanges`), so the Board plays a FLIP on a wrapper it owns inside
  * each `KanbanItem`: read every card's position before the commit, read it again after, start each
  * moved card at its old position and ease it to the new one.
+ *
+ * A change of the Board's sort mode (#830) is deliberately not animated: the Board snaps into place
+ * (`FlipScope` in `board.tsx` skips the measurement and cancels flights across a mode change). A
+ * re-sort inside one mode — a refetch, a date edit, a rollback — keeps this FLIP.
  */
 
 /** A card's viewport position, and the column it sat in when measured. */
