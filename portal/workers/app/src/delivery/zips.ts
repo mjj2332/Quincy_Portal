@@ -73,7 +73,7 @@ async function manifest(c: Ctx, slug: string, size: DeliveryZipSize): Promise<Re
   const set = await readZipSet(c.env.DB, page.setId, size);
   let assessed: ZipAssessment | null = null;
   if (set.count > 0 && !set.tooLarge) {
-    if (set.entries.length > 0) { const checked = await spend(c, "dlcheck", page.projectId, CHECK, Date.now()); if ("refuse" in checked) return checked.refuse; }
+    const checked = await spend(c, "dlcheck", page.projectId, CHECK, Date.now()); if ("refuse" in checked) return checked.refuse;
     assessed = await assess(c, set, "delivery-zip-manifest", "never", false);
   }
   await deliveryZipTestHooks.beforeStream?.();
@@ -127,7 +127,7 @@ async function photosZip(c: Ctx, slug: string, size: DeliveryZipSize): Promise<R
   const set = await readZipSet(c.env.DB, page.setId, size);
   if (set.count === 0) return c.json({ error: "nothing_to_download" }, 409);
   if (set.tooLarge) return c.json({ error: "zip_too_large", maxPhotos: DELIVERY_ZIP_MAX_PHOTOS, maxBytes: DELIVERY_ZIP_MAX_BYTES }, 422);
-  if (set.entries.length > 0) { const checked = await spend(c, "dlcheck", page.projectId, CHECK, Date.now()); if ("refuse" in checked) return checked.refuse; }
+  const checked = await spend(c, "dlcheck", page.projectId, CHECK, Date.now()); if ("refuse" in checked) return checked.refuse;
   const assessed = await assess(c, set, "delivery-zip", "when_blocked");
   if (assessed?.kind === "unavailable" || assessed?.kind === "too_large" || assessed?.kind === "legacy") return c.json({ error: "download_unavailable" }, 502);
   const state = zipArchiveState(set, assessed);

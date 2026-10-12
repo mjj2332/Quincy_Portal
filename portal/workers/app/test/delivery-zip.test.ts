@@ -338,6 +338,14 @@ describe("quotas", () => {
     await database.DB.prepare("INSERT INTO guest_rate_limits (bucket, window_start, count) VALUES (?, ?, 300)").bind(`dlcheck:page:${ids.project}`, Math.floor(Date.now() / 900_000) * 900_000).run();
     expect((await get(manifestPath())).status).toBe(429);
   });
+  it("charges checks even when every Web-size derivative is missing, so polling a preparing page is still limited", async () => {
+    const a = await photo({ web: false }); await page(a); const ip = "203.0.113.21";
+    for (let index = 0; index < 60; index += 1) expect((await get(manifestPath("web"), { ip })).status, `check ${index + 1}`).toBe(200);
+    expect((await get(manifestPath("web"), { ip })).status).toBe(429);
+    await database.DB.prepare("DELETE FROM guest_rate_limits").run();
+    await database.DB.prepare("INSERT INTO guest_rate_limits (bucket, window_start, count) VALUES (?, ?, 300)").bind(`dlcheck:page:${ids.project}`, Math.floor(Date.now() / 900_000) * 900_000).run();
+    expect((await get(zipPath("web"))).status).toBe(429);
+  });
   it("refuses the 21st prepare from one address and the 121st on one page", async () => {
     const a = await photo(); await page(a); const ip = "203.0.113.30";
     for (let index = 0; index < 20; index += 1) expect((await post(preparePath(), { ip })).status, `prepare ${index + 1}`).toBe(200);
