@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Dashboard, type ProjectSummary } from "./Dashboard";
-import { displayMenu, displayTrigger } from "./dashboard-display-test-helpers";
+import { closeDisplay, displayMenu, displayTrigger, openDisplay, sortRadios } from "./dashboard-display-test-helpers";
 import { ConfirmModalHost } from "../components/ConfirmDialog";
 import { ApiError } from "../lib/api";
 import { dashboardProjectsKey } from "../lib/dashboard-projects";
@@ -370,7 +370,7 @@ describe("Dashboard Stage interactions", () => {
     await dndEnd("target", "before");
     await flush();
     expect(apiPostMock).not.toHaveBeenCalled();
-    expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toBe("target Street stays in RAW review. Columns are sorted by priority and shoot date.");
+    expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toBe("target Street stays in RAW review. Columns are sorted by shoot date.");
     const rawColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[href="/projects/before"]'))!;
     expect([...rawColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["before Street", "target Street"]);
     expect(document.activeElement).toBe(handle);
@@ -407,9 +407,9 @@ describe("Dashboard Stage interactions", () => {
     await flush();
     expect(setQueryData).not.toHaveBeenCalled();
     expect(queryClient.getQueryData<ProjectSummary[]>(key)).toEqual(serverSnapshot);
-    // Only the Stage changes in the overlay: the card renders at its SORTED slot (priority 1 beats unset), not at the end.
+    // Only the Stage changes in the overlay: the card renders at its SORTED slot (no Shoot dates anywhere, so street order; priority is ignored), not at the end.
     const rawColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[href="/projects/before"]'))!;
-    expect([...rawColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["Source Street", "before Street", "target Street"]);
+    expect([...rawColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["before Street", "Source Street", "target Street"]);
     resolveMove({ changed: true, project: { projectId: "source", stageKey: "raw_review", boardRevision: 4 }, board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["source", "before", "target"] } });
     await flush();
     const boardMessage = publish.mock.calls.map(([message]) => message).find((message) => message.type === "dashboard-board-invalidated");
@@ -580,7 +580,7 @@ describe("Dashboard Stage interactions", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders one fixed order, priority then shoot date, with no sort choice and no fetch to change it", async () => {
+  it("renders the Shoot-date order by default, ignoring priority and the server map, with no fetch to change it (#830)", async () => {
     const sortProjects = [
       { ...summary("sort-source", "awaiting_raw", 4), street: "Sort Source", priority: 5, shootDate: "2026-08-15" },
       { ...summary("board-first", "raw_review", 1), street: "Board First", priority: 1, shootDate: "2026-08-30" },
@@ -612,17 +612,17 @@ describe("Dashboard Stage interactions", () => {
     await flush();
     const rawColumn = () => [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[href="/projects/board-first"]'))!;
     const order = () => [...rawColumn().querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent);
-    expect(order()).toEqual(["Priority First", "Date First", "Board First", "Unset Late"]);
+    expect(order()).toEqual(["Unset Late", "Date First", "Board First", "Priority First"]);
     expect(projectFetches).toBe(1);
 
     // The drag proposal is a drop indicator over the frozen sorted order, not a live list rewrite. The mover
-    // (priority 5, an older Shoot date) sorts first, ahead of Priority First, wherever in the column it is hovered.
+    // (Shoot date 15 Aug) sorts between Date First and Board First, wherever in the column it is hovered.
     await dndStart("sort-source");
     await dndOver("sort-source", "unset-late");
     const indicator = rawColumn().querySelector('[data-testid="board-drop-indicator"]');
     expect(indicator).not.toBeNull();
-    expect(indicator!.parentElement!.textContent).toContain("Priority First");
-    expect(order()).toEqual(["Priority First", "Date First", "Board First", "Unset Late"]);
+    expect(indicator!.parentElement!.textContent).toContain("Board First");
+    expect(order()).toEqual(["Unset Late", "Date First", "Board First", "Priority First"]);
     await dndCancel("sort-source");
     await flush();
     const fetchesBeforeMove = projectFetches;
@@ -630,8 +630,8 @@ describe("Dashboard Stage interactions", () => {
     await moveToStage(host, "Sort Source", "RAW review");
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/sort-source/stage", expect.objectContaining({ targetStageKey: "raw_review", placement: { kind: "append" } }));
-    expect(order()).toEqual(["Sort Source", "Priority First", "Date First", "Board First", "Unset Late"]);
-    expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toBe("Moved Sort Source to RAW review, position 1 of 5.");
+    expect(order()).toEqual(["Unset Late", "Date First", "Sort Source", "Board First", "Priority First"]);
+    expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toBe("Moved Sort Source to RAW review, position 3 of 5.");
     expect(projectFetches).toBeGreaterThanOrEqual(fetchesBeforeMove);
   });
 
@@ -657,8 +657,8 @@ describe("Dashboard Stage interactions", () => {
     await dndOver("source", "target");
     await dndEnd("source", "target");
     await flush();
-    // Sorted: source (priority 3), target (2), before (1).
-    expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toBe("Source Street is already in RAW review, position 1 of 3.");
+    // Sorted by Shoot date: target (1 Aug), source (2 Aug), before (3 Aug).
+    expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toBe("Source Street is already in RAW review, position 2 of 3.");
     expect(host.querySelector('[data-testid="board-drop-indicator"]')).toBeNull();
     expect(document.querySelector('[data-testid="board-card-overlay"]')).toBeNull();
     const controls = movementControls(host);
@@ -717,14 +717,24 @@ describe("Dashboard Stage interactions", () => {
     expect(apiPostMock).toHaveBeenCalledTimes(1);
 
     const targetColumn = movedCard.closest<HTMLElement>('[data-testid="board-column"]')!;
-    expect([...targetColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["Source Street", "before Street", "target Street"]);
+    expect([...targetColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["before Street", "Source Street", "target Street"]);
+    // The handler refuses a Sort change while the settle is pending, so the radios say so instead of doing nothing (#830).
+    const columnOrder = () => [...targetColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent);
+    const orderBefore = columnOrder();
+    await openDisplay();
+    const deadline = sortRadios().find((radio) => radio.textContent === "Deadline")!;
+    expect(deadline.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => { deadline.click(); await Promise.resolve(); });
+    expect(columnOrder()).toEqual(orderBefore);
+    expect(window.localStorage.getItem("quincy:dashboard:kanbanSort")).not.toBe("due-date");
+    await closeDisplay();
     const provisionalSourceColumn = card(host, "source-sibling-a Street").closest<HTMLElement>('[data-testid="board-column"]')!;
     expect([...provisionalSourceColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-a Street", "source-sibling-b Street"]);
     resolveSettle(settledSnapshot);
     await flush();
     expect(projectFetches).toBe(2);
     const settledColumn = card(host, "Source Street").closest<HTMLElement>('[data-testid="board-column"]')!;
-    expect([...settledColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["Source Street", "before Street", "target Street"]);
+    expect([...settledColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["before Street", "Source Street", "target Street"]);
     // The settled snapshot's server map lists the siblings b, a: the Board renders the data's order, a then b.
     const settledSourceColumn = card(host, "source-sibling-b Street").closest<HTMLElement>('[data-testid="board-column"]')!;
     expect([...settledSourceColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-a Street", "source-sibling-b Street"]);

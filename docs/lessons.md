@@ -5295,6 +5295,23 @@ Tags: board-dnd · #470
   restore falls back to the Stage heading when `card-menu:<id>` is absent (collapsed rail), scrolling the target into view.
 - **Moving out of Awaiting RAW can fill the Shoot date server-side**, so the client's slot may differ from the refetched order for a
   moment. Tests must not assert client slot equals server array for that move.
+- **Superseded in part by #830:** the order is now the viewer's choice of date (see "Board order is a viewer's choice (#830)").
+
+## Board order is a viewer's choice (#830)
+Tags: board-dnd · #830
+
+- **The sort mode is a required argument, not a default.** `sortKanbanProjects`, `boardLandingSlot`, `focusDescriptorFor`, the
+  announcement context and `ProjectKanbanBoardProps.sortMode` all take `KanbanSortMode` with no fallback, so a caller that forgets it
+  fails to compile instead of silently sorting by Shoot date. `compareBoardCards` only keeps the #470 priority tier when `date` is
+  omitted, which is the deprecated server order maps (removed under #476); the client always passes `date`.
+- **Priority orders nothing on the Board.** A star click changes the stars and moves no card, in either mode. Tests that used a priority
+  change to provoke a re-sort now provoke it with a date change (a refetch), which is what still re-sorts a card in place.
+- **A mode change snaps; a data re-sort animates.** `FlipScope` returns no snapshot when `sortMode` changed between commits and cancels
+  flights in progress, otherwise picking Deadline would fly every card at once. The FLIP across a refetch inside one mode is unchanged.
+- **Stored value is read in the state initializer** (`useState(() => initializeKanbanSortMode(...))`), not in an effect, so the first
+  render of a remount already uses the saved mode and no card jumps. Legacy spellings (`priority-shoot-date`, `board`, ...) read as
+  `shoot-date` and are rewritten once. The choice is refused mid-drag, mid-confirmation and while a move is pending or settling.
+- **The label is "Deadline".** The glossary lists "Due date" under Avoid; the stored value `due-date` is a storage spelling only.
 
 ## Calendar and Timeline item menu (#463)
 Tags: gantt-calendar · #463

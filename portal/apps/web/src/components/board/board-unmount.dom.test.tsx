@@ -92,6 +92,7 @@ function baseProps(overrides: Partial<ProjectKanbanBoardProps> = {}): ProjectKan
     pendingMoves: new Set(),
     pendingOrdering: new Set(),
     terminal: false,
+    sortMode: "shoot-date",
     onBoardMove: vi.fn(),
     onPriorityChange: vi.fn(),
     onMoveStage: vi.fn(),

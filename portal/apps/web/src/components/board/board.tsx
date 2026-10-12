@@ -16,6 +16,7 @@ import {
   type SemanticGap,
 } from "../../lib/kanban-interaction";
 import { boardAnimateLayoutChanges, flipDeltas, playFlip, type FlipSnapshot } from "../../lib/kanban-flip";
+import type { KanbanSortMode } from "../../screens/dashboard-helpers";
 import { useStarClickGuard } from "../../lib/star-click-guard";
 import type { ProjectStageKey } from "../../lib/stages";
 import { usePrefersReducedMotion } from "../../lib/use-media-query";
@@ -71,6 +72,8 @@ type FlipScopeProps = {
   /** False under reduced motion: moves are still measured and reported, but not played. */
   animate: boolean;
   rootRef: RefObject<HTMLElement | null>;
+  /** A change of sort mode snaps into place: the FLIP neither measures nor plays across it (#830). */
+  sortMode: KanbanSortMode;
   /**
    * Called with the ids of the cards that moved, when any did — played or not, because the
    * misclick guard it arms matters most exactly when the card jumps.
@@ -103,14 +106,16 @@ class FlipScope extends Component<FlipScopeProps> {
   override getSnapshotBeforeUpdate(previous: FlipScopeProps): FlipSnapshot | null {
     const root = this.props.rootRef.current;
     if (!root || previous.orderKey === this.props.orderKey) return null;
+    if (previous.sortMode !== this.props.sortMode) return null;
     if (!previous.enabled || !this.props.enabled) return null;
     // Mid-flight cards are measured WITH their transform: a second re-sort starts from where the
     // card is on screen, not from where the first one was heading.
     return measureCards(root);
   }
 
-  override componentDidUpdate(_previous: FlipScopeProps, _state: unknown, before: FlipSnapshot | null) {
+  override componentDidUpdate(previous: FlipScopeProps, _state: unknown, before: FlipSnapshot | null) {
     const root = this.props.rootRef.current;
+    if (previous.sortMode !== this.props.sortMode) this.land();
     if (!before || !root) return;
     this.land();
     const deltas = flipDeltas(before, measureCards(root));
@@ -174,6 +179,7 @@ export function ProjectKanbanBoard2({
   pendingMoves,
   pendingOrdering,
   terminal,
+  sortMode,
   onBoardMove,
   onPriorityChange,
   onAnnounce,
@@ -191,10 +197,11 @@ export function ProjectKanbanBoard2({
       const key = semanticStageKey(stage.key);
       record[stage.key] = sortKanbanProjects(
         projects.filter((project) => semanticStageKey(project.stageKey as ProjectStageKey) === key),
+        sortMode,
       );
     }
     return record;
-  }, [activeStages, projects]);
+  }, [activeStages, projects, sortMode]);
 
   /**
    * Where a card released over `overContainer` would land (#470): its sorted slot among that Stage's
@@ -202,8 +209,8 @@ export function ProjectKanbanBoard2({
    * in a target column — a card, the column itself, its rail — yields the same slot.
    */
   const landingFor = useCallback((projectId: string, overContainer: string) => (
-    boardLandingSlot(projects, projectId, semanticStageKey(overContainer as ProjectStageKey))
-  ), [projects]);
+    boardLandingSlot(projects, projectId, semanticStageKey(overContainer as ProjectStageKey), sortMode)
+  ), [projects, sortMode]);
 
   /**
    * Whether a drop into `overContainer` would be accepted — shared by the drop, the narration and
@@ -375,7 +382,7 @@ export function ProjectKanbanBoard2({
       dragActive,
       choices,
       moveToDisabled: moveTo.disabled,
-      onMoveStage: (stageKey) => onMoveStage(project, stageKey, focusDescriptorFor("move-to", project, boardModel, "move-to")),
+      onMoveStage: (stageKey) => onMoveStage(project, stageKey, focusDescriptorFor("move-to", project, boardModel, sortMode, "move-to")),
     };
   };
 
@@ -401,8 +408,8 @@ export function ProjectKanbanBoard2({
     const sourceStageLabel = activeStages.find((stage) => semanticStageKey(stage.key) === semanticStageKey(project.stageKey as ProjectStageKey))?.label ?? "";
     // `announce` returns undefined when terminal, and the Dashboard drops undefined — so terminal
     // suppression is free rather than a second branch here.
-    onAnnounce(announce({ type, street: project.street, sourceStageLabel }, { terminal }));
-  }, [activeStages, onAnnounce, projects, terminal]);
+    onAnnounce(announce({ type, street: project.street, sourceStageLabel }, { terminal, sortMode }));
+  }, [activeStages, onAnnounce, projects, sortMode, terminal]);
 
   const handleMove = useCallback(({ event, overContainer }: KanbanMoveEvent) => {
     if (unmountedRef.current) return;
@@ -422,10 +429,10 @@ export function ProjectKanbanBoard2({
     const verdict = dropVerdict(project, overContainer);
     if (verdict === "same-stage") return reject("same-stage-refused");
     if (verdict !== "ok") return reject(keyboardOrigin ? "invalid-keyboard-target" : "dnd-cancel");
-    const focusDescriptor = focusDescriptorFor(keyboardOrigin ? "keyboard" : "pointer", project, { projects }, "handle");
+    const focusDescriptor = focusDescriptorFor(keyboardOrigin ? "keyboard" : "pointer", project, { projects }, sortMode, "handle");
     // Always an append: the Board is sorted by data, so a drop names a Stage and nothing else.
     onBoardMove?.(projectId, semanticStageKey(overContainer as ProjectStageKey), focusDescriptor);
-  }, [announceRejection, dragDisabled, dropVerdict, onBoardMove, pendingMoves, pendingOrdering, projects, refocusHandle]);
+  }, [announceRejection, dragDisabled, dropVerdict, onBoardMove, pendingMoves, pendingOrdering, projects, refocusHandle, sortMode]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     if (unmountedRef.current) return;
@@ -531,7 +538,7 @@ export function ProjectKanbanBoard2({
           stageLabel: stage?.label ?? "",
           position: siblings.findIndex((item) => item.id === project.id) + 1,
           count: siblings.length,
-        }, { terminal });
+        }, { terminal, sortMode });
       },
       // The hover narration. It describes the SAME slot the drop would land in, via the same
       // `landingFor`. De-duplicated by slot, not by container — a stationary hover fires this
@@ -555,7 +562,7 @@ export function ProjectKanbanBoard2({
           stageLabel,
           position,
           count,
-        }, { terminal });
+        }, { terminal, sortMode });
       },
       // Deliberately silent, and this is mandatory rather than stylistic: the Board's own rejection
       // copy goes to the DASHBOARD's live region via `onAnnounce`. Leaving dnd-kit's defaults here
@@ -566,7 +573,7 @@ export function ProjectKanbanBoard2({
     screenReaderInstructions: {
       draggable: "To pick up a project, focus its card and press Space. Use the arrow keys to move it. Press Space to drop, Escape to cancel. Press Enter to open it. For more actions, use the card's Actions menu.",
     },
-  }), [activeStages, columns, hoverTarget, projects, terminal]);
+  }), [activeStages, columns, hoverTarget, projects, sortMode, terminal]);
 
   return (
     <Kanban
@@ -604,7 +611,7 @@ export function ProjectKanbanBoard2({
           className="min-h-0 w-full flex-1 focus-visible:!outline-none"
         >
           <ScrollAreaPrimitive.Content data-slot="scroll-area-content" className="h-full w-max min-w-full">
-            <FlipScope orderKey={orderKey} enabled={!dragActive} animate={!reducedMotion} rootRef={boardRef} onMoved={starClickGuard.onCardsMoved}>
+            <FlipScope orderKey={orderKey} sortMode={sortMode} enabled={!dragActive} animate={!reducedMotion} rootRef={boardRef} onMoved={starClickGuard.onCardsMoved}>
               <div
                 ref={boardRef}
                 {...starClickGuard.boardHandlers}

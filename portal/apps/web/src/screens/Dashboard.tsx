@@ -6,7 +6,7 @@ import { ApiError, apiPost } from "../lib/api";
 import { confirmStore } from "../lib/confirm";
 import { useCapabilities } from "../lib/capabilities";
 import { useStages } from "../lib/stages";
-import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, DASHBOARD_VIEW_KEY, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, normalizeDashboardView, writeDashboardViewPreference, type DashboardView } from "./dashboard-helpers";
+import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, DASHBOARD_VIEW_KEY, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, KANBAN_SORT_KEY, normalizeDashboardView, writeDashboardViewPreference, writeKanbanSortPreference, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { publishDashboardView, releaseDashboardView } from "../lib/dashboard-view-store";
 import { InternalLink } from "../components/InternalLink";
 import { pushToast as toast } from "../lib/toast-store";
@@ -136,14 +136,16 @@ function focusKeyForControl(control: FocusDescriptor["control"], projectId: stri
   return `${control}:${projectId}`;
 }
 
-function postSuccessRefetchFailureAnnouncement(recovery: MovementRecovery | null, terminal: boolean): string | undefined {
-  if (!recovery) return announce({ type: "post-success-refetch-failure" }, { terminal });
+function postSuccessRefetchFailureAnnouncement(recovery: MovementRecovery | null, terminal: boolean, sortMode: KanbanSortMode): string | undefined {
+  if (!recovery) return announce({ type: "post-success-refetch-failure" }, { terminal, sortMode });
   const targetColumn = sortKanbanProjects(
     recovery.model.projects.filter((project) => canonicalStageKey(project.stageKey) === recovery.settledStageKey),
+    sortMode,
   );
   const index = targetColumn.findIndex((project) => project.id === recovery.projectId);
   return announce({ type: "post-success-refetch-failure" }, {
     terminal,
+    sortMode,
     street: recovery.project.street,
     position: index < 0 ? targetColumn.length : index + 1,
     count: targetColumn.length,
@@ -323,14 +325,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // corrects `calendarState` -- carries `q`.
     return view === "calendar" ? { ...initial, search: routeDashboardSearch ?? search.draft } : initial;
   });
-  // The Board has one fixed order (#470). A retired stored sort ("board", "priority", ...) is rewritten
-  // as the fixed rule once, on mount, so it can never be read back as a choice.
-  useEffect(() => {
-    initializeKanbanSortMode({
-      read: () => window.localStorage.getItem("quincy:dashboard:kanbanSort"),
-      write: (next) => window.localStorage.setItem("quincy:dashboard:kanbanSort", next),
-    });
-  }, []);
+  // The Board's sort is the viewer's choice of date (#830), per browser. Read in the state initializer so
+  // the first render already uses it; a legacy or unknown stored value reads as Shoot date.
+  const [kanbanSortMode, setKanbanSortMode] = useState<KanbanSortMode>(() => initializeKanbanSortMode({
+    read: () => window.localStorage.getItem(KANBAN_SORT_KEY),
+    write: (next) => window.localStorage.setItem(KANBAN_SORT_KEY, next),
+  }));
+  const kanbanSortRef = useRef(kanbanSortMode);
+  kanbanSortRef.current = kanbanSortMode;
   const [boardInteraction, setBoardInteraction] = useState<BoardInteractionState>({ activeId: undefined, proposal: null });
   const [pendingMoves, setPendingMoves] = useState<Set<string>>(new Set());
   const [pendingOrdering, setPendingOrdering] = useState<Set<string>>(new Set());
@@ -475,6 +477,16 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // defers accepting refetched data (a refetch must not land mid-save). A priority save is per-card:
   // only the saving card locks (see `runBoardMovement` and `moveProjectPosition`).
   const movementInteractionActive = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || activeConfirm);
+  // A sort change is refused mid-drag, mid-confirmation and while a move is pending or settling (#830). One boolean
+  // feeds both the disabled Sort radios and the handler guard, so they cannot drift. The handler also reads
+  // `movementBusyRef`: a move marks it synchronously, before the state behind `kanbanSortLocked` has rendered.
+  const kanbanSortLocked = movementInteractionActive || movementSettlePending;
+  const changeKanbanSort = (next: KanbanSortMode) => {
+    if (kanbanSortLocked || movementBusyRef.current) return;
+    setKanbanSortMode(next);
+    writeKanbanSortPreference({ write: (value) => window.localStorage.setItem(KANBAN_SORT_KEY, value) }, next);
+  };
+
   const interactionBlocked = movementInteractionActive || pendingOrdering.size > 0;
   const interactionBlockedRef = useRef(interactionBlocked);
   interactionBlockedRef.current = interactionBlocked;
@@ -1000,7 +1012,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         if (settling) {
           const message = "The move was saved, but the latest Board could not be loaded. Refresh to continue.";
           setRecoveryReason(message);
-          const recoveryMessage = postSuccessRefetchFailureAnnouncement(movementRecoveryRef.current, Boolean(queryRuntime?.principalTerminal));
+          const recoveryMessage = postSuccessRefetchFailureAnnouncement(movementRecoveryRef.current, Boolean(queryRuntime?.principalTerminal), kanbanSortRef.current);
           if (recoveryMessage !== undefined) setAnnouncement(recoveryMessage);
         } else if (interactionBlockedRef.current) {
           queuedRefreshRef.current = true;
@@ -1043,7 +1055,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       if (movementSettlePendingRef.current) {
         const message = "The move was saved, but the latest Board could not be loaded. Refresh to continue.";
         setRecoveryReason(message);
-        const recoveryMessage = postSuccessRefetchFailureAnnouncement(movementRecoveryRef.current, Boolean(queryRuntime?.principalTerminal));
+        const recoveryMessage = postSuccessRefetchFailureAnnouncement(movementRecoveryRef.current, Boolean(queryRuntime?.principalTerminal), kanbanSortRef.current);
         if (recoveryMessage !== undefined) setAnnouncement(recoveryMessage);
       } else if (interactionBlockedRef.current) {
         queuedRefreshRef.current = true;
@@ -1310,10 +1322,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   ) => {
     const targetColumn = sortKanbanProjects(
       model.projects.filter((item) => canonicalStageKey(item.stageKey) === targetStageKey),
+      kanbanSortMode,
     );
     const position = targetColumn.findIndex((item) => item.id === project.id);
     const message = announce(event, {
       terminal: Boolean(queryRuntime?.principalTerminal || queryRuntime?.isProjectRemoved(project.id)),
+      sortMode: kanbanSortMode,
       street: project.street,
       stageLabel: stageLabelFor(targetStageKey),
       sourceStageLabel: stageLabelFor(canonicalStageKey(project.stageKey)),
@@ -1322,7 +1336,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     });
     if (message !== undefined) setAnnouncement(message);
     return message;
-  }, [queryRuntime, stages]);
+  }, [kanbanSortMode, queryRuntime, stages]);
 
   const isMovementTerminal = useCallback((projectId: string) => Boolean(queryRuntime?.principalTerminal || queryRuntime?.isProjectRemoved(projectId)), [queryRuntime]);
 
@@ -1339,7 +1353,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (!movingProject) {
       if (intent.origin === "move-to") {
         captureFocusForRefresh(intent.focusDescriptor.sourceStageKey, intent.focusDescriptor);
-        const message = announce({ type: "stale-move-to" }, { terminal: Boolean(queryRuntime?.principalTerminal) });
+        const message = announce({ type: "stale-move-to" }, { terminal: Boolean(queryRuntime?.principalTerminal), sortMode: kanbanSortMode });
         if (message !== undefined) setAnnouncement(message);
         queueDashboardRefresh();
       }
@@ -1629,7 +1643,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           searchFocusRequest={searchFocusRequest}
           onSearchFocusHandled={handleSearchFocusHandled}
           display={renderedView === "board"
-            ? <BoardDisplayContent priorityVisible={role !== "external_editor"} />
+            ? <BoardDisplayContent value={kanbanSortMode} onChange={changeKanbanSort} disabled={kanbanSortLocked} />
             : renderedView === "table"
               ? <TableDisplayContent
                   groupBy={tablePrefs.groupBy}
@@ -1791,6 +1805,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             pendingMoves={pendingMoves}
             pendingOrdering={pendingOrdering}
             terminal={Boolean(queryRuntime?.principalTerminal || projects.some((project) => queryRuntime?.isProjectRemoved(project.id)))}
+            sortMode={kanbanSortMode}
             onBoardMove={onBoardMove}
             onPriorityChange={setProjectPriority}
             onMoveStage={onMoveToStage}

@@ -3,12 +3,13 @@
  * `DashboardViewBar` owns the trigger and popup; the view passes its content through the `display`
  * slot. Queried by role and accessible name only (test-seam F).
  */
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardViewBar } from "./DashboardViewBar";
 import { BoardDisplayContent, CalendarDisplayContent, TableDisplayContent, TimelineDisplayContent } from "./DashboardDisplay";
-import { chooseGroupBy, columnCheckboxLabels, columnCheckboxes, displayGroup, displayMenu, groupCheckboxes, displayTrigger, groupByRadios, openDisplay, sortRadioLabels, toggleColumn } from "./dashboard-display-test-helpers";
+import { checkedSortLabel, chooseGroupBy, columnCheckboxLabels, columnCheckboxes, displayGroup, displayMenu, groupCheckboxes, displayTrigger, groupByRadios, openDisplay, sortRadioLabels, sortRadios, toggleColumn } from "./dashboard-display-test-helpers";
+import type { KanbanSortMode } from "./dashboard-helpers";
 import { hideableColumnsFor, tablePrefsKey, type TableGroupBy, type HideableColumnId } from "../lib/dashboard-table-model";
 import { useDashboardTablePrefs } from "../lib/use-dashboard-table-prefs";
 import { __resetDashboardSearchStoreForTest } from "../lib/dashboard-search-store";
@@ -34,15 +35,17 @@ function installStorage() {
 
 function Bar({ principalId, role = "admin", view = "table" }: { principalId: string; role?: "admin" | "external_editor"; view?: "table" | "board" | "calendar" }) {
   const { prefs, update } = useDashboardTablePrefs(principalId);
+  const [sort, setSort] = useState<KanbanSortMode>("shoot-date");
   const hideable = hideableColumnsFor(role);
   const display = view === "table"
     ? <TableDisplayContent groupBy={prefs.groupBy} onGroupByChange={(groupBy: TableGroupBy) => update({ groupBy })} hiddenColumns={prefs.hiddenColumns} hideableColumns={hideable}
         onColumnVisibilityChange={(column: HideableColumnId, visible) => update({ hiddenColumns: visible ? prefs.hiddenColumns.filter((id) => id !== column) : [...prefs.hiddenColumns, column] })} />
-    : view === "board" ? <BoardDisplayContent priorityVisible={role !== "external_editor"} /> : undefined;
+    : view === "board" ? <BoardDisplayContent value={sort} onChange={setSort} /> : undefined;
   return (
     <div>
       <DashboardViewBar renderedView={view} canViewProductionCalendar disabled={false} onSelectView={() => undefined} principalId={principalId} searchFocusRequest={null} onSearchFocusHandled={() => undefined} display={display} />
       <output data-testid="prefs">{JSON.stringify(prefs)}</output>
+      <output data-testid="sort">{sort}</output>
     </div>
   );
 }
@@ -128,20 +131,28 @@ describe("Display menu content and Table preferences (#431)", () => {
     expect(prefsText().groupBy).toBe("stage");
   });
 
-  it("explains a shoot-date-only sort for a viewer without priority, since priority is not in an External Editor's order (#470)", async () => {
-    await render(<Bar principalId="u2" role="external_editor" view="board" />);
+  it.each([["admin", "u1"], ["external_editor", "u2"]] as const)("the Board slot offers Shoot date and Deadline as a Sort radio group for %s, Shoot date checked, and no explanation line (#830)", async (role, principalId) => {
+    await render(<Bar principalId={principalId} role={role} view="board" />);
     await openDisplay();
-    expect(displayMenu()?.textContent).toContain("Sorted by shoot date, then street");
-    expect(displayMenu()?.textContent).not.toContain("priority");
+    expect(sortRadioLabels()).toEqual(["Shoot date", "Deadline"]);
+    expect(checkedSortLabel()).toBe("Shoot date");
+    expect(displayMenu()?.textContent).not.toMatch(/priority|Sorted by|Due date/i);
+    expect(groupByRadios()).toHaveLength(0);
   });
 
-  it("the Board slot explains the one fixed sort and offers no sort choices or Group by, and a view with no slot disables Display (#470)", async () => {
+  it("choosing Deadline calls onChange with due-date and leaves the menu open; choosing Shoot date goes back (#830)", async () => {
     await render(<Bar principalId="u1" view="board" />);
     await openDisplay();
-    expect(sortRadioLabels()).toEqual([]);
-    expect(displayMenu()?.textContent).toContain("Sorted by priority, then shoot date, then street");
-    expect(displayMenu()?.textContent).not.toContain("Board order");
-    expect(groupByRadios()).toHaveLength(0);
+    const radio = (label: string) => sortRadios().find((item) => item.textContent === label)!;
+    await act(async () => { radio("Deadline").click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(document.querySelector('[data-testid="sort"]')!.textContent).toBe("due-date");
+    expect(displayMenu(), "a radio item leaves the menu open").not.toBeNull();
+    expect(checkedSortLabel()).toBe("Deadline");
+    await act(async () => { radio("Shoot date").click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(document.querySelector('[data-testid="sort"]')!.textContent).toBe("shoot-date");
+  });
+
+  it("a view with no slot disables Display (#470)", async () => {
     await render(<DashboardViewBar renderedView="none" canViewProductionCalendar disabled={false} onSelectView={() => undefined} principalId="u1" searchFocusRequest={null} onSearchFocusHandled={() => undefined} />);
     expect(displayTrigger()!.disabled).toBe(true);
     expect(document.getElementById(displayTrigger()!.getAttribute("aria-describedby") ?? "")?.textContent).toBe("No display options for this view");

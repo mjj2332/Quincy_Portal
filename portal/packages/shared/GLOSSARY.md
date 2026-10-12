@@ -108,10 +108,12 @@ called Kanban until the Dashboard took its Table / Board / Calendar / Timeline t
 #109 settled "Kanban", the glossary follows the word on the screen. Board order and Board
 position already used this word.
 
-Since #470 a column's order is derived, never stored or hand-arranged: Priority 5 down to 1 then
-unset, then the oldest Shoot date (missing last), then street and id. Dragging a card to another
-column, or Move to in its menu, changes its Stage only, and the card lands where that rule puts it.
-A drop inside its own column is refused.
+Since #470 a column's order is derived, never stored or hand-arranged. Since #830 the viewer
+chooses the date that orders every column, from the Display menu's Sort group: Shoot date
+(the default) or Deadline, oldest first, Projects with no such date last, then street and id.
+Priority orders no column. The choice is remembered per browser. Dragging a card to another
+column, or Move to in its menu, changes its Stage only, and the card lands where the chosen sort
+puts it. A drop inside its own column is refused.
 _Avoid_: Kanban, dashboard, pipeline view
 
 **Timeline**:
@@ -191,9 +193,8 @@ glyph. They are never the same number and never describe the same thing.
 
 **Project priority**:
 How urgently a Project should be worked, relative to other Projects. 1–5, or unset; 5 stars is
-the highest priority and 1 the lowest, so the Priority sort lists 5 first and unset last.
-Set by hand; never derived. It orders Projects only in the Priority sort — a Stage's Board
-order is Board position alone, so Priority never moves a card on the Kanban (#106).
+the highest priority and 1 the lowest. Set by hand; never derived. It orders no Board column
+(#830): a card's stars change without moving it.
 _Avoid_: Rank, urgency, importance, weight, project rating
 
 **Asset rating**:

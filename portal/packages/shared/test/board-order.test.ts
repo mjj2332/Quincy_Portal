@@ -68,4 +68,48 @@ describe("compareBoardCards", () => {
     expect(order([...cards].reverse())).toEqual(expected);
     expect(order([cards[2]!, cards[0]!, cards[3]!, cards[1]!])).toEqual(expected);
   });
+
+  describe("with a chosen date (#830)", () => {
+    const ordered = (cards: BoardCardOrderKey[], date: "shoot" | "due", priorityVisible = true) =>
+      [...cards].sort((a, b) => compareBoardCards(a, b, { priorityVisible, date })).map((c) => c.id);
+
+    it("orders by Shoot date and ignores priority", () => {
+      const cards = [
+        card("late-p5", { priority: 5, shootDate: "2026-09-01" }),
+        card("early-none", { shootDate: "2026-01-01" }),
+        card("mid-p1", { priority: 1, shootDate: "2026-05-01" }),
+      ];
+      expect(ordered(cards, "shoot")).toEqual(["early-none", "mid-p1", "late-p5"]);
+    });
+
+    it("orders by Deadline ascending, ignoring priority and Shoot date", () => {
+      const cards = [
+        card("c", { priority: 5, shootDate: "2026-01-01", deadlineAt: 3000 }),
+        card("a", { priority: null, shootDate: "2026-09-01", deadlineAt: 1000 }),
+        card("b", { priority: 2, shootDate: "2026-05-01", deadlineAt: 2000 }),
+      ];
+      expect(ordered(cards, "due")).toEqual(["a", "b", "c"]);
+    });
+
+    it("puts missing, undefined and non-finite deadlines last, then street then id", () => {
+      const cards = [
+        card("nan", { street: "1 Alpha St", deadlineAt: Number.NaN }),
+        card("inf", { street: "2 Beta St", deadlineAt: Number.POSITIVE_INFINITY }),
+        card("null", { street: "3 Gamma St", deadlineAt: null }),
+        card("undef", { street: "4 Delta St" }),
+        card("dated", { street: "9 Zulu St", deadlineAt: 5 }),
+      ];
+      expect(ordered(cards, "due")).toEqual(["dated", "nan", "inf", "null", "undef"]);
+    });
+
+    it("breaks equal deadlines by street then id, whatever the input order", () => {
+      const cards = [
+        card("b", { street: "2 Beta St", deadlineAt: 10 }),
+        card("a2", { street: "1 Alpha St", deadlineAt: 10 }),
+        card("a1", { street: "1 Alpha St", deadlineAt: 10 }),
+      ];
+      expect(ordered(cards, "due")).toEqual(["a1", "a2", "b"]);
+      expect(ordered([...cards].reverse(), "due")).toEqual(["a1", "a2", "b"]);
+    });
+  });
 });
