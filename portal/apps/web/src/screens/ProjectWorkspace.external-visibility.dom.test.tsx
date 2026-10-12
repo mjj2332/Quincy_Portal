@@ -352,7 +352,7 @@ describe("external-editor visibility inventory", () => {
     // Written against the shared source of truth, not the DOM, so it still holds the line if the
     // frozen inventories below are ever legitimately re-captured.
     expect([...EXTERNAL_EDITOR_CAPABILITIES].sort()).toEqual([
-      "annotateEdited", "annotateRaw", "annotateVideo", "collaborateOnProject", "compareFrames", "moveProjectStage",
+      "annotateEdited", "annotateRaw", "annotateVideo", "collaborateOnProject", "compareFrames", "downloadVideo", "moveProjectStage",
       "recommendRaw", "reviewEdited", "uploadEdited", "uploadExtras", "uploadVideo", "viewEdited",
       "viewProductionCalendar", "viewRaw", "viewVideo",
     ]);
