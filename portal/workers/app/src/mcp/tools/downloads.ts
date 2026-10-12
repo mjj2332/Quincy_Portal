@@ -53,9 +53,29 @@ const getAssetDownloadUrl: McpTool = {
   },
 };
 
+/**
+ * The download-selection route's #802 outcomes. 409 `download_preparing` is not a failure: the archive's checksums are still being computed, so it is a structured, non-error result the AI
+ * client can act on (wait, then call again). 413 and 502 are real errors with the route's own message. Anything else keeps the generic `HTTP <status>` error.
+ */
+async function selectionFailure(response: Response): Promise<McpToolResult> {
+  const text = await response.text();
+  const body = (() => { try { return JSON.parse(text) as { code?: unknown; error?: unknown; pending?: unknown; retryAfterSeconds?: unknown }; } catch { return null; } })();
+  const code = typeof body?.code === "string" ? body.code : undefined;
+  if (response.status === 409 && code === "download_preparing") {
+    const retryAfterSeconds = typeof body?.retryAfterSeconds === "number" ? body.retryAfterSeconds : 60;
+    const pending = typeof body?.pending === "number" ? body.pending : 0;
+    return { content: [{ type: "text", text: JSON.stringify({ status: "preparing", code, pending, retryAfterSeconds, message: "The zip is preparing; try again in about a minute." }) }] };
+  }
+  if ((response.status === 413 && code === "download_too_large") || (response.status === 502 && code === "download_unavailable")) {
+    const message = typeof body?.error === "string" ? body.error : code;
+    return { content: [{ type: "text", text: `${code}: ${message}` }], isError: true };
+  }
+  return { content: [{ type: "text", text: `HTTP ${response.status}: ${text}` }], isError: true };
+}
+
 const getSelectionDownloadUrl: McpTool = {
   name: "get_selection_download_url",
-  description: "A signed, short-lived (15 minutes) download link for a zip of chosen photo assets in one Project (all RAW, or all edited; up to 500 assets and 256 MiB). Creates the zip selection as this user, then returns { url, expiresAt }. Refused when this user may not download that selection. The link is a bearer: do not share or store it.",
+  description: "A signed, short-lived (15 minutes) download link for a zip of chosen photo assets in one Project (all RAW, or all edited; up to 500 assets and 256 MiB). Creates the zip selection as this user, then returns { url, expiresAt }. When the zip's checksums are still being prepared it returns { status: \"preparing\", pending, retryAfterSeconds } instead (not an error): call again after that many seconds. Over the size limit or unavailable files are errors. Refused when this user may not download that selection. The link is a bearer: do not share or store it.",
   scope: "read",
   anyCapability: ["selectForEditing", "downloadFinal"],
   route: { method: "POST", template: "/api/projects/:projectId/download-selection" },
@@ -67,7 +87,7 @@ const getSelectionDownloadUrl: McpTool = {
   call: async (ctx, input) => {
     const projectId = String(input.projectId);
     const created = await dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, { method: "POST", path: `/api/projects/${encodeURIComponent(projectId)}/download-selection`, body: { assetIds: input.assetIds } });
-    if (!created.ok) return jsonResult(created);
+    if (!created.ok) return selectionFailure(created);
     const downloadUrl = ((await created.json().catch(() => null)) as { downloadUrl?: unknown } | null)?.downloadUrl;
     const ticket = typeof downloadUrl === "string" ? /\/download-selection\/([A-Za-z0-9_-]+)\/archive\.zip$/.exec(downloadUrl)?.[1] : undefined;
     if (!ticket) return { content: [{ type: "text", text: "The download selection could not be created." }], isError: true };

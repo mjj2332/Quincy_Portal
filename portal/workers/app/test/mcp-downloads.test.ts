@@ -261,3 +261,37 @@ describe("zip lifetime and provenance", () => {
     }
   });
 });
+
+/** The download-selection route's #802 outcomes as the tool reports them: preparing is a result, too large and unavailable are errors. */
+describe("selection zips that are not ready (#802)", () => {
+  const selection = MCP_TOOLS.find((candidate) => candidate.name === "get_selection_download_url")!;
+  const answering = (response: Response) => selection.call(
+    { env: testEnv, executionCtx: { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext, fetchApp: async () => response, principal: { userId: ids.editor, authorizationEpoch: 0, connectionId: "c", clientName: CLIENT } as never, role: "editor" },
+    { projectId, assetIds: [assetId] });
+  const json = (body: unknown, status: number) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+  it("409 download_preparing is a structured, non-error result with the pending count and retryAfterSeconds, and issues no link", async () => {
+    const result = await answering(json({ error: "Preparing", code: "download_preparing", pending: 3, retryAfterSeconds: 30 }, 409));
+    expect(result.isError).toBeUndefined();
+    const body = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+    expect(body).toMatchObject({ status: "preparing", code: "download_preparing", pending: 3, retryAfterSeconds: 30 });
+    expect(String(body.message)).toContain("try again in about a minute");
+    expect(result.content[0]!.text).not.toContain("/dl/");
+  });
+  it("413 download_too_large and 502 download_unavailable are errors that carry the route's message", async () => {
+    const tooLarge = await answering(json({ error: "Selected assets exceed the 256 MiB download limit", code: "download_too_large", maxBytes: 268435456 }, 413));
+    expect(tooLarge.isError).toBe(true); expect(tooLarge.content[0]!.text).toContain("download_too_large"); expect(tooLarge.content[0]!.text).toContain("256 MiB");
+    const unavailable = await answering(json({ error: "A file in this download is unavailable", code: "download_unavailable" }, 502));
+    expect(unavailable.isError).toBe(true); expect(unavailable.content[0]!.text).toContain("download_unavailable"); expect(unavailable.content[0]!.text).toContain("unavailable");
+  });
+  it("any other failure keeps the generic HTTP error", async () => {
+    const result = await answering(json({ error: "nope" }, 409));
+    expect(result.isError).toBe(true); expect(result.content[0]!.text).toMatch(/^HTTP 409:/);
+  });
+  it("end to end: a selection over 256 MiB with native_zip off answers the tool error, not an issued link", async () => {
+    const hugeId = "a7070000-0000-4000-8000-0000000000f1", now = Date.now();
+    await DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, 'mcp-dl/huge.jpg', 'huge.jpg', ?, 'upload', ?, ?)").bind(hugeId, collectionId, 300 * 1024 * 1024, now, now).run();
+    const outcome = await call("editor", "get_selection_download_url", { projectId, assetIds: [hugeId] });
+    expect(outcome.result?.isError).toBe(true); expect(plain(outcome.result)).toContain("download_too_large"); expect(plain(outcome.result)).not.toContain("/dl/");
+  });
+});

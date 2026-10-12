@@ -223,7 +223,7 @@ describe("guest-api: decisions and downloads (#741 14-ui-guest)", () => {
     expect(await run()).toEqual({ kind: "unreachable" });
   });
   it("reads the Download all manifest through the strict schema and exposes the zip route", async () => {
-    const manifest = { included: [{ videoId: "11111111-1111-4111-8111-111111111111", title: "Film", version: 2, bytes: 10 }], leftOut: [{ title: "Other", reason: "not_released" }], totalBytes: 10, tooLarge: false };
+    const manifest = { included: [{ videoId: "11111111-1111-4111-8111-111111111111", title: "Film", version: 2, bytes: 10 }], leftOut: [{ title: "Other", reason: "not_released" }], totalBytes: 10, tooLarge: false, archive: { state: "ready", pending: 0 } };
     answer(json(manifest));
     expect(await api().downloads()).toEqual({ kind: "ok", value: manifest });
     expect(lastCall().url).toBe(`/d/api/links/${LINK}/downloads`);
@@ -246,5 +246,20 @@ describe("guest-api: decisions and downloads (#741 14-ui-guest)", () => {
     expect(await api().downloads()).toEqual({ kind: "disabled" });
     answer(json({ error: "something_else" }, 403));
     expect(await api().downloads()).toEqual({ kind: "gone" });
+  });
+  it("prepares Download all with a POST and reads the archive state through the strict schema", async () => {
+    answer(json({ state: "preparing", pending: 2, retryAfterSeconds: 30 }));
+    expect(await api().prepareDownloads()).toEqual({ kind: "ok", value: { state: "preparing", pending: 2, retryAfterSeconds: 30 } });
+    expect(lastCall().url).toBe(`/d/api/links/${LINK}/downloads/prepare`); expect(lastCall().init?.method).toBe("POST");
+    answer(json({ state: "ready", pending: 0, extra: 1 })); expect(await api().prepareDownloads()).toEqual({ kind: "gone" });
+  });
+  it("reads a prepare refusal for what it is: 401 verify, 403 download_disabled, 409/422 rejected, a 429 or a 5xx transient, never gone", async () => {
+    answer(json({ error: "verification_required" }, 401)); expect(await api().prepareDownloads()).toEqual({ kind: "verify" });
+    answer(json({ error: "download_disabled" }, 403)); expect(await api().prepareDownloads()).toEqual({ kind: "disabled" });
+    answer(json({ error: "nothing_to_download" }, 409)); expect(await api().prepareDownloads()).toEqual({ kind: "rejected" });
+    answer(json({ error: "zip_too_large" }, 422)); expect(await api().prepareDownloads()).toEqual({ kind: "rejected" });
+    answer(json({ error: "too_many_attempts" }, 429)); expect(await api().prepareDownloads()).toEqual({ kind: "transient" });
+    answer(new Response("", { status: 503 })); expect(await api().prepareDownloads()).toEqual({ kind: "transient" });
+    answer(new Response("Not found", { status: 404 })); expect(await api().prepareDownloads()).toEqual({ kind: "gone" });
   });
 });

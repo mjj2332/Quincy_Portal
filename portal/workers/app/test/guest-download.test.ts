@@ -8,6 +8,8 @@ import { hashToken } from "../src/lib/opaque-token";
 import { baseEnv, database, ids, mp4Bytes, seedFixture } from "./embedded-media-support";
 import { addMember, clearGuestRows, grant, guestFetch, HYGIENE, linkPath, openGuestGate, seedGuestLink, startSession, type LinkInput } from "./guest-support";
 import { clearVideoFlags, markVersionRemoved, seedVideoVersion, setVideoFlags } from "./video-review-support";
+import { NATIVE_ZIP_FLAG, ZIP_LEGACY_MAX_BYTES } from "../src/lib/object-crc";
+import { crc32 } from "node:zlib";
 
 /**
  * Guest downloads (#741 14b): one Version, the manifest and Download all. Rules: docs/plans/741-13-15.md section 4 and settled decision 8. A download is a READ, but every gate runs before
@@ -345,10 +347,10 @@ describe("GET .../downloads/all.zip", () => {
     expect((await database.DB.prepare("SELECT COUNT(*) AS n FROM guest_rate_limits WHERE bucket LIKE 'zip:%'").first<Json>())!.n).toBe(0);
   });
 
-  it("charges the zip bucket before judging state, so a 409 counts", async () => {
+  it("charges the zip bucket only for a start about to be audited, so a 409 costs nothing (#802)", async () => {
     const link = await verifiedLink(); const version = await seedVideoVersion(); await addMember(link.id, version.videoId, [version.assetId]);
-    await guestFetch(zipPath(link.id), { cookie: link.cookie });
-    expect((await database.DB.prepare("SELECT COUNT(*) AS n FROM guest_rate_limits WHERE bucket LIKE 'zip:%'").first<Json>())!.n).toBe(2);
+    const response = await guestFetch(zipPath(link.id), { cookie: link.cookie }); expect(response.status).toBe(409);
+    expect((await database.DB.prepare("SELECT COUNT(*) AS n FROM guest_rate_limits WHERE bucket LIKE 'zip:%'").first<Json>())!.n).toBe(0);
   });
 
   it("refuses HEAD without charging the limit, auditing or reading R2", async () => {
@@ -455,7 +457,7 @@ describe("safeFileName and attachment with astral characters", () => {
  * Interposed storage: the real database and bucket, with a hook that runs `before` or `after` a statement whose SQL matches, so a revoke can land BETWEEN two steps of one request (the
  * Worker under test is mounted in-process, because nothing across the SELF boundary can be paused). `reads` counts every R2 read.
  */
-function interposed(hooks: { before?: Array<[RegExp, () => Promise<unknown>]>; after?: Array<[RegExp, () => Promise<unknown>]> }) {
+function interposed(hooks: { before?: Array<[RegExp, () => Promise<unknown>]>; after?: Array<[RegExp, () => Promise<unknown>]> }, extra: { heads?: Record<string, { etag: string; size: number }>; queue?: unknown } = {}) {
   const unwrap = new WeakMap<object, D1PreparedStatement>(); const fired = new Set<RegExp>(); const reads: string[] = [];
   const fire = async (list: Array<[RegExp, () => Promise<unknown>]> | undefined, sql: string) => { for (const [pattern, action] of list ?? []) if (!fired.has(pattern) && pattern.test(sql)) { fired.add(pattern); await action(); } };
   const wrap = (sql: string, statement: D1PreparedStatement): D1PreparedStatement => {
@@ -475,10 +477,14 @@ function interposed(hooks: { before?: Array<[RegExp, () => Promise<unknown>]>; a
       return (target as any)[prop]?.bind(target);
     },
   });
-  const MEDIA = new Proxy(database.MEDIA, { get(target, prop) { return (...args: unknown[]) => { if (prop === "get" || prop === "head") reads.push(String(prop)); return (target as any)[prop](...args); }; } });
+  const MEDIA = new Proxy(database.MEDIA, { get(target, prop) { return (...args: unknown[]) => {
+    if (prop === "get" || prop === "head") reads.push(String(prop));
+    if (prop === "head" && extra.heads && String(args[0]) in extra.heads) return Promise.resolve(extra.heads[String(args[0])]);
+    return (target as any)[prop](...args);
+  }; } });
   const app = new Hono<AppEnv>(); mountGuestDownloads(app);
   const call = (path: string, cookie: string, method: string, headers: Record<string, string> = {}) =>
-    app.fetch(new Request(`https://portal.test${path}`, { method, headers: { cookie, ...headers } }), { ...baseEnv, DB, MEDIA } as never, { waitUntil() {}, passThroughOnException() {} } as never);
+    app.fetch(new Request(`https://portal.test${path}`, { method, headers: { cookie, ...headers } }), { ...baseEnv, DB, MEDIA, ...(extra.queue ? { OBJECT_CRC_QUEUE: extra.queue } : {}) } as never, { waitUntil() {}, passThroughOnException() {} } as never);
   return { call, reads };
 }
 const resolveSessionRead = /LEFT JOIN guest_reviewers g ON g\.id = s\.guest_id/;
@@ -543,5 +549,158 @@ describe("zipEntries", () => {
     const entries = zipEntries({ DB: database.DB, MEDIA: media } as never, session, [{ videoId: version.videoId, title: "Hero", assetId: version.assetId, version: 1, bytes: 4096, r2Key: version.key }], null);
     await expect(entries.next()).rejects.toThrow("download access lost");
     expect(cancelled).toBe(true);
+  });
+});
+
+describe("GET .../downloads/all.zip behind the native_zip flag (#802)", () => {
+  const BIG = ZIP_LEGACY_MAX_BYTES + 1;
+  const flag = (on: boolean) => database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET enabled = excluded.enabled").bind(NATIVE_ZIP_FLAG, on ? 1 : 0, Date.now()).run();
+  afterEach(async () => { await database.DB.batch([database.DB.prepare("DELETE FROM feature_flags WHERE key = ?").bind(NATIVE_ZIP_FLAG), database.DB.prepare("DELETE FROM object_crc32"), database.DB.prepare("DELETE FROM object_crc32_work")]); });
+  const fakeQueue = () => { const sent: unknown[] = []; return { sent, sendBatch: async (messages: Array<{ body: unknown }>) => { for (const message of messages) sent.push(message.body); } }; };
+  const quota = async () => (await database.DB.prepare("SELECT COUNT(*) AS n FROM guest_rate_limits WHERE bucket LIKE 'zip:%'").first<Json>())!.n as number;
+  /** Stores the CRC row for a real object, so the gate finds it ready. */
+  async function ready(key: string, data = mp4Bytes(4096)) { const head = (await database.MEDIA.head(key))!; await database.DB.prepare("INSERT OR REPLACE INTO object_crc32 (r2_key, crc32, bytes, etag, computed_at) VALUES (?, ?, ?, ?, ?)").bind(key, crc32(data), data.length, head.etag, Date.now()).run(); }
+  const keyOf = async (assetId: string) => (await database.DB.prepare("SELECT r2_key FROM assets WHERE id = ?").bind(assetId).first<{ r2_key: string }>())!.r2_key;
+  /** A big asset whose HEAD reports the size D1 records, without storing 256 MiB. */
+  async function big(linkId: string, title: string) { const version = await another(linkId, title, { bytes: BIG }); const key = await keyOf(version.assetId); return { version, key, heads: { [key]: { etag: "big-etag", size: BIG } } }; }
+  const zip = (link: { id: string; cookie: string }, extra: Parameters<typeof interposed>[1] = {}) => interposed({}, extra).call(zipPath(link.id), link.cookie, "GET");
+
+  it("flag missing and over 256 MiB: 413 download_too_large, no audit and no quota spent", async () => {
+    const { link } = await setup(); const b = await big(link.id, "Big");
+    const response = await zip(link, { heads: b.heads });
+    expect(response.status).toBe(413); expect(await response.json()).toMatchObject({ error: "download_too_large" });
+    expect(await allAudits()).toHaveLength(0); expect(await quota()).toBe(0);
+  });
+
+  it("flag off keeps the legacy writer for a small archive: 200, no Content-Length", async () => {
+    await flag(false); const { link } = await setup();
+    const response = await zip(link); expect(response.status).toBe(200); expect(response.headers.get("content-length")).toBeNull(); expect((await unzip(response)).size).toBe(1);
+  });
+
+  it("flag on, every CRC ready: the native writer, an exact Content-Length and a valid archive, audited once", async () => {
+    await flag(true); const { link, version } = await setup(); await ready(await keyOf(version.assetId));
+    const response = await zip(link); expect(response.status, await response.clone().text()).toBe(200);
+    const archive = new Uint8Array(await response.arrayBuffer());
+    expect(Number(response.headers.get("content-length"))).toBe(archive.length);
+    expect(readZip(archive).get("Hero v1.mp4")).toEqual(mp4Bytes(4096));
+    expect(await audits("review_link.download_all")).toHaveLength(1); expect(await quota()).toBe(2);
+  });
+
+  it("flag on, a CRC not ready but 256 MiB or less: the legacy writer, no queue send", async () => {
+    await flag(true); const { link } = await setup(); const queue = fakeQueue();
+    const response = await zip(link, { queue }); expect(response.status).toBe(200); expect(response.headers.get("content-length")).toBeNull();
+    expect((await unzip(response)).size).toBe(1); expect(queue.sent).toEqual([]);
+  });
+
+  it("flag on, a stale etag over 256 MiB: 409 download_preparing, queued once, no audit and no quota spent", async () => {
+    await flag(true); const { link, version } = await setup(); await ready(await keyOf(version.assetId)); const b = await big(link.id, "Big"); const queue = fakeQueue();
+    await database.DB.prepare("INSERT INTO object_crc32 (r2_key, crc32, bytes, etag, computed_at) VALUES (?, 1, ?, 'old-etag', ?)").bind(b.key, BIG, Date.now()).run();
+    const response = await zip(link, { heads: b.heads, queue });
+    expect(response.status).toBe(409); expect(response.headers.get("retry-after")).toBe("30");
+    expect(await response.json()).toEqual({ error: "download_preparing", pending: 1, retryAfterSeconds: 30 });
+    expect(queue.sent).toEqual([{ type: "object_crc32", r2Key: b.key }]);
+    expect(await allAudits()).toHaveLength(0); expect(await quota()).toBe(0);
+  });
+
+  it("flag on, a CRC job that failed: 502 download_unavailable, never an endless 'preparing'", async () => {
+    await flag(true); const { link } = await setup(); const b = await big(link.id, "Big");
+    await database.DB.prepare("INSERT INTO object_crc32_work (r2_key, state, attempts, requested_at, updated_at) VALUES (?, 'failed', 3, ?, ?)").bind(b.key, Date.now(), Date.now()).run();
+    const response = await zip(link, { heads: b.heads, queue: fakeQueue() });
+    expect(response.status).toBe(502); expect(await response.json()).toEqual({ error: "download_unavailable" });
+    expect(await allAudits()).toHaveLength(0); expect(await quota()).toBe(0);
+  });
+
+  it("a missing object, or a size R2 disagrees with D1 about, is 502 with no audit and no quota spent (flag on or off)", async () => {
+    for (const on of [false, true]) {
+      await flag(on); const { link, version } = await setup(); const key = await keyOf(version.assetId);
+      await database.MEDIA.delete(key); let response = await zip(link); expect(response.status).toBe(502); expect(await response.json()).toEqual({ error: "download_unavailable" });
+      await database.MEDIA.put(key, mp4Bytes(4096)); await setBytes(version.assetId, 4095);
+      response = await zip(link); expect(response.status).toBe(502); await dispose(response);
+      expect(await allAudits()).toHaveLength(0); expect(await quota()).toBe(0);
+      await clearGuestRows(); await wipe();
+    }
+  });
+
+  it("the rate limit is checked after the gate: a 429 is a ready, authorised start that is over quota", async () => {
+    await flag(true); const { link, version } = await setup(); await ready(await keyOf(version.assetId));
+    const now = Date.now(); const start = Math.floor(now / GUEST_WINDOW_MS) * GUEST_WINDOW_MS;
+    await database.DB.prepare("INSERT INTO guest_rate_limits (bucket, window_start, count) VALUES (?, ?, 30)").bind(`zip:link:${link.id}`, start).run();
+    const limited = await zip(link); expect(limited.status).toBe(429); expect(await allAudits()).toHaveLength(0);
+  });
+});
+
+describe("the archive state in the manifest and POST .../downloads/prepare (#802)", () => {
+  const BIG = ZIP_LEGACY_MAX_BYTES + 1;
+  const flag = (on: boolean) => database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET enabled = excluded.enabled").bind(NATIVE_ZIP_FLAG, on ? 1 : 0, Date.now()).run();
+  afterEach(async () => { await database.DB.batch([database.DB.prepare("DELETE FROM feature_flags WHERE key = ?").bind(NATIVE_ZIP_FLAG), database.DB.prepare("DELETE FROM object_crc32"), database.DB.prepare("DELETE FROM object_crc32_work")]); });
+  const fakeQueue = () => { const sent: unknown[] = []; return { sent, sendBatch: async (messages: Array<{ body: unknown }>) => { for (const message of messages) sent.push(message.body); } }; };
+  const zipQuota = async () => (await database.DB.prepare("SELECT COUNT(*) AS n FROM guest_rate_limits WHERE bucket LIKE 'zip:%'").first<Json>())!.n as number;
+  const prepQuota = async () => (await database.DB.prepare("SELECT COALESCE(SUM(count), 0) AS n FROM guest_rate_limits WHERE bucket LIKE 'zipprep:%'").first<Json>())!.n as number;
+  const workRows = async () => (await database.DB.prepare("SELECT COUNT(*) AS n FROM object_crc32_work").first<Json>())!.n as number;
+  const keyOf = async (assetId: string) => (await database.DB.prepare("SELECT r2_key FROM assets WHERE id = ?").bind(assetId).first<{ r2_key: string }>())!.r2_key;
+  async function big(linkId: string, title: string) { const version = await another(linkId, title, { bytes: BIG }); const key = await keyOf(version.assetId); return { version, key, heads: { [key]: { etag: "big-etag", size: BIG } } }; }
+  /** The first Video's CRC row, so only the big one is pending. */
+  async function readyHero(assetId: string) { const key = await keyOf(assetId); const head = (await database.MEDIA.head(key))!; await database.DB.prepare("INSERT OR REPLACE INTO object_crc32 (r2_key, crc32, bytes, etag, computed_at) VALUES (?, ?, 4096, ?, ?)").bind(key, crc32(mp4Bytes(4096)), head.etag, Date.now()).run(); }
+  const manifestOf = async (link: { id: string; cookie: string }, extra: Parameters<typeof interposed>[1] = {}) => { const response = await interposed({}, extra).call(manifestPath(link.id), link.cookie, "GET"); expect(response.status).toBe(200); return (await response.json() as Json).archive; };
+  const prepare = (link: { id: string; cookie: string }, extra: Parameters<typeof interposed>[1] = {}, headers: Record<string, string> = { origin: baseEnv.APP_ORIGIN, "content-type": "application/json" }) =>
+    interposed({}, extra).call(linkPath(link.id, "/downloads/prepare"), link.cookie, "POST", headers);
+
+  it("the manifest reports ready for a small archive, flag on or off", async () => {
+    const { link } = await setup();
+    expect(await manifestOf(link)).toEqual({ state: "ready", pending: 0 });
+    await flag(true); expect(await manifestOf(link)).toEqual({ state: "ready", pending: 0 });
+  });
+
+  it("the manifest reports too_large over 256 MiB with the flag off", async () => {
+    const { link } = await setup(); const b = await big(link.id, "Big");
+    expect(await manifestOf(link, { heads: b.heads })).toEqual({ state: "too_large", pending: 0 });
+  });
+
+  it("the manifest is read-only: it reports preparing and the pending count but queues nothing and writes no work row", async () => {
+    await flag(true); const { link, version } = await setup(); await readyHero(version.assetId); const b = await big(link.id, "Big"); const queue = fakeQueue();
+    expect(await manifestOf(link, { heads: b.heads, queue })).toEqual({ state: "preparing", pending: 1 });
+    expect(queue.sent).toEqual([]); expect(await workRows()).toBe(0);
+  });
+
+  it("the manifest reports unavailable for a failed CRC job", async () => {
+    await flag(true); const { link } = await setup(); const b = await big(link.id, "Big");
+    await database.DB.prepare("INSERT INTO object_crc32_work (r2_key, state, attempts, requested_at, updated_at) VALUES (?, 'failed', 3, ?, ?)").bind(b.key, Date.now(), Date.now()).run();
+    expect(await manifestOf(link, { heads: b.heads })).toEqual({ state: "unavailable", pending: 0 });
+  });
+
+  it("prepare queues each pending object once, answers preparing, and spends no zip start", async () => {
+    await flag(true); const { link, version } = await setup(); await readyHero(version.assetId); const b = await big(link.id, "Big"); const queue = fakeQueue();
+    const response = await prepare(link, { heads: b.heads, queue });
+    expect(response.status).toBe(200); expect(await response.json()).toEqual({ state: "preparing", pending: 1, retryAfterSeconds: 30 });
+    expect(queue.sent).toEqual([{ type: "object_crc32", r2Key: b.key }]);
+    await prepare(link, { heads: b.heads, queue }); expect(queue.sent).toHaveLength(1);
+    expect(await zipQuota()).toBe(0); expect(await prepQuota()).toBe(4); expect(await allAudits()).toHaveLength(0);
+  });
+
+  it("prepare answers ready for a small archive and too_large with the flag off", async () => {
+    const { link } = await setup();
+    expect(await (await prepare(link)).json()).toEqual({ state: "ready", pending: 0 });
+    const b = await big(link.id, "Big"); expect(await (await prepare(link, { heads: b.heads })).json()).toEqual({ state: "too_large", pending: 0 });
+  });
+
+  it("prepare is a POST with the guest fence and the Origin check, like every guest write", async () => {
+    await flag(true); const { link } = await setup();
+    expect((await prepare(link, {}, { "content-type": "application/json" })).status).toBe(403);
+    expect((await prepare(link, {}, { origin: "https://evil.test", "content-type": "application/json" })).status).toBe(403);
+    expect((await interposed({}).call(linkPath(link.id, "/downloads/prepare"), "", "POST", { origin: baseEnv.APP_ORIGIN, "content-type": "application/json" })).status).toBe(404);
+    await database.DB.prepare("UPDATE client_links SET allow_download = 0 WHERE id = ?").bind(link.id).run();
+    expect((await prepare(link)).status).toBe(403);
+  });
+
+  it("prepare says nothing_to_download when nothing is released", async () => {
+    const link = await verifiedLink(); const version = await seedVideoVersion(); await addMember(link.id, version.videoId, [version.assetId]);
+    const response = await prepare(link); expect(response.status).toBe(409); expect(await response.json()).toEqual({ error: "nothing_to_download" });
+  });
+
+  it("prepare has its own rate limit: 20 per guest in 15 minutes, 429 with Retry-After", async () => {
+    const { link } = await setup();
+    for (let index = 0; index < 20; index += 1) expect((await prepare(link)).status, `prepare ${index + 1}`).toBe(200);
+    const limited = await prepare(link); expect(limited.status).toBe(429); expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(await zipQuota()).toBe(0);
   });
 });

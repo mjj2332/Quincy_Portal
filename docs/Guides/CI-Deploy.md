@@ -279,3 +279,13 @@ The owner creates it and adds it to GitHub; an agent never handles the token.
 4. GitHub repo → Settings → Secrets and variables → Actions → **New repository secret**, name
    `CLOUDFLARE_API_TOKEN`. Or `gh secret set CLOUDFLARE_API_TOKEN --repo mjj2332/Quincy_Portal`
    and paste at the prompt.
+
+## Native zip flag (`native_zip`, #802)
+
+The zip routes (staff `selected-raw.zip` and `download-selection`, guest Download all) choose their writer per request from the D1 `feature_flags` row `native_zip` (missing row = off).
+
+- **Off (the default):** the legacy writer serves archives up to 256 MiB; anything larger answers 413 `download_too_large`.
+- **On:** an archive whose every object has a current `object_crc32` row is streamed natively (exact `Content-Length`, ZIP64 when needed). If any object is not ready the request queues it and answers 409 `download_preparing` with `{pending, retryAfterSeconds}`, except that an archive up to 256 MiB falls back to the legacy writer rather than waiting. A failed CRC job, a missing object or a size mismatch answers 502 `download_unavailable`.
+- **Turn on** (after migration 0072 and the CRC backfill have run, so most objects are ready):
+  `npx wrangler d1 execute DB --remote --command "INSERT INTO feature_flags (key, enabled, updated_at) VALUES ('native_zip', 1, CAST(unixepoch('now') AS INTEGER) * 1000) ON CONFLICT(key) DO UPDATE SET enabled = 1, updated_at = excluded.updated_at"`
+- **Roll back:** set `enabled = 0` (same statement with `0`). The next request uses the legacy writer; no deploy is needed and nothing in D1 has to be undone.

@@ -29,7 +29,7 @@ function concat(...parts: Uint8Array[]) { const output = new Uint8Array(parts.re
 /** Running CRC-32 (native, `node:zlib`): pass the previous return value as `previous`; 0 starts a new checksum. */
 export function zipCrc32(chunk: Uint8Array, previous = 0) { return crc32(chunk, previous); }
 
-function uniqueName(name: string, seen: Set<string>) {
+export function uniqueName(name: string, seen: Set<string>) {
   const base = name.split(/[\\/]/).pop()?.trim() || "file";
   if (!seen.has(base)) { seen.add(base); return base; }
   const extension = base.lastIndexOf("."); const stem = extension > 0 ? base.slice(0, extension) : base; const suffix = extension > 0 ? base.slice(extension) : "";

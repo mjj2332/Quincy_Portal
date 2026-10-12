@@ -13,6 +13,8 @@ import { audit, auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { addProjectMemberWithAssignmentIntent, buildInitialProjectMemberStatementTuples, ProjectMemberIneligibleError, ProjectMembershipArchivedError, removeProjectMemberCycle, type InitialProjectMemberSlot } from "../lib/project-members";
 import { createZipStream } from "../lib/zip-stream";
+import { nativeZipResponse, planNativeZip } from "../lib/zip-native";
+import { assessZip, nativeZipEnabled, objectEntry, ZIP_LEGACY_MAX_BYTES, type ZipAssessment } from "../lib/object-crc";
 import { jsonInput } from "./helpers";
 import { projectStageForRole } from "./stages";
 import { abortMultipart } from "../lib/r2s3";
@@ -91,6 +93,22 @@ type ValidatedDownloadSelection = {
 };
 
 /**
+ * What a staff zip route answers when the CRC gate (#802) says the archive cannot be served now. `code` is the stable part; `error` is the sentence the page shows.
+ * Null when the archive can be served, by either writer.
+ */
+const ZIP_TOO_LARGE_MESSAGE = "This download is too large to prepare as one zip. Download the files one at a time.";
+const ZIP_UNAVAILABLE_MESSAGE = "Couldn't prepare this zip. Try again or download the files one at a time.";
+const ZIP_PREPARING_MESSAGE = "Preparing this download. This may take a few minutes.";
+function zipRefusal(c: Context<AppEnv>, assessed: ZipAssessment): Response | null {
+  switch (assessed.kind) {
+    case "too_large": return c.json({ error: ZIP_TOO_LARGE_MESSAGE, code: "download_too_large", maxBytes: ZIP_LEGACY_MAX_BYTES }, 413);
+    case "unavailable": return c.json({ error: ZIP_UNAVAILABLE_MESSAGE, code: "download_unavailable" }, 502);
+    case "preparing": return c.json({ error: ZIP_PREPARING_MESSAGE, code: "download_preparing", pending: assessed.pending.length, retryAfterSeconds: assessed.retryAfterSeconds }, 409, { "retry-after": String(assessed.retryAfterSeconds) });
+    default: return null;
+  }
+}
+
+/**
  * Revalidates every condition at POST and GET time. Tickets deliberately contain only ids, so
  * a later role change, deactivation, asset replacement, or unpublished edit cannot replay an
  * authorization decision that was true at ticket creation.
@@ -143,7 +161,8 @@ async function validateDownloadSelection(c: Context<AppEnv>, projectId: string, 
     if (!Number.isSafeInteger(entry.bytes) || entry.bytes < 0 || totalBytes > Number.MAX_SAFE_INTEGER - entry.bytes) return c.json({ error: unavailableSelectionError }, 404);
     totalBytes += entry.bytes;
   }
-  if (totalBytes > DOWNLOAD_SELECTION_MAX_BYTES) return c.json({ error: "Selected assets exceed the 256 MiB download limit" }, 413);
+  // The 256 MiB cap is the old writer's limit (it is cut off by the CPU limit above it). With `native_zip` on, the CRC gate decides (native when ready, 409 preparing otherwise), so the cap is lifted.
+  if (totalBytes > DOWNLOAD_SELECTION_MAX_BYTES && !await nativeZipEnabled(c.env.DB)) return c.json({ error: "Selected assets exceed the 256 MiB download limit", code: "download_too_large", maxBytes: DOWNLOAD_SELECTION_MAX_BYTES }, 413);
   return { entries, collection, totalBytes, principal: { id: principal.id, role: principal.role, impersonatedBy: c.get("user").impersonatedBy, via: c.get("user").via } };
 }
 
@@ -1033,22 +1052,53 @@ projectsRoutes.post("/projects/:id/autohdr-coverage", requireCapability("adminBa
   return c.json({ ok: true });
 }));
 
+/** The server's selected-for-editing RAW set of a Project, oldest first. The download and its prepare step read the same set. */
+function selectedRawOf(c: Context<AppEnv>, projectId: string) {
+  return createDb(c.env.DB).select({ r2Key: schema.assets.r2Key, originalFilename: schema.assets.originalFilename, bytes: schema.assets.bytes })
+    .from(schema.selections)
+    .innerJoin(schema.assets, eq(schema.selections.assetId, schema.assets.id))
+    .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, projectId), eq(schema.collections.kind, "raw")))
+    .where(eq(schema.selections.state, "selected_for_editing"))
+    .orderBy(asc(schema.assets.createdAt))
+    .all();
+}
+
+/**
+ * `POST /projects/:id/selected-raw/prepare` (#802): the page calls this before it follows the download link. It reads the selected set, runs the CRC gate, queues what is pending and answers
+ * `ready`, `preparing` (with `pending` and `retryAfterSeconds`), `unavailable` or `too_large`. A POST because it has a side effect (the queue), and it writes no audit row: nothing is downloaded.
+ */
+projectsRoutes.post("/projects/:id/selected-raw/prepare", terminalRoute("/projects/:id/selected-raw/prepare", async (c) => {
+  const id = c.req.param("id");
+  if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  if (!roleHasCapability(c.get("user").role, "selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
+  const selected = await selectedRawOf(c, id);
+  if (!selected.length) return c.json({ error: "Select at least one RAW asset before downloading" }, 400);
+  const assessed = await assessZip(c.env, selected, { source: "selected-raw-prepare", enqueue: "always" });
+  switch (assessed.kind) {
+    case "too_large": return c.json({ state: "too_large", maxBytes: ZIP_LEGACY_MAX_BYTES });
+    case "unavailable": return c.json({ state: "unavailable" });
+    case "preparing": return c.json({ state: "preparing", pending: assessed.pending.length, retryAfterSeconds: assessed.retryAfterSeconds });
+    default: return c.json({ state: "ready" });
+  }
+}));
+
 projectsRoutes.get("/projects/:id/selected-raw.zip", terminalRoute("/projects/:id/selected-raw.zip", async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (!roleHasCapability(c.get("user").role, "selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
   const db = createDb(c.env.DB);
-  const selected = await db.select({ r2Key: schema.assets.r2Key, originalFilename: schema.assets.originalFilename, bytes: schema.assets.bytes })
-    .from(schema.selections)
-    .innerJoin(schema.assets, eq(schema.selections.assetId, schema.assets.id))
-    .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, id), eq(schema.collections.kind, "raw")))
-    .where(eq(schema.selections.state, "selected_for_editing"))
-    .orderBy(asc(schema.assets.createdAt))
-    .all();
+  const selected = await selectedRawOf(c, id);
   if (!selected.length) return c.json({ error: "Select at least one RAW asset before downloading" }, 400);
   const project = await db.select({ street: schema.projects.street }).from(schema.projects).where(eq(schema.projects.id, id)).get();
   const filename = `${(project?.street || id).replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "") || id}-selected-raw.zip`;
+  // The gate runs before the audit row: a refusal, or an archive that cannot be planned, leaves no audit behind it.
+  const assessed = await assessZip(c.env, selected, { source: "selected-raw-zip", enqueue: "when_blocked" });
+  const refusal = zipRefusal(c, assessed); if (refusal) return refusal;
+  const planned = assessed.kind === "native" ? planNativeZip({ bucket: c.env.MEDIA, entries: selected.map((asset) => objectEntry(asset.originalFilename, asset.r2Key, assessed.ready)) }) : null;
+  await audit(c.env, c.get("user"), "project.download_selected", "project", id, { count: selected.length });
+  if (planned) return nativeZipResponse(planned.open(), (promise) => c.executionCtx.waitUntil(promise), { "content-disposition": `attachment; filename="${filename}"` });
   async function* entries() {
     for (const asset of selected) {
       const object = await c.env.MEDIA.get(asset.r2Key);
@@ -1056,7 +1106,6 @@ projectsRoutes.get("/projects/:id/selected-raw.zip", terminalRoute("/projects/:i
       yield { name: asset.originalFilename, size: asset.bytes, stream: object.body as ReadableStream<Uint8Array> };
     }
   }
-  await audit(c.env, c.get("user"), "project.download_selected", "project", id, { count: selected.length });
   return new Response(createZipStream(entries()), { headers: { "content-type": "application/zip", "content-disposition": `attachment; filename="${filename}"` } });
 }));
 
@@ -1065,6 +1114,8 @@ projectsRoutes.post("/projects/:id/download-selection", terminalRoute("/projects
   if (!idCheck(projectId)) return c.json({ error: "Invalid project id" }, 400);
   const data = await jsonInput(c, downloadSelectionInput); if (data instanceof Response) return data;
   const validated = await validateDownloadSelection(c, projectId, data.assetIds); if (validated instanceof Response) return validated;
+  // The browser follows the ticket's URL as a plain link, so "preparing" is only visible here, on the POST the page made itself. No ticket is created until the archive can be served.
+  const refusal = zipRefusal(c, await assessZip(c.env, validated.entries, { source: "download-selection-ticket", enqueue: "when_blocked" })); if (refusal) return refusal;
   const db = createDb(c.env.DB);
   const now = new Date();
   const ticket = newId();
@@ -1111,6 +1162,16 @@ projectsRoutes.get("/projects/:id/download-selection/:ticket/archive.zip", termi
   const project = await db.select({ street: schema.projects.street }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   const safeName = (project?.street || projectId).replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "") || projectId;
   const filename = `${safeName}-selection-${collection}.zip`;
+  // Checked again at GET: the ticket holds ids only, and the objects or their CRC rows may have changed since the POST.
+  const assessed = await assessZip(c.env, validatedEntries, { source: "download-selection-archive", enqueue: "when_blocked" });
+  const refusal = zipRefusal(c, assessed); if (refusal) return refusal;
+  const planned = assessed.kind === "native" ? planNativeZip({ bucket: c.env.MEDIA, entries: validatedEntries.map((asset) => objectEntry(asset.originalFilename, asset.r2Key, assessed.ready)) }) : null;
+  // This is an authorization/initiation audit, intentionally written before the streaming
+  // response; a stream cannot truthfully establish that every byte reached the client.
+  await audit(c.env, principal, "project.download_selection", "project", projectId, {
+    collection, count: validatedEntries.length, totalBytes, assetIds,
+  });
+  if (planned) return nativeZipResponse(planned.open(), (promise) => c.executionCtx.waitUntil(promise), { "content-disposition": `attachment; filename="${filename}"`, "cache-control": "private, no-store" });
   async function* entries() {
     for (const asset of validatedEntries) {
       const object = await c.env.MEDIA.get(asset.r2Key);
@@ -1119,11 +1180,6 @@ projectsRoutes.get("/projects/:id/download-selection/:ticket/archive.zip", termi
       yield { name: asset.originalFilename, size: asset.bytes, stream: object.body as ReadableStream<Uint8Array> };
     }
   }
-  // This is an authorization/initiation audit, intentionally written before the streaming
-  // response; a stream cannot truthfully establish that every byte reached the client.
-  await audit(c.env, principal, "project.download_selection", "project", projectId, {
-    collection, count: validatedEntries.length, totalBytes, assetIds,
-  });
   return new Response(createZipStream(entries()), {
     headers: {
       "content-type": "application/zip",

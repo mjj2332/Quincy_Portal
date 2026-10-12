@@ -117,11 +117,22 @@ export type GuestVersionDto = z.infer<typeof guestVersionDtoSchema>;
  */
 export const GUEST_ZIP_MAX_ENTRIES = 20;
 export const GUEST_ZIP_MAX_BYTES = 8 * 1024 ** 3;
+/**
+ * Whether Download all can start now (#802): `ready` (a click downloads), `preparing` (`pending` objects still have their CRC-32 computed, ask again), `unavailable` (an object is missing or its
+ * preparation failed), `too_large` (over what the archive writer can serve). The manifest only REPORTS it; `POST .../downloads/prepare` is what queues the work.
+ */
+export const GUEST_ARCHIVE_STATES = ["ready", "preparing", "unavailable", "too_large"] as const;
+export const guestArchiveStateSchema = z.object({ state: z.enum(GUEST_ARCHIVE_STATES), pending: z.number().int().nonnegative() }).strict();
+export type GuestArchiveState = z.infer<typeof guestArchiveStateSchema>;
+/** The answer of `POST .../downloads/prepare`: the same state, plus when to ask again while it is `preparing`. */
+export const guestArchivePrepareResponseSchema = guestArchiveStateSchema.extend({ retryAfterSeconds: z.number().int().positive().optional() }).strict();
+export type GuestArchivePrepareResponse = z.infer<typeof guestArchivePrepareResponseSchema>;
 export const guestDownloadManifestSchema = z.object({
   included: z.array(z.object({ videoId: uuid, title: z.string(), version: z.number().int().positive(), bytes: z.number().int().nonnegative() }).strict()),
   leftOut: z.array(z.object({ title: z.string(), reason: z.enum(["not_released", "premium_locked"]) }).strict()),
   totalBytes: z.number().int().nonnegative(),
   tooLarge: z.boolean(),
+  archive: guestArchiveStateSchema,
 }).strict();
 export type GuestDownloadManifest = z.infer<typeof guestDownloadManifestSchema>;
 

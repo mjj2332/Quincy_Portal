@@ -1,7 +1,7 @@
 import {
-  guestDecisionResponseSchema, guestDownloadManifestSchema, guestEmailCodeErrorSchema, guestEmailCodeResponseSchema, guestNoteConflictSchema, guestNoteDeleteResponseSchema, guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNotePasteCommitResponseSchema,
+  guestArchivePrepareResponseSchema, guestDecisionResponseSchema, guestDownloadManifestSchema, guestEmailCodeErrorSchema, guestEmailCodeResponseSchema, guestNoteConflictSchema, guestNoteDeleteResponseSchema, guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNotePasteCommitResponseSchema,
   guestNotePastePreviewResponseSchema, guestNotePasteStaleSchema, guestNoteWriteResponseSchema, guestPasscodeErrorSchema, guestSessionResponseSchema, guestSubscriptionResponseSchema, guestVideoListResponseSchema,
-  type GuestDecision, type GuestDecisionInput, type GuestDownloadManifest, type GuestNoteCreateInput, type GuestNoteEditInput, type GuestNoteMarkupResponse, type GuestNotePasteCommitInput, type GuestNotePasteCommitResponse,
+  type GuestArchivePrepareResponse, type GuestDecision, type GuestDecisionInput, type GuestDownloadManifest, type GuestNoteCreateInput, type GuestNoteEditInput, type GuestNoteMarkupResponse, type GuestNotePasteCommitInput, type GuestNotePasteCommitResponse,
   type GuestNotePastePreviewInput, type GuestNotePastePreviewResponse, type GuestNoteThreadDto, type GuestSessionResponse, type GuestVideoDto,
 } from "@quincy/shared";
 
@@ -14,6 +14,9 @@ export type Read<T> = { kind: "ok"; value: T } | { kind: "gone" } | { kind: "tra
 
 /** The Download all manifest read: a 401 is `verify` (the guest has to confirm an email first; the link is fine), never `gone`. A 403 `download_disabled` is `disabled` (staff turned downloads off while the page was open; the review itself is fine). Only a 404 or the stub is `gone`. */
 export type DownloadsRead = Read<GuestDownloadManifest> | { kind: "verify" } | { kind: "disabled" };
+
+/** `POST .../downloads/prepare` (#802): the archive's state after the server queued what it needs. `rejected` is the request's own refusal (nothing to download, over the cap); `limited` and the network are `transient`. */
+export type DownloadsPrepare = Read<GuestArchivePrepareResponse> | { kind: "verify" } | { kind: "disabled" } | { kind: "rejected" };
 
 export type ExchangeResult =
   | { ok: true; session: GuestSessionResponse }
@@ -84,6 +87,8 @@ export type GuestApi = {
   downloadAllUrl: string;
   decide(assetId: string, decision: GuestDecisionInput["decision"], note?: string): Promise<DecisionResult>;
   downloads(): Promise<DownloadsRead>;
+  /** Asks the server to prepare Download all (queues the CRC-32 job for what is missing). The manifest only reports; this is what starts the work. */
+  prepareDownloads(): Promise<DownloadsPrepare>;
   exchange(token: string, passcode?: string): Promise<ExchangeResult>;
   session(): Promise<Read<GuestSessionResponse>>;
   videos(): Promise<Read<GuestVideoDto[]>>;
@@ -201,6 +206,13 @@ export function createGuestApi(linkId: string): GuestApi {
       if (response?.status === 401) return { kind: "verify" };
       if (response?.status === 403 && errorOf((await readJson(response.clone()))?.body) === "download_disabled") return { kind: "disabled" };
       return readResponse(response, (body) => guestDownloadManifestSchema.parse(body));
+    },
+    async prepareDownloads() {
+      const response = await send("/downloads/prepare", { method: "POST", headers: JSON_HEADERS, body: "{}" });
+      if (response?.status === 401) return { kind: "verify" };
+      if (response?.status === 403 && errorOf((await readJson(response.clone()))?.body) === "download_disabled") return { kind: "disabled" };
+      if (response?.status === 409 || response?.status === 422) return { kind: "rejected" };
+      return readResponse(response, (body) => guestArchivePrepareResponseSchema.parse(body));
     },
     async sendCode(email) {
       const response = await send("/email/code", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ email }) });
