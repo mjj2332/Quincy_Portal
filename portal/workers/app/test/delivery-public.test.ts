@@ -41,6 +41,31 @@ async function photo(input: { premium?: boolean; unlocked?: boolean; web?: boole
 const body = async (response: Response) => await response.text();
 const expectStub = async (response: Response) => expect(await snapshot(response)).toEqual(await snapshot(await guestFetch("/d")));
 
+describe("page read: property", () => {
+  const read = async (projectId: string, slug: string) => { const response = await get(pageUrl(slug)); expect(response.status).toBe(200); return { text: await response.text() }; };
+  it("carries the postcode and the agency's business name, and nothing about the agent or a photographer", async () => {
+    const projectId = await seedOpenProject({ street: "5 Rose Rd", suburb: "Newtown", postcode: "2042", agencyName: "Snapshot Realty", agentName: "Agent Smith-Zed", agentEmail: "smith.zed@example.com" });
+    const a = await seedAsset("photo", { projectId }); await putRendition(a.id, "delivery_web", WEB);
+    await seedPage({ projectId, slug: "5-rose-rd-bcdfgh", assetIds: [a.id] });
+    const { text: raw } = await read(projectId, "5-rose-rd-bcdfgh");
+    const dto = deliveryPageDtoSchema.parse(JSON.parse(raw));
+    expect(dto.property).toEqual({ street: "5 Rose Rd", suburb: "Newtown", postcode: "2042", agency: "Snapshot Realty" });
+    expect(raw).not.toMatch(/Smith-Zed|smith\.zed@example\.com|photographer/i);
+  });
+  it("prefers the directory agency's name over the snapshot name", async () => {
+    const projectId = await seedOpenProject({ agencyName: "Old Snapshot Name", directoryAgency: "Directory Realty Pty" });
+    const a = await seedAsset("photo", { projectId });
+    await seedPage({ projectId, slug: "dir-agency-bcdfgh", assetIds: [a.id] });
+    expect(deliveryPageDtoSchema.parse(JSON.parse((await read(projectId, "dir-agency-bcdfgh")).text)).property.agency).toBe("Directory Realty Pty");
+  });
+  it("is null for a postcode or agency that is unset or blank", async () => {
+    const projectId = await seedOpenProject({ postcode: "  ", agencyName: "   " });
+    const a = await seedAsset("photo", { projectId });
+    await seedPage({ projectId, slug: "blank-bcdfgh", assetIds: [a.id] });
+    expect(deliveryPageDtoSchema.parse(JSON.parse((await read(projectId, "blank-bcdfgh")).text)).property).toMatchObject({ postcode: null, agency: null });
+  });
+});
+
 describe("page read", () => {
   it("answers the strict DTO for an enabled page with hygiene headers and handle URLs only", async () => {
     const a = await photo(); const b = await photo();

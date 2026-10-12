@@ -14,7 +14,7 @@ import { previewDelivery, publishDelivery, setAssetPremium, setAssetPremiumUnloc
 const V = "88888888-8888-4888-8888-888888888888";
 const P = "11111111-1111-4111-8111-111111111111"; const A = "22222222-2222-4222-8222-222222222222";
 const handle = "abcdefghijklmnop";
-const state = (setNumber = 1) => ({ page: { slug: "s-abc", path: "/d/s-abc", enabled: true, latestSetNumber: setNumber }, set: { setNumber, publishedAt: 1, coverAssetId: null, items: [] }, dto: { property: { street: "1 A St", suburb: null }, setNumber, publishedAt: 1, coverHandle: null, items: [] } });
+const state = (setNumber = 1) => ({ page: { slug: "s-abc", path: "/d/s-abc", enabled: true, latestSetNumber: setNumber }, set: { setNumber, publishedAt: 1, coverAssetId: null, items: [] }, dto: { property: { street: "1 A St", suburb: null, postcode: null, agency: null }, setNumber, publishedAt: 1, coverHandle: null, items: [] } });
 let client: QueryClient;
 beforeEach(() => { client = new QueryClient(); Object.values(api).forEach((m) => m.mockReset()); sync.invalidateProjectSurfaces.mockClear(); sync.terminatePrincipalOnUnauthorized.mockClear(); });
 

@@ -5,10 +5,10 @@ import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, 
 import { unlockOf, type DeliveryHrefs, type UnlockStates } from "./delivery-model";
 import { PremiumBadge, TOUCH, UnlockControl } from "./UnlockControl";
 
-const NOUN: Record<string, string> = { floorplan: "Floorplan", copy: "Document" };
+const NOUN: Record<string, string> = { floorplan: "Floorplan", copy: "Copywriting" };
 
 /**
- * The PDFs (Floorplan, Description): one row each. View opens the document in a new tab (`noopener noreferrer`); Download saves the original (same-origin `download` anchor), and is absent in Preview.
+ * The PDFs (Floorplan, Copywriting): one row each. View opens the document in a new tab (`noopener noreferrer`); Download saves the original (same-origin `download` anchor), and is absent in Preview.
  * A locked row has no URL, so no View and no Download: a Premium badge and Request unlock.
  */
 export function DocRows({ items, hrefs, unlock, onRequestUnlock, label }: { items: DeliveryItemDto[]; hrefs: DeliveryHrefs | null; unlock: UnlockStates; onRequestUnlock: (handle: string) => void; label: string }) {
@@ -18,7 +18,7 @@ export function DocRows({ items, hrefs, unlock, onRequestUnlock, label }: { item
       <ItemMedia variant="icon"><FileTextIcon aria-hidden /></ItemMedia>
       <ItemContent>
         <ItemTitle>{item.label}{item.locked && <PremiumBadge />}</ItemTitle>
-        <ItemDescription>{`${NOUN[item.kind] ?? "Document"} · PDF`}</ItemDescription>
+        <ItemDescription>{`${NOUN[item.kind] ?? "Copywriting"} · PDF`}</ItemDescription>
       </ItemContent>
       <ItemActions className="flex-wrap">
         {item.locked

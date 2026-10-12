@@ -109,20 +109,32 @@ describe("fetch states", () => {
   });
 });
 
+describe("share", () => {
+  it("shares the page's own absolute address, on the current origin, with no query or hash", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    await open();
+    await click(byTestId("delivery-share")); await flush();
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/d/${SLUG}`);
+    Reflect.deleteProperty(navigator, "clipboard");
+  });
+});
+
 describe("downloads", () => {
-  it("links Web-size to the media URL and Full-res to the download URL of an unlocked photo", async () => {
+  it("links one Download, to the original, on an unlocked photo", async () => {
     await open();
     const tile = document.querySelector(`[data-handle="${handle(1)}"]`)!;
     const links = [...tile.querySelectorAll<HTMLAnchorElement>("a")];
-    expect(links.map((a) => a.getAttribute("href"))).toEqual([mediaUrl(1), downloadUrl(1)]);
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([downloadUrl(1)]);
     expect(links.every((a) => a.hasAttribute("download"))).toBe(true);
   });
-  it("never links a download for the locked item, and renders no Download all", async () => {
+  it("never links a download for the locked item, and keeps Download all in the hero, not the Premium panel", async () => {
     await open();
     await click(tab("Premium"));
     const lockedTile = document.querySelector(`[data-handle="${handle(2)}"]`)!;
     expect(lockedTile.querySelectorAll("a")).toHaveLength(0);
-    expect(text()).not.toMatch(/download all/i);
+    expect(document.querySelector('[data-testid="delivery-panel-premium"]')!.textContent).not.toMatch(/download all/i);
+    expect(document.querySelector('[data-testid="delivery-hero"]')!.textContent).toMatch(/download all/i);
     expect(calls.map((call) => call.url)).toEqual([BASE]);
   });
 });
@@ -148,7 +160,7 @@ describe("request unlock", () => {
     route = (url, init) => init?.method === "POST" ? json({ status: "already_requested" }, 202) : json(dto());
     await open(); await request();
     expect(status()).toBe("Requested. The studio will be in touch.");
-    await click(tab("Photos")); await click(tab("Premium"));
+    await click(tab("Gallery")); await click(tab("Premium"));
     expect(status()).toBe("Requested. The studio will be in touch.");
     await click(byLabel("Open Photo 02")); await until(() => byTestId("delivery-lightbox"));
     expect(byTestId("delivery-lightbox")!.textContent).toContain("Requested. The studio will be in touch.");
@@ -171,7 +183,7 @@ describe("request unlock", () => {
     expect(tabNames()).toContain("Premium");
     expect(byLabel("Request unlock: Photo 02")).toBeNull();
     const tile = document.querySelector(`[data-handle="${handle(2)}"]`)!;
-    expect([...tile.querySelectorAll("a")].map((a) => a.getAttribute("href"))).toEqual([mediaUrl(2), downloadUrl(2)]);
+    expect([...tile.querySelectorAll("a")].map((a) => a.getAttribute("href"))).toEqual([downloadUrl(2)]);
     expect(byTestId("delivery-page")).not.toBeNull();
   });
   it("counts a 429 down from Retry-After and lets the person try again at zero", async () => {
@@ -181,7 +193,7 @@ describe("request unlock", () => {
     await click(tab("Premium")); await click(byLabel("Request unlock: Photo 02")); await act(async () => { await vi.advanceTimersByTimeAsync(10); });
     expect(status()).toBe("Too many requests. Try again in 4 seconds.");
     expect((byLabel("Request unlock: Photo 02") as HTMLButtonElement).disabled).toBe(true);
-    await click(tab("Photos")); await act(async () => { await vi.advanceTimersByTimeAsync(2000); }); await click(tab("Premium"));
+    await click(tab("Gallery")); await act(async () => { await vi.advanceTimersByTimeAsync(2000); }); await click(tab("Premium"));
     expect(status()).toBe("Too many requests. Try again in 2 seconds."); // the wait is a deadline, not a fresh count on remount
     await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
     expect((byLabel("Request unlock: Photo 02") as HTMLButtonElement).disabled).toBe(false);

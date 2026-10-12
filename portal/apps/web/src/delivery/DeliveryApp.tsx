@@ -116,7 +116,7 @@ export function DeliveryApp({ slug }: { slug: string }) {
     </main>;
     case "ready": {
       const downloadable = screen.dto.items.some((item) => item.kind === "photo" && !item.locked);
-      return <main><DeliveryPage dto={screen.dto} hrefs={api.hrefs} unlockState={unlock} onRequestUnlock={(handle) => { void requestUnlock(handle); }} downloadAllSlot={downloadable ? <DeliveryDownloadAll api={api} onGone={gone} /> : undefined} /></main>;
+      return <main><DeliveryPage dto={screen.dto} hrefs={api.hrefs} shareUrl={`${window.location.origin}/d/${slug}`} unlockState={unlock} onRequestUnlock={(handle) => { void requestUnlock(handle); }} downloadAllSlot={downloadable ? <DeliveryDownloadAll api={api} onGone={gone} /> : undefined} /></main>;
     }
   }
 }

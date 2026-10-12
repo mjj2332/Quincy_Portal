@@ -41,7 +41,7 @@ const stateAfterPublish = (setNumber = 1) => ({
   set: { setNumber, publishedAt: Date.UTC(2026, 9, 11, 3, 4), coverAssetId: ids.photo1, items: [
     { assetId: ids.photo1, handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, premium: false, premiumUnlocked: false, videoId: null },
     { assetId: ids.plan, handle: handle(2), kind: "floorplan", label: "Floorplan 01", position: 1, locked: false, premium: false, premiumUnlocked: false, videoId: null }] },
-  dto: { property: { street: "12 Example St", suburb: "Suburbia" }, setNumber, publishedAt: Date.UTC(2026, 9, 11, 3, 4), coverHandle: handle(1), items: [] },
+  dto: { property: { street: "12 Example St", suburb: "Suburbia", postcode: "2030", agency: "Harbour Realty" }, setNumber, publishedAt: Date.UTC(2026, 9, 11, 3, 4), coverHandle: handle(1), items: [] },
 });
 const NO_PAGE = { page: null, set: null, dto: null };
 
@@ -94,7 +94,7 @@ const byId = (id: string) => host.querySelector<HTMLElement>(`[data-testid="${id
 const allById = (id: string) => [...host.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`)];
 const byLabel = (label: string) => host.querySelector<HTMLElement>(`[aria-label="${label}"]`);
 const bodyById = (id: string) => document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
-const previewTab = (within: ParentNode, name: string) => [...within.querySelectorAll<HTMLElement>('[role="tab"]')].find((element) => element.textContent === name);
+const previewTab = (within: ParentNode, name: string) => [...within.querySelectorAll<HTMLElement>('[role="tab"]')].find((element) => (element.querySelector('[data-testid="delivery-tab-label"]')?.textContent ?? element.textContent) === name);
 const gets = () => apiGetMock.mock.calls.map(([path]) => path);
 async function openDelivery(role: Role = "admin") { await mount(role); await click(tab("Delivery")); await flush(); }
 /** A first Publish starts with everything ticked (PRD §6.7); most tests build their own selection from nothing. */
@@ -165,7 +165,7 @@ describe("choosing what to publish", () => {
 
 describe("Preview", () => {
   it("posts the selection and renders the returned page with the staff preview media", async () => {
-    apiPostMock.mockResolvedValue({ dto: { property: { street: "12 Example St", suburb: "Suburbia" }, setNumber: 1, publishedAt: null, coverHandle: handle(1), items: [
+    apiPostMock.mockResolvedValue({ dto: { property: { street: "12 Example St", suburb: "Suburbia", postcode: "2030", agency: "Harbour Realty" }, setNumber: 1, publishedAt: null, coverHandle: handle(1), items: [
       { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, premium: false, width: 10, height: 10, durationMs: null, url: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`, thumbUrl: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/thumb` },
       { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, premium: true, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null }] } });
     await openDelivery(); await startEmpty();
@@ -497,7 +497,7 @@ describe("round 3: the tab does not depend on Video Review", () => {
 
 describe("round 4: fresh candidates, first-Publish defaults and Request unlock in Preview", () => {
   const candidateReads = () => gets().filter((path) => path === `/api/projects/${PROJECT_ID}/delivery/candidates`).length;
-  const lockedPreview = { dto: { property: { street: "12 Example St", suburb: "Suburbia" }, setNumber: 1, publishedAt: null, coverHandle: handle(1), items: [
+  const lockedPreview = { dto: { property: { street: "12 Example St", suburb: "Suburbia", postcode: "2030", agency: "Harbour Realty" }, setNumber: 1, publishedAt: null, coverHandle: handle(1), items: [
     { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, premium: false, width: 10, height: 10, durationMs: null, url: "/m/1", thumbUrl: "/t/1" },
     { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, premium: true, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null }] } };
   const tellOthers = (resources: unknown[]) => {
@@ -641,7 +641,7 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
     expect(b!.operationId).not.toBe(a!.operationId);
     expect(retry!.operationId).toBe(b!.operationId);
   });
-  const lockedPreviewDto = { dto: { property: { street: "12 Example St", suburb: "Suburbia" }, setNumber: 1, publishedAt: null, coverHandle: null, items: [
+  const lockedPreviewDto = { dto: { property: { street: "12 Example St", suburb: "Suburbia", postcode: "2030", agency: "Harbour Realty" }, setNumber: 1, publishedAt: null, coverHandle: null, items: [
     { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, premium: false, width: 10, height: 10, durationMs: null, url: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`, thumbUrl: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/thumb` },
     { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, premium: true, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null },
     { handle: handle(3), kind: "floorplan", label: "Floorplan 01", position: 2, locked: false, premium: false, width: null, height: null, durationMs: null, url: "/pdf/1", thumbUrl: null },
@@ -686,7 +686,7 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
       const video = dialog.querySelector("video");
       expect(video).not.toBeNull();
       pause.mockClear();
-      await click(previewTab(dialog, "Photos"));
+      await click(previewTab(dialog, "Gallery"));
       expect(pause.mock.contexts).toContain(video);
       await click(previewTab(dialog, "Film"));
       const again = dialog.querySelector("video");

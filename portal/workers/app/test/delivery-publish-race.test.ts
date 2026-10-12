@@ -206,7 +206,7 @@ describe("the shared DTO builder", () => {
   it("builds a strict DTO from rows with whatever URLs the caller resolves, and numbers labels per kind", () => {
     const row = (position: number, kind: "photo" | "floorplan" | "copy" | "video", extra: Json = {}) => ({ assetId: crypto.randomUUID(), handle: `h${String(position).padStart(15, "0")}`, position, kind, width: null, height: null, durationMs: null, locked: false, premium: false, ...extra });
     const rows = [row(0, "photo", { width: 6000, height: 4000 }), row(1, "video", { durationMs: 61000 }), row(2, "photo", { locked: true }), row(3, "floorplan"), ...Array.from({ length: 98 }, (_, i) => row(4 + i, "photo"))];
-    const dto = buildDeliveryDto({ property: { street: "1 A St", suburb: "B" }, setNumber: 3, publishedAt: 1_700_000_000_000, coverHandle: rows[0]!.handle, rows, urls: (item: { handle: string }) => ({ url: `/d/x/items/${item.handle}`, thumbUrl: null }) });
+    const dto = buildDeliveryDto({ property: { street: "1 A St", suburb: "B", postcode: null, agency: null }, setNumber: 3, publishedAt: 1_700_000_000_000, coverHandle: rows[0]!.handle, rows, urls: (item: { handle: string }) => ({ url: `/d/x/items/${item.handle}`, thumbUrl: null }) });
     expect(deliveryPageDtoSchema.parse(dto)).toEqual(dto);
     expect(dto.items.slice(0, 4).map((item) => item.label)).toEqual(["Photo 001", "Video 01", "Photo 002", "Floorplan 01"]);
     expect(dto.items[2]!.locked).toBe(true);
