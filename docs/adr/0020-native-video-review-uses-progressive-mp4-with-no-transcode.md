@@ -60,3 +60,7 @@ this decision.
 ## Amendment (#818): staff download
 
 The stream stays disposition-free (decision 6). Staff who need the original file get it from a separate, audited route, `GET /api/projects/:projectId/video-versions/:assetId/download`, behind the `download` review part and the `downloadVideo` capability (admin, editor, assigned External). It serves the same stored bytes as an attachment named `<Title> v<N>.mp4`, and writes a `video_version.download` audit row per full download. It is not a transcode and not a second copy: the file is the one under review.
+
+## Amendment (#828): a film is titled by its latest Version's file name
+
+`videos.title` stays a stored column, and nobody types it. `RECOMPUTE_CURRENT_SQL` (upload completion, remove, restore, restore of a whole film) also sets it from the newest live Version's `original_filename` through `FILM_TITLE_SQL`, whose TypeScript twin is `filmTitleFromFilename` in `@quincy/shared`. A film in Trash keeps its title, and so does a film with no live Version. Stored rather than derived on read because every reader (lists, notifications, downloads, exports, the Delivery candidates) already reads `v.title`, and a derived title would have meant a rule at 13 to 15 reader sites. The reserve route ignores a client `title` for one release. The public Delivery page still shows anonymous "Video NN", because the file name is exactly what #787 keeps off it.

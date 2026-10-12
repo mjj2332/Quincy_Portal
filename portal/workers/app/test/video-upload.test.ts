@@ -98,14 +98,14 @@ describe("POST /video-uploads (reserve)", () => {
   it("reserves for admin, editor and an assigned External, and never returns the object key", async () => {
     stubS3();
     for (const who of ["admin", "member", "external"] as const) {
-      const response = await reserve(who, { title: `Cut by ${who}`, filename: "cut.mp4", bytes: 3_000_000, contentType: "video/mp4" });
+      const response = await reserve(who, { filename: `Cut by ${who}.mp4`, bytes: 3_000_000, contentType: "video/mp4" });
       expect(response.status, who).toBe(201);
       expect(response.headers.get("cache-control")).toMatch(/no-store/);
       const json = await response.json() as Record<string, unknown>; expect(Object.keys(json).filter((name) => /key|r2/i.test(name))).toEqual([]);
       const body = videoUploadReserveResponseSchema.parse(json);
       expect(EXTERNAL_API_RESPONSE_SCHEMAS["video-upload-reserve"].parse(body)).toEqual(body);
       expect(body).toMatchObject({ version: 1, partBytes: 64 * 1024 * 1024 }); expect(body.partUrls).toHaveLength(1);
-      expect(await reservation(body.reservationId)).toMatchObject({ created_by: ids[who], status: "pending", version: 1, new_video_title: `Cut by ${who}`, bytes: 3_000_000, content_type: "video/mp4", upload_id: body.uploadId, project_id: ids.project });
+      expect(await reservation(body.reservationId)).toMatchObject({ created_by: ids[who], status: "pending", version: 1, new_video_title: `Cut by ${who}`, original_filename: `Cut by ${who}.mp4`, bytes: 3_000_000, content_type: "video/mp4", upload_id: body.uploadId, project_id: ids.project });
       await database.DB.prepare(`UPDATE video_upload_reservations SET status = 'failed' WHERE id = ?`).bind(body.reservationId).run();
     }
   });
@@ -174,7 +174,7 @@ describe("POST /video-uploads (reserve)", () => {
 
   it("refuses a bad body with 400, a wrong content type with 415 and an unknown Video with 404, leaving no row", async () => {
     stubS3(); const before = await count("video_upload_reservations"); const good = { title: "Cut", filename: "cut.mp4", bytes: 1000, contentType: "video/mp4" };
-    for (const bad of [{ ...good, title: undefined }, { ...good, videoId: crypto.randomUUID() }, { ...good, filename: "cut.mkv" }, { ...good, filename: "cut.mov.txt" }, { ...good, bytes: 0 }, { ...good, bytes: 1.5 }, { ...good, title: "   " }, { ...good, extra: 1 }, { ...good, clientProbe: { blob: "x".repeat(9000) } }])
+    for (const bad of [{ ...good, filename: "cut.mkv" }, { ...good, filename: "cut.mov.txt" }, { ...good, bytes: 0 }, { ...good, bytes: 1.5 }, { ...good, extra: 1 }, { ...good, clientProbe: { blob: "x".repeat(9000) } }])
       expect((await reserve("member", bad)).status, JSON.stringify(bad).slice(0, 80)).toBe(400);
     for (const contentType of ["video/webm", "VIDEO/MP4", "application/octet-stream", "video/x-matroska"]) expect((await reserve("member", { ...good, contentType })).status, contentType).toBe(415);
     expect((await reserve("member", { videoId: crypto.randomUUID(), filename: "cut.mp4", bytes: 1000, contentType: "video/mp4" })).status).toBe(404);
@@ -209,7 +209,7 @@ describe("POST /video-uploads (reserve)", () => {
   });
 
   it("answers 503 and marks the reservation failed when R2 S3 credentials are missing (production)", async () => {
-    const response = await reserve("member", { title: "No creds", filename: "cut.mp4", bytes: 1000, contentType: "video/mp4" }, baseEnv);
+    const response = await reserve("member", { filename: "No creds.mp4", bytes: 1000, contentType: "video/mp4" }, baseEnv);
     expect(response.status).toBe(503);
     const rows = await database.DB.prepare("SELECT status FROM video_upload_reservations WHERE new_video_title = 'No creds'").all<{ status: string }>();
     expect(rows.results).toEqual([{ status: "failed" }]);
@@ -226,7 +226,7 @@ describe("POST /video-uploads (reserve)", () => {
   it("releases the reservation and aborts the upload when the Project is archived while R2 starts the upload", async () => {
     const calls = stubS3({ onCreate: async () => { await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), ids.project).run(); } });
     try {
-      const response = await reserve("admin", { title: "Late archive", filename: "cut.mp4", bytes: 1000, contentType: "video/mp4" });
+      const response = await reserve("admin", { filename: "Late archive.mp4", bytes: 1000, contentType: "video/mp4" });
       expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ code: "project_unavailable" });
       expect(calls.some((call) => call.method === "DELETE")).toBe(true);
       expect(await count(`video_upload_reservations WHERE new_video_title = 'Late archive' AND status = 'failed'`)).toBe(1);
@@ -234,7 +234,7 @@ describe("POST /video-uploads (reserve)", () => {
   });
 
   it("aborts the new multipart upload when saving its id throws, and queues it when that abort fails too", async () => {
-    const body = (title: string) => ({ title, filename: "cut.mp4", bytes: 1000, contentType: "video/mp4" });
+    const body = (title: string) => ({ filename: `${title}.mp4`, bytes: 1000, contentType: "video/mp4" });
     const row = (title: string) => database.DB.prepare("SELECT id, r2_key AS key, status, upload_id AS uploadId FROM video_upload_reservations WHERE new_video_title = ?").bind(title).first<{ id: string; key: string; status: string; uploadId: string | null }>();
     const calls = stubS3();
     expect((await reserve("member", body("Persist throws"), failingDb(/SET upload_id/))).status).toBe(500);
@@ -352,13 +352,13 @@ describe("PUT …/direct (dev only)", () => {
 
 describe("POST …/complete", () => {
   it("creates the Video, its Asset and the probed meta for Version 1, answers 201 and repeats as 200 with the same body", async () => {
-    stubS3(); const reserved = await reserveAndStore("member", { title: "First cut" });
+    stubS3(); const reserved = await reserveAndStore("member", { filename: "First cut.mp4" });
     const response = await complete("member", reserved.reservationId);
     expect(response.status, await response.clone().text()).toBe(201);
     expect(response.headers.get("cache-control")).toMatch(/no-store/);
     const body = await completeBody(response);
     expect(EXTERNAL_API_RESPONSE_SCHEMAS["video-upload-complete"].parse(body)).toEqual(body);
-    expect(body.version).toMatchObject({ assetId: reserved.assetId, version: 1, current: true, fps: { num: 25, den: 1 }, frameCount: 300, durationMs: 12000, width: 1920, height: 1080, codec: "avc1", hasPoster: false, posterUrl: null, streamUrl: `/media/video/${reserved.assetId}`, originalFilename: "cut.mp4", bytes: reserved.bytes, uploadedBy: { id: ids.member, name: "Member Person", isExternal: false } });
+    expect(body.version).toMatchObject({ assetId: reserved.assetId, version: 1, current: true, fps: { num: 25, den: 1 }, frameCount: 300, durationMs: 12000, width: 1920, height: 1080, codec: "avc1", hasPoster: false, posterUrl: null, streamUrl: `/media/video/${reserved.assetId}`, originalFilename: "First cut.mp4", bytes: reserved.bytes, uploadedBy: { id: ids.member, name: "Member Person", isExternal: false } });
     expect(body.video).toMatchObject({ id: reserved.videoId, title: "First cut", premium: false, currentAssetId: reserved.assetId, uploading: null });
     expect(body.video.versions).toHaveLength(1); expect(body.warnings).toEqual([]);
     const collectionId = await ensureCollection(ids.project, "video");

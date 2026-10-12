@@ -17,7 +17,7 @@ vi.mock("../lib/auth", () => ({ useSession: () => ({ refetch: vi.fn() }) }));
 import { PrincipalFreshnessBoundary } from "./PrincipalFreshnessBoundary";
 import { resetVideoUploadStore, startVideoUpload } from "../lib/video-upload-store";
 
-const start = (userId: string, name: string) => startVideoUpload({ userId, queryClient: undefined, projectId: "p1", role: "editor", file: new File([], name), target: { kind: "new", title: name }, probe: {} as Mp4Probe, cautions: [] });
+const start = (userId: string, name: string) => startVideoUpload({ userId, queryClient: undefined, projectId: "p1", role: "editor", file: new File([], name), target: { kind: "new" }, probe: {} as Mp4Probe, cautions: [] });
 
 describe("video uploads follow the signed-in person at the app's identity boundary (#741 4d-i)", () => {
   let root: Root | null = null; let host: HTMLElement;

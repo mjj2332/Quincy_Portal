@@ -15,7 +15,7 @@ import { resetVideoUploadStore, startVideoUpload, syncUploadPrincipal } from "./
 afterEach(() => { resetVideoUploadStore(); jobs.cancels.length = 0; });
 
 const begin = (userId: string, name: string, queryClient = createQuincyQueryClient()) =>
-  startVideoUpload({ userId, queryClient, projectId: "p1", role: "editor", file: new File([], name), target: { kind: "new", title: name }, probe: {} as Mp4Probe, cautions: [] });
+  startVideoUpload({ userId, queryClient, projectId: "p1", role: "editor", file: new File([], name), target: { kind: "new" }, probe: {} as Mp4Probe, cautions: [] });
 
 describe("a terminal notice ends film uploads (#741 4d-i)", () => {
   it("an unrelated 401 on the client an upload started under aborts it although no Films panel is mounted", async () => {
