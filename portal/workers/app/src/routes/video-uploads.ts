@@ -2,8 +2,8 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
 import {
-  EMBEDDED_POSTER_MAX_BYTES, EMBEDDED_VIDEO_PART_URL_TTL_SECONDS, VIDEO_UPLOAD_ACTIVE_STATUSES, VIDEO_UPLOAD_CONTENT_TYPE, VIDEO_UPLOAD_EXPIRY_MS, VIDEO_UPLOAD_MAX_ACTIVE_PER_USER, VIDEO_MAX_BYTES,
-  isJpeg, mp4RejectMessage, probeMp4, roleHasCapability, timecodeBaseFor, videoObjectKey, videoPosterKey, videoUploadCompleteInputSchema, videoUploadCompleteResponseSchema,
+  EMBEDDED_POSTER_MAX_BYTES, EMBEDDED_VIDEO_PART_URL_TTL_SECONDS, VIDEO_UPLOAD_ACTIVE_STATUSES, VIDEO_UPLOAD_CONTENT_TYPE, VIDEO_UPLOAD_DECLARED_CONTENT_TYPES, VIDEO_UPLOAD_EXPIRY_MS, VIDEO_UPLOAD_MAX_ACTIVE_PER_USER, VIDEO_MAX_BYTES,
+  isJpeg, mp4RejectMessage, normalizeVideoUploadFilename, probeMp4, roleHasCapability, timecodeBaseFor, videoObjectKey, videoPosterKey, videoUploadCompleteInputSchema, videoUploadCompleteResponseSchema,
   videoUploadRejectMessage, videoUploadReserveInputSchema, videoUploadReserveResponseSchema, type Mp4Probe, type Mp4ProbeWarning, type VideoUploadRejectReason,
 } from "@quincy/shared";
 import { terminalRoute } from "../lib/terminal-route";
@@ -109,13 +109,13 @@ videoUploadsRoutes.post("/projects/:projectId/video-uploads", terminalRoute("/pr
   const denied = await access(c, projectId); if (denied) return denied;
   if (await isArchived(c.env.DB, projectId)) return archivedResponse(c);
   const data = await jsonInput(c, videoUploadReserveInputSchema); if (data instanceof Response) return data;
-  if (data.contentType !== VIDEO_UPLOAD_CONTENT_TYPE) return c.json({ error: "Only video/mp4 can be uploaded", code: "unsupported_media_type" }, 415);
+  if (!VIDEO_UPLOAD_DECLARED_CONTENT_TYPES.includes(data.contentType)) return c.json({ error: "Only MP4 or MOV (video/mp4 or video/quicktime) can be uploaded", code: "unsupported_media_type" }, 415);
   if (data.bytes > VIDEO_MAX_BYTES) return c.json({ error: mp4RejectMessage("too_large"), code: "too_large", message: mp4RejectMessage("too_large") }, 413);
   const user = c.get("user"); const reservationId = newId(); const assetId = newId(); const videoId = data.videoId ?? newId(); const now = Date.now();
   const key = videoObjectKey(projectId, videoId, assetId); const expiresAt = now + VIDEO_UPLOAD_EXPIRY_MS;
   let inserted: D1Result<{ version: number }>;
   try {
-    inserted = await c.env.DB.prepare(`${RESERVE_SQL} RETURNING version`).bind(reservationId, user.id, videoId, data.title ?? null, assetId, key, data.filename, data.bytes, data.clientProbe === undefined ? null : JSON.stringify(data.clientProbe), expiresAt, newId(), now, projectId).all<{ version: number }>();
+    inserted = await c.env.DB.prepare(`${RESERVE_SQL} RETURNING version`).bind(reservationId, user.id, videoId, data.title ?? null, assetId, key, normalizeVideoUploadFilename(data.filename), data.bytes, data.clientProbe === undefined ? null : JSON.stringify(data.clientProbe), expiresAt, newId(), now, projectId).all<{ version: number }>();
   } catch (error) {
     if (/UNIQUE constraint failed/i.test(errorText(error)) && /video_id/.test(errorText(error))) return uploadInProgress(c, videoId);
     throw error;
