@@ -179,7 +179,7 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
         <div className="flex min-w-0 items-center gap-[var(--space-2)]"><Author note={reply} />{menu(reply)}</div>
         {body(reply)}
       </div>)}
-      {thread.resolved && (!writing.canWrite || thread.deleted) && <div className="flex justify-end"><ResolvedTick data-testid="guest-note-resolved" /></div>}
+      {thread.resolved && (!writing.canWrite || thread.deleted || replyDraft !== null) && <div className="flex justify-end"><ResolvedTick data-testid="guest-note-resolved" /></div>}
       {writing.canWrite && !thread.deleted && (replyDraft === null
         ? <div className="flex items-center"><Button type="button" variant="ghost" size="sm" data-testid="guest-note-reply-button" className={TOUCH} disabled={busy} onClick={() => { if (!writing.verified) writing.onNeedVerify(); else { setReplyStatus(IDLE); drafts.set(replyKey, { noteId: null, baseRevision: null, baseText: "", ackRevision: null, text: "" }); } }}>Reply</Button>{thread.resolved && <ResolvedTick data-testid="guest-note-resolved" className="ms-auto" />}</div>
         : <form data-testid="guest-reply-form" aria-label="Reply" onSubmit={(event) => { void sendReply(event); }} noValidate className="flex flex-col gap-[var(--space-2)]">

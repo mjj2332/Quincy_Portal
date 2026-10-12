@@ -119,6 +119,14 @@ describe("A resolved note", () => {
     expect(byId("guest-note-reply-button")).toBeNull();
     expect(byId("guest-note-resolved")).not.toBeNull();
   });
+  it("stays visible while a reply to the resolved note is being written", async () => {
+    notes = { [asset(10)]: [note(1, { resolved: true })] };
+    await open();
+    await click(byId("guest-note-reply-button"));
+    expect(byId("guest-reply-form")).not.toBeNull();
+    expect(byId("guest-note-resolved")).not.toBeNull();
+    expect(byId("guest-note-resolved")!.textContent).toBe("Resolved");
+  });
 });
 
 describe("Add a note", () => {
