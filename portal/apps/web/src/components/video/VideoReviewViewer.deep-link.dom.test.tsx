@@ -31,6 +31,7 @@ let stub: VideoElementStub; let viewport: MockViewport;
 let root: Root | null = null;
 let setSelection: (selection: ProjectVideoSelection | null) => void = () => undefined;
 const written: Array<ProjectVideoSelection | null> = [];
+let listGate: Promise<void> | null = null;
 let videoList: () => VideoDto[] = () => [videoOf()];
 let client: QueryClient | null = null;
 let listFails = false;
@@ -52,7 +53,7 @@ function Harness({ initial, parts }: { initial: ProjectVideoSelection | null; pa
   return <QuincyQueryProvider principalId={auth.userId} role="editor"><Probe />{shown && <VideoCollectionPanel projectId={PROJECT} role="editor" review={{ open: true, parts }} deepLink={{ selection, onChange: (next) => { written.push(next); set(next); } }} />}</QuincyQueryProvider>;
 }
 async function mount(initial: ProjectVideoSelection | null, parts: VideoReviewPart[] = ["download"]) {
-  apiGetMock.mockImplementation(async (path) => { if (path.endsWith("/videos")) { if (listFails) throw new ApiError("Films could not be loaded.", 400); return { videos: videoList() }; } throw new Error(`unrouted ${path}`); });
+  apiGetMock.mockImplementation(async (path) => { if (path.endsWith("/videos")) { await listGate; if (listFails) throw new ApiError("Films could not be loaded.", 400); return { videos: videoList() }; } throw new Error(`unrouted ${path}`); });
   const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   await act(async () => { root!.render(<Harness initial={initial} parts={parts} />); });
   await flush();
@@ -71,7 +72,7 @@ async function chooseVersion(prefix: string) {
 }
 
 beforeEach(() => {
-  stub = installVideoElementStub(); viewport = mockViewport({ width: 1440 }); apiGetMock.mockReset(); written.length = 0; listFails = false; videoList = () => [videoOf()];
+  stub = installVideoElementStub(); viewport = mockViewport({ width: 1440 }); apiGetMock.mockReset(); written.length = 0; listFails = false; listGate = null; videoList = () => [videoOf()];
   clipboard.mockReset().mockResolvedValue(undefined);
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: clipboard } });
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } })));
@@ -180,6 +181,39 @@ describe("the viewer's deep link (#819)", () => {
     await click(close); await flush(8);
     const cardB = document.querySelector<HTMLElement>(`[data-testid="video-card-open"][data-video-id="${other.id}"]`)!;
     expect(document.activeElement).toBe(cardB);
+  });
+
+  describe("a Version the cached list lacks while a refresh is in flight", () => {
+    const asset3 = "33333333-3333-4333-8333-333333333333";
+    const withV3 = (): VideoDto => { const base = videoOf(); return { ...base, currentAssetId: asset3, versions: [versionOf({ assetId: asset3, version: 3, current: true, streamUrl: `/media/video/${asset3}` }), ...base.versions.map((v) => ({ ...v, current: false }))] } as VideoDto; };
+    async function openOnStaleCache(refreshed: () => VideoDto[]) {
+      await mount(null);
+      await act(async () => { setShown(false); }); await flush(2);
+      await act(async () => { await client!.invalidateQueries({ refetchType: "none" }); });
+      let release!: () => void;
+      listGate = new Promise<void>((resolve) => { release = resolve; });
+      videoList = refreshed;
+      await act(async () => { setSelection({ id: ids.video, version: 3 }); setShown(true); }); await flush(6);
+      return release;
+    }
+    it("keeps the requested Version in the URL, and shows it once the settled read has it", async () => {
+      const release = await openOnStaleCache(() => [withV3()]);
+      expect(written).toEqual([]);
+      await act(async () => { release(); });
+      const deadline = Date.now() + 10_000;
+      while (!label().startsWith("v3")) { if (Date.now() > deadline) throw new Error(`never showed v3 (${label()})`); await flush(1); }
+      await flush(4);
+      expect(written).toEqual([]);
+    });
+    it("normalises to the current Version when the settled read still lacks it", async () => {
+      const release = await openOnStaleCache(() => [videoOf()]);
+      expect(written).toEqual([]);
+      await act(async () => { release(); });
+      const deadline = Date.now() + 10_000;
+      while (written.length === 0) { if (Date.now() > deadline) throw new Error("never normalised"); await flush(1); }
+      expect(written.at(-1)).toEqual({ id: ids.video, version: 2 });
+      expect(label()).toMatch(/^v2/);
+    });
   });
 
   it("is not remounted by a URL write", async () => {
