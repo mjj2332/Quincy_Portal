@@ -11,7 +11,8 @@ import { issueTransformSource } from "../lib/transform-source";
 import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visibility";
 import { visibleProjectWhere } from "../lib/visible-project-scope";
 import { getEmbeddedMedia } from "../lib/embedded-media";
-import { videoReviewGate } from "../lib/video-review-gate";
+import { attachedVideoNote } from "../lib/video-note-media";
+import { readVideoReviewGate, videoReviewGate } from "../lib/video-review-gate";
 import { LIVE_VERSION, LIVE_VIDEO, versionIsLive } from "../lib/video-live-sql";
 import { serveR2Object, VIDEO_STREAM_HEADERS } from "../lib/r2-serve";
 
@@ -157,6 +158,13 @@ async function readableEmbeddedMedia(c: Context<AppEnv>, mediaId: string): Promi
     // Admin impersonating one, is told nothing exists). Then an attached image follows its post; pending and detached ones are the uploader's.
     if (!roleHasCapability(user.role, "viewNoticeBoard")) return c.json({ error: "Media not found" }, 404);
     if (row.state !== "attached" && row.uploaderId !== user.id) return c.json({ error: "Media not found" }, 404);
+  } else if (row.ownerKind === "video_note") {
+    // A video note's media (#835). The viewer must pass the `notes` gate, `viewVideo` and Project access whatever the row's state; an attached row then follows its note (live, on a live Version), and
+    // every other state (pending, detached, an owner that is gone) is the uploader's alone. Every refusal is the same 404, so an id tells nothing.
+    if (!row.projectId) return c.json({ error: "Media not found" }, 404);
+    if (!(await readVideoReviewGate(c.env.DB, row.projectId)).parts.includes("notes") || !roleHasCapability(user.role, "viewVideo") || !await hasProjectAccess(c, row.projectId)) return c.json({ error: "Media not found" }, 404);
+    const note = row.state === "attached" ? await attachedVideoNote(c.env.DB, row) : null;
+    if (!note && row.uploaderId !== user.id) return c.json({ error: "Media not found" }, 404);
   } else if (row.ownerKind === "whiteboard") {
     if (!row.projectId) return c.json({ error: "Media not found" }, 404);
     if (!await hasProjectCollaborationAccess(c, row.projectId)) return user.role === "external_editor" ? c.json({ error: "Media not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);

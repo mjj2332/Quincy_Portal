@@ -75,6 +75,9 @@ export const NOTICE_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: NOTICE_RICH
 /** Project discussion (#493, #494): the comment profile plus embedded images and videos. The Notice board's profile takes images too (#496), never video. */
 export const COMMENT_MEDIA_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_RICH_TEXT_PROFILE, allowMedia: true, allowVideo: true, allowLinkPreviews: true };
 
+/** Video notes (#835): the discussion's profile without link previews (`link_previews.owner_kind` has no video-note value, and a note is a reference, not a post). */
+export const VIDEO_NOTE_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_MEDIA_RICH_TEXT_PROFILE, allowLinkPreviews: false };
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const encoder = new TextEncoder();
 

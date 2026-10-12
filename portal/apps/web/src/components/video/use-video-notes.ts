@@ -20,7 +20,7 @@ const fresh = (assetId: string): Local => ({ assetId, selectedId: null, scroll: 
  * (read from the form store), the clock handed up by the player, and the writes. The viewer calls this once
  * and gives the panel `session` and the player `playerProps`.
  */
-export function useVideoNotes({ projectId, version, role, userId, archived, forms, markup = false, seekFrame }: {
+export function useVideoNotes({ projectId, version, role, userId, archived, forms, markup = false, seekFrame, openNoteId = null }: {
   projectId: string;
   version: VideoVersionDto;
   role: Role;
@@ -32,6 +32,8 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
   markup?: boolean;
   /** Where a note or marker click sends the playhead. Defaults to this Version's own clock; Compare (#741 7c) routes it through the transport so both sides follow. */
   seekFrame?: (frame: number) => void;
+  /** #835: the note a link names (`&note=`). Once the list and the clock are ready it is selected, scrolled to and sought to, once per Version and note. */
+  openNoteId?: string | null;
 }) {
   const assetId = version.assetId;
   const queryClient = useOptionalProjectQueryClient();
@@ -98,10 +100,19 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
 
   const refresh = useCallback(() => { void query.refetch(); }, [query]);
 
+  // A link to a note (#835): the same landing a marker press gives, applied once its thread is listed and the film is ready to seek.
+  const landedNote = useRef<string | null>(null);
+  useEffect(() => {
+    const key = openNoteId ? `${assetId}:${openNoteId}` : null;
+    if (!key || landedNote.current === key || !clock || !threads?.some((thread) => thread.id === openNoteId)) return;
+    landedNote.current = key;
+    onMarkerSelect(openNoteId!);
+  }, [openNoteId, assetId, clock, threads, onMarkerSelect]);
+
   // A note posted with a drawing becomes the selected one, so its drawing stays on the picture (the display rule shows the selected note's).
   const post = useCallback((input: VideoNoteCreateInput) => withCtx((context) => createVideoNote(context, input)).then((created) => { if (markup && input.markup !== undefined) select(created.id); return created; }), [withCtx, markup, select]);
   const actions = useMemo<ThreadActions>(() => ({
-    reply: (rootId, body) => withCtx((context) => replyToVideoNote(context, rootId, body)),
+    reply: (rootId, content) => withCtx((context) => replyToVideoNote(context, rootId, content)),
     edit: (noteId: string, input: VideoNoteEditInput) => withCtx((context) => editVideoNote(context, noteId, input)),
     resolve: (rootId, resolved) => withCtx((context) => setVideoNoteResolution(context, rootId, resolved)),
     requestDelete: () => undefined, // replaced by the panel, which owns the confirmation

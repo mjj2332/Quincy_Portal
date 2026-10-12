@@ -1,3 +1,4 @@
+import { videoNotificationLinks } from "../lib/video-notification-links";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
@@ -96,6 +97,7 @@ notificationsRoutes.get("/notifications", terminalRoute("/notifications", async 
     rows.map((row) => ({ id: row.id, type: row.type, projectId: row.projectId, sourceKey: row.sourceKey })),
     new Set(context.keys()),
   );
+  const videoLinks = await videoNotificationLinks(c.env.DB, rows.filter((row) => row.projectId && context.has(row.projectId)).map((row) => ({ id: row.id, type: row.type, projectId: row.projectId!, sourceKey: row.sourceKey })));
   return c.json(staffNotificationListResponseSchema.parse({
     notifications: rows.map((row) => {
       const projectContext = row.projectId ? context.get(row.projectId) : undefined;
@@ -107,6 +109,7 @@ notificationsRoutes.get("/notifications", terminalRoute("/notifications", async 
         readAt: row.readAt?.toISOString() ?? null, createdAt: row.createdAt.toISOString(),
         projectStreet: projectContext?.street ?? null, coverAssetId: projectContext?.coverAssetId ?? null,
         actor: enriched?.actor ?? null, subject: enriched?.subject ?? null, assetId: enriched?.assetId ?? null,
+        ...(videoLinks.has(row.id) ? { video: videoLinks.get(row.id)! } : {}),
       };
     }),
     unreadCount: unread?.count ?? 0,

@@ -230,6 +230,7 @@ export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = f
             assetId={session.assetId}
             clock={session.clock}
             drawings={{ on: session.markup, canAnnotate: session.canAnnotate, projectId: session.projectId, role: session.role }}
+            rich={{ projectId: session.projectId, role: session.role }}
           />)}
         </div>
       </ScrollArea>
@@ -238,7 +239,7 @@ export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = f
     <div className="min-[721px]:shrink-0 min-[721px]:border-t min-[721px]:border-border min-[721px]:pt-[var(--space-3)] max-[721px]:order-1">
       {readOnly
         ? <p data-testid="video-notes-archived" className={ARCHIVED_NOTICE_CLASS}>Read-only while archived. Restore the project before adding or changing notes.</p>
-        : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} markup={session.markup} />}
+        : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} markup={session.markup} rich={{ projectId: session.projectId, role: session.role }} />}
     </div>
 
     {canCopy && pasteFrom && <VideoNotePasteDialog

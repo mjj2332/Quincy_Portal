@@ -7,7 +7,7 @@ let seq = 0;
 const note = (over: Record<string, unknown> = {}): VideoNoteThreadDto => {
   seq += 1;
   const id = `00000000-0000-4000-8000-${String(seq).padStart(12, "0")}`;
-  return { id, assetId: "a", parentId: null, author: { kind: "staff", person: person("u1") }, authorRole: "editor", visibility: "internal", startFrame: 10, endFrame: null, drawingFrame: null, hasMarkup: false, body: "hi", deleted: false, resolved: null, revision: 1, createdAt: "2026-10-10T00:00:00.000Z", editedAt: null, copiedFrom: null, replies: [], ...over } as VideoNoteThreadDto;
+  return { id, assetId: "a", parentId: null, author: { kind: "staff", person: person("u1") }, authorRole: "editor", visibility: "internal", startFrame: 10, endFrame: null, drawingFrame: null, mediaCount: 0, hasMarkup: false, body: "hi", deleted: false, resolved: null, revision: 1, createdAt: "2026-10-10T00:00:00.000Z", editedAt: null, copiedFrom: null, replies: [], ...over } as VideoNoteThreadDto;
 };
 const reply = (over: Record<string, unknown> = {}): VideoNoteDto => { const { replies: _replies, ...rest } = note({ startFrame: null, ...over }); return rest; };
 const resolvedBy = { at: "2026-10-10T01:00:00.000Z", by: person("u1") };

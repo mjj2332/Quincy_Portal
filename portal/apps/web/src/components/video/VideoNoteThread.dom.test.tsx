@@ -1,3 +1,4 @@
+import { legacyBodyToRichTextDoc } from "@quincy/shared";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +8,7 @@ import type { VideoFrameClock } from "../../lib/video-frame-clock";
 import { createNoteFormStore, type NoteFormStore } from "../../lib/video-note-form-store";
 import { TICK_SIZE } from "../quincy/ResolvedTick";
 import { VideoNoteThread, type ThreadActions } from "./VideoNoteThread";
+vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 
 // Written AFTER VideoNoteThread.tsx (the component was committed untested): these tests were run against existing code and what
 // failed was fixed. They are not red-first evidence.
@@ -159,7 +161,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(store.slot("asset").open?.text).toBe("  On it  ");
     await click(tid("video-note-reply-post", form)!);
     await flush();
-    expect(props.actions.reply).toHaveBeenCalledWith(t.id, "On it");
+    expect(props.actions.reply).toHaveBeenCalledWith(t.id, legacyBodyToRichTextDoc("On it"));
     expect(host.querySelector('[data-notes-form="reply"]')).toBeNull();
     expect(document.activeElement).toBe(tid("video-note-reply-button"));
   });

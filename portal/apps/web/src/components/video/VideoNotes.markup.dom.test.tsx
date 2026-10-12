@@ -1,3 +1,4 @@
+import { legacyBodyToRichTextDoc } from "@quincy/shared";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +13,7 @@ import "../../testing/dom-polyfills";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
+vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -232,7 +234,7 @@ describe("Draw control visibility (#741 6b-ui)", () => {
     await click(tid("video-note-post")!);
     await land(12);
     await flush(4);
-    expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 12, visibility: "internal", body: "Plain note" });
+    expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 12, visibility: "internal", content: legacyBodyToRichTextDoc("Plain note") });
   });
 
   it("is hidden while the film plays and back once it is paused", async () => {
@@ -425,7 +427,7 @@ describe("Posting a drawing (#741 6b-ui)", () => {
     await land(12);
     await flush(4);
     expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, {
-      startFrame: 12, visibility: "internal", body: "Look at this", drawingFrame: 12,
+      startFrame: 12, visibility: "internal", content: legacyBodyToRichTextDoc("Look at this"), drawingFrame: 12,
       markup: [{ color: "#e64b3c", width: 4, points: [{ x: 0.5, y: 0.5 }, { x: 1, y: 1 }] }],
     });
     expect(tid("video-note-drawing-chip")).toBeNull();
@@ -684,7 +686,7 @@ describe("A drawing with an item this build cannot read (#741 6b-ui, 6s override
     await click(tid("video-note-edit-save")!);
     await flush(4);
     const [, body] = api.apiPatch.mock.calls.at(-1) as [string, Record<string, unknown>];
-    expect(body).toEqual({ expectedRevision: 3, body: "Reworded" });
+    expect(body).toEqual({ expectedRevision: 3, content: legacyBodyToRichTextDoc("Reworded") });
     expect("markup" in body).toBe(false);
     expect("drawingFrame" in body).toBe(false);
   });

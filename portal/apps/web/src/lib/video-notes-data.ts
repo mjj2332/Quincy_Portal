@@ -2,7 +2,7 @@ import { useQuery, type QueryClient, type QueryFunctionContext, type UseQueryRes
 import {
   videoNoteDeleteResponseSchema, videoNoteMarkupResponseSchema, videoNotePasteCommitResponseSchema, videoNotePastePreviewResponseSchema,
   type VideoNotePasteCommitResponse, type VideoNotePastePreviewResponse, videoNoteListResponseSchema, videoNoteThreadDtoSchema,
-  type MarkupItem, type Role, type VideoNoteMarkupResponse, type VideoNoteCreateInput, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto,
+  type MarkupItem, type RichTextDoc, type Role, type VideoNoteReplyInput, type VideoNoteMarkupResponse, type VideoNoteCreateInput, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto,
 } from "@quincy/shared";
 import { apiDeleteWithBody, apiGet, apiPatch, apiPost, apiPut } from "./api";
 import { decodeExternalResponse, externalApiGet } from "./external-api-response";
@@ -135,8 +135,8 @@ const upsert = (ctx: NoteWriteContext) => (thread: VideoNoteThreadDto) => patch(
 export const createVideoNote = (ctx: NoteWriteContext, input: VideoNoteCreateInput): Promise<VideoNoteThreadDto> =>
   run(ctx, async () => parseThread(ctx.role, await apiPost<unknown, VideoNoteCreateInput>(notesPath(ctx.projectId, ctx.assetId), input)), upsert(ctx));
 
-export const replyToVideoNote = (ctx: NoteWriteContext, rootId: string, body: string): Promise<VideoNoteThreadDto> =>
-  run(ctx, async () => parseThread(ctx.role, await apiPost<unknown, { body: string }>(`${notePath(ctx.projectId, rootId)}/replies`, { body })), upsert(ctx));
+export const replyToVideoNote = (ctx: NoteWriteContext, rootId: string, content: RichTextDoc): Promise<VideoNoteThreadDto> =>
+  run(ctx, async () => parseThread(ctx.role, await apiPost<unknown, VideoNoteReplyInput>(`${notePath(ctx.projectId, rootId)}/replies`, { content })), upsert(ctx));
 
 export const editVideoNote = (ctx: NoteWriteContext, noteId: string, input: VideoNoteEditInput): Promise<VideoNoteThreadDto> =>
   run(ctx, async () => parseThread(ctx.role, await apiPatch<unknown, VideoNoteEditInput>(notePath(ctx.projectId, noteId), input)), upsert(ctx));

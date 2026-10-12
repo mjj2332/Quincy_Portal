@@ -11,6 +11,7 @@ import "../../testing/dom-polyfills";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
+vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

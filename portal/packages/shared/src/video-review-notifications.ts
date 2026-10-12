@@ -21,7 +21,7 @@ const SOURCE_PREFIX: Record<VideoReviewNotificationType, string> = {
   video_mention: "video_mention",
 };
 
-/** `video_version:<assetId>`, `video_note:<noteId>`, `video_reply:<replyId>`, `video_decision:<eventId>`, `video_released:<releaseId>`, `video_mention:<noteId>`. */
+/** `video_version:<assetId>`, `video_note:<noteId>`, `video_reply:<replyId>`, `video_decision:<eventId>`, `video_released:<releaseId>`, `video_mention:<mentionRowId>` (the row in `video_note_mentions`, so a mention removed and added again is a new notification). */
 export function videoReviewNotificationSourceKey(kind: VideoReviewNotificationType, sourceId: string): string {
   return `${SOURCE_PREFIX[kind]}:${sourceId}`;
 }

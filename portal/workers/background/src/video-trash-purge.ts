@@ -17,6 +17,12 @@ const notLiveKey = (key: string) => `NOT EXISTS (
 /** `INSERT ... SELECT` form of the shared cleanup upsert: a key already queued keeps its row, as the embedded-media paths do. */
 const enqueue = (select: string) => ENQUEUE_SQL.replace("VALUES (?, ?, ?, ?)", select);
 
+/**
+ * Media an owner note owned is left behind when the purge's cascade removes the note (#835): detach it, due now, so the embedded-media sweep reclaims the objects. No FK ties media to a note, so this
+ * is the same condition the sweep's own backstop uses (an attached `video_note` row whose note is gone). It runs after the audit row, so the positions the audit read relies on do not move.
+ */
+export const DETACH_ORPHANED_NOTE_MEDIA_SQL = "UPDATE embedded_media SET state = 'detached', detached_at = 0, updated_at = ?1 WHERE owner_kind = 'video_note' AND state = 'attached' AND NOT EXISTS (SELECT 1 FROM video_notes n WHERE n.id = embedded_media.owner_id)";
+
 const auditMeta = (item: DueItem, extra: Record<string, unknown> = {}) => JSON.stringify({ projectId: item.projectId, videoId: item.videoId, system: "video_trash_purge", ...extra });
 
 /**
@@ -76,6 +82,7 @@ function versionStatements(db: D1Database, item: DueItem, now: number): D1Prepar
       WHERE (supersedes_asset_id = ?1 OR replaced_by_asset_id = ?1) AND NOT EXISTS (SELECT 1 FROM assets WHERE id = ?1)`).bind(item.id, now),
     db.prepare("UPDATE video_upload_reservations SET supersedes_asset_id = NULL WHERE supersedes_asset_id = ?1 AND NOT EXISTS (SELECT 1 FROM assets WHERE id = ?1)").bind(item.id),
     db.prepare(`DELETE FROM video_upload_reservations WHERE asset_id = ?1 AND status IN ${TERMINAL} AND NOT EXISTS (SELECT 1 FROM assets WHERE id = ?1)`).bind(item.id),
+    db.prepare(DETACH_ORPHANED_NOTE_MEDIA_SQL).bind(now),
   ];
 }
 
@@ -92,5 +99,6 @@ function videoStatements(db: D1Database, item: DueItem, now: number): D1Prepared
       .bind(crypto.randomUUID(), item.id, auditMeta(item), now),
     db.prepare("UPDATE video_upload_reservations SET supersedes_asset_id = NULL WHERE video_id = ?1 AND supersedes_asset_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM videos WHERE id = ?1)").bind(item.id),
     db.prepare(`DELETE FROM video_upload_reservations WHERE video_id = ?1 AND status IN ${TERMINAL} AND NOT EXISTS (SELECT 1 FROM videos WHERE id = ?1)`).bind(item.id),
+    db.prepare(DETACH_ORPHANED_NOTE_MEDIA_SQL).bind(now),
   ];
 }

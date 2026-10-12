@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import {
-  roleHasCapability, VIDEO_MARKUP_MAX_BYTES, videoNoteMarkupResponseSchema, videoNotePasteCommitInputSchema, videoNotePasteCommitResponseSchema, videoNotePastePreviewInputSchema, videoNotePastePreviewResponseSchema, videoNoteCreateInputSchema, videoNoteDeleteInputSchema, videoNoteDeleteResponseSchema, videoNoteEditInputSchema, videoNoteListResponseSchema,
+  roleHasCapability, VIDEO_MARKUP_MAX_BYTES, VIDEO_NOTE_BODY_MAX, videoNoteMarkupResponseSchema, videoNotePasteCommitInputSchema, videoNotePasteCommitResponseSchema, videoNotePastePreviewInputSchema, videoNotePastePreviewResponseSchema, videoNoteCreateInputSchema, videoNoteDeleteInputSchema, videoNoteDeleteResponseSchema, videoNoteEditInputSchema, videoNoteListResponseSchema,
   videoNoteReplyInputSchema, videoNoteResolutionInputSchema, videoNoteThreadDtoSchema,
 } from "@quincy/shared";
 import type { AppEnv } from "../env";
@@ -10,9 +10,11 @@ import { projectIsArchived } from "../lib/project-archive";
 import { terminalRoute } from "../lib/terminal-route";
 import { readVideoReviewGate, type VideoReviewGateState } from "../lib/video-review-gate";
 import {
-  canonicalMarkup, createVideoNote, createVideoNoteReply, deleteVideoNote, drawingFrameFits, editVideoNote, findNoteHead, listVideoNotes, readNoteMarkup, readNoteMarkupSnapshot, readThread, setVideoNoteResolution,
-  userAuthor, versionFrameCount, type MarkupEdit, type MarkupWrite, type NoteHead, type NoteAuthor,
+  canonicalMarkup, createVideoNote, createVideoNoteReply, deleteVideoNote, drawingFrameFits, editVideoNote, findNoteHead, listVideoNotes, noteAndReplyIds, readNoteMarkup, readNoteMarkupSnapshot, readNoteMentions, readThread, setVideoNoteResolution,
+  userAuthor, versionFrameCount, type MarkupEdit, type MarkupWrite, type NoteHead, type NoteAuthor, type NoteRich,
 } from "../lib/video-notes";
+import { prepareNoteContent, type PreparedNoteContent } from "../lib/video-note-mentions";
+import { preflightOwnedMedia, purgeDetachedOwnerMedia } from "../lib/embedded-media";
 import { commitNotePaste, planNotePaste, type PlanOutcome } from "../lib/video-note-paste";
 import { publishOutboxDetached } from "../lib/server-timing";
 import { jsonInput } from "./helpers";
@@ -62,6 +64,26 @@ const deletedResponse = (c: Ctx) => c.json({ error: "This note was deleted.", co
 const thread = (c: Ctx, value: unknown, status: 200 | 201 = 200) => c.json(videoNoteThreadDtoSchema.parse(value), status);
 const conflict = (c: Ctx, value: unknown) => c.json({ error: "This note changed since you loaded it.", code: "note_conflict", thread: videoNoteThreadDtoSchema.parse(value) }, 409);
 
+const mediaUnavailable = (c: Ctx) => c.json({ error: "An image or video in this note is no longer available. Remove it and try again.", code: "media_unavailable" }, 409);
+const CONTENT_ERRORS = {
+  invalid_content: "This note's content is not valid.",
+  mentions_not_allowed: "You can only mention Project members who can open video notes.",
+  too_many_media: "A note can hold at most 10 images and videos.",
+  body_too_long: `A note can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.`,
+} as const;
+
+/**
+ * A staff write's rich `content` (#835), parsed and checked: the video-note profile, mentions resolved against the Project's video audience, the body derived, and the media pre-checked
+ * (advisory only: the batch re-validates every id in SQL). `keep` are the mentions an edit already holds. A refusal is the answer; a legacy `body` write returns null.
+ */
+async function richOf(c: Ctx, projectId: string, content: unknown, ownerId: string, keep: ReadonlySet<string> = new Set()): Promise<{ rich: NoteRich; body: string; prepared: PreparedNoteContent } | Response> {
+  const prepared = await prepareNoteContent(c.env.DB, projectId, content, keep);
+  if ("error" in prepared) return c.json({ error: CONTENT_ERRORS[prepared.error], code: prepared.error }, 400);
+  const uploader = { userId: c.get("user").id };
+  if (!await preflightOwnedMedia(c.env.DB, { ownerKind: "video_note", ownerId, projectId, uploader, ids: prepared.mediaIds, videoIds: prepared.videoIds })) return mediaUnavailable(c);
+  return { rich: { contentJson: prepared.contentJson, mentionUserIds: prepared.mentionIds, mediaIds: prepared.mediaIds, videoIds: prepared.videoIds, uploader }, body: prepared.body, prepared };
+}
+
 /** 15a: the staff notification rows the write appended are published once the write has landed (the Cron recovers any the queue refuses). */
 function publishStaffNotifications(c: Ctx, outboxIds: string[] | undefined): void {
   if (outboxIds?.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, outboxIds));
@@ -94,7 +116,9 @@ videoNotesRoutes.post("/projects/:projectId/video-versions/:assetId/notes", term
   if (input.startFrame >= frameCount || (endFrame !== null && endFrame > frameCount)) return c.json({ error: "The frames are outside this Version.", code: "frame_out_of_range", frameCount }, 422);
   if (stored && !drawingFrameFits(input.drawingFrame!, input.startFrame, endFrame)) return drawingOutside(c);
   const markup: MarkupWrite | undefined = stored ? { ...stored, drawingFrame: input.drawingFrame! } : undefined;
-  const outcome = await createVideoNote(c.env.DB, { projectId, assetId, author: authorOf(c), read: readerOf(c, projectId), visibility: input.visibility, startFrame: input.startFrame, endFrame, body: input.body, markup, now: Date.now(), gate: gateOf.get(c.req.raw) });
+  const written = input.content === undefined ? null : await richOf(c, projectId, input.content, crypto.randomUUID()); if (written instanceof Response) return written;
+  const outcome = await createVideoNote(c.env.DB, { projectId, assetId, author: authorOf(c), read: readerOf(c, projectId), visibility: input.visibility, startFrame: input.startFrame, endFrame, body: written ? written.body : input.body!, rich: written?.rich, markup, now: Date.now(), gate: gateOf.get(c.req.raw) });
+  if (outcome.kind === "media") return mediaUnavailable(c);
   if (outcome.kind === "archived") return archivedResponse(c);
   if (outcome.kind === "gone") return c.json({ error: "Version not found" }, 404);
   publishStaffNotifications(c, outcome.outboxIds);
@@ -109,7 +133,9 @@ videoNotesRoutes.post("/projects/:projectId/video-notes/:noteId/replies", termin
   const parent = await findNoteHead(c.env.DB, projectId, noteId); if (!parent) return notFound(c);
   if (parent.parent_id !== null) return c.json({ error: "Replies attach to a note, not to another reply.", code: "not_a_thread" }, 422);
   if (parent.deleted_at !== null) return deletedResponse(c);
-  const outcome = await createVideoNoteReply(c.env.DB, { projectId, parent, author: authorOf(c), read: readerOf(c, projectId), body: input.body, now: Date.now(), gate: gateOf.get(c.req.raw) });
+  const written = input.content === undefined ? null : await richOf(c, projectId, input.content, crypto.randomUUID()); if (written instanceof Response) return written;
+  const outcome = await createVideoNoteReply(c.env.DB, { projectId, parent, author: authorOf(c), read: readerOf(c, projectId), body: written ? written.body : input.body!, rich: written?.rich, now: Date.now(), gate: gateOf.get(c.req.raw) });
+  if (outcome.kind === "media") return mediaUnavailable(c);
   if (outcome.kind === "archived") return archivedResponse(c);
   if (outcome.kind === "gone") return deletedResponse(c);
   publishStaffNotifications(c, outcome.outboxIds);
@@ -132,7 +158,10 @@ videoNotesRoutes.patch("/projects/:projectId/video-notes/:noteId", terminalRoute
   const isReply = note.parent_id !== null;
   if (isReply && input.markup !== undefined) return c.json({ error: "Only a note can carry a drawing, not a reply.", code: "markup_on_reply" }, 422);
   if (isReply && (input.startFrame !== undefined || input.endFrame !== undefined)) return c.json({ error: "A reply has no frames.", code: "reply_has_no_frames" }, 422);
-  const body = input.body ?? note.body;
+  if (input.body !== undefined && note.content_json !== null) return c.json({ error: "This note has rich content; edit it from the current page.", code: "use_content" }, 422);
+  const held = input.content === undefined ? [] : await readNoteMentions(c.env.DB, note.id);
+  const written = input.content === undefined ? null : await richOf(c, projectId, input.content, note.id, new Set(held.map((mention) => mention.userId))); if (written instanceof Response) return written;
+  const body = written ? written.body : input.body ?? note.body;
   const startFrame = isReply ? null : input.startFrame ?? note.start_frame;
   const endFrame = isReply ? null : input.endFrame === undefined ? note.end_frame : input.endFrame;
   const framesChanged = startFrame !== note.start_frame || endFrame !== note.end_frame;
@@ -153,9 +182,11 @@ videoNotesRoutes.patch("/projects/:projectId/video-notes/:noteId", terminalRoute
     if (current?.strokes_json !== stored.json || note.drawing_frame !== drawingFrame) markup = { kind: "set", ...stored, drawingFrame };
   }
   // A same-state edit still goes through the batch: an archive that lands first must win over the no-op (#527), and the lib answers 200 with no audit otherwise.
-  const outcome = await editVideoNote(c.env.DB, { projectId, note, author: userAuthor(principal), read: readerOf(c, projectId), expectedRevision: input.expectedRevision, body, startFrame, endFrame, markup, now: Date.now() });
+  const outcome = await editVideoNote(c.env.DB, { projectId, note, author: userAuthor(principal), read: readerOf(c, projectId), expectedRevision: input.expectedRevision, body, rich: written?.rich, held, startFrame, endFrame, markup, now: Date.now() });
   switch (outcome.kind) {
-    case "ok": case "noop": return thread(c, outcome.value);
+    case "ok": publishStaffNotifications(c, outcome.outboxIds); return thread(c, outcome.value);
+    case "noop": return thread(c, outcome.value);
+    case "media": return mediaUnavailable(c);
     case "archived": return archivedResponse(c);
     case "gone": return notFound(c);
     case "forbidden": return c.json({ error: "Forbidden: only the author can edit this note." }, 403);
@@ -188,9 +219,13 @@ videoNotesRoutes.delete("/projects/:projectId/video-notes/:noteId", terminalRout
   if (note.author_user_id !== principal.id) return c.json({ error: "Forbidden: only the author can delete this note." }, 403);
   if (note.deleted_at !== null) return deletedResponse(c);
   if (note.revision !== input.expectedRevision) { const current = await readerOf(c, projectId)(note.parent_id ?? note.id); return current ? conflict(c, current) : notFound(c); }
+  const owners = await noteAndReplyIds(c.env.DB, note.id);
   const outcome = await deleteVideoNote(c.env.DB, { projectId, note, author: userAuthor(principal), read: readerOf(c, projectId), expectedRevision: input.expectedRevision, now: Date.now() });
   switch (outcome.kind) {
-    case "ok": return c.json(videoNoteDeleteResponseSchema.parse({ thread: outcome.value }));
+    case "ok":
+      // The batch left the media of what it removed detached and due now: delete the objects, then the rows. The daily sweep is the backstop (#493).
+      await Promise.all((outcome.mode === "removed" ? owners : [note.id]).map((ownerId) => purgeDetachedOwnerMedia(c.env, "video_note", ownerId)));
+      return c.json(videoNoteDeleteResponseSchema.parse({ thread: outcome.value }));
     case "archived": return archivedResponse(c);
     case "gone": return notFound(c);
     case "forbidden": return c.json({ error: "Forbidden: only the author can delete this note." }, 403);

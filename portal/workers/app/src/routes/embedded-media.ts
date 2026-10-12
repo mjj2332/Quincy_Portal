@@ -4,12 +4,13 @@ import { createDb, schema } from "@quincy/db";
 import { eq } from "drizzle-orm";
 import {
   EMBEDDED_HEIC_CONTENT_TYPES, EMBEDDED_IMAGE_CONTENT_TYPES, EMBEDDED_POSTER_MAX_BYTES, EMBEDDED_VIDEO_CONTENT_TYPES, EMBEDDED_VIDEO_PART_URL_TTL_SECONDS, embeddedMediaKindFor, embeddedMediaMaxBytes, embeddedMediaObjectKey,
-  embeddedMediaPosterKey, enqueueEmbeddedDisplaySafely, externalEmbeddedMediaCompleteSchema, externalEmbeddedMediaPresignSchema, externalEmbeddedMediaSettingsSchema, isEmbeddedHeicContentType, isJpeg, renditionsEnabled,
+  embeddedMediaPosterKey, enqueueEmbeddedDisplaySafely, roleHasCapability, externalEmbeddedMediaCompleteSchema, externalEmbeddedMediaPresignSchema, externalEmbeddedMediaSettingsSchema, isEmbeddedHeicContentType, isJpeg, renditionsEnabled,
   embeddedImageDimensionsShape, requireBothImageDimensions,
 } from "@quincy/shared";
 import { terminalRoute } from "../lib/terminal-route";
 import type { AppEnv, Env } from "../env";
-import { hasProjectCollaborationAccess } from "../middleware/capability";
+import { hasProjectAccess, hasProjectCollaborationAccess } from "../middleware/capability";
+import { readVideoReviewGate } from "../lib/video-review-gate";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { abortMultipart, createMultipartPresign, PART_BYTES, PRESIGN_EXPIRES_SECONDS } from "../lib/r2s3";
@@ -23,7 +24,7 @@ const uuid = z.string().uuid();
  * the discussion (the default) or the Project's whiteboard. A whiteboard upload takes the same types and sizes and is never attachable to a comment.
  * HEIC and HEIF (#495) are images with a JPEG display copy made after upload: `heicGate` refuses them for everyone but an Admin until the owner turns the flag on.
  */
-const presignInput = z.object({ contentType: z.enum([...EMBEDDED_IMAGE_CONTENT_TYPES, ...EMBEDDED_HEIC_CONTENT_TYPES, ...EMBEDDED_VIDEO_CONTENT_TYPES]), bytes: z.number().int().min(1), owner: z.enum(["discussion", "whiteboard"]).optional() }).strict()
+const presignInput = z.object({ contentType: z.enum([...EMBEDDED_IMAGE_CONTENT_TYPES, ...EMBEDDED_HEIC_CONTENT_TYPES, ...EMBEDDED_VIDEO_CONTENT_TYPES]), bytes: z.number().int().min(1), owner: z.enum(["discussion", "whiteboard", "video_note"]).optional() }).strict()
   .superRefine((value, context) => { if (value.bytes > embeddedMediaMaxBytes(embeddedMediaKindFor(value.contentType)!)) context.addIssue({ code: "custom", path: ["bytes"], message: "File is too large" }); });
 /** `width` and `height` (#611) are the image's pixel size as the uploading browser measured it. Optional, both or neither, and only recorded for an image that is not HEIC. */
 const completeInput = z.object({ parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) }).strict()).optional(), ...embeddedImageDimensionsShape }).strict().superRefine(requireBothImageDimensions);
@@ -39,16 +40,38 @@ export async function collaborationGate(c: Context<AppEnv>, projectId: string): 
   return project ?? c.json({ error: "Project not found" }, 404);
 }
 
+/**
+ * The gate for media a VIDEO NOTE owns (#835): the people who may write a video note, not the Collaboration tab's people. In the order every video route uses: the `notes` part (closed is a
+ * plain 404), `annotateVideo` (403), then Project visibility (an External outside the Project 404, staff 403). Without it a non-member Editor could presign for a note and then fail at complete.
+ */
+export async function videoNoteUploadGate(c: Context<AppEnv>, projectId: string): Promise<Project | Response> {
+  const user = c.get("user");
+  if (!(await readVideoReviewGate(c.env.DB, projectId)).parts.includes("notes")) return c.json({ error: "Not found" }, 404);
+  if (!roleHasCapability(user.role, "annotateVideo")) return c.json({ error: "Forbidden" }, 403);
+  if (!await hasProjectAccess(c, projectId)) return user.role === "external_editor" ? c.json({ error: "Project not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  const project = await createDb(c.env.DB).select({ id: schema.projects.id, archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  return project ?? c.json({ error: "Project not found" }, 404);
+}
+
+/** The gate for a request about an existing row: a video note's media takes `videoNoteUploadGate`, every other row (and an unknown id) the Collaboration gate. */
+async function gateForRow(c: Context<AppEnv>, projectId: string, mediaId: string): Promise<Project | Response> {
+  const row = uuid.safeParse(mediaId).success ? await getEmbeddedMedia(c.env.DB, mediaId) : null;
+  return row?.ownerKind === "video_note" && row.projectId === projectId ? videoNoteUploadGate(c, projectId) : collaborationGate(c, projectId);
+}
+
 embeddedMediaRoutes.post("/projects/:projectId/embedded-media", terminalRoute("/projects/:projectId/embedded-media", async (c) => {
   const projectId = c.req.param("projectId"); if (!uuid.safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
-  const project = await collaborationGate(c, projectId); if (project instanceof Response) return project;
+  // The owner picks the gate, so it is peeked at before the body is parsed (Hono caches the body; `jsonInput` reads it again).
+  const peek: unknown = await c.req.json().catch(() => null);
+  const videoNote = typeof peek === "object" && peek !== null && (peek as { owner?: unknown }).owner === "video_note";
+  const project = await (videoNote ? videoNoteUploadGate(c, projectId) : collaborationGate(c, projectId)); if (project instanceof Response) return project;
   if (project.archivedAt) return c.json({ error: "Archived projects cannot accept media", code: "project_archived" }, 409);
   const data = await jsonInput(c, presignInput); if (data instanceof Response) return data;
   const heic = isEmbeddedHeicContentType(data.contentType);
   if (heic) { const refused = await heicGate(c); if (refused) return refused; }
   const user = c.get("user"); const mediaId = newId(); const key = embeddedMediaObjectKey(projectId, mediaId); const now = Date.now();
   const kind = embeddedMediaKindFor(data.contentType)!;
-  const ownerKind = data.owner === "whiteboard" ? "whiteboard" : "project_comment";
+  const ownerKind = data.owner === "whiteboard" ? "whiteboard" : data.owner === "video_note" ? "video_note" : "project_comment";
   // Fenced on the Project still being live, so a reservation never lands in an archived Project.
   const reserved = await c.env.DB.prepare(`
     INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at, rendition_status)
@@ -83,7 +106,7 @@ embeddedMediaRoutes.put("/projects/:projectId/embedded-media/:mediaId/direct", t
   if (c.env.APP_ENV !== "dev") return c.json({ error: "Direct uploads are available only in dev" }, 404);
   const projectId = c.req.param("projectId"); const mediaId = c.req.param("mediaId");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(mediaId).success) return c.json({ error: "Invalid media upload" }, 400);
-  const project = await collaborationGate(c, projectId); if (project instanceof Response) return project;
+  const project = await gateForRow(c, projectId, mediaId); if (project instanceof Response) return project;
   // A reservation made before the Project was archived takes no bytes afterwards (as `complete` and the poster refuse too).
   if (project.archivedAt) return c.json({ error: "Archived projects cannot accept media", code: "project_archived" }, 409);
   const row = await getEmbeddedMedia(c.env.DB, mediaId);
@@ -100,7 +123,7 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/complete"
   const stray = () => c.json({ error: "Media upload not found" }, 404);
   const live = await createDb(c.env.DB).select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (!live) return stray();
-  const project = await collaborationGate(c, projectId); if (project instanceof Response) return project;
+  const project = await gateForRow(c, projectId, mediaId); if (project instanceof Response) return project;
   if (project.archivedAt) return c.json({ error: "Archived projects cannot accept media", code: "project_archived" }, 409);
   const data = await jsonInput(c, completeInput); if (data instanceof Response) return data;
   const user = c.get("user"); const row = await getEmbeddedMedia(c.env.DB, mediaId);
@@ -146,7 +169,7 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/complete"
 embeddedMediaRoutes.put("/projects/:projectId/embedded-media/:mediaId/poster", terminalRoute("/projects/:projectId/embedded-media/:mediaId/poster", async (c) => {
   const projectId = c.req.param("projectId"); const mediaId = c.req.param("mediaId");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(mediaId).success) return c.json({ error: "Invalid media upload" }, 400);
-  const project = await collaborationGate(c, projectId); if (project instanceof Response) return project;
+  const project = await gateForRow(c, projectId, mediaId); if (project instanceof Response) return project;
   if (project.archivedAt) return c.json({ error: "Archived projects cannot accept media", code: "project_archived" }, 409);
   const user = c.get("user"); const row = await getEmbeddedMedia(c.env.DB, mediaId);
   if (!row || row.projectId !== projectId || row.uploaderId !== user.id || row.kind !== "video") return c.json({ error: "Media upload not found" }, 404);
@@ -194,7 +217,7 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/abort", t
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(mediaId).success) return c.json({ error: "Invalid media upload" }, 400);
   const live = await createDb(c.env.DB).select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (!live) return c.json({ error: "Media upload not found" }, 404);
-  const project = await collaborationGate(c, projectId); if (project instanceof Response) return project;
+  const project = await gateForRow(c, projectId, mediaId); if (project instanceof Response) return project;
   const user = c.get("user"); const row = await getEmbeddedMedia(c.env.DB, mediaId);
   if (!row || row.projectId !== projectId || row.uploaderId !== user.id) return c.json({ error: "Media upload not found" }, 404);
   const outcome = await abortEmbeddedMedia(c.env, row);
@@ -208,7 +231,7 @@ async function ownRenditionRow(c: Context<AppEnv>, projectId: string, mediaId: s
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(mediaId).success) return c.json({ error: "Invalid media upload" }, 400);
   const live = await createDb(c.env.DB).select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (!live) return c.json({ error: "Media upload not found" }, 404);
-  const project = await collaborationGate(c, projectId); if (project instanceof Response) return project;
+  const project = await gateForRow(c, projectId, mediaId); if (project instanceof Response) return project;
   const row = await getEmbeddedMedia(c.env.DB, mediaId);
   if (!row || row.projectId !== projectId || row.uploaderId !== c.get("user").id || row.kind !== "image" || row.state === "uploading") return c.json({ error: "Media upload not found" }, 404);
   return row;
