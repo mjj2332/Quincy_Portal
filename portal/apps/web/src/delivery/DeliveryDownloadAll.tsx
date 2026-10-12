@@ -47,7 +47,7 @@ export function DeliveryDownloadAll({ api, onGone }: { api: Pick<DeliveryApi, "z
           <DialogDescription>One zip with every photo on this page that is unlocked.</DialogDescription>
         </DialogHeader>
         <RadioGroup value={size} onValueChange={(next) => { if (next === "web" || next === "full") setSize(next); }} aria-label="Photo size" data-testid="delivery-zip-sizes" className="shrink-0">
-          {SIZES.map((choice) => <FieldLabel key={choice.size} htmlFor={`delivery-zip-size-${choice.size}`} className={`${TOUCH} has-data-checked:bg-[var(--bg-raised)] has-data-checked:hover:bg-[var(--bg-raised)]`}>
+          {SIZES.map((choice) => <FieldLabel key={choice.size} htmlFor={`delivery-zip-size-${choice.size}`} className={`${TOUCH} has-data-checked:bg-[var(--bg-raised)]!`}>
             <Field orientation="horizontal">
               <FieldContent><FieldTitle className="text-foreground">{choice.title}</FieldTitle><FieldDescription className="normal-case tracking-[var(--tracking-normal)] [font:var(--type-body-sm)] text-foreground-secondary">{choice.hint}</FieldDescription></FieldContent>
               <RadioGroupItem value={choice.size} id={`delivery-zip-size-${choice.size}`} data-testid={`delivery-zip-size-${choice.size}`} />
