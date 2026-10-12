@@ -37,7 +37,7 @@ export type DeliveryPageProps = {
   hrefs: DeliveryHrefs | null;
   onRequestUnlock: (handle: string) => void;
   unlockState: UnlockStates;
-  /** Beside the Photos heading. Slice 7 fills it; until then nothing is rendered and nothing is requested. */
+  /** Beside the Photos heading (the Premium heading when the page has no Photos tab). Nothing is rendered or requested without it. */
   downloadAllSlot?: ReactNode;
 };
 
@@ -80,11 +80,11 @@ function Groups({ items, props, onOpen, headings }: { items: DeliveryItemDto[]; 
   </div>;
 }
 
-function Panel({ tab, props, onOpen }: { tab: DeliveryTab; props: DeliveryPageProps; onOpen: OpenViewer }) {
+function Panel({ tab, props, onOpen, slotTab }: { tab: DeliveryTab; props: DeliveryPageProps; onOpen: OpenViewer; slotTab: DeliveryTabId }) {
   const noun: Record<DeliveryTabId, string> = { photos: count(tab.items.length, "photo", "photos"), film: count(tab.items.length, "film", "films"), floorplan: count(tab.items.length, "floorplan", "floorplans"), description: count(tab.items.length, "document", "documents"), premium: count(tab.items.length, "extra", "extras") };
   return <TabsContent value={tab.id} data-testid={`delivery-panel-${tab.id}`} className="pt-[var(--space-5)]">
     <Frame><FramePanel>
-      <SectionHead eyebrow={noun[tab.id]} actions={tab.id === "photos" ? props.downloadAllSlot : undefined}>{tab.label}</SectionHead>
+      <SectionHead eyebrow={noun[tab.id]} actions={tab.id === slotTab ? props.downloadAllSlot : undefined}>{tab.label}</SectionHead>
       {tab.id === "premium" && <p className="m-0 mb-[var(--space-5)] max-w-[60ch] [font:var(--type-body)] text-foreground-secondary">Extras from the studio. A locked extra shows a preview; ask the studio to unlock it.</p>}
       <Groups items={tab.items} props={props} onOpen={onOpen} headings={tab.id === "premium"} />
     </FramePanel></Frame>
@@ -100,6 +100,8 @@ export function DeliveryPage(props: DeliveryPageProps) {
   const { dto } = props;
   const tabs = useMemo(() => tabsOf(dto), [dto]);
   const hero = useMemo(() => heroOf(dto), [dto]);
+  // Download all sits on the Photos tab; a page whose photos are all paid extras has no Photos tab, so it sits on Premium, where those photos are.
+  const slotTab: DeliveryTabId = tabs.some((tab) => tab.id === "photos") ? "photos" : "premium";
   const [chosen, setChosen] = useState<DeliveryTabId | null>(null);
   const active = tabs.some((tab) => tab.id === chosen) ? chosen : (tabs[0]?.id ?? null);
   const [viewer, setViewer] = useState<Viewer | null>(null);
@@ -121,7 +123,7 @@ export function DeliveryPage(props: DeliveryPageProps) {
           <TabsList variant="line" data-testid="delivery-tabs-list" aria-label="Delivery sections" className="h-auto max-w-full group-data-[orientation=horizontal]/tabs:h-auto flex-wrap justify-start gap-x-[var(--space-1)] gap-y-[var(--space-3)]">
             {tabs.map((tab) => <TabsTrigger key={tab.id} value={tab.id} className={`h-auto flex-none px-[var(--space-3)] ${TOUCH}`}>{tab.label}</TabsTrigger>)}
           </TabsList>
-          {tabs.map((tab) => <Panel key={tab.id} tab={tab} props={props} onOpen={open} />)}
+          {tabs.map((tab) => <Panel key={tab.id} tab={tab} props={props} onOpen={open} slotTab={slotTab} />)}
         </Tabs>}
       <footer data-testid="delivery-footer" className="grid gap-[var(--space-4)]">
         <Separator />

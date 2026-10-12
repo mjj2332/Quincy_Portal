@@ -74,3 +74,43 @@ describe("unlock request", () => {
     stub(() => json({ status: "weird" }, 202)); expect(await createDeliveryApi(SLUG).requestUnlock(H)).toEqual({ kind: "failed" });
   });
 });
+
+describe("photo zips (slice 7)", () => {
+  const manifest = (over: Record<string, unknown> = {}) => ({ size: "web", setNumber: 1, photos: 3, totalBytes: 3_000_000, tooLarge: false, leftOut: [{ label: "Photo 02", reason: "premium_locked" }], archive: { state: "ready", pending: 0 }, ...over });
+  it("builds the zip URL from the slug and size", () => {
+    const api = createDeliveryApi(SLUG);
+    expect(api.zipUrl("web")).toBe(`/d/api/pages/${SLUG}/zips/web/photos.zip`);
+    expect(api.zipUrl("full")).toBe(`/d/api/pages/${SLUG}/zips/full/photos.zip`);
+  });
+  it("reads the manifest with no credentials and strictly parses it", async () => {
+    const fetchMock = stub(() => json(manifest()));
+    expect(await createDeliveryApi(SLUG).zipManifest("web")).toEqual({ kind: "ok", manifest: manifest() });
+    expect(fetchMock).toHaveBeenCalledWith(`/d/api/pages/${SLUG}/zips/web`, expect.objectContaining({ credentials: "omit" }));
+    expect(fetchMock.mock.calls[0]![1]!.method).toBeUndefined();
+  });
+  it("reads a manifest with an unknown field as outdated, a 404 as gone, a 429 as limited, anything else as transient", async () => {
+    const api = createDeliveryApi(SLUG);
+    stub(() => json(manifest({ extra: 1 }))); expect(await api.zipManifest("web")).toEqual({ kind: "outdated" });
+    stub(() => new Response("Not found", { status: 404 })); expect(await api.zipManifest("web")).toEqual({ kind: "gone" });
+    stub(() => json({ error: "too_many_attempts" }, 429, { "retry-after": "20" })); expect(await api.zipManifest("web")).toEqual({ kind: "limited", retryAfterSeconds: 20 });
+    stub(() => new Response("", { status: 503 })); expect(await api.zipManifest("web")).toEqual({ kind: "transient" });
+    stub(() => { throw new TypeError("offline"); }); expect(await api.zipManifest("web")).toEqual({ kind: "transient" });
+    stub(() => new Response("nope", { status: 200 })); expect(await api.zipManifest("web")).toEqual({ kind: "transient" });
+  });
+  it("POSTs `{}` to prepare and reads the archive answer", async () => {
+    const fetchMock = stub(() => json({ state: "preparing", pending: 4, retryAfterSeconds: 30 }));
+    expect(await createDeliveryApi(SLUG).prepareZip("full")).toEqual({ kind: "ok", value: { state: "preparing", pending: 4, retryAfterSeconds: 30 } });
+    expect(fetchMock).toHaveBeenCalledWith(`/d/api/pages/${SLUG}/zips/full/prepare`, expect.objectContaining({ method: "POST", credentials: "omit", body: "{}", headers: { "content-type": "application/json" } }));
+  });
+  it("reads prepare refusals: 404 gone, 429 limited, 409 nothing, 422 tooLarge, the rest failed", async () => {
+    const api = createDeliveryApi(SLUG);
+    stub(() => new Response("Not found", { status: 404 })); expect(await api.prepareZip("web")).toEqual({ kind: "gone" });
+    stub(() => json({ error: "too_many_attempts" }, 429, { "retry-after": "9" })); expect(await api.prepareZip("web")).toEqual({ kind: "limited", retryAfterSeconds: 9 });
+    stub(() => json({ error: "nothing_to_download" }, 409)); expect(await api.prepareZip("web")).toEqual({ kind: "nothing" });
+    stub(() => json({ error: "zip_too_large" }, 422)); expect(await api.prepareZip("web")).toEqual({ kind: "tooLarge" });
+    stub(() => json({ error: "invalid_origin" }, 403)); expect(await api.prepareZip("web")).toEqual({ kind: "failed" });
+    stub(() => new Response("", { status: 500 })); expect(await api.prepareZip("web")).toEqual({ kind: "failed" });
+    stub(() => json({ state: "weird", pending: 0 })); expect(await api.prepareZip("web")).toEqual({ kind: "failed" });
+    stub(() => { throw new TypeError("offline"); }); expect(await api.prepareZip("web")).toEqual({ kind: "failed" });
+  });
+});

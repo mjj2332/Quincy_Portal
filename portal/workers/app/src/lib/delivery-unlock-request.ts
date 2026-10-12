@@ -1,6 +1,5 @@
-import {
-  CLIENT_DELIVERY_ALL_PROJECTS_FLAG, CLIENT_DELIVERY_MASTER_FLAG, DELIVERY_CLIENT_OUTBOX_ACTOR, DELIVERY_UNLOCK_NOTIFICATION_EVENT, ROLES, clientDeliveryPilotFlag, deliveryUnlockSourceKey, roleHasCapability,
-} from "@quincy/shared";
+import { DELIVERY_CLIENT_OUTBOX_ACTOR, DELIVERY_UNLOCK_NOTIFICATION_EVENT, ROLES, deliveryUnlockSourceKey, roleHasCapability } from "@quincy/shared";
+import { clientDeliveryGateSql } from "./client-delivery-gate";
 import { lockedSql } from "./delivery-lock";
 import { SQL_UUID_V4 } from "./sql-uuid";
 import { GUEST_DAY_MS, windowStart } from "../guest/rate-limit";
@@ -19,8 +18,7 @@ import { publishOutboxDetached } from "./server-timing";
 export type UnlockRequest = { auditId: string; slug: string; handle: string; projectId: string; setId: string; setNumber: number; assetId: string; label: string; ipBucket: string; now: number };
 
 const ELIGIBLE_ROLES = ROLES.filter((role) => roleHasCapability(role, "manageExtras")).map((role) => `'${role}'`).join(", ");
-const GATE = `(EXISTS (SELECT 1 FROM feature_flags WHERE key = '${CLIENT_DELIVERY_MASTER_FLAG}' AND enabled = 1)
-  AND (EXISTS (SELECT 1 FROM feature_flags WHERE key = '${CLIENT_DELIVERY_ALL_PROJECTS_FLAG}' AND enabled = 1) OR EXISTS (SELECT 1 FROM feature_flags WHERE key = '${clientDeliveryPilotFlag("")}' || p.project_id AND enabled = 1)))`;
+const GATE = clientDeliveryGateSql("p.project_id");
 
 export const unlockItemBucket = (assetId: string): string => `unlock:item:${assetId}`;
 

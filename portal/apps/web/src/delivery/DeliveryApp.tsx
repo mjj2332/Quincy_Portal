@@ -7,6 +7,7 @@ import { UnreachableScreen } from "../guest/GuestScreens";
 import { createDeliveryApi } from "./delivery-api";
 import { useSecondsUntil } from "./delivery-hooks";
 import type { UnlockState, UnlockStates } from "./delivery-model";
+import { DeliveryDownloadAll } from "./DeliveryDownloadAll";
 import { DeliveryPage } from "./DeliveryPage";
 import { STUDIO_EMAIL } from "./studio";
 import { StudioCredit } from "./StudioCredit";
@@ -113,6 +114,9 @@ export function DeliveryApp({ slug }: { slug: string }) {
     case "outdated": return <main className={shell}>
       <EmptyState data-testid="delivery-outdated" title="This page was updated."><Button type="button" className={TOUCH} onClick={() => { window.location.reload(); }}>Reload</Button></EmptyState>
     </main>;
-    case "ready": return <main><DeliveryPage dto={screen.dto} hrefs={api.hrefs} unlockState={unlock} onRequestUnlock={(handle) => { void requestUnlock(handle); }} /></main>;
+    case "ready": {
+      const downloadable = screen.dto.items.some((item) => item.kind === "photo" && !item.locked);
+      return <main><DeliveryPage dto={screen.dto} hrefs={api.hrefs} unlockState={unlock} onRequestUnlock={(handle) => { void requestUnlock(handle); }} downloadAllSlot={downloadable ? <DeliveryDownloadAll api={api} onGone={gone} /> : undefined} /></main>;
+    }
   }
 }

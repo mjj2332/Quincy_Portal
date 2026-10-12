@@ -252,3 +252,29 @@ describe("request unlock", () => {
     expect((byLabel("Request unlock: Photo 02") as HTMLButtonElement).disabled).toBe(false);
   });
 });
+
+describe("download all slot (#787 slice 7)", () => {
+  const zipCalls = () => calls.filter((call) => call.url.includes("/zips/"));
+  it("offers Download all when the set has an unlocked photo, and requests nothing until it is opened", async () => {
+    await open();
+    expect(byTestId("delivery-download-all")).not.toBeNull();
+    expect(zipCalls()).toEqual([]);
+  });
+  it("offers no control when every photo is locked", async () => {
+    route = () => json(page([locked(1), locked(2), film(3)]));
+    await open();
+    expect(byTestId("delivery-download-all")).toBeNull();
+  });
+  it("offers no control when the page has no photos at all", async () => {
+    route = () => json(page([film(1), pdf(2, "floorplan")]));
+    await open();
+    expect(byTestId("delivery-download-all")).toBeNull();
+  });
+  it("shows the page-gone screen when a zip read answers 404", async () => {
+    route = (url) => (url.includes("/zips/") ? new Response("Not found", { status: 404 }) : json(dto()));
+    await open(); await click(byTestId("delivery-download-all")); await flush();
+    expect(byTestId("delivery-gone")).not.toBeNull();
+    expect(byTestId("delivery-page")).toBeNull();
+  });
+});
+

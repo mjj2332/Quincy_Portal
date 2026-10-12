@@ -331,6 +331,20 @@ Staff's act of making one Premium Asset viewable and downloadable in full, for e
 There is no payment in the Portal; a client asks, staff decide.
 _Avoid_: Purchase, buy, release
 
+**Web-size**:
+The Client Delivery photo derivative a client sees and may download as a zip: a JPEG scaled to fit the
+Delivery spec (`delivery_web`). Never the original.
+_Avoid_: Web copy, preview, small
+
+**Full-res**:
+The original upload of a photo, as the client gets it from a single download or a Full-res zip.
+_Avoid_: Original size, RAW (a RAW is a different Collection)
+
+**Download all**:
+The control on a Client Delivery page that zips the page's current photos, in Web-size or Full-res. It
+includes unlocked Premium photos, leaves out locked ones (listed by label), and never includes Videos or PDFs.
+_Avoid_: Bulk download, export
+
 ### Notifications
 
 **Notification**:
