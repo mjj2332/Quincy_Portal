@@ -8,6 +8,7 @@ export * from "./crypto";
 export * from "./tonomo";
 export * from "./transform-source";
 export * from "./renditions";
+export * from "./object-crc";
 export * from "./staff-routes";
 export * from "./dashboard-filter";
 export * from "./dashboard-filter-tree";

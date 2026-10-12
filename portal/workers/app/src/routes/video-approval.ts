@@ -78,7 +78,7 @@ videoApprovalRoutes.post("/projects/:projectId/video-versions/:assetId/release",
     }
   };
   const early = answer(await releaseVerdict(c.env.DB, assetId, input.approvalRevision)); if (early) return early;
-  const result = await releaseVersion(c.env.DB, { projectId, assetId, principal: principalOf(c), approvalRevision: input.approvalRevision, now: Date.now() });
+  const result = await releaseVersion(c.env.DB, { projectId, assetId, principal: principalOf(c), approvalRevision: input.approvalRevision, now: Date.now() }, c.env);
   if ("release" in result) return c.json(videoReleaseResponseSchema.parse({ release: result.release }), 201);
   if (result.kind === "archived") return archivedResponse(c);
   if (!await findVersion(c.env.DB, projectId, assetId)) return versionNotFound(c);

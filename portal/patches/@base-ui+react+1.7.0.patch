@@ -1,0 +1,56 @@
+diff --git a/node_modules/@base-ui/react/floating-ui-react/components/FloatingFocusManager.js b/node_modules/@base-ui/react/floating-ui-react/components/FloatingFocusManager.js
+index 5d5b40c..e9725e8 100644
+--- a/node_modules/@base-ui/react/floating-ui-react/components/FloatingFocusManager.js
++++ b/node_modules/@base-ui/react/floating-ui-react/components/FloatingFocusManager.js
+@@ -569,7 +569,10 @@ function FloatingFocusManager(props) {
+         if (modal) {
+           const els = getTabbableContent();
+           // enqueueFocus returns a rAF-cancel function we don't need here.
+-          void (0, _enqueueFocus.enqueueFocus)(els[els.length - 1]);
++          // Quincy #796: redirect synchronously so a Tab that lands before the next frame cannot leave the trap.
++          void (0, _enqueueFocus.enqueueFocus)(els[els.length - 1], {
++            sync: true
++          });
+         } else if (portalContext?.portalNode) {
+           preventReturnFocusRef.current = false;
+           if ((0, _tabbable.isOutsideEvent)(event, portalContext.portalNode)) {
+@@ -586,7 +589,10 @@ function FloatingFocusManager(props) {
+       onFocus: event => {
+         if (modal) {
+           // enqueueFocus returns a rAF-cancel function we don't need here.
+-          void (0, _enqueueFocus.enqueueFocus)(getTabbableContent()[0]);
++          // Quincy #796: redirect synchronously so a Tab that lands before the next frame cannot leave the trap.
++          void (0, _enqueueFocus.enqueueFocus)(getTabbableContent()[0], {
++            sync: true
++          });
+         } else if (portalContext?.portalNode) {
+           if (closeOnFocusOut) {
+             preventReturnFocusRef.current = true;
+diff --git a/node_modules/@base-ui/react/floating-ui-react/components/FloatingFocusManager.mjs b/node_modules/@base-ui/react/floating-ui-react/components/FloatingFocusManager.mjs
+index 8a6039f..37a4d69 100644
+--- a/node_modules/@base-ui/react/floating-ui-react/components/FloatingFocusManager.mjs
++++ b/node_modules/@base-ui/react/floating-ui-react/components/FloatingFocusManager.mjs
+@@ -563,7 +563,10 @@ export function FloatingFocusManager(props) {
+         if (modal) {
+           const els = getTabbableContent();
+           // enqueueFocus returns a rAF-cancel function we don't need here.
+-          void enqueueFocus(els[els.length - 1]);
++          // Quincy #796: redirect synchronously so a Tab that lands before the next frame cannot leave the trap.
++          void enqueueFocus(els[els.length - 1], {
++            sync: true
++          });
+         } else if (portalContext?.portalNode) {
+           preventReturnFocusRef.current = false;
+           if (isOutsideEvent(event, portalContext.portalNode)) {
+@@ -580,7 +583,10 @@ export function FloatingFocusManager(props) {
+       onFocus: event => {
+         if (modal) {
+           // enqueueFocus returns a rAF-cancel function we don't need here.
+-          void enqueueFocus(getTabbableContent()[0]);
++          // Quincy #796: redirect synchronously so a Tab that lands before the next frame cannot leave the trap.
++          void enqueueFocus(getTabbableContent()[0], {
++            sync: true
++          });
+         } else if (portalContext?.portalNode) {
+           if (closeOnFocusOut) {
+             preventReturnFocusRef.current = true;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { INGEST_QUEUE_NAME, parseQueueBody, RENDITION_DLQ_QUEUE_NAME, RENDITION_QUEUE_NAME } from "../src/queue-dispatch";
+import { INGEST_QUEUE_NAME, OBJECT_CRC_QUEUE_NAME, parseQueueBody, RENDITION_DLQ_QUEUE_NAME, RENDITION_QUEUE_NAME } from "../src/queue-dispatch";
 import { DROPBOX_SYNC_TRIGGERS } from "../src/messages";
 
 describe("queue-name dispatch", () => {
@@ -48,5 +48,14 @@ describe("queue-name dispatch", () => {
     expect(parseQueueBody(INGEST_QUEUE_NAME, {
       type: "dropbox_sync", projectId: "p", connectionId: "connection-1:raw", trigger: "dropbox_delta",
     })).toBeNull();
+  });
+});
+
+describe("object CRC queue dispatch (#802)", () => {
+  it("accepts a start and a continuation on its own queue only, with a non-empty key", () => {
+    expect(parseQueueBody(OBJECT_CRC_QUEUE_NAME, { type: "object_crc32", r2Key: "projects/p/raw/a.jpg" })).toEqual({ queue: OBJECT_CRC_QUEUE_NAME, body: { type: "object_crc32", r2Key: "projects/p/raw/a.jpg" } });
+    expect(parseQueueBody(OBJECT_CRC_QUEUE_NAME, { type: "object_crc32", r2Key: "k", etag: "e", offset: 4 })).toEqual({ queue: OBJECT_CRC_QUEUE_NAME, body: { type: "object_crc32", r2Key: "k", etag: "e", offset: 4 } });
+    for (const bad of [{ type: "object_crc32" }, { type: "object_crc32", r2Key: "" }, { type: "object_crc32", r2Key: "k", offset: 1 }, { type: "generate_renditions", assetId: "a" }]) expect(parseQueueBody(OBJECT_CRC_QUEUE_NAME, bad), JSON.stringify(bad)).toBeNull();
+    for (const queue of [RENDITION_QUEUE_NAME, RENDITION_DLQ_QUEUE_NAME, INGEST_QUEUE_NAME]) expect(parseQueueBody(queue, { type: "object_crc32", r2Key: "k" }), queue).toBeNull();
   });
 });

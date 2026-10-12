@@ -1,5 +1,5 @@
 import { guestDigestStatements } from "./guest-digest";
-import { ROLE_LABELS, type Role, type VideoDecisionEvent, type VideoRelease, type VideoVersionDecisions } from "@quincy/shared";
+import { enqueueObjectCrcs, ROLE_LABELS, type ObjectCrcQueueEnv, type Role, type VideoDecisionEvent, type VideoRelease, type VideoVersionDecisions } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { everPublishedSql } from "./delivery-lock";
 import { newId } from "./ids";
@@ -115,7 +115,7 @@ export async function releaseVerdict(db: D1Database, assetId: string, expected: 
  * Project unarchived, and the partial unique index `video_releases_live_unique` backs it. So two Releases leave one winner, and a decision landing first makes the Release stale.
  * Returns the Release, the verdict that refused it, or `archived`.
  */
-export async function releaseVersion(db: D1Database, input: { projectId: string; assetId: string; principal: Principal; approvalRevision: number; now: number }): Promise<{ release: VideoRelease } | ReleaseVerdict | { kind: "archived" }> {
+export async function releaseVersion(db: D1Database, input: { projectId: string; assetId: string; principal: Principal; approvalRevision: number; now: number }, crc: ObjectCrcQueueEnv = {}): Promise<{ release: VideoRelease } | ReleaseVerdict | { kind: "archived" }> {
   const releaseId = newId(); const auditId = newId();
   try {
     await db.batch([
@@ -133,7 +133,12 @@ export async function releaseVersion(db: D1Database, input: { projectId: string;
     ]);
   } catch (error) { if (!isUnique(error)) throw error; }
   const release = await readRelease(db, releaseId);
-  if (release) return { release };
+  if (release) {
+    // #802: a released Version is what a guest's Download all zips, so its CRC is queued now. Best effort, after the commit: a lost send is repaired by the hourly sweep.
+    const original = await db.prepare("SELECT r2_key FROM assets WHERE id = ?1").bind(input.assetId).first<{ r2_key: string }>().catch(() => null);
+    if (original) await enqueueObjectCrcs(crc, [original.r2_key], "video-release");
+    return { release };
+  }
   if (await projectArchived(db, input.projectId)) return { kind: "archived" };
   const verdict = await releaseVerdict(db, input.assetId, input.approvalRevision);
   // The verdict can read "ok" only if the state changed back between the INSERT and now; the Release was still refused, so the safe answer is stale.

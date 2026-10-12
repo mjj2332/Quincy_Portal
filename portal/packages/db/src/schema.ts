@@ -2278,3 +2278,47 @@ export const guestNotificationDigest = sqliteTable(
     check("guest_notification_digest_sent_at_check", sql`${t.sentAt} IS NULL OR typeof(${t.sentAt}) = 'integer'`),
   ],
 );
+
+/** CRC-32, size and etag of one R2 object (#802). Keyed by R2 key, no foreign key: a stale row is harmless because the etag is checked before a byte is used. */
+export const objectCrc32 = sqliteTable(
+  "object_crc32",
+  {
+    r2Key: text("r2_key").primaryKey(),
+    crc32: integer("crc32").notNull(),
+    bytes: integer("bytes").notNull(),
+    etag: text("etag").notNull(),
+    computedAt: intTime("computed_at").notNull(),
+  },
+  (t) => [
+    check("object_crc32_r2_key_check", sql`length(${t.r2Key}) >= 1`),
+    check("object_crc32_crc32_check", sql`typeof(${t.crc32}) = 'integer' AND ${t.crc32} >= 0 AND ${t.crc32} <= 4294967295`),
+    check("object_crc32_bytes_check", sql`typeof(${t.bytes}) = 'integer' AND ${t.bytes} >= 0`),
+    check("object_crc32_etag_check", sql`length(${t.etag}) >= 1`),
+    check("object_crc32_computed_at_check", sql`typeof(${t.computedAt}) = 'integer'`),
+  ],
+);
+
+/** The resumable CRC job's state (#802): the offset reached and the running CRC of one object, so a large object is read in ranges. etag and bytes are NULL until the first range reads the object. */
+export const objectCrc32Work = sqliteTable(
+  "object_crc32_work",
+  {
+    r2Key: text("r2_key").primaryKey(),
+    etag: text("etag"),
+    bytes: integer("bytes"),
+    offset: integer("offset").notNull().default(0),
+    crcPartial: integer("crc_partial").notNull().default(0),
+    state: text("state", { enum: ["queued", "running", "failed"] }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    requestedAt: intTime("requested_at").notNull(),
+    updatedAt: intTime("updated_at").notNull(),
+    lastError: text("last_error"),
+    claimToken: text("claim_token"),
+  },
+  (t) => [
+    check("object_crc32_work_r2_key_check", sql`length(${t.r2Key}) >= 1`),
+    check("object_crc32_work_claim_token_check", sql`${t.claimToken} IS NULL OR length(${t.claimToken}) >= 1`),
+    check("object_crc32_work_state_check", sql`${t.state} IN ('queued', 'running', 'failed')`),
+    check("object_crc32_work_offset_check", sql`typeof(${t.offset}) = 'integer' AND ${t.offset} >= 0`),
+    check("object_crc32_work_crc_partial_check", sql`typeof(${t.crcPartial}) = 'integer' AND ${t.crcPartial} >= 0 AND ${t.crcPartial} <= 4294967295`),
+  ],
+);

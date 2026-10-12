@@ -11,6 +11,7 @@
     "workers/webhook-ingress"
   ],
   "scripts": {
+    "postinstall": "patch-package",
     "dev": "npm run dev -w @quincy/web",
     "build": "npm run build -w @quincy/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
@@ -73,6 +74,7 @@
     "@types/react-dom": "19.2.5",
     "@vitejs/plugin-react": "^6.0.3",
     "drizzle-kit": "^0.31.10",
+    "patch-package": "^8.0.1",
     "shadcn": "4.19.0",
     "tailwindcss": "4.3.3",
     "typescript": "^7.0.2",

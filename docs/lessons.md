@@ -991,6 +991,13 @@ Tags: focus-overlays
   "restore focus in the same synchronous call that closes it," not "restore it after the DOM
   settles."
 
+## Base UI's own focus guards redirected on the next frame, so a fast Tab left the dialog (#796)
+Tags: focus-overlays, reui-vendor, testing-guards · #796
+
+- **What bit.** In `@base-ui/react` 1.7.0 the modal `FloatingFocusManager` guards (the two `data-base-ui-focus-guard` spans around the popup) send focus back in with `enqueueFocus(target)`, which defers to `requestAnimationFrame`. A Tab that arrives before that frame (key repeat, rapid presses, or a frame-throttled background tab) finds focus still on the guard, and native Tab walks out of the dialog into the page (observed: guard to the navigation rail brand, from a Dialog nested in the Project sheet). It was found by a browser pass run in a background tab, where frames are throttled and the gap is wide; in a foreground tab it is rare enough to pass by hand. Base UI 1.9.0 still defers, so upgrading does not fix it. Same family as the TB8-02 rule above: a deferred focus call is a race.
+- **Rule.** `portal/patches/@base-ui+react+1.7.0.patch` (`patch-package`, run by `portal`'s `postinstall`) passes `{ sync: true }` to both guard calls, in the `.mjs` and the `.js` build, each marked `// Quincy #796`. Do not hand-roll a trap in `DialogContent`; keep Base UI's and keep it synchronous.
+- **Gate.** `components/quincy/dialog-focus-guard-sync.dom.test.tsx` focuses each guard of the real `DialogContent` nested in a `Sheet` and asserts the landing element with no frame flush (red on the unpatched package). `config/base-ui-patch.guard.test.ts` fails when the installed Base UI version no longer matches the patch file name, so a bump must re-make the patch (`npx patch-package @base-ui/react`) or drop it together with `postinstall`, after checking upstream still defers.
+
 ## Two ways a green test quietly stops proving anything (TB8-04, 2026-09-02)
 Tags: testing-guards
 
@@ -6153,6 +6160,8 @@ Tags: workers-runtime · #741
 - **What bit.** Importing `crc32` from `node:zlib` passed every vitest run (the Workers pool provides it under `nodejs_compat`, compat date >= 2026-07-01) but failed `typecheck:worker-app` (TS2591): the Worker compiles against `@cloudflare/workers-types` only, with no `@types/node`.
 - **Rule.** Declare the one function used in `src/node-zlib.d.ts`, the same way `src/node-async-hooks.d.ts` does, instead of adding `@types/node` (which would leak Node globals into Worker code). Run `npm run verify`, not just the tests, after adding a `node:` import.
 - **Why `crc32`.** The JS table loop cost ~1.1 s CPU per 256 MiB against a 30000 ms `cpu_ms`; native is ~6 ms for the same bytes in Node.
+
+- **Background Worker (#802).** It has its own `src/node-zlib.d.ts`, and its tsconfig also pulls in the DOM lib, whose `ReadableStreamBYOBReader` has no `readAtLeast` (workerd has it). `src/byob-read-at-least.d.ts` adds that one method; the code still checks for it at runtime and falls back to `read(view)`.
 
 Guards: `workers/app/test/zip-stream-crc.test.ts`.
 
