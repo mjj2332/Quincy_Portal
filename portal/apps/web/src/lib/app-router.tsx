@@ -37,7 +37,7 @@
  */
 import { createContext, use, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
-import { dashboardSearchOf, roleHasCapability, type DashboardCalendarState, type Role, type WorkspaceTab } from "@quincy/shared";
+import { dashboardSearchOf, roleHasCapability, type DashboardCalendarState, type ProjectVideoSelection, type Role, type WorkspaceTab } from "@quincy/shared";
 import { pushToast } from "./toast-store";
 import { canonicalLegacyDashboardLocation, dashboardFocusOf, isDashboardLayerLocation, isSheetLocation, locationStore, parseStaffLocation, readSheetEntryState, staffPathFor, type StaffRoute } from "./router";
 import { createDashboardBackdropSource, DashboardLocationContext, type DashboardBackdropSource } from "./dashboard-location";
@@ -99,6 +99,8 @@ type ShellState = {
   arrivalIntent: ArrivalIntent | null;
   acknowledgeArrivalSignal: (projectId: string, signal: number) => void;
   syncProjectTab: (projectId: string, tab: WorkspaceTab) => void;
+  /** #819: the Video viewer's selection (or none) written to `?tab=video&video=…&version=…` by `replace`. */
+  syncProjectVideo: (projectId: string, selection: ProjectVideoSelection | null) => void;
   /** #498: the Project whiteboard's link. Open pushes `?whiteboard=open`; close returns to `tab`. */
   openProjectWhiteboard: (projectId: string) => void;
   closeProjectWhiteboard: (projectId: string, tab: WorkspaceTab) => void;
@@ -285,6 +287,16 @@ function ShellRoute() {
     history.replace(target);
   };
 
+  // #819: the Video viewer opens, closes and switches Version by `replace` (no sheet depth, and a push would bump the navigation epoch).
+  // Checked against the live location, not the render-time route, so a late callback from a viewer that has since gone away writes nothing.
+  const syncProjectVideo = (projectId: string, selection: ProjectVideoSelection | null) => {
+    const live = parseStaffLocation(history.getLocation());
+    if (live.kind !== "project" || live.projectId !== projectId || live.whiteboard || live.arrivalTab !== "video") return;
+    const target = staffPathFor({ kind: "project", projectId, arrivalTab: "video", ...(selection ? { video: selection } : {}) });
+    if (target === history.getLocation()) return;
+    history.replace(target);
+  };
+
   // #498: open is a push through the location store (never the router's navigate). Close returns to the
   // Workspace the way `returnToWorkspace` does: when the entry below is this project's workspace, step
   // back onto it; a cold whiteboard link has none, so replace with the tab the Workspace was showing.
@@ -464,7 +476,7 @@ function ShellRoute() {
     user, route, pathname, notice, navigate,
     clearNotice: () => setNotice(null),
     searchFocusSignal: currentSearchFocusSignal, acknowledgeSearchFocus,
-    dashboardCalendar, arrivalIntent: currentArrivalIntent, acknowledgeArrivalSignal, syncProjectTab,
+    dashboardCalendar, arrivalIntent: currentArrivalIntent, acknowledgeArrivalSignal, syncProjectTab, syncProjectVideo,
     openProjectWhiteboard, closeProjectWhiteboard,
     impersonating, isSheetRoute, backdropLocation, backdropSource, closeProjectSheet,
     returnToWorkspace, leaveDeletedProject,
@@ -585,7 +597,7 @@ const projectRoute = createRoute({
   getParentRoute: () => dashboardLayerRoute,
   path: "/projects/$projectId",
   component: function ProjectLeaf() {
-    const { route, notice, pathname, clearNotice, arrivalIntent, acknowledgeArrivalSignal, syncProjectTab, openProjectWhiteboard, closeProjectWhiteboard } = useShell();
+    const { route, notice, pathname, clearNotice, arrivalIntent, acknowledgeArrivalSignal, syncProjectTab, syncProjectVideo, openProjectWhiteboard, closeProjectWhiteboard } = useShell();
     if (route.kind !== "project") return <NotAvailable />;
     return <ProjectWorkspace
       key={route.projectId}
@@ -597,6 +609,8 @@ const projectRoute = createRoute({
       onArrivalConsumed={(signal) => acknowledgeArrivalSignal(route.projectId, signal)}
       urlTab={route.arrivalTab}
       onTabShown={(tab) => syncProjectTab(route.projectId, tab)}
+      {...(route.video ? { urlVideo: route.video } : {})}
+      onVideoChange={(selection) => syncProjectVideo(route.projectId, selection)}
       whiteboardOpen={route.whiteboard === true}
       onOpenWhiteboard={() => openProjectWhiteboard(route.projectId)}
       onCloseWhiteboard={(tab) => closeProjectWhiteboard(route.projectId, tab)}

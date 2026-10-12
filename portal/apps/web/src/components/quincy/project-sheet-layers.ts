@@ -66,6 +66,14 @@ export function hasOpenModalAbove(popup: HTMLElement | null, doc: Document): boo
   return false;
 }
 
+/**
+ * #819: is a modal open above the dialog that hosts `element` (or above `element` itself when it is not inside one)? Lets a caller outside the
+ * sheet, such as the Workspace's arrival focus, leave focus alone while the video viewer is open over the sheet.
+ */
+export function hasOpenModalAboveHost(element: HTMLElement, doc: Document): boolean {
+  return hasOpenModalAbove(element.closest<HTMLElement>('[role="dialog"], [data-slot="dialog-content"]') ?? element, doc);
+}
+
 export function hasOpenInnerLayer(popup: HTMLElement | null, slot: HTMLElement | null, doc: Document): boolean {
   if (!popup) return false;
   // In-place modal: the Lightbox lives inside the popup DOM. `querySelector` searches

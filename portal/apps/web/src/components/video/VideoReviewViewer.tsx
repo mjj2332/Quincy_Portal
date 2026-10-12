@@ -9,6 +9,7 @@ import { OverlayContainerContext } from "../OverlayContainerContext";
 import { Button } from "../reui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "../reui/dialog";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
+import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
@@ -34,13 +35,13 @@ const VERSION_SELECT_ID = "video-review-version";
 
 /**
  * The staff review viewer (#741 4d-ii): a collection-local, full-viewport dialog on the inverse surface that plays one Video, one
- * Version at a time. It changes no URL. The dialog popup owns the keyboard scope, so the shortcuts never reach the Project sheet
+ * Version at a time. It changes no URL of its own: with `deepLink` (#819) it reports the Version on show and offers Copy link. The dialog popup owns the keyboard scope, so the shortcuts never reach the Project sheet
  * underneath and stop when it closes; the player's own handler does the work. Switching Version remounts the player (keyed by
  * Asset id): paused, at frame 0, with that Version's own clock, timecode and streaming URL. A superseded Version still plays.
  * With `notes` (the Project's `notes` part is on, #741 5b) the Version details column becomes the notes panel, and the Version details
  * move behind a button in its header; without it the viewer is exactly the 4d-ii viewer.
  */
-export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download }: {
+export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, deepLink }: {
   video: VideoDto;
   onClose: () => void;
   /** The control that opened the viewer; focus goes back to it on close. */
@@ -55,8 +56,10 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   trash?: { projectId: string; archived: boolean };
   /** Present only when the Project's `download` part is on and the role holds `downloadVideo` (#818): the Download link in the header (single view only). */
   download?: { projectId: string };
+  /** Present when the URL names this film (#819, staff Project route): `version` is the Version number it names (absent = the current one), `href` the absolute link to a Version, `onVersionShown` how the viewer reports the Version on show. */
+  deepLink?: { version?: number; href: (version: number) => string; onVersionShown: (version: number) => void };
 }) {
-  const [assetId, setAssetId] = useState(video.currentAssetId);
+  const [assetId, setAssetId] = useState(() => (deepLink?.version === undefined ? undefined : video.versions.find((candidate) => candidate.version === deepLink.version)?.assetId) ?? video.currentAssetId);
   const playerRef = useRef<VideoPlayerControl>(null);
   const compareRef = useRef<VideoPlayerControl>(null);
   const compareButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -227,6 +230,23 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   };
 
   const version = video.versions.find((candidate) => candidate.assetId === assetId) ?? video.versions[0]!;
+  // #819: the URL follows the Version on show (this also rewrites a missing or unknown Version to the one shown), and a change of the URL's Version from outside
+  // (Back/Forward) is taken once. The report is guarded by the URL's own value, so the two never chase each other.
+  const urlVersion = deepLink?.version;
+  const reportVersion = deepLink?.onVersionShown;
+  const reportRef = useRef(reportVersion);
+  reportRef.current = reportVersion;
+  const urlVersionRef = useRef(urlVersion);
+  urlVersionRef.current = urlVersion;
+  // Keyed on the Version on show only: a URL that moved on its own is followed by the effect below, never overwritten by this one.
+  useEffect(() => { if (reportRef.current !== undefined && urlVersionRef.current !== version.version) reportRef.current(version.version); }, [version.version]);
+  const seededUrlVersion = useRef(urlVersion);
+  useEffect(() => {
+    if (seededUrlVersion.current === urlVersion) return;
+    seededUrlVersion.current = urlVersion;
+    const target = urlVersion === undefined ? undefined : video.versions.find((candidate) => candidate.version === urlVersion);
+    if (target && target.assetId !== assetId) { setResume(null); setAssetId(target.assetId); }
+  }, [urlVersion, video.versions, assetId]);
   const base = { nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame };
   const startLabel = framesToTimecode(0, base, version.startTimecodeFrames ?? 0);
   const newest = Math.max(...video.versions.map((candidate) => candidate.version));
@@ -275,6 +295,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         </Select>
         {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} /></Suspense>}
       </div>}
+      {deepLink && !comparing && <CopyTextButton text={deepLink.href(version.version)} label="Copy link" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}
       {download && !comparing && <Button variant="outline" nativeButton={false} data-testid="video-download" aria-label={`Download version ${version.version}`} className="pointer-coarse:min-h-11 max-[721px]:min-h-11" render={<a href={videoVersionDownloadUrl(download.projectId, version.assetId)} download />}><DownloadIcon aria-hidden="true" />Download</Button>}
       {(canCompare || comparing) && <Button
         ref={compareButtonRef}

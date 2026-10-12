@@ -99,7 +99,7 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
         </div>}
         {message && <Notice tone="critical" role="alert">{message}</Notice>}
         <div className="flex flex-wrap gap-[var(--space-2)]">
-          <Button type="button" variant="primary" className="min-h-[44px]" onClick={(event) => onOpen(video, event.currentTarget)}>Open review</Button>
+          <Button type="button" variant="primary" className="min-h-[44px]" data-testid="video-card-open" data-video-id={video.id} onClick={(event) => onOpen(video, event.currentTarget)}>Open review</Button>
           {canUpload && !busy && <FilePickButton
             accept={VIDEO_ACCEPT}
             variant="secondary"

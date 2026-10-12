@@ -52,6 +52,9 @@ describe("staff route contract", () => {
     expect(safeStaffDestination(`/projects/${projectId}?tab=edited`)).toBe(`/projects/${projectId}?tab=edited`);
     expect(safeStaffDestination(`/projects/${projectId}?tab=raw`)).toBe(`/projects/${projectId}?tab=raw`);
     expect(safeStaffDestination(`/projects/${projectId}?tab=collaboration`)).toBeNull();
+    // #819: a signed-out click on a video link keeps the film and Version through sign-in.
+    const videoLink = `/projects/${projectId}?tab=video&video=9b2f6c1e-7a3d-4e5f-8a1b-2c3d4e5f6a7b&version=2`;
+    expect(safeStaffDestination(videoLink)).toBe(videoLink);
     for (const destination of [
       "https://quincy.flamingfire.my/admin", "//attacker.example", "\\admin", "/admin?next=/api", "/admin#x",
       "/d/token", "/api/projects", "/unknown", `/projects/${projectId.toUpperCase()}`,
