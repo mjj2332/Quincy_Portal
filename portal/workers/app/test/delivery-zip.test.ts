@@ -202,6 +202,24 @@ describe("readiness", () => {
     await database.DB.prepare("UPDATE asset_renditions SET spec_version = 'old' WHERE asset_id = ?").bind(a.id).run();
     expect((await get(zipPath("web"))).status).toBe(409);
   });
+  it("a Web-size R2 object that is gone while its current row survives is preparing, and prepare asks for it again", async () => {
+    const a = await photo(); await page(a); await database.MEDIA.delete(a.webKey);
+    const response = await get(zipPath("web")); expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "download_preparing", pending: 1 });
+    expect(deliveryZipManifestSchema.parse(await (await get(manifestPath("web"))).json()).archive).toMatchObject({ state: "preparing", pending: 1 });
+    const sent: unknown[] = []; const queue = { send: async (message: unknown) => { sent.push(message); } };
+    const prepared = await localApp({ RENDITIONS_ENABLED: true, RENDITION_QUEUE: queue })(preparePath("web"), jsonPost());
+    expect(await prepared.json()).toEqual({ state: "preparing", pending: 1, retryAfterSeconds: 30 });
+    expect(sent).toEqual([{ type: "generate_renditions", assetId: a.id, variants: ["delivery_web"] }]);
+    expect(await audits()).toBe(0);
+    // Full-res does not depend on the derivative.
+    expect((await get(zipPath("full"))).status).toBe(200);
+  });
+  it("native_zip off with every Web-size derivative missing is still 502 download_unavailable, on the zip, prepare and manifest", async () => {
+    const a = await photo({ web: false }); await page(a); await flag(false);
+    const response = await get(zipPath("web")); expect(response.status).toBe(502); expect(await response.json()).toEqual({ error: "download_unavailable" });
+    expect(deliveryZipManifestSchema.parse(await (await get(manifestPath("web"))).json()).archive.state).toBe("unavailable");
+    expect(await (await post(preparePath("web"))).json()).toEqual({ state: "unavailable", pending: 0 });
+  });
   it("native_zip off is 502 download_unavailable, with no audit", async () => {
     const a = await photo(); await page(a); await flag(false);
     const response = await get(zipPath("web")); expect(response.status).toBe(502); expect(await response.json()).toEqual({ error: "download_unavailable" });
@@ -293,6 +311,19 @@ describe("quotas", () => {
     expect(await audits()).toBe(10);
     // A different address still starts (the page bucket holds 60).
     const other = await get(zipPath("web"), { ip: "203.0.113.10" }); expect(other.status).toBe(200); await other.arrayBuffer();
+  });
+  it("a start refused by the address limit does not charge the page bucket (both or neither)", async () => {
+    const a = await photo(); await page(a); const ip = "203.0.113.40";
+    for (let index = 0; index < 10; index += 1) await (await get(zipPath("web"), { ip })).arrayBuffer();
+    for (let index = 0; index < 5; index += 1) expect((await get(zipPath("web"), { ip })).status).toBe(429);
+    const pageBucket = await database.DB.prepare("SELECT count FROM guest_rate_limits WHERE bucket = ?").bind(`dlzip:page:${ids.project}`).first<{ count: number }>();
+    expect(pageBucket?.count).toBe(10);
+  });
+  it("a full page bucket does not charge the address bucket", async () => {
+    const a = await photo(); await page(a); const ip = "203.0.113.41";
+    await database.DB.prepare("INSERT INTO guest_rate_limits (bucket, window_start, count) VALUES (?, ?, 60)").bind(`dlzip:page:${ids.project}`, Math.floor(Date.now() / 900_000) * 900_000).run();
+    expect((await get(zipPath("web"), { ip })).status).toBe(429);
+    expect(await count("SELECT COUNT(*) AS n FROM guest_rate_limits WHERE bucket LIKE 'dlzip:ip:%'")).toBe(0);
   });
   it("a preparing answer and a refusal cost no start", async () => {
     const a = await photo({ crc: false }); await page(a);

@@ -69,3 +69,18 @@ export async function refundAttempt(db: D1Database, bucket: string, now: number,
     db.prepare("DELETE FROM guest_rate_limits WHERE bucket = ?1 AND window_start = ?2 AND count <= 1").bind(bucket, start),
   ]);
 }
+
+/**
+ * Like `reserveAttempts`, but both or neither: when any bucket is full, the buckets that did take the attempt are given it back, so a request refused by one limit never drains another (a client over its
+ * address limit cannot fill the page's bucket). The give-back is a second batch, so a crash between the two can only over-charge, never under-charge.
+ */
+export async function reserveAllOrNone(db: D1Database, reservations: Reservation[], now: number): Promise<{ limited: boolean; retryAfterSeconds: number }> {
+  const windows = reservations.map((entry) => entry.windowMs ?? GUEST_WINDOW_MS);
+  const results = await db.batch(reservations.map((entry, index) => db.prepare(RESERVE_SQL).bind(entry.bucket, windowStart(now, windows[index]), entry.limit, entry.amount ?? 1)));
+  const took = results.map((result) => result.results.length > 0);
+  if (took.every(Boolean)) return { limited: false, retryAfterSeconds: 1 };
+  let retry = 0;
+  results.forEach((result, index) => { if (!took[index]) retry = Math.max(retry, windowStart(now, windows[index]) + windows[index]! - now); });
+  for (const [index, entry] of reservations.entries()) if (took[index]) await refundAttempt(db, entry.bucket, now, windows[index]);
+  return { limited: true, retryAfterSeconds: Math.max(1, Math.ceil(retry / 1000)) };
+}

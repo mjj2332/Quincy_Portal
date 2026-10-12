@@ -28,7 +28,7 @@ export type ZipAssessment =
   | { kind: "too_large" }
   | { kind: "native"; ready: Map<string, ObjectCrc> }
   | { kind: "preparing"; pending: string[]; retryAfterSeconds: number }
-  | { kind: "unavailable"; reason: "missing" | "changed" | "failed" | "disabled" };
+  | { kind: "unavailable"; reason: "missing" | "changed" | "failed" | "disabled"; /** With `missing`: every key R2 does not have, so a caller whose objects are regenerable can ask for just those. */ missingKeys?: string[] };
 /** Whether the gate queues the CRC job for what is pending: never (a read-only poll), only when it is about to answer `preparing`, or always (a preparation request). */
 export type EnqueueMode = "never" | "when_blocked" | "always";
 type GateEnv = Pick<Env, "DB" | "OBJECT_CRC_QUEUE"> & { MEDIA: Pick<R2Bucket, "head"> };
@@ -87,7 +87,7 @@ async function queuePending(env: GateEnv, keys: readonly string[], work: Map<str
  * An object is pending when it has no row or its row's etag differs from R2's. The row's own size is not compared with D1's: the etag decides, and the writer checks the size again as it reads.
  */
 export async function assessZip(env: GateEnv, subjects: readonly CrcSubject[], options: { source: string; enqueue: EnqueueMode; now?: number; /** Default true: HEAD even with the flag off. */ headWhenOff?: boolean;
-  /** Default false. The native writer is the ONLY writer (Client Delivery zips, #787 slice 7): the flag off is `unavailable` (reason `disabled`), and a missing CRC is `preparing` however small the set, never `legacy`. */ nativeOnly?: boolean }): Promise<ZipAssessment> {
+  /** Default false. The native writer is the ONLY writer (Client Delivery zips, #787 slice 7): the flag off is `unavailable` (reason `disabled`), and a missing CRC is `preparing` however small the set, never `legacy`. */ nativeOnly?: boolean; /** Default false. Name every absent key in `missingKeys` of a `missing` answer. */ listMissing?: boolean }): Promise<ZipAssessment> {
   const now = options.now ?? Date.now();
   const small = subjects.reduce((total, subject) => total + subject.bytes, 0) <= ZIP_LEGACY_MAX_BYTES;
   const enabled = await nativeZipEnabled(env.DB);
@@ -99,6 +99,8 @@ export async function assessZip(env: GateEnv, subjects: readonly CrcSubject[], o
   const unique = [...new Map(subjects.map((subject) => [subject.r2Key, subject])).values()];
   const heads: Array<{ etag: string; size: number } | null> = [];
   for (let at = 0; at < unique.length; at += HEAD_BATCH) heads.push(...await Promise.all(unique.slice(at, at + HEAD_BATCH).map((subject) => env.MEDIA.head(subject.r2Key))));
+  const absent = unique.filter((_, index) => heads[index] === null).map((subject) => subject.r2Key);
+  if (absent.length > 0) return options.listMissing ? { kind: "unavailable", reason: "missing", missingKeys: absent } : { kind: "unavailable", reason: "missing" };
   for (const [index, head] of heads.entries()) {
     if (head === null) return { kind: "unavailable", reason: "missing" };
     if (head.size !== unique[index]!.bytes) return { kind: "unavailable", reason: "changed" };
