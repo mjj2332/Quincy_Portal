@@ -27,27 +27,20 @@ export function PreparedZipNotice({ ask, onDownload, onClose, onError, label = "
   useEffect(() => { void start(); }, [start]);
   const status = prepared.status;
   const failed = status === "unavailable" || status === "failed" || status === "too_large";
-  const close = <Button type="button" variant="ghost" data-testid="prepared-zip-close" className="ml-auto" onClick={onClose}>Close</Button>;
-  // A failure is announced as an alert, like the guest side; preparing, timeout and ready share one status region (a distinct element, so the role change is announced).
-  if (failed) {
-    return (
-      <Notice key="alert" tone="critical" role="alert" data-tone="critical" data-testid="prepared-zip-notice" className="flex flex-wrap items-start gap-[var(--space-2)]">
-        <span className="min-w-0 flex-1">{status === "too_large" ? PREPARE_TOO_BIG_COPY : PREPARE_FAILED_COPY}</span>
-        {status !== "too_large" && <Button type="button" variant="outline" data-testid="prepared-zip-check-again" onClick={() => void start()}>Check again</Button>}
-        {close}
-      </Notice>
-    );
-  }
-  const tone = status === "ready" ? "positive" : "caution";
+  const tone = failed ? "critical" : status === "ready" ? "positive" : "caution";
+  // One stable row of actions outside the announcement region, so a poll that turns the message from status to alert never remounts Close (it may hold focus). Only the message element changes: a
+  // failure is announced as an alert (a distinct element, so the role change is announced), preparing, timeout and ready share one status.
   return (
-    <Notice key="status" tone={tone} role="status" data-tone={tone} data-testid="prepared-zip-notice" className="flex flex-wrap items-start gap-[var(--space-2)]">
-      <span className="flex min-w-0 flex-1 items-start gap-[var(--space-2)]">
-        {(status === "idle" || status === "checking" || status === "preparing") && <Spinner aria-hidden="true" role="presentation" className={NOTICE_SPINNER} />}
-        {status === "ready" ? READY_HINT_COPY : status === "timeout" ? PREPARE_TIMEOUT_COPY : PREPARING_COPY}
-      </span>
-      {status === "timeout" && <Button type="button" variant="outline" data-testid="prepared-zip-check-again" onClick={() => void start()}>Check again</Button>}
+    <Notice tone={tone} data-tone={tone} data-testid="prepared-zip-notice" className="flex flex-wrap items-start gap-[var(--space-2)]">
+      {failed
+        ? <span key="alert" role="alert" data-testid="prepared-zip-message" className="min-w-0 flex-1">{status === "too_large" ? PREPARE_TOO_BIG_COPY : PREPARE_FAILED_COPY}</span>
+        : <span key="status" role="status" data-testid="prepared-zip-message" className="flex min-w-0 flex-1 items-start gap-[var(--space-2)]">
+          {(status === "idle" || status === "checking" || status === "preparing") && <Spinner aria-hidden="true" role="presentation" className={NOTICE_SPINNER} />}
+          {status === "ready" ? READY_HINT_COPY : status === "timeout" ? PREPARE_TIMEOUT_COPY : PREPARING_COPY}
+        </span>}
+      {(status === "timeout" || status === "unavailable" || status === "failed") && <Button type="button" variant="outline" data-testid="prepared-zip-check-again" onClick={() => void start()}>Check again</Button>}
       {status === "ready" && <Button type="button" variant="outline" data-testid="prepared-zip-download" onClick={onDownload}>{label}</Button>}
-      {close}
+      <Button type="button" variant="ghost" data-testid="prepared-zip-close" className="ml-auto" onClick={onClose}>Close</Button>
     </Notice>
   );
 }

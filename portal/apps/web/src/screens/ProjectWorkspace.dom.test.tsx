@@ -1197,22 +1197,23 @@ describe("ProjectWorkspace selection download", () => {
     const closeNotice = async () => { await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="prepared-zip-close"]')!.click(); }); await tick(0); };
 
     const trigger = () => [...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((item) => item.textContent === "Download selection")!;
+    const message = () => host.querySelector('[data-testid="prepared-zip-message"]');
     const unavailable = () => new ApiError("Unavailable", 502, { code: "download_unavailable" });
 
     it("design review: preparing is a caution status with the copy beside an aligned spinner; ready is a positive status that SAYS it is ready, with an outline Download zip", async () => {
       apiPostMock.mockRejectedValue(preparing()); await selectOneAndDownload();
-      expect(notice()!.getAttribute("role")).toBe("status"); expect(notice()!.getAttribute("data-tone")).toBe("caution");
+      expect(message()!.getAttribute("role")).toBe("status"); expect(notice()!.getAttribute("data-tone")).toBe("caution");
       const spinner = notice()!.querySelector('[role="presentation"]')!; expect(spinner).not.toBeNull(); expect(spinner.parentElement!.textContent).toContain("Preparing this download."); expect(spinner.parentElement).not.toBe(notice());
       apiPostMock.mockResolvedValue({ downloadUrl: "/api/projects/p1/download-selection/a/archive.zip" }); await tick(30_000);
-      expect(notice()!.getAttribute("role")).toBe("status"); expect(notice()!.getAttribute("data-tone")).toBe("positive");
-      expect(notice()!.textContent).toContain("The zip starts in your browser. If nothing downloads, wait a minute and try again.");
+      expect(message()!.getAttribute("role")).toBe("status"); expect(notice()!.getAttribute("data-tone")).toBe("positive");
+      expect(message()!.textContent).toContain("The zip starts in your browser. If nothing downloads, wait a minute and try again.");
       expect(readyDownload().classList.contains("bg-primary")).toBe(false);
     });
 
     it("design review: a failure or a too-large zip is announced as an alert, not a status", async () => {
       apiPostMock.mockRejectedValue(preparing()); await selectOneAndDownload();
       apiPostMock.mockRejectedValue(unavailable()); await tick(30_000);
-      expect(notice()!.getAttribute("role")).toBe("alert"); expect(notice()!.textContent).toContain("Couldn't prepare this zip."); expect(notice()!.getAttribute("data-tone")).toBe("critical");
+      expect(message()!.getAttribute("role")).toBe("alert"); expect(message()!.textContent).toContain("Couldn't prepare this zip."); expect(notice()!.getAttribute("data-tone")).toBe("critical");
     });
 
     it("design review: Close and Download zip return focus to the trigger that opened the notice (selection)", async () => {
@@ -1240,6 +1241,36 @@ describe("ProjectWorkspace selection download", () => {
       apiPostMock.mockResolvedValue({ state: "ready" }); await tick(30_000);
       await act(async () => { readyDownload().focus(); readyDownload().click(); }); await tick(0);
       expect(notice()).toBeNull(); expect(document.activeElement).toBe(rawToolbar());
+    });
+
+    it("Sol: the trigger is the clicked button even when the click never focused it (Safari), so Close returns focus to it", async () => {
+      apiPostMock.mockRejectedValue(preparing());
+      await render(<ProjectWorkspace projectId="p1" />); await flush(); await openTab(host, "RAW");
+      await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[0]!);
+      (document.activeElement as HTMLElement | null)?.blur();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      await act(async () => { trigger().click(); }); await tick(0);
+      expect(document.activeElement).not.toBe(trigger());
+      await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="prepared-zip-close"]')!.focus(); host.querySelector<HTMLButtonElement>('[data-testid="prepared-zip-close"]')!.click(); }); await tick(0);
+      expect(document.activeElement).toBe(trigger());
+    });
+
+    it("Sol: Close keeps focus when a poll turns the notice from preparing to unavailable", async () => {
+      apiPostMock.mockRejectedValue(preparing()); await selectOneAndDownload();
+      const close = host.querySelector<HTMLButtonElement>('[data-testid="prepared-zip-close"]')!; close.focus(); expect(document.activeElement).toBe(close);
+      apiPostMock.mockRejectedValue(unavailable()); await tick(30_000);
+      expect(message()!.getAttribute("role")).toBe("alert");
+      expect(document.activeElement).toBe(close); expect(close.isConnected).toBe(true);
+    });
+
+    it("Sol: a Download zip that completes after focus moved to another control leaves focus there", async () => {
+      vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+      await rawReadyNotice();
+      const late = deferred(); apiPostMock.mockImplementationOnce(() => late.promise as Promise<never>);
+      await act(async () => { readyDownload().focus(); readyDownload().click(); }); await tick(0);
+      const other = host.querySelector<HTMLButtonElement>('[role="tab"]')!; other.focus(); expect(document.activeElement).toBe(other);
+      late.resolve({ state: "ready" }); await tick(0);
+      expect(notice()).toBeNull(); expect(document.activeElement).toBe(other);
     });
 
     it("design review: on the Edited tab the notice follows the AutoHDR status card, on the RAW tab it follows the hand-off bar", async () => {

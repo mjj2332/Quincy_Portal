@@ -294,7 +294,7 @@ describe("PhotoGrid download selection", () => {
     expect(buttons.slice(-2).map((button) => button.textContent)).toEqual(["Clear", "Download selection"]);
     await click(buttons.at(-1)!);
     expect(onDownloadSelection).toHaveBeenCalledTimes(1);
-    expect(onDownloadSelection).toHaveBeenCalledWith(["one", "two"]);
+    expect(onDownloadSelection).toHaveBeenCalledWith(["one", "two"], expect.any(HTMLButtonElement));
     expect(isSelected(host, "one")).toBe(true); expect(isSelected(host, "two")).toBe(true);
   });
 

@@ -32,7 +32,7 @@ interface PhotoGridProps {
   onDelete?: (assetId: string) => Promise<void>;
   onBulkDelete?: (assetIds: string[]) => Promise<{ succeededIds: string[]; failedIds: string[] }>;
   canDownloadSelection?: boolean;
-  onDownloadSelection?: (assetIds: string[]) => Promise<void>;
+  onDownloadSelection?: (assetIds: string[], trigger: HTMLElement) => Promise<void>;
 }
 
 // TB8-09 slice 5, owner decision §9.3 (approved 2026-09-04): `.actionbar` takes the inverse
@@ -172,11 +172,11 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
     setMulti((current) => { const next = new Set([...current].filter((id) => !succeeded.has(id))); return next.size === current.size ? current : next; });
     lastSelected.current = null;
   }
-  async function downloadSelection() {
+  async function downloadSelection(trigger: HTMLElement) {
     if (!onDownloadSelection) return;
     const ids = [...multi];
     setIsPreparingDownload(true);
-    try { await onDownloadSelection(ids); }
+    try { await onDownloadSelection(ids, trigger); }
     finally { setIsPreparingDownload(false); }
   }
   function renderGrid(gridAssets: WorkspaceAsset[]) {
@@ -218,7 +218,7 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
     {multi.size > 0 && <div className={ACTIONBAR} data-surface="inverse" data-testid="photo-grid-actionbar"><span className="[font:400_18px/1.18_var(--font-display)]">{multi.size}</span><span className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-on-inverse-muted">selected</span><span className="w-px h-[22px] bg-border" />{canReview && <><button className={BARBTN} type="button" onClick={() => void bulk("rate")}>Rate 5</button><button className={BARBTN} type="button" onClick={() => void bulk("label")}>Label</button><button className={BARBTN_SOLID} type="button" onClick={() => void bulk("approve")}>Approve</button><button className={BARBTN} type="button" onClick={() => void bulk("flag")}>Flag</button></>}{canRecommend && <button className={BARBTN_SOLID} type="button" onClick={() => void bulk("recommend")}>Recommend</button>}{canSelect && <button className={BARBTN} type="button" onClick={() => void bulk("select")}>Select for editing</button>}{canDelete && onBulkDelete && <button className={BARBTN} type="button" onClick={() => void deleteMany().catch(() => undefined)}>Delete {multi.size}</button>}<button className={BARBTN} type="button" onClick={() => { setMulti(new Set()); lastSelected.current = null; }}>Clear</button>{canDownloadSelection && onDownloadSelection && (() => {
       // Only the entry count is capped here. Bytes are the server's call (413 download_too_large with native_zip off), so a large selection can reach the prepare endpoint when it is on.
       const exceedsLimit = multi.size > DOWNLOAD_SELECTION_MAX_ASSETS;
-      return <button className={BARBTN} type="button" disabled={isPreparingDownload || exceedsLimit} title={exceedsLimit ? `Download up to ${DOWNLOAD_SELECTION_MAX_ASSETS} assets` : undefined} onClick={() => void downloadSelection().catch(() => undefined)}>{isPreparingDownload ? "Preparing download…" : "Download selection"}</button>;
+      return <button className={BARBTN} type="button" disabled={isPreparingDownload || exceedsLimit} title={exceedsLimit ? `Download up to ${DOWNLOAD_SELECTION_MAX_ASSETS} assets` : undefined} onClick={(event) => void downloadSelection(event.currentTarget).catch(() => undefined)}>{isPreparingDownload ? "Preparing download…" : "Download selection"}</button>;
     })()}</div>}
   </>;
 }
