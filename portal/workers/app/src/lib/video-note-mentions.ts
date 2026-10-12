@@ -1,5 +1,5 @@
 import {
-  EMBEDDED_MEDIA_MAX_PER_POST, VIDEO_NOTE_BODY_MAX, VIDEO_NOTE_RICH_TEXT_PROFILE, normalizeRichTextMentionLabels, parseRichTextDoc, richTextMediaRefs, richTextMentionIds, videoNoteBody,
+  EMBEDDED_MEDIA_MAX_PER_POST, VIDEO_NOTE_BODY_MAX, RICH_TEXT_JSON_MAX_BYTES, VIDEO_NOTE_RICH_TEXT_PROFILE, normalizeRichTextMentionLabels, parseRichTextDoc, richTextMediaRefs, richTextMentionIds, videoNoteBody,
   type RichTextDoc,
 } from "@quincy/shared";
 import { videoAudience } from "./video-review-notifications";
@@ -18,7 +18,7 @@ export async function videoMentionableUsers(db: D1Database, projectId: string): 
 }
 
 export type PreparedNoteContent = { content: RichTextDoc; contentJson: string; body: string; mentionIds: string[]; mediaIds: string[]; videoIds: string[] };
-export type PrepareFailure = { error: "invalid_content" | "mentions_not_allowed" | "too_many_media" | "body_too_long" };
+export type PrepareFailure = { error: "invalid_content" | "content_too_large" | "mentions_not_allowed" | "too_many_media" | "body_too_long" };
 
 /**
  * Parses a note's `content` against the video-note profile, resolves its mentions against the candidates (labels are rewritten from the server's names, never trusted),
@@ -43,9 +43,12 @@ export async function prepareNoteContent(db: D1Database, projectId: string, raw:
   }
   let content: RichTextDoc;
   try { content = normalizeRichTextMentionLabels(parsed, names); } catch { return { error: "mentions_not_allowed" }; }
+  // The parse capped the document as sent; substituting current names can grow it, and the column's CHECK is on the stored JSON, so the cap is checked again here (a refusal, not a 500).
+  const contentJson = JSON.stringify(content);
+  if (new TextEncoder().encode(contentJson).length > RICH_TEXT_JSON_MAX_BYTES) return { error: "content_too_large" };
   const refs = richTextMediaRefs(content);
   if (refs.length > EMBEDDED_MEDIA_MAX_PER_POST) return { error: "too_many_media" };
   const body = videoNoteBody(content);
   if (body.length > VIDEO_NOTE_BODY_MAX) return { error: "body_too_long" };
-  return { content, contentJson: JSON.stringify(content), body, mentionIds, mediaIds: refs.map((ref) => ref.id), videoIds: refs.filter((ref) => ref.kind === "video").map((ref) => ref.id) };
+  return { content, contentJson, body, mentionIds, mediaIds: refs.map((ref) => ref.id), videoIds: refs.filter((ref) => ref.kind === "video").map((ref) => ref.id) };
 }
