@@ -127,6 +127,8 @@ describe("A resolved note", () => {
     expect(byId("guest-reply-form")).not.toBeNull();
     expect(byId("guest-note-resolved")).not.toBeNull();
     expect(byId("guest-note-resolved")!.textContent).toBe("Resolved");
+    // Bottom-right, as on the staff card: the tick follows the reply form, not sits above it.
+    expect(byId("guest-reply-form")!.compareDocumentPosition(byId("guest-note-resolved")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 
