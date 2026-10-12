@@ -13,7 +13,7 @@ this decision.
 
 ## Decision
 
-1. **Staff upload a web-ready H.264 MP4 with a constant frame rate, up to 2 GB.** The file is served
+1. **Staff upload a web-ready H.264 MP4 (or QuickTime MOV, point 5) with a constant frame rate, up to 2 GB.** The file is served
    exactly as uploaded, from storage, with HTTP byte-range support. There is no transcoding, no
    adaptive streaming, and no server-side FFmpeg.
 2. **The server re-probes the stored file.** Upload is reserve, then a presigned multipart upload
@@ -24,7 +24,16 @@ this decision.
    unsupported edit list. A non-fast-start MP4 is accepted with a warning that playback may begin slowly.
 4. **A Version is immutable.** Notes store integer presentation frames against one exact Version, which
    is only safe because the file, and so its frame rate, can never change.
-5. **The stream is private.** It is never cached publicly and never served with a download disposition
+5. **A QuickTime `.mov` is accepted when it holds the same shape (#813).** An H.264 `.mov` with a
+   constant frame rate is admitted exactly as an `.mp4` is: the probe accepts the legacy QuickTime
+   opening boxes (`wide`, `mdat`, `moov`) as well as `ftyp`, and nothing else about the checks relaxes
+   (bounds, `avc1`/`avc3` with `avcC`, the single video track, the edit-list, transform and
+   fragmentation rules, `not_fast_start`). The bytes are stored unchanged, with no remux, under the
+   canonical `video/mp4` type and an `original.mp4` object key; a terminal `.mov` filename is stored as
+   `.mp4`, so the player, stream and every download name treat it as an MP4. ProRes, HEVC and other
+   non-H.264 `.mov` files are still rejected with the same plain reasons. PCM audio (`lpcm`, `sowt`,
+   `twos`) is accepted with no warning: the audio track is never decoded by the Portal.
+6. **The stream is private.** It is never cached publicly and never served with a download disposition
    to staff viewers; the project-access check applies to every range request.
 
 ## Considered options
