@@ -104,7 +104,7 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
           <Button type="button" variant="secondary" className="min-h-[44px]" disabled={cancelling} onClick={() => { setCancelling(true); void onCancelReservation(cancellable.reservationId).finally(() => setCancelling(false)); }}>{cancelling ? "Cancelling…" : "Cancel upload"}</Button>
         </div>}
         {message && <Notice tone="critical" role="alert">{message}</Notice>}
-        <div className="flex flex-wrap gap-[var(--space-2)]">
+        <div className="flex flex-wrap items-center gap-[var(--space-2)]">
           <Button type="button" variant="primary" className="min-h-[44px]" data-testid="video-card-open" data-video-id={video.id} onClick={(event) => onOpen(video, event.currentTarget)}>Open review</Button>
           {canUpload && !busy && <FilePickButton
             accept={VIDEO_ACCEPT}
