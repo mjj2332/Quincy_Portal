@@ -47,9 +47,9 @@ export function DeliveryDownloadAll({ api, onGone }: { api: Pick<DeliveryApi, "z
           <DialogDescription>One zip with every photo on this page that is unlocked.</DialogDescription>
         </DialogHeader>
         <RadioGroup value={size} onValueChange={(next) => { if (next === "web" || next === "full") setSize(next); }} aria-label="Photo size" data-testid="delivery-zip-sizes" className="shrink-0">
-          {SIZES.map((choice) => <FieldLabel key={choice.size} htmlFor={`delivery-zip-size-${choice.size}`} className={TOUCH}>
+          {SIZES.map((choice) => <FieldLabel key={choice.size} htmlFor={`delivery-zip-size-${choice.size}`} className={`${TOUCH} has-data-checked:bg-[var(--bg-raised)] has-data-checked:hover:bg-[var(--bg-raised)]`}>
             <Field orientation="horizontal">
-              <FieldContent><FieldTitle>{choice.title}</FieldTitle><FieldDescription>{choice.hint}</FieldDescription></FieldContent>
+              <FieldContent><FieldTitle className="text-foreground">{choice.title}</FieldTitle><FieldDescription className="normal-case tracking-[var(--tracking-normal)] [font:var(--type-body-sm)] text-foreground-secondary">{choice.hint}</FieldDescription></FieldContent>
               <RadioGroupItem value={choice.size} id={`delivery-zip-size-${choice.size}`} data-testid={`delivery-zip-size-${choice.size}`} />
             </Field>
           </FieldLabel>)}
@@ -116,6 +116,7 @@ function ZipPanel({ api, size, onClose, onGone }: { api: Pick<DeliveryApi, "zipM
     <div data-testid="delivery-zip-body" className="min-h-0 flex-1 overflow-y-auto"><ZipBody loaded={loaded} archive={archive} prepareWait={prepareWait} pollWait={pollWait} onRetry={load} onCheckAgain={() => void startPrepared()} /></div>
     <DialogFooter className="shrink-0">
       <Button type="button" variant="outline" data-testid="delivery-zip-close" className={TOUCH} onClick={onClose}>Close</Button>
+      {!canDownload && manifest !== null && manifest.photos > 0 && !manifest.tooLarge && archive === "preparing" && <Button type="button" disabled data-testid="delivery-zip-start-pending" className={TOUCH}><Spinner aria-hidden="true" role="presentation" />Download zip</Button>}
       {canDownload && <Button nativeButton={false} data-testid="delivery-zip-start" className={TOUCH} render={<a href={api.zipUrl(size)} download />}><DownloadIcon aria-hidden="true" />Download zip</Button>}
     </DialogFooter>
   </>;
@@ -148,14 +149,12 @@ function ZipBody({ loaded, archive, prepareWait, pollWait, onRetry, onCheckAgain
       <Button type="button" variant="outline" data-testid="delivery-zip-check-again" className={TOUCH} onClick={onCheckAgain}>Check again</Button>
     </div>}
     {usable && archive === "too_large" && <p role="alert" data-testid="delivery-zip-problem" className={PROBLEM}>{TOO_BIG_COPY}</p>}
-    {photos > 0 && <ItemGroup className="gap-[var(--space-2)]">
-      <Item variant="outline" size="sm" data-testid="delivery-zip-summary"><ItemContent><ItemTitle>{`${photos} ${photos === 1 ? "photo" : "photos"} · ${formatBytes(totalBytes)}`}</ItemTitle></ItemContent></Item>
-    </ItemGroup>}
+    {photos > 0 && <h3 data-testid="delivery-zip-summary" className={HEADING}>{`In the zip: ${photos} ${photos === 1 ? "photo" : "photos"} · ${formatBytes(totalBytes)}`}</h3>}
     {leftOut.length > 0 && <section aria-label="Not included" className="flex flex-col gap-[var(--space-2)]">
-      <h3 className={HEADING}>Not included (locked)</h3>
+      <h3 className={HEADING}>Not included</h3>
       <ItemGroup className="gap-[var(--space-2)]">
         {leftOut.map((entry, index) => <Item key={`${entry.label}:${index}`} variant="outline" size="sm" data-testid="delivery-zip-leftout-item">
-          <ItemContent><ItemTitle>{entry.label}</ItemTitle><ItemDescription>Locked. Ask the studio to unlock it.</ItemDescription></ItemContent>
+          <ItemContent><ItemTitle>{entry.label}</ItemTitle><ItemDescription>Ask the studio to unlock it.</ItemDescription></ItemContent>
         </Item>)}
       </ItemGroup>
     </section>}

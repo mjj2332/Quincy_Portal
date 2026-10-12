@@ -44,7 +44,7 @@ describe("opening", () => {
     const dialog = byTestId("delivery-download-all-dialog")!;
     expect(dialog.textContent).toContain("Download all photos");
     expect(reads().map((c) => c.url)).toEqual([`${BASE}/zips/web`]);
-    expect(byTestId("delivery-zip-summary")!.textContent).toBe("12 photos · 24 MB");
+    expect(byTestId("delivery-zip-summary")!.textContent).toBe("In the zip: 12 photos · 24 MB");
     expect(byTestId("delivery-zip-size-web")!.getAttribute("aria-checked")).toBe("true");
     expect(dialog.textContent).toContain("Smaller JPEGs for websites and social media");
     expect(dialog.textContent).toContain("Original files for print");
@@ -53,11 +53,11 @@ describe("opening", () => {
     expect(a.textContent).toBe("Download zip");
     expect(posts()).toEqual([]);
   });
-  it("lists the locked photos left out by public label under 'Not included (locked)'", async () => {
+  it("lists the locked photos left out by public label under Not included", async () => {
     answers.web = () => json(manifest({ leftOut: [{ label: "Photo 02", reason: "premium_locked" }, { label: "Photo 05", reason: "premium_locked" }] }));
     await show(); await openIt();
     const dialog = byTestId("delivery-download-all-dialog")!;
-    expect(dialog.textContent).toContain("Not included (locked)");
+    expect(dialog.textContent).toContain("Not included");
     expect(allByTestId("delivery-zip-leftout-item").map((i) => i.textContent)).toEqual([expect.stringContaining("Photo 02"), expect.stringContaining("Photo 05")]);
   });
   it("Close closes the dialog and a late manifest after Close changes nothing", async () => {
@@ -77,7 +77,7 @@ describe("size", () => {
     answers.full = () => json(manifest({ size: "full", photos: 12, totalBytes: 3 * 1024 ** 3 }));
     await show(); await openIt(); await pick("full");
     expect(reads().map((c) => c.url)).toEqual([`${BASE}/zips/web`, `${BASE}/zips/full`]);
-    expect(byTestId("delivery-zip-summary")!.textContent).toBe("12 photos · 3 GB");
+    expect(byTestId("delivery-zip-summary")!.textContent).toBe("In the zip: 12 photos · 3 GB");
     expect(link()!.getAttribute("href")).toBe(`${BASE}/zips/full/photos.zip`);
   });
   it("a late answer for the size left is ignored", async () => {
@@ -86,7 +86,7 @@ describe("size", () => {
     answers.full = () => json(manifest({ size: "full", photos: 7, totalBytes: 1024 ** 3 }));
     await show(); await openIt(); await pick("full");
     await act(async () => { releaseWeb(json(manifest({ photos: 99 }))); }); await flush();
-    expect(byTestId("delivery-zip-summary")!.textContent).toBe("7 photos · 1 GB");
+    expect(byTestId("delivery-zip-summary")!.textContent).toBe("In the zip: 7 photos · 1 GB");
     expect(link()!.getAttribute("href")).toBe(`${BASE}/zips/full/photos.zip`);
   });
   it("reopening starts again from Web-size with a fresh read", async () => {
@@ -105,6 +105,8 @@ describe("preparing", () => {
     expect(posts()).toHaveLength(1); expect(posts()[0]!.url).toBe(`${BASE}/zips/web/prepare`); expect(posts()[0]!.body).toBe("{}");
     expect(status()!.textContent).toContain("Preparing this download. This may take a few minutes.");
     expect(link()).toBeNull();
+    const pending = byTestId("delivery-zip-start-pending") as HTMLButtonElement;
+    expect(pending.disabled).toBe(true); expect(pending.getAttribute("href")).toBeNull(); expect(pending.textContent).toBe("Download zip");
   });
   it("polls the manifest and offers the anchor once ready", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
@@ -115,6 +117,7 @@ describe("preparing", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
     expect(status()!.textContent).toContain("Your zip is ready");
     expect(link()!.getAttribute("href")).toBe(`${BASE}/zips/web/photos.zip`);
+    expect(byTestId("delivery-zip-start-pending")).toBeNull();
     expect(posts()).toHaveLength(1);
   });
   it("after five minutes it says still preparing and Check again prepares once more", async () => {
