@@ -56,7 +56,7 @@ function Hero({ dto, hero, action }: { dto: DeliveryPageDto; hero: DeliveryItemD
       data-testid="delivery-hero-photo" src={hero.url} alt={hero.label} fetchPriority="high" onError={() => { setFailed(true); }}
       srcSet={hero.thumbUrl ? `${hero.thumbUrl} ${RENDITION_SPECS.thumb.maxEdge}w, ${hero.url} ${DELIVERY_RENDITION_SPECS.delivery_web.maxEdge}w` : undefined}
       sizes="100vw" className="absolute inset-0 size-full object-cover" />}
-    <div aria-hidden className="pointer-events-none absolute inset-0 bg-[var(--scrim-hero)]" />
+    <div aria-hidden className="pointer-events-none absolute inset-0 bg-[image:var(--scrim-hero)]" />
     <img src="/brand/Quincy-HERO-Q-WHITE-1.png" alt="" aria-hidden className="pointer-events-none absolute -top-[12%] left-1/2 h-[125%] -translate-x-1/2 opacity-15 select-none" />
     <div data-testid="delivery-hero-credit" aria-hidden className="pointer-events-none absolute top-[var(--space-7)] right-[var(--space-7)] z-10 @max-[721px]:top-[var(--space-4)] @max-[721px]:right-[var(--space-4)]">
       <img src="/brand/quincy-wordmark-white.png" alt="" className="h-[var(--space-5)] w-auto select-none" />

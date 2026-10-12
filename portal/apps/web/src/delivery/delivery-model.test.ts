@@ -8,7 +8,7 @@ const item = (n: number, over: Partial<DeliveryItemDto> = {}): DeliveryItemDto =
 const page = (items: DeliveryItemDto[], coverHandle: string | null = null): DeliveryPageDto => ({ property: { street: "12 Example St", suburb: "Suburbia", postcode: "2030", agency: "Harbour Realty" }, setNumber: 1, publishedAt: 1_760_000_000_000, coverHandle, items });
 
 describe("tabsOf", () => {
-  it("orders tabs Gallery, Film, Floorplan, Copywriting, Premium, keeps published order and hides empty tabs", () => {
+  it("orders tabs Gallery, Film, Floorplan, Premium, Copywriting, keeps published order and hides empty tabs", () => {
     const tabs = tabsOf(page([item(1, { kind: "copy", url: "/c" }), item(2), item(3, { kind: "video" }), item(4, { kind: "floorplan" }), item(5)]));
     expect(tabs.map((tab) => tab.id)).toEqual(["photos", "film", "floorplan", "description"]);
     expect(tabs[0]!.items.map((i) => i.handle)).toEqual([handle(2), handle(5)]);
@@ -22,6 +22,10 @@ describe("tabsOf", () => {
   it("keeps Premium after an unlock (locked false, premium true) and hides a kind tab left empty", () => {
     const tabs = tabsOf(page([item(1, { premium: true, locked: false })]));
     expect(tabs.map((tab) => tab.id)).toEqual(["premium"]);
+  });
+  it("puts Premium before Copywriting when both have items", () => {
+    const tabs = tabsOf(page([item(1), item(2, { kind: "copy", url: "/c" }), item(3, { premium: true })]));
+    expect(tabs.map((tab) => tab.id)).toEqual(["photos", "premium", "description"]);
   });
   it("treats a locked item as an extra even if the flag were missing", () => { expect(isExtra(item(1, { locked: true }))).toBe(true); });
   it("is empty for an empty page", () => { expect(tabsOf(page([]))).toEqual([]); });

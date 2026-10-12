@@ -27,7 +27,7 @@ export const isExtra = (item: DeliveryItemDto): boolean => item.premium || item.
 
 const KIND_TAB: Record<DeliveryItemDto["kind"], Exclude<DeliveryTabId, "premium">> = { photo: "photos", video: "film", floorplan: "floorplan", copy: "description" };
 const LABELS: Record<DeliveryTabId, string> = { photos: "Gallery", film: "Film", floorplan: "Floorplan", description: "Copywriting", premium: "Premium" };
-const ORDER: readonly DeliveryTabId[] = ["photos", "film", "floorplan", "description", "premium"];
+const ORDER: readonly DeliveryTabId[] = ["photos", "film", "floorplan", "premium", "description"];
 
 /** The tabs in PRD order, items in published order, empty tabs left out. Premium holds every extra of every kind, and keeps holding it after an unlock. */
 export function tabsOf(dto: DeliveryPageDto): DeliveryTab[] {

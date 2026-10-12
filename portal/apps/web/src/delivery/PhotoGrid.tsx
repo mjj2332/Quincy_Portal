@@ -36,7 +36,7 @@ function PhotoTile({ item, items, index, hrefs, unlock, onRequestUnlock, onOpen 
       <div className="absolute inset-0 overflow-hidden"><TileImage key={`${item.locked}:${item.thumbUrl}`} item={item} /></div>
       <Button type="button" variant="ghost" aria-label={`Open ${item.label}`} className="absolute inset-0 h-full w-full rounded-none p-0 hover:bg-transparent" onClick={(event) => { onOpen(items, index, event.currentTarget); }} />
       {/* Always visible (the prototype reveals it on hover, which a phone has no equivalent of), and it never takes a click from the open button under it. */}
-      <span data-testid="delivery-tile-caption" className="pointer-events-none absolute inset-x-0 bottom-0 bg-[var(--scrim-caption)] px-[var(--space-3)] pt-[var(--space-6)] pb-[var(--space-2)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-on-inverse">{item.label}</span>
+      <span data-testid="delivery-tile-caption" className="pointer-events-none absolute inset-x-0 bottom-0 bg-[image:var(--scrim-caption)] px-[var(--space-3)] pt-[var(--space-6)] pb-[var(--space-2)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-on-inverse">{item.label}</span>
       {item.locked && <span className="pointer-events-none absolute top-[var(--space-2)] left-[var(--space-2)]"><PremiumBadge overPhoto /></span>}
     </div>
     {!item.locked && hrefs && <PhotoDownloads item={item} hrefs={hrefs} />}

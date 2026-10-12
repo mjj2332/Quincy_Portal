@@ -63,9 +63,9 @@ describe("tabs", () => {
   });
   it("shows each tab's count beside its label, and a lock on Premium", async () => {
     await show(page([photo(1), photo(2), film(3), pdf(4, "floorplan"), pdf(5, "copy"), pdf(6, "copy"), locked(7)]));
-    expect(tabNames()).toEqual(["Gallery", "Film", "Floorplan", "Copywriting", "Premium"]);
+    expect(tabNames()).toEqual(["Gallery", "Film", "Floorplan", "Premium", "Copywriting"]);
     const counts = [...document.querySelectorAll('[role="tab"]')].map((element) => element.querySelector('[data-testid="delivery-tab-count"]')?.textContent);
-    expect(counts).toEqual(["2", "1", "1", "2", "1"]);
+    expect(counts).toEqual(["2", "1", "1", "1", "2"]);
     expect(tab("Premium")!.querySelector("svg")).not.toBeNull();
     expect(tab("Gallery")!.querySelector("svg")).toBeNull();
   });
