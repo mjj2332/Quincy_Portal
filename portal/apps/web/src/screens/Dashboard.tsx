@@ -477,13 +477,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // defers accepting refetched data (a refetch must not land mid-save). A priority save is per-card:
   // only the saving card locks (see `runBoardMovement` and `moveProjectPosition`).
   const movementInteractionActive = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || activeConfirm);
-  // A sort change is refused mid-drag, mid-confirmation and while a move is pending or settling (#830): the
-  // Display trigger is disabled then, and the handler guards the same states for a stale menu.
+  // A sort change is refused mid-drag, mid-confirmation and while a move is pending or settling (#830). One boolean
+  // feeds both the disabled Sort radios and the handler guard, so they cannot drift.
+  const kanbanSortLocked = movementInteractionActive || movementSettlePending;
   const changeKanbanSort = (next: KanbanSortMode) => {
-    if (movementInteractionActive || movementSettlePending || movementBusyRef.current) return;
+    if (kanbanSortLocked) return;
     setKanbanSortMode(next);
     writeKanbanSortPreference({ write: (value) => window.localStorage.setItem(KANBAN_SORT_KEY, value) }, next);
   };
+
   const interactionBlocked = movementInteractionActive || pendingOrdering.size > 0;
   const interactionBlockedRef = useRef(interactionBlocked);
   interactionBlockedRef.current = interactionBlocked;
@@ -1640,7 +1642,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           searchFocusRequest={searchFocusRequest}
           onSearchFocusHandled={handleSearchFocusHandled}
           display={renderedView === "board"
-            ? <BoardDisplayContent value={kanbanSortMode} onChange={changeKanbanSort} />
+            ? <BoardDisplayContent value={kanbanSortMode} onChange={changeKanbanSort} disabled={kanbanSortLocked} />
             : renderedView === "table"
               ? <TableDisplayContent
                   groupBy={tablePrefs.groupBy}

@@ -37,13 +37,13 @@ const KANBAN_SORT_LABELS: Record<KanbanSortMode, string> = { "shoot-date": "Shoo
  * The Board's Sort group (#830): which date orders every column, oldest first. Priority no longer
  * orders cards. The same for every role (an External Editor's cards carry the Deadline too).
  */
-export function BoardDisplayContent({ value, onChange }: { value: KanbanSortMode; onChange: (next: KanbanSortMode) => void }) {
+export function BoardDisplayContent({ value, onChange, disabled = false }: { value: KanbanSortMode; onChange: (next: KanbanSortMode) => void; disabled?: boolean }) {
   return (
     <DropdownMenuGroup>
       <DropdownMenuLabel>Sort</DropdownMenuLabel>
       <DropdownMenuRadioGroup value={value} onValueChange={(next) => { if (KANBAN_SORT_MODES.includes(next as KanbanSortMode)) onChange(next as KanbanSortMode); }}>
         {KANBAN_SORT_MODES.map((mode) => (
-          <DropdownMenuRadioItem key={mode} value={mode}>{KANBAN_SORT_LABELS[mode]}</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem key={mode} value={mode} disabled={disabled}>{KANBAN_SORT_LABELS[mode]}</DropdownMenuRadioItem>
         ))}
       </DropdownMenuRadioGroup>
     </DropdownMenuGroup>

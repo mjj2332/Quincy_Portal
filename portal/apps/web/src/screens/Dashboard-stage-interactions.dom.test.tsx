@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Dashboard, type ProjectSummary } from "./Dashboard";
-import { displayMenu, displayTrigger } from "./dashboard-display-test-helpers";
+import { closeDisplay, displayMenu, displayTrigger, openDisplay, sortRadios } from "./dashboard-display-test-helpers";
 import { ConfirmModalHost } from "../components/ConfirmDialog";
 import { ApiError } from "../lib/api";
 import { dashboardProjectsKey } from "../lib/dashboard-projects";
@@ -718,6 +718,16 @@ describe("Dashboard Stage interactions", () => {
 
     const targetColumn = movedCard.closest<HTMLElement>('[data-testid="board-column"]')!;
     expect([...targetColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["before Street", "Source Street", "target Street"]);
+    // The handler refuses a Sort change while the settle is pending, so the radios say so instead of doing nothing (#830).
+    const columnOrder = () => [...targetColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent);
+    const orderBefore = columnOrder();
+    await openDisplay();
+    const deadline = sortRadios().find((radio) => radio.textContent === "Deadline")!;
+    expect(deadline.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => { deadline.click(); await Promise.resolve(); });
+    expect(columnOrder()).toEqual(orderBefore);
+    expect(window.localStorage.getItem("quincy:dashboard:kanbanSort")).not.toBe("due-date");
+    await closeDisplay();
     const provisionalSourceColumn = card(host, "source-sibling-a Street").closest<HTMLElement>('[data-testid="board-column"]')!;
     expect([...provisionalSourceColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-a Street", "source-sibling-b Street"]);
     resolveSettle(settledSnapshot);
