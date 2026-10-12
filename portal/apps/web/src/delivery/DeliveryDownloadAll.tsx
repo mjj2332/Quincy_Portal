@@ -39,7 +39,7 @@ export function DeliveryDownloadAll({ api, onGone }: { api: Pick<DeliveryApi, "z
   const close = useCallback(() => { setOpen(false); }, []);
   const gone = useCallback(() => { setOpen(false); onGone(); }, [onGone]);
   return <>
-    <Button type="button" variant="outline" data-testid="delivery-download-all" className={TOUCH} onClick={() => { setSize("web"); setOpening((n) => n + 1); setOpen(true); }}><DownloadIcon aria-hidden="true" />Download all</Button>
+    <Button type="button" variant="default" size="lg" data-testid="delivery-download-all" className={TOUCH} onClick={() => { setSize("web"); setOpening((n) => n + 1); setOpen(true); }}><DownloadIcon aria-hidden="true" />Download all</Button>
     <Dialog open={open} onOpenChange={(next) => { if (!next) close(); }}>
       <DialogContent data-testid="delivery-download-all-dialog" showCloseButton={false} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col sm:max-w-[520px]">
         <DialogHeader className="shrink-0">

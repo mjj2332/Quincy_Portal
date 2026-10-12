@@ -19,7 +19,7 @@ export const photo = (n: number, over: Partial<DeliveryItemDto> = {}): DeliveryI
 export const locked = (n: number, over: Partial<DeliveryItemDto> = {}): DeliveryItemDto => photo(n, { locked: true, premium: true, ...over });
 export const film = (n: number, over: Partial<DeliveryItemDto> = {}): DeliveryItemDto => ({ handle: handle(n), kind: "video", label: `Video ${String(n).padStart(2, "0")}`, position: n, locked: false, premium: false, width: 1920, height: 1080, durationMs: 62_000, url: mediaUrl(n), thumbUrl: thumbUrl(n), ...over });
 export const pdf = (n: number, kind: "floorplan" | "copy", over: Partial<DeliveryItemDto> = {}): DeliveryItemDto => ({ handle: handle(n), kind, label: `${kind === "floorplan" ? "Floorplan" : "Copy"} ${String(n).padStart(2, "0")}`, position: n, locked: false, premium: false, width: null, height: null, durationMs: null, url: mediaUrl(n), thumbUrl: null, ...over });
-export const page = (items: DeliveryItemDto[], over: Partial<DeliveryPageDto> = {}): DeliveryPageDto => ({ property: { street: "12 Example St", suburb: "Suburbia" }, setNumber: 1, publishedAt: Date.UTC(2026, 9, 10, 14, 30), coverHandle: null, items, ...over });
+export const page = (items: DeliveryItemDto[], over: Partial<DeliveryPageDto> = {}): DeliveryPageDto => ({ property: { street: "12 Example St", suburb: "Suburbia", postcode: "2030", agency: "Harbour Realty" }, setNumber: 1, publishedAt: Date.UTC(2026, 9, 10, 14, 30), coverHandle: null, items, ...over });
 
 export const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 export const flush = async (times = 4) => { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); };
@@ -37,8 +37,10 @@ export const press = async (key: string, target: Element = document.activeElemen
 export const byTestId = (id: string, within: ParentNode = document) => within.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 export const allByTestId = (id: string, within: ParentNode = document) => [...within.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`)];
 export const byLabel = (label: string, within: ParentNode = document) => within.querySelector<HTMLElement>(`[aria-label="${label}"]`);
-export const tab = (name: string) => [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find((element) => element.textContent === name) ?? null;
-export const tabNames = () => [...document.querySelectorAll<HTMLElement>('[role="tab"]')].map((element) => element.textContent);
+/** A tab's name is its label span; its count and lock sit beside it (#836). */
+const tabLabel = (element: HTMLElement) => element.querySelector('[data-testid="delivery-tab-label"]')?.textContent ?? element.textContent;
+export const tab = (name: string) => [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find((element) => tabLabel(element) === name) ?? null;
+export const tabNames = () => [...document.querySelectorAll<HTMLElement>('[role="tab"]')].map(tabLabel);
 
 type Listener = () => void;
 export type FakeEmbla = {

@@ -1709,3 +1709,26 @@ describe("guard: inverse.css re-scopes the tone text roles in both blocks", () =
     }
   });
 });
+
+/**
+ * #836: the gradient `--scrim-hero` / `--scrim-caption` tokens hold a `linear-gradient(...)`, which is an image. `bg-[var(--scrim-x)]`
+ * compiles to `background-color`, which rejects a gradient, so the scrim silently never paints.
+ * Use `bg-[image:var(--scrim-x)]`.
+ */
+export function scrimColourUtilityProblems(source: string): string[] {
+  return source.split(/[\s"'`]+/).filter((token) => /(?:^|:)bg-\[var\(--scrim-(?:hero|caption)\)\]/.test(token));
+}
+
+describe("guard: a --scrim-* token is never used through a background-color utility (#836)", () => {
+  it("no source file uses bg-[var(--scrim-*)]", () => {
+    const offenders = sourceFiles().flatMap((file) =>
+      scrimColourUtilityProblems(stripComments(readFileSync(file, "utf8"))).map((t) => `  ${t} — ${rel(file)}`));
+    expect(offenders, ["A --scrim-* gradient needs `bg-[image:var(--scrim-…)]`, not `bg-[var(--scrim-…)]`.", ...offenders].join("\n")).toEqual([]);
+  });
+
+  it("proves the detector on planted fixtures", () => {
+    expect(scrimColourUtilityProblems('className="bg-[var(--scrim-hero)]"')).toEqual(["bg-[var(--scrim-hero)]"]);
+    expect(scrimColourUtilityProblems("hover:bg-[var(--scrim-caption)] x")).toEqual(["hover:bg-[var(--scrim-caption)]"]);
+    expect(scrimColourUtilityProblems("bg-[image:var(--scrim-hero)] bg-[var(--ink-900)]")).toEqual([]);
+  });
+});

@@ -131,4 +131,7 @@
   /* The wash behind a detached overlay. Was four raw rgba() literals differing by 2%
      (app.css:764, :528, :1078, :843) — one token, one value. */
   --scrim-overlay: color-mix(in srgb, var(--ink-900) 50%, transparent);
+  /* #836: the Delivery page's photo scrims. The hero's rises from the bottom (the address sits there), a touch of the top held for the wordmark; the caption's is the tile's own bottom band. */
+  --scrim-hero: linear-gradient(to top, color-mix(in srgb, var(--ink-900) 78%, transparent), color-mix(in srgb, var(--ink-900) 12%, transparent) 55%, color-mix(in srgb, var(--ink-900) 32%, transparent));
+  --scrim-caption: linear-gradient(to top, color-mix(in srgb, var(--ink-900) 62%, transparent), transparent);
 }

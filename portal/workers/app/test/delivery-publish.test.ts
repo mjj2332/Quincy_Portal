@@ -329,6 +329,25 @@ describe("the First-Publish Stage move", () => {
   });
 });
 
+describe("Preview: property", () => {
+  it("carries the postcode and the agency name, never the agent", async () => {
+    const projectId = await seedOpenProject({ street: "9 Elm St", suburb: "Glebe", postcode: "2037", agencyName: "Elm Realty", agentName: "Agent Smith-Zed" });
+    const photo = await seedAsset("photo", { projectId });
+    const response = await preview({ assetIds: [photo.id] }, "admin", projectId);
+    expect(response.status).toBe(200);
+    const raw = JSON.stringify(await response.json());
+    expect(JSON.parse(raw).dto.property).toEqual({ street: "9 Elm St", suburb: "Glebe", postcode: "2037", agency: "Elm Realty" });
+    expect(raw).not.toContain("Smith-Zed");
+  });
+  it("shows the same property on the staff read of a published page", async () => {
+    const projectId = await seedOpenProject({ postcode: "2000", directoryAgency: "Dir Realty" });
+    const photo = await seedAsset("photo", { projectId });
+    expect((await publish(body([photo.id]), "admin", projectId)).status).toBe(201);
+    const state = await (await read("admin", projectId)).json() as Json;
+    expect(state.dto.property).toMatchObject({ postcode: "2000", agency: "Dir Realty" });
+  });
+});
+
 describe("Preview", () => {
   it("renders the DTO for an unpublished selection and creates nothing", async () => {
     const [photo, plan, copy] = [await seedAsset("photo"), await seedAsset("floorplan_pdf", { versionGroupId: crypto.randomUUID() }), await seedAsset("copy_pdf")]; const video = await seedVideoVersion({ poster: true });
@@ -336,7 +355,7 @@ describe("Preview", () => {
     const response = await preview({ assetIds: [photo.id, plan.id, copy.id, video.assetId], coverAssetId: photo.id });
     expect(response.status).toBe(200);
     const { dto } = await response.json() as Json;
-    expect(dto).toMatchObject({ property: { street: "Media Street", suburb: null }, setNumber: 1, publishedAt: null });
+    expect(dto).toMatchObject({ property: { street: "Media Street", suburb: null, postcode: null, agency: null }, setNumber: 1, publishedAt: null });
     expect(dto.items.map((item: Json) => [item.kind, item.label])).toEqual([["photo", "Photo 01"], ["floorplan", "Floorplan 01"], ["copy", "Copy 01"], ["video", "Video 01"]]);
     expect(dto.coverHandle).toBe(dto.items[0].handle);
     expect(dto.items.map((item: Json) => [item.url, item.thumbUrl])).toEqual([photo.id, plan.id, copy.id, video.assetId].map((assetId, index) => [`${d(`/preview-media/${assetId}/media`)}`, index === 0 || index === 3 ? d(`/preview-media/${assetId}/thumb`) : null]));

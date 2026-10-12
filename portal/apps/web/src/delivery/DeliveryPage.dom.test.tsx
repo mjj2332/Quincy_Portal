@@ -27,14 +27,14 @@ function Harness({ initial, after, unlockState = {} }: { initial: DeliveryPageDt
 }
 
 describe("tabs", () => {
-  it("orders Photos, Film, Floorplan, Description, hides empty tabs and keeps published order", async () => {
+  it("orders Gallery, Film, Floorplan, Copywriting, hides empty tabs and keeps published order", async () => {
     await show(page([pdf(1, "copy"), photo(2), film(3), pdf(4, "floorplan"), photo(5)]));
-    expect(tabNames()).toEqual(["Photos", "Film", "Floorplan", "Description"]);
+    expect(tabNames()).toEqual(["Gallery", "Film", "Floorplan", "Copywriting"]);
     expect(allByTestId("delivery-tile").map((tile) => tile.dataset.handle)).toEqual([handle(2), handle(5)]);
   });
   it("hides every tab that has nothing in it and shows a calm empty state for an empty page", async () => {
     await show(page([photo(1)]));
-    expect(tabNames()).toEqual(["Photos"]);
+    expect(tabNames()).toEqual(["Gallery"]);
     await mounted!.unmount();
     await show(page([]));
     expect(tabNames()).toEqual([]);
@@ -42,12 +42,12 @@ describe("tabs", () => {
   });
   it("adds Premium only when something is a paid extra, and keeps it, with the item, after an unlock", async () => {
     mounted = await render(<Harness initial={page([photo(1), locked(2)])} after={page([photo(1), photo(2, { premium: true, locked: false })])} />);
-    expect(tabNames()).toEqual(["Photos", "Premium"]);
+    expect(tabNames()).toEqual(["Gallery", "Premium"]);
     await click(tab("Premium"));
     expect(allByTestId("delivery-tile").map((tile) => tile.dataset.handle)).toEqual([handle(2)]);
     expect(byTestId("delivery-premium-badge")).not.toBeNull();
     await click(byTestId("swap"));
-    expect(tabNames()).toEqual(["Photos", "Premium"]);
+    expect(tabNames()).toEqual(["Gallery", "Premium"]);
     expect(byTestId("delivery-panel-premium")).not.toBeNull();
     expect(allByTestId("delivery-tile").map((tile) => tile.dataset.handle)).toEqual([handle(2)]);
     expect(byTestId("delivery-premium-badge")).toBeNull();
@@ -58,8 +58,16 @@ describe("tabs", () => {
     await click(tab("Film"));
     expect(byTestId("delivery-panel-film")).not.toBeNull();
     await click(byTestId("swap"));
-    expect(tabNames()).toEqual(["Photos"]);
+    expect(tabNames()).toEqual(["Gallery"]);
     expect(byTestId("delivery-panel-photos")).not.toBeNull();
+  });
+  it("shows each tab's count beside its label, and a lock on Premium", async () => {
+    await show(page([photo(1), photo(2), film(3), pdf(4, "floorplan"), pdf(5, "copy"), pdf(6, "copy"), locked(7)]));
+    expect(tabNames()).toEqual(["Gallery", "Film", "Floorplan", "Premium", "Copywriting"]);
+    const counts = [...document.querySelectorAll('[role="tab"]')].map((element) => element.querySelector('[data-testid="delivery-tab-count"]')?.textContent);
+    expect(counts).toEqual(["2", "1", "1", "1", "2"]);
+    expect(tab("Premium")!.querySelector("svg")).not.toBeNull();
+    expect(tab("Gallery")!.querySelector("svg")).toBeNull();
   });
   it("labels the tab list and its panels", async () => {
     await show(page([photo(1), film(2)]));
@@ -71,52 +79,74 @@ describe("tabs", () => {
 describe("hero", () => {
   it("is the cover photo at web size, with a thumb srcset, high fetch priority and the street as the one h1", async () => {
     await show(page([photo(1), photo(2)], { coverHandle: handle(2) }));
-    const img = byTestId("delivery-hero")!.querySelector("img")!;
+    const img = byTestId("delivery-hero-photo")!;
     expect(img.getAttribute("src")).toBe(photo(2).url);
     expect(img.getAttribute("srcset")).toBe(`${photo(2).thumbUrl} 640w, ${photo(2).url} 2048w`);
     expect(img.getAttribute("fetchpriority")).toBe("high");
     expect(img.getAttribute("alt")).toBe("Photo 02");
     expect(document.querySelectorAll("h1")).toHaveLength(1);
-    expect(document.querySelector("h1")!.textContent).toBe("12 Example St, Suburbia");
+    expect(document.querySelector("h1")!.textContent).toBe("12 Example St");
   });
   it("falls back to the first unlocked photo when the cover is locked, and to text only when there is no photo to show", async () => {
     await show(page([locked(1), photo(2), photo(3)], { coverHandle: handle(1) }));
-    expect(byTestId("delivery-hero")!.querySelector("img")!.getAttribute("src")).toBe(photo(2).url);
+    expect(byTestId("delivery-hero-photo")!.getAttribute("src")).toBe(photo(2).url);
     await mounted!.unmount();
     await show(page([locked(1), film(2)], { coverHandle: handle(1) }));
-    expect(byTestId("delivery-hero")!.querySelector("img")).toBeNull();
-    expect(document.querySelector("h1")!.textContent).toBe("12 Example St, Suburbia");
+    expect(byTestId("delivery-hero-photo")).toBeNull();
+    expect(document.querySelector("h1")!.textContent).toBe("12 Example St");
   });
-  it("says when it was delivered, in the studio's time zone, and not at all for a Preview", async () => {
+  it("prints the eyebrow as suburb, postcode and delivered date (in the studio's time zone), and drops the date for a Preview", async () => {
     await show(page([photo(1)]));
-    expect(byTestId("delivery-hero")!.textContent).toContain("Delivered 11 October 2026");
+    expect(byTestId("delivery-hero-eyebrow")!.textContent).toBe("Suburbia · 2030 · 11 October 2026");
     await mounted!.unmount();
     await show(page([photo(1)], { publishedAt: null }));
+    expect(byTestId("delivery-hero-eyebrow")!.textContent).toBe("Suburbia · 2030");
     expect(byTestId("delivery-hero")!.textContent).not.toContain("Delivered");
   });
-  it("offers Ask the studio as a mailto with the street as the subject", async () => {
-    await show(page([photo(1)]));
-    const link = [...document.querySelectorAll("a")].find((a) => a.textContent === "Ask the studio")!;
-    expect(link.getAttribute("href")).toBe("mailto:info@quincyproductions.com.au?subject=12%20Example%20St");
+  it("prints the meta line as the agency, a dash and the counts: frames are the Gallery's photos, films are every film", async () => {
+    await show(page([photo(1), photo(2), locked(3), film(4)]));
+    const meta = byTestId("delivery-hero-meta")!;
+    expect(meta.textContent).not.toMatch(/\bby\b/);
+    expect(meta.textContent).toBe("Harbour Realty—2 frames · 1 film");
   });
-  it("shows a processing tile, not a broken image or the original, when the hero derivative is missing", async () => {
-    await show(page([photo(1)]));
-    await act(async () => { byTestId("delivery-hero")!.querySelector("img")!.dispatchEvent(new Event("error")); });
-    expect(byTestId("delivery-hero")!.querySelector("img")).toBeNull();
-    expect(byTestId("delivery-hero")!.querySelector('[data-testid="delivery-processing"]')).not.toBeNull();
+  it("leaves the dash out when the agency is unknown, and a zero count out of the counts", async () => {
+    await show(page([photo(1)], { property: { street: "12 Example St", suburb: "Suburbia", postcode: "2030", agency: null } }));
+    expect(byTestId("delivery-hero-meta")!.textContent).toBe("1 frame");
   });
-  it("prints the studio footer from the one constant, with the address as a mailto for this street", async () => {
+  it("has no Ask the studio link or button anywhere on the page", async () => {
+    await show(page([photo(1), locked(2)]));
+    expect([...document.querySelectorAll("a, button")].filter((element) => /^ask the studio$/i.test((element.textContent ?? "").trim()))).toEqual([]);
+  });
+  it("sets the wordmark credit in the hero's top right as decoration, not a second studio name", async () => {
+    await show(page([photo(1)]));
+    const credit = byTestId("delivery-hero-credit")!;
+    expect(credit.getAttribute("aria-hidden")).toBe("true");
+    expect(credit.querySelector("img")!.getAttribute("src")).toBe("/brand/quincy-wordmark-white.png");
+    expect(credit.querySelector("img")!.getAttribute("alt")).toBe("");
+  });
+  it("falls to the plain ink hero, not a broken image or the original, when the hero derivative is missing", async () => {
+    await show(page([photo(1)]));
+    await act(async () => { byTestId("delivery-hero-photo")!.dispatchEvent(new Event("error")); });
+    expect(byTestId("delivery-hero-photo")).toBeNull();
+    expect(byTestId("delivery-hero")!.querySelector('[data-testid="delivery-processing"]')).toBeNull();
+    expect(document.querySelector("h1")!.textContent).toBe("12 Example St");
+  });
+  it("prints the studio footer: the name, the email as a mailto for this street, and the website", async () => {
     await show(page([photo(1)]));
     const footer = byTestId("delivery-footer")!;
-    expect(footer.textContent).toBe("Quincy Productions · info@quincyproductions.com.au");
-    const link = footer.querySelector("a")!;
-    expect(link.textContent).toBe("info@quincyproductions.com.au");
-    expect(link.getAttribute("href")).toBe("mailto:info@quincyproductions.com.au?subject=12%20Example%20St");
+    expect(footer.textContent).toContain("Quincy Productions");
+    const email = [...footer.querySelectorAll("a")].find((a) => a.textContent === "info@quincyproductions.com.au")!;
+    expect(email.getAttribute("href")).toBe("mailto:info@quincyproductions.com.au?subject=12%20Example%20St");
+    const site = [...footer.querySelectorAll("a")].find((a) => a.textContent === "quincyproductions.com.au")!;
+    expect(site.getAttribute("href")).toBe("https://quincyproductions.com.au");
+    expect(site.getAttribute("rel")).toBe("noopener noreferrer");
   });
-  it("lets the tab list grow past its fixed 32px height, so a wrapped fifth tab is not hidden under the panel", async () => {
+  it("lets the tab list grow past its fixed 32px height, as a single sideways-scrolling row (never wrapping)", async () => {
     await show(page([photo(1), film(2), pdf(3, "floorplan"), pdf(4, "copy"), locked(5)]));
     const list = byTestId("delivery-tabs-list")!;
-    expect(list.className).toContain("flex-wrap");
+    expect(list.className).toContain("flex-nowrap");
+    expect(list.className).toContain("overflow-x-auto");
+    expect(list.className).not.toContain("flex-wrap");
     expect(list.className).toContain("group-data-[orientation=horizontal]/tabs:h-auto");
     expect(list.className).not.toContain("group-data-[orientation=horizontal]/tabs:h-8");
     const triggers = [...list.querySelectorAll('[role="tab"]')];
@@ -126,10 +156,31 @@ describe("hero", () => {
       expect(t.className).not.toContain("h-[calc(100%-1px)]");
     }
   });
-  it("styles Ask the studio as a visible secondary button", async () => {
+  it("sticks the tab bar above the content on a tokenised ground, and mutes the counts", async () => {
+    await show(page([photo(1), film(2)]));
+    const bar = byTestId("delivery-tabs-list")!.parentElement!.parentElement!;
+    expect(bar.className).toContain("sticky");
+    expect(bar.className).toContain("top-0");
+    expect(bar.className).toMatch(/\bz-/);
+    expect(byTestId("delivery-tab-count")!.className).toContain("text-muted-foreground");
+  });
+  it("hides the hero wordmark credit once the page is 721 px or narrower", async () => {
     await show(page([photo(1)]));
-    const link = [...document.querySelectorAll("a")].find((a) => a.textContent === "Ask the studio")!;
-    expect(link.className).toContain("bg-secondary");
+    expect(byTestId("delivery-hero-credit")!.className).toContain("@max-[721px]:hidden");
+  });
+  it("describes the PDFs as Floorplan and Copywriting, and names the Copywriting section the same", async () => {
+    await show(page([pdf(1, "floorplan"), pdf(2, "copy")]));
+    await click(tab("Floorplan"));
+    expect(byTestId("delivery-doc")!.textContent).toContain("Floorplan · PDF");
+    await click(tab("Copywriting"));
+    expect(byTestId("delivery-panel-description")!.querySelector('[data-testid="delivery-doc"]')!.textContent).toContain("Copywriting · PDF");
+  });
+  it("groups the Premium tab by kind under headings with counts, naming the documents Copywriting", async () => {
+    await show(page([locked(1), locked(2, { kind: "copy", url: null, thumbUrl: null })]));
+    await click(tab("Premium"));
+    expect(byLabel("Copywriting", byTestId("delivery-panel-premium")!)).not.toBeNull();
+    expect(byLabel("Description")).toBeNull();
+    expect(byTestId("delivery-panel-premium")!.textContent).toContain("2items to unlock");
   });
   it("lets a lone film span the whole row", async () => {
     await show(page([film(1)]));
@@ -138,13 +189,21 @@ describe("hero", () => {
 });
 
 describe("photo grid", () => {
-  it("is four columns, two at 721 px and under the container, and every box carries its photo's own ratio", async () => {
+  it("captions every tile with its label, always visible", async () => {
+    await show(page([photo(1), photo(2)]));
+    expect(allByTestId("delivery-tile").map((tile) => tile.querySelector('[data-testid="delivery-tile-caption"]')?.textContent)).toEqual(["Photo 01", "Photo 02"]);
+  });
+  it("is four columns, two at 721 px and under the container, and every tile is a uniform 3:2 box whatever the photo's own ratio", async () => {
     await show(page([photo(1), photo(2, { width: 3000, height: 4000 }), photo(3, { width: null, height: null })]));
     const grid = byTestId("delivery-grid")!;
     expect(grid.className).toContain("grid-cols-4");
     expect(grid.className).toContain("@max-[721px]:grid-cols-2");
-    const ratios = allByTestId("delivery-tile").map((tile) => (tile.firstElementChild as HTMLElement).style.aspectRatio);
-    expect(ratios).toEqual(["6000 / 4000", "3000 / 4000", "3 / 2"]);
+    for (const tile of allByTestId("delivery-tile")) {
+      const box = tile.firstElementChild as HTMLElement;
+      expect(box.className).toContain("aspect-[3/2]");
+      expect(box.style.aspectRatio).toBe("");
+      expect(tile.querySelector("img")!.className).toContain("object-cover");
+    }
   });
   it("loads the thumbnail in the grid, with alt text from the label, and opens the viewer from the tile only", async () => {
     await show(page([photo(1)]));
@@ -158,10 +217,12 @@ describe("photo grid", () => {
     await act(async () => { allByTestId("delivery-tile")[0]!.querySelector("img")!.dispatchEvent(new Event("error")); });
     expect(allByTestId("delivery-tile")[0]!.querySelector("img")).toBeNull();
     expect(byTestId("delivery-processing")).not.toBeNull();
+    // The caption's scrim would cover the "still being prepared" text.
+    expect(allByTestId("delivery-tile")[0]!.querySelector('[data-testid="delivery-tile-caption"]')).toBeNull();
   });
   it("keeps the open button outside any overflow-hidden ancestor within its tile, so its focus outline is not clipped", async () => {
     await show(page([photo(1), locked(2)]));
-    for (const name of ["Photos", "Premium"]) {
+    for (const name of ["Gallery", "Premium"]) {
       await click(tab(name));
       for (const tile of allByTestId("delivery-tile")) {
         const open = tile.querySelector<HTMLElement>('[aria-label^="Open "]')!;
@@ -202,7 +263,7 @@ describe("downloads", () => {
   });
   it("offers no download of any kind in Preview (hrefs null), but still shows the page", async () => {
     await show(page([photo(1), film(2), pdf(3, "floorplan"), pdf(4, "copy")]), { hrefs: null });
-    for (const name of ["Photos", "Film", "Floorplan", "Description"]) { await click(tab(name)); expect(document.querySelectorAll("a[download]"), name).toHaveLength(0); }
+    for (const name of ["Gallery", "Film", "Floorplan", "Copywriting"]) { await click(tab(name)); expect(document.querySelectorAll("a[download]"), name).toHaveLength(0); }
     await click(tab("Floorplan"));
     expect(byLabel("View Floorplan 03")?.getAttribute("href")).toBe(pdf(3, "floorplan").url);
   });
@@ -375,7 +436,7 @@ describe("film", () => {
       await show(page([photo(1), film(2)])); await click(tab("Film"));
       const video = document.querySelector("video");
       pause.mockClear();
-      await click(tab("Photos"));
+      await click(tab("Gallery"));
       expect(pause.mock.contexts).toContain(video);
       await click(tab("Film"));
       const again = document.querySelector("video");
@@ -414,7 +475,7 @@ describe("documents", () => {
     const download = byLabel("Download Floorplan 01") as HTMLAnchorElement;
     expect(download.getAttribute("href")).toBe(hrefs.download(handle(1)));
     expect(download.hasAttribute("download")).toBe(true);
-    await click(tab("Description"));
+    await click(tab("Copywriting"));
     expect(byLabel("View Copy 02")).not.toBeNull();
   });
 });
@@ -458,7 +519,7 @@ describe("premium", () => {
     await click(tab("Premium"));
     expect(byLabel("Request unlock: Photo 02")).toBeNull();
     expect(byTestId("delivery-unlock-status")!.textContent).toBe("Requested. The studio will be in touch.");
-    await click(tab("Photos")); await click(tab("Premium"));
+    await click(tab("Gallery")); await click(tab("Premium"));
     expect(byTestId("delivery-unlock-status")!.textContent).toBe("Requested. The studio will be in touch.");
   });
   it("counts a rate-limit wait down and enables the button again at zero", async () => {
@@ -483,22 +544,16 @@ describe("download all", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(byTestId("delivery-panel-photos")!.querySelector('a[href*="zip"], a[href*="all"]')).toBeNull();
   });
-  it("renders whatever slice 7 passes in the slot beside the Photos heading", async () => {
+  it("renders whatever slice 7 passes in the slot inside the hero, as its action", async () => {
     await show(page([photo(1)]), { downloadAllSlot: <span data-testid="slot">Download all</span> });
-    expect(byTestId("slot")!.closest('[data-slot="section-head"]')).not.toBeNull();
+    expect(byTestId("delivery-hero")!.contains(byTestId("slot"))).toBe(true);
   });
-  it("puts the slot in the Photos panel when there is a Photos tab, not in the Premium panel", async () => {
-    await show(page([photo(1), photo(2, { premium: true })]), { downloadAllSlot: <span data-testid="slot">Download all</span> });
-    expect(tabNames()).toEqual(["Photos", "Premium"]);
-    expect(byTestId("delivery-panel-photos")!.contains(byTestId("slot"))).toBe(true);
-    await click(tab("Premium"));
-    expect(byTestId("delivery-panel-premium")!.querySelector('[data-testid="slot"]')).toBeNull();
-  });
-  it("puts the slot in the Premium panel when the only photos are unlocked extras and there is no Photos tab", async () => {
+  it("keeps the slot in the hero on every tab, including a page with no Gallery tab", async () => {
     await show(page([photo(1, { premium: true }), film(2)]), { downloadAllSlot: <span data-testid="slot">Download all</span> });
     expect(tabNames()).toEqual(["Film", "Premium"]);
-    expect(byTestId("delivery-panel-film")!.querySelector('[data-testid="slot"]')).toBeNull();
+    expect(byTestId("delivery-hero")!.contains(byTestId("slot"))).toBe(true);
     await click(tab("Premium"));
-    expect(byTestId("delivery-panel-premium")!.contains(byTestId("slot"))).toBe(true);
+    expect(byTestId("delivery-hero")!.contains(byTestId("slot"))).toBe(true);
+    expect(allByTestId("slot")).toHaveLength(1);
   });
 });

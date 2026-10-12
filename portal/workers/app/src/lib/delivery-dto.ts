@@ -59,13 +59,21 @@ export function deliveryLabels(rows: readonly Pick<DeliveryItemRow, "kind">[]): 
   });
 }
 
-export function buildDeliveryDto(input: { property: { street: string; suburb: string | null }; setNumber: number; publishedAt: number | null; coverHandle: string | null; rows: readonly DeliveryItemRow[]; urls: DeliveryUrlResolver }): DeliveryPageDto {
+/** The address and agency the page prints. `agency` is the directory agency's name, else the Tonomo snapshot (the house rule, as `production-scope-sql.ts`): a business, never an agent. */
+export type DeliveryProperty = { street: string; suburb: string | null; postcode: string | null; agency: string | null };
+async function readDeliveryProperty(db: D1Database, projectId: string): Promise<DeliveryProperty> {
+  return (await db.prepare("SELECT p.street AS street, p.suburb AS suburb, p.postcode AS postcode, COALESCE(ag.name, p.agency_name) AS agency FROM projects p LEFT JOIN agencies ag ON ag.id = p.agency_id WHERE p.id = ?1")
+    .bind(projectId).first<DeliveryProperty>())!;
+}
+
+export function buildDeliveryDto(input: { property: DeliveryProperty; setNumber: number; publishedAt: number | null; coverHandle: string | null; rows: readonly DeliveryItemRow[]; urls: DeliveryUrlResolver }): DeliveryPageDto {
   const labels = deliveryLabels(input.rows);
   const items: DeliveryItemDto[] = input.rows.map((row, index) => ({
     handle: row.handle, kind: row.kind, label: labels[index]!, position: row.position, locked: row.locked, premium: row.premium,
     width: row.width, height: row.height, durationMs: row.durationMs, ...input.urls(row),
   }));
-  return { property: { street: input.property.street, suburb: input.property.suburb }, setNumber: input.setNumber, publishedAt: input.publishedAt, coverHandle: input.coverHandle, items };
+  const clean = (value: string | null): string | null => { const text = value?.trim(); return text ? text : null; };
+  return { property: { street: input.property.street, suburb: clean(input.property.suburb), postcode: clean(input.property.postcode), agency: clean(input.property.agency) }, setNumber: input.setNumber, publishedAt: input.publishedAt, coverHandle: input.coverHandle, items };
 }
 
 /** The Assets a Delivery set may hold, as a predicate over `assets a` joined to `collections c`: a current, ready photo of the Edited collection, a Floorplan or Copy PDF of its own collection, or a live Video Version. Never RAW, never a Floorplan preview. */
@@ -155,7 +163,7 @@ export async function readDeliveryState(db: D1Database, projectId: string, optio
   const pageState = { slug: page.slug, path: `/d/${page.slug}`, enabled: page.enabled === 1, latestSetNumber: page.latestSetNumber };
   if (!set) return { page: pageState, set: null, dto: null };
   const rows = await readSetRows(db, set.id);
-  const project = (await db.prepare("SELECT street, suburb FROM projects WHERE id = ?1").bind(projectId).first<{ street: string; suburb: string | null }>())!;
+  const project = await readDeliveryProperty(db, projectId);
   const coverHandle = rows.find((row) => row.assetId === set.coverAssetId)?.handle ?? null;
   const dto = buildDeliveryDto({ property: project, setNumber: set.setNumber, publishedAt: set.publishedAt, coverHandle, rows, urls: await lockAwareUrls(db, rows, options.urls ?? setItemUrls(projectId)) });
   const flags = await readPremiumFlags(db, rows.map((row) => row.assetId));
@@ -167,7 +175,7 @@ export async function readDeliveryState(db: D1Database, projectId: string, optio
 export async function previewDelivery(db: D1Database, projectId: string, assetIds: readonly string[], coverAssetId: string | null, newHandle: () => string, urls: DeliveryUrlResolver = previewItemUrls(projectId)): Promise<{ ok: true; dto: DeliveryPageDto } | Exclude<SelectionVerdict, { ok: true }>> {
   const verdict = await checkSelection(db, projectId, assetIds, coverAssetId, newHandle);
   if (!verdict.ok) return verdict;
-  const project = (await db.prepare("SELECT street, suburb FROM projects WHERE id = ?1").bind(projectId).first<{ street: string; suburb: string | null }>())!;
+  const project = await readDeliveryProperty(db, projectId);
   const latest = (await db.prepare("SELECT latest_set_number AS latest FROM delivery_pages WHERE project_id = ?1").bind(projectId).first<{ latest: number }>())?.latest ?? 0;
   const coverHandle = verdict.rows.find((row) => row.assetId === coverAssetId)?.handle ?? null;
   return { ok: true, dto: buildDeliveryDto({ property: project, setNumber: latest + 1, publishedAt: null, coverHandle, rows: verdict.rows, urls: await lockAwareUrls(db, verdict.rows, urls) }) };

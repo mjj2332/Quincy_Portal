@@ -47,9 +47,15 @@ export async function seedRawPhoto(projectId = ids.project) {
   return { id, projectId, collectionId };
 }
 /** A Project of its own (so a Stage move leaves the shared fixture Projects alone), with the pilot gate row open. */
-export async function seedOpenProject(input: { stageKey?: string; street?: string; suburb?: string | null; archived?: boolean } = {}) {
+export async function seedOpenProject(input: { stageKey?: string; street?: string; suburb?: string | null; postcode?: string | null; agencyName?: string | null; directoryAgency?: string; agentName?: string; agentEmail?: string; archived?: boolean } = {}) {
   const id = crypto.randomUUID(); const now = Date.now();
-  await database.DB.prepare("INSERT INTO projects (id, street, suburb, stage_key, board_revision, archived_at, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)").bind(id, input.street ?? "12 Test Street", input.suburb === undefined ? "Testville" : input.suburb, input.stageKey ?? "editing_autohdr", input.archived ? now : null, now, now).run();
+  let agencyId: string | null = null;
+  if (input.directoryAgency !== undefined) {
+    agencyId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO agencies (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)").bind(agencyId, input.directoryAgency, now, now).run();
+  }
+  await database.DB.prepare("INSERT INTO projects (id, street, suburb, postcode, agency_name, agency_id, agent_name, agent_email, stage_key, board_revision, archived_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)")
+    .bind(id, input.street ?? "12 Test Street", input.suburb === undefined ? "Testville" : input.suburb, input.postcode ?? null, input.agencyName ?? null, agencyId, input.agentName ?? null, input.agentEmail ?? null, input.stageKey ?? "editing_autohdr", input.archived ? now : null, now, now).run();
   await openDelivery(id);
   return id;
 }
