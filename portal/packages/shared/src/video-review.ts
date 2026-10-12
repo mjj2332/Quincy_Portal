@@ -20,7 +20,7 @@ export const VIDEO_REVIEW_PART_CAPABILITY = {
   guest: "shareVideo",
   guest_comments: "shareVideo",
   notify_client: "shareVideo",
-  delivery: "releaseVideo",
+  delivery: "shareVideo",
   trash: "manageVideoTrash",
   download: "downloadVideo",
 } as const satisfies Record<VideoReviewPart, Capability>;

@@ -32,7 +32,7 @@ describe("TB5A Slice 4 External Board adapter", () => {
 
 		expect(mapped.every((project) => (project as unknown as Record<string, unknown>).boardPosition === undefined)).toBe(true);
 		expect(mapped.every((project) => project.priority === null)).toBe(true);
-		expect(sortKanbanProjects(mapped, "shoot-date").map((project) => project.id)).toEqual([a.id, z.id]);
+		expect(sortKanbanProjects(mapped, "shoot-date", "awaiting_raw").map((project) => project.id)).toEqual([a.id, z.id]);
 	});
 
 	it("decodes the project-list envelope with and without the deprecated per-Stage order (both directions of skew, #475)", () => {

@@ -9,7 +9,7 @@ describe("video review parts (#741)", () => {
     for (const part of VIDEO_REVIEW_PARTS) expect(CAPABILITIES).toContain(VIDEO_REVIEW_PART_CAPABILITY[part]);
     expect(VIDEO_REVIEW_PART_CAPABILITY).toEqual({
       upload: "uploadVideo", notes: "annotateVideo", markup: "annotateVideo", compare: "viewVideo", export: "viewVideo", notify_staff: "viewVideo",
-      links: "shareVideo", guest: "shareVideo", guest_comments: "shareVideo", notify_client: "shareVideo", delivery: "releaseVideo", trash: "manageVideoTrash", download: "downloadVideo",
+      links: "shareVideo", guest: "shareVideo", guest_comments: "shareVideo", notify_client: "shareVideo", delivery: "shareVideo", trash: "manageVideoTrash", download: "downloadVideo",
     });
   });
 

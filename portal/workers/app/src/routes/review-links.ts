@@ -21,7 +21,7 @@ const uuid = z.string().uuid();
 
 /**
  * Staff Review links (#741 11a). Every route checks inline, in this order: malformed id 400, the `links` gate (closed 404, the same body for a real
- * and an unknown id), `shareVideo` 403 (so an External editor and a Photographer stop here), Project visibility (staff 403), archived 409 on writes,
+ * and an unknown id), `shareVideo` 403 (a Photographer stops here; an External editor holds `shareVideo` since #834 and goes on to Project visibility, where an unassigned one gets 404), Project visibility (staff 403), archived 409 on writes,
  * the link 404 (a link of another Project, or a delivery link, is an unknown id), then the body. REVOKE is the one exception: its gate is the open
  * check alone (`null` part), so a security cut never depends on the `links` part being on, and it is allowed on an archived Project. No `.use(...)`:
  * router-wide middleware leaks across sibling mounts (docs/lessons.md).

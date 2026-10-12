@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareBoardCards, type BoardCardOrderKey } from "../src";
+import { DEFAULT_STAGES, STAGE_KEYS, boardSortDirectionFor, boardSortHint, compareBoardCards, type BoardCardOrderKey } from "../src";
 
 function card(id: string, over: Partial<BoardCardOrderKey> = {}): BoardCardOrderKey {
   return { id, street: "1 Alpha St", priority: null, shootDate: null, ...over };
@@ -110,6 +110,68 @@ describe("compareBoardCards", () => {
       ];
       expect(ordered(cards, "due")).toEqual(["a1", "a2", "b"]);
       expect(ordered([...cards].reverse(), "due")).toEqual(["a1", "a2", "b"]);
+    });
+  });
+  describe("direction (#832)", () => {
+    const run = (cards: BoardCardOrderKey[], date: "shoot" | "due", direction?: "asc" | "desc") =>
+      [...cards].sort((a, b) => compareBoardCards(a, b, { priorityVisible: false, date, direction })).map((c) => c.id);
+
+    it("runs the Shoot date newest first under desc, undated and malformed last", () => {
+      const cards = [
+        card("old", { shootDate: "2026-01-01" }),
+        card("none", { street: "0 Zero St" }),
+        card("new", { shootDate: "2026-09-01" }),
+        card("bad", { street: "5 Echo St", shootDate: "2026-02-31" }),
+        card("mid", { shootDate: "2026-05-01" }),
+      ];
+      expect(run(cards, "shoot", "desc")).toEqual(["new", "mid", "old", "none", "bad"]);
+      expect(run([...cards].reverse(), "shoot", "desc")).toEqual(["new", "mid", "old", "none", "bad"]);
+    });
+
+    it("runs the Deadline newest first under desc, missing and NaN last", () => {
+      const cards = [
+        card("a", { deadlineAt: 1000 }),
+        card("nan", { street: "2 Beta St", deadlineAt: Number.NaN }),
+        card("c", { deadlineAt: 3000 }),
+        card("none", { street: "3 Gamma St" }),
+        card("b", { deadlineAt: 2000 }),
+      ];
+      expect(run(cards, "due", "desc")).toEqual(["c", "b", "a", "nan", "none"]);
+    });
+
+    it("keeps equal dates street then id ascending under desc", () => {
+      const cards = [
+        card("b", { street: "2 Beta St", shootDate: "2026-05-01" }),
+        card("a2", { shootDate: "2026-05-01" }),
+        card("a1", { shootDate: "2026-05-01" }),
+      ];
+      expect(run(cards, "shoot", "desc")).toEqual(["a1", "a2", "b"]);
+      expect(run([...cards].reverse(), "shoot", "desc")).toEqual(["a1", "a2", "b"]);
+    });
+
+    it("treats an omitted direction as asc", () => {
+      const cards = [card("n", { shootDate: "2026-09-01", deadlineAt: 9 }), card("o", { shootDate: "2026-01-01", deadlineAt: 1 })];
+      expect(run(cards, "shoot")).toEqual(["o", "n"]);
+      expect(run(cards, "shoot", "asc")).toEqual(["o", "n"]);
+      expect(run(cards, "due")).toEqual(["o", "n"]);
+    });
+  });
+
+  describe("boardSortDirectionFor", () => {
+    it("is desc for Delivered only", () => {
+      for (const key of STAGE_KEYS) expect(boardSortDirectionFor(key)).toBe(key === "delivered" ? "desc" : "asc");
+    });
+  });
+
+  describe("boardSortHint (#833)", () => {
+    it("names the default direction, then each Stage that differs, by its live label", () => {
+      expect(boardSortHint(DEFAULT_STAGES)).toBe("Oldest first · Delivered newest first");
+      expect(boardSortHint(DEFAULT_STAGES.map((stage) => stage.key === "delivered" ? { ...stage, label: "Handed over" } : stage)))
+        .toBe("Oldest first · Handed over newest first");
+    });
+
+    it("drops the exception when Delivered is not among the Stages", () => {
+      expect(boardSortHint(DEFAULT_STAGES.filter((stage) => stage.key !== "delivered"))).toBe("Oldest first");
     });
   });
 });

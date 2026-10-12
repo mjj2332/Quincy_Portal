@@ -1,5 +1,6 @@
 import {
   STAGE_KEYS,
+  boardSortDirectionFor,
   compareBoardCards,
   parseStageTransportKey,
   stageMoveConfirmationReasons,
@@ -131,13 +132,15 @@ function projectStageKey(project: ProjectSummary): CanonicalStageKey | null {
 
 /**
  * The Board column order (#470, #830): the viewer's chosen date (`shoot-date` or `due-date`) oldest
- * first, undated last, then street and id. Priority does not order cards. `mode` is required so no
- * caller can silently fall back to a default. The server's deprecated order maps keep the #470 rule
+ * first, undated last, then street and id; Delivered runs newest first (#832, `boardSortDirectionFor`).
+ * Priority does not order cards. `mode` and `stageKey` are required so no caller can silently fall
+ * back to a default. The server's deprecated order maps keep the #470 rule
  * until #476 removes them; the client never reads them.
  */
-export function sortKanbanProjects(projects: ProjectSummary[], mode: KanbanSortMode): ProjectSummary[] {
+export function sortKanbanProjects(projects: ProjectSummary[], mode: KanbanSortMode, stageKey: StageKey): ProjectSummary[] {
   const date = mode === "due-date" ? "due" : "shoot";
-  return [...projects].sort((left, right) => compareBoardCards(left, right, { priorityVisible: false, date }));
+  const direction = boardSortDirectionFor(stageKey);
+  return [...projects].sort((left, right) => compareBoardCards(left, right, { priorityVisible: false, date, direction }));
 }
 
 /**
@@ -156,7 +159,7 @@ export function boardLandingSlot(
   const column = sortKanbanProjects([
     ...projects.filter((project) => project.id !== projectId && projectStageKey(project) === target),
     mover,
-  ], mode);
+  ], mode, target);
   const index = column.findIndex((project) => project.id === projectId);
   return {
     gap: { targetStageKey: target, successor: column[index + 1]?.id ?? "end" },
@@ -352,7 +355,7 @@ export function focusDescriptorFor(
   control?: FocusDescriptor["control"],
 ): FocusDescriptor {
   const sourceStageKey = projectStageKey(project) ?? "awaiting_raw";
-  const sourceIndex = sortKanbanProjects(model.projects.filter((candidate) => projectStageKey(candidate) === sourceStageKey), mode)
+  const sourceIndex = sortKanbanProjects(model.projects.filter((candidate) => projectStageKey(candidate) === sourceStageKey), mode, sourceStageKey)
     .findIndex((candidate) => candidate.id === project.id);
   const resolvedControl = control ?? (origin === "move-to"
     ? "move-to"

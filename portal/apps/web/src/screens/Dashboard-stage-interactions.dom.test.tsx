@@ -18,7 +18,7 @@ if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
 }
 
-const authState = vi.hoisted(() => ({ role: "admin" as "admin" | "editor" | "external_editor", moved: false }));
+const authState = vi.hoisted(() => ({ role: "admin" as "admin" | "editor" | "external_editor", moved: false, delivered: false }));
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
 type DndTestEvent = { active: { id: string }; over: { id: string } | null; activatorEvent?: Event };
@@ -61,6 +61,7 @@ vi.mock("../lib/stages", () => ({
       ...(authState.role === "admin"
         ? [{ key: "editing_autohdr" as const, label: "Editing · autoHDR", displayOrder: 3, active: true }]
         : [{ key: "editing" as const, label: "Editing", displayOrder: 3, active: true }]),
+      ...(authState.delivered ? [{ key: "delivered" as const, label: "Delivered", displayOrder: 5, active: true }] : []),
     ];
     return { stages, presentationStageKey: (key: string) => key === "editing_autohdr" && authState.role !== "admin" ? "editing" : key };
   },
@@ -212,7 +213,7 @@ let host: HTMLElement;
 
 describe("Dashboard Stage interactions", () => {
   beforeEach(() => {
-    authState.role = "admin"; authState.moved = false; apiGetMock.mockReset(); apiPostMock.mockReset();
+    authState.role = "admin"; authState.moved = false; authState.delivered = false; apiGetMock.mockReset(); apiPostMock.mockReset();
     dnd.handlers.length = 0;
     sortable.contexts.length = 0;
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(response()) : Promise.resolve({}));
@@ -633,6 +634,36 @@ describe("Dashboard Stage interactions", () => {
     expect(order()).toEqual(["Unset Late", "Date First", "Sort Source", "Board First", "Priority First"]);
     expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toBe("Moved Sort Source to RAW review, position 3 of 5.");
     expect(projectFetches).toBeGreaterThanOrEqual(fetchesBeforeMove);
+  });
+
+  it("Move to Delivered lands at the newest-first slot, announces it, and focuses the card (#832)", async () => {
+    const snapshot = (moved: boolean) => ({
+      projects: [
+        { ...summary("source", moved ? "delivered" : "awaiting_raw", moved ? 4 : 3), shootDate: "2026-06-01" },
+        { ...summary("newer", "delivered", 8), shootDate: "2026-09-01" },
+        { ...summary("older", "delivered", 9), shootDate: "2026-01-01" },
+      ],
+      board: { contractEnabled: true, orderedProjectIdsByStage: {} },
+    });
+    authState.delivered = true;
+    let moved = false;
+    apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(snapshot(moved)) : Promise.resolve({}));
+    apiPostMock.mockImplementationOnce(() => {
+      moved = true;
+      return Promise.resolve({
+        changed: true,
+        project: { projectId: "source", stageKey: "delivered", boardRevision: 4 },
+        board: { sourceStageKey: "awaiting_raw", targetStageKey: "delivered", orderedVisibleProjectIds: ["newer", "source", "older"] },
+      });
+    });
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); });
+    await flush();
+    await moveToStage(host, "Source Street", "Delivered"); await flush(); await flush();
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "delivered", placement: { kind: "append" } }));
+    expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toBe("Moved Source Street to Delivered, position 2 of 3.");
+    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card-menu:source");
+    const delivered = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[href="/projects/newer"]'))!;
+    expect([...delivered.querySelectorAll('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["newer Street", "Source Street", "older Street"]);
   });
 
   it("says the move changed nothing, at the card's sorted position, when the server reports changed:false", async () => {
