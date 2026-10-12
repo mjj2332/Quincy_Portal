@@ -41,7 +41,7 @@ function newCode(): string {
 const escapeHtml = (value: string): string => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 /**
- * The code email. Transactional: it carries no Review link (only the hash of the token is stored, ADR 0021 §10) and no unsubscribe link, because no membership exists yet and the last
+ * The code email. Transactional: it carries no Review link (the secret is stored since #815 and could be mailed, but ADR 0021 §10 keeps it out until the owner decides) and no unsubscribe link, because no membership exists yet and the last
  * sentence says the only consequence. The label is staff text, so it is escaped for HTML and appears nowhere else.
  */
 export function composeCodeEmail(code: string, label: string | null): { subject: string; text: string; html: string } {

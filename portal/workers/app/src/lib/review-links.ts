@@ -48,18 +48,21 @@ export async function isLiveMember(db: D1Database, linkId: string, videoId: stri
 // ---- read ---------------------------------------------------------------------------------------------------------------------------------------
 
 type LinkRow = {
-  id: string; label: string | null; expires_at: number; created_at: number; revoked_at: number | null; has_passcode: number; allow_comments: number; allow_approve: number; allow_download: number;
+  id: string; label: string | null; expires_at: number; created_at: number; revoked_at: number | null; has_passcode: number; token_secret: string | null; allow_comments: number; allow_approve: number; allow_download: number;
   created_by: string | null; cu_name: string | null; cu_role: Role | null; cu_active: number | null; revoked_by: string | null; ru_name: string | null; ru_role: Role | null; ru_active: number | null;
 };
 const person = (id: string | null, name: string | null, role: Role | null, active: number | null) =>
   id === null || name === null || role === null ? null : { id, name, roleLabel: ROLE_LABELS[role], isExternal: role === "external_editor", active: Boolean(active) };
 const iso = (ms: number) => new Date(ms).toISOString();
 
-/** The Project's Review links (or one), newest first, as the staff DTO. Never selects the token hash or the passcode hash itself. */
-export async function loadReviewLinkDtos(db: D1Database, projectId: string, now: number, linkId?: string): Promise<ReviewLinkDto[]> {
+/** The one place a Review link's address is built: the id in the query, the secret in the fragment so it never reaches a server log or a Referer. */
+export const reviewLinkUrl = (origin: string, linkId: string, secret: string) => `${origin}/d/review?link=${linkId}#t=${secret}`;
+
+/** The Project's Review links (or one), newest first, as the staff DTO. Never selects the token hash or the passcode hash. Selects the plain-text secret only to build `url`. */
+export async function loadReviewLinkDtos(db: D1Database, projectId: string, now: number, origin: string, linkId?: string): Promise<ReviewLinkDto[]> {
   const scope = "SELECT id FROM client_links WHERE project_id = ?1 AND kind = 'video_review' AND (?2 IS NULL OR id = ?2)";
   const [links, videos, grants, activity, guests] = await db.batch([
-    db.prepare(`SELECT l.id, l.label, l.expires_at, l.created_at, l.revoked_at, l.passcode_hash IS NOT NULL AS has_passcode, l.allow_comments, l.allow_approve, l.allow_download,
+    db.prepare(`SELECT l.id, l.label, l.expires_at, l.created_at, l.revoked_at, l.passcode_hash IS NOT NULL AS has_passcode, l.token_secret, l.allow_comments, l.allow_approve, l.allow_download,
         l.created_by, cu.name AS cu_name, cu.role AS cu_role, cu.active AS cu_active, l.revoked_by, ru.name AS ru_name, ru.role AS ru_role, ru.active AS ru_active
       FROM client_links l LEFT JOIN user cu ON cu.id = l.created_by LEFT JOIN user ru ON ru.id = l.revoked_by
       WHERE l.project_id = ?1 AND l.kind = 'video_review' AND (?2 IS NULL OR l.id = ?2) ORDER BY l.created_at DESC, l.rowid DESC`).bind(projectId, linkId ?? null),
@@ -93,6 +96,7 @@ export async function loadReviewLinkDtos(db: D1Database, projectId: string, now:
     return {
       id: row.id, label: row.label, status, createdAt: iso(row.created_at), createdBy: person(row.created_by, row.cu_name, row.cu_role, row.cu_active), expiresAt: iso(row.expires_at),
       revokedAt: row.revoked_at === null ? null : iso(row.revoked_at), revokedBy: person(row.revoked_by, row.ru_name, row.ru_role, row.ru_active), hasPasscode: row.has_passcode === 1,
+      url: row.token_secret !== null && row.revoked_at === null ? reviewLinkUrl(origin, row.id, row.token_secret) : null,
       allow: { comments: row.allow_comments === 1, approve: row.allow_approve === 1, download: row.allow_download === 1 }, videos: videoMap.get(row.id) ?? [],
       activity: { openSessions: Number(seen?.open_sessions ?? 0), lastOpenedAt: seen?.last_opened == null ? null : iso(seen.last_opened), verifiedGuests: guestMap.get(row.id) ?? [] },
     };
@@ -120,7 +124,7 @@ const COUNT_PAIRS = `(SELECT COUNT(*) FROM json_each(?) j JOIN video_version_met
   JOIN videos v ON v.id = m.video_id AND v.project_id = ? AND ${LIVE_VIDEO("v")} WHERE ${LIVE_VERSION("m")})`;
 
 export type CreateInput = {
-  projectId: string; principal: Principal; videoIds: string[]; grants: GrantPair[]; label: string | null; allow: Allow; expiresAt: number; passcodeHash: string | null; tokenHash: string; now: number;
+  projectId: string; principal: Principal; videoIds: string[]; grants: GrantPair[]; label: string | null; allow: Allow; expiresAt: number; passcodeHash: string | null; tokenHash: string; tokenSecret: string; now: number;
 };
 /** Creates the link, its memberships and its grants in one batch. Returns the link id, or false when the guard refused (archived, a Video outside the Project, a grant that is not a Version). */
 export async function createReviewLink(db: D1Database, input: CreateInput): Promise<string | false> {
@@ -133,9 +137,9 @@ export async function createReviewLink(db: D1Database, input: CreateInput): Prom
   const guard = `${NOT_ARCHIVED} AND (SELECT COUNT(*) FROM videos WHERE project_id = ? AND removed_at IS NULL AND id IN (SELECT value FROM json_each(?))) = ? AND ${COUNT_PAIRS} = ?`;
   const ok = await commit(db, audit, [
     auditStatement(db, audit, guard, [input.projectId, input.projectId, JSON.stringify(input.videoIds), input.videoIds.length, pairs, input.projectId, input.grants.length]),
-    db.prepare(`INSERT INTO client_links (id, project_id, token_hash, kind, label, passcode_hash, allow_comments, allow_approve, allow_download, expires_at, created_by, token_generation, updated_at, created_at)
-      SELECT ?, ?, ?, 'video_review', ?, ?, ?, ?, ?, ?, ?, 1, ?, ? WHERE ${AUDITED}`)
-      .bind(linkId, input.projectId, input.tokenHash, input.label, input.passcodeHash, Number(input.allow.comments), Number(input.allow.approve), Number(input.allow.download), input.expiresAt, input.principal.id, input.now, input.now, auditId),
+    db.prepare(`INSERT INTO client_links (id, project_id, token_hash, token_secret, kind, label, passcode_hash, allow_comments, allow_approve, allow_download, expires_at, created_by, token_generation, updated_at, created_at)
+      SELECT ?, ?, ?, ?, 'video_review', ?, ?, ?, ?, ?, ?, ?, 1, ?, ? WHERE ${AUDITED}`)
+      .bind(linkId, input.projectId, input.tokenHash, input.tokenSecret, input.label, input.passcodeHash, Number(input.allow.comments), Number(input.allow.approve), Number(input.allow.download), input.expiresAt, input.principal.id, input.now, input.now, auditId),
     db.prepare(`INSERT INTO review_link_videos (id, link_id, video_id, project_id, added_by, added_at) SELECT json_extract(j.value, '$.id'), ?, json_extract(j.value, '$.v'), ?, ?, ? FROM json_each(?) j WHERE ${AUDITED} ORDER BY j.key`)
       .bind(linkId, input.projectId, input.principal.id, input.now, members, auditId),
     db.prepare(`INSERT INTO review_link_version_grants (id, link_id, video_id, asset_id, granted_by, granted_at) SELECT json_extract(j.value, '$.id'), ?, json_extract(j.value, '$.v'), json_extract(j.value, '$.a'), ?, ? FROM json_each(?) j WHERE ${AUDITED} ORDER BY j.key`)
@@ -220,21 +224,21 @@ export async function revokeReviewLink(db: D1Database, input: { projectId: strin
   const audit: Audit = { id: auditId, action: "review_link.revoke", linkId: input.linkId, principal: input.principal, now: input.now, meta: { projectId: input.projectId, linkId: input.linkId } };
   return commit(db, audit, [
     auditStatement(db, audit, LINK_LIVE, [input.linkId, input.projectId]),
-    db.prepare(`UPDATE client_links SET revoked_at = ?, revoked_by = ?, updated_at = ?, token_generation = token_generation + 1 WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND ${AUDITED}`)
+    db.prepare(`UPDATE client_links SET revoked_at = ?, revoked_by = ?, updated_at = ?, token_secret = NULL, token_generation = token_generation + 1 WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND ${AUDITED}`)
       .bind(input.now, input.principal.id, input.now, input.linkId, input.projectId, auditId),
     db.prepare(`DELETE FROM guest_sessions WHERE link_id = ? AND ${AUDITED}`).bind(input.linkId, auditId),
   ]);
 }
 
 /** Rotates the token. Refused (false) on a revoked or expired link, or an archived Project. */
-export async function replaceReviewLinkToken(db: D1Database, input: { projectId: string; linkId: string; principal: Principal; tokenHash: string; now: number }): Promise<boolean> {
+export async function replaceReviewLinkToken(db: D1Database, input: { projectId: string; linkId: string; principal: Principal; tokenHash: string; tokenSecret: string; now: number }): Promise<boolean> {
   const auditId = newId();
   const audit: Audit = { id: auditId, action: "review_link.replace", linkId: input.linkId, principal: input.principal, now: input.now, meta: { projectId: input.projectId, linkId: input.linkId } };
   const live = "EXISTS (SELECT 1 FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND expires_at > ?)";
   return commit(db, audit, [
     auditStatement(db, audit, `${NOT_ARCHIVED} AND ${live}`, [input.projectId, input.linkId, input.projectId, input.now]),
-    db.prepare(`UPDATE client_links SET token_hash = ?, token_generation = token_generation + 1, updated_at = ? WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND expires_at > ? AND ${AUDITED}`)
-      .bind(input.tokenHash, input.now, input.linkId, input.projectId, input.now, auditId),
+    db.prepare(`UPDATE client_links SET token_hash = ?, token_secret = ?, token_generation = token_generation + 1, updated_at = ? WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND expires_at > ? AND ${AUDITED}`)
+      .bind(input.tokenHash, input.tokenSecret, input.now, input.linkId, input.projectId, input.now, auditId),
     db.prepare(`DELETE FROM guest_sessions WHERE link_id = ? AND ${AUDITED}`).bind(input.linkId, auditId),
   ]);
 }

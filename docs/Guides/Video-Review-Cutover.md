@@ -146,8 +146,9 @@ link, export) without a stop.
 3. **Video only.** If Frame.io also delivers photos for a client, keep Frame.io for photos until the
    single delivery page exists (spec "Out of scope").
 4. **Tell clients.** For each Video create a Review link and send the new
-   link in place of the Frame.io link. The link is shown once, at creation; afterwards "Replace
-   link" issues a new one and ends existing guest sessions (`docs/plans/741.md`, decisions).
+   link in place of the Frame.io link. The full link stays copyable from the link's row and its
+   settings (#815); "Replace link" issues a new one and ends existing guest sessions. A link made before #815 has no
+   stored link, so press "Replace link" once to get a copyable one (`docs/plans/741.md`, decisions).
 
 ## 4. Rollback
 

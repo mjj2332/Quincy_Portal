@@ -201,7 +201,7 @@ describe("detail: revoke and replace", () => {
     expect(checkbox("Main walkthrough v2", detail())!.disabled).toBe(true);
     expect(buttonIn(detail(), "Remove Main walkthrough from link")).toBeUndefined();
   });
-  it("Replace asks first, then shows the new URL once", async () => {
+  it("Replace asks first, then shows the new URL", async () => {
     const url = `https://quincy.test/d/review?link=${L1}#t=fresh456`;
     apiPostMock.mockResolvedValue({ link: linkOf(), url });
     await mount(); await openDetailOf("Smith family");
@@ -209,7 +209,7 @@ describe("detail: revoke and replace", () => {
     expect(text(q('[data-testid="review-link-confirm"]'))).toContain("stops working at once");
     await press(buttonIn(q('[data-testid="review-link-confirm"]'), "Replace"));
     expect(apiPostMock).toHaveBeenCalledWith(`${base}/replace`, {});
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toBe(url);
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]')!.value).toBe(url);
     await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
     expect(document.body.textContent).not.toContain("fresh456");
     expect(q('[data-testid="review-link-detail"]')).not.toBeNull();
@@ -220,6 +220,58 @@ describe("detail: revoke and replace", () => {
     expect(buttonIn(detail(), "Replace link")!.disabled).toBe(true);
     expect(text(detail())).toContain("Extend the expiry");
     expect(q<HTMLButtonElement>("button#review-link-detail-expiry", detail())!.disabled).toBe(false);
+  });
+});
+
+describe("detail: the link itself (#815)", () => {
+  const urlInput = () => q<HTMLInputElement>('[data-testid="review-link-url"]', detail());
+  it("shows the full link as the first row of Settings, above Label, read-only, and Copy writes that exact string", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const link = linkOf(); state.links = [link];
+    await mount(); await openDetailOf("Smith family");
+    expect(urlInput()!.value).toBe(link.url); expect(urlInput()!.readOnly).toBe(true);
+    expect(text(q(`label[for="${urlInput()!.id}"]`, detail()))).toBe("Link");
+    const settings = q('section[aria-label="Settings"]', detail())!;
+    const inputs = all<HTMLInputElement>("input", settings);
+    expect(inputs[0]).toBe(urlInput());
+    expect(inputs.indexOf(urlInput()!)).toBeLessThan(inputs.indexOf(q<HTMLInputElement>("#review-link-detail-label", settings)!));
+    await press(buttonIn(settings, "Copy link"));
+    expect(writeText).toHaveBeenCalledWith(link.url);
+  });
+  it("shows the link on an expired link too, status text unchanged", async () => {
+    state.links = [linkOf({ status: "expired", expiresAt: "2026-10-01T12:59:00.000Z" })];
+    await mount(); await openDetailOf("Smith family");
+    expect(urlInput()!.value).toContain("#t=saved-");
+    expect(text(detail())).toContain("Extend the expiry");
+  });
+  it("says to press Replace link when an active or expired link has no stored URL", async () => {
+    state.links = [linkOf({ url: null })];
+    await mount(); await openDetailOf("Smith family");
+    expect(urlInput()).toBeNull();
+    expect(text(detail())).toContain("Press Replace link to get a copyable link.");
+    await unmount(); document.body.replaceChildren();
+    state.links = [linkOf({ url: null, status: "expired", expiresAt: "2026-10-01T12:59:00.000Z" })];
+    await mount(); await openDetailOf("Smith family");
+    expect(text(detail())).toContain("Press Replace link to get a copyable link.");
+  });
+  it("shows nothing about the link on a revoked one", async () => {
+    state.links = [linkOf({ status: "revoked", revokedAt: "2026-10-09T05:00:00.000Z", url: null })];
+    await mount(); await openDetailOf("Smith family");
+    expect(urlInput()).toBeNull();
+    expect(text(detail())).not.toContain("Press Replace link");
+    expect(buttonIn(detail(), "Copy link")).toBeUndefined();
+  });
+  it("Replace, then Done, leaves the detail showing the new URL", async () => {
+    const url = `https://quincy.test/d/review?link=${L1}#t=fresh789`;
+    apiPostMock.mockResolvedValue({ link: linkOf({ url }), url });
+    state.links = [linkOf()];
+    await mount(); await openDetailOf("Smith family");
+    state.links = [linkOf({ url })]; // what the server holds once the replace lands
+    await confirm("Replace link", "Replace");
+    await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
+    expect(urlInput()!.value).toBe(url);
+    expect(document.body.textContent).not.toContain("saved-");
   });
 });
 
@@ -453,16 +505,16 @@ describe("one-time URLs are never overwritten", () => {
     await press(buttonIn(dialog(), "Close"));
     await openList(); await press(button("Manage Jones"));
     await confirm("Replace link", "Replace");
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toContain("#t=replaced");
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]')!.value).toContain("#t=replaced");
     await act(async () => { created.resolve({ link: linkOf({ id: L1 }), url: `https://quincy.test/d/review?link=${L1}#t=created` }); });
     await flush();
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toContain("#t=replaced");
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]')!.value).toContain("#t=replaced");
     expect(text(q('[data-testid="review-link-reveal"]'))).toContain("1 of 2");
     await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toContain("#t=created");
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]')!.value).toContain("#t=created");
     expect(text(q('[data-testid="review-link-reveal"]'))).not.toContain("of 2");
     await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
-    expect(q('input[aria-label="Review link URL"]')).toBeNull();
+    expect(q('[data-testid="review-link-reveal"]')).toBeNull();
   });
 
   async function queueTwoReveals() {
@@ -491,7 +543,7 @@ describe("one-time URLs are never overwritten", () => {
     await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Copy link"));
     expect(text(copyButton())).toContain("Copied");
     await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toContain("#t=created");
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]')!.value).toContain("#t=created");
     expect(text(copyButton())).toContain("Copy link");
     expect(text(copyButton())).not.toContain("Copied");
   });
@@ -504,7 +556,7 @@ describe("one-time URLs are never overwritten", () => {
     await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
     await act(async () => { slow.resolve(undefined); });
     await flush();
-    expect(q<HTMLInputElement>('input[aria-label="Review link URL"]')!.value).toContain("#t=created");
+    expect(q<HTMLInputElement>('[data-testid="review-link-url"]')!.value).toContain("#t=created");
     expect(text(copyButton())).toContain("Copy link");
     expect(text(copyButton())).not.toContain("Copied");
   });

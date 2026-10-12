@@ -14,8 +14,12 @@ itself. Both are this decision.
 ## Decision
 
 1. **The token lives in the URL fragment**, so it never reaches server logs, referrers or analytics. The
-   page exchanges it by POST for an HttpOnly cookie scoped to the guest path. Tokens are stored only as
-   hashes; the server cannot rebuild a link.
+   page exchanges it by POST for an HttpOnly cookie scoped to the guest path. Verification uses the hash
+   only. **Amended 2026-10-12 (#815, owner decision):** the secret is also stored in plain text
+   (`client_links.token_secret`) so staff can copy the full link again, and the staff DTO carries it as `url`.
+   Accepted risk: anyone with database read access can open every Review link that has a stored secret.
+   Revoking a link clears the secret, a replace overwrites it, and links made before the amendment have none
+   until they are replaced. The hash still decides every guest exchange.
 2. **Link lifecycle.** Default expiry 30 days, or a date staff choose. An optional passcode. Revoking a
    link kills every open guest session on it at once.
 3. **Identity is an email verified by a one-time code.** Codes are hashed, expire in 10 minutes, allow 5
@@ -43,8 +47,9 @@ itself. Both are this decision.
    check on mutations. A staff session is ignored on guest routes and a guest session is useless on staff
    routes. The guest page is a separate lazy-loaded app inside the same SPA entry, with no staff session and
    no router-driven navigation.
-10. **Client email carries no link.** Because only the hash is stored, notification emails cannot include the
-    Review link; the client opens the link they already hold. Each email has a one-click unsubscribe scoped
+10. **Client email carries no link.** Notification emails do not include the Review link; the client opens the
+    link they already hold. (Amended #815: the secret is now stored, so including the link is possible, but it
+    stays out until the owner decides.) Each email has a one-click unsubscribe scoped
     to one guest and one link.
 
 ## Considered options

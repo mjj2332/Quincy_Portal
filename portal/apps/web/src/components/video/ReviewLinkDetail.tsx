@@ -9,12 +9,13 @@ import { buttonClasses, Button } from "../quincy/Button";
 import { Checkbox } from "../quincy/Checkbox";
 import { DateTimeField } from "../quincy/DateTimeField";
 import { Notice } from "../quincy/Notice";
+import { FIELD_LEGEND_TEXT } from "../quincy/Eyebrow";
 import { QuincyField } from "../quincy/QuincyField";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../reui/alert-dialog";
 import { Badge } from "../reui/badge";
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList, ComboboxTrigger } from "../reui/combobox";
 import { DialogDescription, DialogHeader, DialogTitle } from "../reui/dialog";
-import { FieldDescription } from "../reui/field";
+import { Field, FieldDescription, FieldLabel } from "../reui/field";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
 import { formatVideoDate } from "./video-format";
 import { DIALOG_FIELD_LAYER, GRANT_LIMIT_HINT, passcodeProblem } from "./ReviewLinkCreateView";
@@ -22,6 +23,7 @@ import { DIALOG_TITLE, ReviewLinkDialogFrame } from "./ReviewLinkDialogFrame";
 import { ReviewLinkAllowFields } from "./ReviewLinkAllowFields";
 import { activityLine, expiryLine, linkName } from "./ReviewLinkList";
 import { ReviewLinkStatusBadge } from "./ReviewLinkStatusBadge";
+import { ReviewLinkUrlField } from "./ReviewLinkUrlField";
 import { useReviewLinkState, type ReviewLinksUi } from "./use-review-links-ui";
 
 const TEXT = "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]";
@@ -121,6 +123,15 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
     {problems.map(([scope, problem]) => <Notice key={scope} tone="critical" role="alert">{problem.text}</Notice>)}
 
     <section aria-label="Settings" className="grid gap-[var(--space-4)]">
+      {!revoked && (link.url !== null
+        ? <Field>
+          <FieldLabel htmlFor="review-link-detail-url">Link</FieldLabel>
+          <ReviewLinkUrlField id="review-link-detail-url" url={link.url} />
+        </Field>
+        : <Field>
+          <span className={FIELD_LEGEND_TEXT}>Link</span>
+          <FieldDescription>Press Replace link to get a copyable link.</FieldDescription>
+        </Field>)}
       <QuincyField id="review-link-detail-label" label="Label" maxLength={REVIEW_LINK_LABEL_MAX} autoComplete="off" disabled={locked} value={labelValue} onChange={(event) => store.patchDetail(linkId, { label: event.target.value })} />
       <DateTimeField variant="date" id="review-link-detail-expiry" label="Expires" value={expiryValue} disabled={locked} positionerClassName={DIALOG_FIELD_LAYER} onApply={(next) => { if (next) store.patchDetail(linkId, { expiryDay: next === currentDay ? null : next }); }} description={expiry && !expiry.ok ? expiry.message : expiryChanged ? "The link stops working at the end of this day." : `The link stops working on ${formatAbsoluteTime(link.expiresAt).replace(", ", " at ")}.`} {...(expiry && !expiry.ok ? { descriptionRole: "status" as const } : {})} />
       <div className="grid gap-[var(--space-1)]">

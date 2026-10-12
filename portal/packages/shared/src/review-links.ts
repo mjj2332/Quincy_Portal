@@ -65,6 +65,8 @@ export const reviewLinkDtoSchema = z.object({
   revokedAt: isoDateTime.nullable(),
   revokedBy: videoPersonSchema.nullable(),
   hasPasscode: z.boolean(),
+  /** The full link, so staff can copy it again (#815). Null for a link made before it was stored, and for a revoked one. */
+  url: z.string().url().nullable(),
   allow: z.object({ comments: z.boolean(), approve: z.boolean(), download: z.boolean() }).strict(),
   videos: z.array(z.object({
     videoId: uuid,

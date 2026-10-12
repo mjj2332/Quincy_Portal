@@ -34,6 +34,19 @@ describe("review link writes and the list cache", () => {
     expect((client.getQueryData(reviewLinksKey(PROJECT)) as Array<{ id: string }>).map((l) => l.id)).toEqual([L1, L2]);
   });
 
+  it("a replace puts the new URL in the cached list, and a read that was in flight cannot put the old one back", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const oldLink = linkOf({ id: L1, url: "https://example.test/d/old#t=old" });
+    client.setQueryData(reviewLinksKey(PROJECT), [oldLink]);
+    let finishStale!: (links: unknown[]) => void;
+    const stale = client.fetchQuery({ queryKey: reviewLinksKey(PROJECT), staleTime: 0, queryFn: () => new Promise<unknown[]>((resolve) => { finishStale = resolve; }) }).catch(() => undefined);
+    const fresh = { ...oldLink, url: "https://example.test/d/new#t=new" };
+    apiPostMock.mockResolvedValue({ link: fresh, url: fresh.url });
+    await createReviewLinkActions(client, PROJECT).replace(L1);
+    finishStale([oldLink]); await stale;
+    expect((client.getQueryData(reviewLinksKey(PROJECT)) as Array<{ url: string }>)[0]!.url).toBe(fresh.url);
+  });
+
   it("a removal never invents a list that was never loaded", async () => {
     const client = new QueryClient();
     apiDeleteMock.mockResolvedValue(undefined);

@@ -1379,6 +1379,8 @@ export const clientLinks = sqliteTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     /** Token hashed at rest; 30-day default expiry (D-04). */
     tokenHash: text("token_hash").notNull().unique(),
+    /** Plain-text link secret so staff can copy the full link again (#815, migration 0073). Null for legacy and delivery links and once revoked. Never used to verify. */
+    tokenSecret: text("token_secret"),
     /** Null for a video_review link; set for a delivery link (route SQL enforces, migration 0069). */
     publishVersion: integer("publish_version"),
     expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),

@@ -6,18 +6,18 @@ import { pushToast } from "../../lib/toast-store";
 const COPIED_MS = 2000;
 
 /**
- * Copies a string the caller already holds (#741 11b: a Review link's one-time URL). The clipboard core of `quincy/CopyProjectLinkButton`
+ * Copies a string the caller already holds (#741 11b, #815: a Review link's URL). The clipboard core of `quincy/CopyProjectLinkButton`
  * (the same `c-button-41` Copy -> Copied swap on the installed `reui/button`, the same refusal to use the registry's
  * `use-copy-to-clipboard`, which swallows a rejected write and throws where `navigator.clipboard` is missing). Never copies on its own:
  * a clipboard write after an awaited fetch loses the user activation in Safari, so the person presses it.
  * Sits in `components/video/` for this slice only; folding `CopyProjectLinkButton` onto it is a follow-up in a quincy-layer PR.
  */
-export function CopyTextButton({ text, label = "Copy link", success = "Link copied.", failure = "Couldn't copy the link.", className }: { text: string; label?: string; success?: string; failure?: string; className?: string }) {
+export function CopyTextButton({ text, label = "Copy link", success = "Link copied.", failure = "Couldn't copy the link.", className, ariaLabel }: { text: string; label?: string; success?: string; failure?: string; className?: string; /** Overrides the accessible name where the visible label alone is ambiguous, such as one Copy per row. */ ariaLabel?: string }) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<number | undefined>(undefined);
   const textRef = useRef(text);
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
-  // A new `text` (the one-time reveal moving on to the next queued URL) must not inherit the last URL's "Copied", and a write that was
+  // A new `text` (the reveal moving on to the next queued URL) must not inherit the last URL's "Copied", and a write that was
   // started for the old text must not mark the new one copied when it resolves late.
   useEffect(() => {
     textRef.current = text;
@@ -41,7 +41,7 @@ export function CopyTextButton({ text, label = "Copy link", success = "Link copi
   }
 
   return (
-    <Button type="button" variant="outline" data-testid="copy-text" className={className} onClick={copy}>
+    <Button type="button" variant="outline" data-testid="copy-text" className={className} onClick={copy} {...(ariaLabel ? { "aria-label": ariaLabel } : {})}>
       {copied ? <CheckIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" /> : <CopyIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />}
       {copied ? "Copied" : label}
     </Button>

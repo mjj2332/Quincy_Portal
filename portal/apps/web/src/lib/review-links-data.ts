@@ -9,7 +9,7 @@ import { classifyReviewLinkError } from "./review-link-errors";
  * Review links (#741 11b): the Project's list and the seven writes. The list lives under the Project root so the project-removed sweep
  * clears it. Every write, success or failure, invalidates it afterwards (a refused write usually means the list is stale), and a write the
  * server answered "gate closed" also invalidates the Project's video-review parts and detail so the UI hides itself, a 401 ends the session, and an archive refusal is recorded. The URL a create or replace
- * returns is handed to the caller and never touches the cache.
+ * returns is handed to the caller for the reveal step, and since #815 it is also the link's `url`, which rides in the cached DTO like any other field (never in storage).
  */
 export const reviewLinksKey = (projectId: string) => ["project-data", projectId, "review-links"] as const;
 const base = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}/review-links`;
