@@ -193,13 +193,17 @@ describe("photo grid", () => {
     await show(page([photo(1), photo(2)]));
     expect(allByTestId("delivery-tile").map((tile) => tile.querySelector('[data-testid="delivery-tile-caption"]')?.textContent)).toEqual(["Photo 01", "Photo 02"]);
   });
-  it("is four columns, two at 721 px and under the container, and every box carries its photo's own ratio", async () => {
+  it("is four columns, two at 721 px and under the container, and every tile is a uniform 3:2 box whatever the photo's own ratio", async () => {
     await show(page([photo(1), photo(2, { width: 3000, height: 4000 }), photo(3, { width: null, height: null })]));
     const grid = byTestId("delivery-grid")!;
     expect(grid.className).toContain("grid-cols-4");
     expect(grid.className).toContain("@max-[721px]:grid-cols-2");
-    const ratios = allByTestId("delivery-tile").map((tile) => (tile.firstElementChild as HTMLElement).style.aspectRatio);
-    expect(ratios).toEqual(["6000 / 4000", "3000 / 4000", "3 / 2"]);
+    for (const tile of allByTestId("delivery-tile")) {
+      const box = tile.firstElementChild as HTMLElement;
+      expect(box.className).toContain("aspect-[3/2]");
+      expect(box.style.aspectRatio).toBe("");
+      expect(tile.querySelector("img")!.className).toContain("object-cover");
+    }
   });
   it("loads the thumbnail in the grid, with alt text from the label, and opens the viewer from the tile only", async () => {
     await show(page([photo(1)]));

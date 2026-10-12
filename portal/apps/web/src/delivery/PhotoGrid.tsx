@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { DeliveryItemDto } from "@quincy/shared";
 import { LazyImage } from "../components/LazyImage";
 import { Button, buttonVariants } from "../components/reui/button";
-import { aspectOf, unlockOf, type DeliveryHrefs, type UnlockStates } from "./delivery-model";
+import { unlockOf, type DeliveryHrefs, type UnlockStates } from "./delivery-model";
 import { PremiumBadge, TOUCH, UnlockControl } from "./UnlockControl";
 
 /** What a tile shows when its derivative is not there (yet): never the original, never a broken image. */
@@ -36,7 +36,7 @@ function TileImage({ item }: { item: DeliveryItemDto }) {
 function PhotoTile({ item, items, index, hrefs, unlock, onRequestUnlock, onOpen }: { item: DeliveryItemDto; items: DeliveryItemDto[]; index: number; hrefs: DeliveryHrefs | null; unlock: UnlockStates; onRequestUnlock: (handle: string) => void; onOpen: OpenViewer }) {
   return <li data-testid="delivery-tile" data-handle={item.handle} className="grid content-start gap-[var(--space-2)]">
     {/* The clip is on the picture's own wrapper, not on the tile: the open button's focus outline is drawn outward and an ancestor with overflow-hidden would cut it off. */}
-    <div style={{ aspectRatio: aspectOf(item) }} className="relative bg-surface-sunken">
+    <div className="relative aspect-[3/2] bg-surface-sunken">
       <div className="absolute inset-0 overflow-hidden"><TileImage key={`${item.locked}:${item.thumbUrl}`} item={item} /></div>
       <Button type="button" variant="ghost" aria-label={`Open ${item.label}`} className="absolute inset-0 h-full w-full rounded-none p-0 hover:bg-transparent" onClick={(event) => { onOpen(items, index, event.currentTarget); }} />
       {item.locked && <span className="pointer-events-none absolute top-[var(--space-2)] left-[var(--space-2)]"><PremiumBadge overPhoto /></span>}
@@ -46,7 +46,7 @@ function PhotoTile({ item, items, index, hrefs, unlock, onRequestUnlock, onOpen 
   </li>;
 }
 
-/** The thumbnails: four columns, two once the page itself (not the window) is 721 px or narrower, so it holds its shape inside Preview's 720 px dialog. Boxes carry the photo's own ratio, so nothing shifts as images load. */
+/** The thumbnails: four columns, two once the page itself (not the window) is 721 px or narrower, so it holds its shape inside Preview's 720 px dialog. Every tile is a uniform 3:2 box and the picture covers it (cropped), so rows stay even and nothing shifts as images load; the viewer shows the whole photo. */
 export function PhotoGrid({ items, hrefs, unlock, onRequestUnlock, onOpen, label = "Photos" }: { items: DeliveryItemDto[]; hrefs: DeliveryHrefs | null; unlock: UnlockStates; onRequestUnlock: (handle: string) => void; onOpen: OpenViewer; label?: string }) {
   return <ul aria-label={label} data-testid="delivery-grid" className="m-0 grid list-none grid-cols-4 gap-[var(--space-4)] p-0 @max-[721px]:grid-cols-2 @max-[721px]:gap-[var(--space-2)]">
     {items.map((item, index) => <PhotoTile key={item.handle} item={item} items={items} index={index} hrefs={hrefs} unlock={unlock} onRequestUnlock={onRequestUnlock} onOpen={onOpen} />)}
