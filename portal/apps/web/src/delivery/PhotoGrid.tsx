@@ -24,9 +24,13 @@ export function PhotoDownloads({ item, hrefs }: { item: DeliveryItemDto; hrefs: 
 /** The tile's picture. Keyed by its address and lock state, so a failure belongs to the file that failed: an unlock refetch brings a different file and gets a fresh try. */
 function TileImage({ item }: { item: DeliveryItemDto }) {
   const [failed, setFailed] = useState(false);
-  return item.thumbUrl !== null && !failed
-    ? <LazyImage src={item.thumbUrl} alt={item.label} className="size-full object-cover" onFailedChange={setFailed} />
-    : <ProcessingTile label={item.label} />;
+  if (item.thumbUrl === null || failed) return <ProcessingTile label={item.label} />;
+  // The caption is the picture's, not the tile's: a processing tile already says its piece in words, and the scrim would sit over them.
+  // Always visible (the prototype reveals it on hover, which a phone has no equivalent of), and it never takes a click from the open button over it.
+  return <>
+    <LazyImage src={item.thumbUrl} alt={item.label} className="size-full object-cover" onFailedChange={setFailed} />
+    <span data-testid="delivery-tile-caption" className="pointer-events-none absolute inset-x-0 bottom-0 bg-[image:var(--scrim-caption)] px-[var(--space-3)] pt-[var(--space-6)] pb-[var(--space-2)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-on-inverse">{item.label}</span>
+  </>;
 }
 
 function PhotoTile({ item, items, index, hrefs, unlock, onRequestUnlock, onOpen }: { item: DeliveryItemDto; items: DeliveryItemDto[]; index: number; hrefs: DeliveryHrefs | null; unlock: UnlockStates; onRequestUnlock: (handle: string) => void; onOpen: OpenViewer }) {
@@ -35,8 +39,6 @@ function PhotoTile({ item, items, index, hrefs, unlock, onRequestUnlock, onOpen 
     <div style={{ aspectRatio: aspectOf(item) }} className="relative bg-surface-sunken">
       <div className="absolute inset-0 overflow-hidden"><TileImage key={`${item.locked}:${item.thumbUrl}`} item={item} /></div>
       <Button type="button" variant="ghost" aria-label={`Open ${item.label}`} className="absolute inset-0 h-full w-full rounded-none p-0 hover:bg-transparent" onClick={(event) => { onOpen(items, index, event.currentTarget); }} />
-      {/* Always visible (the prototype reveals it on hover, which a phone has no equivalent of), and it never takes a click from the open button under it. */}
-      <span data-testid="delivery-tile-caption" className="pointer-events-none absolute inset-x-0 bottom-0 bg-[image:var(--scrim-caption)] px-[var(--space-3)] pt-[var(--space-6)] pb-[var(--space-2)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-on-inverse">{item.label}</span>
       {item.locked && <span className="pointer-events-none absolute top-[var(--space-2)] left-[var(--space-2)]"><PremiumBadge overPhoto /></span>}
     </div>
     {!item.locked && hrefs && <PhotoDownloads item={item} hrefs={hrefs} />}

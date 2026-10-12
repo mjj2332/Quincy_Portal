@@ -141,10 +141,12 @@ describe("hero", () => {
     expect(site.getAttribute("href")).toBe("https://quincyproductions.com.au");
     expect(site.getAttribute("rel")).toBe("noopener noreferrer");
   });
-  it("lets the tab list grow past its fixed 32px height, so a wrapped fifth tab is not hidden under the panel", async () => {
+  it("lets the tab list grow past its fixed 32px height, as a single sideways-scrolling row (never wrapping)", async () => {
     await show(page([photo(1), film(2), pdf(3, "floorplan"), pdf(4, "copy"), locked(5)]));
     const list = byTestId("delivery-tabs-list")!;
-    expect(list.className).toContain("flex-wrap");
+    expect(list.className).toContain("flex-nowrap");
+    expect(list.className).toContain("overflow-x-auto");
+    expect(list.className).not.toContain("flex-wrap");
     expect(list.className).toContain("group-data-[orientation=horizontal]/tabs:h-auto");
     expect(list.className).not.toContain("group-data-[orientation=horizontal]/tabs:h-8");
     const triggers = [...list.querySelectorAll('[role="tab"]')];
@@ -153,6 +155,18 @@ describe("hero", () => {
       expect(t.className).toContain("h-auto");
       expect(t.className).not.toContain("h-[calc(100%-1px)]");
     }
+  });
+  it("sticks the tab bar above the content on a tokenised ground, and mutes the counts", async () => {
+    await show(page([photo(1), film(2)]));
+    const bar = byTestId("delivery-tabs-list")!.parentElement!.parentElement!;
+    expect(bar.className).toContain("sticky");
+    expect(bar.className).toContain("top-0");
+    expect(bar.className).toMatch(/\bz-/);
+    expect(byTestId("delivery-tab-count")!.className).toContain("text-muted-foreground");
+  });
+  it("hides the hero wordmark credit once the page is 721 px or narrower", async () => {
+    await show(page([photo(1)]));
+    expect(byTestId("delivery-hero-credit")!.className).toContain("@max-[721px]:hidden");
   });
   it("describes the PDFs as Floorplan and Copywriting, and names the Copywriting section the same", async () => {
     await show(page([pdf(1, "floorplan"), pdf(2, "copy")]));
@@ -199,6 +213,8 @@ describe("photo grid", () => {
     await act(async () => { allByTestId("delivery-tile")[0]!.querySelector("img")!.dispatchEvent(new Event("error")); });
     expect(allByTestId("delivery-tile")[0]!.querySelector("img")).toBeNull();
     expect(byTestId("delivery-processing")).not.toBeNull();
+    // The caption's scrim would cover the "still being prepared" text.
+    expect(allByTestId("delivery-tile")[0]!.querySelector('[data-testid="delivery-tile-caption"]')).toBeNull();
   });
   it("keeps the open button outside any overflow-hidden ancestor within its tile, so its focus outline is not clipped", async () => {
     await show(page([photo(1), locked(2)]));

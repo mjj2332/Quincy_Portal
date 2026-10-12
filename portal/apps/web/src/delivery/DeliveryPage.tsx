@@ -58,7 +58,7 @@ function Hero({ dto, hero, action }: { dto: DeliveryPageDto; hero: DeliveryItemD
       sizes="100vw" className="absolute inset-0 size-full object-cover" />}
     <div aria-hidden className="pointer-events-none absolute inset-0 bg-[image:var(--scrim-hero)]" />
     <img src="/brand/Quincy-HERO-Q-WHITE-1.png" alt="" aria-hidden className="pointer-events-none absolute -top-[12%] left-1/2 h-[125%] -translate-x-1/2 opacity-15 select-none" />
-    <div data-testid="delivery-hero-credit" aria-hidden className="pointer-events-none absolute top-[var(--space-7)] right-[var(--space-7)] z-10 @max-[721px]:top-[var(--space-4)] @max-[721px]:right-[var(--space-4)]">
+    <div data-testid="delivery-hero-credit" aria-hidden className="pointer-events-none absolute top-[var(--space-7)] right-[var(--space-7)] z-10 @max-[721px]:hidden">
       <img src="/brand/quincy-wordmark-white.png" alt="" className="h-[var(--space-5)] w-auto select-none" />
     </div>
     <div className="relative z-10 mx-auto w-full max-w-[var(--container-page)] px-[var(--space-7)] pt-[var(--space-9)] pb-[var(--space-8)] @max-[721px]:px-[var(--space-4)] @max-[721px]:pt-[var(--space-7)] @max-[721px]:pb-[var(--space-6)]">
@@ -97,7 +97,7 @@ function PremiumIntro({ items }: { items: DeliveryItemDto[] }) {
       <h2 className="m-0 [font:var(--type-h1)] tracking-[var(--tracking-tight)] text-pretty">Paid extras</h2>
       <p className="m-0 max-w-[60ch] [font:var(--type-body)] text-foreground-secondary">Extras from the studio. A locked extra shows a preview; ask the studio to unlock it.</p>
     </div>
-    <div className="text-right">
+    <div className="text-right @max-[721px]:text-left">
       <p className="m-0 [font:var(--type-h1)] tabular-nums">{lockedCount}</p>
       <p className="m-0 [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">{lockedCount === 1 ? "item to unlock" : "items to unlock"}</p>
     </div>
@@ -155,13 +155,13 @@ export function DeliveryPage(props: DeliveryPageProps) {
     {active === null
       ? <div className="mx-auto w-full max-w-[var(--container-page)] px-[var(--space-7)] py-[var(--space-7)] @max-[721px]:px-[var(--space-4)]"><EmptyState data-testid="delivery-empty" title="Nothing here yet.">The studio hasn't added anything to this page.</EmptyState></div>
       : <Tabs value={active} onValueChange={(value) => { setChosen(value as DeliveryTabId); }}>
-        <div className="border-0 border-b border-solid border-[var(--border-hairline)]">
-          <div className="mx-auto w-full max-w-[var(--container-page)] px-[var(--space-7)] py-[var(--space-4)] @max-[721px]:px-[var(--space-4)]">
-            <TabsList variant="line" data-testid="delivery-tabs-list" aria-label="Delivery sections" className="h-auto max-w-full group-data-[orientation=horizontal]/tabs:h-auto flex-wrap justify-start gap-x-[var(--space-3)] gap-y-[var(--space-3)]">
-              {tabs.map((tab) => <TabsTrigger key={tab.id} value={tab.id} className={`h-auto flex-none gap-[var(--space-2)] px-[var(--space-2)] [font:var(--type-label)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary data-active:text-foreground ${TOUCH}`}>
+        <div data-testid="delivery-tabs-bar" className="sticky top-0 z-20 border-0 border-b border-solid border-[var(--border-hairline)] bg-[color-mix(in_srgb,var(--background)_92%,transparent)] backdrop-blur-[10px]">
+          <div className="mx-auto w-full max-w-[var(--container-page)] px-[var(--space-7)] pt-[var(--space-4)] pb-[var(--space-2)] @max-[721px]:px-[var(--space-4)]">
+            <TabsList variant="line" data-testid="delivery-tabs-list" aria-label="Delivery sections" className="h-auto max-w-full group-data-[orientation=horizontal]/tabs:h-auto flex-nowrap justify-start gap-[var(--space-3)] overflow-x-auto pb-[var(--space-2)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {tabs.map((tab) => <TabsTrigger key={tab.id} value={tab.id} className={`h-auto shrink-0 flex-none gap-[var(--space-2)] px-[var(--space-2)] [font:var(--type-label)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary data-active:text-foreground ${TOUCH}`}>
                 {tab.id === "premium" && <LockIcon aria-hidden className="size-3.5" />}
                 <span data-testid="delivery-tab-label">{tab.label}</span>
-                <span data-testid="delivery-tab-count" className="tabular-nums text-foreground-secondary">{tab.items.length}</span>
+                <span data-testid="delivery-tab-count" className="tabular-nums text-muted-foreground">{tab.items.length}</span>
               </TabsTrigger>)}
             </TabsList>
           </div>
