@@ -1203,10 +1203,13 @@ describe("ProjectWorkspace selection download", () => {
     it("design review: preparing is a caution status with the copy beside an aligned spinner; ready is a positive status that SAYS it is ready, with an outline Download zip", async () => {
       apiPostMock.mockRejectedValue(preparing()); await selectOneAndDownload();
       expect(message()!.getAttribute("role")).toBe("status"); expect(notice()!.getAttribute("data-tone")).toBe("caution");
+      // Layout (design review r2): the row aligns on text baselines, and the message has a basis so the actions wrap underneath at phone width.
+      expect(notice()!.className).toContain("items-baseline"); expect(notice()!.className).not.toContain("items-start");
+      expect(message()!.className).toContain("basis-[min(100%,20rem)]");
       const spinner = notice()!.querySelector('[role="presentation"]')!; expect(spinner).not.toBeNull(); expect(spinner.parentElement!.textContent).toContain("Preparing this download."); expect(spinner.parentElement).not.toBe(notice());
       apiPostMock.mockResolvedValue({ downloadUrl: "/api/projects/p1/download-selection/a/archive.zip" }); await tick(30_000);
       expect(message()!.getAttribute("role")).toBe("status"); expect(notice()!.getAttribute("data-tone")).toBe("positive");
-      expect(message()!.textContent).toContain("The zip starts in your browser. If nothing downloads, wait a minute and try again.");
+      expect(message()!.textContent).toContain("Your zip is ready. It starts in your browser when you press Download zip. If nothing downloads, wait a minute and try again.");
       expect(readyDownload().classList.contains("bg-primary")).toBe(false);
     });
 

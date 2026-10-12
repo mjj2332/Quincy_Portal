@@ -17,3 +17,5 @@ One line per UI element added or changed. All reuse installed items; nothing is 
 The staff notice is an inline `Notice` under the hand-off bar rather than a `reui/dialog`: the staff download buttons live in a toolbar and the notice must not block the grid while the zip prepares. The guest surface already is a dialog.
 
 The notice renders after the hand-off block on both tabs (after the AutoHDR status card on Edited), and Close / Download zip return focus to the control that opened it.
+
+The staff notice's "Download zip" (`outline`) and "Close" (`ghost`) inherit the notice's tone colour, so their labels are green when the notice is ready (positive) and caution-toned while preparing; accepted, not overridden.

@@ -31,10 +31,10 @@ export function PreparedZipNotice({ ask, onDownload, onClose, onError, label = "
   // One stable row of actions outside the announcement region, so a poll that turns the message from status to alert never remounts Close (it may hold focus). Only the message element changes: a
   // failure is announced as an alert (a distinct element, so the role change is announced), preparing, timeout and ready share one status.
   return (
-    <Notice tone={tone} data-tone={tone} data-testid="prepared-zip-notice" className="flex flex-wrap items-start gap-[var(--space-2)]">
+    <Notice tone={tone} data-tone={tone} data-testid="prepared-zip-notice" className="flex flex-wrap items-baseline gap-[var(--space-2)]">
       {failed
-        ? <span key="alert" role="alert" data-testid="prepared-zip-message" className="min-w-0 flex-1">{status === "too_large" ? PREPARE_TOO_BIG_COPY : PREPARE_FAILED_COPY}</span>
-        : <span key="status" role="status" data-testid="prepared-zip-message" className="flex min-w-0 flex-1 items-start gap-[var(--space-2)]">
+        ? <span key="alert" role="alert" data-testid="prepared-zip-message" className="min-w-0 flex-1 basis-[min(100%,20rem)]">{status === "too_large" ? PREPARE_TOO_BIG_COPY : PREPARE_FAILED_COPY}</span>
+        : <span key="status" role="status" data-testid="prepared-zip-message" className="flex min-w-0 flex-1 basis-[min(100%,20rem)] items-start gap-[var(--space-2)]">
           {(status === "idle" || status === "checking" || status === "preparing") && <Spinner aria-hidden="true" role="presentation" className={NOTICE_SPINNER} />}
           {status === "ready" ? READY_HINT_COPY : status === "timeout" ? PREPARE_TIMEOUT_COPY : PREPARING_COPY}
         </span>}

@@ -801,7 +801,7 @@ describe("Download all", () => {
       expect(region.compareDocumentPosition(byId("guest-download-item")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       manifest = READY; await settle(30_000);
       expect(preparing()).toBe(region); expect(region.isConnected).toBe(true); expect(region.getAttribute("role")).toBe("status");
-      expect(region.textContent).toContain("The zip starts in your browser. If nothing downloads, wait a minute and try again.");
+      expect(region.textContent).toContain("Your zip is ready. It starts in your browser when you press Download zip. If nothing downloads, wait a minute and try again.");
       expect(region.textContent).not.toContain("Preparing this download.");
       expect(region.querySelector('svg')).toBeNull();
     });
