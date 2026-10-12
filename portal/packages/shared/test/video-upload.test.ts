@@ -16,6 +16,17 @@ describe("videoUploadReserveInputSchema filename (#813)", () => {
   });
 });
 
+describe("videoUploadReserveInputSchema filename control characters (#828)", () => {
+  it.each(["\u0000.mp4", "a\u0000b.mp4", "a\u0001.mp4", "a\nb.mov", "a\tb.mp4", "a\u007f.mp4"])("rejects %j: SQLite and JavaScript disagree about them, so the title rules could diverge", (filename) => {
+    const r = videoUploadReserveInputSchema.safeParse({ ...base, filename });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0]!.path).toEqual(["filename"]);
+  });
+  it("still accepts spaces, NBSP, unicode and an emoji", () => {
+    for (const filename of ["my film.mp4", "a\u00a0b.mp4", "Éclair 🎬.mov"]) expect(videoUploadReserveInputSchema.safeParse({ ...base, filename }).success, filename).toBe(true);
+  });
+});
+
 describe("normalizeVideoUploadFilename (#813)", () => {
   it("turns a terminal .mov of any case into .mp4", () => {
     expect(normalizeVideoUploadFilename("film.mov")).toBe("film.mp4");

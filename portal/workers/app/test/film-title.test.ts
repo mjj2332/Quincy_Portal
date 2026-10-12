@@ -72,6 +72,15 @@ describe("upload sets and moves the title", () => {
     expect(reserved).toMatchObject({ version: 1, originalFilename: "  Hero Walkthrough.mp4", newVideoTitle: "Hero Walkthrough" });
   });
 
+  it("refuses a file name with a control character at reservation: 400, no reservation row", async () => {
+    const before = (await database.DB.prepare("SELECT count(*) AS n FROM video_upload_reservations").first<{ n: number }>())!.n;
+    for (const filename of ["\u0000.mp4", "a\u0000b.mov", "a\u0001.mp4"]) {
+      const { response } = await reserve({ filename });
+      expect(response.status, JSON.stringify(filename)).toBe(400);
+    }
+    expect((await database.DB.prepare("SELECT count(*) AS n FROM video_upload_reservations").first<{ n: number }>())!.n).toBe(before);
+  });
+
   it("ignores a stale client title: Version 1 is titled from its file name", async () => {
     const reserved = await upload({ filename: "Real name.mp4", title: "Typed in an old tab" });
     expect(reserved.newVideoTitle).toBe("Real name");
@@ -139,12 +148,31 @@ describe("remove and restore keep the title on the latest live Version (#828)", 
     expect(await titleOf(v1!.videoId)).toBe("Beta");
   });
 
-  it("a refused removal (the fence) leaves the title as it was", async () => {
+  it("a removal refused by the committing batch (the audit fence) leaves the title as it was", async () => {
     const [v1, v2] = await film(["Alpha.mp4", "Beta.mp4"]);
     await setTitle(v1!.videoId, "Stale value");
-    const impact = await impactOf(v2!.assetId);
-    const refused = await call(`${base}/video-versions/${v2!.assetId}/remove`, "admin", "POST", { expected: { ...expectedOf(impact), notes: impact.notes + 1 }, removeVideo: false });
-    expect(refused.status).toBe(409);
+    // The preliminary read passes (the confirmed counts are the real ones), then a decision lands just before the batch, so only the batch's own conditions refuse it.
+    const zero = { notes: 0, decisions: 0, release: false, links: 0 };
+    expect(expectedOf(await impactOf(v2!.assetId))).toEqual(zero);
+    let ran = false;
+    const db = new Proxy(database.DB, { get(target, property) {
+      if (property === "batch") return async (statements: D1PreparedStatement[]) => {
+        if (!ran && statements.length >= 5) {
+          ran = true;
+          await database.DB.prepare("INSERT INTO video_approval_events (id, project_id, video_id, asset_id, link_id, revision, decision, note, actor_guest_id, actor_user_id, created_at) VALUES (?, ?, ?, ?, NULL, 1, 'approved', NULL, NULL, ?, ?)").bind(crypto.randomUUID(), ids.project, v2!.videoId, v2!.assetId, ids.admin, Date.now()).run();
+        }
+        return target.batch(statements);
+      };
+      const value = Reflect.get(target, property, target); return typeof value === "function" ? value.bind(target) : value;
+    } }) as D1Database;
+    const context = await createAuth(DEV_ENV).$context;
+    const cookie = `${context.authCookies.sessionToken.name}=${tokens.admin}.${await makeSignature(tokens.admin, authSecret)}`;
+    const executionContext = { waitUntil: () => undefined, passThroughOnException: () => undefined, props: undefined } as unknown as ExecutionContext;
+    const response = await app.fetch(new Request(`https://portal.test${base}/video-versions/${v2!.assetId}/remove`, { method: "POST", headers: { cookie, origin: DEV_ENV.APP_ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ expected: zero, removeVideo: false }) }), { ...DEV_ENV, DB: db } as Env, executionContext);
+    expect(ran, "the committing batch ran through the proxy").toBe(true);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "impact_changed" });
+    expect(await database.DB.prepare("SELECT removed_at FROM video_version_meta WHERE asset_id = ?").bind(v2!.assetId).first()).toEqual({ removed_at: null });
     expect(await titleOf(v1!.videoId)).toBe("Stale value");
   });
 

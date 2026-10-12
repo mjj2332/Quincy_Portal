@@ -60,7 +60,8 @@ const isoTimestamp = z.string().datetime();
 export const videoUploadReserveInputSchema = z.object({
   videoId: uuid.optional(),
   title: z.unknown().transform(() => undefined).optional(),
-  filename: z.string().min(1).max(255).regex(/\.(mp4|mov)$/i, "Only MP4 or MOV files can be uploaded"),
+  // No control characters (C0 and DEL): the film title is cut from this name by SQLite and by TypeScript, and they disagree about NUL (#828).
+  filename: z.string().min(1).max(255).regex(/^[^\u0000-\u001f\u007f]*$/, "The file name contains a control character").regex(/\.(mp4|mov)$/i, "Only MP4 or MOV files can be uploaded"),
   bytes: z.number().int().positive(),
   contentType: z.string(),
   clientProbe: z.record(z.string(), z.unknown()).optional(),
