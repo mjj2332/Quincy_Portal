@@ -294,6 +294,7 @@ _Avoid_: Notes export, NLE export (in staff-facing copy)
 **Review link**:
 A private link giving Guest reviewers access to one or more Videos from a single Project, with an
 expiry, an optional passcode and the Versions granted on it. Delivers released video only.
+Created and managed by Admin, Editor and, on Projects they are assigned to, External editors (#834); Release stays a studio decision.
 _Avoid_: Client link, share link, delivery link (the delivery page is a different, unbuilt surface)
 
 **Guest reviewer**:

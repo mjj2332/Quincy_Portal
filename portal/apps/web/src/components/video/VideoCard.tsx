@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import type { VideoDto } from "@quincy/shared";
 import { Badge } from "../reui/badge";
@@ -12,6 +12,8 @@ import { Notice } from "../quincy/Notice";
 import { FilePickButton } from "../quincy/FileDropzone";
 import type { VideoUploadState } from "../../lib/video-upload";
 import { Checkbox } from "../quincy/Checkbox";
+import { IconButton } from "../quincy/icon-button";
+import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
 import { formatDuration, formatFps, formatVideoDate } from "./video-format";
 import { ReviewLinkChips } from "./ReviewLinkChips";
 import type { ReviewLinkChip } from "./use-review-links-ui";
@@ -25,7 +27,7 @@ export const VIDEO_ACCEPT = ".mp4,.mov,video/mp4,video/quicktime";
  * the Video and the control that was pressed to `onOpen`; selection and note chips arrive in later slices. `onVersionFile` checks and
  * starts the upload and returns a message when the file is refused.
  */
-export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks }: {
+export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks, onCreateReviewLink }: {
   video: VideoDto;
   canUpload: boolean;
   currentUserId: string | null;
@@ -37,9 +39,13 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
   onCancelReservation: (reservationId: string) => Promise<void>;
   /** Opens the review player on this Video; `trigger` is where focus returns on close. */
   onOpen: (video: VideoDto, trigger: HTMLElement) => void;
+  /** Present only when new Review links may be made (#834): the card's "⋯" menu then offers Create Review link for this film. Absent on an archived Project. */
+  onCreateReviewLink?: () => void;
   /** Review links (#741 11b), present only when the links part is on and the role may share: the tick for a new link and the links this Video is on. */
   reviewLinks?: { selected: boolean; /** Absent when the Project is archived: no new links. */ onToggle?: () => void; chips: ReviewLinkChip[]; onOpenChip: (linkId: string) => void; onOpenAll: () => void };
 }) {
+  // The menu closes before the dialog has focus: while Create Review link hands off, the menu moves no focus (#463); the dialog returns focus to the menu button itself.
+  const handOff = useRef(false);
   const [cancelling, setCancelling] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
@@ -98,7 +104,7 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
           <Button type="button" variant="secondary" className="min-h-[44px]" disabled={cancelling} onClick={() => { setCancelling(true); void onCancelReservation(cancellable.reservationId).finally(() => setCancelling(false)); }}>{cancelling ? "Cancelling…" : "Cancel upload"}</Button>
         </div>}
         {message && <Notice tone="critical" role="alert">{message}</Notice>}
-        <div className="flex flex-wrap gap-[var(--space-2)]">
+        <div className="flex flex-wrap items-center gap-[var(--space-2)]">
           <Button type="button" variant="primary" className="min-h-[44px]" data-testid="video-card-open" data-video-id={video.id} onClick={(event) => onOpen(video, event.currentTarget)}>Open review</Button>
           {canUpload && !busy && <FilePickButton
             accept={VIDEO_ACCEPT}
@@ -107,6 +113,18 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
             disabled={checking}
             onFile={(file) => { setMessage(null); setChecking(true); void onVersionFile(video, file).then((refused) => setMessage(refused)).finally(() => setChecking(false)); }}
           >{checking ? "Checking…" : `Upload v${nextNumber}`}</FilePickButton>}
+          {onCreateReviewLink && <div className="ml-auto">
+            <Menu
+              triggerLabel="Film actions" label="Film menu" triggerTestId="video-card-menu"
+              triggerRender={<IconButton data-video-id={video.id} />}
+              triggerClassName="text-foreground"
+              trigger={<span aria-hidden="true">⋯</span>}
+              finalFocus={() => (handOff.current ? false : undefined)}
+              onOpenChange={(isOpen) => { if (isOpen) handOff.current = false; }}
+            >
+              <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-create-review-link" onClick={() => { handOff.current = true; onCreateReviewLink(); }}>Create Review link</MenuPrimitive.Item>
+            </Menu>
+          </div>}
         </div>
       </div>
     </FramePanel>

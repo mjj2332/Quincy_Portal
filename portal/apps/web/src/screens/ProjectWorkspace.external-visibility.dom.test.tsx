@@ -353,10 +353,10 @@ describe("external-editor visibility inventory", () => {
     // frozen inventories below are ever legitimately re-captured.
     expect([...EXTERNAL_EDITOR_CAPABILITIES].sort()).toEqual([
       "annotateEdited", "annotateRaw", "annotateVideo", "collaborateOnProject", "compareFrames", "downloadVideo", "moveProjectStage",
-      "recommendRaw", "reviewEdited", "uploadEdited", "uploadExtras", "uploadVideo", "viewEdited",
+      "recommendRaw", "reviewEdited", "shareVideo", "uploadEdited", "uploadExtras", "uploadVideo", "viewEdited",
       "viewProductionCalendar", "viewRaw", "viewVideo",
     ]);
-    for (const forbidden of ["adminBackend", "editProject", "uploadRaw", "selectForEditing", "viewNoticeBoard"]) {
+    for (const forbidden of ["adminBackend", "editProject", "uploadRaw", "selectForEditing", "viewNoticeBoard", "releaseVideo", "manageVideoPremium", "manageVideoTrash"]) {
       expect(ROLE_CAPABILITIES.external_editor as readonly string[]).not.toContain(forbidden);
     }
   });

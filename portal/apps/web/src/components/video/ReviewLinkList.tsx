@@ -34,7 +34,7 @@ export function ReviewLinkList({ ui }: { ui: ReviewLinksUi }) {
   </DialogHeader>}>
     {links.isPending && <p role="status" className="flex items-center gap-[var(--space-2)] text-foreground-secondary"><Spinner aria-hidden="true" role="presentation" className="size-3.5" />Loading Review links…</p>}
     {links.isError && !links.data && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{links.error.message || "Review links could not be loaded."}</span><Button type="button" variant="text" className="min-h-11" onClick={() => void links.refetch()}>Retry</Button></Notice>}
-    {links.data && links.data.length === 0 && <EmptyState title="No Review links yet.">Tick films on the page, then choose Create Review link.</EmptyState>}
+    {links.data && links.data.length === 0 && <EmptyState title="No Review links yet.">Tick films on the page and choose Create Review link, or use a film’s ⋯ menu.</EmptyState>}
     {links.data && links.data.length > 0 && <ItemGroup className="gap-[var(--space-2)]">
       {links.data.map((link) => <Item key={link.id} variant="outline" data-testid="review-link-row" className="max-[721px]:flex-wrap">
         <ItemContent className={cn("max-[721px]:basis-full", link.status === "revoked" && "opacity-60")}>

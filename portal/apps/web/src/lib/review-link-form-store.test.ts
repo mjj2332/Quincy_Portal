@@ -268,3 +268,50 @@ describe("review link form store (#741 11b)", () => {
     expect(sent).toEqual([`grants:${A}:v1`]);
   });
 });
+
+describe("review link form store: single-film create (#834)", () => {
+  const reveal = { url: "https://x.test/d/review?link=a#t=tok", linkId: A, label: null, origin: "create" as const };
+
+  it("openCreateFor opens a create view for that film alone, keeps the ticks, and overwrites that film's grant draft", () => {
+    const store = createReviewLinkStore("u:p");
+    store.toggleSelect(A); store.toggleSelect(B); store.setGrant(A, ["old"]);
+    store.openCreateFor(A, ["v2"], '[data-testid="x"]');
+    const s = store.getState();
+    expect(s.view).toEqual({ kind: "create", only: A });
+    expect([...s.selection]).toEqual([A, B]);
+    expect(s.create.grants[A]).toEqual(["v2"]);
+    expect(s.returnFocus).toBe('[data-testid="x"]');
+  });
+
+  it("a single-film success keeps the ticks and clears only that film's unchanged draft fields", () => {
+    const store = createReviewLinkStore("u:p");
+    store.toggleSelect(A); store.toggleSelect(B); store.setGrant(B, ["b1"]);
+    store.openCreateFor(A, ["a1"]);
+    store.patchCreate({ label: "Smith", passcode: "secret1" });
+    const submitted = { videoIds: [A], draft: store.getState().create, selectionRevs: store.selectionRevisions([A]), draftRevs: store.draftRevisions(), keepSelection: true as const };
+    store.patchCreate({ passcode: "changed-meanwhile" });
+    store.showReveal(reveal, submitted);
+    const s = store.getState();
+    expect([...s.selection]).toEqual([A, B]);
+    expect(s.create.label).toBe("");
+    expect(s.create.passcode).toBe("changed-meanwhile");
+    expect(s.create.grants[A]).toBeUndefined();
+    expect(s.create.grants[B]).toEqual(["b1"]);
+  });
+
+  it("returnFocus is kept while the dialog moves between steps and cleared once it closes", () => {
+    const store = createReviewLinkStore("u:p");
+    store.openCreateFor(A, ["a1"], "#opener");
+    store.openList();
+    expect(store.getState().returnFocus).toBe("#opener");
+    store.closeDialog();
+    expect(store.getState().view.kind).toBe("closed");
+    expect(store.getState().returnFocus).toBeNull();
+  });
+
+  it("openCreate (the selection bar) is a multi-film create with no single film", () => {
+    const store = createReviewLinkStore("u:p");
+    store.openCreateFor(A, ["a1"]); store.closeDialog(); store.openCreate();
+    expect(store.getState().view).toEqual({ kind: "create" });
+  });
+});

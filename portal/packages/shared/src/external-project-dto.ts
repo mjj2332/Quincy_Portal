@@ -10,6 +10,7 @@ import { projectDefaultRangeSchema } from "./default-subtask-range";
 import { subtaskRemindersDtoSchema } from "./subtask-reminders";
 import { externalProductionGanttSchema } from "./production-gantt";
 import { videoListResponseSchema, videoReviewResponseSchema } from "./video-review";
+import { reviewLinkListResponseSchema } from "./review-links";
 import { videoUploadCompleteResponseSchema, videoUploadReserveResponseSchema } from "./video-upload";
 import { videoNotePasteCommitResponseSchema, videoNotePastePreviewResponseSchema } from "./video-note-paste-api";
 import { videoNoteDeleteResponseSchema, videoNoteListResponseSchema, videoNoteMarkupResponseSchema, videoNoteThreadDtoSchema } from "./video-notes";
@@ -265,7 +266,7 @@ export type ExternalApiSurface =
   | "annotation-mutation" | "collection-links" | "ingest-status" | "stages" | "collaboration" | "checklist" | "comment-list"
   | "comment-mutation" | "comment-read-state" | "mentionable" | "notifications" | "notification-mutation"
   | "review-mutation" | "external-upload" | "external-upload-complete" | "access-snapshot" | "activity" | "calendar" | "gantt" | "export" | "subtask-assignee-options"
-  | "embedded-media-presign" | "embedded-media-complete" | "embedded-media-rendition" | "embedded-media-settings" | "link-preview" | "video-review" | "video-list" | "video-upload-reserve" | "video-upload-complete"
+  | "embedded-media-presign" | "embedded-media-complete" | "embedded-media-rendition" | "embedded-media-settings" | "link-preview" | "video-review" | "video-list" | "review-link-list" | "video-upload-reserve" | "video-upload-complete"
   | "video-note-list" | "video-note-thread" | "video-note-delete" | "video-note-paste-preview" | "video-note-paste" | "video-note-markup";
 
 export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, z.ZodTypeAny>> = {
@@ -303,6 +304,7 @@ export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, 
   "link-preview": linkPreviewResponseSchema,
   "video-review": videoReviewResponseSchema,
   "video-list": videoListResponseSchema,
+  "review-link-list": reviewLinkListResponseSchema,
   "video-upload-reserve": videoUploadReserveResponseSchema,
   "video-upload-complete": videoUploadCompleteResponseSchema,
   "video-note-list": videoNoteListResponseSchema,

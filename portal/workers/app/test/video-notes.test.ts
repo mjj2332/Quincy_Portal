@@ -232,19 +232,16 @@ describe("author-only edit and delete (stories 38-40)", () => {
     expect(await noteRow(thread.replies[0]!.id)).toMatchObject({ author_user_id: ids.member, author_guest_id: null, parent_id: root.id, visibility: "public" });
   });
 
-  it("shows a guest author's email to a viewer who holds shareVideo (Admin, Editor) and the name alone to an External, on the list and on a thread", async () => {
+  it("shows a guest author's email to a viewer who holds shareVideo (Admin, Editor, External editor since #834), on the list and on a thread", async () => {
     const version = await seedVideoVersion(); const guest = await seedVideoNote({ assetId: version.assetId, guest: true });
     const reply = await seedVideoNote({ assetId: version.assetId, parentId: guest.id, guest: true });
-    for (const who of ["admin", "member"] as const) {
+    for (const who of ["admin", "member", "external"] as const) {
       const notes = await list(who, version.assetId);
       expect(notes[0]!.author, who).toEqual({ kind: "guest", id: guest.guestId, name: "Client Person", email: `${guest.guestId}@guest.test` });
       expect(notes[0]!.replies[0]!.author, who).toEqual({ kind: "guest", id: reply.guestId, name: "Client Person", email: `${reply.guestId}@guest.test` });
     }
-    const raw = await (await request(notesPath(version.assetId), "external")).text();
-    expect(JSON.parse(raw).notes[0].author).toEqual({ kind: "guest", id: guest.guestId, name: "Client Person" });
-    expect(raw).not.toContain("@guest.test");
     const posted = await createOk("member", version.assetId); const replied = await request(`${notePath(guest.id)}/replies`, "external", "POST", { body: "from an External" });
-    expect(replied.status).toBe(201); expect(await replied.text()).not.toContain("@guest.test"); expect(posted.author.kind).toBe("staff");
+    expect(replied.status).toBe(201); expect(await replied.text()).toContain("@guest.test"); expect(posted.author.kind).toBe("staff");
     const resolved = await request(`${notePath(guest.id)}/resolution`, "member", "PUT", { resolved: true }); expect((await resolved.json() as Json).author.email).toBe(`${guest.guestId}@guest.test`);
   });
 

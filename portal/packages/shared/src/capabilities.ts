@@ -72,6 +72,7 @@ export const EXTERNAL_EDITOR_CAPABILITIES = [
   "viewVideo",
   "uploadVideo",
   "annotateVideo",
+  "shareVideo",
   "downloadVideo",
 ] as const satisfies readonly Capability[];
 
