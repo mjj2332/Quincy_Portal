@@ -1,6 +1,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { frameSeekSeconds } from "@quincy/shared";
+import "./testing/dom-polyfills";
 import { installVideoElementStub, type VideoElementStub } from "./testing/video-element";
 
 /**
@@ -23,9 +25,10 @@ vi.mock("./lib/auth", () => ({
   signOut: async () => undefined,
 }));
 vi.mock("./components/LazyImage", () => ({ LazyImage: ({ src, alt, className }: { src: string; alt: string; className?: string }) => <img src={src} alt={alt} className={className} /> }));
+vi.mock("./components/video/VideoNoteEditor", async () => await import("./testing/video-note-editor-stub"));
 vi.mock("./lib/video-poster", () => ({ captureVideoPoster: () => Promise.resolve(null) }));
 
-const list = vi.hoisted(() => ({ mode: "ok" as "ok" | "fail" | "pending", videos: [] as unknown[], parts: [] as string[] }));
+const list = vi.hoisted(() => ({ mode: "ok" as "ok" | "fail" | "pending", videos: [] as unknown[], parts: [] as string[], notes: [] as unknown[] }));
 const removed = vi.hoisted(() => ({ callbacks: [] as Array<(removal: { assetId: string; videoId: string; video: unknown }) => void> }));
 vi.mock("./components/video/VideoVersionMenu", () => ({ VideoVersionMenu: (props: { onRemoved: (removal: { assetId: string; videoId: string; video: unknown }) => void }) => { removed.callbacks.push(props.onRemoved); return null; } }));
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string, init?: unknown) => Promise<unknown>>());
@@ -54,6 +57,7 @@ function serveApi(path: string): Promise<unknown> {
     if (list.mode === "pending") return new Promise(() => undefined);
     return Promise.resolve({ videos: list.videos });
   }
+  if (/\/video-versions\/[^/]+\/notes$/.test(path)) return Promise.resolve({ notes: list.notes });
   if (path.includes("/assets?collection=")) return Promise.resolve({ assets: [] });
   if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
   if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: PROJECT_ID, marker: null, latest: null, unreadCount: 0 });
@@ -76,6 +80,7 @@ beforeEach(() => {
   list.mode = "ok";
   list.videos = [videoOf()];
   list.parts = [];
+  list.notes = [];
   removed.callbacks.length = 0;
   apiGetMock.mockReset().mockImplementation(serveApi);
 });
@@ -234,5 +239,39 @@ describe("#819: a link to a film and Version", () => {
     await act(async () => { window.history.back(); });
     await flushUntil(() => shownVersion()?.startsWith("v1") === true, "Back onto v1");
     expect(currentLocation()).toBe(`${base}?tab=video&video=${VIDEO_ID}&version=1`);
+  });
+});
+
+describe("#835: a link to a note", () => {
+  const NOTE_OPEN = "00000000-0000-4000-8000-000000000201";
+  const NOTE_RESOLVED = "00000000-0000-4000-8000-000000000202";
+  const threadOf = (id: string) => document.querySelector<HTMLElement>(`[data-testid="video-note-thread"][data-note-id="${id}"]`);
+  const noteOf = (id: string, startFrame: number, over: Record<string, unknown> = {}) => ({
+    id, assetId: ASSET_2, parentId: null, author: { kind: "staff", person: mia }, authorRole: "editor", visibility: "public", startFrame, endFrame: null, drawingFrame: null, hasMarkup: false,
+    body: `Note at ${startFrame}`, deleted: false, resolved: null, revision: 1, createdAt: "2026-10-10T00:00:01.000Z", editedAt: null, copiedFrom: null, replies: [], ...over,
+  });
+  async function openNoteLink(noteId: string) {
+    list.parts = ["notes"];
+    await mountAt(`${base}?tab=video&video=${VIDEO_ID}&version=2&note=${noteId}`);
+    await flushUntil(() => viewerEl()?.querySelector("video") != null, "the review player");
+    const video = viewerEl()!.querySelector("video")!;
+    await act(async () => { stub.loadMetadata(video, { duration: 12, videoWidth: 1920, videoHeight: 1080 }); });
+    await act(async () => { stub.finishSeek(video); stub.presentFrame(video, 0); });
+    await flushUntil(() => threadOf(noteId)?.dataset.selected === "true", "the linked thread to be selected");
+    return video;
+  }
+
+  it("a note= link selects the thread and seeks the film to its frame", async () => {
+    list.notes = [noteOf(NOTE_OPEN, 50), noteOf("00000000-0000-4000-8000-000000000203", 10)];
+    const video = await openNoteLink(NOTE_OPEN);
+    expect(threadOf("00000000-0000-4000-8000-000000000203")?.dataset.selected).toBe("false");
+    expect(video.currentTime).toBe(frameSeekSeconds(50, { num: 25, den: 1 }));
+  });
+
+  it("a note= link to a note since resolved opens the filters so the thread is listed and selected", async () => {
+    list.notes = [noteOf(NOTE_OPEN, 50), noteOf(NOTE_RESOLVED, 200, { resolved: { at: "2026-10-10T00:00:05.000Z", by: mia } })];
+    const video = await openNoteLink(NOTE_RESOLVED);
+    expect(threadOf(NOTE_RESOLVED)?.dataset.resolved).toBe("true");
+    expect(video.currentTime).toBe(frameSeekSeconds(200, { num: 25, den: 1 }));
   });
 });

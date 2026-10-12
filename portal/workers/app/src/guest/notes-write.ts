@@ -5,7 +5,7 @@ import {
 } from "@quincy/shared";
 import { noteWriteParts, type GuestWriter } from "../lib/guest-fence-sql";
 import { preflightOwnedMedia } from "../lib/embedded-media";
-import { prepareGuestNoteContent } from "../lib/video-note-mentions";
+import { prepareGuestNoteContent } from "../lib/video-note-content";
 import {
   canonicalMarkup, createVideoNote, createVideoNoteReply, deleteVideoNote, drawingFrameFits, editVideoNote, findNoteHeadForLink, readNoteMarkup, versionFrameCount,
   type MarkupEdit, type MarkupWrite, type NoteAuthor, type NoteHead, type NoteRich,

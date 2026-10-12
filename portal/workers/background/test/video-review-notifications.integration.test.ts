@@ -314,11 +314,23 @@ describe("digest: a deferred video-review email is re-authorized before it is se
     expect(await ledger(fixture.outboxId)).toMatchObject({ email: "sent" });
   });
 
+  it("a video_mention deferred to the digest is sent end to end with the mention copy and no note text (#835)", async () => {
+    const { fixture, send } = await digestDefer({ kind: "video_mention" });
+    await flush(send);
+    const mine = send.mock.calls.filter(([mail]) => mail.to === `${fixture.recipientId}@example.test`);
+    expect(mine).toHaveLength(1);
+    expect(JSON.stringify(mine[0])).toContain("Kitchen walkthrough");
+    expect(JSON.stringify(mine[0])).toContain("mentioned you on");
+    expect(JSON.stringify(mine[0])).not.toContain(SENTINEL);
+    expect(await ledger(fixture.outboxId)).toMatchObject({ email: "sent" });
+  });
+
   it.each([
     ["membership removed", { role: "editor" }, (f: { membershipId: string }) => exec("DELETE FROM project_members WHERE id = ?", f.membershipId)],
     ["the role loses viewVideo", { role: "editor" }, (f: { recipientId: string }) => exec("UPDATE user SET role = 'photographer' WHERE id = ?", f.recipientId)],
     ["the epoch is bumped", { role: "editor" }, (f: { recipientId: string }) => exec("UPDATE user SET authorization_epoch = authorization_epoch + 1 WHERE id = ?", f.recipientId)],
     ["notify_staff is turned off", { role: "editor" }, () => exec("DELETE FROM feature_flags WHERE key = 'video_review_notify_staff'")],
+    ["the mentioned note is deleted", { kind: "video_mention" }, (f: { noteId: string }) => exec("UPDATE video_notes SET deleted_at = ? WHERE id = ?", Date.now(), f.noteId)],
     ["the note is deleted", { kind: "video_note" }, (f: { sourceKey: string }) => exec("UPDATE video_notes SET deleted_at = ? WHERE id = ?", Date.now(), f.sourceKey.split(":")[1])],
     ["the decision row is removed", { kind: "video_decision", actor: "guest" }, (f: { sourceKey: string }) => exec("DELETE FROM video_approval_events WHERE id = ?", f.sourceKey.split(":")[1])],
     ["an assigned External is unassigned", { role: "external_editor", kind: "video_note", actor: "guest" }, (f: { membershipId: string }) => exec("DELETE FROM project_members WHERE id = ?", f.membershipId)],

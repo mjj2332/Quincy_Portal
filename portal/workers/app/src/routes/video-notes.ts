@@ -13,7 +13,7 @@ import {
   canonicalMarkup, createVideoNote, createVideoNoteReply, deleteVideoNote, drawingFrameFits, editVideoNote, findNoteHead, listVideoNotes, noteAndReplyIds, readNoteMarkup, readNoteMarkupSnapshot, readNoteMentions, readThread, setVideoNoteResolution,
   userAuthor, versionFrameCount, type MarkupEdit, type MarkupWrite, type NoteHead, type NoteAuthor, type NoteRich,
 } from "../lib/video-notes";
-import { prepareNoteContent, type PreparedNoteContent } from "../lib/video-note-mentions";
+import { prepareNoteContent, type PreparedNoteContent } from "../lib/video-note-content";
 import { preflightOwnedMedia, purgeDetachedOwnerMedia } from "../lib/embedded-media";
 import { commitNotePaste, planNotePaste, type PlanOutcome } from "../lib/video-note-paste";
 import { publishOutboxDetached } from "../lib/server-timing";

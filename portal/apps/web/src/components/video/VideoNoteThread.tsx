@@ -20,7 +20,6 @@ import { Badge } from "../reui/badge";
 import { Button as ReuiButton } from "../reui/button";
 import { Item } from "../reui/item";
 import { Kbd } from "../reui/kbd";
-import { Textarea } from "../reui/textarea";
 import { RichTextContent } from "../RichTextContent";
 import { VideoNoteEditor } from "./VideoNoteEditor";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
@@ -107,8 +106,8 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
   pinned?: boolean;
   /** Drawings on notes (#741 6b-ui): whether the Project's `markup` part is on, whether this person may draw, and what the lazy read needs. Absent = 5b's thread. */
   drawings?: { on: boolean; canAnnotate: boolean; projectId: string; role: Role };
-  /** The rich fields (#835): the Project and the person's role, which the @ list and the upload routes need. Absent = plain text fields. */
-  rich?: { projectId: string; role: Role };
+  /** The rich fields (#835): the Project and the person's role, which the @ list and the upload routes need. */
+  rich: { projectId: string; role: Role };
 }) {
   const [uploading, setUploading] = useState(false);
   const openKey = useSyncExternalStore(store.subscribe, () => store.slot(assetId).open?.noteId ?? null);
@@ -181,8 +180,8 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
   }, [focusPending, editing?.noteId, store, assetId]);
   // A reply that opens takes focus, as the plain reply box did with autoFocus (the rich field is a wrapper around the editor, so it has no autoFocus of its own).
   useEffect(() => {
-    if (replying && rich) focusField(q(articleRef.current, '[data-testid="video-note-reply-body"]'));
-  }, [replying, rich === undefined]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (replying) focusField(q(articleRef.current, '[data-testid="video-note-reply-body"]'));
+  }, [replying]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function renderMenu(note: VideoNoteDto): ReactNode {
     if (readOnly || note.deleted || !isOwnNote(note, userId)) return null;
@@ -214,10 +213,8 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     onSubmit={(event) => { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit, markup: drawings?.on ?? false }); }}
   >
     <label className="sr-only" htmlFor={`video-note-edit-${note.id}`}>Edit note</label>
-    {rich
-      ? <div data-testid="video-note-edit-body"><VideoNoteEditor id={`video-note-edit-${note.id}`} projectId={rich.projectId} role={rich.role} value={draftDoc(editing.content, editing.text)} disabled={busy} placeholder="Edit note… Use @ to mention a colleague."
+    <div data-testid="video-note-edit-body"><VideoNoteEditor id={`video-note-edit-${note.id}`} projectId={rich.projectId} role={rich.role} value={draftDoc(editing.content, editing.text)} disabled={busy} placeholder="Edit note… Use @ to mention a colleague."
         onChange={(doc) => { if (!busy) store.setOpenContent(assetId, doc); }} onSubmit={() => { void store.save(assetId, { clock, frameCount, send: actions.edit, markup: drawings?.on ?? false }); }} onUploadingChange={setUploading} /></div>
-      : <Textarea id={`video-note-edit-${note.id}`} data-testid="video-note-edit-body" value={editing.text} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) store.setOpenText(assetId, event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit, markup: drawings?.on ?? false }); } }} />}
     {(editing.frames || showDrawControls) && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
       {showDrawControls && (!editing.frames || editing.drawing.touched) && <span data-testid="video-note-edit-frames-follow" className="text-foreground-secondary [font:var(--type-label)]">Frames follow the drawing.</span>}
       {editing.frames && !editing.drawing.touched && <>
@@ -262,10 +259,8 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
       {form?.kind === "reply" && <form data-notes-form="reply" className="grid gap-[var(--space-2)]" onSubmit={(event) => { event.preventDefault(); void store.reply(assetId, { send: actions.reply }); }}>
         <span className="flex items-center gap-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">{`Reply · ${thread.visibility === "internal" ? "Internal" : "Client-visible"}`}<VisibilityBadge visibility={thread.visibility} /></span>
         <label className="sr-only" htmlFor={`video-note-reply-${thread.id}`}>Write a reply</label>
-        {rich
-          ? <div data-testid="video-note-reply-body"><VideoNoteEditor id={`video-note-reply-${thread.id}`} projectId={rich.projectId} role={rich.role} value={draftDoc(form.content, form.text)} disabled={busy} placeholder="Write a reply… Use @ to mention a colleague."
+        <div data-testid="video-note-reply-body"><VideoNoteEditor id={`video-note-reply-${thread.id}`} projectId={rich.projectId} role={rich.role} value={draftDoc(form.content, form.text)} disabled={busy} placeholder="Write a reply… Use @ to mention a colleague."
             onChange={(doc) => { if (!busy) store.setOpenContent(assetId, doc); }} onSubmit={() => { void store.reply(assetId, { send: actions.reply }); }} onUploadingChange={setUploading} /></div>
-          : <Textarea id={`video-note-reply-${thread.id}`} data-testid="video-note-reply-body" autoFocus value={form.text} readOnly={busy} maxLength={VIDEO_NOTE_BODY_MAX} onChange={(event) => { if (!busy) store.setOpenText(assetId, event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void store.reply(assetId, { send: actions.reply }); } }} />}
         <div className="flex justify-end gap-[var(--space-2)]">
           <Button type="button" variant="secondary" data-testid="video-note-reply-cancel" disabled={busy} onClick={() => { store.close(assetId); }}>Cancel</Button>
           <Button type="submit" data-testid="video-note-reply-post" disabled={busy || uploading || form.text.trim() === "" || form.text.length > VIDEO_NOTE_BODY_MAX}>{busy ? "Posting…" : "Post"}</Button>

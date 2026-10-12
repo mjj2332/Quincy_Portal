@@ -11,7 +11,7 @@ import { readVideoReviewGate, type VideoReviewGateState } from "./video-review-g
  * row and nothing else: no staff notification carries note text (docs/plans/741-13-15.md section 1.7), and the consumer composes the title at delivery.
  *
  * The recipients and the `notify_staff` gate are read just BEFORE the batch (the batch is where the source row appears), so a person added a millisecond later is simply not told; the consumer
- * re-checks everything at delivery. Only call this from a site that notifies: edits, deletes, resolves, paste and a staff-recorded decision emit nothing.
+ * re-checks everything at delivery. Only call this from a site that notifies: `video_mention` is emitted on create, reply and edit (an edit with `mentionsOnly`, for newly added mentions only); deletes, resolves, paste and a staff-recorded decision emit nothing.
  */
 export type VideoReviewEmit = {
   kind: VideoReviewNotificationType;

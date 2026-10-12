@@ -21,6 +21,7 @@ Replace `tail -3` with `cut -c1-4 | uniq -d` to list numbers claimed by two diff
 - Mirror the SQL in a `sqliteTable`, e.g. `projectWhiteboardVersions` portal/packages/db/src/schema.ts:467.
 
 ## 5. FK safety
+- 0075 is the one reviewed rebuild (docs/Guides/CI-Deploy.md "Video note rich media"); it needs no guard exception. Do not copy it.
 - `PRAGMA foreign_keys=OFF` does not reliably persist in remote D1 migrations, and drizzle's `__new_` table rebuild needs it. `portal/packages/db/test/migration-fk-safety.guard.test.ts` bans both; for a new `CHECK`, use ADD COLUMN → copy → DROP COLUMN → RENAME COLUMN.
 - `no migration re-asserts an operator-owned feature flag` portal/packages/db/test/migration-feature-flag-ownership.guard.test.ts:87.
 

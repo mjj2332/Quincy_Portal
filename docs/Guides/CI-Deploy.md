@@ -187,7 +187,7 @@ Rollback: a code rollback is safe, and the queue and tables can stay. A `failed`
 
 ### Video note rich media (0075, #835)
 
-Migration 0075 is schema only (no route reads it yet) and contains the Portal's **one reviewed table rebuild**, owner-approved 2026-10-12:
+Migration 0075 adds the schema, and the Worker in this PR reads and writes the new columns and tables, so production stays on the old Worker until the owner applies 0075 and re-runs the deploy (the "A PR that adds a D1 migration" flow above). It contains the Portal's **one reviewed table rebuild**, owner-approved 2026-10-12:
 - `embedded_media` is rebuilt once, so `owner_kind` admits `video_note`, `uploader_id` becomes nullable, and `uploader_guest_id` (references `guest_reviewers`) is added, with a CHECK that exactly one uploader is set. A `video_note` row must carry a `project_id`. A new index, `embedded_media_uploader_guest_idx`, joins the six existing ones.
 - `video_notes` gains `content_json` (nullable, at most 32768 bytes) and `video_note_mentions` is created (cascades with the note, unique per note and person).
 

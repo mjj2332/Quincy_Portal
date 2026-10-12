@@ -1,4 +1,4 @@
-import { VIDEO_REVIEW_ALL_PROJECTS_FLAG, VIDEO_REVIEW_MASTER_FLAG, videoReviewPartFlag, videoReviewPilotFlag } from "@quincy/shared";
+import { SOURCE_PREFIX, VIDEO_REVIEW_ALL_PROJECTS_FLAG, VIDEO_REVIEW_MASTER_FLAG, videoReviewPartFlag, videoReviewPilotFlag } from "@quincy/shared";
 
 /**
  * Where a staff video-note notification lands (#835, story 6). Resolved at read from the notification's source key, never stored (ADR 0007/0008): the key names a note, a reply or a mention row, and
@@ -8,7 +8,7 @@ import { VIDEO_REVIEW_ALL_PROJECTS_FLAG, VIDEO_REVIEW_MASTER_FLAG, videoReviewPa
 export type VideoNotificationLink = { id: string; version: number; note: string };
 type Row = { id: string; type: string; projectId: string; sourceKey: string | null };
 
-const PREFIX: Record<string, string> = { video_note: "video_note:", video_reply: "video_reply:", video_mention: "video_mention:" };
+const LINKED = new Set(["video_note", "video_reply", "video_mention"]);
 
 const CHUNK = 80;
 /** D1 allows 100 bound parameters a statement; a row binds four, so the link read takes 24 rows at a time. */
@@ -36,7 +36,7 @@ export async function projectsWithVideoNotes(db: D1Database, projectIds: string[
 export async function videoNotificationLinks(db: D1Database, rows: Row[]): Promise<Map<string, VideoNotificationLink | null>> {
   const out = new Map<string, VideoNotificationLink | null>();
   const pending = rows.flatMap((row) => {
-    const prefix = PREFIX[row.type];
+    const prefix = LINKED.has(row.type) ? `${SOURCE_PREFIX[row.type as keyof typeof SOURCE_PREFIX]}:` : undefined;
     return prefix && row.sourceKey?.startsWith(prefix) ? [{ row, sourceId: row.sourceKey.slice(prefix.length) }] : [];
   });
   // One statement per chunk of rows (ADR 0007 bounds every read in chunks). A row is matched on its Project as well as its source id, so a key that names another Project's note resolves to nothing.

@@ -179,7 +179,7 @@ export async function readNoteMarkupSnapshot(db: D1Database, projectId: string, 
 export type WriteOutcome<T> = { kind: "ok"; value: T; outboxIds?: string[] } | { kind: "archived" } | { kind: "gone" } | { kind: "media" };
 
 /**
- * A staff note's rich content (#835), already parsed and checked by `prepareNoteContent` (lib/video-note-mentions.ts). `mentionUserIds` is every person the document mentions; the write turns them
+ * A staff note's rich content (#835), already parsed and checked by `prepareNoteContent` (lib/video-note-content.ts). `mentionUserIds` is every person the document mentions; the write turns them
  * into `video_note_mentions` rows (an edit: only the ones the note did not hold) and into `video_mention` notifications. `uploader` is who the attached media must belong to.
  */
 export type NoteRich = { contentJson: string; mentionUserIds: string[]; mediaIds: string[]; videoIds: string[]; uploader: MediaUploader };

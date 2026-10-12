@@ -39,18 +39,13 @@ export async function prepareNoteContent(db: D1Database, projectId: string, raw:
       for (const row of rows) names.set(row.id, row.name);
     }
     for (const id of mentionIds) if (!names.has(id)) return { error: "mentions_not_allowed" };
-    if (mentionIds.some((id) => !candidates.some((candidate) => candidate.id === id) && !keepMentionIds.has(id))) return { error: "mentions_not_allowed" };
   }
   let content: RichTextDoc;
   try { content = normalizeRichTextMentionLabels(parsed, names); } catch { return { error: "mentions_not_allowed" }; }
   // The parse capped the document as sent; substituting current names can grow it, and the column's CHECK is on the stored JSON, so the cap is checked again here (a refusal, not a 500).
   const contentJson = JSON.stringify(content);
   if (new TextEncoder().encode(contentJson).length > RICH_TEXT_JSON_MAX_BYTES) return { error: "content_too_large" };
-  const refs = richTextMediaRefs(content);
-  if (refs.length > EMBEDDED_MEDIA_MAX_PER_POST) return { error: "too_many_media" };
-  const body = videoNoteBody(content);
-  if (body.length > VIDEO_NOTE_BODY_MAX) return { error: "body_too_long" };
-  return { content, contentJson, body, mentionIds, mediaIds: refs.map((ref) => ref.id), videoIds: refs.filter((ref) => ref.kind === "video").map((ref) => ref.id) };
+  return finishNoteContent(content, contentJson, mentionIds);
 }
 
 /**
@@ -61,9 +56,14 @@ export function prepareGuestNoteContent(raw: unknown): PreparedNoteContent | Pre
   let content: RichTextDoc;
   try { content = parseRichTextDoc(raw, VIDEO_NOTE_RICH_TEXT_PROFILE); } catch { return { error: "invalid_content" }; }
   if (richTextMentionIds(content).length) return { error: "mentions_not_allowed" };
+  return finishNoteContent(content, JSON.stringify(content), []);
+}
+
+/** The tail both paths share: count the media, derive the body, bound it. */
+function finishNoteContent(content: RichTextDoc, contentJson: string, mentionIds: string[]): PreparedNoteContent | PrepareFailure {
   const refs = richTextMediaRefs(content);
   if (refs.length > EMBEDDED_MEDIA_MAX_PER_POST) return { error: "too_many_media" };
   const body = videoNoteBody(content);
   if (body.length > VIDEO_NOTE_BODY_MAX) return { error: "body_too_long" };
-  return { content, contentJson: JSON.stringify(content), body, mentionIds: [], mediaIds: refs.map((ref) => ref.id), videoIds: refs.filter((ref) => ref.kind === "video").map((ref) => ref.id) };
+  return { content, contentJson, body, mentionIds, mediaIds: refs.map((ref) => ref.id), videoIds: refs.filter((ref) => ref.kind === "video").map((ref) => ref.id) };
 }

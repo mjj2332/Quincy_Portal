@@ -12,7 +12,7 @@ export function isVideoReviewNotificationType(value: string): value is VideoRevi
   return (VIDEO_REVIEW_NOTIFICATION_TYPES as readonly string[]).includes(value);
 }
 
-const SOURCE_PREFIX: Record<VideoReviewNotificationType, string> = {
+export const SOURCE_PREFIX: Record<VideoReviewNotificationType, string> = {
   video_version_uploaded: "video_version",
   video_note: "video_note",
   video_reply: "video_reply",

@@ -7,7 +7,7 @@ import { externalMentionableUserSchema, ROLE_LABELS, roleHasCapability } from "@
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectCollaborationAccess } from "../middleware/capability";
 import { videoReviewGate } from "../lib/video-review-gate";
-import { videoMentionableUsers } from "../lib/video-note-mentions";
+import { videoMentionableUsers } from "../lib/video-note-content";
 import { projectMentionableUsers } from "../lib/project-collaboration";
 import { resolveVisibleProject } from "../lib/visible-project-scope";
 
