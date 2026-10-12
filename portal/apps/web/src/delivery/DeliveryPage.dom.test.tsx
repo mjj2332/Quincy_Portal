@@ -119,7 +119,7 @@ describe("hero", () => {
     expect(list.className).toContain("flex-wrap");
     expect(list.className).toContain("group-data-[orientation=horizontal]/tabs:h-auto");
     expect(list.className).not.toContain("group-data-[orientation=horizontal]/tabs:h-8");
-    const triggers = [...list.querySelectorAll('[data-slot="tabs-trigger"]')];
+    const triggers = [...list.querySelectorAll('[role="tab"]')];
     expect(triggers.length).toBe(5);
     for (const t of triggers) {
       expect(t.className).toContain("h-auto");
