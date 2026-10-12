@@ -9,7 +9,7 @@ import { buttonClasses, Button } from "../quincy/Button";
 import { Checkbox } from "../quincy/Checkbox";
 import { DateTimeField } from "../quincy/DateTimeField";
 import { Notice } from "../quincy/Notice";
-import { Eyebrow } from "../quincy/Eyebrow";
+import { FIELD_LEGEND_TEXT } from "../quincy/Eyebrow";
 import { QuincyField } from "../quincy/QuincyField";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../reui/alert-dialog";
 import { Badge } from "../reui/badge";
@@ -129,7 +129,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
           <ReviewLinkUrlField id="review-link-detail-url" url={link.url} />
         </Field>
         : <Field>
-          <Eyebrow>Link</Eyebrow>
+          <span className={FIELD_LEGEND_TEXT}>Link</span>
           <FieldDescription>Press Replace link to get a copyable link.</FieldDescription>
         </Field>)}
       <QuincyField id="review-link-detail-label" label="Label" maxLength={REVIEW_LINK_LABEL_MAX} autoComplete="off" disabled={locked} value={labelValue} onChange={(event) => store.patchDetail(linkId, { label: event.target.value })} />
