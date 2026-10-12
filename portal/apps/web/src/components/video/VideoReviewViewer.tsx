@@ -150,7 +150,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         consumed = result.consumed;
         if (result.focus === "dialog") popup.focus({ preventScroll: true });
         // focus === "draw": the pill is still expanded here, so the overlay returns focus to its Draw button itself once drawing has ended.
-        else if (result.focus === "textarea") (popup.querySelector<HTMLElement>('[data-notes-form="edit"] textarea, [data-notes-form="reply"] textarea') ?? popup.querySelector<HTMLElement>("#video-note-body"))?.focus({ preventScroll: true });
+        else if (result.focus === "textarea") (popup.querySelector<HTMLElement>('[data-notes-form="edit"] :is(textarea, [contenteditable="true"]), [data-notes-form="reply"] :is(textarea, [contenteditable="true"])') ?? popup.querySelector<HTMLElement>("#video-note-body"))?.focus({ preventScroll: true });
       }
       escapeSnapshot.current = { layer, form: consumed, compare: !consumed && modeRef.current === "compare" };
     };

@@ -67,6 +67,7 @@ const conflict = (c: Ctx, value: unknown) => c.json({ error: "This note changed 
 const mediaUnavailable = (c: Ctx) => c.json({ error: "An image or video in this note is no longer available. Remove it and try again.", code: "media_unavailable" }, 409);
 const CONTENT_ERRORS = {
   invalid_content: "This note's content is not valid.",
+  content_too_large: "This note is too large once the mentioned names are filled in. Shorten it.",
   mentions_not_allowed: "You can only mention Project members who can open video notes.",
   too_many_media: "A note can hold at most 10 images and videos.",
   body_too_long: `A note can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.`,

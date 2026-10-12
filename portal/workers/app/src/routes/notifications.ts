@@ -1,4 +1,4 @@
-import { videoNotificationLinks } from "../lib/video-notification-links";
+import { projectsWithVideoNotes, videoNotificationLinks } from "../lib/video-notification-links";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
@@ -6,7 +6,7 @@ import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { createDb, externalVisibleNotificationCte, schema } from "@quincy/db";
 import type { AppEnv } from "../env";
 import { audit } from "../lib/audit";
-import { decodeNotificationCursor, encodeNotificationCursor, externalNotificationListResponseSchema, staffNotificationListResponseSchema } from "@quincy/shared";
+import { decodeNotificationCursor, encodeNotificationCursor, externalNotificationListResponseSchema, roleHasCapability, staffNotificationListResponseSchema } from "@quincy/shared";
 import { notificationProjectContext } from "../lib/notification-project-context";
 import { notificationEnrichment } from "../lib/notification-enrichment";
 import { coverMaps, effectiveCoverAssetId } from "../lib/project-covers";
@@ -97,7 +97,9 @@ notificationsRoutes.get("/notifications", terminalRoute("/notifications", async 
     rows.map((row) => ({ id: row.id, type: row.type, projectId: row.projectId, sourceKey: row.sourceKey })),
     new Set(context.keys()),
   );
-  const videoLinks = await videoNotificationLinks(c.env.DB, rows.filter((row) => row.projectId && context.has(row.projectId)).map((row) => ({ id: row.id, type: row.type, projectId: row.projectId!, sourceKey: row.sourceKey })));
+  // ADR 0007: a link is gated by the route that exposes it. The notes API wants `viewVideo` and the Project's `notes` part, so a viewer without either keeps the tab-level fallback.
+  const notesOpen = roleHasCapability(c.get("user").role, "viewVideo") ? await projectsWithVideoNotes(c.env.DB, [...context.keys()]) : new Set<string>();
+  const videoLinks = await videoNotificationLinks(c.env.DB, rows.filter((row) => row.projectId && notesOpen.has(row.projectId)).map((row) => ({ id: row.id, type: row.type, projectId: row.projectId!, sourceKey: row.sourceKey })));
   return c.json(staffNotificationListResponseSchema.parse({
     notifications: rows.map((row) => {
       const projectContext = row.projectId ? context.get(row.projectId) : undefined;

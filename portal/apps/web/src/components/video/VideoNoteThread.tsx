@@ -80,6 +80,16 @@ function NoteText({ note }: { note: VideoNoteDto }) {
  * which is the impersonated user while an Admin impersonates), and the server enforces it again. The open form's text, baseline, conflict and
  * marks live in the Video tab's form store: this component renders them and sends commands.
  */
+/** The editable element of a field: the element itself when it is one (the plain box), else the one inside the wrapper the rich editor sits in. A wrapper takes no focus. Tries again a frame later if the editor has not attached yet. */
+const FIELD = "textarea, [contenteditable='true']";
+function focusField(host: HTMLElement | null) {
+  if (!host) return;
+  const find = () => (host.matches(FIELD) ? host : host.querySelector<HTMLElement>(FIELD));
+  const now = find();
+  if (now) { now.focus(); return; }
+  requestAnimationFrame(() => { find()?.focus(); });
+}
+
 export function VideoNoteThread({ thread, selected, userId, readOnly, now, timecode, frameCount, actions, onSeek, store, assetId, clock, pinned = false, drawings, rich }: {
   thread: VideoNoteThreadDto;
   selected: boolean;
@@ -167,8 +177,12 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
   const focusPending = editing?.focusOnOpen === true;
   useEffect(() => {
     if (!focusPending || !editing) return;
-    if (store.takeFocusOnOpen(assetId, editing.noteId)) q(articleRef.current, '[data-testid="video-note-edit-body"]')?.focus();
+    if (store.takeFocusOnOpen(assetId, editing.noteId)) focusField(q(articleRef.current, '[data-testid="video-note-edit-body"]'));
   }, [focusPending, editing?.noteId, store, assetId]);
+  // A reply that opens takes focus, as the plain reply box did with autoFocus (the rich field is a wrapper around the editor, so it has no autoFocus of its own).
+  useEffect(() => {
+    if (replying && rich) focusField(q(articleRef.current, '[data-testid="video-note-reply-body"]'));
+  }, [replying, rich === undefined]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function renderMenu(note: VideoNoteDto): ReactNode {
     if (readOnly || note.deleted || !isOwnNote(note, userId)) return null;

@@ -2,6 +2,7 @@ import { ROLE_LABELS, VIDEO_MARKUP_MAX_BYTES, guestOutboxActor, richTextMediaIds
 import { archivedInSnapshot, ARCHIVED_SNAPSHOT_SQL } from "./project-archive";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
+import { fillLinkPreviews } from "./link-previews";
 import { guestNoteGuard, reachSql, type GuestWriter } from "./guest-fence-sql";
 import { LIVE_VERSION_EXISTS } from "./video-live-sql";
 import { guestReplyInsertSql, projectFence, REPLY_INSERT_SQL, VERSION_FROM } from "./video-notes-sql";
@@ -64,6 +65,18 @@ function threads(rows: NoteRow[], showGuestEmail: boolean): VideoNoteThreadDto[]
   return roots;
 }
 
+/**
+ * Fills the display facts a document does not store (a video's `hasPoster`, an image's pixel size) on every root and reply, the way Project comments and Notice Board posts are filled
+ * (`fillLinkPreviews`, #556/#611). Without them a posterless video asks for a poster that is not there and an image has no reserved box. One batched read per kind, none for a note without media.
+ */
+async function withMediaFacts(db: D1Database, roots: VideoNoteThreadDto[]): Promise<VideoNoteThreadDto[]> {
+  const dtos = roots.flatMap((root) => [root, ...root.replies]).filter((dto): dto is VideoNoteDto & { content: RichTextDoc } => dto.content !== undefined);
+  if (!dtos.length) return roots;
+  const filled = new Map((await fillLinkPreviews(db, dtos)).map((dto) => [dto.id, dto.content]));
+  const apply = <T extends VideoNoteDto>(dto: T): T => (filled.has(dto.id) ? { ...dto, content: filled.get(dto.id)! } : dto);
+  return roots.map((root) => ({ ...apply(root), replies: root.replies.map(apply) }));
+}
+
 /** The Version's frame count, or null when the Asset is not a video Version of this Project. */
 export async function versionFrameCount(db: D1Database, projectId: string, assetId: string): Promise<number | null> {
   const row = await db.prepare(`SELECT m.frame_count FROM ${VERSION_FROM} WHERE m.asset_id = ?1 AND v.project_id = ?2`).bind(assetId, projectId).first<{ frame_count: number }>();
@@ -77,13 +90,13 @@ export async function listVideoNotes(db: D1Database, projectId: string, assetId:
     db.prepare(`${NOTE_SELECT} WHERE n.asset_id = ?1 AND n.project_id = ?2 ${NOTE_ORDER}`).bind(assetId, projectId),
   ]);
   if ((version!.results as unknown[]).length === 0) return null;
-  return videoNoteListResponseSchema.parse({ notes: threads(notes!.results as NoteRow[], showGuestEmail) }).notes;
+  return videoNoteListResponseSchema.parse({ notes: await withMediaFacts(db, threads(notes!.results as NoteRow[], showGuestEmail)) }).notes;
 }
 
 /** One root with its replies, or null when no such root in the Project. */
 export async function readThread(db: D1Database, projectId: string, rootId: string, showGuestEmail = false): Promise<VideoNoteThreadDto | null> {
   const rows = (await db.prepare(`${NOTE_SELECT} WHERE n.project_id = ?1 AND (n.id = ?2 OR n.parent_id = ?2) AND ${LIVE_VERSION_EXISTS("n.asset_id")} ${NOTE_ORDER}`).bind(projectId, rootId).all<NoteRow>()).results;
-  const thread = threads(rows, showGuestEmail)[0];
+  const [thread] = await withMediaFacts(db, threads(rows, showGuestEmail));
   return thread ? videoNoteThreadDtoSchema.parse(thread) : null;
 }
 
