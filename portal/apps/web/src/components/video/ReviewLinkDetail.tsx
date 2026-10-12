@@ -22,6 +22,7 @@ import { DIALOG_TITLE, ReviewLinkDialogFrame } from "./ReviewLinkDialogFrame";
 import { ReviewLinkAllowFields } from "./ReviewLinkAllowFields";
 import { activityLine, expiryLine, linkName } from "./ReviewLinkList";
 import { ReviewLinkStatusBadge } from "./ReviewLinkStatusBadge";
+import { ReviewLinkUrlField } from "./ReviewLinkUrlField";
 import { useReviewLinkState, type ReviewLinksUi } from "./use-review-links-ui";
 
 const TEXT = "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]";
@@ -121,6 +122,15 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
     {problems.map(([scope, problem]) => <Notice key={scope} tone="critical" role="alert">{problem.text}</Notice>)}
 
     <section aria-label="Settings" className="grid gap-[var(--space-4)]">
+      {!revoked && (link.url !== null
+        ? <div className="grid gap-[var(--space-1)]">
+          <span className={HEADING}>Link</span>
+          <ReviewLinkUrlField url={link.url} />
+        </div>
+        : <div className="grid gap-[var(--space-1)]">
+          <span className={HEADING}>Link</span>
+          <FieldDescription>Press Replace link to get a copyable link.</FieldDescription>
+        </div>)}
       <QuincyField id="review-link-detail-label" label="Label" maxLength={REVIEW_LINK_LABEL_MAX} autoComplete="off" disabled={locked} value={labelValue} onChange={(event) => store.patchDetail(linkId, { label: event.target.value })} />
       <DateTimeField variant="date" id="review-link-detail-expiry" label="Expires" value={expiryValue} disabled={locked} positionerClassName={DIALOG_FIELD_LAYER} onApply={(next) => { if (next) store.patchDetail(linkId, { expiryDay: next === currentDay ? null : next }); }} description={expiry && !expiry.ok ? expiry.message : expiryChanged ? "The link stops working at the end of this day." : `The link stops working on ${formatAbsoluteTime(link.expiresAt).replace(", ", " at ")}.`} {...(expiry && !expiry.ok ? { descriptionRole: "status" as const } : {})} />
       <div className="grid gap-[var(--space-1)]">

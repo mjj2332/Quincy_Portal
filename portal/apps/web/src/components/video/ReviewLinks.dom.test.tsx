@@ -83,6 +83,27 @@ describe("the list", () => {
     expect(text(rows[1])).toContain("Expired"); expect(text(rows[1])).toContain("2 films"); expect(text(rows[1])).toContain("Not opened yet");
     expect(text(rows[2])).toContain("Revoked"); expect(text(rows[2])).toContain("Untitled link");
   });
+  it("offers Copy on a row only when the link has a URL and is not revoked, named for the link, and copies the exact URL", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const smith = linkOf();
+    state.links = [smith, linkOf({ id: L2, label: "Jones", status: "expired", url: null }), linkOf({ id: L3, label: "Wu", status: "revoked", revokedAt: "2026-10-09T05:00:00.000Z", url: null })];
+    await mount(); await openList();
+    const rows = all('[data-testid="review-link-row"]');
+    expect(buttonIn(rows[0]!, "Copy link for Smith family")).toBeDefined();
+    expect(buttonIn(rows[1]!, /Copy link for/)).toBeUndefined();
+    expect(buttonIn(rows[2]!, /Copy link for/)).toBeUndefined();
+    await press(buttonIn(rows[0]!, "Copy link for Smith family"));
+    expect(writeText).toHaveBeenCalledWith(smith.url);
+    expect(rows[0]!.textContent).toContain("Copied");
+  });
+  it("keeps Copy on an expired link that has a URL, and none on a revoked one even if a URL were sent", async () => {
+    state.links = [linkOf({ status: "expired" }), linkOf({ id: L2, label: "Jones", status: "revoked", revokedAt: "2026-10-09T05:00:00.000Z" })];
+    await mount(); await openList();
+    const rows = all('[data-testid="review-link-row"]');
+    expect(buttonIn(rows[0]!, "Copy link for Smith family")).toBeDefined();
+    expect(buttonIn(rows[1]!, /Copy link for/)).toBeUndefined();
+  });
   it("says so when there are none, and points at the checkboxes", async () => {
     await mount(); await openList();
     expect(text(dialog())).toContain("No Review links yet.");
@@ -187,7 +208,8 @@ describe("create", () => {
     const reveal = q('[data-testid="review-link-reveal"]')!;
     expect(q<HTMLInputElement>('input[aria-label="Review link URL"]', reveal)!.value).toBe(url);
     expect(q<HTMLInputElement>('input[aria-label="Review link URL"]', reveal)!.readOnly).toBe(true);
-    expect(text(reveal)).toContain("This is the only time the full link is shown. Lost it? Use Replace link.");
+    expect(text(reveal)).toContain("You can copy this link again from its settings.");
+    expect(text(reveal)).not.toContain("only time");
     expect(writeText).not.toHaveBeenCalled(); // no auto-copy
     await press(buttonIn(reveal, "Copy link"));
     expect(writeText).toHaveBeenCalledWith(url);
@@ -204,7 +226,7 @@ describe("create", () => {
     expect(live()).toContain("Couldn't copy the link.");
     expect(live()).not.toContain("Link copied.");
   });
-  it("never stores the URL: not in storage, not in the query cache; Done discards it and clears the selection, and the list is refetched", async () => {
+  it("keeps the URL out of storage and the page text; Done closes the reveal and clears the selection, the list is refetched, and the detail then shows the link", async () => {
     const url = `https://quincy.test/d/review?link=${L1}#t=tok123`;
     apiPostMock.mockResolvedValue({ link: linkOf(), url });
     state.links = [linkOf()];
@@ -221,7 +243,7 @@ describe("create", () => {
     expect(q('[data-testid="review-link-selection-bar"]')).toBeNull();
     await press(buttonIn(q('[data-testid="review-link-reveal"]'), "Done"));
     expect(document.body.textContent).not.toContain("tok123");
-    expect(q('input[aria-label="Review link URL"]')).toBeNull();
+    expect(q('[data-testid="review-link-reveal"]')).toBeNull();
     expect(q('[data-testid="review-link-detail"]')).not.toBeNull();
   });
   it("a create that lands after the dialog was closed still shows its URL", async () => {

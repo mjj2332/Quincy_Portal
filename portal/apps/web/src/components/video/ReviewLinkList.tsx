@@ -7,6 +7,7 @@ import { Notice } from "../quincy/Notice";
 import { DialogDescription, DialogHeader, DialogTitle } from "../reui/dialog";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
 import { Spinner } from "../reui/spinner";
+import { CopyTextButton } from "./CopyTextButton";
 import { DIALOG_TITLE, ReviewLinkDialogFrame } from "./ReviewLinkDialogFrame";
 import { ReviewLinkStatusBadge } from "./ReviewLinkStatusBadge";
 import type { ReviewLinksUi } from "./use-review-links-ui";
@@ -40,6 +41,7 @@ export function ReviewLinkList({ ui }: { ui: ReviewLinksUi }) {
           <ItemDescription className="text-foreground-secondary">{`${expiryLine(link)} · ${plural(link.videos.length, "film")} · ${activityLine(link, now)}`}</ItemDescription>
         </ItemContent>
         <ItemActions>
+          {link.url !== null && link.status !== "revoked" && <CopyTextButton text={link.url} ariaLabel={`Copy link for ${linkName(link)}`} className="min-h-11" />}
           <Button type="button" variant="secondary" className="min-h-11" aria-label={`Manage ${linkName(link)}`} onClick={() => store.openDetail(link.id)}>Manage</Button>
         </ItemActions>
       </Item>)}

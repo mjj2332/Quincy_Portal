@@ -2,7 +2,7 @@ import { classifyReviewLinkError, type ReviewLinkErrorAction } from "./review-li
 
 /**
  * Everything a person is in the middle of on Review links (#741 11b), for as long as the Video tab is open: the Videos ticked for a new
- * link, the create form, each link's unsaved edits, which dialog step is showing, the one-time URL and every request that is out. One store
+ * link, the create form, each link's unsaved edits, which dialog step is showing, the URL reveals and every request that is out. One store
  * per person + Project, created by the collection and retired when either changes, never a component's state: the dialog, its steps and
  * the panel all remount (a tab switch, a refetch swapping the list, Escape) and none of that may lose a half-typed passcode, a
  * selection, or the only copy of a link. A request addresses its scope (`create`, `patch:<link>`, ...) and the op that started it: a
@@ -27,7 +27,7 @@ export type ReviewLinkStoreState = {
   view: ReviewLinkView;
   create: CreateDraft;
   details: Readonly<Record<string, DetailDraft>>;
-  /** The one-time URLs waiting to be read, oldest first; none is ever replaced, each goes only when dismissed. */
+  /** The URL reveals waiting to be read (the link also stays copyable from its settings, #815), oldest first; none is ever replaced, each goes only when dismissed. */
   reveals: readonly Reveal[];
   /** The one on screen: `reveals[0]`. */
   reveal: Reveal | null;
@@ -86,7 +86,7 @@ export function createReviewLinkStore(key: string) {
     openList() { update(() => ({ view: { kind: "list" } })); },
     openCreate() { update(() => ({ view: { kind: "create" } })); },
     openDetail(linkId: string) { update(() => ({ view: { kind: "detail", linkId } })); },
-    /** Closing never cancels a request and never discards a draft; it does discard the one-time URL on screen. */
+    /** Closing never cancels a request and never discards a draft; it does discard the reveal on screen. */
     closeDialog() {
       update((s) => {
         // On a reveal, closing dismisses the URL on screen and nothing else: a second one waiting is still unread.
