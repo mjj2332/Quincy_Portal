@@ -2,10 +2,10 @@ import { videoRemovalImpactSchema, type VideoRemovalImpact } from "@quincy/share
 import { ApiError } from "./api";
 
 /**
- * Which refusal a Video Trash write is (#776 E), and the sentence a person reads for it. The routes answer 409 with a `code` (`impact_changed` and `last_version` carry the impact as it
+ * Which refusal a Video Trash write is (#776 E), and the sentence a person reads for it. The routes answer 409 with a `code` (`delivery_published` when the film is on a published Client Delivery page; `impact_changed` and `last_version` carry the impact as it
  * is now), and a 404 with plain text: "Version not found" / "Video not found" (and "... in Trash") mean the row is gone, any other 404 is the gate or the Project.
  */
-export type VideoTrashErrorKind = "impact_changed" | "last_version" | "upload_in_progress" | "video_in_trash" | "archived" | "gone" | "access" | "network" | "uncertain" | "other";
+export type VideoTrashErrorKind = "impact_changed" | "last_version" | "upload_in_progress" | "video_in_trash" | "delivery_published" | "archived" | "gone" | "access" | "network" | "uncertain" | "other";
 export type ClassifiedVideoTrashError = { kind: VideoTrashErrorKind; /** `impact_changed` / `last_version`: the impact as the server holds it now. */ impact?: VideoRemovalImpact; /** What the person reads. */ message: string };
 
 const detailsOf = (error: ApiError): Record<string, unknown> => (error.details && typeof error.details === "object" ? error.details as Record<string, unknown> : {});
@@ -22,6 +22,8 @@ export function classifyVideoTrashError(error: unknown, op: "remove" | "restore"
   if (error.status === 409) {
     if (code === "project_archived") return { kind: "archived", message: "This project is archived, so films can't be removed or restored." };
     if (code === "upload_in_progress") return { kind: "upload_in_progress", message: "A new version is being uploaded to this film. Wait for the upload to finish or cancel it, then try again." };
+    // The film (or this Version) is on the page's current published set; it stays until a later Publish leaves it out (delivery-lock.ts).
+    if (code === "delivery_published") return { kind: "delivery_published", message: op === "remove" ? "This film is on the published Client Delivery page, so it can't be removed. Publish the Delivery again without it, then remove it." : RETRY };
     if (code === "video_in_trash") return { kind: "video_in_trash", message: "This version's film is in Trash. Restore the film first." };
     if (code === "impact_changed" || code === "last_version") {
       const impact = videoRemovalImpactSchema.safeParse(details.impact);

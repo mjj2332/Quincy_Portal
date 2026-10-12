@@ -19,6 +19,11 @@ describe("classifyVideoTrashError (#776 E)", () => {
     expect(classifyVideoTrashError(refusal(409, "impact_changed", "changed", { impact: { notes: "many" } }), "remove")).toMatchObject({ kind: "other", message: expect.stringMatching(/try again/i) });
   });
 
+  it("names a film on the published Client Delivery page instead of asking for a retry", () => {
+    const classified = classifyVideoTrashError(refusal(409, "delivery_published", "This is part of a published Client Delivery page; it can't be deleted or removed while it is."), "remove");
+    expect(classified).toMatchObject({ kind: "delivery_published", message: expect.stringMatching(/published Client Delivery page/i) });
+    expect(classified.message).not.toMatch(/try again/i);
+  });
   it("names an upload in progress, an archived Project and a Video in Trash", () => {
     expect(classifyVideoTrashError(refusal(409, "upload_in_progress", "x"), "remove")).toMatchObject({ kind: "upload_in_progress", message: expect.stringMatching(/upload/i) });
     expect(classifyVideoTrashError(refusal(409, "project_archived", "x"), "remove")).toMatchObject({ kind: "archived", message: expect.stringMatching(/archived/i) });
