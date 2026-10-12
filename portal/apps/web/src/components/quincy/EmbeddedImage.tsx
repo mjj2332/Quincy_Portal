@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from "react";
-import { embeddedMediaUrl } from "../../lib/embedded-media";
+import { embeddedMediaUrl } from "../../lib/embedded-media-core";
 import { XIcon } from "lucide-react";
 import { Button } from "../reui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "../reui/dialog";
@@ -14,12 +14,13 @@ const SMALL_NATURAL = 96;
  * knows it (#611): `width` and `height` attributes let the browser reserve the box before the lazy file loads, and the stylesheet's
  * `max-width: 100%` and `height: auto` keep it responsive. Without a size (an older image) the box is as it always was.
  */
-export function EmbeddedImage({ mediaId, alt, width, height }: { mediaId: string; alt?: string; width?: number; height?: number }) {
+/** `mediaUrl` (#835) is where the bytes are read from: the staff route by default, a Review link's own for a guest. */
+export function EmbeddedImage({ mediaId, alt, width, height, mediaUrl = embeddedMediaUrl }: { mediaId: string; alt?: string; width?: number; height?: number; mediaUrl?: (mediaId: string) => string }) {
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);
   // Under twice the 48px close chip in either dimension, the chip would cover most of the image (a 24px one entirely): the stage then pads its top and right by the chip so the image sits beside it.
   const [small, setSmall] = useState(false);
-  const src = embeddedMediaUrl(mediaId);
+  const src = mediaUrl(mediaId);
   // The author's alt text (#553); an image posted before alt existed has none and keeps the generic name.
   const label = alt?.trim() || "Embedded image";
   const reserved = width !== undefined && height !== undefined && width > 0 && height > 0 ? { width, height } : {};

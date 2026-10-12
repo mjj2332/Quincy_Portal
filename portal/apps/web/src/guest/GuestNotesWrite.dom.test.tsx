@@ -8,8 +8,22 @@ import { GuestApp } from "./GuestApp";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 if (!Element.prototype.getAnimations) Element.prototype.getAnimations = () => [];
+/** The rich field is a textarea handle on its props: this file is about what the page does with the document and the upload state (the field itself is tested in GuestNoteEditor.dom.test.tsx). Typing sends a one-paragraph document, which is what the real field sends for plain text. */
+const field = vi.hoisted(() => ({ props: new Map<string, { media: unknown; onUploadingChange?: (uploading: boolean) => void; onChange: (doc: unknown) => void; value: unknown; label: string }>() }));
+vi.mock("./GuestNoteEditor", async () => {
+  const shared = await import("@quincy/shared");
+  return {
+    GuestNoteEditor: (props: { testId: string; label: string; placeholder?: string; disabled?: boolean; value: import("@quincy/shared").RichTextDoc; onChange: (doc: import("@quincy/shared").RichTextDoc) => void; media: unknown; onUploadingChange?: (uploading: boolean) => void }) => {
+      field.props.set(props.testId, props as never);
+      return <textarea data-testid={props.testId} aria-label={props.label} placeholder={props.placeholder} disabled={props.disabled} value={shared.videoNoteBody(props.value)}
+        onChange={(event) => { props.onChange(event.target.value === "" ? { type: "doc", content: [{ type: "paragraph" }] } : shared.legacyBodyToRichTextDoc(event.target.value)); }} />;
+    },
+  };
+});
 vi.mock("../components/LazyImage", () => ({ LazyImage: ({ src, alt, className }: { src: string; alt: string; className?: string }) => <img src={src} alt={alt} className={className} /> }));
 
+/** The one-paragraph document a typed note is sent as (#835): the note travels as `content`, never as `body`. */
+const para = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
 const LINK = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const BASE = `/d/api/links/${LINK}`;
 const asset = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -56,6 +70,7 @@ async function route(url: string, init: RequestInit | undefined): Promise<Respon
 
 const flush = async (times = 6) => { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); };
 async function open() {
+  field.props.clear();
   window.history.replaceState(null, "", `/d/review?link=${LINK}#t=tok123`);
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -187,9 +202,9 @@ describe("the composer", () => {
     await atSeconds(2);
     await click(byId("guest-add-note"));
     expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:02:00");
-    await typeInto(byId("guest-composer-body"), "  Too dark here ");
+    await typeInto(byId("guest-composer-body"), "Too dark here");
     await submit("guest-composer");
-    expect(posted).toEqual({ startFrame: 50, body: "Too dark here" });
+    expect(posted).toEqual({ startFrame: 50, content: para("Too dark here") });
     expect(byId("guest-composer")).toBeNull();
     const rows = allById("guest-note");
     expect(rows).toHaveLength(1);
@@ -209,7 +224,7 @@ describe("the composer", () => {
     expect(byId("guest-composer-anchor")?.textContent).toMatch(/00:00:02:00.*00:00:04:00/);
     await typeInto(byId("guest-composer-body"), "Cut this section");
     await submit("guest-composer");
-    expect(posted).toEqual({ startFrame: 50, endFrame: 101, body: "Cut this section" });
+    expect(posted).toEqual({ startFrame: 50, endFrame: 101, content: para("Cut this section") });
   });
   it("marking an in again moves the start, and clears an out that falls before it", async () => {
     await open();
@@ -350,7 +365,7 @@ describe("drawing", () => {
       await typeInto(byId("guest-composer-body"), "Look here");
       await submit("guest-composer");
     });
-    expect(posted).toMatchObject({ startFrame: 50, body: "Look here", drawingFrame: 50 });
+    expect(posted).toMatchObject({ startFrame: 50, content: para("Look here"), drawingFrame: 50 });
     expect((posted as unknown as { markup: unknown[] }).markup).toHaveLength(1);
   });
   it("keeps Draw enabled and pressed while drawing, and pressing it again finishes the drawing like Done; Post stays disabled meanwhile", async () => {
@@ -595,7 +610,7 @@ describe("own notes", () => {
     expect(field.value).toBe("My note");
     await typeInto(field, "Reworded");
     await submit("guest-composer");
-    expect(patched).toEqual({ expectedRevision: 3, body: "Reworded" });
+    expect(patched).toEqual({ expectedRevision: 3, content: para("Reworded") });
     expect(byId("guest-composer")).toBeNull();
     expect(byId("guest-note-body")?.textContent).toBe("Reworded");
   });
@@ -622,7 +637,7 @@ describe("own notes", () => {
     // Saving again uses the fresh revision.
     extra = (url, init) => (url === `${BASE}/notes/${noteId(2)}` && init?.method === "PATCH" ? json(mine(2, { revision: 6, body: "My draft" })) : undefined);
     await submit("guest-composer");
-    expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 5, body: "My draft" });
+    expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 5, content: para("My draft") });
   });
   it("re-marks the frames of a note without a drawing, sending only the frames", async () => {
     notes = { [asset(10)]: [mine(2, { revision: 3, startFrame: 50 })] };
@@ -660,7 +675,7 @@ describe("own notes", () => {
     await click(menuItem("Edit"));
     await typeInto(byId("guest-note-edit-body"), "Done");
     await submit("guest-note-edit-form");
-    expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 2, body: "Done" });
+    expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 2, content: para("Done") });
   });
   it("disables a reply edit once the Project turns out to be archived, keeping its draft and sending nothing more", async () => {
     const reply = (({ replies: _replies, ...rest }) => rest)(mine(7, { parentId: noteId(1), startFrame: null, body: "Will do", revision: 2 }));
@@ -758,7 +773,7 @@ describe("replies", () => {
     await click(byId("guest-note-reply-button"));
     await typeInto(byId("guest-reply-body"), "Will do");
     await submit("guest-reply-form");
-    expect(requests("POST").at(-1)).toEqual({ url: `${BASE}/notes/${noteId(1)}/replies`, body: { body: "Will do" } });
+    expect(requests("POST").at(-1)).toEqual({ url: `${BASE}/notes/${noteId(1)}/replies`, body: { content: para("Will do") } });
     expect(allById("guest-note-reply")).toHaveLength(1);
     expect(byId("guest-reply-form")).toBeNull();
   });
@@ -1010,7 +1025,7 @@ describe("round 4 findings", () => {
     await submit("guest-composer");
     const patches = requests("PATCH");
     expect(patches.length).toBeGreaterThanOrEqual(2);
-    expect(patches.at(-1)!.body).toEqual({ expectedRevision: 3, body: "Reworded" });
+    expect(patches.at(-1)!.body).toEqual({ expectedRevision: 3, content: para("Reworded") });
     expect(byId("guest-composer-problem")?.textContent).toMatch(/changed/i);
     expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("Reworded");
   });
@@ -1029,13 +1044,13 @@ describe("round 4 findings", () => {
     notes = { [asset(10)]: [{ ...note(1), replies: [reply7({ revision: 4, body: "Edited elsewhere" })] }] };
     await click(button("Open Film 1"));
     await submit("guest-note-edit-form");
-    expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 2, body: "Will do it" });
+    expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 2, content: para("Will do it") });
     expect(byId("guest-note-edit-problem")?.textContent).toMatch(/changed/i);
     expect((byId("guest-note-edit-body") as HTMLTextAreaElement).value).toBe("Will do it");
     // The guest has now been shown the latest version; saving again is the acknowledgement and moves the base forward.
     extra = (url, init) => (url === `${BASE}/notes/${noteId(7)}` && init?.method === "PATCH" ? json({ ...note(1), replies: [reply7({ revision: 5, body: "Will do it" })] }) : undefined);
     await submit("guest-note-edit-form");
-    expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 4, body: "Will do it" });
+    expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 4, content: para("Will do it") });
   });
 
   it("a reply edit whose text equals the body it started from is unchanged, even if the list body moved", async () => {
@@ -1204,5 +1219,99 @@ describe("the video step keys and modals", () => {
     await click(cancel);
     await keyDown("]");
     expect(byId("guest-video-title")?.textContent).toBe("Film 2");
+  });
+});
+
+describe("rich notes (#835 C): pictures, no mentions", () => {
+  const MEDIA = "44444444-4444-4444-8444-444444444444";
+  const withImage = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }, { type: "image", attrs: { mediaId: MEDIA } }] });
+  const props = (testId: string) => field.props.get(testId)!;
+  const typed = async (testId: string, text: string) => { await typeInto(byId(testId), text); };
+  const uploading = async (testId: string, busy: boolean) => { await act(async () => { props(testId).onUploadingChange!(busy); }); await flush(); };
+  const post = () => byId("guest-composer-post") as HTMLButtonElement;
+
+  it("every field (the composer, a reply, an edit) reads and uploads media through the link's own routes", async () => {
+    notes = { [asset(10)]: [note(1), mine(2)] };
+    await open();
+    await click(byId("guest-add-note"));
+    const transport = props("guest-composer-body").media as { mediaUrl: (id: string) => string; posterUrl: (id: string) => string; heicEnabled: boolean };
+    expect(transport.mediaUrl(MEDIA)).toBe(`${BASE}/media/${MEDIA}`);
+    expect(transport.posterUrl(MEDIA)).toBe(`${BASE}/media/${MEDIA}/poster`);
+    expect(transport.heicEnabled).toBe(false);
+    await click(byId("guest-composer-cancel"));
+    await click(allById("guest-note-reply-button")[0]);
+    expect(props("guest-reply-body").media).toBe(transport);
+  });
+
+  it("holds Post while a picture is still uploading, and releases it when it lands", async () => {
+    await open();
+    await click(byId("guest-add-note"));
+    await typed("guest-composer-body", "See the logo");
+    expect(post().disabled).toBe(false);
+    await uploading("guest-composer-body", true);
+    expect(post().disabled).toBe(true);
+    await submit("guest-composer");
+    expect(requests("POST")).toEqual([]);
+    await uploading("guest-composer-body", false);
+    expect(post().disabled).toBe(false);
+  });
+
+  it("posts the document with its picture as content, and a picture alone is a note", async () => {
+    let posted: unknown = null;
+    extra = (url, init) => {
+      if (url.endsWith("/notes") && init?.method === "POST") { posted = JSON.parse(String(init.body)); return json(mine(5, { startFrame: 50 }), 201); }
+      return undefined;
+    };
+    await open();
+    await atSeconds(2);
+    await click(byId("guest-add-note"));
+    await submit("guest-composer");
+    expect(posted).toBeNull(); // nothing yet: an empty field is not a note
+    await act(async () => { props("guest-composer-body").onChange(withImage("See the logo")); });
+    await submit("guest-composer");
+    expect(posted).toEqual({ startFrame: 50, content: withImage("See the logo") });
+    await click(byId("guest-add-note"));
+    const only = { type: "doc", content: [{ type: "image", attrs: { mediaId: MEDIA } }] };
+    await act(async () => { props("guest-composer-body").onChange(only); });
+    expect(post().disabled).toBe(false);
+    await submit("guest-composer");
+    expect(posted).toEqual({ startFrame: 50, content: only });
+  });
+
+  it("holds Send reply and Save while their pictures upload", async () => {
+    notes = { [asset(10)]: [note(1), mine(2)] };
+    await open();
+    await click(allById("guest-note-reply-button")[0]);
+    await typed("guest-reply-body", "Will do");
+    await uploading("guest-reply-body", true);
+    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(true);
+    await submit("guest-reply-form");
+    expect(requests("POST")).toEqual([]);
+    await uploading("guest-reply-body", false);
+    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(false);
+    await click(byId("guest-reply-cancel"));
+    // A reply to the guest's own note is edited inline; the root is edited in the composer.
+    await click(allById("guest-note-actions")[0]);
+    await click(menuItem("Edit"));
+    await typed("guest-composer-body", "Reworded");
+    await uploading("guest-composer-body", true);
+    expect(post().disabled).toBe(true);
+    await submit("guest-composer");
+    expect(requests("PATCH")).toEqual([]);
+  });
+
+  it("an edit that adds a picture sends the document", async () => {
+    notes = { [asset(10)]: [mine(2, { revision: 3 })] };
+    let patched: unknown = null;
+    extra = (url, init) => {
+      if (url === `${BASE}/notes/${noteId(2)}` && init?.method === "PATCH") { patched = JSON.parse(String(init.body)); return json(mine(2, { revision: 4 })); }
+      return undefined;
+    };
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    await act(async () => { props("guest-composer-body").onChange(withImage("My note")); });
+    await submit("guest-composer");
+    expect(patched).toEqual({ expectedRevision: 3, content: withImage("My note") });
   });
 });

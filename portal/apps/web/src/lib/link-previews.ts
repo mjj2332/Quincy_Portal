@@ -1,6 +1,6 @@
 import { linkPreviewResponseSchema, type LinkPreviewCard } from "@quincy/shared";
 import { apiPost } from "./api";
-import type { EmbeddedMediaScope } from "./embedded-media";
+import type { EmbeddedMediaScope } from "./embedded-media-core";
 
 /**
  * Asks the server for the card behind a link just added to a post (#497). A page with no card, a hit rate limit, a blocked

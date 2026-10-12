@@ -5,7 +5,7 @@ import type { GuestNoteThreadDto, GuestVideoDto } from "@quincy/shared";
 import { installVideoElementStub, type VideoElementStub } from "../testing/video-element";
 import { mockViewport, type MockViewport } from "../testing/viewport";
 import { GuestApp } from "./GuestApp";
-import type { GuestApi } from "./guest-api";
+import { createGuestMediaTransport, type GuestApi } from "./guest-api";
 import { GuestVideoScreen } from "./GuestVideoScreen";
 import { createGuestWriter } from "./use-guest-writer";
 import { createGuestDrafts } from "./guest-drafts";
@@ -686,6 +686,7 @@ describe("Sol round 7", () => {
       decide: async () => ({ kind: "gone" }),
       downloads: async () => ({ kind: "gone" }),
       prepareDownloads: async () => ({ kind: "gone" }),
+      media: createGuestMediaTransport(LINK),
       downloadAllUrl: `/d/api/links/${LINK}/downloads/all.zip`,
     };
     host = document.createElement("div");
@@ -833,5 +834,51 @@ describe("#776 E: a removed Version's stream 404 refreshes the list", () => {
     await flush();
     expect(byId("guest-unavailable")).toBeNull();
     expect(byId("guest-notice")).not.toBeNull();
+  });
+});
+
+describe("rich notes on the page (#835 C)", () => {
+  const MEDIA = "44444444-4444-4444-8444-444444444444";
+  const CLIP = "55555555-5555-4555-8555-555555555555";
+  const para = (...content: unknown[]) => ({ type: "paragraph" as const, content });
+  const text = (value: string) => ({ type: "text" as const, text: value });
+  const doc = (...content: unknown[]) => ({ type: "doc" as const, content }) as unknown as NonNullable<GuestNoteThreadDto["content"]>;
+
+  it("a mention reaches the guest as a plain name, never a mention node, id or link", async () => {
+    // The server has already turned the node into "@Mia" text (story 9); the page shows it as the words it is.
+    notes = [note({ body: "Ask @Mia Chen about it", content: doc(para(text("Ask "), text("@Mia Chen"), text(" about it"))) })];
+    await open();
+    await click(button("Open Film 1"));
+    const body = byId("guest-note-body")!;
+    expect(body.textContent).toBe("Ask @Mia Chen about it");
+    expect(body.querySelector("a, [data-type=\"mention\"]")).toBeNull();
+  });
+
+  it("a stray mention node still reads as the plain name", async () => {
+    notes = [note({ body: "Ask @Mia", content: doc(para(text("Ask "), { type: "mention", attrs: { id: "11111111-1111-4111-8111-111111111111", label: "Mia" } })) })];
+    await open();
+    await click(button("Open Film 1"));
+    expect(byId("guest-note-body")!.textContent).toBe("Ask @Mia");
+    expect(host.innerHTML).not.toContain("11111111-1111-4111-8111-111111111111");
+  });
+
+  it("a picture and a video in a note are read from the link's own media routes", async () => {
+    notes = [note({ body: "Look [1 image] [1 video]", content: doc(para(text("Look")), { type: "image", attrs: { mediaId: MEDIA, alt: "Site photo" } }, { type: "video", attrs: { mediaId: CLIP } }) })];
+    await open();
+    await click(button("Open Film 1"));
+    const image = byId("guest-note-body")!.querySelector("img")!;
+    expect(image.getAttribute("src")).toBe(`/d/api/links/${LINK}/media/${MEDIA}`);
+    expect(image.getAttribute("alt")).toBe("Site photo");
+    const video = byId("guest-note-body")!.querySelector("video")!;
+    expect(video.getAttribute("src")).toBe(`/d/api/links/${LINK}/media/${CLIP}`);
+    expect(video.getAttribute("poster")).toBe(`/d/api/links/${LINK}/media/${CLIP}/poster`);
+    expect(host.innerHTML).not.toContain("/media/embedded/");
+  });
+
+  it("a note with no document still reads from its text", async () => {
+    notes = [note()];
+    await open();
+    await click(button("Open Film 1"));
+    expect(byId("guest-note-body")!.textContent).toBe("Trim the opening");
   });
 });

@@ -3,7 +3,7 @@ import { GUEST_DECISION_NOTE_MAX, type GuestDecisionInput } from "@quincy/shared
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/reui/alert-dialog";
 import { Field, FieldLabel } from "../components/reui/field";
 import { Textarea } from "../components/reui/textarea";
-import { useNoteDraft, type GuestDrafts } from "./guest-drafts";
+import { docText, textDoc, useNoteDraft, type GuestDrafts } from "./guest-drafts";
 
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const PROBLEM = "m-0 text-destructive [font:var(--type-body-sm)]";
@@ -38,7 +38,7 @@ export function GuestDecisionDialog({ value, assetId, film, version, drafts, ope
 }) {
   const key = decisionDraftKey(assetId, value);
   const draft = useNoteDraft(drafts, key);
-  const text = draft?.text ?? "";
+  const text = draft ? docText(draft.doc) : "";
   const [pending, setPending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const opId = useRef(0);
@@ -67,7 +67,7 @@ export function GuestDecisionDialog({ value, assetId, film, version, drafts, ope
       <Field>
         <FieldLabel htmlFor="guest-decision-note">Note for the studio (optional)</FieldLabel>
         <Textarea id="guest-decision-note" data-testid="guest-decision-note" maxLength={GUEST_DECISION_NOTE_MAX} value={text}
-          onChange={(event) => { drafts.set(key, { noteId: null, text: event.target.value, baseText: "", baseRevision: null, ackRevision: null }); }} />
+          onChange={(event) => { drafts.set(key, { noteId: null, doc: textDoc(event.target.value), baseDoc: textDoc(""), baseRevision: null, ackRevision: null }); }} />
       </Field>
       {problem !== null && <p role="alert" data-testid="guest-decision-problem" className={PROBLEM}>{problem}</p>}
       <AlertDialogFooter>

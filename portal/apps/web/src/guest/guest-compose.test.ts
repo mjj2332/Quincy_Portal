@@ -1,36 +1,44 @@
 import { describe, expect, it } from "vitest";
-import type { GuestNoteThreadDto, MarkupItem } from "@quincy/shared";
+import type { GuestNoteThreadDto, MarkupItem, RichTextDoc } from "@quincy/shared";
 import { composeInput, editPatch, failureText, removeThread, upsertThread } from "./guest-compose";
 
 const thread = (id: string, startFrame: number, over: Partial<GuestNoteThreadDto> = {}): GuestNoteThreadDto => ({
   id, parentId: null, author: { kind: "studio", name: "Mia" }, startFrame, endFrame: null, drawingFrame: null, hasMarkup: false, body: id, deleted: false, resolved: false, revision: 1,
   createdAt: "2026-10-09T01:00:00.000Z", editedAt: null, replies: [], ...over,
 });
+const para = (text: string): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph", ...(text === "" ? {} : { content: [{ type: "text", text }] }) }] }) as RichTextDoc;
+const image = (mediaId: string) => ({ type: "image", attrs: { mediaId } });
 const stroke: MarkupItem = { color: "#e64b3c", width: 4, points: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.2 }] };
 
 describe("composeInput", () => {
   const base = { frameCount: 1000, items: [] as MarkupItem[], drawingFrame: null };
-  it("a point mark is a point note at that frame, with the body trimmed", () => {
-    expect(composeInput({ ...base, body: "  Trim this  ", marks: { in: 50, out: null } })).toEqual({ ok: true, input: { startFrame: 50, body: "Trim this" } });
+  it("a point mark is a point note at that frame, and the document is sent as content", () => {
+    expect(composeInput({ ...base, doc: para("Trim this"), marks: { in: 50, out: null } })).toEqual({ ok: true, input: { startFrame: 50, content: para("Trim this") } });
   });
   it("in and out make a range whose end is exclusive", () => {
-    expect(composeInput({ ...base, body: "x", marks: { in: 50, out: 74 } })).toEqual({ ok: true, input: { startFrame: 50, endFrame: 75, body: "x" } });
+    expect(composeInput({ ...base, doc: para("x"), marks: { in: 50, out: 74 } })).toEqual({ ok: true, input: { startFrame: 50, endFrame: 75, content: para("x") } });
   });
-  it("refuses an empty body, with no marks, and a body of only spaces", () => {
-    expect(composeInput({ ...base, body: "   ", marks: { in: 5, out: null } })).toMatchObject({ ok: false });
-    expect(composeInput({ ...base, body: "x", marks: { in: null, out: null } })).toMatchObject({ ok: false });
+  it("refuses an empty document, a document of only spaces, and a note with no marks", () => {
+    expect(composeInput({ ...base, doc: para(""), marks: { in: 5, out: null } })).toMatchObject({ ok: false });
+    expect(composeInput({ ...base, doc: para("   "), marks: { in: 5, out: null } })).toMatchObject({ ok: false });
+    expect(composeInput({ ...base, doc: para("x"), marks: { in: null, out: null } })).toMatchObject({ ok: false });
   });
   it("sends the drawing with its frame when the frame is inside the note", () => {
-    expect(composeInput({ ...base, body: "x", marks: { in: 50, out: null }, items: [stroke], drawingFrame: 50 })).toEqual({ ok: true, input: { startFrame: 50, body: "x", markup: [stroke], drawingFrame: 50 } });
-    expect(composeInput({ ...base, body: "x", marks: { in: 50, out: 60 }, items: [stroke], drawingFrame: 55 })).toMatchObject({ ok: true });
+    expect(composeInput({ ...base, doc: para("x"), marks: { in: 50, out: null }, items: [stroke], drawingFrame: 50 })).toEqual({ ok: true, input: { startFrame: 50, content: para("x"), markup: [stroke], drawingFrame: 50 } });
+    expect(composeInput({ ...base, doc: para("x"), marks: { in: 50, out: 60 }, items: [stroke], drawingFrame: 55 })).toMatchObject({ ok: true });
   });
   it("refuses a drawing whose frame the marks no longer cover (a point must sit on it; a range is half open)", () => {
-    expect(composeInput({ ...base, body: "x", marks: { in: 51, out: null }, items: [stroke], drawingFrame: 50 })).toMatchObject({ ok: false, problem: expect.stringMatching(/drawing/i) });
-    expect(composeInput({ ...base, body: "x", marks: { in: 50, out: 60 }, items: [stroke], drawingFrame: 61 })).toMatchObject({ ok: false });
-    expect(composeInput({ ...base, body: "x", marks: { in: 50, out: 60 }, items: [stroke], drawingFrame: 60 })).toMatchObject({ ok: true });
+    expect(composeInput({ ...base, doc: para("x"), marks: { in: 51, out: null }, items: [stroke], drawingFrame: 50 })).toMatchObject({ ok: false, problem: expect.stringMatching(/drawing/i) });
+    expect(composeInput({ ...base, doc: para("x"), marks: { in: 50, out: 60 }, items: [stroke], drawingFrame: 61 })).toMatchObject({ ok: false });
+    expect(composeInput({ ...base, doc: para("x"), marks: { in: 50, out: 60 }, items: [stroke], drawingFrame: 60 })).toMatchObject({ ok: true });
+  });
+  it("a note that is only a picture is a note, and a note too long is refused", () => {
+    const only = { type: "doc", content: [image("m1")] } as RichTextDoc;
+    expect(composeInput({ ...base, doc: only, marks: { in: 5, out: null } })).toEqual({ ok: true, input: { startFrame: 5, content: only } });
+    expect(composeInput({ ...base, doc: para("x".repeat(10_001)), marks: { in: 5, out: null } })).toMatchObject({ ok: false, problem: expect.stringMatching(/too long/i) });
   });
   it("ignores a drawing frame when there are no strokes", () => {
-    expect(composeInput({ ...base, body: "x", marks: { in: 50, out: null }, items: [], drawingFrame: 12 })).toEqual({ ok: true, input: { startFrame: 50, body: "x" } });
+    expect(composeInput({ ...base, doc: para("x"), marks: { in: 50, out: null }, items: [], drawingFrame: 12 })).toEqual({ ok: true, input: { startFrame: 50, content: para("x") } });
   });
 });
 
@@ -71,16 +79,18 @@ describe("failureText", () => {
 });
 
 describe("editPatch", () => {
-  const baseline = { body: "Old", startFrame: 50, endFrame: null as number | null, hadDrawing: false };
-  const base = { body: "Old", marks: { in: 50, out: null as number | null }, frameCount: 1000, items: [] as MarkupItem[], drawingFrame: null as number | null, drawingRemoved: false, baseline };
+  const baseline = { doc: para("Old"), startFrame: 50, endFrame: null as number | null, hadDrawing: false };
+  const base = { doc: para("Old"), marks: { in: 50, out: null as number | null }, frameCount: 1000, items: [] as MarkupItem[], drawingFrame: null as number | null, drawingRemoved: false, baseline };
   it("sends nothing when nothing changed", () => {
     expect(editPatch(base)).toEqual({ ok: true, patch: null });
   });
-  it("sends the trimmed body only when it changed", () => {
-    expect(editPatch({ ...base, body: "  New  " })).toEqual({ ok: true, patch: { body: "New" } });
+  it("sends the document as content only when it changed", () => {
+    expect(editPatch({ ...base, doc: para("New") })).toEqual({ ok: true, patch: { content: para("New") } });
+    expect(editPatch({ ...base, doc: { type: "doc", content: [...para("Old").content, image("m1")] } as RichTextDoc })).toMatchObject({ ok: true, patch: { content: expect.anything() } });
   });
-  it("refuses an empty body", () => {
-    expect(editPatch({ ...base, body: "   " })).toMatchObject({ ok: false });
+  it("refuses an empty document", () => {
+    expect(editPatch({ ...base, doc: para("   ") })).toMatchObject({ ok: false });
+    expect(editPatch({ ...base, doc: para("") })).toMatchObject({ ok: false });
   });
   it("sends new frames, with a null end when a range becomes a point", () => {
     expect(editPatch({ ...base, marks: { in: 60, out: 80 } })).toEqual({ ok: true, patch: { startFrame: 60, endFrame: 81 } });

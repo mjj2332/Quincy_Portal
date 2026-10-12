@@ -1,35 +1,41 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNoteDraft, type GuestDrafts } from "./guest-drafts";
 import { PencilIcon } from "lucide-react";
-import type { GuestNoteDto, GuestNoteThreadDto } from "@quincy/shared";
+import { legacyBodyToRichTextDoc, type GuestNoteDto, type GuestNoteThreadDto, type RichTextDoc } from "@quincy/shared";
+import type { EditorMediaTransport } from "../lib/embedded-media-core";
+import { RichTextContent } from "../components/RichTextContent";
 import { noteAnchorLabel } from "../lib/video-note-view";
 import { cn } from "../lib/utils";
 import { Badge } from "../components/reui/badge";
 import { Button } from "../components/reui/button";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/reui/alert-dialog";
 import { Item, ItemContent } from "../components/reui/item";
-import { Textarea } from "../components/reui/textarea";
 import { ICON_BUTTON } from "../components/quincy/icon-button";
 import { Menu, MENU_ITEM, MenuPrimitive } from "../components/quincy/menu";
 import { ResolvedTick } from "../components/quincy/ResolvedTick";
 import { IconTip } from "../components/quincy/VideoPlayer";
+import { noteText, sameDoc } from "./guest-compose";
+import { GuestNoteField } from "./GuestNoteField";
 
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const BODY = "m-0 whitespace-pre-wrap text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [overflow-wrap:anywhere]";
+const EMPTY_DOC: RichTextDoc = { type: "doc", content: [{ type: "paragraph" }] };
 const PROBLEM = "m-0 text-destructive [font:var(--type-body-sm)]";
 
 /** What a note action came to. `message` is what to tell the guest, or null when the answer is not for this form any more (a stale one). */
 /** `saved` is a write that landed but whose answer is not for this view any more (the guest went to All videos meanwhile): the form's draft is done with all the same. `conflict` is the thread a conflict answered with: the latest version the guest was shown. */
 export type ActionOutcome = { ok: true } | { ok: false; message: string | null; saved?: boolean; conflict?: GuestNoteThreadDto };
 export type NoteActions = {
-  reply: (root: GuestNoteThreadDto, body: string) => Promise<ActionOutcome>;
-  edit: (root: GuestNoteThreadDto, note: GuestNoteDto, body: string, expectedRevision: number) => Promise<ActionOutcome>;
+  reply: (root: GuestNoteThreadDto, content: RichTextDoc) => Promise<ActionOutcome>;
+  edit: (root: GuestNoteThreadDto, note: GuestNoteDto, content: RichTextDoc, expectedRevision: number) => Promise<ActionOutcome>;
   remove: (root: GuestNoteThreadDto, note: GuestNoteDto, expectedRevision: number) => Promise<ActionOutcome>;
 };
 export type Writing = {
   /** The link allows comments and the Project is not archived. */
   canWrite: boolean;
   verified: boolean;
+  /** The link's media routes (#835 C): where a note's pictures are read from, and what a reply's editor uploads through. */
+  media: EditorMediaTransport;
   actions: NoteActions;
   /** The reply and reply-edit drafts, which outlive the list (the phone drawer closing, a re-verification). */
   drafts: GuestDrafts;
@@ -51,10 +57,11 @@ function Author({ note }: { note: GuestNoteDto }) {
   </span>;
 }
 
-function NoteText({ note }: { note: GuestNoteDto }) {
-  return note.deleted
-    ? <p data-testid="guest-note-tombstone" className="m-0 text-foreground-secondary italic [font:var(--type-body-sm)]">Note deleted</p>
-    : <p data-testid="guest-note-body" className={BODY}>{note.body}</p>;
+/** The note as the guest reads it: the rich document when the note has one (pictures from the link's media routes; a mention is already the plain "@Name"), else its text. */
+function NoteText({ note, media }: { note: GuestNoteDto; media: EditorMediaTransport }) {
+  if (note.deleted) return <p data-testid="guest-note-tombstone" className="m-0 text-foreground-secondary italic [font:var(--type-body-sm)]">Note deleted</p>;
+  if (note.content) return <div data-testid="guest-note-body" className="text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [overflow-wrap:anywhere]"><RichTextContent content={note.content} mediaUrl={media.mediaUrl} posterUrl={media.posterUrl} /></div>;
+  return <p data-testid="guest-note-body" className={BODY}>{note.body}</p>;
 }
 
 type Status = { problem: string | null; pending: boolean };
@@ -78,6 +85,9 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
   const [deleting, setDeleting] = useState<(Status & { noteId: string; baseRevision: number }) | null>(null);
   /** A delete that hit a conflict: the confirm closed and the note row shows the latest text, with this line above it. */
   const [deleteConflict, setDeleteConflict] = useState<string | null>(null);
+  // A picture still going up holds Send / Save: the note would go without it.
+  const [editUploading, setEditUploading] = useState(false);
+  const [replyUploading, setReplyUploading] = useState(false);
   const busy = (editDraft !== null && editStatus.pending) || (replyDraft !== null && replyStatus.pending) || (deleting?.pending ?? false);
 
   const own = (note: GuestNoteDto) => writing.canWrite && !note.deleted && note.author.kind === "guest" && note.author.self;
@@ -87,13 +97,12 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
 
   const saveEdit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!writing.canWrite || editDraft === null || editingNote === null || editStatus.pending) return;
-    const text = editDraft.text.trim();
-    if (text === "") { setEditStatus({ pending: false, problem: "A note can't be empty." }); return; }
-    if (text === editDraft.baseText) { drafts.clear(editKey); setEditStatus(IDLE); return; }
+    if (!writing.canWrite || editDraft === null || editingNote === null || editStatus.pending || editUploading) return;
+    if (noteText(editDraft.doc) === "") { setEditStatus({ pending: false, problem: "A note can't be empty." }); return; }
+    if (sameDoc(editDraft.doc, editDraft.baseDoc)) { drafts.clear(editKey); setEditStatus(IDLE); return; }
     setEditStatus({ pending: true, problem: null });
     const sent = editDraft;
-    const outcome = await writing.actions.edit(thread, editingNote, text, sent.ackRevision ?? sent.baseRevision ?? editingNote.revision);
+    const outcome = await writing.actions.edit(thread, editingNote, sent.doc, sent.ackRevision ?? sent.baseRevision ?? editingNote.revision);
     if (outcome.ok || outcome.saved === true) { drafts.clearIf(editKey, sent.rev); setEditStatus(IDLE); return; }
     // A conflict showed the guest the latest version: saving again is their acknowledgement, so the base moves to it (and only then).
     const shown = outcome.conflict === undefined ? undefined : [outcome.conflict, ...outcome.conflict.replies].find((candidate) => candidate.id === editingNote.id);
@@ -102,12 +111,11 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
   };
   const sendReply = async (event: FormEvent) => {
     event.preventDefault();
-    if (!writing.canWrite || replyDraft === null || replyStatus.pending) return;
-    const text = replyDraft.text.trim();
-    if (text === "") { setReplyStatus({ pending: false, problem: "Write a reply first." }); return; }
+    if (!writing.canWrite || replyDraft === null || replyStatus.pending || replyUploading) return;
+    if (noteText(replyDraft.doc) === "") { setReplyStatus({ pending: false, problem: "Write a reply first." }); return; }
     setReplyStatus({ pending: true, problem: null });
     const sent = replyDraft;
-    const outcome = await writing.actions.reply(thread, text);
+    const outcome = await writing.actions.reply(thread, sent.doc);
     if (outcome.ok || outcome.saved === true) { drafts.clearIf(replyKey, sent.rev); setReplyStatus(IDLE); } else setReplyStatus({ pending: false, problem: outcome.message });
   };
   // A hard-deleted root unmounts this whole thread, the confirm with it, so `finalFocus` never runs. When the unmount actually happens
@@ -149,22 +157,22 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
 
   const menu = (note: GuestNoteDto) => own(note)
     ? <Menu triggerLabel="Actions for your note" label="Note actions" triggerClassName={cn(ICON_BUTTON, "ms-auto")} triggerTestId="guest-note-actions" trigger={<span aria-hidden="true">⋯</span>}>
-      <MenuPrimitive.Item className={MENU_ITEM} disabled={busy || (note.id === thread.id && writing.composerOpen)} onClick={() => { if (note.id === thread.id) writing.editRoot(thread); else { setEditStatus(IDLE); drafts.set(editKey, { noteId: note.id, baseRevision: note.revision, baseText: note.body, ackRevision: null, text: note.body }); } }}>Edit</MenuPrimitive.Item>
+      <MenuPrimitive.Item className={MENU_ITEM} disabled={busy || (note.id === thread.id && writing.composerOpen)} onClick={() => { if (note.id === thread.id) writing.editRoot(thread); else { setEditStatus(IDLE); { const doc = note.content ?? legacyBodyToRichTextDoc(note.body); drafts.set(editKey, { noteId: note.id, baseRevision: note.revision, baseDoc: doc, ackRevision: null, doc }); } } }}>Edit</MenuPrimitive.Item>
       <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={busy} onClick={() => { setDeleteConflict(null); setDeleting({ noteId: note.id, problem: null, pending: false, baseRevision: note.revision }); }}>Delete</MenuPrimitive.Item>
     </Menu>
     : null;
 
   const body = (note: GuestNoteDto) => editDraft !== null && editDraft.noteId === note.id
     ? <form data-testid="guest-note-edit-form" aria-label="Edit your note" onSubmit={(event) => { void saveEdit(event); }} noValidate className="flex flex-col gap-[var(--space-2)]">
-      <Textarea data-testid="guest-note-edit-body" aria-label="Your note" autoFocus value={editDraft.text} disabled={editStatus.pending || !writing.canWrite} onChange={(event) => { drafts.set(editKey, { ...editDraft, text: event.target.value }); }} />
+      <GuestNoteField testId="guest-note-edit-body" label="Your note" media={writing.media} value={editDraft.doc} disabled={editStatus.pending || !writing.canWrite} onChange={(doc) => { drafts.set(editKey, { ...editDraft, doc }); }} onUploadingChange={setEditUploading} />
       {editDraft.baseRevision !== note.revision && <p data-testid="guest-note-edit-latest" className="m-0 whitespace-pre-wrap text-foreground-secondary [font:var(--type-body-sm)] [overflow-wrap:anywhere]">{`Latest saved version: ${note.body}`}</p>}
       {editStatus.problem !== null && <p role="alert" data-testid="guest-note-edit-problem" className={PROBLEM}>{editStatus.problem}</p>}
       <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
         <Button type="button" variant="ghost" size="sm" data-testid="guest-note-edit-cancel" className={TOUCH} disabled={editStatus.pending} onClick={() => { drafts.clear(editKey); setEditStatus(IDLE); }}>Cancel</Button>
-        <Button type="submit" size="sm" data-testid="guest-note-edit-save" className={TOUCH} disabled={editStatus.pending || !writing.canWrite}>Save</Button>
+        <Button type="submit" size="sm" data-testid="guest-note-edit-save" className={TOUCH} disabled={editStatus.pending || !writing.canWrite || editUploading}>Save</Button>
       </div>
     </form>
-    : <NoteText note={note} />;
+    : <NoteText note={note} media={writing.media} />;
 
   return <Item variant="outline" size="sm" data-testid="guest-note" data-note-id={thread.id} data-selected={selected ? "true" : "false"} className="flex-col items-stretch data-[selected=true]:border-foreground">
     <ItemContent className="gap-[var(--space-2)]">
@@ -180,13 +188,13 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
         {body(reply)}
       </div>)}
       {writing.canWrite && !thread.deleted && (replyDraft === null
-        ? <div className="flex min-h-8 items-center"><Button type="button" variant="ghost" size="sm" data-testid="guest-note-reply-button" className={TOUCH} disabled={busy} onClick={() => { if (!writing.verified) writing.onNeedVerify(); else { setReplyStatus(IDLE); drafts.set(replyKey, { noteId: null, baseRevision: null, baseText: "", ackRevision: null, text: "" }); } }}>Reply</Button>{thread.resolved && <ResolvedTick data-testid="guest-note-resolved" className="ms-auto" />}</div>
+        ? <div className="flex min-h-8 items-center"><Button type="button" variant="ghost" size="sm" data-testid="guest-note-reply-button" className={TOUCH} disabled={busy} onClick={() => { if (!writing.verified) writing.onNeedVerify(); else { setReplyStatus(IDLE); drafts.set(replyKey, { noteId: null, baseRevision: null, baseDoc: EMPTY_DOC, ackRevision: null, doc: EMPTY_DOC }); } }}>Reply</Button>{thread.resolved && <ResolvedTick data-testid="guest-note-resolved" className="ms-auto" />}</div>
         : <form data-testid="guest-reply-form" aria-label="Reply" onSubmit={(event) => { void sendReply(event); }} noValidate className="flex flex-col gap-[var(--space-2)]">
-          <Textarea data-testid="guest-reply-body" aria-label="Your reply" autoFocus value={replyDraft.text} disabled={replyStatus.pending || !writing.canWrite} onChange={(event) => { drafts.set(replyKey, { ...replyDraft, text: event.target.value }); }} />
+          <GuestNoteField testId="guest-reply-body" label="Your reply" media={writing.media} value={replyDraft.doc} disabled={replyStatus.pending || !writing.canWrite} onChange={(doc) => { drafts.set(replyKey, { ...replyDraft, doc }); }} onUploadingChange={setReplyUploading} />
           {replyStatus.problem !== null && <p role="alert" data-testid="guest-reply-problem" className={PROBLEM}>{replyStatus.problem}</p>}
           <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
             <Button type="button" variant="ghost" size="sm" data-testid="guest-reply-cancel" className={TOUCH} disabled={replyStatus.pending} onClick={() => { drafts.clear(replyKey); setReplyStatus(IDLE); }}>Cancel</Button>
-            <Button type="submit" size="sm" data-testid="guest-reply-send" className={TOUCH} disabled={replyStatus.pending || !writing.canWrite}>Send reply</Button>
+            <Button type="submit" size="sm" data-testid="guest-reply-send" className={TOUCH} disabled={replyStatus.pending || !writing.canWrite || replyUploading}>Send reply</Button>
           </div>
         </form>)}
       {thread.resolved && (!writing.canWrite || thread.deleted || replyDraft !== null) && <div className="flex justify-end"><ResolvedTick data-testid="guest-note-resolved" /></div>}

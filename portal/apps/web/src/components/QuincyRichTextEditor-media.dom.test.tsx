@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import editorSource from "./QuincyRichTextEditor.tsx?raw";
+import editorSource from "./QuincyRichTextEditorBase.tsx?raw";
 import imageSource from "./quincy/EmbeddedImage.tsx?raw";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";

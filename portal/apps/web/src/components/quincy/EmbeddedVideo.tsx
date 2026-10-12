@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { embeddedMediaPosterUrl, embeddedMediaUrl } from "../../lib/embedded-media";
+import { embeddedMediaPosterUrl, embeddedMediaUrl } from "../../lib/embedded-media-core";
 import { buttonVariants } from "../reui/button";
 
 /**
@@ -11,9 +11,10 @@ import { buttonVariants } from "../reui/button";
  * (ProRes, say) offers itself as a download instead of a dead player. Neither ReUI nor base-nova has a media-playback component.
  */
 /** `hasPoster` is the server's answer (#556): `false` leaves `poster` off so a posterless video never requests `/poster`; absent (an older node, the whiteboard dialog) asks for it as before. */
-export function EmbeddedVideo({ mediaId, hasPoster, className, videoClassName }: { mediaId: string; hasPoster?: boolean; className?: string; videoClassName?: string }) {
+/** `mediaUrl` and `posterUrl` (#835) are where the bytes and the poster are read from: the staff routes by default, a Review link's own for a guest. */
+export function EmbeddedVideo({ mediaId, hasPoster, className, videoClassName, mediaUrl = embeddedMediaUrl, posterUrl = embeddedMediaPosterUrl }: { mediaId: string; hasPoster?: boolean; className?: string; videoClassName?: string; mediaUrl?: (mediaId: string) => string; posterUrl?: (mediaId: string) => string }) {
   const [failed, setFailed] = useState(false);
-  const src = embeddedMediaUrl(mediaId);
+  const src = mediaUrl(mediaId);
   // A posterless video shows no frame until it plays; `#t=0.1` asks the browser for one. Only the player gets it: the download href stays on the bare `src`.
   const playSrc = hasPoster === false ? `${src}#t=0.1` : src;
   return <div data-testid="embedded-video" className={cn("my-[var(--space-2)]", className)}>
@@ -22,6 +23,6 @@ export function EmbeddedVideo({ mediaId, hasPoster, className, videoClassName }:
         <p className="m-0 text-foreground-secondary [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">This video can't play in this browser.</p>
         <a data-slot="button" href={`${src}?download=1`} download className={cn(buttonVariants({ variant: "outline", size: "default" }))}>Download video</a>
       </div>
-      : <video controls preload="metadata" playsInline poster={hasPoster === false ? undefined : embeddedMediaPosterUrl(mediaId)} src={playSrc} aria-label="Embedded video" onError={() => setFailed(true)} className={cn("rich-text__embedded-video", videoClassName)} />}
+      : <video controls preload="metadata" playsInline poster={hasPoster === false ? undefined : posterUrl(mediaId)} src={playSrc} aria-label="Embedded video" onError={() => setFailed(true)} className={cn("rich-text__embedded-video", videoClassName)} />}
   </div>;
 }

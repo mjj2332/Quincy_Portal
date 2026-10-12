@@ -3,7 +3,6 @@ import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tip
 import { CheckIcon } from "lucide-react";
 import { RICH_TEXT_IMAGE_ALT_MAX_LENGTH } from "@quincy/shared";
 import { EmbeddedImage } from "../../lib/rich-text-tiptap";
-import { embeddedMediaUrl } from "../../lib/embedded-media";
 import { Button } from "../reui/button";
 import { Field, FieldLabel } from "../reui/field";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "../reui/input-group";
@@ -32,7 +31,9 @@ function AltForm({ alt, inputRef, onApply }: { alt: string; inputRef: RefObject<
   </form>;
 }
 
-function EmbeddedImageEditorView({ node, editor, selected, updateAttributes }: NodeViewProps) {
+function EmbeddedImageEditorView({ node, editor, selected, updateAttributes, extension }: NodeViewProps) {
+  // The node's own option (#835): the editor host says where the bytes are read from (the staff route, or a Review link's).
+  const mediaUrl = (extension.options as { mediaUrl: (mediaId: string) => string }).mediaUrl;
   // The editor goes non-editable while a Save is in flight, which only a transaction announces: follow it.
   const [editable, setEditable] = useState(editor.isEditable);
   useEffect(() => {
@@ -46,7 +47,7 @@ function EmbeddedImageEditorView({ node, editor, selected, updateAttributes }: N
   const mediaId = String(node.attrs.mediaId ?? "");
   const alt = typeof node.attrs.alt === "string" ? node.attrs.alt : "";
   return <NodeViewWrapper className="rich-text__embedded-image-node" contentEditable={false}>
-    <img src={embeddedMediaUrl(mediaId)} alt={alt || "Embedded image"} data-media-id={mediaId} data-drag-handle="" className="rich-text__embedded-image cursor-grab active:cursor-grabbing" />
+    <img src={mediaUrl(mediaId)} alt={alt || "Embedded image"} data-media-id={mediaId} data-drag-handle="" className="rich-text__embedded-image cursor-grab active:cursor-grabbing" />
     {(selected || open) && editable && <div className="absolute bottom-[var(--space-2)] left-[var(--space-2)]">
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger render={<Button type="button" variant="secondary" size="xs" data-testid="embedded-image-alt-button" className="pointer-coarse:h-11 max-[721px]:h-11" />}>Alt text</PopoverTrigger>

@@ -116,7 +116,7 @@ export async function reservePreview<P extends string>(c: Handled<P>, v: Verifie
   return attempt.limited ? tooMany(attempt.retryAfterSeconds) : null;
 }
 
-const CONTENT_ERRORS = ["invalid_content", "mentions_not_allowed", "too_many_media", "body_too_long"] as const;
+const CONTENT_ERRORS = ["invalid_content", "content_too_large", "mentions_not_allowed", "too_many_media", "body_too_long"] as const;
 
 /**
  * A guest write's rich `content` (#835 C), parsed and checked: the video-note profile, no mention of any kind (400 `mentions_not_allowed`), at most ten media, the body derived, and the media

@@ -1,17 +1,27 @@
 import { useSyncExternalStore } from "react";
+import { legacyBodyToRichTextDoc, type RichTextDoc } from "@quincy/shared";
 
 /** An inline note form the guest has open: a reply (`noteId` null) or an edit of one note of the thread (`noteId`). */
 export type NoteDraft = {
   noteId: string | null;
-  text: string;
-  /** The body the draft started from; "unchanged" is judged against this, not the list's body, which may have moved since. */
-  baseText: string;
+  /** The note as a rich document (#835): text, and pictures the guest added. */
+  doc: RichTextDoc;
+  /** The document the draft started from; "unchanged" is judged against this, not the list's note, which may have moved since. */
+  baseDoc: RichTextDoc;
   /** The revision the draft was opened on. A save always sends this (or `ackRevision`), never the list's current revision, so an edit made elsewhere meanwhile is a conflict, not an overwrite. */
   baseRevision: number | null;
   /** The revision a conflict answer showed the guest; set only by that answer, so saving again is the guest's acknowledgement. */
   ackRevision: number | null;
   /** Moves on every change, so a completion can tell whether the draft it sent is still the draft on show. */
   rev: number;
+};
+
+/** A plain-text draft (a decision's note) as the document a draft holds, and back. The text is kept exactly as typed: one text node, newlines inside it. */
+export const textDoc = (text: string): RichTextDoc => (text === "" ? { type: "doc", content: [{ type: "paragraph" }] } : legacyBodyToRichTextDoc(text));
+export const docText = (doc: RichTextDoc): string => {
+  const first = doc.content[0];
+  const node = first && first.type === "paragraph" ? first.content?.[0] : undefined;
+  return node && node.type === "text" ? node.text : "";
 };
 
 export type GuestDrafts = {

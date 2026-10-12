@@ -2,10 +2,10 @@ import { useState } from "react";
 import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
 import { VideoIcon } from "lucide-react";
 import { EmbeddedVideo } from "../../lib/rich-text-tiptap";
-import { embeddedMediaPosterUrl, embeddedMediaUrl } from "../../lib/embedded-media";
 import { Badge } from "../reui/badge";
 
-function EmbeddedVideoEditorView({ node }: NodeViewProps) {
+function EmbeddedVideoEditorView({ node, extension }: NodeViewProps) {
+  const { mediaUrl, posterUrl } = extension.options as { mediaUrl: (mediaId: string) => string; posterUrl: (mediaId: string) => string };
   const mediaId = String(node.attrs.mediaId ?? "");
   const [failed, setFailed] = useState(false);
   const hasPoster = node.attrs.hasPoster !== false;
@@ -13,7 +13,7 @@ function EmbeddedVideoEditorView({ node }: NodeViewProps) {
   return <NodeViewWrapper className="rich-text__embedded-video-node" contentEditable={false}>
     {failed
       ? <div data-testid="embedded-video-preview-unavailable" data-drag-handle="" className="rich-text__embedded-video rich-text__embedded-video--unavailable cursor-grab active:cursor-grabbing"><p className="m-0 text-foreground-secondary [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">This video can't preview in this browser.</p></div>
-      : <video src={hasPoster ? embeddedMediaUrl(mediaId) : `${embeddedMediaUrl(mediaId)}#t=0.1`} poster={hasPoster ? embeddedMediaPosterUrl(mediaId) : undefined} preload="metadata" muted playsInline data-media-id={mediaId} data-drag-handle="" onError={() => setFailed(true)} className="rich-text__embedded-video cursor-grab active:cursor-grabbing" />}
+      : <video src={hasPoster ? mediaUrl(mediaId) : `${mediaUrl(mediaId)}#t=0.1`} poster={hasPoster ? posterUrl(mediaId) : undefined} preload="metadata" muted playsInline data-media-id={mediaId} data-drag-handle="" onError={() => setFailed(true)} className="rich-text__embedded-video cursor-grab active:cursor-grabbing" />}
     <Badge variant="invert" data-testid="embedded-video-badge" className="pointer-events-none absolute top-[var(--space-2)] left-[var(--space-2)]"><VideoIcon aria-hidden="true" />Video</Badge>
   </NodeViewWrapper>;
 }
