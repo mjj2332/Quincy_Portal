@@ -97,7 +97,8 @@ function readAlign(editor: Editor): RichTextAlign {
 }
 
 function readSnapshot(editor: Editor | null): RichTextSnapshot {
-  if (!editor) return IDLE_SNAPSHOT;
+  // A destroyed editor (Tiptap's `useEditor` drops it when React disconnects a tree's effects, as a Suspense reveal does) has no state to read.
+  if (!editor || editor.isDestroyed) return IDLE_SNAPSHOT;
   const editable = editor.isEditable;
   const hasHighlight = "highlight" in editor.schema.marks;
   const hasTable = "table" in editor.schema.nodes;

@@ -159,7 +159,8 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(form.querySelector('[role="group"]')).toBeNull();
     expect((tid("video-note-reply-post", form) as HTMLButtonElement).disabled).toBe(true);
     await type(form.querySelector("textarea")!, "  On it  ");
-    expect(store.slot("asset").open?.text).toBe("  On it  ");
+    // The stored plain body is trimmed (5b07446a: `videoNoteBody`), while the document posted below keeps what was typed.
+    expect(store.slot("asset").open?.text).toBe("On it");
     await click(tid("video-note-reply-post", form)!);
     await flush();
     expect(props.actions.reply).toHaveBeenCalledWith(t.id, legacyBodyToRichTextDoc("  On it  "));

@@ -221,7 +221,7 @@ export function QuincyRichTextEditorBase({
       .map((extension) => extension === LinkPreview ? LinkPreviewWithView : extension === EmbeddedImage ? (mediaUrl ? EmbeddedImageWithView.configure({ mediaUrl }) : EmbeddedImageWithView) : extension === EmbeddedVideo ? (mediaUrl && posterUrl ? EmbeddedVideoWithView.configure({ mediaUrl, posterUrl }) : EmbeddedVideoWithView) : extension),
     ...(preset === "document" ? [RichTextSlashCommand.configure({ items: [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM] })] : []),
   ], [preset, mentionsOn, mediaUrl, posterUrl]);
-  const editor = useEditor({
+  const created = useEditor({
     extensions,
     // The toolbar subscribes to its own formatting snapshot (`useRichTextState`); the field itself
     // re-renders only on the props and state it owns.
@@ -296,6 +296,11 @@ export function QuincyRichTextEditorBase({
     },
     onSelectionUpdate: ({ editor: next }) => setQuery(mentionsOnRef.current ? mentionQuery(next) : null),
   });
+  // Tiptap's `useEditor` destroys its editor a tick after the component's effects are disconnected and builds a new one when they reconnect.
+  // React does that when a Suspense boundary reveals a tree (the editor here loads as a lazy chunk, #835): until the render that carries
+  // the new editor, `created` is the destroyed one, whose view and state are gone. It is never handed on to a render, and each effect
+  // below checks `isDestroyed` again, because React re-runs a committed render's effects after that tick has already destroyed its editor.
+  const editor = created && !created.isDestroyed ? created : null;
   editorRef.current = editor;
   const state = useRichTextState(editor);
   // Below 721px the table controls are a toolbar group and the floating bar is not mounted; on a desktop the group
@@ -327,12 +332,12 @@ export function QuincyRichTextEditorBase({
   const outline = useRichTextOutline(isDocument ? editor : null);
   const activeHeading = useRichTextActiveHeading(isDocument ? editor : null, pageRef, outline);
 
-  useEffect(() => { if (editor) editor.setEditable(!disabled); }, [disabled, editor]);
+  useEffect(() => { if (editor && !editor.isDestroyed) editor.setEditable(!disabled); }, [disabled, editor]);
   useEffect(() => { if (picking !== null) pickerRef.current?.click(); }, [picking]);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   // Keep every pending insertion point on the text it was beside as the document changes.
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
     const follow = ({ transaction }: { transaction: { docChanged: boolean; mapping: { map: (pos: number) => number } } }) => {
       if (!transaction.docChanged) return;
       for (const [key, pos] of insertAt.current) insertAt.current.set(key, transaction.mapping.map(pos));
@@ -473,7 +478,7 @@ export function QuincyRichTextEditorBase({
   // Esc is only seen by the editor's key handler, so a list left open behind a Tab would hold the
   // sheet's layer gate shut for good: close it when focus leaves the editor.
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
     const dom = editor.view.dom;
     const onBlur = () => {
       setMentionDismissed(true);
@@ -488,7 +493,7 @@ export function QuincyRichTextEditorBase({
   // impersonation offset included, read from the computed style) plus its height. Constant, so it does not depend on being stuck now.
   useEffect(() => {
     const addon = addonRef.current;
-    if (!editor || !isDocument || !addon) return;
+    if (!editor || editor.isDestroyed || !isDocument || !addon) return;
     const apply = () => {
       const style = getComputedStyle(addon);
       const top = (parseFloat(style.top) || 0) + addon.offsetHeight;
@@ -503,17 +508,19 @@ export function QuincyRichTextEditorBase({
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(apply);
     observer?.observe(addon);
     window.addEventListener("resize", apply);
-    editor.view.dom.addEventListener("focus", apply);
-    return () => { observer?.disconnect(); window.removeEventListener("resize", apply); editor.view.dom.removeEventListener("focus", apply); };
+    const dom = editor.view.dom;
+    dom.addEventListener("focus", apply);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", apply); dom.removeEventListener("focus", apply); };
   }, [editor, isDocument]);
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
+    const dom = editor.view.dom;
     const announce = () => setNestingBlocked(true);
-    editor.view.dom.addEventListener("rich-text-nesting-blocked", announce);
-    return () => editor.view.dom.removeEventListener("rich-text-nesting-blocked", announce);
+    dom.addEventListener("rich-text-nesting-blocked", announce);
+    return () => dom.removeEventListener("rich-text-nesting-blocked", announce);
   }, [editor]);
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
     const serialised = JSON.stringify(value);
     if (serialised !== valueRef.current) {
       // The host replaced the content (a post cleared the composer, or an edit began): an earlier upload error is stale.
@@ -524,7 +531,7 @@ export function QuincyRichTextEditorBase({
     }
   }, [editor, value]);
   useEffect(() => {
-    if (!editor || !mentionA11y) return;
+    if (!editor || editor.isDestroyed || !mentionA11y) return;
     const dom = editor.view.dom;
     dom.setAttribute("role", "combobox");
     dom.setAttribute("aria-haspopup", "listbox");
