@@ -48,6 +48,8 @@ describe("#337 notification type → Workspace tab", () => {
       video_note: "video",
       video_reply: "video",
       video_decision: "video",
+      video_released: "video",
+      video_mention: "video",
       delivery_unlock_requested: "edited",
     };
     expect({ ...NOTIFICATION_WORKSPACE_TAB }).toEqual(expected);

@@ -77,6 +77,8 @@ export const EXTERNAL_LEGACY_NOTIFICATION_POLICY: Record<NotificationType, Exter
   video_note: { decision: "allowed", durableEvent: "project.video_review.notification" },
   video_reply: { decision: "allowed", durableEvent: "project.video_review.notification" },
   video_decision: { decision: "allowed", durableEvent: "project.video_review.notification" },
+  video_released: { decision: "allowed", durableEvent: "project.video_review.notification" },
+  video_mention: { decision: "allowed", durableEvent: "project.video_review.notification" },
   // Internal only (#787 slice 8): a client's unlock request is for the studio, and an External must not learn a client page exists.
   delivery_unlock_requested: { decision: "suppressed", reason: "delivery_withheld" },
 };

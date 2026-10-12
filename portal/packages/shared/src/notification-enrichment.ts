@@ -156,6 +156,8 @@ export const NOTIFICATION_ENRICHMENT: Record<NotificationType, NotificationEnric
   video_note: SYSTEM,
   video_reply: SYSTEM,
   video_decision: SYSTEM,
+  video_released: SYSTEM,
+  video_mention: SYSTEM,
   delivery_unlock_requested: SYSTEM,
 };
 

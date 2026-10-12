@@ -17,7 +17,7 @@ describe("video review notification transport", () => {
   it("names one outbox event and exactly four notification types", () => {
     expect(NOTIFICATION_OUTBOX_EVENT_TYPES.projectVideoReview).toBe("project.video_review.notification");
     expect(VIDEO_REVIEW_NOTIFICATION_EVENT).toBe("project.video_review.notification");
-    expect([...VIDEO_REVIEW_NOTIFICATION_TYPES]).toEqual(["video_version_uploaded", "video_note", "video_reply", "video_decision"]);
+    expect([...VIDEO_REVIEW_NOTIFICATION_TYPES]).toEqual(["video_version_uploaded", "video_note", "video_reply", "video_decision", "video_released", "video_mention"]);
     for (const type of VIDEO_REVIEW_NOTIFICATION_TYPES) {
       expect(NOTIFICATION_TYPES).toContain(type);
       expect(NOTIFICATION_WORKSPACE_TAB[type]).toBe("video");
@@ -28,11 +28,18 @@ describe("video review notification transport", () => {
     }
   });
 
+  it("narrows what an External reads: a Release is a generic update, a mention names only a video note", () => {
+    expect(externalNotificationCopy({ type: "video_released" })).toEqual({ title: "Video review update", body: "A video in an assigned project has an update." });
+    expect(externalNotificationCopy({ type: "video_mention" })).toEqual({ title: "Video review update", body: "You were mentioned in a video note." });
+  });
+
   it("builds the source keys the plan names", () => {
     expect(videoReviewNotificationSourceKey("video_version_uploaded", ID)).toBe(`video_version:${ID}`);
     expect(videoReviewNotificationSourceKey("video_note", ID)).toBe(`video_note:${ID}`);
     expect(videoReviewNotificationSourceKey("video_reply", ID)).toBe(`video_reply:${ID}`);
     expect(videoReviewNotificationSourceKey("video_decision", ID)).toBe(`video_decision:${ID}`);
+    expect(videoReviewNotificationSourceKey("video_released", ID)).toBe(`video_released:${ID}`);
+    expect(videoReviewNotificationSourceKey("video_mention", ID)).toBe(`video_mention:${ID}`);
   });
 
   it("parses the strict payload and refuses anything else", () => {

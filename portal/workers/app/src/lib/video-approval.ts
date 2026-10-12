@@ -3,6 +3,7 @@ import { enqueueObjectCrcs, ROLE_LABELS, type ObjectCrcQueueEnv, type Role, type
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { everPublishedSql } from "./delivery-lock";
 import { newId } from "./ids";
+import { videoReviewOutboxStatements } from "./video-review-notifications";
 import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO, LIVE_VIDEO_EXISTS } from "./video-live-sql";
 
 /**
@@ -115,8 +116,10 @@ export async function releaseVerdict(db: D1Database, assetId: string, expected: 
  * Project unarchived, and the partial unique index `video_releases_live_unique` backs it. So two Releases leave one winner, and a decision landing first makes the Release stale.
  * Returns the Release, the verdict that refused it, or `archived`.
  */
-export async function releaseVersion(db: D1Database, input: { projectId: string; assetId: string; principal: Principal; approvalRevision: number; now: number }, crc: ObjectCrcQueueEnv = {}): Promise<{ release: VideoRelease } | ReleaseVerdict | { kind: "archived" }> {
+export async function releaseVersion(db: D1Database, input: { projectId: string; assetId: string; principal: Principal; approvalRevision: number; now: number }, crc: ObjectCrcQueueEnv = {}): Promise<{ release: VideoRelease; outboxIds: string[] } | ReleaseVerdict | { kind: "archived" }> {
   const releaseId = newId(); const auditId = newId();
+  // #835: staff Project members are told of the Release; the recipients are read just before the batch and the rows are fenced on the audit row.
+  const notify = await releaseNotification(db, { ...input, releaseId, auditId });
   try {
     await db.batch([
       db.prepare(`INSERT INTO video_releases (id, project_id, video_id, asset_id, approval_event_id, approval_revision, released_by, released_at, withdrawn_at, withdrawn_by)
@@ -130,6 +133,7 @@ export async function releaseVersion(db: D1Database, input: { projectId: string;
         FROM video_releases r WHERE r.id = ?5`).bind(auditId, input.principal.id, auditMeta(input.principal), input.now, releaseId),
       // 15b: subscribers of every live link that grants this Version with downloads on are told it is released; fenced on the audit row.
       ...guestDigestStatements(db, { kind: "video_released", releaseId }, auditId, input.now),
+      ...notify.statements,
     ]);
   } catch (error) { if (!isUnique(error)) throw error; }
   const release = await readRelease(db, releaseId);
@@ -137,12 +141,21 @@ export async function releaseVersion(db: D1Database, input: { projectId: string;
     // #802: a released Version is what a guest's Download all zips, so its CRC is queued now. Best effort, after the commit: a lost send is repaired by the hourly sweep.
     const original = await db.prepare("SELECT r2_key FROM assets WHERE id = ?1").bind(input.assetId).first<{ r2_key: string }>().catch(() => null);
     if (original) await enqueueObjectCrcs(crc, [original.r2_key], "video-release");
-    return { release };
+    return { release, outboxIds: notify.outboxIds };
   }
   if (await projectArchived(db, input.projectId)) return { kind: "archived" };
   const verdict = await releaseVerdict(db, input.assetId, input.approvalRevision);
   // The verdict can read "ok" only if the state changed back between the INSERT and now; the Release was still refused, so the safe answer is stale.
   return verdict.kind === "ok" ? { kind: "stale", current: input.approvalRevision } : verdict;
+}
+
+async function releaseNotification(db: D1Database, input: { projectId: string; assetId: string; principal: Principal; now: number; releaseId: string; auditId: string }) {
+  const version = await findVersion(db, input.projectId, input.assetId);
+  if (!version) return { statements: [], outboxIds: [] };
+  return videoReviewOutboxStatements(db, {
+    kind: "video_released", projectId: input.projectId, videoId: version.videoId, assetId: input.assetId, sourceId: input.releaseId,
+    actorId: input.principal.id, excludeUserId: input.principal.id, auditId: input.auditId, occurredAt: input.now,
+  });
 }
 
 /** Withdraws the Version's live Release. `none` when there is none, `archived` when the Project is. */

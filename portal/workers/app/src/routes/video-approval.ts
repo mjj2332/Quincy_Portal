@@ -9,6 +9,7 @@ import { hasProjectAccess } from "../middleware/capability";
 import { projectIsArchived } from "../lib/project-archive";
 import { terminalRoute } from "../lib/terminal-route";
 import { readVideoReviewGate } from "../lib/video-review-gate";
+import { publishOutboxDetached } from "../lib/server-timing";
 import { findVersion, findVideo, loadDecisions, recordStaffDecision, releaseVerdict, releaseVersion, setPremium, setPremiumUnlock, videoPublished, withdrawRelease, type Principal } from "../lib/video-approval";
 import { jsonInput } from "./helpers";
 
@@ -79,7 +80,10 @@ videoApprovalRoutes.post("/projects/:projectId/video-versions/:assetId/release",
   };
   const early = answer(await releaseVerdict(c.env.DB, assetId, input.approvalRevision)); if (early) return early;
   const result = await releaseVersion(c.env.DB, { projectId, assetId, principal: principalOf(c), approvalRevision: input.approvalRevision, now: Date.now() }, c.env);
-  if ("release" in result) return c.json(videoReleaseResponseSchema.parse({ release: result.release }), 201);
+  if ("release" in result) {
+    if (result.outboxIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.outboxIds));
+    return c.json(videoReleaseResponseSchema.parse({ release: result.release }), 201);
+  }
   if (result.kind === "archived") return archivedResponse(c);
   if (!await findVersion(c.env.DB, projectId, assetId)) return versionNotFound(c);
   return answer(result) ?? c.json({ error: "The client decision changed; review it before releasing.", code: "release_stale", current: null }, 409);
