@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ROLES } from "./capabilities";
 import { shapeSchema, strokePointSchema, strokeSchema, STROKE_LIMITS } from "./freehand-strokes";
 import { videoPersonSchema } from "./video-review";
+import { richTextMediaRefs, richTextPlainText, type RichTextDoc, type RichTextBlock, type RichTextTreeNode } from "./rich-text";
 
 /**
  * Frame-anchored notes on a Video Version (#741, 5a). A leaf module on purpose: `external-project-dto` imports it for its response-schema
@@ -12,6 +13,25 @@ const iso = z.string().min(1);
 
 /** CHECK length(body) <= 10000 (0068). JS `length` counts UTF-16 units, which is never fewer than SQLite's character count, so it is the stricter bound. */
 export const VIDEO_NOTE_BODY_MAX = 10_000;
+
+/**
+ * The plain `body` a rich note stores (#835): what marker export, counts, search and the guest digest read. A mention reads "@Name", an image or video node reads as nothing in the
+ * text, and a count hint ("[1 image]", "[2 videos]") closes it, so an exported marker says there is something to look at in the Portal. The caller checks the length.
+ */
+export function videoNoteBody(doc: RichTextDoc): string {
+  const strip = (node: RichTextTreeNode): RichTextTreeNode => {
+    if (node.type === "mention") return { type: "text", text: `@${node.attrs.label}` };
+    if (node.type === "paragraph" || node.type === "heading") return { ...node, content: (node.content ?? []).map(strip) } as RichTextTreeNode;
+    if (node.type === "image" || node.type === "video" || node.type === "text" || node.type === "hardBreak" || node.type === "linkPreview") return node;
+    return { ...node, content: (node as { content?: RichTextTreeNode[] }).content?.map(strip) } as RichTextTreeNode;
+  };
+  const refs = richTextMediaRefs(doc);
+  const text = richTextPlainText({ type: "doc", content: doc.content.filter((block) => block.type !== "image" && block.type !== "video").map((block) => strip(block) as RichTextBlock) });
+  const images = refs.filter((ref) => ref.kind === "image").length; const videos = refs.length - images;
+  const hints = [images ? `[${images} image${images === 1 ? "" : "s"}]` : "", videos ? `[${videos} video${videos === 1 ? "" : "s"}]` : ""].filter(Boolean).join(" ");
+  return [text, hints].filter(Boolean).join(" ");
+}
+
 export const VIDEO_NOTE_VISIBILITIES = ["public", "internal"] as const;
 export type VideoNoteVisibility = (typeof VIDEO_NOTE_VISIBILITIES)[number];
 
@@ -52,11 +72,15 @@ export const withVideoNoteCreateRules = <T extends z.ZodType<{ startFrame: numbe
   .refine((value) => (value.markup === undefined) === (value.drawingFrame === undefined), { message: "markup and drawingFrame go together", path: ["drawingFrame"] }) as unknown as z.ZodEffects<z.ZodEffects<T, z.output<T>, z.input<T>>, z.output<T>, z.input<T>>;
 
 /** `visibility` is required: there is no default, and it is immutable after posting. `endFrame` is exclusive: the note covers [startFrame, endFrame). `markup` and `drawingFrame` travel together. */
-export const videoNoteCreateInputSchema = withVideoNoteCreateRules(z.object({ ...videoNoteCreateFields, visibility: z.enum(VIDEO_NOTE_VISIBILITIES) }).strict());
+/** A staff note carries `content` (a rich document, #835) XOR the legacy `body` (an old tab still posts text). The server parses `content` against the video-note profile. */
+const content = z.unknown();
+const bodyXorContent = (value: { body?: string | undefined; content?: unknown }) => (value.body === undefined) !== (value.content === undefined);
+const BODY_XOR_CONTENT = { message: "Send either body or content", path: ["content"] };
+export const videoNoteCreateInputSchema = withVideoNoteCreateRules(z.object({ ...videoNoteCreateFields, body: body.optional(), content: content.optional(), visibility: z.enum(VIDEO_NOTE_VISIBILITIES) }).strict()).refine(bodyXorContent, BODY_XOR_CONTENT);
 export type VideoNoteCreateInput = z.infer<typeof videoNoteCreateInputSchema>;
 
 /** A reply takes its visibility from the thread's root in SQL, so it carries nothing but the body. */
-export const videoNoteReplyInputSchema = z.object({ body }).strict();
+export const videoNoteReplyInputSchema = z.object({ body: body.optional(), content: content.optional() }).strict().refine(bodyXorContent, BODY_XOR_CONTENT);
 export type VideoNoteReplyInput = z.infer<typeof videoNoteReplyInputSchema>;
 
 /**
@@ -67,12 +91,14 @@ export type VideoNoteReplyInput = z.infer<typeof videoNoteReplyInputSchema>;
 export const videoNoteEditInputSchema = z.object({
   expectedRevision: revision,
   body: body.optional(),
+  content: content.optional(),
   startFrame: frame.optional(),
   endFrame: frame.nullable().optional(),
   markup: videoMarkupSchema.nullable().optional(),
   drawingFrame: frame.optional(),
 }).strict()
-  .refine((value) => value.body !== undefined || value.startFrame !== undefined || value.endFrame !== undefined || value.markup !== undefined, { message: "Nothing to change" })
+  .refine((value) => value.body === undefined || value.content === undefined, BODY_XOR_CONTENT)
+  .refine((value) => value.body !== undefined || value.content !== undefined || value.startFrame !== undefined || value.endFrame !== undefined || value.markup !== undefined, { message: "Nothing to change" })
   .refine((value) => value.drawingFrame === undefined || (value.markup !== undefined && value.markup !== null), { message: "drawingFrame goes with a markup envelope", path: ["drawingFrame"] });
 export type VideoNoteEditInput = z.infer<typeof videoNoteEditInputSchema>;
 
@@ -106,6 +132,10 @@ export const videoNoteDtoSchema = z.object({
   hasMarkup: z.boolean(),
   /** A tombstone reads as `deleted: true` with an empty body. */
   body: z.string(),
+  /** The rich document (#835), omitted for a legacy plain-text note and a tombstone: those read from `body`. */
+  content: z.custom<RichTextDoc>((value) => typeof value === "object" && value !== null && (value as { type?: unknown }).type === "doc").optional(),
+  /** Images and videos in the note. */
+  mediaCount: z.number().int().nonnegative().default(0),
   deleted: z.boolean(),
   resolved: z.object({ at: iso, by: videoPersonSchema }).strict().nullable(),
   revision: z.number().int().positive(),

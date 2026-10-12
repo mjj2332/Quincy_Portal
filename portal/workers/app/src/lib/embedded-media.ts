@@ -10,7 +10,7 @@ export { discardUnreferencedObject, enqueueEmbeddedMediaCleanup, settleThrownAdo
 /** Embedded media (#493): the D1 row plus the helpers every writer of it shares. */
 export type EmbeddedMediaState = "uploading" | "pending" | "attached" | "detached";
 export type EmbeddedMediaRow = {
-  id: string; ownerKind: "project_comment" | "notice_post" | "whiteboard"; ownerId: string | null; projectId: string | null; uploaderId: string;
+  id: string; ownerKind: "project_comment" | "notice_post" | "whiteboard" | "video_note"; ownerId: string | null; projectId: string | null; uploaderId: string | null; uploaderGuestId: string | null;
   kind: "image" | "video" | "preview_image"; contentType: string; bytes: number; originalKey: string; displayKey: string | null; posterKey: string | null;
   uploadId: string | null; state: EmbeddedMediaState; detachedAt: number | null; createdAt: number; updatedAt: number;
   /** HEIC display copy (#495). `not_required` for every other upload. */
@@ -18,7 +18,7 @@ export type EmbeddedMediaRow = {
 };
 
 type RawRow = {
-  id: string; owner_kind: EmbeddedMediaRow["ownerKind"]; owner_id: string | null; project_id: string | null; uploader_id: string; kind: EmbeddedMediaRow["kind"];
+  id: string; owner_kind: EmbeddedMediaRow["ownerKind"]; owner_id: string | null; project_id: string | null; uploader_id: string | null; uploader_guest_id: string | null; kind: EmbeddedMediaRow["kind"];
   content_type: string; bytes: number; original_key: string; display_key: string | null; poster_key: string | null; upload_id: string | null;
   state: EmbeddedMediaState; detached_at: number | null; created_at: number; updated_at: number;
   rendition_status: EmbeddedRenditionStatus; display_content_type: string | null; rendition_error: string | null;
@@ -26,7 +26,7 @@ type RawRow = {
 
 export function embeddedMediaFromRaw(raw: RawRow): EmbeddedMediaRow {
   return {
-    id: raw.id, ownerKind: raw.owner_kind, ownerId: raw.owner_id, projectId: raw.project_id, uploaderId: raw.uploader_id, kind: raw.kind,
+    id: raw.id, ownerKind: raw.owner_kind, ownerId: raw.owner_id, projectId: raw.project_id, uploaderId: raw.uploader_id, uploaderGuestId: raw.uploader_guest_id, kind: raw.kind,
     contentType: raw.content_type, bytes: Number(raw.bytes), originalKey: raw.original_key, displayKey: raw.display_key, posterKey: raw.poster_key,
     uploadId: raw.upload_id, state: raw.state, detachedAt: raw.detached_at === null ? null : Number(raw.detached_at), createdAt: Number(raw.created_at), updatedAt: Number(raw.updated_at),
     renditionStatus: raw.rendition_status, displayContentType: raw.display_content_type, renditionError: raw.rendition_error,
@@ -131,30 +131,34 @@ export async function deleteEmbeddedMediaObjects(env: Pick<Env, "MEDIA">, rows: 
   } catch { return false; }
 }
 
-/** What owns a set of embedded media: a Project comment (inside its Project) or a Notice board post (no Project). */
-export type OwnedMediaOwner = { ownerKind: "project_comment" | "notice_post"; ownerId: string; projectId: string | null };
+/** What owns a set of embedded media: a Project comment (inside its Project), a Notice board post (no Project) or a video note (#835, inside its Project). */
+export type OwnedMediaOwner = { ownerKind: "project_comment" | "notice_post" | "video_note"; ownerId: string; projectId: string | null };
+/** Who uploaded the media a save wants (#835): a staff user, or a guest reviewer on a Review link. Exactly one of the row's two uploader columns is set (migration 0075). */
+export type MediaUploader = { userId: string } | { guestId: string };
+const uploaderColumn = (uploader: MediaUploader): "uploader_id" | "uploader_guest_id" => ("userId" in uploader ? "uploader_id" : "uploader_guest_id");
+const uploaderValue = (uploader: MediaUploader): string => ("userId" in uploader ? uploader.userId : uploader.guestId);
 
-type OwnedMediaRow = { id: string; state: EmbeddedMediaState; owner_id: string | null; uploader_id: string; project_id: string | null; owner_kind: string; kind: string; created_at: number; detached_at: number | null; rendition_status: EmbeddedRenditionStatus };
+type OwnedMediaRow = { id: string; state: EmbeddedMediaState; owner_id: string | null; uploader_id: string | null; uploader_guest_id: string | null; project_id: string | null; owner_kind: string; kind: string; created_at: number; detached_at: number | null; rendition_status: EmbeddedRenditionStatus };
 
 /**
  * Pre-checks the images a save wants before its batch so an obvious mistake is a clean 400. It is only advisory: the batch's
  * own statements (`ownedMediaStatements`) are the authority and re-validate every id in SQL, so a concurrent edit, delete or
  * sweep between this read and the batch can never leave a retained image detached. More than ten, or a duplicate, is refused.
  */
-export async function preflightOwnedMedia(db: D1Database, input: OwnedMediaOwner & { uploaderId: string; ids: string[]; videoIds?: string[]; now?: number }): Promise<boolean> {
+export async function preflightOwnedMedia(db: D1Database, input: OwnedMediaOwner & { uploader: MediaUploader; ids: string[]; videoIds?: string[]; now?: number }): Promise<boolean> {
   const videos = new Set(input.videoIds ?? []);
   const now = input.now ?? Date.now();
   if (input.ids.length > EMBEDDED_MEDIA_MAX_PER_POST || new Set(input.ids).size !== input.ids.length) return false;
   if (!input.ids.length) return true;
   const placeholders = input.ids.map(() => "?").join(", ");
-  const found = (await db.prepare(`SELECT id, state, owner_id, uploader_id, project_id, owner_kind, kind, created_at, detached_at, rendition_status FROM embedded_media WHERE id IN (${placeholders})`).bind(...input.ids).all<OwnedMediaRow>()).results;
+  const found = (await db.prepare(`SELECT id, state, owner_id, uploader_id, uploader_guest_id, project_id, owner_kind, kind, created_at, detached_at, rendition_status FROM embedded_media WHERE id IN (${placeholders})`).bind(...input.ids).all<OwnedMediaRow>()).results;
   const byId = new Map(found.map((row) => [row.id, row]));
   const cutoff = now - EMBEDDED_MEDIA_RETENTION_MS;
   for (const id of input.ids) {
     const row = byId.get(id);
     if (!row || row.project_id !== input.projectId || row.owner_kind !== input.ownerKind || row.kind !== (videos.has(id) ? "video" : "image")) return false;
     // A HEIC image whose display copy is not ready cannot be posted (#495): no reader ever meets a processing or failed image.
-    const fresh = row.state === "pending" && row.owner_id === null && row.uploader_id === input.uploaderId && Number(row.created_at) > cutoff && (row.rendition_status === "not_required" || row.rendition_status === "ready");
+    const fresh = row.state === "pending" && row.owner_id === null && row[uploaderColumn(input.uploader)] === uploaderValue(input.uploader) && Number(row.created_at) > cutoff && (row.rendition_status === "not_required" || row.rendition_status === "ready");
     const mine = row.owner_id === input.ownerId && (row.state === "attached" || (row.state === "detached" && Number(row.detached_at) > cutoff));
     if (!fresh && !mine) return false;
   }
@@ -170,7 +174,7 @@ export async function preflightOwnedMedia(db: D1Database, input: OwnedMediaOwner
  * attached to this owner. A link preview's image (`preview_image`, #497) is never touched here: `linkPreviewStatements` owns it. A node names its kind (`videoIds` are the video nodes, every other id an image): the attach and the guard both
  * require the stored row to be of that kind, so a video node cannot take an image row, nor the reverse. A save that lost the fence is skipped.
  */
-export function ownedMediaStatements(db: D1Database, input: OwnedMediaOwner & { uploaderId: string; ids: string[]; videoIds?: string[]; now: number; fence: { sql: string; binds: unknown[] }; guardId: string }): D1PreparedStatement[] {
+export function ownedMediaStatements(db: D1Database, input: OwnedMediaOwner & { uploader: MediaUploader; ids: string[]; videoIds?: string[]; now: number; fence: { sql: string; binds: unknown[] }; guardId: string }): D1PreparedStatement[] {
   const { fence, ids, now } = input;
   const videos = new Set(input.videoIds ?? []);
   const kindOf = (id: string) => (videos.has(id) ? "video" : "image");
@@ -181,19 +185,19 @@ export function ownedMediaStatements(db: D1Database, input: OwnedMediaOwner & { 
   const statements = ids.map((id) => db.prepare(`
     UPDATE embedded_media SET state = 'attached', owner_id = ?, detached_at = NULL, updated_at = ?
     WHERE id = ? AND owner_kind = ? AND ${scope} AND kind = ? AND ${fence.sql}
-      AND ((state = 'pending' AND owner_id IS NULL AND uploader_id = ? AND created_at > ? AND rendition_status IN ('not_required', 'ready'))
+      AND ((state = 'pending' AND owner_id IS NULL AND ${uploaderColumn(input.uploader)} = ? AND created_at > ? AND rendition_status IN ('not_required', 'ready'))
         OR (owner_id = ? AND (state = 'attached' OR (state = 'detached' AND detached_at > ?))))
-  `).bind(input.ownerId, now, id, input.ownerKind, ...scopeBinds, kindOf(id), ...fence.binds, input.uploaderId, cutoff, input.ownerId, cutoff));
+  `).bind(input.ownerId, now, id, input.ownerKind, ...scopeBinds, kindOf(id), ...fence.binds, uploaderValue(input.uploader), cutoff, input.ownerId, cutoff));
   statements.push(db.prepare(`
     UPDATE embedded_media SET state = 'detached', detached_at = ?, updated_at = ?
     WHERE owner_kind = ? AND owner_id = ? AND state = 'attached' AND kind <> 'preview_image' ${ids.length ? `AND id NOT IN (${marks})` : ""} AND ${fence.sql}
   `).bind(now, now, input.ownerKind, input.ownerId, ...ids, ...fence.binds));
   if (ids.length) {
     statements.push(db.prepare(`
-      INSERT INTO embedded_media (id, owner_kind, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at)
+      INSERT INTO embedded_media (id, owner_kind, ${uploaderColumn(input.uploader)}, kind, content_type, bytes, original_key, state, created_at, updated_at)
       SELECT ?, ?, ?, 'image', 'guard', 0, ?, 'uploading', ?, ?
       WHERE ${fence.sql} AND (SELECT COUNT(*) FROM embedded_media WHERE owner_kind = ? AND owner_id = ? AND state = 'attached' AND (${ids.map(() => "(id = ? AND kind = ?)").join(" OR ")})) <> ?
-    `).bind(`guard-${input.guardId}`, input.ownerKind, input.uploaderId, `guard/${input.guardId}`, now, now, ...fence.binds, input.ownerKind, input.ownerId, ...ids.flatMap((id) => [id, kindOf(id)]), ids.length));
+    `).bind(`guard-${input.guardId}`, input.ownerKind, uploaderValue(input.uploader), `guard/${input.guardId}`, now, now, ...fence.binds, input.ownerKind, input.ownerId, ...ids.flatMap((id) => [id, kindOf(id)]), ids.length));
   }
   return statements;
 }

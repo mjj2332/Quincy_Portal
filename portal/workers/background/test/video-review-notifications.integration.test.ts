@@ -32,9 +32,9 @@ async function seed(options: Options = {}) {
   const kind = options.kind ?? "video_note"; const now = Date.now();
   const id = () => crypto.randomUUID();
   const projectId = id(); const collectionId = id(); const videoId = id(); const assetId = id(); const recipientId = id(); const actorUserId = id(); const guestId = id(); const membershipId = id(); const outboxId = id();
-  const noteId = id(); const rootId = id(); const eventId = id(); const releaseId = id();
+  const noteId = id(); const rootId = id(); const eventId = id(); const releaseId = id(); const mentionId = id();
   const role = options.role ?? "editor";
-  const sourceId = kind === "video_version_uploaded" ? assetId : kind === "video_note" || kind === "video_mention" || kind === "video_reply" ? noteId : kind === "video_released" ? releaseId : eventId;
+  const sourceId = kind === "video_version_uploaded" ? assetId : kind === "video_mention" ? mentionId : kind === "video_note" || kind === "video_reply" ? noteId : kind === "video_released" ? releaseId : eventId;
   const guestActor = (options.actor ?? "member") === "guest";
   const actorId = guestActor ? `guest:${guestId}` : actorUserId;
   const statements: D1PreparedStatement[] = [
@@ -55,6 +55,7 @@ async function seed(options: Options = {}) {
       statements.push(database.DB.prepare(`INSERT INTO video_notes ${noteColumns} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, 1, ?, ?)`)
         .bind(noteId, projectId, videoId, assetId, parent, guestActor ? null : actorUserId, guestActor ? guestId : null, guestActor ? "guest" : "editor", guestActor ? "public" : options.internal ? "internal" : "public", parent ? null : 10, SENTINEL, options.deletedNote ? now : null, now));
     }
+    if (kind === "video_mention") statements.push(database.DB.prepare("INSERT INTO video_note_mentions (id, note_id, mentioned_user_id, created_at) VALUES (?, ?, ?, ?)").bind(mentionId, noteId, recipientId, now));
     if (kind === "video_released") {
       statements.push(
         database.DB.prepare("INSERT INTO video_approval_events (id, project_id, video_id, asset_id, link_id, revision, decision, note, actor_guest_id, actor_user_id, created_at) VALUES (?, ?, ?, ?, NULL, 1, 'approved', NULL, NULL, ?, ?)").bind(eventId, projectId, videoId, assetId, actorUserId, now),
@@ -86,7 +87,7 @@ async function seed(options: Options = {}) {
   if (options.removedVersion) await database.DB.prepare("UPDATE video_version_meta SET removed_at = ?, removed_by = ? WHERE asset_id = ?").bind(now, actorUserId, assetId).run();
   if (options.removedVideo) await database.DB.prepare("UPDATE videos SET removed_at = ?, removed_by = ? WHERE id = ?").bind(now, actorUserId, videoId).run();
   if (options.cadence !== null) await setCadence(recipientId, options.cadence ?? "immediate");
-  return { outboxId, recipientId, projectId, membershipId, sourceKey, actorId, guestId, assetId };
+  return { outboxId, recipientId, projectId, membershipId, sourceKey, actorId, guestId, assetId, videoId, noteId, rootId };
 }
 
 async function deliver(fixture: { outboxId: string }, send: ReturnType<typeof vi.fn> | undefined = vi.fn().mockResolvedValue({ messageId: "m-1" })) {
@@ -142,6 +143,35 @@ describe("delivery: copy and the sentinel", () => {
     expect(send).not.toHaveBeenCalled();
     expect(await stored(fixture.recipientId)).toHaveLength(1);
     expect(await ledger(fixture.outboxId)).toMatchObject({ in_app: "sent", email: "deferred" });
+  });
+});
+
+describe("delivery: the link lands on the note (#835)", () => {
+  const link = (fixture: { projectId: string; videoId: string }, note: string) => `https://portal.test/projects/${fixture.projectId}?tab=video&video=${fixture.videoId}&version=3&note=${note}`;
+  it.each(["video_note", "video_mention"] as const)("a staff %s emails a link to the Video, the Version and the note", async (kind) => {
+    const fixture = await seed({ kind, actor: "member" });
+    const send = await deliver(fixture);
+    expect(send!.mock.calls[0]![0].text).toContain(link(fixture, fixture.noteId));
+  });
+  it("a reply links to the thread's root", async () => {
+    const fixture = await seed({ kind: "video_reply", actor: "member" });
+    const send = await deliver(fixture);
+    expect(send!.mock.calls[0]![0].text).toContain(link(fixture, fixture.rootId));
+  });
+  it("a Release, a decision and an upload stay at the Video tab", async () => {
+    const fixture = await seed({ kind: "video_released", actor: "member" });
+    const send = await deliver(fixture);
+    expect(send!.mock.calls[0]![0].text).toContain(`https://portal.test/projects/${fixture.projectId}?tab=video`);
+    expect(send!.mock.calls[0]![0].text).not.toContain("note=");
+  });
+  it("an External keeps the tab-level link, and a mention whose row is gone is not delivered", async () => {
+    const external = await seed({ kind: "video_mention", actor: "member", role: "external_editor" });
+    expect((await deliver(external))!.mock.calls[0]![0].text).not.toContain("note=");
+    const gone = await seed({ kind: "video_mention", actor: "member" });
+    await database.DB.prepare("DELETE FROM video_note_mentions WHERE id = (SELECT substr(?, 15))").bind(gone.sourceKey).run();
+    const send = await deliver(gone);
+    expect(send).not.toHaveBeenCalled();
+    expect(await stored(gone.recipientId)).toEqual([]);
   });
 });
 

@@ -442,7 +442,7 @@ describe("attaching a HEIC image (#495)", () => {
     const { ownedMediaStatements } = await import("../src/lib/embedded-media");
     const pending = await heicRow({ state: "pending" });
     const owner = crypto.randomUUID(); const now = Date.now();
-    const statements = ownedMediaStatements(database.DB, { ownerKind: "project_comment", ownerId: owner, projectId: ids.project, uploaderId: ids.member, ids: [pending.id], now, fence: { sql: "1 = 1", binds: [] }, guardId: crypto.randomUUID() });
+    const statements = ownedMediaStatements(database.DB, { ownerKind: "project_comment", ownerId: owner, projectId: ids.project, uploader: { userId: ids.member }, ids: [pending.id], now, fence: { sql: "1 = 1", binds: [] }, guardId: crypto.randomUUID() });
     await expect(database.DB.batch(statements)).rejects.toThrow(/CHECK constraint failed/i);
     expect(await mediaRow(pending.id)).toMatchObject({ state: "pending", owner_id: null });
   });

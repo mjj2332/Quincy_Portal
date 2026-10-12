@@ -209,6 +209,8 @@ function editFailure<P extends string>(c: Handled<P>, outcome: Exclude<Awaited<R
     case "markup": return c.json({ error: "markup_locks_frames" }, 422);
     case "drawing_outside": return c.json({ error: "drawing_frame_outside" }, 422);
     case "out_of_range": return c.json({ error: "frame_out_of_range" }, 422);
+    // A guest edit carries no media until slice C; the lib only answers `media` for a write that names some.
+    case "media": return c.json({ error: "media_unavailable" }, 409);
   }
 }
 

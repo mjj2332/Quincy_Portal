@@ -72,7 +72,7 @@ export async function fetchEmbeddedHeicSetting(): Promise<boolean> {
 }
 
 /** Where an upload belongs: a Project's discussion, the Notice board (#496), or a Project's whiteboard (#501: `owner`, which the server stores as the row's owner kind). */
-export type EmbeddedMediaScope = { projectId: string; owner?: "whiteboard" } | { noticeBoard: true };
+export type EmbeddedMediaScope = { projectId: string; owner?: "whiteboard" | "video_note" } | { noticeBoard: true };
 
 function mediaBase(scope: EmbeddedMediaScope): string {
   return "noticeBoard" in scope ? "/api/notice-board/embedded-media" : `/api/projects/${encodeURIComponent(scope.projectId)}/embedded-media`;
@@ -187,7 +187,7 @@ export async function uploadEmbeddedImage(scope: EmbeddedMediaScope, file: File,
   if (signal?.aborted) throw abortError();
   // The size is read while the upload runs and sent with the completion (#611). A HEIC is not measured: the server uses its JPEG copy's size.
   const measured = isEmbeddedHeicContentType(contentType) ? Promise.resolve(null) : readImageDimensions(file);
-  const presign = externalEmbeddedMediaPresignSchema.parse(await apiPost<unknown, { contentType: string; bytes: number; owner?: "whiteboard" }>(base, { contentType, bytes: file.size, ...owner }));
+  const presign = externalEmbeddedMediaPresignSchema.parse(await apiPost<unknown, { contentType: string; bytes: number; owner?: "whiteboard" | "video_note" }>(base, { contentType, bytes: file.size, ...owner }));
   // From here the helper owns the reservation: a cancel before the copy is `preparing` (the owner learns the id only then) aborts it here,
   // even when presign answered after the owner went away. The Notice board has no abort route, so `abortEmbeddedImage` leaves that to the sweep.
   const aborting = () => abortEmbeddedImage(scope, presign.mediaId);
@@ -251,13 +251,13 @@ export function embeddedVideoProblem(file: Pick<File, "type" | "size" | "name">)
  * id. A cancelled or failed upload tells the server to abort, so no reservation or object is left behind; the abort request is
  * `keepalive`, so it survives the page closing. A cancel rejects as an `AbortError`.
  */
-export async function uploadEmbeddedVideo(projectId: string, file: File, options: { signal?: AbortSignal; onProgress?: (percent: number) => void; owner?: "whiteboard"; /** Told, just before the media id is returned, whether the server kept a poster frame (#556): a posterless video must not ask for `/poster`. */ onPoster?: (stored: boolean) => void } = {}): Promise<string> {
+export async function uploadEmbeddedVideo(projectId: string, file: File, options: { signal?: AbortSignal; onProgress?: (percent: number) => void; owner?: "whiteboard" | "video_note"; /** Told, just before the media id is returned, whether the server kept a poster frame (#556): a posterless video must not ask for `/poster`. */ onPoster?: (stored: boolean) => void } = {}): Promise<string> {
   const { signal, onProgress, owner, onPoster } = options;
   const contentType = embeddedVideoContentType(file);
   if (!contentType) throw new Error(`${file.name || "This file"} is not an MP4 or MOV video.`);
   if (signal?.aborted) throw abortError();
   const base = mediaBase({ projectId });
-  const presign = externalEmbeddedMediaPresignSchema.parse(await apiPost<unknown, { contentType: string; bytes: number; owner?: "whiteboard" }>(base, { contentType, bytes: file.size, ...(owner ? { owner } : {}) }));
+  const presign = externalEmbeddedMediaPresignSchema.parse(await apiPost<unknown, { contentType: string; bytes: number; owner?: "whiteboard" | "video_note" }>(base, { contentType, bytes: file.size, ...(owner ? { owner } : {}) }));
   const mediaUrl = `${base}/${encodeURIComponent(presign.mediaId)}`;
   let abortSent: Promise<unknown> | null = null;
   const abortOnServer = () => abortSent ??= fetch(`${mediaUrl}/abort`, { method: "POST", credentials: "include", keepalive: true, headers: { "content-type": "application/json" }, body: "{}" }).catch(() => undefined);

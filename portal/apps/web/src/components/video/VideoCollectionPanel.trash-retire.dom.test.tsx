@@ -12,6 +12,7 @@ import { fixtureVersion, fixtureVideo } from "../../testing/video-trash-fixtures
 import { restoreVideoVersion } from "../../lib/video-trash-data";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
 import "../../testing/dom-polyfills";
+vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

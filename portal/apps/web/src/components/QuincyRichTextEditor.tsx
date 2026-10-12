@@ -388,7 +388,7 @@ export function QuincyRichTextEditor({
       });
       setUploads((entries) => [...entries, { key, name: file.name || (kind === "video" ? "Video" : "Image"), percent: 0, kind }]);
       const onProgress = (percent: number) => { if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, percent } : entry)); };
-      follow(kind === "video" && "projectId" in scope ? uploadEmbeddedVideo(scope.projectId, file, { signal: controller.signal, onProgress, onPoster: (stored) => { posterStored = stored; } }) : uploadEmbeddedImage(scope, file, onProgress, { signal: controller.signal, onPhase }));
+      follow(kind === "video" && "projectId" in scope ? uploadEmbeddedVideo(scope.projectId, file, { signal: controller.signal, onProgress, ...(scope.owner ? { owner: scope.owner } : {}), onPoster: (stored) => { posterStored = stored; } }) : uploadEmbeddedImage(scope, file, onProgress, { signal: controller.signal, onPhase }));
     }
     setUploadErrors(problems);
   };

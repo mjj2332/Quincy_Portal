@@ -1,3 +1,4 @@
+import { legacyBodyToRichTextDoc } from "@quincy/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { VideoNoteThreadDto } from "@quincy/shared";
 import { ApiError } from "./api";
@@ -391,7 +392,7 @@ describe("edit save and reply (#741 5b form store)", () => {
     store.setOpenText(V2, " answer ");
     const refused = vi.fn(async () => { throw new ApiError("Nope", 500); });
     await store.reply(V2, { send: refused });
-    expect(refused).toHaveBeenCalledWith(root.id, "answer");
+    expect(refused).toHaveBeenCalledWith(root.id, legacyBodyToRichTextDoc("answer"));
     expect(store.slot(V2).open).toMatchObject({ kind: "reply", text: " answer ", problem: { text: "Nope" } });
     const ok = vi.fn(async () => root);
     await store.reply(V2, { send: ok });

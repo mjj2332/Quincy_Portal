@@ -321,7 +321,7 @@ function mentionOutboxStatements(
 
 /** Pre-checks a comment's desired images (advisory, see `preflightOwnedMedia`) so an obvious mistake is a clean 400. */
 export async function resolveCommentMedia(db: D1Database, input: { projectId: string; authorId: string; commentId: string; mediaIds: string[]; videoIds?: string[]; previewIds?: string[]; now?: number }): Promise<CommentMediaChanges | null> {
-  const ok = await preflightOwnedMedia(db, { ownerKind: "project_comment", ownerId: input.commentId, projectId: input.projectId, uploaderId: input.authorId, ids: input.mediaIds, videoIds: input.videoIds, now: input.now })
+  const ok = await preflightOwnedMedia(db, { ownerKind: "project_comment", ownerId: input.commentId, projectId: input.projectId, uploader: { userId: input.authorId }, ids: input.mediaIds, videoIds: input.videoIds, now: input.now })
     && await preflightLinkPreviews(db, { ownerKind: "project_comment", ownerId: input.commentId, projectId: input.projectId, requesterId: input.authorId, ids: input.previewIds ?? [], now: input.now });
   return ok ? { authorId: input.authorId, ids: input.mediaIds, videoIds: input.videoIds, previewIds: input.previewIds ?? [] } : null;
 }
@@ -331,7 +331,7 @@ function mediaStatements(db: D1Database, projectId: string, commentId: string, m
   const fence = { sql: "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)", binds: [auditId] };
   const previews = media.previewIds ?? [];
   return [
-    ...ownedMediaStatements(db, { ownerKind: "project_comment", ownerId: commentId, projectId, uploaderId: media.authorId, ids: media.ids, videoIds: media.videoIds, now, fence, guardId: auditId }),
+    ...ownedMediaStatements(db, { ownerKind: "project_comment", ownerId: commentId, projectId, uploader: { userId: media.authorId }, ids: media.ids, videoIds: media.videoIds, now, fence, guardId: auditId }),
     // A new comment holds no previews yet, so only an edit has anything to drop.
     ...(includePreviews || previews.length ? linkPreviewStatements(db, { ownerKind: "project_comment", ownerId: commentId, projectId, requesterId: media.authorId, ids: previews, now, fence, guardId: auditId }) : []),
   ];

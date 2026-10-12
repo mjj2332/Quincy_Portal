@@ -34,6 +34,8 @@ export const staffNotificationListItemSchema = z.object({
   actor: notificationActorSchema.nullable(),
   subject: notificationSubjectSchema.nullable(),
   assetId: uuid.nullable(),
+  /** #835: where a video note, reply or mention lands in the Video tab (resolved at read; null when it cannot be). */
+  video: z.object({ id: uuid, version: z.number().int().positive(), note: uuid }).strict().nullable().optional(),
 }).strict();
 
 export const staffNotificationListResponseSchema = z.object({

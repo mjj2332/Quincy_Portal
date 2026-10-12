@@ -120,7 +120,7 @@ noticeBoardRoutes.post("/notice-board/posts", terminalRoute("/notice-board/posts
   if (!prepared) return c.json({ error: "Invalid notice content or mention target" }, 400);
   const id = newId(); const wallClockMs = Date.now(); const createdAt = new Date(wallClockMs); const user = c.get("user");
   const mentions = prepared.mentionIds.map((mentionedUserId) => ({ id: newId(), postId: id, mentionedUserId, createdAt }));
-  if (!await preflightOwnedMedia(c.env.DB, { ownerKind: "notice_post", ownerId: id, projectId: null, uploaderId: user.id, ids: prepared.mediaIds })) return c.json({ error: "An image in this notice is unavailable.", code: "invalid_media" }, 400);
+  if (!await preflightOwnedMedia(c.env.DB, { ownerKind: "notice_post", ownerId: id, projectId: null, uploader: { userId: user.id }, ids: prepared.mediaIds })) return c.json({ error: "An image in this notice is unavailable.", code: "invalid_media" }, 400);
   if (!await preflightLinkPreviews(c.env.DB, { ownerKind: "notice_post", ownerId: id, projectId: null, requesterId: user.id, ids: prepared.previewIds })) return c.json({ error: "A link preview in this notice is unavailable.", code: "invalid_link_preview" }, 400);
   try { await createNoticeBoardPost(c.env.DB, { id, authorId: user.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), mentions, wallClockMs, media: { authorId: user.id, ids: prepared.mediaIds, previewIds: prepared.previewIds } }); }
   catch (error) { if (error instanceof NoticeBoardMediaConflictError) return c.json({ error: "An image in this notice is no longer available. Remove it and try again.", code: "media_conflict" }, 409); throw error; }
@@ -151,7 +151,7 @@ noticeBoardRoutes.patch("/notice-board/posts/:id", terminalRoute("/notice-board/
   const createdAt = new Date();
   const added = prepared.mentionIds.filter((mentionedUserId) => !existingIds.has(mentionedUserId))
     .map((mentionedUserId) => ({ id: newId(), postId: id, mentionedUserId, createdAt }));
-  if (!await preflightOwnedMedia(c.env.DB, { ownerKind: "notice_post", ownerId: id, projectId: null, uploaderId: user.id, ids: prepared.mediaIds })) return c.json({ error: "An image in this notice is unavailable.", code: "invalid_media" }, 400);
+  if (!await preflightOwnedMedia(c.env.DB, { ownerKind: "notice_post", ownerId: id, projectId: null, uploader: { userId: user.id }, ids: prepared.mediaIds })) return c.json({ error: "An image in this notice is unavailable.", code: "invalid_media" }, 400);
   if (!await preflightLinkPreviews(c.env.DB, { ownerKind: "notice_post", ownerId: id, projectId: null, requesterId: user.id, ids: prepared.previewIds })) return c.json({ error: "A link preview in this notice is unavailable.", code: "invalid_link_preview" }, 400);
   let edited: Awaited<ReturnType<typeof editNoticeBoardPost>>;
   try { edited = await editNoticeBoardPost(c.env.DB, { id, authorId: user.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), editedAt: createdAt, removeMentionIds: removed.map((map) => map.id), addMentions: added, media: { authorId: user.id, ids: prepared.mediaIds, previewIds: prepared.previewIds } }); }

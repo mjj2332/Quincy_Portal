@@ -180,7 +180,8 @@ export type DashboardRoute =
   | DashboardCalendarFacetRoute;
 
 /** #819: which film (and optionally which Version number) the Video viewer shows. */
-export type ProjectVideoSelection = { id: string; version?: number };
+/** `note` (#835) is a note id, only ever with a `version`: the note's thread opens at its frame. */
+export type ProjectVideoSelection = { id: string; version?: number; note?: string };
 
 export type StaffRoute =
   | DashboardRoute
@@ -229,14 +230,18 @@ const VIDEO_VERSION = /^[1-9][0-9]{0,5}$/u;
 /** #819: `tab=video&video=<uuid>[&version=<N>]`, strictly in that order. `null` = not this spelling. */
 function parseProjectVideoQuery(query: string): ProjectVideoSelection | null {
   const parts = query.split("&");
-  if (parts.length < 2 || parts.length > 3 || parts[0] !== "tab=video") return null;
+  if (parts.length < 2 || parts.length > 4 || parts[0] !== "tab=video") return null;
   if (!parts[1]!.startsWith("video=")) return null;
   const id = parts[1]!.slice("video=".length);
   if (!UUID.test(id)) return null;
   if (parts.length === 2) return { id };
   if (!parts[2]!.startsWith("version=")) return null;
   const version = parts[2]!.slice("version=".length);
-  return VIDEO_VERSION.test(version) ? { id, version: Number(version) } : null;
+  if (!VIDEO_VERSION.test(version)) return null;
+  if (parts.length === 3) return { id, version: Number(version) };
+  if (!parts[3]!.startsWith("note=")) return null;
+  const note = parts[3]!.slice("note=".length);
+  return UUID.test(note) ? { id, version: Number(version), note } : null;
 }
 const calendarParameterNames = new Set([
   "view", "date", "sub", "layers", "editors", "unassigned", "stages", "priority", "archived", "shoot", "deadline", "completed", "delivered", "overdue", "mine", "q", "f", "forder", "focus",
@@ -919,7 +924,7 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
       return qs ? `/?${qs}` : "/";
     }
     case "create-project": return "/projects/new";
-    case "project": return `/projects/${encodeURIComponent(route.projectId)}${route.whiteboard ? `?${PROJECT_WHITEBOARD_QUERY}` : route.arrivalTab === "video" && route.video ? `?tab=video&video=${route.video.id}${route.video.version ? `&version=${route.video.version}` : ""}` : route.arrivalTab ? `?${projectArrivalQuery(route.arrivalTab)}` : ""}`;
+    case "project": return `/projects/${encodeURIComponent(route.projectId)}${route.whiteboard ? `?${PROJECT_WHITEBOARD_QUERY}` : route.arrivalTab === "video" && route.video ? `?tab=video&video=${route.video.id}${route.video.version ? `&version=${route.video.version}${route.video.note ? `&note=${route.video.note}` : ""}` : ""}` : route.arrivalTab ? `?${projectArrivalQuery(route.arrivalTab)}` : ""}`;
     case "edit-project": return `/projects/${encodeURIComponent(route.projectId)}/edit`;
     case "admin": return "/admin";
     case "notices": return "/notices";

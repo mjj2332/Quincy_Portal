@@ -42,6 +42,8 @@ export const ENQUEUE_SQL = `
  */
 export async function sweepEmbeddedMedia(env: Pick<Env, "DB" | "MEDIA">, now = Date.now()): Promise<{ scanned: number; reclaimed: number; failed: number; drained: number }> {
   const cutoff = now - EMBEDDED_MEDIA_RETENTION_MS;
+  // Backstop (#835): a video note's media whose note is gone (a cascade through a purge, a hard delete) is detached, due now, and reclaimed by this run.
+  await env.DB.prepare("UPDATE embedded_media SET state = 'detached', detached_at = 0, updated_at = ? WHERE owner_kind = 'video_note' AND state = 'attached' AND NOT EXISTS (SELECT 1 FROM video_notes n WHERE n.id = embedded_media.owner_id)").bind(now).run();
   const rows = await env.DB.prepare(`
     SELECT id, state, original_key AS originalKey, display_key AS displayKey, poster_key AS posterKey, upload_id AS uploadId, project_id AS projectId
     FROM embedded_media

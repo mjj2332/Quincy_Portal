@@ -146,7 +146,7 @@ describe("replies", () => {
     expect(threads.map((t) => t.replies.map((r) => r.visibility))).toEqual([["internal"], ["public"]]);
     for (const body of [{ body: "x", visibility: "public" }, { body: "x", startFrame: 1 }, { body: "x", parentId: open.id }, {}]) expect((await request(`${notePath(internal.id)}/replies`, "admin", "POST", body)).status).toBe(400);
     expect(REPLY_INSERT_SQL).toContain("p.visibility");
-    expect(new Set(REPLY_INSERT_SQL.match(/\?\d+/g)).size).toBe(8);
+    expect(new Set(REPLY_INSERT_SQL.match(/\?\d+/g)).size).toBe(9);
     expect(REPLY_INSERT_SQL.split("p.visibility").length).toBe(2);
   });
 
