@@ -118,6 +118,23 @@ describe("create from a Video card's menu (#834)", () => {
     await flush(20);
     expect(document.activeElement).toBe(cardMenu(V1));
   });
+  it("does not carry a card's return target into a later opening from the header", async () => {
+    await mount();
+    await openCardMenu(V1);
+    await act(async () => { menuItemCreate()!.click(); await Promise.resolve(); });
+    await flush(20);
+    await press(buttonIn(dialog(), "Cancel"));
+    await flush(20);
+    expect(document.activeElement).toBe(cardMenu(V1));
+    const header = q<HTMLButtonElement>('[data-testid="review-links-open"]')!;
+    await press(header);
+    await flush(20);
+    expect(dialog()).not.toBeNull();
+    await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    await flush(20);
+    expect(dialog()).toBeNull();
+    expect(document.activeElement).toBe(header);
+  });
   it("is offered to an External editor, and hidden from a Photographer, with the links part off, and on an archived Project", async () => {
     await mount({ role: "external_editor" });
     expect(cardMenu(V1)).not.toBeNull();

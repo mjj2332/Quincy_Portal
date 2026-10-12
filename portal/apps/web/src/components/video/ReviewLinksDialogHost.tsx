@@ -38,8 +38,11 @@ export function ReviewLinksDialogHost({ store, projectId, role, archived }: { st
     return () => { document.removeEventListener("click", remember, true); };
   }, [closed]);
   // `returnFocus` is cleared in the same update that closes the dialog, so the selector is kept here for the close's own focus return.
+  // It is captured afresh on each opening, `null` included, so a card's selector never leaks into a later header opening.
   const returnTo = useRef<string | null>(null);
-  if (state.returnFocus) returnTo.current = state.returnFocus;
+  const wasClosed = useRef(true);
+  if (wasClosed.current && !closed) returnTo.current = state.returnFocus;
+  wasClosed.current = closed;
   if (!ui.enabled) return null;
   return <Dialog open={view.kind !== "closed"} onOpenChange={(open) => { if (!open) store.closeDialog(); }} disablePointerDismissal={view.kind === "reveal"}>
     {/* `sm:max-w-[560px]`, Modal's "wide": `max-w-xl` is 1320px here (Quincy redefines `--container-xl`, see `reui/alert-dialog.tsx`). */}
