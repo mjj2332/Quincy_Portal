@@ -5,6 +5,8 @@ import { eq } from "drizzle-orm";
 import type { AppEnv } from "../env";
 import { terminalRoute } from "../lib/terminal-route";
 import { readEligibleAssets } from "../lib/delivery-dto";
+import { lockedSql } from "../lib/delivery-lock";
+import { RENDITION_VARIANT_SPEC } from "@quincy/shared";
 import { LIVE_VERSION, LIVE_VIDEO, versionIsLive } from "../lib/video-live-sql";
 import { VIDEO_STREAM_HEADERS, serveR2Object } from "../lib/r2-serve";
 import { serveAssetRendition, serveVideoPoster } from "./media";
@@ -22,18 +24,29 @@ const HANDLE = /^[a-z0-9]{16}$/;
  */
 export const deliveryMediaRoutes = new Hono<AppEnv>();
 type Ctx = Context<AppEnv>;
-/** These `/api` routes sit outside `/media`'s cache default, so a refusal would carry no Cache-Control. Anything not already marked is `private, no-store`. Per route, not `.use(...)`, which leaks across sibling mounts. */
+/** Staff Delivery media is never cached by the browser: whether an item is locked can change between two views, and a cached clean image would bypass the lock-aware handler. Volume is a few staff, so correctness wins over the 300 s `/media` default. Always overrides. */
 async function withNoStoreDefault(response: Response): Promise<Response> {
-  if (response.headers.has("cache-control")) return response;
   const marked = new Response(response.body, response);
   marked.headers.set("cache-control", "private, no-store");
   return marked;
 }
 const notFound = (c: Ctx) => c.json({ error: "Not found" }, 404);
 
+/** A locked photo is shown to staff as the client sees it: the watermarked `premium_preview`, else nothing. Never its web, thumb or original. */
+async function servePremiumPreview(c: Ctx, assetId: string): Promise<Response> {
+  const row = await c.env.DB.prepare("SELECT r2_key AS r2Key, content_type AS contentType FROM asset_renditions WHERE asset_id = ?1 AND variant = 'premium_preview' AND spec_version = ?2")
+    .bind(assetId, RENDITION_VARIANT_SPEC.premium_preview).first<{ r2Key: string; contentType: string }>();
+  if (!row || (row.contentType !== "image/jpeg" && row.contentType !== "image/webp")) return notFound(c);
+  const object = await c.env.MEDIA.get(row.r2Key);
+  if (!object || object.httpMetadata?.contentType !== row.contentType) return notFound(c);
+  return new Response(object.body, { headers: { "content-type": row.contentType, "cache-control": "private, no-store", "x-content-type-options": "nosniff", "content-length": String(object.size) } });
+}
+
 async function serveAsset(c: Ctx, projectId: string, assetId: string, part: "media" | "thumb"): Promise<Response> {
   const asset = await createDb(c.env.DB).select().from(schema.assets).where(eq(schema.assets.id, assetId)).get();
   if (!asset) return notFound(c);
+  const lock = await c.env.DB.prepare(`SELECT ${lockedSql("a")} AS locked FROM assets a WHERE a.id = ?1`).bind(assetId).first<{ locked: number }>();
+  if (lock?.locked === 1) return asset.kind === "photo" ? servePremiumPreview(c, assetId) : notFound(c);
   if (asset.kind === "photo") return serveAssetRendition(c, asset, part === "media" ? "web" : "thumb");
   if (asset.kind === "floorplan_pdf" || asset.kind === "copy_pdf") return part === "media" ? serveAssetRendition(c, asset, "original") : notFound(c);
   if (asset.kind !== "video") return notFound(c);

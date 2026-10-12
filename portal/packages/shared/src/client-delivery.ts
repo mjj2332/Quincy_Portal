@@ -53,6 +53,8 @@ export const deliveryItemDtoSchema = z.object({
   label: z.string().min(1).max(40),
   position: z.number().int().nonnegative(),
   locked: z.boolean(),
+  /** The item's own paid-extra flag, true before AND after an Unlock, so a viewer's Premium tab keeps listing an unlocked item. It says nothing about unlocks or payment; `locked` is the live answer. */
+  premium: z.boolean(),
   width: z.number().int().positive().nullable(),
   height: z.number().int().positive().nullable(),
   durationMs: z.number().int().nonnegative().nullable(),

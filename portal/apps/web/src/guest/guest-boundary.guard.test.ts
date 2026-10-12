@@ -1,13 +1,14 @@
 /**
- * Guards the guest/staff boundary of the Review-link page (#741 12b).
+ * Guards the guest/staff boundary of the Review-link page (#741 12b) and the public Client Delivery page (#787 slice 9).
  *
- * `/d/review` is served by the same SPA entry as the staff app but must never reach the staff app's session, API, router or query cache: a guest has no staff session, so a stray
- * `/api` request is an unauthenticated probe of the staff surface, and a router that canonicalises the URL would undo the fragment scrub. Everything under `src/guest/` is held to:
+ * `/d/review` and `/d/<address>` are served by the same SPA entry as the staff app but must never reach the staff app's session, API, router or query cache: a guest has no staff session, so a stray
+ * `/api` request is an unauthenticated probe of the staff surface, and a router that canonicalises the URL would undo the fragment scrub. Each tree (`src/guest/`, `src/delivery/`) is held to:
  *
  * - no import of `lib/auth`, `lib/api`, `lib/router`, `lib/app-router`, `lib/query-client`, `InternalLink` or `@tanstack/*`, directly or through anything it imports;
  * - no `locationStore(` call;
- * - `history.` is used only as `history.replaceState`, and only in `link-fragment.ts` (the fragment scrub);
- * - `fetch(` is called only in `guest-api.ts`, and no string literal starts a staff `/api/` path.
+ * - `history.` is used only as `history.replaceState`, and only in the one file the tree allows (guest: `link-fragment.ts`, the fragment scrub; delivery: none, there is no fragment);
+ * - `fetch(` is called only in the tree's one API file (`guest/guest-api.ts`, `delivery/delivery-api.ts`), and no string literal starts a staff `/api/` path;
+ * - the Delivery page's own `/d/api/pages` address is written only in `delivery/delivery-api.ts`, in either tree.
  *
  * Per docs/lessons.md ("a grep gate that cannot fail is not a gate") every detector is a pure function over injected input and is falsified with planted fixtures beside the real scan.
  */
@@ -52,6 +53,10 @@ export function findHistoryMisuse(files: Source[], allowedFile: string): string[
 }
 export function findStrayFetch(files: Source[], allowedFile: string): string[] {
   return files.filter(({ path, source }) => path !== allowedFile && /\bfetch\s*\(|\bXMLHttpRequest\b|\bsendBeacon\b|\bEventSource\b|\bWebSocket\b/.test(strip(source))).map(({ path }) => path).sort();
+}
+/** The public Delivery page's API address, written as a literal anywhere but its one wrapper. */
+export function findPagesApiLiterals(files: Source[], allowedFile: string): string[] {
+  return files.filter(({ path, source }) => path !== allowedFile && /\/d\/api\/pages\b/.test(strip(source))).map(({ path }) => path).sort();
 }
 export function findStaffApiLiterals(files: Source[]): string[] {
   return files.filter(({ source }) => /["'`]\/api(?:\/|["'`])/.test(strip(source))).map(({ path }) => path).sort();
@@ -107,39 +112,47 @@ function walk(dir: string): string[] {
 const isTest = (path: string) => /\.(?:dom\.)?test\.tsx?$/.test(path);
 const read = (files: string[]): Source[] => files.map((file) => ({ path: rel(file), source: readFileSync(file, "utf8") })).sort((a, b) => (a.path < b.path ? -1 : 1));
 
-const ALLOWED_HISTORY = "guest/link-fragment.ts";
-const ALLOWED_FETCH = "guest/guest-api.ts";
-const guestFiles = () => read(walk(guestDir)).filter(({ path }) => !isTest(path));
+type Tree = { name: string; dir: string; allowedFetch: string; allowedHistory: string; mustContain: string[] };
+const TREES: Tree[] = [
+  { name: "guest", dir: "guest", allowedFetch: "guest/guest-api.ts", allowedHistory: "guest/link-fragment.ts", mustContain: ["guest/link-fragment.ts", "guest/guest-api.ts", "guest/GuestApp.tsx"] },
+  // No history file: the Delivery page has no fragment to scrub, so `history.` is not used at all.
+  { name: "delivery", dir: "delivery", allowedFetch: "delivery/delivery-api.ts", allowedHistory: "", mustContain: ["delivery/delivery-api.ts", "delivery/DeliveryApp.tsx", "delivery/DeliveryPage.tsx", "delivery/mount-delivery.tsx"] },
+];
+const PAGES_API_FILE = "delivery/delivery-api.ts";
+const treeFiles = (tree: Tree) => read(walk(join(srcDir, tree.dir))).filter(({ path }) => !isTest(path));
 const projectFiles = () => read(walk(srcDir)).filter(({ path }) => !isTest(path));
 
-describe("guard: the guest tree stays out of the staff app", () => {
-  it("has files to scan, including the fragment scrub and the API wrapper", () => {
-    const paths = guestFiles().map((file) => file.path);
-    expect(paths).toContain(ALLOWED_HISTORY);
-    expect(paths).toContain(ALLOWED_FETCH);
-    expect(existsSync(join(guestDir, "GuestApp.tsx"))).toBe(true);
+describe.each(TREES)("guard: the $name tree stays out of the staff app", (tree) => {
+  it("has files to scan, including its API wrapper", () => {
+    const paths = treeFiles(tree).map((file) => file.path);
+    for (const path of tree.mustContain) expect(paths).toContain(path);
+    expect(existsSync(join(srcDir, tree.allowedFetch))).toBe(true);
   });
 
   it("imports no staff module, router or TanStack directly", () => {
-    expect(findBannedImports(guestFiles())).toEqual([]);
+    expect(findBannedImports(treeFiles(tree))).toEqual([]);
   });
 
   it("reaches no staff module through anything it imports", () => {
-    const roots = guestFiles().map((file) => file.path);
+    const roots = treeFiles(tree).map((file) => file.path);
     expect(findReachableStaffModules(roots, projectFiles())).toEqual([]);
   });
 
   it("never calls locationStore", () => {
-    expect(findLocationStoreCalls(guestFiles())).toEqual([]);
+    expect(findLocationStoreCalls(treeFiles(tree))).toEqual([]);
   });
 
-  it("uses history only as replaceState, only in link-fragment.ts", () => {
-    expect(findHistoryMisuse(guestFiles(), ALLOWED_HISTORY)).toEqual([]);
+  it("uses history only as replaceState, and only where the tree allows it", () => {
+    expect(findHistoryMisuse(treeFiles(tree), tree.allowedHistory)).toEqual([]);
   });
 
-  it("makes network calls only from guest-api.ts, and never to a staff /api path", () => {
-    expect(findStrayFetch(guestFiles(), ALLOWED_FETCH)).toEqual([]);
-    expect(findStaffApiLiterals(guestFiles())).toEqual([]);
+  it("makes network calls only from its API file, and never to a staff /api path", () => {
+    expect(findStrayFetch(treeFiles(tree), tree.allowedFetch)).toEqual([]);
+    expect(findStaffApiLiterals(treeFiles(tree))).toEqual([]);
+  });
+
+  it("writes the /d/api/pages address only in delivery-api.ts", () => {
+    expect(findPagesApiLiterals(treeFiles(tree), PAGES_API_FILE)).toEqual([]);
   });
 });
 
@@ -184,6 +197,22 @@ describe("self-test: each detector fires on planted fixtures and spares the clea
       { path: "guest/link-fragment.ts", source: "window.history.replaceState(window.history.state, '', '/x');" },
     ];
     expect(findHistoryMisuse(planted, "guest/link-fragment.ts")).toEqual(["guest/a.ts", "guest/b.ts", "guest/c.ts", "guest/d.ts"]);
+  });
+
+  it("the Delivery page's /d/api/pages address", () => {
+    const planted: Source[] = [
+      { path: "delivery/delivery-api.ts", source: "const base = `/d/api/pages/${slug}`;" },
+      { path: "delivery/a.tsx", source: "const url = `/d/api/pages/${slug}/items/${h}/media`;" },
+      { path: "guest/b.ts", source: "fetch('/d/api/pages/x');" },
+      { path: "delivery/c.tsx", source: "// the page reads /d/api/pages through delivery-api.ts\nconst ok = api.hrefs.media(handle);" },
+      { path: "delivery/d.tsx", source: "const links = '/d/api/links/x';" },
+    ];
+    expect(findPagesApiLiterals(planted, "delivery/delivery-api.ts")).toEqual(["delivery/a.tsx", "guest/b.ts"]);
+  });
+
+  it("no allowed history file means replaceState is refused everywhere", () => {
+    expect(findHistoryMisuse([{ path: "delivery/a.ts", source: "history.replaceState(null, '', '/x');" }], "")).toEqual(["delivery/a.ts"]);
+    expect(findHistoryMisuse([{ path: "delivery/a.ts", source: "const s = window.history.state;" }], "")).toEqual([]);
   });
 
   it("fetch and staff /api literals", () => {

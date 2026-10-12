@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parse } from "@babel/parser";
 import { describe, expect, it } from "vitest";
-import { checkVendorChunk, VENDOR_MODULE_PATTERN, vendorChunkGuard, type VendorGuardChunk } from "./vendor-chunk-guard";
+import { checkVendorChunk, EMBLA_MODULE_PATTERN, VENDOR_MODULE_PATTERN, vendorChunkGuard, type VendorGuardChunk } from "./vendor-chunk-guard";
 
 const NM = "/repo/portal/node_modules";
 const APP = "/repo/portal/apps/web/src";
@@ -46,6 +46,25 @@ describe("checkVendorChunk keeps the whiteboard editor lazy (#498)", () => {
       "assets/index.js": chunk({ name: "index", isEntry: true, moduleIds: where === "entry" ? [leaked] : [] }),
       "assets/vendor.js": chunk({ name: "vendor", moduleIds: where === "vendor" ? [`${NM}/react/index.js`, leaked] : [`${NM}/react/index.js`] }),
     })).toThrow(/@excalidraw/);
+  });
+});
+
+describe("checkVendorChunk keeps the Delivery carousel lazy (#787)", () => {
+  const embla = [`${NM}/embla-carousel/esm/embla-carousel.esm.js`, `${NM}/embla-carousel-react/esm/embla-carousel-react.esm.js`, `${NM}/embla-carousel-reactive-utils/esm/embla-carousel-reactive-utils.esm.js`];
+  it.each(embla)("EMBLA_MODULE_PATTERN matches %s", (id) => expect(EMBLA_MODULE_PATTERN.test(id)).toBe(true));
+  it.each([`${APP}/delivery/DeliveryApp.tsx`, `${NM}/react/index.js`, `${NM}/embla-notcarousel/index.js`])("EMBLA_MODULE_PATTERN does not match %s", (id) => expect(EMBLA_MODULE_PATTERN.test(id)).toBe(false));
+  it("passes when embla sits in its own lazy chunk", () => {
+    expect(() => checkVendorChunk(context(), {
+      "assets/index.js": chunk({ name: "index", isEntry: true, moduleIds: [`${APP}/main.tsx`] }),
+      "assets/vendor.js": chunk({ name: "vendor", moduleIds: [`${NM}/react/index.js`] }),
+      "assets/DeliveryApp.js": chunk({ name: "DeliveryApp", moduleIds: embla }),
+    })).not.toThrow();
+  });
+  it.each(["entry", "vendor"] as const)("fails when an embla module reaches the %s chunk", (where) => {
+    expect(() => checkVendorChunk(context(), {
+      "assets/index.js": chunk({ name: "index", isEntry: true, moduleIds: where === "entry" ? [embla[1]!] : [] }),
+      "assets/vendor.js": chunk({ name: "vendor", moduleIds: where === "vendor" ? [`${NM}/react/index.js`, embla[0]!] : [`${NM}/react/index.js`] }),
+    })).toThrow(/embla/);
   });
 });
 

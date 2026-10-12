@@ -19,6 +19,20 @@ export const lockedSql = (alias: string): string => `(CASE
       AND ld_t.delivery_premium = 1 AND NOT EXISTS (SELECT 1 FROM asset_premium_unlocks ld_u WHERE ld_u.asset_id = ld_t.id))
   END)`;
 
+/**
+ * "Is this item a paid extra" as SQL: `lockedSql` without the Unlock clause, so it stays 1 after an Unlock. Same resolution: a Video Version answers by its Video, a Floorplan preview by its PDF, anything else by its own flag.
+ */
+export const premiumSql = (alias: string): string => `(CASE
+  WHEN ${alias}.kind = 'video' THEN EXISTS (
+    SELECT 1 FROM video_version_meta pr_m JOIN videos pr_v ON pr_v.id = pr_m.video_id WHERE pr_m.asset_id = ${alias}.id AND pr_v.premium = 1)
+  ELSE EXISTS (
+    SELECT 1 FROM assets pr_t
+    WHERE pr_t.id = COALESCE(
+        CASE WHEN ${alias}.kind = 'floorplan_preview' THEN (SELECT pr_p.id FROM assets pr_p WHERE pr_p.kind = 'floorplan_pdf' AND pr_p.collection_id = ${alias}.collection_id AND pr_p.version_group_id = ${alias}.version_group_id AND pr_p.version = ${alias}.version) END,
+        ${alias}.id)
+      AND pr_t.delivery_premium = 1)
+  END)`;
+
 const CURRENT_SET_ITEMS = `FROM delivery_set_items cs_i JOIN delivery_sets cs_s ON cs_s.id = cs_i.set_id
       JOIN delivery_pages cs_p ON cs_p.project_id = cs_s.project_id AND cs_p.latest_set_number = cs_s.set_number`;
 
