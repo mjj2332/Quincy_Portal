@@ -17,7 +17,10 @@
  * once 0040 was replaced with the FK-safe column swap (`ALTER TABLE ... ADD COLUMN ...
  * CHECK(...)` / `DROP COLUMN` / `RENAME COLUMN`) documented in
  * docs/adr/0001-project-priority-1-to-5.md. **Never add a baseline or exception entry to
- * make this pass.** If it fires, the migration is wrong, not the guard — replace the
+ * make this pass.** (0075 rebuilds `embedded_media` once, and neither pattern fires on it: it keeps foreign keys
+ * ON, runs no PRAGMA, and uses no `__new_` name. It is the one reviewed table rebuild, argued in
+ * docs/Guides/CI-Deploy.md section "Video note rich media (0075)", and it needs no exception here because the
+ * rule is unchanged. `migration-0075.test.ts` pins that it has no PRAGMA and drops exactly one table.) If it fires, the migration is wrong, not the guard — replace the
  * table-rebuild with the column-swap pattern instead.
  */
 import { describe, expect, it } from "vitest";
