@@ -244,9 +244,11 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   useEffect(() => {
     if (seededUrlVersion.current === urlVersion) return;
     seededUrlVersion.current = urlVersion;
-    const target = urlVersion === undefined ? undefined : video.versions.find((candidate) => candidate.version === urlVersion);
-    if (target && target.assetId !== assetId) { setResume(null); setAssetId(target.assetId); }
-  }, [urlVersion, video.versions, assetId]);
+    // An omitted or unknown Version resolves to the current one, and that Version is reported back even when it is already on show.
+    const target = (urlVersion === undefined ? undefined : video.versions.find((candidate) => candidate.version === urlVersion)) ?? video.versions.find((candidate) => candidate.assetId === video.currentAssetId) ?? video.versions[0]!;
+    if (target.assetId !== assetId) { exitCompare("dialog"); setResume(null); setAssetId(target.assetId); }
+    if (target.version !== urlVersion) reportRef.current?.(target.version);
+  }, [urlVersion, video.versions, video.currentAssetId, assetId, exitCompare]);
   const base = { nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame };
   const startLabel = framesToTimecode(0, base, version.startTimecodeFrames ?? 0);
   const newest = Math.max(...video.versions.map((candidate) => candidate.version));

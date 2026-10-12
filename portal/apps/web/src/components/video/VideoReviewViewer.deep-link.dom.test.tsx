@@ -1,7 +1,9 @@
 import { act, useState } from "react";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectVideoSelection, VideoDto, VideoReviewPart } from "@quincy/shared";
+import { ApiError } from "../../lib/api";
 import { QuincyQueryProvider } from "../../lib/query-client";
 import "../../testing/dom-polyfills";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
@@ -29,6 +31,10 @@ let stub: VideoElementStub; let viewport: MockViewport;
 let root: Root | null = null;
 let setSelection: (selection: ProjectVideoSelection | null) => void = () => undefined;
 const written: Array<ProjectVideoSelection | null> = [];
+let videoList: () => VideoDto[] = () => [videoOf()];
+let client: QueryClient | null = null;
+let listFails = false;
+let setShown: (shown: boolean) => void = () => undefined;
 const clipboard = vi.fn<(text: string) => Promise<void>>();
 async function flush(times = 8) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
 const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
@@ -37,13 +43,16 @@ const click = (el: Element) => act(async () => { (el as HTMLElement).click(); })
 const label = () => tid("video-version-label")?.textContent ?? "";
 
 /** Stands in for the shell: the URL's selection is state, and the panel's writes go to it (and are recorded). */
+function Probe() { client = useQueryClient(); return null; }
 function Harness({ initial, parts }: { initial: ProjectVideoSelection | null; parts: VideoReviewPart[] }) {
   const [selection, set] = useState<ProjectVideoSelection | null>(initial);
+  const [shown, show] = useState(true);
   setSelection = set;
-  return <QuincyQueryProvider principalId={auth.userId} role="editor"><VideoCollectionPanel projectId={PROJECT} role="editor" review={{ open: true, parts }} deepLink={{ selection, onChange: (next) => { written.push(next); set(next); } }} /></QuincyQueryProvider>;
+  setShown = show;
+  return <QuincyQueryProvider principalId={auth.userId} role="editor"><Probe />{shown && <VideoCollectionPanel projectId={PROJECT} role="editor" review={{ open: true, parts }} deepLink={{ selection, onChange: (next) => { written.push(next); set(next); } }} />}</QuincyQueryProvider>;
 }
 async function mount(initial: ProjectVideoSelection | null, parts: VideoReviewPart[] = ["download"]) {
-  apiGetMock.mockImplementation(async (path) => { if (path.endsWith("/videos")) return { videos: [videoOf()] }; throw new Error(`unrouted ${path}`); });
+  apiGetMock.mockImplementation(async (path) => { if (path.endsWith("/videos")) { if (listFails) throw new ApiError("Films could not be loaded.", 400); return { videos: videoList() }; } throw new Error(`unrouted ${path}`); });
   const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   await act(async () => { root!.render(<Harness initial={initial} parts={parts} />); });
   await flush();
@@ -62,7 +71,7 @@ async function chooseVersion(prefix: string) {
 }
 
 beforeEach(() => {
-  stub = installVideoElementStub(); viewport = mockViewport({ width: 1440 }); apiGetMock.mockReset(); written.length = 0;
+  stub = installVideoElementStub(); viewport = mockViewport({ width: 1440 }); apiGetMock.mockReset(); written.length = 0; listFails = false; videoList = () => [videoOf()];
   clipboard.mockReset().mockResolvedValue(undefined);
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: clipboard } });
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } })));
@@ -119,6 +128,58 @@ describe("the viewer's deep link (#819)", () => {
     await act(async () => { setSelection({ id: ids.video, version: 2 }); }); await flush(6);
     expect(label()).toMatch(/^v2/);
     expect(written).toEqual([]);
+  });
+
+  it("an external change to an omitted Version resolves to the current one and rewrites the URL", async () => {
+    await mount({ id: ids.video, version: 1 });
+    await act(async () => { setSelection({ id: ids.video }); }); await flush(6);
+    expect(label()).toMatch(/^v2/);
+    expect(written.at(-1)).toEqual({ id: ids.video, version: 2 });
+    // Already on the current Version: the unknown Version is still reported back.
+    written.length = 0;
+    await act(async () => { setSelection({ id: ids.video, version: 9 }); }); await flush(6);
+    expect(label()).toMatch(/^v2/);
+    expect(written.at(-1)).toEqual({ id: ids.video, version: 2 });
+  });
+
+  it("an external Version change while comparing leaves Compare for that Version", async () => {
+    await mount({ id: ids.video, version: 2 }, ["compare"]);
+    const video = dialog()!.querySelector("video")!;
+    await act(async () => { stub.loadMetadata(video, { duration: 12, videoWidth: 1920, videoHeight: 1080 }); });
+    await act(async () => { stub.finishSeek(video); stub.presentFrame(video, 0); }); await flush(2);
+    await click(tid("video-compare-toggle")!);
+    const deadline = Date.now() + 10_000;
+    while (!tid("video-compare")) { if (Date.now() > deadline) throw new Error("never compared"); await flush(1); }
+    await act(async () => { setSelection({ id: ids.video, version: 1 }); }); await flush(8);
+    expect(tid("video-compare")).toBeNull();
+    expect(label()).toMatch(/^v1/);
+  });
+
+  it("a failed refresh over a cached list that lacks the film does not strip the link", async () => {
+    videoList = () => [];
+    await mount(null);
+    expect(client).not.toBeNull();
+    await act(async () => { setShown(false); }); await flush(2);
+    await act(async () => { await client!.invalidateQueries({ refetchType: "none" }); });
+    listFails = true;
+    await act(async () => { setSelection({ id: ids.video, version: 1 }); setShown(true); }); await flush(20);
+    expect(written).not.toContainEqual(null);
+    expect(dialog()).toBeNull();
+  });
+
+  it("closing a film returns focus to its own card, not the one the viewer was first opened from", async () => {
+    const other = { ...videoOf(), id: "55555555-5555-4555-8555-555555555555", title: "Second", versions: videoOf().versions.map((v) => ({ ...v, assetId: v.assetId === ids.asset2 ? "44444444-4444-4444-8444-444444444441" : "44444444-4444-4444-8444-444444444442" })), currentAssetId: "44444444-4444-4444-8444-444444444441" } as VideoDto;
+    videoList = () => [videoOf(), other];
+    await mount(null);
+    const cardA = document.querySelector<HTMLElement>(`[data-testid="video-card-open"][data-video-id="${ids.video}"]`)!;
+    await click(cardA);
+    const deadline = Date.now() + 10_000;
+    while (!dialog()?.querySelector("video")) { if (Date.now() > deadline) throw new Error("the review player never mounted"); await flush(1); }
+    await act(async () => { setSelection({ id: other.id, version: 2 }); }); await flush(8);
+    const close = [...dialog()!.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === "Video")!;
+    await click(close); await flush(8);
+    const cardB = document.querySelector<HTMLElement>(`[data-testid="video-card-open"][data-video-id="${other.id}"]`)!;
+    expect(document.activeElement).toBe(cardB);
   });
 
   it("is not remounted by a URL write", async () => {
