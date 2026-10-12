@@ -14,10 +14,11 @@ export const SLIDE_MS = 4000;
 
 function Slide({ item, near }: { item: DeliveryItemDto; near: boolean }) {
   const [failed, setFailed] = useState(false);
+  // The photo fills the slide and `object-contain` fits the whole frame (#822). It is positioned against the slide, not sized in the grid: the grid row is `auto`, so `max-h-full` never constrained a tall original and the carousel cropped it.
   // Only the photo on screen and its neighbours get an <img>; `useNeighbourPreload` warms the two beyond. 40 slides do not mean 40 full-size requests.
-  return <div className="grid h-full w-full place-items-center">
+  return <div className="relative grid h-full w-full place-items-center">
     {near && item.url !== null && !failed
-      ? <img src={item.url} alt={item.label} onError={() => { setFailed(true); }} className="max-h-full max-w-full object-contain" />
+      ? <img src={item.url} alt={item.label} onError={() => { setFailed(true); }} className="absolute inset-0 size-full object-contain" />
       : near ? <div className="h-[40dvh] w-[min(40rem,90%)]"><ProcessingTile label={item.label} /></div> : null}
   </div>;
 }
