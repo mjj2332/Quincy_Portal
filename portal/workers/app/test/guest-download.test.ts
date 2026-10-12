@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { guestVideoListResponseSchema } from "@quincy/shared";
 import { GUEST_WINDOW_MS } from "../src/guest/rate-limit";
 import { attachment, mountGuestDownloads, safeFileName } from "../src/guest/download";
@@ -359,7 +359,11 @@ describe("GET .../downloads/all.zip", () => {
   });
 
   describe("the guest and link buckets are taken together or not at all (#824)", () => {
-    const START = Math.floor(Date.now() / GUEST_WINDOW_MS) * GUEST_WINDOW_MS;
+    // The fixtures and the handler read the same frozen clock, one second before a window boundary, so no run can straddle two windows.
+    const PINNED = (Math.floor(Date.now() / GUEST_WINDOW_MS) + 1) * GUEST_WINDOW_MS - 1000;
+    const START = Math.floor(PINNED / GUEST_WINDOW_MS) * GUEST_WINDOW_MS;
+    beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(PINNED); });
+    afterEach(() => { vi.useRealTimers(); });
     const put = (bucket: string, count: number) => database.DB.prepare("INSERT INTO guest_rate_limits (bucket, window_start, count) VALUES (?, ?, ?)").bind(bucket, START, count).run();
     it("a start refused by the guest bucket leaves the link bucket untouched", async () => {
       const { link } = await setup(); await put(`zip:guest:${link.guestId}`, 10); await put(`zip:link:${link.id}`, 5);
