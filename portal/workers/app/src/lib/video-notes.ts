@@ -202,7 +202,7 @@ export async function createVideoNoteReply<T = VideoNoteThreadDto>(db: D1Databas
   const rootAsset = "(SELECT x.asset_id FROM video_notes x WHERE x.id = ?7)";
   const auditGuard = guardOf(author, 8, "?5", rootAsset); const insertGuard = guardOf(author, 9, "?5", "p.asset_id");
   // 15a: the thread's authors and the Version's uploader are told of a reply (no text); read before the batch, fenced on its audit row.
-  const notify = await videoReviewOutboxStatements(db, { kind: "video_reply", projectId: input.projectId, videoId: input.parent.video_id, assetId: input.parent.asset_id, sourceId: replyId, threadRootId: input.parent.id, ...outboxActor(author), auditId, occurredAt: input.now, gate: input.gate });
+  const notify = await videoReviewOutboxStatements(db, { kind: "video_reply", projectId: input.projectId, videoId: input.parent.video_id, assetId: input.parent.asset_id, sourceId: replyId, ...outboxActor(author), auditId, occurredAt: input.now, gate: input.gate });
   const results = await db.batch([
     db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.reply', 'video_note', ?3, ?4, ?5
       WHERE ${projectFence(6)} AND EXISTS (SELECT 1 FROM video_notes p WHERE p.id = ?7 AND p.project_id = ?6 AND p.parent_id IS NULL AND p.deleted_at IS NULL AND ${LIVE_VERSION_EXISTS("p.asset_id")}${author.kind === "guest" ? " AND p.visibility = 'public'" : ""})${auditGuard.sql}`)

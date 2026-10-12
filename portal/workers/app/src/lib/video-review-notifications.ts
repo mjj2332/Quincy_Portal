@@ -3,7 +3,6 @@ import {
   type VideoReviewNotificationPayload, type VideoReviewNotificationType,
 } from "@quincy/shared";
 import { newId } from "./ids";
-import { LIVE_VERSION } from "./video-live-sql";
 import { readVideoReviewGate, type VideoReviewGateState } from "./video-review-gate";
 
 /**
@@ -12,7 +11,7 @@ import { readVideoReviewGate, type VideoReviewGateState } from "./video-review-g
  * row and nothing else: no staff notification carries note text (docs/plans/741-13-15.md section 1.7), and the consumer composes the title at delivery.
  *
  * The recipients and the `notify_staff` gate are read just BEFORE the batch (the batch is where the source row appears), so a person added a millisecond later is simply not told; the consumer
- * re-checks everything at delivery. Only call this from a site that notifies: edits, deletes, resolves, paste, a staff-recorded decision and Release emit nothing.
+ * re-checks everything at delivery. Only call this from a site that notifies: edits, deletes, resolves, paste and a staff-recorded decision emit nothing.
  */
 export type VideoReviewEmit = {
   kind: VideoReviewNotificationType;
@@ -23,8 +22,6 @@ export type VideoReviewEmit = {
   actorId: string;
   /** The user never told about their own action; null for a guest. */
   excludeUserId: string | null;
-  /** The thread's root note, for a reply: its authors are told, with the Version's uploader. */
-  threadRootId?: string;
   /** The source write's audit row: the fence. */
   auditId: string;
   occurredAt: number;
@@ -32,12 +29,15 @@ export type VideoReviewEmit = {
   gate?: VideoReviewGateState;
 };
 
-type Candidate = { userId: string; role: string; membershipId: string | null };
+export type Candidate = { userId: string; role: string; membershipId: string | null };
 const VIEWERS = ROLES.filter((role) => roleHasCapability(role, "viewVideo"));
 const VIEWER_SQL = VIEWERS.map((role) => `'${role}'`).join(", ");
 
-/** Users who have a `project_members` row on the Project: told of an upload, a new note or a client decision. */
-async function projectMembers(db: D1Database, input: VideoReviewEmit): Promise<Candidate[]> {
+/**
+ * The one audience for every video kind (#835): active users with a `project_members` row on the Project whose role holds `viewVideo`, never the Actor. A non-member Admin is not in it,
+ * a Photographer is not, and a guest has no user id. A reply is told to the same people as a note, whoever wrote in the thread.
+ */
+export async function videoAudience(db: D1Database, input: VideoReviewEmit): Promise<Candidate[]> {
   return (await db.prepare(`
     SELECT u.id AS userId, u.role AS role, pm.id AS membershipId
     FROM project_members pm JOIN user u ON u.id = pm.user_id
@@ -45,32 +45,20 @@ async function projectMembers(db: D1Database, input: VideoReviewEmit): Promise<C
   `).bind(input.projectId, input.excludeUserId).all<Candidate>()).results;
 }
 
-/** A reply: everyone who wrote the root or a reply in the thread, plus the Version's uploader; each must be an Admin or a current member. Guests never appear (no user id). */
-async function threadParticipants(db: D1Database, input: VideoReviewEmit): Promise<Candidate[]> {
-  return (await db.prepare(`
-    SELECT u.id AS userId, u.role AS role, pm.id AS membershipId
-    FROM user u LEFT JOIN project_members pm ON pm.project_id = ?1 AND pm.user_id = u.id
-    WHERE u.active = 1 AND u.role IN (${VIEWER_SQL}) AND u.id IS NOT ?2
-      AND (u.role = 'admin' OR pm.id IS NOT NULL)
-      AND u.id IN (
-        SELECT n.author_user_id FROM video_notes n WHERE n.project_id = ?1 AND (n.id = ?3 OR n.parent_id = ?3) AND n.author_user_id IS NOT NULL
-        UNION SELECT m.uploaded_by FROM video_version_meta m WHERE m.asset_id = ?4 AND ${LIVE_VERSION("m")}
-      )
-  `).bind(input.projectId, input.excludeUserId, input.threadRootId ?? null, input.assetId).all<Candidate>()).results;
-}
-
 const SOURCE_EXISTS: Record<VideoReviewNotificationType, string> = {
   video_version_uploaded: "EXISTS (SELECT 1 FROM assets WHERE id = ?)",
   video_note: "EXISTS (SELECT 1 FROM video_notes WHERE id = ?)",
   video_reply: "EXISTS (SELECT 1 FROM video_notes WHERE id = ?)",
   video_decision: "EXISTS (SELECT 1 FROM video_approval_events WHERE id = ?)",
+  video_released: "EXISTS (SELECT 1 FROM video_releases WHERE id = ? AND withdrawn_at IS NULL)",
+  video_mention: "EXISTS (SELECT 1 FROM video_notes WHERE id = ?)",
 };
 
 export async function videoReviewOutboxStatements(db: D1Database, input: VideoReviewEmit): Promise<{ statements: D1PreparedStatement[]; outboxIds: string[] }> {
   const none = { statements: [], outboxIds: [] };
   const gate = input.gate ?? await readVideoReviewGate(db, input.projectId);
   if (!gate.open || !gate.parts.includes("notify_staff")) return none;
-  const candidates = input.kind === "video_reply" ? await threadParticipants(db, input) : await projectMembers(db, input);
+  const candidates = await videoAudience(db, input);
   const people = new Map<string, { role: string; membershipIds: string[] }>();
   for (const candidate of candidates) {
     const person = people.get(candidate.userId) ?? { role: candidate.role, membershipIds: [] };
@@ -81,11 +69,11 @@ export async function videoReviewOutboxStatements(db: D1Database, input: VideoRe
   const eventType = NOTIFICATION_OUTBOX_EVENT_TYPES.projectVideoReview;
   const statements: D1PreparedStatement[] = []; const outboxIds: string[] = [];
   for (const [recipientId, person] of people) {
-    if (person.role !== "admin" && !person.membershipIds.length) continue;
+    if (!person.membershipIds.length) continue;
     const payload: VideoReviewNotificationPayload = {
       schemaVersion: 1,
       event: { type: eventType, sourceKey, recipientId },
-      authorizationAtOccurrence: person.role === "admin" ? { kind: "admin" } : { kind: "project_member", membershipIds: [...person.membershipIds].sort() },
+      authorizationAtOccurrence: { kind: "project_member", membershipIds: [...person.membershipIds].sort() },
       video: { kind: input.kind, projectId: input.projectId, videoId: input.videoId, assetId: input.assetId, sourceId: input.sourceId },
     };
     const outboxId = newId(); outboxIds.push(outboxId);

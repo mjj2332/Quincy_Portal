@@ -41,11 +41,13 @@ export function notificationCopy(
     case "project_deadline_reminder": return { title: "Project deadline reminder", body: `${projectLabel} has a deadline reminder.` };
     case "project_activity": return { title: "Project activity", body: `${projectLabel} has a project update.` };
     case "project_collaboration_activity": return { title: "Project collaboration activity", body: `${projectLabel} has a collaboration update.` };
-    // #741 15a: these four exist only on the outbox path, whose resolver composes the title (naming the Video, Version and actor); this is the neutral form.
+    // #741 15a: these six exist only on the outbox path, whose resolver composes the title (naming the Video, Version and actor); this is the neutral form.
     case "video_version_uploaded":
     case "video_note":
     case "video_reply":
-    case "video_decision": return { title: "Video review update", body: `${projectLabel} has a video review update.` };
+    case "video_decision":
+    case "video_released":
+    case "video_mention": return { title: "Video review update", body: `${projectLabel} has a video review update.` };
     // #787 slice 8: outbox path only; the resolver composes the title (naming the item), this is the neutral form.
     case "delivery_unlock_requested": return { title: "Unlock requested", body: `A client asked to unlock an item on ${projectLabel}'s Delivery page.` };
   }

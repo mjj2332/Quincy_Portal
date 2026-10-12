@@ -19,6 +19,8 @@ export const NOTIFICATION_TYPES = [
   "video_note",
   "video_reply",
   "video_decision",
+  "video_released",
+  "video_mention",
   "delivery_unlock_requested",
 ] as const;
 
@@ -48,6 +50,8 @@ export const NOTIFICATION_WORKSPACE_TAB: Readonly<Record<NotificationType, Works
   video_note: "video",
   video_reply: "video",
   video_decision: "video",
+  video_released: "video",
+  video_mention: "video",
   // TODO(#787 slice 10): the Project's Delivery tab, once it exists; until then the Edited tab holds the delivered photos.
   delivery_unlock_requested: "edited",
 });
