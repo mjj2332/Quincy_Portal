@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Film } from "lucide-react";
-import type { Mp4Probe } from "@quincy/shared";
+import { filmTitleFromFilename, type Mp4Probe } from "@quincy/shared";
 import { Button } from "../quincy/Button";
 import { FileDropzone, FilePickButton } from "../quincy/FileDropzone";
 import { Notice } from "../quincy/Notice";
@@ -63,7 +63,8 @@ export function NewFilmUploader({ onStart }: {
       data-testid="new-film-form"
       onSubmit={(event) => { event.preventDefault(); void submit(); }}
     >
-      <p className={HINT} data-testid="new-film-probe">{`${picked.file.name} · ${formatFps(picked.probe.fps)} fps · ${picked.probe.width}×${picked.probe.height} · ${formatDuration(picked.probe.durationMs)}`}</p>
+      <p className="m-0 [font:var(--weight-bold)_var(--text-base)/var(--leading-normal)_var(--font-sans)] text-foreground [overflow-wrap:anywhere]" data-testid="new-film-title">{filmTitleFromFilename(picked.file.name)}</p>
+      <p className={`${HINT} [overflow-wrap:anywhere]`} data-testid="new-film-probe">{`${picked.file.name} · ${formatFps(picked.probe.fps)} fps · ${picked.probe.width}×${picked.probe.height} · ${formatDuration(picked.probe.durationMs)}`}</p>
       {picked.cautions.map((caution) => <Notice key={caution} tone="caution" role="status">{caution}</Notice>)}
       {refusal && <Notice tone="critical" role="alert" data-testid="new-film-refusal">{refusal}</Notice>}
       <div className="flex flex-wrap gap-[var(--space-2)]">

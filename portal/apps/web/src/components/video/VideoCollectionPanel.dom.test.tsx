@@ -311,6 +311,14 @@ describe("Uploader (#741 4d-i)", () => {
     expect(button("Upload")).toBeDefined(); expect(button("Cancel")).toBeDefined();
   });
 
+  it("leads the form with the title the film will get, before the file's facts (#828)", async () => {
+    await mount([]);
+    await pick(await good(), host.querySelector('[data-testid="new-film-uploader"]')!);
+    const title = host.querySelector('[data-testid="new-film-title"]');
+    expect(title?.textContent).toBe("Main cut");
+    expect(title!.compareDocumentPosition(host.querySelector('[data-testid="new-film-probe"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("while a submit is starting the picker is locked, so a newer film cannot be replaced by the old one's success", async () => {
     await mount([]);
     await pick(await good(), host.querySelector('[data-testid="new-film-uploader"]')!);
