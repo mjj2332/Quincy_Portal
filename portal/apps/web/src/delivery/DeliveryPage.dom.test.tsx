@@ -124,6 +124,10 @@ describe("hero", () => {
     expect(credit.querySelector("img")!.getAttribute("src")).toBe("/brand/quincy-wordmark-white.png");
     expect(credit.querySelector("img")!.getAttribute("alt")).toBe("");
   });
+  it("lays no Q watermark over the hero photo", async () => {
+    await show(page([photo(1)]));
+    expect(byTestId("delivery-hero")!.querySelector('img[src*="HERO-Q"]')).toBeNull();
+  });
   it("falls to the plain ink hero, not a broken image or the original, when the hero derivative is missing", async () => {
     await show(page([photo(1)]));
     await act(async () => { byTestId("delivery-hero-photo")!.dispatchEvent(new Event("error")); });
