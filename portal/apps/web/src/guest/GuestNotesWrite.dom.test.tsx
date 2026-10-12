@@ -113,6 +113,7 @@ describe("A resolved note", () => {
     await open();
     expect(byId("guest-note-resolved")!.parentElement).toBe(byId("guest-note-reply-button")!.parentElement);
     expect(byId("guest-note-resolved")!.className).toContain("ms-auto");
+    expect(byId("guest-note-reply-button")!.parentElement!.className).toContain("min-h-8"); // open and resolved cards share one row height
     await act(async () => { root!.unmount(); }); root = null; host.remove();
     session = SESSION_OFF;
     await open();
