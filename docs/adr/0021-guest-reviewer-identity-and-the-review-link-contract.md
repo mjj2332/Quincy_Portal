@@ -27,7 +27,7 @@ itself. Both are this decision.
    attempts, and are consumed once. Requests and attempts are rate-limited per link, per email and per IP,
    counted by attempt and reserved in a single statement. Responses are identical for known and unknown
    emails. A guest session is hashed, bound to one link, and lasts at most 7 days or the link's expiry,
-   whichever is sooner. Watching needs no verification; commenting, approving and downloading do.
+   whichever is sooner (Delivery review link: see the ADR 0023 amendment). Watching needs no verification; commenting, approving and downloading do.
 4. **Membership and grants.** A link holds one or more Videos from a single Project. A Version is visible
    only while its Video is a current member of the link and the Version is granted to it. A new Version
    never appears on a link until staff grant it. Removing a Video takes effect on the next request, and

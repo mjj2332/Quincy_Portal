@@ -7,7 +7,7 @@ import { hashToken, randomToken } from "../lib/opaque-token";
 import { hashPasscode, verifyPasscode } from "../lib/review-passcode";
 import type { AppEnv } from "../env";
 import { committableSql } from "../lib/guest-fence-sql";
-import { guestNotFound, guestRoute, INVALID, readJson, sessionCookieHeader, TOO_LARGE, tooMany } from "./http";
+import { DELIVERY_SESSION_MAX_MS, guestNotFound, guestRoute, INVALID, readJson, sessionCookieHeader, TOO_LARGE, tooMany } from "./http";
 import { archivedRefusal, authenticateGuest, classifyRefusal as classifyFence } from "./fence";
 import { identityOf, notificationsOf, sessionBody, type GuestSession } from "./link";
 import { clientAddress, emailBucket, GUEST_CODE_RESEND_MS, GUEST_DAY_MS, GUEST_LIMITS, ipBucket, reserveAttempts, windowStart } from "./rate-limit";
@@ -194,7 +194,9 @@ async function verifyCode(c: Handled<"/d/api/links/:linkId/email/verify">): Prom
     db.prepare(`INSERT INTO guest_link_members (id, link_id, guest_id, first_verified_at, last_verified_at, last_seen_at) SELECT ?1, ?2, g.id, ?3, ?3, ?3 FROM guest_reviewers g
       WHERE g.email_normalized = ?4 AND ${landed(5, 6)}
       ON CONFLICT (link_id, guest_id) DO UPDATE SET last_verified_at = excluded.last_verified_at, last_seen_at = excluded.last_seen_at`).bind(newId(), link.id, committedAt, email, session.id, tokenHash),
-    db.prepare(`UPDATE guest_sessions SET guest_id = (SELECT id FROM guest_reviewers WHERE email_normalized = ?1), verified_at = ?2 WHERE id = ?3 AND token_hash = ?4`).bind(email, committedAt, session.id, tokenHash),
+    // On the Delivery review link a verified session lasts 400 days (ADR 0023 amendment); on every other link verifying leaves the expiry the exchange set.
+    db.prepare(`UPDATE guest_sessions SET guest_id = (SELECT id FROM guest_reviewers WHERE email_normalized = ?1), verified_at = ?2,
+      expires_at = CASE WHEN EXISTS (SELECT 1 FROM client_links l WHERE l.id = guest_sessions.link_id AND l.delivery_review = 1) THEN ?5 ELSE expires_at END WHERE id = ?3 AND token_hash = ?4`).bind(email, committedAt, session.id, tokenHash, committedAt + DELIVERY_SESSION_MAX_MS),
     db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?1, NULL, 'review_link.email_verify', 'review_link', s.link_id, json_object('guest', json_object('guestId', s.guest_id, 'sessionId', s.id), 'linkId', s.link_id), ?2
       FROM guest_sessions s WHERE s.id = ?3 AND s.token_hash = ?4 AND s.guest_id IS NOT NULL`).bind(newId(), committedAt, session.id, tokenHash),

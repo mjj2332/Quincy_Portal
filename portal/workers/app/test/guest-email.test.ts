@@ -5,7 +5,7 @@ import { hashToken } from "../src/lib/opaque-token";
 import { emailBucket, ipBucket } from "../src/guest/rate-limit";
 import { baseEnv, database, ids, request as staffRequest, seedFixture } from "./embedded-media-support";
 import {
-  addMember, clearGuestRows, freshIp, GUEST_WINDOW_MS, guestFetch, guestOrigin, HYGIENE, linkPath, linkWithSession, mockEmail, openGuestGate, seedGuestLink, sessionCookie, sha256Hex, startSession, type SentEmail,
+  addMember, clearGuestRows, cookieName, freshIp, GUEST_WINDOW_MS, guestFetch, guestOrigin, HYGIENE, linkPath, linkWithSession, mockEmail, openGuestGate, seedGuestLink, sessionCookie, sha256Hex, startSession, type SentEmail,
 } from "./guest-support";
 import { clearVideoFlags, seedVideoVersion, setVideoFlags } from "./video-review-support";
 
@@ -443,6 +443,33 @@ describe("POST .../email/verify", () => {
     expect(rows[0]).toMatchObject({ actor_id: null, target_type: "review_link", target_id: link.id });
     expect(JSON.parse(rows[0]!.meta_json)).toEqual({ guest: { guestId, sessionId: session.id }, linkId: link.id });
     expect(response.status).toBe(200);
+  });
+});
+
+describe("session lifetime at verify (ADR 0023 amendment)", () => {
+  it("sets a verified Delivery session to about 400 days, in the row and in Max-Age", async () => {
+    const link = await seedGuestLink({ deliveryReview: true });
+    const { session, code } = await sent({ link });
+    const response = await verify(link, session.cookie, code);
+    expect(response.status).toBe(200);
+    const stored = (await sessionRow(session.id))!.expires_at as number;
+    expect(stored).toBeGreaterThan(Date.now() + 400 * DAY - 10_000); expect(stored).toBeLessThanOrEqual(Date.now() + 400 * DAY);
+    const maxAge = Number(response.headers.getSetCookie().find((entry) => entry.startsWith(`${cookieName(link.id)}=`))!.match(/Max-Age=(\d+)/)![1]);
+    expect(maxAge).toBeLessThanOrEqual(34_560_000); expect(maxAge).toBeGreaterThan(400 * 86_400 - 30);
+  });
+
+  it("keeps min(7 days, link expiry) for a verified session on an ordinary link", async () => {
+    const link = await seedGuestLink({ expiresAt: Date.now() + 3 * DAY });
+    const { session, code } = await sent({ link });
+    expect((await verify(link, session.cookie, code)).status).toBe(200);
+    const stored = (await sessionRow(session.id))!.expires_at as number;
+    const linkExpiry = (await database.DB.prepare("SELECT expires_at FROM client_links WHERE id = ?").bind(link.id).first<{ expires_at: number }>())!.expires_at;
+    expect(stored).toBe(linkExpiry);
+    const long = await seedGuestLink();
+    const second = await sent({ link: long });
+    expect((await verify(long, second.session.cookie, second.code)).status).toBe(200);
+    const sevenDay = (await sessionRow(second.session.id))!.expires_at as number;
+    expect(sevenDay).toBeGreaterThan(Date.now() + 7 * DAY - 10_000); expect(sevenDay).toBeLessThanOrEqual(Date.now() + 7 * DAY);
   });
 });
 

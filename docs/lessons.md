@@ -6269,3 +6269,11 @@ Tags: d1-migrations, testing-guards · #847
 
 Guards: `workers/app/test/review-link-open.guard.test.ts`, `workers/app/test/delivery-review-link.test.ts`, `packages/db/test/migration-0077.test.ts`, `workers/app/test/delivery-public-boundary.guard.test.ts`.
 
+## A sliding cookie must only re-send a token the same statement just proved current (#847)
+Tags: auth · #847
+
+- **What bit (avoided).** The Delivery review link's verified session slides to 400 days on the session read. A renewal that sets `Set-Cookie` with the token from the request would, when a verify in another tab had just rotated the token, overwrite the new cookie with the old one and sign the guest out.
+- **Rule.** Renew in one `UPDATE ... WHERE token_hash = <the hash this request authenticated with> ... RETURNING expires_at` and send `Set-Cookie` only when that row came back. The token is never rotated by renewal, `guest_id` and `verified_at` are never touched, and a once-a-day throttle is built into the WHERE (`expires_at < now + max - 1 day`), not a separate read.
+- **Related.** A "never" that is really a long number still has to be one definition (see "A nullable "never" breaks every comparison that was written for a number (#847)").
+
+Guards: `workers/app/test/guest-session.test.ts` ("verified Delivery guests stay signed in"), `workers/app/test/guest-email.test.ts` ("session lifetime at verify").

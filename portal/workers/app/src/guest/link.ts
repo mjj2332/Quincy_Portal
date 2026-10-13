@@ -4,21 +4,22 @@ import { reviewLinkOpenSql } from "@quincy/db";
 import { hashToken } from "../lib/opaque-token";
 import { readVideoReviewGate } from "../lib/video-review-gate";
 import type { AppEnv } from "../env";
-import { readSessionCookie, UUID } from "./http";
+import { DELIVERY_SESSION_MAX_MS, DELIVERY_SESSION_RENEW_MS, readSessionCookie, UUID } from "./http";
 
 /** What the guest surface knows of a Review link: the link row, the gate and the session join. Every failure here is `null`, and the caller answers the one stub. */
 export type GuestLink = {
   id: string; projectId: string; label: string | null; /** Null: the Delivery review link never expires (#847). */ expiresAt: number | null; allowComments: boolean; allowApprove: boolean; allowDownload: boolean;
   tokenHash: string; tokenGeneration: number; hasPasscode: boolean; passcodeHash: string | null;
+  /** The Project's Delivery review link (#847): its verified sessions are long-lived and slide (ADR 0023 amendment). */ deliveryReview: boolean;
   /** The Worker parts on for this Project when the row was read (`guest` is always among them). The `allow` flags a guest is shown depend on two of them. */
   parts: VideoReviewPart[];
 };
-type LinkRow = { id: string; project_id: string; label: string | null; expires_at: number | null; allow_comments: number; allow_approve: number; allow_download: number; token_hash: string; token_generation: number; passcode_hash: string | null };
+type LinkRow = { id: string; project_id: string; label: string | null; expires_at: number | null; allow_comments: number; allow_approve: number; allow_download: number; token_hash: string; token_generation: number; passcode_hash: string | null; delivery_review: number };
 
-const LINK_SELECT = "l.id, l.project_id, l.label, l.expires_at, l.allow_comments, l.allow_approve, l.allow_download, l.token_hash, l.token_generation, l.passcode_hash";
+const LINK_SELECT = "l.id, l.project_id, l.label, l.expires_at, l.allow_comments, l.allow_approve, l.allow_download, l.token_hash, l.token_generation, l.passcode_hash, l.delivery_review";
 const toLink = (row: LinkRow, parts: VideoReviewPart[]): GuestLink => ({
   id: row.id, projectId: row.project_id, label: row.label, expiresAt: row.expires_at, allowComments: row.allow_comments === 1, allowApprove: row.allow_approve === 1, allowDownload: row.allow_download === 1,
-  tokenHash: row.token_hash, tokenGeneration: row.token_generation, hasPasscode: row.passcode_hash !== null, passcodeHash: row.passcode_hash, parts,
+  tokenHash: row.token_hash, tokenGeneration: row.token_generation, hasPasscode: row.passcode_hash !== null, passcodeHash: row.passcode_hash, deliveryReview: row.delivery_review === 1, parts,
 });
 
 /** The full gate for a Project: `video_review` on, the Project piloted or all-projects on, and the `guest` part on. Answers the parts that are on, or `null` when the gate is shut. */
@@ -68,6 +69,19 @@ export async function resolveSession(c: Context<AppEnv>, linkId: string, now: nu
     await c.env.DB.batch(touch);
   }
   return { id: row.session_id, tokenHash, link: toLink(row, parts), guestId: row.guest_id, email: row.guest_email, name: row.guest_name, expiresAt: row.session_expires_at };
+}
+
+/**
+ * Slides a verified Delivery session's expiry out to the 400-day cap, at most once a day (it only writes when more than a day has been lost). One statement carries every fence: the
+ * token hash this request authenticated with (a verify in another tab rotates it, and the caller must not then re-send the old token), a verified guest, an unexpired session and
+ * the link still open and still the Delivery review link. Answers the new expiry, or `null` when nothing was written. The token, guest and `verified_at` are never touched.
+ */
+export async function renewDeliverySession(db: D1Database, session: GuestSession, now: number): Promise<number | null> {
+  const expiresAt = now + DELIVERY_SESSION_MAX_MS;
+  const row = await db.prepare(`UPDATE guest_sessions SET expires_at = ?1 WHERE id = ?2 AND token_hash = ?3 AND guest_id IS NOT NULL AND guest_sessions.expires_at > ?4 AND guest_sessions.expires_at < ?5
+      AND EXISTS (SELECT 1 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE s.id = guest_sessions.id AND ${reviewLinkOpenSql("l", "?4")} AND l.delivery_review = 1 AND s.link_generation = l.token_generation)
+    RETURNING expires_at`).bind(expiresAt, session.id, session.tokenHash, now, expiresAt - DELIVERY_SESSION_RENEW_MS).first<{ expires_at: number }>();
+  return row ? row.expires_at : null;
 }
 
 /**
