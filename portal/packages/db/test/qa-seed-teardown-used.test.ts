@@ -71,9 +71,11 @@ function scenario(groups?: readonly AppRowGroup[]): Scenario {
 function expectedAfterTeardown(before: Snapshot, s: Scenario): Snapshot {
   const registeredIds = new Set(before[FIXTURE_ENTITIES_TABLE]!.map((row) => String(row.id)));
   const plantedIds = new Set(s.fixtureRows.map((row) => row.values.id).filter((id): id is string => typeof id === "string"));
-  const fixtureLinked = (table: string, row: Row) =>
+  // `social_overlays` is a shared FK parent (the global library): the fixture's join row goes with the Project, the overlay it planted survives.
+  const fixtureLinked = (table: string, row: Row) => table !== "social_overlays" && (
     registeredIds.has(String(row.id)) || plantedIds.has(String(row.id))
-    || (table === "project_comment_read_markers" && row.project_id === s.fixture.projectId);
+    || (table === "project_comment_read_markers" && row.project_id === s.fixture.projectId)
+    || (table === "project_social_overlays" && row.project_id === s.fixture.projectId));
   return Object.fromEntries(Object.entries(before).map(([table, rows]) => [
     table,
     REGISTRY_TABLES.includes(table) ? [] : rows.filter((row) => !fixtureLinked(table, row)),

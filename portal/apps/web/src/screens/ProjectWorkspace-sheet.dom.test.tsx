@@ -30,9 +30,10 @@ vi.mock("../lib/auth", () => ({
 
 const apiGetMock = vi.fn<(path: string, init?: unknown) => Promise<unknown>>();
 const apiPatchMock = vi.fn<(path: string, body?: unknown) => Promise<unknown>>();
+const apiPutMock = vi.fn<(path: string, body?: unknown) => Promise<unknown>>();
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, apiGet: (path: string, init?: unknown) => apiGetMock(path, init), apiPost: vi.fn(() => Promise.resolve({})), apiPatch: (path: string, body?: unknown) => apiPatchMock(path, body), apiDelete: vi.fn(() => Promise.resolve({})) };
+  return { ...actual, apiGet: (path: string, init?: unknown) => apiGetMock(path, init), apiPost: vi.fn(() => Promise.resolve({})), apiPatch: (path: string, body?: unknown) => apiPatchMock(path, body), apiPut: (path: string, body?: unknown) => apiPutMock(path, body), apiDelete: vi.fn(() => Promise.resolve({})) };
 });
 
 if (!Element.prototype.getAnimations) Element.prototype.getAnimations = () => [];
@@ -118,6 +119,7 @@ beforeEach(() => {
   onRequestClose.mockReset();
   apiGetMock.mockReset();
   apiPatchMock.mockReset().mockResolvedValue({});
+  apiPutMock.mockReset();
   apiGetMock.mockImplementation((path: string) => {
     if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
     if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1"), workspaceAsset("raw-2")] });
@@ -295,5 +297,63 @@ describe("the real Workspace inside the Project sheet (#366)", () => {
     expect(document.querySelector('[data-testid="project-sheet-body"]')!.contains(checklist)).toBe(true);
     expect(checklist.closest('[id$="-discussion-panel"], [id$="-activity-panel"]')).toBeNull();
     expect(document.querySelector('[data-testid="project-collaboration-panel"]')!.getAttribute("data-checklist-layout")).toBe("rail");
+  });
+});
+
+// #870 — the Social overlays picker in the real header, below the four-cell control grid.
+describe("the Social overlays picker in the Project header (#870)", () => {
+  const overlayId = "22222222-2222-4222-8222-222222222222", tiktokId = "33333333-3333-4333-8333-333333333333";
+  const overlayState = (selected: Array<{ id: string; name: string }>) => ({
+    available: [{ id: overlayId, name: "Instagram Reel", platformLabel: "Instagram", isDefault: true, archivedAt: null }, { id: tiktokId, name: "TikTok", platformLabel: "TikTok", isDefault: false, archivedAt: null }],
+    selected: selected.map((choice) => ({ ...choice, platformLabel: "x", isDefault: false, archivedAt: null })),
+    resolved: [],
+  });
+  function openGate(open: boolean) {
+    const previous = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path, init) => path.endsWith("/video-review") ? Promise.resolve({ open, parts: [] }) : path.endsWith("/social-overlays") ? Promise.resolve(overlayState([])) : previous(path, init));
+  }
+  const picker = () => document.querySelector<HTMLElement>('[data-testid="project-social-overlays"]');
+  const pickerTrigger = () => document.querySelector<HTMLButtonElement>('button[aria-label="Social overlays"]');
+
+  it("sits after the control grid and before the tabs when video review is open", async () => {
+    openGate(true);
+    await renderSheet();
+    await flushUntil(() => picker() !== null, "the Social overlays picker");
+    const header = document.querySelector('[data-testid="project-header"]')!;
+    const deadline = header.querySelector('[data-testid="project-deadline-trigger"]')!;
+    expect(header.contains(picker())).toBe(true);
+    expect(deadline.compareDocumentPosition(picker()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(picker()!.compareDocumentPosition(header.querySelector('[data-testid="project-overview-tab"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("is absent while video review is closed, and asks for nothing", async () => {
+    openGate(false);
+    await renderSheet();
+    await flush(20);
+    expect(picker()).toBeNull();
+    expect(apiGetMock.mock.calls.some(([path]) => String(path).endsWith("/social-overlays"))).toBe(false);
+  });
+
+  it("is absent for a Photographer even with video review open", async () => {
+    authState.role = "photographer"; openGate(true);
+    await renderSheet();
+    await flush(20);
+    expect(picker()).toBeNull();
+  });
+
+  it("picks by keyboard, saves once on Escape, closes only the picker, and returns focus to its trigger", async () => {
+    openGate(true);
+    apiPutMock.mockResolvedValue({ ...overlayState([{ id: tiktokId, name: "TikTok" }]) });
+    await renderSheet();
+    await flushUntil(() => pickerTrigger() !== null, "the picker trigger");
+    await click(pickerTrigger()!);
+    await flushUntil(() => document.querySelector('[role="listbox"]') !== null, "the overlay list");
+    await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("TikTok"))!);
+    await escape(document.activeElement ?? document.body);
+    await flushUntil(() => document.querySelector('[role="listbox"]') === null, "the list to close");
+    expect(onRequestClose).not.toHaveBeenCalled();
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    expect(apiPutMock).toHaveBeenCalledWith("/api/projects/p1/social-overlays", { overlayIds: [tiktokId], expectedOverlayIds: [] });
+    expect(document.activeElement).toBe(pickerTrigger());
   });
 });

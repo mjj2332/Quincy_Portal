@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CollectionKind } from "@quincy/shared";
+import type { CollectionKind, Role } from "@quincy/shared";
 import type { WorkspaceTab } from "../lib/workspace-tab";
 import { StageDot } from "./atoms";
 import { InternalLink } from "./InternalLink";
@@ -20,7 +20,8 @@ import { SCROLL_FADE_EDGE_FRACTION, SCROLL_FADE_MASK_CLASSES, useScrollFade } fr
 import { HEADER_READONLY_VALUE, HEADER_TEXT_LINK, READONLY_GROUP_FOCUS } from "./project-header-popover";
 import { useStages } from "../lib/stages";
 import { useCapabilities } from "../lib/capabilities";
-import type { ProjectDetail } from "../lib/project-data";
+import { useVideoReviewQuery, type ProjectDetail } from "../lib/project-data";
+import { ProjectSocialOverlayPicker } from "./quincy/ProjectSocialOverlayPicker";
 
 function date(value: string | null) {
   return value
@@ -36,6 +37,13 @@ export function WhiteboardButton({ onOpen }: { onOpen: () => void }) {
     </TooltipTrigger>
     <TooltipContent side="bottom">Open whiteboard</TooltipContent>
   </Tooltip>;
+}
+
+/** #870: below the control grid, only while the Video review gate is open (the picker's routes answer 404 when it is closed). Its own component, so the query exists only for roles that can see it. */
+function SocialOverlaysRow({ projectId, role, canEdit, archived }: { projectId: string; role: Role; canEdit: boolean; archived: boolean }) {
+  const open = useVideoReviewQuery(projectId, true, role).data?.open === true;
+  if (!open) return null;
+  return <div data-testid="project-header-social-overlays"><ProjectSocialOverlayPicker key={projectId} projectId={projectId} role={role} canEdit={canEdit} archived={archived} /></div>;
 }
 
 function collectionLabel(value: string) {
@@ -212,7 +220,9 @@ export function ProjectHeader({
   const dashboardReturn = useDashboardReturnLink();
   const inSheet = useInProjectSheet();
   const { presentationStageKey, stages } = useStages();
-  const { can } = useCapabilities();
+  const { can, role } = useCapabilities();
+  // #870: the Social overlays picker needs `viewVideo` (an External editor sees it read-only) and the Video review gate open: see `SocialOverlaysRow`.
+  const offersOverlays = can("viewVideo") && role !== undefined;
   const currentStageKey = presentationStageKey(project.stageKey);
   // #455: the header is read-only on an archived Project, from the loaded detail or latched by the first refusal of a write (Stage, Deadline,
   // Dropbox) until the detail goes un-archived. The latch makes the whole row flip at once instead of one control per refusal.
@@ -369,6 +379,8 @@ export function ProjectHeader({
         <ProjectHeaderDropbox project={project} isSyncing={isSyncing} autohdrBlocked={autohdrBlocked} onSyncDropbox={onSyncDropbox} archived={archived} archivedNotice={latch === "dropbox"} readOnlyRef={dropboxGroupRef} onArchivedRefusal={(inside) => latchArchived("dropbox", inside)} />
       </div>}
     </div>
+
+    {offersOverlays && <SocialOverlaysRow projectId={project.id} role={role!} canEdit={can("chooseSocialOverlays")} archived={archived} />}
 
     {/* The entry button sits beside the scroller, not inside it: at phone width the tabs scroll sideways and it must stay in view. */}
     <div className="project-header__tabrow flex min-w-0 items-center gap-[var(--space-2)]">

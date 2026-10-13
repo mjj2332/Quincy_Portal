@@ -302,6 +302,10 @@ describe("terminal route manifest", () => {
         path: `/api/projects/${manifestProjectId}/videos`,
         parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS["video-list"].parse(body),
       },
+      "project-social-overlays": {
+        path: `/api/projects/${manifestProjectId}/social-overlays`,
+        parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS["project-social-overlays"].parse(body),
+      },
       "review-link-list": {
         path: `/api/projects/${manifestProjectId}/review-links`,
         parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS["review-link-list"].parse(body),
@@ -329,6 +333,7 @@ describe("terminal route manifest", () => {
       activity: "assigned-project",
       "video-review": "assigned-project",
       "video-list": "assigned-project",
+      "project-social-overlays": "assigned-project",
       "review-link-list": "assigned-project",
       "video-note-list": "assigned-project",
     };

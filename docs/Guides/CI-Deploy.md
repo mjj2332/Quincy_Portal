@@ -254,6 +254,17 @@ Owner steps after the deploy:
 
 **Rollback.** An old Worker ignores the table, so a code rollback is safe, and the R2 objects under `social-overlays/` can stay. Dropping the table means a Time Travel restore, which loses every write since the bookmark.
 
+### Project Social overlays (0080, #870)
+
+Migration 0080 creates `project_social_overlays` (which Social overlays a Project offers in the Video viewer, chosen in the Project sheet) with a composite primary key `(project_id, overlay_id)` and one index on `overlay_id`. Deleting a Project removes its rows (cascade). An overlay row cannot be deleted while a Project selects it (restrict), which is safe because overlays are archived, never deleted. Additive only: no ALTER, no rebuild, no PRAGMA, no backfill, no trigger. A Project with no row resolves to the Default overlay at read time, so the apply changes no behaviour until someone picks. The number is 0080 because #869 holds 0079; with the integration PR the pending list shows 0078, 0079, then 0080, and anything else listed means an earlier migration PR was never applied: stop. The Worker in this PR reads the table on the Project sheet, so production stays on the old Worker until the owner applies the migration and re-runs the deploy (the "A PR that adds a D1 migration" flow above, with a Time Travel bookmark first).
+
+Owner steps after the deploy:
+
+1. Post-check the schema: `PRAGMA table_info(project_social_overlays)` lists `project_id` and `overlay_id`, `PRAGMA index_list(project_social_overlays)` shows the overlay index, and `SELECT COUNT(*) FROM project_social_overlays` is 0.
+2. Optional: in a Project sheet with Video review open, pick an overlay under Social overlays and confirm `SELECT project_id, overlay_id FROM project_social_overlays` shows the row.
+
+**Rollback.** An old Worker ignores the table, so a code rollback is safe. Dropping the table means a Time Travel restore, which loses every write since the bookmark.
+
 ### Subtask presets (0052)
 
 0052 converts every date-only Subtask range to a 09:00 start and a 17:00 end (the presets, ADR 0016)

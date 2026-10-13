@@ -144,7 +144,7 @@ export function controlProjectRows(ctx: PlantContext): PlantRow[] {
   ];
 }
 
-export type AppRowGroup = "comments" | "activity" | "audit" | "notifications" | "jobs" | "assets" | "dlq" | "autohdr" | "members" | "documents";
+export type AppRowGroup = "comments" | "activity" | "audit" | "notifications" | "jobs" | "assets" | "dlq" | "autohdr" | "members" | "documents" | "social";
 
 /** Every app-shaped row for one project, grouped so a test can plant one finding's shape alone. */
 export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): PlantRow[] {
@@ -155,7 +155,7 @@ export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): Pla
     job: id("job"), handoff: id("handoff"), mapping: id("mapping"), assetV1: id("asset-v1"), assetV2: id("asset-v2"), assetV3: id("asset-v3"),
     rendition: id("rendition"), dlq: id("dlq"), claim: id("claim"), outbox: id("outbox"), notification: id("notification"), ledger: id("ledger"),
     annotation: id("annotation"), link: id("link"), manifest: id("manifest"), rawClaim: id("raw-claim"), subtaskOcc: id("subtask-reminder-occurrence"), document: id("document"), documentAudit: id("document-audit"), videoUpload: id("video-upload"), videoUploadAudit: id("video-upload-audit"),
-    reviewLink: id("review-link"), reviewVideo: id("review-video"), reviewMember: id("review-member"), reviewGrant: id("review-grant"), guestSession: id("guest-session"),
+    reviewLink: id("review-link"), reviewVideo: id("review-video"), reviewMember: id("review-member"), reviewGrant: id("review-grant"), guestSession: id("guest-session"), overlay: id("social-overlay"),
   };
   const rows: PlantRow[] = [];
   const needsAssets = want("assets") || want("dlq") || want("autohdr") || want("documents");
@@ -240,6 +240,13 @@ export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): Pla
         table: "notification_delivery_ledger",
         values: { id: ids.ledger, outbox_id: ids.outbox, event_type: "comment.mention", source_key: `outbox:${ctx.tag}`, recipient_id: ctx.userId, channel: "in_app", status: "sent", notification_id: ids.notification, created_at: T0, updated_at: T0 },
       },
+    );
+  }
+  if (want("social")) {
+    // The overlay is a global library row (a shared FK parent): teardown deletes the Project's join and leaves the overlay.
+    rows.push(
+      { table: "social_overlays", values: { id: ids.overlay, name: `QA overlay ${ctx.tag}`, platform_label: "QA", image_key: `social-overlays/${ids.overlay}/qa.png`, width: 1080, height: 1920, bytes: 1, created_by: ctx.userId, updated_by: ctx.userId, created_at: T0, updated_at: T0 } },
+      { table: "project_social_overlays", values: { project_id: ctx.projectId, overlay_id: ids.overlay } },
     );
   }
   if (want("documents")) {
