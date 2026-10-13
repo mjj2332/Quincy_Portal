@@ -6,8 +6,7 @@ import { UNDO_TOAST_TTL_MS } from "../../lib/use-scheduling-undo-toast";
 import { readRemovalImpact, refreshAfterRefusal, removeVideoVersion, restoreVideoVersion, restoreWholeVideo } from "../../lib/video-trash-data";
 import { classifyVideoTrashError, type ClassifiedVideoTrashError } from "../../lib/video-trash-errors";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../reui/alert-dialog";
-import { Badge } from "../reui/badge";
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
+import { plural, RemovalImpactList, type ImpactRow } from "./RemovalImpactList";
 import { Spinner } from "../reui/spinner";
 import { Button } from "../quincy/Button";
 import { ICON_BUTTON } from "../quincy/icon-button";
@@ -28,7 +27,6 @@ export type VersionRemovalHandle = { open: (assetId: string, returnFocusTo: () =
 
 type Target = { assetId: string; version: number; videoId: string; title: string };
 const MENU_TRIGGER_SELECTOR = '[data-testid="video-version-menu"]';
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 /** Errors a second press of Remove cannot fix: the row is gone, the Project is archived, or access is lost. */
 const FINAL: ReadonlySet<ClassifiedVideoTrashError["kind"]> = new Set(["gone", "archived", "access"]);
 
@@ -183,14 +181,7 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
         </AlertDialogHeader>
         {impact === null && loadFailure === null && <p className="m-0 flex items-center gap-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]" role="status"><Spinner aria-hidden="true" />Checking what this affects…</p>}
         {loadFailure !== null && <Notice tone="critical" role="alert" data-testid="video-remove-load-error">{loadFailure}</Notice>}
-        {impact !== null && <ItemGroup data-testid="video-remove-impact">
-          {rows.length === 0
-            ? <Item size="xs" className="px-0"><ItemContent><ItemTitle className="font-normal">Nothing else is affected.</ItemTitle></ItemContent></Item>
-            : rows.map((row) => <Item key={row.key} size="xs" className="px-0"><ItemContent>
-              <ItemTitle className="font-normal">{row.title}{row.badge && <Badge variant="warning-light" size="sm">{row.badge}</Badge>}</ItemTitle>
-              <ItemDescription className="line-clamp-none">{row.description}</ItemDescription>
-            </ItemContent></Item>)}
-        </ItemGroup>}
+        {impact !== null && <RemovalImpactList rows={rows} testId="video-remove-impact" />}
         {blockedByUpload && <Notice tone="caution" role="status">A new version is being uploaded to this film. Wait for it to finish or cancel it before removing the whole film.</Notice>}
         {draft && <Notice tone="caution" role="status" data-testid="video-remove-draft">You have an unsent note or entry on this version. It will be discarded.</Notice>}
         {problem !== null && <Notice ref={problemRef} tabIndex={-1} tone="critical" role="alert" data-testid="video-remove-problem">{problem.message}</Notice>}
@@ -204,10 +195,9 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
   </>;
 }
 
-type Row = { key: string; title: string; description: string; badge?: string };
 /** What the removal hides, one row each; empty when nothing else is touched. */
-function impactRows(impact: VideoRemovalImpact): Row[] {
-  const rows: Row[] = [];
+function impactRows(impact: VideoRemovalImpact): ImpactRow[] {
+  const rows: ImpactRow[] = [];
   if (impact.notes > 0) rows.push({ key: "notes", title: plural(impact.notes, "note"), description: "Notes, replies and drawings on this version are hidden. A restore brings them back." });
   if (impact.decisions > 0) rows.push({ key: "decisions", title: plural(impact.decisions, "client decision"), description: "The client's approvals and change requests are hidden with it." });
   if (impact.release) rows.push({ key: "release", title: "Released to the client", badge: "Live", description: "Clients lose this version while it is in Trash. A restore brings the release back." });
