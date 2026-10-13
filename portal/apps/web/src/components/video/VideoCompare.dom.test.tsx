@@ -38,15 +38,15 @@ const ids = { video: "88888888-8888-4888-8888-888888888888", asset3: "55555555-5
 const mia = { id: "99999999-9999-4999-8999-999999999999", name: "Mia Chen", roleLabel: "Editor", isExternal: false, active: true };
 const me = { id: auth.userId, name: "Terry", roleLabel: "Admin", isExternal: false, active: true };
 const F25 = { num: 25, den: 1 };
-const versionOf = (over: Record<string, unknown> = {}) => ({ assetId: ids.asset3, version: 3, current: true, uploadedBy: mia, createdAt: "2026-10-09T01:00:00.000Z", originalFilename: "film.mp4", bytes: 120_000_000, fps: F25, frameCount: 300, durationMs: 12000, width: 1920, height: 1080, codec: "avc1", startTimecodeFrames: 90000, tcNominalFps: 25, tcDropFrame: false, fastStart: true, hasAudio: true, hasPoster: true, streamUrl: `/media/video/${ids.asset3}`, posterUrl: null, ...over });
+const versionOf = (over: Record<string, unknown> = {}) => ({ assetId: ids.asset3, version: 3, current: true, reviewStatus: "in_review", uploadedBy: mia, createdAt: "2026-10-09T01:00:00.000Z", originalFilename: "film.mp4", bytes: 120_000_000, fps: F25, frameCount: 300, durationMs: 12000, width: 1920, height: 1080, codec: "avc1", startTimecodeFrames: 90000, tcNominalFps: 25, tcDropFrame: false, fastStart: true, hasAudio: true, hasPoster: true, streamUrl: `/media/video/${ids.asset3}`, posterUrl: null, ...over });
 /** v3 (A by default), v2 (B by default), v1. `over` patches v2 and v1 by version number. */
 let patch: Record<number, Record<string, unknown>> = {};
 const videoOf = (versions = 3): VideoDto => ({
-  id: ids.video, title: "Main walkthrough", premium: false, premiumUnlocked: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ids.asset3, latestNoteCount: null, uploading: null,
+  id: ids.video, reviewStatus: "in_review", olderPublishedVersion: null, title: "Main walkthrough", premium: false, premiumUnlocked: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ids.asset3, latestNoteCount: null, uploading: null,
   versions: [
     versionOf(patch[3]),
-    ...(versions >= 2 ? [versionOf({ assetId: ids.asset2, version: 2, current: false, uploadedBy: me, streamUrl: `/media/video/${ids.asset2}`, ...patch[2] })] : []),
-    ...(versions >= 3 ? [versionOf({ assetId: ids.asset1, version: 1, current: false, uploadedBy: me, streamUrl: `/media/video/${ids.asset1}`, ...patch[1] })] : []),
+    ...(versions >= 2 ? [versionOf({ assetId: ids.asset2, version: 2, current: false, reviewStatus: "in_review", uploadedBy: me, streamUrl: `/media/video/${ids.asset2}`, ...patch[2] })] : []),
+    ...(versions >= 3 ? [versionOf({ assetId: ids.asset1, version: 1, current: false, reviewStatus: "in_review", uploadedBy: me, streamUrl: `/media/video/${ids.asset1}`, ...patch[1] })] : []),
   ],
 }) as unknown as VideoDto;
 

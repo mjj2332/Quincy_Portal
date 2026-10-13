@@ -110,9 +110,9 @@ describe("PRD §4 capability matrix", () => {
 });
 
 describe("video review capabilities (#741)", () => {
-  const VIDEO = ["viewVideo", "uploadVideo", "annotateVideo", "shareVideo", "releaseVideo", "manageVideoPremium", "manageVideoTrash", "downloadVideo"] as const;
+  const VIDEO = ["viewVideo", "uploadVideo", "annotateVideo", "shareVideo", "releaseVideo", "manageVideoPremium", "manageVideoTrash", "downloadVideo", "approveVideoInternal"] as const;
 
-  it("declares all eight", () => {
+  it("declares all nine", () => {
     for (const capability of VIDEO) expect(CAPABILITIES).toContain(capability);
   });
 
@@ -126,15 +126,16 @@ describe("video review capabilities (#741)", () => {
       manageVideoPremium: ["admin", "editor"],
       manageVideoTrash: ["admin", "editor"],
       downloadVideo: ["admin", "editor", "external_editor"],
+      approveVideoInternal: ["admin", "editor"],
     };
     for (const capability of VIDEO) {
       for (const role of ROLES) expect(roleHasCapability(role, capability), `${role} ${capability}`).toBe(grants[capability].includes(role));
     }
   });
 
-  it("gives photographers none of the eight and Externals never release, premium or Trash (#834: they share)", () => {
+  it("gives photographers none of the nine and Externals never release, premium, Trash or internal approval (#834: they share)", () => {
     for (const capability of VIDEO) expect(roleHasCapability("photographer", capability)).toBe(false);
-    for (const capability of ["releaseVideo", "manageVideoPremium", "manageVideoTrash"] as const) expect(EXTERNAL_EDITOR_CAPABILITIES as readonly string[]).not.toContain(capability);
+    for (const capability of ["releaseVideo", "manageVideoPremium", "manageVideoTrash", "approveVideoInternal"] as const) expect(EXTERNAL_EDITOR_CAPABILITIES as readonly string[]).not.toContain(capability);
   });
 });
 

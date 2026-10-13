@@ -1846,6 +1846,8 @@ export const videoVersionMeta = sqliteTable(
     removedBy: text("removed_by").references(() => user.id),
     purgeAt: integer("purge_at"),
     removedWithVideo: integer("removed_with_video").notNull().default(0),
+    /** Review status (#863): stored per Version. Published is derived from the latest Published set and never stored. */
+    reviewStatus: text("review_status", { enum: ["in_review", "approved_internal"] as const }).notNull().default("in_review"),
   },
   (t) => [
     index("video_version_meta_video_idx").on(t.videoId),
@@ -1854,6 +1856,7 @@ export const videoVersionMeta = sqliteTable(
     check("video_version_meta_removed_at_check", sql`${t.removedAt} IS NULL OR typeof(${t.removedAt}) = 'integer'`),
     check("video_version_meta_purge_at_check", sql`${t.purgeAt} IS NULL OR typeof(${t.purgeAt}) = 'integer'`),
     check("video_version_meta_removed_with_video_check", sql`${t.removedWithVideo} IN (0, 1)`),
+    check("video_version_meta_review_status_check", sql`${t.reviewStatus} IN ('in_review', 'approved_internal')`),
     check("video_version_meta_fps_num_check", sql`${t.fpsNum} > 0`),
     check("video_version_meta_fps_den_check", sql`${t.fpsDen} > 0`),
     check("video_version_meta_media_timescale_check", sql`${t.mediaTimescale} > 0`),

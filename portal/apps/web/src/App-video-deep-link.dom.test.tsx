@@ -38,8 +38,8 @@ vi.mock("./lib/api", async (importOriginal) => {
 });
 
 const mia = { id: "99999999-9999-4999-8999-999999999999", name: "Mia Chen", roleLabel: "Editor", isExternal: false, active: true };
-const versionOf = (assetId: string, version: number, current: boolean) => ({ assetId, version, current, uploadedBy: mia, createdAt: "2026-10-09T01:00:00.000Z", originalFilename: "film.mp4", bytes: 1, fps: { num: 25, den: 1 }, frameCount: 300, durationMs: 12000, width: 1920, height: 1080, codec: "avc1", startTimecodeFrames: null, tcNominalFps: 25, tcDropFrame: false, fastStart: true, hasAudio: true, hasPoster: false, streamUrl: `/media/video/${assetId}`, posterUrl: null });
-const videoOf = () => ({ id: VIDEO_ID, title: "Main walkthrough", premium: false, premiumUnlocked: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ASSET_2, latestNoteCount: null, uploading: null, versions: [versionOf(ASSET_2, 2, true), versionOf(ASSET_1, 1, false)] });
+const versionOf = (assetId: string, version: number, current: boolean) => ({ assetId, version, current, reviewStatus: "in_review", uploadedBy: mia, createdAt: "2026-10-09T01:00:00.000Z", originalFilename: "film.mp4", bytes: 1, fps: { num: 25, den: 1 }, frameCount: 300, durationMs: 12000, width: 1920, height: 1080, codec: "avc1", startTimecodeFrames: null, tcNominalFps: 25, tcDropFrame: false, fastStart: true, hasAudio: true, hasPoster: false, streamUrl: `/media/video/${assetId}`, posterUrl: null });
+const videoOf = () => ({ id: VIDEO_ID, reviewStatus: "in_review", olderPublishedVersion: null, title: "Main walkthrough", premium: false, premiumUnlocked: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ASSET_2, latestNoteCount: null, uploading: null, versions: [versionOf(ASSET_2, 2, true), versionOf(ASSET_1, 1, false)] });
 
 const COLLECTIONS = ["raw", "edited", "video"].map((kind, index) => ({ id: `c-${index}`, kind, status: "active", expectedCount: null, receivedCount: 1 }));
 

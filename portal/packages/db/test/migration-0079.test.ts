@@ -21,7 +21,7 @@ function applyUpTo(db: SqliteDatabase, max: number): void {
   }
 }
 function migrated(): SqliteDatabase {
-  const db = localSqlite(); applyUpTo(db, 77);
+  const db = localSqlite(); applyUpTo(db, 78);
   db.exec("BEGIN");
   for (const statement of readFileSync(new URL(`../migrations/${MIGRATION}`, import.meta.url), "utf8").split("--> statement-breakpoint")) db.exec(statement);
   db.exec("COMMIT");

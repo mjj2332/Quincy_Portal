@@ -486,6 +486,12 @@ describe("terminal route manifest", () => {
     const removed = await send("DELETE", `${base}/video-notes/${thread.id}`, { expectedRevision: 2 });
     expect(removed.status).toBe(200);
     EXTERNAL_API_RESPONSE_SCHEMAS["video-note-delete"].parse(await removed.json());
+    // Review status (#863): an assigned External reaches the handler (not the fallback 404), may not approve, and may set In review with a response-only external surface.
+    expect((await send("PUT", `${base}/video-versions/${crypto.randomUUID()}/review-status`, { reviewStatus: "in_review", expectedStatus: "in_review" })).status).toBe(404);
+    expect((await send("PUT", `${base}/video-versions/${manifestVideoAssetId}/review-status`, { reviewStatus: "approved_internal", expectedStatus: "in_review" })).status).toBe(403);
+    const reviewStatus = await send("PUT", `${base}/video-versions/${manifestVideoAssetId}/review-status`, { reviewStatus: "in_review", expectedStatus: "in_review" });
+    expect(reviewStatus.status).toBe(200);
+    EXTERNAL_API_RESPONSE_SCHEMAS["video-review-status"].parse(await reviewStatus.json());
   });
 
   it("reaches every Review link route (#834): with the links part on, an assigned External reaches each handler, not the fallback 404", async () => {

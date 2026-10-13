@@ -442,11 +442,15 @@ describe("POST …/complete", () => {
     expect((await complete("member", v1.reservationId)).status).toBe(201);
     const collectionId = await ensureCollection(ids.project, "video");
     const before = (await database.DB.prepare("SELECT received_count AS n FROM collections WHERE id = ?").bind(collectionId).first<{ n: number }>())!.n;
+    await database.DB.prepare("UPDATE video_version_meta SET review_status = 'approved_internal' WHERE asset_id = ?").bind(v1.assetId).run();
     const v2 = await reserveAndStore("admin", { videoId: v1.videoId });
     expect(v2.version).toBe(2);
     const response = await complete("admin", v2.reservationId); expect(response.status, await response.clone().text()).toBe(201);
     const body = await completeBody(response);
     expect(body.video.versions.map((v) => [v.version, v.current])).toEqual([[2, true], [1, false]]);
+    // Review status (#863): a new Version starts In review, so the Video reads In review while Version 1 keeps its approval.
+    expect(body.video.reviewStatus).toBe("in_review");
+    expect(body.video.versions.map((v) => [v.version, v.reviewStatus])).toEqual([[2, "in_review"], [1, "approved_internal"]]);
     expect(body.video.currentAssetId).toBe(v2.assetId);
     expect(await database.DB.prepare("SELECT superseded_at AS supersededAt, replaced_by_asset_id AS replacedBy FROM assets WHERE id = ?").bind(v1.assetId).first()).toEqual({ supersededAt: expect.any(Number), replacedBy: v2.assetId });
     expect(await database.DB.prepare("SELECT supersedes_asset_id AS s, superseded_at AS at FROM assets WHERE id = ?").bind(v2.assetId).first()).toEqual({ s: v1.assetId, at: null });
