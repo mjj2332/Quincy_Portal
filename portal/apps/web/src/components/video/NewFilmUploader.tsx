@@ -25,6 +25,10 @@ export function NewFilmUploader({ userId, queryClient, projectId, role }: { user
   const rows = useNewFilmBatch(userId, projectId);
   const receive = (files: File[]) => { if (userId) addNewFilms({ userId, queryClient, projectId, role, files }); };
   const waiting = rows.filter((row) => row.status === "ready");
+  // A caution several rows carry (the fast-start warning) is said once above the list; one unique to a row stays on it.
+  const counts = new Map<string, number>();
+  for (const row of rows) for (const caution of new Set(row.cautions)) counts.set(caution, (counts.get(caution) ?? 0) + 1);
+  const shared = [...counts].filter(([, count]) => count > 1).map(([caution]) => caution);
   const checking = rows.some((row) => row.status === "checking");
 
   return <div className="grid gap-[var(--space-3)]" data-testid="new-film-uploader">
@@ -32,18 +36,23 @@ export function NewFilmUploader({ userId, queryClient, projectId, role }: { user
       <div className="ey">New films</div>
       <h2 className="upload-zone__title">Drop MP4 or MOV films here</h2>
       <p>H.264, constant frame rate, up to 2 GB each. Frame rate and timecode are read from each file.</p>
-      <FilePickButton multiple accept={VIDEO_ACCEPT} variant="primary" className={`min-h-[44px] ${TOUCH}`} onFiles={receive}>Choose files</FilePickButton>
+      <FilePickButton multiple accept={VIDEO_ACCEPT} variant="secondary" className={`min-h-[44px] ${TOUCH}`} onFiles={receive}>Choose files</FilePickButton>
     </FileDropzone>
+    {shared.length > 0 && <div className="grid gap-[var(--space-2)]" data-testid="new-film-shared-cautions">
+      {shared.map((caution) => <Notice key={caution} tone="caution" role="status">{caution}</Notice>)}
+    </div>}
     {rows.length > 0 && <ItemGroup>
       {rows.map((row) => {
         const line = facts(row);
-        return <Item key={row.key} role="listitem" variant="outline" data-testid="new-film-row" data-status={row.status} className="flex-wrap">
+        const title = filmTitleFromFilename(row.file.name);
+        const detail = `${row.file.name}${line ? ` · ${line}` : ""}`;
+        return <Item key={row.key} role="listitem" variant="outline" data-testid="new-film-row" data-status={row.status} className="flex-wrap rounded-[var(--radius-card)]">
           <ItemContent className="min-w-[12rem]">
-            <ItemTitle className="font-normal [overflow-wrap:anywhere]">{filmTitleFromFilename(row.file.name)}</ItemTitle>
-            <ItemDescription className="line-clamp-none [overflow-wrap:anywhere]">{row.file.name}{line ? ` · ${line}` : ""}</ItemDescription>
+            <ItemTitle className="font-normal [overflow-wrap:anywhere]">{title}</ItemTitle>
+            {detail !== title && <ItemDescription className="line-clamp-none [overflow-wrap:anywhere]">{detail}</ItemDescription>}
             {row.status === "checking" && <ItemDescription className="line-clamp-none flex items-center gap-[var(--space-2)]" role="status"><Spinner aria-hidden="true" />Checking…</ItemDescription>}
             {row.status === "queued" && <ItemDescription className="line-clamp-none" role="status">Waiting to upload</ItemDescription>}
-            {row.cautions.map((caution) => <Notice key={caution} tone="caution" role="status">{caution}</Notice>)}
+            {row.cautions.filter((caution) => !shared.includes(caution)).map((caution) => <Notice key={caution} tone="caution" role="status">{caution}</Notice>)}
             {(row.status === "rejected" || row.status === "refused") && row.message && <Notice tone="critical" role="alert">{row.message}</Notice>}
           </ItemContent>
           <ItemActions>

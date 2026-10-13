@@ -346,6 +346,35 @@ describe("Uploader (#741 4d-i)", () => {
     expect(rowsOf().every((row) => row.getAttribute("role") === "listitem")).toBe(true);
   });
 
+  it("a rejected file's name is not repeated under its title", async () => {
+    await mount([]);
+    await pick(new File([new Uint8Array(4)], "Wrong format.mkv"));
+    const occurrences = rowText(0).split("Wrong format.mkv").length - 1;
+    expect(occurrences).toBe(1);
+  });
+
+  it("a caution shared by several rows shows once above the list; a unique one stays on its row", async () => {
+    await mount([]);
+    const slowSpec = { tracks: [videoTrack({ timescale: 25000, stts: [[300, 1000]] })], moovFirst: false };
+    await pick([await mp4(slowSpec, "A.mp4"), await mp4(slowSpec, "B.mp4")]);
+    const uploader = host.querySelector('[data-testid="new-film-uploader"]')!;
+    expect(uploader.textContent!.split(NOT_FAST_START_CAUTION).length - 1).toBe(1);
+    expect(rowText(0)).not.toContain(NOT_FAST_START_CAUTION);
+    expect(uploader.querySelector('[data-testid="new-film-shared-cautions"]')?.textContent).toContain(NOT_FAST_START_CAUTION);
+    await pick(await mp4(slowSpec, "C.mp4"));
+    await press(button("Remove A.mp4")); await press(button("Remove B.mp4"));
+    // One row left: its caution is its own again.
+    expect(rowText(0)).toContain(NOT_FAST_START_CAUTION);
+    expect(uploader.querySelector('[data-testid="new-film-shared-cautions"]')).toBeNull();
+  });
+
+  it("rows are square like the Portal's cards, and Choose files is secondary while Upload is the only primary button", async () => {
+    await mount([]);
+    await pick(await good());
+    expect(rowsOf()[0]!.className).toContain("rounded-[var(--radius-card)]");
+    expect(button("Choose files")!.className).not.toBe(uploadButton()!.className);
+  });
+
   it("Upload is disabled while a file is still being checked", async () => {
     await mount([]);
     let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; });
