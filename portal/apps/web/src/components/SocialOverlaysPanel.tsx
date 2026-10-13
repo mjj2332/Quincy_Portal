@@ -44,15 +44,19 @@ export function SocialOverlaysPanel() {
   const open = (kind: DialogKind) => { const id = ++nextDialog.current; currentDialog.current = id; setDialog({ ...kind, id }); };
   const close = () => { currentDialog.current = null; setDialog(null); };
 
+  // Every list read takes a ticket. A mutation or a newer read takes the next one, so an older read that finishes late is dropped instead of overwriting fresher rows.
+  const readTicket = useRef(0);
   const load = useCallback(async () => {
+    const ticket = ++readTicket.current;
     setLoading(true); setError(undefined);
-    try { setOverlays(await listSocialOverlays()); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Social overlays could not be loaded."); }
-    finally { setLoading(false); }
+    try { const rows = await listSocialOverlays(); if (ticket === readTicket.current) setOverlays(rows); }
+    catch (reason) { if (ticket === readTicket.current) setError(reason instanceof Error ? reason.message : "Social overlays could not be loaded."); }
+    finally { if (ticket === readTicket.current) setLoading(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  const replaceRow = (next: SocialOverlayDto) => setOverlays((current) => current.some((row) => row.id === next.id) ? current.map((row) => row.id === next.id ? next : row) : [...current, next]);
+  const replaceRow = (next: SocialOverlayDto) => { readTicket.current += 1; setLoading(false); applyRow(next); };
+  const applyRow = (next: SocialOverlayDto) => setOverlays((current) => current.some((row) => row.id === next.id) ? current.map((row) => row.id === next.id ? next : row) : [...current, next]);
   const visible = overlays.filter((overlay) => showArchived || overlay.archivedAt === null);
 
   async function toggleArchive(overlay: SocialOverlayDto) {
@@ -114,15 +118,20 @@ function OverlayDialog({ dialog, onClose, onSaved }: { dialog: Dialog; onClose: 
   const [fileError, setFileError] = useState<string>();
   const [saveError, setSaveError] = useState<string>();
   const [saving, setSaving] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const checkTicket = useRef(0);
   const needsFile = dialog.kind !== "rename", needsFields = dialog.kind !== "replace";
   const submitLabel = dialog.kind === "create" ? "Upload" : dialog.kind === "rename" ? "Save" : "Replace";
   const title = dialog.kind === "create" ? "Upload a Social overlay" : dialog.kind === "rename" ? `Rename ${dialog.overlay.name}` : `Replace image for ${dialog.overlay.name}`;
-  const valid = (!needsFields || (name.trim().length > 0 && platformLabel.trim().length > 0)) && (!needsFile || (file !== null && !fileError));
+  const valid = (!needsFields || (name.trim().length > 0 && platformLabel.trim().length > 0)) && (!needsFile || (file !== null && !fileError && !checking));
 
   async function choose(picked: File) {
-    setSaveError(undefined);
+    // The previous file stops being submittable the moment a new one is picked, and only the latest check may decide.
+    const ticket = ++checkTicket.current;
+    setSaveError(undefined); setFile(null); setFileError(undefined); setChecking(true);
     const problem = await checkOverlayFile(picked);
-    setFile(problem ? null : picked); setFileError(problem ?? undefined);
+    if (ticket !== checkTicket.current) return;
+    setChecking(false); setFile(problem ? null : picked); setFileError(problem ?? undefined);
   }
   async function submit() {
     if (!valid || saving) return;

@@ -208,4 +208,42 @@ describe("Admin > Social overlays (#869)", () => {
     expect(document.body.querySelector<HTMLInputElement>("#social-overlay-name")!.value).toBe("My draft");
     expect(rows()).toHaveLength(2);
   });
+
+  it("clears the accepted file when a new one is picked, blocks submit while it is checked, and ignores a superseded check (Sol b1)", async () => {
+    await mount([]); await openTab(); await press(button("Upload overlay"));
+    apiPostFormMock.mockResolvedValue({ overlay: overlay() });
+    await type(document.body.querySelector<HTMLInputElement>("#social-overlay-name")!, "N");
+    await type(document.body.querySelector<HTMLInputElement>("#social-overlay-platform")!, "P");
+    const dialog = () => document.body.querySelector('[data-testid="social-overlay-dialog"]')!;
+    const slow = (name: string, spec = {}) => { const file = pngFile(name, spec); let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; }); const original = file.arrayBuffer.bind(file); file.arrayBuffer = async () => { await gate; return original(); }; return { file, release }; };
+    await pick(pngFile("a.png"));
+    expect(button(/^Upload$/, dialog())?.hasAttribute("disabled")).toBe(false);
+    const b = slow("b.png"); const c = slow("c.png");
+    await pick(b.file);
+    expect(button(/^Upload$/, dialog())?.hasAttribute("disabled")).toBe(true);
+    await press(button(/^Upload$/, dialog()));
+    expect(apiPostFormMock).not.toHaveBeenCalled();
+    await pick(c.file);
+    await act(async () => { c.release(); }); await flush(15);
+    await act(async () => { b.release(); }); await flush(15);
+    expect(button(/^Upload$/, dialog())?.hasAttribute("disabled")).toBe(false);
+    await press(button(/^Upload$/, dialog()));
+    expect((apiPostFormMock.mock.calls[0]![1].get("image") as File).name).toBe("c.png");
+  });
+
+  it("a slow list read cannot overwrite a mutation that finished first (Sol b2)", async () => {
+    await mount([overlay(), tiktok()]); await openTab();
+    let finish!: (value: unknown) => void;
+    apiGetMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await press(button("Refresh"));
+    const next = tiktok({ revision: 2, imageUrl: "/social-overlay-images/22222222-2222-4222-8222-222222222222/cccccccc-cccc-4ccc-8ccc-cccccccccccc" });
+    apiPostFormMock.mockResolvedValue({ overlay: next });
+    await press(button("Replace image for TikTok"));
+    await pick(pngFile());
+    await press(button(/^Replace$/, document.body.querySelector('[data-testid="social-overlay-dialog"]')!));
+    expect(rows()[1]!.querySelector("img")?.getAttribute("src")).toBe(next.imageUrl);
+    await act(async () => { finish({ overlays: [overlay(), tiktok()] }); }); await flush();
+    expect(rows()[1]!.querySelector("img")?.getAttribute("src")).toBe(next.imageUrl);
+    expect(rows()).toHaveLength(2);
+  });
 });
