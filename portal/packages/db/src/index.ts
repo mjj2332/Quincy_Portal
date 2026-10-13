@@ -3,6 +3,7 @@ import * as schema from "./schema";
 
 export * as schema from "./schema";
 export { externalVisibleNotificationWhere, externalVisibleNotificationCte } from "./external-notification-visibility";
+export { reviewLinkOpenSql, reviewLinkExpiryOrSql, reviewLinkExpired } from "./review-link-sql";
 export { videoRemovalSuppressionStatements } from "./video-removal-suppression";
 export { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "./collection-count";
 export { supersedeCarryStatements, supersedeCarryToSuccessorStatements } from "./supersede-carry";

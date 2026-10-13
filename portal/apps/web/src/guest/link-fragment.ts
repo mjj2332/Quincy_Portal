@@ -12,13 +12,18 @@ export function readLinkId(search: string = window.location.search): string | nu
   return params.length === 1 && params[0]![0] === "link" && UUID.test(params[0]![1]) ? params[0]![1] : null;
 }
 
-/** Reads `#t=<token>` and removes the whole fragment from the address. Returns the token (kept in memory by the caller), or null when there was none. */
-export function takeLinkToken(): string | null {
+/** What the fragment carried: the credential, and (a Delivery page's "Review & feedback" link, #847) the film to open. `videoId` is a UUID or null. */
+export type LinkFragment = { token: string | null; videoId: string | null };
+
+/** Reads `#t=<token>` (and an optional `&v=<videoId>`) and removes the whole fragment from the address. The caller keeps both in memory. */
+export function takeLinkToken(): LinkFragment {
   const { hash, pathname, search } = window.location;
-  if (hash === "") return null;
-  const token = new URLSearchParams(hash.slice(1)).get("t");
+  if (hash === "") return { token: null, videoId: null };
+  const params = new URLSearchParams(hash.slice(1));
+  const token = params.get("t");
+  const video = params.get("v");
   window.history.replaceState(window.history.state, "", pathname + search);
-  return token !== null && token !== "" ? token : null;
+  return { token: token !== null && token !== "" ? token : null, videoId: video !== null && UUID.test(video) ? video : null };
 }
 
 /**
@@ -27,9 +32,9 @@ export function takeLinkToken(): string | null {
  * again on boot. (`location.replace` would not do: a URL that differs only in its fragment is a same-document navigation, so nothing reloads and the token is simply back in the bar.) A retry of
  * the dynamic import in place would not do: the browser caches a rejected import by URL, and after a deploy the old hashed chunk is gone for good.
  */
-export function reopenWithToken(token: string | null): void {
+export function reopenWithToken(token: string | null, videoId: string | null = null): void {
   if (token === null) { window.location.reload(); return; }
   const { pathname, search } = window.location;
-  window.history.replaceState(window.history.state, "", `${pathname}${search}#t=${encodeURIComponent(token)}`);
+  window.history.replaceState(window.history.state, "", `${pathname}${search}#t=${encodeURIComponent(token)}${videoId !== null ? `&v=${videoId}` : ""}`);
   window.location.reload();
 }

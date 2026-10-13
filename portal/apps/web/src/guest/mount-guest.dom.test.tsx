@@ -31,7 +31,20 @@ describe("mountGuest: the fragment is scrubbed before the chunk is requested", (
     await flush();
     // A full reload, not an in-place retry: the browser caches the rejected import, and a deploy removed the old chunk.
     expect(reopen).toHaveBeenCalledTimes(1);
-    expect(reopen).toHaveBeenCalledWith("boot-token");
+    expect(reopen).toHaveBeenCalledWith("boot-token", null);
     expect(importer).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands the film id from the fragment to GuestApp as initialVideoId, and Reload reopens with it", async () => {
+    const film = "11111111-1111-4111-8111-000000000001";
+    window.history.replaceState(null, "", `/d/review?link=${LINK}#t=boot-token&v=${film}`);
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    const seen: unknown[] = [];
+    const importer = vi.fn(() => Promise.resolve({ GuestApp: (props: { token: string | null; initialVideoId?: string | null }) => { seen.push(props); return null; } }));
+    await act(async () => { mountGuest(host!, importer as never, vi.fn()); });
+    await flush();
+    expect(seen[0]).toEqual({ token: "boot-token", initialVideoId: film });
+    expect(window.location.hash).toBe("");
   });
 });

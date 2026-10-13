@@ -7,7 +7,7 @@ import { useNow } from "./use-now";
 import { externalApiGet, externalProjectDetailToWorkspace } from "./external-api-response";
 import { ZodError } from "zod";
 import { videoListResponseSchema, videoReviewResponseSchema, type ExternalProjectDetailDto, type VideoDto, type VideoReviewResponse } from "@quincy/shared";
-import { createActiveProjectDetailsInvalidatedMessage, createDashboardBoardInvalidatedMessage, createProductionCalendarInvalidatedMessage, createProductionGanttInvalidatedMessage, getProjectQueryRuntime, projectResourceKey, useProjectQueryRuntime, withDependentResources, type ProjectDataResource, type ProjectQueryRuntime } from "./project-query-sync";
+import { createActiveProjectDetailsInvalidatedMessage, createDashboardBoardInvalidatedMessage, createProductionCalendarInvalidatedMessage, createProductionGanttInvalidatedMessage, getProjectQueryRuntime, invalidatesPastPendingRead, projectResourceKey, useProjectQueryRuntime, withDependentResources, type ProjectDataResource, type ProjectQueryRuntime } from "./project-query-sync";
 import type { ReviewPatch, WorkspaceAsset, Review } from "../components/PhotoGrid";
 import type { ProjectStageKey } from "./stages";
 
@@ -54,6 +54,8 @@ export const projectDataKeys = {
   delivery: (projectId: string) => ["project-data", projectId, "delivery"] as const,
   /** What the Delivery tab may offer to publish (#787 slice 10): Publish's own eligibility, behind the Client Delivery gate alone. */
   deliveryCandidates: (projectId: string) => ["project-data", projectId, "delivery-candidates"] as const,
+  /** The Project's Review links (#741 11b); the Delivery link (#847) changes with Publish and premium, so those write paths ask for it again. */
+  reviewLinks: (projectId: string) => ["project-data", projectId, "review-links"] as const,
   /** Every note thread on one Video Version (#741 5b). Under the Project root, so `project-data-removed` clears it; keyed by the Version's Asset id. */
   videoNotes: (projectId: string, assetId: string) => ["project-data", projectId, "video-notes", assetId] as const,
   /** Every Version's client decisions and live Release for one Video (#741 14-ui-staff). */
@@ -449,7 +451,7 @@ export async function invalidateProjectResources(queryClient: QueryClient, inval
   const immediateKeys = immediateResources.map((resource) => projectResourceKey(invalidation.projectId, resource));
   const directInvalidations: Promise<unknown>[] = [];
   for (const [index, queryKey] of immediateKeys.entries()) {
-    if (runtime) directInvalidations.push(immediateResources[index]!.kind === "delivery-candidates" ? runtime.requestFreshInvalidation(queryKey) : runtime.requestInvalidation(queryKey));
+    if (runtime) directInvalidations.push(invalidatesPastPendingRead(immediateResources[index]!) ? runtime.requestFreshInvalidation(queryKey) : runtime.requestInvalidation(queryKey));
     else directInvalidations.push(queryClient.invalidateQueries({ queryKey, exact: true, refetchType: "active" }));
   }
   await Promise.all(directInvalidations);

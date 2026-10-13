@@ -4,7 +4,7 @@ import { aspectOf, formatDelivered, formatDuration, heroMetaOf, heroOf, isExtra,
 import { STUDIO_EMAIL, STUDIO_WEBSITE, studioEmailHref } from "./studio";
 
 const handle = (n: number) => `h${String(n).padStart(15, "0")}`;
-const item = (n: number, over: Partial<DeliveryItemDto> = {}): DeliveryItemDto => ({ handle: handle(n), kind: "photo", label: `Photo ${String(n).padStart(2, "0")}`, position: n, locked: false, premium: false, width: 6000, height: 4000, durationMs: null, url: `/m/${n}`, thumbUrl: `/t/${n}`, ...over });
+const item = (n: number, over: Partial<DeliveryItemDto> = {}): DeliveryItemDto => ({ handle: handle(n), kind: "photo", label: `Photo ${String(n).padStart(2, "0")}`, position: n, locked: false, premium: false, width: 6000, height: 4000, durationMs: null, url: `/m/${n}`, thumbUrl: `/t/${n}`, review: null, ...over });
 const page = (items: DeliveryItemDto[], coverHandle: string | null = null): DeliveryPageDto => ({ property: { street: "12 Example St", suburb: "Suburbia", postcode: "2030", agency: "Harbour Realty" }, setNumber: 1, publishedAt: 1_760_000_000_000, coverHandle, items });
 
 describe("tabsOf", () => {

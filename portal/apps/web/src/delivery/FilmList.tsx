@@ -40,7 +40,10 @@ function FilmPlayer({ item, hrefs }: { item: DeliveryItemDto; hrefs: DeliveryHre
     <div className="grid justify-items-start gap-[var(--space-2)] p-[var(--space-4)]">
       {duration !== null && <span className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">{duration}</span>}
       <span className="[font:var(--type-h3)]">{item.label}</span>
-      {hrefs && <a href={hrefs.download(item.handle)} download aria-label={`Download ${item.label}, original`} className={buttonVariants({ variant: "outline", size: "sm", className: `w-fit ${TOUCH}` })}>Download original</a>}
+      {(hrefs || item.review) && <div className="flex flex-wrap items-center gap-[var(--space-3)]">
+        {hrefs && <a href={hrefs.download(item.handle)} download aria-label={`Download ${item.label}, original`} className={buttonVariants({ variant: "outline", size: "sm", className: `w-fit ${TOUCH}` })}>Download original</a>}
+        {item.review && <a href={item.review.url} target="_blank" rel="noopener noreferrer" aria-label={`Review & feedback for ${item.label}, opens in a new tab`} className={buttonVariants({ variant: "outline", size: "sm", className: `w-fit ${TOUCH}` })}>Review & feedback</a>}
+      </div>}
     </div>
   </div>;
 }

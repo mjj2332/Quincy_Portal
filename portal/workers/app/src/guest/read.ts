@@ -29,7 +29,7 @@ type VersionRow = {
 
 /** Current members with at least one live grant, in Video position order, each with its granted Versions newest first. */
 export async function listGuestVideos(db: D1Database, linkId: string, projectId: string, guestId: string | null = null, canDownload = false): Promise<GuestVideoListResponse> {
-  const [videoResult, versionResult, decisionResult, releaseResult] = await db.batch([
+  const [videoResult, versionResult, decisionResult, releaseResult, publishedResult] = await db.batch([
     db.prepare(`SELECT v.id, v.title, v.premium, (p.video_id IS NOT NULL) AS unlocked
       FROM review_link_videos rv JOIN videos v ON v.id = rv.video_id AND v.project_id = ?2 AND ${LIVE_VIDEO("v")} LEFT JOIN video_premium_unlocks p ON p.video_id = v.id
       WHERE rv.link_id = ?1 AND rv.removed_at IS NULL
@@ -47,10 +47,14 @@ export async function listGuestVideos(db: D1Database, linkId: string, projectId:
       WHERE e.link_id = ?1 AND e.revision = (SELECT MAX(x.revision) FROM video_approval_events x WHERE x.asset_id = e.asset_id AND x.link_id = e.link_id)`).bind(linkId),
     db.prepare(`SELECT r.asset_id FROM video_releases r JOIN video_version_meta rm ON rm.asset_id = r.asset_id AND ${LIVE_VERSION("rm")} JOIN videos rvd ON rvd.id = r.video_id AND ${LIVE_VIDEO("rvd")}
       WHERE r.withdrawn_at IS NULL AND r.asset_id IN (SELECT g.asset_id FROM review_link_version_grants g WHERE g.link_id = ?1 AND g.revoked_at IS NULL)`).bind(linkId),
+    // #847: on the Delivery review link only, the Versions of the latest Published set (the Delivery page's downloads). Empty for every ordinary link.
+    db.prepare(`SELECT pdi.asset_id FROM client_links pdl JOIN delivery_pages pdp ON pdp.project_id = pdl.project_id JOIN delivery_sets pds ON pds.project_id = pdl.project_id AND pds.set_number = pdp.latest_set_number
+      JOIN delivery_set_items pdi ON pdi.set_id = pds.id WHERE pdl.id = ?1 AND pdl.delivery_review = 1`).bind(linkId),
   ]);
   const decisionByAsset = new Map((decisionResult!.results as Array<{ asset_id: string; decision: "approved" | "changes_requested"; revision: number; created_at: number; actor_guest_id: string | null }>)
     .map((row) => [row.asset_id, { value: row.decision, revision: row.revision, at: iso(row.created_at), self: guestId !== null && row.actor_guest_id === guestId }] as const));
   const releasedAssets = new Set((releaseResult!.results as Array<{ asset_id: string }>).map((row) => row.asset_id));
+  const publishedAssets = new Set((publishedResult!.results as Array<{ asset_id: string }>).map((row) => row.asset_id));
   const versionsByVideo = new Map<string, VersionRow[]>();
   for (const row of versionResult!.results as VersionRow[]) versionsByVideo.set(row.video_id, [...(versionsByVideo.get(row.video_id) ?? []), row]);
   return guestVideoListResponseSchema.parse({
@@ -61,8 +65,8 @@ export async function listGuestVideos(db: D1Database, linkId: string, projectId:
         startTimecodeFrames: row.start_tc_frames, tcNominalFps: row.tc_nominal_fps, tcDropFrame: row.tc_drop_frame === 1, hasAudio: row.has_audio === 1,
         posterUrl: row.has_poster === 1 ? posterUrl(linkId, row.asset_id) : null, streamUrl: streamUrl(linkId, row.asset_id), publicNoteCount: row.note_count,
         decision: decisionByAsset.get(row.asset_id) ?? null, released: releasedAssets.has(row.asset_id),
-        // Only a live-released Version of an unlocked Video on a link that allows downloads (`canDownload` is the link flag AND the `delivery` part) names the route.
-        downloadUrl: canDownload && releasedAssets.has(row.asset_id) && !(video.premium === 1 && video.unlocked !== 1) ? downloadUrl(linkId, row.asset_id) : null,
+        // Only a live-released Version (or, on the Delivery review link, one in the latest Published set) of an unlocked Video on a link that allows downloads (`canDownload` is the link flag AND the `delivery` part) names the route. `released` stays about Releases alone.
+        downloadUrl: canDownload && (releasedAssets.has(row.asset_id) || publishedAssets.has(row.asset_id)) && !(video.premium === 1 && video.unlocked !== 1) ? downloadUrl(linkId, row.asset_id) : null,
       })),
     })).filter((video) => video.versions.length > 0),
   });

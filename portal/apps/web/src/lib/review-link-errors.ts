@@ -13,12 +13,14 @@ const detailsOf = (error: ApiError): Record<string, unknown> => (error.details &
 const CODE_COPY: Record<string, { text: string; action: ReviewLinkErrorAction }> = {
   link_revoked: { text: "This Review link was revoked, so it can't be changed.", action: "refetch" },
   link_expired: { text: "This Review link has expired. Extend its expiry first, then replace it.", action: "refetch" },
+  link_not_revoked: { text: "Revoke this link before deleting it.", action: "refetch" },
   grant_required: { text: "Grant at least one Version. To stop sharing a Video, remove it instead.", action: "none" },
   grant_not_version: { text: "That Version no longer belongs to this Video. The list was refreshed.", action: "refetch" },
   project_archived: { text: "Archived projects are read-only; Review links can't be changed. Revoking still works.", action: "none" },
   already_on_link: { text: "That Video is already on this link.", action: "refetch" },
   link_conflict: { text: "The Review link changed. It was reloaded; try again.", action: "refetch" },
   video_other_project: { text: "Every Video must belong to this Project. The list was refreshed.", action: "refetch" },
+  delivery_review_managed: { text: "This link is managed by the Delivery page, so it can't be changed here. The list was refreshed.", action: "refetch" },
   expiry_out_of_range: { text: "The expiry must be between one hour and 365 days from now.", action: "none" },
 };
 

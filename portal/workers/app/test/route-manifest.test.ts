@@ -485,7 +485,7 @@ describe("terminal route manifest", () => {
       // An unknown link / Video is answered by the handler itself ("Review link not found"), never the router's fallback "Not found".
       const calls: Array<[string, string, unknown?]> = [
         ["PATCH", `${base}/${link}`, { label: "x" }], ["POST", `${base}/${link}/videos`, { videoId: video, assetIds: [crypto.randomUUID()] }],
-        ["DELETE", `${base}/${link}/videos/${video}`], ["PUT", `${base}/${link}/videos/${video}/grants`, { assetIds: [crypto.randomUUID()] }], ["POST", `${base}/${link}/revoke`, {}], ["POST", `${base}/${link}/replace`, {}],
+        ["DELETE", `${base}/${link}/videos/${video}`], ["PUT", `${base}/${link}/videos/${video}/grants`, { assetIds: [crypto.randomUUID()] }], ["POST", `${base}/${link}/revoke`, {}], ["POST", `${base}/${link}/replace`, {}], ["DELETE", `${base}/${link}`],
       ];
       for (const [method, path, body] of calls) {
         const response = await send(method, path, body);

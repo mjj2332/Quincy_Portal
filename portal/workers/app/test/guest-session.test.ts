@@ -53,6 +53,27 @@ describe("POST /d/api/links/:linkId/session", () => {
     expect(audit!.meta_json).not.toContain(link.token);
   });
 
+  it("exchanges the token on a link with no expiry and holds the seven-day session cap (#847)", async () => {
+    const link = await seedGuestLink({ deliveryReview: true });
+    const { response } = await startSession(link);
+    expect(response.status).toBe(200);
+    const body = guestSessionResponseSchema.parse(await response.json());
+    expect(body.link).toMatchObject({ label: "Delivery", expiresAt: null });
+    const [row] = await sessionRows(link.id);
+    expect(row!.expires_at as number).toBeGreaterThan(Date.now() + 7 * DAY - 5_000); expect(row!.expires_at as number).toBeLessThanOrEqual(Date.now() + 7 * DAY);
+    const maxAge = Number(response.headers.getSetCookie()[0]!.match(/Max-Age=(\d+)/)![1]);
+    expect(maxAge).toBeGreaterThan(7 * 86_400 - 30); expect(maxAge).toBeLessThanOrEqual(7 * 86_400);
+  });
+
+  it("keeps a session on a link with no expiry across later requests, and ends it when the Delivery page is switched off (#847)", async () => {
+    const link = await linkWithSession({ deliveryReview: true });
+    expect((await guestFetch(linkPath(link.id, "/session"), { cookie: link.cookie })).status).toBe(200);
+    await database.DB.prepare("UPDATE delivery_pages SET enabled = 0 WHERE slug LIKE 'guest-dr-%'").run();
+    const reference = await stubOf(await guestFetch("/d/api/x"));
+    expect(await stubOf(await guestFetch(linkPath(link.id, "/session"), { cookie: link.cookie }))).toEqual(reference);
+    expect(await stubOf(await guestFetch(linkPath(link.id, "/session"), { method: "POST", body: { token: link.token } }))).toEqual(reference);
+  });
+
   it("caps the session at the link expiry", async () => {
     const link = await seedGuestLink({ expiresAt: Date.now() + 3_600_000 });
     const { response } = await startSession(link);
@@ -64,7 +85,7 @@ describe("POST /d/api/links/:linkId/session", () => {
     expect(maxAge).toBeLessThanOrEqual(3600); expect(maxAge).toBeGreaterThan(3500);
   });
 
-  it("answers the byte-identical stub for an unknown link, a wrong token, another link's token, a malformed token, an expired, revoked or non-video link", async () => {
+  it("answers the byte-identical stub for an unknown link, a wrong token, another link's token, a malformed token, an expired, revoked, deleted or non-video link", async () => {
     const a = await seedGuestLink(); const b = await seedGuestLink();
     const reference = await stubOf(await guestFetch("/d/api/x"));
     expect(reference.status).toBe(404);
@@ -75,6 +96,7 @@ describe("POST /d/api/links/:linkId/session", () => {
     ];
     const expired = await seedGuestLink({ expiresAt: Date.now() - 1000 }); attempts.push(await post(expired.id, expired.token));
     const revoked = await seedGuestLink({ revoked: true }); attempts.push(await post(revoked.id, revoked.token));
+    const deleted = await seedGuestLink({ deleted: true }); attempts.push(await post(deleted.id, deleted.token));
     const delivery = await seedGuestLink({ kind: "delivery" }); attempts.push(await post(delivery.id, delivery.token));
     for (const [index, response] of attempts.entries()) expect(await stubOf(response), `attempt ${index}`).toEqual(reference);
     expect(await sessionRows(a.id)).toHaveLength(0);
@@ -216,6 +238,10 @@ describe("GET and DELETE /d/api/links/:linkId/session", () => {
     await database.DB.prepare("UPDATE client_links SET revoked_at = ?, revoked_by = ? WHERE id = ?").bind(Date.now(), ids.member, revoked.id).run();
     expect(await stubOf(await read(revoked))).toEqual(reference);
 
+    const deleted = await linkWithSession(); expect((await read(deleted)).status).toBe(200);
+    await database.DB.prepare("UPDATE client_links SET revoked_at = ?, revoked_by = ?, deleted_at = ?, deleted_by = ? WHERE id = ?").bind(Date.now(), ids.member, Date.now(), ids.member, deleted.id).run();
+    expect(await stubOf(await read(deleted))).toEqual(reference);
+
     const replaced = await linkWithSession(); expect((await read(replaced)).status).toBe(200);
     await database.DB.prepare("UPDATE client_links SET token_generation = token_generation + 1 WHERE id = ?").bind(replaced.id).run();
     expect(await stubOf(await read(replaced)), "the generation join, with the session row still present").toEqual(reference);
@@ -282,14 +308,14 @@ describe("GET /d/review", () => {
     expect(await response.text()).toContain("<div id=\"root\"");
   });
 
-  it("serves byte-identical shells (body and every header) for a live, unknown, expired, revoked, non-video and non-pilot link", async () => {
+  it("serves byte-identical shells (body and every header) for a live, unknown, expired, revoked, deleted, non-video and non-pilot link", async () => {
     const live = await seedGuestLink();
-    const expired = await seedGuestLink({ expiresAt: Date.now() - 1000 }); const revoked = await seedGuestLink({ revoked: true }); const delivery = await seedGuestLink({ kind: "delivery" });
+    const expired = await seedGuestLink({ expiresAt: Date.now() - 1000 }); const revoked = await seedGuestLink({ revoked: true }); const deleted = await seedGuestLink({ deleted: true }); const delivery = await seedGuestLink({ kind: "delivery" });
     const shellOf = async (response: Response) => ({ status: response.status, body: await response.text(), headers: [...response.headers].filter(([name]) => name !== "server-timing").sort() });
     const reference = await shellOf(await guestFetch(`/d/review?link=${live.id}`));
     expect(reference.status).toBe(200);
     expect(reference.body).toContain("<div id=\"root\"");
-    for (const id of [crypto.randomUUID(), expired.id, revoked.id, delivery.id]) {
+    for (const id of [crypto.randomUUID(), expired.id, revoked.id, deleted.id, delivery.id]) {
       const other = await shellOf(await guestFetch(`/d/review?link=${id}`));
       expect(other, id).toEqual(reference);
     }

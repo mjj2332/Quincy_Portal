@@ -462,6 +462,7 @@ describe("a received Trash or decisions broadcast is not swallowed by a read alr
   it.each([
     ["videos", { kind: "videos" } as const, projectDataKeys.videos("p")],
     ["video-trash", { kind: "video-trash" } as const, projectDataKeys.videoTrash("p")],
+    ["review-links (#847)", { kind: "review-links" } as const, projectDataKeys.reviewLinks("p")],
     ["video-decisions", { kind: "video-decisions", videoId: video } as const, projectDataKeys.videoDecisions("p", video)],
   ])("%s: the answer to the first read, issued before the broadcast, does not become the cache", async (_name, resource, key) => {
     vi.stubGlobal("BroadcastChannel", FakeChannel);

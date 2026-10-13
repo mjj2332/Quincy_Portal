@@ -1,3 +1,4 @@
+import { reviewLinkOpenSql } from "@quincy/db";
 import { videoReviewPartFlag, type VideoReviewPart } from "@quincy/shared";
 import { LIVE_VERSION, LIVE_VIDEO } from "./video-live-sql";
 
@@ -7,8 +8,8 @@ import { LIVE_VERSION, LIVE_VIDEO } from "./video-live-sql";
  * cannot disagree about what "the link is still live" means. Pure strings: nothing here reads a request or a staff principal.
  */
 
-/** The session and link are still live at `now` (a placeholder such as `?5`): session unexpired, a video review link that is not revoked or expired, minted under its current generation. */
-export const liveSql = (now: string): string => `s.expires_at > ${now} AND l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ${now} AND s.link_generation = l.token_generation`;
+/** The session and link are still live at `now` (a placeholder such as `?5`): session unexpired, a video review link that is open (`reviewLinkOpenSql`), minted under its current generation. */
+export const liveSql = (now: string): string => `s.expires_at > ${now} AND ${reviewLinkOpenSql("l", now)} AND s.link_generation = l.token_generation`;
 
 /** One part flag as a row test. */
 const partOn = (part: VideoReviewPart): string => `EXISTS (SELECT 1 FROM feature_flags f WHERE f.enabled = 1 AND f.key = '${videoReviewPartFlag(part)}')`;
@@ -38,6 +39,18 @@ export const reachSql = (link: string, project: string, asset: string): string =
     JOIN assets ra ON ra.id = rg.asset_id AND ra.kind = 'video'
     JOIN video_version_meta rm ON rm.asset_id = ra.id AND rm.video_id = rg.video_id AND ${LIVE_VERSION("rm")}
     WHERE rg.link_id = ${link} AND rg.asset_id = ${asset} AND rg.revoked_at IS NULL)`;
+
+/**
+ * The Version `asset` (a SQL expression) is in the LATEST Published set of the Project of the Delivery review link `link` (#847): the one Version of a film the Delivery page offers as a download, which the
+ * link may therefore serve without a Release. Only a link with `delivery_review = 1` qualifies, so an ordinary Review link never gets this way in. Superseded sets are not the page.
+ */
+export const publishedOnDeliveryLinkSql = (link: string, asset: string): string => `EXISTS (SELECT 1 FROM client_links pdl
+    JOIN delivery_pages pdp ON pdp.project_id = pdl.project_id JOIN delivery_sets pds ON pds.project_id = pdl.project_id AND pds.set_number = pdp.latest_set_number
+    JOIN delivery_set_items pdi ON pdi.set_id = pds.id
+    WHERE pdl.id = ${link} AND pdl.delivery_review = 1 AND pdi.asset_id = ${asset})`;
+
+/** The Version `asset` may be handed to a guest of `link` as a file: a live Release, OR (the Delivery review link only) it is in the latest Published set. `released` stays about Releases alone. */
+export const guestDownloadableSql = (link: string, asset: string): string => `(EXISTS (SELECT 1 FROM video_releases gr WHERE gr.asset_id = ${asset} AND gr.withdrawn_at IS NULL) OR ${publishedOnDeliveryLinkSql(link, asset)})`;
 
 /** The identity a guest write was authenticated with: the exact session, its token hash, the verified guest and the link. */
 export type GuestWriter = { guestId: string; sessionId: string; linkId: string; tokenHash: string; /** The write touches a drawing, so the `markup` part must be on as well. */ markup: boolean };

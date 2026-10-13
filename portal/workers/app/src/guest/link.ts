@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import type { GuestSessionResponse, VideoReviewPart } from "@quincy/shared";
+import { reviewLinkOpenSql } from "@quincy/db";
 import { hashToken } from "../lib/opaque-token";
 import { readVideoReviewGate } from "../lib/video-review-gate";
 import type { AppEnv } from "../env";
@@ -7,12 +8,12 @@ import { readSessionCookie, UUID } from "./http";
 
 /** What the guest surface knows of a Review link: the link row, the gate and the session join. Every failure here is `null`, and the caller answers the one stub. */
 export type GuestLink = {
-  id: string; projectId: string; label: string | null; expiresAt: number; allowComments: boolean; allowApprove: boolean; allowDownload: boolean;
+  id: string; projectId: string; label: string | null; /** Null: the Delivery review link never expires (#847). */ expiresAt: number | null; allowComments: boolean; allowApprove: boolean; allowDownload: boolean;
   tokenHash: string; tokenGeneration: number; hasPasscode: boolean; passcodeHash: string | null;
   /** The Worker parts on for this Project when the row was read (`guest` is always among them). The `allow` flags a guest is shown depend on two of them. */
   parts: VideoReviewPart[];
 };
-type LinkRow = { id: string; project_id: string; label: string | null; expires_at: number; allow_comments: number; allow_approve: number; allow_download: number; token_hash: string; token_generation: number; passcode_hash: string | null };
+type LinkRow = { id: string; project_id: string; label: string | null; expires_at: number | null; allow_comments: number; allow_approve: number; allow_download: number; token_hash: string; token_generation: number; passcode_hash: string | null };
 
 const LINK_SELECT = "l.id, l.project_id, l.label, l.expires_at, l.allow_comments, l.allow_approve, l.allow_download, l.token_hash, l.token_generation, l.passcode_hash";
 const toLink = (row: LinkRow, parts: VideoReviewPart[]): GuestLink => ({
@@ -32,10 +33,10 @@ export async function guestGloballyOpen(db: D1Database): Promise<boolean> {
   return rows.length === 2;
 }
 
-/** An active Review link (kind `video_review`, not revoked, not expired) whose Project passes the gate. */
+/** An active Review link (open per `reviewLinkOpenSql`: not revoked, not expired, its Delivery page on when it is the Delivery review link) whose Project passes the gate. */
 export async function loadActiveLink(c: Context<AppEnv>, linkId: string, now: number): Promise<GuestLink | null> {
   if (!UUID.test(linkId)) return null;
-  const row = await c.env.DB.prepare(`SELECT ${LINK_SELECT} FROM client_links l WHERE l.id = ?1 AND l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ?2`).bind(linkId, now).first<LinkRow>();
+  const row = await c.env.DB.prepare(`SELECT ${LINK_SELECT} FROM client_links l WHERE l.id = ?1 AND ${reviewLinkOpenSql("l", "?2")}`).bind(linkId, now).first<LinkRow>();
   const parts = row ? await guestGateParts(c.env.DB, row.project_id) : null;
   return row && parts ? toLink(row, parts) : null;
 }
@@ -56,7 +57,7 @@ export async function resolveSession(c: Context<AppEnv>, linkId: string, now: nu
   const tokenHash = await hashToken(token);
   const row = await c.env.DB.prepare(`SELECT s.id AS session_id, s.guest_id, g.email_normalized AS guest_email, g.display_name AS guest_name, s.expires_at AS session_expires_at, s.last_seen_at, ${LINK_SELECT}
       FROM guest_sessions s JOIN client_links l ON l.id = s.link_id LEFT JOIN guest_reviewers g ON g.id = s.guest_id
-      WHERE s.token_hash = ?1 AND s.link_id = ?2 AND s.expires_at > ?3 AND l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ?3 AND s.link_generation = l.token_generation`)
+      WHERE s.token_hash = ?1 AND s.link_id = ?2 AND s.expires_at > ?3 AND ${reviewLinkOpenSql("l", "?3")} AND s.link_generation = l.token_generation`)
     .bind(tokenHash, linkId, now).first<LinkRow & { session_id: string; guest_id: string | null; guest_email: string | null; guest_name: string | null; session_expires_at: number; last_seen_at: number }>();
   const parts = row ? await guestGateParts(c.env.DB, row.project_id) : null;
   if (!row || !parts) return null;
@@ -75,7 +76,7 @@ export async function resolveSession(c: Context<AppEnv>, linkId: string, now: nu
  */
 export async function sessionStillValid(db: D1Database, session: GuestSession, now: number): Promise<boolean> {
   const row = await db.prepare(`SELECT 1 AS ok FROM guest_sessions s JOIN client_links l ON l.id = s.link_id
-      WHERE s.id = ?1 AND s.token_hash = ?2 AND s.link_id = ?3 AND s.guest_id IS ?4 AND s.expires_at > ?5 AND l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ?5 AND s.link_generation = l.token_generation`)
+      WHERE s.id = ?1 AND s.token_hash = ?2 AND s.link_id = ?3 AND s.guest_id IS ?4 AND s.expires_at > ?5 AND ${reviewLinkOpenSql("l", "?5")} AND s.link_generation = l.token_generation`)
     .bind(session.id, session.tokenHash, session.link.id, session.guestId, now).first();
   if (!row) return false;
   const parts = await guestGateParts(db, session.link.projectId);
@@ -88,7 +89,7 @@ export async function sessionStillValid(db: D1Database, session: GuestSession, n
  */
 export const sessionBody = (link: GuestLink, identity: { email: string; name: string | null } | null = null, notifications: GuestSessionResponse["notifications"] = null, heic = false): GuestSessionResponse => ({
   link: {
-    label: link.label, expiresAt: new Date(link.expiresAt).toISOString(),
+    label: link.label, expiresAt: link.expiresAt === null ? null : new Date(link.expiresAt).toISOString(),
     allow: { comments: link.allowComments && link.parts.includes("guest_comments"), approve: link.allowApprove && link.parts.includes("delivery"), download: link.allowDownload && link.parts.includes("delivery"), markup: link.parts.includes("markup") },
   },
   verified: identity !== null, email: identity?.email ?? null, name: identity?.name ?? null,

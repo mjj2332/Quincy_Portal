@@ -156,6 +156,64 @@ describe("the link token", () => {
   });
 });
 
+describe("a Delivery deep link (#847)", () => {
+  const posts = () => fetchMock.mock.calls.filter((call) => (call[1] as RequestInit | undefined)?.method === "POST" && String(call[0]).endsWith("/session"));
+  async function openDeep(videoId: string | null, token: string | null = "tok123") {
+    window.history.replaceState(null, "", `/d/review?link=${LINK}`);
+    host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => { root!.render(<GuestApp token={token} initialVideoId={videoId} />); });
+    await flush();
+  }
+
+  it("with a live session, resumes first (no exchange), opens that film and asks an unverified guest to verify once", async () => {
+    await openDeep(vid(2));
+    expect(posts()).toHaveLength(0);
+    expect(title()).toBe("Film 2");
+    expect(document.querySelectorAll('[data-testid="guest-verify-dialog"]')).toHaveLength(1);
+  });
+
+  it("opens the film's newest granted Version, which the list gives first", async () => {
+    videos = [videoOf(1), videoOf(2, { versions: [versionOf(22, { version: 2 }), versionOf(21, { version: 1 })] })];
+    await openDeep(vid(2));
+    expect(title()).toBe("Film 2");
+    expect(host.textContent).toContain("v2 · latest");
+  });
+
+  it("does not open the verify dialog for an already verified session", async () => {
+    const verified = { ...SESSION, verified: true, email: "a@b.co", name: "A" };
+    extra = (url) => (url === `/d/api/links/${LINK}/session` ? json(verified) : undefined);
+    await openDeep(vid(3));
+    expect(title()).toBe("Film 3");
+    expect(document.querySelectorAll('[data-testid="guest-verify-dialog"]')).toHaveLength(0);
+  });
+
+  it("exchanges the token only when there is no session to resume", async () => {
+    let gone = true;
+    extra = (url, init) => {
+      if (url !== `/d/api/links/${LINK}/session`) return undefined;
+      if ((init?.method ?? "GET") === "GET") return gone ? stub404() : undefined;
+      gone = false; return undefined;
+    };
+    await openDeep(vid(1));
+    expect(posts()).toHaveLength(1);
+    expect(title()).toBe("Film 1");
+  });
+
+  it("a film that is no longer on the link shows a calm notice and the list", async () => {
+    await openDeep(vid(9));
+    expect(byId("guest-notice")?.textContent).toContain("no longer available");
+    expect(allById("guest-video-row")).toHaveLength(3);
+  });
+
+  it("an ordinary link still exchanges the token first and lands on the list", async () => {
+    await openDeep(null);
+    expect(posts()).toHaveLength(1);
+    expect(allById("guest-video-row")).toHaveLength(3);
+    expect(byId("guest-notice")).toBeNull();
+    expect(document.querySelectorAll('[data-testid="guest-verify-dialog"]')).toHaveLength(0);
+  });
+});
+
 describe("the video screen", () => {
   it("moves through the videos with Previous / Next and [ / ], without the list", async () => {
     await open();

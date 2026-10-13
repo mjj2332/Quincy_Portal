@@ -23,8 +23,31 @@ describe("Publish settles the stage move's surfaces", () => {
     api.apiPost.mockResolvedValue({ ...state(1), replayed: false, operationSetNumber: 1 });
     await publishDelivery(client, P, { assetIds: [A], coverAssetId: null, expectedLatestSet: null, operationId: "op-1" });
     const call = sync.invalidateProjectSurfaces.mock.calls.map(([, input]) => input as { resources: Array<{ kind: string }>; dashboard: boolean; calendar: boolean; gantt: boolean })[0]!;
-    expect(call.resources.map((r) => r.kind).sort()).toEqual(["activity", "delivery", "detail"]);
+    expect(call.resources.map((r) => r.kind).sort()).toEqual(["activity", "delivery", "detail", "review-links"]);
     expect([call.dashboard, call.calendar, call.gantt]).toEqual([true, true, true]);
+  });
+});
+
+describe("a local Review links invalidation is not swallowed by a read already in flight (#847)", () => {
+  it("the answer to the first read, issued before the Publish, does not become the cache", async () => {
+    const { QueryObserver } = await import("@tanstack/react-query");
+    const { invalidateProjectResources } = await vi.importActual<typeof import("./project-data")>("./project-data");
+    const runtime = new ProjectQueryRuntime(client, "local");
+    const key = projectDataKeys.reviewLinks(P);
+    let resolveOld!: (value: string) => void;
+    const reads = vi.fn<() => Promise<string>>();
+    reads.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+    reads.mockResolvedValueOnce("fresh");
+    const observer = new QueryObserver(client, { queryKey: key, queryFn: reads, staleTime: 15_000 });
+    const unsubscribe = observer.subscribe(() => undefined);
+    await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(1));
+    const done = invalidateProjectResources(client, { projectId: P, resources: [{ kind: "review-links" }] }, false);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveOld("stale");
+    await done;
+    await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(client.getQueryData(key)).toBe("fresh"));
+    unsubscribe(); runtime.dispose();
   });
 });
 
@@ -109,7 +132,7 @@ describe("Video premium from the Delivery tab uses the Client Delivery routes", 
     const cached = client.getQueryData<{ candidates: Array<{ assetId: string; premium: boolean }> }>(projectDataKeys.deliveryCandidates(P))!.candidates;
     expect(cached.map((c) => c.premium)).toEqual([true, false]);
     const kinds = sync.invalidateProjectSurfaces.mock.calls.map(([, input]) => (input as { resources: Array<{ kind: string }> }).resources.map((r) => r.kind).sort());
-    expect(kinds).toEqual([["delivery", "delivery-candidates", "videos"]]);
+    expect(kinds).toEqual([["delivery", "delivery-candidates", "review-links", "videos"]]);
   });
   it("unlocks and re-locks through /premium-unlock, sending the payment reference only when unlocking", async () => {
     client.setQueryData(projectDataKeys.deliveryCandidates(P), { candidates: [candidate({ premium: true })] });

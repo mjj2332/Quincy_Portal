@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { AppEnv } from "../env";
 import { audit, auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
+import { syncDeliveryReviewLink } from "../lib/delivery-review-link";
 import { jsonInput } from "./helpers";
 import { ensurePipelineStages, listPipelineStages } from "./stages";
 import { boardSchemaMaintenance } from "../lib/board-schema-maintenance";
@@ -20,6 +21,7 @@ const agentPatch = agentFields.partial();
 const stagePatch = z.object({ label: z.string().trim().min(1).optional(), active: z.boolean().optional() });
 const renditionBackfill = z.object({ dryRun: z.boolean().optional(), cursor: z.string().uuid().optional(), limit: z.number().int().min(1).max(100).optional(), confirmProduction: z.literal(true).optional() });
 const autohdrBackfillInput = z.object({ dryRun: z.boolean().optional(), limit: z.number().int().min(1).max(100).optional(), cursor: z.string().uuid().optional() });
+const deliveryReviewSyncInput = z.object({ dryRun: z.boolean().optional(), limit: z.number().int().min(1).max(100).optional(), cursor: z.string().uuid().optional() }).strict();
 const autohdrScaffoldBackfillInput = z.object({ dryRun: z.boolean().optional(), limit: z.number().int().min(1).max(200).optional() });
 const optionalQuery = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((value) => value === "" ? undefined : value, schema.optional());
 const eventsQuery = z.object({ source: optionalQuery(z.literal("tonomo")), status: optionalQuery(z.enum(["received", "processed", "poison"])), offset: optionalQuery(z.coerce.number().int().min(0)), limit: optionalQuery(z.coerce.number().int().min(1).max(100)) });
@@ -432,6 +434,33 @@ adminRoutes.post("/admin/autohdr/scaffold-backfill", terminalRoute("/admin/autoh
   }
   await audit(c.env, c.get("user"), "admin.autohdr_scaffold_backfill", "system", "scaffold-backfill", { triggeredCount: items.length, items });
   return c.json({ dryRun: false, triggeredCount: items.length, items });
+}));
+
+/**
+ * #847 / ADR 0023: brings every Project with a Delivery page onto its Delivery review link (create when the latest set holds a film, then converge membership and grants). Operator-run once after
+ * migration 0077 is applied and the Worker deployed, from a signed-in Admin browser; re-runnable (a second run reports `changed: 0`). One page of Projects per call (`cursor` is the last
+ * Project id seen); archived Projects are included. The response never carries a link address or secret. `dryRun` writes nothing and reports what a real run would create.
+ */
+adminRoutes.post("/admin/delivery-review-links/sync", terminalRoute("/admin/delivery-review-links/sync", async (c) => {
+  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  const input = await jsonInput(c, deliveryReviewSyncInput); if (input instanceof Response) return input;
+  const limit = input.limit ?? 50; const user = c.get("user");
+  const pages = (await c.env.DB.prepare("SELECT project_id AS projectId FROM delivery_pages WHERE (?1 IS NULL OR project_id > ?1) ORDER BY project_id LIMIT ?2").bind(input.cursor ?? null, limit + 1).all<{ projectId: string }>()).results;
+  const batch = pages.slice(0, limit); const nextCursor = pages.length > limit ? batch[batch.length - 1]!.projectId : null;
+  if (input.dryRun) {
+    const missing = (await c.env.DB.prepare(`SELECT p.project_id AS projectId FROM delivery_pages p WHERE p.project_id IN (SELECT value FROM json_each(?1))
+        AND NOT EXISTS (SELECT 1 FROM client_links l WHERE l.project_id = p.project_id AND l.delivery_review = 1)
+        AND EXISTS (SELECT 1 FROM delivery_sets ds JOIN delivery_set_items di ON di.set_id = ds.id JOIN assets a ON a.id = di.asset_id AND a.kind = 'video' WHERE ds.project_id = p.project_id AND ds.set_number = p.latest_set_number)`)
+      .bind(JSON.stringify(batch.map((page) => page.projectId))).all<{ projectId: string }>()).results;
+    return c.json({ dryRun: true, scanned: batch.length, wouldCreate: missing.length, nextCursor });
+  }
+  let created = 0; let changed = 0;
+  for (const page of batch) {
+    const result = await syncDeliveryReviewLink(c.env.DB, { projectId: page.projectId, principal: user, now: Date.now(), trigger: "backfill" });
+    if (result.created) created += 1; if (result.changed) changed += 1;
+  }
+  await audit(c.env, user, "admin.delivery_review_backfill", "system", "delivery-review-links", { scanned: batch.length, created, changed, nextCursor });
+  return c.json({ dryRun: false, scanned: batch.length, created, changed, nextCursor });
 }));
 
 // Messages the quincy-renditions consumer's DLQ actually received (see background queue()'s

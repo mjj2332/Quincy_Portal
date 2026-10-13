@@ -26,7 +26,7 @@ export type GuestSessionInput = z.infer<typeof guestSessionInputSchema>;
  * renders a control whose POST would be the stub. `markup` is the Worker part alone (a drawing is a note field, so it needs `comments` too): with it off, a note that carries a drawing is the stub.
  */
 export const guestSessionResponseSchema = z.object({
-  link: z.object({ label: z.string().nullable(), expiresAt: iso, allow: z.object({ comments: z.boolean(), approve: z.boolean(), download: z.boolean(), markup: z.boolean() }).strict() }).strict(),
+  link: z.object({ label: z.string().nullable(), expiresAt: iso.nullable(), allow: z.object({ comments: z.boolean(), approve: z.boolean(), download: z.boolean(), markup: z.boolean() }).strict() }).strict(),
   verified: z.boolean(),
   email: z.string().nullable(),
   name: z.string().nullable(),

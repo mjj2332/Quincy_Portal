@@ -6260,6 +6260,16 @@ Tags: d1-migrations, testing-guards · #828
 - **Parity.** A rule written twice (SQLite `trim`, `substr`, `lower` and JavaScript) differs on exactly the edge cases: SQLite `trim()` takes spaces only (not tab or NBSP), `substr()` counts code points (not UTF-16 units), `lower()` folds ASCII only. One shared table (`packages/shared/src/testing/film-title-cases.ts`) runs through both, against real D1.
 
 Guards: `workers/app/test/film-title.test.ts`, `packages/db/test/migration-0074.test.ts`, `packages/shared/test/video-upload.test.ts`.
+
+## A nullable "never" breaks every comparison that was written for a number (#847)
+Tags: d1-migrations, testing-guards · #847
+
+- **What bit (avoided).** The Delivery review link never expires, so `client_links.expires_at` became NULL-able. In SQL `expires_at > ?` is NULL (read as expired) and `MIN(?, expires_at)` is NULL (a session with no expiry); in JavaScript `null <= now` is true. Each of the roughly ten read sites (guest session start, session read, download admission, digest, staff status, sweeps) was correct for a number and silently wrong for NULL, and the wrong answers fail closed, so a missed site looks like "the link is broken" rather than an error.
+- **Rule.** Give "open" one definition (`reviewLinkOpenSql` in `packages/db`, `reviewLinkExpired` in TS), route every site through it, and make a guard test (`workers/app/test/review-link-open.guard.test.ts`) fail on a bare `expires_at` comparison. Store "never" as NULL, not a far-future date, so the data says what it means; the cap `COALESCE(expires_at, fallback)` is also one helper.
+- **Sync as a recompute.** The link's membership is rewritten by set-based SQL that reads the wanted state at commit time (as lesson #828), so Publish, Unlock and the backfill converge whichever commits last; a no-op sync writes no audit row and no digest, which is also how "run the backfill twice" is proved idempotent.
+
+Guards: `workers/app/test/review-link-open.guard.test.ts`, `workers/app/test/delivery-review-link.test.ts`, `packages/db/test/migration-0077.test.ts`, `workers/app/test/delivery-public-boundary.guard.test.ts`.
+
 ## Never seek a media element before it has data (iOS wedges the seek)
 Tags: qa-browser, testing-guards
 

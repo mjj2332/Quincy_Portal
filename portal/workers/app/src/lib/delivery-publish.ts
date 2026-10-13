@@ -16,6 +16,7 @@ import type { Env, SessionUser } from "../env";
 import { auditMeta } from "./audit";
 import { deliverySlugBase, randomItemHandle, randomSlugSuffix } from "./delivery-address";
 import { DELIVERY_ELIGIBLE_SQL, checkSelection, type SelectionVerdict } from "./delivery-dto";
+import { deliveryReviewSyncStatements, mintDeliveryLink } from "./delivery-review-link";
 import { newId } from "./ids";
 import { finalizerFromResults } from "./project-stage";
 import { readBoardProject } from "./project-board-order";
@@ -154,6 +155,9 @@ export async function publishDelivery(env: Pick<Env, "DB">, input: PublishReques
     });
     const activityStart = statements.length;
     statements.push(...activity.statements);
+    // #847: the Project's Delivery review link follows this Publish (created on the first one that holds a film). It is fenced on the publish audit row, sits BEFORE the Stage bundle so the positional
+    // reads below stay valid, and cannot fail the batch: creation is guarded by NOT EXISTS, so the unique index is never reached.
+    statements.push(...deliveryReviewSyncStatements(db, { projectId: input.projectId, principal: input.principal, now, trigger: "publish", parentAuditId: auditId, create: await mintDeliveryLink() }).statements);
     const composed = seen.board ? await composeDeliveredMove(db, input, seen.board, now) : null;
     if (composed === "unavailable") return { kind: "delivered_stage_unavailable" };
     const stage = composed;

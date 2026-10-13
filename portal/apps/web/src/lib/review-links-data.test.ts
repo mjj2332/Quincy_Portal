@@ -34,6 +34,18 @@ describe("review link writes and the list cache", () => {
     expect((client.getQueryData(reviewLinksKey(PROJECT)) as Array<{ id: string }>).map((l) => l.id)).toEqual([L1, L2]);
   });
 
+  it("keeps the Delivery link first: a new link lands after it, and the Delivery link itself is never pushed down (#847)", async () => {
+    const DELIVERY = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const client = new QueryClient();
+    client.setQueryData(reviewLinksKey(PROJECT), [linkOf({ id: DELIVERY, delivery: true, label: "Delivery", expiresAt: null }), linkOf({ id: L2 })]);
+    apiPostMock.mockResolvedValue(reveal(L1));
+    await createReviewLinkActions(client, PROJECT).create({} as never);
+    expect((client.getQueryData(reviewLinksKey(PROJECT)) as Array<{ id: string }>).map((l) => l.id)).toEqual([DELIVERY, L1, L2]);
+    apiPostMock.mockResolvedValue({ link: linkOf({ id: DELIVERY, delivery: true, label: "Delivery", expiresAt: null }), url: "https://example.test/x" });
+    await createReviewLinkActions(client, PROJECT).replace(DELIVERY);
+    expect((client.getQueryData(reviewLinksKey(PROJECT)) as Array<{ id: string }>).map((l) => l.id)).toEqual([DELIVERY, L1, L2]);
+  });
+
   it("a replace puts the new URL in the cached list, and a read that was in flight cannot put the old one back", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const oldLink = linkOf({ id: L1, url: "https://example.test/d/old#t=old" });
@@ -52,6 +64,32 @@ describe("review link writes and the list cache", () => {
     apiDeleteMock.mockResolvedValue(undefined);
     await createReviewLinkActions(client, PROJECT).removeVideo(L1, "v");
     expect(client.getQueryData(reviewLinksKey(PROJECT))).toBeUndefined();
+  });
+});
+
+describe("delete (#846)", () => {
+  it("drops the link from a loaded cache before the call resolves, and keeps the others", async () => {
+    const client = new QueryClient();
+    client.setQueryData(reviewLinksKey(PROJECT), [linkOf({ id: L1 }), linkOf({ id: L2 })]);
+    apiDeleteMock.mockResolvedValue(undefined);
+    await createReviewLinkActions(client, PROJECT).deleteLink(L1);
+    expect(apiDeleteMock).toHaveBeenCalledWith(`/api/projects/${PROJECT}/review-links/${L1}`);
+    expect((client.getQueryData(reviewLinksKey(PROJECT)) as Array<{ id: string }>).map((l) => l.id)).toEqual([L2]);
+    expect(client.getQueryState(reviewLinksKey(PROJECT))?.isInvalidated).toBe(true);
+  });
+  it("never invents a list that was never loaded", async () => {
+    const client = new QueryClient();
+    apiDeleteMock.mockResolvedValue(undefined);
+    await createReviewLinkActions(client, PROJECT).deleteLink(L1);
+    expect(client.getQueryData(reviewLinksKey(PROJECT))).toBeUndefined();
+  });
+  it("a 409 link_not_revoked keeps the row and invalidates the list", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(reviewLinksKey(PROJECT), [linkOf({ id: L1 })]);
+    apiDeleteMock.mockRejectedValue(new ApiError("Revoke this Review link before deleting it.", 409, { code: "link_not_revoked" }));
+    await expect(createReviewLinkActions(client, PROJECT).deleteLink(L1)).rejects.toBeInstanceOf(ApiError);
+    expect((client.getQueryData(reviewLinksKey(PROJECT)) as Array<{ id: string }>).map((l) => l.id)).toEqual([L1]);
+    expect(client.getQueryState(reviewLinksKey(PROJECT))?.isInvalidated).toBe(true);
   });
 });
 

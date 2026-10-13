@@ -5,7 +5,7 @@ import { createDeliveryApi } from "./delivery-api";
 const SLUG = "12-example-st-23456b";
 const H = "abcdefghij123456";
 const dto = (): DeliveryPageDto => ({ property: { street: "12 Example St", suburb: "Suburbia", postcode: "2030", agency: "Harbour Realty" }, setNumber: 1, publishedAt: 1_700_000_000_000, coverHandle: null, items: [
-  { handle: H, kind: "photo", label: "Photo 01", position: 0, locked: false, premium: false, width: 6000, height: 4000, durationMs: null, url: `/d/api/pages/${SLUG}/items/${H}/media`, thumbUrl: `/d/api/pages/${SLUG}/items/${H}/thumb` }] });
+  { handle: H, kind: "photo", label: "Photo 01", position: 0, locked: false, premium: false, width: 6000, height: 4000, durationMs: null, url: `/d/api/pages/${SLUG}/items/${H}/media`, thumbUrl: `/d/api/pages/${SLUG}/items/${H}/thumb`, review: null }] });
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 const stub = (impl: (url: string, init: RequestInit | undefined) => Response | Promise<Response>) => { const fn = vi.fn(async (url: string, init?: RequestInit) => impl(url, init)); vi.stubGlobal("fetch", fn); return fn; };
 afterEach(() => { vi.unstubAllGlobals(); });

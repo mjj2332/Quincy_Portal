@@ -1388,7 +1388,8 @@ export const clientLinks = sqliteTable(
     tokenSecret: text("token_secret"),
     /** Null for a video_review link; set for a delivery link (route SQL enforces, migration 0069). */
     publishVersion: integer("publish_version"),
-    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    /** Null means never expires: only the Delivery review link has it (#847, migration 0077). Every reader checks `expires_at IS NULL OR expires_at > now`. */
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
     passcodeHash: text("passcode_hash"),
     createdAt: createdAt(),
     /* video review (#741, migration 0069). Cross-column invariants live in route SQL, not CHECKs. */
@@ -1402,9 +1403,16 @@ export const clientLinks = sqliteTable(
     updatedAt: integer("updated_at"),
     revokedAt: integer("revoked_at"),
     revokedBy: text("revoked_by").references(() => user.id),
+    /** Soft delete of a revoked Review link (#846, migration 0076). Set together; route SQL enforces that deleted means revoked. The row and its children are never removed. */
+    deletedAt: integer("deleted_at"),
+    deletedBy: text("deleted_by").references(() => user.id),
+    /** 1 marks the Project's system-owned Delivery review link (#847, migration 0077). At most one per Project for life. */
+    deliveryReview: integer("delivery_review").notNull().default(0),
   },
   (t) => [
     index("client_links_project_idx").on(t.projectId),
+    uniqueIndex("client_links_delivery_review_unique").on(t.projectId).where(sql`${t.deliveryReview} = 1`),
+    check("client_links_delivery_review_check", sql`${t.deliveryReview} IN (0, 1)`),
     index("client_links_project_kind_idx").on(t.projectId, t.kind, t.createdAt),
     check("client_links_kind_check", sql`${t.kind} IN ('delivery', 'video_review')`),
     check("client_links_label_check", sql`${t.label} IS NULL OR length(trim(${t.label})) BETWEEN 1 AND 80`),
@@ -1414,6 +1422,7 @@ export const clientLinks = sqliteTable(
     check("client_links_token_generation_check", sql`${t.tokenGeneration} >= 1`),
     check("client_links_updated_at_check", sql`${t.updatedAt} IS NULL OR typeof(${t.updatedAt}) = 'integer'`),
     check("client_links_revoked_at_check", sql`${t.revokedAt} IS NULL OR typeof(${t.revokedAt}) = 'integer'`),
+    check("client_links_deleted_at_check", sql`${t.deletedAt} IS NULL OR typeof(${t.deletedAt}) = 'integer'`),
     check("client_links_publish_version_check", sql`${t.publishVersion} IS NULL OR ${t.publishVersion} >= 1`),
   ],
 );

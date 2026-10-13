@@ -223,7 +223,7 @@ describe("a Video premium write refreshes the Delivery state too (#787 slice 10)
     await setVideoPremium(ctx(), true);
     api.apiPut.mockResolvedValueOnce({ premium: true, premiumUnlocked: true });
     await setVideoPremiumUnlock(ctx(), { unlocked: true });
-    expect(order).toEqual(["invalidate:video-decisions,videos,delivery,delivery-candidates", "invalidate:video-decisions,videos,delivery,delivery-candidates"]);
+    expect(order).toEqual(["invalidate:video-decisions,videos,delivery,delivery-candidates,review-links", "invalidate:video-decisions,videos,delivery,delivery-candidates,review-links"]);
     order.length = 0;
     api.apiPost.mockResolvedValueOnce({ decision: event });
     await recordClientDecision(ctx(), { decision: "approved" });

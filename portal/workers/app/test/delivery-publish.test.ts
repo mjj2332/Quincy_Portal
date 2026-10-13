@@ -388,7 +388,7 @@ describe("the staff read and the public DTO", () => {
     const wire = JSON.stringify({ ...state.dto, items: state.dto.items.map((item: Json) => ({ ...item, url: null, thumbUrl: null })) });
     for (const secret of [photo.id, video.assetId, video.videoId, premium.id, "Secret Walkthrough", ".bin", "projects/", "delivery-test", ids.admin, "Admin Person", ids.project]) expect(wire, secret).not.toContain(secret);
     expect(Object.keys(state.dto).sort()).toEqual(["coverHandle", "items", "property", "publishedAt", "setNumber"]);
-    expect(Object.keys(state.dto.items[0]).sort()).toEqual(["durationMs", "handle", "height", "kind", "label", "locked", "position", "premium", "thumbUrl", "url", "width"]);
+    expect(Object.keys(state.dto.items[0]).sort()).toEqual(["durationMs", "handle", "height", "kind", "label", "locked", "position", "premium", "review", "thumbUrl", "url", "width"]);
     expect(state.dto.coverHandle).toBe(state.set.items[0].handle);
   });
 

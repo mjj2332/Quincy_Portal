@@ -456,6 +456,19 @@ describe("film", () => {
     expect(video.getAttribute("src")).toBe(film(1).url);
     expect(document.querySelector<HTMLAnchorElement>('a[aria-label="Download Video 01, original"]')!.getAttribute("href")).toBe(hrefs.download(handle(1)));
   });
+  it("offers Review & feedback as a new-tab link only on an unlocked film that carries a review entry (#847)", async () => {
+    const url = "/d/review?link=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa#t=secret&v=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    await show(page([film(1, { review: { url } }), film(2), locked(3, { kind: "video", review: null })])); await click(tab("Film"));
+    const links = [...document.querySelectorAll<HTMLAnchorElement>("a")].filter((a) => a.textContent === "Review & feedback");
+    expect(links).toHaveLength(1);
+    expect(links[0]!.getAttribute("href")).toBe(url);
+    expect(links[0]!.getAttribute("target")).toBe("_blank");
+    expect(links[0]!.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(links[0]!.getAttribute("aria-label")).toBe("Review & feedback for Video 01, opens in a new tab");
+    expect(links[0]!.hasAttribute("download")).toBe(false);
+    expect(links[0]!.closest("li")!.querySelector("video")).not.toBeNull();
+    for (const tile of document.querySelectorAll('[data-testid="delivery-locked"]')) expect(tile.querySelector("a")).toBeNull();
+  });
   it("pauses when the tab changes and when the page goes away", async () => {
     const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
     try {

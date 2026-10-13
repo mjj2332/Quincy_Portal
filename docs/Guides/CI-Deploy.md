@@ -205,6 +205,29 @@ Rehearsed locally (`wrangler d1 migrations apply DB --local` over a seeded 0074 
 
 **Rollback.** The old Worker reads `embedded_media` columns that still exist, so a code rollback is safe. Restoring the old schema is a Time Travel restore, which loses every write since the bookmark.
 
+### Review link delete (0076, #846)
+
+Migration 0076 adds two nullable columns to `client_links`: `deleted_at` (integer, with a typeof CHECK) and `deleted_by` (text, references `user`). No default, no backfill, no index, no rebuild, no PRAGMA. The Worker in this PR reads both columns (every staff Review link read filters `deleted_at IS NULL`), so production stays on the old Worker until the owner applies 0076 and re-runs the deploy (the "A PR that adds a D1 migration" flow above). Apply checklist (from `portal/workers/app`, `--remote`, owner's go-ahead):
+
+1. Take a Time Travel bookmark (`npx wrangler d1 time-travel info DB`) and record the id in the PR.
+2. `npx wrangler d1 migrations apply DB --remote`. #846 and #847 ship in one PR, so the pending list shows exactly 0076 then 0077, both from that PR, and both apply in that order (do the 0077 pre-check below first). Anything else listed means an earlier migration PR was never applied: stop.
+3. Post-check: `PRAGMA table_info(client_links)` shows `deleted_at` and `deleted_by`, and `SELECT COUNT(*) FROM client_links WHERE deleted_at IS NOT NULL` is 0.
+4. Re-run the deploy (`gh run rerun <run-id> --failed`).
+
+**Rollback.** An old Worker ignores both columns, so a code rollback is safe, but it would show deleted links again. Dropping the columns means a Time Travel restore, which loses every write since the bookmark.
+
+### Delivery review link (0077, #847)
+
+Migration 0077 adds `client_links.delivery_review` (integer, NOT NULL DEFAULT 0, CHECK 0 or 1), makes `client_links.expires_at` nullable with the 0069-style column swap (add `expires_at_next`, copy, drop `expires_at`, rename; no rebuild, no PRAGMA), and creates the partial unique index `client_links_delivery_review_unique` on `project_id` where `delivery_review = 1`. The Worker in this PR reads and writes all three, so production stays on the old Worker until the owner applies 0077 and re-runs the deploy. Apply checklist (from `portal/workers/app`, `--remote`, owner's go-ahead):
+
+1. Pre-check: `SELECT COUNT(*) FROM client_links` (note it) and `SELECT name FROM sqlite_master WHERE sql LIKE '%client_links%' AND type IN ('view','trigger')` must list nothing that mentions `expires_at` (the DROP COLUMN fails on one). Take a Time Travel bookmark (`npx wrangler d1 time-travel info DB`) and record the id in the PR.
+2. `npx wrangler d1 migrations apply DB --remote`; the pending list shows 0076 then 0077 (one PR, see 0076 above), or 0077 alone if 0076 is already applied.
+3. Post-check: `PRAGMA table_info(client_links)` shows `delivery_review` and `expires_at` with notnull 0; the row count equals the pre-check; `PRAGMA foreign_key_check` is empty; `PRAGMA index_list(client_links)` lists `client_links_delivery_review_unique`.
+4. Re-run the deploy (`gh run rerun <run-id> --failed`).
+5. Backfill, once, from the owner's signed-in Admin browser (`docs/agents/production-data.md`): `POST /api/admin/delivery-review-links/sync` with `{ "dryRun": true }` first (reports `wouldCreate`), then `{}` and follow `nextCursor` as `{ "cursor": "<id>" }` until it is null. It reports `{ scanned, created, changed, nextCursor }` and never an address. Verify that `SELECT COUNT(*) FROM client_links WHERE delivery_review = 1` equals the number of Projects whose latest Published set holds a film, then run it again: every page must report `created: 0, changed: 0`. Until it has run, those Projects show no Review button.
+
+**Rollback.** A code rollback is safe for ordinary links. A Delivery review link made after this ships fails closed on an older Worker, which reads a NULL expiry as expired, so roll forward. Restoring the schema is a Time Travel restore, which loses every write since the bookmark.
+
 ### Subtask presets (0052)
 
 0052 converts every date-only Subtask range to a 09:00 start and a 17:00 end (the presets, ADR 0016)

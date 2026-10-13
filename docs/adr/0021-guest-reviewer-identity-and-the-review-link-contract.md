@@ -21,7 +21,8 @@ itself. Both are this decision.
    Revoking a link clears the secret, a replace overwrites it, and links made before the amendment have none
    until they are replaced. The hash still decides every guest exchange.
 2. **Link lifecycle.** Default expiry 30 days, or a date staff choose. An optional passcode. Revoking a
-   link kills every open guest session on it at once.
+   link kills every open guest session on it at once. Delete (#846) is a soft delete of a revoked link: the
+   row and everything it produced stay, and every staff read leaves it out.
 3. **Identity is an email verified by a one-time code.** Codes are hashed, expire in 10 minutes, allow 5
    attempts, and are consumed once. Requests and attempts are rate-limited per link, per email and per IP,
    counted by attempt and reserved in a single statement. Responses are identical for known and unknown

@@ -1,3 +1,4 @@
+import { reviewLinkExpired, reviewLinkOpenSql } from "@quincy/db";
 import { guestDigestStatements } from "./guest-digest";
 import { ROLE_LABELS, REVIEW_LINK_STATUSES, type ReviewLinkDto, type Role } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
@@ -15,15 +16,18 @@ import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO } from "./video-live-sql"
 const AUDIT_INSERT_WHERE = "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, ?, 'review_link', ?, ?, ? WHERE";
 const AUDITED = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)";
 const NOT_ARCHIVED = "EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)";
-const LINK_LIVE = "EXISTS (SELECT 1 FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL)";
+// `delivery_review = 0` on every fence below is the SQL backstop of the route refusal (#847): the Delivery review link is changed only by the sync in lib/delivery-review-link.ts.
+const LINK_LIVE = "EXISTS (SELECT 1 FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND delivery_review = 0)";
+const LINK_DELETABLE = "EXISTS (SELECT 1 FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NOT NULL AND deleted_at IS NULL AND delivery_review = 0)";
 const MEMBER_LIVE = "EXISTS (SELECT 1 FROM review_link_videos WHERE link_id = ? AND video_id = ? AND removed_at IS NULL)";
 
 export type Principal = NonNullable<AuditPrincipal>;
 export type Allow = { comments: boolean; approve: boolean; download: boolean };
 
-export type LinkHead = { id: string; revoked_at: number | null; expires_at: number };
-export async function findLinkHead(db: D1Database, projectId: string, linkId: string): Promise<LinkHead | null> {
-  return await db.prepare("SELECT id, revoked_at, expires_at FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review'").bind(linkId, projectId).first<LinkHead>() ?? null;
+export type LinkHead = { id: string; revoked_at: number | null; /** Null: the Delivery review link never expires. */ expires_at: number | null; deleted_at: number | null; /** 1 for the Project's Delivery review link, which staff routes refuse (409 `delivery_review_managed`). */ delivery_review: number };
+/** The link's head, or null. A deleted link (#846) is absent unless `includeDeleted`: only the Delete route asks for it, so every other route answers 404 on a deleted link. */
+export async function findLinkHead(db: D1Database, projectId: string, linkId: string, options: { includeDeleted?: boolean } = {}): Promise<LinkHead | null> {
+  return await db.prepare(`SELECT id, revoked_at, expires_at, deleted_at, delivery_review FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review'${options.includeDeleted ? "" : " AND deleted_at IS NULL"}`).bind(linkId, projectId).first<LinkHead>() ?? null;
 }
 
 /** Whether the audit row of a guarded batch landed (the guard held and every later statement ran). */
@@ -48,7 +52,7 @@ export async function isLiveMember(db: D1Database, linkId: string, videoId: stri
 // ---- read ---------------------------------------------------------------------------------------------------------------------------------------
 
 type LinkRow = {
-  id: string; label: string | null; expires_at: number; created_at: number; revoked_at: number | null; has_passcode: number; token_secret: string | null; allow_comments: number; allow_approve: number; allow_download: number;
+  id: string; label: string | null; expires_at: number | null; delivery_review: number; created_at: number; revoked_at: number | null; has_passcode: number; token_secret: string | null; allow_comments: number; allow_approve: number; allow_download: number;
   created_by: string | null; cu_name: string | null; cu_role: Role | null; cu_active: number | null; revoked_by: string | null; ru_name: string | null; ru_role: Role | null; ru_active: number | null;
 };
 const person = (id: string | null, name: string | null, role: Role | null, active: number | null) =>
@@ -60,18 +64,18 @@ export const reviewLinkUrl = (origin: string, linkId: string, secret: string) =>
 
 /** The Project's Review links (or one), newest first, as the staff DTO. Never selects the token hash or the passcode hash. Selects the plain-text secret only to build `url`. */
 export async function loadReviewLinkDtos(db: D1Database, projectId: string, now: number, origin: string, linkId?: string): Promise<ReviewLinkDto[]> {
-  const scope = "SELECT id FROM client_links WHERE project_id = ?1 AND kind = 'video_review' AND (?2 IS NULL OR id = ?2)";
+  const scope = "SELECT id FROM client_links WHERE project_id = ?1 AND kind = 'video_review' AND deleted_at IS NULL AND (?2 IS NULL OR id = ?2)";
   const [links, videos, grants, activity, guests] = await db.batch([
-    db.prepare(`SELECT l.id, l.label, l.expires_at, l.created_at, l.revoked_at, l.passcode_hash IS NOT NULL AS has_passcode, l.token_secret, l.allow_comments, l.allow_approve, l.allow_download,
+    db.prepare(`SELECT l.id, l.label, l.expires_at, l.delivery_review, l.created_at, l.revoked_at, l.passcode_hash IS NOT NULL AS has_passcode, l.token_secret, l.allow_comments, l.allow_approve, l.allow_download,
         l.created_by, cu.name AS cu_name, cu.role AS cu_role, cu.active AS cu_active, l.revoked_by, ru.name AS ru_name, ru.role AS ru_role, ru.active AS ru_active
       FROM client_links l LEFT JOIN user cu ON cu.id = l.created_by LEFT JOIN user ru ON ru.id = l.revoked_by
-      WHERE l.project_id = ?1 AND l.kind = 'video_review' AND (?2 IS NULL OR l.id = ?2) ORDER BY l.created_at DESC, l.rowid DESC`).bind(projectId, linkId ?? null),
+      WHERE l.project_id = ?1 AND l.kind = 'video_review' AND l.deleted_at IS NULL AND (?2 IS NULL OR l.id = ?2) ORDER BY l.delivery_review DESC, l.created_at DESC, l.rowid DESC`).bind(projectId, linkId ?? null),
     db.prepare(`SELECT m.link_id, m.video_id, m.added_at, v.title FROM review_link_videos m JOIN videos v ON v.id = m.video_id AND ${LIVE_VIDEO("v")}
       WHERE m.removed_at IS NULL AND m.link_id IN (${scope}) ORDER BY m.added_at, m.rowid`).bind(projectId, linkId ?? null),
     db.prepare(`SELECT g.link_id, g.video_id, g.asset_id, a.version FROM review_link_version_grants g JOIN assets a ON a.id = g.asset_id
       JOIN video_version_meta gm ON gm.asset_id = g.asset_id AND gm.video_id = g.video_id AND ${LIVE_VERSION("gm")} JOIN videos gv ON gv.id = g.video_id AND ${LIVE_VIDEO("gv")}
       WHERE g.revoked_at IS NULL AND g.link_id IN (${scope}) ORDER BY a.version, g.rowid`).bind(projectId, linkId ?? null),
-    db.prepare(`SELECT s.link_id, SUM(CASE WHEN s.expires_at > ?3 AND s.link_generation = l.token_generation AND l.revoked_at IS NULL AND l.expires_at > ?3 THEN 1 ELSE 0 END) AS open_sessions, MAX(s.created_at) AS last_opened
+    db.prepare(`SELECT s.link_id, SUM(CASE WHEN s.expires_at > ?3 AND s.link_generation = l.token_generation AND ${reviewLinkOpenSql("l", "?3")} THEN 1 ELSE 0 END) AS open_sessions, MAX(s.created_at) AS last_opened
       FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE s.link_id IN (${scope}) GROUP BY s.link_id`).bind(projectId, linkId ?? null, now),
     // Guests who verified an email on the link (#741 13a): the only place staff see an address besides a note author.
     db.prepare(`SELECT m.link_id, g.email_normalized AS email, g.display_name AS name, m.last_seen_at, m.unsubscribed_at FROM guest_link_members m JOIN guest_reviewers g ON g.id = m.guest_id
@@ -92,9 +96,9 @@ export async function loadReviewLinkDtos(db: D1Database, projectId: string, now:
   const activityMap = new Map((activity!.results as Array<{ link_id: string; open_sessions: number; last_opened: number | null }>).map((row) => [row.link_id, row]));
   return (links!.results as LinkRow[]).map((row): ReviewLinkDto => {
     const seen = activityMap.get(row.id);
-    const status = REVIEW_LINK_STATUSES[row.revoked_at !== null ? 2 : row.expires_at <= now ? 1 : 0]!;
+    const status = REVIEW_LINK_STATUSES[row.revoked_at !== null ? 2 : reviewLinkExpired(row.expires_at, now) ? 1 : 0]!;
     return {
-      id: row.id, label: row.label, status, createdAt: iso(row.created_at), createdBy: person(row.created_by, row.cu_name, row.cu_role, row.cu_active), expiresAt: iso(row.expires_at),
+      id: row.id, label: row.label, status, createdAt: iso(row.created_at), createdBy: person(row.created_by, row.cu_name, row.cu_role, row.cu_active), expiresAt: row.expires_at === null ? null : iso(row.expires_at), delivery: row.delivery_review === 1,
       revokedAt: row.revoked_at === null ? null : iso(row.revoked_at), revokedBy: person(row.revoked_by, row.ru_name, row.ru_role, row.ru_active), hasPasscode: row.has_passcode === 1,
       url: row.token_secret !== null && row.revoked_at === null ? reviewLinkUrl(origin, row.id, row.token_secret) : null,
       allow: { comments: row.allow_comments === 1, approve: row.allow_approve === 1, download: row.allow_download === 1 }, videos: videoMap.get(row.id) ?? [],
@@ -165,7 +169,7 @@ export async function patchReviewLink(db: D1Database, input: { projectId: string
   const audit: Audit = { id: auditId, action: "review_link.update", linkId: input.linkId, principal: input.principal, now: input.now, meta: { projectId: input.projectId, linkId: input.linkId, fields: patchedFields(patch) } };
   return commit(db, audit, [
     auditStatement(db, audit, `${NOT_ARCHIVED} AND ${LINK_LIVE}`, [input.projectId, input.linkId, input.projectId]),
-    db.prepare(`UPDATE client_links SET ${assignments.join(", ")} WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND ${AUDITED}`).bind(...values, input.linkId, input.projectId, auditId),
+    db.prepare(`UPDATE client_links SET ${assignments.join(", ")} WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND delivery_review = 0 AND ${AUDITED}`).bind(...values, input.linkId, input.projectId, auditId),
   ]);
 }
 
@@ -224,7 +228,7 @@ export async function revokeReviewLink(db: D1Database, input: { projectId: strin
   const audit: Audit = { id: auditId, action: "review_link.revoke", linkId: input.linkId, principal: input.principal, now: input.now, meta: { projectId: input.projectId, linkId: input.linkId } };
   return commit(db, audit, [
     auditStatement(db, audit, LINK_LIVE, [input.linkId, input.projectId]),
-    db.prepare(`UPDATE client_links SET revoked_at = ?, revoked_by = ?, updated_at = ?, token_secret = NULL, token_generation = token_generation + 1 WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND ${AUDITED}`)
+    db.prepare(`UPDATE client_links SET revoked_at = ?, revoked_by = ?, updated_at = ?, token_secret = NULL, token_generation = token_generation + 1 WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND delivery_review = 0 AND ${AUDITED}`)
       .bind(input.now, input.principal.id, input.now, input.linkId, input.projectId, auditId),
     db.prepare(`DELETE FROM guest_sessions WHERE link_id = ? AND ${AUDITED}`).bind(input.linkId, auditId),
   ]);
@@ -234,11 +238,25 @@ export async function revokeReviewLink(db: D1Database, input: { projectId: strin
 export async function replaceReviewLinkToken(db: D1Database, input: { projectId: string; linkId: string; principal: Principal; tokenHash: string; tokenSecret: string; now: number }): Promise<boolean> {
   const auditId = newId();
   const audit: Audit = { id: auditId, action: "review_link.replace", linkId: input.linkId, principal: input.principal, now: input.now, meta: { projectId: input.projectId, linkId: input.linkId } };
-  const live = "EXISTS (SELECT 1 FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND expires_at > ?)";
+  const live = `EXISTS (SELECT 1 FROM client_links WHERE id = ? AND project_id = ? AND delivery_review = 0 AND ${reviewLinkOpenSql("client_links", "?")})`;
   return commit(db, audit, [
     auditStatement(db, audit, `${NOT_ARCHIVED} AND ${live}`, [input.projectId, input.linkId, input.projectId, input.now]),
-    db.prepare(`UPDATE client_links SET token_hash = ?, token_secret = ?, token_generation = token_generation + 1, updated_at = ? WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND expires_at > ? AND ${AUDITED}`)
+    db.prepare(`UPDATE client_links SET token_hash = ?, token_secret = ?, token_generation = token_generation + 1, updated_at = ? WHERE id = ? AND project_id = ? AND delivery_review = 0 AND ${reviewLinkOpenSql("client_links", "?")} AND ${AUDITED}`)
       .bind(input.tokenHash, input.tokenSecret, input.now, input.linkId, input.projectId, input.now, auditId),
     db.prepare(`DELETE FROM guest_sessions WHERE link_id = ? AND ${AUDITED}`).bind(input.linkId, auditId),
+  ]);
+}
+
+/**
+ * Soft delete of a revoked link (#846). The row stays: six child tables cascade on `client_links`, so a hard delete would erase guest notes and approvals. Allowed on an archived Project
+ * (no archived guard), like Revoke. The audit row carries the guard (revoked and not yet deleted), the UPDATE runs only if it landed, and nothing else is touched: no child row, no digest.
+ */
+export async function deleteReviewLink(db: D1Database, input: { projectId: string; linkId: string; principal: Principal; now: number }): Promise<boolean> {
+  const auditId = newId();
+  const audit: Audit = { id: auditId, action: "review_link.delete", linkId: input.linkId, principal: input.principal, now: input.now, meta: { projectId: input.projectId, linkId: input.linkId } };
+  return commit(db, audit, [
+    auditStatement(db, audit, LINK_DELETABLE, [input.linkId, input.projectId]),
+    db.prepare(`UPDATE client_links SET deleted_at = ?, deleted_by = ?, updated_at = ? WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NOT NULL AND deleted_at IS NULL AND delivery_review = 0 AND ${AUDITED}`)
+      .bind(input.now, input.principal.id, input.now, input.linkId, input.projectId, auditId),
   ]);
 }

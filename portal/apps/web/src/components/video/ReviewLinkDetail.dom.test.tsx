@@ -43,6 +43,29 @@ const THREE = videoOf(V1, "Main walkthrough", [[id(303), 3, true], [A2, 2, false
 const hangList = () => apiGetMock.mockImplementation(async (path) => { if (path.endsWith("/review-links")) return new Promise(() => undefined); if (path.endsWith("/videos")) return { videos: state.videos }; throw new Error(path); });
 const save = () => buttonIn(detail(), "Save changes")!;
 
+describe("detail: the Delivery link (#847)", () => {
+  const DELIVERY_NOTE = "Managed by the Delivery page. Films follow Publish and Unlock; this link has no expiry and cannot be revoked or deleted.";
+  it("shows the note, keeps the URL, films and Versions read-only, and hides every control that would change the link", async () => {
+    state.links = [linkOf({ label: "Delivery", delivery: true, expiresAt: null })];
+    await mount(); await openDetailOf("Delivery");
+    expect(text(detail())).toContain(DELIVERY_NOTE);
+    expect(text(detail())).toContain("Never expires");
+    expect(q('#review-link-detail-url', detail())).not.toBeNull();
+    expect(text(detail())).toContain("Main walkthrough");
+    const box = checkbox("Main walkthrough v2", detail());
+    expect(box === null || box === undefined).toBe(true);
+    expect(text(detail())).toContain("v2");
+    for (const gone of ["#review-link-detail-label", "#review-link-detail-expiry", "#review-link-detail-passcode"]) expect(q(gone, detail()), gone).toBeNull();
+    expect(q('[aria-label="Danger zone"]', detail())).toBeNull();
+    for (const name of ["Save changes", "Replace link", "Revoke link", "Delete link", "Add a film", "Remove Main walkthrough from link"]) expect(buttonIn(detail(), name), name).toBeFalsy();
+    expect(all('input[type="checkbox"]', detail())).toHaveLength(0);
+  });
+  it("an ordinary link has no such note", async () => {
+    await mount(); await openDetailOf("Smith family");
+    expect(text(detail())).not.toContain("Managed by the Delivery page");
+  });
+});
+
 describe("detail: Versions and Videos", () => {
   it("shows each member with its granted Versions ticked and an All links way back", async () => {
     await mount(); await openDetailOf("Smith family");
@@ -220,6 +243,82 @@ describe("detail: revoke and replace", () => {
     expect(buttonIn(detail(), "Replace link")!.disabled).toBe(true);
     expect(text(detail())).toContain("Extend the expiry");
     expect(q<HTMLButtonElement>("button#review-link-detail-expiry", detail())!.disabled).toBe(false);
+  });
+});
+
+describe("detail: delete (#846)", () => {
+  const revokedLink = () => linkOf({ status: "revoked", revokedAt: "2026-10-10T03:00:00.000Z", url: null });
+  it("offers no Delete link on an active or an expired link", async () => {
+    await mount(); await openDetailOf("Smith family");
+    expect(buttonIn(detail(), "Delete link")).toBeUndefined();
+    await unmount();
+    state.links = [linkOf({ status: "expired" })];
+    await mount(); await openDetailOf("Smith family");
+    expect(buttonIn(detail(), "Delete link")).toBeUndefined();
+  });
+  it("on a revoked link Cancel and Escape send nothing, the confirm says it can't be undone, and confirming deletes and returns to the list without it", async () => {
+    state.links = [revokedLink(), linkOf({ id: L2, label: "Jones family" })];
+    apiDeleteMock.mockImplementation(async () => { state.links = [linkOf({ id: L2, label: "Jones family" })]; return undefined; });
+    await mount(); await openDetailOf("Smith family");
+    await press(buttonIn(detail(), "Delete link"));
+    expect(text(q('[data-testid="review-link-confirm"]'))).toContain("can't be undone");
+    await press(buttonIn(q('[data-testid="review-link-confirm"]'), "Cancel"));
+    expect(apiDeleteMock).not.toHaveBeenCalled();
+    await press(buttonIn(detail(), "Delete link"));
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); }); await flush();
+    expect(apiDeleteMock).not.toHaveBeenCalled();
+    if (!q('[data-testid="review-link-confirm"]')) await press(buttonIn(detail(), "Delete link"));
+    await press(buttonIn(q('[data-testid="review-link-confirm"]'), "Delete"));
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1);
+    expect(apiDeleteMock).toHaveBeenCalledWith(base);
+    expect(q('[data-testid="review-link-detail"]')).toBeNull();
+    expect(all('[data-testid="review-link-row"]')).toHaveLength(1);
+    expect(text(dialog())).toContain("Jones family"); expect(text(dialog())).not.toContain("Smith family");
+    // Focus stays inside the dialog, not on a removed control.
+    expect(dialog()!.contains(document.activeElement)).toBe(true);
+  });
+  it("deleting the only link leaves focus on the dialog, not the page behind it", async () => {
+    state.links = [revokedLink()];
+    apiDeleteMock.mockImplementation(async () => { state.links = []; return undefined; });
+    await mount(); await openDetailOf("Smith family");
+    await confirm("Delete link", "Delete");
+    expect(text(dialog())).toContain("No Review links yet");
+    expect(document.activeElement).toBe(dialog());
+  });
+  it("a delete that completes after the person moved to another link does not steal their focus", async () => {
+    const other = linkOf({ id: L2, label: "Jones family" });
+    state.links = [revokedLink(), other];
+    let finish!: () => void;
+    apiDeleteMock.mockImplementation(() => new Promise<undefined>((resolve) => { finish = () => { state.links = [other]; resolve(undefined); }; }));
+    await mount(); await openDetailOf("Smith family");
+    await confirm("Delete link", "Delete");
+    await press(buttonIn(detail(), "All links"));
+    await press(button("Manage Jones family"));
+    const label = q<HTMLInputElement>("#review-link-detail-label", detail())!;
+    await act(async () => { label.focus(); });
+    await act(async () => { finish(); }); await flush();
+    expect(text(detail())).toContain("Jones family");
+    expect(document.activeElement).toBe(label);
+  });
+  it("a double press sends once", async () => {
+    state.links = [revokedLink()];
+    let finish!: () => void;
+    apiDeleteMock.mockImplementation(() => new Promise<undefined>((resolve) => { finish = () => resolve(undefined); }));
+    await mount(); await openDetailOf("Smith family");
+    await press(buttonIn(detail(), "Delete link"));
+    const action = buttonIn(q('[data-testid="review-link-confirm"]'), "Delete")!;
+    await press(action); await press(action);
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1);
+    expect(buttonIn(detail(), "Delete link")!.disabled).toBe(true);
+    await act(async () => { finish(); }); await flush();
+  });
+  it("a refusal shows a critical notice inside the detail and keeps the link", async () => {
+    state.links = [revokedLink()];
+    apiDeleteMock.mockRejectedValue(refused(409, { error: "x", code: "link_not_revoked" }));
+    await mount(); await openDetailOf("Smith family");
+    await confirm("Delete link", "Delete");
+    expect(text(q('[role="alert"]', detail()))).toMatch(/Revoke this link before deleting it/);
+    expect(buttonIn(detail(), "Delete link")).toBeDefined();
   });
 });
 

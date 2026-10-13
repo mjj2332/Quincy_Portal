@@ -2,6 +2,7 @@ import { guestDigestStatements } from "./guest-digest";
 import { enqueueObjectCrcs, ROLE_LABELS, type ObjectCrcQueueEnv, type Role, type VideoDecisionEvent, type VideoRelease, type VideoVersionDecisions } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { everPublishedSql } from "./delivery-lock";
+import { deliveryReviewSyncStatements } from "./delivery-review-link";
 import { newId } from "./ids";
 import { videoReviewOutboxStatements } from "./video-review-notifications";
 import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO, LIVE_VIDEO_EXISTS } from "./video-live-sql";
@@ -197,11 +198,14 @@ export async function setPremium(db: D1Database, input: { projectId: string; vid
   const before = await findVideo(db, input.projectId, input.videoId); if (!before) return "not_found";
   let landed = false;
   if (before.premium !== input.premium) {
+    const auditId = newId();
     const [update] = await db.batch([
       db.prepare(`UPDATE videos SET premium = ?1, updated_at = ?2 WHERE id = ?3 AND project_id = ?4 AND premium <> ?1 AND (?1 = 1 OR NOT ${VIDEO_IN_CURRENT_SET("?3")}) AND ${LIVE_VIDEO("videos")} AND ${NOT_ARCHIVED("?4")}`).bind(input.premium ? 1 : 0, input.now, input.videoId, input.projectId),
       db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?1, ?2, 'video.premium_set', 'video', ?3, ${metaWith("?4", "json_object('projectId', ?5, 'premium', json(?6))")}, ?7 WHERE changes() > 0`)
-        .bind(newId(), input.principal.id, input.videoId, auditMeta(input.principal), input.projectId, input.premium ? "true" : "false", input.now),
+        .bind(auditId, input.principal.id, input.videoId, auditMeta(input.principal), input.projectId, input.premium ? "true" : "false", input.now),
+      // #847: marking a published film Premium locks it, so it leaves the Delivery review link. Fenced on the audit row above.
+      ...deliveryReviewSyncStatements(db, { projectId: input.projectId, principal: input.principal, now: input.now, trigger: "premium", parentAuditId: auditId, create: null }).statements,
     ]);
     landed = (update?.meta.changes ?? 0) > 0;
     if (!landed && !input.premium && !await projectArchived(db, input.projectId) && (await findVideo(db, input.projectId, input.videoId))?.premium && await videoPublished(db, input.videoId)) return "published";
@@ -228,21 +232,27 @@ export async function setPremiumUnlock(db: D1Database, input: { projectId: strin
   const meta = (extra: string) => `json_object('projectId', ?5, ${extra})`;
   let landed = false;
   if (input.unlocked && (!before.unlocked || before.paymentRef !== input.paymentRef)) {
+    const auditId = newId();
     const [write] = await db.batch([
       db.prepare(`INSERT INTO video_premium_unlocks (video_id, project_id, unlocked_by, unlocked_at, payment_ref)
         SELECT v.id, v.project_id, ?1, ?2, ?3 FROM videos v WHERE v.id = ?4 AND v.project_id = ?5 AND ${LIVE_VIDEO("v")} AND ${NOT_ARCHIVED("?5")}
         ON CONFLICT (video_id) DO UPDATE SET payment_ref = excluded.payment_ref WHERE payment_ref IS NOT excluded.payment_ref`).bind(input.principal.id, input.now, input.paymentRef, input.videoId, input.projectId),
       db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?1, ?2, 'video.premium_unlock', 'video', ?3, ${metaWith("?4", meta("'hasPaymentRef', json(?6), 'paymentRefChanged', json(?7)"))}, ?8 WHERE changes() > 0`)
-        .bind(newId(), input.principal.id, input.videoId, auditMeta(input.principal), input.projectId, input.paymentRef === null ? "false" : "true", before.unlocked ? "true" : "false", input.now),
+        .bind(auditId, input.principal.id, input.videoId, auditMeta(input.principal), input.projectId, input.paymentRef === null ? "false" : "true", before.unlocked ? "true" : "false", input.now),
+      // #847: an Unlock lets the film join the Delivery review link (it never creates the link).
+      ...deliveryReviewSyncStatements(db, { projectId: input.projectId, principal: input.principal, now: input.now, trigger: "unlock", parentAuditId: auditId, create: null }).statements,
     ]);
     landed = (write?.meta.changes ?? 0) > 0;
   } else if (!input.unlocked && before.unlocked) {
+    const auditId = newId();
     const [write] = await db.batch([
       db.prepare(`DELETE FROM video_premium_unlocks WHERE video_id = ?1 AND project_id = ?2 AND ${LIVE_VIDEO_EXISTS("video_premium_unlocks.video_id")} AND ${NOT_ARCHIVED("?2")}`).bind(input.videoId, input.projectId),
       db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?1, ?2, 'video.premium_relock', 'video', ?3, ${metaWith("?4", "json_object('projectId', ?5)")}, ?6 WHERE changes() > 0`)
-        .bind(newId(), input.principal.id, input.videoId, auditMeta(input.principal), input.projectId, input.now),
+        .bind(auditId, input.principal.id, input.videoId, auditMeta(input.principal), input.projectId, input.now),
+      // #847: a Re-lock takes the film off the Delivery review link.
+      ...deliveryReviewSyncStatements(db, { projectId: input.projectId, principal: input.principal, now: input.now, trigger: "relock", parentAuditId: auditId, create: null }).statements,
     ]);
     landed = (write?.meta.changes ?? 0) > 0;
   }

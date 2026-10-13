@@ -3,6 +3,7 @@ import { DELIVERY_HANDLE_LENGTH, DELIVERY_SLUG_PATTERN as SLUG_PATTERN, DELIVERY
 import type { AppEnv } from "../env";
 import { clientDeliveryGate } from "../lib/client-delivery-gate";
 import { deliveryLabels, readDeliveryState, readSetRows, type DeliveryUrlResolver } from "../lib/delivery-dto";
+import { readDeliveryReviewEntries } from "../lib/delivery-review-entry";
 import { newId } from "../lib/ids";
 import { lockedSql } from "../lib/delivery-lock";
 import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO } from "../lib/video-live-sql";
@@ -192,7 +193,8 @@ export function mountDelivery(app: Hono<AppEnv>): void {
     const match = PAGE_PATH.exec(rawPath(c)); const slug = match?.[1];
     if (!slugOk(slug)) return guestNotFound(c);
     const page = await admitPage(c.env.DB, slug); if (!page) return guestNotFound(c);
-    const state = await readDeliveryState(c.env.DB, page.projectId, { urls: publicUrls(slug) });
+    const review = await readDeliveryReviewEntries(c.env.DB, page.projectId, Date.now());
+    const state = await readDeliveryState(c.env.DB, page.projectId, { urls: publicUrls(slug), review });
     await publicDeliveryTestHooks.beforeServe?.();
     // The page was read after admission: if it was switched off, the gate shut or a newer set published meanwhile, it is a miss, not a stale page.
     const again = await admitPage(c.env.DB, slug);

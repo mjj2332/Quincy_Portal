@@ -161,6 +161,16 @@ describe("the list", () => {
     expect(text(rows[1])).toContain("Expired"); expect(text(rows[1])).toContain("2 films"); expect(text(rows[1])).toContain("Not opened yet");
     expect(text(rows[2])).toContain("Revoked"); expect(text(rows[2])).toContain("Untitled link");
   });
+  it("pins the Delivery link first and says it never expires (#847)", async () => {
+    state.links = [
+      linkOf({ id: L3, label: "Delivery", delivery: true, expiresAt: null }),
+      linkOf(),
+    ];
+    await mount(); await openList();
+    const rows = all('[data-testid="review-link-row"]');
+    expect(text(rows[0])).toContain("Delivery"); expect(text(rows[0])).toContain("Never expires");
+    expect(text(rows[1])).toContain("Smith family");
+  });
   it("offers Copy on a row only when the link has a URL and is not revoked, named for the link, and copies the exact URL", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });

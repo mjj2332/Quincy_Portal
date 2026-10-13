@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
  */
 const sources = import.meta.glob("../src/guest/**/*.ts", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 
-const FORBIDDEN_IMPORTS = [/\/middleware\/(session|capability)\b/, /(^|\/)auth$/, /better-auth/, /\/routes\/(?!$)/, /\/lib\/impersonation/, /\/mcp\//];
+const FORBIDDEN_IMPORTS = [/\/middleware\/(session|capability)\b/, /(^|\/)auth$/, /better-auth/, /\/routes\/(?!$)/, /\/lib\/impersonation/, /\/mcp\//, /\/lib\/delivery-review-link/];
 export function violations(source: string): string[] {
   const found: string[] = [];
   for (const match of source.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)) {
@@ -16,6 +16,8 @@ export function violations(source: string): string[] {
   }
   if (/\bconsole\s*\./.test(source)) found.push("console.*");
   if (/c\.get\(\s*["']user["']\s*\)|requireSession|getAuth\s*\(/.test(source)) found.push("staff principal");
+  // #847: the guest side only ever hashes the token it is shown. The stored secret is staff's (copy the address) and the public Delivery page's entry (`lib/delivery-review-entry.ts`), nothing here.
+  if (/\btoken_secret\b/.test(source)) found.push("reads the stored link secret");
   return found;
 }
 
@@ -33,6 +35,8 @@ describe("guest surface boundary", () => {
     expect(violations('import { x } from "../routes/media";')).toContain("import ../routes/media");
     expect(violations("console.log(await c.req.text());")).toContain("console.*");
     expect(violations('const u = c.get("user");')).toContain("staff principal");
+    expect(violations("db.prepare('SELECT token_secret FROM client_links')")).toContain("reads the stored link secret");
+    expect(violations('import { syncDeliveryReviewLink } from "../lib/delivery-review-link";')).toContain("import ../lib/delivery-review-link");
     expect(violations('import { hashToken } from "../lib/opaque-token";\nimport { serveR2Object } from "../lib/r2-serve";')).toEqual([]);
   });
 });

@@ -5,6 +5,7 @@ import { clearDeliveryFlags, openDelivery, seedAsset, seedOpenProject, seedPage,
 import { seedVideoVersion } from "./video-review-support";
 import { publishDelivery, type PublishDeps, type PublishOutcome } from "../src/lib/delivery-publish";
 import { buildDeliveryDto } from "../src/lib/delivery-dto";
+import { syncDeliveryReviewLink } from "../src/lib/delivery-review-link";
 
 /**
  * Client Delivery Publish under contention (#787 slice 5). The batch is the only writer, so every case here is a way two writers, or a writer and a stale read, can meet: two Publishes
@@ -212,5 +213,37 @@ describe("the shared DTO builder", () => {
     expect(dto.items[2]!.locked).toBe(true);
     expect(dto.items.map((item) => item.premium).slice(0, 3)).toEqual([false, false, false]);
     expect(JSON.stringify(dto)).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
+  });
+});
+
+describe("the Delivery review link under contention (#847)", () => {
+  const linkRows = () => database.DB.prepare("SELECT id, token_secret FROM client_links WHERE project_id = ? AND delivery_review = 1").bind(ids.project).all<Json>().then((r) => r.results);
+  const liveFilms = async () => (await database.DB.prepare("SELECT v.video_id AS id FROM review_link_videos v WHERE removed_at IS NULL ORDER BY video_id").all<{ id: string }>()).results.map((r) => r.id);
+  const cleanLinks = () => database.DB.batch([database.DB.prepare("DELETE FROM review_link_version_grants"), database.DB.prepare("DELETE FROM review_link_videos"), database.DB.prepare("DELETE FROM guest_notification_digest"), database.DB.prepare("DELETE FROM client_links")]);
+  afterEach(cleanLinks);
+
+  it("two first Publishes of different films leave exactly one link, carrying the winner's film only", async () => {
+    const a = await seedVideoVersion({ title: "A" }); const b = await seedVideoVersion({ title: "B" });
+    const results = await Promise.all([http(ids.project, [a.assetId], null), http(ids.project, [b.assetId], null)]);
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+    expect(await linkRows()).toHaveLength(1);
+    const winner = results[0]!.status === 201 ? a : b;
+    expect(await liveFilms()).toEqual([winner.videoId]);
+    expect(await n("SELECT count(*) AS n FROM audit_log WHERE action = 'review_link.create'")).toBe(1);
+  });
+
+  it("a backfill that runs while a re-Publish is held neither duplicates the link nor changes its address, and the link ends on the new set", async () => {
+    const a = await seedVideoVersion({ title: "A" }); const b = await seedVideoVersion({ title: "B" });
+    expect((await http(ids.project, [a.assetId], null)).status).toBe(201);
+    const [before] = await linkRows();
+    const held = gate(); let reached!: () => void; const arrived = new Promise<void>((resolve) => { reached = resolve; });
+    const slow = send(ids.project, [b.assetId], { expectedLatestSet: 1 }, { beforeBatch: async () => { reached(); await held.open; } });
+    await arrived;
+    expect(await syncDeliveryReviewLink(baseEnv.DB, { projectId: ids.project, principal, now: Date.now(), trigger: "backfill" })).toEqual({ created: false, changed: false });
+    held.release();
+    expect((await slow).kind).toBe("published");
+    const rows = await linkRows(); expect(rows).toEqual([before]);
+    expect(await liveFilms()).toEqual([b.videoId]);
+    expect(await syncDeliveryReviewLink(baseEnv.DB, { projectId: ids.project, principal, now: Date.now(), trigger: "backfill" })).toEqual({ created: false, changed: false });
   });
 });

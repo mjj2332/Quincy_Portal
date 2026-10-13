@@ -31,7 +31,7 @@ const MUTED = `${TEXT} text-foreground-secondary`;
 const HEADING = "[font:var(--weight-medium)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]";
 const TARGET = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
-type Confirm = { kind: "remove"; videoId: string; title: string } | { kind: "revoke" } | { kind: "replace" };
+type Confirm = { kind: "remove"; videoId: string; title: string } | { kind: "revoke" } | { kind: "replace" } | { kind: "delete" };
 
 /** Every scope a request for this link can have, so its refusals show in its detail. */
 const belongsTo = (scope: string, linkId: string) => scope.split(":")[1] === linkId;
@@ -53,11 +53,13 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
     </div>;
   }
 
+  // The Delivery link (#847) follows Publish and Unlock: staff see it and copy its address, nothing more.
+  const managed = link.delivery;
   const revoked = link.status === "revoked";
   const expired = link.status === "expired";
   const locked = revoked || ui.archived;
   const draft = state.details[linkId] ?? emptyDetail();
-  const currentDay = sydneyDayKey(link.expiresAt);
+  const currentDay = link.expiresAt === null ? "" : sydneyDayKey(link.expiresAt);
   const labelValue = draft.label ?? link.label ?? "";
   const expiryValue = draft.expiryDay ?? currentDay;
   const allowValue: Allow = { ...link.allow, ...draft.allow };
@@ -99,10 +101,26 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
     void store.run(`grants:${linkId}:${member.videoId}`, () => actions.setGrants(linkId, member.videoId, next), () => undefined, undefined, linkId);
   }
 
+  /** The link is gone: drop its unsaved edits, and go back to the list only if this link's detail is still the open step. */
+  function afterDelete() {
+    store.resetDetail(linkId);
+    const { view } = store.getState();
+    // Only a completion that itself returned this link's detail to the list restores focus; if the person has moved on, their focus is theirs.
+    if (!(view.kind === "detail" && view.linkId === linkId)) return;
+    store.openList();
+    // The Delete button is unmounted with this step; without this focus would fall to the page behind the dialog. After the list renders: the first surviving row's first control (Copy link), else the dialog itself.
+    window.setTimeout(() => {
+      if (store.getState().view.kind !== "list") return;
+      const open = document.querySelector<HTMLElement>('[data-testid="review-links-dialog"]');
+      (open?.querySelector<HTMLElement>('[data-testid="review-link-row"] button') ?? open)?.focus();
+    }, 0);
+  }
+
   function run(action: Confirm) {
     setConfirm(null);
     if (action.kind === "remove") void store.run(`remove:${linkId}:${action.videoId}`, () => actions.removeVideo(linkId, action.videoId), () => undefined, undefined, linkId);
     else if (action.kind === "revoke") void store.run(`revoke:${linkId}`, () => actions.revoke(linkId), () => undefined, undefined, linkId);
+    else if (action.kind === "delete") void store.run(`delete:${linkId}`, () => actions.deleteLink(linkId), afterDelete, undefined, linkId);
     else void store.run(`replace:${linkId}`, () => actions.replace(linkId), (result) => store.showReveal({ url: result.url, linkId, label: result.link.label, origin: "replace" }), undefined, linkId);
   }
 
@@ -118,6 +136,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
       </div>}
     >
 
+    {managed && <Notice tone="caution" role="status" data-testid="review-link-managed-note">Managed by the Delivery page. Films follow Publish and Unlock; this link has no expiry and cannot be revoked or deleted.</Notice>}
     {revoked && <Notice tone="caution" role="status">This link was revoked. Guests can no longer open it.</Notice>}
     {!revoked && ui.archived && <Notice tone="caution" role="status">Archived projects are read-only, so this link can't be changed. You can still revoke it.</Notice>}
     {problems.map(([scope, problem]) => <Notice key={scope} tone="critical" role="alert">{problem.text}</Notice>)}
@@ -132,8 +151,9 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
           <span className={FIELD_LEGEND_TEXT}>Link</span>
           <FieldDescription>Press Replace link to get a copyable link.</FieldDescription>
         </Field>)}
+      {!managed && <>
       <QuincyField id="review-link-detail-label" label="Label" maxLength={REVIEW_LINK_LABEL_MAX} autoComplete="off" disabled={locked} value={labelValue} onChange={(event) => store.patchDetail(linkId, { label: event.target.value })} />
-      <DateTimeField variant="date" id="review-link-detail-expiry" label="Expires" value={expiryValue} disabled={locked} positionerClassName={DIALOG_FIELD_LAYER} onApply={(next) => { if (next) store.patchDetail(linkId, { expiryDay: next === currentDay ? null : next }); }} description={expiry && !expiry.ok ? expiry.message : expiryChanged ? "The link stops working at the end of this day." : `The link stops working on ${formatAbsoluteTime(link.expiresAt).replace(", ", " at ")}.`} {...(expiry && !expiry.ok ? { descriptionRole: "status" as const } : {})} />
+      <DateTimeField variant="date" id="review-link-detail-expiry" label="Expires" value={expiryValue} disabled={locked} positionerClassName={DIALOG_FIELD_LAYER} onApply={(next) => { if (next) store.patchDetail(linkId, { expiryDay: next === currentDay ? null : next }); }} description={expiry && !expiry.ok ? expiry.message : expiryChanged ? "The link stops working at the end of this day." : link.expiresAt === null ? "The link never expires." : `The link stops working on ${formatAbsoluteTime(link.expiresAt).replace(", ", " at ")}.`} {...(expiry && !expiry.ok ? { descriptionRole: "status" as const } : {})} />
       <div className="grid gap-[var(--space-1)]">
         <QuincyField id="review-link-detail-passcode" label={link.hasPasscode ? "New passcode" : "Passcode"} autoComplete="off" spellCheck={false} disabled={locked || draft.removePasscode} aria-describedby="review-link-detail-passcode-hint" value={draft.passcode} error={passcodeError} onChange={(event) => store.patchDetail(linkId, { passcode: event.target.value })} />
         {link.hasPasscode
@@ -147,6 +167,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
       {!locked && <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
         <Button type="button" variant="primary" className="min-h-11" disabled={!canSave} onClick={save}>{saving ? "Saving…" : "Save changes"}</Button>
       </div>}
+      </>}
     </section>
 
     <section aria-label="Films on this link" className="grid gap-[var(--space-3)]">
@@ -165,7 +186,8 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
             <ItemContent>
               <ItemTitle>{member.title}</ItemTitle>
               <ItemDescription className="line-clamp-none text-foreground-secondary">Versions guests can watch</ItemDescription>
-              <div className="grid gap-[var(--space-1)]">
+              {managed && <p className={TEXT} data-testid="review-link-version-readout">{[...member.grants].sort((a, b) => b.version - a.version).map((grant) => `v${grant.version}`).join(" · ")}</p>}
+              {!managed && <div className="grid gap-[var(--space-1)]">
                 {versions.map((version) => {
                   const on = granted.has(version.assetId);
                   return <label key={version.assetId} className={`flex min-h-11 cursor-pointer items-center gap-[var(--space-3)] ${TEXT}`}>
@@ -173,17 +195,17 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
                     <span>{"unlisted" in version ? `Version ${version.version}` : `v${version.version}${version.current ? " (current)" : ""}${version.uploadedBy && version.createdAt ? ` · ${version.uploadedBy.name} · ${formatVideoDate(version.createdAt)}` : ""}`}</span>
                   </label>;
                 })}
-              </div>
-              {!locked && full && <p id={limitId} data-testid="review-link-grant-limit-hint" className={MUTED}>{GRANT_LIMIT_HINT}</p>}
-              {!locked && granted.size === 1 && <p className={MUTED}>Remove the film to stop sharing it.</p>}
+              </div>}
+              {!locked && !managed && full && <p id={limitId} data-testid="review-link-grant-limit-hint" className={MUTED}>{GRANT_LIMIT_HINT}</p>}
+              {!locked && !managed && granted.size === 1 && <p className={MUTED}>Remove the film to stop sharing it.</p>}
             </ItemContent>
-            {!locked && <ItemActions>
+            {!locked && !managed && <ItemActions>
               <Button type="button" variant="secondary" className="min-h-11" disabled={busy} aria-label={`Remove ${member.title} from link`} onClick={() => setConfirm({ kind: "remove", videoId: member.videoId, title: member.title })}>Remove</Button>
             </ItemActions>}
           </Item>;
         })}
       </ItemGroup>
-      {!locked && (available.length > 0
+      {!locked && !managed && (available.length > 0
         ? <Combobox<VideoDto> items={available} value={null} onValueChange={(video) => { if (video) void store.run(`add:${linkId}`, () => actions.addVideo(linkId, video.id, [video.currentAssetId]), () => undefined, undefined, linkId); }} itemToStringLabel={(video) => video.title} itemToStringValue={(video) => video.id} isItemEqualToValue={(a, b) => a.id === b.id}>
           <ComboboxTrigger aria-label="Add a film" disabled={busyLink} className={buttonClasses("secondary", { className: "min-h-11 justify-between self-start" })}>{state.pending.has(`add:${linkId}`) ? "Adding…" : "Add a film"}</ComboboxTrigger>
           <ComboboxContent className="min-w-[max(var(--anchor-width),240px)] max-w-[calc(100vw-2*var(--space-4))]">
@@ -207,7 +229,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
       </ItemGroup>
     </section>}
 
-    {!revoked && <section aria-label="Danger zone" className="grid gap-[var(--space-2)]">
+    {!revoked && !managed && <section aria-label="Danger zone" className="grid gap-[var(--space-2)]">
       <div data-testid="review-link-actions" className="flex flex-wrap gap-[var(--space-2)]">
         <Button type="button" variant="secondary" className="min-h-11" disabled={ui.archived || expired || busyLink} onClick={() => setConfirm({ kind: "replace" })}>Replace link</Button>
         <Button type="button" variant="danger" className="min-h-11" disabled={busyLink} onClick={() => setConfirm({ kind: "revoke" })}>Revoke link</Button>
@@ -215,19 +237,27 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
       {expired && <p className={MUTED}>Expired links can't be replaced. Extend the expiry first, then replace it.</p>}
     </section>}
 
+    {revoked && ui.enabled && <section aria-label="Danger zone" className="grid gap-[var(--space-2)]">
+      <div data-testid="review-link-actions" className="flex flex-wrap gap-[var(--space-2)]">
+        <Button type="button" variant="danger" className="min-h-11" disabled={busyLink} onClick={() => setConfirm({ kind: "delete" })}>Delete link</Button>
+      </div>
+      <p className={MUTED}>Deleting removes it from this list. Its notes, approvals and history stay.</p>
+    </section>}
+
     <AlertDialog open={confirm !== null} onOpenChange={(next) => { if (!next) setConfirm(null); }}>
       <AlertDialogContent size="sm" data-testid="review-link-confirm">
         <AlertDialogHeader>
-          <AlertDialogTitle>{confirm?.kind === "remove" ? `Remove ${confirm.title}?` : confirm?.kind === "revoke" ? "Revoke this link?" : "Replace this link?"}</AlertDialogTitle>
+          <AlertDialogTitle>{confirm?.kind === "remove" ? `Remove ${confirm.title}?` : confirm?.kind === "revoke" ? "Revoke this link?" : confirm?.kind === "delete" ? "Delete this link?" : "Replace this link?"}</AlertDialogTitle>
           <AlertDialogDescription className="text-foreground-secondary">
             {confirm?.kind === "remove" && "Guests lose access to it at once. Notes and decisions stay."}
             {confirm?.kind === "revoke" && "Guests can no longer open it, and anyone using it is signed out. This can't be undone."}
+            {confirm?.kind === "delete" && "It disappears from your Review links. Its notes, approvals and history stay. This can't be undone."}
             {confirm?.kind === "replace" && "The current link stops working at once and anyone using it is signed out. You'll get a new link to share."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction variant={confirm?.kind === "replace" ? "default" : "destructive"} onClick={() => { if (confirm) run(confirm); }}>{confirm?.kind === "remove" ? "Remove film" : confirm?.kind === "revoke" ? "Revoke" : "Replace"}</AlertDialogAction>
+          <AlertDialogAction variant={confirm?.kind === "replace" ? "default" : "destructive"} onClick={() => { if (confirm) run(confirm); }}>{confirm?.kind === "remove" ? "Remove film" : confirm?.kind === "revoke" ? "Revoke" : confirm?.kind === "delete" ? "Delete" : "Replace"}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

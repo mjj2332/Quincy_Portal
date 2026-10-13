@@ -1,4 +1,4 @@
-import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, SQL_UUID_V4, videoRemovalSuppressionStatements } from "@quincy/db";
+import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, SQL_UUID_V4, videoRemovalSuppressionStatements, reviewLinkOpenSql } from "@quincy/db";
 import {
   ROLE_LABELS, VIDEO_TRASH_RETENTION_DAYS, VIDEO_TRASH_RETENTION_MS, VIDEO_UPLOAD_ACTIVE_STATUSES,
   type Role, type VideoRemovalImpact, type VideoRemoveInput, type VideoTrashItem, type VideoTrashResponse,
@@ -31,7 +31,7 @@ const DECISIONS_SQL = (asset: string) => `(SELECT COUNT(*) FROM video_approval_e
 const RELEASED_SQL = (asset: string) => `(CASE WHEN EXISTS (SELECT 1 FROM video_releases WHERE asset_id = ${asset} AND withdrawn_at IS NULL) THEN 1 ELSE 0 END)`;
 /** The live Review links that grant the Version: an unrevoked grant, on a link that is a video review link, unrevoked and unexpired, whose Video membership is live. */
 const LINKS_FROM_SQL = (asset: string, now: string) =>
-  `FROM review_link_version_grants g JOIN client_links l ON l.id = g.link_id AND l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ${now}
+  `FROM review_link_version_grants g JOIN client_links l ON l.id = g.link_id AND ${reviewLinkOpenSql("l", now)}
      JOIN review_link_videos rv ON rv.link_id = g.link_id AND rv.video_id = g.video_id AND rv.removed_at IS NULL
    WHERE g.asset_id = ${asset} AND g.revoked_at IS NULL`;
 const ACTIVE_UPLOAD_SQL = (video: string) => `EXISTS (SELECT 1 FROM video_upload_reservations r WHERE r.video_id = ${video} AND r.status IN (${ACTIVE_RESERVATION_STATUSES}))`;

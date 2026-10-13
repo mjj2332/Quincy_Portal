@@ -3,8 +3,8 @@ import { GUEST_ZIP_MAX_BYTES, GUEST_ZIP_MAX_ENTRIES, guestDownloadManifestSchema
 import { auditMeta } from "../lib/audit";
 import { attachment, safeFileName, videoVersionFileName } from "../lib/download-name";
 import { newId } from "../lib/ids";
-import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO } from "../lib/video-live-sql";
-import { gateSql, liveSql, reachSql } from "../lib/guest-fence-sql";
+import { LIVE_VERSION, LIVE_VIDEO } from "../lib/video-live-sql";
+import { gateSql, guestDownloadableSql, liveSql, reachSql } from "../lib/guest-fence-sql";
 import { VIDEO_STREAM_HEADERS, serveR2Object } from "../lib/r2-serve";
 import { createZipStream, type ZipStreamEntry } from "../lib/zip-stream";
 import { nativeZipResponse, planNativeZip, type NativeZipEntry } from "../lib/zip-native";
@@ -40,14 +40,17 @@ export { attachment, safeFileName };
 // -- SQL: the fence a committing statement and every zip entry repeat. Aliases: `s` guest_sessions, `l` client_links. Downloads read, so there is NO unarchived test here. --
 type Binds = { session: string; token: string; guest: string; now: string };
 const sessionFence = (b: Binds): string => `s.id = ${b.session} AND s.token_hash = ${b.token} AND s.guest_id = ${b.guest} AND s.verified_at IS NOT NULL AND l.allow_download = 1 AND ${liveSql(b.now)} AND ${gateSql(PARTS)}`;
-/** The Version has a live Release and its Video is not a locked premium one. `asset` is a SQL expression. */
-const deliverableSql = (asset: string): string => `EXISTS (SELECT 1 FROM video_releases dr JOIN videos dv ON dv.id = dr.video_id AND ${LIVE_VIDEO("dv")} WHERE dr.asset_id = ${asset} AND dr.withdrawn_at IS NULL AND ${LIVE_VERSION_EXISTS(asset)}
-    AND (dv.premium = 0 OR EXISTS (SELECT 1 FROM video_premium_unlocks du WHERE du.video_id = dv.id)))`;
+/**
+ * The Version may be handed over now: a live Version of a live Video that is not a locked premium one, and either released or (the Delivery review link only, #847) in the latest Published set.
+ * `link` and `asset` are SQL expressions. One predicate for the audit INSERT, the last fence before R2, and every zip entry.
+ */
+const deliverableSql = (link: string, asset: string): string => `EXISTS (SELECT 1 FROM videos dv JOIN video_version_meta dm ON dm.video_id = dv.id AND dm.asset_id = ${asset} AND ${LIVE_VERSION("dm")} WHERE ${LIVE_VIDEO("dv")}
+    AND (dv.premium = 0 OR EXISTS (SELECT 1 FROM video_premium_unlocks du WHERE du.video_id = dv.id)) AND ${guestDownloadableSql(link, asset)})`;
 
 /** Whether this session may still be handed `assetId` (or, with null, anything at all): the same predicate the audit INSERT carries, at a fresh time. */
 async function stillAllowed(db: D1Database, session: GuestSession, assetId: string | null): Promise<boolean> {
   if (session.guestId === null) return false;
-  const asset = assetId === null ? "" : ` AND ${reachSql("l.id", "l.project_id", "?5")} AND ${deliverableSql("?5")}`;
+  const asset = assetId === null ? "" : ` AND ${reachSql("l.id", "l.project_id", "?5")} AND ${deliverableSql("l.id", "?5")}`;
   const row = await db.prepare(`SELECT 1 AS ok FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE ${sessionFence({ session: "?1", token: "?2", guest: "?3", now: "?4" })}${asset}`)
     .bind(session.id, session.tokenHash, session.guestId, Date.now(), ...(assetId === null ? [] : [assetId])).first();
   return row !== null;
@@ -73,16 +76,16 @@ async function enter(c: Ctx, assetId?: string): Promise<Entered | Response> {
   return { session, guestId: session.guestId, answer };
 }
 
-type VersionState = { r2Key: string; bytes: number; version: number; videoId: string; title: string; released: boolean; locked: boolean };
-/** One Version through a live member and a live grant, with whether it is released and whether its Video is locked premium; null when unreachable. */
+type VersionState = { r2Key: string; bytes: number; version: number; videoId: string; title: string; /** A live Release, or on the Delivery review link a place in the latest Published set. */ downloadable: boolean; locked: boolean };
+/** One Version through a live member and a live grant, with whether it may be downloaded and whether its Video is locked premium; null when unreachable. */
 async function readVersion(db: D1Database, linkId: string, projectId: string, assetId: string): Promise<VersionState | null> {
   const row = await db.prepare(`SELECT a.r2_key, a.bytes, a.version, v.id AS video_id, v.title, v.premium,
       EXISTS (SELECT 1 FROM video_premium_unlocks u WHERE u.video_id = v.id) AS unlocked,
-      EXISTS (SELECT 1 FROM video_releases r WHERE r.asset_id = a.id AND r.withdrawn_at IS NULL) AS released
+      ${guestDownloadableSql("?1", "a.id")} AS downloadable
     FROM video_version_meta m JOIN assets a ON a.id = m.asset_id AND a.kind = 'video' AND ${LIVE_VERSION("m")} JOIN videos v ON v.id = m.video_id AND v.project_id = ?2 AND ${LIVE_VIDEO("v")}
     WHERE a.id = ?3 AND ${reachSql("?1", "?2", "a.id")}`).bind(linkId, projectId, assetId)
-    .first<{ r2_key: string; bytes: number; version: number; video_id: string; title: string; premium: number; unlocked: number; released: number }>();
-  return row ? { r2Key: row.r2_key, bytes: row.bytes, version: row.version, videoId: row.video_id, title: row.title, released: row.released === 1, locked: row.premium === 1 && row.unlocked !== 1 } : null;
+    .first<{ r2_key: string; bytes: number; version: number; video_id: string; title: string; premium: number; unlocked: number; downloadable: number }>();
+  return row ? { r2Key: row.r2_key, bytes: row.bytes, version: row.version, videoId: row.video_id, title: row.title, downloadable: row.downloadable === 1, locked: row.premium === 1 && row.unlocked !== 1 } : null;
 }
 
 /** Nothing landed: say why from a fresh read, in the order of the entry. The stub or the capability first, then the Version's state, else the stub. */
@@ -93,7 +96,7 @@ async function refusedBecause(c: Ctx, session: GuestSession, assetId: string | u
   if (row.guest_id === null || row.verified_at === null || row.guest_id !== session.guestId) return c.json({ error: "verification_required" }, 401);
   if (assetId !== undefined) {
     const state = await readVersion(c.env.DB, session.link.id, session.link.projectId, assetId);
-    if (state && !state.released) return c.json({ error: "not_released" }, 409);
+    if (state && !state.downloadable) return c.json({ error: "not_released" }, 409);
     if (state?.locked) return c.json({ error: "premium_locked" }, 403);
   }
   return guestNotFound(c);
@@ -106,7 +109,7 @@ async function downloadOne(c: Ctx): Promise<Response> {
   const { session, guestId, answer } = entered;
   const state = await readVersion(c.env.DB, session.link.id, session.link.projectId, assetId);
   if (!state) return answer(await guestNotFound(c));
-  if (!state.released) return answer(c.json({ error: "not_released" }, 409));
+  if (!state.downloadable) return answer(c.json({ error: "not_released" }, 409));
   if (state.locked) return answer(c.json({ error: "premium_locked" }, 403));
   // One audit row per download: a GET that asks for the whole file (no Range, or `bytes=0-`). A resumed or chunked read, and HEAD, write nothing, but they passed every gate above.
   const range = c.req.header("range")?.trim();
@@ -114,7 +117,7 @@ async function downloadOne(c: Ctx): Promise<Response> {
     const at = Date.now();
     const written = await c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?1, NULL, 'review_link.download', 'review_link', l.id, ?2, ?3 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id
-      WHERE ${sessionFence({ session: "?4", token: "?5", guest: "?6", now: "?3" })} AND ${reachSql("l.id", "l.project_id", "?7")} AND ${deliverableSql("?7")}`)
+      WHERE ${sessionFence({ session: "?4", token: "?5", guest: "?6", now: "?3" })} AND ${reachSql("l.id", "l.project_id", "?7")} AND ${deliverableSql("l.id", "?7")}`)
       .bind(newId(), auditMeta(null, { guest: { guestId, sessionId: session.id }, linkId: session.link.id, projectId: session.link.projectId, videoId: state.videoId, assetId, version: state.version, bytes: state.bytes }), at, session.id, session.tokenHash, guestId, assetId).run();
     if (written.meta.changes === 0) return refusedBecause(c, session, assetId);
   }
@@ -136,7 +139,7 @@ type LeftOut = { videoId: string; title: string; reason: "not_released" | "premi
  */
 async function readDownloadSet(db: D1Database, linkId: string, projectId: string): Promise<{ included: Included[]; leftOut: LeftOut[] }> {
   const rows = (await db.prepare(`SELECT v.id AS video_id, v.title, v.premium, (u.video_id IS NOT NULL) AS unlocked, a.id AS asset_id, a.version, a.bytes, a.r2_key,
-        EXISTS (SELECT 1 FROM video_releases r WHERE r.asset_id = a.id AND r.withdrawn_at IS NULL) AS released
+        ${guestDownloadableSql("?1", "a.id")} AS released
       FROM review_link_videos rv JOIN videos v ON v.id = rv.video_id AND v.project_id = ?2 AND ${LIVE_VIDEO("v")} LEFT JOIN video_premium_unlocks u ON u.video_id = v.id
         JOIN review_link_version_grants g ON g.link_id = rv.link_id AND g.video_id = rv.video_id AND g.revoked_at IS NULL
         JOIN assets a ON a.id = g.asset_id AND a.kind = 'video' JOIN video_version_meta m ON m.asset_id = a.id AND m.video_id = g.video_id AND ${LIVE_VERSION("m")}
