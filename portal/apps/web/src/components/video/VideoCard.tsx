@@ -1,6 +1,6 @@
 import { useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { ChevronDown } from "lucide-react";
-import type { Role, VideoDto } from "@quincy/shared";
+import { staffPathFor, videoVersionDownloadUrl, type Role, type VideoDto } from "@quincy/shared";
 import { Badge } from "../reui/badge";
 import { Button } from "../quincy/Button";
 import { Frame, FramePanel } from "../reui/frame";
@@ -11,6 +11,7 @@ import { LazyImage } from "../LazyImage";
 import { Notice } from "../quincy/Notice";
 import { FilePickButton } from "../quincy/FileDropzone";
 import type { VideoUploadState } from "../../lib/video-upload";
+import { copyText } from "../../lib/clipboard";
 import { Checkbox } from "../quincy/Checkbox";
 import { IconButton } from "../quincy/icon-button";
 import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
@@ -33,7 +34,7 @@ const onCardSurface = (event: { currentTarget: Element; target: EventTarget }) =
  * the Video and the control that was pressed to `onOpen`; selection and note chips arrive in later slices. `onVersionFile` checks and
  * starts the upload and returns a message when the file is refused.
  */
-export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks, onCreateReviewLink, appearance = { thumb: "fit", info: true }, reviewStatus }: {
+export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks, onCreateReviewLink, projectId, download, appearance = { thumb: "fit", info: true }, reviewStatus }: {
   video: VideoDto;
   canUpload: boolean;
   currentUserId: string | null;
@@ -45,6 +46,10 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
   onCancelReservation: (reservationId: string) => Promise<void>;
   /** Opens the review player on this Video; `trigger` is where focus returns on close. */
   onOpen: (video: VideoDto, trigger: HTMLElement) => void;
+  /** The Project this film is in: the "⋯" menu's Copy link builds the staff deep link from it (#866). */
+  projectId: string;
+  /** Present when staff may download (the `download` part and the capability): the "⋯" menu then offers the current Version as an attachment (#866). */
+  download?: { projectId: string };
   /** Present only when new Review links may be made (#834): the card's "⋯" menu then offers Create Review link for this film. Absent on an archived Project. */
   onCreateReviewLink?: () => void;
   /** Review links (#741 11b), present only when the links part is on and the role may share: the tick for a new link and the links this Video is on. */
@@ -56,6 +61,8 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
 }) {
   // The menu closes before the dialog has focus: while Create Review link hands off, the menu moves no focus (#463); the dialog returns focus to the menu button itself.
   const handOff = useRef(false);
+  // The viewer's focus-return target (#866): the ⋯ button itself, never a menu item, which is portalled and gone once the menu closes.
+  const menuTrigger = useRef<HTMLButtonElement>(null);
   const [cancelling, setCancelling] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
@@ -147,18 +154,23 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
             disabled={checking}
             onFile={(file) => { setMessage(null); setChecking(true); void onVersionFile(video, file).then((refused) => setMessage(refused)).finally(() => setChecking(false)); }}
           >{checking ? "Checking…" : `Upload v${nextNumber}`}</FilePickButton>}
-          {onCreateReviewLink && <div className="ml-auto">
+          <div className="ml-auto">
             <Menu
               triggerLabel="Film actions" label="Film menu" triggerTestId="video-card-menu"
-              triggerRender={<IconButton data-video-id={video.id} />}
+              triggerRender={<IconButton ref={menuTrigger} data-video-id={video.id} />}
               triggerClassName="text-foreground"
               trigger={<span aria-hidden="true">⋯</span>}
               finalFocus={() => (handOff.current ? false : undefined)}
               onOpenChange={(isOpen) => { if (isOpen) handOff.current = false; }}
             >
-              <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-create-review-link" onClick={() => { handOff.current = true; onCreateReviewLink(); }}>Create Review link</MenuPrimitive.Item>
+              {/* Groups, in order: the film (Open, Create Review link) ‖ the file and its address (Download, Copy link). Later tickets append items inside a group. */}
+              <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-menu-open" onClick={() => { handOff.current = true; onOpen(video, menuTrigger.current ?? document.body); }}>Open</MenuPrimitive.Item>
+              {onCreateReviewLink && <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-create-review-link" onClick={() => { handOff.current = true; onCreateReviewLink(); }}>Create Review link</MenuPrimitive.Item>}
+              <MenuPrimitive.Separator className="my-[var(--space-1)] h-px bg-border" />
+              {download && <MenuPrimitive.LinkItem closeOnClick className={MENU_ITEM} data-testid="video-card-download" href={videoVersionDownloadUrl(download.projectId, video.currentAssetId)} download>{`Download v${newest.version}`}</MenuPrimitive.LinkItem>}
+              <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-copy-link" onClick={() => copyText(new URL(staffPathFor({ kind: "project", projectId, arrivalTab: "video", video: { id: video.id } }), window.location.origin).href)}>Copy link</MenuPrimitive.Item>
             </Menu>
-          </div>}
+          </div>
         </div>
       </div>
     </FramePanel>
