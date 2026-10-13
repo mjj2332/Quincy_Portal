@@ -6,7 +6,8 @@ import { ApiError, apiGet } from "./api";
 import { useNow } from "./use-now";
 import { externalApiGet, externalProjectDetailToWorkspace } from "./external-api-response";
 import { ZodError } from "zod";
-import { videoListResponseSchema, videoReviewResponseSchema, type ExternalProjectDetailDto, type VideoDto, type VideoReviewResponse } from "@quincy/shared";
+import { fetchProjectSocialOverlays } from "./project-social-overlays";
+import { videoListResponseSchema, videoReviewResponseSchema, type ProjectSocialOverlaysResponse, type ExternalProjectDetailDto, type VideoDto, type VideoReviewResponse } from "@quincy/shared";
 import { createActiveProjectDetailsInvalidatedMessage, createDashboardBoardInvalidatedMessage, createProductionCalendarInvalidatedMessage, createProductionGanttInvalidatedMessage, getProjectQueryRuntime, invalidatesPastPendingRead, projectResourceKey, useProjectQueryRuntime, withDependentResources, type ProjectDataResource, type ProjectQueryRuntime } from "./project-query-sync";
 import type { ReviewPatch, WorkspaceAsset, Review } from "../components/PhotoGrid";
 import type { ProjectStageKey } from "./stages";
@@ -61,6 +62,8 @@ export const projectDataKeys = {
   /** Every Version's client decisions and live Release for one Video (#741 14-ui-staff). */
   videoDecisions: (projectId: string, videoId: string) => ["project-data", projectId, "video-decisions", videoId] as const,
   /** The Project's Video Trash (#776 E): what was removed and is waiting out its retention. Read afresh on every open. */
+  /** The Project's chosen Social overlays and the picker list (#870). Under the Project root, so `project-data-removed` clears it. */
+  socialOverlays: (projectId: string) => ["project-data", projectId, "social-overlays"] as const,
   videoTrash: (projectId: string) => ["project-data", projectId, "video-trash"] as const,
   /** One note's drawing at one revision (#741 6b-ui). The revision is in the key, so an edited drawing is a different entry and a cached one is never stale. */
   videoNoteMarkup: (projectId: string, noteId: string, revision: number) => ["project-data", projectId, "video-note-markup", noteId, revision] as const,
@@ -147,6 +150,18 @@ export function useVideoReviewQuery(projectId: string, enabled: boolean, role: R
         if (error instanceof ApiError && (error.status === 403 || error.status === 404)) return { open: false, parts: [] } satisfies VideoReviewResponse;
         throw error;
       }
+    },
+  });
+}
+
+/** The Project's Social overlays (#870): the picker list, the stored selection and what the viewer resolves to. A closed gate is a 404 and reads as an error the caller hides. */
+export function useProjectSocialOverlaysQuery(projectId: string, enabled: boolean, role: Role = "admin"): UseQueryResult<ProjectSocialOverlaysResponse, Error> {
+  return useQuery<ProjectSocialOverlaysResponse, Error>({
+    queryKey: projectDataKeys.socialOverlays(projectId), enabled, staleTime: 0, retry: (count, error) => (error instanceof ZodError || (error instanceof ApiError && (error.status === 403 || error.status === 404)) ? false : projectQueryRetry(count, error)),
+    queryFn: async ({ signal, client }: QueryFunctionContext) => {
+      const response = await fetchProjectSocialOverlays(projectId, role === "external_editor", signal);
+      if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
+      return response;
     },
   });
 }
