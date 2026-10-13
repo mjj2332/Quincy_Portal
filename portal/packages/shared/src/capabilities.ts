@@ -52,6 +52,8 @@ export const CAPABILITIES = [
   "manageVideoPremium",
   "manageVideoTrash",
   "downloadVideo",
+  /** Set a Video Version's Review status to Approved (internal) (#863). In review needs only annotateVideo. */
+  "approveVideoInternal",
   "switchDeliveryPage",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
@@ -125,6 +127,7 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "manageVideoPremium",
     "manageVideoTrash",
     "downloadVideo",
+    "approveVideoInternal",
     "switchDeliveryPage",
   ],
   editor: [
@@ -155,6 +158,7 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "manageVideoPremium",
     "manageVideoTrash",
     "downloadVideo",
+    "approveVideoInternal",
   ],
   external_editor: EXTERNAL_EDITOR_CAPABILITIES,
   photographer: [

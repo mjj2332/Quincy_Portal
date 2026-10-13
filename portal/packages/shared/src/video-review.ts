@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Capability } from "./capabilities";
+import { roleHasCapability, type Capability, type Role } from "./capabilities";
 
 /**
  * Staff-side video review (#741). The gate is a set of feature-flag rows; each part is one flag
@@ -49,6 +49,12 @@ export const VIDEO_KEY_PATTERN = /^projects\/[^/]+\/video\//;
  */
 export const videoPersonSchema = z.object({ id: z.string().uuid(), name: z.string(), roleLabel: z.string(), isExternal: z.boolean(), active: z.boolean() }).strict();
 
+/** Review status (#863). A Version stores one of two, a Video also reads `published`, which is derived and never stored. */
+export const VERSION_REVIEW_STATUSES = ["in_review", "approved_internal"] as const;
+export type VersionReviewStatus = (typeof VERSION_REVIEW_STATUSES)[number];
+export const VIDEO_REVIEW_STATUSES = ["in_review", "approved_internal", "published"] as const;
+export type VideoReviewStatus = (typeof VIDEO_REVIEW_STATUSES)[number];
+
 /** One Version of a Video as the list returns it (#741). Never carries an object key: playback addresses a Version by Asset id alone. */
 export const videoVersionDtoSchema = z.object({
   assetId: z.string().uuid(),
@@ -70,6 +76,8 @@ export const videoVersionDtoSchema = z.object({
   fastStart: z.boolean(),
   hasAudio: z.boolean(),
   hasPoster: z.boolean(),
+  /** Stored Review status of this Version (#863). Never `published`: that is derived on the Video. */
+  reviewStatus: z.enum(VERSION_REVIEW_STATUSES),
   streamUrl: z.string().startsWith("/media/video/"),
   posterUrl: z.string().startsWith("/media/video/").nullable(),
 }).strict();
@@ -77,6 +85,10 @@ export type VideoVersionDto = z.infer<typeof videoVersionDtoSchema>;
 
 export const videoDtoSchema = z.object({
   id: z.string().uuid(),
+  /** The Video's Review status (#863): its latest live Version's stored status, read as `published` while that Version is in the latest Published set. */
+  reviewStatus: z.enum(VIDEO_REVIEW_STATUSES),
+  /** The newest older Version that is in the latest Published set while the current Version is not ("vN published"), else null. */
+  olderPublishedVersion: z.number().int().positive().nullable(),
   title: z.string(),
   premium: z.boolean(),
   /** An unlock row exists for this Video (#741 14a). Independent of `premium`: the unlock only matters while the Video is premium. */
@@ -97,3 +109,17 @@ export type VideoDto = z.infer<typeof videoDtoSchema>;
 /** `GET /api/projects/:id/videos`. */
 export const videoListResponseSchema = z.object({ videos: z.array(videoDtoSchema) }).strict();
 export type VideoListResponse = z.infer<typeof videoListResponseSchema>;
+
+/**
+ * `PUT /api/projects/:projectId/video-versions/:assetId/review-status` (#863). The path names the Version the pill was read on,
+ * `expectedStatus` is the status it showed, so a stale write is refused rather than overwriting someone else's change.
+ */
+export const videoReviewStatusInputSchema = z.object({ reviewStatus: z.enum(VERSION_REVIEW_STATUSES), expectedStatus: z.enum(VERSION_REVIEW_STATUSES) }).strict();
+export type VideoReviewStatusInput = z.infer<typeof videoReviewStatusInputSchema>;
+export const videoReviewStatusResponseSchema = z.object({ video: videoDtoSchema }).strict();
+export type VideoReviewStatusResponse = z.infer<typeof videoReviewStatusResponseSchema>;
+
+/** The statuses a role may set: Approved (internal) needs approveVideoInternal, In review needs annotateVideo. One rule for the route and the pill. */
+export function reviewStatusTransitions(role: Role): VersionReviewStatus[] {
+  return VERSION_REVIEW_STATUSES.filter((status) => roleHasCapability(role, status === "approved_internal" ? "approveVideoInternal" : "annotateVideo"));
+}

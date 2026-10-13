@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, Columns2, DownloadIcon, Link2 } from "lucide-react";
+import { ChevronLeft, Columns2, DownloadIcon, Link2, Trash2 } from "lucide-react";
 import { framesToTimecode, videoVersionDownloadUrl, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
 import { registerToastHost } from "../../lib/toast-host";
 import { hasOpenAlertDialog } from "../../lib/alert-dialog-press";
@@ -7,6 +7,8 @@ import { useMediaQuery } from "../../lib/use-media-query";
 import type { CompareSideId, CompareStore } from "../../lib/video-compare-store";
 import { OverlayContainerContext } from "../OverlayContainerContext";
 import { Button } from "../reui/button";
+import { IconButton } from "../quincy/icon-button";
+import type { VersionRemovalHandle } from "./VideoVersionMenu";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "../reui/dialog";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
 import { CopyTextButton } from "./CopyTextButton";
@@ -19,6 +21,7 @@ import { formatBytes, formatDuration, formatFps, formatVideoDate } from "./video
 import type { NoteFormStore } from "../../lib/video-note-form-store";
 import { versionSlot, videoSlot, type VideoApprovalStore } from "../../lib/video-approval-store";
 import type { VideoNotesSession } from "./use-video-notes";
+import { VideoReviewStatusPill } from "./VideoReviewStatusPill";
 
 /** The notes UI is its own chunk: a Project whose notes part is off never loads it. */
 const LazyNotesHost = lazy(() => import("./VideoNotesHost"));
@@ -43,7 +46,7 @@ const VERSION_SELECT_ID = "video-review-version";
  * With `notes` (the Project's `notes` part is on, #741 5b) the Version details column becomes the notes panel, and the Version details
  * move behind a button in its header; without it the viewer is exactly the 4d-ii viewer.
  */
-export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, reviewLinks, deepLink }: {
+export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, reviewLinks, deepLink, reviewStatus }: {
   video: VideoDto;
   onClose: () => void;
   /** The control that opened the viewer; focus goes back to it on close. */
@@ -60,6 +63,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   download?: { projectId: string };
   /** Present only when new Review links may be made (#834): the header's Create Review link, which hands over the Version to grant (the one on screen; side A in Compare). */
   reviewLinks?: { onCreate: (assetId: string) => void };
+  /** Present when Review status is offered (#863): the header pill reports the Video's status and, per role, sets it. */
+  reviewStatus?: { projectId: string; role: Role; archived: boolean };
   /** Present when the URL names this film (#819, staff Project route): `version` is the Version number it names (absent = the current one), `href` the absolute link to a Version, `onVersionShown` how the viewer reports the Version on show. */
   deepLink?: { version?: number; /** The list this Video came from is a settled, successful read: only then is an unknown Version normalised in the URL. */ settled: boolean; href: (version: number) => string; onVersionShown: (version: number) => void };
 }) {
@@ -202,10 +207,28 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     }
   }, [versionIds, video.id, assetId, video.currentAssetId, compareStore, exitCompare]);
   /** The Version was removed (#776 E): state that holds nothing typed lets go, and the viewer moves to the Video's current Version. Typed state goes through `captureDrafts`. */
+  const assetIdRef = useRef(assetId);
+  assetIdRef.current = assetId;
   const onVersionRemoved = useCallback((removed: { assetId: string; videoId: string; video: VideoDto | null }) => {
     compareStore?.dropVersion(removed.assetId);
-    if (removed.video !== null) { setResume(null); setAssetId(removed.video.currentAssetId); }
+    // Move only when the Version on show is the one that went (#862: a row can remove another Version); the film's other Versions leave the person where they are.
+    if (removed.video !== null && removed.assetId === assetIdRef.current) { setResume(null); setAssetId(removed.video.currentAssetId); }
   }, [compareStore]);
+  // The Version list's own rows (#862): the list closes without handing focus back to its trigger, because the confirmation takes it and returns it to the Version select.
+  const removeRef = useRef<VersionRemovalHandle | null>(null);
+  // The menu is a lazy chunk: its rows' icons wait for the handle to mount, so a press is never lost.
+  const [removeReady, setRemoveReady] = useState(false);
+  const bindRemove = useCallback((handle: VersionRemovalHandle | null) => { removeRef.current = handle; setRemoveReady(handle !== null); }, []);
+  const [versionListOpen, setVersionListOpen] = useState(false);
+  const handOff = useRef(false);
+  const rowsDisabled = trash?.archived === true;
+  const removeFromRow = (candidate: VideoDto["versions"][number]) => {
+    const handle = removeRef.current;
+    if (!handle) return;
+    handOff.current = true;
+    setVersionListOpen(false);
+    handle.open(candidate.assetId, () => document.getElementById(VERSION_SELECT_ID));
+  };
   /**
    * At the moment the person confirms Remove: notes the edit revision of each slot the removal retires. The returned function, run when the answer is applied, retires a slot only if it has not
    * been edited since, so anything typed after the confirmation (the answer was slow, the film came back and was drafted on) survives. `whole`: the Video went, so its payment reference too.
@@ -308,17 +331,25 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         <DialogTitle className="text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{video.title}</DialogTitle>
         <DialogDescription className="text-foreground-secondary [font:var(--type-label)]">{`${version.width}×${version.height} · ${formatFps(version.fps)} fps · `}<span data-testid="video-start-tc" className="whitespace-nowrap">{`start TC ${startLabel}`}</span></DialogDescription>
       </div>
+      {reviewStatus && <VideoReviewStatusPill video={video} version={version} comparing={comparing} {...reviewStatus} />}
       {!comparing && <div data-testid="video-version-group" className="flex min-w-0 max-w-full items-center gap-[var(--space-2)]">
         <label htmlFor={VERSION_SELECT_ID} className="shrink-0 text-foreground-secondary [font:var(--type-label)]">Version</label>
-        <Select value={version.assetId} onValueChange={(next) => { if (typeof next === "string") { setResume(null); setAssetId(next); } }}>
+        <Select open={versionListOpen} onOpenChange={(next) => { if (next) handOff.current = false; setVersionListOpen(next); }} value={version.assetId} onValueChange={(next) => { if (typeof next === "string") { setResume(null); setAssetId(next); } }}>
           <SelectTrigger id={VERSION_SELECT_ID} data-testid="video-version-trigger" className="pointer-coarse:min-h-11 max-[721px]:min-h-11 min-w-0 max-w-full">
             <SelectValue>{() => <span data-testid="video-version-label" className="block truncate">{optionLabel(version)}</span>}</SelectValue>
           </SelectTrigger>
-          <SelectContent className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
-            {video.versions.map((candidate) => <SelectItem key={candidate.assetId} value={candidate.assetId} className="pointer-coarse:min-h-11 max-[721px]:min-h-11">{optionLabel(candidate)}</SelectItem>)}
+          <SelectContent finalFocus={() => !handOff.current} className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
+            {video.versions.map((candidate) => <SelectItem key={candidate.assetId} value={candidate.assetId} className="pointer-coarse:min-h-11 max-[721px]:min-h-11">{optionLabel(candidate)}{trash && <IconButton
+              tabIndex={-1} aria-hidden="true" data-testid="video-version-row-remove" data-asset-id={candidate.assetId} title={`Remove version ${candidate.version}`}
+              disabled={!removeReady || rowsDisabled || (video.uploading != null && video.versions.length === 1)}
+              className="ml-auto text-foreground"
+              // The option commits on pointerdown/mouseup/click: none of them may reach it from the icon.
+              onPointerDown={(event) => { event.stopPropagation(); }} onMouseUp={(event) => { event.stopPropagation(); }}
+              onClick={(event) => { event.stopPropagation(); event.preventDefault(); removeFromRow(candidate); }}
+            ><Trash2 aria-hidden="true" /></IconButton>}</SelectItem>)}
           </SelectContent>
         </Select>
-        {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} /></Suspense>}
+        {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} removeRef={bindRemove} /></Suspense>}
       </div>}
       <div data-testid="video-header-actions" className="ml-auto flex flex-wrap items-center justify-end gap-x-[var(--space-4)] gap-y-[var(--space-2)] max-[721px]:ml-0 max-[721px]:justify-start">
       {!comparing && !phone && <ReviewPaneToggle open={pane.open} onOpenChange={setPaneOpen} paneId={paneId} label={notesOn ? "Notes" : "Details"} className="pointer-coarse:min-h-11" />}
