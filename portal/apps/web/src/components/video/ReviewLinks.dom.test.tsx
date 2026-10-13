@@ -135,15 +135,18 @@ describe("create from a Video card's menu (#834)", () => {
     expect(dialog()).toBeNull();
     expect(document.activeElement).toBe(header);
   });
-  it("is offered to an External editor, and hidden from a Photographer, with the links part off, and on an archived Project", async () => {
+  it("offers Create Review link to an External editor, and not to a Photographer, with the links part off, or on an archived Project (the menu itself stays, #866)", async () => {
     await mount({ role: "external_editor" });
-    expect(cardMenu(V1)).not.toBeNull();
+    await openCardMenu(V1); expect(menuItemCreate()).not.toBeNull();
     await unmount();
-    await mount({ role: "photographer" }); expect(cardMenu(V1)).toBeNull();
+    await mount({ role: "photographer" });
+    await openCardMenu(V1); expect(cardMenu(V1)).not.toBeNull(); expect(menuItemCreate()).toBeNull();
     await unmount();
-    await mount({ parts: ["upload"] }); expect(cardMenu(V1)).toBeNull();
+    await mount({ parts: ["upload"] });
+    await openCardMenu(V1); expect(cardMenu(V1)).not.toBeNull(); expect(menuItemCreate()).toBeNull();
     await unmount();
-    await mount({ archived: true }); expect(cardMenu(V1)).toBeNull();
+    await mount({ archived: true });
+    await openCardMenu(V1); expect(cardMenu(V1)).not.toBeNull(); expect(menuItemCreate()).toBeNull();
   });
 });
 
