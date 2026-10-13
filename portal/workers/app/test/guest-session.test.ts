@@ -4,6 +4,7 @@ import { guestSessionResponseSchema } from "@quincy/shared";
 import { app } from "../src/index";
 import { hashPasscode } from "../src/lib/review-passcode";
 import { hashToken } from "../src/lib/opaque-token";
+import { renewDeliverySession } from "../src/guest/link";
 import type { Env } from "../src/env";
 import { baseEnv, cookie as staffCookie, database, ids, request as staffRequest, seedFixture } from "./embedded-media-support";
 import {
@@ -508,5 +509,126 @@ describe("Sol round 1 fixes", () => {
     expect(body.link.expiresAt).toBe(new Date(shortened).toISOString()); expect(body.link.label).toBe("Renamed");
     const [row] = await sessionRows(link.id);
     expect(row!.expires_at).toBe(shortened);
+  });
+});
+
+/** The Delivery review link keeps a verified guest signed in (follow-up to #847, ADR 0023 amendment): 400 days, sliding, renewed by the page's session read at most once a day. */
+describe("verified Delivery guests stay signed in (ADR 0023 amendment)", () => {
+  const LONG = 400 * DAY;
+  const read = (link: { id: string; cookie: string }) => guestFetch(linkPath(link.id, "/session"), { cookie: link.cookie });
+  const row = async (linkId: string) => (await database.DB.prepare("SELECT * FROM guest_sessions WHERE link_id = ?").bind(linkId).first<Record<string, unknown>>())!;
+  const setExpiry = (linkId: string, expiresAt: number) => database.DB.prepare("UPDATE guest_sessions SET expires_at = ? WHERE link_id = ?").bind(expiresAt, linkId).run();
+  /** A session taken to verified in SQL (the email flow has its own tests): a guest row, and the session pointing at it. */
+  async function verified(input: Parameters<typeof linkWithSession>[0], expiresIn: number) {
+    const link = await linkWithSession(input);
+    const guestId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO guest_reviewers (id, email_normalized, display_name, created_at) VALUES (?1, ?2, 'Gina Guest', ?3)").bind(guestId, `${guestId}@guest-forever.test`, now).run();
+    await database.DB.prepare("UPDATE guest_sessions SET guest_id = ?1, verified_at = ?2, expires_at = ?3, created_at = ?5 WHERE link_id = ?4").bind(guestId, now, now + expiresIn, link.id, now - 5_000).run();
+    return { ...link, guestId };
+  }
+  afterEach(async () => { await database.DB.prepare("DELETE FROM guest_reviewers WHERE email_normalized LIKE '%@guest-forever.test'").run(); });
+
+  it("renews a verified Delivery session to about 400 days, re-sends the SAME cookie, and leaves identity and token untouched", async () => {
+    const link = await verified({ deliveryReview: true }, 10 * DAY);
+    const before = await row(link.id);
+    const response = await read(link);
+    expect(response.status).toBe(200);
+    const body = guestSessionResponseSchema.parse(await response.json());
+    expect(body).toMatchObject({ verified: true, name: "Gina Guest", email: `${link.guestId}@guest-forever.test` });
+    const after = await row(link.id);
+    expect(after.expires_at as number).toBeGreaterThan(Date.now() + LONG - 10_000); expect(after.expires_at as number).toBeLessThanOrEqual(Date.now() + LONG);
+    expect(after).toMatchObject({ guest_id: before.guest_id, verified_at: before.verified_at, token_hash: before.token_hash });
+    const setCookie = response.headers.getSetCookie().find((entry) => entry.startsWith(`${cookieName(link.id)}=`))!;
+    expect(setCookie.split(";")[0]).toBe(link.cookie);
+    const maxAge = Number(setCookie.match(/Max-Age=(\d+)/)![1]);
+    expect(maxAge).toBeGreaterThan(400 * 86_400 - 30); expect(maxAge).toBeLessThanOrEqual(34_560_000);
+  });
+
+  it("upgrades a live verified session minted before this change (about 7 days left) on its first read", async () => {
+    const link = await verified({ deliveryReview: true }, 7 * DAY);
+    const response = await read(link);
+    expect(response.status).toBe(200);
+    expect((await row(link.id)).expires_at as number).toBeGreaterThan(Date.now() + LONG - 10_000);
+    expect(sessionCookie(response, link.id)).toBe(link.cookie);
+  });
+
+  it("writes at most once a day: a second read right after renewal changes nothing and sends no cookie", async () => {
+    const link = await verified({ deliveryReview: true }, 10 * DAY);
+    expect(sessionCookie(await read(link), link.id)).toBe(link.cookie);
+    const renewed = (await row(link.id)).expires_at;
+    const again = await read(link);
+    expect(again.status).toBe(200);
+    expect(again.headers.getSetCookie()).toEqual([]);
+    expect((await row(link.id)).expires_at).toBe(renewed);
+  });
+
+  it("does not renew an unverified Delivery session", async () => {
+    const link = await linkWithSession({ deliveryReview: true });
+    await setExpiry(link.id, Date.now() + 2 * DAY);
+    const response = await read(link);
+    expect(response.status).toBe(200);
+    expect(response.headers.getSetCookie()).toEqual([]);
+    expect((await row(link.id)).expires_at as number).toBeLessThan(Date.now() + 3 * DAY);
+  });
+
+  it("does not renew a verified session on an ordinary link", async () => {
+    const link = await verified({}, 1 * DAY);
+    const response = await read(link);
+    expect(response.status).toBe(200);
+    expect(response.headers.getSetCookie()).toEqual([]);
+    expect((await row(link.id)).expires_at as number).toBeLessThan(Date.now() + 2 * DAY);
+  });
+
+  it("answers the stub to a token a verify has since rotated, writes nothing and sets no cookie", async () => {
+    const link = await verified({ deliveryReview: true }, 10 * DAY);
+    await database.DB.prepare("UPDATE guest_sessions SET token_hash = ? WHERE link_id = ?").bind(await hashToken("a-newer-token"), link.id).run();
+    const before = await row(link.id);
+    const response = await read(link);
+    expect(await stubOf(response)).toEqual(await stubOf(await guestFetch("/d/api/x")));
+    expect(response.headers.getSetCookie()).toEqual([]);
+    expect(await row(link.id)).toEqual(before);
+  });
+
+  it("suspends while the Delivery page is off (stub, no renewal) and resumes, renewing, when it is switched back on", async () => {
+    const link = await verified({ deliveryReview: true }, 10 * DAY);
+    await database.DB.prepare("UPDATE delivery_pages SET enabled = 0 WHERE slug LIKE 'guest-dr-%'").run();
+    const before = (await row(link.id)).expires_at;
+    const off = await read(link);
+    expect(await stubOf(off)).toEqual(await stubOf(await guestFetch("/d/api/x")));
+    expect((await row(link.id)).expires_at).toBe(before);
+    await database.DB.prepare("UPDATE delivery_pages SET enabled = 1 WHERE slug LIKE 'guest-dr-%'").run();
+    const on = await read(link);
+    expect(on.status).toBe(200);
+    expect((await row(link.id)).expires_at as number).toBeGreaterThan(Date.now() + LONG - 10_000);
+  });
+
+  it("does not bring an expired verified session back", async () => {
+    const link = await verified({ deliveryReview: true }, -1_000);
+    const response = await read(link);
+    expect(await stubOf(response)).toEqual(await stubOf(await guestFetch("/d/api/x")));
+    expect(response.headers.getSetCookie()).toEqual([]);
+    expect((await row(link.id)).expires_at as number).toBeLessThan(Date.now());
+  });
+
+  it("does not extend when the feature gate closes between authentication and the renewal write (D6)", async () => {
+    const link = await verified({ deliveryReview: true }, 10 * DAY);
+    const held = { id: (await row(link.id)).id as string, tokenHash: await hashToken(link.cookie.split("=")[1]!) } as Parameters<typeof renewDeliverySession>[1];
+    const before = (await row(link.id)).expires_at;
+    for (const key of ["video_review_guest", "video_review"]) {
+      await database.DB.prepare("UPDATE feature_flags SET enabled = 0 WHERE key = ?").bind(key).run();
+      expect(await renewDeliverySession(database.DB, held, Date.now()), key).toBeNull();
+      expect((await row(link.id)).expires_at, key).toBe(before);
+      await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = ?").bind(key).run();
+    }
+    expect(await renewDeliverySession(database.DB, held, Date.now()), "control: gate open").not.toBeNull();
+  });
+
+  it("renews on the session read only: videos and stream never set a cookie", async () => {
+    const link = await verified({ deliveryReview: true }, 10 * DAY);
+    const before = (await row(link.id)).expires_at;
+    const videos = await guestFetch(linkPath(link.id, "/videos"), { cookie: link.cookie });
+    const stream = await guestFetch(linkPath(link.id, `/versions/${crypto.randomUUID()}/stream`), { cookie: link.cookie });
+    expect(videos.headers.getSetCookie()).toEqual([]); expect(stream.headers.getSetCookie()).toEqual([]);
+    expect((await row(link.id)).expires_at).toBe(before);
   });
 });

@@ -40,7 +40,7 @@ address per film, so the client can reach the review screen with no staff step i
 
 ## Supersedes, for this link only
 
-- ADR 0021 section 2 (expiry, passcode, revoke, replace), section 4 ("nothing appears until staff grant": Publish
+- ADR 0021 section 2 (expiry, passcode, revoke, replace), section 3's 7-day cap for a verified session, section 4 ("nothing appears until staff grant": Publish
   grants) and section 5's "a Release is the only way to download".
 - ADR 0022's "the Delivery page shares nothing with `client_links`" (the page now carries this link's address,
   including a Video id) and "switching off is the only recourse" (it also ends the link).
@@ -49,7 +49,14 @@ address per film, so the client can reach the review screen with no staff step i
 
 - Anyone holding the Delivery address can reach review and may verify an email, comment or approve. Approval never
   releases (0021 section 5). The per-link guest rate limits are now shared by every client of a Project.
-- The guest session stays capped at 7 days (0021 section 3); a link with no expiry caps nothing else.
+- **Amended 2026-10-13 (owner decision: "A guest stays verified forever, because we're dealing with regular customers.")**
+  On the Delivery review link, a verified guest session lasts 400 days, the longest cookie lifetime browsers honour,
+  and it slides. Verifying sets it. The page's session read renews it at most once a day, and the same cookie is
+  re-sent only when that renewal landed under the current token. The token is not rotated and the identity is
+  untouched. An unverified session keeps the 7-day cap (0021 section 3). The session still fails on the next request
+  while the link is closed (page off, gate off) and is not renewed while closed. Switching the page on brings back
+  sessions that have not expired. Accepted risk: a cookie stays valid while it is used, and staff have no per-guest
+  stop on this link. Ordinary Review links are unchanged.
 - Sync additions notify subscribers through the same digest as an ordinary link's add and grant, once.
 - Rollback: a code rollback is safe for ordinary links. An older Worker reads a NULL expiry as expired, so the
   Delivery review link fails closed there; roll forward. See `docs/Guides/CI-Deploy.md`.

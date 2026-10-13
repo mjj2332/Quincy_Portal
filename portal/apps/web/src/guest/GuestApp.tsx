@@ -112,11 +112,11 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
     started.current = true;
     // `main.tsx` already scrubbed the fragment and passed the token in; this page never reads the address.
     if (api === null) { setScreen({ name: "unavailable" }); return; }
-    // A Delivery deep link (a film in the fragment) resumes first: the visitor may already hold this link's session, and a second exchange would only churn it. Ordinary links exchange first.
-    if (token.current !== null && initialVideoId !== null) { void resume(api, token.current); return; }
-    if (token.current !== null) { void exchange(api, token.current); return; }
+    // Resume first whenever there is a token: the visitor may already hold this link's session (a verified Delivery guest for up to 400 days), and an exchange would mint an unverified one over it.
+    // If the session is gone, `resume` falls back to the exchange, passcode flow included.
+    if (token.current !== null) { void resume(api, token.current); return; }
     void resume(api);
-  }, [api, exchange, resume, initialVideoId]);
+  }, [api, resume]);
 
   const submitPasscode = (passcode: string) => {
     if (api === null || token.current === null) { setScreen({ name: "unavailable" }); return; }

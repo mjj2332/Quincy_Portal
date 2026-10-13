@@ -40,6 +40,8 @@ let videos: GuestVideoDto[] = [];
 let notes: GuestNoteThreadDto[] = [];
 let extra: Handler | null = null;
 let log: string[] = [];
+/** True: this visitor holds no session yet, so a GET on the session is the stub until an exchange lands. Resume-first (ADR 0023) makes that the precondition of every exchange test. */
+let sessionGone = false;
 let fetchMock: ReturnType<typeof vi.fn>;
 let stub: VideoElementStub;
 let viewport: MockViewport;
@@ -51,7 +53,7 @@ function route(url: string, init: RequestInit | undefined): Response {
   if (custom) return custom;
   const method = init?.method ?? "GET";
   const base = `/d/api/links/${LINK}`;
-  if (url === `${base}/session`) return method === "POST" ? json(SESSION) : json(SESSION);
+  if (url === `${base}/session`) { if (method === "POST") { sessionGone = false; return json(SESSION); } return sessionGone ? stub404() : json(SESSION); }
   if (url === `${base}/videos`) return json({ videos });
   if (url.startsWith(`${base}/versions/`) && url.endsWith("/notes")) return json({ notes });
   return stub404();
@@ -91,7 +93,7 @@ const requests = () => fetchMock.mock.calls.map((call) => String(call[0]));
 beforeEach(() => {
   stub = installVideoElementStub();
   viewport = mockViewport({ width: 1440 });
-  videos = [videoOf(1), videoOf(2), videoOf(3)]; notes = []; extra = null; log = [];
+  videos = [videoOf(1), videoOf(2), videoOf(3)]; notes = []; extra = null; log = []; sessionGone = false;
   fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => route(String(input), init));
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
@@ -103,6 +105,7 @@ afterEach(async () => {
 
 describe("the link token", () => {
   it("comes in as a prop and the page never reads location.hash", async () => {
+    sessionGone = true;
     const posts: string[] = [];
     extra = (url, init) => { if (url.endsWith("/session") && init?.method === "POST") posts.push(String(init.body)); return undefined; };
     window.history.replaceState(null, "", `/d/review?link=${LINK}#t=hashtoken`);
@@ -199,13 +202,34 @@ describe("a Delivery deep link (#847)", () => {
     expect(title()).toBe("Film 1");
   });
 
+  it("a token with no film in the fragment resumes a live session first, with no exchange (the staff-copied Delivery link, ADR 0023)", async () => {
+    await openDeep(null);
+    expect(posts()).toHaveLength(0);
+    expect(fetchMock.mock.calls[0]![0]).toBe(`/d/api/links/${LINK}/session`);
+    expect(allById("guest-video-row")).toHaveLength(3);
+  });
+
+  it("a token with no film exchanges when the session is gone, and a passcode link still asks for the passcode", async () => {
+    let gone = true;
+    extra = (url, init) => {
+      if (url !== `/d/api/links/${LINK}/session`) return undefined;
+      if ((init?.method ?? "GET") === "GET") return gone ? stub404() : undefined;
+      return json({ error: "passcode_required" }, 401);
+    };
+    await openDeep(null);
+    expect(posts()).toHaveLength(1);
+    expect(byId("guest-passcode")).not.toBeNull();
+    gone = false;
+  });
+
   it("a film that is no longer on the link shows a calm notice and the list", async () => {
     await openDeep(vid(9));
     expect(byId("guest-notice")?.textContent).toContain("no longer available");
     expect(allById("guest-video-row")).toHaveLength(3);
   });
 
-  it("an ordinary link still exchanges the token first and lands on the list", async () => {
+  it("an ordinary link with no session to resume exchanges the token and lands on the list", async () => {
+    sessionGone = true;
     await openDeep(null);
     expect(posts()).toHaveLength(1);
     expect(allById("guest-video-row")).toHaveLength(3);
@@ -392,6 +416,7 @@ describe("Sol round 1: selecting a drawing note seeks to the drawing frame", () 
 
 describe("Sol round 1: an initial rate limit on an unprotected link", () => {
   it("shows a countdown and a token-only retry, never a passcode form", async () => {
+    sessionGone = true;
     const bodies: unknown[] = [];
     let limited = true;
     extra = (url, init) => {
@@ -419,6 +444,7 @@ describe("Sol round 1: a transient failure is not 'unavailable'", () => {
   const HINT = "Check your connection and try again.";
 
   it("a 5xx on the exchange shows the calm retry and repeats the exchange", async () => {
+    sessionGone = true;
     let down = true;
     extra = (url, init) => (down && url.endsWith("/session") && init?.method === "POST" ? new Response("boom", { status: 503 }) : undefined);
     await open();
@@ -494,12 +520,14 @@ describe("Sol round 2", () => {
   const typeIn = async (input: HTMLInputElement, value: string) => { await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); }); };
 
   it("limits the passcode field to GUEST_PASSCODE_MAX (64)", async () => {
+    sessionGone = true;
     withPasscode();
     await open();
     expect(host.querySelector<HTMLInputElement>('input[type="password"]')!.maxLength).toBe(64);
   });
 
   it("keeps a 400 from the passcode exchange on the form with an inline error", async () => {
+    sessionGone = true;
     withPasscode();
     await open();
     const input = host.querySelector<HTMLInputElement>('input[type="password"]')!;
@@ -595,6 +623,7 @@ describe("Sol round 6", () => {
   });
 
   it("a body-read rejection on the exchange is a retry screen, not unavailable", async () => {
+    sessionGone = true;
     extra = (url, init) => (url.endsWith("/session") && init?.method === "POST" ? brokenBody() : undefined);
     await open();
     expect(byId("guest-unavailable")).toBeNull();
@@ -619,6 +648,7 @@ describe("Sol round 6", () => {
   });
 
   it("control: a schema-invalid 200 on the exchange is still unavailable", async () => {
+    sessionGone = true;
     extra = (url, init) => (url.endsWith("/session") && init?.method === "POST" ? json({ nope: true }) : undefined);
     await open();
     expect(byId("guest-unavailable")).not.toBeNull();
@@ -691,6 +721,7 @@ describe("Sol round 7", () => {
   };
 
   it("a 401 whose body cannot be read is a retry screen, not unavailable", async () => {
+    sessionGone = true;
     extra = (url, init) => (url.endsWith("/session") && init?.method === "POST" ? broken(401) : undefined);
     await open();
     expect(byId("guest-unavailable")).toBeNull();
@@ -698,6 +729,7 @@ describe("Sol round 7", () => {
   });
 
   it("a 429 whose body cannot be read is a retry screen, not unavailable", async () => {
+    sessionGone = true;
     extra = (url, init) => (url.endsWith("/session") && init?.method === "POST" ? broken(429) : undefined);
     await open();
     expect(byId("guest-unavailable")).toBeNull();

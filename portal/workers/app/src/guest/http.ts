@@ -10,6 +10,12 @@ import type { AppEnv, Env } from "../env";
  */
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const SESSION_MAX_MS = 7 * 86_400_000;
+/**
+ * A verified guest on the Delivery review link stays signed in for 400 days, the longest cookie lifetime browsers honour (RFC 6265bis; Chrome clamps anything above it), so the row's
+ * `expires_at` and the cookie's Max-Age are kept equal. Renewal slides it forward at most once a day (`DELIVERY_SESSION_RENEW_MS`). ADR 0023, amendment of 2026-10-13.
+ */
+export const DELIVERY_SESSION_MAX_MS = 400 * 86_400_000;
+export const DELIVERY_SESSION_RENEW_MS = 86_400_000;
 
 const HYGIENE: Record<string, string> = { "referrer-policy": "no-referrer", "cache-control": "private, no-store", "x-robots-tag": "noindex", "x-content-type-options": "nosniff" };
 
