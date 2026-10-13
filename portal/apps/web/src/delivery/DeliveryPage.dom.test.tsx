@@ -491,6 +491,42 @@ describe("film", () => {
   });
 });
 
+describe("film frame (#848)", () => {
+  const ratio = (el: Element | null | undefined) => (el as HTMLElement).style.getPropertyValue("--film-ratio");
+  it("gives the video its own shape as a CSS variable, never an inline aspect-ratio that would beat the container rule", async () => {
+    await show(page([film(1, { width: 1080, height: 1920 }), film(2, { width: null, height: null })])); await click(tab("Film"));
+    const [vertical, unknown] = [...document.querySelectorAll("video")];
+    expect(ratio(vertical)).toBe("1080 / 1920");
+    expect(vertical!.style.getPropertyValue("aspect-ratio")).toBe("");
+    expect(ratio(unknown)).toBe("");
+    expect(unknown!.style.getPropertyValue("aspect-ratio")).toBe("");
+  });
+  it("keeps the same frame after a playback error and on a locked film", async () => {
+    await show(page([film(1, { width: 1080, height: 1920 }), locked(2, { kind: "video", label: "Video 02", width: 1080, height: 1920, url: null, thumbUrl: null })]));
+    await click(tab("Film"));
+    await act(async () => { document.querySelector("video")!.dispatchEvent(new Event("error")); });
+    const failed = byTestId("delivery-film-failed")!;
+    expect(ratio(failed)).toBe("1080 / 1920");
+    expect(failed.style.getPropertyValue("aspect-ratio")).toBe("");
+    await click(tab("Premium"));
+    const frame = byTestId("delivery-locked")!.firstElementChild;
+    expect(ratio(frame)).toBe("1080 / 1920");
+    expect((frame as HTMLElement).style.getPropertyValue("aspect-ratio")).toBe("");
+  });
+  it("still renders every tile's content on a mixed page", async () => {
+    await show(page([film(1), film(2, { width: 1080, height: 1920 }), film(3, { url: null }), locked(4, { kind: "video", label: "Video 04", url: null, thumbUrl: null })]));
+    await click(tab("Film"));
+    expect(document.querySelectorAll("video")).toHaveLength(2);
+    expect(allByTestId("delivery-film-failed")).toHaveLength(1);
+    for (const label of ["Video 01", "Video 02", "Video 03"]) expect(document.querySelector(`a[aria-label="Download ${label}, original"]`), label).not.toBeNull();
+    expect(document.body.textContent).toContain("1:02");
+    await click(tab("Premium"));
+    const panel = byTestId("delivery-panel-premium")!;
+    expect(panel.textContent).toContain("Video 04"); expect(panel.textContent).toContain("Premium");
+    expect([...panel.querySelectorAll("button")].some((b) => b.textContent === "Request unlock")).toBe(true);
+  });
+});
+
 describe("documents", () => {
   it("lists a PDF row with View in a new tab (noopener noreferrer) and Download", async () => {
     await show(page([pdf(1, "floorplan"), pdf(2, "copy")])); await click(tab("Floorplan"));
