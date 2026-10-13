@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { ProjectSocialOverlayChoice, ProjectSocialOverlaysResponse, Role } from "@quincy/shared";
+import { PROJECT_SOCIAL_OVERLAYS_MAX, type ProjectSocialOverlayChoice, type ProjectSocialOverlaysResponse, type Role } from "@quincy/shared";
 import { projectDataKeys, useProjectSocialOverlaysQuery } from "../../lib/project-data";
 import { createProjectDataInvalidationMessage, getProjectQueryRuntime } from "../../lib/project-query-sync";
 import { saveProjectSocialOverlays, SocialOverlaysSaveError } from "../../lib/project-social-overlays";
@@ -13,7 +13,7 @@ import { Item, ItemContent, ItemDescription, ItemTitle } from "../reui/item";
 import { META_TRIGGER } from "./icon-button";
 
 type Failure = { kind: "failed" } | { kind: "conflict"; current: ProjectSocialOverlaysResponse } | { kind: "unavailable" };
-type Request = { overlayIds: string[]; expectedOverlayIds: string[] };
+type Request = { overlayIds: string[]; expectedRevision: string };
 
 const TRIGGER_CLASSES = "justify-start gap-[var(--space-2)] px-[var(--space-2)] border-solid border-[length:var(--border-width-hair)] border-border [font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)] text-foreground";
 const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((id) => b.includes(id));
@@ -25,7 +25,7 @@ const TRIGGER_ID = "project-social-overlays-trigger";
  * COMPLETE stored set the picker last saw, archived choices included: an archived overlay is never offered, stays on the Project that had it, and is shown here as Archived and read-only.
  * A failed save keeps the attempted choice on screen with Retry (a transient failure) or Reload (a conflict, which applies the fresh server state only when asked).
  */
-export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived }: { projectId: string; role: Role; canEdit: boolean; archived: boolean }) {
+export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived, onArchivedRefusal }: { projectId: string; role: Role; canEdit: boolean; archived: boolean; /** The server refused a save because the Project is archived: the header latches its other controls too. */ onArchivedRefusal?: () => void }) {
   const queryClient = useQueryClient();
   const query = useProjectSocialOverlaysQuery(projectId, true, role);
   const data = query.data;
@@ -37,7 +37,7 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived 
   const [latched, setLatched] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const draftRef = useRef<string[]>([]);
-  const baselineRef = useRef<{ ids: string[]; stored: string[] }>({ ids: [], stored: [] });
+  const baselineRef = useRef<{ ids: string[]; revision: string }>({ ids: [], revision: "" });
   const lastRequest = useRef<Request | null>(null);
   const live = useRef({ projectId, mounted: true });
   live.current.projectId = projectId;
@@ -54,8 +54,8 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived 
   }
 
   const known = new Map<string, ProjectSocialOverlayChoice>([...data.selected, ...data.available].map((choice) => [choice.id, choice]));
+  const revision = data.revision;
   const activeIds = data.selected.filter((choice) => choice.archivedAt === null).map((choice) => choice.id);
-  const storedIds = data.selected.map((choice) => choice.id);
   const archivedChoices = data.selected.filter((choice) => choice.archivedAt !== null);
   const draftChoices = draft.map((id) => known.get(id)).filter((choice): choice is ProjectSocialOverlayChoice => Boolean(choice));
   const shownIds = open ? draft : attempt ?? activeIds;
@@ -76,7 +76,7 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived 
     lastRequest.current = request;
     setAttempt(request.overlayIds); setFailure(null); setSaving(true);
     try {
-      const next = await saveProjectSocialOverlays(originating, request.overlayIds, request.expectedOverlayIds);
+      const next = await saveProjectSocialOverlays(originating, request.overlayIds, request.expectedRevision);
       if (!live.current.mounted || live.current.projectId !== originating) return;
       await publish(next);
       if (!live.current.mounted || live.current.projectId !== originating) return;
@@ -84,7 +84,10 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived 
     } catch (error) {
       if (!live.current.mounted || live.current.projectId !== originating) return;
       const reason = error instanceof SocialOverlaysSaveError ? error.failure : { kind: "failed" as const, message: "" };
-      if (reason.kind === "archived") { setLatched(true); setAttempt(null); }
+      if (reason.kind === "archived") {
+        setLatched(true); setAttempt(null); onArchivedRefusal?.();
+        void queryClient.invalidateQueries({ queryKey: projectDataKeys.detail(projectId) });
+      }
       else if (reason.kind === "conflict") setFailure({ kind: "conflict", current: reason.current });
       else if (reason.kind === "unavailable") setFailure({ kind: "unavailable" });
       else setFailure({ kind: "failed" });
@@ -103,7 +106,7 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived 
   function handleOpenChange(next: boolean) {
     if (next) {
       if (saving || libraryEmpty || readOnly) return;
-      baselineRef.current = { ids: activeIds, stored: storedIds };
+      baselineRef.current = { ids: activeIds, revision };
       draftRef.current = activeIds; setDraft(activeIds); setFailure(null); setAttempt(null); lastRequest.current = null; setOpen(true);
       void query.refetch();
       return;
@@ -115,7 +118,7 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived 
     setOpen(false);
     const final = draftRef.current, baseline = baselineRef.current;
     if (sameSet(final, baseline.ids)) return;
-    void send({ overlayIds: final, expectedOverlayIds: baseline.stored });
+    void send({ overlayIds: final, expectedRevision: baseline.revision });
   }
 
   function handleValueChange(next: ProjectSocialOverlayChoice[]) {
@@ -168,7 +171,7 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived 
         <ComboboxInput showTrigger={false} placeholder="Search overlays…" aria-label="Search overlays" />
         <ComboboxEmpty>No matching overlays</ComboboxEmpty>
         <ComboboxList aria-label="Social overlays">
-          {(choice: ProjectSocialOverlayChoice) => <ComboboxItem key={choice.id} value={choice} className="max-[721px]:min-h-[44px]">
+          {(choice: ProjectSocialOverlayChoice) => <ComboboxItem key={choice.id} value={choice} disabled={!draft.includes(choice.id) && draft.length >= PROJECT_SOCIAL_OVERLAYS_MAX} className="max-[721px]:min-h-[44px]">
             <Item size="xs" className="p-0">
               <ItemContent>
                 <ItemTitle className="whitespace-nowrap" data-testid="overlay-option-name">{choice.name}{choice.isDefault && <Badge variant="secondary" size="sm" className="ml-[var(--space-1)]">Default</Badge>}</ItemTitle>
@@ -177,6 +180,7 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived 
             </Item>
           </ComboboxItem>}
         </ComboboxList>
+        {draft.length >= PROJECT_SOCIAL_OVERLAYS_MAX && <p className="px-[var(--space-3)] py-[var(--space-2)] text-foreground-secondary [font:var(--weight-regular)_var(--text-sm)/1.3_var(--font-sans)]">You can choose up to {PROJECT_SOCIAL_OVERLAYS_MAX} overlays. Remove one to pick another.</p>}
       </ComboboxContent>
     </Combobox>
     {archivedBadges}

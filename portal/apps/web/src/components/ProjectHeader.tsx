@@ -40,10 +40,10 @@ export function WhiteboardButton({ onOpen }: { onOpen: () => void }) {
 }
 
 /** #870: below the control grid, only while the Video review gate is open (the picker's routes answer 404 when it is closed). Its own component, so the query exists only for roles that can see it. */
-function SocialOverlaysRow({ projectId, role, canEdit, archived }: { projectId: string; role: Role; canEdit: boolean; archived: boolean }) {
+function SocialOverlaysRow({ projectId, role, canEdit, archived, onArchivedRefusal }: { projectId: string; role: Role; canEdit: boolean; archived: boolean; onArchivedRefusal: () => void }) {
   const open = useVideoReviewQuery(projectId, true, role).data?.open === true;
   if (!open) return null;
-  return <div data-testid="project-header-social-overlays"><ProjectSocialOverlayPicker key={projectId} projectId={projectId} role={role} canEdit={canEdit} archived={archived} /></div>;
+  return <div data-testid="project-header-social-overlays"><ProjectSocialOverlayPicker key={projectId} projectId={projectId} role={role} canEdit={canEdit} archived={archived} onArchivedRefusal={onArchivedRefusal} /></div>;
 }
 
 function collectionLabel(value: string) {
@@ -167,7 +167,7 @@ function StageControl({ project, currentStageKey, stages, contractEnabled, pendi
 }
 
 /** #455: which write was refused as archived, if any (the latch's source; it also says which read-only group focus returns to). */
-type ArchivedLatch = null | "stage" | "deadline" | "dropbox";
+type ArchivedLatch = null | "stage" | "deadline" | "dropbox" | "social-overlays";
 
 export function ProjectHeader({
   project,
@@ -253,7 +253,7 @@ export function ProjectHeader({
     const flip = focusAfterFlip.current;
     if (!latch || !flip) return;
     focusAfterFlip.current = null;
-    const target = { stage: stageGroupRef, deadline: deadlineGroupRef, dropbox: dropboxGroupRef }[flip.source].current;
+    const target = { stage: stageGroupRef, deadline: deadlineGroupRef, dropbox: dropboxGroupRef, "social-overlays": stageGroupRef }[flip.source].current;
     if (!target) return;
     const active = document.activeElement;
     const reclaimed = !!active && active !== document.body && active !== target && active.contains(target);
@@ -380,7 +380,7 @@ export function ProjectHeader({
       </div>}
     </div>
 
-    {offersOverlays && <SocialOverlaysRow projectId={project.id} role={role!} canEdit={can("chooseSocialOverlays")} archived={archived} />}
+    {offersOverlays && <SocialOverlaysRow projectId={project.id} role={role!} canEdit={can("chooseSocialOverlays")} archived={archived} onArchivedRefusal={() => latchArchived("social-overlays", false)} />}
 
     {/* The entry button sits beside the scroller, not inside it: at phone width the tabs scroll sideways and it must stay in view. */}
     <div className="project-header__tabrow flex min-w-0 items-center gap-[var(--space-2)]">

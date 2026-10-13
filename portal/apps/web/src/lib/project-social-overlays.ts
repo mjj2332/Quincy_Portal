@@ -22,9 +22,9 @@ export class SocialOverlaysSaveError extends Error {
   constructor(readonly failure: SocialOverlaysSaveFailure) { super(failure.kind === "failed" ? failure.message : failure.kind); this.name = "SocialOverlaysSaveError"; }
 }
 
-export async function saveProjectSocialOverlays(projectId: string, overlayIds: string[], expectedOverlayIds: string[]): Promise<ProjectSocialOverlaysResponse> {
+export async function saveProjectSocialOverlays(projectId: string, overlayIds: string[], expectedRevision: string): Promise<ProjectSocialOverlaysResponse> {
   try {
-    return projectSocialOverlaysResponseSchema.parse(await apiPut<unknown, unknown>(path(projectId), { overlayIds, expectedOverlayIds }));
+    return projectSocialOverlaysResponseSchema.parse(await apiPut<unknown, unknown>(path(projectId), { overlayIds, expectedRevision }));
   } catch (error) {
     if (error instanceof ApiError && error.status === 409) {
       const conflict = projectSocialOverlaysConflictSchema.safeParse(error.details);

@@ -2,7 +2,7 @@ import { SELF as workerSelf } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EXTERNAL_API_RESPONSE_SCHEMAS, projectSocialOverlaysResponseSchema, type ProjectSocialOverlaysResponse } from "@quincy/shared";
 import { pngBytes } from "../../../packages/shared/src/testing/png-fixture";
-import { projectSocialOverlayTestHooks } from "../src/lib/project-social-overlays";
+import { projectSocialOverlayTestHooks, socialOverlaysRevision } from "../src/lib/project-social-overlays";
 import { baseEnv, cookie, database, ids, request, seedFixture, type Who } from "./embedded-media-support";
 import { clearVideoFlags, setVideoFlags } from "./video-review-support";
 
@@ -11,7 +11,8 @@ type Json = Record<string, any>;
 const OPEN = ["video_review", `video_review_pilot:${ids.project}`, `video_review_pilot:${ids.archivedProject}`] as const;
 const path = (projectId: string = ids.project) => `/api/projects/${projectId}/social-overlays`;
 const json = async (response: Response) => await response.json() as Json;
-const put = (overlayIds: string[], expectedOverlayIds: string[], who: Who = "admin", projectId?: string) => request(path(projectId), who, "PUT", { overlayIds, expectedOverlayIds });
+/** `expectedOverlayIds` is the stored set the caller believes in; the wire carries only its revision. */
+const put = async (overlayIds: string[], expectedOverlayIds: string[], who: Who = "admin", projectId?: string) => request(path(projectId), who, "PUT", { overlayIds, expectedRevision: await socialOverlaysRevision(expectedOverlayIds) });
 const read = async (who: Who = "admin", projectId?: string): Promise<ProjectSocialOverlaysResponse> => projectSocialOverlaysResponseSchema.parse(await (await request(path(projectId), who)).json());
 
 async function admin(pathname: string, init: { method?: string; json?: unknown; form?: FormData } = {}): Promise<Response> {
@@ -30,6 +31,7 @@ const archive = async (overlay: { id: string; revision: number }) => { const r =
 const unarchive = async (overlay: { id: string; revision: number }) => { const r = await admin(`/api/admin/social-overlays/${overlay.id}/unarchive`, { method: "POST", json: { expectedRevision: overlay.revision } }); expect(r.status).toBe(200); };
 const joins = async (projectId: string = ids.project) => ((await database.DB.prepare("SELECT overlay_id FROM project_social_overlays WHERE project_id = ? ORDER BY overlay_id").bind(projectId).all<{ overlay_id: string }>()).results).map((row) => row.overlay_id);
 const audits = async () => (await database.DB.prepare("SELECT actor_id, action, target_type, target_id, meta_json FROM audit_log WHERE action LIKE 'project.social_overlays%' ORDER BY created_at, rowid").all<Json>()).results;
+const REV = "a".repeat(64);
 const names = (rows: Array<{ name: string }>) => rows.map((row) => row.name);
 
 beforeAll(async () => { await seedFixture(); });
@@ -75,7 +77,7 @@ describe("who may read and set", () => {
 
 describe("resolution", () => {
   it("resolves to nothing for an empty library", async () => {
-    expect(await read()).toEqual({ available: [], selected: [], resolved: [] });
+    expect(await read()).toEqual({ available: [], selected: [], resolved: [], revision: await socialOverlaysRevision([]) });
   });
 
   it("falls back to the Default when nothing is chosen, with a preview that carries no key or bytes", async () => {
@@ -167,10 +169,43 @@ describe("setting", () => {
 
   it("refuses malformed bodies 400 and an oversize body 413", async () => {
     const reel = await make("Reel");
-    for (const body of [{ overlayIds: [reel.id, reel.id], expectedOverlayIds: [] }, { overlayIds: ["x"], expectedOverlayIds: [] }, { overlayIds: [] }, { overlayIds: [], expectedOverlayIds: [], extra: 1 }]) {
+    for (const body of [{ overlayIds: [reel.id, reel.id], expectedRevision: REV }, { overlayIds: ["x"], expectedRevision: REV }, { overlayIds: [] }, { overlayIds: [], expectedRevision: REV, extra: 1 }, { overlayIds: [], expectedOverlayIds: [] }]) {
       expect((await request(path(), "admin", "PUT", body)).status, JSON.stringify(body)).toBe(400);
     }
-    expect((await request(path(), "admin", "PUT", { overlayIds: [], expectedOverlayIds: [], pad: "x".repeat(20_000) })).status).toBe(413);
+    expect((await request(path(), "admin", "PUT", { overlayIds: [], expectedRevision: REV, pad: "x".repeat(20_000) })).status).toBe(413);
+    expect(await joins()).toEqual([]);
+  });
+});
+
+describe("the revision", () => {
+  it("is a stable digest of the stored set, returned by GET and changed by a save", async () => {
+    const reel = await make("Reel");
+    const empty = (await read()).revision;
+    expect(empty).toBe(await socialOverlaysRevision([]));
+    await put([reel.id], []);
+    expect((await read()).revision).toBe(await socialOverlaysRevision([reel.id]));
+    expect((await read()).revision).not.toBe(empty);
+  });
+
+  it("covers a stored set of any size: 400 retained joins still save with their revision", async () => {
+    await make("Default");
+    const stored: string[] = [];
+    for (let i = 0; i < 400; i += 1) {
+      const id = crypto.randomUUID(); stored.push(id);
+      await database.DB.prepare("INSERT INTO social_overlays (id, name, platform_label, image_key, width, height, bytes, archived_at, archived_by, created_by, updated_by, created_at, updated_at) VALUES (?, ?, 'x', ?, 1080, 1920, 1, 1, ?, ?, ?, 1, 1)").bind(id, `Old ${i}`, `social-overlays/${id}/a.png`, ids.admin, ids.admin, ids.admin).run();
+      await database.DB.prepare("INSERT INTO project_social_overlays (project_id, overlay_id) VALUES (?, ?)").bind(ids.project, id).run();
+    }
+    expect((await put([], stored)).status).toBe(200);
+    expect(await joins()).toHaveLength(400);
+  });
+
+  it("answers a wrong revision 409 social_overlays_conflict with the fresh state and its revision", async () => {
+    const reel = await make("Reel");
+    const response = await request(path(), "admin", "PUT", { overlayIds: [reel.id], expectedRevision: REV });
+    expect(response.status).toBe(409);
+    const body = await json(response);
+    expect(body).toMatchObject({ code: "social_overlays_conflict" });
+    expect(body.current.revision).toBe(await socialOverlaysRevision([]));
     expect(await joins()).toEqual([]);
   });
 });

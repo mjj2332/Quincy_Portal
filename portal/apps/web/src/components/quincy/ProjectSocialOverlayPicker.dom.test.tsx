@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectSocialOverlaysResponse } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
+import { projectDataKeys } from "../../lib/project-data";
 import { ProjectSocialOverlayPicker } from "./ProjectSocialOverlayPicker";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
@@ -20,16 +21,19 @@ const tiktok = choice("tiktok", "TikTok", "TikTok");
 const shorts = choice("shorts", "YouTube Shorts", "YouTube");
 const old = choice("old", "Old Story", "Instagram", { archivedAt: 5 });
 const preview = (c: typeof reel) => ({ id: c.id, name: c.name, platformLabel: c.platformLabel, isDefault: c.isDefault, imageUrl: `/social-overlay-images/${c.id}/x`, width: 1080, height: 1920 });
+/** A fake digest that still differs with the stored set's size. */
+const rev = (stored: number) => String(stored).padStart(64, "0");
 const state = (selected: Array<typeof reel>, available = [reel, tiktok, shorts]): ProjectSocialOverlaysResponse => {
   const live = selected.filter((c) => c.archivedAt === null);
-  return { available, selected, resolved: (live.length ? live : available.filter((c) => c.isDefault)).map(preview) };
+  return { revision: rev(selected.length), available, selected, resolved: (live.length ? live : available.filter((c) => c.isDefault)).map(preview) };
 };
 
 let root: Root | null = null;
 let host: HTMLDivElement;
 let queryClient: QueryClient;
 type Props = Partial<Parameters<typeof ProjectSocialOverlayPicker>[0]>;
-const tree = (props: Props) => <QueryClientProvider client={queryClient}><ProjectSocialOverlayPicker projectId={projectId} role="admin" canEdit archived={false} {...props} /></QueryClientProvider>;
+const onArchivedRefusal = vi.fn();
+const tree = (props: Props) => <QueryClientProvider client={queryClient}><ProjectSocialOverlayPicker projectId={projectId} role="admin" canEdit archived={false} onArchivedRefusal={onArchivedRefusal} {...props} /></QueryClientProvider>;
 async function mount(props: Props = {}) {
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -71,7 +75,7 @@ const click = async (label: RegExp) => {
   await act(async () => { button.click(); await Promise.resolve(); });
 };
 
-beforeEach(() => { apiGetMock.mockReset().mockResolvedValue(state([])); apiPutMock.mockReset(); });
+beforeEach(() => { onArchivedRefusal.mockReset(); apiGetMock.mockReset().mockResolvedValue(state([])); apiPutMock.mockReset(); });
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
   root = null; queryClient?.clear(); document.body.replaceChildren();
@@ -92,7 +96,7 @@ describe("ProjectSocialOverlayPicker (#870)", () => {
     await mount();
     await open(); await pick("TikTok"); await pick("YouTube Shorts"); await closeWithEscape();
     expect(apiPutMock).toHaveBeenCalledTimes(1);
-    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/social-overlays`, { overlayIds: [id.tiktok, id.shorts], expectedOverlayIds: [] });
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/social-overlays`, { overlayIds: [id.tiktok, id.shorts], expectedRevision: rev(0) });
     await waitFor(() => expect(text()).toContain("TikTok, YouTube Shorts"));
     await open();
     expect(options().filter((option) => option.getAttribute("aria-selected") === "true").length).toBe(2);
@@ -110,7 +114,7 @@ describe("ProjectSocialOverlayPicker (#870)", () => {
     apiPutMock.mockResolvedValue(state([]));
     await mount();
     await open(); await pick("TikTok"); await closeWithEscape();
-    expect(apiPutMock).toHaveBeenCalledWith(expect.any(String), { overlayIds: [], expectedOverlayIds: [id.tiktok] });
+    expect(apiPutMock).toHaveBeenCalledWith(expect.any(String), { overlayIds: [], expectedRevision: rev(1) });
     await waitFor(() => expect(text()).toContain("Nothing chosen"));
   });
 
@@ -123,7 +127,7 @@ describe("ProjectSocialOverlayPicker (#870)", () => {
     await open();
     expect(optionNames()).not.toContain("Old Story");
     await pick("YouTube Shorts"); await closeWithEscape();
-    expect(apiPutMock).toHaveBeenCalledWith(expect.any(String), { overlayIds: [id.tiktok, id.shorts], expectedOverlayIds: expect.arrayContaining([id.old, id.tiktok]) });
+    expect(apiPutMock).toHaveBeenCalledWith(expect.any(String), { overlayIds: [id.tiktok, id.shorts], expectedRevision: rev(2) });
   });
 
   it("keeps the trigger on the attempted pick while the save is pending and will not reopen", async () => {
@@ -193,6 +197,29 @@ describe("ProjectSocialOverlayPicker (#870)", () => {
     expect(apiPutMock).toHaveBeenCalledTimes(1);
   });
 
+  it("tells the header, and asks for the Project detail again, when the server says the Project is archived", async () => {
+    apiPutMock.mockRejectedValueOnce(new ApiError("Archived", 409, { error: "Archived", code: "project_archived" }));
+    await mount();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    await open(); await pick("TikTok"); await closeWithEscape();
+    await waitFor(() => expect(onArchivedRefusal).toHaveBeenCalledTimes(1));
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.detail(projectId) }));
+  });
+
+  it("stops at 50 selected overlays, disables the rest and says why", async () => {
+    const many = Array.from({ length: 51 }, (_, i) => ({ id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`, name: `Overlay ${String(i).padStart(2, "0")}`, platformLabel: "x", isDefault: i === 0, archivedAt: null }));
+    apiGetMock.mockResolvedValue(state([], many));
+    await mount();
+    await open();
+    for (const option of options().slice(0, 50)) await act(async () => { option.click(); await Promise.resolve(); });
+    const last = options()[50]!;
+    expect(last.getAttribute("aria-disabled")).toBe("true");
+    expect(document.body.textContent).toContain("up to 50");
+    await act(async () => { last.click(); await Promise.resolve(); });
+    await closeWithEscape();
+    expect((apiPutMock.mock.calls[0]?.[1] as { overlayIds: string[] }).overlayIds).toHaveLength(50);
+  });
+
   it("goes read-only when the server says the Project is archived", async () => {
     apiPutMock.mockRejectedValueOnce(new ApiError("Archived", 409, { error: "Archived", code: "project_archived" }));
     await mount();
@@ -212,7 +239,7 @@ describe("ProjectSocialOverlayPicker (#870)", () => {
   });
 
   it("tells staff how to add overlays when the library is empty, and disables the control", async () => {
-    apiGetMock.mockResolvedValue({ available: [], selected: [], resolved: [] });
+    apiGetMock.mockResolvedValue({ available: [], selected: [], resolved: [], revision: rev(0) });
     await mount();
     expect(text()).toContain("Social preview unavailable");
     expect(trigger().disabled).toBe(true);

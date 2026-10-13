@@ -11,6 +11,7 @@ import { confirm, confirmStore } from "../lib/confirm";
 import { QuincyQueryProvider } from "../lib/query-client";
 import type { WorkspaceAsset } from "../components/PhotoGrid";
 import type { Role } from "@quincy/shared";
+import { ApiError } from "../lib/api";
 import { stubRailMedia } from "../testing/rail-media";
 
 // jsdom has no matchMedia: without it the checklist reads as stacked (collapsed) (#377).
@@ -307,6 +308,7 @@ describe("the Social overlays picker in the Project header (#870)", () => {
     available: [{ id: overlayId, name: "Instagram Reel", platformLabel: "Instagram", isDefault: true, archivedAt: null }, { id: tiktokId, name: "TikTok", platformLabel: "TikTok", isDefault: false, archivedAt: null }],
     selected: selected.map((choice) => ({ ...choice, platformLabel: "x", isDefault: false, archivedAt: null })),
     resolved: [],
+    revision: "0".repeat(64),
   });
   function openGate(open: boolean) {
     const previous = apiGetMock.getMockImplementation()!;
@@ -353,7 +355,20 @@ describe("the Social overlays picker in the Project header (#870)", () => {
     await flushUntil(() => document.querySelector('[role="listbox"]') === null, "the list to close");
     expect(onRequestClose).not.toHaveBeenCalled();
     expect(apiPutMock).toHaveBeenCalledTimes(1);
-    expect(apiPutMock).toHaveBeenCalledWith("/api/projects/p1/social-overlays", { overlayIds: [tiktokId], expectedOverlayIds: [] });
+    expect(apiPutMock).toHaveBeenCalledWith("/api/projects/p1/social-overlays", { overlayIds: [tiktokId], expectedRevision: "0".repeat(64) });
     expect(document.activeElement).toBe(pickerTrigger());
+  });
+
+  it("makes the whole header read-only when saving is refused because the Project is archived", async () => {
+    openGate(true);
+    apiPutMock.mockRejectedValue(new ApiError("Archived", 409, { error: "Archived", code: "project_archived" }));
+    await renderSheet();
+    await flushUntil(() => pickerTrigger() !== null, "the picker trigger");
+    expect(document.querySelector('[role="group"][aria-label="Stage"]')).toBeNull();
+    await click(pickerTrigger()!);
+    await flushUntil(() => document.querySelector('[role="listbox"]') !== null, "the overlay list");
+    await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("TikTok"))!);
+    await escape(document.activeElement ?? document.body);
+    await flushUntil(() => document.querySelector('[role="group"][aria-label="Stage"]') !== null, "the Stage control to turn read-only");
   });
 });

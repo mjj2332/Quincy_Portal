@@ -8,7 +8,7 @@ import { newId } from "./ids";
 /**
  * A Project's Social overlays (#870). `resolveProjectSocialOverlays` is the one rule the Video viewer (#871) and the guest payload (#872) consume: the Project's selected overlays that are not
  * archived, else the non-archived Default, else nothing (an empty library). It reads library order (Default first, then name ignoring case, then id), never selection order. A fallback is never stored.
- * `setProjectSocialOverlays` is one `db.batch`: an audit row whose `WHERE` carries the whole fence (Project unarchived, stored set still the one the caller saw, every wanted overlay real and either
+ * `setProjectSocialOverlays` is one `db.batch`: an audit row whose `WHERE` carries the whole fence (Project unarchived, stored set still the one the caller saw, checked by revision, every wanted overlay real and either
  * selectable or already stored), then the deletes and inserts, each fenced on that audit row's id. A refused fence writes nothing and leaves no audit row.
  */
 export type Principal = NonNullable<AuditPrincipal>;
@@ -30,6 +30,12 @@ const RESOLVED = `WITH chosen AS (SELECT o.* FROM project_social_overlays p JOIN
     WHERE is_default = 1 AND archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM chosen)
   ${ORDER}`;
 
+/** A digest of the complete stored join set (order and archive state ignored). It is the whole concurrency token: bounded, whatever the set's size. */
+export async function socialOverlaysRevision(storedIds: readonly string[]): Promise<string> {
+  const bytes = new TextEncoder().encode([...storedIds].sort().join(","));
+  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 /** The picker's list, the stored selection (archived joins included) and the resolution, read in one batch so they share a snapshot. */
 export async function readProjectSocialOverlays(db: D1Database, projectId: string): Promise<ProjectSocialOverlaysResponse> {
   const [available, selected, resolved] = await db.batch([
@@ -37,9 +43,11 @@ export async function readProjectSocialOverlays(db: D1Database, projectId: strin
     db.prepare(`SELECT ${COLUMNS} FROM social_overlays WHERE id IN (SELECT overlay_id FROM project_social_overlays WHERE project_id = ?1) ${ORDER}`).bind(projectId),
     db.prepare(RESOLVED).bind(projectId),
   ]);
+  const selectedChoices = (selected!.results as ChoiceRow[]).map(choice);
   return projectSocialOverlaysResponseSchema.parse({
     available: (available!.results as ChoiceRow[]).map(choice),
-    selected: (selected!.results as ChoiceRow[]).map(choice),
+    selected: selectedChoices,
+    revision: await socialOverlaysRevision(selectedChoices.map((row) => row.id)),
     resolved: (resolved!.results as PreviewRow[]).map(preview),
   });
 }
@@ -62,14 +70,14 @@ const projectState = async (db: D1Database, projectId: string): Promise<"missing
   return row === null ? "missing" : row.archived_at === null ? "live" : "archived";
 };
 
-export async function setProjectSocialOverlays(db: D1Database, input: { projectId: string; overlayIds: string[]; expectedOverlayIds: string[]; principal: Principal; now: number }): Promise<SetOutcome> {
-  const { projectId, overlayIds, expectedOverlayIds } = input;
+export async function setProjectSocialOverlays(db: D1Database, input: { projectId: string; overlayIds: string[]; expectedRevision: string; principal: Principal; now: number }): Promise<SetOutcome> {
+  const { projectId, overlayIds, expectedRevision } = input;
   const project = await projectState(db, projectId);
   if (project === "missing") return { kind: "not_found" };
   if (project === "archived") return { kind: "archived" };
   const current = await readProjectSocialOverlays(db, projectId);
   const stored = current.selected.map((row) => row.id);
-  if (!sameSet(stored, expectedOverlayIds)) return { kind: "conflict", state: current };
+  if (current.revision !== expectedRevision) return { kind: "conflict", state: current };
   // Every wanted overlay must exist, and one that is archived may only be there because the Project already holds it.
   const known = new Map((await db.prepare(`SELECT id, archived_at FROM social_overlays WHERE id IN (SELECT value FROM json_each(?1))`).bind(JSON.stringify(overlayIds)).all<{ id: string; archived_at: number | null }>()).results.map((row) => [row.id, row.archived_at]));
   for (const id of overlayIds) if (!known.has(id) || (known.get(id) !== null && !stored.includes(id))) return { kind: "unavailable" };
@@ -79,7 +87,7 @@ export async function setProjectSocialOverlays(db: D1Database, input: { projectI
   const archivedStored = current.selected.filter((row) => row.archivedAt !== null).map((row) => row.id);
   await projectSocialOverlayTestHooks.beforeWrite?.();
 
-  const auditId = newId(), wantedJson = JSON.stringify(overlayIds), expectedJson = JSON.stringify(expectedOverlayIds), archivedJson = JSON.stringify(archivedStored);
+  const auditId = newId(), wantedJson = JSON.stringify(overlayIds), expectedJson = JSON.stringify(stored), archivedJson = JSON.stringify(archivedStored);
   const meta = auditMeta(input.principal, { before: [...stored].sort(), after: [...archivedStored, ...wanted].sort() });
   await db.batch([
     db.prepare(
@@ -110,6 +118,6 @@ export async function setProjectSocialOverlays(db: D1Database, input: { projectI
   if (now !== "live") return now === "missing" ? { kind: "not_found" } : { kind: "archived" };
   // The stored set moved, or an overlay the Project holds was archived or unarchived since admission (the audit `after` is built from the archived joins seen then).
   const nowArchived = state.selected.filter((row) => row.archivedAt !== null).map((row) => row.id);
-  if (!sameSet(state.selected.map((row) => row.id), expectedOverlayIds) || !sameSet(nowArchived, archivedStored)) return { kind: "conflict", state };
+  if (state.revision !== expectedRevision || !sameSet(nowArchived, archivedStored)) return { kind: "conflict", state };
   return { kind: "unavailable" };
 }
