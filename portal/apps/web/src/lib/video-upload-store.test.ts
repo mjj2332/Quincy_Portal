@@ -4,19 +4,20 @@ import type { QueryClient } from "@tanstack/react-query";
 type Opts = { onDone: (r: { title: string; version?: number }) => void };
 const made = vi.hoisted(() => ({
   opts: [] as unknown[],
-  jobs: [] as { id: number; state: Record<string, unknown>; cancelAnswer: string | null; refuse: (message: string | null) => void }[],
+  jobs: [] as { id: number; cleaning: boolean; isCancelled: boolean; state: Record<string, unknown>; cancelAnswer: string | null; refuse: (message: string | null) => void }[],
   check: (file: File): unknown => file.name.endsWith(".mkv") ? { ok: false, message: "not an mp4" } : { ok: true, probe: { fps: { num: 25, den: 1 } }, cautions: [] },
 }));
 vi.mock("./video-upload", () => ({
   VideoUpload: class {
     state: Record<string, unknown> = { phase: "uploading", projectId: "p1" };
     cancelAnswer: string | null = null;
+    cleaning = false; isCancelled = false;
     refuse!: (message: string | null) => void;
     reserved = new Promise<string | null>((resolve) => { this.refuse = resolve; });
     id = 0;
     constructor(id: number, o: unknown) { this.id = id; made.opts.push(o); made.jobs.push(this); }
     start() {} retry() {}
-    cancel() { return Promise.resolve(this.cancelAnswer); }
+    cancel() { this.isCancelled = true; return Promise.resolve(this.cancelAnswer); }
   },
   abortReservation: vi.fn(async () => null),
   checkVideoFile: async (file: File) => made.check(file),
@@ -141,6 +142,25 @@ describe("a batch of new films (#845)", () => {
     expect(made.jobs).toHaveLength(3);
     change(1, { phase: "failed", retry: null });
     await vi.waitFor(() => expect(made.jobs).toHaveLength(4));
+  });
+
+  it("a failed job keeps its lane until its abort has been answered, and removing its tray row does not free it early (#845)", async () => {
+    await add(films(4)); go();
+    const job = made.jobs[0] as unknown as { cleaning: boolean };
+    job.cleaning = true; // the abort request is in flight
+    change(0, { phase: "failed", retry: null });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(made.jobs).toHaveLength(3);
+    // Removing a parked failure from the tray is not the same as the server having dropped it.
+    change(1, { phase: "failed", retry: "upload" });
+    removeVideoUpload(made.jobs[1]!.id);
+    made.jobs[1]!.cleaning = true;
+    await new Promise((r) => setTimeout(r, 5));
+    expect(made.jobs).toHaveLength(3);
+    job.cleaning = false; change(0, { phase: "failed", retry: null });
+    await vi.waitFor(() => expect(made.jobs).toHaveLength(4));
+    (made.jobs[1] as unknown as { cleaning: boolean }).cleaning = false; change(1, { phase: "failed", retry: "upload" });
+    await vi.waitFor(() => expect(made.jobs).toHaveLength(4)); // 5th not queued: only 4 films
   });
 
   it("a cancelled job (its row gone) frees its lane", async () => {

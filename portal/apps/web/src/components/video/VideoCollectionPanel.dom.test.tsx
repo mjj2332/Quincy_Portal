@@ -338,6 +338,14 @@ describe("Uploader (#741 4d-i)", () => {
     expect(host.querySelector('[data-testid="video-upload-tray"]')?.textContent).toContain("A.mp4");
   });
 
+  it("the list is a real list: each film row is a listitem", async () => {
+    await mount([]);
+    await pick([await good(), await mp4({ tracks: [videoTrack({ timescale: 25000, stts: [[300, 1000]] })] }, "B.mp4")]);
+    const list = host.querySelector('[data-testid="new-film-uploader"] [role="list"]')!;
+    expect(list.querySelectorAll('[role="listitem"]')).toHaveLength(2);
+    expect(rowsOf().every((row) => row.getAttribute("role") === "listitem")).toBe(true);
+  });
+
   it("Upload is disabled while a file is still being checked", async () => {
     await mount([]);
     let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; });

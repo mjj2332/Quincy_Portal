@@ -127,6 +127,7 @@ export class VideoUpload {
   private poster: Promise<Blob | null> | null = null;
   private running = false;
   private cancelled = false;
+  private cleaningCount = 0;
   private reserveRequest: Promise<VideoUploadReserveResponse> | null = null;
   private resolveReserved!: (refusal: string | null) => void;
   /** Settles once the server has answered the reserve: `null` when it is held (or the upload was cancelled first), else the server's reason it was refused. */
@@ -149,7 +150,16 @@ export class VideoUpload {
     this.cancelled = true;
     this.controller.abort();
     this.resolveReserved(null);
-    return this.sendAbort();
+    return this.whileCleaning(this.sendAbort());
+  }
+
+  /** True once `cancel` has been called. */
+  get isCancelled(): boolean { return this.cancelled; }
+  /** True while an abort request (from a cancel or a failure) is unanswered: the server may still count this upload's reservation. */
+  get cleaning(): boolean { return this.cleaningCount > 0; }
+  private async whileCleaning<T>(work: Promise<T>): Promise<T> {
+    this.cleaningCount += 1;
+    try { return await work; } finally { this.cleaningCount -= 1; this.options.onChange(this.state); }
   }
 
   /** One abort request, including for a reservation whose reserve call is still in flight and will answer late. No retries, no bookkeeping of the answer. */
@@ -164,7 +174,7 @@ export class VideoUpload {
 
   /** A failure's cleanup: one abort, then a refresh whatever it answered. */
   private async abortAfterFailure(): Promise<void> {
-    await this.sendAbort();
+    await this.whileCleaning(this.sendAbort());
     this.options.onServerCleaned?.();
   }
 

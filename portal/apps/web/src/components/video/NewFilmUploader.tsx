@@ -37,7 +37,7 @@ export function NewFilmUploader({ userId, queryClient, projectId, role }: { user
     {rows.length > 0 && <ItemGroup>
       {rows.map((row) => {
         const line = facts(row);
-        return <Item key={row.key} variant="outline" data-testid="new-film-row" data-status={row.status} className="flex-wrap">
+        return <Item key={row.key} role="listitem" variant="outline" data-testid="new-film-row" data-status={row.status} className="flex-wrap">
           <ItemContent className="min-w-[12rem]">
             <ItemTitle className="font-normal [overflow-wrap:anywhere]">{filmTitleFromFilename(row.file.name)}</ItemTitle>
             <ItemDescription className="line-clamp-none [overflow-wrap:anywhere]">{row.file.name}{line ? ` · ${line}` : ""}</ItemDescription>

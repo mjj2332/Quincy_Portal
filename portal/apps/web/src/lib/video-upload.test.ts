@@ -290,6 +290,33 @@ describe("VideoUpload (#741 4d-i)", () => {
     expect(calls.filter((call) => call.url.endsWith("/abort"))).toHaveLength(1);
   });
 
+  it("`cleaning` is true from the failure until the abort has been answered, and onChange fires when it ends (#845)", async () => {
+    routes[RESERVE] = () => json(multipartReserve, 201);
+    let answer!: () => void;
+    routes[ABORT] = () => new Promise<Response>((resolve) => { answer = () => resolve(json({ ok: true })); });
+    FakeXhr.script = [403];
+    const { job, states } = await make(); job.start(); await until(job, "failed");
+    expect(job.cleaning).toBe(true);
+    const before = states.length;
+    answer();
+    await vi.waitFor(() => expect(job.cleaning).toBe(false));
+    expect(states.length).toBeGreaterThan(before);
+  });
+
+  it("a cancel is `cleaning` until its abort is answered, and the job reads as cancelled", async () => {
+    routes[RESERVE] = () => json(multipartReserve, 201);
+    let answer!: () => void;
+    routes[ABORT] = () => new Promise<Response>((resolve) => { answer = () => resolve(json({ ok: true })); });
+    FakeXhr.hold = true;
+    const { job } = await make(); job.start();
+    for (let i = 0; i < 100 && FakeXhr.instances.length < 1; i += 1) await new Promise((resolve) => setTimeout(resolve, 2));
+    const done = job.cancel();
+    expect(job.isCancelled).toBe(true); expect(job.cleaning).toBe(true);
+    await vi.waitFor(() => expect(calls.some((call) => call.url.endsWith("/abort"))).toBe(true));
+    answer(); await done;
+    expect(job.cleaning).toBe(false);
+  });
+
   it("a failure after the reservation sends one abort and then reports the server cleaned up, whatever it answered", async () => {
     routes[RESERVE] = () => json(devReserve, 201);
     routes["PUT /api/projects/:p/video-uploads/:r/direct"] = () => new Response(null, { status: 200 });

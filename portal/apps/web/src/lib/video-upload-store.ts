@@ -88,7 +88,7 @@ export const NEW_FILM_BATCH_PACE = 3;
 export type NewFilmStatus = "checking" | "ready" | "rejected" | "queued" | "started" | "refused";
 export type NewFilmEntry = {
   key: string; file: File; status: NewFilmStatus; probe?: Mp4Probe; cautions: string[]; message?: string;
-  jobId?: number; reservedSettled?: boolean; role: Role; queryClient: QueryClient | undefined; generation: number;
+  jobId?: number; job?: VideoUpload; reservedSettled?: boolean; role: Role; queryClient: QueryClient | undefined; generation: number;
 };
 const batches = new Map<string, NewFilmEntry[]>();
 const batchKey = (userId: string, projectId: string) => `${userId}:${projectId}`;
@@ -104,9 +104,12 @@ function patchEntry(bk: string, key: string, patch: Partial<NewFilmEntry>) {
 
 /** A job holds its lane from start until it is truly finished (done, cancelled, refused or failed for good). A failure parked for a manual retry keeps it: the server still counts that reservation. */
 function holdsLane(entry: NewFilmEntry) {
-  if (entry.jobId === undefined) return false;
-  const state = entries.get(entry.jobId)?.job.state;
-  if (!state) return false;
+  // The job is held by the entry itself, not looked up in `entries`: removing its tray row must not release the lane while the server may still count it.
+  const job = entry.job;
+  if (!job) return false;
+  if (job.cleaning) return true; // an abort is unanswered
+  if (job.isCancelled) return false;
+  const state = job.state;
   return isActive(state) || (state.phase === "failed" && state.retry != null);
 }
 
@@ -125,7 +128,7 @@ function pump() {
       changed = true;
       if (!started) { list = list.filter((other) => other.key !== entry.key); continue; }
       lanes += 1;
-      list = list.map((other) => (other.key === entry.key ? { ...other, status: "started", jobId: started.id } : other));
+      list = list.map((other) => (other.key === entry.key ? { ...other, status: "started", jobId: started.id, job: entries.get(started.id)?.job } : other));
       batches.set(bk, list);
       const key = entry.key;
       void started.reserved.then((refusal) => {
