@@ -1,9 +1,11 @@
-import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, Columns2, DownloadIcon, Link2, Trash2 } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronLeft, Columns2, DownloadIcon, Link2, Smartphone, Trash2 } from "lucide-react";
 import { framesToTimecode, videoVersionDownloadUrl, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
 import { registerToastHost } from "../../lib/toast-host";
 import { hasOpenAlertDialog } from "../../lib/alert-dialog-press";
 import { useMediaQuery } from "../../lib/use-media-query";
+import { useProjectSocialOverlaysQuery } from "../../lib/project-data";
+import { currentOverlay, useSocialPreview } from "../../lib/use-social-preview";
 import type { CompareSideId, CompareStore } from "../../lib/video-compare-store";
 import { OverlayContainerContext } from "../OverlayContainerContext";
 import { Button } from "../reui/button";
@@ -15,6 +17,8 @@ import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
 import { ReviewPaneToggle, ReviewSplit, useReviewPane } from "../quincy/ReviewPane";
+import { Toggle } from "../reui/toggle";
+import type { SocialPreviewMode } from "../quincy/SocialPreviewControls";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../reui/tabs";
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
 import { formatBytes, formatDuration, formatFps, formatVideoDate } from "./video-format";
@@ -46,7 +50,7 @@ const VERSION_SELECT_ID = "video-review-version";
  * With `notes` (the Project's `notes` part is on, #741 5b) the Version details column becomes the notes panel, and the Version details
  * move behind a button in its header; without it the viewer is exactly the 4d-ii viewer.
  */
-export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, reviewLinks, deepLink, reviewStatus }: {
+export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, reviewLinks, deepLink, reviewStatus, social }: {
   video: VideoDto;
   onClose: () => void;
   /** The control that opened the viewer; focus goes back to it on close. */
@@ -65,6 +69,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   reviewLinks?: { onCreate: (assetId: string) => void };
   /** Present when Review status is offered (#863): the header pill reports the Video's status and, per role, sets it. */
   reviewStatus?: { projectId: string; role: Role; archived: boolean };
+  /** Present when Social preview is offered (#871, behind the Video review gate only): where to read the Project's resolved overlays, and whether the viewer opens with it on (the card menu's Social preview). */
+  social?: { projectId: string; role: Role; initialOn?: boolean };
   /** Present when the URL names this film (#819, staff Project route): `version` is the Version number it names (absent = the current one), `href` the absolute link to a Version, `onVersionShown` how the viewer reports the Version on show. */
   deepLink?: { version?: number; /** The list this Video came from is a settled, successful read: only then is an unknown Version normalised in the URL. */ settled: boolean; href: (version: number) => string; onVersionShown: (version: number) => void };
 }) {
@@ -132,7 +138,26 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   // drawing ends and the strokes stay; then a frame confirmation is cancelled, a clean edit or reply closes, a dirty form or the composer keeps its text on the first Escape);
   // 3. only then does it close the viewer.
   const forms = notes?.forms;
-  const escapeSnapshot = useRef({ layer: false, form: false, compare: false });
+  // Social preview (#871): the Project's resolved overlays are read only while it is on (so a viewer that never uses it makes no request), and the choice lives in this opening alone.
+  const preview = useSocialPreview(social?.initialOn ?? false);
+  const socialOn = social !== undefined && preview.on;
+  const socialOnRef = useRef(socialOn);
+  socialOnRef.current = socialOn;
+  const socialToggleRef = useRef<HTMLButtonElement | null>(null);
+  const overlaysQuery = useProjectSocialOverlaysQuery(social?.projectId ?? "", socialOn, social?.role);
+  const frames = useMemo(() => overlaysQuery.data?.resolved.map(({ id, name, imageUrl }) => ({ id, name, imageUrl })), [overlaysQuery.data]);
+  const refetchOverlays = overlaysQuery.refetch;
+  const socialMode: SocialPreviewMode | undefined = socialOn ? {
+    overlays: frames ?? [], currentId: currentOverlay(frames, preview.overlayId)?.id ?? null, onOverlay: preview.setOverlayId, fit: preview.fit, onFit: preview.setFit,
+    status: overlaysQuery.isError ? "error" : frames ? "ready" : "loading", onRetry: () => { void refetchOverlays(); },
+  } : undefined;
+  const setSocialOn = (next: boolean) => {
+    // Drawing ends on entry (the strokes stay in the draft); nothing else of the notes is closed or forgotten.
+    // A Post waiting on its frame or a drawing awaiting confirmation must not complete while hidden; the drafts stay.
+    if (next) { forms?.cancelConfirmation(assetId); forms?.exitDraw(assetId); }
+    preview.setOn(next);
+  };
+  const escapeSnapshot = useRef({ layer: false, form: false, compare: false, social: false });
   const exitCompare = useCallback((focus: "button" | "dialog") => {
     if (modeRef.current !== "compare") return;
     // The view may not have loaded yet (leaving at once): then the frame it was entered at is still the position.
@@ -152,12 +177,13 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       const popup = popupRef.current;
       // A modal dialog opened from the panel (the notes paste dialog) is not a floating popup but owns Escape just the same.
       const layer = hasOpenAlertDialog() || hasOpenFloatingPopup(popup, slot) || hasOpenModalAbove(popup, document);
-      if (layer || popup === null) { escapeSnapshot.current = { layer, form: false, compare: false }; return; }
+      if (layer || popup === null) { escapeSnapshot.current = { layer, form: false, compare: false, social: false }; return; }
       const active = document.activeElement;
       let consumed = false;
       const inForm = active instanceof Element && popup.contains(active) && active.closest("[data-notes-form]") !== null;
       // In compare a form is only the Escape's when focus is inside that side's note form: a hidden or unfocused draft never swallows it.
-      if (notesOn && forms && (modeRef.current !== "compare" || inForm)) {
+      // Social preview hides the forms: a hidden draft must not swallow the Escape that leaves it.
+      if (notesOn && forms && !socialOnRef.current && (modeRef.current !== "compare" || inForm)) {
         // In compare the form belongs to the side whose panel holds focus (else the side whose tab is showing).
         const pair = compareStore?.getState().pair;
         const sideOf = active instanceof Element ? active.closest("[data-compare-side]")?.getAttribute("data-compare-side") : null;
@@ -169,10 +195,10 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         // focus === "draw": the pill is still expanded here, so the overlay returns focus to its Draw button itself once drawing has ended.
         else if (result.focus === "textarea") (popup.querySelector<HTMLElement>('[data-notes-form="edit"] :is(textarea, [contenteditable="true"]), [data-notes-form="reply"] :is(textarea, [contenteditable="true"])') ?? popup.querySelector<HTMLElement>("#video-note-body"))?.focus({ preventScroll: true });
       }
-      escapeSnapshot.current = { layer, form: consumed, compare: !consumed && modeRef.current === "compare" };
+      escapeSnapshot.current = { layer, form: consumed, compare: !consumed && modeRef.current === "compare", social: !consumed && socialOnRef.current };
     };
     window.addEventListener("keydown", onKeyDown, true);
-    return () => { window.removeEventListener("keydown", onKeyDown, true); escapeSnapshot.current = { layer: false, form: false, compare: false }; };
+    return () => { window.removeEventListener("keydown", onKeyDown, true); escapeSnapshot.current = { layer: false, form: false, compare: false, social: false }; };
   }, [notesOn, forms, assetId, slot, compareStore]);
   const handleOpenChange = (open: boolean, details: { reason: string; cancel: () => void; allowPropagation: () => void }) => {
     if (open) return;
@@ -180,6 +206,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       const snapshot = escapeSnapshot.current;
       if (snapshot.layer) { details.cancel(); details.allowPropagation(); return; }
       if (snapshot.form) { details.cancel(); return; }
+      if (snapshot.social) { details.cancel(); preview.setOn(false); socialToggleRef.current?.focus({ preventScroll: true }); return; }
       if (snapshot.compare) { details.cancel(); exitCompare("button"); return; }
     }
     onClose();
@@ -359,12 +386,25 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         const sideA = comparing ? compareStore?.getState().pair?.a : undefined;
         reviewLinks.onCreate(sideA && video.versions.some((candidate) => candidate.assetId === sideA) ? sideA : version.assetId);
       }}><Link2 aria-hidden="true" />Create Review link</Button>}
+      {social && <Toggle
+        ref={socialToggleRef}
+        variant="outline"
+        pressed={socialOn}
+        disabled={comparing}
+        onPressedChange={setSocialOn}
+        data-testid="video-social-toggle"
+        aria-pressed={socialOn}
+        {...(comparing ? { title: "Leave Compare to preview for Social" } : {})}
+        className="pointer-coarse:min-h-11 max-[721px]:min-h-11"
+      ><Smartphone aria-hidden="true" />Social preview</Toggle>}
       {(canCompare || comparing) && <Button
         ref={compareButtonRef}
         type="button"
         variant="outline"
         data-testid="video-compare-toggle"
         aria-pressed={comparing}
+        disabled={socialOn}
+        {...(socialOn ? { title: "Turn off Social preview to compare" } : {})}
         className="pointer-coarse:min-h-11 max-[721px]:hidden"
         onPointerEnter={() => { preloadCompare(notesOn); }}
         onFocus={() => { preloadCompare(notesOn); }}
@@ -408,7 +448,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       rowClassName="overflow-y-auto"
       playerClassName="overflow-y-auto"
       player={<>
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} />
+        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} />
         {delivery && phone && <div className="mt-[var(--space-4)] shrink-0">{deliveryPanel}</div>}
       </>}
       pane={sidePane}
@@ -440,7 +480,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
             <LazyCompareView video={video} store={compareStore} startFrame={startFrame} onChangeSide={changeSide} controlRef={compareRef} detailsFor={detailsFor} {...(notes ? { notes: { projectId: notes.projectId, role: notes.role, userId: notes.userId, archived: notes.archived, forms: notes.forms } } : {})} />
           </Suspense>
         </>
-        : notes ? <Suspense fallback={null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows}>{layout}</LazyNotesHost></Suspense> : layout(null)}
+        : notes ? <Suspense fallback={null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows} paused={socialOn}>{layout}</LazyNotesHost></Suspense> : layout(null)}
       </OverlayContainerContext.Provider>
       <div ref={setSlot} />
       <div ref={setToastSlot} />
