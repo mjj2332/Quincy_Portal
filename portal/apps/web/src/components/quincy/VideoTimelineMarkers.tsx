@@ -1,6 +1,7 @@
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { cn } from "@/lib/utils";
-import { clusterMarkers, clusterWidthPx, frameFraction, markerHitTargets, nearestMarkerId, spanFractions } from "../../lib/video-timeline-geometry";
+import { clampMark, type NoteMarks } from "../../lib/video-note-marks";
+import { clusterMarkers, clusterWidthPx, frameAtX, frameFraction, markerHitTargets, nearestMarkerId, spanFractions } from "../../lib/video-timeline-geometry";
 
 /** One note on the timeline. Data, not a note DTO: the guest page (12b) and Compare (7) draw the same lane from their own notes. */
 export type TimelineMarker = { id: string; startFrame: number; endFrame: number | null; tone: "public" | "internal"; selected: boolean; /** Breaks ties between markers on one frame: the oldest note wins. */ createdAt?: string };
@@ -117,4 +118,145 @@ export function VideoPendingRangeBand({ range, frameCount }: { range: { startFra
     style={fractionStyle(from, to)}
     className={cn("pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 bg-foreground/30", THUMB_HALF, LEFT, SPAN)}
   />;
+}
+
+
+type HandleKind = "in" | "out";
+
+/**
+ * The In / Out handles over the scrubber (#861). Hand-built, not a second Base UI Slider: the playhead cannot share a sorted thumb set with
+ * them, and an overlaid root would steal presses on the open track. The wrapper takes no pointer, only the handles do, so a press anywhere else
+ * still seeks. Each handle sits at the frame it marks (Out is the LAST included frame, where the pending band ends). In's hit box lies to the left
+ * of its frame and Out's to the right, so a one-frame range keeps both reachable. A handle moves only its own end and stops at the other (`clampMark`);
+ * a drag follows the primary pointer alone and ends on release, cancel, capture loss, locking or unmounting (a Version switch remounts the player).
+ * Touch: inert, the range button is the path (no 44px target fits on the track).
+ */
+export function VideoRangeHandles({ marks, frameCount, label, largeStep, interactive, onMove, onGrab, className }: {
+  marks: NoteMarks;
+  frameCount: number;
+  /** The frame as text in the person's chosen time format. */
+  label: (frame: number) => string;
+  largeStep: number;
+  interactive: boolean;
+  /** A handle landed on a frame (already clamped against the other end). */
+  onMove: (kind: HandleKind, frame: number) => void;
+  /** A gesture starts (pointer down or the first key): the host pauses so the playhead can follow. */
+  onGrab: () => void;
+  className?: string;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const lastFrame = Math.max(0, frameCount - 1);
+  const latest = useRef({ marks, interactive, onMove, frameCount, lastFrame });
+  latest.current = { marks, interactive, onMove, frameCount, lastFrame };
+  const drag = useRef<{ kind: HandleKind; pointerId: number; offset: number; end: () => void } | null>(null);
+
+  const endDrag = () => { drag.current?.end(); drag.current = null; };
+  useEffect(() => { if (!interactive) endDrag(); }, [interactive]);
+  useEffect(() => endDrag, []);
+
+  const geometry = () => {
+    const wrap = wrapRef.current!;
+    const rect = wrap.getBoundingClientRect();
+    const half = Number.parseFloat(getComputedStyle(wrap).getPropertyValue("--thumb-half")) || 6;
+    return { rect, half };
+  };
+
+  const onPointerDown = (kind: HandleKind) => (event: ReactPointerEvent<HTMLDivElement>) => {
+    const now = latest.current;
+    if (!now.interactive || drag.current !== null || event.button !== 0 || event.isPrimary === false) return;
+    const { rect, half } = geometry();
+    const held = now.marks[kind];
+    if (held === null) return;
+    const pointerId = event.pointerId ?? 1;
+    // Where inside the handle the press landed, so a press never jumps it.
+    const offset = event.clientX - rect.left - (half + (rect.width - 2 * half) * frameFraction(held, now.frameCount));
+    event.preventDefault();
+    event.stopPropagation();
+    const target = event.currentTarget;
+    try { target.setPointerCapture?.(pointerId); } catch { /* a pointer that is already gone */ }
+    onGrab();
+    const move = (moved: PointerEvent) => {
+      if ((moved.pointerId ?? 1) !== pointerId || moved.isPrimary === false) return;
+      const live = latest.current;
+      if (!live.interactive) { endDrag(); return; }
+      const box = geometry();
+      const frame = clampMark(live.marks, kind, frameAtX(moved.clientX - box.rect.left - offset, box.rect.width, box.half, live.frameCount), live.lastFrame);
+      if (frame !== live.marks[kind]) live.onMove(kind, frame);
+    };
+    const finish = (ended: PointerEvent) => { if ((ended.pointerId ?? 1) === pointerId) endDrag(); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+    target.addEventListener("lostpointercapture", finish);
+    drag.current = {
+      kind, pointerId, offset,
+      end: () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", finish);
+        window.removeEventListener("pointercancel", finish);
+        target.removeEventListener("lostpointercapture", finish);
+        try { target.releasePointerCapture?.(pointerId); } catch { /* already released */ }
+      },
+    };
+  };
+
+  const onKeyDown = (kind: HandleKind) => (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const now = latest.current;
+    if (!now.interactive || event.ctrlKey || event.metaKey || event.altKey) return;
+    const held = now.marks[kind];
+    if (held === null) return;
+    const big = event.shiftKey;
+    let target: number | null = null;
+    if (event.key === "ArrowRight" || event.key === "ArrowUp") target = held + (big ? largeStep : 1);
+    else if (event.key === "ArrowLeft" || event.key === "ArrowDown") target = held - (big ? largeStep : 1);
+    else if (event.key === "PageUp") target = held + largeStep;
+    else if (event.key === "PageDown") target = held - largeStep;
+    else if (event.key === "Home") target = 0;
+    else if (event.key === "End") target = now.lastFrame;
+    if (target === null) return;
+    event.preventDefault();
+    const frame = clampMark(now.marks, kind, target, now.lastFrame);
+    if (frame === held) return;
+    onGrab();
+    now.onMove(kind, frame);
+  };
+
+  const bounds = (kind: HandleKind): [number, number] => (kind === "in" ? [0, marks.out ?? lastFrame] : [marks.in ?? 0, lastFrame]);
+  const render = (kind: HandleKind) => {
+    const frame = marks[kind];
+    if (frame === null) return null;
+    const [min, max] = bounds(kind);
+    const f = frameFraction(frame, frameCount);
+    return <div
+      key={kind}
+      role="slider"
+      tabIndex={0}
+      aria-label={kind === "in" ? "In point" : "Out point"}
+      aria-orientation="horizontal"
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={frame}
+      aria-valuetext={label(frame)}
+      aria-disabled={interactive ? undefined : true}
+      data-testid={`video-range-${kind}`}
+      data-kind={kind}
+      onPointerDown={onPointerDown(kind)}
+      onKeyDown={onKeyDown(kind)}
+      style={fractionStyle(f, f)}
+      className={cn(
+        "absolute inset-y-0 w-3 touch-none outline-none",
+        LEFT,
+        // In's box lies left of its frame and Out's right of it, so a one-frame range keeps both reachable.
+        kind === "in" ? "-translate-x-full border-r-2 border-solid border-foreground" : "border-l-2 border-solid border-foreground",
+        interactive ? "pointer-events-auto cursor-ew-resize" : "pointer-events-none",
+        "pointer-coarse:pointer-events-none max-[721px]:pointer-events-none",
+        "focus-visible:ring-2 focus-visible:ring-ring",
+      )}
+    />;
+  };
+
+  return <div ref={wrapRef} data-testid="video-range-handles" className={cn("pointer-events-none absolute inset-0", THUMB_HALF, className)}>
+    {render("in")}
+    {render("out")}
+  </div>;
 }

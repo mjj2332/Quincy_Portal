@@ -24,6 +24,7 @@ import { GuestDownload } from "./GuestDownload";
 import { GuestDownloadAll } from "./GuestDownloadAll";
 import type { GuestDrafts } from "./guest-drafts";
 import { useGuestCompose } from "./use-guest-compose";
+import { EMPTY_MARKS, marksToFrames } from "../lib/video-note-marks";
 import type { GuestVerify } from "./use-guest-verify";
 import type { GuestWriter, Skipped, WriterBinding } from "./use-guest-writer";
 import { useGuestMarkup } from "./GuestMarkup";
@@ -270,6 +271,11 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
 
   const onDrawingChange = useCallback((drawing: boolean) => { if (phone) setDrawerOpen(!drawing); }, [phone]);
   const compose = useGuestCompose({ clock, frameCount: version.frameCount, timecode, markupAllowed: session.link.allow.markup, media: api.media, post, edit: editRoot, latestOf, onDrawingChange });
+  // The range button and handles (#861) exist where the link allows comments; they take the open draft's marks and are disabled with no draft (the hint says how to start one), an archived Project, or marks the draft has locked (a drawing).
+  const rangeProps = session.link.allow.comments ? {
+    range: { marks: compose.isOpen ? compose.marks : EMPTY_MARKS, locked: archived || !compose.onMark, ...(!compose.isOpen && !archived ? { hint: "Add a note to mark a range" } : {}), clear: compose.clearMarks },
+    pendingRange: compose.isOpen ? marksToFrames(compose.marks, version.frameCount) : null,
+  } : {};
   // A draft belongs to the Version it was made on; an archived Project takes it away.
   const { close: closeComposer, editingId } = compose;
   useEffect(() => { closeComposer(); }, [version.assetId, closeComposer]);
@@ -437,7 +443,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       paneId={paneId}
       handleLabel="Resize notes"
       stacked={phone}
-      player={<VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} />}
+      player={<VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} />}
       pane={phone ? null : <aside data-surface="default" className="flex flex-1 flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-hidden">{panel}</aside>}
     />
     {phone && <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>

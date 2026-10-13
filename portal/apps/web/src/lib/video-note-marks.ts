@@ -24,3 +24,19 @@ export function marksToFrames(marks: NoteMarks, frameCount: number): { startFram
   const only = marks.in ?? marks.out;
   return only === null ? null : { startFrame: clamp(only), endFrame: null };
 }
+
+/** What the range button does next (#861): nothing marked or only an Out reads "Set in", an In alone "Set out", both "Clear". */
+export function rangeStep(marks: NoteMarks): "in" | "out" | "clear" {
+  if (marks.in === null) return "in";
+  return marks.out === null ? "out" : "clear";
+}
+
+/**
+ * Where a dragged handle may land (#861): In stops at Out, Out stops at In (equal is a one-frame range), both inside `[0, lastFrame]`.
+ * Dragging constrains instead of clearing the other end (the I / O rule of `markFrame` is for keys; a handle moves only its own end).
+ */
+export function clampMark(marks: NoteMarks, kind: "in" | "out", frame: number, lastFrame: number): number {
+  const rounded = Math.min(lastFrame, Math.max(0, Math.round(frame)));
+  if (kind === "in") return marks.out === null ? rounded : Math.min(rounded, marks.out);
+  return marks.in === null ? rounded : Math.max(rounded, marks.in);
+}

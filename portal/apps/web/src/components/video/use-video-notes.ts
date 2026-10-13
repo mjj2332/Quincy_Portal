@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { roleHasCapability, type Role, type VideoNoteCreateInput, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto, type VideoVersionDto } from "@quincy/shared";
 import { useFrameLabel } from "../../lib/time-format-prefs";
 import type { TimelineMarker } from "../quincy/VideoTimelineMarkers";
+import type { VideoRangeControl } from "../quincy/VideoPlayer";
 import { useOptionalProjectQueryClient } from "../../lib/project-data";
 import type { VideoFrameClock } from "../../lib/video-frame-clock";
 import { DEFAULT_NOTE_FILTERS, visibleThreads, type NoteFilters } from "../../lib/video-note-view";
-import { effectiveMarks, type NoteFormStore } from "../../lib/video-note-form-store";
+import { effectiveMarks, marksLocked, type NoteFormStore } from "../../lib/video-note-form-store";
 import { marksToFrames } from "../../lib/video-note-marks";
 import {
   commitVideoNotePaste, createVideoNote, deleteVideoNote, previewVideoNotePaste, editVideoNote, replyToVideoNote, setVideoNoteResolution, useVideoNotesQuery, type NoteWriteContext,
@@ -64,6 +65,8 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
   // Draw mode locks the transport, seeks and marks; with the part off there is no draw mode, whatever a stale slot says.
   const drawHeld = useSyncExternalStore(forms.subscribe, () => forms.slot(assetId).draw !== null);
   const drawing = markup && drawHeld;
+  // Whether the slot takes a mark right now (a reply open, a request out, an edit with a drawing change): the range controls show it by being disabled.
+  const marksHeld = useSyncExternalStore(forms.subscribe, () => marksLocked(forms.slot(assetId)));
   const pendingRange = useMemo(() => marksToFrames(effectiveMarks(marks, clock).value, frameCount), [marks, clock, frameCount]);
   // A form whose note left the Version's list goes; an archived Project takes no forms; leaving the Version re-arms the first Escape.
   useEffect(() => { if (threads) forms.retireMissing(assetId, threads); }, [forms, assetId, threads]);
@@ -136,7 +139,16 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
     markup, canAnnotate, selectedThread,
     seekToNote, select, actions, post, remove, refresh, previewPaste, commitPaste,
     /** What the viewer hands the player. `onMark` exists only while the panel can take a mark, so I and O do nothing on an archived Project; it marks the frame on screen at once, with no pause and nothing pending. */
-    playerProps: { markers, pendingRange, onMarkerSelect, onClockChange, transportLocked: drawing, ...(writable && clock ? { onMark: (kind: "in" | "out", frame: number) => { forms.mark(assetId, kind, frame, clock); } } : {}) },
+    playerProps: {
+      markers, pendingRange, onMarkerSelect, onClockChange, transportLocked: drawing,
+      ...(writable && clock ? { onMark: (kind: "in" | "out", frame: number) => { forms.mark(assetId, kind, frame, clock); } } : {}),
+      /** The range button and handles (#861): always there while notes are on; disabled where a mark would be refused. Clear on an open edit makes it a point (a note keeps a frame); on a new draft it empties the marks. */
+      range: {
+        marks: effectiveMarks(marks, clock).value,
+        locked: !writable || marksHeld,
+        clear: () => { if (forms.slot(assetId).open) { if (clock) forms.makePoint(assetId, clock); } else forms.clearMarks(assetId); },
+      } satisfies VideoRangeControl,
+    },
   };
 }
 
