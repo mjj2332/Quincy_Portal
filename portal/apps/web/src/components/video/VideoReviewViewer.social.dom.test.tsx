@@ -167,6 +167,13 @@ afterEach(async () => {
 const popup = () => dialog()!;
 const composerBox = () => tid("video-note-composer");
 const composerText = () => composerBox()!.querySelector<HTMLElement>("textarea") as HTMLTextAreaElement;
+async function chooseNoteAction(scope: ParentNode, name: string, label: "Edit" | "Delete") {
+  const trigger = scope.querySelector<HTMLElement>(`[aria-label="Actions for note by ${name}"]`)!;
+  await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); });
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((candidate) => candidate.textContent === label)!;
+  await act(async () => { item.click(); await Promise.resolve(); await Promise.resolve(); });
+  await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
+}
 const socialToggle = () => tid("video-social-toggle")!;
 const stage = () => tid("video-stage")!;
 const overlayImg = () => tid("video-social-overlay") as HTMLImageElement | null;
@@ -277,6 +284,22 @@ describe("Social preview in the staff viewer (#871)", () => {
     expect(tid("video-note-reply-button", threadOf(s.n1.id))).toBeNull();
     await click(socialToggle()); await flush(2);
     expect(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>('[data-notes-form="reply"] textarea')!.value).toBe("half a reply");
+  });
+
+  it("keeps a note readable while its Edit form is open and hidden by Social, and the form is back on exit", async () => {
+    const s = seed();
+    await openFilm();
+    await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit");
+    const form = threadOf(s.n1.id).querySelector('[data-notes-form="edit"]')!;
+    await startSocial();
+    expect(threadOf(s.n1.id).querySelector('[data-notes-form="edit"]')).toBe(form);
+    expect(form.closest("[hidden]")).not.toBeNull();
+    const body = tid("video-note-body", threadOf(s.n1.id))!;
+    expect(body.textContent).toBe("Fix the lower third");
+    expect(body.closest("[hidden]")).toBeNull();
+    await click(socialToggle()); await flush(2);
+    expect(form.closest("[hidden]")).toBeNull();
+    expect(tid("video-note-body", threadOf(s.n1.id))).toBeNull();
   });
 
   it("stays on across a Version switch", async () => {

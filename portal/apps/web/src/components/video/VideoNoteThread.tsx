@@ -253,11 +253,11 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, paused = f
         {drawings && thread.hasMarkup && !thread.deleted && <IconTip label="Has a drawing"><span data-testid="video-note-has-drawing" className={cn(META_TEXT, "inline-flex items-center !normal-case")}><PencilIcon aria-hidden="true" className="size-3" /><span className="sr-only">{drawings.on ? "Drawing" : "Drawing hidden"}</span></span></IconTip>}
         <span className="ms-auto">{renderMenu(thread)}</span>
       </div>
-      {editing?.noteId === thread.id ? editForm(thread) : <NoteText note={thread} />}
+      {editing?.noteId === thread.id ? <>{editForm(thread)}{paused && <NoteText note={thread} />}</> : <NoteText note={thread} />}
       {thread.replies.length > 0 && <div className="grid gap-[var(--space-2)] border-s border-border ps-[var(--space-3)]">
         {thread.replies.map((reply) => <div key={reply.id} data-testid="video-note-reply" data-note-id={reply.id} className="grid gap-[var(--space-1)]">
           {header(reply, false)}
-          {editing?.noteId === reply.id ? editForm(reply) : <NoteText note={reply} />}
+          {editing?.noteId === reply.id ? <>{editForm(reply)}{paused && <NoteText note={reply} />}</> : <NoteText note={reply} />}
         </div>)}
       </div>}
       {notice && <Notice tone="critical" role="alert" data-testid="video-note-notice" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{notice.text}</span>{notice.refresh && <Button type="button" variant="text" data-testid="video-note-notice-refresh" onClick={actions.refresh}>Refresh notes</Button>}</Notice>}
