@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import type { GuestSessionResponse, VideoReviewPart } from "@quincy/shared";
 import { reviewLinkOpenSql } from "@quincy/db";
 import { hashToken } from "../lib/opaque-token";
+import { gateSql, liveSql } from "../lib/guest-fence-sql";
 import { readVideoReviewGate } from "../lib/video-review-gate";
 import type { AppEnv } from "../env";
 import { DELIVERY_SESSION_MAX_MS, DELIVERY_SESSION_RENEW_MS, readSessionCookie, UUID } from "./http";
@@ -74,12 +75,12 @@ export async function resolveSession(c: Context<AppEnv>, linkId: string, now: nu
 /**
  * Slides a verified Delivery session's expiry out to the 400-day cap, at most once a day (it only writes when more than a day has been lost). One statement carries every fence: the
  * token hash this request authenticated with (a verify in another tab rotates it, and the caller must not then re-send the old token), a verified guest, an unexpired session and
- * the link still open and still the Delivery review link. Answers the new expiry, or `null` when nothing was written. The token, guest and `verified_at` are never touched.
+ * the link still open, the feature gate still on, and still the Delivery review link. Answers the new expiry, or `null` when nothing was written. The token, guest and `verified_at` are never touched.
  */
 export async function renewDeliverySession(db: D1Database, session: GuestSession, now: number): Promise<number | null> {
   const expiresAt = now + DELIVERY_SESSION_MAX_MS;
-  const row = await db.prepare(`UPDATE guest_sessions SET expires_at = ?1 WHERE id = ?2 AND token_hash = ?3 AND guest_id IS NOT NULL AND guest_sessions.expires_at > ?4 AND guest_sessions.expires_at < ?5
-      AND EXISTS (SELECT 1 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE s.id = guest_sessions.id AND ${reviewLinkOpenSql("l", "?4")} AND l.delivery_review = 1 AND s.link_generation = l.token_generation)
+  const row = await db.prepare(`UPDATE guest_sessions SET expires_at = ?1 WHERE id = ?2 AND token_hash = ?3 AND guest_id IS NOT NULL AND guest_sessions.expires_at < ?5
+      AND EXISTS (SELECT 1 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE s.id = guest_sessions.id AND ${liveSql("?4")} AND ${gateSql()} AND l.delivery_review = 1)
     RETURNING expires_at`).bind(expiresAt, session.id, session.tokenHash, now, expiresAt - DELIVERY_SESSION_RENEW_MS).first<{ expires_at: number }>();
   return row ? row.expires_at : null;
 }

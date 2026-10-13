@@ -4,6 +4,7 @@ import { guestSessionResponseSchema } from "@quincy/shared";
 import { app } from "../src/index";
 import { hashPasscode } from "../src/lib/review-passcode";
 import { hashToken } from "../src/lib/opaque-token";
+import { renewDeliverySession } from "../src/guest/link";
 import type { Env } from "../src/env";
 import { baseEnv, cookie as staffCookie, database, ids, request as staffRequest, seedFixture } from "./embedded-media-support";
 import {
@@ -607,6 +608,19 @@ describe("verified Delivery guests stay signed in (ADR 0023 amendment)", () => {
     expect(await stubOf(response)).toEqual(await stubOf(await guestFetch("/d/api/x")));
     expect(response.headers.getSetCookie()).toEqual([]);
     expect((await row(link.id)).expires_at as number).toBeLessThan(Date.now());
+  });
+
+  it("does not extend when the feature gate closes between authentication and the renewal write (D6)", async () => {
+    const link = await verified({ deliveryReview: true }, 10 * DAY);
+    const held = { id: (await row(link.id)).id as string, tokenHash: await hashToken(link.cookie.split("=")[1]!) } as Parameters<typeof renewDeliverySession>[1];
+    const before = (await row(link.id)).expires_at;
+    for (const key of ["video_review_guest", "video_review"]) {
+      await database.DB.prepare("UPDATE feature_flags SET enabled = 0 WHERE key = ?").bind(key).run();
+      expect(await renewDeliverySession(database.DB, held, Date.now()), key).toBeNull();
+      expect((await row(link.id)).expires_at, key).toBe(before);
+      await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = ?").bind(key).run();
+    }
+    expect(await renewDeliverySession(database.DB, held, Date.now()), "control: gate open").not.toBeNull();
   });
 
   it("renews on the session read only: videos and stream never set a cookie", async () => {
