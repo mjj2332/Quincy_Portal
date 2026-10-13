@@ -1,76 +1,70 @@
-import { useState } from "react";
-import { Film } from "lucide-react";
-import { filmTitleFromFilename, type Mp4Probe } from "@quincy/shared";
+import type { QueryClient } from "@tanstack/react-query";
+import { filmTitleFromFilename, type Role } from "@quincy/shared";
 import { Button } from "../quincy/Button";
 import { FileDropzone, FilePickButton } from "../quincy/FileDropzone";
 import { Notice } from "../quincy/Notice";
-import { checkVideoFile } from "../../lib/video-upload";
-import { uploadIdentityGeneration } from "../../lib/video-upload-store";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
+import { Spinner } from "../reui/spinner";
+import { pluralCaution } from "../../lib/video-upload";
+import { addNewFilms, removeNewFilm, retryNewFilm, uploadNewFilms, useNewFilmBatch, type NewFilmEntry } from "../../lib/video-upload-store";
 import { VIDEO_ACCEPT } from "./VideoCard";
 import { formatDuration, formatFps } from "./video-format";
 
-const HINT = "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
+const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
-type Picked = { file: File; probe: Mp4Probe; cautions: string[] };
+function facts(entry: NewFilmEntry) {
+  const probe = entry.probe;
+  return probe ? `${formatFps(probe.fps)} fps · ${probe.width}×${probe.height} · ${formatDuration(probe.durationMs)}` : null;
+}
 
-/** The "new film" drop target and its confirm form (#741 4d-i). The file is checked in the browser first; nothing is requested from the server until Upload. The film is titled by its file name, so there is no title to type (#828). */
-export function NewFilmUploader({ onStart }: {
-  /** Resolves `null` once the server holds the upload, else the reason it refused (a limit, a conflict). On a refusal the file stays so the person can try again. */
-  onStart: (input: Picked) => Promise<string | null>;
-}) {
-  const [starting, setStarting] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
-  const [checking, setChecking] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
-  const [picked, setPicked] = useState<Picked | null>(null);
-
-  async function receive(file: File) {
-    setProblem(null); setRefusal(null); setPicked(null); setChecking(true);
-    const generation = uploadIdentityGeneration();
-    const result = await checkVideoFile(file);
-    setChecking(false);
-    // The person changed while the file was being read: it is not theirs to show.
-    if (generation !== uploadIdentityGeneration()) return;
-    if (!result.ok) { setProblem(result.message); return; }
-    setPicked({ file, probe: result.probe, cautions: result.cautions });
-  }
-
-  async function submit() {
-    if (!picked || starting) return;
-    setStarting(true); setRefusal(null);
-    const reason = await onStart(picked);
-    setStarting(false);
-    if (reason === null) setPicked(null); else setRefusal(reason);
-  }
+/**
+ * The "new films" drop box and its list (#845). Every picked file is checked in the browser first; nothing is requested from the server until Upload. Each film
+ * is titled by its file name (#828), so there is no title to type. The queue lives in the upload store, so it outlives this panel; a started film leaves the
+ * list for the upload tray. The drop box is never locked: more films can be added while others are checking or uploading.
+ */
+export function NewFilmUploader({ userId, queryClient, projectId, role }: { userId: string | null; queryClient: QueryClient | undefined; projectId: string; role: Role }) {
+  const rows = useNewFilmBatch(userId, projectId);
+  const receive = (files: File[]) => { if (userId) addNewFilms({ userId, queryClient, projectId, role, files }); };
+  const waiting = rows.filter((row) => row.status === "ready");
+  // A caution several rows carry (the fast-start warning) is said once above the list; one unique to a row stays on it.
+  const counts = new Map<string, number>();
+  for (const row of rows) for (const caution of new Set(row.cautions)) counts.set(caution, (counts.get(caution) ?? 0) + 1);
+  const shared = [...counts].filter(([, count]) => count > 1).map(([caution]) => caution);
+  const checking = rows.some((row) => row.status === "checking");
 
   return <div className="grid gap-[var(--space-3)]" data-testid="new-film-uploader">
-    <FileDropzone
-      onFile={(file) => void receive(file)}
-      disabled={checking || starting}
-      data-testid="new-film-dropzone"
-      className="flex flex-wrap items-center gap-[var(--space-4)] p-[var(--space-4)] bg-card border-dashed border-[length:var(--border-width-hair)] border-border data-[dragging=true]:bg-secondary"
-    >
-      <Film aria-hidden="true" className="size-7 shrink-0 text-foreground-secondary" />
-      <div className="grid min-w-[16rem] flex-1 gap-[var(--space-1)]">
-        <strong className="[font:var(--weight-medium)_var(--text-base)/var(--leading-normal)_var(--font-sans)]">Drop an MP4 or MOV to start a new film</strong>
-        <span className={HINT}>H.264, constant frame rate, up to 2 GB. Frame rate and timecode are read from the file.</span>
-      </div>
-      <FilePickButton accept={VIDEO_ACCEPT} variant="primary" className="min-h-[44px]" disabled={checking || starting} onFile={(file) => void receive(file)}>{checking ? "Checking…" : "Upload new film"}</FilePickButton>
+    <FileDropzone multiple onFiles={receive} data-testid="new-film-dropzone" className="upload-zone">
+      <div className="ey">New films</div>
+      <h2 className="upload-zone__title">Drop MP4 or MOV films here</h2>
+      <p>H.264, constant frame rate, up to 2 GB each. Frame rate and timecode are read from each file.</p>
+      <FilePickButton multiple accept={VIDEO_ACCEPT} variant="secondary" className={`min-h-[44px] ${TOUCH}`} onFiles={receive}>Choose files</FilePickButton>
     </FileDropzone>
-    {problem && <Notice tone="critical" role="alert" data-testid="new-film-problem">{problem}</Notice>}
-    {picked && <form
-      className="grid gap-[var(--space-3)] p-[var(--space-4)] bg-secondary border-solid border-[length:var(--border-width-hair)] border-border"
-      data-testid="new-film-form"
-      onSubmit={(event) => { event.preventDefault(); void submit(); }}
-    >
-      <p className="m-0 [font:var(--weight-bold)_var(--text-base)/var(--leading-normal)_var(--font-sans)] text-foreground [overflow-wrap:anywhere]" data-testid="new-film-title">{filmTitleFromFilename(picked.file.name)}</p>
-      <p className={`${HINT} [overflow-wrap:anywhere]`} data-testid="new-film-probe">{`${picked.file.name} · ${formatFps(picked.probe.fps)} fps · ${picked.probe.width}×${picked.probe.height} · ${formatDuration(picked.probe.durationMs)}`}</p>
-      {picked.cautions.map((caution) => <Notice key={caution} tone="caution" role="status">{caution}</Notice>)}
-      {refusal && <Notice tone="critical" role="alert" data-testid="new-film-refusal">{refusal}</Notice>}
-      <div className="flex flex-wrap gap-[var(--space-2)]">
-        <Button type="submit" className="min-h-[44px]" disabled={starting}>{starting ? "Starting…" : "Upload"}</Button>
-        <Button type="button" variant="secondary" className="min-h-[44px]" disabled={starting} onClick={() => { setPicked(null); setRefusal(null); }}>Cancel</Button>
-      </div>
-    </form>}
+    {shared.length > 0 && <div className="grid gap-[var(--space-2)]" data-testid="new-film-shared-cautions">
+      {shared.map((caution) => <Notice key={caution} tone="caution" role="status">{pluralCaution(caution)}</Notice>)}
+    </div>}
+    {rows.length > 0 && <ItemGroup>
+      {rows.map((row) => {
+        const line = facts(row);
+        const title = filmTitleFromFilename(row.file.name);
+        const detail = `${row.file.name}${line ? ` · ${line}` : ""}`;
+        return <Item key={row.key} role="listitem" variant="outline" data-testid="new-film-row" data-status={row.status} className="flex-wrap rounded-[var(--radius-card)]">
+          <ItemContent className="min-w-[12rem]">
+            <ItemTitle className="font-normal [overflow-wrap:anywhere]">{title}</ItemTitle>
+            {detail !== title && <ItemDescription className="line-clamp-none [overflow-wrap:anywhere]">{detail}</ItemDescription>}
+            {row.status === "checking" && <ItemDescription className="line-clamp-none flex items-center gap-[var(--space-2)]" role="status"><Spinner aria-hidden="true" />Checking…</ItemDescription>}
+            {row.status === "queued" && <ItemDescription className="line-clamp-none" role="status">Waiting to upload</ItemDescription>}
+            {row.cautions.filter((caution) => !shared.includes(caution)).map((caution) => <Notice key={caution} tone="caution" role="status">{caution}</Notice>)}
+            {(row.status === "rejected" || row.status === "refused") && row.message && <Notice tone="critical" role="alert">{row.message}</Notice>}
+          </ItemContent>
+          <ItemActions>
+            {row.status === "refused" && <Button type="button" variant="secondary" className={TOUCH} aria-label={`Retry ${row.file.name}`} onClick={() => retryNewFilm(row.key)}>Retry</Button>}
+            <Button type="button" variant="text" className={TOUCH} aria-label={`Remove ${row.file.name}`} onClick={() => removeNewFilm(row.key)}>Remove</Button>
+          </ItemActions>
+        </Item>;
+      })}
+    </ItemGroup>}
+    {waiting.length > 0 && userId && <div className="flex flex-wrap gap-[var(--space-2)]">
+      <Button type="button" className="min-h-[44px]" disabled={checking} onClick={() => uploadNewFilms(userId, projectId)}>{`Upload ${waiting.length} film${waiting.length === 1 ? "" : "s"}`}</Button>
+    </div>}
   </div>;
 }

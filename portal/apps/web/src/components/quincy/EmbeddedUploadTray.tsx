@@ -40,7 +40,7 @@ function PreparingRow({ name, onRemove, focusRemove }: { name: string; onRemove:
  * A HEIC (#495) goes on to a `preparing` row (a `Spinner` with Remove) and, if its JPEG cannot be made, a `failed` row
  * (a critical `Notice` with Retry and Remove). Renders nothing when there is nothing to show. The owner keeps the uploads, their abort controllers and the errors.
  */
-export function EmbeddedUploadTray({ uploads, errors, onCancel, onRemove = onCancel, onRetry, testId = "rich-text-upload-tray", className }: {
+export function EmbeddedUploadTray({ uploads, errors, onCancel, onRemove = onCancel, onRetry, pluralCaution = (caution) => caution, testId = "rich-text-upload-tray", className }: {
   uploads: readonly EmbeddedUpload[];
   errors: readonly string[];
   /** Cancel a running video upload. */
@@ -49,14 +49,29 @@ export function EmbeddedUploadTray({ uploads, errors, onCancel, onRemove = onCan
   onRemove?: (key: number) => void;
   /** Retry a failed one. */
   onRetry?: (key: number) => void;
+  /** How a caution reads when it covers several finished films at once (#845). Defaults to the caution as it is. */
+  pluralCaution?: (caution: string) => string;
   testId?: string;
   className?: string;
 }) {
   // The failed row's Retry unmounts when it is pressed; the preparing row that replaces it takes focus.
   const retried = useRef<number | null>(null);
   if (uploads.length === 0 && errors.length === 0) return null;
+  // Finished films that carry the same cautions are said once, naming the films, with one Dismiss for the lot (#845).
+  const groupOf = (entry: EmbeddedUpload) => (entry.phase === "done" && entry.cautions?.length ? entry.cautions.join("\n") : null);
+  const groups = new Map<string, EmbeddedUpload[]>();
+  for (const entry of uploads) { const group = groupOf(entry); if (group !== null) groups.set(group, [...(groups.get(group) ?? []), entry]); }
   return <div data-testid={testId} className={className ?? "grid gap-[var(--space-2)]"}>
     {uploads.map((entry) => {
+      const group = groupOf(entry);
+      const together = group !== null ? groups.get(group)! : [];
+      if (together.length > 1) {
+        if (together[0] !== entry) return null;
+        return <Notice key={`group-${entry.key}`} tone="caution" role="status" className="flex flex-wrap items-center justify-between gap-[var(--space-1)]">
+          <span className="grid min-w-0 gap-[var(--space-1)] [overflow-wrap:anywhere]"><span>{together.map((member) => member.name).join(", ")} uploaded.</span>{entry.cautions?.map((caution) => <span key={caution}>{pluralCaution(caution)}</span>)}</span>
+          <Button type="button" variant="text" aria-label={`Dismiss warning for ${together.length} films`} onClick={() => { for (const member of together) onRemove(member.key); }}>Dismiss</Button>
+        </Notice>;
+      }
       if (entry.phase === "preparing") return <PreparingRow key={entry.key} name={entry.name} onRemove={() => onRemove(entry.key)} focusRemove={retried.current === entry.key} />;
       // #741: a film that went up with a caution the person has not seen yet (one only the server raised). It stays until dismissed.
       if (entry.phase === "done") return <Notice key={entry.key} tone="caution" role="status" className="flex flex-wrap items-center justify-between gap-[var(--space-1)]">
