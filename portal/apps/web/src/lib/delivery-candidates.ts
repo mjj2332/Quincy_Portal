@@ -1,4 +1,4 @@
-import type { CollectionKind, DeliveryCandidateDto, DeliveryItemKind } from "@quincy/shared";
+import type { CollectionKind, DeliveryCandidateDto, DeliveryItemKind, VideoReviewStatus } from "@quincy/shared";
 
 /**
  * What the Delivery tab offers to publish (#787 slice 10). The list comes from the server (`GET /delivery/candidates`), which applies Publish's own eligibility behind the Client Delivery gate
@@ -14,6 +14,8 @@ export type DeliveryCandidate = {
   videoId: string | null;
   premium: boolean;
   premiumUnlocked: boolean;
+  /** A Video's Review status; null for everything else and while Video Review is closed (#864). */
+  reviewStatus: VideoReviewStatus | null;
 };
 
 export const COLLECTION_OF_KIND = { photo: "edited", floorplan: "floorplan", copy: "copy", video: null } as const satisfies Record<DeliveryItemKind, CollectionKind | null>;

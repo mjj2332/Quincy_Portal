@@ -1,5 +1,5 @@
-import { DELIVERY_ITEM_KINDS, RENDITION_VARIANT_SPEC, type DeliveryCandidateDto, type DeliveryItemKind, type DeliveryItemDto, type DeliveryPageDto, type DeliveryState } from "@quincy/shared";
-import { lockedSql, premiumSql } from "./delivery-lock";
+import { DELIVERY_ITEM_KINDS, RENDITION_VARIANT_SPEC, type DeliveryCandidateDto, type DeliveryItemKind, type DeliveryItemDto, type DeliveryPageDto, type DeliveryState, type VideoReviewStatus } from "@quincy/shared";
+import { inCurrentSetSql, lockedSql, premiumSql } from "./delivery-lock";
 import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VERSION_OF_VIDEO } from "./video-live-sql";
 
 /**
@@ -135,22 +135,23 @@ async function readPremiumFlags(db: D1Database, assetIds: readonly string[]): Pr
 
 /**
  * What the staff Delivery tab may offer: every Asset of the Project that `DELIVERY_ELIGIBLE_SQL` accepts (the predicate Publish checks, so the two cannot drift), in page order. A Video
- * Version is eligible only while current and live, so each Video appears once, at its current Version. Names and premium state ride along; nothing here needs Video Review.
+ * Version is eligible only while current and live, so each Video appears once, at its current Version. Names and premium state ride along; nothing here needs Video Review. A Video's Review status rides along only when `options.reviewStatus` (Video Review open).
  */
-export async function readDeliveryCandidates(db: D1Database, projectId: string): Promise<DeliveryCandidateDto[]> {
+export async function readDeliveryCandidates(db: D1Database, projectId: string, options: { reviewStatus: boolean }): Promise<DeliveryCandidateDto[]> {
   const assets = (await db.prepare(`SELECT a.id AS assetId, a.kind AS assetKind, a.original_filename AS name, a.delivery_premium AS premium, u.asset_id IS NOT NULL AS unlocked
       FROM assets a JOIN collections c ON c.id = a.collection_id LEFT JOIN asset_premium_unlocks u ON u.asset_id = a.id
       WHERE c.project_id = ?1 AND ${DELIVERY_ELIGIBLE_SQL} ORDER BY a.created_at, a.id`).bind(projectId).all<{ assetId: string; assetKind: string; name: string; premium: number; unlocked: number }>()).results;
   const videoAssetIds = assets.filter((row) => row.assetKind === "video").map((row) => row.assetId);
-  const films = videoAssetIds.length === 0 ? [] : (await db.prepare(`SELECT m.asset_id AS assetId, v.id AS videoId, v.title AS title, v.premium AS premium, vu.video_id IS NOT NULL AS unlocked
+  const films = videoAssetIds.length === 0 ? [] : (await db.prepare(`SELECT m.asset_id AS assetId, v.id AS videoId, v.title AS title, v.premium AS premium, vu.video_id IS NOT NULL AS unlocked,
+      CASE WHEN ${inCurrentSetSql("= m.asset_id")} THEN 'published' ELSE m.review_status END AS reviewStatus
       FROM video_version_meta m JOIN videos v ON v.id = m.video_id LEFT JOIN video_premium_unlocks vu ON vu.video_id = v.id
       WHERE v.project_id = ?2 AND m.asset_id IN (SELECT value FROM json_each(?1)) AND ${LIVE_VERSION_OF_VIDEO("m", "v")} ORDER BY v.position, v.created_at, v.id`)
-    .bind(JSON.stringify(videoAssetIds), projectId).all<{ assetId: string; videoId: string; title: string; premium: number; unlocked: number }>()).results;
+    .bind(JSON.stringify(videoAssetIds), projectId).all<{ assetId: string; videoId: string; title: string; premium: number; unlocked: number; reviewStatus: VideoReviewStatus }>()).results;
   const of = (kind: string) => assets.filter((row) => row.assetKind === kind);
-  const doc = (kind: DeliveryItemKind) => (row: (typeof assets)[number]): DeliveryCandidateDto => ({ assetId: row.assetId, kind, name: row.name, videoId: null, premium: row.premium === 1, premiumUnlocked: row.unlocked === 1 });
+  const doc = (kind: DeliveryItemKind) => (row: (typeof assets)[number]): DeliveryCandidateDto => ({ assetId: row.assetId, kind, name: row.name, videoId: null, premium: row.premium === 1, premiumUnlocked: row.unlocked === 1, reviewStatus: null });
   return [
     ...of("photo").map(doc("photo")), ...of("floorplan_pdf").map(doc("floorplan")), ...of("copy_pdf").map(doc("copy")),
-    ...films.map((film): DeliveryCandidateDto => ({ assetId: film.assetId, kind: "video", name: film.title, videoId: film.videoId, premium: film.premium === 1, premiumUnlocked: film.unlocked === 1 })),
+    ...films.map((film): DeliveryCandidateDto => ({ assetId: film.assetId, kind: "video", name: film.title, videoId: film.videoId, premium: film.premium === 1, premiumUnlocked: film.unlocked === 1, reviewStatus: options.reviewStatus ? film.reviewStatus : null })),
   ];
 }
 

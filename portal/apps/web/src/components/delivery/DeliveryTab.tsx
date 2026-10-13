@@ -21,6 +21,7 @@ import { Label } from "../reui/label";
 import { Switch } from "../reui/switch";
 import { Toggle } from "../reui/toggle";
 import { CopyTextButton } from "../video/CopyTextButton";
+import { REVIEW_STATUS_LABEL } from "../video/VideoReviewStatusPill";
 import { DeliveryPreviewDialog } from "./DeliveryPreviewDialog";
 
 /**
@@ -88,7 +89,8 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
       return;
     }
     const inSet = new Set(state.set.items.map((item) => item.assetId));
-    const start = candidates.filter((c) => inSet.has(c.assetId)).map((c) => c.assetId);
+    // A later Publish starts from the current set plus the Videos already Approved (internal) (#864). Seeded once, so a Video the person cleared is never re-ticked. (A first Publish above already has everything ticked.)
+    const start = candidates.filter((c) => inSet.has(c.assetId) || c.reviewStatus === "approved_internal").map((c) => c.assetId);
     setSelected(new Set(start));
     setCover(state.set.coverAssetId && start.includes(state.set.coverAssetId) ? state.set.coverAssetId : null);
   }, [seeded, listsUsable, delivery.isPending, candidates, state]);
@@ -98,13 +100,19 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
   const coverIsValid = cover !== null && orderedIds.includes(cover) && candidates.some((c) => c.assetId === cover && c.kind === "photo");
   const sentCover = coverIsValid ? cover : null;
   useEffect(() => { if (seeded && cover !== null && listsUsable && !coverIsValid) setCover(null); }, [seeded, cover, listsUsable, coverIsValid]);
+  // Videos in `ids` still In review (#864): advisory only, never blocks Publish. A retry sends its frozen body, so the warning reads that rather than the live selection.
+  const inReviewIn = (ids: readonly string[]) => candidates.filter((c) => c.kind === "video" && c.reviewStatus === "in_review" && ids.includes(c.assetId));
+  const inReviewNotice = (ids: readonly string[], testId: string) => {
+    const warned = inReviewIn(ids);
+    return warned.length === 0 ? null : <Notice tone="caution" role="status" data-testid={testId}>{`Still ${REVIEW_STATUS_LABEL.in_review}: ${warned.map((c) => c.name).join(", ")}. ${warned.length === 1 ? "This Video has" : "These Videos have"} not been ${REVIEW_STATUS_LABEL.approved_internal}.`}</Notice>;
+  };
   const nameOf = (assetId: string) => candidates.find((c) => c.assetId === assetId)?.name ?? "an item";
   const expected = state?.page?.latestSetNumber ?? null;
   // Items the client page serves that are no longer candidates (a newer version replaced them): the page still shows THESE Assets, so their premium state is theirs to change.
   const served = useMemo<DeliveryCandidate[]>(() => {
     const known = new Set(candidates.map((c) => c.assetId));
     return (state?.set?.items ?? []).filter((item) => !known.has(item.assetId)).map((item) => ({
-      assetId: item.assetId, kind: item.kind, name: `${item.label} (older version)`, collection: COLLECTION_OF_KIND[item.kind], premium: item.premium, premiumUnlocked: item.premiumUnlocked, videoId: item.videoId,
+      assetId: item.assetId, kind: item.kind, name: `${item.label} (older version)`, collection: COLLECTION_OF_KIND[item.kind], premium: item.premium, premiumUnlocked: item.premiumUnlocked, videoId: item.videoId, reviewStatus: null,
     }));
   }, [candidates, state]);
   const surfaces = (collection?: "edited" | "floorplan" | "copy" | null) => invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "delivery" }, { kind: "delivery-candidates" }, ...(collection ? [{ kind: "assets", collectionKind: collection } as const] : [])], dashboard: false, calendar: false, gantt: false });
@@ -266,6 +274,7 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
             </Item>)}
           </ItemGroup>
         </section>}
+        {inReviewNotice(orderedIds, "delivery-in-review-inline")}
         <div className="flex flex-wrap items-center gap-[var(--space-2)]">
           <Button type="button" variant="outline" data-testid="delivery-preview" className={TOUCH} disabled={none || busy !== null} onClick={() => void runPreview()}>Preview</Button>
           <Button type="button" data-testid="delivery-publish" className={TOUCH} disabled={(none && !pending.current) || busy !== null || isArchived || !seeded} onClick={() => { setProblem(null); setConfirming(true); }}>{pending.current ? "Retry publish" : page ? "Publish a new set" : "Publish"}</Button>
@@ -283,6 +292,7 @@ export function DeliveryTab({ projectId, role, archived, active }: { projectId: 
           <AlertDialogTitle>{pending.current ? `Retry the unfinished publish (${pending.current.body.assetIds.length} item${pending.current.body.assetIds.length === 1 ? "" : "s"})?` : `Publish ${orderedIds.length} item${orderedIds.length === 1 ? "" : "s"}?`}</AlertDialogTitle>
           <AlertDialogDescription>{pending.current ? "The earlier attempt may or may not have gone through. This sends it again exactly as it was; the server publishes it only once." : page ? "This replaces what the client sees with this selection as the next set." : detail.data?.stageKey === "delivered" ? "This creates the client page." : "This creates the client page. The first Publish also moves the Project to Delivered."}</AlertDialogDescription>
         </AlertDialogHeader>
+        {inReviewNotice(pending.current?.body.assetIds ?? orderedIds, "delivery-in-review-warning")}
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction data-testid="delivery-publish-confirm" onClick={() => void runPublish()}>Publish</AlertDialogAction>

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { VIDEO_REVIEW_STATUSES } from "./video-review";
 
 /**
  * Client Delivery (#787). The gate is a set of `feature_flags` rows read like the video review gate: `client_delivery` (master) plus either `client_delivery_all_projects` or
@@ -103,6 +104,8 @@ export const deliveryCandidateSchema = z.object({
   assetId: z.string().uuid(), kind: z.enum(DELIVERY_ITEM_KINDS),
   /** The original filename of a photo or document, or the Video's title. Staff only. */
   name: z.string(), videoId: z.string().uuid().nullable(), premium: z.boolean(), premiumUnlocked: z.boolean(),
+  /** A Video's Review status (#863), derived as the Video list does: `published` while this Version is in the latest set. Null for a photo, Floorplan or Copy document, and for every Video while Video Review is closed. */
+  reviewStatus: z.enum(VIDEO_REVIEW_STATUSES).nullable(),
 }).strict();
 export const deliveryCandidatesResponseSchema = z.object({ candidates: z.array(deliveryCandidateSchema) }).strict();
 export type DeliveryCandidateDto = z.infer<typeof deliveryCandidateSchema>;

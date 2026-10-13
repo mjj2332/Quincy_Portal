@@ -23,7 +23,7 @@ onPrincipalTerminal((queryClient) => { if (queryClient) retired.add(queryClient)
 
 const putVideo = (ctx: ReviewStatusWriteContext, video: VideoDto) =>
   ctx.queryClient.setQueryData<VideoDto[]>(projectDataKeys.videos(ctx.projectId), (old) => old?.map((entry) => (entry.id === video.id ? video : entry)));
-const converge = (ctx: ReviewStatusWriteContext) => invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "videos" }], dashboard: false, calendar: false, gantt: false });
+const converge = (ctx: ReviewStatusWriteContext) => invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: [{ kind: "videos" }, { kind: "delivery-candidates" }], dashboard: false, calendar: false, gantt: false });
 
 const parse = (role: Role, value: unknown): VideoDto =>
   (role === "external_editor" ? decodeExternalResponse("video-review-status", value) as { video: VideoDto } : videoReviewStatusResponseSchema.parse(value)).video;
