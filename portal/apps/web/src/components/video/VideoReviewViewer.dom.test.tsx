@@ -6,6 +6,8 @@ import { frameSeekSeconds } from "@quincy/shared";
 import { QuincyQueryProvider } from "../../lib/query-client";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
+import { installLocalStorageShim } from "../../testing/local-storage";
+import { resetUiPrefMemory } from "../../lib/ui-prefs";
 import { ProjectSheet } from "../quincy/ProjectSheet";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
 
@@ -63,8 +65,9 @@ async function key(k: string, target: Element, init: KeyboardEventInit = {}) {
   await act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init })); });
 }
 
-beforeEach(() => { stub = installVideoElementStub(); apiGetMock.mockReset(); vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }))); });
-afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; resetVideoUploadStore(); stub.dispose(); document.body.replaceChildren(); vi.unstubAllGlobals(); });
+let shim: ReturnType<typeof installLocalStorageShim>;
+beforeEach(() => { shim = installLocalStorageShim(); resetUiPrefMemory(); stub = installVideoElementStub(); apiGetMock.mockReset(); vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }))); });
+afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; shim.restore(); resetUiPrefMemory(); resetVideoUploadStore(); stub.dispose(); document.body.replaceChildren(); vi.unstubAllGlobals(); });
 
 describe("VideoReviewViewer (#741 4d-ii)", () => {
   it("opens from the card as a dialog named by the film, playing the newest Version", async () => {
@@ -252,5 +255,21 @@ describe("VideoReviewViewer (#741 4d-ii)", () => {
     expect(dialog()!.querySelector("[data-testid=video-readout]")!.textContent).toMatch(/^00:00:00;00 \//);
     await act(async () => { stub.loadMetadata(second, { duration: 12 }); });
     expect(stub.writes.at(-1)).toBe(frameSeekSeconds(0, { num: 30000, den: 1001 }));
+  });
+});
+
+describe("Time format menu in the viewer (#860)", () => {
+  it("Escape with the menu open closes only the menu, even with the notes and Compare off", async () => {
+    await mount();
+    await openViewer();
+    const trigger = document.querySelector<HTMLElement>('[data-testid="video-time-format-trigger"]')!;
+    await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush(2);
+    const item = document.querySelector<HTMLElement>('[data-testid="video-time-format-timecode"]')!;
+    expect(item).not.toBeNull();
+    await key("Escape", item);
+    await flush(4);
+    expect(document.querySelector('[data-testid="video-time-format-timecode"]')).toBeNull();
+    expect(dialog()).not.toBeNull();
   });
 });

@@ -102,3 +102,27 @@ export function timecodeToFrames(tc: string, base: TimecodeBase): number | null 
   }
   return frames;
 }
+
+/** How a frame is written for a person: SMPTE timecode (today's reading), elapsed `m:ss`, or the 0-based frame number (#860). */
+export const TIME_FORMATS = ["timecode", "standard", "frames"] as const;
+export type TimeFormat = (typeof TIME_FORMATS)[number];
+
+/** What a label needs of a Version. Structural, so the staff DTO and the guest DTO both fit. */
+export type FrameLabelVersion = Readonly<{ fps: Rational; tcNominalFps: number; tcDropFrame: boolean; startTimecodeFrames: number | null }>;
+
+/**
+ * The label for `frame` in `format`. Timecode is `framesToTimecode` (start timecode and drop-frame included). Standard is the elapsed whole
+ * seconds from the rational rate (never the nominal one: 23.976 would drift), `m:ss`, or `h:mm:ss` from one hour, with no start-timecode offset.
+ * Frames is the 0-based frame index.
+ */
+export function frameLabel(frame: number, format: TimeFormat, version: FrameLabelVersion): string {
+  if (format === "frames") return String(Math.trunc(frame));
+  if (format === "standard") {
+    const seconds = Math.max(0, Math.floor(frameStartSeconds(frame, version.fps) + 1e-6));
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor(seconds / 60) % 60;
+    const s = seconds % 60;
+    return h > 0 ? `${h}:${pad2(m)}:${pad2(s)}` : `${m}:${pad2(s)}`;
+  }
+  return framesToTimecode(frame, { nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame }, version.startTimecodeFrames ?? 0);
+}
