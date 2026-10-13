@@ -42,8 +42,11 @@ function deleteCopy(tombstone: boolean, conflicted: boolean) {
  * 721px) nothing inside scrolls on its own: the whole dialog scrolls, with the composer directly under the player ahead of the list.
  * It holds no data of its own: `session` (from `useVideoNotes`) is shared with the player, which draws the markers and takes I and O.
  */
-export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = false }: { session: VideoNotesSession; video: VideoDto; detailsRows: ReactNode; /** The Project's `export` part is on (#741 9): the ⋯ menu gains the marker export. */ exportEnabled?: boolean }) {
-  const { query, threads, shown, filters, setFilters, selectedId, version, readOnly } = session;
+export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = false, paused = false }: { session: VideoNotesSession; video: VideoDto; detailsRows: ReactNode; /** The Project's `export` part is on (#741 9): the ⋯ menu gains the marker export. */ exportEnabled?: boolean; /** Social preview is on (#871): notes stay readable, writing is paused. */ paused?: boolean }) {
+  const { query, threads, shown, filters, setFilters, selectedId, version } = session;
+  // Social preview (#871) pauses writing: the panel reads as read-only, but the forms and drafts are kept (the store is untouched), so they are back on exit.
+  const archived = session.readOnly;
+  const readOnly = archived || paused;
   const now = useNow();
   const listRef = useRef<HTMLDivElement>(null);
   const [deleting, setDeleting] = useState<Deleting | null>(null);
@@ -237,7 +240,9 @@ export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = f
     </div>
 
     <div className="min-[721px]:shrink-0 min-[721px]:border-t min-[721px]:border-border min-[721px]:pt-[var(--space-3)] max-[721px]:order-1">
-      {readOnly
+      {paused && !archived
+        ? <p data-testid="video-notes-social-paused" className={ARCHIVED_NOTICE_CLASS}>Notes are off in Social preview.</p>
+        : archived
         ? <p data-testid="video-notes-archived" className={ARCHIVED_NOTICE_CLASS}>Read-only while archived. Restore the project before adding or changing notes.</p>
         : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} markup={session.markup} rich={{ projectId: session.projectId, role: session.role }} />}
     </div>

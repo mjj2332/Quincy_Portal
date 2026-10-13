@@ -34,7 +34,7 @@ const onCardSurface = (event: { currentTarget: Element; target: EventTarget }) =
  * the Video and the control that was pressed to `onOpen`; selection and note chips arrive in later slices. `onVersionFile` checks and
  * starts the upload and returns a message when the file is refused.
  */
-export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks, onCreateReviewLink, projectId, download, appearance = { thumb: "fit", info: true }, reviewStatus }: {
+export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks, onCreateReviewLink, onSocialPreview, projectId, download, appearance = { thumb: "fit", info: true }, reviewStatus }: {
   video: VideoDto;
   canUpload: boolean;
   currentUserId: string | null;
@@ -52,6 +52,8 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
   download?: { projectId: string };
   /** Present only when new Review links may be made (#834): the card's "⋯" menu then offers Create Review link for this film. Absent on an archived Project. */
   onCreateReviewLink?: () => void;
+  /** Opens the review viewer on this film with Social preview on (#871); `trigger` is where focus returns on close. */
+  onSocialPreview?: (video: VideoDto, trigger: HTMLElement) => void;
   /** Review links (#741 11b), present only when the links part is on and the role may share: the tick for a new link and the links this Video is on. */
   /** The grid's Appearance choices (#865): how the poster fills its frame, and whether the descriptive text shows. */
   appearance?: { thumb: "fit" | "fill"; info: boolean };
@@ -166,6 +168,7 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
               {/* Groups, in order: the film (Open, Create Review link) ‖ the file and its address (Download, Copy link). Later tickets append items inside a group. */}
               <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-menu-open" onClick={() => { handOff.current = true; onOpen(video, menuTrigger.current ?? document.body); }}>Open</MenuPrimitive.Item>
               {onCreateReviewLink && <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-create-review-link" onClick={() => { handOff.current = true; onCreateReviewLink(); }}>Create Review link</MenuPrimitive.Item>}
+              {onSocialPreview && <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-social-preview" onClick={() => { handOff.current = true; onSocialPreview(video, menuTrigger.current ?? document.body); }}>Social preview</MenuPrimitive.Item>}
               <MenuPrimitive.Separator className="my-[var(--space-1)] h-px bg-border" />
               {download && <MenuPrimitive.LinkItem closeOnClick className={MENU_ITEM} data-testid="video-card-download" href={videoVersionDownloadUrl(download.projectId, video.currentAssetId)} download>{`Download v${newest.version}`}</MenuPrimitive.LinkItem>}
               <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-copy-link" onClick={() => copyText(new URL(staffPathFor({ kind: "project", projectId, arrivalTab: "video", video: { id: video.id } }), window.location.origin).href)}>Copy link</MenuPrimitive.Item>

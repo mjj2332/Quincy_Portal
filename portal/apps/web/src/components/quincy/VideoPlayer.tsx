@@ -13,6 +13,7 @@ import { Toggle } from "../reui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
 import { TimeFormatMenu } from "./TimeFormatMenu";
 import { VideoStage } from "./VideoStage";
+import { SocialPreviewControls, type SocialPreviewMode } from "./SocialPreviewControls";
 import { rangeStep, type NoteMarks } from "../../lib/video-note-marks";
 import { VideoPendingRangeBand, VideoRangeHandles, VideoTimelineMarkers, type TimelineMarker } from "./VideoTimelineMarkers";
 
@@ -63,7 +64,7 @@ export function IconTip({ label, keys, children }: { label: string; keys?: strin
  * surface (`data-surface="inverse"`) around it, like the Lightbox. `keyboard="self"` listens on the player; `"host"` leaves the
  * scope to the caller, who forwards events to `controlRef.handleKeyDown`.
  */
-export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, onMediaError, transportLocked = false, transportActions, transportReplacement }: {
+export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, onMediaError, transportLocked = false, transportActions, transportReplacement, social }: {
   version: VideoPlayerVersion;
   title: string;
   controlRef?: Ref<VideoPlayerControl>;
@@ -96,8 +97,15 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   transportActions?: ReactNode;
   /** Replaces the whole transport block (scrubber, controls, key legend) in place, under the picture, while the host needs the room (drawing). Never overlaid on the picture. */
   transportReplacement?: ReactNode;
+  /**
+   * Social preview (#871): the film framed 9:16 under an overlay. While set the player owns the rule that nothing is marked, drawn or noted: it ignores
+   * `markers`, `pendingRange`, `range`, `onMark`, `overlay`, `transportActions` and `transportReplacement`. Playback, the scrubber, the keys, mute, the time format and full screen work as ever.
+   */
+  social?: SocialPreviewMode;
 }) {
+  if (social) { markers = undefined; pendingRange = undefined; onMark = undefined; range = undefined; overlay = undefined; transportActions = undefined; transportReplacement = undefined; }
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
+  const [failedImage, setFailedImage] = useState<string | null>(null);
   const [muted, setMutedState] = useState(initialMuted);
   const playerRef = useRef<HTMLElement | null>(null);
   // The transport block's height, kept while it shows so its replacement (drawing) takes at least the same room: the picture above never moves when Draw is pressed.
@@ -117,6 +125,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     document.addEventListener("fullscreenchange", onChange);
     return () => { document.removeEventListener("fullscreenchange", onChange); };
   }, [section]);
+  const socialOverlay = social?.overlays.find((candidate) => candidate.id === social.currentId) ?? null;
   const lastFrame = Math.max(0, version.frameCount - 1);
   const shownFrame = clock.targetFrame ?? clock.frame;
   const fullscreenAvailable = typeof document !== "undefined" && document.fullscreenEnabled === true;
@@ -170,7 +179,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     onKeyDown={keyboard === "self" ? (event) => { handleKeyDown(event); } : undefined}
     className={cn("flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", className)}
   >
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} onMediaError={onMediaError} />
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} onMediaError={onMediaError} {...(social ? { social: { fit: social.fit, imageUrl: socialOverlay?.imageUrl ?? null, onImageError: () => { setFailedImage(socialOverlay?.imageUrl ?? null); } } } : {})} />
 
     {transportReplacement != null ? <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div> : <div ref={transportRef} className="flex flex-col gap-[var(--space-3)]">
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}
@@ -207,6 +216,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         <span>{timecode(clock.frame)}</span><span className="text-foreground-secondary">{` / ${timecode(version.frameCount)}`}</span>
       </output>
       <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><TimeFormatMenu /></OverlayContainerContext.Provider>
+      {social && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><SocialPreviewControls social={social} imageFailed={socialOverlay !== null && failedImage === socialOverlay.imageUrl} /></OverlayContainerContext.Provider>}
       {range !== undefined && (() => {
         const rangeButton = <Button type="button" variant="outline" size="icon" aria-label={stepLabel} data-testid="video-range-button" data-step={step} className={COARSE} disabled={rangeLocked} onClick={pressRange}>
           {step === "in" ? <ArrowRightFromLine aria-hidden="true" /> : step === "out" ? <ArrowRightToLine aria-hidden="true" /> : <X aria-hidden="true" />}

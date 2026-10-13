@@ -114,7 +114,9 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
   // A form that closes (Cancel, Save, a conflict) takes its in-flight uploads with it; the next one starts clean.
   useEffect(() => { setUploading(false); }, [openKey]);
   const articleRef = useRef<HTMLElement>(null);
-  const form = useSyncExternalStore(store.subscribe, () => { const open = store.slot(assetId).open; return open && open.rootId === thread.id ? open : null; });
+  const storedForm = useSyncExternalStore(store.subscribe, () => { const open = store.slot(assetId).open; return open && open.rootId === thread.id ? open : null; });
+  // Read-only shows no reply or edit form. An archived Project has closed its own; Social preview (#871) only hides: the store keeps the open form and its text, and it returns on exit.
+  const form = readOnly ? null : storedForm;
   const op = useSyncExternalStore(store.subscribe, () => store.slot(assetId).op);
   const marksHeld = useSyncExternalStore(store.subscribe, () => store.slot(assetId).marks);
   const closedNotice = useSyncExternalStore(store.subscribe, () => { const held = store.slot(assetId).notice; return held && held.rootId === thread.id ? held : null; });
