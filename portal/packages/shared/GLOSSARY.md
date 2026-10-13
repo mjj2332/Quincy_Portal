@@ -383,17 +383,20 @@ _Avoid_: Bulk download, export
 **Notification**:
 The record a Recipient reads in the notification centre. Carries its own title and body,
 written at delivery; the stored copy is the durable record, and enrichment at read only
-ever adds to it or falls back to it.
+ever adds to it or falls back to it. Kept for 30 days from delivery, read or unread, then
+removed for good.
 _Avoid_: Alert, message, toast
 
 **Notification outbox**:
 The queued intent to notify one Recipient about one occurrence, written in the same
-transaction as the thing that happened. Not yet a Notification.
+transaction as the thing that happened. Not yet a Notification. Kept for 30 days, then removed
+together with the Delivery ledger rows and the Notification it led to.
 _Avoid_: Queue, job, event log
 
 **Delivery ledger**:
 The per-channel record of what became of one outbox intent — sent, suppressed or failed —
-and which Notification it produced. The audit trail of delivery, not of the occurrence.
+and which Notification it produced. A short-lived record of delivery, kept for 30 days like
+the outbox intent it settles; never an audit trail, and not a record of the occurrence.
 _Avoid_: Receipt, delivery log
 
 **Project activity event**:
