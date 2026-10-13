@@ -98,7 +98,7 @@ export const PROJECT_DESCENDANT_AUDIT_TYPES = [
  * and must survive teardown. */
 export const GLOBAL_AUDIT_TYPES = [
   "agency", "agent", "asset_renditions", "feature_flag", "integration", "notice_board_post",
-  "notification_preference", "pipeline_stage", "system", "user", "webhook_event",
+  "notification_preference", "pipeline_stage", "social_overlay", "system", "user", "webhook_event",
 ] as const;
 
 // ---------------------------------------------------------------------------

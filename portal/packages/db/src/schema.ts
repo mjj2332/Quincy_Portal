@@ -2360,3 +2360,34 @@ export const objectCrc32Work = sqliteTable(
     check("object_crc32_work_crc_partial_check", sql`typeof(${t.crcPartial}) = 'integer' AND ${t.crcPartial} >= 0 AND ${t.crcPartial} <= 4294967295`),
   ],
 );
+
+/**
+ * Social overlay library (#869; migration 0079). PNG bytes live in R2 at `imageKey` (never overwritten: a replace writes a new key). `imageRev` is the row revision, bumped by every mutation.
+ * One partial unique index allows a single `isDefault` row, a table CHECK keeps the Default un-archivable, and names are unique ignoring case.
+ */
+export const socialOverlays = sqliteTable(
+  "social_overlays",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    platformLabel: text("platform_label").notNull(),
+    imageKey: text("image_key").notNull(),
+    imageRev: integer("image_rev").notNull().default(1),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    bytes: integer("bytes").notNull(),
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+    archivedAt: integer("archived_at"),
+    archivedBy: text("archived_by").references(() => user.id),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    updatedBy: text("updated_by").notNull().references(() => user.id),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("social_overlays_image_key_unique").on(t.imageKey),
+    uniqueIndex("social_overlays_default_unique").on(t.isDefault).where(sql`${t.isDefault} = 1`),
+    uniqueIndex("social_overlays_name_unique").on(sql`${t.name} COLLATE NOCASE`),
+    check("social_overlays_default_not_archived", sql`NOT (${t.isDefault} = 1 AND ${t.archivedAt} IS NOT NULL)`),
+  ],
+);
