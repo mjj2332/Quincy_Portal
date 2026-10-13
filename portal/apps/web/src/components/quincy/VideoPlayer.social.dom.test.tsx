@@ -76,6 +76,19 @@ describe("VideoPlayer Social preview (#871)", () => {
     expect(document.body.textContent).toContain("Overlay unavailable");
   });
 
+  it("clears the failure when the image loads, and on a new attempt", async () => {
+    await mount({ social: socialOf() });
+    await act(async () => { byTestId("video-social-overlay")!.dispatchEvent(new Event("error")); });
+    expect(document.body.textContent).toContain("Overlay unavailable");
+    await act(async () => { byTestId("video-social-overlay")!.dispatchEvent(new Event("load")); });
+    expect(document.body.textContent).not.toContain("Overlay unavailable");
+    await act(async () => { byTestId("video-social-overlay")!.dispatchEvent(new Event("error")); });
+    await act(async () => { root!.render(<VideoPlayer version={version} title="x" social={socialOf({ currentId: B.id })} />); });
+    expect(document.body.textContent).not.toContain("Overlay unavailable");
+    await act(async () => { root!.render(<VideoPlayer version={version} title="x" social={socialOf({ currentId: A.id })} />); });
+    expect(document.body.textContent).not.toContain("Overlay unavailable");
+  });
+
   it("lists the resolved overlays by name and reports a pick; a single overlay shows its name with no select", async () => {
     const onOverlay = vi.fn();
     await mount({ social: socialOf({ onOverlay }) });

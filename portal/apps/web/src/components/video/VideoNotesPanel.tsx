@@ -224,6 +224,7 @@ export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = f
             selected={thread.id === selectedId}
             userId={session.userId}
             readOnly={readOnly}
+            paused={paused}
             now={now}
             timecode={session.timecode}
             frameCount={session.frameCount}
@@ -240,11 +241,11 @@ export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = f
     </div>
 
     <div className="min-[721px]:shrink-0 min-[721px]:border-t min-[721px]:border-border min-[721px]:pt-[var(--space-3)] max-[721px]:order-1">
-      {paused && !archived
-        ? <p data-testid="video-notes-social-paused" className={ARCHIVED_NOTICE_CLASS}>Notes are off in Social preview.</p>
-        : archived
+      {paused && !archived && <p data-testid="video-notes-social-paused" className={ARCHIVED_NOTICE_CLASS}>Notes are off in Social preview.</p>}
+      {archived
         ? <p data-testid="video-notes-archived" className={ARCHIVED_NOTICE_CLASS}>Read-only while archived. Restore the project before adding or changing notes.</p>
-        : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} markup={session.markup} rich={{ projectId: session.projectId, role: session.role }} />}
+        // Mounted through Social preview, hidden and inert (as the collapsed pane is): unmounting would abort an attachment still uploading.
+        : <div hidden={paused} inert={paused}><VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} markup={session.markup} rich={{ projectId: session.projectId, role: session.role }} /></div>}
     </div>
 
     {canCopy && pasteFrom && <VideoNotePasteDialog

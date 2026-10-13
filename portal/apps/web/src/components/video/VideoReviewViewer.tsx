@@ -153,7 +153,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   } : undefined;
   const setSocialOn = (next: boolean) => {
     // Drawing ends on entry (the strokes stay in the draft); nothing else of the notes is closed or forgotten.
-    if (next) forms?.exitDraw(assetId);
+    // A Post waiting on its frame or a drawing awaiting confirmation must not complete while hidden; the drafts stay.
+    if (next) { forms?.cancelConfirmation(assetId); forms?.exitDraw(assetId); }
     preview.setOn(next);
   };
   const escapeSnapshot = useRef({ layer: false, form: false, compare: false, social: false });

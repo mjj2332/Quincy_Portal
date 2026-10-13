@@ -89,11 +89,13 @@ function focusField(host: HTMLElement | null) {
   requestAnimationFrame(() => { find()?.focus(); });
 }
 
-export function VideoNoteThread({ thread, selected, userId, readOnly, now, timecode, frameCount, actions, onSeek, store, assetId, clock, pinned = false, drawings, rich }: {
+export function VideoNoteThread({ thread, selected, userId, readOnly, paused = false, now, timecode, frameCount, actions, onSeek, store, assetId, clock, pinned = false, drawings, rich }: {
   thread: VideoNoteThreadDto;
   selected: boolean;
   userId: string | null;
   readOnly: boolean;
+  /** Social preview is on (#871): open reply and edit forms stay mounted (a running upload must survive), but hidden, inert and not reachable. */
+  paused?: boolean;
   now: number;
   timecode: (frame: number) => string;
   frameCount: number;
@@ -115,8 +117,7 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
   useEffect(() => { setUploading(false); }, [openKey]);
   const articleRef = useRef<HTMLElement>(null);
   const storedForm = useSyncExternalStore(store.subscribe, () => { const open = store.slot(assetId).open; return open && open.rootId === thread.id ? open : null; });
-  // Read-only shows no reply or edit form. An archived Project has closed its own; Social preview (#871) only hides: the store keeps the open form and its text, and it returns on exit.
-  const form = readOnly ? null : storedForm;
+  const form = storedForm;
   const op = useSyncExternalStore(store.subscribe, () => store.slot(assetId).op);
   const marksHeld = useSyncExternalStore(store.subscribe, () => store.slot(assetId).marks);
   const closedNotice = useSyncExternalStore(store.subscribe, () => { const held = store.slot(assetId).notice; return held && held.rootId === thread.id ? held : null; });
@@ -210,6 +211,8 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     const showDrawControls = Boolean(drawings?.on && drawings.canAnnotate && note.id === thread.id && thread.startFrame !== null);
     return <form
     data-notes-form="edit"
+    hidden={paused}
+    inert={paused}
     data-size-container="true"
     className="@container grid gap-[var(--space-2)]"
     onSubmit={(event) => { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit, markup: drawings?.on ?? false }); }}
@@ -258,7 +261,7 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
         </div>)}
       </div>}
       {notice && <Notice tone="critical" role="alert" data-testid="video-note-notice" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{notice.text}</span>{notice.refresh && <Button type="button" variant="text" data-testid="video-note-notice-refresh" onClick={actions.refresh}>Refresh notes</Button>}</Notice>}
-      {form?.kind === "reply" && <form data-notes-form="reply" className="grid gap-[var(--space-2)]" onSubmit={(event) => { event.preventDefault(); void store.reply(assetId, { send: actions.reply }); }}>
+      {form?.kind === "reply" && <form data-notes-form="reply" hidden={paused} inert={paused} className="grid gap-[var(--space-2)]" onSubmit={(event) => { event.preventDefault(); void store.reply(assetId, { send: actions.reply }); }}>
         <span className="flex items-center gap-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">{`Reply · ${thread.visibility === "internal" ? "Internal" : "Client-visible"}`}<VisibilityBadge visibility={thread.visibility} /></span>
         <label className="sr-only" htmlFor={`video-note-reply-${thread.id}`}>Write a reply</label>
         <div data-testid="video-note-reply-body"><VideoNoteEditor id={`video-note-reply-${thread.id}`} projectId={rich.projectId} role={rich.role} value={draftDoc(form.content, form.text)} disabled={busy} placeholder="Write a reply… Use @ to mention a colleague."

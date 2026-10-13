@@ -37,7 +37,7 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, f
    * The stage takes the 9:16 shape on a phone, where the film's own 16:9 would leave the frame about 120px wide; the timecode chip and `overlay` are not drawn.
    * The same `<video>` element throughout: it moves into the frame by CSS only, never remounts.
    */
-  social?: { fit: "fill" | "fit"; imageUrl: string | null; onImageError?: () => void };
+  social?: { fit: "fill" | "fit"; imageUrl: string | null; onImageError?: () => void; onImageLoad?: () => void };
 }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [failed, setFailed] = useState(false);
@@ -75,7 +75,7 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, f
     {/* One wrapper in both modes, so toggling Social never reparents (and so never remounts) the `<video>`. */}
     <div data-testid="video-social-frame" className={framed ? "relative m-auto aspect-[9/16] w-[min(100cqw,calc(100cqh*9/16))] overflow-hidden" : "absolute inset-0"}>
       {videoElement}
-      {framed && social.imageUrl && <img data-testid="video-social-overlay" src={social.imageUrl} alt="" aria-hidden="true" draggable={false} onError={social.onImageError} className="pointer-events-none absolute inset-0 size-full select-none object-fill" />}
+      {framed && social.imageUrl && <img data-testid="video-social-overlay" src={social.imageUrl} alt="" aria-hidden="true" draggable={false} onError={social.onImageError} onLoad={social.onImageLoad} className="pointer-events-none absolute inset-0 size-full select-none object-fill" />}
     </div>
     {!framed && box && <div data-testid="video-picture-box" className="pointer-events-none absolute" style={{ left: box.left, top: box.top, width: box.width, height: box.height }}>
       <span data-testid="video-timecode-chip" aria-hidden="true" className={cn("absolute bottom-[var(--space-2)] left-[var(--space-2)] max-w-[calc(100%-var(--space-4))] overflow-hidden whitespace-nowrap border border-invert-foreground/20 bg-invert px-[var(--space-2)] py-[var(--space-1)] text-invert-foreground", MONO)}>{chip}</span>

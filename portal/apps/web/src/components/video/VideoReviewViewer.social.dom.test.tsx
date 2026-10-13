@@ -226,7 +226,8 @@ describe("Social preview in the staff viewer (#871)", () => {
     await openFilm({}, 12);
     await type(composerText(), "keep me");
     await startSocial();
-    expect(composerBox()).toBeNull();
+    expect(composerBox()!.closest("[hidden]")).not.toBeNull();
+    expect(composerBox()!.closest("[inert]")).not.toBeNull();
     expect(tid("video-notes-social-paused")!.textContent).toContain("Notes are off in Social preview");
     expect(tid("video-marker-lane")).toBeNull();
     expect(tid("video-range-button")).toBeNull();
@@ -237,6 +238,32 @@ describe("Social preview in the staff viewer (#871)", () => {
     expect(composerText().value).toBe("keep me");
   });
 
+  it("keeps the composer and an open reply form MOUNTED (same nodes) so a running upload survives a Social round trip", async () => {
+    const s = seed();
+    await openFilm({}, 12);
+    await click(tid("video-note-reply-button", threadOf(s.n1.id))!);
+    const composer = composerBox()!; const reply = threadOf(s.n1.id).querySelector('[data-notes-form="reply"]')!;
+    await startSocial();
+    await click(socialToggle()); await flush(2);
+    expect(composerBox()).toBe(composer);
+    expect(threadOf(s.n1.id).querySelector('[data-notes-form="reply"]')).toBe(reply);
+  });
+
+  it("cancels a Post waiting on its frame when Social is entered, keeps the draft, and never posts it", async () => {
+    await openFilm({}, 7);
+    await type(composerText(), "Point note");
+    await present(40);
+    api.apiPost.mockResolvedValue(note({ startFrame: 7, body: "Point note" }));
+    await click(tid("video-note-post")!);
+    await startSocial();
+    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 7 / 25); });
+    await flush(4);
+    expect(api.apiPost).not.toHaveBeenCalled();
+    await click(socialToggle()); await flush(2);
+    expect(api.apiPost).not.toHaveBeenCalled();
+    expect(composerText().value).toBe("Point note");
+  });
+
   it("keeps notes readable and hides an open reply form without dropping it", async () => {
     const s = seed();
     await openFilm();
@@ -244,7 +271,9 @@ describe("Social preview in the staff viewer (#871)", () => {
     await type(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>('[data-testid="video-note-reply-body"] textarea')!, "half a reply");
     await startSocial();
     expect(threadOf(s.n1.id)).not.toBeNull();
-    expect(threadOf(s.n1.id).querySelector('[data-notes-form="reply"]')).toBeNull();
+    const replyForm = threadOf(s.n1.id).querySelector('[data-notes-form="reply"]')!;
+    expect(replyForm.closest("[hidden]")).not.toBeNull();
+    expect(replyForm.closest("[inert]")).not.toBeNull();
     expect(tid("video-note-reply-button", threadOf(s.n1.id))).toBeNull();
     await click(socialToggle()); await flush(2);
     expect(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>('[data-notes-form="reply"] textarea')!.value).toBe("half a reply");

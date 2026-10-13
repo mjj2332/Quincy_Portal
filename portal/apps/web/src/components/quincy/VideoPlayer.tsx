@@ -106,6 +106,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   if (social) { markers = undefined; pendingRange = undefined; onMark = undefined; range = undefined; overlay = undefined; transportActions = undefined; transportReplacement = undefined; }
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [failedImage, setFailedImage] = useState<string | null>(null);
+  const socialActive = social !== undefined;
   const [muted, setMutedState] = useState(initialMuted);
   const playerRef = useRef<HTMLElement | null>(null);
   // The transport block's height, kept while it shows so its replacement (drawing) takes at least the same room: the picture above never moves when Draw is pressed.
@@ -126,6 +127,8 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     return () => { document.removeEventListener("fullscreenchange", onChange); };
   }, [section]);
   const socialOverlay = social?.overlays.find((candidate) => candidate.id === social.currentId) ?? null;
+  // A failure is about one attempt: a new overlay, or Social turned off and on again, starts clean; a successful load clears it.
+  useEffect(() => { setFailedImage(null); }, [socialOverlay?.imageUrl, socialActive]);
   const lastFrame = Math.max(0, version.frameCount - 1);
   const shownFrame = clock.targetFrame ?? clock.frame;
   const fullscreenAvailable = typeof document !== "undefined" && document.fullscreenEnabled === true;
@@ -179,7 +182,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     onKeyDown={keyboard === "self" ? (event) => { handleKeyDown(event); } : undefined}
     className={cn("flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", className)}
   >
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} onMediaError={onMediaError} {...(social ? { social: { fit: social.fit, imageUrl: socialOverlay?.imageUrl ?? null, onImageError: () => { setFailedImage(socialOverlay?.imageUrl ?? null); } } } : {})} />
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} onMediaError={onMediaError} {...(social ? { social: { fit: social.fit, imageUrl: socialOverlay?.imageUrl ?? null, onImageError: () => { setFailedImage(socialOverlay?.imageUrl ?? null); }, onImageLoad: () => { setFailedImage(null); } } } : {})} />
 
     {transportReplacement != null ? <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div> : <div ref={transportRef} className="flex flex-col gap-[var(--space-3)]">
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}
