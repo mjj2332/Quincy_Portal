@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GuestNoteThreadDto, GuestVideoDto } from "@quincy/shared";
+import type { GuestNoteThreadDto, GuestSocialOverlay, GuestVideoDto } from "@quincy/shared";
 import { installVideoElementStub, type VideoElementStub } from "../testing/video-element";
 import { installLocalStorageShim } from "../testing/local-storage";
 import { mockViewport, type MockViewport } from "../testing/viewport";
@@ -40,6 +40,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const stub404 = () => new Response("Not found", { status: 404 });
 
 let videos: GuestVideoDto[] = [];
+let socialOverlays: GuestSocialOverlay[] = [];
 let notes: GuestNoteThreadDto[] = [];
 let extra: Handler | null = null;
 let log: string[] = [];
@@ -58,7 +59,7 @@ function route(url: string, init: RequestInit | undefined): Response {
   const method = init?.method ?? "GET";
   const base = `/d/api/links/${LINK}`;
   if (url === `${base}/session`) { if (method === "POST") { sessionGone = false; return json(SESSION); } return sessionGone ? stub404() : json(SESSION); }
-  if (url === `${base}/videos`) return json({ videos });
+  if (url === `${base}/videos`) return json({ videos, socialOverlays });
   if (url.startsWith(`${base}/versions/`) && url.endsWith("/notes")) return json({ notes });
   return stub404();
 }
@@ -98,7 +99,7 @@ beforeEach(() => {
   shim = installLocalStorageShim(); resetUiPrefMemory();
   stub = installVideoElementStub();
   viewport = mockViewport({ width: 1440 });
-  videos = [videoOf(1), videoOf(2), videoOf(3)]; notes = []; extra = null; log = []; sessionGone = false;
+  videos = [videoOf(1), videoOf(2), videoOf(3)]; socialOverlays = []; notes = []; extra = null; log = []; sessionGone = false;
   fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => route(String(input), init));
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
@@ -877,7 +878,7 @@ describe("Sol round 7", () => {
     const api: GuestApi = {
       exchange: async () => ({ ok: false, reason: "unavailable" }),
       session: async () => { await gate; return { kind: "gone" }; },
-      videos: async () => { await gate; return { kind: "ok", value: [] }; },
+      videos: async () => { await gate; return { kind: "ok", value: { videos: [], socialOverlays: [] } }; },
       notes: async () => ({ kind: "ok", value: [] }),
       markup: async () => ({ kind: "gone" }),
       sendCode: async () => ({ ok: false, reason: "gone" }),
@@ -898,7 +899,7 @@ describe("Sol round 7", () => {
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
-    await act(async () => { root!.render(<GuestVideoScreen api={api} verify={{ request: () => undefined }} writer={createGuestWriter()} drafts={createGuestDrafts()} subscription={createGuestSubscription()} session={SESSION} onSession={() => undefined} archived={false} onArchived={() => undefined} videos={videos} index={0} onIndex={() => undefined} onBack={null} onUnavailable={onUnavailable} onGrantsChanged={onGrantsChanged} onDecided={() => undefined} onResyncDelivery={() => undefined} onShownVersion={() => undefined} />); });
+    await act(async () => { root!.render(<GuestVideoScreen api={api} verify={{ request: () => undefined }} writer={createGuestWriter()} drafts={createGuestDrafts()} subscription={createGuestSubscription()} session={SESSION} onSession={() => undefined} archived={false} onArchived={() => undefined} socialOverlays={[]} videos={videos} index={0} onIndex={() => undefined} onBack={null} onUnavailable={onUnavailable} onGrantsChanged={onGrantsChanged} onDecided={() => undefined} onResyncDelivery={() => undefined} onShownVersion={() => undefined} />); });
     await flush();
     await act(async () => { stub.fireError(host.querySelector("video")!); });
     await act(async () => { root!.unmount(); });

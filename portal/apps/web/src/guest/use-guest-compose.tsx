@@ -71,6 +71,10 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
   isOpen: boolean; editingId: string | null;
   /** True while the draft of an edit stands in for the saved drawing of the note `id` (a redraw is under way, drawn, or the drawing is being removed), so the saved strokes must not show under it. */
   replacesSavedDrawing: (id: string | null) => boolean;
+  /** The pen is on the picture. */
+  drawing: boolean;
+  /** Puts the pen down (also from `confirming`: a late confirmation then does nothing); the strokes stay in the draft. Social preview (#872) ends a drawing this way on entry. */
+  endDrawing: () => void;
   begin: () => void; beginEdit: (thread: GuestNoteThreadDto) => void; close: () => void; form: ReactNode; overlay: (box: Box | null) => ReactNode; transportReplacement: ReactNode;
   /** The player's I / O marks, or undefined while the marks cannot change (no draft, locked by a drawing, drawing in progress, or posting). */
   onMark: ((kind: "in" | "out", frame: number) => void) | undefined;
@@ -171,6 +175,7 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
     return () => { window.removeEventListener("keydown", onKeyDown); };
   }, [drawing, canUndo, canRedo, undo, redo]);
 
+  const endDrawing = useCallback(() => { opId.current += 1; setPhase("off"); }, []);
   const startDrawing = async () => {
     if (!clock || phase !== "off" || pending) return;
     clock.pause();
@@ -287,7 +292,7 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
   const editingId = isOpen && target !== null ? target.id : null;
   const replacing = editingId !== null && (items.length > 0 || phase !== "off" || removed);
   const replacesSavedDrawing = useCallback((id: string | null) => replacing && id === editingId, [replacing, editingId]);
-  return useMemo(() => ({ isOpen, editingId, replacesSavedDrawing, begin, beginEdit, close, form, overlay, transportReplacement, onMark, marks, clearMarks }), [isOpen, editingId, replacesSavedDrawing, begin, beginEdit, close, form, overlay, transportReplacement, onMark, marks, clearMarks]);
+  return useMemo(() => ({ isOpen, editingId, drawing, endDrawing, replacesSavedDrawing, begin, beginEdit, close, form, overlay, transportReplacement, onMark, marks, clearMarks }), [isOpen, editingId, drawing, endDrawing, replacesSavedDrawing, begin, beginEdit, close, form, overlay, transportReplacement, onMark, marks, clearMarks]);
 }
 
 /** The SVG on the picture box. A gesture never outlives draw mode or the picture it started on: leaving, or a resize, drops the stroke in progress and keeps the finished ones. */

@@ -17,11 +17,11 @@ export type Principal = NonNullable<AuditPrincipal>;
 export const projectSocialOverlayTestHooks: { beforeWrite?: () => Promise<void> } = {};
 
 type ChoiceRow = { id: string; name: string; platform_label: string; is_default: number; archived_at: number | null };
-type PreviewRow = ChoiceRow & { image_key: string; width: number; height: number };
+export type PreviewRow = ChoiceRow & { image_key: string; width: number; height: number };
 const ORDER = "ORDER BY is_default DESC, name COLLATE NOCASE, id";
 const choice = (row: ChoiceRow): ProjectSocialOverlayChoice => ({ id: row.id, name: row.name, platformLabel: row.platform_label, isDefault: row.is_default === 1, archivedAt: row.archived_at });
-const uuidOfKey = (key: string): string => key.slice(key.lastIndexOf("/") + 1, -".png".length);
-const preview = (row: PreviewRow): ProjectSocialOverlayPreview => ({ ...{ id: row.id, name: row.name, platformLabel: row.platform_label, isDefault: row.is_default === 1 }, imageUrl: socialOverlayImagePath(row.id, uuidOfKey(row.image_key)), width: row.width, height: row.height });
+export const uuidOfKey = (key: string): string => key.slice(key.lastIndexOf("/") + 1, -".png".length);
+export const previewOf = (row: PreviewRow): ProjectSocialOverlayPreview => ({ ...{ id: row.id, name: row.name, platformLabel: row.platform_label, isDefault: row.is_default === 1 }, imageUrl: socialOverlayImagePath(row.id, uuidOfKey(row.image_key)), width: row.width, height: row.height });
 
 const COLUMNS = "id, name, platform_label, is_default, archived_at";
 const RESOLVED = `WITH chosen AS (SELECT o.* FROM project_social_overlays p JOIN social_overlays o ON o.id = p.overlay_id WHERE p.project_id = ?1 AND o.archived_at IS NULL)
@@ -29,6 +29,9 @@ const RESOLVED = `WITH chosen AS (SELECT o.* FROM project_social_overlays p JOIN
   UNION ALL SELECT id, name, platform_label, is_default, archived_at, image_key, width, height FROM social_overlays
     WHERE is_default = 1 AND archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM chosen)
   ${ORDER}`;
+
+/** The Project's resolved overlays as one statement, so a caller can fold it into its own `db.batch` (#872). */
+export const resolvedSocialOverlaysStatement = (db: D1Database, projectId: string): D1PreparedStatement => db.prepare(RESOLVED).bind(projectId);
 
 /** A digest of the complete stored join set (order and archive state ignored). It is the whole concurrency token: bounded, whatever the set's size. */
 export async function socialOverlaysRevision(storedIds: readonly string[]): Promise<string> {
@@ -41,20 +44,20 @@ export async function readProjectSocialOverlays(db: D1Database, projectId: strin
   const [available, selected, resolved] = await db.batch([
     db.prepare(`SELECT ${COLUMNS} FROM social_overlays WHERE archived_at IS NULL ${ORDER}`),
     db.prepare(`SELECT ${COLUMNS} FROM social_overlays WHERE id IN (SELECT overlay_id FROM project_social_overlays WHERE project_id = ?1) ${ORDER}`).bind(projectId),
-    db.prepare(RESOLVED).bind(projectId),
+    resolvedSocialOverlaysStatement(db, projectId),
   ]);
   const selectedChoices = (selected!.results as ChoiceRow[]).map(choice);
   return projectSocialOverlaysResponseSchema.parse({
     available: (available!.results as ChoiceRow[]).map(choice),
     selected: selectedChoices,
     revision: await socialOverlaysRevision(selectedChoices.map((row) => row.id)),
-    resolved: (resolved!.results as PreviewRow[]).map(preview),
+    resolved: (resolved!.results as PreviewRow[]).map(previewOf),
   });
 }
 
 /** What the Video viewer lays over a Video in this Project. */
 export async function resolveProjectSocialOverlays(db: D1Database, projectId: string): Promise<ProjectSocialOverlayPreview[]> {
-  return (await db.prepare(RESOLVED).bind(projectId).all<PreviewRow>()).results.map(preview);
+  return (await db.prepare(RESOLVED).bind(projectId).all<PreviewRow>()).results.map(previewOf);
 }
 
 export type SetOutcome =

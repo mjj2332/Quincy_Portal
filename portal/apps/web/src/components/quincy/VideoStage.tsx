@@ -16,7 +16,7 @@ const CHIP_CHROME_PX = 40;
  * it is handed the picture box (the box the picture really occupies, null until measured) so markup can be mapped onto the picture and not
  * the letterbox bands (#741 6b-ui). Key it by Version like the player: a new Version is a new element.
  */
-export function VideoStage({ streamUrl, title, width, height, timecode, frame, frameSuffix = true, onVideo, overlay, onMediaError, social }: {
+export function VideoStage({ streamUrl, title, width, height, timecode, frame, frameSuffix = true, onVideo, overlay, watermark, onMediaError, social }: {
   streamUrl: string;
   title: string;
   /** The stored size: the stage's shape on a phone, and the picture box's stand-in until the decoded size is known. */
@@ -30,6 +30,8 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, f
   frameSuffix?: boolean;
   onVideo?: (video: HTMLVideoElement | null) => void;
   overlay?: ReactNode | ((box: Box | null) => ReactNode);
+  /** Drawn over the picture, never dropped by Social (#872): the premium watermark is a deterrent, so a locked film is marked in the 9:16 frame too. Handed the box the picture occupies in the frame (the whole frame in Fill, the contained picture in Fit). */
+  watermark?: (box: Box) => ReactNode;
   /** The element reported a media error (after the stage has shown its own notice). The guest page rechecks access here: a revoked link fails a range request the same way a bad file does. */
   onMediaError?: () => void;
   /**
@@ -41,7 +43,7 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, f
 }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [failed, setFailed] = useState(false);
-  const box = usePictureBox(video, { width, height });
+  const box = usePictureBox(video, { width, height }, social?.fit === "fill" ? "cover" : "contain");
   const onMediaErrorRef = useRef(onMediaError);
   onMediaErrorRef.current = onMediaError;
   const onVideoRef = useRef(onVideo);
@@ -75,11 +77,13 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, f
     {/* One wrapper in both modes, so toggling Social never reparents (and so never remounts) the `<video>`. */}
     <div data-testid="video-social-frame" className={framed ? "relative m-auto aspect-[9/16] w-[min(100cqw,calc(100cqh*9/16))] overflow-hidden" : "absolute inset-0"}>
       {videoElement}
+      {framed && box && watermark?.(box)}
       {framed && social.imageUrl && <img data-testid="video-social-overlay" src={social.imageUrl} alt="" aria-hidden="true" draggable={false} onError={social.onImageError} onLoad={social.onImageLoad} className="pointer-events-none absolute inset-0 size-full select-none object-fill" />}
     </div>
     {!framed && box && <div data-testid="video-picture-box" className="pointer-events-none absolute" style={{ left: box.left, top: box.top, width: box.width, height: box.height }}>
       <span data-testid="video-timecode-chip" aria-hidden="true" className={cn("absolute bottom-[var(--space-2)] left-[var(--space-2)] max-w-[calc(100%-var(--space-4))] overflow-hidden whitespace-nowrap border border-invert-foreground/20 bg-invert px-[var(--space-2)] py-[var(--space-1)] text-invert-foreground", MONO)}>{chip}</span>
     </div>}
+    {!framed && box && watermark?.(box)}
     {failed && <div data-surface="default" className="absolute inset-x-[var(--space-3)] top-[var(--space-3)]"><Notice tone="caution" role="alert" className="bg-card">This version can't play in this browser.</Notice></div>}
     {!framed && (typeof overlay === "function" ? overlay(box) : overlay)}
   </div>;

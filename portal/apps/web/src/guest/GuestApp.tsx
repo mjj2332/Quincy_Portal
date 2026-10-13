@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { GuestDecision, GuestSessionResponse, GuestVideoDto } from "@quincy/shared";
+import type { GuestDecision, GuestSessionResponse, GuestSocialOverlay, GuestVideoDto } from "@quincy/shared";
 import { createGuestApi, type GuestApi } from "./guest-api";
 import { readLinkId } from "./link-fragment";
 import { GuestVideoScreen } from "./GuestVideoScreen";
@@ -29,6 +29,8 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
   const [screen, setScreen] = useState<Screen>({ name: "boot" });
   const [session, setSession] = useState<GuestSessionResponse | null>(null);
   const [videos, setVideos] = useState<GuestVideoDto[]>([]);
+  // The Project's Social overlays (#872), re-read with the list on every resync so a changed selection reaches an open page.
+  const [overlays, setOverlays] = useState<GuestSocialOverlay[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   // The latest list and screen for async completions; `commitVideos` is the only writer of the list, so the ref is never behind a queued update.
   const videosRef = useRef<GuestVideoDto[]>([]);
@@ -70,11 +72,12 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
     const list = await opened.videos();
     if (list.kind === "gone") { setScreen({ name: "unavailable" }); return; }
     if (list.kind === "transient") { fail(() => { void enter(opened, next); }); return; }
-    commitVideos(list.value);
+    commitVideos(list.value.videos);
+    setOverlays(list.value.socialOverlays);
     const wanted = wantedVideo.current;
     wantedVideo.current = null;
     if (wanted !== null) {
-      const index = list.value.findIndex((video) => video.id === wanted);
+      const index = list.value.videos.findIndex((video) => video.id === wanted);
       if (index >= 0) {
         // The video screen opens a film on its newest granted Version. An unverified guest gets the existing verify dialog, once.
         setScreen({ name: "video", index });
@@ -83,7 +86,7 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
       }
       setNotice("That video is no longer available on this link. Here is what is.");
     }
-    setScreen(list.value.length === 1 ? { name: "video", index: 0 } : { name: "list" });
+    setScreen(list.value.videos.length === 1 ? { name: "video", index: 0 } : { name: "list" });
   }, [fail, commitVideos, verify]);
 
   const exchange = useCallback(async (opened: GuestApi, tokenValue: string, passcode?: string) => {
@@ -151,9 +154,10 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
       if (rereadSeq.current !== mine) return;
       if (fresh.kind === "gone") { setScreen({ name: "unavailable" }); return; }
       if (fresh.kind !== "ok") return;
-      if (fresh.value.length === 0) { setScreen({ name: "unavailable" }); return; }
+      if (fresh.value.videos.length === 0) { setScreen({ name: "unavailable" }); return; }
+      setOverlays(fresh.value.socialOverlays);
       const local = new Map(videosRef.current.flatMap((video) => video.versions).map((version) => [version.assetId, version] as const));
-      const merged = fresh.value.map((video) => ({ ...video, versions: video.versions.map((version) => {
+      const merged = fresh.value.videos.map((video) => ({ ...video, versions: video.versions.map((version) => {
         const kept = local.get(version.assetId)?.decision;
         return kept && kept.revision > (version.decision?.revision ?? 0) ? { ...version, decision: kept } : version;
       }) }));
@@ -176,7 +180,7 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
   if (screen.name === "video" && videos[screen.index] === undefined) return <UnavailableScreen />;
   const shown = screen.name === "list"
     ? <VideoListScreen api={api} title={session?.link.label ?? null} videos={videos} session={session} onSession={setSession} verify={verify} onOpen={(index) => { setNotice(null); setScreen({ name: "video", index }); }} onUnavailable={unavailable} />
-    : <GuestVideoScreen api={api} verify={verify} writer={writer} drafts={drafts} subscription={subscription} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} onDecided={decided} onResyncDelivery={resyncDelivery} onShownVersion={onShownVersion} />;
+    : <GuestVideoScreen api={api} verify={verify} writer={writer} drafts={drafts} subscription={subscription} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} socialOverlays={overlays} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} onDecided={decided} onResyncDelivery={resyncDelivery} onShownVersion={onShownVersion} />;
   // On the video screen the notices and the screen share one bounded column (#859): a notice shortens the screen (it is `flex-1` in here) instead of pushing it past the window.
   return <div data-testid="guest-column" className={screen.name === "video" ? "flex min-h-dvh flex-col min-[721px]:h-dvh" : "contents"}>{archived && <p role="status" data-testid="guest-archived-notice" className="m-0 bg-card px-[var(--space-5)] py-[var(--space-3)] text-center text-card-foreground [font:var(--type-label)]">This project was archived, so notes are read-only.</p>}{notice !== null && <p role="status" data-testid="guest-notice" className="m-0 bg-card px-[var(--space-5)] py-[var(--space-3)] text-center text-card-foreground [font:var(--type-label)]">{notice}</p>}{shown}<GuestVerifyDialog api={api} {...verifyDialog} /></div>;
 }

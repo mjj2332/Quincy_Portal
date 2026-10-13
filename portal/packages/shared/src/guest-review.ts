@@ -151,7 +151,17 @@ export const guestVideoDtoSchema = z.object({
 export type GuestVideoDto = z.infer<typeof guestVideoDtoSchema>;
 
 /** `GET /d/api/links/:linkId/videos`: only current members with at least one live grant, in Video position order. */
-export const guestVideoListResponseSchema = z.object({ videos: z.array(guestVideoDtoSchema) }).strict();
+export const guestSocialOverlaySchema = z.object({
+  id: uuid,
+  /** A client-safe label for the switcher ("Instagram Reel"); never the platform label, the Default flag or archive state. */
+  name: z.string(),
+  /** The public immutable overlay image (#869). */
+  imageUrl: z.string().regex(/^\/social-overlay-images\/[0-9a-f-]{36}\/[0-9a-f-]{36}$/),
+}).strict();
+export type GuestSocialOverlay = z.infer<typeof guestSocialOverlaySchema>;
+
+/** `socialOverlays` (#872) is the Project's resolved Social overlays, library order, Default first; `[]` for an empty library. */
+export const guestVideoListResponseSchema = z.object({ videos: z.array(guestVideoDtoSchema), socialOverlays: z.array(guestSocialOverlaySchema) }).strict();
 export type GuestVideoListResponse = z.infer<typeof guestVideoListResponseSchema>;
 
 const guestAuthorSchema = z.discriminatedUnion("kind", [

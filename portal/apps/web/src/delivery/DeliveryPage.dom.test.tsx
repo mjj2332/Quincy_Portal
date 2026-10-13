@@ -192,6 +192,16 @@ describe("hero", () => {
   });
 });
 
+describe("Social preview (#872)", () => {
+  it("is not on the Film tab: no Social control, no frame, nothing named Social, whether a film is locked or not", async () => {
+    await show(page([film(1), film(2, { locked: true })]));
+    await click(tab("Film"));
+    expect(byTestId("guest-social-toggle")).toBeNull();
+    expect(document.querySelector('[data-testid^="video-social"]')).toBeNull();
+    expect(document.body.textContent).not.toMatch(/social/i);
+  });
+});
+
 describe("photo grid", () => {
   it("captions every tile with its label, always visible", async () => {
     await show(page([photo(1), photo(2)]));

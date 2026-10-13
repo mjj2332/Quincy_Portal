@@ -1,0 +1,327 @@
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { GuestNoteThreadDto, GuestSessionResponse, GuestSocialOverlay, GuestVideoDto } from "@quincy/shared";
+import { installVideoElementStub, type VideoElementStub } from "../testing/video-element";
+import { installLocalStorageShim } from "../testing/local-storage";
+import { resetUiPrefMemory } from "../lib/ui-prefs";
+import { TIME_FORMAT_KEY } from "../lib/time-format-prefs";
+import { mockViewport, type MockViewport } from "../testing/viewport";
+import { GuestApp } from "./GuestApp";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+if (!Element.prototype.getAnimations) Element.prototype.getAnimations = () => [];
+/** The rich field is a textarea handle on its props: this file is about what the page does with the document and the upload state (the field itself is tested in GuestNoteEditor.dom.test.tsx). Typing sends a one-paragraph document, which is what the real field sends for plain text. */
+const field = vi.hoisted(() => ({ props: new Map<string, { media: unknown; onUploadingChange?: (uploading: boolean) => void; onChange: (doc: unknown) => void; value: unknown; label: string }>() }));
+vi.mock("./GuestNoteEditor", async () => {
+  const shared = await import("@quincy/shared");
+  return {
+    GuestNoteEditor: (props: { testId: string; label: string; placeholder?: string; disabled?: boolean; value: import("@quincy/shared").RichTextDoc; onChange: (doc: import("@quincy/shared").RichTextDoc) => void; media: unknown; onUploadingChange?: (uploading: boolean) => void }) => {
+      field.props.set(props.testId, props as never);
+      return <textarea data-testid={props.testId} aria-label={props.label} placeholder={props.placeholder} disabled={props.disabled} value={shared.videoNoteBody(props.value)}
+        onChange={(event) => { props.onChange(event.target.value === "" ? { type: "doc", content: [{ type: "paragraph" }] } : shared.legacyBodyToRichTextDoc(event.target.value)); }} />;
+    },
+  };
+});
+vi.mock("../components/LazyImage", () => ({ LazyImage: ({ src, alt, className }: { src: string; alt: string; className?: string }) => <img src={src} alt={alt} className={className} /> }));
+
+/** The one-paragraph document a typed note is sent as (#835): the note travels as `content`, never as `body`. */
+const para = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+const LINK = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const BASE = `/d/api/links/${LINK}`;
+const asset = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const vid = (n: number) => `11111111-1111-4111-8111-${String(n).padStart(12, "0")}`;
+const noteId = (n: number) => `22222222-2222-4222-8222-${String(n).padStart(12, "0")}`;
+const SESSION_OFF: GuestSessionResponse = { link: { label: "Smith house", expiresAt: "2026-11-01T00:00:00.000Z", allow: { comments: false, approve: false, download: false, markup: true } }, verified: false, email: null, name: null, notifications: null, media: { heic: false } };
+const ANON: GuestSessionResponse = { ...SESSION_OFF, link: { ...SESSION_OFF.link, allow: { ...SESSION_OFF.link.allow, comments: true } } };
+const VERIFIED: GuestSessionResponse = { ...ANON, verified: true, email: "sam@example.com", name: "Sam" };
+
+const versionOf = (n: number) => ({
+  assetId: asset(n), version: n, fps: { num: 25, den: 1 }, frameCount: 3000, durationMs: 120000, width: 1920, height: 1080, startTimecodeFrames: null, tcNominalFps: 25, tcDropFrame: false,
+  hasAudio: true, posterUrl: `${BASE}/versions/${asset(n)}/poster`, streamUrl: `${BASE}/versions/${asset(n)}/stream`, publicNoteCount: 0, decision: null, released: false, downloadUrl: null,
+});
+const videoOf = (n: number, versions = [versionOf(n * 10)]): GuestVideoDto => ({ id: vid(n), title: `Film ${n}`, premium: false, unlocked: true, versions });
+const note = (n: number, over: Partial<GuestNoteThreadDto> = {}): GuestNoteThreadDto => ({
+  id: noteId(n), parentId: null, author: { kind: "studio", name: "Mia Chen" }, startFrame: 50, endFrame: null, drawingFrame: null, hasMarkup: false, body: "Trim the opening", deleted: false,
+  resolved: false, revision: 1, createdAt: "2026-10-09T01:00:00.000Z", editedAt: null, replies: [], ...over,
+});
+const mine = (n: number, over: Partial<GuestNoteThreadDto> = {}) => note(n, { author: { kind: "guest", name: "Sam", self: true }, body: "My note", ...over });
+
+type Handler = (url: string, init: RequestInit | undefined) => Response | Promise<Response> | undefined;
+const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
+const stub404 = () => new Response("Not found", { status: 404 });
+
+let session: GuestSessionResponse;
+let videos: GuestVideoDto[];
+let socialOverlays: GuestSocialOverlay[];
+let notes: Record<string, GuestNoteThreadDto[]>;
+let extra: Handler | null;
+let fetchMock: ReturnType<typeof vi.fn>;
+let stub: VideoElementStub;
+let viewport: MockViewport;
+let root: Root | null = null;
+let host: HTMLElement;
+
+async function route(url: string, init: RequestInit | undefined): Promise<Response> {
+  const custom = await extra?.(url, init);
+  if (custom) return custom;
+  if (url === `${BASE}/session`) return json(session);
+  if (url === `${BASE}/videos`) return json({ videos, socialOverlays });
+  const list = /\/versions\/([^/]+)\/notes$/.exec(url);
+  if (list && (init?.method ?? "GET") === "GET") return json({ notes: notes[list[1]!] ?? [] });
+  return stub404();
+}
+
+const flush = async (times = 6) => { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); };
+const REEL: GuestSocialOverlay = { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", name: "Instagram Reel", imageUrl: "/social-overlay-images/cccccccc-cccc-4ccc-8ccc-cccccccccccc/dddddddd-dddd-4ddd-8ddd-dddddddddddd" };
+const TIKTOK: GuestSocialOverlay = { id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", name: "TikTok", imageUrl: "/social-overlay-images/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee/ffffffff-ffff-4fff-8fff-ffffffffffff" };
+async function open(initialVideoId: string | null = null) {
+  field.props.clear();
+  window.history.replaceState(null, "", `/d/review?link=${LINK}#t=tok123`);
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => { root!.render(<GuestApp token="tok123" initialVideoId={initialVideoId} />); });
+  await flush();
+}
+const byId = (id: string) => document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+const allById = (id: string) => [...document.body.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`)];
+const click = async (element: Element | null | undefined) => { await act(async () => { (element as HTMLElement).click(); }); await flush(); };
+const typeInto = async (element: HTMLElement | null, value: string) => {
+  const field = element as HTMLInputElement | HTMLTextAreaElement;
+  const proto = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  await act(async () => { Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(field, value); field.dispatchEvent(new Event("input", { bubbles: true })); });
+};
+const submit = async (id: string) => { await act(async () => { byId(id)!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); }); await flush(); };
+const button = (label: string) => [...document.body.querySelectorAll<HTMLElement>("button")].find((item) => item.getAttribute("aria-label")?.startsWith(label) || item.textContent?.trim() === label);
+const keyDown = async (key: string) => { await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); }); await flush(); };
+const menuItem = (label: string) => [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.trim() === label);
+/** Puts the film on `seconds` (25 fps), as the browser would after a seek: its data is there (the clock holds a seek until it is), the seek lands, the frame shows. */
+async function atSeconds(seconds: number) {
+  const video = host.querySelector("video")!;
+  await act(async () => { stub.loadData(video, 4); stub.finishSeek(video); stub.presentFrame(video, seconds); });
+  await flush();
+}
+/** The writes the page made (the token exchange at boot is not one). */
+const requests = (method: string) => fetchMock.mock.calls.filter((call) => ((call[1] as RequestInit | undefined)?.method ?? "GET") === method && String(call[0]) !== `${BASE}/session`).map((call) => ({ url: String(call[0]), body: (call[1] as RequestInit).body === undefined ? null : JSON.parse(String((call[1] as RequestInit).body)) as unknown }));
+
+beforeEach(() => {
+  stub = installVideoElementStub();
+  viewport = mockViewport({ width: 1440 });
+  session = VERIFIED; videos = [videoOf(1)]; socialOverlays = [REEL, TIKTOK]; notes = {}; extra = null;
+  fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => route(String(input), init));
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+});
+afterEach(async () => {
+  if (root) await act(async () => { root!.unmount(); });
+  root = null; host?.remove(); stub.dispose(); viewport.restore();
+  document.body.innerHTML = "";
+  window.history.replaceState(null, "", "/");
+});
+
+
+/** Gives every element a layout size so the player can place its picture box (happy-dom has none). */
+async function withLayout(run: () => Promise<void>) {
+  const original = Object.getOwnPropertyDescriptors(HTMLElement.prototype);
+  for (const [prop, value] of [["offsetWidth", 800], ["offsetHeight", 800], ["offsetLeft", 0], ["offsetTop", 0]] as const) Object.defineProperty(HTMLElement.prototype, prop, { configurable: true, get: () => value });
+  try { await run(); } finally {
+    for (const prop of ["offsetWidth", "offsetHeight", "offsetLeft", "offsetTop"] as const) {
+      const d = original[prop];
+      if (d) Object.defineProperty(HTMLElement.prototype, prop, d); else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[prop];
+    }
+  }
+}
+const pointer = async (layer: Element, type: string, x: number, y: number) => {
+  const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 });
+  Object.assign(event, { pointerId: 1, isPrimary: true });
+  await act(async () => { layer.dispatchEvent(event); });
+};
+async function draw(layer: Element) {
+  Object.defineProperty(layer, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100, x: 0, y: 0, toJSON: () => ({}) }) });
+  await pointer(layer, "pointerdown", 10, 10); await pointer(layer, "pointermove", 40, 40); await pointer(layer, "pointerup", 40, 40);
+}
+beforeEach(() => { Element.prototype.setPointerCapture = () => undefined; Element.prototype.releasePointerCapture = () => undefined; });
+const toggle = () => byId("guest-social-toggle");
+const stage = () => byId("video-stage");
+const overlayImage = () => byId("video-social-overlay") as HTMLImageElement | null;
+const social = async (on: boolean) => { if ((toggle()?.getAttribute("aria-pressed") === "true") !== on) await click(toggle()); };
+
+describe("Social preview on the Review link (#872)", () => {
+  it("is not offered when the Project resolves no overlays", async () => {
+    socialOverlays = [];
+    await open();
+    expect(toggle()).toBeNull();
+  });
+
+  it("is a labelled toggle: visible text Social, accessible name Social preview", async () => {
+    await open();
+    expect(toggle()!.getAttribute("aria-label")).toBe("Social preview");
+    expect(toggle()!.textContent).toContain("Social");
+    expect(toggle()!.getAttribute("aria-pressed")).toBe("false");
+    expect(stage()!.dataset.social).toBeUndefined();
+  });
+
+  it("frames the film in Fill with the first overlay, switches overlay and Fit, and leaves cleanly", async () => {
+    await open();
+    await social(true);
+    expect(toggle()!.getAttribute("aria-pressed")).toBe("true");
+    expect(stage()!.dataset.social).toBe("fill");
+    expect(overlayImage()!.getAttribute("src")).toBe(REEL.imageUrl);
+    await click(byId("video-social-overlay-select"));
+    await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent === TIKTOK.name));
+    expect(overlayImage()!.getAttribute("src")).toBe(TIKTOK.imageUrl);
+    await click(byId("video-social-fit"));
+    expect(stage()!.dataset.social).toBe("fit");
+    await social(false);
+    expect(stage()!.dataset.social).toBeUndefined();
+    expect(overlayImage()).toBeNull();
+  });
+
+  it("keeps the same <video> element and still plays on Space; the marker lane, range button and I key go away", async () => {
+    notes = { [asset(10)]: [note(1)] };
+    await open();
+    expect(byId("video-marker-lane")).not.toBeNull();
+    const before = host.querySelector("video");
+    await social(true);
+    expect(host.querySelector("video")).toBe(before);
+    expect(byId("video-marker-lane")).toBeNull();
+    expect(byId("video-range-button")).toBeNull();
+    await keyDown("i");
+    expect(byId("guest-composer")).toBeNull();
+    await social(false);
+    expect(byId("video-marker-lane")).not.toBeNull();
+  });
+
+  it("replaces Add a note with a line saying notes are off, and brings it back", async () => {
+    await open();
+    expect(byId("guest-add-note")).not.toBeNull();
+    await social(true);
+    expect(byId("guest-add-note")).toBeNull();
+    expect(byId("guest-notes-social-paused")!.textContent).toContain("Notes are off in Social preview");
+    await social(false);
+    expect(byId("guest-add-note")).not.toBeNull();
+    expect(byId("guest-notes-social-paused")).toBeNull();
+  });
+
+  it("is offered to a guest who cannot comment, with no paused line", async () => {
+    session = SESSION_OFF;
+    await open();
+    await social(true);
+    expect(stage()!.dataset.social).toBe("fill");
+    expect(byId("guest-notes-social-paused")).toBeNull();
+  });
+
+  it("keeps a typed composer draft (body and an in mark) while Social is on, and returns it intact", async () => {
+    await open();
+    await atSeconds(1);
+    await click(byId("guest-add-note"));
+    await typeInto(byId("guest-composer-body"), "Half written");
+    await click(byId("guest-composer-mark-in"));
+    const anchor = byId("guest-composer-anchor")!.textContent;
+    await social(true);
+    expect(byId("guest-composer")?.hidden === true || byId("guest-composer") === null || byId("guest-composer")!.closest("[hidden]") !== null).toBe(true);
+    await social(false);
+    expect(byId("guest-composer")!.closest("[hidden]")).toBeNull();
+    expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("Half written");
+    expect(byId("guest-composer-anchor")!.textContent).toBe(anchor);
+  });
+
+  it("hides an open own-note Edit form but keeps the saved text readable, and restores the form with its text", async () => {
+    notes = { [asset(10)]: [note(1, { replies: [(({ replies: _replies, ...reply }) => reply)(mine(2, { parentId: noteId(1), startFrame: null, body: "My reply" }))] })] };
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    expect(byId("guest-note-edit-form")).not.toBeNull();
+    await social(true);
+    expect(allById("guest-note-body").map((el) => el.textContent)).toContain("My reply");
+    expect(byId("guest-note-edit-form")?.hidden ?? true).toBe(true);
+    await social(false);
+    expect(byId("guest-note-edit-form")).not.toBeNull();
+    expect(byId("guest-note-edit-form")!.hidden).toBe(false);
+    expect((byId("guest-note-edit-body") as HTMLTextAreaElement).value).toBe("My reply");
+  });
+
+  it("hides an open reply form while Social is on and restores its draft", async () => {
+    notes = { [asset(10)]: [note(1)] };
+    await open();
+    await click(byId("guest-note-reply-button"));
+    await typeInto(byId("guest-reply-body"), "Draft reply");
+    await social(true);
+    expect(byId("guest-reply-form")?.hidden ?? true).toBe(true);
+    expect(byId("guest-note-reply-button")).toBeNull();
+    await social(false);
+    expect(byId("guest-reply-form")!.hidden).toBe(false);
+    expect((byId("guest-reply-body") as HTMLTextAreaElement).value).toBe("Draft reply");
+  });
+
+  it("ends a drawing in progress on entry, keeps its strokes, and does not reopen the phone drawer", async () => {
+    viewport.restore(); viewport = mockViewport({ width: 375 });
+    await withLayout(async () => {
+      await open();
+      await click(button("Notes"));
+      await atSeconds(1);
+      await click(byId("guest-add-note"));
+      await click(button("Notes")); // the draft closed the drawer; the pen button is in the composer, in the drawer
+      await click(byId("guest-composer-draw"));
+      await atSeconds(1);
+      await draw(byId("guest-draft-layer")!);
+      expect(byId("guest-markup-toolbar")).not.toBeNull();
+      await social(true);
+      expect(byId("guest-markup-toolbar")).toBeNull();
+      expect(byId("guest-notes-drawer")).toBeNull();
+      await social(false);
+      await click(button("Notes"));
+      expect(byId("guest-composer-drawing")).not.toBeNull();
+    });
+  });
+
+  it("keeps the premium watermark inside the Social frame on a locked film", async () => {
+    videos = [videoOf(1, [versionOf(10)])]; videos = [{ ...videos[0]!, premium: true, unlocked: false }];
+    await withLayout(async () => {
+      await open();
+      await social(true);
+      expect(byId("video-social-frame")!.contains(byId("guest-watermark"))).toBe(true);
+    });
+  });
+
+  it("stays on across Videos and Versions and starts off again after All videos", async () => {
+    videos = [videoOf(1, [versionOf(11), versionOf(10)]), videoOf(2)];
+    await open(vid(1));
+    await social(true);
+    await click(byId("guest-version-trigger"));
+    await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.startsWith("v10")));
+    expect(toggle()!.getAttribute("aria-pressed")).toBe("true");
+    await click(button("Next video"));
+    expect(byId("guest-video-title")!.textContent).toBe("Film 2");
+    expect(toggle()!.getAttribute("aria-pressed")).toBe("true");
+    expect(stage()!.dataset.social).toBe("fill");
+    await click(button("All videos"));
+    await click(button("Open Film 1"));
+    expect(toggle()!.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("is offered on a Delivery deep link entry", async () => {
+    videos = [videoOf(1), videoOf(2)];
+    await open(vid(2));
+    expect(byId("guest-video-title")!.textContent).toBe("Film 2");
+    expect(toggle()).not.toBeNull();
+  });
+
+  it("names the toggle Social preview on a phone too", async () => {
+    viewport.restore(); viewport = mockViewport({ width: 375 });
+    await open();
+    expect(toggle()!.getAttribute("aria-label")).toBe("Social preview");
+  });
+
+  it("follows a changed selection after a resync: a chosen overlay that left the list falls back to the first", async () => {
+    await open();
+    await social(true);
+    await click(byId("video-social-overlay-select"));
+    await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent === TIKTOK.name));
+    expect(overlayImage()!.getAttribute("src")).toBe(TIKTOK.imageUrl);
+    socialOverlays = [REEL];
+    await act(async () => { host.querySelector("video")!.dispatchEvent(new Event("error")); });
+    await flush();
+    expect(overlayImage()!.getAttribute("src")).toBe(REEL.imageUrl);
+  });
+});
