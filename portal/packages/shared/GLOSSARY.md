@@ -248,14 +248,31 @@ staff member.
 A titled item in a Project's Video Collection. Its Versions are its cuts; reviewing it is separate
 from the photo Stages.
 Its title is the file name of its latest live Version (spaces trimmed, `.mp4` or `.mov` dropped, 200
-characters at most, "Untitled film" if nothing is left). Nobody types it, and it moves when a Version
-is uploaded, removed or restored (#828).
+characters at most, "Untitled film" if nothing is left). It moves when a Version is uploaded, removed
+or restored (#828), and staff rename it only by renaming the latest Version's file name, which the next
+upload replaces.
 _Avoid_: Asset (a Video is the group of its Versions)
 
 **Version**:
 One immutable uploaded Asset of a Video, numbered in upload order. A re-cut is a new Version, never
 an edit. Notes, approvals and Releases belong to one exact Version.
 _Avoid_: Revision, take
+
+**Review status**:
+Where a Video stands inside the studio: In review or Approved (internal), held by its latest Version,
+or Published while that Version is in the latest Published set. A new Version starts In review. Guest
+reviewers never see it.
+_Avoid_: Status (bare), Stage (that is the photo pipeline), workflow state
+
+**Approved (internal)**:
+Staff's sign-off that a Version is ready for the client. It is not a Client approval, a Release or a
+Publish, and only Admins and Editors can give it.
+_Avoid_: Approved (bare), signed off, ready
+
+**Client approval**:
+A Guest reviewer's informational decision that a Version is approved. It releases and publishes
+nothing.
+_Avoid_: Approved (bare), sign-off
 
 **Compare**:
 Two Versions of one Video played as one: stepped, scrubbed and played together, side by side or
@@ -318,6 +335,11 @@ Removing an already-revoked Review link from staff's list. Its notes, approvals 
 and it cannot be restored. Anyone who may Revoke a link may Delete it.
 _Avoid_: Purge, remove
 
+**Delete (Video)**:
+Moving a Video and every one of its Versions to Trash, restorable until Trash empties. Unlike Delete
+(Review link), it can be undone.
+_Avoid_: Archive, purge
+
 **Guest reviewer**:
 A client with no Portal account who reviews through a Review link, identified by an email verified
 with a one-time code.
@@ -333,6 +355,21 @@ A staff member taking the original file of one live Version from the review view
 `<Title> v<N>.mp4`. Separate from the stream (which never offers a download) and from a client's download on a
 Review link; each full download is audited as `video_version.download`.
 _Avoid_: Export (that is the NLE marker export), Release (a Release makes a Version available to a client)
+
+**Social overlay**:
+An agency-wide transparent 9:16 frame imitating one platform's on-screen UI, drawn over a film to show
+how it reads once posted. Admins manage them; each Project chooses which ones it offers.
+_Avoid_: Social profile, template, skin
+
+**Default overlay**:
+The one Social overlay that can never be archived, offered whenever a Project has no other usable
+Social overlay.
+_Avoid_: Fallback profile
+
+**Social preview**:
+Watching a Video through a Social overlay. It is view-only: no notes, marks or drawing while it is on.
+Staff and Guest reviewers can open it.
+_Avoid_: Social mode, mockup
 
 ### Client delivery
 
