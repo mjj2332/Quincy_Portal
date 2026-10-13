@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { Role } from "@quincy/shared";
 import { useOptionalProjectQueryClient } from "../../lib/project-data";
 import { pushToast } from "../../lib/toast-store";
@@ -21,19 +21,22 @@ const stemLength = (name: string) => name.replace(EXTENSION, "").length;
  * reaches the card's select and open handlers.
  * Ledger: `reui/dialog` (shell), `quincy/QuincyField` (reui field + input), `quincy/Button`, `quincy/Notice`; behaviour from FreeFrame's name-dialog.
  */
-export function VideoRenameDialog({ open, onOpenChange, projectId, role, target, latest, finalFocus }: {
+export function VideoRenameDialog({ open, openingId, onClose, projectId, role, target, latest, finalFocus }: {
   open: boolean;
-  onOpenChange: (open: boolean) => void;
+  /** Which opening this is: every completion below is fenced on it, and the form is remounted per opening. */
+  openingId: number;
+  /** Closes the opening `openingId`; a no-op when that opening is no longer the current one. */
+  onClose: (openingId: number) => void;
   projectId: string;
   role: Role;
   target: RenameTarget;
-  /** The card's current latest Version, read when the person asks to apply the name to it. */
+  /** The Video's latest live Version from the full collection (not the filtered cards), read when the person asks to apply the name to it. */
   latest: RenameTarget;
   finalFocus: () => HTMLElement | null;
 }) {
-  return <Dialog open={open} onOpenChange={onOpenChange}>
+  return <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(openingId); }}>
     <DialogContent data-testid="video-rename-dialog" showCloseButton={false} finalFocus={() => finalFocus() ?? true} className="flex flex-col gap-[var(--space-4)] sm:max-w-[420px]">
-      <RenameForm projectId={projectId} role={role} target={target} latest={latest} onClose={() => onOpenChange(false)} />
+      <RenameForm key={openingId} projectId={projectId} role={role} target={target} latest={latest} onClose={() => onClose(openingId)} />
     </DialogContent>
   </Dialog>;
 }
@@ -46,6 +49,9 @@ function RenameForm({ projectId, role, target, latest, onClose }: { projectId: s
   const [pending, setPending] = useState(false);
   const [problem, setProblem] = useState<ClassifiedRenameError | null>(null);
   const inFlight = useRef(false);
+  // The form is one dialog opening: once it is unmounted (Cancel, Escape) a save that finishes late may still toast, but it touches nothing else.
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   // Focus and select the stem once, when the field mounts: a ref that changed identity would reselect on every keystroke.
   const initial = target.originalFilename;
   const focusStem = useCallback((el: HTMLInputElement | null) => { if (el) { el.focus(); el.setSelectionRange(0, stemLength(initial)); } }, [initial]);
@@ -60,10 +66,10 @@ function RenameForm({ projectId, role, target, latest, onClose }: { projectId: s
     try {
       await renameVideoVersion({ queryClient, projectId, role }, { assetId: aimedAt.assetId, filename: trimmed });
       pushToast("File renamed.");
-      onClose();
+      if (live.current) onClose();
     } catch (error) {
-      setProblem(classifyRenameError(error));
-    } finally { inFlight.current = false; setPending(false); }
+      if (live.current) setProblem(classifyRenameError(error));
+    } finally { inFlight.current = false; if (live.current) setPending(false); }
   };
 
   return <form onSubmit={(event) => void submit(event)} className="grid gap-[var(--space-4)]" noValidate>

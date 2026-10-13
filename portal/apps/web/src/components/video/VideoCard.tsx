@@ -18,7 +18,6 @@ import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
 import { VideoReviewStatusPill } from "./VideoReviewStatusPill";
 import { formatDuration, formatFps, formatVideoDate } from "./video-format";
 import { ReviewLinkChips } from "./ReviewLinkChips";
-import { VideoRenameDialog, type RenameTarget } from "./VideoRenameDialog";
 import type { ReviewLinkChip } from "./use-review-links-ui";
 
 const META = "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
@@ -35,7 +34,7 @@ const onCardSurface = (event: { currentTarget: Element; target: EventTarget }) =
  * the Video and the control that was pressed to `onOpen`; selection and note chips arrive in later slices. `onVersionFile` checks and
  * starts the upload and returns a message when the file is refused.
  */
-export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks, onCreateReviewLink, projectId, download, appearance = { thumb: "fit", info: true }, reviewStatus, rename }: {
+export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks, onCreateReviewLink, projectId, download, appearance = { thumb: "fit", info: true }, reviewStatus, onRename }: {
   video: VideoDto;
   canUpload: boolean;
   currentUserId: string | null;
@@ -58,8 +57,8 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
   appearance?: { thumb: "fit" | "fill"; info: boolean };
   /** Present when the card shows the Review status pill (#865); the same pill as the viewer's, with its own test ids. */
   reviewStatus?: { projectId: string; role: Role; archived: boolean };
-  /** Present when the person may rename (#867: whoever may upload, on an unarchived Project): the "⋯" menu then offers Rename, which opens the file-name dialog for the newest Version. */
-  rename?: { projectId: string; role: Role };
+  /** Present when the person may rename (#867: whoever may upload, on an unarchived Project): the "⋯" menu then offers Rename. The dialog is hosted by the panel, above the filtered list. */
+  onRename?: (video: VideoDto) => void;
   reviewLinks?: { selected: boolean; /** Absent when the Project is archived: no new links. */ onToggle?: () => void; chips: ReviewLinkChip[]; onOpenChip: (linkId: string) => void; onOpenAll: () => void };
 }) {
   // The menu closes before the dialog has focus: while Create Review link hands off, the menu moves no focus (#463); the dialog returns focus to the menu button itself.
@@ -69,8 +68,6 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
   const [cancelling, setCancelling] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
-  // The Version the rename dialog was opened on, frozen at the press (#867): null while the dialog is closed.
-  const [renaming, setRenaming] = useState<RenameTarget | null>(null);
   const newest = video.versions.find((version) => version.current) ?? video.versions[0]!;
   const nextNumber = Math.max(...video.versions.map((version) => version.version)) + 1;
   const portrait = newest.height > newest.width;
@@ -95,10 +92,7 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
     else if (event.key === " ") { event.preventDefault(); select?.(); }
   };
 
-  const latest: RenameTarget = { assetId: newest.assetId, originalFilename: newest.originalFilename };
-
-  return <>
-  <Frame
+  return <Frame
     data-testid="video-card" aria-label={video.title} role="group" tabIndex={0} data-selected={reviewLinks?.selected ? "true" : "false"}
     className="transition-colors hover:border-[var(--border-hover)] data-[selected=true]:border-[var(--border-strong)]"
     onPointerDown={(event) => { lastPointer.current = event.pointerType; }}
@@ -177,16 +171,14 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
               <MenuPrimitive.Separator className="my-[var(--space-1)] h-px bg-border" />
               {download && <MenuPrimitive.LinkItem closeOnClick className={MENU_ITEM} data-testid="video-card-download" href={videoVersionDownloadUrl(download.projectId, video.currentAssetId)} download>{`Download v${newest.version}`}</MenuPrimitive.LinkItem>}
               <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-copy-link" onClick={() => copyText(new URL(staffPathFor({ kind: "project", projectId, arrivalTab: "video", video: { id: video.id } }), window.location.origin).href)}>Copy link</MenuPrimitive.Item>
-              {rename && <>
+              {onRename && <>
                 <MenuPrimitive.Separator className="my-[var(--space-1)] h-px bg-border" />
-                <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-rename" onClick={() => { handOff.current = true; setRenaming(latest); }}>Rename</MenuPrimitive.Item>
+                <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-rename" onClick={() => { handOff.current = true; onRename(video); }}>Rename</MenuPrimitive.Item>
               </>}
             </Menu>
           </div>
         </div>
       </div>
     </FramePanel>
-  </Frame>
-  {rename && <VideoRenameDialog open={renaming !== null} onOpenChange={(isOpen) => { if (!isOpen) setRenaming(null); }} projectId={rename.projectId} role={rename.role} target={renaming ?? latest} latest={latest} finalFocus={() => menuTrigger.current} />}
-  </>;
+  </Frame>;
 }

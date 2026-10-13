@@ -174,3 +174,40 @@ describe("the card behind the dialog", () => {
     expect(apiPutMock.mock.calls[0]![0]).toBe(filePath(TEASER.currentAssetId));
   });
 });
+
+describe("the dialog outlives its card (Sol, #867)", () => {
+  it("keeps the dialog and the typed name when the 409 refresh filters the card out, and applies to the latest Version of the full collection", async () => {
+    const LATEST = "00000000-0000-4000-8000-000000000299";
+    storage.values.set(`quincy:ui:video-grid:${auth.userId}`, JSON.stringify({ status: "in_review" }));
+    await mount({ parts: ALL });
+    expect(cardTitle(V1)).toBe("Main walkthrough");
+    await openRename(V1);
+    await typeInto(input(), "Walk final.mp4");
+    // The list is filtered to In review; the refresh after the 409 brings a Video whose newest Version is Approved (internal), so the filter drops its card.
+    const fresh = videoOf(V1, "Main walkthrough", [[LATEST, 3, true], [A2, 2, false], [A1, 1, false]]);
+    apiPutMock.mockImplementationOnce(async () => { state.videos = [{ ...fresh, reviewStatus: "approved_internal" } as typeof fresh, TEASER]; throw refusal(409, { error: "newer", code: "not_latest_version", video: { ...fresh, reviewStatus: "approved_internal" } }); });
+    await act(async () => { input()!.form!.requestSubmit(); await Promise.resolve(); }); await flush(20);
+    expect(cardMenu(V1)).toBeNull();
+    expect(dlg()).not.toBeNull();
+    expect(input()!.value).toBe("Walk final.mp4");
+    apiPutMock.mockResolvedValueOnce({ video: { ...fresh, title: "Walk final" } });
+    await click(all<HTMLButtonElement>("button", dlg()).find((b) => /latest version/i.test(b.textContent ?? ""))!);
+    await act(async () => { input()!.form!.requestSubmit(); await Promise.resolve(); }); await flush(20);
+    expect(apiPutMock).toHaveBeenLastCalledWith(filePath(LATEST), { filename: "Walk final.mp4" });
+  });
+
+  it("does not let a save that finishes late close or clear a dialog opened afterwards", async () => {
+    let finish!: (value: unknown) => void;
+    apiPutMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await mount({ parts: ALL });
+    await openRename(V1); await typeInto(input(), "First.mp4");
+    await act(async () => { input()!.form!.requestSubmit(); await Promise.resolve(); }); await flush(5);
+    await click(cancel());
+    expect(dlg()).toBeNull();
+    await openRename(V1); await typeInto(input(), "Second.mp4");
+    state.videos = [renamed("First"), TEASER];
+    await act(async () => { finish({ video: renamed("First") }); await Promise.resolve(); }); await flush(20);
+    expect(dlg()).not.toBeNull();
+    expect(input()!.value).toBe("Second.mp4");
+  });
+});
