@@ -239,6 +239,21 @@ Migration 0078 adds one column, `video_version_meta.review_status` (text, NOT NU
 
 **Rollback.** The column is additive with a default, so an older Worker ignores it and a code rollback is safe (an older upload INSERT omits it and gets In review). Dropping the column is a Time Travel restore, which loses every write since the bookmark.
 
+### Social overlays (0079, #869)
+
+Migration 0079 creates `social_overlays` (the Admin-managed library of 9:16 platform graphics the Video viewer lays over a Video) with three indexes: unique `image_key`, a partial unique `is_default` (one Default) and a unique `name COLLATE NOCASE`. Additive only: no ALTER, no rebuild, no PRAGMA, no backfill. The number is 0079 because #863 holds 0078; if the integration PR carries both, the pending list shows 0078 then 0079 (plus 0080 for #870 if it has landed), all from that PR, and anything else listed means an earlier migration PR was never applied: stop. Renumber on a clash with a later free number, never share an idx. The Worker in this PR reads the table, so production stays on the old Worker until the owner applies the migration and re-runs the deploy (the "A PR that adds a D1 migration" flow above, with a Time Travel bookmark first).
+
+This PR also adds one **public** read route, `GET /social-overlay-images/:overlayId/:imageUuid`, on purpose: the overlays are generic platform graphics with no client data, so staff and guests share one cacheable URL (`public, max-age=31536000, immutable`; the uuid changes on every replace). It serves only the row's current PNG key, archived overlays included. Anything else is a `no-store` JSON 404, never the SPA shell. It is listed in `run_worker_first` in `wrangler.jsonc` and classified `public-library` in the route manifest.
+
+Owner steps after the deploy:
+
+1. Post-check the schema: `PRAGMA table_info(social_overlays)` lists the columns, `PRAGMA index_list(social_overlays)` shows the three indexes, and `SELECT COUNT(*) FROM social_overlays` is 0.
+2. From the signed-in Admin browser, open Admin, Social overlays and upload **Instagram Reel** first (name "Instagram Reel", platform "Instagram"). The first overlay uploaded becomes the Default. Then upload TikTok and YouTube Shorts. Each must be a 9:16 PNG with transparency, 540 to 2160 px wide, at most 8 MB. There is no bundled seed: a migration cannot write R2.
+3. Post-check the data: `SELECT name, is_default, archived_at FROM social_overlays` returns 3 rows with exactly one `is_default = 1`.
+4. Until step 2 is done the library is empty, and the Social preview (#870 to #872) treats that as "Social preview unavailable", not as an error.
+
+**Rollback.** An old Worker ignores the table, so a code rollback is safe, and the R2 objects under `social-overlays/` can stay. Dropping the table means a Time Travel restore, which loses every write since the bookmark.
+
 ### Subtask presets (0052)
 
 0052 converts every date-only Subtask range to a 09:00 start and a 17:00 end (the presets, ADR 0016)

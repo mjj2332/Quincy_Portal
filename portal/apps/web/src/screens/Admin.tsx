@@ -26,8 +26,9 @@ import { EmptyState } from "@/components/quincy/EmptyState";
 import { QuincyField } from "@/components/quincy/QuincyField";
 import { QuincySelectField } from "@/components/quincy/QuincySelectField";
 import { AdminAttention } from "../components/AdminAttention";
+import { SocialOverlaysPanel } from "../components/SocialOverlaysPanel";
 
-type AdminTab = "users" | "directory" | "pipeline" | "integrations";
+type AdminTab = "users" | "directory" | "pipeline" | "social" | "integrations";
 type User = { id: string; name: string; email: string; role: Role; active: boolean; defaultEditor: boolean; createdAt: string | null };
 type IntegrationStatus = "connected" | "disconnected" | "expired" | "error";
 type Integration = { provider: string; status: IntegrationStatus; expiresAt: string | null; lastEventAt: string | null; lastError: string | null };
@@ -65,7 +66,7 @@ type NotificationDeliveryResponse = { view: NotificationDeliveryView; items: Not
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PROVIDERS = ["dropbox", "tonomo", "vimeo"] as const;
-const TAB_LABELS: Record<AdminTab, string> = { users: "Users", directory: "Directory", pipeline: "Pipeline", integrations: "Integrations" };
+const TAB_LABELS: Record<AdminTab, string> = { users: "Users", directory: "Directory", pipeline: "Pipeline", social: "Social overlays", integrations: "Integrations" };
 const DELIVERY_VIEWS: NotificationDeliveryView[] = ["pending_stuck", "dlq", "failed", "unknown", "preference_suppressed"];
 const DELIVERY_LABELS: Record<NotificationDeliveryView, string> = {
   pending_stuck: "Pending / stuck",
@@ -147,7 +148,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
   const canAdminBackend = can("adminBackend");
   const availableTabs: AdminTab[] = [
     ...(canManageUsers ? ["users" as const] : []),
-    ...(canAdminBackend ? ["directory" as const, "pipeline" as const] : []),
+    ...(canAdminBackend ? ["directory" as const, "pipeline" as const, "social" as const] : []),
     ...(canManageIntegrations ? ["integrations" as const] : []),
   ];
   const [activeTab, setActiveTab] = useState<AdminTab>(availableTabs[0] ?? "users");
@@ -671,6 +672,8 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           </TableRow>)}</TableBody>
         </Table></TableWrap>
       </section>}
+
+      {activeTab === "social" && canAdminBackend && <section role="tabpanel" id="admin-panel-social" aria-labelledby="admin-tab-social" tabIndex={0}><SocialOverlaysPanel /></section>}
 
       {activeTab === "pipeline" && canAdminBackend && <section role="tabpanel" id="admin-panel-pipeline" aria-labelledby="admin-tab-pipeline" tabIndex={0}>
         <AdminAttention />

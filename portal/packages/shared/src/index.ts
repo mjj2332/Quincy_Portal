@@ -79,3 +79,4 @@ export * from "./client-delivery";
 export * from "./delivery-path";
 export * from "./email-send-errors";
 export * from "./freehand-strokes";
+export * from "./social-overlays";

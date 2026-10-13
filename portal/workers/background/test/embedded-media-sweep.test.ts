@@ -82,6 +82,15 @@ describe("embedded media sweep covers link previews (#497)", () => {
   }
   const previewExists = async (id: string) => (await database.DB.prepare("SELECT 1 AS one FROM link_previews WHERE id = ?").bind(id).first()) !== null;
 
+  it("drains a reserved Social overlay key whose request died after the PUT (#869)", async () => {
+    const key = `social-overlays/${crypto.randomUUID()}/${crypto.randomUUID()}.png`;
+    await database.MEDIA.put(key, "png");
+    await database.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, NULL, NULL, ?)").bind(key, now - 1000).run();
+    await sweepEmbeddedMedia(database, now);
+    expect(await database.MEDIA.head(key)).toBeNull();
+    expect(await database.DB.prepare("SELECT 1 AS hit FROM embedded_media_cleanup WHERE storage_key = ?").bind(key).first()).toBeNull();
+  });
+
   it("deletes previews nobody owns after seven days, and keeps fresh and owned ones", async () => {
     const stale = await seedPreview({ createdAt: now - 7 * day });
     const staleNotice = await seedPreview({ createdAt: now - 30 * day, notice: true });
