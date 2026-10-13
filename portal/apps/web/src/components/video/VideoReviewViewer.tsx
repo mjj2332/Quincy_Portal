@@ -145,9 +145,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     if (focus === "button" && compareButtonRef.current?.isConnected) compareButtonRef.current.focus({ preventScroll: true });
     else popupRef.current?.focus({ preventScroll: true });
   }, [compareStore]);
-  const compareEnabled = compareStore !== undefined;
   useEffect(() => {
-    if (!(notesOn && forms) && !compareEnabled) return;
+    // Always on: the time-format menu (#860) is a floating popup of the player itself, so Escape closes it first even with notes and Compare off.
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       const popup = popupRef.current;
@@ -174,7 +173,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => { window.removeEventListener("keydown", onKeyDown, true); escapeSnapshot.current = { layer: false, form: false, compare: false }; };
-  }, [notesOn, forms, assetId, slot, compareEnabled, compareStore]);
+  }, [notesOn, forms, assetId, slot, compareStore]);
   const handleOpenChange = (open: boolean, details: { reason: string; cancel: () => void; allowPropagation: () => void }) => {
     if (open) return;
     if (details.reason === "escape-key") {

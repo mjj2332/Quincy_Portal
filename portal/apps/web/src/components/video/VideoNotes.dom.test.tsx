@@ -12,6 +12,9 @@ import { ArchivedFromCache } from "../../testing/archived-from-cache";
 import "../../testing/dom-polyfills";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
+import { installLocalStorageShim } from "../../testing/local-storage";
+import { resetUiPrefMemory } from "../../lib/ui-prefs";
+import { TIME_FORMAT_KEY } from "../../lib/time-format-prefs";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
 vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 
@@ -140,7 +143,9 @@ async function pickVersion(label: string) {
   await flush(8);
 }
 
+let shim: ReturnType<typeof installLocalStorageShim>;
 beforeEach(() => {
+  shim = installLocalStorageShim(); resetUiPrefMemory();
   notifyManager.setScheduler((callback) => callback());
   seedCache = null;
   stub = installVideoElementStub();
@@ -149,7 +154,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
-  root = null; resetVideoUploadStore(); stub.dispose(); document.body.replaceChildren(); vi.unstubAllGlobals(); vi.useRealTimers();
+  root = null; resetVideoUploadStore(); stub.dispose(); shim.restore(); resetUiPrefMemory(); document.body.replaceChildren(); vi.unstubAllGlobals(); vi.useRealTimers();
 });
 
 describe("Video notes panel (#741 5b)", () => {
@@ -1223,6 +1228,15 @@ describe("Copy and paste notes (#741 5c-ui)", () => {
     expect(sent[1]).toEqual({ sourceAssetId: ids.asset1, noteIds: v1.all.map((n) => n.id), offsetFrames: 0 });
   });
 
+  it("the dialog's source and new labels follow the time format (#860)", async () => {
+    shim.values.set(TIME_FORMAT_KEY, JSON.stringify("frames"));
+    await copyOnV1();
+    await openPasteDialog();
+    expect(tid("video-note-paste-source", rows()[0]!)!.textContent).toBe("5");
+    expect(tid("video-note-paste-target", rows()[0]!)!.textContent).toBe("5");
+    expect(tid("video-note-paste-source", rows()[1]!)!.textContent).toBe("20 → 49");
+  });
+
   it("lists skipped notes with their reason in plain words and never ticks them", async () => {
     const v1 = v1Notes();
     await copyOnV1(v1, { [v1.a.id]: "already_copied", [v1.c.id]: "out_of_range" });
@@ -1475,3 +1489,48 @@ describe("Copy and paste notes (#741 5c-ui)", () => {
   });
 });
 const viewerStillOpen = () => document.querySelector('[data-testid="video-review-viewer"]') !== null;
+
+// ---- The time format follows the player's menu (#860) ----
+describe("Time format in the notes (#860)", () => {
+  const trigger = () => tid("video-time-format-trigger")!;
+  const choose = async (id: string) => {
+    await act(async () => { trigger().click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush(2);
+    await act(async () => { tid(`video-time-format-${id}`)!.click(); await Promise.resolve(); });
+    await flush(2);
+  };
+
+  it("picking Standard in the player rewrites the notes' anchors and the composer's anchor in the same tab, and the choice survives a Version switch", async () => {
+    const s = seed();
+    await openFilm({}, 25);
+    expect(tid("video-note-anchor", document)!.textContent).toContain("01:00:01:00");
+    await choose("standard");
+    expect(tid("video-note-anchor-button", threadOf(s.n1.id))!.textContent).toContain("0:00");
+    expect(tid("video-note-anchor-button", threadOf(s.n1.id))!.textContent).not.toContain("01:00");
+    expect(tid("video-note-anchor-button", threadOf(s.n3.id))!.textContent).toContain("0:04 → 0:05");
+    expect(tid("video-note-anchor")!.textContent).toContain("0:01");
+    await pickVersion("v1");
+    expect(trigger().getAttribute("aria-label")).toBe("Time format: Standard");
+    expect(threads().map((t) => tid("video-note-anchor-button", t)!.textContent)).toEqual(["0:00"]);
+  });
+
+  it("Frames show the frame numbers", async () => {
+    const s = seed();
+    await openFilm({}, 0);
+    await choose("frames");
+    expect(tid("video-note-anchor-button", threadOf(s.n1.id))!.textContent).toContain("10");
+    expect(tid("video-note-anchor-button", threadOf(s.n3.id))!.textContent).toContain("100 → 125");
+  });
+
+  it("Escape with the time-format menu open closes only the menu, not the viewer", async () => {
+    await openFilm({}, 0);
+    await act(async () => { trigger().click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush(2);
+    const item = tid("video-time-format-timecode")!;
+    expect(item).not.toBeNull();
+    await key("Escape", item);
+    await flush(4);
+    expect(tid("video-time-format-timecode")).toBeNull();
+    expect(viewerStillOpen()).toBe(true);
+  });
+});

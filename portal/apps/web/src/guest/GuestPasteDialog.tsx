@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import { GUEST_NOTE_PASTE_MAX, VIDEO_NOTE_PASTE_OFFSET_MAX, framesToTimecode, type GuestNotePasteCommitResponse, type GuestNotePasteRow, type GuestNotePastePreviewResponse, type GuestVideoDto } from "@quincy/shared";
+import { GUEST_NOTE_PASTE_MAX, VIDEO_NOTE_PASTE_OFFSET_MAX, type GuestNotePasteCommitResponse, type GuestNotePasteRow, type GuestNotePastePreviewResponse, type GuestVideoDto } from "@quincy/shared";
+import { useFrameLabeller } from "../lib/time-format-prefs";
 import { noteAnchorLabel } from "../lib/video-note-view";
 import { cn } from "../lib/utils";
 import { Button } from "../components/reui/button";
@@ -39,7 +40,6 @@ const covered = (planIds: string | null, ticked: readonly string[], unticked: Re
   return ticked.every((id) => unticked.has(id) || inPlan.has(id));
 };
 
-const timecodeOf = (version: Version) => (frame: number) => framesToTimecode(frame, { nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame }, version.startTimecodeFrames ?? 0);
 
 /**
  * Copy the guest's own notes from another granted Version of this Video onto the one on screen (#741 13d). It is the guest twin of the staff paste dialog (`VideoNotePasteDialog`), which is bound
@@ -205,8 +205,9 @@ function PasteFlow({ opening, api, writer, video, target, markupAllowed, generat
     const known = new Set(items.map((note) => note.id));
     return [...ordered, ...mapped.filter((row) => !known.has(row.noteId)).map((row): Entry => ({ id: row.noteId, mapped: row, note: null }))];
   }, [plan, mapped, own, leftOut]);
-  const sourceTc = useMemo(() => (source ? timecodeOf(source) : (frame: number) => String(frame)), [source]);
-  const targetTc = useMemo(() => timecodeOf(target), [target]);
+  const labelOf = useFrameLabeller();
+  const sourceTc = useMemo(() => (source ? (frame: number) => labelOf(source, frame) : (frame: number) => String(frame)), [source, labelOf]);
+  const targetTc = useMemo(() => (frame: number) => labelOf(target, frame), [target, labelOf]);
   const sourceLabel = source ? `v${source.version}` : "";
 
   async function submit() {

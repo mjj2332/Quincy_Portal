@@ -1,14 +1,17 @@
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
+import { useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
 import { Maximize, Pause, Play, StepBack, StepForward, Volume2, VolumeX } from "lucide-react";
-import { framesToTimecode, rationalToNumber, type Box, type VideoVersionDto } from "@quincy/shared";
+import { rationalToNumber, type Box, type VideoVersionDto } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { useVideoFrameClock, type VideoFrameClock } from "../../lib/video-frame-clock";
 import { usePlayerKeys } from "../../lib/use-player-keys";
+import { useFrameLabel, useTimeFormat } from "../../lib/time-format-prefs";
+import { OverlayContainerContext } from "../OverlayContainerContext";
 import { Button } from "../reui/button";
 import { Kbd, KbdGroup } from "../reui/kbd";
 import { Slider } from "../reui/slider";
 import { Toggle } from "../reui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
+import { TimeFormatMenu } from "./TimeFormatMenu";
 import { VideoStage } from "./VideoStage";
 import { VideoPendingRangeBand, VideoTimelineMarkers, type TimelineMarker } from "./VideoTimelineMarkers";
 
@@ -86,9 +89,17 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   useLayoutEffect(() => { if (transportReplacement == null && transportRef.current) transportHeight.current = transportRef.current.offsetHeight; });
   const clock = useVideoFrameClock(video, version, initialFrame === undefined ? {} : { initialFrame });
 
-  const base = useMemo(() => ({ nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame }), [version.tcNominalFps, version.tcDropFrame]);
-  const start = version.startTimecodeFrames ?? 0;
-  const timecode = useCallback((frame: number) => framesToTimecode(frame, base, start), [base, start]);
+  const timecode = useFrameLabel(version);
+  const [timeFormat] = useTimeFormat();
+  // Full screen shows only the player's own subtree, so the time-format menu portals into it while it is up (else it opens behind, unseen).
+  const [section, setSection] = useState<HTMLElement | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const inheritedOverlay = useContext(OverlayContainerContext);
+  useEffect(() => {
+    const onChange = () => { setIsFullscreen(section !== null && document.fullscreenElement === section); };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => { document.removeEventListener("fullscreenchange", onChange); };
+  }, [section]);
   const lastFrame = Math.max(0, version.frameCount - 1);
   const shownFrame = clock.targetFrame ?? clock.frame;
   const fullscreenAvailable = typeof document !== "undefined" && document.fullscreenEnabled === true;
@@ -123,14 +134,14 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const playLabel = clock.playing ? "Pause" : "Play";
 
   return <section
-    ref={playerRef}
+    ref={(element) => { playerRef.current = element; setSection(element); }}
     aria-label="Player"
     data-testid="video-player"
     tabIndex={-1}
     onKeyDown={keyboard === "self" ? (event) => { handleKeyDown(event); } : undefined}
     className={cn("flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", className)}
   >
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} onVideo={setVideo} overlay={overlay} onMediaError={onMediaError} />
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} onMediaError={onMediaError} />
 
     {transportReplacement != null ? <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div> : <div ref={transportRef} className="flex flex-col gap-[var(--space-3)]">
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}
@@ -165,6 +176,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
       <output data-testid="video-readout" aria-live={clock.playing || !clock.confirmed ? "off" : "polite"} className={cn("px-[var(--space-2)] max-[721px]:px-0", MONO)}>
         <span>{timecode(clock.frame)}</span><span className="text-foreground-secondary">{` / ${timecode(version.frameCount)}`}</span>
       </output>
+      <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><TimeFormatMenu /></OverlayContainerContext.Provider>
       <div data-testid="video-key-legend" className={LEGEND}>
         <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>J</Kbd><Kbd className={LEGEND_KBD}>K</Kbd><Kbd className={LEGEND_KBD}>L</Kbd></KbdGroup>shuttle</span>
         <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>←</Kbd><Kbd className={LEGEND_KBD}>→</Kbd></KbdGroup>frame</span>

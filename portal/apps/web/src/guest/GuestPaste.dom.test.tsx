@@ -3,6 +3,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GuestNoteThreadDto, GuestSessionResponse, GuestVideoDto } from "@quincy/shared";
 import { installVideoElementStub, type VideoElementStub } from "../testing/video-element";
+import { installLocalStorageShim } from "../testing/local-storage";
+import { resetUiPrefMemory } from "../lib/ui-prefs";
+import { TIME_FORMAT_KEY } from "../lib/time-format-prefs";
 import { mockViewport, type MockViewport } from "../testing/viewport";
 import { GuestApp } from "./GuestApp";
 
@@ -654,5 +657,19 @@ describe("a stale answer for part of the selection", () => {
     expect(byId("guest-paste-submit")?.hasAttribute("disabled")).toBe(false);
     await click(byId("guest-paste-submit"));
     expect((pasteCalls(COMMIT_URL)[1]!.body as { notes: Array<{ noteId: string }> }).notes.map((entry) => entry.noteId)).toEqual([noteId(1), noteId(2)]);
+  });
+});
+
+describe("the time format in the paste dialog (#860)", () => {
+  let shim: ReturnType<typeof installLocalStorageShim>;
+  beforeEach(() => { shim = installLocalStorageShim(); resetUiPrefMemory(); });
+  afterEach(() => { shim.restore(); resetUiPrefMemory(); });
+
+  it("the source and new labels follow the chosen format", async () => {
+    shim.values.set(TIME_FORMAT_KEY, JSON.stringify("frames"));
+    extra = (url, init) => (url === PREVIEW_URL && init?.method === "POST" ? json(plan([mapped(1)])) : undefined);
+    await open();
+    await openDialog();
+    expect(allById("guest-paste-row")[0]!.textContent).toContain("v1 50 → v2 50");
   });
 });
