@@ -361,7 +361,9 @@ describe("the video screen", () => {
 
 describe("the notes pane (#859)", () => {
   const toggle = () => byId("video-pane-toggle");
-  const pane = () => byId("video-review-pane");
+  /** The pane when it is showing; a collapsed pane stays mounted but hidden (`mountedPane`). */
+  const mountedPane = () => byId("video-review-pane");
+  const pane = () => { const el = mountedPane(); return el && !el.hidden ? el : null; };
   const handle = () => byId("video-review-handle");
   const now = (el: Element) => Number(el.getAttribute("aria-valuenow"));
   const press = async (target: Element, key: string, init: KeyboardEventInit = {}) => { await act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init })); }); };
@@ -382,7 +384,7 @@ describe("the notes pane (#859)", () => {
     const film = host.querySelector("video");
     await click(toggle()!);
     expect(pane()).toBeNull();
-    expect(byId("guest-notes-panel")).toBeNull();
+    expect(mountedPane()!.hidden).toBe(true);
     expect(toggle()!.getAttribute("aria-expanded")).toBe("false");
     expect(host.querySelector("video")).toBe(film);
     expect(saved()).toEqual({ open: false, width: 360 });

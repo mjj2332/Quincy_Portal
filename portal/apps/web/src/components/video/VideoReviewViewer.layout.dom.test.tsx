@@ -67,7 +67,9 @@ afterEach(async () => { viewport.restore(); shim.restore(); if (root) await act(
 
 const PANE = REVIEW_PANE_KEY;
 const toggle = () => document.querySelector<HTMLButtonElement>('[data-testid="video-pane-toggle"]');
-const pane = () => document.querySelector<HTMLElement>('[data-testid="video-review-pane"]');
+/** The pane when it is showing; a collapsed pane stays mounted but hidden (`mountedPane`). */
+const mountedPane = () => document.querySelector<HTMLElement>('[data-testid="video-review-pane"]');
+const pane = () => { const el = mountedPane(); return el && !el.hidden ? el : null; };
 const handle = () => document.querySelector<HTMLElement>('[data-testid="video-review-handle"]');
 const splitRow = () => document.querySelector<HTMLElement>('[data-testid="video-review-split"]')!;
 const filmNode = () => document.querySelector("video");
@@ -106,6 +108,42 @@ describe("VideoReviewViewer layout (#859): full-height player, collapsible and r
     expect(pane()).not.toBeNull();
     expect(filmNode()).toBe(film);
     expect(saved()).toEqual({ open: true, width: 360 });
+  });
+
+  it("collapsing hides the pane without unmounting it: its contents are the same nodes, inert and out of the tab order, when it reopens", async () => {
+    await mount(["notes"]);
+    await openViewerWithFilm();
+    const aside = mountedPane()!.querySelector("aside")!;
+    await act(async () => { toggle()!.click(); });
+    expect(mountedPane()).not.toBeNull();
+    expect(mountedPane()!.hidden).toBe(true);
+    expect(mountedPane()!.hasAttribute("inert")).toBe(true);
+    expect(mountedPane()!.style.display).toBe("none");
+    expect(handle()).toBeNull();
+    await act(async () => { toggle()!.click(); });
+    expect(mountedPane()!.hidden).toBe(false);
+    expect(mountedPane()!.hasAttribute("inert")).toBe(false);
+    expect(mountedPane()!.querySelector("aside")).toBe(aside);
+  });
+
+  it("a row too narrow for the smallest pane and a 480px player lays the pane out collapsed without writing the saved preference; the toggle shows it for the visit", async () => {
+    shim.values.set(PANE, JSON.stringify({ open: true, width: 400 }));
+    await mount(["notes"]);
+    // the row is measured when the viewer mounts: give every element 740px of width, as a 740px window has
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 740 });
+    try {
+      await openViewerWithFilm();
+      expect(pane()).toBeNull();
+      expect(handle()).toBeNull();
+      expect(toggle()!.getAttribute("aria-expanded")).toBe("false");
+      expect(JSON.parse(shim.values.get(PANE)!)).toEqual({ open: true, width: 400 });
+      await act(async () => { toggle()!.click(); });
+      expect(pane()).not.toBeNull();
+      expect(toggle()!.getAttribute("aria-expanded")).toBe("true");
+      expect(handle()).toBeNull();
+      expect(JSON.parse(shim.values.get(PANE)!)).toEqual({ open: true, width: 400 });
+    } finally { if (original) Object.defineProperty(HTMLElement.prototype, "clientWidth", original); else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth; }
   });
 
   it("collapsing with focus inside the pane moves focus to the toggle", async () => {

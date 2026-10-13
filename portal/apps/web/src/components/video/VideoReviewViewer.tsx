@@ -4,8 +4,6 @@ import { framesToTimecode, videoVersionDownloadUrl, type Role, type VideoDto, ty
 import { registerToastHost } from "../../lib/toast-host";
 import { hasOpenAlertDialog } from "../../lib/alert-dialog-press";
 import { useMediaQuery } from "../../lib/use-media-query";
-import { REVIEW_PANE_KEY, normalizeReviewPane } from "../../lib/review-pane-prefs";
-import { useUiPref } from "../../lib/ui-prefs";
 import type { CompareSideId, CompareStore } from "../../lib/video-compare-store";
 import { OverlayContainerContext } from "../OverlayContainerContext";
 import { Button } from "../reui/button";
@@ -14,7 +12,7 @@ import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reu
 import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
-import { ReviewPaneToggle, ReviewSplit } from "../quincy/ReviewPane";
+import { ReviewPaneToggle, ReviewSplit, useReviewPane } from "../quincy/ReviewPane";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../reui/tabs";
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
 import { formatBytes, formatDuration, formatFps, formatVideoDate } from "./video-format";
@@ -100,15 +98,12 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const [resume, setResume] = useState<{ assetId: string; frame: number } | null>(null);
   const phone = useMediaQuery(PHONE_QUERY);
   // The side pane (#859): open / width are a per-browser preference shared with the guest page. `sideTab` picks Notes (or Details) or Delivery inside it.
-  const [panePref, setPanePref] = useUiPref(REVIEW_PANE_KEY, normalizeReviewPane);
-  const panePrefRef = useRef(panePref);
-  panePrefRef.current = panePref;
+  const pane = useReviewPane(phone);
   const paneId = useId();
   const [sideTab, setSideTab] = useState<"main" | "delivery">("main");
-  const setPaneOpen = useCallback((open: boolean) => { if (panePrefRef.current.open !== open) setPanePref({ ...panePrefRef.current, open }); }, [setPanePref]);
-  const setPaneWidth = useCallback((width: number) => { setPanePref({ ...panePrefRef.current, width }); }, [setPanePref]);
   /** An I/O mark, a marker or a note link needs the notes where the person can see them: open the pane on its first tab. */
-  const revealNotes = useCallback(() => { if (!phone) setPaneOpen(true); setSideTab("main"); }, [setPaneOpen, phone]);
+  const setPaneOpen = pane.setOpen;
+  const revealNotes = useCallback(() => { setPaneOpen(true); setSideTab("main"); }, [setPaneOpen]);
   const deepNoteId = notes?.openNoteId;
   useEffect(() => { if (deepNoteId !== undefined) revealNotes(); }, [deepNoteId, revealNotes]);
   // One mute choice for both views: the single player and compare each start from it, and report back on exit.
@@ -326,7 +321,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} /></Suspense>}
       </div>}
       <div data-testid="video-header-actions" className="ml-auto flex flex-wrap items-center justify-end gap-x-[var(--space-4)] gap-y-[var(--space-2)] max-[721px]:ml-0 max-[721px]:justify-start">
-      {!comparing && !phone && <ReviewPaneToggle open={panePref.open} onOpenChange={setPaneOpen} paneId={paneId} label={notesOn ? "Notes" : "Details"} className="pointer-coarse:min-h-11" />}
+      {!comparing && !phone && <ReviewPaneToggle open={pane.open} onOpenChange={setPaneOpen} paneId={paneId} label={notesOn ? "Notes" : "Details"} className="pointer-coarse:min-h-11" />}
       {deepLink && !comparing && <CopyTextButton text={deepLink.href(version.version)} label="Copy link" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}
       {download && !comparing && <Button variant="outline" nativeButton={false} data-testid="video-download" aria-label={`Download version ${version.version}`} className="pointer-coarse:min-h-11 max-[721px]:min-h-11" render={<a href={videoVersionDownloadUrl(download.projectId, version.assetId)} download />}><DownloadIcon aria-hidden="true" />Download</Button>}
       {reviewLinks && <Button type="button" variant="outline" data-testid="video-create-review-link" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={() => {
@@ -357,7 +352,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       </aside>;
     // Delivery is a tab of the pane on desktop, so the player takes the full column; both panels stay mounted (a draft or a pending write survives switching). A phone keeps today's stack: delivery under the player.
     const tabbed = delivery !== undefined && !phone;
-    const pane = tabbed
+    const sidePane = tabbed
       ? <Tabs value={sideTab} onValueChange={(next) => { setSideTab(next === "delivery" ? "delivery" : "main"); }} className="min-h-0 flex-1 gap-0">
         <TabsList variant="line" className="w-full shrink-0 rounded-none border-l border-b border-border bg-card px-[var(--space-3)]">
           <TabsTrigger value="main">{slots ? "Notes" : "Details"}</TabsTrigger>
@@ -373,9 +368,10 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       ...(slots.playerProps.onMark ? { onMark: (kind: "in" | "out", frame: number) => { revealNotes(); slots.playerProps.onMark!(kind, frame); } } : {}),
     } : undefined;
     return <ReviewSplit
-      open={panePref.open}
-      width={panePref.width}
-      onWidth={setPaneWidth}
+      open={pane.open}
+      width={pane.width}
+      onWidth={pane.setWidth}
+      onNarrow={pane.onNarrow}
       paneId={paneId}
       handleLabel="Resize notes"
       stacked={phone}
@@ -385,7 +381,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} />
         {delivery && phone && <div className="mt-[var(--space-4)] shrink-0">{deliveryPanel}</div>}
       </>}
-      pane={pane}
+      pane={sidePane}
     />;
   };
 

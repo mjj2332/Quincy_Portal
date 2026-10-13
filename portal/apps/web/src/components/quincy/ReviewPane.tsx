@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
-import { PANE_MIN, clampPaneWidth, paneCeiling } from "../../lib/review-pane-prefs";
+import { PANE_MIN, PLAYER_MIN, REVIEW_PANE_KEY, clampPaneWidth, normalizeReviewPane, paneCeiling } from "../../lib/review-pane-prefs";
+import { useUiPref } from "../../lib/ui-prefs";
 import { Button } from "../reui/button";
 
 /**
@@ -14,10 +15,33 @@ import { Button } from "../reui/button";
  * measured width, never a percentage inside the flex row. `stacked` (phone) drops the handle and the width: the pane wraps below the player.
  */
 export const REVIEW_PANE_WIDTH_VAR = "--review-pane-w";
+
+/**
+ * The pane's state for a screen: the saved preference (open, width), plus the narrow rule. A row too narrow for the smallest pane AND the
+ * 480px player lays out collapsed without touching the saved preference; the toggle then shows it for this visit only (`narrowOpen`),
+ * and the player may shrink below 480 while it does.
+ */
+export function useReviewPane(phone: boolean) {
+  const [pref, setPref] = useUiPref(REVIEW_PANE_KEY, normalizeReviewPane);
+  const prefRef = useRef(pref);
+  prefRef.current = pref;
+  const [narrow, setNarrow] = useState(false);
+  const narrowRef = useRef(false);
+  narrowRef.current = narrow;
+  const [narrowOpen, setNarrowOpen] = useState(false);
+  const open = narrow ? narrowOpen : pref.open;
+  const setOpen = useCallback((next: boolean) => {
+    if (phone) return; // a phone has its own layout and must not rewrite the desktop choice
+    if (narrowRef.current) { setNarrowOpen(next); return; }
+    if (prefRef.current.open !== next) setPref({ ...prefRef.current, open: next });
+  }, [phone, setPref]);
+  const setWidth = useCallback((width: number) => { setPref({ ...prefRef.current, width }); }, [setPref]);
+  return { open, setOpen, width: pref.width, setWidth, onNarrow: setNarrow };
+}
 const STEP = 16;
 const STEP_BIG = 64;
 
-export function ReviewSplit({ player, pane, open, width, onWidth, paneId, handleLabel, stacked, rowClassName, playerClassName }: {
+export function ReviewSplit({ player, pane, open, width, onWidth, onNarrow, paneId, handleLabel, stacked, rowClassName, playerClassName }: {
   player: ReactNode;
   pane: ReactNode;
   open: boolean;
@@ -25,6 +49,8 @@ export function ReviewSplit({ player, pane, open, width, onWidth, paneId, handle
   width: number;
   /** Commit a new preferred width: on a key, and when a drag ends. */
   onWidth: (next: number) => void;
+  /** Told whether the row is too narrow for the smallest pane plus the minimum player (measured; never while unmeasured). */
+  onNarrow: (narrow: boolean) => void;
   paneId: string;
   handleLabel: string;
   stacked: boolean;
@@ -46,6 +72,9 @@ export function ReviewSplit({ player, pane, open, width, onWidth, paneId, handle
     observer.observe(row);
     return () => { observer.disconnect(); };
   }, [measure]);
+
+  const narrow = hostWidth > 0 && hostWidth < PANE_MIN + PLAYER_MIN;
+  useEffect(() => { onNarrow(narrow); }, [narrow, onNarrow]);
 
   const [drag, setDrag] = useState<number | null>(null);
   const dragRef = useRef<{ x: number; width: number; now: number } | null>(null);
@@ -91,10 +120,10 @@ export function ReviewSplit({ player, pane, open, width, onWidth, paneId, handle
   };
   useEffect(() => { if (!open || stacked) { dragRef.current = null; setDrag(null); } }, [open, stacked]);
 
-  const showPane = (stacked || open) && pane !== null;
+  const showPane = stacked || open;
   return <div ref={rowRef} data-testid="video-review-split" className={`flex min-h-0 flex-1 flex-wrap min-[721px]:flex-nowrap min-[721px]:overflow-hidden ${rowClassName ?? ""}`}>
     <div data-testid="video-review-player" className={`flex min-h-0 min-w-0 flex-[999_1_640px] flex-col p-[var(--space-5)] min-[721px]:flex-1 ${playerClassName ?? ""}`}>{player}</div>
-    {showPane && !stacked && <div
+    {showPane && !stacked && !narrow && <div
       role="separator"
       data-testid="video-review-handle"
       tabIndex={0}
@@ -113,10 +142,13 @@ export function ReviewSplit({ player, pane, open, width, onWidth, paneId, handle
       onLostPointerCapture={finish}
       className="relative z-10 w-0 flex-none cursor-col-resize touch-none before:absolute before:inset-y-0 before:-right-2 before:-left-2 before:content-[''] pointer-coarse:before:-right-3 pointer-coarse:before:-left-3 after:absolute after:inset-y-0 after:left-0 after:w-0.5 after:bg-transparent after:transition-colors hover:after:bg-ring data-[dragging=true]:after:bg-ring"
     />}
-    {showPane && <div
+    {/* Collapsing hides the pane, it does not unmount it: an upload in flight, a pending reply and a draft all live in it. */}
+    {pane !== null && <div
       id={paneId}
       data-testid="video-review-pane"
-      style={stacked ? undefined : { [REVIEW_PANE_WIDTH_VAR]: `${shown}px` } as CSSProperties}
+      hidden={!showPane}
+      inert={!showPane}
+      style={{ ...(stacked ? {} : { [REVIEW_PANE_WIDTH_VAR]: `${shown}px` }), ...(showPane ? {} : { display: "none" }) } as CSSProperties}
       className="flex min-h-0 flex-col max-[721px]:flex-[1_1_360px] min-[721px]:w-[var(--review-pane-w)] min-[721px]:flex-none min-[721px]:overflow-hidden"
     >{pane}</div>}
   </div>;

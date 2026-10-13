@@ -3,6 +3,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GuestNoteThreadDto, GuestSessionResponse, GuestVideoDto } from "@quincy/shared";
 import { installVideoElementStub, type VideoElementStub } from "../testing/video-element";
+import { installLocalStorageShim } from "../testing/local-storage";
+import { resetUiPrefMemory } from "../lib/ui-prefs";
 import { mockViewport, type MockViewport } from "../testing/viewport";
 import { GuestApp } from "./GuestApp";
 
@@ -1313,5 +1315,45 @@ describe("rich notes (#835 C): pictures, no mentions", () => {
     await act(async () => { props("guest-composer-body").onChange(withImage("My note")); });
     await submit("guest-composer");
     expect(patched).toEqual({ expectedRevision: 3, content: withImage("My note") });
+  });
+});
+
+describe("collapsing the notes pane keeps its work (#859)", () => {
+  let shim: ReturnType<typeof installLocalStorageShim>;
+  beforeEach(() => { shim = installLocalStorageShim(); resetUiPrefMemory(); });
+  afterEach(() => { shim.restore(); resetUiPrefMemory(); });
+  const toggle = () => byId("video-pane-toggle")!;
+
+  it("a reply that is in flight when the pane is collapsed still shows its failure when the pane is reopened", async () => {
+    notes = { [asset(10)]: [note(1)] };
+    let reject: () => void = () => undefined;
+    extra = (url, init) => (url.endsWith("/replies") && init?.method === "POST" ? new Promise<Response>((resolve) => { reject = () => { resolve(json({ error: "server_error" }, 500)); }; }) : undefined);
+    await open();
+    await click(byId("guest-note-reply-button"));
+    await typeInto(byId("guest-reply-body"), "On it");
+    await submit("guest-reply-form");
+    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(true);
+    await click(toggle());
+    expect(byId("video-review-pane")!.hidden).toBe(true);
+    await act(async () => { reject(); });
+    await flush();
+    await click(toggle());
+    expect(byId("video-review-pane")!.hidden).toBe(false);
+    expect(byId("guest-reply-problem")).not.toBeNull();
+    expect(byId("guest-reply-problem")!.textContent).not.toBe("");
+  });
+
+  it("an attachment still uploading when the pane is collapsed is still uploading (Send stays held) when it is reopened", async () => {
+    notes = { [asset(10)]: [note(1)] };
+    await open();
+    await click(byId("guest-note-reply-button"));
+    await act(async () => { field.props.get("guest-reply-body")!.onUploadingChange!(true); });
+    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(true);
+    await click(toggle());
+    await click(toggle());
+    expect(byId("guest-reply-form")).not.toBeNull();
+    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { field.props.get("guest-reply-body")!.onUploadingChange!(false); });
+    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(false);
   });
 });
