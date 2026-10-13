@@ -2,7 +2,7 @@ import { useQuery, useQueryClient, type QueryClient, type UseQueryResult } from 
 import { reviewLinkListResponseSchema, reviewLinkRevealResponseSchema, reviewLinkResponseSchema, type ReviewLinkCreateInput, type ReviewLinkDto, type ReviewLinkPatchInput, type ReviewLinkRevealResponse } from "@quincy/shared";
 import { ZodError } from "zod";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./api";
-import { invalidateProjectSurfaces, projectQueryRetry, recordProjectArchivedRefusal, terminatePrincipalOnUnauthorized } from "./project-data";
+import { invalidateProjectSurfaces, projectDataKeys, projectQueryRetry, recordProjectArchivedRefusal, terminatePrincipalOnUnauthorized } from "./project-data";
 import { classifyReviewLinkError } from "./review-link-errors";
 
 /**
@@ -11,7 +11,7 @@ import { classifyReviewLinkError } from "./review-link-errors";
  * server answered "gate closed" also invalidates the Project's video-review parts and detail so the UI hides itself, a 401 ends the session, and an archive refusal is recorded. The URL a create or replace
  * returns is handed to the caller for the reveal step, and since #815 it is also the link's `url`, which rides in the cached DTO like any other field (never in storage).
  */
-export const reviewLinksKey = (projectId: string) => ["project-data", projectId, "review-links"] as const;
+export const reviewLinksKey = (projectId: string) => projectDataKeys.reviewLinks(projectId);
 const base = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}/review-links`;
 const linkPath = (projectId: string, linkId: string) => `${base(projectId)}/${encodeURIComponent(linkId)}`;
 const videoPath = (projectId: string, linkId: string, videoId: string) => `${linkPath(projectId, linkId)}/videos/${encodeURIComponent(videoId)}`;
@@ -64,7 +64,14 @@ export function createReviewLinkActions(client: QueryClient, projectId: string):
   }
   // A link the server just returned is seeded even into a list that never loaded (initial GET pending or failed), so Done can still open it;
   // the refetch that follows every write fills in the rest. A removal never invents a list.
-  const upsert = (link: ReviewLinkDto) => remember((links) => (links.some((existing) => existing.id === link.id) ? links.map((existing) => (existing.id === link.id ? link : existing)) : [link, ...links]), true);
+  // The Delivery link (#847) stays pinned first, as the server lists it: a new link lands after it.
+  const upsert = (link: ReviewLinkDto) => remember((links) => {
+    if (links.some((existing) => existing.id === link.id)) return links.map((existing) => (existing.id === link.id ? link : existing));
+    if (link.delivery) return [link, ...links];
+    const pinned = links.findIndex((existing) => !existing.delivery);
+    const at = pinned < 0 ? links.length : pinned;
+    return [...links.slice(0, at), link, ...links.slice(at)];
+  }, true);
   const onWriteRefusal = (error: unknown) => onRefusal(client, projectId, error);
   async function settled<T>(task: () => Promise<T>): Promise<T> {
     try { return await task(); }

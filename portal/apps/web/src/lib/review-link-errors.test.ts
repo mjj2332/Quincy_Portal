@@ -16,6 +16,7 @@ describe("classifyReviewLinkError", () => {
     ["link_not_revoked", 409, "refetch", /Revoke this link before deleting it/],
     ["video_other_project", 422, "refetch", /this Project/],
     ["expiry_out_of_range", 422, "none", /between one hour/],
+    ["delivery_review_managed", 409, "refetch", /Delivery page/],
   ] as const)("%s", (code, status, action, text) => {
     const result = classifyReviewLinkError(refused(status, { error: "server words", code }));
     expect(result.action).toBe(action);

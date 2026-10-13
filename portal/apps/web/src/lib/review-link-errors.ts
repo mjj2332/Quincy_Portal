@@ -20,6 +20,7 @@ const CODE_COPY: Record<string, { text: string; action: ReviewLinkErrorAction }>
   already_on_link: { text: "That Video is already on this link.", action: "refetch" },
   link_conflict: { text: "The Review link changed. It was reloaded; try again.", action: "refetch" },
   video_other_project: { text: "Every Video must belong to this Project. The list was refreshed.", action: "refetch" },
+  delivery_review_managed: { text: "This link is managed by the Delivery page, so it can't be changed here. The list was refreshed.", action: "refetch" },
   expiry_out_of_range: { text: "The expiry must be between one hour and 365 days from now.", action: "none" },
 };
 

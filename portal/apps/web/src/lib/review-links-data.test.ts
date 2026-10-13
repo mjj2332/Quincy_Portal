@@ -34,6 +34,18 @@ describe("review link writes and the list cache", () => {
     expect((client.getQueryData(reviewLinksKey(PROJECT)) as Array<{ id: string }>).map((l) => l.id)).toEqual([L1, L2]);
   });
 
+  it("keeps the Delivery link first: a new link lands after it, and the Delivery link itself is never pushed down (#847)", async () => {
+    const DELIVERY = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const client = new QueryClient();
+    client.setQueryData(reviewLinksKey(PROJECT), [linkOf({ id: DELIVERY, delivery: true, label: "Delivery", expiresAt: null }), linkOf({ id: L2 })]);
+    apiPostMock.mockResolvedValue(reveal(L1));
+    await createReviewLinkActions(client, PROJECT).create({} as never);
+    expect((client.getQueryData(reviewLinksKey(PROJECT)) as Array<{ id: string }>).map((l) => l.id)).toEqual([DELIVERY, L1, L2]);
+    apiPostMock.mockResolvedValue({ link: linkOf({ id: DELIVERY, delivery: true, label: "Delivery", expiresAt: null }), url: "https://example.test/x" });
+    await createReviewLinkActions(client, PROJECT).replace(DELIVERY);
+    expect((client.getQueryData(reviewLinksKey(PROJECT)) as Array<{ id: string }>).map((l) => l.id)).toEqual([DELIVERY, L1, L2]);
+  });
+
   it("a replace puts the new URL in the cached list, and a read that was in flight cannot put the old one back", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const oldLink = linkOf({ id: L1, url: "https://example.test/d/old#t=old" });

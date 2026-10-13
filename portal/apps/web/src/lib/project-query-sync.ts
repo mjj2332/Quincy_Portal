@@ -17,6 +17,7 @@ export type ProjectDataResource =
   | { kind: "videos" }
   | { kind: "delivery" }
   | { kind: "delivery-candidates" }
+  | { kind: "review-links" }
   | { kind: "video-trash" }
   | { kind: "video-notes"; assetId: string }
   | { kind: "video-decisions"; videoId: string };
@@ -84,7 +85,7 @@ function nonEmptyString(value: unknown): value is string {
 function isResource(value: unknown): value is ProjectDataResource {
   if (!value || typeof value !== "object") return false;
   const resource = value as Record<string, unknown>;
-  if (resource.kind === "detail" || resource.kind === "activity" || resource.kind === "subtasks" || resource.kind === "comments" || resource.kind === "comment-read-marker" || resource.kind === "collaboration-summary" || resource.kind === "video-review" || resource.kind === "videos" || resource.kind === "delivery" || resource.kind === "delivery-candidates" || resource.kind === "video-trash") return Object.keys(resource).length === 1;
+  if (resource.kind === "detail" || resource.kind === "activity" || resource.kind === "subtasks" || resource.kind === "comments" || resource.kind === "comment-read-marker" || resource.kind === "collaboration-summary" || resource.kind === "video-review" || resource.kind === "videos" || resource.kind === "delivery" || resource.kind === "delivery-candidates" || resource.kind === "review-links" || resource.kind === "video-trash") return Object.keys(resource).length === 1;
   if (resource.kind === "video-notes") return nonEmptyString(resource.assetId) && Object.keys(resource).length === 2;
   if (resource.kind === "video-decisions") return nonEmptyString(resource.videoId) && Object.keys(resource).length === 2;
   return resource.kind === "assets" && validCollections.has(resource.collectionKind as CollectionKind) && Object.keys(resource).length === 2;
@@ -146,6 +147,7 @@ export function projectResourceKey(projectId: string, resource: ProjectDataResou
     case "videos": return projectDataKeys.videos(projectId);
     case "delivery": return projectDataKeys.delivery(projectId);
     case "delivery-candidates": return projectDataKeys.deliveryCandidates(projectId);
+    case "review-links": return projectDataKeys.reviewLinks(projectId);
     case "video-trash": return projectDataKeys.videoTrash(projectId);
     case "video-notes": return projectDataKeys.videoNotes(projectId, resource.assetId);
     case "video-decisions": return projectDataKeys.videoDecisions(projectId, resource.videoId);

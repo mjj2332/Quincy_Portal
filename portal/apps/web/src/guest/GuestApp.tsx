@@ -25,7 +25,7 @@ type Screen =
  * boot (exchange the token handed in as a prop, or resume the session on a reload) -> passcode | limited | unreachable | unavailable | list -> video(index). A single-Video link skips the list.
  * A 404 or a lost 401 is `unavailable` (no oracle); a network error or 5xx is `unreachable`, a calm retry of the step that failed.
  */
-export function GuestApp({ token: initialToken }: { token: string | null }) {
+export function GuestApp({ token: initialToken, initialVideoId = null }: { token: string | null; initialVideoId?: string | null }) {
   const [screen, setScreen] = useState<Screen>({ name: "boot" });
   const [session, setSession] = useState<GuestSessionResponse | null>(null);
   const [videos, setVideos] = useState<GuestVideoDto[]>([]);
@@ -54,6 +54,12 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
   // The step that failed transiently; the Try again button repeats it.
   const retry = useRef<() => void>(() => undefined);
 
+  const unavailable = useCallback(() => { setScreen({ name: "unavailable" }); }, []);
+  // The one verify dialog for the page and its one continuation slot: Download all, a decision and the single Download all all ask it, so two of them can never each open their own.
+  const { verify, dialog: verifyDialog } = useGuestVerify(setSession, unavailable);
+  // The film a Delivery page's "Review & feedback" link names (#847); consumed by the first `enter`.
+  const wantedVideo = useRef<string | null>(initialVideoId);
+
   const fail = useCallback((step: () => void) => {
     retry.current = () => { setScreen({ name: "boot" }); step(); };
     setScreen({ name: "unreachable" });
@@ -65,8 +71,20 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
     if (list.kind === "gone") { setScreen({ name: "unavailable" }); return; }
     if (list.kind === "transient") { fail(() => { void enter(opened, next); }); return; }
     commitVideos(list.value);
+    const wanted = wantedVideo.current;
+    wantedVideo.current = null;
+    if (wanted !== null) {
+      const index = list.value.findIndex((video) => video.id === wanted);
+      if (index >= 0) {
+        // The video screen opens a film on its newest granted Version. An unverified guest gets the existing verify dialog, once.
+        setScreen({ name: "video", index });
+        if (!next.verified) verify.request();
+        return;
+      }
+      setNotice("That video is no longer available on this link. Here is what is.");
+    }
     setScreen(list.value.length === 1 ? { name: "video", index: 0 } : { name: "list" });
-  }, [fail, commitVideos]);
+  }, [fail, commitVideos, verify]);
 
   const exchange = useCallback(async (opened: GuestApi, tokenValue: string, passcode?: string) => {
     const result = await opened.exchange(tokenValue, passcode);
@@ -82,30 +100,29 @@ export function GuestApp({ token: initialToken }: { token: string | null }) {
     else setScreen({ name: "unavailable" });
   }, [enter, fail]);
 
-  const resume = useCallback(async (opened: GuestApi) => {
+  const resume = useCallback(async (opened: GuestApi, exchangeIfGone?: string) => {
     const existing = await opened.session();
-    if (existing.kind === "gone") setScreen({ name: "unavailable" });
-    else if (existing.kind === "transient") fail(() => { void resume(opened); });
-    else await enter(opened, existing.value);
-  }, [enter, fail]);
+    if (existing.kind === "gone") { if (exchangeIfGone !== undefined) await exchange(opened, exchangeIfGone); else setScreen({ name: "unavailable" }); }
+    else if (existing.kind === "transient") fail(() => { void resume(opened, exchangeIfGone); });
+    else { if (exchangeIfGone !== undefined) token.current = null; await enter(opened, existing.value); }
+  }, [enter, exchange, fail]);
 
   useEffect(() => {
     if (started.current) return;
     started.current = true;
     // `main.tsx` already scrubbed the fragment and passed the token in; this page never reads the address.
     if (api === null) { setScreen({ name: "unavailable" }); return; }
+    // A Delivery deep link (a film in the fragment) resumes first: the visitor may already hold this link's session, and a second exchange would only churn it. Ordinary links exchange first.
+    if (token.current !== null && initialVideoId !== null) { void resume(api, token.current); return; }
     if (token.current !== null) { void exchange(api, token.current); return; }
     void resume(api);
-  }, [api, exchange, resume]);
+  }, [api, exchange, resume, initialVideoId]);
 
   const submitPasscode = (passcode: string) => {
     if (api === null || token.current === null) { setScreen({ name: "unavailable" }); return; }
     setScreen((current) => (current.name === "passcode" ? { ...current, pending: true } : current));
     void exchange(api, token.current, passcode);
   };
-  const unavailable = useCallback(() => { setScreen({ name: "unavailable" }); }, []);
-  // The one verify dialog for the page and its one continuation slot: Download all, a decision and the single Download all all ask it, so two of them can never each open their own.
-  const { verify, dialog: verifyDialog } = useGuestVerify(setSession, unavailable);
   // Staff took the displayed Video or Version off the link while it was open: show what is still granted, calmly, or nothing if nothing is.
   const grantsChanged = useCallback((fresh: GuestVideoDto[]) => {
     if (fresh.length === 0) { setScreen({ name: "unavailable" }); return; }

@@ -53,6 +53,8 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
     </div>;
   }
 
+  // The Delivery link (#847) follows Publish and Unlock: staff see it and copy its address, nothing more.
+  const managed = link.delivery;
   const revoked = link.status === "revoked";
   const expired = link.status === "expired";
   const locked = revoked || ui.archived;
@@ -134,6 +136,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
       </div>}
     >
 
+    {managed && <Notice tone="caution" role="status" data-testid="review-link-managed-note">Managed by the Delivery page. Films follow Publish and Unlock; this link has no expiry and cannot be revoked or deleted.</Notice>}
     {revoked && <Notice tone="caution" role="status">This link was revoked. Guests can no longer open it.</Notice>}
     {!revoked && ui.archived && <Notice tone="caution" role="status">Archived projects are read-only, so this link can't be changed. You can still revoke it.</Notice>}
     {problems.map(([scope, problem]) => <Notice key={scope} tone="critical" role="alert">{problem.text}</Notice>)}
@@ -148,6 +151,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
           <span className={FIELD_LEGEND_TEXT}>Link</span>
           <FieldDescription>Press Replace link to get a copyable link.</FieldDescription>
         </Field>)}
+      {!managed && <>
       <QuincyField id="review-link-detail-label" label="Label" maxLength={REVIEW_LINK_LABEL_MAX} autoComplete="off" disabled={locked} value={labelValue} onChange={(event) => store.patchDetail(linkId, { label: event.target.value })} />
       <DateTimeField variant="date" id="review-link-detail-expiry" label="Expires" value={expiryValue} disabled={locked} positionerClassName={DIALOG_FIELD_LAYER} onApply={(next) => { if (next) store.patchDetail(linkId, { expiryDay: next === currentDay ? null : next }); }} description={expiry && !expiry.ok ? expiry.message : expiryChanged ? "The link stops working at the end of this day." : link.expiresAt === null ? "The link never expires." : `The link stops working on ${formatAbsoluteTime(link.expiresAt).replace(", ", " at ")}.`} {...(expiry && !expiry.ok ? { descriptionRole: "status" as const } : {})} />
       <div className="grid gap-[var(--space-1)]">
@@ -163,6 +167,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
       {!locked && <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
         <Button type="button" variant="primary" className="min-h-11" disabled={!canSave} onClick={save}>{saving ? "Saving…" : "Save changes"}</Button>
       </div>}
+      </>}
     </section>
 
     <section aria-label="Films on this link" className="grid gap-[var(--space-3)]">
@@ -181,7 +186,8 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
             <ItemContent>
               <ItemTitle>{member.title}</ItemTitle>
               <ItemDescription className="line-clamp-none text-foreground-secondary">Versions guests can watch</ItemDescription>
-              <div className="grid gap-[var(--space-1)]">
+              {managed && <p className={TEXT} data-testid="review-link-version-readout">{[...member.grants].sort((a, b) => b.version - a.version).map((grant) => `v${grant.version}`).join(" · ")}</p>}
+              {!managed && <div className="grid gap-[var(--space-1)]">
                 {versions.map((version) => {
                   const on = granted.has(version.assetId);
                   return <label key={version.assetId} className={`flex min-h-11 cursor-pointer items-center gap-[var(--space-3)] ${TEXT}`}>
@@ -189,17 +195,17 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
                     <span>{"unlisted" in version ? `Version ${version.version}` : `v${version.version}${version.current ? " (current)" : ""}${version.uploadedBy && version.createdAt ? ` · ${version.uploadedBy.name} · ${formatVideoDate(version.createdAt)}` : ""}`}</span>
                   </label>;
                 })}
-              </div>
-              {!locked && full && <p id={limitId} data-testid="review-link-grant-limit-hint" className={MUTED}>{GRANT_LIMIT_HINT}</p>}
-              {!locked && granted.size === 1 && <p className={MUTED}>Remove the film to stop sharing it.</p>}
+              </div>}
+              {!locked && !managed && full && <p id={limitId} data-testid="review-link-grant-limit-hint" className={MUTED}>{GRANT_LIMIT_HINT}</p>}
+              {!locked && !managed && granted.size === 1 && <p className={MUTED}>Remove the film to stop sharing it.</p>}
             </ItemContent>
-            {!locked && <ItemActions>
+            {!locked && !managed && <ItemActions>
               <Button type="button" variant="secondary" className="min-h-11" disabled={busy} aria-label={`Remove ${member.title} from link`} onClick={() => setConfirm({ kind: "remove", videoId: member.videoId, title: member.title })}>Remove</Button>
             </ItemActions>}
           </Item>;
         })}
       </ItemGroup>
-      {!locked && (available.length > 0
+      {!locked && !managed && (available.length > 0
         ? <Combobox<VideoDto> items={available} value={null} onValueChange={(video) => { if (video) void store.run(`add:${linkId}`, () => actions.addVideo(linkId, video.id, [video.currentAssetId]), () => undefined, undefined, linkId); }} itemToStringLabel={(video) => video.title} itemToStringValue={(video) => video.id} isItemEqualToValue={(a, b) => a.id === b.id}>
           <ComboboxTrigger aria-label="Add a film" disabled={busyLink} className={buttonClasses("secondary", { className: "min-h-11 justify-between self-start" })}>{state.pending.has(`add:${linkId}`) ? "Adding…" : "Add a film"}</ComboboxTrigger>
           <ComboboxContent className="min-w-[max(var(--anchor-width),240px)] max-w-[calc(100vw-2*var(--space-4))]">
@@ -223,7 +229,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
       </ItemGroup>
     </section>}
 
-    {!revoked && <section aria-label="Danger zone" className="grid gap-[var(--space-2)]">
+    {!revoked && !managed && <section aria-label="Danger zone" className="grid gap-[var(--space-2)]">
       <div data-testid="review-link-actions" className="flex flex-wrap gap-[var(--space-2)]">
         <Button type="button" variant="secondary" className="min-h-11" disabled={ui.archived || expired || busyLink} onClick={() => setConfirm({ kind: "replace" })}>Replace link</Button>
         <Button type="button" variant="danger" className="min-h-11" disabled={busyLink} onClick={() => setConfirm({ kind: "revoke" })}>Revoke link</Button>

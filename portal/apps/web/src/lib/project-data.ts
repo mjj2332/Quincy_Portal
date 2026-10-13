@@ -54,6 +54,8 @@ export const projectDataKeys = {
   delivery: (projectId: string) => ["project-data", projectId, "delivery"] as const,
   /** What the Delivery tab may offer to publish (#787 slice 10): Publish's own eligibility, behind the Client Delivery gate alone. */
   deliveryCandidates: (projectId: string) => ["project-data", projectId, "delivery-candidates"] as const,
+  /** The Project's Review links (#741 11b); the Delivery link (#847) changes with Publish and premium, so those write paths ask for it again. */
+  reviewLinks: (projectId: string) => ["project-data", projectId, "review-links"] as const,
   /** Every note thread on one Video Version (#741 5b). Under the Project root, so `project-data-removed` clears it; keyed by the Version's Asset id. */
   videoNotes: (projectId: string, assetId: string) => ["project-data", projectId, "video-notes", assetId] as const,
   /** Every Version's client decisions and live Release for one Video (#741 14-ui-staff). */

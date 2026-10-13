@@ -43,6 +43,29 @@ const THREE = videoOf(V1, "Main walkthrough", [[id(303), 3, true], [A2, 2, false
 const hangList = () => apiGetMock.mockImplementation(async (path) => { if (path.endsWith("/review-links")) return new Promise(() => undefined); if (path.endsWith("/videos")) return { videos: state.videos }; throw new Error(path); });
 const save = () => buttonIn(detail(), "Save changes")!;
 
+describe("detail: the Delivery link (#847)", () => {
+  const DELIVERY_NOTE = "Managed by the Delivery page. Films follow Publish and Unlock; this link has no expiry and cannot be revoked or deleted.";
+  it("shows the note, keeps the URL, films and Versions read-only, and hides every control that would change the link", async () => {
+    state.links = [linkOf({ label: "Delivery", delivery: true, expiresAt: null })];
+    await mount(); await openDetailOf("Delivery");
+    expect(text(detail())).toContain(DELIVERY_NOTE);
+    expect(text(detail())).toContain("Never expires");
+    expect(q('#review-link-detail-url', detail())).not.toBeNull();
+    expect(text(detail())).toContain("Main walkthrough");
+    const box = checkbox("Main walkthrough v2", detail());
+    expect(box === null || box === undefined).toBe(true);
+    expect(text(detail())).toContain("v2");
+    for (const gone of ["#review-link-detail-label", "#review-link-detail-expiry", "#review-link-detail-passcode"]) expect(q(gone, detail()), gone).toBeNull();
+    expect(q('[aria-label="Danger zone"]', detail())).toBeNull();
+    for (const name of ["Save changes", "Replace link", "Revoke link", "Delete link", "Add a film", "Remove Main walkthrough from link"]) expect(buttonIn(detail(), name), name).toBeFalsy();
+    expect(all('input[type="checkbox"]', detail())).toHaveLength(0);
+  });
+  it("an ordinary link has no such note", async () => {
+    await mount(); await openDetailOf("Smith family");
+    expect(text(detail())).not.toContain("Managed by the Delivery page");
+  });
+});
+
 describe("detail: Versions and Videos", () => {
   it("shows each member with its granted Versions ticked and an All links way back", async () => {
     await mount(); await openDetailOf("Smith family");
