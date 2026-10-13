@@ -154,18 +154,19 @@ export type DeletionTarget = { impact: VideoDeletionImpact; collectionId: string
 
 /** The whole-Video impact over its live Versions from a fresh read, or null when it is not a live Video of this Project. */
 export async function readVideoDeletionImpact(db: D1Database, projectId: string, videoId: string, now: number): Promise<DeletionTarget | null> {
-  const [head, links] = await db.batch([
+  const [head, links, assets] = await db.batch([
     db.prepare(`SELECT v.collection_id AS collectionId, ${LIVE_VERSIONS_SQL("v.id")} AS versions, ${LATEST_VERSION_SQL("v.id")} AS latestVersion, ${ACTIVE_UPLOAD_SQL("v.id")} AS uploading,
         ${NOTES_SQL(LIVE_ASSETS("v.id"))} AS notes, ${DECISIONS_SQL(LIVE_ASSETS("v.id"))} AS decisions, ${RELEASES_SQL(LIVE_ASSETS("v.id"))} AS releases
       FROM videos v WHERE v.id = ?1 AND v.project_id = ?2 AND v.removed_at IS NULL`).bind(videoId, projectId),
     db.prepare(`SELECT DISTINCT l.id, l.label ${LINKS_FROM_SQL(LIVE_ASSETS("?1"), "?2")} ORDER BY COALESCE(l.label, ''), l.id`).bind(videoId, now),
+    db.prepare(`SELECT lm.asset_id AS id FROM video_version_meta lm WHERE lm.video_id = ?1 AND lm.removed_at IS NULL ORDER BY lm.asset_id`).bind(videoId),
   ]);
   const row = head!.results[0] as { collectionId: string; versions: number; latestVersion: number; uploading: number; notes: number; decisions: number; releases: number } | undefined;
   if (!row || row.versions < 1) return null;
   const published = await deliveryPublishedBlock(db, videoId, "", true);
   return {
     collectionId: row.collectionId,
-    impact: { versions: row.versions, latestVersion: row.latestVersion, uploading: row.uploading === 1, published, notes: row.notes, decisions: row.decisions, releases: row.releases, links: links!.results as Array<{ id: string; label: string | null }> },
+    impact: { assetIds: (assets!.results as Array<{ id: string }>).map((asset) => asset.id), versions: row.versions, latestVersion: row.latestVersion, uploading: row.uploading === 1, published, notes: row.notes, decisions: row.decisions, releases: row.releases, links: links!.results as Array<{ id: string; label: string | null }> },
   };
 }
 
@@ -173,7 +174,7 @@ export type DeletionRefusal = "impact_changed" | "upload_in_progress";
 /** The refusal a delete meets against the impact as it stands: the confirmed counts and Version set first, then an active upload. A published set is answered before either, by the caller. */
 export function deletionRefusal(impact: VideoDeletionImpact, input: VideoDeleteInput): DeletionRefusal | null {
   const e = input.expected;
-  if (e.versions !== impact.versions || e.latestVersion !== impact.latestVersion || e.notes !== impact.notes || e.decisions !== impact.decisions || e.releases !== impact.releases || e.links !== impact.links.length) return "impact_changed";
+  if (e.assetIds.length !== impact.assetIds.length || [...e.assetIds].sort().some((id, i) => id !== impact.assetIds[i]) || e.notes !== impact.notes || e.decisions !== impact.decisions || e.releases !== impact.releases || e.links !== impact.links.length) return "impact_changed";
   return impact.uploading ? "upload_in_progress" : null;
 }
 
@@ -186,7 +187,7 @@ export type DeleteOutcome = { kind: "deleted"; versionCount: number } | { kind: 
  */
 export async function deleteVideo(db: D1Database, input: { projectId: string; videoId: string; target: DeletionTarget; principal: Principal; request: VideoDeleteInput; now: number }): Promise<DeleteOutcome> {
   const { projectId, videoId, target, request, now } = input; const e = request.expected; const auditId = newId();
-  const meta = auditMeta(input.principal, { projectId, versionCount: e.versions, latestVersion: e.latestVersion, notes: e.notes, decisions: e.decisions, releases: e.releases, links: e.links, wholeVideo: true })!;
+  const meta = auditMeta(input.principal, { projectId, versionCount: e.assetIds.length, notes: e.notes, decisions: e.decisions, releases: e.releases, links: e.links, wholeVideo: true })!;
   const versionMeta = auditMeta(input.principal, { projectId, videoId, wholeVideo: true })!;
   const bind = (sql: string, ...args: unknown[]) => db.prepare(sql).bind(...args);
   const fence = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?1)";
@@ -196,9 +197,10 @@ export async function deleteVideo(db: D1Database, input: { projectId: string; vi
         AND ${NOT_ARCHIVED("?4")}
         AND NOT ${ACTIVE_UPLOAD_SQL("?3")}
         AND NOT ${inCurrentSetSql("IN (SELECT dm.asset_id FROM video_version_meta dm WHERE dm.video_id = ?3)")}
-        AND ${LIVE_VERSIONS_SQL("?3")} = ?7 AND ${LATEST_VERSION_SQL("?3")} = ?8
-        AND ${NOTES_SQL(LIVE_ASSETS("?3"))} = ?9 AND ${DECISIONS_SQL(LIVE_ASSETS("?3"))} = ?10 AND ${RELEASES_SQL(LIVE_ASSETS("?3"))} = ?11
-        AND (SELECT COUNT(DISTINCT l.id) ${LINKS_FROM_SQL(LIVE_ASSETS("?3"), "?2")}) = ?12`, auditId, now, videoId, projectId, input.principal.id, now + VIDEO_TRASH_RETENTION_MS, e.versions, e.latestVersion, e.notes, e.decisions, e.releases, e.links),
+        AND ${LIVE_VERSIONS_SQL("?3")} = (SELECT COUNT(DISTINCT value) FROM json_each(?7))
+        AND NOT EXISTS (SELECT 1 FROM video_version_meta xm WHERE xm.video_id = ?3 AND xm.removed_at IS NULL AND xm.asset_id NOT IN (SELECT value FROM json_each(?7)))
+        AND ${NOTES_SQL(LIVE_ASSETS("?3"))} = ?8 AND ${DECISIONS_SQL(LIVE_ASSETS("?3"))} = ?9 AND ${RELEASES_SQL(LIVE_ASSETS("?3"))} = ?10
+        AND (SELECT COUNT(DISTINCT l.id) ${LINKS_FROM_SQL(LIVE_ASSETS("?3"), "?2")}) = ?11`, auditId, now, videoId, projectId, input.principal.id, now + VIDEO_TRASH_RETENTION_MS, JSON.stringify(e.assetIds), e.notes, e.decisions, e.releases, e.links),
     bind("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?1, ?2, 'video.remove', 'video', ?3, ?4, ?5 WHERE changes() > 0", auditId, input.principal.id, videoId, meta, now),
     bind(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ${SQL_UUID_V4}, ?2, 'video_version.remove', 'asset', m.asset_id, json_patch(?4, json_object('version', a.version)), ?5
@@ -209,7 +211,7 @@ export async function deleteVideo(db: D1Database, input: { projectId: string; vi
     fencedCollectionCount(db, target.collectionId, now, auditId),
     ...videoRemovalSuppressionStatements(db, { projectId, path: "$.video.videoId", subjectId: videoId, auditId, now }),
   ]);
-  if (await db.prepare("SELECT 1 AS one FROM audit_log WHERE id = ?1").bind(auditId).first()) return { kind: "deleted", versionCount: e.versions };
+  if (await db.prepare("SELECT 1 AS one FROM audit_log WHERE id = ?1").bind(auditId).first()) return { kind: "deleted", versionCount: e.assetIds.length };
   return await diagnoseDeletion(db, projectId, videoId, request, now);
 }
 

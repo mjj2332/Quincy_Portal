@@ -38,11 +38,12 @@ export const videoRemoveResponseSchema = z.object({ video: videoDtoSchema.nullab
 export type VideoRemoveResponse = z.infer<typeof videoRemoveResponseSchema>;
 
 /**
- * What deleting a whole Video (#868) takes out of sight: every live Version. `versions` and `latestVersion` identify the Version set the person confirmed (an equal-size replacement changes
- * `latestVersion`); the counts run over those Versions. `uploading` is an active upload reservation, `published` a Client Delivery current set that holds any Version of the Video (a trashed
+ * What deleting a whole Video (#868) takes out of sight: every live Version. `assetIds` is the exact Version set the person confirmed (a swap of equal size changes it); the counts run over those Versions. `uploading` is an active upload reservation, `published` a Client Delivery current set that holds any Version of the Video (a trashed
  * one included): either blocks the delete.
  */
 export const videoDeletionImpactSchema = z.object({
+  /** The exact live Version set the person confirms (Asset ids, sorted); `versions` and `latestVersion` describe it. */
+  assetIds: z.array(uuid).min(1),
   versions: z.number().int().positive(),
   latestVersion: z.number().int().positive(),
   uploading: z.boolean(),
@@ -56,7 +57,7 @@ export type VideoDeletionImpact = z.infer<typeof videoDeletionImpactSchema>;
 
 /** `POST .../videos/:videoId/remove`. `expected` is what the person confirmed (links as a count). */
 export const videoDeleteInputSchema = z.object({
-  expected: z.object({ versions: z.number().int().positive(), latestVersion: z.number().int().positive(), notes: count, decisions: count, releases: count, links: count }).strict(),
+  expected: z.object({ assetIds: z.array(uuid).min(1).refine((ids) => new Set(ids).size === ids.length, "duplicate Asset id"), notes: count, decisions: count, releases: count, links: count }).strict(),
 }).strict();
 export type VideoDeleteInput = z.infer<typeof videoDeleteInputSchema>;
 

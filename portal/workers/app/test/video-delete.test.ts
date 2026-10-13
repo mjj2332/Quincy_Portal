@@ -13,14 +13,15 @@ import { clearVideoFlags, currentVersions, markVersionRemoved, seedReservation, 
 const impactPath = (videoId: string, projectId?: string) => p(`/videos/${videoId}/removal-impact`, projectId);
 const removePath = (videoId: string, projectId?: string) => p(`/videos/${videoId}/remove`, projectId);
 const impactOf = async (videoId: string, who: Who = "admin"): Promise<VideoDeletionImpact> => { const response = await request(impactPath(videoId), who); expect(response.status).toBe(200); return videoDeletionImpactSchema.parse(await response.json()); };
-const expectedOf = (impact: VideoDeletionImpact) => ({ versions: impact.versions, latestVersion: impact.latestVersion, notes: impact.notes, decisions: impact.decisions, releases: impact.releases, links: impact.links.length });
+const expectedOf = (impact: VideoDeletionImpact) => ({ assetIds: impact.assetIds, notes: impact.notes, decisions: impact.decisions, releases: impact.releases, links: impact.links.length });
 const del = (videoId: string, body: unknown, who: Who = "admin") => request(removePath(videoId), who, "POST", body);
 const deleteAuto = async (videoId: string, who: Who = "admin") => del(videoId, { expected: expectedOf(await impactOf(videoId)) }, who);
 const restoreVideo = (videoId: string) => request(p(`/videos/${videoId}/restore`), "admin", "POST", {});
 const trashList = async () => videoTrashResponseSchema.parse(await (await request(p("/video-trash"), "admin")).json());
 const audits = (...actions: string[]) => rows(`SELECT actor_id, action, target_type, target_id, meta_json FROM audit_log WHERE action IN (${actions.map(() => "?").join(",")}) ORDER BY created_at, rowid`, ...actions);
 const ACTIONS = ["video.remove", "video_version.remove", "video.restore", "video_version.restore"] as const;
-const ZERO = { versions: 1, latestVersion: 1, notes: 0, decisions: 0, releases: 0, links: 0 };
+const ID = "00000000-0000-4000-8000-000000000001";
+const ZERO = { assetIds: [ID], notes: 0, decisions: 0, releases: 0, links: 0 };
 const untouched = async (seeds: Seeded[]) => {
   for (const seed of seeds) expect(await first("SELECT removed_at, removed_with_video FROM video_version_meta WHERE asset_id = ?", seed.assetId)).toEqual({ removed_at: null, removed_with_video: 0 });
   expect(await first("SELECT removed_at FROM videos WHERE id = ?", seeds[0]!.videoId)).toEqual({ removed_at: null });
@@ -62,7 +63,7 @@ describe("the route order: malformed id, part off, capability, access, archived,
   it("answers 404 for an unknown, other-Project or trashed Video before the body is read, then 400 for a non-strict body", async () => {
     const [mine] = await seedVideo(1); const [elsewhere] = await seedVideo(1, { projectId: ids.otherProject });
     for (const videoId of [crypto.randomUUID(), elsewhere!.videoId]) for (const call of calls(videoId)) expect((await request(call.path, "admin", call.method, call.method === "POST" ? { garbage: true } : undefined)).status, call.name).toBe(404);
-    for (const body of [{}, { expected: { ...ZERO, extra: 1 } }, { expected: { ...ZERO, versions: 0 } }, { expected: ZERO, extra: true }, { expected: { ...ZERO, links: -1 } }]) expect((await del(mine!.videoId, body)).status, JSON.stringify(body)).toBe(400);
+    for (const body of [{}, { expected: { ...ZERO, extra: 1 } }, { expected: { ...ZERO, assetIds: [] } }, { expected: { ...ZERO, assetIds: [ID, ID] } }, { expected: ZERO, extra: true }, { expected: { ...ZERO, links: -1 } }]) expect((await del(mine!.videoId, body)).status, JSON.stringify(body)).toBe(400);
     expect((await deleteAuto(mine!.videoId)).status).toBe(200);
     expect((await request(impactPath(mine!.videoId), "admin")).status).toBe(404);
     expect((await del(mine!.videoId, { expected: ZERO })).status).toBe(404);
@@ -128,7 +129,7 @@ describe("delete", () => {
     expect(log.filter((row) => row.action === "video_version.remove").map((row) => row.target_id).sort()).toEqual([v1, v2, v3].map((seed) => seed!.assetId).sort());
     const videoAudit = log.find((row) => row.action === "video.remove")!;
     expect(videoAudit).toMatchObject({ actor_id: ids.admin, target_type: "video", target_id: v1!.videoId });
-    expect(JSON.parse(videoAudit.meta_json as string)).toMatchObject({ projectId: ids.project, versionCount: 3, latestVersion: 3, notes: 1, decisions: 1, releases: 0, links: 0, wholeVideo: true });
+    expect(JSON.parse(videoAudit.meta_json as string)).toMatchObject({ projectId: ids.project, versionCount: 3, notes: 1, decisions: 1, releases: 0, links: 0, wholeVideo: true });
     expect(log.map((row) => row.meta_json as string).join()).not.toContain("TOP-SECRET");
     const trash = await trashList(); expect(trash.items).toHaveLength(1); expect(trash.items[0]).toMatchObject({ kind: "video", videoId: v1!.videoId, title: "Whole", versionCount: 3 });
   });
@@ -168,7 +169,7 @@ describe("delete", () => {
   it("refuses a stale confirmation for each changed field and writes nothing", async () => {
     const [v1, v2] = await seedVideo(2);
     const base = expectedOf(await impactOf(v1!.videoId));
-    for (const [field, value] of [["versions", 3], ["latestVersion", 9], ["notes", 1], ["decisions", 1], ["releases", 1], ["links", 1]] as const) {
+    for (const [field, value] of [["assetIds", [ID]], ["notes", 1], ["decisions", 1], ["releases", 1], ["links", 1]] as const) {
       const response = await del(v1!.videoId, { expected: { ...base, [field]: value } });
       expect(response.status, field).toBe(409);
       expect(await response.json()).toMatchObject({ code: "impact_changed", impact: { versions: 2 } });
@@ -210,7 +211,7 @@ describe("delete", () => {
 });
 
 describe("concurrency: the fence repeats in the committing batch", () => {
-  const exact = (seeds: Seeded[]) => ({ expected: { ...ZERO, versions: seeds.length, latestVersion: seeds.length } });
+  const exact = (seeds: Seeded[]) => ({ expected: { ...ZERO, assetIds: seeds.map((seed) => seed.assetId).sort() } });
 
   it("a Version that completes after the read: impact_changed with the fresh impact, nothing written", async () => {
     const [v1] = await seedVideo(1);
@@ -226,6 +227,22 @@ describe("concurrency: the fence repeats in the committing batch", () => {
     expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ code: "impact_changed" });
     expect(await first("SELECT removed_at FROM videos WHERE id = ?", v1!.videoId)).toEqual({ removed_at: null });
     expect(await audits(...ACTIONS)).toEqual([]);
+  });
+
+  it("a swap of the Version set with identical counts and latest (v1 removed, v2 restored) is impact_changed and trashes nothing", async () => {
+    const [v1, v2, v3] = await seedVideo(3);
+    await markVersionRemoved(v2!.assetId);
+    expect(await currentVersions(v1!.videoId)).toEqual([3]);
+    const confirmed = await impactOf(v1!.videoId);
+    expect(confirmed).toMatchObject({ versions: 2, latestVersion: 3 });
+    const response = await racing("POST", removePath(v1!.videoId), { expected: expectedOf(confirmed) }, async () => {
+      await markVersionRemoved(v1!.assetId);
+      await database.DB.prepare("UPDATE video_version_meta SET removed_at = NULL, removed_by = NULL, purge_at = NULL, removed_with_video = 0 WHERE asset_id = ?").bind(v2!.assetId).run();
+    });
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ code: "impact_changed", impact: { versions: 2, latestVersion: 3 } });
+    expect(await first("SELECT removed_at FROM video_version_meta WHERE asset_id = ?", v2!.assetId)).toEqual({ removed_at: null });
+    expect(await first("SELECT removed_at FROM videos WHERE id = ?", v1!.videoId)).toEqual({ removed_at: null });
+    expect(await audits("video.remove", "video_version.remove")).toEqual([]);
   });
 
   it("a note, a decision, a Release or a link added after the read is impact_changed", async () => {

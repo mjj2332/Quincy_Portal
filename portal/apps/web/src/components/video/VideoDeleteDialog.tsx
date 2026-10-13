@@ -80,13 +80,13 @@ export function VideoDeleteDialog({ projectId, target, uploadKey, localUpload, o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoId, load]);
 
-  // An upload that blocks the delete ends (finished or cancelled) in the film the list already observes: read the impact again, so Delete is offered without reopening.
+  // An upload that starts or ends (finished or cancelled) shows in the film the list already observes: read the impact again either way, so Delete is blocked or offered without reopening.
   const seenUploadKey = useRef(uploadKey);
   useEffect(() => {
     if (seenUploadKey.current === uploadKey) return;
     seenUploadKey.current = uploadKey;
-    if (target && impact?.uploading === true && !pending) void load(target);
-  }, [uploadKey, target, impact, pending, load]);
+    if (target && !pending) void load(target);
+  }, [uploadKey, target, pending, load]);
 
   const announce = useCallback((done: DeleteTarget, started: string) => {
     if (!queryClient) return;
@@ -123,7 +123,8 @@ export function VideoDeleteDialog({ projectId, target, uploadKey, localUpload, o
     }
   };
 
-  const blockedByUpload = localUpload || impact?.uploading === true;
+  // The list already carries the reservation (`uploadKey`), so Delete is blocked the moment it is known, before the impact read says so.
+  const blockedByUpload = localUpload || uploadKey !== "" || impact?.uploading === true;
   const blockedByDelivery = impact?.published === true;
   const canConfirm = impact !== null && !pending && !blockedByUpload && !blockedByDelivery && queryClient !== undefined && !(problem && FINAL.has(problem.kind));
   const rows = useMemo(() => (impact ? filmImpactRows(impact) : []), [impact]);

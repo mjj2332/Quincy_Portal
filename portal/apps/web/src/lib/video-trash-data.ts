@@ -126,7 +126,7 @@ export async function removeVideoVersion(ctx: TrashWriteContext & { assetId: str
  * is applied and before the convergence is awaited. A refusal is rethrown after the local recovery.
  */
 export async function deleteWholeVideo(ctx: TrashWriteContext, impact: VideoDeletionImpact, onApplied?: (response: VideoDeleteResponse) => void): Promise<VideoDeleteResponse> {
-  const body: VideoDeleteInput = { expected: { versions: impact.versions, latestVersion: impact.latestVersion, notes: impact.notes, decisions: impact.decisions, releases: impact.releases, links: impact.links.length } };
+  const body: VideoDeleteInput = { expected: { assetIds: impact.assetIds, notes: impact.notes, decisions: impact.decisions, releases: impact.releases, links: impact.links.length } };
   let response: VideoDeleteResponse;
   try {
     response = videoDeleteResponseSchema.parse(await apiPost<unknown, VideoDeleteInput>(deletePath(ctx.projectId, ctx.videoId), body));

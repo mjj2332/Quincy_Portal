@@ -29,7 +29,7 @@ vi.mock("../../lib/api", async (importOriginal) => ({ ...(await importOriginal<t
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const ids = { video: "88888888-8888-4888-8888-888888888888", other: "99999999-9999-4999-8999-999999999990", a2: "77777777-7777-4777-8777-777777777777", a1: "66666666-6666-4666-8666-666666666666", b1: "55555555-5555-4555-8555-555555555550", link: "55555555-5555-4555-8555-555555555555" };
-const impactOf = (over: Partial<VideoDeletionImpact> = {}): VideoDeletionImpact => ({ versions: 2, latestVersion: 2, uploading: false, published: false, notes: 3, decisions: 1, releases: 1, links: [{ id: ids.link, label: "Client cut" }], ...over });
+const impactOf = (over: Partial<VideoDeletionImpact> = {}): VideoDeletionImpact => ({ assetIds: [ids.a1, ids.a2].sort(), versions: 2, latestVersion: 2, uploading: false, published: false, notes: 3, decisions: 1, releases: 1, links: [{ id: ids.link, label: "Client cut" }], ...over });
 
 let stub: VideoElementStub;
 let root: Root | null = null; let host: HTMLElement;
@@ -153,6 +153,24 @@ describe("the confirmation", () => {
     await act(async () => { await probe.client!.invalidateQueries({ queryKey: projectDataKeys.videos(PROJECT), exact: true }); }); await flush(10);
     expect(confirmBtn().disabled).toBe(false);
   });
+  it("blocks at once when an upload starts after the impact was read, and reads the impact again when it starts and when it ends", async () => {
+    await mount();
+    await startDelete();
+    expect(confirmBtn().disabled).toBe(false);
+    const reads = () => gets().filter((path) => path.endsWith("/removal-impact")).length;
+    const before = reads();
+    films[0] = fixtureVideo({ id: ids.video, versions: films[0]!.versions, uploading: { reservationId: "00000000-0000-4000-8000-0000000000a1", version: 3, uploader: { id: "99999999-9999-4999-8999-999999999999", name: "Mia Chen", roleLabel: "Editor", isExternal: false, active: true }, expiresAt: "2026-10-10T01:00:00.000Z" } });
+    impact = impactOf({ uploading: true });
+    await act(async () => { await probe.client!.invalidateQueries({ queryKey: projectDataKeys.videos(PROJECT), exact: true }); }); await flush(10);
+    expect(confirmBtn().disabled).toBe(true);
+    expect(tid("video-delete-blocked")).not.toBeNull();
+    expect(reads()).toBeGreaterThan(before);
+    const during = reads();
+    films[0] = fixtureVideo({ id: ids.video, versions: films[0]!.versions }); impact = impactOf();
+    await act(async () => { await probe.client!.invalidateQueries({ queryKey: projectDataKeys.videos(PROJECT), exact: true }); }); await flush(10);
+    expect(reads()).toBeGreaterThan(during);
+    expect(confirmBtn().disabled).toBe(false);
+  });
   it("blocks a film that is on a published Client Delivery page", async () => {
     impact = impactOf({ published: true });
     await mount();
@@ -168,7 +186,7 @@ describe("Delete", () => {
     await startDelete();
     expect(filmCards()).toBe(2);
     await click(confirmBtn()); await flush(12);
-    expect(posts()).toEqual([{ path: `/api/projects/${PROJECT}/videos/${ids.video}/remove`, body: { expected: { versions: 2, latestVersion: 2, notes: 3, decisions: 1, releases: 1, links: 1 } } }]);
+    expect(posts()).toEqual([{ path: `/api/projects/${PROJECT}/videos/${ids.video}/remove`, body: { expected: { assetIds: [ids.a1, ids.a2].sort(), notes: 3, decisions: 1, releases: 1, links: 1 } } }]);
     expect(tid("video-delete-dialog")).toBeNull();
     expect(filmCards()).toBe(1);
     await flush(10);
