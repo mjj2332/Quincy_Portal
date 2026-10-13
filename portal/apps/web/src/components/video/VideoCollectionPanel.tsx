@@ -180,7 +180,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     </div>
     <div className="grid gap-[var(--space-5)] p-[var(--space-6)]" data-testid="video-collection-body">
       <ReviewLinksHost ui={reviewLinks} videos={videos.data ?? []} {...(setBarHeight ? { onBarHeight: setBarHeight } : {})} />
-      {canUpload && <NewFilmUploader onStart={(picked) => start({ ...picked, target: { kind: "new" } })} />}
+      {canUpload && <NewFilmUploader userId={userId} queryClient={queryClient} projectId={projectId} role={role} />}
       <EmbeddedUploadTray uploads={rows} errors={[]} onCancel={(key) => void cancelVideoUpload(key, queryClient)} onRemove={(key) => removeVideoUpload(key)} onRetry={(key) => retryVideoUpload(key)} testId="video-upload-tray" />
       {videos.isError && !videos.data && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{videos.error.message || "Films could not be loaded."}</span><Button type="button" variant="text" onClick={() => { terminate(videos.error); void videos.refetch(); }}>Retry</Button></Notice>}
       {videos.data && videos.data.length === 0 && <EmptyState title="No films yet.">{canUpload ? "Drop the first MP4 or MOV above to begin." : "Uploaded films will appear here."}</EmptyState>}

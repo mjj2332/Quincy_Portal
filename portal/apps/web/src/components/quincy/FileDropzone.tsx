@@ -9,12 +9,19 @@ import { Button, type ButtonVariant } from "./Button";
  * The one hidden `<input type="file">` lives here, in `components/quincy/`, so the screens that use it add no raw primitive.
  */
 
+/** One file at a time (the default), or a list when `multiple`: the two shapes cannot be mixed. */
+type PickHandler = { multiple?: false; onFile: (file: File) => void; onFiles?: undefined } | { multiple: true; onFiles: (files: File[]) => void; onFile?: undefined };
+function splitPickHandler<P extends PickHandler>(props: P) {
+  const { multiple, onFile, onFiles, ...rest } = props;
+  return { multiple: multiple === true, onFile: onFile as (file: File) => void, onFiles: onFiles as (files: File[]) => void, rest: rest as Omit<P, "multiple" | "onFile" | "onFiles"> };
+}
+
 /** A real Button that opens the file picker. Tab to it, Enter or Space opens the picker; the input itself is not a tab stop. */
-export function FilePickButton({ accept, onFile, variant = "secondary", disabled, className, children, ...rest }: {
+export function FilePickButton({ accept, variant = "secondary", disabled, className, children, ...props }: {
   accept: string;
-  onFile: (file: File) => void;
   variant?: ButtonVariant;
-} & Omit<React.ComponentProps<"button">, "onClick" | "type">) {
+} & PickHandler & Omit<React.ComponentProps<"button">, "onClick" | "type">) {
+  const { multiple, onFile, onFiles, rest } = splitPickHandler(props);
   const input = React.useRef<HTMLInputElement>(null);
   return <>
     <Button type="button" variant={variant} disabled={disabled} className={className} onClick={() => input.current?.click()} {...rest}>{children}</Button>
@@ -23,24 +30,26 @@ export function FilePickButton({ accept, onFile, variant = "secondary", disabled
       type="file"
       name="file"
       accept={accept}
+      multiple={multiple}
       className="sr-only"
       tabIndex={-1}
       aria-hidden="true"
       data-testid="file-pick-input"
       onChange={(event) => {
-        const file = event.target.files?.[0];
+        // Read the list before the reset: clearing `value` empties the live FileList.
+        const picked = Array.from(event.target.files ?? []);
         event.target.value = "";
-        if (file) onFile(file);
+        if (multiple) { if (picked.length > 0) onFiles(picked); } else if (picked[0]) onFile(picked[0]);
       }}
     />
   </>;
 }
 
 /** A drop target for one file. Sets `data-dragging` while a file is over it. Drops are ignored while `disabled`. */
-export function FileDropzone({ onFile, disabled, className, children, ...rest }: {
-  onFile: (file: File) => void;
+export function FileDropzone({ disabled, className, children, ...props }: {
   disabled?: boolean;
-} & Omit<React.ComponentProps<"div">, "onDrop" | "onDragOver" | "onDragEnter" | "onDragLeave">) {
+} & PickHandler & Omit<React.ComponentProps<"div">, "onDrop" | "onDragOver" | "onDragEnter" | "onDragLeave">) {
+  const { multiple, onFile, onFiles, rest } = splitPickHandler(props);
   const [dragging, setDragging] = React.useState(false);
   const depth = React.useRef(0);
   return <div
@@ -53,8 +62,8 @@ export function FileDropzone({ onFile, disabled, className, children, ...rest }:
     onDrop={(event) => {
       event.preventDefault(); depth.current = 0; setDragging(false);
       if (disabled) return;
-      const file = event.dataTransfer?.files?.[0];
-      if (file) onFile(file);
+      const dropped = Array.from(event.dataTransfer?.files ?? []);
+      if (multiple) { if (dropped.length > 0) onFiles(dropped); } else if (dropped[0]) onFile(dropped[0]);
     }}
   >{children}</div>;
 }

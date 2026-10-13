@@ -6150,6 +6150,7 @@ Tags: media-renditions, workers-runtime · #741, #751
   - Reserve: a refused reserve (429 `too_many_uploads`, 409 `upload_in_progress`, ...) keeps the person's file and title and shows the server's words. No client counter.
   - Cancel: send the abort, await its response whatever it is (204, 409 `upload_completed`, 503 `abort_pending`, a network failure), invalidate `videos` and `detail`, drop the local row. A 503 or no answer is a toast; the server sweep reclaims the reservation.
   - A reservation the tab has no job for (a reload, another device) is visible in the DTO (`uploading.reservationId`), and its owner can abort it from the card.
+- Related: a batch of new films (#845) only paces the jobs it started, three at a time; a job holds its lane until it is truly finished (a failure parked for a retry keeps it), and a refusal comes back as a row with the server's words. It never refuses by count.
 - **A notice about a person names the person.** The terminal-principal broadcast carries the principal id of the query client that saw the 401 (`bindQueryClientPrincipal`), and the store clears only that person's uploads, so a retired person's late 401 clears nothing the current person owns.
 
 Guards: `apps/web/src/lib/video-upload-store.test.ts` ("Cancel leaves the reservation to the server"), `video-upload-terminal.test.ts` ("the terminal notice names its principal"), `components/video/VideoCollectionPanel.dom.test.tsx` ("The server owns the reservation").

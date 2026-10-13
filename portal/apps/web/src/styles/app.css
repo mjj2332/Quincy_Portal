@@ -659,7 +659,7 @@
 .document-history small { color: var(--text-secondary); font-size: 10px; }
 .document-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .upload-zone { border: 1.5px dashed var(--greige-300); background: var(--paper-100); padding: 28px; text-align: center; transition: background var(--dur-fast), border-color var(--dur-fast); }
-.upload-zone.is-dragging { background: var(--paper-000); border-color: var(--ink-900); }
+.upload-zone.is-dragging, .upload-zone[data-dragging="true"] { background: var(--paper-000); border-color: var(--ink-900); }
 .upload-zone__title { margin: 7px 0; font: var(--type-h3); font-size: 24px; letter-spacing: var(--tracking-tight); }
 .upload-zone p { max-width: 48ch; margin: 0 auto 18px; color: var(--text-secondary); font-size: 13.5px; line-height: 1.5; }
 .upload-progress { max-width: 600px; margin: 20px auto 0; text-align: left; }

@@ -4,7 +4,8 @@ import type { QueryClient } from "@tanstack/react-query";
 type Opts = { onDone: (r: { title: string; version?: number }) => void };
 const made = vi.hoisted(() => ({
   opts: [] as unknown[],
-  jobs: [] as { state: Record<string, unknown>; cancelAnswer: string | null; refuse: (message: string | null) => void }[],
+  jobs: [] as { id: number; state: Record<string, unknown>; cancelAnswer: string | null; refuse: (message: string | null) => void }[],
+  check: (file: File): unknown => file.name.endsWith(".mkv") ? { ok: false, message: "not an mp4" } : { ok: true, probe: { fps: { num: 25, den: 1 } }, cautions: [] },
 }));
 vi.mock("./video-upload", () => ({
   VideoUpload: class {
@@ -12,11 +13,13 @@ vi.mock("./video-upload", () => ({
     cancelAnswer: string | null = null;
     refuse!: (message: string | null) => void;
     reserved = new Promise<string | null>((resolve) => { this.refuse = resolve; });
-    constructor(_id: number, o: unknown) { made.opts.push(o); made.jobs.push(this); }
+    id = 0;
+    constructor(id: number, o: unknown) { this.id = id; made.opts.push(o); made.jobs.push(this); }
     start() {} retry() {}
     cancel() { return Promise.resolve(this.cancelAnswer); }
   },
   abortReservation: vi.fn(async () => null),
+  checkVideoFile: async (file: File) => made.check(file),
 }));
 const invalidate = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock("./project-data", () => ({ invalidateProjectSurfaces: invalidate, terminatePrincipalOnUnauthorized: vi.fn() }));
@@ -24,7 +27,7 @@ const toast = vi.hoisted(() => vi.fn());
 vi.mock("./toast-store", () => ({ pushToast: toast }));
 
 import { abortReservation } from "./video-upload";
-import { abortVideoReservation, cancelVideoUpload, removeVideoUpload, resetVideoUploadStore, startVideoUpload } from "./video-upload-store";
+import { abortVideoReservation, addNewFilms, cancelVideoUpload, newFilmBatchSnapshot, removeNewFilm, removeVideoUpload, resetVideoUploadStore, retryNewFilm, startVideoUpload, syncUploadPrincipal, uploadNewFilms } from "./video-upload-store";
 
 const queryClient = {} as QueryClient;
 const start = () => startVideoUpload({ userId: "u1", queryClient, projectId: "p1", role: "editor", file: new File([], "a.mp4"), target: { kind: "new" }, probe: {} as never, cautions: [] })!;
@@ -103,5 +106,79 @@ describe("a refused reserve (#751)", () => {
   });
   it("does not count: a fourth start is not refused by the client", () => {
     for (let i = 0; i < 4; i += 1) expect(start()).not.toBeNull();
+  });
+});
+
+describe("a batch of new films (#845)", () => {
+  const films = (n: number, ext = "mp4") => Array.from({ length: n }, (_, i) => new File([], `film${i}.${ext}`));
+  const add = async (files: File[]) => { addNewFilms({ userId: "u1", queryClient, projectId: "p1", role: "editor", files }); await vi.waitFor(() => expect(newFilmBatchSnapshot("u1", "p1").every((e) => e.status !== "checking")).toBe(true)); };
+  const rows = () => newFilmBatchSnapshot("u1", "p1");
+  const go = () => uploadNewFilms("u1", "p1");
+  const change = (index: number, state: Record<string, unknown>) => { made.jobs[index]!.state = { projectId: "p1", ...state }; (made.opts[index] as { onChange: (s: unknown) => void }).onChange(made.jobs[index]!.state); };
+
+  it("shows each file as checking, then ready with its probe, or rejected with the reason; a rejected file never reserves", async () => {
+    await add([...films(2), new File([], "cut.mkv")]);
+    expect(rows().map((r) => r.status)).toEqual(["ready", "ready", "rejected"]);
+    expect(rows()[2]!.message).toBe("not an mp4");
+    go();
+    expect(made.jobs).toHaveLength(2);
+  });
+
+  it("runs three at a time and starts the next only when one has truly finished", async () => {
+    await add(films(5)); go();
+    expect(made.jobs).toHaveLength(3);
+    change(0, { phase: "uploading" });
+    await Promise.resolve(); await Promise.resolve();
+    expect(made.jobs).toHaveLength(3);
+    change(0, { phase: "done" });
+    await vi.waitFor(() => expect(made.jobs).toHaveLength(4));
+  });
+
+  it("a failure parked for a retry keeps its lane; a terminal failure frees it", async () => {
+    await add(films(4)); go();
+    change(0, { phase: "failed", retry: "upload" });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(made.jobs).toHaveLength(3);
+    change(1, { phase: "failed", retry: null });
+    await vi.waitFor(() => expect(made.jobs).toHaveLength(4));
+  });
+
+  it("a cancelled job (its row gone) frees its lane", async () => {
+    await add(films(4)); go();
+    made.jobs[0]!.state = { phase: "uploading", projectId: "p1" };
+    await cancelVideoUpload(made.jobs[0]!.id, queryClient);
+    await vi.waitFor(() => expect(made.jobs).toHaveLength(4));
+  });
+
+  it("a refused reserve comes back as a refused row with the server's words, and Retry reserves it again", async () => {
+    await add(films(1)); go();
+    made.jobs[0]!.refuse("You already have three uploads in progress in this project. Finish or cancel one first.");
+    await vi.waitFor(() => expect(rows()[0]!.status).toBe("refused"));
+    expect(rows()[0]!.message).toMatch(/three uploads/);
+    expect(made.jobs).toHaveLength(1);
+    retryNewFilm(rows()[0]!.key);
+    expect(made.jobs).toHaveLength(2);
+    expect(rows()).toHaveLength(0);
+  });
+
+  it("a started file leaves the list; Remove drops an unstarted row, and its late check applies nothing", async () => {
+    made.check = () => new Promise(() => undefined);
+    addNewFilms({ userId: "u1", queryClient, projectId: "p1", role: "editor", files: films(1) });
+    expect(rows()[0]!.status).toBe("checking");
+    removeNewFilm(rows()[0]!.key);
+    expect(rows()).toHaveLength(0);
+    made.check = () => ({ ok: true, probe: {}, cautions: [] });
+  });
+
+  it("another person empties the batch, and a check still running then applies nothing", async () => {
+    let finish!: (v: unknown) => void;
+    made.check = () => new Promise((resolve) => { finish = resolve; });
+    addNewFilms({ userId: "u1", queryClient, projectId: "p1", role: "editor", files: films(1) });
+    syncUploadPrincipal("u2");
+    finish({ ok: true, probe: {}, cautions: [] });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(newFilmBatchSnapshot("u1", "p1")).toHaveLength(0);
+    expect(newFilmBatchSnapshot("u2", "p1")).toHaveLength(0);
+    made.check = () => ({ ok: true, probe: {}, cautions: [] });
   });
 });
