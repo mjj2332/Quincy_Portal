@@ -154,9 +154,12 @@ describe("VideoReviewViewer (#741 4d-ii)", () => {
     await mount();
     await openViewer();
     const aside = dialog()!.querySelector<HTMLElement>("aside")!;
-    const row = aside.parentElement!;
+    const row = dialog()!.querySelector<HTMLElement>('[data-testid="video-review-split"]')!;
+    const pane = aside.parentElement!;
+    expect(pane.parentElement).toBe(row);
     for (const token of ["min-[721px]:flex-nowrap", "min-[721px]:overflow-hidden"]) expect(row.className).toContain(token);
     for (const token of ["min-[721px]:min-h-0", "min-[721px]:overflow-y-auto"]) expect(aside.className).toContain(token);
+    expect(pane.className).toContain("min-h-0");
     expect(row.firstElementChild!.className).toContain("min-h-0");
   });
 

@@ -1,9 +1,11 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, Columns2, DownloadIcon, Link2 } from "lucide-react";
 import { framesToTimecode, videoVersionDownloadUrl, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
 import { registerToastHost } from "../../lib/toast-host";
 import { hasOpenAlertDialog } from "../../lib/alert-dialog-press";
 import { useMediaQuery } from "../../lib/use-media-query";
+import { REVIEW_PANE_KEY, normalizeReviewPane } from "../../lib/review-pane-prefs";
+import { useUiPref } from "../../lib/ui-prefs";
 import type { CompareSideId, CompareStore } from "../../lib/video-compare-store";
 import { OverlayContainerContext } from "../OverlayContainerContext";
 import { Button } from "../reui/button";
@@ -12,6 +14,8 @@ import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reu
 import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
+import { ReviewPaneToggle, ReviewSplit } from "../quincy/ReviewPane";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../reui/tabs";
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
 import { formatBytes, formatDuration, formatFps, formatVideoDate } from "./video-format";
 import type { NoteFormStore } from "../../lib/video-note-form-store";
@@ -95,6 +99,18 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const startFrameRef = useRef(0);
   const [resume, setResume] = useState<{ assetId: string; frame: number } | null>(null);
   const phone = useMediaQuery(PHONE_QUERY);
+  // The side pane (#859): open / width are a per-browser preference shared with the guest page. `sideTab` picks Notes (or Details) or Delivery inside it.
+  const [panePref, setPanePref] = useUiPref(REVIEW_PANE_KEY, normalizeReviewPane);
+  const panePrefRef = useRef(panePref);
+  panePrefRef.current = panePref;
+  const paneId = useId();
+  const [sideTab, setSideTab] = useState<"main" | "delivery">("main");
+  const setPaneOpen = useCallback((open: boolean) => { if (panePrefRef.current.open !== open) setPanePref({ ...panePrefRef.current, open }); }, [setPanePref]);
+  const setPaneWidth = useCallback((width: number) => { setPanePref({ ...panePrefRef.current, width }); }, [setPanePref]);
+  /** An I/O mark, a marker or a note link needs the notes where the person can see them: open the pane on its first tab. */
+  const revealNotes = useCallback(() => { if (!phone) setPaneOpen(true); setSideTab("main"); }, [setPaneOpen, phone]);
+  const deepNoteId = notes?.openNoteId;
+  useEffect(() => { if (deepNoteId !== undefined) revealNotes(); }, [deepNoteId, revealNotes]);
   // One mute choice for both views: the single player and compare each start from it, and report back on exit.
   // The compare store owns the preference (it outlives the viewer): the viewer reads it on open and writes every single-player change back.
   const [muted, setMutedState] = useState(() => compareStore?.getState().muted ?? false);
@@ -310,6 +326,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} /></Suspense>}
       </div>}
       <div data-testid="video-header-actions" className="ml-auto flex flex-wrap items-center justify-end gap-x-[var(--space-4)] gap-y-[var(--space-2)] max-[721px]:ml-0 max-[721px]:justify-start">
+      {!comparing && !phone && <ReviewPaneToggle open={panePref.open} onOpenChange={setPaneOpen} paneId={paneId} label={notesOn ? "Notes" : "Details"} className="pointer-coarse:min-h-11" />}
       {deepLink && !comparing && <CopyTextButton text={deepLink.href(version.version)} label="Copy link" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}
       {download && !comparing && <Button variant="outline" nativeButton={false} data-testid="video-download" aria-label={`Download version ${version.version}`} className="pointer-coarse:min-h-11 max-[721px]:min-h-11" render={<a href={videoVersionDownloadUrl(download.projectId, version.assetId)} download />}><DownloadIcon aria-hidden="true" />Download</Button>}
       {reviewLinks && <Button type="button" variant="outline" data-testid="video-create-review-link" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={() => {
@@ -330,20 +347,47 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       ><Columns2 aria-hidden="true" />{comparing ? "Single view" : "Compare"}</Button>}
       </div>
     </header>;
-  const layout = (slots: { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode } | null): ReactNode => <>
-    <div className="flex min-h-0 flex-1 flex-wrap overflow-y-auto min-[721px]:flex-nowrap min-[721px]:overflow-hidden">
-      <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col overflow-y-auto min-[721px]:flex-1 p-[var(--space-5)]">
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...slots?.playerProps} />
-        {delivery && <div className="mt-[var(--space-4)] shrink-0"><Suspense fallback={null}><LazyDeliveryPanel projectId={delivery.projectId} role={delivery.role} archived={delivery.archived} video={video} version={version} store={delivery.store} /></Suspense></div>}
-      </div>
-      {slots
-        ? slots.panel
-        : <aside aria-label="Version details" className="flex-[1_1_360px] min-[721px]:min-h-0 min-[721px]:flex-[0_0_clamp(240px,28vw,360px)] min-[721px]:overflow-y-auto border-l border-border bg-card p-[var(--space-5)] text-card-foreground max-[721px]:border-t max-[721px]:border-l-0">
-          <h3 className="mb-[var(--space-3)] px-2.5 text-[length:var(--text-lg)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{`Version ${version.version}`}</h3>
-          {detailsRows}
-        </aside>}
-    </div>
-  </>;
+  const layout = (slots: { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode } | null): ReactNode => {
+    const deliveryPanel = delivery ? <Suspense fallback={null}><LazyDeliveryPanel projectId={delivery.projectId} role={delivery.role} archived={delivery.archived} video={video} version={version} store={delivery.store} /></Suspense> : null;
+    const main = slots
+      ? slots.panel
+      : <aside aria-label="Version details" className="min-[721px]:min-h-0 flex-1 min-[721px]:overflow-y-auto border-l border-border bg-card p-[var(--space-5)] text-card-foreground max-[721px]:border-t max-[721px]:border-l-0">
+        <h3 className="mb-[var(--space-3)] px-2.5 text-[length:var(--text-lg)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{`Version ${version.version}`}</h3>
+        {detailsRows}
+      </aside>;
+    // Delivery is a tab of the pane on desktop, so the player takes the full column; both panels stay mounted (a draft or a pending write survives switching). A phone keeps today's stack: delivery under the player.
+    const tabbed = delivery !== undefined && !phone;
+    const pane = tabbed
+      ? <Tabs value={sideTab} onValueChange={(next) => { setSideTab(next === "delivery" ? "delivery" : "main"); }} className="min-h-0 flex-1 gap-0">
+        <TabsList variant="line" className="w-full shrink-0 rounded-none border-l border-b border-border bg-card px-[var(--space-3)]">
+          <TabsTrigger value="main">{slots ? "Notes" : "Details"}</TabsTrigger>
+          <TabsTrigger value="delivery">Delivery</TabsTrigger>
+        </TabsList>
+        <TabsContent value="main" keepMounted className="flex min-h-0 flex-col [&[hidden]]:hidden">{main}</TabsContent>
+        <TabsContent value="delivery" keepMounted className="min-h-0 overflow-y-auto border-l border-border bg-card p-[var(--space-4)] [&[hidden]]:hidden">{deliveryPanel}</TabsContent>
+      </Tabs>
+      : main;
+    const playerProps = slots ? {
+      ...slots.playerProps,
+      onMarkerSelect: (id: string) => { revealNotes(); slots.playerProps.onMarkerSelect(id); },
+      ...(slots.playerProps.onMark ? { onMark: (kind: "in" | "out", frame: number) => { revealNotes(); slots.playerProps.onMark!(kind, frame); } } : {}),
+    } : undefined;
+    return <ReviewSplit
+      open={panePref.open}
+      width={panePref.width}
+      onWidth={setPaneWidth}
+      paneId={paneId}
+      handleLabel="Resize notes"
+      stacked={phone}
+      rowClassName="overflow-y-auto"
+      playerClassName="overflow-y-auto"
+      player={<>
+        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} />
+        {delivery && phone && <div className="mt-[var(--space-4)] shrink-0">{deliveryPanel}</div>}
+      </>}
+      pane={pane}
+    />;
+  };
 
   return <Dialog open onOpenChange={handleOpenChange}>
     <DialogContent

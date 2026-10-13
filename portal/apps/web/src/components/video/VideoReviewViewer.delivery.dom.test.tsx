@@ -68,7 +68,7 @@ describe("VideoReviewViewer delivery panel (#741 14-ui-staff)", () => {
     expect(apiGetMock.mock.calls.some(([path]) => path.endsWith("/decisions"))).toBe(false);
   });
 
-  it("shows the panel under the player with the delivery part on, for the Version being shown", async () => {
+  it("shows the panel in the pane's Delivery tab with the delivery part on, for the Version being shown", async () => {
     await mount(["delivery"]);
     await openViewer();
     await panelLoaded();
@@ -77,7 +77,7 @@ describe("VideoReviewViewer delivery panel (#741 14-ui-staff)", () => {
     expect(apiGetMock.mock.calls.some(([path]) => path.endsWith("/decisions"))).toBe(true);
   });
 
-  it("sits beside the notes panel when notes are on too", async () => {
+  it("sits in a Delivery tab beside the Notes tab when notes are on too", async () => {
     await mount(["delivery", "notes"]);
     await openViewer();
     await panelLoaded();
