@@ -1,4 +1,4 @@
-import { videoRemovalImpactSchema, type VideoRemovalImpact } from "@quincy/shared";
+import { videoDeletionImpactSchema, videoRemovalImpactSchema, type VideoDeletionImpact, type VideoRemovalImpact } from "@quincy/shared";
 import { ApiError } from "./api";
 
 /**
@@ -6,14 +6,14 @@ import { ApiError } from "./api";
  * is now), and a 404 with plain text: "Version not found" / "Video not found" (and "... in Trash") mean the row is gone, any other 404 is the gate or the Project.
  */
 export type VideoTrashErrorKind = "impact_changed" | "last_version" | "upload_in_progress" | "video_in_trash" | "delivery_published" | "archived" | "gone" | "access" | "network" | "uncertain" | "other";
-export type ClassifiedVideoTrashError = { kind: VideoTrashErrorKind; /** `impact_changed` / `last_version`: the impact as the server holds it now. */ impact?: VideoRemovalImpact; /** What the person reads. */ message: string };
+export type ClassifiedVideoTrashError = { kind: VideoTrashErrorKind; /** `impact_changed` / `last_version`: the impact as the server holds it now. */ impact?: VideoRemovalImpact; /** `delete` + `impact_changed`: the whole-film impact as the server holds it now. */ filmImpact?: VideoDeletionImpact; /** What the person reads. */ message: string };
 
 const detailsOf = (error: ApiError): Record<string, unknown> => (error.details && typeof error.details === "object" ? error.details as Record<string, unknown> : {});
 
 export const MAY_HAVE_BEEN_APPLIED = "may have been applied";
 const RETRY = "That didn't go through. Try again.";
 
-export function classifyVideoTrashError(error: unknown, op: "remove" | "restore"): ClassifiedVideoTrashError {
+export function classifyVideoTrashError(error: unknown, op: "remove" | "restore" | "delete"): ClassifiedVideoTrashError {
   if (!(error instanceof ApiError)) return { kind: "uncertain", message: `Something went wrong. The change ${MAY_HAVE_BEEN_APPLIED}; check Trash before trying again.` };
   const details = detailsOf(error);
   const code = details.code;
@@ -23,8 +23,12 @@ export function classifyVideoTrashError(error: unknown, op: "remove" | "restore"
     if (code === "project_archived") return { kind: "archived", message: "This project is archived, so films can't be removed or restored." };
     if (code === "upload_in_progress") return { kind: "upload_in_progress", message: "A new version is being uploaded to this film. Wait for the upload to finish or cancel it, then try again." };
     // The film (or this Version) is on the page's current published set; it stays until a later Publish leaves it out (delivery-lock.ts).
-    if (code === "delivery_published") return { kind: "delivery_published", message: op === "remove" ? "This film is on the published Client Delivery page, so it can't be removed. Publish the Delivery again without it, then remove it." : RETRY };
+    if (code === "delivery_published") return { kind: "delivery_published", message: op === "remove" ? "This film is on the published Client Delivery page, so it can't be removed. Publish the Delivery again without it, then remove it." : op === "delete" ? "This film is on the published Client Delivery page, so it can't be deleted. Publish the Delivery again without it, then delete it." : RETRY };
     if (code === "video_in_trash") return { kind: "video_in_trash", message: "This version's film is in Trash. Restore the film first." };
+    if (op === "delete" && code === "impact_changed") {
+      const film = videoDeletionImpactSchema.safeParse(details.impact);
+      return film.success ? { kind: "impact_changed", filmImpact: film.data, message: "This film changed since you looked. Check what deleting it affects, then confirm again." } : { kind: "other", message: RETRY };
+    }
     if (code === "impact_changed" || code === "last_version") {
       const impact = videoRemovalImpactSchema.safeParse(details.impact);
       if (!impact.success) return { kind: "other", message: RETRY };
@@ -35,7 +39,7 @@ export function classifyVideoTrashError(error: unknown, op: "remove" | "restore"
     return { kind: "other", message: RETRY };
   }
   if (error.status === 404 && /^(Version|Video) not found/.test(error.message)) {
-    return { kind: "gone", message: op === "remove" ? "This version was already removed or no longer exists. The list is refreshed." : "That was already restored or deleted. The list is refreshed." };
+    return { kind: "gone", message: op === "delete" ? "This film was already deleted or no longer exists. The list is refreshed." : op === "remove" ? "This version was already removed or no longer exists. The list is refreshed." : "That was already restored or deleted. The list is refreshed." };
   }
   if (error.status === 403 || error.status === 404) return { kind: "access", message: "You no longer have access to this. It has been refreshed." };
   return { kind: "other", message: RETRY };

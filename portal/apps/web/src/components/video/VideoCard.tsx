@@ -15,6 +15,7 @@ import { copyText } from "../../lib/clipboard";
 import { Checkbox } from "../quincy/Checkbox";
 import { IconButton } from "../quincy/icon-button";
 import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
+import { cn } from "@/lib/utils";
 import { VideoReviewStatusPill } from "./VideoReviewStatusPill";
 import { formatDuration, formatFps, formatVideoDate } from "./video-format";
 import { ReviewLinkChips } from "./ReviewLinkChips";
@@ -34,7 +35,7 @@ const onCardSurface = (event: { currentTarget: Element; target: EventTarget }) =
  * the Video and the control that was pressed to `onOpen`; selection and note chips arrive in later slices. `onVersionFile` checks and
  * starts the upload and returns a message when the file is refused.
  */
-export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks, onCreateReviewLink, projectId, download, appearance = { thumb: "fit", info: true }, reviewStatus }: {
+export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks, onCreateReviewLink, projectId, download, appearance = { thumb: "fit", info: true }, reviewStatus, remove }: {
   video: VideoDto;
   canUpload: boolean;
   currentUserId: string | null;
@@ -57,6 +58,8 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
   appearance?: { thumb: "fit" | "fill"; info: boolean };
   /** Present when the card shows the Review status pill (#865); the same pill as the viewer's, with its own test ids. */
   reviewStatus?: { projectId: string; role: Role; archived: boolean };
+  /** Present when staff may delete (the `trash` part and the capability, #868): the "⋯" menu then ends with Delete…, in its own group. `disabled` on an archived Project. */
+  remove?: { disabled: boolean; onOpen: () => void };
   reviewLinks?: { selected: boolean; /** Absent when the Project is archived: no new links. */ onToggle?: () => void; chips: ReviewLinkChip[]; onOpenChip: (linkId: string) => void; onOpenAll: () => void };
 }) {
   // The menu closes before the dialog has focus: while Create Review link hands off, the menu moves no focus (#463); the dialog returns focus to the menu button itself.
@@ -169,6 +172,10 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
               <MenuPrimitive.Separator className="my-[var(--space-1)] h-px bg-border" />
               {download && <MenuPrimitive.LinkItem closeOnClick className={MENU_ITEM} data-testid="video-card-download" href={videoVersionDownloadUrl(download.projectId, video.currentAssetId)} download>{`Download v${newest.version}`}</MenuPrimitive.LinkItem>}
               <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-copy-link" onClick={() => copyText(new URL(staffPathFor({ kind: "project", projectId, arrivalTab: "video", video: { id: video.id } }), window.location.origin).href)}>Copy link</MenuPrimitive.Item>
+              {remove && <>
+                <MenuPrimitive.Separator className="my-[var(--space-1)] h-px bg-border" />
+                <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive-wash-foreground")} disabled={remove.disabled} data-testid="video-card-delete" onClick={() => { handOff.current = true; remove.onOpen(); }}>Delete…</MenuPrimitive.Item>
+              </>}
             </Menu>
           </div>
         </div>
