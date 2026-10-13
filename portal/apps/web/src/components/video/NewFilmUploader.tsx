@@ -5,6 +5,7 @@ import { FileDropzone, FilePickButton } from "../quincy/FileDropzone";
 import { Notice } from "../quincy/Notice";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
 import { Spinner } from "../reui/spinner";
+import { pluralCaution } from "../../lib/video-upload";
 import { addNewFilms, removeNewFilm, retryNewFilm, uploadNewFilms, useNewFilmBatch, type NewFilmEntry } from "../../lib/video-upload-store";
 import { VIDEO_ACCEPT } from "./VideoCard";
 import { formatDuration, formatFps } from "./video-format";
@@ -39,7 +40,7 @@ export function NewFilmUploader({ userId, queryClient, projectId, role }: { user
       <FilePickButton multiple accept={VIDEO_ACCEPT} variant="secondary" className={`min-h-[44px] ${TOUCH}`} onFiles={receive}>Choose files</FilePickButton>
     </FileDropzone>
     {shared.length > 0 && <div className="grid gap-[var(--space-2)]" data-testid="new-film-shared-cautions">
-      {shared.map((caution) => <Notice key={caution} tone="caution" role="status">{caution}</Notice>)}
+      {shared.map((caution) => <Notice key={caution} tone="caution" role="status">{pluralCaution(caution)}</Notice>)}
     </div>}
     {rows.length > 0 && <ItemGroup>
       {rows.map((row) => {

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mp4RejectMessage } from "@quincy/shared";
 import { buildMp4, videoTrack, type Mp4Spec } from "../../../../packages/shared/src/testing/mp4-builder";
-import { ABORT_UNREACHABLE_MESSAGE, NOT_FAST_START_CAUTION, NOT_MP4_NAME_MESSAGE, TIMECODE_MISMATCH_CAUTION, VideoUpload, checkVideoFile, type VideoUploadDone, type VideoUploadState } from "./video-upload";
+import { ABORT_UNREACHABLE_MESSAGE, NOT_FAST_START_CAUTION, pluralCaution, NOT_MP4_NAME_MESSAGE, TIMECODE_MISMATCH_CAUTION, VideoUpload, checkVideoFile, type VideoUploadDone, type VideoUploadState } from "./video-upload";
 
 const poster = vi.hoisted(() => ({ blob: null as Blob | null }));
 vi.mock("./video-poster", () => ({ captureVideoPoster: () => Promise.resolve(poster.blob) }));
@@ -362,5 +362,13 @@ describe("VideoUpload (#741 4d-i)", () => {
 describe("fast-start caution copy", () => {
   it("names the setting with curly quotes", () => {
     expect(NOT_FAST_START_CAUTION).toContain("Re-export with “Fast start” (or “Optimise for web”) turned on.");
+  });
+});
+
+describe("pluralCaution (#845)", () => {
+  it("words the fast-start and timecode cautions for several files, and leaves any other text alone", () => {
+    expect(pluralCaution(NOT_FAST_START_CAUTION)).toBe("These files aren't fast-start, so playback may take a moment to begin. Re-export them with “Fast start” (or “Optimise for web”) turned on.");
+    expect(pluralCaution(TIMECODE_MISMATCH_CAUTION)).toMatch(/^The files' timecode tracks don't match their frame rates/);
+    expect(pluralCaution("Something else.")).toBe("Something else.");
   });
 });

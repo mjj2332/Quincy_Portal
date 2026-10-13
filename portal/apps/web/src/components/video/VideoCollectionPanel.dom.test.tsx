@@ -5,7 +5,7 @@ import { mp4RejectMessage, type Role, type VideoDto } from "@quincy/shared";
 import { buildMp4, videoTrack, type Mp4Spec } from "../../../../../packages/shared/src/testing/mp4-builder";
 import { QuincyQueryProvider } from "../../lib/query-client";
 import { resetVideoUploadStore, startVideoUpload } from "../../lib/video-upload-store";
-import { NOT_FAST_START_CAUTION, TIMECODE_MISMATCH_CAUTION, checkVideoFile } from "../../lib/video-upload";
+import { NOT_FAST_START_CAUTION, pluralCaution, TIMECODE_MISMATCH_CAUTION, checkVideoFile } from "../../lib/video-upload";
 import { announcePrincipalTerminal } from "../../lib/principal-terminal";
 import { useOptionalProjectQueryClient } from "../../lib/project-data";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
@@ -358,9 +358,10 @@ describe("Uploader (#741 4d-i)", () => {
     const slowSpec = { tracks: [videoTrack({ timescale: 25000, stts: [[300, 1000]] })], moovFirst: false };
     await pick([await mp4(slowSpec, "A.mp4"), await mp4(slowSpec, "B.mp4")]);
     const uploader = host.querySelector('[data-testid="new-film-uploader"]')!;
-    expect(uploader.textContent!.split(NOT_FAST_START_CAUTION).length - 1).toBe(1);
-    expect(rowText(0)).not.toContain(NOT_FAST_START_CAUTION);
-    expect(uploader.querySelector('[data-testid="new-film-shared-cautions"]')?.textContent).toContain(NOT_FAST_START_CAUTION);
+    expect(uploader.textContent!.split(pluralCaution(NOT_FAST_START_CAUTION)).length - 1).toBe(1);
+    expect(uploader.textContent).not.toContain(NOT_FAST_START_CAUTION);
+    expect(rowText(0)).not.toContain("fast-start");
+    expect(uploader.querySelector('[data-testid="new-film-shared-cautions"]')?.textContent).toContain(pluralCaution(NOT_FAST_START_CAUTION));
     await pick(await mp4(slowSpec, "C.mp4"));
     await press(button("Remove A.mp4")); await press(button("Remove B.mp4"));
     // One row left: its caution is its own again.

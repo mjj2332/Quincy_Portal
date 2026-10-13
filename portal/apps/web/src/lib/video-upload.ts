@@ -21,6 +21,12 @@ import { captureVideoPoster } from "./video-poster";
 
 export const NOT_FAST_START_CAUTION = "This file isn't fast-start, so playback may take a moment to begin. Re-export with “Fast start” (or “Optimise for web”) turned on.";
 export const TIMECODE_MISMATCH_CAUTION = "The file's timecode track doesn't match its frame rate, so it is ignored and timecode starts at 00:00:00:00.";
+const PLURAL_CAUTIONS = new Map<string, string>([
+  [NOT_FAST_START_CAUTION, "These files aren't fast-start, so playback may take a moment to begin. Re-export them with “Fast start” (or “Optimise for web”) turned on."],
+  [TIMECODE_MISMATCH_CAUTION, "The files' timecode tracks don't match their frame rates, so they are ignored and timecode starts at 00:00:00:00."],
+]);
+/** A caution worded for several files at once (shown once for the lot); any other text is returned as it came. */
+export const pluralCaution = (caution: string): string => PLURAL_CAUTIONS.get(caution) ?? caution;
 export const NOT_MP4_NAME_MESSAGE = mp4RejectMessage("not_mp4");
 const UPLOADS_UNAVAILABLE = "Uploads aren't available right now.";
 export const COMPLETE_RETRY_DELAYS_MS: readonly number[] = [2_000, 5_000, 10_000];

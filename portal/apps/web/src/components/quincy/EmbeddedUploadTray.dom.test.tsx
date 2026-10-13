@@ -45,3 +45,34 @@ describe("EmbeddedUploadTray Cancel vs Remove (#556)", () => {
     expect(onCancel.mock.calls).toEqual([[3]]);
   });
 });
+
+describe("EmbeddedUploadTray finished entries with a shared caution (#845)", () => {
+  const CAUTION = "This file isn't fast-start.";
+  const done = (key: number, name: string, cautions: string[] = [CAUTION]) => ({ key, name, percent: 100, kind: "video" as const, phase: "done" as const, cautions });
+  async function mountTray(uploads: ReturnType<typeof done>[], onRemove = vi.fn(), pluralCaution?: (c: string) => string) {
+    const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => { root!.render(<EmbeddedUploadTray uploads={uploads} errors={[]} onCancel={vi.fn()} onRemove={onRemove} {...(pluralCaution ? { pluralCaution } : {})} />); });
+    return host;
+  }
+  const click = async (el: Element) => { await act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); }); };
+
+  it("a lone finished entry keeps its own panel", async () => {
+    const host = await mountTray([done(1, "Kitchen cut 1.mp4")]);
+    expect(host.textContent).toContain("Kitchen cut 1.mp4 uploaded, with a warning.");
+    expect(host.querySelectorAll('button[aria-label^="Dismiss warning"]')).toHaveLength(1);
+  });
+
+  it("two or more finished entries sharing a caution make one Notice naming the films, with one Dismiss that dismisses all of them", async () => {
+    const onRemove = vi.fn();
+    const host = await mountTray([done(1, "Kitchen cut 1.mp4"), done(2, "Kitchen cut 2.mp4"), done(3, "Hall.mp4", ["Only this one."])], onRemove, (c) => c.replace("This file isn't", "These files aren't"));
+    const text = host.textContent!;
+    expect(text).toContain("Kitchen cut 1.mp4, Kitchen cut 2.mp4 uploaded.");
+    expect(text.split("fast-start").length - 1).toBe(1);
+    expect(text).toContain("These files aren't fast-start.");
+    expect(text).toContain("Hall.mp4 uploaded, with a warning.");
+    const dismisses = [...host.querySelectorAll('button')].filter((b) => b.textContent === "Dismiss");
+    expect(dismisses).toHaveLength(2);
+    await click(dismisses[0]!);
+    expect(onRemove.mock.calls.map(([key]) => key).sort()).toEqual([1, 2]);
+  });
+});
