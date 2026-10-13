@@ -192,6 +192,15 @@ describe("races at the write", () => {
     expect(await joins()).toEqual([]); expect(await audits()).toHaveLength(0);
   });
 
+  it("refuses a write when a selected overlay is archived between admission and commit, so the audit never misreports the result", async () => {
+    await make("Default"); const a = await make("Alpha"); const b = await make("Beta");
+    await put([a.id], []);
+    projectSocialOverlayTestHooks.beforeWrite = async () => { await archive(a); };
+    const response = await put([b.id], [a.id]); expect(response.status).toBe(409);
+    expect(await json(response)).toMatchObject({ code: "social_overlays_conflict" });
+    expect(await joins()).toEqual([a.id]); expect(await audits()).toHaveLength(1);
+  });
+
   it("refuses a write when the overlay is archived between admission and commit", async () => {
     const reel = await make("Reel"); const tiktok = await make("TikTok");
     projectSocialOverlayTestHooks.beforeWrite = async () => { await archive(tiktok); };

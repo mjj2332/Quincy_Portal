@@ -64,7 +64,9 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived 
   const defaultName = data.available.find((choice) => choice.isDefault)?.name ?? data.resolved.find((overlay) => overlay.isDefault)?.name;
   const nothingChosen = shownIds.length === 0;
 
-  function publish(next: ProjectSocialOverlaysResponse) {
+  // A read still in flight began before this answer: cancel it so it cannot land on top (a cancelled query keeps the data set after).
+  async function publish(next: ProjectSocialOverlaysResponse) {
+    await queryClient.cancelQueries({ queryKey: projectDataKeys.socialOverlays(projectId) });
     queryClient.setQueryData(projectDataKeys.socialOverlays(projectId), next);
     getProjectQueryRuntime(queryClient)?.publish(createProjectDataInvalidationMessage(projectId, [{ kind: "social-overlays" }]));
   }
@@ -76,7 +78,9 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived 
     try {
       const next = await saveProjectSocialOverlays(originating, request.overlayIds, request.expectedOverlayIds);
       if (!live.current.mounted || live.current.projectId !== originating) return;
-      publish(next); setAttempt(null);
+      await publish(next);
+      if (!live.current.mounted || live.current.projectId !== originating) return;
+      setAttempt(null);
     } catch (error) {
       if (!live.current.mounted || live.current.projectId !== originating) return;
       const reason = error instanceof SocialOverlaysSaveError ? error.failure : { kind: "failed" as const, message: "" };
@@ -92,7 +96,7 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived 
   function reload() {
     const fresh = failure?.kind === "conflict" ? failure.current : null;
     setFailure(null); setAttempt(null); lastRequest.current = null;
-    if (fresh) queryClient.setQueryData(projectDataKeys.socialOverlays(projectId), fresh);
+    if (fresh) void queryClient.cancelQueries({ queryKey: projectDataKeys.socialOverlays(projectId) }).then(() => queryClient.setQueryData(projectDataKeys.socialOverlays(projectId), fresh));
     else void query.refetch();
   }
 
@@ -100,7 +104,7 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived 
     if (next) {
       if (saving || libraryEmpty || readOnly) return;
       baselineRef.current = { ids: activeIds, stored: storedIds };
-      draftRef.current = activeIds; setDraft(activeIds); setFailure(null); setOpen(true);
+      draftRef.current = activeIds; setDraft(activeIds); setFailure(null); setAttempt(null); lastRequest.current = null; setOpen(true);
       void query.refetch();
       return;
     }

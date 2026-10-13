@@ -25,9 +25,11 @@ export const projectSocialOverlaysResponseSchema = z.object({
 }).strict();
 export type ProjectSocialOverlaysResponse = z.infer<typeof projectSocialOverlaysResponseSchema>;
 
-const idSet = z.array(uuid).max(PROJECT_SOCIAL_OVERLAYS_MAX).refine((ids) => new Set(ids).size === ids.length, { message: "Duplicate overlay ids" });
+/** The stored baseline also holds retained archived joins, so its ceiling is separate from (and above) the limit on what a caller may select. 300 ids stay inside the 16 KiB body cap with the selection. */
+export const PROJECT_SOCIAL_OVERLAYS_STORED_MAX = 300;
+const idSet = (max: number) => z.array(uuid).max(max).refine((ids) => new Set(ids).size === ids.length, { message: "Duplicate overlay ids" });
 /** `overlayIds` is the selectable set the caller wants. `expectedOverlayIds` is the complete stored set it last saw, archived joins included. */
-export const projectSocialOverlayInput = z.object({ overlayIds: idSet, expectedOverlayIds: idSet }).strict();
+export const projectSocialOverlayInput = z.object({ overlayIds: idSet(PROJECT_SOCIAL_OVERLAYS_MAX), expectedOverlayIds: idSet(PROJECT_SOCIAL_OVERLAYS_STORED_MAX) }).strict();
 export type ProjectSocialOverlayInput = z.infer<typeof projectSocialOverlayInput>;
 
 /** 409 `social_overlays_conflict`: the stored set moved, and `current` is the fresh read. */

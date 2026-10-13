@@ -19,6 +19,12 @@ describe("Project Social overlay contract (#870)", () => {
     ]) expect(projectSocialOverlayInput.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
   });
 
+  it("limits the selection to 50 but accepts a larger stored baseline (retained archived joins)", () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
+    expect(projectSocialOverlayInput.safeParse({ overlayIds: [], expectedOverlayIds: many(51) }).success).toBe(true);
+    expect(projectSocialOverlayInput.safeParse({ overlayIds: many(51), expectedOverlayIds: [] }).success).toBe(false);
+  });
+
   it("is strict about the response and carries no R2 key, bytes or Admin metadata", () => {
     expect(projectSocialOverlaysResponseSchema.parse({ available: [choice], selected: [choice], resolved: [preview] }).resolved[0]!.imageUrl).toContain(A);
     expect(projectSocialOverlaysResponseSchema.safeParse({ available: [{ ...choice, bytes: 1 }], selected: [], resolved: [] }).success).toBe(false);

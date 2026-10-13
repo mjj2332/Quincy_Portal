@@ -79,7 +79,7 @@ export async function setProjectSocialOverlays(db: D1Database, input: { projectI
   const archivedStored = current.selected.filter((row) => row.archivedAt !== null).map((row) => row.id);
   await projectSocialOverlayTestHooks.beforeWrite?.();
 
-  const auditId = newId(), wantedJson = JSON.stringify(overlayIds), expectedJson = JSON.stringify(expectedOverlayIds);
+  const auditId = newId(), wantedJson = JSON.stringify(overlayIds), expectedJson = JSON.stringify(expectedOverlayIds), archivedJson = JSON.stringify(archivedStored);
   const meta = auditMeta(input.principal, { before: [...stored].sort(), after: [...archivedStored, ...wanted].sort() });
   await db.batch([
     db.prepare(
@@ -88,9 +88,11 @@ export async function setProjectSocialOverlays(db: D1Database, input: { projectI
        WHERE EXISTS (SELECT 1 FROM projects WHERE id = ?3 AND archived_at IS NULL)
          AND (SELECT count(*) FROM project_social_overlays WHERE project_id = ?3) = json_array_length(?6)
          AND NOT EXISTS (SELECT 1 FROM project_social_overlays WHERE project_id = ?3 AND overlay_id NOT IN (SELECT value FROM json_each(?6)))
+         AND (SELECT count(*) FROM project_social_overlays p JOIN social_overlays o ON o.id = p.overlay_id WHERE p.project_id = ?3 AND o.archived_at IS NOT NULL) = json_array_length(?8)
+         AND NOT EXISTS (SELECT 1 FROM project_social_overlays p JOIN social_overlays o ON o.id = p.overlay_id WHERE p.project_id = ?3 AND o.archived_at IS NOT NULL AND o.id NOT IN (SELECT value FROM json_each(?8)))
          AND NOT EXISTS (SELECT 1 FROM json_each(?7) j WHERE NOT EXISTS (
            SELECT 1 FROM social_overlays o WHERE o.id = j.value AND (o.archived_at IS NULL OR EXISTS (SELECT 1 FROM project_social_overlays p WHERE p.project_id = ?3 AND p.overlay_id = o.id))))`,
-    ).bind(auditId, input.principal.id, projectId, meta, input.now, expectedJson, wantedJson),
+    ).bind(auditId, input.principal.id, projectId, meta, input.now, expectedJson, wantedJson, archivedJson),
     db.prepare(
       `DELETE FROM project_social_overlays WHERE project_id = ?1 AND overlay_id NOT IN (SELECT value FROM json_each(?2))
          AND overlay_id IN (SELECT id FROM social_overlays WHERE archived_at IS NULL) AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?3)`,
@@ -106,6 +108,8 @@ export async function setProjectSocialOverlays(db: D1Database, input: { projectI
   // Nothing was written: say why, from a fresh read.
   const now = await projectState(db, projectId);
   if (now !== "live") return now === "missing" ? { kind: "not_found" } : { kind: "archived" };
-  if (!sameSet(state.selected.map((row) => row.id), expectedOverlayIds)) return { kind: "conflict", state };
+  // The stored set moved, or an overlay the Project holds was archived or unarchived since admission (the audit `after` is built from the archived joins seen then).
+  const nowArchived = state.selected.filter((row) => row.archivedAt !== null).map((row) => row.id);
+  if (!sameSet(state.selected.map((row) => row.id), expectedOverlayIds) || !sameSet(nowArchived, archivedStored)) return { kind: "conflict", state };
   return { kind: "unavailable" };
 }

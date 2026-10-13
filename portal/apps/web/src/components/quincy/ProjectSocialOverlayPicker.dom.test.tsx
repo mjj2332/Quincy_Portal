@@ -139,6 +139,29 @@ describe("ProjectSocialOverlayPicker (#870)", () => {
     await waitFor(() => expect(trigger().getAttribute("aria-busy")).toBeNull());
   });
 
+  it("is not overwritten by a read that was in flight when the save finished", async () => {
+    let lateRead!: (value: unknown) => void;
+    apiGetMock.mockResolvedValueOnce(state([])).mockReturnValueOnce(new Promise((resolve) => { lateRead = resolve; }));
+    apiPutMock.mockResolvedValue(state([tiktok]));
+    await mount();
+    await open(); await pick("TikTok"); await closeWithEscape();
+    await waitFor(() => expect(text()).toContain("TikTok"));
+    await act(async () => { lateRead(state([])); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    expect(text()).toContain("TikTok");
+    expect(text()).not.toContain("Nothing chosen");
+  });
+
+  it("drops an unsaved attempt when the picker is reopened after a failed save", async () => {
+    apiPutMock.mockRejectedValueOnce(new ApiError("Boom", 500, { error: "Boom" }));
+    await mount();
+    await open(); await pick("TikTok"); await closeWithEscape();
+    await waitFor(() => expect(host.querySelector('[role="alert"]')).not.toBeNull());
+    await open(); await closeWithEscape();
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(text()).toContain("Nothing chosen");
+  });
+
   it("returns focus to the trigger on close", async () => {
     apiGetMock.mockResolvedValue(state([tiktok]));
     await mount();
