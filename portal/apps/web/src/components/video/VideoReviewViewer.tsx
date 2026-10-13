@@ -201,14 +201,19 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     if (removed.video !== null && removed.assetId === assetIdRef.current) { setResume(null); setAssetId(removed.video.currentAssetId); }
   }, [compareStore]);
   // The Version list's own rows (#862): the list closes without handing focus back to its trigger, because the confirmation takes it and returns it to the Version select.
-  const removeRef = useRef<VersionRemovalHandle>(null);
+  const removeRef = useRef<VersionRemovalHandle | null>(null);
+  // The menu is a lazy chunk: its rows' icons wait for the handle to mount, so a press is never lost.
+  const [removeReady, setRemoveReady] = useState(false);
+  const bindRemove = useCallback((handle: VersionRemovalHandle | null) => { removeRef.current = handle; setRemoveReady(handle !== null); }, []);
   const [versionListOpen, setVersionListOpen] = useState(false);
   const handOff = useRef(false);
   const rowsDisabled = trash?.archived === true;
   const removeFromRow = (candidate: VideoDto["versions"][number]) => {
+    const handle = removeRef.current;
+    if (!handle) return;
     handOff.current = true;
     setVersionListOpen(false);
-    removeRef.current?.open(candidate.assetId, () => document.getElementById(VERSION_SELECT_ID));
+    handle.open(candidate.assetId, () => document.getElementById(VERSION_SELECT_ID));
   };
   /**
    * At the moment the person confirms Remove: notes the edit revision of each slot the removal retires. The returned function, run when the answer is applied, retires a slot only if it has not
@@ -318,10 +323,10 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
           <SelectTrigger id={VERSION_SELECT_ID} data-testid="video-version-trigger" className="pointer-coarse:min-h-11 max-[721px]:min-h-11 min-w-0 max-w-full">
             <SelectValue>{() => <span data-testid="video-version-label" className="block truncate">{optionLabel(version)}</span>}</SelectValue>
           </SelectTrigger>
-          <SelectContent finalFocus={() => (handOff.current ? false : undefined)} className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
+          <SelectContent finalFocus={() => !handOff.current} className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
             {video.versions.map((candidate) => <SelectItem key={candidate.assetId} value={candidate.assetId} className="pointer-coarse:min-h-11 max-[721px]:min-h-11">{optionLabel(candidate)}{trash && <IconButton
               tabIndex={-1} aria-hidden="true" data-testid="video-version-row-remove" data-asset-id={candidate.assetId} title={`Remove version ${candidate.version}`}
-              disabled={rowsDisabled || (video.uploading != null && video.versions.length === 1)}
+              disabled={!removeReady || rowsDisabled || (video.uploading != null && video.versions.length === 1)}
               className="ml-auto text-foreground"
               // The option commits on pointerdown/mouseup/click: none of them may reach it from the icon.
               onPointerDown={(event) => { event.stopPropagation(); }} onMouseUp={(event) => { event.stopPropagation(); }}
@@ -329,7 +334,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
             ><Trash2 aria-hidden="true" /></IconButton>}</SelectItem>)}
           </SelectContent>
         </Select>
-        {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} removeRef={removeRef} /></Suspense>}
+        {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} removeRef={bindRemove} /></Suspense>}
       </div>}
       <div data-testid="video-header-actions" className="ml-auto flex flex-wrap items-center justify-end gap-x-[var(--space-4)] gap-y-[var(--space-2)] max-[721px]:ml-0 max-[721px]:justify-start">
       {deepLink && !comparing && <CopyTextButton text={deepLink.href(version.version)} label="Copy link" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}

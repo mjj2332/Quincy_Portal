@@ -309,4 +309,26 @@ describe("Remove a Version from its row in the Version list (#862)", () => {
     expect(posts()[0]!.body).toMatchObject({ removeVideo: true });
     expect(dialog()).toBeNull();
   });
+
+  describe.each([["with the trash part on", ["trash"]], ["with the trash part off", []]])("an ordinary close of the Version list %s", (_name, parts) => {
+    const trigger = () => document.getElementById("video-review-version")!;
+    it("Escape returns focus to the Version select", async () => {
+      await mount({ parts });
+      await openViewer();
+      await openList();
+      expect(document.querySelector('[role="listbox"]')).not.toBeNull();
+      await act(async () => { document.querySelector('[role="listbox"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+      await flush(16);
+      expect(document.activeElement).toBe(trigger());
+    });
+    it("choosing a Version returns focus to the Version select", async () => {
+      await mount({ parts });
+      await openViewer();
+      await openList();
+      await act(async () => { options().find((o) => o.textContent?.startsWith("v1"))!.click(); });
+      await flush(8);
+      expect(versionLabel()).toContain("v1");
+      expect(document.activeElement).toBe(trigger());
+    });
+  });
 });
