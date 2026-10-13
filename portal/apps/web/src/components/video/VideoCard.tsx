@@ -1,6 +1,6 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { ChevronDown } from "lucide-react";
-import type { VideoDto } from "@quincy/shared";
+import type { Role, VideoDto } from "@quincy/shared";
 import { Badge } from "../reui/badge";
 import { Button } from "../quincy/Button";
 import { Frame, FramePanel } from "../reui/frame";
@@ -14,6 +14,7 @@ import type { VideoUploadState } from "../../lib/video-upload";
 import { Checkbox } from "../quincy/Checkbox";
 import { IconButton } from "../quincy/icon-button";
 import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
+import { VideoReviewStatusPill } from "./VideoReviewStatusPill";
 import { formatDuration, formatFps, formatVideoDate } from "./video-format";
 import { ReviewLinkChips } from "./ReviewLinkChips";
 import type { ReviewLinkChip } from "./use-review-links-ui";
@@ -22,12 +23,17 @@ const META = "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_v
 
 export const VIDEO_ACCEPT = ".mp4,.mov,video/mp4,video/quicktime";
 
+/** Controls and portalled popups inside a card: a press on one of these is theirs, never the card's select or open. */
+const NESTED_CONTROL = 'button,a,input,label,[role^="menu"],[role~="dialog"]';
+/** A press that began on the card itself. React events bubble through portals, so a popup's own click reaches the card's handler: `contains` is the DOM-tree test that rules those out. */
+const onCardSurface = (event: { currentTarget: Element; target: EventTarget }) => event.currentTarget.contains(event.target as Node) && !(event.target as Element).closest(NESTED_CONTROL);
+
 /**
  * One Video as a card (#741 4d-i): poster, newest Version, duration, a Versions list, and who is uploading. Open review (4d-ii) hands
  * the Video and the control that was pressed to `onOpen`; selection and note chips arrive in later slices. `onVersionFile` checks and
  * starts the upload and returns a message when the file is refused.
  */
-export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks, onCreateReviewLink }: {
+export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks, onCreateReviewLink, appearance = { thumb: "fit", info: true }, reviewStatus }: {
   video: VideoDto;
   canUpload: boolean;
   currentUserId: string | null;
@@ -42,6 +48,10 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
   /** Present only when new Review links may be made (#834): the card's "⋯" menu then offers Create Review link for this film. Absent on an archived Project. */
   onCreateReviewLink?: () => void;
   /** Review links (#741 11b), present only when the links part is on and the role may share: the tick for a new link and the links this Video is on. */
+  /** The grid's Appearance choices (#865): how the poster fills its frame, and whether the descriptive text shows. */
+  appearance?: { thumb: "fit" | "fill"; info: boolean };
+  /** Present when the card shows the Review status pill (#865); the same pill as the viewer's, with its own test ids. */
+  reviewStatus?: { projectId: string; role: Role; archived: boolean };
   reviewLinks?: { selected: boolean; /** Absent when the Project is archived: no new links. */ onToggle?: () => void; chips: ReviewLinkChip[]; onOpenChip: (linkId: string) => void; onOpenAll: () => void };
 }) {
   // The menu closes before the dialog has focus: while Create Review link hands off, the menu moves no focus (#463); the dialog returns focus to the menu button itself.
@@ -57,12 +67,35 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
   const cancellable = uploadingElsewhere && currentUserId !== null && uploadingElsewhere.uploader.id === currentUserId ? uploadingElsewhere : null;
   const busy = Boolean(myUpload || video.uploading);
   const count = video.versions.length;
+  // A touch tap opens the film (no hover to select by); read per event, so a hybrid laptop's mouse still selects. `click.pointerType` is unreliable on iOS Safari, so the pointerdown's is kept.
+  const lastPointer = useRef("mouse");
+  const select = reviewLinks?.onToggle;
+  const onClick = (event: MouseEvent<HTMLElement>) => {
+    if (!onCardSurface(event)) return;
+    if (lastPointer.current === "touch") { onOpen(video, event.currentTarget); return; }
+    // No `detail` gating: a double click toggles twice (net unchanged), then `onDoubleClick` opens.
+    select?.();
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    // Only the card itself: Enter on Open review (or a menu trigger) belongs to that control.
+    if (event.target !== event.currentTarget) return;
+    if (event.key === "Enter") { event.preventDefault(); onOpen(video, event.currentTarget); }
+    else if (event.key === " ") { event.preventDefault(); select?.(); }
+  };
 
-  return <Frame data-testid="video-card" aria-label={video.title} role="group">
+  return <Frame
+    data-testid="video-card" aria-label={video.title} role="group" tabIndex={0} data-selected={reviewLinks?.selected ? "true" : "false"}
+    className="transition-colors hover:border-[var(--border-hover)] data-[selected=true]:border-[var(--border-strong)]"
+    onPointerDown={(event) => { lastPointer.current = event.pointerType; }}
+    onMouseDown={(event) => { if (event.detail > 1 && onCardSurface(event)) event.preventDefault(); }}
+    onClick={onClick}
+    onDoubleClick={(event) => { if (onCardSurface(event)) onOpen(video, event.currentTarget); }}
+    onKeyDown={onKeyDown}
+  >
     <FramePanel className="flex flex-col gap-[var(--space-3)] p-0">
-      <div data-testid="video-card-poster" data-orientation={portrait ? "portrait" : "landscape"} className="relative aspect-video overflow-hidden bg-invert text-invert-foreground">
+      <div data-testid="video-card-poster" data-thumbnail={appearance.thumb} data-orientation={portrait ? "portrait" : "landscape"} className="relative aspect-video overflow-hidden bg-invert text-invert-foreground">
         {newest.posterUrl
-          ? <LazyImage src={newest.posterUrl} alt={`Poster of ${video.title}`} className="h-full w-full object-contain" />
+          ? <LazyImage src={newest.posterUrl} alt={`Poster of ${video.title}`} className={`h-full w-full ${appearance.thumb === "fill" ? "object-cover" : "object-contain"}`} />
           : <div data-testid="video-card-no-poster" className="flex h-full w-full items-center justify-center [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] opacity-70">No poster</div>}
         <Badge variant="secondary" className="absolute left-[var(--space-2)] top-[var(--space-2)]">{`v${newest.version}`}</Badge>
         {video.premium && <Badge variant="warning" className="absolute right-[var(--space-2)] top-[var(--space-2)]">Premium</Badge>}
@@ -74,7 +107,8 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
             <h3 className="serif [font:var(--type-h3)]">{video.title}</h3>
             {reviewLinks?.onToggle && <label className="-mr-[var(--space-2)] -mt-[var(--space-2)] flex size-11 shrink-0 cursor-pointer items-center justify-center"><Checkbox aria-label={`Select ${video.title}`} checked={reviewLinks.selected} onChange={reviewLinks.onToggle} /></label>}
           </div>
-          <div className="flex flex-col items-start gap-[var(--space-1)]">
+          {reviewStatus && <div><VideoReviewStatusPill video={video} version={newest} comparing={false} testId="video-card-review-status" {...reviewStatus} /></div>}
+          {appearance.info && <div className="flex flex-col items-start gap-[var(--space-1)]">
             {/* The count sits on the versions row, so a card's height is the same with or without open notes. */}
             <div className="flex items-center gap-[var(--space-2)]" data-testid="video-card-versions-row">
             <Popover>
@@ -95,7 +129,7 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
             </div>
             {reviewLinks && reviewLinks.chips.length > 0 && <ReviewLinkChips chips={reviewLinks.chips} onOpenChip={reviewLinks.onOpenChip} onOpenAll={reviewLinks.onOpenAll} />}
             <p className={META} data-testid="video-card-meta">{`${count > 1 ? `v${newest.version} by` : "by"} ${newest.uploadedBy.name} · ${formatVideoDate(newest.createdAt)} · ${formatFps(newest.fps)}\u00a0fps`}</p>
-          </div>
+          </div>}
         </div>
         {myUpload && <p role="status" className={`${META} flex items-center gap-[var(--space-2)]`} data-testid="video-card-uploading"><Spinner aria-hidden="true" role="presentation" className="size-3.5" />{`Uploading v${myUpload.version ?? nextNumber} · ${myUpload.percent}%`}</p>}
         {uploadingElsewhere && !cancellable && <p role="status" className={`${META} flex items-center gap-[var(--space-2)]`} data-testid="video-card-uploading-other"><Spinner aria-hidden="true" role="presentation" className="size-3.5" />{`${uploadingElsewhere.uploader.name} is uploading v${uploadingElsewhere.version}`}</p>}

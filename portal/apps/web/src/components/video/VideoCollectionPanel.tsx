@@ -9,6 +9,8 @@ import { createNoteFormStore, type NoteFormStore } from "../../lib/video-note-fo
 import { createVideoApprovalStore, type VideoApprovalStore } from "../../lib/video-approval-store";
 import { abortVideoReservation, cancelVideoUpload, removeVideoUpload, retryVideoUpload, startVideoUpload, uploadIdentityGeneration, useVideoUploads } from "../../lib/video-upload-store";
 import { checkVideoFile, pluralCaution } from "../../lib/video-upload";
+import { useUiPref } from "../../lib/ui-prefs";
+import { arrangeVideos, DEFAULT_VIDEO_GRID_PREFS, GRID_COLUMNS, normalizeVideoGridPrefs, videoGridKey, type VideoGridPrefs } from "../../lib/video-grid-prefs";
 import { ViewLoadBoundary } from "../ViewLoadBoundary";
 import { Button } from "../quincy/Button";
 import { EmbeddedUploadTray, type EmbeddedUpload } from "../quincy/EmbeddedUploadTray";
@@ -16,6 +18,7 @@ import { EmptyState } from "../quincy/EmptyState";
 import { Notice } from "../quincy/Notice";
 import { NewFilmUploader } from "./NewFilmUploader";
 import { VideoCard } from "./VideoCard";
+import { VideoGridToolbar } from "./VideoGridToolbar";
 import { ReviewLinksHost, ReviewLinksOpenButton } from "./ReviewLinksHost";
 import { PROJECT_SHEET_CLOSE_SCROLL_MARGIN } from "../quincy/ProjectSheet";
 import { ReviewLinkStoreContext, useReviewLinksUi } from "./use-review-links-ui";
@@ -104,6 +107,24 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   const reviewLinks = useReviewLinksUi({ projectId, role, review, archived, store: useContext(ReviewLinkStoreContext) });
   // The fixed selection bar's measured height (0 while it is not shown), kept clear at the end of the collection.
   const setBarHeight = useReportBarHeight() ?? undefined;
+  // Grid preferences (#865): per person within this browser. Before the person is known nothing is written; a choice then stands for this mount only.
+  const [storedPrefs, storePrefs] = useUiPref(videoGridKey(userId ?? "signed-out"), normalizeVideoGridPrefs);
+  const [sessionPrefs, setSessionPrefs] = useState<VideoGridPrefs | null>(null);
+  const prefs = userId ? storedPrefs : sessionPrefs ?? DEFAULT_VIDEO_GRID_PREFS;
+  const setPrefs = userId ? storePrefs : setSessionPrefs;
+  // Only the rendered grid is filtered: the Review links selection and the viewer's lookup keep the whole collection, so a selected film a filter hides stays selected.
+  const arranged = useMemo(() => arrangeVideos(videos.data ?? [], prefs), [videos.data, prefs]);
+  // A status change under a filter (or a status sort) can take the card that holds focus out of the grid: focus then goes to the Status select rather than to the page.
+  const focusedCard = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const card = focusedCard.current;
+    if (!card || card.isConnected) return;
+    focusedCard.current = null;
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (active === null || active === document.body) document.querySelector<HTMLElement>('[data-testid="video-grid-status"]')?.focus({ preventScroll: true });
+    }, 0);
+  }, [arranged]);
   const running = uploads.filter((upload) => upload.phase === "reserving" || upload.phase === "uploading" || upload.phase === "finishing");
   // The component is chosen once per opening: swapping `lazy` for the loaded one mid-open would remount the viewer (playback, Version and frame lost).
   const [opened, setOpened] = useState<{ id: string; Viewer: ViewerComponent | typeof LazyViewer } | null>(null);
@@ -184,8 +205,10 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
       <EmbeddedUploadTray uploads={rows} errors={[]} onCancel={(key) => void cancelVideoUpload(key, queryClient)} onRemove={(key) => removeVideoUpload(key)} onRetry={(key) => retryVideoUpload(key)} testId="video-upload-tray" pluralCaution={pluralCaution} />
       {videos.isError && !videos.data && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{videos.error.message || "Films could not be loaded."}</span><Button type="button" variant="text" onClick={() => { terminate(videos.error); void videos.refetch(); }}>Retry</Button></Notice>}
       {videos.data && videos.data.length === 0 && <EmptyState title="No films yet.">{canUpload ? "Drop the first MP4 or MOV above to begin." : "Uploaded films will appear here."}</EmptyState>}
-      {videos.data && videos.data.length > 0 && <div className="grid gap-[var(--space-5)] [grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr))]" data-testid="video-card-grid" onFocusCapture={() => { preloadViewer(); if (notesEnabled) preloadNotes(); }} onPointerOverCapture={() => { preloadViewer(); if (notesEnabled) preloadNotes(); }}>
-        {videos.data.map((video) => <VideoCard key={video.id} video={video} canUpload={canUpload} currentUserId={userId} myUpload={myVersionUpload(video)} onVersionFile={versionFile} onCancelReservation={(reservationId) => abortVideoReservation(queryClient, projectId, reservationId)} onOpen={(picked, trigger) => { opener.current = trigger; openerVideoId.current = picked.id; setOpenVideoId(picked.id, Math.max(...picked.versions.map((version) => version.version))); }} {...(reviewLinks.canWrite ? { onCreateReviewLink: () => reviewLinks.store.openCreateFor(video.id, [video.currentAssetId], `[data-testid="video-card-menu"][data-video-id="${video.id}"]`) } : {})} {...(reviewLinks.enabled ? { reviewLinks: { selected: reviewLinks.selection.has(video.id), ...(reviewLinks.canWrite ? { onToggle: () => reviewLinks.store.toggleSelect(video.id) } : {}), chips: reviewLinks.chipsFor(video.id), onOpenChip: reviewLinks.store.openDetail, onOpenAll: reviewLinks.store.openList } } : {})} />)}
+      {videos.data && videos.data.length > 0 && <VideoGridToolbar prefs={prefs} onChange={setPrefs} shown={arranged.length} total={videos.data.length} />}
+      {videos.data && videos.data.length > 0 && arranged.length === 0 && <EmptyState title="No films match this filter.">Choose another status, or show all films.</EmptyState>}
+      {videos.data && arranged.length > 0 && <div className={`grid gap-[var(--space-5)] ${GRID_COLUMNS[prefs.size]}`} data-size={prefs.size} data-testid="video-card-grid" onFocusCapture={(event) => { const card = (event.target as Element).closest<HTMLElement>('[data-testid="video-card"]'); if (card) focusedCard.current = card; preloadViewer(); if (notesEnabled) preloadNotes(); }} onPointerOverCapture={() => { preloadViewer(); if (notesEnabled) preloadNotes(); }}>
+        {arranged.map((video) => <VideoCard key={video.id} video={video} appearance={{ thumb: prefs.thumb, info: prefs.info }} reviewStatus={{ projectId, role, archived }} canUpload={canUpload} currentUserId={userId} myUpload={myVersionUpload(video)} onVersionFile={versionFile} onCancelReservation={(reservationId) => abortVideoReservation(queryClient, projectId, reservationId)} onOpen={(picked, trigger) => { opener.current = trigger; openerVideoId.current = picked.id; setOpenVideoId(picked.id, Math.max(...picked.versions.map((version) => version.version))); }} {...(reviewLinks.canWrite ? { onCreateReviewLink: () => reviewLinks.store.openCreateFor(video.id, [video.currentAssetId], `[data-testid="video-card-menu"][data-video-id="${video.id}"]`) } : {})} {...(reviewLinks.enabled ? { reviewLinks: { selected: reviewLinks.selection.has(video.id), ...(reviewLinks.canWrite ? { onToggle: () => reviewLinks.store.toggleSelect(video.id) } : {}), chips: reviewLinks.chipsFor(video.id), onOpenChip: reviewLinks.store.openDetail, onOpenAll: reviewLinks.store.openList } } : {})} />)}
       </div>}
     </div>
     {trashEnabled && trashMounted && <ViewLoadBoundary viewLabel="Trash">
