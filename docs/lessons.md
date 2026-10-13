@@ -6150,6 +6150,7 @@ Tags: media-renditions, workers-runtime · #741, #751
   - Reserve: a refused reserve (429 `too_many_uploads`, 409 `upload_in_progress`, ...) keeps the person's file and title and shows the server's words. No client counter.
   - Cancel: send the abort, await its response whatever it is (204, 409 `upload_completed`, 503 `abort_pending`, a network failure), invalidate `videos` and `detail`, drop the local row. A 503 or no answer is a toast; the server sweep reclaims the reservation.
   - A reservation the tab has no job for (a reload, another device) is visible in the DTO (`uploading.reservationId`), and its owner can abort it from the card.
+- Related: a batch of new films (#845) only paces the jobs it started, three at a time; a job holds its lane until it is truly finished (a failure parked for a retry keeps it), and a refusal comes back as a row with the server's words. It never refuses by count.
 - **A notice about a person names the person.** The terminal-principal broadcast carries the principal id of the query client that saw the 401 (`bindQueryClientPrincipal`), and the store clears only that person's uploads, so a retired person's late 401 clears nothing the current person owns.
 
 Guards: `apps/web/src/lib/video-upload-store.test.ts` ("Cancel leaves the reservation to the server"), `video-upload-terminal.test.ts` ("the terminal notice names its principal"), `components/video/VideoCollectionPanel.dom.test.tsx` ("The server owns the reservation").
@@ -6277,3 +6278,12 @@ Tags: auth · #847
 - **Related.** A "never" that is really a long number still has to be one definition (see "A nullable "never" breaks every comparison that was written for a number (#847)").
 
 Guards: `workers/app/test/guest-session.test.ts` ("verified Delivery guests stay signed in"), `workers/app/test/guest-email.test.ts` ("session lifetime at verify").
+## Never seek a media element before it has data (iOS wedges the seek)
+Tags: qa-browser, testing-guards
+
+- **What bit.** On iOS Safari the review player's playhead was pinned at frame 0 while the picture played, and dragging the scrubber did nothing. Measured in the iPhone Simulator: iOS ignores `preload="auto"`, so no data loads before a gesture. `loadedmetadata` fires at `readyState` 1, and the frame clock then wrote `currentTime = 0.02` (frame 0's midpoint). That seek stayed pending (`seeking` true, no `seeked`). Pressing Play brought `loadeddata` and `canplay`, and the picture played (`requestVideoFrameCallback` fired every frame, with the right `mediaTime`), but `video.seeking` stayed true and `currentTime` stayed 0.02 forever. The clock's target never settled, the slider (`targetFrame ?? frame`) stayed at 0, and a drag only moved the target because `seek()` saw `seeking` and waited for a `seeked` that never came. A control page whose data was already loading when the same seek was issued got `seeked` normally.
+- **Not the cause.** The "`requestVideoFrameCallback` goes silent" theory is refuted: it was healthy. Any fallback that reads `currentTime` is useless in the wedge, because `currentTime` is the frozen value.
+- **Rule.** Never write `currentTime` while `readyState < HAVE_CURRENT_DATA` (2). `VideoFrameClock.issue()` settles a target the playhead already sits in (frame 0 at time 0) without a write, and otherwise holds the target pending and writes it on `loadeddata` / `canplay`, paused or playing. `emptied` drops the held seek. Desktop (data at metadata) behaves as before.
+- **Gate.** `video-frame-clock.dom.test.tsx` ("never seeks an element that has no data") drives the iOS sequence with `loadMetadata(video, { readyState: 1 })` and `loadData`. The test stub's `loadMetadata` defaults to `readyState` 2, as on desktop; a test that wants the iOS case must say 1. Only a real iOS pass shows the wedge itself, because happy-dom has no media pipeline.
+
+Guards: `apps/web/src/lib/video-frame-clock.dom.test.tsx`.

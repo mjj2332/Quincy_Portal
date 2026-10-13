@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mp4RejectMessage } from "@quincy/shared";
 import { buildMp4, videoTrack, type Mp4Spec } from "../../../../packages/shared/src/testing/mp4-builder";
-import { ABORT_UNREACHABLE_MESSAGE, NOT_FAST_START_CAUTION, NOT_MP4_NAME_MESSAGE, TIMECODE_MISMATCH_CAUTION, VideoUpload, checkVideoFile, type VideoUploadDone, type VideoUploadState } from "./video-upload";
+import { ABORT_UNREACHABLE_MESSAGE, NOT_FAST_START_CAUTION, pluralCaution, NOT_MP4_NAME_MESSAGE, TIMECODE_MISMATCH_CAUTION, VideoUpload, checkVideoFile, type VideoUploadDone, type VideoUploadState } from "./video-upload";
 
 const poster = vi.hoisted(() => ({ blob: null as Blob | null }));
 vi.mock("./video-poster", () => ({ captureVideoPoster: () => Promise.resolve(poster.blob) }));
@@ -290,6 +290,33 @@ describe("VideoUpload (#741 4d-i)", () => {
     expect(calls.filter((call) => call.url.endsWith("/abort"))).toHaveLength(1);
   });
 
+  it("`cleaning` is true from the failure until the abort has been answered, and onChange fires when it ends (#845)", async () => {
+    routes[RESERVE] = () => json(multipartReserve, 201);
+    let answer!: () => void;
+    routes[ABORT] = () => new Promise<Response>((resolve) => { answer = () => resolve(json({ ok: true })); });
+    FakeXhr.script = [403];
+    const { job, states } = await make(); job.start(); await until(job, "failed");
+    expect(job.cleaning).toBe(true);
+    const before = states.length;
+    answer();
+    await vi.waitFor(() => expect(job.cleaning).toBe(false));
+    expect(states.length).toBeGreaterThan(before);
+  });
+
+  it("a cancel is `cleaning` until its abort is answered, and the job reads as cancelled", async () => {
+    routes[RESERVE] = () => json(multipartReserve, 201);
+    let answer!: () => void;
+    routes[ABORT] = () => new Promise<Response>((resolve) => { answer = () => resolve(json({ ok: true })); });
+    FakeXhr.hold = true;
+    const { job } = await make(); job.start();
+    for (let i = 0; i < 100 && FakeXhr.instances.length < 1; i += 1) await new Promise((resolve) => setTimeout(resolve, 2));
+    const done = job.cancel();
+    expect(job.isCancelled).toBe(true); expect(job.cleaning).toBe(true);
+    await vi.waitFor(() => expect(calls.some((call) => call.url.endsWith("/abort"))).toBe(true));
+    answer(); await done;
+    expect(job.cleaning).toBe(false);
+  });
+
   it("a failure after the reservation sends one abort and then reports the server cleaned up, whatever it answered", async () => {
     routes[RESERVE] = () => json(devReserve, 201);
     routes["PUT /api/projects/:p/video-uploads/:r/direct"] = () => new Response(null, { status: 200 });
@@ -335,5 +362,13 @@ describe("VideoUpload (#741 4d-i)", () => {
 describe("fast-start caution copy", () => {
   it("names the setting with curly quotes", () => {
     expect(NOT_FAST_START_CAUTION).toContain("Re-export with “Fast start” (or “Optimise for web”) turned on.");
+  });
+});
+
+describe("pluralCaution (#845)", () => {
+  it("words the fast-start and timecode cautions for several files, and leaves any other text alone", () => {
+    expect(pluralCaution(NOT_FAST_START_CAUTION)).toBe("These files aren't fast-start, so playback may take a moment to begin. Re-export them with “Fast start” (or “Optimise for web”) turned on.");
+    expect(pluralCaution(TIMECODE_MISMATCH_CAUTION)).toMatch(/^The files' timecode tracks don't match their frame rates/);
+    expect(pluralCaution("Something else.")).toBe("Something else.");
   });
 });

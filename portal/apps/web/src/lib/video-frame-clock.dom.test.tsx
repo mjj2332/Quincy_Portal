@@ -390,3 +390,117 @@ describe("VideoFrameClock, seeks stay inside the element's real duration (#741 4
     expect(stub.writes[0]!).toBeLessThan(0.01);
   });
 });
+
+describe("VideoFrameClock never seeks an element that has no data (iOS wedges the seek)", () => {
+  const META = { duration: 20, videoWidth: 1920, videoHeight: 1080 } as const;
+  function build(initialFrame?: number) {
+    stub = installVideoElementStub({ rvfc: true });
+    const video = document.createElement("video");
+    clock = new VideoFrameClock(video, { fps: FPS_25, frameCount: 500 }, initialFrame === undefined ? {} : { initialFrame });
+    return video;
+  }
+
+  it("iOS: metadata at readyState 1 with the playhead on frame 0 writes nothing and is settled at frame 0", async () => {
+    const video = build();
+    stub.loadMetadata(video, { ...META, readyState: 1 });
+    expect(stub.writes).toEqual([]);
+    expect(clock!.getState()).toMatchObject({ frame: 0, targetFrame: null, confirmed: true });
+    await expect(clock!.awaitConfirmedFrame()).resolves.toBe(0);
+    expect(stub.writes).toEqual([]);
+  });
+
+  it("an initial frame past 0 is held back at readyState 1 and sought exactly once when data arrives", () => {
+    const video = build(100);
+    stub.loadMetadata(video, { ...META, readyState: 1 });
+    expect(stub.writes).toEqual([]);
+    expect(clock!.getState()).toMatchObject({ targetFrame: 100, confirmed: false });
+    stub.loadData(video);
+    expect(stub.writes).toEqual([seekTo(100)]);
+    stub.loadData(video); // canplay-style repeat: idempotent
+    expect(stub.writes).toEqual([seekTo(100)]);
+    stub.finishSeek(video);
+    stub.presentFrame(video, 100 / 25);
+    expect(clock!.getState()).toMatchObject({ frame: 100, targetFrame: null, confirmed: true });
+  });
+
+  it("canplay releases the held seek the same way", () => {
+    const video = build(100);
+    stub.loadMetadata(video, { ...META, readyState: 1 });
+    stub.setReadyState(video, 3);
+    video.dispatchEvent(new Event("canplay"));
+    expect(stub.writes).toEqual([seekTo(100)]);
+  });
+
+  it("play() before data keeps playing; the held seek goes out when data arrives while playing", () => {
+    const video = build(100);
+    clock!.play();
+    stub.loadMetadata(video, { ...META, readyState: 1 });
+    expect(stub.writes).toEqual([]);
+    expect(clock!.getState()).toMatchObject({ playing: true, targetFrame: 100 });
+    stub.loadData(video);
+    expect(stub.writes).toEqual([seekTo(100)]);
+    expect(clock!.getState().playing).toBe(true);
+    expect(video.paused).toBe(false);
+    expect(stub.callsOf(video)).not.toContain("pause");
+  });
+
+  it("seekToFrame at readyState 1 moves the slider target without writing; data releases the seek", () => {
+    const video = build();
+    stub.loadMetadata(video, { ...META, readyState: 1 });
+    clock!.seekToFrame(300);
+    expect(stub.writes).toEqual([]);
+    expect(clock!.getState()).toMatchObject({ targetFrame: 300, confirmed: false });
+    stub.loadData(video);
+    expect(stub.writes).toEqual([seekTo(300)]);
+  });
+
+  it("emptied drops a held seek", () => {
+    const video = build(100);
+    stub.loadMetadata(video, { ...META, readyState: 1 });
+    video.dispatchEvent(new Event("emptied"));
+    stub.loadData(video);
+    expect(stub.writes).toEqual([]);
+  });
+
+  it("a seek held for want of data cancels the previous seek's confirmation timer", async () => {
+    const video = build();
+    stub.loadMetadata(video, META);
+    stub.finishSeek(video); stub.presentFrame(video, 0);
+    stub.writes.length = 0;
+    clock!.seekToFrame(100);
+    stub.finishSeek(video); // landed, no frame presented yet: the fallback timer is armed
+    stub.setReadyState(video, 1);
+    clock!.seekToFrame(300);
+    const settled = vi.fn();
+    clock!.awaitConfirmedFrame().then(settled, () => {});
+    vi.advanceTimersByTime(400);
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    expect(clock!.getState()).toMatchObject({ targetFrame: 300, confirmed: false });
+    stub.loadData(video);
+    expect(stub.writes).toEqual([seekTo(100), seekTo(300)]);
+  });
+
+  it("a reverse whose last step settles in place (no data) still ends: unmuted, stopped", () => {
+    let t = 0;
+    stub = installVideoElementStub({ rvfc: true });
+    const video = document.createElement("video");
+    clock = new VideoFrameClock(video, { fps: FPS_25, frameCount: 500 }, { now: () => t });
+    stub.loadMetadata(video, { ...META, readyState: 1 });
+    clock!.seekToFrame(10);
+    expect(stub.writes).toEqual([]);
+    clock!.reverse(1);
+    expect(video.muted).toBe(true);
+    t = 10_000;
+    vi.advanceTimersByTime(50);
+    expect(stub.writes).toEqual([]);
+    expect(clock!.getState()).toMatchObject({ frame: 0, targetFrame: null, confirmed: true, playing: false, rate: 0 });
+    expect(video.muted).toBe(false);
+  });
+
+  it("regression: with data at metadata the init seek is written as before", () => {
+    const video = build(100);
+    stub.loadMetadata(video, { ...META, readyState: 2 });
+    expect(stub.writes).toEqual([seekTo(100)]);
+  });
+});

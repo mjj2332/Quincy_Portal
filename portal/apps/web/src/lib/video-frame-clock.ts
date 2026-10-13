@@ -71,6 +71,8 @@ export class VideoFrameClock {
   private commanded = false;
   /** This load has been initialised (the first seek issued): a repeated `loadedmetadata` for it keeps the current target. Reset by `emptied`. */
   private initialised = false;
+  /** The target could not be written yet (the element has no data): `loadeddata` / `canplay` issues it. See `issue`. */
+  private deferred = false;
 
   constructor(private readonly video: HTMLVideoElement, version: FrameClockVersion, options: { now?: () => number; initialFrame?: number } = {}) {
     this.initialFrame = options.initialFrame !== undefined && Number.isFinite(options.initialFrame) ? Math.max(0, Math.trunc(options.initialFrame)) : 0;
@@ -193,9 +195,9 @@ export class VideoFrameClock {
     this.trim = 1;
     // Judge the restart by the frame a pending seek is bringing, not the one still on screen.
     if ((this.state.targetFrame ?? this.state.frame) >= this.lastFrame()) {
-      this.target = 0; this.issued = 0; this.presented = false;
-      this.video.currentTime = this.seekSeconds(0);
+      this.target = 0;
       this.state = { ...this.state, frame: 0, targetFrame: 0, confirmed: false };
+      this.issue();
     }
     this.video.playbackRate = rate;
     // play() must run inside the user's gesture (Safari / iOS refuse it later). Before metadata it stays pending; `initialize` positions frame 0 without pausing, so it is never aborted.
@@ -267,7 +269,9 @@ export class VideoFrameClock {
 
   private readonly handlers: ReadonlyArray<readonly [string, () => void]> = [
     ["loadedmetadata", () => { this.initialize(); }],
-    ["emptied", () => { this.initialised = false; }],
+    ["emptied", () => { this.initialised = false; this.deferred = false; }],
+    ["loadeddata", () => { this.releaseDeferred(); }],
+    ["canplay", () => { this.releaseDeferred(); }],
     ["seeked", () => { if (this.video.readyState >= 3) this.set({ stalled: false }); this.onSeeked(); }],
     ["waiting", () => {
       if (this.disposed || this.video.paused) return;
@@ -327,12 +331,37 @@ export class VideoFrameClock {
     this.startRaf();
   }
 
+  /**
+   * Writes the target to `currentTime`, but never while the element has no data (`readyState < HAVE_CURRENT_DATA`): iOS loads
+   * nothing before a gesture, the seek stays pending, and a later `play()` wedges WebKit with `seeking` true and `currentTime`
+   * frozen forever. A playhead already inside the target frame settles it where it stands; any other target waits for data.
+   */
   private issue(): void {
     if (this.target === null) return;
+    if (this.video.readyState < 2) {
+      // The target is replaced without a write: the previous seek's fallback timer must not settle (or resolve a waiter for) the old frame.
+      this.clearConfirmTimer();
+      if (this.timeFrame() === this.target) {
+        this.deferred = false;
+        // No `seeked` will follow, which is where a reverse normally ends: end it here, then carry on if it was a mid-run step.
+        if (this.reverseState?.final) this.endReverse();
+        this.set({ frame: this.target });
+        this.settle();
+        if (this.reverseState) this.scheduleTick();
+      } else this.deferred = true;
+      return;
+    }
+    this.deferred = false;
     this.issued = this.target;
     // Presentation evidence belongs to one seek: a frame shown before this write says nothing about the one it asks for.
     this.presented = false;
     this.video.currentTime = this.seekSeconds(this.target);
+  }
+
+  /** Data arrived (`loadeddata`, `canplay`): the seek held back by `issue` goes out now, paused or playing. Idempotent. */
+  private releaseDeferred(): void {
+    if (this.disposed || !this.deferred || this.target === null || this.video.readyState < 2) return;
+    this.issue();
   }
 
   /** The middle of `frame`, kept strictly inside a finite element duration (the last frame's midpoint can lie past it). */

@@ -21,6 +21,12 @@ import { captureVideoPoster } from "./video-poster";
 
 export const NOT_FAST_START_CAUTION = "This file isn't fast-start, so playback may take a moment to begin. Re-export with “Fast start” (or “Optimise for web”) turned on.";
 export const TIMECODE_MISMATCH_CAUTION = "The file's timecode track doesn't match its frame rate, so it is ignored and timecode starts at 00:00:00:00.";
+const PLURAL_CAUTIONS = new Map<string, string>([
+  [NOT_FAST_START_CAUTION, "These files aren't fast-start, so playback may take a moment to begin. Re-export them with “Fast start” (or “Optimise for web”) turned on."],
+  [TIMECODE_MISMATCH_CAUTION, "The files' timecode tracks don't match their frame rates, so they are ignored and timecode starts at 00:00:00:00."],
+]);
+/** A caution worded for several files at once (shown once for the lot); any other text is returned as it came. */
+export const pluralCaution = (caution: string): string => PLURAL_CAUTIONS.get(caution) ?? caution;
 export const NOT_MP4_NAME_MESSAGE = mp4RejectMessage("not_mp4");
 const UPLOADS_UNAVAILABLE = "Uploads aren't available right now.";
 export const COMPLETE_RETRY_DELAYS_MS: readonly number[] = [2_000, 5_000, 10_000];
@@ -127,6 +133,7 @@ export class VideoUpload {
   private poster: Promise<Blob | null> | null = null;
   private running = false;
   private cancelled = false;
+  private cleaningCount = 0;
   private reserveRequest: Promise<VideoUploadReserveResponse> | null = null;
   private resolveReserved!: (refusal: string | null) => void;
   /** Settles once the server has answered the reserve: `null` when it is held (or the upload was cancelled first), else the server's reason it was refused. */
@@ -149,7 +156,16 @@ export class VideoUpload {
     this.cancelled = true;
     this.controller.abort();
     this.resolveReserved(null);
-    return this.sendAbort();
+    return this.whileCleaning(this.sendAbort());
+  }
+
+  /** True once `cancel` has been called. */
+  get isCancelled(): boolean { return this.cancelled; }
+  /** True while an abort request (from a cancel or a failure) is unanswered: the server may still count this upload's reservation. */
+  get cleaning(): boolean { return this.cleaningCount > 0; }
+  private async whileCleaning<T>(work: Promise<T>): Promise<T> {
+    this.cleaningCount += 1;
+    try { return await work; } finally { this.cleaningCount -= 1; this.options.onChange(this.state); }
   }
 
   /** One abort request, including for a reservation whose reserve call is still in flight and will answer late. No retries, no bookkeeping of the answer. */
@@ -164,7 +180,7 @@ export class VideoUpload {
 
   /** A failure's cleanup: one abort, then a refresh whatever it answered. */
   private async abortAfterFailure(): Promise<void> {
-    await this.sendAbort();
+    await this.whileCleaning(this.sendAbort());
     this.options.onServerCleaned?.();
   }
 
