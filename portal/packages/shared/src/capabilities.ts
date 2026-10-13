@@ -54,6 +54,8 @@ export const CAPABILITIES = [
   "downloadVideo",
   /** Set a Video Version's Review status to Approved (internal) (#863). In review needs only annotateVideo. */
   "approveVideoInternal",
+  /** Choose which Social overlays a Project offers in the Video viewer (#870). Admin and Editor. */
+  "chooseSocialOverlays",
   "switchDeliveryPage",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
@@ -128,6 +130,7 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "manageVideoTrash",
     "downloadVideo",
     "approveVideoInternal",
+    "chooseSocialOverlays",
     "switchDeliveryPage",
   ],
   editor: [
@@ -159,6 +162,7 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "manageVideoTrash",
     "downloadVideo",
     "approveVideoInternal",
+    "chooseSocialOverlays",
   ],
   external_editor: EXTERNAL_EDITOR_CAPABILITIES,
   photographer: [
