@@ -163,7 +163,7 @@ export function VideoRangeHandles({ marks, frameCount, label, largeStep, interac
 
   const onPointerDown = (kind: HandleKind) => (event: ReactPointerEvent<HTMLDivElement>) => {
     const now = latest.current;
-    if (!now.interactive || drag.current !== null || event.button !== 0 || event.isPrimary === false) return;
+    if (!now.interactive || drag.current !== null || event.button !== 0 || event.isPrimary === false || event.pointerType === "touch") return;
     const { rect, half } = geometry();
     const held = now.marks[kind];
     if (held === null) return;

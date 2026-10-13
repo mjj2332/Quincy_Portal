@@ -52,10 +52,10 @@ const present = (frame: number) => act(async () => { stub.presentFrame(video(), 
 async function key(k: string, init: KeyboardEventInit = {}, target: Element = byTestId("video-player")!) {
   await act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init })); });
 }
-type PointerInit = { clientX: number; button?: number; isPrimary?: boolean; pointerId?: number };
-async function pointer(type: string, target: Element, { clientX, button = 0, isPrimary = true, pointerId = 1 }: PointerInit) {
+type PointerInit = { clientX: number; button?: number; isPrimary?: boolean; pointerId?: number; pointerType?: string };
+async function pointer(type: string, target: Element, { clientX, button = 0, isPrimary = true, pointerId = 1, pointerType = "mouse" }: PointerInit) {
   const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, clientY: 4, button });
-  Object.defineProperties(event, { pointerId: { value: pointerId }, isPrimary: { value: isPrimary } });
+  Object.defineProperties(event, { pointerId: { value: pointerId }, isPrimary: { value: isPrimary }, pointerType: { value: pointerType } });
   await act(async () => { target.dispatchEvent(event); });
 }
 const centre = (frame: number) => 6 + frame;
@@ -114,6 +114,12 @@ describe("VideoPlayer range button (#861)", () => {
   it("is disabled when the range is locked or the transport is (drawing), and carries the host's reason as its tooltip text", async () => {
     await mount({ onMark: vi.fn(), range: noopRange(NONE, { locked: true, hint: "Add a note to mark a range" }) });
     expect((rangeButton() as HTMLButtonElement).disabled).toBe(true);
+    // The reason is reachable: an enabled wrapper takes focus and opens the tooltip.
+    const tip = byTestId("video-range-tip")!;
+    expect(tip.contains(rangeButton())).toBe(true);
+    await act(async () => { tip.focus(); });
+    await flush(4);
+    expect(document.body.textContent).toContain("Add a note to mark a range");
     await update({ range: noopRange(NONE) });
     expect((rangeButton() as HTMLButtonElement).disabled).toBe(false);
     await update({ transportLocked: true });
@@ -197,6 +203,14 @@ describe("VideoPlayer range handles (#861)", () => {
     await pointer("pointermove", handle("in")!, { clientX: centre(50) });
     await pointer("pointerdown", handle("in")!, { clientX: centre(10), isPrimary: false, pointerId: 7 });
     await pointer("pointermove", handle("in")!, { clientX: centre(50) });
+    expect(onMark).not.toHaveBeenCalled();
+  });
+
+  it("a touch pointer never starts a drag, even where the primary pointer is fine", async () => {
+    const onMark = vi.fn();
+    await mount({ onMark, range: noopRange({ in: 10, out: null }) });
+    await pointer("pointerdown", handle("in")!, { clientX: centre(10), pointerType: "touch" });
+    await pointer("pointermove", handle("in")!, { clientX: centre(50), pointerType: "touch" });
     expect(onMark).not.toHaveBeenCalled();
   });
 

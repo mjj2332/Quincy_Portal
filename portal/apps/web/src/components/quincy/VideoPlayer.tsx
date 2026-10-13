@@ -207,11 +207,14 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         <span>{timecode(clock.frame)}</span><span className="text-foreground-secondary">{` / ${timecode(version.frameCount)}`}</span>
       </output>
       <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><TimeFormatMenu /></OverlayContainerContext.Provider>
-      {range !== undefined && <IconTip label={rangeLocked && range.hint ? range.hint : stepLabel} {...(rangeLocked ? {} : { keys: step === "clear" ? "I / O" : step === "in" ? "I" : "O" })}>
-        <Button type="button" variant="outline" size="icon" aria-label={stepLabel} data-testid="video-range-button" data-step={step} className={COARSE} disabled={rangeLocked} onClick={pressRange}>
+      {range !== undefined && (() => {
+        const rangeButton = <Button type="button" variant="outline" size="icon" aria-label={stepLabel} data-testid="video-range-button" data-step={step} className={COARSE} disabled={rangeLocked} onClick={pressRange}>
           {step === "in" ? <ArrowRightFromLine aria-hidden="true" /> : step === "out" ? <ArrowRightToLine aria-hidden="true" /> : <X aria-hidden="true" />}
-        </Button>
-      </IconTip>}
+        </Button>;
+        // A disabled button gets no hover or focus, so its reason hangs on an enabled wrapper the tooltip can open from.
+        if (rangeLocked && range.hint) return <IconTip label={range.hint}><span tabIndex={0} data-testid="video-range-tip" className="inline-flex rounded-[var(--radius-md)] focus-visible:ring-2 focus-visible:ring-ring">{rangeButton}</span></IconTip>;
+        return <IconTip label={stepLabel} {...(rangeLocked ? {} : { keys: step === "clear" ? "I / O" : step === "in" ? "I" : "O" })}>{rangeButton}</IconTip>;
+      })()}
       <div data-testid="video-key-legend" className={LEGEND}>
         <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>J</Kbd><Kbd className={LEGEND_KBD}>K</Kbd><Kbd className={LEGEND_KBD}>L</Kbd></KbdGroup>shuttle</span>
         <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>←</Kbd><Kbd className={LEGEND_KBD}>→</Kbd></KbdGroup>frame</span>
