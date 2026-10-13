@@ -103,9 +103,12 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
   function afterDelete() {
     store.resetDetail(linkId);
     const { view } = store.getState();
-    if (view.kind === "detail" && view.linkId === linkId) store.openList();
+    // Only a completion that itself returned this link's detail to the list restores focus; if the person has moved on, their focus is theirs.
+    if (!(view.kind === "detail" && view.linkId === linkId)) return;
+    store.openList();
     // The Delete button is unmounted with this step; without this focus would fall to the page behind the dialog. After the list renders: a surviving link's Manage, else the dialog itself.
     window.setTimeout(() => {
+      if (store.getState().view.kind !== "list") return;
       const open = document.querySelector<HTMLElement>('[data-testid="review-links-dialog"]');
       (open?.querySelector<HTMLElement>('[data-testid="review-link-row"] button') ?? open)?.focus();
     }, 0);

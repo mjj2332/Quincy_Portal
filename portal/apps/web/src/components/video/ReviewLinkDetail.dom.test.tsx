@@ -262,6 +262,21 @@ describe("detail: delete (#846)", () => {
     expect(text(dialog())).toContain("No Review links yet");
     expect(document.activeElement).toBe(dialog());
   });
+  it("a delete that completes after the person moved to another link does not steal their focus", async () => {
+    const other = linkOf({ id: L2, label: "Jones family" });
+    state.links = [revokedLink(), other];
+    let finish!: () => void;
+    apiDeleteMock.mockImplementation(() => new Promise<undefined>((resolve) => { finish = () => { state.links = [other]; resolve(undefined); }; }));
+    await mount(); await openDetailOf("Smith family");
+    await confirm("Delete link", "Delete");
+    await press(buttonIn(detail(), "All links"));
+    await press(button("Manage Jones family"));
+    const label = q<HTMLInputElement>("#review-link-detail-label", detail())!;
+    await act(async () => { label.focus(); });
+    await act(async () => { finish(); }); await flush();
+    expect(text(detail())).toContain("Jones family");
+    expect(document.activeElement).toBe(label);
+  });
   it("a double press sends once", async () => {
     state.links = [revokedLink()];
     let finish!: () => void;
