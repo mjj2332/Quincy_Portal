@@ -389,8 +389,8 @@ _Avoid_: Alert, message, toast
 
 **Notification outbox**:
 The queued intent to notify one Recipient about one occurrence, written in the same
-transaction as the thing that happened. Not yet a Notification. Kept for 30 days, then removed
-together with the Delivery ledger rows and the Notification it led to.
+transaction as the thing that happened. Not yet a Notification. Removed, with its Delivery ledger rows, once it
+and the Notification it led to are both 30 days old.
 _Avoid_: Queue, job, event log
 
 **Delivery ledger**:
