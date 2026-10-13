@@ -2391,3 +2391,16 @@ export const socialOverlays = sqliteTable(
     check("social_overlays_default_not_archived", sql`NOT (${t.isDefault} = 1 AND ${t.archivedAt} IS NOT NULL)`),
   ],
 );
+
+/**
+ * Project social overlay selection (#870; migration 0080). One row per (Project, overlay). A Project with no usable row resolves to the Default overlay at read time.
+ * Rows go with the Project (cascade). An overlay row cannot be deleted while selected (restrict): overlays are archived, and an archived one stays on the Projects that had it.
+ */
+export const projectSocialOverlays = sqliteTable(
+  "project_social_overlays",
+  {
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    overlayId: text("overlay_id").notNull().references(() => socialOverlays.id, { onDelete: "restrict" }),
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.overlayId] }), index("project_social_overlays_overlay_idx").on(t.overlayId)],
+);
