@@ -462,6 +462,42 @@ describe("VideoFrameClock never seeks an element that has no data (iOS wedges th
     expect(stub.writes).toEqual([]);
   });
 
+  it("a seek held for want of data cancels the previous seek's confirmation timer", async () => {
+    const video = build();
+    stub.loadMetadata(video, META);
+    stub.finishSeek(video); stub.presentFrame(video, 0);
+    stub.writes.length = 0;
+    clock!.seekToFrame(100);
+    stub.finishSeek(video); // landed, no frame presented yet: the fallback timer is armed
+    stub.setReadyState(video, 1);
+    clock!.seekToFrame(300);
+    const settled = vi.fn();
+    clock!.awaitConfirmedFrame().then(settled, () => {});
+    vi.advanceTimersByTime(400);
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    expect(clock!.getState()).toMatchObject({ targetFrame: 300, confirmed: false });
+    stub.loadData(video);
+    expect(stub.writes).toEqual([seekTo(100), seekTo(300)]);
+  });
+
+  it("a reverse whose last step settles in place (no data) still ends: unmuted, stopped", () => {
+    let t = 0;
+    stub = installVideoElementStub({ rvfc: true });
+    const video = document.createElement("video");
+    clock = new VideoFrameClock(video, { fps: FPS_25, frameCount: 500 }, { now: () => t });
+    stub.loadMetadata(video, { ...META, readyState: 1 });
+    clock!.seekToFrame(10);
+    expect(stub.writes).toEqual([]);
+    clock!.reverse(1);
+    expect(video.muted).toBe(true);
+    t = 10_000;
+    vi.advanceTimersByTime(50);
+    expect(stub.writes).toEqual([]);
+    expect(clock!.getState()).toMatchObject({ frame: 0, targetFrame: null, confirmed: true, playing: false, rate: 0 });
+    expect(video.muted).toBe(false);
+  });
+
   it("regression: with data at metadata the init seek is written as before", () => {
     const video = build(100);
     stub.loadMetadata(video, { ...META, readyState: 2 });

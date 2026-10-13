@@ -339,10 +339,15 @@ export class VideoFrameClock {
   private issue(): void {
     if (this.target === null) return;
     if (this.video.readyState < 2) {
+      // The target is replaced without a write: the previous seek's fallback timer must not settle (or resolve a waiter for) the old frame.
+      this.clearConfirmTimer();
       if (this.timeFrame() === this.target) {
         this.deferred = false;
+        // No `seeked` will follow, which is where a reverse normally ends: end it here, then carry on if it was a mid-run step.
+        if (this.reverseState?.final) this.endReverse();
         this.set({ frame: this.target });
         this.settle();
+        if (this.reverseState) this.scheduleTick();
       } else this.deferred = true;
       return;
     }
