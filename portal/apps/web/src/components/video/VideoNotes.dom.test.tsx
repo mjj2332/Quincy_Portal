@@ -1534,3 +1534,88 @@ describe("Time format in the notes (#860)", () => {
     expect(viewerStillOpen()).toBe(true);
   });
 });
+
+describe("In / Out range button and handles (#861)", () => {
+  const rangeButton = () => tid("video-range-button", popup()) as HTMLButtonElement | null;
+  const handle = (kind: "in" | "out") => tid(`video-range-${kind}`, popup());
+  const anchor = () => tid("video-note-anchor")!.textContent ?? "";
+  const trackRect = (width = 311) => { tid("video-range-handles", popup())!.getBoundingClientRect = () => ({ left: 0, top: 0, width, height: 12, right: width, bottom: 12, x: 0, y: 0, toJSON: () => ({}) }); };
+  async function pointer(type: string, target: Element, clientX: number) {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, button: 0 });
+    Object.defineProperties(event, { pointerId: { value: 1 }, isPrimary: { value: true } });
+    await act(async () => { target.dispatchEvent(event); });
+  }
+
+  it("the button cycles the composer's marks In -> Out -> cleared, and the keys and the button agree", async () => {
+    await openFilm({}, 12);
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set in point");
+    await click(rangeButton()!);
+    expect(anchor()).toContain("In 01:00:00:12");
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+    await present(20);
+    await click(rangeButton()!);
+    expect(anchor()).toContain("Out 01:00:00:20");
+    expect(tid("video-pending-band")).not.toBeNull();
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Clear in and out");
+    await click(rangeButton()!);
+    expect(tid("video-note-clear-marks")).toBeNull();
+    expect(tid("video-pending-band")).toBeNull();
+    await dispatchKey(popup(), "i");
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+  });
+
+  it("a handle moves its own end only, the pending band follows, and Post sends the exclusive end", async () => {
+    await openFilm({}, 12);
+    await click(rangeButton()!);
+    await present(20);
+    await click(rangeButton()!);
+    trackRect();
+    await key("ArrowRight", handle("in")!);
+    expect(anchor()).toContain("In 01:00:00:13");
+    expect(anchor()).toContain("Out 01:00:00:20");
+    await pointer("pointerdown", handle("out")!, 6 + 20);
+    await pointer("pointermove", handle("out")!, 6 + 30);
+    await pointer("pointerup", handle("out")!, 6 + 30);
+    expect(anchor()).toContain("Out 01:00:01:05");
+    api.apiPost.mockResolvedValue(commit(note({ startFrame: 13, endFrame: 31, body: "Dragged" })));
+    await type(composerText(), "Dragged");
+    await click(tid("video-note-post")!);
+    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 13 / 25); });
+    await flush(4);
+    expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 13, endFrame: 31, visibility: "internal", content: legacyBodyToRichTextDoc("Dragged") });
+  });
+
+  it("while editing a note the controls drive the edit's marks, and Clear makes it a point note, never frameless", async () => {
+    const s = seed();
+    await openFilm({}, 20);
+    await click(tid("video-notes-filter-status-all")!);
+    await chooseNoteAction(threadOf(s.n4.id), "Terry", "Edit");
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Clear in and out");
+    await click(rangeButton()!);
+    expect(tid("video-note-edit-anchor")!.textContent).not.toContain("→");
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+    api.apiPatch.mockResolvedValue(commit({ ...s.n4, endFrame: null, revision: 2 } as VideoNoteThreadDto));
+    await click(tid("video-note-edit-save")!);
+    await flush(4);
+    expect(api.apiPatch).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n4.id}`, { expectedRevision: 1, startFrame: 200, endFrame: null });
+  });
+
+  it("is present but disabled on an archived Project, and I / O stay inert", async () => {
+    await openFilm({ archivedProject: true }, 12);
+    expect(rangeButton()!.disabled).toBe(true);
+    await dispatchKey(popup(), "i");
+    expect(tid("video-pending-band")).toBeNull();
+  });
+
+  it("a reply form locks the range controls", async () => {
+    const s = seed();
+    await openFilm({}, 12);
+    await click(tid("video-note-reply-button", threadOf(s.n2.id))!);
+    expect(rangeButton()!.disabled).toBe(true);
+  });
+
+  it("with the notes part off there is no range button", async () => {
+    await openFilm({ parts: [] });
+    expect(rangeButton()).toBeNull();
+  });
+});

@@ -2,7 +2,7 @@ import { legacyBodyToRichTextDoc } from "@quincy/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { VideoNoteThreadDto } from "@quincy/shared";
 import { ApiError } from "./api";
-import { createNoteFormStore, effectiveMarks, FRAME_CONFIRM_TIMEOUT_MS, frameOnScreen, type NoteClock, type NoteFormStore } from "./video-note-form-store";
+import { createNoteFormStore, effectiveMarks, marksLocked, FRAME_CONFIRM_TIMEOUT_MS, frameOnScreen, type NoteClock, type NoteFormStore } from "./video-note-form-store";
 import { EMPTY_MARKS } from "./video-note-marks";
 
 const V2 = "77777777-7777-4777-8777-777777777777";
@@ -175,6 +175,32 @@ describe("marks (#741 5b form store)", () => {
     store.mark(V2, "out", 9, fc.clock); // posting
     expect(effectiveMarks(store.slot(V2).marks, fc.clock).value).toEqual({ in: 4, out: null });
     sent.resolve(note()); await done;
+  });
+});
+
+describe("marksLocked (#861)", () => {
+  const clockA = {} as NoteClock;
+  it("agrees with what mark() refuses: open composer or plain edit takes marks; reply, a markup edit, a reply edit and a request out do not", () => {
+    expect(marksLocked(store.slot(V2))).toBe(false);
+    const plain = note({ startFrame: 10, endFrame: 21 });
+    store.openEdit(V2, plain, plain.id);
+    expect(marksLocked(store.slot(V2))).toBe(false);
+    store.mark(V2, "in", 12, clockA);
+    expect(effectiveMarks(store.slot(V2).marks, clockA).value.in).toBe(12);
+    const root = note();
+    store.openReply(V2, root.id);
+    expect(marksLocked(store.slot(V2))).toBe(true);
+    const marked = note({ hasMarkup: true });
+    store.openEdit(V2, marked, marked.id);
+    expect(marksLocked(store.slot(V2))).toBe(true);
+  });
+
+  it("a request in flight locks the marks", async () => {
+    const fc = fakeClock(4);
+    store.setBody(V2, "x", 4);
+    const done = store.post(V2, { clock: fc.clock, frameCount: 300, send: () => gate<unknown>().promise });
+    expect(marksLocked(store.slot(V2))).toBe(true);
+    fc.abort(); await done.catch(() => undefined);
   });
 });
 

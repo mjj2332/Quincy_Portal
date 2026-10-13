@@ -96,6 +96,11 @@ export function effectiveMarks(marks: StoredMarks, clock: object | null): { valu
   return marks.clock !== null && marks.clock === clock ? marks : { value: marks.seed, touched: false };
 }
 
+/** Whether the slot takes no mark right now: a request is out, drawing, or the open form is a reply / carries a drawing change. One rule for `mark` and for the controls that show it (#861). */
+export function marksLocked(held: Slot): boolean {
+  return !!held.op || !!held.draw || (!!held.open && (!held.open.frames || held.open.drawing.touched));
+}
+
 const isAbort = (error: unknown) => error instanceof Error && error.name === "AbortError";
 const messageOf = (error: unknown, fallback: string) => (error instanceof Error && error.message ? error.message : fallback);
 
@@ -209,7 +214,7 @@ export function createNoteFormStore(key: string) {
 
   function takeMark(assetId: string, clock: object, change: (marks: NoteMarks) => NoteMarks) {
     const held = slot(assetId);
-    if (held.op || held.draw || (held.open && (!held.open.frames || held.open.drawing.touched))) return;
+    if (marksLocked(held)) return;
     put(assetId, { marks: { clock, value: change(effectiveMarks(held.marks, clock).value), touched: true, seed: held.marks.seed }, spent: false });
   }
 
