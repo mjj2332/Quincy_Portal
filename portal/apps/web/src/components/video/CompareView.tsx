@@ -13,7 +13,7 @@ import { Notice } from "../quincy/Notice";
 import { VideoStage } from "../quincy/VideoStage";
 import { COARSE, IconTip, type VideoPlayerControl } from "../quincy/VideoPlayer";
 import { TimeFormatMenu } from "../quincy/TimeFormatMenu";
-import { useFrameLabeller } from "../../lib/time-format-prefs";
+import { useFrameLabeller, useTimeFormat } from "../../lib/time-format-prefs";
 import { VideoPendingRangeBand, VideoTimelineMarkers, type TimelineMarker } from "../quincy/VideoTimelineMarkers";
 import { Badge } from "../reui/badge";
 import { Button as UiButton } from "../reui/button";
@@ -401,6 +401,7 @@ function SideStage({ side: id, version, title, label, initialFrame, phase, start
   cellStyle?: React.CSSProperties | undefined;
 }) {
   const [element, setElement] = useState<HTMLVideoElement | null>(null);
+  const [timeFormat] = useTimeFormat();
   const clock = useVideoFrameClock(element, version, { initialFrame });
   const instance = clock.instance;
   const { fps, frameCount, hasAudio } = version;
@@ -416,7 +417,7 @@ function SideStage({ side: id, version, title, label, initialFrame, phase, start
   }, [instance, onClockChange]);
 
   return <div data-compare-cell={id} data-phase={phase} style={cellStyle} className={cn("relative flex h-full min-h-0 min-w-0 flex-col", cellClassName)}>
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} onVideo={setElement} overlay={(box) => <>
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setElement} overlay={(box) => <>
       <div data-testid="video-compare-side-labels" data-corner={labelCorner} className="pointer-events-none absolute" style={box ? { left: box.left, top: box.top, width: box.width, height: box.height } : { inset: 0 }}>
         <div className={cn("absolute top-[var(--space-2)] flex flex-wrap items-center gap-[var(--space-1)]", labelCorner === "top-right" ? "right-[var(--space-2)] justify-end" : "left-[var(--space-2)]")}>
           <Badge variant="invert">{label}</Badge>
