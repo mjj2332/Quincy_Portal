@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import {
-  roleHasCapability, videoRemovalImpactSchema, videoRemovalRefusalSchema, videoRemoveInputSchema, videoRemoveResponseSchema, videoRestoreResponseSchema, videoTrashResponseSchema,
+  roleHasCapability, videoDeleteInputSchema, videoDeleteResponseSchema, videoDeletionImpactSchema, videoDeletionRefusalSchema, videoRemovalImpactSchema, videoRemovalRefusalSchema, videoRemoveInputSchema, videoRemoveResponseSchema, videoRestoreResponseSchema, videoTrashResponseSchema,
 } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
@@ -10,7 +10,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import { readVideoReviewGate } from "../lib/video-review-gate";
 import { loadVideoDtos } from "../lib/video-dto";
 import { DELIVERY_PUBLISHED_BODY } from "../lib/delivery-lock";
-import { deliveryPublishedBlock, findTrashedVersion, findTrashedVideo, listTrash, readRemovalImpact, removalRefusal, removeVersion, restoreVersion, restoreVideo, type Principal } from "../lib/video-trash";
+import { deleteVideo, deletionRefusal, deliveryPublishedBlock, findTrashedVersion, findTrashedVideo, listTrash, readRemovalImpact, readVideoDeletionImpact, removalRefusal, removeVersion, restoreVersion, restoreVideo, type Principal } from "../lib/video-trash";
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
@@ -82,6 +82,39 @@ videoTrashRoutes.post("/projects/:projectId/video-versions/:assetId/remove", ter
   }
   const [video] = input.removeVideo ? [] : await loadVideoDtos(c.env.DB, projectId, target.videoId, admitted.notes);
   return c.json(videoRemoveResponseSchema.parse({ video: video ?? null }));
+}));
+
+videoTrashRoutes.get("/projects/:projectId/videos/:videoId/removal-impact", terminalRoute("/projects/:projectId/videos/:videoId/removal-impact", async (c) => {
+  const projectId = c.req.param("projectId"); const videoId = c.req.param("videoId");
+  if (!uuid.safeParse(projectId).success || !uuid.safeParse(videoId).success) return c.json({ error: "Invalid id" }, 400);
+  const admitted = await admit(c, projectId, false); if (admitted instanceof Response) return admitted;
+  const target = await readVideoDeletionImpact(c.env.DB, projectId, videoId, Date.now());
+  if (!target) return c.json({ error: "Video not found" }, 404);
+  c.header("cache-control", "private, no-store");
+  return c.json(videoDeletionImpactSchema.parse(target.impact));
+}));
+
+videoTrashRoutes.post("/projects/:projectId/videos/:videoId/remove", terminalRoute("/projects/:projectId/videos/:videoId/remove", async (c) => {
+  const projectId = c.req.param("projectId"); const videoId = c.req.param("videoId");
+  if (!uuid.safeParse(projectId).success || !uuid.safeParse(videoId).success) return c.json({ error: "Invalid id" }, 400);
+  const admitted = await admit(c, projectId, true); if (admitted instanceof Response) return admitted;
+  const now = Date.now();
+  const target = await readVideoDeletionImpact(c.env.DB, projectId, videoId, now);
+  if (!target) return c.json({ error: "Video not found" }, 404);
+  const input = await jsonInput(c, videoDeleteInputSchema); if (input instanceof Response) return input;
+  const refuse = (kind: "impact_changed" | "upload_in_progress", impact: typeof target.impact) => kind === "impact_changed"
+    ? c.json(videoDeletionRefusalSchema.parse({ error: "The film changed since you looked; review what deleting it affects.", code: kind, impact }), 409)
+    : c.json({ error: "A new Version is being uploaded to this Video; wait for it to finish or cancel it.", code: kind }, 409);
+  if (target.impact.published) return c.json(DELIVERY_PUBLISHED_BODY, 409);
+  const early = deletionRefusal(target.impact, input); if (early) return refuse(early, target.impact);
+  const outcome = await deleteVideo(c.env.DB, { projectId, videoId, target, principal: principalOf(c), request: input, now });
+  switch (outcome.kind) {
+    case "archived": return archivedResponse(c);
+    case "not_found": return c.json({ error: "Video not found" }, 404);
+    case "delivery_published": return c.json(DELIVERY_PUBLISHED_BODY, 409);
+    case "impact_changed": case "upload_in_progress": return refuse(outcome.kind, outcome.impact);
+    case "deleted": return c.json(videoDeleteResponseSchema.parse({ videoId, versionCount: outcome.versionCount }));
+  }
 }));
 
 videoTrashRoutes.post("/projects/:projectId/video-versions/:assetId/restore", terminalRoute("/projects/:projectId/video-versions/:assetId/restore", async (c) => {

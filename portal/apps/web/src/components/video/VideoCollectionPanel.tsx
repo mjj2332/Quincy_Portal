@@ -18,6 +18,7 @@ import { EmptyState } from "../quincy/EmptyState";
 import { Notice } from "../quincy/Notice";
 import { NewFilmUploader } from "./NewFilmUploader";
 import { VideoCard } from "./VideoCard";
+import { VideoDeleteDialog, type DeleteTarget } from "./VideoDeleteDialog";
 import { VideoRenameDialog, type RenameTarget } from "./VideoRenameDialog";
 import { useCardDialogHost } from "./use-card-dialog-host";
 import { VideoGridToolbar } from "./VideoGridToolbar";
@@ -81,6 +82,8 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   const downloadEnabled = review.parts.includes("download") && roleHasCapability(role, "downloadVideo");
   const trashEnabled = review.parts.includes("trash") && roleHasCapability(role, "manageVideoTrash");
   const [trashOpen, setTrashOpen] = useState(false);
+  // The film whose Delete confirmation is open (#868): one dialog for the grid, captured with its title when it opens.
+  const [deleting, setDeleting] = useState<DeleteTarget | null>(null);
   const [trashMounted, setTrashMounted] = useState(false);
   useEffect(() => {
     // The notice names the session's query client: a retired session's late 401 must not cancel this session's confirmation (as in video-upload-store).
@@ -202,6 +205,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   }
 
   const myVersionUpload = (video: VideoDto) => running.find((upload) => upload.videoId === video.id);
+  const deletingVideo = deleting ? videos.data?.find((video) => video.id === deleting.videoId) ?? null : null;
 
   return <section aria-labelledby="video-films-heading" data-testid="video-films">
     <div className="workspace-intro workspace-intro--stack" data-testid="video-films-header">
@@ -223,7 +227,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
       {videos.data && videos.data.length > 0 && <VideoGridToolbar prefs={prefs} onChange={setPrefs} shown={arranged.length} total={videos.data.length} />}
       {videos.data && videos.data.length > 0 && arranged.length === 0 && <EmptyState title="No films match this filter.">Choose another status, or show all films.</EmptyState>}
       {videos.data && arranged.length > 0 && <div className={`grid gap-[var(--space-5)] ${GRID_COLUMNS[prefs.size]}`} data-size={prefs.size} data-testid="video-card-grid" onFocusCapture={(event) => { const card = (event.target as Element).closest<HTMLElement>('[data-testid="video-card"]'); if (card) focusedCard.current = card; preloadViewer(); if (notesEnabled) preloadNotes(); }} onPointerOverCapture={() => { preloadViewer(); if (notesEnabled) preloadNotes(); }}>
-        {arranged.map((video) => <VideoCard key={video.id} video={video} projectId={projectId} {...(downloadEnabled ? { download: { projectId } } : {})} appearance={{ thumb: prefs.thumb, info: prefs.info }} reviewStatus={{ projectId, role, archived }} {...(canRename ? { onRename: (picked: VideoDto) => { const newest = picked.versions.find((version) => version.current) ?? picked.versions[0]!; renameHost.open({ videoId: picked.id, assetId: newest.assetId, originalFilename: newest.originalFilename }); } } : {})} canUpload={canUpload} currentUserId={userId} myUpload={myVersionUpload(video)} onVersionFile={versionFile} onCancelReservation={(reservationId) => abortVideoReservation(queryClient, projectId, reservationId)} onSocialPreview={(picked, trigger) => { opener.current = trigger; openerVideoId.current = picked.id; setSocialFor(picked.id); setOpenVideoId(picked.id, Math.max(...picked.versions.map((version) => version.version))); }} onOpen={(picked, trigger) => { setSocialFor(null); opener.current = trigger; openerVideoId.current = picked.id; setOpenVideoId(picked.id, Math.max(...picked.versions.map((version) => version.version))); }} {...(reviewLinks.canWrite ? { onCreateReviewLink: () => reviewLinks.store.openCreateFor(video.id, [video.currentAssetId], `[data-testid="video-card-menu"][data-video-id="${video.id}"]`) } : {})} {...(reviewLinks.enabled ? { reviewLinks: { selected: reviewLinks.selection.has(video.id), ...(reviewLinks.canWrite ? { onToggle: () => reviewLinks.store.toggleSelect(video.id) } : {}), chips: reviewLinks.chipsFor(video.id), onOpenChip: reviewLinks.store.openDetail, onOpenAll: reviewLinks.store.openList } } : {})} />)}
+        {arranged.map((video) => <VideoCard key={video.id} video={video} projectId={projectId} {...(downloadEnabled ? { download: { projectId } } : {})} appearance={{ thumb: prefs.thumb, info: prefs.info }} reviewStatus={{ projectId, role, archived }} {...(canRename ? { onRename: (picked: VideoDto) => { const newest = picked.versions.find((version) => version.current) ?? picked.versions[0]!; renameHost.open({ videoId: picked.id, assetId: newest.assetId, originalFilename: newest.originalFilename }); } } : {})} canUpload={canUpload} currentUserId={userId} myUpload={myVersionUpload(video)} onVersionFile={versionFile} onCancelReservation={(reservationId) => abortVideoReservation(queryClient, projectId, reservationId)} onSocialPreview={(picked, trigger) => { opener.current = trigger; openerVideoId.current = picked.id; setSocialFor(picked.id); setOpenVideoId(picked.id, Math.max(...picked.versions.map((version) => version.version))); }} onOpen={(picked, trigger) => { setSocialFor(null); opener.current = trigger; openerVideoId.current = picked.id; setOpenVideoId(picked.id, Math.max(...picked.versions.map((version) => version.version))); }} {...(reviewLinks.canWrite ? { onCreateReviewLink: () => reviewLinks.store.openCreateFor(video.id, [video.currentAssetId], `[data-testid="video-card-menu"][data-video-id="${video.id}"]`) } : {})} {...(reviewLinks.enabled ? { reviewLinks: { selected: reviewLinks.selection.has(video.id), ...(reviewLinks.canWrite ? { onToggle: () => reviewLinks.store.toggleSelect(video.id) } : {}), chips: reviewLinks.chipsFor(video.id), onOpenChip: reviewLinks.store.openDetail, onOpenAll: reviewLinks.store.openList } } : {})} {...(trashEnabled ? { remove: { disabled: archived, onOpen: () => setDeleting({ videoId: video.id, title: video.title }) } } : {})} />)}
       </div>}
     </div>
     {canRename && (renameHost.opening ?? renameHost.lastTarget) && (() => {
@@ -233,6 +237,8 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
       return <VideoRenameDialog open={renameHost.opening !== null} openingId={renameHost.opening?.openingId ?? 0} onClose={renameHost.close} projectId={projectId} role={role} target={shown}
         latest={newest ? { assetId: newest.assetId, originalFilename: newest.originalFilename } : shown} finalFocus={() => document.querySelector<HTMLElement>(`[data-testid="video-card-menu"][data-video-id="${shown.videoId}"]`)} />;
     })()}
+    {trashEnabled && <VideoDeleteDialog projectId={projectId} target={deleting} uploadKey={deletingVideo?.uploading?.reservationId ?? ""} localUpload={deletingVideo ? myVersionUpload(deletingVideo) !== undefined : false}
+      onClose={() => setDeleting(null)} onDeleted={() => { focusedCard.current = null; }} />}
     {trashEnabled && trashMounted && <ViewLoadBoundary viewLabel="Trash">
       <Suspense fallback={null}><LazyTrashDialog projectId={projectId} archived={archived} open={trashOpen} onOpenChange={setTrashOpen} returnFocusId={TRASH_OPEN_ID} /></Suspense>
     </ViewLoadBoundary>}
