@@ -40,7 +40,7 @@ export function VideoReviewStatusPill({ video, version, comparing, projectId, ro
   const older = video.olderPublishedVersion !== null && <span data-testid={`${testId}-older`} className="text-foreground-secondary [font:var(--type-label)] whitespace-nowrap">{`v${video.olderPublishedVersion} published`}</span>;
 
   if (status === "published" || archived || allowed.length === 0 || !queryClient) {
-    return <div className="flex items-center gap-[var(--space-2)]">
+    return <div className="flex flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)]">
       <StatusPill tone={tone} data-testid={testId}>{REVIEW_STATUS_LABEL[status]}</StatusPill>
       {older}
     </div>;
