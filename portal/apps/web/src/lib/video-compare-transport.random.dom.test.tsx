@@ -176,10 +176,11 @@ async function run(config: (typeof CONFIGS)[number], seed: number) {
     { name: "stalePlaying", passive: true, run: () => {
       // A `playing` that was queued while data was there, delivered after readyState dropped back below 3.
       const s2 = pick(["a", "b"] as const);
-      stub.setReadyState(videos[s2], pick([1, 2]));
+      stub.setReadyState(videos[s2], 2);
       stub.firePlaying(videos[s2]);
     } },
-    { name: "readyState", passive: true, run: () => { stub.setReadyState(videos[pick(["a", "b"] as const)], pick([1, 2, 4])); } },
+    // Never below 2: with no data the clock deliberately holds its seeks (video-frame-clock.dom.test.tsx), so alignment is not an invariant there.
+    { name: "readyState", passive: true, run: () => { stub.setReadyState(videos[pick(["a", "b"] as const)], pick([2, 4])); } },
     { name: "ended", passive: true, run: () => {
       const side = pick(["a", "b"] as const);
       const v = videos[side];

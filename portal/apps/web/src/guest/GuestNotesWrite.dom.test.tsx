@@ -90,10 +90,10 @@ const submit = async (id: string) => { await act(async () => { byId(id)!.dispatc
 const button = (label: string) => [...document.body.querySelectorAll<HTMLElement>("button")].find((item) => item.getAttribute("aria-label")?.startsWith(label) || item.textContent?.trim() === label);
 const keyDown = async (key: string) => { await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); }); await flush(); };
 const menuItem = (label: string) => [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.trim() === label);
-/** Puts the film on `seconds` (25 fps), as the browser would after a seek. */
+/** Puts the film on `seconds` (25 fps), as the browser would after a seek: its data is there (the clock holds a seek until it is), the seek lands, the frame shows. */
 async function atSeconds(seconds: number) {
   const video = host.querySelector("video")!;
-  await act(async () => { stub.finishSeek(video); stub.presentFrame(video, seconds); });
+  await act(async () => { stub.loadData(video, 4); stub.finishSeek(video); stub.presentFrame(video, seconds); });
   await flush();
 }
 /** The writes the page made (the token exchange at boot is not one). */

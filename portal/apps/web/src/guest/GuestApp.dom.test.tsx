@@ -66,6 +66,8 @@ async function open(search = `?link=${LINK}`, hash = "#t=tok123") {
   const token = new URLSearchParams(hash.slice(1)).get("t");
   await act(async () => { root!.render(<GuestApp token={token} />); });
   await flush();
+  // A desktop element has its data by now: without it the clock holds every seek back (video-frame-clock.dom.test.tsx).
+  await act(async () => { for (const video of host.querySelectorAll("video")) stub.loadData(video, 4); });
 }
 const byId = (id: string) => host.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const allById = (id: string) => [...host.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`)];

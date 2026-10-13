@@ -6269,3 +6269,12 @@ Tags: d1-migrations, testing-guards · #847
 
 Guards: `workers/app/test/review-link-open.guard.test.ts`, `workers/app/test/delivery-review-link.test.ts`, `packages/db/test/migration-0077.test.ts`, `workers/app/test/delivery-public-boundary.guard.test.ts`.
 
+## Never seek a media element before it has data (iOS wedges the seek)
+Tags: qa-browser, testing-guards
+
+- **What bit.** On iOS Safari the review player's playhead was pinned at frame 0 while the picture played, and dragging the scrubber did nothing. Measured in the iPhone Simulator: iOS ignores `preload="auto"`, so no data loads before a gesture. `loadedmetadata` fires at `readyState` 1, and the frame clock then wrote `currentTime = 0.02` (frame 0's midpoint). That seek stayed pending (`seeking` true, no `seeked`). Pressing Play brought `loadeddata` and `canplay`, and the picture played (`requestVideoFrameCallback` fired every frame, with the right `mediaTime`), but `video.seeking` stayed true and `currentTime` stayed 0.02 forever. The clock's target never settled, the slider (`targetFrame ?? frame`) stayed at 0, and a drag only moved the target because `seek()` saw `seeking` and waited for a `seeked` that never came. A control page whose data was already loading when the same seek was issued got `seeked` normally.
+- **Not the cause.** The "`requestVideoFrameCallback` goes silent" theory is refuted: it was healthy. Any fallback that reads `currentTime` is useless in the wedge, because `currentTime` is the frozen value.
+- **Rule.** Never write `currentTime` while `readyState < HAVE_CURRENT_DATA` (2). `VideoFrameClock.issue()` settles a target the playhead already sits in (frame 0 at time 0) without a write, and otherwise holds the target pending and writes it on `loadeddata` / `canplay`, paused or playing. `emptied` drops the held seek. Desktop (data at metadata) behaves as before.
+- **Gate.** `video-frame-clock.dom.test.tsx` ("never seeks an element that has no data") drives the iOS sequence with `loadMetadata(video, { readyState: 1 })` and `loadData`. The test stub's `loadMetadata` defaults to `readyState` 2, as on desktop; a test that wants the iOS case must say 1. Only a real iOS pass shows the wedge itself, because happy-dom has no media pipeline.
+
+Guards: `apps/web/src/lib/video-frame-clock.dom.test.tsx`.
