@@ -1392,3 +1392,75 @@ describe("the time format on the guest page (#860)", () => {
     expect(byId("guest-note-anchor")!.textContent).toBe("0:02");
   });
 });
+
+describe("In / Out range button and handles (#861)", () => {
+  const rangeButton = () => byId("video-range-button") as HTMLButtonElement | null;
+  const handle = (kind: "in" | "out") => byId(`video-range-${kind}`);
+  const keyOn = async (target: Element, k: string) => { await act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); }); await flush(); };
+
+  it("with no open composer the button is there but disabled, and it starts nothing", async () => {
+    await open();
+    expect(rangeButton()!.disabled).toBe(true);
+    expect(byId("guest-composer")).toBeNull();
+  });
+
+  it("with an open composer the button cycles Set out -> Clear -> Set in, and the anchor and pending band follow", async () => {
+    await open();
+    await atSeconds(2);
+    await click(byId("guest-add-note"));
+    expect(rangeButton()!.disabled).toBe(false);
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+    await atSeconds(4);
+    await click(rangeButton());
+    expect(byId("guest-composer-anchor")?.textContent).toMatch(/00:00:02:00.*00:00:04:00/);
+    expect(byId("video-pending-band")).not.toBeNull();
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Clear in and out");
+    await click(rangeButton());
+    expect(byId("guest-composer-anchor")?.textContent).toBe("No frame marked");
+    expect(byId("video-pending-band")).toBeNull();
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set in point");
+  });
+
+  it("a handle moves one end and the POST carries the exclusive end frame", async () => {
+    let posted: unknown = null;
+    extra = (url, init) => {
+      if (url.endsWith("/notes") && init?.method === "POST") { posted = JSON.parse(String(init.body)); return json(mine(5, { startFrame: 51, endFrame: 101 }), 201); }
+      return undefined;
+    };
+    await open();
+    await atSeconds(2);
+    await click(byId("guest-add-note"));
+    await atSeconds(4);
+    await click(rangeButton());
+    await keyOn(handle("in")!, "ArrowRight");
+    expect(byId("guest-composer-anchor")?.textContent).toMatch(/00:00:02:01.*00:00:04:00/);
+    await typeInto(byId("guest-composer-body"), "Nudged");
+    await submit("guest-composer");
+    expect(posted).toEqual({ startFrame: 51, endFrame: 101, content: para("Nudged") });
+  });
+
+  it("the range controls give way to the pen while drawing, and a note with a drawing locks its frames", async () => {
+    await open();
+    await atSeconds(2);
+    await click(byId("guest-add-note"));
+    await click(byId("guest-composer-draw"));
+    expect(rangeButton()).toBeNull();
+  });
+
+  it("Clear on a note being edited keeps its first frame as a point", async () => {
+    notes = { [asset(10)]: [mine(2, { revision: 3, startFrame: 50, endFrame: 101 })] };
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Clear in and out");
+    await click(rangeButton());
+    expect(byId("guest-composer-anchor")?.textContent).toMatch(/^At 00:00:02:00/);
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+  });
+
+  it("a link that allows no comments has no range button", async () => {
+    session = SESSION_OFF;
+    await open();
+    expect(rangeButton()).toBeNull();
+  });
+});

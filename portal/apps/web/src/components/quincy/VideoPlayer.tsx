@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
-import { Maximize, Pause, Play, StepBack, StepForward, Volume2, VolumeX } from "lucide-react";
+import { ArrowRightFromLine, ArrowRightToLine, Maximize, Pause, Play, StepBack, StepForward, Volume2, VolumeX, X } from "lucide-react";
 import { rationalToNumber, type Box, type VideoVersionDto } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { useVideoFrameClock, type VideoFrameClock } from "../../lib/video-frame-clock";
@@ -13,10 +13,25 @@ import { Toggle } from "../reui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
 import { TimeFormatMenu } from "./TimeFormatMenu";
 import { VideoStage } from "./VideoStage";
-import { VideoPendingRangeBand, VideoTimelineMarkers, type TimelineMarker } from "./VideoTimelineMarkers";
+import { rangeStep, type NoteMarks } from "../../lib/video-note-marks";
+import { VideoPendingRangeBand, VideoRangeHandles, VideoTimelineMarkers, type TimelineMarker } from "./VideoTimelineMarkers";
 
 /** What the player reads of a Version: where it streams, how it is timed, and how its timecode is labelled. */
 export type VideoPlayerVersion = Pick<VideoVersionDto, "streamUrl" | "fps" | "frameCount" | "width" | "height" | "tcNominalFps" | "tcDropFrame" | "startTimecodeFrames" | "hasAudio">;
+
+/**
+ * The composer's in / out range as the player draws and edits it (#861): the marks to show, whether the host takes changes right now, and how to
+ * clear them. Marking itself goes through `onMark`, the path I and O use, so a host's wrappers run for the button and the handles too.
+ * Absent, the player has no range button and no handles.
+ */
+export type VideoRangeControl = {
+  marks: NoteMarks;
+  /** The host takes no change to the marks right now (archived Project, a reply open, a request out, no open composer). The controls stay, disabled. */
+  locked: boolean;
+  /** Why it is locked, for the disabled button's tooltip. */
+  hint?: string;
+  clear(): void;
+};
 
 /** For a host that owns the keyboard scope (the review dialog): hands it the player's shortcut handler. True when the key was the player's. */
 export type VideoPlayerControl = {
@@ -48,7 +63,7 @@ export function IconTip({ label, keys, children }: { label: string; keys?: strin
  * surface (`data-surface="inverse"`) around it, like the Lightbox. `keyboard="self"` listens on the player; `"host"` leaves the
  * scope to the caller, who forwards events to `controlRef.handleKeyDown`.
  */
-export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, onClockChange, overlay, onMediaError, transportLocked = false, transportActions, transportReplacement }: {
+export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, onMediaError, transportLocked = false, transportActions, transportReplacement }: {
   version: VideoPlayerVersion;
   title: string;
   controlRef?: Ref<VideoPlayerControl>;
@@ -67,6 +82,8 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   onMarkerSelect?: (id: string) => void;
   /** Takes I and O: called with the frame on screen (the one on its way while a seek is in flight). Without it I and O are not bound. */
   onMark?: (kind: "in" | "out", frame: number) => void;
+  /** The in / out range, drawn as handles on the scrubber and driven by one cycling button next to the time format (#861). Without it neither exists. */
+  range?: VideoRangeControl;
   /** The frame clock, once the element is ready, and null when it goes away; siblings (the notes composer) subscribe to it on their own. */
   onClockChange?: (clock: VideoFrameClock | null) => void;
   /** Drawn over the stage (#741 6b-ui); a function is handed the picture box. Built by the host, so this module never imports it. */
@@ -130,6 +147,18 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const currentFrame = useCallback(() => currentFrameRef.current(), []);
   useImperativeHandle(controlRef, () => ({ handleKeyDown, currentFrame }), [handleKeyDown, currentFrame]);
 
+  const step = range ? rangeStep(range.marks) : "in";
+  const rangeLocked = transportLocked || (range?.locked ?? true);
+  const marksTaken = !rangeLocked && onMark !== undefined;
+  const pressRange = () => {
+    if (!range || rangeLocked) return;
+    if (step === "clear") range.clear();
+    else onMark?.(step, markFrame());
+  };
+  // A handle moved: it marks its own end, and the paused playhead follows so the frame under the handle is the one on screen.
+  const moveHandle = (kind: "in" | "out", frame: number) => { onMark?.(kind, frame); clock.seekToFrame(frame); };
+  const stepLabel = step === "in" ? "Set in point" : step === "out" ? "Set out point" : "Clear in and out";
+
   const toggleMuted = (next: boolean) => { setMutedState(next); clock.setMuted(next); onMutedChange?.(next); };
   const playLabel = clock.playing ? "Pause" : "Play";
 
@@ -159,6 +188,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
           onValueChange={(value) => { clock.seekToFrame(Array.isArray(value) ? (value[0] ?? 0) : value); }}
           thumbProps={{ getAriaLabel: () => "Timeline", getAriaValueText: (_formatted, value) => timecode(value) }}
         />
+        {range !== undefined && <VideoRangeHandles marks={range.marks} frameCount={version.frameCount} label={timecode} largeStep={Math.max(1, Math.round(rationalToNumber(version.fps)))} interactive={marksTaken} onMove={moveHandle} onGrab={clock.pause} />}
       </div>
       {markers !== undefined && <VideoTimelineMarkers markers={markers} frameCount={version.frameCount} {...(onMarkerSelect ? { onSelect: onMarkerSelect } : {})} />}
     </div>
@@ -177,6 +207,14 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         <span>{timecode(clock.frame)}</span><span className="text-foreground-secondary">{` / ${timecode(version.frameCount)}`}</span>
       </output>
       <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><TimeFormatMenu /></OverlayContainerContext.Provider>
+      {range !== undefined && (() => {
+        const rangeButton = <Button type="button" variant="outline" size="icon" aria-label={stepLabel} data-testid="video-range-button" data-step={step} className={COARSE} disabled={rangeLocked} onClick={pressRange}>
+          {step === "in" ? <ArrowRightFromLine aria-hidden="true" /> : step === "out" ? <ArrowRightToLine aria-hidden="true" /> : <X aria-hidden="true" />}
+        </Button>;
+        // A disabled button gets no hover or focus, so its reason hangs on an enabled wrapper the tooltip can open from.
+        if (rangeLocked && range.hint) return <IconTip label={range.hint}><span tabIndex={0} data-testid="video-range-tip" className="inline-flex rounded-[var(--radius-md)] focus-visible:ring-2 focus-visible:ring-ring">{rangeButton}</span></IconTip>;
+        return <IconTip label={stepLabel} {...(rangeLocked ? {} : { keys: step === "clear" ? "I / O" : step === "in" ? "I" : "O" })}>{rangeButton}</IconTip>;
+      })()}
       <div data-testid="video-key-legend" className={LEGEND}>
         <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>J</Kbd><Kbd className={LEGEND_KBD}>K</Kbd><Kbd className={LEGEND_KBD}>L</Kbd></KbdGroup>shuttle</span>
         <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>←</Kbd><Kbd className={LEGEND_KBD}>→</Kbd></KbdGroup>frame</span>
