@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { SOCIAL_OVERLAY_NAME_MAX, SOCIAL_OVERLAY_PLATFORM_MAX, type SocialOverlayDto } from "@quincy/shared";
 import { Modal } from "./Modal";
 import { Button } from "@/components/reui/button";
@@ -16,7 +16,9 @@ import {
   checkOverlayFile, createSocialOverlay, listSocialOverlays, overlayErrorMessage, renameSocialOverlay, replaceSocialOverlayImage, setSocialOverlayArchived,
 } from "../lib/social-overlays";
 
-type Dialog = { kind: "create" } | { kind: "rename"; overlay: SocialOverlayDto } | { kind: "replace"; overlay: SocialOverlayDto };
+type DialogKind = { kind: "create" } | { kind: "rename"; overlay: SocialOverlayDto } | { kind: "replace"; overlay: SocialOverlayDto };
+/** Each opened dialog carries its own id, so a save that outlives its dialog can be told apart from the dialog now on screen. */
+type Dialog = DialogKind & { id: number };
 const HINT = "PNG · 9:16 · transparent · max 8 MB. Export it with an alpha channel; a fully opaque image is not detected.";
 const TEXT_BUTTON = "min-h-[32px] px-0 py-[6px]";
 const TOGGLE_ROW = "flex items-center gap-[var(--space-2)] cursor-pointer min-h-[38px] max-[721px]:min-h-[44px] text-foreground-secondary";
@@ -37,6 +39,10 @@ export function SocialOverlaysPanel() {
   const [showArchived, setShowArchived] = useState(false);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [busy, setBusy] = useState(false);
+  const currentDialog = useRef<number | null>(null);
+  const nextDialog = useRef(0);
+  const open = (kind: DialogKind) => { const id = ++nextDialog.current; currentDialog.current = id; setDialog({ ...kind, id }); };
+  const close = () => { currentDialog.current = null; setDialog(null); };
 
   const load = useCallback(async () => {
     setLoading(true); setError(undefined);
@@ -61,7 +67,7 @@ export function SocialOverlaysPanel() {
   return <>
     <SectionHead eyebrow="Video review" actions={<>
       <Button type="button" variant="outline" onClick={() => void load()} disabled={loading}>Refresh</Button>
-      <Button type="button" onClick={() => setDialog({ kind: "create" })}>Upload overlay</Button>
+      <Button type="button" onClick={() => open({ kind: "create" })}>Upload overlay</Button>
     </>}>Social overlays</SectionHead>
     <p className="m-0 mb-[var(--space-4)] max-w-[60ch] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">
       Platform graphics a reviewer can lay over a Video to see it as it would look in Instagram, TikTok or YouTube Shorts.
@@ -85,17 +91,22 @@ export function SocialOverlaysPanel() {
         <TableCell data-label="Image">{overlay.width} × {overlay.height} · {formatBytes(overlay.bytes)}</TableCell>
         <TableCell data-label="Updated">{formatDate(overlay.updatedAt)} · {overlay.updatedBy.name}</TableCell>
         <TableCell><TableActions>
-          <Button type="button" variant="ghost" className={TEXT_BUTTON} aria-label={`Rename ${overlay.name}`} onClick={() => setDialog({ kind: "rename", overlay })}>Rename</Button>
-          <Button type="button" variant="ghost" className={TEXT_BUTTON} aria-label={`Replace image for ${overlay.name}`} onClick={() => setDialog({ kind: "replace", overlay })}>Replace image</Button>
+          <Button type="button" variant="ghost" className={TEXT_BUTTON} aria-label={`Rename ${overlay.name}`} onClick={() => open({ kind: "rename", overlay })}>Rename</Button>
+          <Button type="button" variant="ghost" className={TEXT_BUTTON} aria-label={`Replace image for ${overlay.name}`} onClick={() => open({ kind: "replace", overlay })}>Replace image</Button>
           {!overlay.isDefault && <Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={busy} aria-label={`${overlay.archivedAt === null ? "Archive" : "Unarchive"} ${overlay.name}`} onClick={() => void toggleArchive(overlay)}>{overlay.archivedAt === null ? "Archive" : "Unarchive"}</Button>}
         </TableActions></TableCell>
       </TableRow>)}</TableBody>
     </Table></TableWrap>}
-    {dialog && <OverlayDialog dialog={dialog} onClose={() => setDialog(null)} onSaved={(next) => { replaceRow(next); setDialog(null); pushToast(dialog.kind === "create" ? "Overlay uploaded." : "Overlay updated.", "success"); }} />}
+    {dialog && <OverlayDialog key={dialog.id} dialog={dialog} onClose={close} onSaved={(next, saved) => {
+      // The saved row is real whichever dialog started it. Only the dialog still on screen may be closed by it.
+      replaceRow(next);
+      if (currentDialog.current === saved.id) close();
+      pushToast(saved.kind === "create" ? "Overlay uploaded." : "Overlay updated.", "success");
+    }} />}
   </>;
 }
 
-function OverlayDialog({ dialog, onClose, onSaved }: { dialog: Dialog; onClose: () => void; onSaved: (overlay: SocialOverlayDto) => void }) {
+function OverlayDialog({ dialog, onClose, onSaved }: { dialog: Dialog; onClose: () => void; onSaved: (overlay: SocialOverlayDto, saved: Dialog) => void }) {
   const existing = dialog.kind === "create" ? null : dialog.overlay;
   const [name, setName] = useState(existing?.name ?? "");
   const [platformLabel, setPlatformLabel] = useState(existing?.platformLabel ?? "");
@@ -117,9 +128,9 @@ function OverlayDialog({ dialog, onClose, onSaved }: { dialog: Dialog; onClose: 
     if (!valid || saving) return;
     setSaving(true); setSaveError(undefined);
     try {
-      if (dialog.kind === "create") onSaved(await createSocialOverlay({ name: name.trim(), platformLabel: platformLabel.trim(), file: file! }));
-      else if (dialog.kind === "rename") onSaved(await renameSocialOverlay(dialog.overlay, { name: name.trim(), platformLabel: platformLabel.trim() }));
-      else onSaved(await replaceSocialOverlayImage(dialog.overlay, file!));
+      if (dialog.kind === "create") onSaved(await createSocialOverlay({ name: name.trim(), platformLabel: platformLabel.trim(), file: file! }), dialog);
+      else if (dialog.kind === "rename") onSaved(await renameSocialOverlay(dialog.overlay, { name: name.trim(), platformLabel: platformLabel.trim() }), dialog);
+      else onSaved(await replaceSocialOverlayImage(dialog.overlay, file!), dialog);
     } catch (reason) { setSaveError(overlayErrorMessage(reason)); setSaving(false); }
   }
 

@@ -1,6 +1,8 @@
-import { SELF as workerSelf } from "cloudflare:test";
+import { createExecutionContext, SELF as workerSelf } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { pngBytes, type PngSpec } from "../../../packages/shared/src/testing/png-fixture";
+import { app } from "../src/index";
+import type { Env } from "../src/env";
 import { baseEnv, cookie, database, seedFixture, type Who } from "./embedded-media-support";
 
 type Overlay = { id: string; name: string; platformLabel: string; isDefault: boolean; archivedAt: number | null; imageUrl: string; width: number; height: number; bytes: number; revision: number; updatedBy: { id: string; name: string } };
@@ -219,5 +221,63 @@ describe("Social overlay library (#869)", () => {
     }
     const current = await list();
     expect((await call(current[0]!.imageUrl, null)).status).toBe(200);
+  });
+
+  describe("R2 cleanup ownership (Sol 3)", () => {
+    const cleanup = async (key: string) => database.DB.prepare("SELECT storage_key, claimed_until FROM embedded_media_cleanup WHERE storage_key = ?").bind(key).first<{ storage_key: string; claimed_until: number | null }>();
+    const withPut = (onPut: (key: string, put: () => Promise<unknown>) => Promise<unknown>): Env => ({ ...baseEnv, MEDIA: new Proxy(baseEnv.MEDIA, { get: (target, property) => {
+      if (property === "put") return (key: string, ...rest: unknown[]) => onPut(key, () => (target.put as (...a: unknown[]) => Promise<unknown>).call(target, key, ...rest));
+      const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+    } }) });
+    const inProcess = async (environment: Env, path: string, form: FormData): Promise<Response> =>
+      app.fetch(new Request(`https://portal.test${path}`, { method: "POST", headers: { cookie: await cookie("admin"), origin: baseEnv.APP_ORIGIN }, body: form }), environment, createExecutionContext());
+
+    it("reserves the key before the PUT and unqueues it when the row adopts the object, on create and on replace", async () => {
+      const seen: Array<{ key: string; reserved: boolean }> = [];
+      const environment = withPut(async (key, put) => { seen.push({ key, reserved: (await cleanup(key)) !== null }); return put(); });
+      const created = await inProcess(environment, "/api/admin/social-overlays", formOf({ name: "Instagram Reel", platformLabel: "Instagram" }, png()));
+      expect(created.status).toBe(201);
+      const overlay = ((await created.json()) as { overlay: Overlay }).overlay; const firstKey = await keyOf(overlay.id);
+      expect(seen).toEqual([{ key: firstKey, reserved: true }]);
+      expect(await cleanup(firstKey)).toBeNull();
+      const replaced = await inProcess(environment, `/api/admin/social-overlays/${overlay.id}/image`, formOf({ expectedRevision: "1" }, png()));
+      expect(replaced.status).toBe(200);
+      const secondKey = await keyOf(overlay.id);
+      expect(seen[1]).toEqual({ key: secondKey, reserved: true });
+      expect(await cleanup(secondKey)).toBeNull(); expect(await cleanup(firstKey)).toBeNull(); expect(await keys()).toEqual([secondKey]);
+    });
+
+    it("keeps the reservation when the PUT commits and the process then fails everywhere, so the drain sweeps the object", async () => {
+      const environment: Env = { ...withPut(async (_key, put) => { await put(); throw new Error("connection lost after commit"); }), };
+      const failing: Env = { ...environment, MEDIA: new Proxy(environment.MEDIA, { get: (target, property) => {
+        if (property === "delete") return async () => { throw new Error("R2 down"); };
+        const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+      } }) };
+      const response = await inProcess(failing, "/api/admin/social-overlays", formOf({ name: "Crash", platformLabel: "P" }, png()));
+      expect(response.status).toBe(500);
+      const [key] = await keys();
+      expect(key).toBeDefined();
+      expect(await cleanup(key!)).toMatchObject({ storage_key: key, claimed_until: null });
+      expect(await list()).toEqual([]);
+    });
+
+    it("loses the adoption when the sweep claimed the reservation, deletes the object and creates no row", async () => {
+      const environment = withPut(async (key, put) => { await put(); await database.DB.prepare("UPDATE embedded_media_cleanup SET claimed_until = 1 WHERE storage_key = ?").bind(key).run(); });
+      const response = await inProcess(environment, "/api/admin/social-overlays", formOf({ name: "Raced", platformLabel: "P" }, png()));
+      expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ code: "overlay_conflict" });
+      expect(await list()).toEqual([]); expect(await keys()).toEqual([]); expect(await audits()).toEqual([]);
+    });
+
+    it("queues the previous key in the replace batch itself, so a crash after commit still sweeps it", async () => {
+      const overlay = await make(); const oldKey = await keyOf(overlay.id);
+      const failing: Env = { ...baseEnv, MEDIA: new Proxy(baseEnv.MEDIA, { get: (target, property) => {
+        if (property === "delete") return async () => { throw new Error("R2 down"); };
+        const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+      } }) };
+      const response = await inProcess(failing, `/api/admin/social-overlays/${overlay.id}/image`, formOf({ expectedRevision: "1" }, png()));
+      expect(response.status).toBe(200);
+      expect(await cleanup(oldKey)).toMatchObject({ storage_key: oldKey });
+      expect(await cleanup(await keyOf(overlay.id))).toBeNull();
+    });
   });
 });

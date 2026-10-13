@@ -7,7 +7,7 @@ import { newId } from "../lib/ids";
 import { discardUnreferencedObject, settleThrownAdoption } from "../lib/embedded-media";
 import { serveR2Object } from "../lib/r2-serve";
 import {
-  fencedAudit, getOverlay, inspectUpload, isUnique, listOverlays, nameTaken, overlayDto, overlayError, overlayKey, readOverlayForm, type OverlayError, type OverlayRow,
+  adoptDequeue, fencedAudit, getOverlay, inspectUpload, isUnique, listOverlays, nameTaken, overlayDto, overlayError, overlayKey, queueReplaced, readOverlayForm, reservationHeld, reserveOverlayObject, type OverlayError, type OverlayRow,
 } from "../lib/social-overlays";
 import { jsonInput } from "./helpers";
 
@@ -43,14 +43,18 @@ socialOverlayAdminRoutes.post("/admin/social-overlays", terminalRoute("/admin/so
   const size = inspectUpload(form.image); if (asError(size)) return overlayError(c, size);
   if (await nameTaken(c.env.DB, fields.name, null)) return nameTakenResponse(c);
   const user = c.get("user"), id = newId(), key = overlayKey(id, crypto.randomUUID()), now = Date.now();
-  await c.env.MEDIA.put(key, form.image!, { httpMetadata: { contentType: "image/png" } });
+  const queuedAt = await reserveOverlayObject(c.env.DB, key);
+  try { await c.env.MEDIA.put(key, form.image!, { httpMetadata: { contentType: "image/png" } }); }
+  catch (error) { await discardUnreferencedObject(c.env, key, null); throw error; }
   try {
-    await c.env.DB.batch([
+    const results = await c.env.DB.batch([
       c.env.DB.prepare(`INSERT INTO social_overlays (id, name, platform_label, image_key, image_rev, width, height, bytes, is_default, created_by, updated_by, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, CASE WHEN NOT EXISTS (SELECT 1 FROM social_overlays WHERE is_default = 1) THEN 1 ELSE 0 END, ?8, ?8, ?9, ?9)`)
-        .bind(id, fields.name, fields.platformLabel, key, size.width, size.height, form.image!.byteLength, user.id, now),
+        SELECT ?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, CASE WHEN NOT EXISTS (SELECT 1 FROM social_overlays WHERE is_default = 1) THEN 1 ELSE 0 END, ?8, ?8, ?9, ?9 WHERE ${reservationHeld("?4", "?10")}`)
+        .bind(id, fields.name, fields.platformLabel, key, size.width, size.height, form.image!.byteLength, user.id, now, queuedAt),
       fencedAudit(c.env, user, "social_overlay.create", id, { name: fields.name, platformLabel: fields.platformLabel, width: size.width, height: size.height, bytes: form.image!.byteLength, revision: 1 }, now),
+      adoptDequeue(c.env.DB, key, queuedAt),
     ]);
+    if (results[0]!.meta.changes === 0) { await discardUnreferencedObject(c.env, key, null); return conflict(c); }
   } catch (error) {
     if (isUnique(error, NAME_CONFLICT)) { await discardUnreferencedObject(c.env, key, null); return nameTakenResponse(c); }
     const outcome = await settleThrownAdoption(c.env, { key, projectId: null, mediaId: id, what: "Social overlay", error, isAdopted: async () => (await getOverlay(c.env.DB, id))?.image_key === key });
@@ -93,13 +97,17 @@ socialOverlayAdminRoutes.post("/admin/social-overlays/:id/image", terminalRoute(
   if (row.image_rev !== expected) return conflict(c);
   const size = inspectUpload(form.image); if (asError(size)) return overlayError(c, size);
   const user = c.get("user"), key = overlayKey(id, crypto.randomUUID()), now = Date.now();
-  await c.env.MEDIA.put(key, form.image!, { httpMetadata: { contentType: "image/png" } });
+  const queuedAt = await reserveOverlayObject(c.env.DB, key);
+  try { await c.env.MEDIA.put(key, form.image!, { httpMetadata: { contentType: "image/png" } }); }
+  catch (error) { await discardUnreferencedObject(c.env, key, null); throw error; }
   let results: D1Result[];
   try {
     results = await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE social_overlays SET image_key = ?1, width = ?2, height = ?3, bytes = ?4, image_rev = image_rev + 1, updated_by = ?5, updated_at = ?6 WHERE id = ?7 AND image_rev = ?8")
-        .bind(key, size.width, size.height, form.image!.byteLength, user.id, now, id, expected),
+      c.env.DB.prepare(`UPDATE social_overlays SET image_key = ?1, width = ?2, height = ?3, bytes = ?4, image_rev = image_rev + 1, updated_by = ?5, updated_at = ?6 WHERE id = ?7 AND image_rev = ?8 AND ${reservationHeld("?1", "?9")}`)
+        .bind(key, size.width, size.height, form.image!.byteLength, user.id, now, id, expected, queuedAt),
       fencedAudit(c.env, user, "social_overlay.replace_image", id, { width: size.width, height: size.height, bytes: form.image!.byteLength, previousBytes: row.bytes, revision: expected + 1 }, now),
+      queueReplaced(c.env.DB, row.image_key, id, key, now),
+      adoptDequeue(c.env.DB, key, queuedAt),
     ]);
   } catch (error) {
     const outcome = await settleThrownAdoption(c.env, { key, projectId: null, mediaId: id, what: "Social overlay", error, isAdopted: async () => (await getOverlay(c.env.DB, id))?.image_key === key });

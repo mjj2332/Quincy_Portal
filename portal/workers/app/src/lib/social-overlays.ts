@@ -71,3 +71,20 @@ export function fencedAudit(env: Env, principal: Pick<SessionUser, "id" | "imper
   return env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?1, ?2, ?3, 'social_overlay', ?4, ?5, ?6 WHERE changes() > 0")
     .bind(newId(), principal.id, action, overlayId, auditMeta(principal, meta), at);
 }
+
+/**
+ * Cleanup ownership for an overlay PNG (the poster pattern of `embedded-media-upload.ts`). The key is queued in `embedded_media_cleanup` BEFORE the PUT, so an object written by a request
+ * that then dies is swept by the background drain. The row write is fenced on the reservation (still ours, unclaimed) and the same batch dequeues it, so a sweep that claimed it wins and the write loses.
+ */
+export async function reserveOverlayObject(db: D1Database, key: string): Promise<number> {
+  const queuedAt = Date.now();
+  await db.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?1, NULL, NULL, ?2)").bind(key, queuedAt).run();
+  return queuedAt;
+}
+/** The reservation is still ours and unclaimed. `key` and `queuedAt` are numbered parameters already bound by the caller. */
+export const reservationHeld = (key: string, queuedAt: string): string => `EXISTS (SELECT 1 FROM embedded_media_cleanup WHERE storage_key = ${key} AND queued_at = ${queuedAt} AND claimed_until IS NULL)`;
+export const adoptDequeue = (db: D1Database, key: string, queuedAt: number): D1PreparedStatement =>
+  db.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?1 AND queued_at = ?2 AND claimed_until IS NULL AND EXISTS (SELECT 1 FROM social_overlays WHERE image_key = ?1)").bind(key, queuedAt);
+/** Queues a key a committed write just replaced, in the same batch, so a crash before its delete still sweeps it. */
+export const queueReplaced = (db: D1Database, oldKey: string, overlayId: string, newKey: string, now: number): D1PreparedStatement =>
+  db.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT ?1, NULL, NULL, ?2 WHERE EXISTS (SELECT 1 FROM social_overlays WHERE id = ?3 AND image_key = ?4) ON CONFLICT(storage_key) DO NOTHING").bind(oldKey, now, overlayId, newKey);

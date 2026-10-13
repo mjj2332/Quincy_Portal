@@ -187,4 +187,25 @@ describe("Admin > Social overlays (#869)", () => {
     expect(form.get("expectedRevision")).toBe("1");
     expect(rows()[1]!.querySelector("img")?.getAttribute("src")).toBe(next.imageUrl);
   });
+
+  it("a save that finishes after its dialog was cancelled neither closes nor resets a newer dialog (Sol 2)", async () => {
+    await mount([overlay()]); await openTab();
+    let finish!: (value: unknown) => void;
+    apiPostFormMock.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    await press(button("Upload overlay"));
+    await type(document.body.querySelector<HTMLInputElement>("#social-overlay-name")!, "TikTok");
+    await type(document.body.querySelector<HTMLInputElement>("#social-overlay-platform")!, "TikTok");
+    await pick(pngFile());
+    await press(button(/^Upload$/, document.body.querySelector('[data-testid="social-overlay-dialog"]')!));
+    await press(button("Cancel", document.body.querySelector('[data-testid="social-overlay-dialog"]')!));
+    expect(document.body.querySelector('[data-testid="social-overlay-dialog"]')).toBeNull();
+    await press(button("Rename Instagram Reel"));
+    await type(document.body.querySelector<HTMLInputElement>("#social-overlay-name")!, "My draft");
+    await act(async () => { finish({ overlay: tiktok() }); });
+    await flush();
+    const dialog = document.body.querySelector('[data-testid="social-overlay-dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(document.body.querySelector<HTMLInputElement>("#social-overlay-name")!.value).toBe("My draft");
+    expect(rows()).toHaveLength(2);
+  });
 });
