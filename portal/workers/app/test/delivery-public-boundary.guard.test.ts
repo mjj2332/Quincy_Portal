@@ -25,6 +25,8 @@ export function violations(source: string): string[] {
   if (/\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM|REPLACE\s+INTO)\s+(?:client_links|review_link_videos|review_link_version_grants|guest_sessions)\b/i.test(source)) found.push("writes review link state");
   if (/\b(?:token_hash|passcode_hash)\b/.test(source)) found.push("reads link credentials");
   if (/c\.get\(\s*["']user["']\s*\)|requireSession|requireCapability|getAuth\s*\(/.test(source)) found.push("staff principal");
+  // #863: Review status is staff-only. No column, DTO key or stored value of it may appear in a guest or public Delivery source (ADR 0021 section 7).
+  if (/\b(?:review_status|reviewStatus|approved_internal)\b/.test(source)) found.push("reads Review status");
   return found;
 }
 
@@ -57,6 +59,11 @@ describe("public Delivery surface boundary", () => {
     expect(violations("db.prepare('INSERT INTO review_link_version_grants (id) VALUES (?)')")).toContain("writes review link state");
     expect(violations('import { syncDeliveryReviewLink } from "../lib/delivery-review-link";')).toContain("import ../lib/delivery-review-link");
     expect(violations("db.prepare('SELECT l.token_secret FROM client_links l JOIN review_link_videos rv ON 1')")).toEqual([]);
+    // #863: Review status is staff-only (ADR 0021 section 7, guests see public content only). The planted forms are the column, the DTO key and the stored value.
+    expect(violations("db.prepare('SELECT m.review_status FROM video_version_meta m')")).toContain("reads Review status");
+    expect(violations("const dto = { reviewStatus: video.reviewStatus };")).toContain("reads Review status");
+    expect(violations("if (row.status === 'approved_internal') hide();")).toContain("reads Review status");
+    expect(violations("const approvalStatus = 'approved'; // a client decision is not a Review status")).toEqual([]);
     expect(violations('const u = c.get("user");')).toContain("staff principal");
     expect(violations('import { readDeliveryState } from "../lib/delivery-dto";\nimport { serveR2Object } from "../lib/r2-serve";\nimport { guestNotFound } from "../guest/http";')).toEqual([]);
   });

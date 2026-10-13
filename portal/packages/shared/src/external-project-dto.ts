@@ -9,7 +9,7 @@ import { externalCalendarRangeSchema } from "./production-calendar";
 import { projectDefaultRangeSchema } from "./default-subtask-range";
 import { subtaskRemindersDtoSchema } from "./subtask-reminders";
 import { externalProductionGanttSchema } from "./production-gantt";
-import { videoListResponseSchema, videoReviewResponseSchema } from "./video-review";
+import { videoListResponseSchema, videoReviewResponseSchema, videoReviewStatusResponseSchema } from "./video-review";
 import { reviewLinkListResponseSchema } from "./review-links";
 import { videoUploadCompleteResponseSchema, videoUploadReserveResponseSchema } from "./video-upload";
 import { videoNotePasteCommitResponseSchema, videoNotePastePreviewResponseSchema } from "./video-note-paste-api";
@@ -267,7 +267,7 @@ export type ExternalApiSurface =
   | "comment-mutation" | "comment-read-state" | "mentionable" | "notifications" | "notification-mutation"
   | "review-mutation" | "external-upload" | "external-upload-complete" | "access-snapshot" | "activity" | "calendar" | "gantt" | "export" | "subtask-assignee-options"
   | "embedded-media-presign" | "embedded-media-complete" | "embedded-media-rendition" | "embedded-media-settings" | "link-preview" | "video-review" | "video-list" | "review-link-list" | "video-upload-reserve" | "video-upload-complete"
-  | "video-note-list" | "video-note-thread" | "video-note-delete" | "video-note-paste-preview" | "video-note-paste" | "video-note-markup";
+  | "video-note-list" | "video-note-thread" | "video-note-delete" | "video-note-paste-preview" | "video-note-paste" | "video-note-markup" | "video-review-status";
 
 export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, z.ZodTypeAny>> = {
   me: externalMeResponseSchema,
@@ -313,6 +313,7 @@ export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, 
   "video-note-paste-preview": videoNotePastePreviewResponseSchema,
   "video-note-paste": videoNotePasteCommitResponseSchema,
   "video-note-markup": videoNoteMarkupResponseSchema,
+  "video-review-status": videoReviewStatusResponseSchema,
 };
 
 export function externalRoleLabel(): string {
