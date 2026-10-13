@@ -63,6 +63,10 @@ export const RECOMPUTE_CURRENT_SQL: readonly [string, string, string] = [
 /** `RECOMPUTE_CURRENT_SQL` as prepared statements for a batch. */
 export const recomputeCurrentStatements = (db: D1Database, videoId: string, now: number): D1PreparedStatement[] => RECOMPUTE_CURRENT_SQL.map((sql) => db.prepare(sql).bind(videoId, now));
 
+/** The current-Version recompute, each statement also fenced on the mutation's audit row, so a refused fence moves no asset. */
+export const fencedRecomputeStatements = (db: D1Database, videoId: string, now: number, auditId: string): D1PreparedStatement[] =>
+  RECOMPUTE_CURRENT_SQL.map((sql) => db.prepare(`${sql.trimEnd()} AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?3)`).bind(videoId, now, auditId));
+
 /** Whether the Version is a live Version of a live Video of this Project, from a fresh read. For a handler that built its answer before a last admission (an export, a stream). */
 export async function versionIsLive(db: D1Database, projectId: string, assetId: string): Promise<boolean> {
   return await db.prepare(`SELECT 1 AS ok FROM video_version_meta m JOIN videos v ON v.id = m.video_id WHERE m.asset_id = ?1 AND v.project_id = ?2 AND ${LIVE_VERSION("m")} AND ${LIVE_VIDEO("v")}`).bind(assetId, projectId).first() !== null;

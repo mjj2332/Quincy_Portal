@@ -56,17 +56,17 @@ beforeEach(() => {
 afterEach(async () => { await unmount(); resetVideoUploadStore(); resetUiPrefMemory(); storage.restore(); stub.dispose(); document.body.replaceChildren(); vi.unstubAllGlobals(); Reflect.deleteProperty(navigator, "clipboard"); });
 
 describe("which items the menu offers", () => {
-  it.each(["editor", "external_editor", "admin"] as const)("%s with links and download sees Open, Create Review link, Download v2, Copy link, in that order, in two groups", async (role) => {
+  it.each(["editor", "external_editor", "admin"] as const)("%s with links and download sees Open, Create Review link, Download v2, Copy link, Rename, in that order, in three groups", async (role) => {
     await mount({ role, parts: ALL });
     await openCardMenu(V1);
-    expect(items()).toEqual(["Open", "Create Review link", "Social preview", "Download v2", "Copy link"]);
-    expect(separators()).toHaveLength(1);
+    expect(items()).toEqual(["Open", "Create Review link", "Social preview", "Download v2", "Copy link", "Rename"]);
+    expect(separators()).toHaveLength(2);
   });
-  it("offers only Open and Copy link without the links and download parts, still in two groups", async () => {
+  it("offers only Open, Copy link and Rename without the links and download parts, in three groups", async () => {
     await mount({ parts: ["upload"] });
     await openCardMenu(V1);
-    expect(items()).toEqual(["Open", "Social preview", "Copy link"]);
-    expect(separators()).toHaveLength(1);
+    expect(items()).toEqual(["Open", "Social preview", "Copy link", "Rename"]);
+    expect(separators()).toHaveLength(2);
   });
   it("on an archived Project drops Create Review link only", async () => {
     await mount({ archived: true, parts: ALL });
