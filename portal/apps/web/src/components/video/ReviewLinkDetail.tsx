@@ -31,7 +31,7 @@ const MUTED = `${TEXT} text-foreground-secondary`;
 const HEADING = "[font:var(--weight-medium)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]";
 const TARGET = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
-type Confirm = { kind: "remove"; videoId: string; title: string } | { kind: "revoke" } | { kind: "replace" };
+type Confirm = { kind: "remove"; videoId: string; title: string } | { kind: "revoke" } | { kind: "replace" } | { kind: "delete" };
 
 /** Every scope a request for this link can have, so its refusals show in its detail. */
 const belongsTo = (scope: string, linkId: string) => scope.split(":")[1] === linkId;
@@ -99,10 +99,23 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
     void store.run(`grants:${linkId}:${member.videoId}`, () => actions.setGrants(linkId, member.videoId, next), () => undefined, undefined, linkId);
   }
 
+  /** The link is gone: drop its unsaved edits, and go back to the list only if this link's detail is still the open step. */
+  function afterDelete() {
+    store.resetDetail(linkId);
+    const { view } = store.getState();
+    if (view.kind === "detail" && view.linkId === linkId) store.openList();
+    // The Delete button is unmounted with this step; without this focus would fall to the page behind the dialog. After the list renders: a surviving link's Manage, else the dialog itself.
+    window.setTimeout(() => {
+      const open = document.querySelector<HTMLElement>('[data-testid="review-links-dialog"]');
+      (open?.querySelector<HTMLElement>('[data-testid="review-link-row"] button') ?? open)?.focus();
+    }, 0);
+  }
+
   function run(action: Confirm) {
     setConfirm(null);
     if (action.kind === "remove") void store.run(`remove:${linkId}:${action.videoId}`, () => actions.removeVideo(linkId, action.videoId), () => undefined, undefined, linkId);
     else if (action.kind === "revoke") void store.run(`revoke:${linkId}`, () => actions.revoke(linkId), () => undefined, undefined, linkId);
+    else if (action.kind === "delete") void store.run(`delete:${linkId}`, () => actions.deleteLink(linkId), afterDelete, undefined, linkId);
     else void store.run(`replace:${linkId}`, () => actions.replace(linkId), (result) => store.showReveal({ url: result.url, linkId, label: result.link.label, origin: "replace" }), undefined, linkId);
   }
 
@@ -215,19 +228,27 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
       {expired && <p className={MUTED}>Expired links can't be replaced. Extend the expiry first, then replace it.</p>}
     </section>}
 
+    {revoked && ui.enabled && <section aria-label="Danger zone" className="grid gap-[var(--space-2)]">
+      <div data-testid="review-link-actions" className="flex flex-wrap gap-[var(--space-2)]">
+        <Button type="button" variant="danger" className="min-h-11" disabled={busyLink} onClick={() => setConfirm({ kind: "delete" })}>Delete link</Button>
+      </div>
+      <p className={MUTED}>Deleting removes it from this list. Its notes, approvals and history stay.</p>
+    </section>}
+
     <AlertDialog open={confirm !== null} onOpenChange={(next) => { if (!next) setConfirm(null); }}>
       <AlertDialogContent size="sm" data-testid="review-link-confirm">
         <AlertDialogHeader>
-          <AlertDialogTitle>{confirm?.kind === "remove" ? `Remove ${confirm.title}?` : confirm?.kind === "revoke" ? "Revoke this link?" : "Replace this link?"}</AlertDialogTitle>
+          <AlertDialogTitle>{confirm?.kind === "remove" ? `Remove ${confirm.title}?` : confirm?.kind === "revoke" ? "Revoke this link?" : confirm?.kind === "delete" ? "Delete this link?" : "Replace this link?"}</AlertDialogTitle>
           <AlertDialogDescription className="text-foreground-secondary">
             {confirm?.kind === "remove" && "Guests lose access to it at once. Notes and decisions stay."}
             {confirm?.kind === "revoke" && "Guests can no longer open it, and anyone using it is signed out. This can't be undone."}
+            {confirm?.kind === "delete" && "It disappears from your Review links. Its notes, approvals and history stay. This can't be undone."}
             {confirm?.kind === "replace" && "The current link stops working at once and anyone using it is signed out. You'll get a new link to share."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction variant={confirm?.kind === "replace" ? "default" : "destructive"} onClick={() => { if (confirm) run(confirm); }}>{confirm?.kind === "remove" ? "Remove film" : confirm?.kind === "revoke" ? "Revoke" : "Replace"}</AlertDialogAction>
+          <AlertDialogAction variant={confirm?.kind === "replace" ? "default" : "destructive"} onClick={() => { if (confirm) run(confirm); }}>{confirm?.kind === "remove" ? "Remove film" : confirm?.kind === "revoke" ? "Revoke" : confirm?.kind === "delete" ? "Delete" : "Replace"}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

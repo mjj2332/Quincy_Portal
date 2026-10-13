@@ -55,6 +55,32 @@ describe("review link writes and the list cache", () => {
   });
 });
 
+describe("delete (#846)", () => {
+  it("drops the link from a loaded cache before the call resolves, and keeps the others", async () => {
+    const client = new QueryClient();
+    client.setQueryData(reviewLinksKey(PROJECT), [linkOf({ id: L1 }), linkOf({ id: L2 })]);
+    apiDeleteMock.mockResolvedValue(undefined);
+    await createReviewLinkActions(client, PROJECT).deleteLink(L1);
+    expect(apiDeleteMock).toHaveBeenCalledWith(`/api/projects/${PROJECT}/review-links/${L1}`);
+    expect((client.getQueryData(reviewLinksKey(PROJECT)) as Array<{ id: string }>).map((l) => l.id)).toEqual([L2]);
+    expect(client.getQueryState(reviewLinksKey(PROJECT))?.isInvalidated).toBe(true);
+  });
+  it("never invents a list that was never loaded", async () => {
+    const client = new QueryClient();
+    apiDeleteMock.mockResolvedValue(undefined);
+    await createReviewLinkActions(client, PROJECT).deleteLink(L1);
+    expect(client.getQueryData(reviewLinksKey(PROJECT))).toBeUndefined();
+  });
+  it("a 409 link_not_revoked keeps the row and invalidates the list", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(reviewLinksKey(PROJECT), [linkOf({ id: L1 })]);
+    apiDeleteMock.mockRejectedValue(new ApiError("Revoke this Review link before deleting it.", 409, { code: "link_not_revoked" }));
+    await expect(createReviewLinkActions(client, PROJECT).deleteLink(L1)).rejects.toBeInstanceOf(ApiError);
+    expect((client.getQueryData(reviewLinksKey(PROJECT)) as Array<{ id: string }>).map((l) => l.id)).toEqual([L1]);
+    expect(client.getQueryState(reviewLinksKey(PROJECT))?.isInvalidated).toBe(true);
+  });
+});
+
 describe("review link write refusals end or refresh what they should, with no component mounted (#741 11b round 10)", () => {
   const detailHeld = { id: PROJECT, archivedAt: null };
   it("a 401 ends the originating principal's session: its private data and every open form are dropped", async () => {

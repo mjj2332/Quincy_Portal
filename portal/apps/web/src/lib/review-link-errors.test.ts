@@ -13,6 +13,7 @@ describe("classifyReviewLinkError", () => {
     ["project_archived", 409, "none", /Archived/],
     ["already_on_link", 409, "refetch", /already on this link/],
     ["link_conflict", 409, "refetch", /changed/],
+    ["link_not_revoked", 409, "refetch", /Revoke this link before deleting it/],
     ["video_other_project", 422, "refetch", /this Project/],
     ["expiry_out_of_range", 422, "none", /between one hour/],
   ] as const)("%s", (code, status, action, text) => {

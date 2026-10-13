@@ -6,7 +6,7 @@ import { invalidateProjectSurfaces, projectQueryRetry, recordProjectArchivedRefu
 import { classifyReviewLinkError } from "./review-link-errors";
 
 /**
- * Review links (#741 11b): the Project's list and the seven writes. The list lives under the Project root so the project-removed sweep
+ * Review links (#741 11b): the Project's list and the eight writes. The list lives under the Project root so the project-removed sweep
  * clears it. Every write, success or failure, invalidates it afterwards (a refused write usually means the list is stale), and a write the
  * server answered "gate closed" also invalidates the Project's video-review parts and detail so the UI hides itself, a 401 ends the session, and an archive refusal is recorded. The URL a create or replace
  * returns is handed to the caller for the reveal step, and since #815 it is also the link's `url`, which rides in the cached DTO like any other field (never in storage).
@@ -47,6 +47,8 @@ export type ReviewLinkActions = {
   setGrants: (linkId: string, videoId: string, assetIds: string[]) => Promise<ReviewLinkDto>;
   revoke: (linkId: string) => Promise<ReviewLinkDto>;
   replace: (linkId: string) => Promise<ReviewLinkRevealResponse>;
+  /** Delete a revoked link (#846): it leaves the cached list at once; a refusal leaves the row and the refetch tells the truth. */
+  deleteLink: (linkId: string) => Promise<void>;
 };
 
 export function createReviewLinkActions(client: QueryClient, projectId: string): ReviewLinkActions {
@@ -82,6 +84,10 @@ export function createReviewLinkActions(client: QueryClient, projectId: string):
     setGrants: (linkId, videoId, assetIds) => settled(() => one(apiPut(`${videoPath(projectId, linkId, videoId)}/grants`, { assetIds }))),
     revoke: (linkId) => settled(() => one(apiPost(`${linkPath(projectId, linkId)}/revoke`, {}))),
     replace: (linkId) => settled(() => reveal(apiPost(`${linkPath(projectId, linkId)}/replace`, {}))),
+    deleteLink: (linkId) => settled(async () => {
+      await apiDelete(linkPath(projectId, linkId));
+      await remember((links) => links.filter((link) => link.id !== linkId));
+    }),
   };
 }
 

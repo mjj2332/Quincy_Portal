@@ -205,6 +205,17 @@ Rehearsed locally (`wrangler d1 migrations apply DB --local` over a seeded 0074 
 
 **Rollback.** The old Worker reads `embedded_media` columns that still exist, so a code rollback is safe. Restoring the old schema is a Time Travel restore, which loses every write since the bookmark.
 
+### Review link delete (0076, #846)
+
+Migration 0076 adds two nullable columns to `client_links`: `deleted_at` (integer, with a typeof CHECK) and `deleted_by` (text, references `user`). No default, no backfill, no index, no rebuild, no PRAGMA. The Worker in this PR reads both columns (every staff Review link read filters `deleted_at IS NULL`), so production stays on the old Worker until the owner applies 0076 and re-runs the deploy (the "A PR that adds a D1 migration" flow above). Apply checklist (from `portal/workers/app`, `--remote`, owner's go-ahead):
+
+1. Take a Time Travel bookmark (`npx wrangler d1 time-travel info DB`) and record the id in the PR.
+2. `npx wrangler d1 migrations apply DB --remote`; the pending list must show only 0076. If it lists two (for example #847's 0077), stop: 0076 must be applied alone and first.
+3. Post-check: `PRAGMA table_info(client_links)` shows `deleted_at` and `deleted_by`, and `SELECT COUNT(*) FROM client_links WHERE deleted_at IS NOT NULL` is 0.
+4. Re-run the deploy (`gh run rerun <run-id> --failed`).
+
+**Rollback.** An old Worker ignores both columns, so a code rollback is safe, but it would show deleted links again. Dropping the columns means a Time Travel restore, which loses every write since the bookmark.
+
 ### Subtask presets (0052)
 
 0052 converts every date-only Subtask range to a 09:00 start and a 17:00 end (the presets, ADR 0016)

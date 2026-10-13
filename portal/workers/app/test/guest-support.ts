@@ -11,14 +11,14 @@ export const GUEST_WINDOW_MS = 15 * 60_000;
 export const guestFlags = (projectId: string = ids.project) => ["video_review", `video_review_pilot:${projectId}`, "video_review_guest", "video_review_guest_comments", "video_review_delivery"] as const;
 export async function openGuestGate(projectId: string = ids.project) { await clearVideoFlags(); await setVideoFlags(...guestFlags(projectId)); }
 
-export type LinkInput = { projectId?: string; expiresAt?: number; passcodeHash?: string | null; kind?: "video_review" | "delivery"; revoked?: boolean; label?: string | null; generation?: number; allow?: [number, number, number] };
+export type LinkInput = { projectId?: string; expiresAt?: number; passcodeHash?: string | null; kind?: "video_review" | "delivery"; revoked?: boolean; /** A soft-deleted link (#846); implies revoked. */ deleted?: boolean; label?: string | null; generation?: number; allow?: [number, number, number] };
 export async function seedGuestLink(input: LinkInput = {}) {
   const id = crypto.randomUUID(); const token = randomToken(); const tokenHash = await hashToken(token); const now = Date.now();
-  const allow = input.allow ?? [1, 1, 1];
-  await database.DB.prepare(`INSERT INTO client_links (id, project_id, token_hash, publish_version, expires_at, passcode_hash, created_at, kind, label, allow_comments, allow_approve, allow_download, created_by, token_generation, updated_at, revoked_at, revoked_by)
-    VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  const allow = input.allow ?? [1, 1, 1]; const revoked = input.revoked || input.deleted;
+  await database.DB.prepare(`INSERT INTO client_links (id, project_id, token_hash, publish_version, expires_at, passcode_hash, created_at, kind, label, allow_comments, allow_approve, allow_download, created_by, token_generation, updated_at, revoked_at, revoked_by, deleted_at, deleted_by)
+    VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(id, input.projectId ?? ids.project, tokenHash, input.expiresAt ?? now + 30 * 86_400_000, input.passcodeHash ?? null, now, input.kind ?? "video_review", input.label === undefined ? "Smith family" : input.label,
-      allow[0], allow[1], allow[2], ids.member, input.generation ?? 1, now, input.revoked ? now : null, input.revoked ? ids.member : null).run();
+      allow[0], allow[1], allow[2], ids.member, input.generation ?? 1, now, revoked ? now : null, revoked ? ids.member : null, input.deleted ? now : null, input.deleted ? ids.member : null).run();
   return { id, token, tokenHash };
 }
 

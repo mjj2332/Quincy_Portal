@@ -244,6 +244,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "PUT", path: "/api/projects/:projectId/review-links/:linkId/videos/:videoId/grants", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/review-links/:linkId/revoke", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/review-links/:linkId/replace", class: "scoped" },
+  { method: "DELETE", path: "/api/projects/:projectId/review-links/:linkId", class: "scoped" },
   { method: "GET", path: "/api/projects/:projectId/videos/:videoId/decisions", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/video-versions/:assetId/decisions", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/video-versions/:assetId/release", class: "scoped" },

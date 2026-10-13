@@ -223,6 +223,67 @@ describe("detail: revoke and replace", () => {
   });
 });
 
+describe("detail: delete (#846)", () => {
+  const revokedLink = () => linkOf({ status: "revoked", revokedAt: "2026-10-10T03:00:00.000Z", url: null });
+  it("offers no Delete link on an active or an expired link", async () => {
+    await mount(); await openDetailOf("Smith family");
+    expect(buttonIn(detail(), "Delete link")).toBeUndefined();
+    await unmount();
+    state.links = [linkOf({ status: "expired" })];
+    await mount(); await openDetailOf("Smith family");
+    expect(buttonIn(detail(), "Delete link")).toBeUndefined();
+  });
+  it("on a revoked link Cancel and Escape send nothing, the confirm says it can't be undone, and confirming deletes and returns to the list without it", async () => {
+    state.links = [revokedLink(), linkOf({ id: L2, label: "Jones family" })];
+    apiDeleteMock.mockImplementation(async () => { state.links = [linkOf({ id: L2, label: "Jones family" })]; return undefined; });
+    await mount(); await openDetailOf("Smith family");
+    await press(buttonIn(detail(), "Delete link"));
+    expect(text(q('[data-testid="review-link-confirm"]'))).toContain("can't be undone");
+    await press(buttonIn(q('[data-testid="review-link-confirm"]'), "Cancel"));
+    expect(apiDeleteMock).not.toHaveBeenCalled();
+    await press(buttonIn(detail(), "Delete link"));
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); }); await flush();
+    expect(apiDeleteMock).not.toHaveBeenCalled();
+    if (!q('[data-testid="review-link-confirm"]')) await press(buttonIn(detail(), "Delete link"));
+    await press(buttonIn(q('[data-testid="review-link-confirm"]'), "Delete"));
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1);
+    expect(apiDeleteMock).toHaveBeenCalledWith(base);
+    expect(q('[data-testid="review-link-detail"]')).toBeNull();
+    expect(all('[data-testid="review-link-row"]')).toHaveLength(1);
+    expect(text(dialog())).toContain("Jones family"); expect(text(dialog())).not.toContain("Smith family");
+    // Focus stays inside the dialog, not on a removed control.
+    expect(dialog()!.contains(document.activeElement)).toBe(true);
+  });
+  it("deleting the only link leaves focus on the dialog, not the page behind it", async () => {
+    state.links = [revokedLink()];
+    apiDeleteMock.mockImplementation(async () => { state.links = []; return undefined; });
+    await mount(); await openDetailOf("Smith family");
+    await confirm("Delete link", "Delete");
+    expect(text(dialog())).toContain("No Review links yet");
+    expect(document.activeElement).toBe(dialog());
+  });
+  it("a double press sends once", async () => {
+    state.links = [revokedLink()];
+    let finish!: () => void;
+    apiDeleteMock.mockImplementation(() => new Promise<undefined>((resolve) => { finish = () => resolve(undefined); }));
+    await mount(); await openDetailOf("Smith family");
+    await press(buttonIn(detail(), "Delete link"));
+    const action = buttonIn(q('[data-testid="review-link-confirm"]'), "Delete")!;
+    await press(action); await press(action);
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1);
+    expect(buttonIn(detail(), "Delete link")!.disabled).toBe(true);
+    await act(async () => { finish(); }); await flush();
+  });
+  it("a refusal shows a critical notice inside the detail and keeps the link", async () => {
+    state.links = [revokedLink()];
+    apiDeleteMock.mockRejectedValue(refused(409, { error: "x", code: "link_not_revoked" }));
+    await mount(); await openDetailOf("Smith family");
+    await confirm("Delete link", "Delete");
+    expect(text(q('[role="alert"]', detail()))).toMatch(/Revoke this link before deleting it/);
+    expect(buttonIn(detail(), "Delete link")).toBeDefined();
+  });
+});
+
 describe("detail: the link itself (#815)", () => {
   const urlInput = () => q<HTMLInputElement>('[data-testid="review-link-url"]', detail());
   it("shows the full link as the first row of Settings, above Label, read-only, and Copy writes that exact string", async () => {

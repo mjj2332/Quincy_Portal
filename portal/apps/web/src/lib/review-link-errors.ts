@@ -13,6 +13,7 @@ const detailsOf = (error: ApiError): Record<string, unknown> => (error.details &
 const CODE_COPY: Record<string, { text: string; action: ReviewLinkErrorAction }> = {
   link_revoked: { text: "This Review link was revoked, so it can't be changed.", action: "refetch" },
   link_expired: { text: "This Review link has expired. Extend its expiry first, then replace it.", action: "refetch" },
+  link_not_revoked: { text: "Revoke this link before deleting it.", action: "refetch" },
   grant_required: { text: "Grant at least one Version. To stop sharing a Video, remove it instead.", action: "none" },
   grant_not_version: { text: "That Version no longer belongs to this Video. The list was refreshed.", action: "refetch" },
   project_archived: { text: "Archived projects are read-only; Review links can't be changed. Revoking still works.", action: "none" },

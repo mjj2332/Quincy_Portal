@@ -13,7 +13,7 @@ export type ReviewLinksUi = {
   projectId: string;
   /** The `links` gate part is on and this role may share Videos: the only condition under which any Review link UI exists. */
   enabled: boolean;
-  /** Enabled and the Project is not archived: create, edit, add, remove and replace. Revoke needs only `enabled`. */
+  /** Enabled and the Project is not archived: create, edit, add, remove and replace. Revoke and Delete (#846) need only `enabled`. */
   canWrite: boolean;
   archived: boolean;
   store: ReviewLinkStore;

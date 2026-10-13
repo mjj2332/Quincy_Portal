@@ -12,7 +12,7 @@ import { projectIsArchived } from "../lib/project-archive";
 import { readVideoReviewGate } from "../lib/video-review-gate";
 import { terminalRoute } from "../lib/terminal-route";
 import {
-  addLinkVideo, createReviewLink, findLinkHead, isLiveMember, loadReviewLinkDtos, patchReviewLink, removeLinkVideo, replaceReviewLinkToken, revokeReviewLink, setLinkGrants, versionsByVideo,
+  addLinkVideo, createReviewLink, deleteReviewLink, findLinkHead, isLiveMember, loadReviewLinkDtos, patchReviewLink, removeLinkVideo, replaceReviewLinkToken, revokeReviewLink, setLinkGrants, versionsByVideo,
   type GrantPair, type LinkHead, type Principal,
 } from "../lib/review-links";
 import { jsonInput } from "./helpers";
@@ -22,7 +22,7 @@ const uuid = z.string().uuid();
 /**
  * Staff Review links (#741 11a). Every route checks inline, in this order: malformed id 400, the `links` gate (closed 404, the same body for a real
  * and an unknown id), `shareVideo` 403 (a Photographer stops here; an External editor holds `shareVideo` since #834 and goes on to Project visibility, where an unassigned one gets 404), Project visibility (staff 403), archived 409 on writes,
- * the link 404 (a link of another Project, or a delivery link, is an unknown id), then the body. REVOKE is the one exception: its gate is the open
+ * the link 404 (a link of another Project, or a delivery link, is an unknown id), then the body. REVOKE is the one exception (and DELETE, #846, shares its gate): its gate is the open
  * check alone (`null` part), so a security cut never depends on the `links` part being on, and it is allowed on an archived Project. No `.use(...)`:
  * router-wide middleware leaks across sibling mounts (docs/lessons.md).
  *
@@ -64,12 +64,14 @@ function boundedExpiry(value: string, now: number): number | null {
 const unique = <T,>(values: T[]): T[] => [...new Set(values)];
 const noStore = (c: Ctx) => c.header("Cache-Control", "private, no-store");
 
+/** The link after a write, or null when a delete landed between the write and this reload (the handler then answers 404). */
 async function oneLink(c: Ctx, projectId: string, linkId: string, now: number) {
   const [link] = await loadReviewLinkDtos(c.env.DB, projectId, now, c.env.APP_ORIGIN, linkId);
-  return reviewLinkDtoSchema.parse(link);
+  return link === undefined ? null : reviewLinkDtoSchema.parse(link);
 }
 /** The create and replace body: the link and, from the same DTO, its address. A revoke can land between the write and this reload; the link then has no address, so answer as revoked. */
-function reveal(c: Ctx, link: ReviewLinkDto, status: 200 | 201 = 200): Response {
+function reveal(c: Ctx, link: ReviewLinkDto | null, status: 200 | 201 = 200): Response {
+  if (link === null) return linkNotFound(c);
   if (link.url === null) return revokedResponse(c);
   return c.json(reviewLinkRevealResponseSchema.parse({ link, url: link.url }), status);
 }
@@ -145,7 +147,8 @@ reviewLinksRoutes.patch("/projects/:projectId/review-links/:linkId", terminalRou
     patch: { label: input.label, expiresAt, allow: input.allow, passcodeHash: input.passcode === undefined ? undefined : input.passcode === null ? null : await hashPasscode(input.passcode) },
   });
   if (!ok) return refusedBecause(c, projectId, linkId);
-  return c.json(reviewLinkResponseSchema.parse({ link: await oneLink(c, projectId, linkId, now) }));
+  const link = await oneLink(c, projectId, linkId, now);
+  return link === null ? linkNotFound(c) : c.json(reviewLinkResponseSchema.parse({ link }));
 }));
 
 reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/videos", terminalRoute("/projects/:projectId/review-links/:linkId/videos", async (c) => {
@@ -165,7 +168,8 @@ reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/videos", termi
   const now = Date.now();
   const ok = await addLinkVideo(c.env.DB, { projectId, linkId, principal: principalOf(c), videoId: input.videoId, assetIds, now });
   if (!ok) return refusedBecause(c, projectId, linkId, async () => await isLiveMember(c.env.DB, linkId, input.videoId) ? alreadyOn() : null);
-  return c.json(reviewLinkResponseSchema.parse({ link: await oneLink(c, projectId, linkId, now) }), 201);
+  const link = await oneLink(c, projectId, linkId, now);
+  return link === null ? linkNotFound(c) : c.json(reviewLinkResponseSchema.parse({ link }), 201);
 }));
 
 reviewLinksRoutes.delete("/projects/:projectId/review-links/:linkId/videos/:videoId", terminalRoute("/projects/:projectId/review-links/:linkId/videos/:videoId", async (c) => {
@@ -199,7 +203,8 @@ reviewLinksRoutes.put("/projects/:projectId/review-links/:linkId/videos/:videoId
   const now = Date.now();
   const ok = await setLinkGrants(c.env.DB, { projectId, linkId, principal: principalOf(c), videoId, assetIds, now });
   if (!ok) return refusedBecause(c, projectId, linkId, async () => await isLiveMember(c.env.DB, linkId, videoId) ? null : missing());
-  return c.json(reviewLinkResponseSchema.parse({ link: await oneLink(c, projectId, linkId, now) }));
+  const link = await oneLink(c, projectId, linkId, now);
+  return link === null ? linkNotFound(c) : c.json(reviewLinkResponseSchema.parse({ link }));
 }));
 
 reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/revoke", terminalRoute("/projects/:projectId/review-links/:linkId/revoke", async (c) => {
@@ -214,7 +219,8 @@ reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/revoke", termi
     // Lost a race to another revoke: the link is revoked either way, which is what was asked.
     if (!ok && (await findLinkHead(c.env.DB, projectId, linkId))?.revoked_at === null) return c.json({ error: "The Review link changed; reload and try again.", code: "link_conflict" }, 409);
   }
-  return c.json(reviewLinkResponseSchema.parse({ link: await oneLink(c, projectId, linkId, now) }));
+  const link = await oneLink(c, projectId, linkId, now);
+  return link === null ? linkNotFound(c) : c.json(reviewLinkResponseSchema.parse({ link }));
 }));
 
 reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/replace", terminalRoute("/projects/:projectId/review-links/:linkId/replace", async (c) => {
@@ -228,6 +234,22 @@ reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/replace", term
   if (head.expires_at <= now) return expired();
   const token = randomToken();
   const ok = await replaceReviewLinkToken(c.env.DB, { projectId, linkId, principal: principalOf(c), tokenHash: await hashToken(token), tokenSecret: token, now });
-  if (!ok) return refusedBecause(c, projectId, linkId, async () => (await findLinkHead(c.env.DB, projectId, linkId))!.expires_at <= Date.now() ? expired() : null);
+  if (!ok) return refusedBecause(c, projectId, linkId, async () => ((await findLinkHead(c.env.DB, projectId, linkId))?.expires_at ?? Infinity) <= Date.now() ? expired() : null);
   return reveal(c, await oneLink(c, projectId, linkId, now));
+}));
+
+/** Delete shares Revoke's gate (#846): the open check alone, archived Projects allowed. Only a revoked link can go, and the row is kept (soft delete). A repeat is 204 and writes nothing. */
+reviewLinksRoutes.delete("/projects/:projectId/review-links/:linkId", terminalRoute("/projects/:projectId/review-links/:linkId", async (c) => {
+  noStore(c);
+  const projectId = c.req.param("projectId"); const linkId = c.req.param("linkId");
+  if (!uuid.safeParse(projectId).success || !uuid.safeParse(linkId).success) return c.json({ error: "Invalid id" }, 400);
+  const refused = await admit(c, projectId, { write: true, part: null, allowArchived: true }); if (refused) return refused;
+  const notRevoked = () => c.json({ error: "Revoke this Review link before deleting it.", code: "link_not_revoked" }, 409);
+  const head = await findLinkHead(c.env.DB, projectId, linkId, { includeDeleted: true }); if (!head) return linkNotFound(c);
+  if (head.deleted_at !== null) return c.body(null, 204);
+  if (head.revoked_at === null) return notRevoked();
+  const ok = await deleteReviewLink(c.env.DB, { projectId, linkId, principal: principalOf(c), now: Date.now() });
+  // Lost a race to another delete: the link is gone either way, which is what was asked.
+  if (!ok && (await findLinkHead(c.env.DB, projectId, linkId, { includeDeleted: true }))?.deleted_at === null) return notRevoked();
+  return c.body(null, 204);
 }));

@@ -16,14 +16,16 @@ const AUDIT_INSERT_WHERE = "INSERT INTO audit_log (id, actor_id, action, target_
 const AUDITED = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)";
 const NOT_ARCHIVED = "EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)";
 const LINK_LIVE = "EXISTS (SELECT 1 FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL)";
+const LINK_DELETABLE = "EXISTS (SELECT 1 FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NOT NULL AND deleted_at IS NULL)";
 const MEMBER_LIVE = "EXISTS (SELECT 1 FROM review_link_videos WHERE link_id = ? AND video_id = ? AND removed_at IS NULL)";
 
 export type Principal = NonNullable<AuditPrincipal>;
 export type Allow = { comments: boolean; approve: boolean; download: boolean };
 
-export type LinkHead = { id: string; revoked_at: number | null; expires_at: number };
-export async function findLinkHead(db: D1Database, projectId: string, linkId: string): Promise<LinkHead | null> {
-  return await db.prepare("SELECT id, revoked_at, expires_at FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review'").bind(linkId, projectId).first<LinkHead>() ?? null;
+export type LinkHead = { id: string; revoked_at: number | null; expires_at: number; deleted_at: number | null };
+/** The link's head, or null. A deleted link (#846) is absent unless `includeDeleted`: only the Delete route asks for it, so every other route answers 404 on a deleted link. */
+export async function findLinkHead(db: D1Database, projectId: string, linkId: string, options: { includeDeleted?: boolean } = {}): Promise<LinkHead | null> {
+  return await db.prepare(`SELECT id, revoked_at, expires_at, deleted_at FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review'${options.includeDeleted ? "" : " AND deleted_at IS NULL"}`).bind(linkId, projectId).first<LinkHead>() ?? null;
 }
 
 /** Whether the audit row of a guarded batch landed (the guard held and every later statement ran). */
@@ -60,12 +62,12 @@ export const reviewLinkUrl = (origin: string, linkId: string, secret: string) =>
 
 /** The Project's Review links (or one), newest first, as the staff DTO. Never selects the token hash or the passcode hash. Selects the plain-text secret only to build `url`. */
 export async function loadReviewLinkDtos(db: D1Database, projectId: string, now: number, origin: string, linkId?: string): Promise<ReviewLinkDto[]> {
-  const scope = "SELECT id FROM client_links WHERE project_id = ?1 AND kind = 'video_review' AND (?2 IS NULL OR id = ?2)";
+  const scope = "SELECT id FROM client_links WHERE project_id = ?1 AND kind = 'video_review' AND deleted_at IS NULL AND (?2 IS NULL OR id = ?2)";
   const [links, videos, grants, activity, guests] = await db.batch([
     db.prepare(`SELECT l.id, l.label, l.expires_at, l.created_at, l.revoked_at, l.passcode_hash IS NOT NULL AS has_passcode, l.token_secret, l.allow_comments, l.allow_approve, l.allow_download,
         l.created_by, cu.name AS cu_name, cu.role AS cu_role, cu.active AS cu_active, l.revoked_by, ru.name AS ru_name, ru.role AS ru_role, ru.active AS ru_active
       FROM client_links l LEFT JOIN user cu ON cu.id = l.created_by LEFT JOIN user ru ON ru.id = l.revoked_by
-      WHERE l.project_id = ?1 AND l.kind = 'video_review' AND (?2 IS NULL OR l.id = ?2) ORDER BY l.created_at DESC, l.rowid DESC`).bind(projectId, linkId ?? null),
+      WHERE l.project_id = ?1 AND l.kind = 'video_review' AND l.deleted_at IS NULL AND (?2 IS NULL OR l.id = ?2) ORDER BY l.created_at DESC, l.rowid DESC`).bind(projectId, linkId ?? null),
     db.prepare(`SELECT m.link_id, m.video_id, m.added_at, v.title FROM review_link_videos m JOIN videos v ON v.id = m.video_id AND ${LIVE_VIDEO("v")}
       WHERE m.removed_at IS NULL AND m.link_id IN (${scope}) ORDER BY m.added_at, m.rowid`).bind(projectId, linkId ?? null),
     db.prepare(`SELECT g.link_id, g.video_id, g.asset_id, a.version FROM review_link_version_grants g JOIN assets a ON a.id = g.asset_id
@@ -240,5 +242,19 @@ export async function replaceReviewLinkToken(db: D1Database, input: { projectId:
     db.prepare(`UPDATE client_links SET token_hash = ?, token_secret = ?, token_generation = token_generation + 1, updated_at = ? WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND expires_at > ? AND ${AUDITED}`)
       .bind(input.tokenHash, input.tokenSecret, input.now, input.linkId, input.projectId, input.now, auditId),
     db.prepare(`DELETE FROM guest_sessions WHERE link_id = ? AND ${AUDITED}`).bind(input.linkId, auditId),
+  ]);
+}
+
+/**
+ * Soft delete of a revoked link (#846). The row stays: six child tables cascade on `client_links`, so a hard delete would erase guest notes and approvals. Allowed on an archived Project
+ * (no archived guard), like Revoke. The audit row carries the guard (revoked and not yet deleted), the UPDATE runs only if it landed, and nothing else is touched: no child row, no digest.
+ */
+export async function deleteReviewLink(db: D1Database, input: { projectId: string; linkId: string; principal: Principal; now: number }): Promise<boolean> {
+  const auditId = newId();
+  const audit: Audit = { id: auditId, action: "review_link.delete", linkId: input.linkId, principal: input.principal, now: input.now, meta: { projectId: input.projectId, linkId: input.linkId } };
+  return commit(db, audit, [
+    auditStatement(db, audit, LINK_DELETABLE, [input.linkId, input.projectId]),
+    db.prepare(`UPDATE client_links SET deleted_at = ?, deleted_by = ?, updated_at = ? WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NOT NULL AND deleted_at IS NULL AND ${AUDITED}`)
+      .bind(input.now, input.principal.id, input.now, input.linkId, input.projectId, auditId),
   ]);
 }

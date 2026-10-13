@@ -53,6 +53,8 @@ async function expectLinkInvariants() {
   const bad = async (where: string) => (await database.DB.prepare(`SELECT id FROM client_links WHERE ${where}`).all()).results;
   expect(await bad("kind = 'video_review' AND (created_by IS NULL OR updated_at IS NULL)"), "video link without created_by/updated_at").toEqual([]);
   expect(await bad("kind = 'video_review' AND ((revoked_at IS NULL) <> (revoked_by IS NULL))"), "revoked_at/revoked_by pair").toEqual([]);
+  expect(await bad("(deleted_at IS NULL) <> (deleted_by IS NULL)"), "deleted_at/deleted_by pair").toEqual([]);
+  expect(await bad("deleted_at IS NOT NULL AND revoked_at IS NULL"), "deleted link that was never revoked").toEqual([]);
   expect(await bad("kind = 'delivery' AND publish_version IS NULL"), "delivery link without publish_version").toEqual([]);
   expect(await bad("kind = 'video_review' AND publish_version IS NOT NULL"), "video link with publish_version").toEqual([]);
 }
@@ -112,6 +114,7 @@ describe("the links gate and the route order", () => {
     expect((await request(`/api/projects/nope/review-links`, "admin")).status).toBe(400);
     expect((await request(`${base()}/nope`, "admin", "PATCH", { label: "x" })).status).toBe(400);
     expect((await request(`${base()}/nope/revoke`, "admin", "POST", {})).status).toBe(400);
+    expect((await request(`${base()}/nope`, "admin", "DELETE")).status).toBe(400);
     expect((await request(`${base()}/${crypto.randomUUID()}/videos/nope`, "admin", "DELETE")).status).toBe(400);
   });
 
@@ -120,16 +123,17 @@ describe("the links gate and the route order", () => {
     expect((await request(base(), "photographer")).status, "list photographer").toBe(403);
     expect((await create({ videoIds: [v1.videoId] }, "photographer")).status, "create photographer").toBe(403);
     expect((await request(`${base()}/${crypto.randomUUID()}/revoke`, "photographer", "POST", {})).status, "revoke photographer").toBe(403);
+    expect((await request(`${base()}/${crypto.randomUUID()}`, "photographer", "DELETE")).status, "delete photographer").toBe(403);
     expect(await audits()).toEqual([]);
   });
 
-  it("#834: an External outsider gets 404 'Project not found' on all eight routes, before any link is looked up", async () => {
+  it("#834: an External outsider gets 404 'Project not found' on all nine routes, before any link is looked up", async () => {
     const { link } = await createOk({ videoIds: [v1.videoId] });
     const id = link.id; const videoId = v1.videoId;
     const calls: Array<[string, string, Json?]> = [
       ["GET", base()], ["POST", base(), { videoIds: [videoId] }], ["PATCH", `${base()}/${id}`, { label: "x" }],
       ["POST", `${base()}/${id}/videos`, { videoId, assetIds: [v1.assetId] }], ["DELETE", `${base()}/${id}/videos/${videoId}`],
-      ["PUT", `${base()}/${id}/videos/${videoId}/grants`, { assetIds: [v1.assetId] }], ["POST", `${base()}/${id}/revoke`, {}], ["POST", `${base()}/${id}/replace`, {}],
+      ["PUT", `${base()}/${id}/videos/${videoId}/grants`, { assetIds: [v1.assetId] }], ["POST", `${base()}/${id}/revoke`, {}], ["POST", `${base()}/${id}/replace`, {}], ["DELETE", `${base()}/${id}`],
     ];
     for (const [method, path, body] of calls) {
       const response = await request(path, "externalOutsider", method as "GET", body);
@@ -165,7 +169,7 @@ describe("the links gate and the route order", () => {
       const calls: Array<[string, string, Json?]> = [
         ["GET", archivedPath], ["POST", archivedPath, { videoIds: [unknown] }], ["PATCH", `${archivedPath}/${unknown}`, { label: "x" }],
         ["POST", `${archivedPath}/${unknown}/videos`, { videoId: unknown, assetIds: [unknown] }], ["DELETE", `${archivedPath}/${unknown}/videos/${unknown}`],
-        ["PUT", `${archivedPath}/${unknown}/videos/${unknown}/grants`, { assetIds: [unknown] }], ["POST", `${archivedPath}/${unknown}/revoke`, {}], ["POST", `${archivedPath}/${unknown}/replace`, {}],
+        ["PUT", `${archivedPath}/${unknown}/videos/${unknown}/grants`, { assetIds: [unknown] }], ["POST", `${archivedPath}/${unknown}/revoke`, {}], ["POST", `${archivedPath}/${unknown}/replace`, {}], ["DELETE", `${archivedPath}/${unknown}`],
       ];
       for (const [method, path, body] of calls) {
         const response = await request(path, "external", method as "GET", body);
@@ -201,6 +205,8 @@ describe("the links gate and the route order", () => {
     const revoked = await request(`${archivedPath}/${parked}/revoke`, "admin", "POST", {});
     expect(revoked.status).toBe(200); expect(reviewLinkResponseSchema.parse(await revoked.json()).link.status).toBe("revoked");
     expect(await sessionCount(parked)).toBe(0);
+    expect((await request(`${archivedPath}/${parked}`, "admin", "DELETE")).status).toBe(204); // reads, revokes and deletes stay open on an archived Project
+    expect(await row(parked)).toMatchObject({ deleted_by: ids.admin });
     expect(link.status).toBe("active");
   });
 });
@@ -335,7 +341,10 @@ describe("link URL on read (#815)", () => {
     noStore(await request(`${base()}/${link.id}/videos/${v2.videoId}/grants`, "admin", "PUT", { assetIds: [v2.assetId, v2b.assetId] }));
     noStore(await request(`${base()}/${link.id}/videos/${v2.videoId}`, "admin", "DELETE"));
     noStore(await request(`${base()}/${link.id}/replace`, "admin", "POST", {}));
+    noStore(await request(`${base()}/${link.id}`, "admin", "DELETE")); // refused: still active
     noStore(await request(`${base()}/${link.id}/revoke`, "admin", "POST", {}));
+    noStore(await request(`${base()}/${link.id}`, "admin", "DELETE")); // 204
+    noStore(await request(`${base()}/${crypto.randomUUID()}`, "admin", "DELETE"));
     noStore(await request(base(), "admin", "POST", { videoIds: [] }));
     noStore(await request(base(), "photographer"));
     noStore(await request(`${base()}/${crypto.randomUUID()}`, "admin", "PATCH", { label: "x" }));
@@ -613,6 +622,138 @@ describe("replace", () => {
       const response = await request(`${base()}/${link.id}/replace`, "admin", "POST", {});
       expect(raced).toBe(true);
       expect(response.status, await response.clone().text()).toBe(409); expect(await json(response)).toMatchObject({ code: "link_revoked" });
+    } finally { db.prepare = prepare; db.batch = batch; }
+  });
+});
+
+describe("delete (#846)", () => {
+  const revokeOk = async (linkId: string, who: Who = "admin") => { const response = await request(`${base()}/${linkId}/revoke`, who, "POST", {}); expect(response.status).toBe(200); };
+  const del = (linkId: string, who: Who = "admin", projectId: string = ids.project) => request(`${base(projectId)}/${linkId}`, who, "DELETE");
+  const count = async (table: string) => (await database.DB.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ n: number }>())!.n;
+  afterEach(async () => { await database.DB.batch([database.DB.prepare("DELETE FROM video_releases"), database.DB.prepare("DELETE FROM video_approval_events"), database.DB.prepare("DELETE FROM guest_link_members"), database.DB.prepare("DELETE FROM guest_notification_digest")]); });
+
+  it("refuses an active link, and an expired one that was never revoked, with 409 link_not_revoked and writes nothing", async () => {
+    const active = await createOk({ videoIds: [v1.videoId] });
+    const expired = await createOk({ videoIds: [v2.videoId] });
+    await database.DB.prepare("UPDATE client_links SET expires_at = ? WHERE id = ?").bind(Date.now() - 1000, expired.link.id).run();
+    const before = [await row(active.link.id), await row(expired.link.id)];
+    for (const id of [active.link.id, expired.link.id]) {
+      const response = await del(id); expect(response.status).toBe(409);
+      expect(await json(response)).toEqual({ error: "Revoke this Review link before deleting it.", code: "link_not_revoked" });
+    }
+    expect([await row(active.link.id), await row(expired.link.id)]).toEqual(before);
+    expect(await audits("review_link.delete")).toEqual([]);
+  });
+
+  it("deletes a revoked link: 204 no-store, deleted_at/deleted_by set, revoke fields kept, updated_at bumped, one audit row without a secret; a repeat is 204 and changes nothing", async () => {
+    const { link, token } = await createOk({ videoIds: [v1.videoId] });
+    await revokeOk(link.id);
+    const before = (await row(link.id))!;
+    const first = await del(link.id, "member");
+    expect(first.status).toBe(204); expect(first.headers.get("cache-control")).toBe("private, no-store"); expect(await first.text()).toBe("");
+    const stored = (await row(link.id))!;
+    expect(stored).toMatchObject({ deleted_by: ids.member, revoked_at: before.revoked_at, revoked_by: before.revoked_by, token_generation: before.token_generation, kind: "video_review" });
+    expect(stored.deleted_at).not.toBeNull(); expect(stored.updated_at).toBeGreaterThanOrEqual(before.updated_at); expect(stored.updated_at).toBe(stored.deleted_at);
+    const second = await del(link.id, "admin");
+    expect(second.status).toBe(204);
+    expect(await row(link.id)).toEqual(stored);
+    const log = await audits("review_link.delete");
+    expect(log).toHaveLength(1);
+    expect(log[0]).toMatchObject({ actor_id: ids.member, target_type: "review_link", target_id: link.id });
+    expect(JSON.parse(log[0]!.meta_json!)).toMatchObject({ projectId: ids.project, linkId: link.id });
+    expect(log[0]!.meta_json).not.toContain(token); expect(log[0]!.meta_json).not.toContain(stored.token_hash);
+  });
+
+  it("authorizes before the idempotent return: a Photographer gets 403 on an already-deleted link and an External outsider 404", async () => {
+    const { link } = await createOk({ videoIds: [v1.videoId] });
+    await revokeOk(link.id); expect((await del(link.id)).status).toBe(204);
+    expect((await del(link.id, "photographer")).status).toBe(403);
+    const outsider = await del(link.id, "externalOutsider"); expect(outsider.status).toBe(404); expect(await json(outsider)).toEqual({ error: "Project not found" });
+    expect(await audits("review_link.delete")).toHaveLength(1);
+  });
+
+  it("leaves the link out of the list and answers 404 to every other write on it (revoke included), never 200 or 500", async () => {
+    const keep = await createOk({ videoIds: [v3.videoId] });
+    const { link } = await createOk({ videoIds: [v1.videoId] });
+    await revokeOk(link.id); expect((await del(link.id)).status).toBe(204);
+    expect((await listOk()).map((entry) => entry.id)).toEqual([keep.link.id]);
+    const calls: Array<[string, string, Json?]> = [
+      ["PATCH", `${base()}/${link.id}`, { label: "x" }], ["POST", `${base()}/${link.id}/videos`, { videoId: v2.videoId, assetIds: [v2.assetId] }], ["DELETE", `${base()}/${link.id}/videos/${v1.videoId}`],
+      ["PUT", `${base()}/${link.id}/videos/${v1.videoId}/grants`, { assetIds: [v1.assetId] }], ["POST", `${base()}/${link.id}/replace`, {}], ["POST", `${base()}/${link.id}/revoke`, {}],
+    ];
+    for (const [method, path, body] of calls) {
+      const response = await request(path, "admin", method as "POST", body);
+      expect(response.status, `${method} ${path}`).toBe(404); expect(await json(response)).toEqual({ error: "Review link not found" });
+    }
+  });
+
+  it("keeps everything the link produced: the row, members, grants, guest members, a guest note, an approval event with its link label, a Release", async () => {
+    const { link } = await createOk({ videoIds: [v1.videoId], label: "Smith family" });
+    const note = await seedVideoNote({ assetId: v1.assetId, guest: true });
+    const eventId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO video_approval_events (id, project_id, video_id, asset_id, link_id, revision, decision, note, actor_guest_id, actor_user_id, created_at) VALUES (?, ?, ?, ?, ?, 1, 'approved', NULL, ?, NULL, ?)").bind(eventId, ids.project, v1.videoId, v1.assetId, link.id, note.guestId, now),
+      database.DB.prepare("INSERT INTO video_releases (id, project_id, video_id, asset_id, approval_event_id, approval_revision, released_by, released_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)").bind(crypto.randomUUID(), ids.project, v1.videoId, v1.assetId, eventId, ids.admin, now),
+      database.DB.prepare("INSERT INTO guest_link_members (id, link_id, guest_id, first_verified_at, last_verified_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), link.id, note.guestId, now, now, now),
+    ]);
+    await revokeOk(link.id);
+    const tables = ["client_links", "review_link_videos", "review_link_version_grants", "guest_link_members", "video_notes", "video_approval_events", "video_releases", "guest_reviewers"];
+    const before = await Promise.all(tables.map(count));
+    const digestBefore = await count("guest_notification_digest");
+    expect((await del(link.id)).status).toBe(204);
+    expect(await Promise.all(tables.map(count))).toEqual(before);
+    expect(await count("guest_notification_digest")).toBe(digestBefore);
+    expect(await members(link.id)).toHaveLength(1); expect(await grants(link.id)).toHaveLength(1);
+    await setVideoFlags(...OPEN, "video_review_delivery");
+    const decisions = await json(await request(`/api/projects/${ids.project}/videos/${v1.videoId}/decisions`, "admin"));
+    expect(decisions.versions.find((version: Json) => version.assetId === v1.assetId).events[0].link).toEqual({ id: link.id, label: "Smith family" });
+    const release = decisions.versions.find((version: Json) => version.assetId === v1.assetId).release; expect(release).not.toBeNull();
+  });
+
+  it("answers 404 for an unknown id, another Project's link and a delivery link, leaving the delivery row untouched", async () => {
+    const deliveryId = await seedDeliveryLink();
+    const foreign = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO client_links (id, project_id, token_hash, kind, expires_at, created_by, created_at, updated_at, revoked_at, revoked_by) VALUES (?, ?, ?, 'video_review', ?, ?, ?, ?, ?, ?)").bind(foreign, ids.otherProject, await hashToken("foreign"), now + DAY, ids.admin, now, now, now, ids.admin).run();
+    const deliveryBefore = await row(deliveryId); const foreignBefore = await row(foreign);
+    for (const id of [crypto.randomUUID(), deliveryId, foreign]) expect((await del(id)).status, id).toBe(404);
+    expect(await row(deliveryId)).toEqual(deliveryBefore); expect(await row(foreign)).toEqual(foreignBefore);
+    expect(await audits("review_link.delete")).toEqual([]);
+  });
+
+  it("works with the links part off (like revoke) and on an archived Project, but not with the master off", async () => {
+    const { link } = await createOk({ videoIds: [v1.videoId] }); await revokeOk(link.id);
+    const other = await createOk({ videoIds: [v2.videoId] }); await revokeOk(other.link.id);
+    await clearVideoFlags(); await setVideoFlags("video_review", `video_review_pilot:${ids.project}`);
+    expect((await del(link.id)).status).toBe(204);
+    await clearVideoFlags(); await setVideoFlags("video_review_links", `video_review_pilot:${ids.project}`);
+    expect((await del(other.link.id)).status).toBe(404); expect((await row(other.link.id))!.deleted_at).toBeNull();
+    await clearVideoFlags(); await setVideoFlags(...OPEN);
+    await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), ids.project).run();
+    try { expect((await del(other.link.id)).status).toBe(204); } finally { await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run(); }
+  });
+
+  it("lets an assigned External delete, audited under the External", async () => {
+    const { link } = await createOk({ videoIds: [v1.videoId] }, "external"); await revokeOk(link.id, "external");
+    expect((await del(link.id, "external")).status).toBe(204);
+    expect((await audits("review_link.delete"))[0]).toMatchObject({ actor_id: ids.external });
+    expect(await row(link.id)).toMatchObject({ deleted_by: ids.external });
+  });
+
+  it("answers 404, not 500, when a delete lands between a revoke and its reload", async () => {
+    const { link } = await createOk({ videoIds: [v1.videoId] });
+    const db = database.DB; const prepare = db.prepare.bind(db); const batch = db.batch.bind(db); let armed = false; let raced = false;
+    db.prepare = ((sql: string) => { if (!raced && sql.includes("l.token_secret")) armed = true; return prepare(sql); }) as typeof db.prepare;
+    db.batch = (async (statements: D1PreparedStatement[]) => {
+      if (armed && !raced) {
+        raced = true;
+        await prepare("UPDATE client_links SET deleted_at = ?, deleted_by = ? WHERE id = ?").bind(Date.now(), ids.admin, link.id).run();
+      }
+      return batch(statements);
+    }) as typeof db.batch;
+    try {
+      const response = await request(`${base()}/${link.id}/revoke`, "admin", "POST", {});
+      expect(raced).toBe(true);
+      expect(response.status, await response.clone().text()).toBe(404); expect(await json(response)).toEqual({ error: "Review link not found" });
     } finally { db.prepare = prepare; db.batch = batch; }
   });
 });

@@ -1402,6 +1402,9 @@ export const clientLinks = sqliteTable(
     updatedAt: integer("updated_at"),
     revokedAt: integer("revoked_at"),
     revokedBy: text("revoked_by").references(() => user.id),
+    /** Soft delete of a revoked Review link (#846, migration 0076). Set together; route SQL enforces that deleted means revoked. The row and its children are never removed. */
+    deletedAt: integer("deleted_at"),
+    deletedBy: text("deleted_by").references(() => user.id),
   },
   (t) => [
     index("client_links_project_idx").on(t.projectId),
@@ -1414,6 +1417,7 @@ export const clientLinks = sqliteTable(
     check("client_links_token_generation_check", sql`${t.tokenGeneration} >= 1`),
     check("client_links_updated_at_check", sql`${t.updatedAt} IS NULL OR typeof(${t.updatedAt}) = 'integer'`),
     check("client_links_revoked_at_check", sql`${t.revokedAt} IS NULL OR typeof(${t.revokedAt}) = 'integer'`),
+    check("client_links_deleted_at_check", sql`${t.deletedAt} IS NULL OR typeof(${t.deletedAt}) = 'integer'`),
     check("client_links_publish_version_check", sql`${t.publishVersion} IS NULL OR ${t.publishVersion} >= 1`),
   ],
 );
