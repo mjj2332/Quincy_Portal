@@ -86,7 +86,7 @@ beforeEach(() => {
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; resetVideoUploadStore(); stub.dispose(); document.body.replaceChildren(); vi.unstubAllGlobals(); clearToasts(); });
 
 describe("the Delete item", () => {
-  it.each(["admin", "editor"] as const)("%s sees Delete… last, after a separator, in its own group", async (role) => {
+  it.each(["admin", "editor"] as const)("%s sees Delete… last, after Rename, in the last group under one separator", async (role) => {
     await mount({ role });
     await openMenu(ids.video);
     const labels = menuItems();
@@ -94,9 +94,18 @@ describe("the Delete item", () => {
     expect(labels.filter((label) => label === "Delete…")).toHaveLength(1);
     const menu = document.querySelector('[role="menu"]')!;
     const children = [...menu.children];
-    expect(children.at(-2)?.getAttribute("role")).toBe("separator");
     expect(children.at(-1)).toBe(tid("video-card-delete"));
+    expect(children.at(-2)).toBe(tid("video-card-rename"));
+    expect(children.at(-3)?.getAttribute("role")).toBe("separator");
     expect(separators()).toBeGreaterThanOrEqual(1);
+  });
+  it("on an archived Project (no Rename) the disabled Delete… still gets the separator", async () => {
+    await mount({ archived: true });
+    await openMenu(ids.video);
+    expect(menuItems()).not.toContain("Rename");
+    const children = [...document.querySelector('[role="menu"]')!.children];
+    expect(children.at(-1)).toBe(tid("video-card-delete"));
+    expect(children.at(-2)?.getAttribute("role")).toBe("separator");
   });
   it("is absent for a Photographer and with the trash part off", async () => {
     await mount({ role: "photographer" });

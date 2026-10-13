@@ -19,6 +19,8 @@ import { Notice } from "../quincy/Notice";
 import { NewFilmUploader } from "./NewFilmUploader";
 import { VideoCard } from "./VideoCard";
 import { VideoDeleteDialog, type DeleteTarget } from "./VideoDeleteDialog";
+import { VideoRenameDialog, type RenameTarget } from "./VideoRenameDialog";
+import { useCardDialogHost } from "./use-card-dialog-host";
 import { VideoGridToolbar } from "./VideoGridToolbar";
 import { ReviewLinksHost, ReviewLinksOpenButton } from "./ReviewLinksHost";
 import { PROJECT_SHEET_CLOSE_SCROLL_MARGIN } from "../quincy/ProjectSheet";
@@ -50,6 +52,9 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   const terminate = useProjectAccessTermination();
   const videos = useProjectVideosQuery(projectId, true, role);
   const uploads = useVideoUploads(userId, projectId);
+  // Dialogs opened from a card live here, above the filtered list: a refresh that drops the card from the filter must not take the dialog and its draft with it (#867).
+  const renameHost = useCardDialogHost<RenameTarget & { videoId: string }>();
+  const canRename = roleHasCapability(role, "uploadVideo") && !archived;
   const canUpload = review.parts.includes("upload");
   const notesEnabled = review.parts.includes("notes");
   // Drawing on notes (#741 6b-ui) needs the notes part too: markup alone offers nothing.
@@ -212,9 +217,16 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
       {videos.data && videos.data.length > 0 && <VideoGridToolbar prefs={prefs} onChange={setPrefs} shown={arranged.length} total={videos.data.length} />}
       {videos.data && videos.data.length > 0 && arranged.length === 0 && <EmptyState title="No films match this filter.">Choose another status, or show all films.</EmptyState>}
       {videos.data && arranged.length > 0 && <div className={`grid gap-[var(--space-5)] ${GRID_COLUMNS[prefs.size]}`} data-size={prefs.size} data-testid="video-card-grid" onFocusCapture={(event) => { const card = (event.target as Element).closest<HTMLElement>('[data-testid="video-card"]'); if (card) focusedCard.current = card; preloadViewer(); if (notesEnabled) preloadNotes(); }} onPointerOverCapture={() => { preloadViewer(); if (notesEnabled) preloadNotes(); }}>
-        {arranged.map((video) => <VideoCard key={video.id} video={video} projectId={projectId} {...(downloadEnabled ? { download: { projectId } } : {})} appearance={{ thumb: prefs.thumb, info: prefs.info }} reviewStatus={{ projectId, role, archived }} canUpload={canUpload} currentUserId={userId} myUpload={myVersionUpload(video)} onVersionFile={versionFile} onCancelReservation={(reservationId) => abortVideoReservation(queryClient, projectId, reservationId)} onOpen={(picked, trigger) => { opener.current = trigger; openerVideoId.current = picked.id; setOpenVideoId(picked.id, Math.max(...picked.versions.map((version) => version.version))); }} {...(reviewLinks.canWrite ? { onCreateReviewLink: () => reviewLinks.store.openCreateFor(video.id, [video.currentAssetId], `[data-testid="video-card-menu"][data-video-id="${video.id}"]`) } : {})} {...(reviewLinks.enabled ? { reviewLinks: { selected: reviewLinks.selection.has(video.id), ...(reviewLinks.canWrite ? { onToggle: () => reviewLinks.store.toggleSelect(video.id) } : {}), chips: reviewLinks.chipsFor(video.id), onOpenChip: reviewLinks.store.openDetail, onOpenAll: reviewLinks.store.openList } } : {})} {...(trashEnabled ? { remove: { disabled: archived, onOpen: () => setDeleting({ videoId: video.id, title: video.title }) } } : {})} />)}
+        {arranged.map((video) => <VideoCard key={video.id} video={video} projectId={projectId} {...(downloadEnabled ? { download: { projectId } } : {})} appearance={{ thumb: prefs.thumb, info: prefs.info }} reviewStatus={{ projectId, role, archived }} {...(canRename ? { onRename: (picked: VideoDto) => { const newest = picked.versions.find((version) => version.current) ?? picked.versions[0]!; renameHost.open({ videoId: picked.id, assetId: newest.assetId, originalFilename: newest.originalFilename }); } } : {})} canUpload={canUpload} currentUserId={userId} myUpload={myVersionUpload(video)} onVersionFile={versionFile} onCancelReservation={(reservationId) => abortVideoReservation(queryClient, projectId, reservationId)} onOpen={(picked, trigger) => { opener.current = trigger; openerVideoId.current = picked.id; setOpenVideoId(picked.id, Math.max(...picked.versions.map((version) => version.version))); }} {...(reviewLinks.canWrite ? { onCreateReviewLink: () => reviewLinks.store.openCreateFor(video.id, [video.currentAssetId], `[data-testid="video-card-menu"][data-video-id="${video.id}"]`) } : {})} {...(reviewLinks.enabled ? { reviewLinks: { selected: reviewLinks.selection.has(video.id), ...(reviewLinks.canWrite ? { onToggle: () => reviewLinks.store.toggleSelect(video.id) } : {}), chips: reviewLinks.chipsFor(video.id), onOpenChip: reviewLinks.store.openDetail, onOpenAll: reviewLinks.store.openList } } : {})} {...(trashEnabled ? { remove: { disabled: archived, onOpen: () => setDeleting({ videoId: video.id, title: video.title }) } } : {})} />)}
       </div>}
     </div>
+    {canRename && (renameHost.opening ?? renameHost.lastTarget) && (() => {
+      const shown = renameHost.opening?.target ?? renameHost.lastTarget!;
+      const video = videos.data?.find((entry) => entry.id === shown.videoId);
+      const newest = video ? video.versions.find((version) => version.current) ?? video.versions[0] : undefined;
+      return <VideoRenameDialog open={renameHost.opening !== null} openingId={renameHost.opening?.openingId ?? 0} onClose={renameHost.close} projectId={projectId} role={role} target={shown}
+        latest={newest ? { assetId: newest.assetId, originalFilename: newest.originalFilename } : shown} finalFocus={() => document.querySelector<HTMLElement>(`[data-testid="video-card-menu"][data-video-id="${shown.videoId}"]`)} />;
+    })()}
     {trashEnabled && <VideoDeleteDialog projectId={projectId} target={deleting} uploadKey={deletingVideo?.uploading?.reservationId ?? ""} localUpload={deletingVideo ? myVersionUpload(deletingVideo) !== undefined : false}
       onClose={() => setDeleting(null)} onDeleted={() => { focusedCard.current = null; }} />}
     {trashEnabled && trashMounted && <ViewLoadBoundary viewLabel="Trash">

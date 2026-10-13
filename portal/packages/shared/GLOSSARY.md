@@ -249,8 +249,8 @@ A titled item in a Project's Video Collection. Its Versions are its cuts; review
 from the photo Stages.
 Its title is the file name of its latest live Version (spaces trimmed, `.mp4` or `.mov` dropped, 200
 characters at most, "Untitled film" if nothing is left). It moves when a Version is uploaded, removed
-or restored (#828), and staff rename it only by renaming the latest Version's file name, which the next
-upload replaces.
+or restored (#828), and staff rename it only by renaming the latest Version's file name (#867), from a
+Video card's ⋯ menu, which the next upload replaces.
 _Avoid_: Asset (a Video is the group of its Versions)
 
 **Version**:

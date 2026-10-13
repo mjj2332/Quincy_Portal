@@ -6,7 +6,7 @@ import {
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { firstInCurrentSet, inCurrentSetSql } from "./delivery-lock";
 import { newId } from "./ids";
-import { RECOMPUTE_CURRENT_SQL } from "./video-live-sql";
+import { fencedRecomputeStatements as fencedRecompute } from "./video-live-sql";
 
 /**
  * Video Trash (#776 C): remove a Version or a Video, restore it, and list what is in Trash. A removal HIDES; it deletes nothing. Grants, notes, decisions, Releases and memberships are not
@@ -79,9 +79,6 @@ export function removalRefusal(impact: VideoRemovalImpact, input: VideoRemoveInp
 // ---- statements fenced on the mutation's audit row -------------------------------------------------------------------------------------------------------
 
 const AUDIT_FENCE = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)";
-/** The current-Version recompute, each statement also fenced on the mutation's audit row, so a refused fence moves no asset. */
-const fencedRecompute = (db: D1Database, videoId: string, now: number, auditId: string): D1PreparedStatement[] =>
-  RECOMPUTE_CURRENT_SQL.map((sql) => db.prepare(`${sql.trimEnd()} AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?3)`).bind(videoId, now, auditId));
 /** The collection count and status, fenced on the mutation's audit row, so a refused fence leaves `collections.updated_at` alone. */
 const fencedCollectionCount = (db: D1Database, collectionId: string, now: number, auditId: string): D1PreparedStatement =>
   db.prepare(`${COLLECTION_RECEIVED_COUNT_SQL.trimEnd()} AND ${AUDIT_FENCE}`).bind(...collectionReceivedCountBindings(collectionId, now), auditId);

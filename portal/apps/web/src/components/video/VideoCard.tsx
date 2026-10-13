@@ -35,7 +35,7 @@ const onCardSurface = (event: { currentTarget: Element; target: EventTarget }) =
  * the Video and the control that was pressed to `onOpen`; selection and note chips arrive in later slices. `onVersionFile` checks and
  * starts the upload and returns a message when the file is refused.
  */
-export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks, onCreateReviewLink, projectId, download, appearance = { thumb: "fit", info: true }, reviewStatus, remove }: {
+export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks, onCreateReviewLink, projectId, download, appearance = { thumb: "fit", info: true }, reviewStatus, onRename, remove }: {
   video: VideoDto;
   canUpload: boolean;
   currentUserId: string | null;
@@ -58,6 +58,8 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
   appearance?: { thumb: "fit" | "fill"; info: boolean };
   /** Present when the card shows the Review status pill (#865); the same pill as the viewer's, with its own test ids. */
   reviewStatus?: { projectId: string; role: Role; archived: boolean };
+  /** Present when the person may rename (#867: whoever may upload, on an unarchived Project): the "⋯" menu then offers Rename. The dialog is hosted by the panel, above the filtered list. */
+  onRename?: (video: VideoDto) => void;
   /** Present when staff may delete (the `trash` part and the capability, #868): the "⋯" menu then ends with Delete…, in its own group. `disabled` on an archived Project. */
   remove?: { disabled: boolean; onOpen: () => void };
   reviewLinks?: { selected: boolean; /** Absent when the Project is archived: no new links. */ onToggle?: () => void; chips: ReviewLinkChip[]; onOpenChip: (linkId: string) => void; onOpenAll: () => void };
@@ -166,15 +168,16 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
               finalFocus={() => (handOff.current ? false : undefined)}
               onOpenChange={(isOpen) => { if (isOpen) handOff.current = false; }}
             >
-              {/* Groups, in order: the film (Open, Create Review link) ‖ the file and its address (Download, Copy link). Later tickets append items inside a group. */}
+              {/* Groups, in order: the film (Open, Create Review link) ‖ the file and its address (Download, Copy link) ‖ Rename (#867; Delete #868 joins it). Later tickets append items inside a group. */}
               <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-menu-open" onClick={() => { handOff.current = true; onOpen(video, menuTrigger.current ?? document.body); }}>Open</MenuPrimitive.Item>
               {onCreateReviewLink && <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-create-review-link" onClick={() => { handOff.current = true; onCreateReviewLink(); }}>Create Review link</MenuPrimitive.Item>}
               <MenuPrimitive.Separator className="my-[var(--space-1)] h-px bg-border" />
               {download && <MenuPrimitive.LinkItem closeOnClick className={MENU_ITEM} data-testid="video-card-download" href={videoVersionDownloadUrl(download.projectId, video.currentAssetId)} download>{`Download v${newest.version}`}</MenuPrimitive.LinkItem>}
               <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-copy-link" onClick={() => copyText(new URL(staffPathFor({ kind: "project", projectId, arrivalTab: "video", video: { id: video.id } }), window.location.origin).href)}>Copy link</MenuPrimitive.Item>
-              {remove && <>
+              {(onRename || remove) && <>
                 <MenuPrimitive.Separator className="my-[var(--space-1)] h-px bg-border" />
-                <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive-wash-foreground")} disabled={remove.disabled} data-testid="video-card-delete" onClick={() => { handOff.current = true; remove.onOpen(); }}>Delete…</MenuPrimitive.Item>
+                {onRename && <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-rename" onClick={() => { handOff.current = true; onRename(video); }}>Rename</MenuPrimitive.Item>}
+                {remove && <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive-wash-foreground")} disabled={remove.disabled} data-testid="video-card-delete" onClick={() => { handOff.current = true; remove.onOpen(); }}>Delete…</MenuPrimitive.Item>}
               </>}
             </Menu>
           </div>
