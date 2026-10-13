@@ -6289,11 +6289,11 @@ Tags: qa-browser, testing-guards
 Guards: `apps/web/src/lib/video-frame-clock.dom.test.tsx`.
 
 ## Retention must key on the youngest thing that still needs the chain, and must not let SET NULL re-arm a digest item (#856)
-Tags: notifications, d1-migrations · #856
+Tags: notifications, testing-guards · #856
 
 - **What bit (avoided).** The first idea was to prune each notification table by its own `created_at`. An outbox intent can be much older than its Notification: retries move `available_at`, and an admin replay re-pends an old row. Deleting a 30-day-old outbox chain whose Notification is 2 days old hides that Notification from its External Editor, because visibility joins notification, sent in-app ledger and outbox. The ledger FK to the outbox is RESTRICT and to the Notification SET NULL, so the order of deletes also matters.
 - **The trap.** `notification_digest_items.ledger_id` and `digest_id` are SET NULL. An item whose ledger or digest row is deleted from under it turns back into a claimable digest item (`CLAIMABLE_ITEM = ledger_id IS NULL OR ...`), which is a duplicate email. Items are deleted explicitly, in the same atomic `DB.batch` as the parent.
 - **Rule.** A Notification goes by its own age. An outbox (and its ledger) goes only if it is past the cutoff, no Notification linked through its ledger is young, and it holds no live lease. The batch re-applies that predicate to the page's ids (`DOOMED`), so a row the consumer changed between read and batch drops out, and the final outbox delete adds `AND NOT EXISTS (ledger)`: the RESTRICT FK is impossible by construction. Bind the ids as one JSON string (`json_each`), because D1 caps a statement at 100 parameters.
-- **Proof.** Assert the harness enforces foreign keys first (a raw outbox delete under a ledger row must reject), or every FK assertion passes vacuously. D1 `meta.changes` counts rows touched by foreign-key actions too, so the logged per-table counts can be a little high.
+- **Proof.** Assert the harness enforces foreign keys first (a raw outbox delete under a ledger row must reject), or every FK assertion passes vacuously. D1 `meta.changes` counts rows touched by foreign-key actions too, so the logged per-table counts can be a little high. The age-only sweep of digest items must be limited to true orphans (no Notification, ledger or digest), or it deletes the pending items of a chain that is being kept; and the chain phase is capped below the page budget so the leaf tables are never starved by a large backlog.
 
 Guards: `workers/background/test/notification-retention.integration.test.ts`.

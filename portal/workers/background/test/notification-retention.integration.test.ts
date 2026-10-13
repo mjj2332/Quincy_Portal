@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { NOTIFICATION_RETENTION_MS } from "@quincy/db";
+import { NOTIFICATION_RETENTION_MS, externalVisibleNotificationCte } from "@quincy/db";
 import { pruneNotifications } from "../src/notifications";
 import type { Env } from "../src/env";
 
@@ -44,7 +44,7 @@ type Chain = { outboxId: string; inAppLedgerId: string; emailLedgerId: string | 
 type ChainInput = {
   /** Age of the outbox row in ms; the Notification, ledger and item default to the same instant. */
   outboxAge: number; notificationAge?: number | null; outboxStatus?: string; ledgerStatus?: string; read?: boolean;
-  lease?: number; email?: boolean; item?: boolean;
+  lease?: number; email?: boolean; item?: boolean; itemAge?: number;
 };
 async function seedChain(input: ChainInput): Promise<Chain> {
   const outboxId = id(); const inAppLedgerId = id(); const sourceKey = `retention:${outboxId}`;
@@ -67,7 +67,7 @@ async function seedChain(input: ChainInput): Promise<Chain> {
   let itemId: string | null = null;
   if (input.item) {
     itemId = id();
-    await run("INSERT INTO notification_digest_items (id, recipient_id, notification_id, ledger_id, project_id, notification_type, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'raw_ready', 'pending', ?, ?)", itemId, userId, notificationId, inAppLedgerId, projectId, NOW - (notificationAge ?? input.outboxAge), NOW - (notificationAge ?? input.outboxAge));
+    await run("INSERT INTO notification_digest_items (id, recipient_id, notification_id, ledger_id, project_id, notification_type, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'raw_ready', 'pending', ?, ?)", itemId, userId, notificationId, inAppLedgerId, projectId, NOW - (input.itemAge ?? notificationAge ?? input.outboxAge), NOW - (input.itemAge ?? notificationAge ?? input.outboxAge));
   }
   return { outboxId, inAppLedgerId, emailLedgerId, notificationId, itemId };
 }
@@ -214,14 +214,65 @@ describe("notification retention (#856)", () => {
     expect(await chainRows(young)).toEqual(expected(young, true));
   });
 
-  it("keeps the whole visibility join (Notification, sent in-app ledger, outbox) of a young chain", async () => {
-    const chain = await seedChain({ outboxAge: 30 * DAY - 3_600_000, email: true });
+  it("keeps an old pending item whose chain is kept, and removes a true orphan at 31 days", async () => {
+    const delayed = await seedChain({ outboxAge: 31 * DAY, notificationAge: 2 * DAY, item: true, itemAge: 31 * DAY });
+    const leased = await seedChain({ outboxAge: 31 * DAY, outboxStatus: "processing", ledgerStatus: "processing", item: true });
+    const orphan = id();
+    await run("INSERT INTO notification_digest_items (id, recipient_id, project_id, notification_type, state, created_at, updated_at) VALUES (?, ?, ?, 'raw_ready', 'pending', ?, ?)", orphan, userId, projectId, NOW - 31 * DAY, NOW - 31 * DAY);
     await pruneNotifications(target, NOW);
-    const joined = await count(
-      "notifications n JOIN notification_delivery_ledger l ON l.notification_id = n.id AND l.channel = 'in_app' AND l.status = 'sent' JOIN notification_outbox o ON o.id = l.outbox_id",
-      "n.id = ? AND n.user_id = ?", chain.notificationId, userId,
-    );
-    expect(joined).toBe(1);
+    expect(await exists("notification_digest_items", delayed.itemId!)).toBe(true);
+    expect(await exists("notification_digest_items", leased.itemId!)).toBe(true);
+    expect(await exists("notification_digest_items", orphan)).toBe(false);
+  });
+
+  it("prunes an old legacy Notification and an old digest in the same run as a chain backlog bigger than one run", async () => {
+    for (let i = 0; i < 100 * 30 + 5; i += 1) await seedChain({ outboxAge: 31 * DAY + i });
+    const legacy = id(); const digest = id();
+    await run("INSERT INTO notifications (id, user_id, project_id, type, title, created_at) VALUES (?, ?, ?, 'raw_ready', 'Legacy', ?)", legacy, userId, projectId, NOW - 31 * DAY);
+    await run("INSERT INTO notification_digests (id, recipient_id, slot_at, cadence, status, item_count, project_count, created_at, updated_at) VALUES (?, ?, ?, 'hourly', 'sent', 0, 0, ?, ?)", digest, userId, NOW - 31 * DAY, NOW - 31 * DAY, NOW - 31 * DAY);
+    await pruneNotifications(target, NOW);
+    expect(await count("notification_outbox")).toBeGreaterThan(0);
+    expect(await exists("notifications", legacy)).toBe(false);
+    expect(await exists("notification_digests", digest)).toBe(false);
+  }, 120_000);
+
+  it("keeps a row created one millisecond after the cutoff and removes one created at cutoff minus one, for every leaf table", async () => {
+    const cutoff = NOW - RETENTION;
+    const rows = { notification: [id(), id()], item: [id(), id()], digest: [id(), id()] };
+    for (const [index, at] of [cutoff + 1, cutoff - 1].entries()) {
+      await run("INSERT INTO notifications (id, user_id, project_id, type, title, created_at) VALUES (?, ?, ?, 'raw_ready', 'Edge', ?)", rows.notification[index], userId, projectId, at);
+      await run("INSERT INTO notification_digest_items (id, recipient_id, project_id, notification_type, state, created_at, updated_at) VALUES (?, ?, ?, 'raw_ready', 'unknown', ?, ?)", rows.item[index], userId, projectId, at, at);
+      await run("INSERT INTO notification_digests (id, recipient_id, slot_at, cadence, status, item_count, project_count, created_at, updated_at) VALUES (?, ?, ?, 'hourly', 'sent', 0, 0, ?, ?)", rows.digest[index], userId, at, at, at);
+    }
+    await pruneNotifications(target, NOW);
+    const present = async (index: number) => [await exists("notifications", rows.notification[index]), await exists("notification_digest_items", rows.item[index]), await exists("notification_digests", rows.digest[index])];
+    expect(await present(0)).toEqual([true, true, true]);
+    expect(await present(1)).toEqual([false, false, false]);
+  });
+
+  it("keeps an External Editor's Notification visible through the real reader when its outbox is 31 days old and the Notification 2 days old", async () => {
+    const externalId = id(); const membershipId = id(); const notificationId = id(); const outboxId = id(); const ledgerId = id();
+    const sourceKey = membershipId; // the assignment event's source key is the membership cycle
+    const outboxAt = NOW - 31 * DAY; const notificationAt = NOW - 2 * DAY;
+    await run("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'External', 'external-retention@example.test', 1, 'external_editor', 1, ?, ?)", externalId, NOW, NOW);
+    await run("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)", membershipId, projectId, externalId, NOW - 40 * DAY);
+    const payload = JSON.stringify({
+      schemaVersion: 1,
+      event: { type: "project.assignment.created", sourceKey, recipientId: externalId },
+      assignment: { projectId, userId: externalId, roleOnProject: "editor", membershipCycle: membershipId },
+    });
+    await run("INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, payload_json, status, available_at, recipient_authorization_epoch, created_at, updated_at) VALUES (?, 1, 'project.assignment.created', ?, ?, ?, ?, ?, 'completed', ?, 0, ?, ?)", outboxId, sourceKey, projectId, userId, externalId, payload, outboxAt, outboxAt, outboxAt);
+    await run("INSERT INTO notifications (id, user_id, project_id, type, title, body, source_key, created_at) VALUES (?, ?, ?, 'assigned_to_project', 'T', 'B', ?, ?)", notificationId, externalId, projectId, sourceKey, notificationAt);
+    await run("INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, notification_id, created_at, updated_at) VALUES (?, ?, 'project.assignment.created', ?, ?, 'in_app', 'sent', ?, ?, ?)", ledgerId, outboxId, sourceKey, externalId, notificationId, outboxAt, notificationAt);
+    const visible = async () => {
+      const cte = externalVisibleNotificationCte(externalId);
+      return (await database.DB.prepare(`${cte.sql} SELECT id FROM external_visible_notifications`).bind(...cte.bindings).all<{ id: string }>()).results.map((row) => row.id);
+    };
+    expect(await visible()).toEqual([notificationId]); // the seed is real: visible before the prune
+    await pruneNotifications(target, NOW);
+    expect(await visible()).toEqual([notificationId]);
+    await pruneNotifications(target, NOW + 29 * DAY);
+    expect(await visible()).toEqual([]);
   });
 
   it("leaves project activity and the audit log untouched", async () => {
