@@ -66,11 +66,15 @@ async function readDeliveryProperty(db: D1Database, projectId: string): Promise<
     .bind(projectId).first<DeliveryProperty>())!;
 }
 
-export function buildDeliveryDto(input: { property: DeliveryProperty; setNumber: number; publishedAt: number | null; coverHandle: string | null; rows: readonly DeliveryItemRow[]; urls: DeliveryUrlResolver }): DeliveryPageDto {
+/** The way into review per film, by Asset id (#847). Absent for staff Preview and the staff read, so every item there carries `review: null`. */
+export type DeliveryReviewEntries = ReadonlyMap<string, { url: string }>;
+
+export function buildDeliveryDto(input: { property: DeliveryProperty; setNumber: number; publishedAt: number | null; coverHandle: string | null; rows: readonly DeliveryItemRow[]; urls: DeliveryUrlResolver; review?: DeliveryReviewEntries }): DeliveryPageDto {
   const labels = deliveryLabels(input.rows);
   const items: DeliveryItemDto[] = input.rows.map((row, index) => ({
     handle: row.handle, kind: row.kind, label: labels[index]!, position: row.position, locked: row.locked, premium: row.premium,
     width: row.width, height: row.height, durationMs: row.durationMs, ...input.urls(row),
+    review: row.kind === "video" && !row.locked ? input.review?.get(row.assetId) ?? null : null,
   }));
   const clean = (value: string | null): string | null => { const text = value?.trim(); return text ? text : null; };
   return { property: { street: input.property.street, suburb: clean(input.property.suburb), postcode: clean(input.property.postcode), agency: clean(input.property.agency) }, setNumber: input.setNumber, publishedAt: input.publishedAt, coverHandle: input.coverHandle, items };
@@ -155,7 +159,7 @@ const STATE_KINDS: readonly string[] = DELIVERY_ITEM_KINDS;
  * The staff read of a Project's Delivery page: the page, the set (the latest, or the numbered one for a replayed Publish) with the Asset behind each handle, and the page as a viewer sees
  * it. Everything is null before the first Publish.
  */
-export async function readDeliveryState(db: D1Database, projectId: string, options: { setNumber?: number; urls?: DeliveryUrlResolver } = {}): Promise<DeliveryState> {
+export async function readDeliveryState(db: D1Database, projectId: string, options: { setNumber?: number; urls?: DeliveryUrlResolver; review?: DeliveryReviewEntries } = {}): Promise<DeliveryState> {
   const page = await db.prepare("SELECT slug, enabled, latest_set_number AS latestSetNumber FROM delivery_pages WHERE project_id = ?1").bind(projectId).first<{ slug: string; enabled: number; latestSetNumber: number }>();
   if (!page) return { page: null, set: null, dto: null };
   const set = await db.prepare("SELECT id, set_number AS setNumber, cover_asset_id AS coverAssetId, published_at AS publishedAt FROM delivery_sets WHERE project_id = ?1 AND set_number = ?2")
@@ -165,7 +169,7 @@ export async function readDeliveryState(db: D1Database, projectId: string, optio
   const rows = await readSetRows(db, set.id);
   const project = await readDeliveryProperty(db, projectId);
   const coverHandle = rows.find((row) => row.assetId === set.coverAssetId)?.handle ?? null;
-  const dto = buildDeliveryDto({ property: project, setNumber: set.setNumber, publishedAt: set.publishedAt, coverHandle, rows, urls: await lockAwareUrls(db, rows, options.urls ?? setItemUrls(projectId)) });
+  const dto = buildDeliveryDto({ property: project, setNumber: set.setNumber, publishedAt: set.publishedAt, coverHandle, rows, urls: await lockAwareUrls(db, rows, options.urls ?? setItemUrls(projectId)), ...(options.review === undefined ? {} : { review: options.review }) });
   const flags = await readPremiumFlags(db, rows.map((row) => row.assetId));
   const items = rows.map((row, index) => ({ assetId: row.assetId, handle: row.handle, kind: row.kind, label: dto.items[index]!.label, position: row.position, locked: row.locked, premium: flags.get(row.assetId)?.premium ?? false, premiumUnlocked: flags.get(row.assetId)?.unlocked ?? false, videoId: flags.get(row.assetId)?.videoId ?? null })).filter((item) => STATE_KINDS.includes(item.kind));
   return { page: pageState, set: { setNumber: set.setNumber, publishedAt: set.publishedAt, coverAssetId: set.coverAssetId, items }, dto };

@@ -1,3 +1,4 @@
+import { reviewLinkOpenSql } from "@quincy/db";
 import {
   VIDEO_REVIEW_ALL_PROJECTS_FLAG, VIDEO_REVIEW_MASTER_FLAG, framesToTimecode, videoReviewPartFlag, videoReviewPilotFlag,
 } from "@quincy/shared";
@@ -63,7 +64,7 @@ const SURVIVORS_SQL = `SELECT d.id, d.event_type, d.video_id, v.title AS video_t
   FROM guest_notification_digest d
   JOIN guest_link_members m ON m.guest_id = d.guest_id AND m.link_id = d.link_id AND m.unsubscribed_at IS NULL
   JOIN guest_reviewers gr ON gr.id = d.guest_id
-  JOIN client_links l ON l.id = d.link_id AND l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ?2
+  JOIN client_links l ON l.id = d.link_id AND ${reviewLinkOpenSql("l", "?2")}
   JOIN videos v ON v.id = d.video_id AND v.project_id = l.project_id AND v.removed_at IS NULL
   JOIN review_link_videos rv ON rv.link_id = l.id AND rv.video_id = d.video_id AND rv.removed_at IS NULL
   LEFT JOIN assets a ON a.id = d.asset_id

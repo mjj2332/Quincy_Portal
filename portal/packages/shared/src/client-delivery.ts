@@ -61,6 +61,11 @@ export const deliveryItemDtoSchema = z.object({
   durationMs: z.number().int().nonnegative().nullable(),
   url: z.string().max(2048).nullable(),
   thumbUrl: z.string().max(2048).nullable(),
+  /**
+   * The way into review for this film (#847): a relative address of the Project's Delivery review link, `/d/review?link=<id>#t=<secret>&v=<videoId>`. Null on every non-film item, on a locked film, when the
+   * Project has no open Delivery review link, when the guest gate is shut, and in staff Preview. The one field of this page that carries a credential and a Video id, by design (ADR 0023).
+   */
+  review: z.object({ url: z.string().max(2048) }).strict().nullable(),
 }).strict();
 export const deliveryPageDtoSchema = z.object({
   property: z.object({ street: z.string(), suburb: z.string().nullable(), postcode: z.string().nullable(), agency: z.string().nullable() }).strict(),

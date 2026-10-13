@@ -8,6 +8,7 @@ import { hashToken } from "../src/lib/opaque-token";
 import { baseEnv, database, ids, mp4Bytes, seedFixture } from "./embedded-media-support";
 import { addMember, clearGuestRows, grant, guestFetch, HYGIENE, linkPath, openGuestGate, seedGuestLink, startSession, type LinkInput } from "./guest-support";
 import { box, buildMp4, videoTrack } from "../../../packages/shared/src/testing/mp4-builder";
+import { seedPage, wipeDelivery } from "./delivery-support";
 import { clearVideoFlags, markVersionRemoved, seedVideoVersion, setVideoFlags } from "./video-review-support";
 import { NATIVE_ZIP_FLAG, ZIP_LEGACY_MAX_BYTES } from "../src/lib/object-crc";
 import { crc32 } from "node:zlib";
@@ -775,5 +776,58 @@ describe("the archive state in the manifest and POST .../downloads/prepare (#802
     for (let index = 0; index < 20; index += 1) expect((await prepare(link)).status, `prepare ${index + 1}`).toBe(200);
     const limited = await prepare(link); expect(limited.status).toBe(429); expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
     expect(await zipQuota()).toBe(0);
+  });
+});
+
+describe("the Delivery review link serves the published Version without a Release (#847)", () => {
+  afterEach(async () => { await clearGuestRows(); await wipeDelivery(); });
+  const listed = async (link: { id: string; cookie: string }) => guestVideoListResponseSchema.parse(await (await guestFetch(linkPath(link.id, "/videos"), { cookie: link.cookie })).json());
+  /** A film with v1 and v2 (v2 published, in the latest set), on a Delivery review link, nothing released. */
+  async function delivered(options: { ordinary?: boolean; title?: string } = {}) {
+    const v1 = await seedVideoVersion({ title: options.title ?? "Hero" }); const v2 = await seedVideoVersion({ videoId: v1.videoId, version: 2 });
+    await seedPage({ assetIds: [v2.assetId] });
+    const link = await verifiedLink(options.ordinary ? {} : { deliveryReview: true });
+    await addMember(link.id, v1.videoId, [v1.assetId, v2.assetId]);
+    return { link, v1, v2 };
+  }
+
+  it("downloads the published Version, audits it, and refuses an older Version until it is released", async () => {
+    const { link, v1, v2 } = await delivered();
+    const published = await get(link, link.cookie, v2.assetId);
+    expect(published.status, await published.clone().text()).toBe(200);
+    expect(new Uint8Array(await published.arrayBuffer())).toEqual(mp4Bytes(4096));
+    expect(await audits()).toHaveLength(1);
+    const older = await get(link, link.cookie, v1.assetId); expect(older.status).toBe(409); expect(await older.json()).toEqual({ error: "not_released" });
+    await release(v1);
+    const released = await get(link, link.cookie, v1.assetId); expect(released.status).toBe(200); dispose(released);
+    expect((await get(link, link.cookie, v2.assetId, {}, "HEAD")).status).toBe(200);
+    expect((await get(link, link.cookie, v2.assetId, { range: "bytes=0-9" })).status).toBe(206);
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM video_releases WHERE asset_id = ?").bind(v2.assetId).first()).toEqual({ n: 0 });
+  });
+
+  it("an ordinary link with the same Version granted still needs a Release", async () => {
+    const { link, v2 } = await delivered({ ordinary: true });
+    const response = await get(link, link.cookie, v2.assetId); expect(response.status).toBe(409); expect(await response.json()).toEqual({ error: "not_released" });
+  });
+
+  it("stops serving a Version once a newer Publish replaces it, and never serves a premium film that is locked", async () => {
+    const { link, v2 } = await delivered();
+    expect((await get(link, link.cookie, v2.assetId, {}, "HEAD")).status).toBe(200);
+    await setPremium((await database.DB.prepare("SELECT video_id FROM video_version_meta WHERE asset_id = ?").bind(v2.assetId).first<{ video_id: string }>())!.video_id, true);
+    const locked = await get(link, link.cookie, v2.assetId); expect(locked.status).toBe(403); expect(await locked.json()).toEqual({ error: "premium_locked" });
+    await database.DB.prepare("DELETE FROM delivery_set_items").run();
+    const gone = await get(link, link.cookie, v2.assetId); expect([403, 409]).toContain(gone.status);
+  });
+
+  it("lists a download URL for the published Version only, with released still false, and Download all holds it", async () => {
+    const { link, v1, v2 } = await delivered();
+    const versions = (await listed(link)).videos[0]!.versions;
+    expect(versions.map((entry) => [entry.version, entry.released, entry.downloadUrl])).toEqual([[2, false, `/d/api/links/${link.id}/versions/${v2.assetId}/download`], [1, false, null]]);
+    const manifest = await (await guestFetch(manifestPath(link.id), { cookie: link.cookie })).json() as Json;
+    expect(manifest.included.map((entry: Json) => entry.version)).toEqual([2]); expect(manifest.leftOut).toEqual([]);
+    const zip = await guestFetch(zipPath(link.id), { cookie: link.cookie }); expect(zip.status).toBe(200);
+    const files = await unzip(zip); expect([...files.keys()]).toEqual(["Hero v2.mp4"]);
+    await release(v1);
+    expect(((await listed(link)).videos[0]!.versions).map((entry) => entry.downloadUrl !== null)).toEqual([true, true]);
   });
 });

@@ -1,3 +1,4 @@
+import { reviewLinkOpenSql } from "@quincy/db";
 import { gateSql, reachSql } from "./guest-fence-sql";
 import { SQL_UUID_V4 } from "./sql-uuid";
 
@@ -20,11 +21,16 @@ export type GuestDigestEmit =
   /** A staff reply under a public root: the guests who authored the root or a reply in that thread, on every link that reaches the Version. */
   | { kind: "staff_reply"; replyId: string; rootId: string }
   /** A Release: subscribers of every link with a live grant of the Version and `allow_download`. */
-  | { kind: "video_released"; releaseId: string };
+  | { kind: "video_released"; releaseId: string }
+  /**
+   * What one Delivery review link sync (#847) just added: `video_added` once per film that joined the link, and `version_granted` once per Version granted to a film that was already on it. The rows
+   * are the ones this sync wrote (`added_at = now` by `actorId`), so a sync that changes nothing says nothing, and fenced on the sync's audit row like every producer here.
+   */
+  | { kind: "delivery_sync"; projectId: string; actorId: string };
 
 const AUDITED = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)";
 /** A live link in this Project, with the digest gate (`guest` and `notify_client`). `?` placeholders are listed in `LIVE_BINDS`. */
-const LIVE_LINK = `l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ? AND ${gateSql(["guest", "notify_client"])}`;
+const LIVE_LINK = `${reviewLinkOpenSql("l", "?")} AND ${gateSql(["guest", "notify_client"])}`;
 const COLUMNS = "(id, guest_id, link_id, event_type, video_id, asset_id, note_id, created_at)";
 const SUBSCRIBED = "m.unsubscribed_at IS NULL";
 
@@ -45,6 +51,20 @@ export function guestDigestStatements(db: D1Database, event: GuestDigestEmit, au
         WHERE g.link_id = ? AND g.revoked_at IS NULL AND g.id IN (SELECT value FROM json_each(?)) AND ${SUBSCRIBED} AND ${LIVE_LINK}
           AND EXISTS (SELECT 1 FROM review_link_videos rv WHERE rv.link_id = l.id AND rv.video_id = g.video_id AND rv.removed_at IS NULL) AND ${AUDITED}`)
         .bind(now, event.linkId, JSON.stringify(event.grantIds), now, auditId)];
+    case "delivery_sync":
+      return [
+        db.prepare(`INSERT INTO guest_notification_digest ${COLUMNS}
+          SELECT ${SQL_UUID_V4}, m.guest_id, m.link_id, 'video_added', rv.video_id, NULL, NULL, ?
+          FROM review_link_videos rv JOIN client_links l ON l.id = rv.link_id JOIN guest_link_members m ON m.link_id = l.id
+          WHERE l.project_id = ? AND l.delivery_review = 1 AND rv.removed_at IS NULL AND rv.added_at = ? AND rv.added_by = ? AND ${SUBSCRIBED} AND ${LIVE_LINK} AND ${AUDITED}`)
+          .bind(now, event.projectId, now, event.actorId, now, auditId),
+        db.prepare(`INSERT INTO guest_notification_digest ${COLUMNS}
+          SELECT ${SQL_UUID_V4}, m.guest_id, m.link_id, 'version_granted', g.video_id, g.asset_id, NULL, ?
+          FROM review_link_version_grants g JOIN client_links l ON l.id = g.link_id JOIN guest_link_members m ON m.link_id = l.id
+          JOIN review_link_videos rv ON rv.link_id = l.id AND rv.video_id = g.video_id AND rv.removed_at IS NULL AND rv.added_at <> ?
+          WHERE l.project_id = ? AND l.delivery_review = 1 AND g.revoked_at IS NULL AND g.granted_at = ? AND g.granted_by = ? AND ${SUBSCRIBED} AND ${LIVE_LINK} AND ${AUDITED}`)
+          .bind(now, now, event.projectId, now, event.actorId, now, auditId),
+      ];
     case "public_note":
       return [db.prepare(`INSERT INTO guest_notification_digest ${COLUMNS}
         SELECT ${SQL_UUID_V4}, m.guest_id, m.link_id, 'public_note', n.video_id, n.asset_id, n.id, ?

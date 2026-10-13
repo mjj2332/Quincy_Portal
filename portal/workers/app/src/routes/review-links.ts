@@ -4,6 +4,7 @@ import {
   REVIEW_LINK_DEFAULT_EXPIRY_MS, REVIEW_LINK_MAX_EXPIRY_MS, REVIEW_LINK_MIN_EXPIRY_MS, roleHasCapability, type ReviewLinkDto,
   reviewLinkAddVideoInputSchema, reviewLinkCreateInputSchema, reviewLinkDtoSchema, reviewLinkGrantsInputSchema, reviewLinkListResponseSchema, reviewLinkPatchInputSchema, reviewLinkResponseSchema, reviewLinkRevealResponseSchema,
 } from "@quincy/shared";
+import { reviewLinkExpired } from "@quincy/db";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
 import { hashToken, randomToken } from "../lib/opaque-token";
@@ -41,6 +42,7 @@ const revokedResponse = (c: Ctx) => c.json({ error: "This Review link was revoke
 const grantRequired = (c: Ctx) => c.json({ error: "Grant at least one Version.", code: "grant_required" }, 422);
 const notVersion = (c: Ctx) => c.json({ error: "A grant must be a Version of that Video.", code: "grant_not_version" }, 422);
 const otherProject = (c: Ctx) => c.json({ error: "Every Video must belong to this Project.", code: "video_other_project" }, 422);
+const managedResponse = (c: Ctx) => c.json({ error: "This is the Delivery review link. It is managed by the Delivery page and staff cannot change it.", code: "delivery_review_managed" }, 409);
 const expiryOut = (c: Ctx) => c.json({ error: "The expiry must be between one hour and 365 days from now.", code: "expiry_out_of_range" }, 422);
 
 function principalOf(c: Ctx): Principal { const user = c.get("user"); return { id: user.id, impersonatedBy: user.impersonatedBy, via: user.via }; }
@@ -87,6 +89,7 @@ async function refusedBecause(c: Ctx, projectId: string, linkId: string, extra?:
 async function liveLink(c: Ctx, projectId: string, linkId: string): Promise<LinkHead | Response> {
   const head = await findLinkHead(c.env.DB, projectId, linkId);
   if (!head) return linkNotFound(c);
+  if (head.delivery_review === 1) return managedResponse(c);
   if (head.revoked_at !== null) return revokedResponse(c);
   return head;
 }
@@ -213,6 +216,7 @@ reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/revoke", termi
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(linkId).success) return c.json({ error: "Invalid id" }, 400);
   const refused = await admit(c, projectId, { write: true, part: null, allowArchived: true }); if (refused) return refused;
   const head = await findLinkHead(c.env.DB, projectId, linkId); if (!head) return linkNotFound(c);
+  if (head.delivery_review === 1) return managedResponse(c);
   const now = Date.now();
   if (head.revoked_at === null) {
     const ok = await revokeReviewLink(c.env.DB, { projectId, linkId, principal: principalOf(c), now });
@@ -231,10 +235,10 @@ reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/replace", term
   const head = await liveLink(c, projectId, linkId); if (head instanceof Response) return head;
   const now = Date.now();
   const expired = () => c.json({ error: "This Review link has expired. Extend its expiry first.", code: "link_expired" }, 409);
-  if (head.expires_at <= now) return expired();
+  if (reviewLinkExpired(head.expires_at, now)) return expired();
   const token = randomToken();
   const ok = await replaceReviewLinkToken(c.env.DB, { projectId, linkId, principal: principalOf(c), tokenHash: await hashToken(token), tokenSecret: token, now });
-  if (!ok) return refusedBecause(c, projectId, linkId, async () => ((await findLinkHead(c.env.DB, projectId, linkId))?.expires_at ?? Infinity) <= Date.now() ? expired() : null);
+  if (!ok) return refusedBecause(c, projectId, linkId, async () => reviewLinkExpired((await findLinkHead(c.env.DB, projectId, linkId))?.expires_at ?? null, Date.now()) ? expired() : null);
   return reveal(c, await oneLink(c, projectId, linkId, now));
 }));
 
@@ -246,6 +250,7 @@ reviewLinksRoutes.delete("/projects/:projectId/review-links/:linkId", terminalRo
   const refused = await admit(c, projectId, { write: true, part: null, allowArchived: true }); if (refused) return refused;
   const notRevoked = () => c.json({ error: "Revoke this Review link before deleting it.", code: "link_not_revoked" }, 409);
   const head = await findLinkHead(c.env.DB, projectId, linkId, { includeDeleted: true }); if (!head) return linkNotFound(c);
+  if (head.delivery_review === 1) return managedResponse(c);
   if (head.deleted_at !== null) return c.body(null, 204);
   if (head.revoked_at === null) return notRevoked();
   const ok = await deleteReviewLink(c.env.DB, { projectId, linkId, principal: principalOf(c), now: Date.now() });

@@ -61,7 +61,10 @@ export const reviewLinkDtoSchema = z.object({
   status: z.enum(REVIEW_LINK_STATUSES),
   createdAt: isoDateTime,
   createdBy: videoPersonSchema.nullable(),
-  expiresAt: isoDateTime,
+  /** Null means never expires: only the Delivery review link (#847). */
+  expiresAt: isoDateTime.nullable(),
+  /** True for the Project's system-owned Delivery review link (#847): pinned first, labelled "Delivery", no expiry, and the server refuses every staff change to it (409 `delivery_review_managed`). */
+  delivery: z.boolean(),
   revokedAt: isoDateTime.nullable(),
   revokedBy: videoPersonSchema.nullable(),
   hasPasscode: z.boolean(),

@@ -2,6 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { reviewLinkListResponseSchema, reviewLinkResponseSchema, reviewLinkRevealResponseSchema, type ReviewLinkDto } from "@quincy/shared";
 import { hashToken } from "../src/lib/opaque-token";
 import { baseEnv, database, ids, request, seedFixture, type Who } from "./embedded-media-support";
+import { addMember, seedGuestLink } from "./guest-support";
 import { clearVideoFlags, seedVideoNote, seedVideoVersion, setVideoFlags } from "./video-review-support";
 
 /** Staff Review link API (#741 11a): the full order matrix, the 0069 cross-column invariants (route SQL, not CHECKs), and the token rules. */
@@ -80,7 +81,7 @@ beforeEach(async () => {
   otherProjectVideo = await seedVideoVersion({ projectId: ids.otherProject, title: "Elsewhere" });
   await setVideoFlags(`video_review_pilot:${ids.otherProject}`, `video_review_pilot:${ids.archivedProject}`);
 });
-afterEach(async () => { await expectGrantInvariant(); await expectLinkInvariants(); await clearVideoFlags(); });
+afterEach(async () => { await expectGrantInvariant(); await expectLinkInvariants(); await clearVideoFlags(); await database.DB.prepare("DELETE FROM delivery_pages WHERE slug LIKE 'guest-dr-%'").run(); });
 
 describe("the links gate and the route order", () => {
   it("answers one 404 for a real and an unknown id on every route when the master, the links part or the Project's pilot is off", async () => {
@@ -787,5 +788,50 @@ describe("cross-column invariants (0069 leaves them to route SQL)", () => {
     const listed = await (await request(base(), "admin")).text();
     for (const secret of [...hashes, "secret-pass", tokens[0]!, "token_secret", "tokenSecret", "token_hash"]) expect(listed).not.toContain(secret);
     expect(listed).toContain(tokens[1]!);
+  });
+});
+
+describe("the Delivery review link (#847)", () => {
+  async function deliveryLink() {
+    const seeded = await seedGuestLink({ deliveryReview: true });
+    await addMember(seeded.id, v1.videoId, [v1.assetId]);
+    return seeded.id;
+  }
+
+  it("is listed first and marked, with no expiry, whatever order the links were made in", async () => {
+    const early = await createOk({ videoIds: [v2.videoId] });
+    const id = await deliveryLink();
+    const late = await createOk({ videoIds: [v3.videoId] });
+    const links = await listOk();
+    expect(links.map((link) => link.id)).toEqual([id, late.link.id, early.link.id]);
+    expect(links[0]).toMatchObject({ delivery: true, label: "Delivery", status: "active", expiresAt: null, hasPasscode: false, revokedAt: null, allow: { comments: true, approve: true, download: true } });
+    expect(links[0]!.videos.map((video) => video.videoId)).toEqual([v1.videoId]);
+    expect(links.slice(1).map((link) => [link.delivery, link.expiresAt === null])).toEqual([[false, false], [false, false]]);
+  });
+
+  it("refuses every staff change with 409 delivery_review_managed, before the body is read, and writes nothing", async () => {
+    const id = await deliveryLink(); const other = await createOk({ videoIds: [v2.videoId] });
+    const before = { link: await row(id), members: await members(id), grants: await grants(id), audits: await audits() };
+    const calls: Array<[string, string, unknown]> = [
+      ["PATCH", `${base()}/${id}`, { label: "Mine" }], ["PATCH", `${base()}/${id}`, { expiresAt: new Date(Date.now() + 5 * DAY).toISOString() }], ["PATCH", `${base()}/${id}`, { passcode: "hunter22" }], ["PATCH", `${base()}/${id}`, { allow: { comments: false } }],
+      ["PATCH", `${base()}/${id}`, { nonsense: true }],
+      ["POST", `${base()}/${id}/videos`, { videoId: v3.videoId, assetIds: [v3.assetId] }], ["DELETE", `${base()}/${id}/videos/${v1.videoId}`, undefined],
+      ["PUT", `${base()}/${id}/videos/${v1.videoId}/grants`, { assetIds: [v1.assetId] }], ["POST", `${base()}/${id}/replace`, {}], ["POST", `${base()}/${id}/revoke`, {}], ["DELETE", `${base()}/${id}`, undefined],
+    ];
+    for (const who of ["admin", "member"] as const) for (const [method, path, body] of calls) {
+      const response = await request(path, who, method as "PATCH", body);
+      expect(response.status, `${who} ${method} ${path}`).toBe(409);
+      expect(await json(response)).toMatchObject({ code: "delivery_review_managed" });
+    }
+    expect({ link: await row(id), members: await members(id), grants: await grants(id), audits: await audits() }).toEqual(before);
+    expect((await row(id))).toMatchObject({ revoked_at: null, deleted_at: null, expires_at: null, passcode_hash: null, token_generation: 1 });
+    // An ordinary link beside it is untouched by any of this and still works.
+    expect((await request(`${base()}/${other.link.id}`, "admin", "PATCH", { label: "Still mine" })).status).toBe(200);
+  });
+
+  it("is still a 404 for another Project's id, and the gate and capability order is unchanged", async () => {
+    const id = await deliveryLink();
+    expect((await request(`${base(ids.otherProject)}/${id}/revoke`, "admin", "POST", {})).status).toBe(404);
+    expect((await request(`${base()}/${id}/revoke`, "photographer", "POST", {})).status).toBe(403);
   });
 });

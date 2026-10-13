@@ -1,5 +1,6 @@
 import type { Context, Hono } from "hono";
 import { guestHeicAvailable } from "../lib/embedded-heic";
+import { reviewLinkExpiryOrSql, reviewLinkOpenSql } from "@quincy/db";
 import { guestSessionInputSchema } from "@quincy/shared";
 import { VIDEO_STREAM_HEADERS, serveR2Object } from "../lib/r2-serve";
 import { verifyPasscode } from "../lib/review-passcode";
@@ -54,8 +55,8 @@ async function startSession(c: Context<AppEnv, "/d/api/links/:linkId/session">):
   // The INSERT repeats the link fence, so a revoke, replace, passcode change or expiry between the read above and here mints nothing; the audit row follows only a session that landed.
   const [inserted, , stored] = await c.env.DB.batch([
     c.env.DB.prepare(`INSERT INTO guest_sessions (id, token_hash, link_id, link_generation, guest_id, verified_at, created_at, expires_at, last_seen_at)
-      SELECT ?1, ?2, l.id, l.token_generation, NULL, NULL, ?3, MIN(?4, l.expires_at), ?3 FROM client_links l
-      WHERE l.id = ?5 AND l.kind = 'video_review' AND l.revoked_at IS NULL AND l.expires_at > ?3 AND l.token_generation = ?6 AND l.token_hash = ?7 AND l.passcode_hash IS ?8`)
+      SELECT ?1, ?2, l.id, l.token_generation, NULL, NULL, ?3, MIN(?4, ${reviewLinkExpiryOrSql("l", "?4")}), ?3 FROM client_links l
+      WHERE l.id = ?5 AND ${reviewLinkOpenSql("l", "?3")} AND l.token_generation = ?6 AND l.token_hash = ?7 AND l.passcode_hash IS ?8`)
       .bind(sessionId, await hashToken(sessionToken), now, now + SESSION_MAX_MS, link.id, link.tokenGeneration, link.tokenHash, link.passcodeHash),
     c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?1, NULL, 'review_link.session_start', 'review_link', ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM guest_sessions WHERE id = ?5)`)
@@ -63,7 +64,7 @@ async function startSession(c: Context<AppEnv, "/d/api/links/:linkId/session">):
     // Read back what actually landed: staff may have shortened or renamed the link since the snapshot above.
     c.env.DB.prepare(`SELECT s.expires_at AS session_expires_at, l.label, l.expires_at, l.allow_comments, l.allow_approve, l.allow_download FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE s.id = ?1`).bind(sessionId),
   ]);
-  const row = stored?.results[0] as { session_expires_at: number; label: string | null; expires_at: number; allow_comments: number; allow_approve: number; allow_download: number } | undefined;
+  const row = stored?.results[0] as { session_expires_at: number; label: string | null; expires_at: number | null; allow_comments: number; allow_approve: number; allow_download: number } | undefined;
   if (!inserted || inserted.meta.changes === 0 || !row) return guestNotFound(c);
   const response = c.json(sessionBody({ ...link, label: row.label, expiresAt: row.expires_at, allowComments: row.allow_comments === 1, allowApprove: row.allow_approve === 1, allowDownload: row.allow_download === 1 }, null, null, await guestHeicAvailable(c.env)));
   response.headers.append("set-cookie", sessionCookieHeader(c.env, link.id, sessionToken, (row.session_expires_at - now) / 1000));

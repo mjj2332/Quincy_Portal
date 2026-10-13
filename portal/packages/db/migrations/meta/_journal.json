@@ -540,6 +540,13 @@
       "when": 1791000000000,
       "tag": "0076_review_link_soft_delete",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "6",
+      "when": 1791100000000,
+      "tag": "0077_delivery_review_link",
+      "breakpoints": true
     }
   ]
 }

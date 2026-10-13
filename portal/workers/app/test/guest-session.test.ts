@@ -53,6 +53,27 @@ describe("POST /d/api/links/:linkId/session", () => {
     expect(audit!.meta_json).not.toContain(link.token);
   });
 
+  it("exchanges the token on a link with no expiry and holds the seven-day session cap (#847)", async () => {
+    const link = await seedGuestLink({ deliveryReview: true });
+    const { response } = await startSession(link);
+    expect(response.status).toBe(200);
+    const body = guestSessionResponseSchema.parse(await response.json());
+    expect(body.link).toMatchObject({ label: "Delivery", expiresAt: null });
+    const [row] = await sessionRows(link.id);
+    expect(row!.expires_at as number).toBeGreaterThan(Date.now() + 7 * DAY - 5_000); expect(row!.expires_at as number).toBeLessThanOrEqual(Date.now() + 7 * DAY);
+    const maxAge = Number(response.headers.getSetCookie()[0]!.match(/Max-Age=(\d+)/)![1]);
+    expect(maxAge).toBeGreaterThan(7 * 86_400 - 30); expect(maxAge).toBeLessThanOrEqual(7 * 86_400);
+  });
+
+  it("keeps a session on a link with no expiry across later requests, and ends it when the Delivery page is switched off (#847)", async () => {
+    const link = await linkWithSession({ deliveryReview: true });
+    expect((await guestFetch(linkPath(link.id, "/session"), { cookie: link.cookie })).status).toBe(200);
+    await database.DB.prepare("UPDATE delivery_pages SET enabled = 0 WHERE slug LIKE 'guest-dr-%'").run();
+    const reference = await stubOf(await guestFetch("/d/api/x"));
+    expect(await stubOf(await guestFetch(linkPath(link.id, "/session"), { cookie: link.cookie }))).toEqual(reference);
+    expect(await stubOf(await guestFetch(linkPath(link.id, "/session"), { method: "POST", body: { token: link.token } }))).toEqual(reference);
+  });
+
   it("caps the session at the link expiry", async () => {
     const link = await seedGuestLink({ expiresAt: Date.now() + 3_600_000 });
     const { response } = await startSession(link);

@@ -22,7 +22,7 @@ export function activityLine(link: ReviewLinkDto, now: number): string {
   if (!lastOpenedAt) return "Not opened yet";
   return `Last opened ${formatRelativeTime(lastOpenedAt, now)}${openSessions > 0 ? ` · ${openSessions} open now` : ""}`;
 }
-export const expiryLine = (link: ReviewLinkDto) => `${link.status === "expired" ? "Expired" : "Expires"} ${formatCivilDay(sydneyDayKey(link.expiresAt))}`;
+export const expiryLine = (link: ReviewLinkDto) => link.expiresAt === null ? "Never expires" : `${link.status === "expired" ? "Expired" : "Expires"} ${formatCivilDay(sydneyDayKey(link.expiresAt))}`;
 
 /** The list step of the Review links dialog (#741 11b): one `reui/item` row per link. */
 export function ReviewLinkList({ ui }: { ui: ReviewLinksUi }) {

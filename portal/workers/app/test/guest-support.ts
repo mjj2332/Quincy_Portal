@@ -11,14 +11,17 @@ export const GUEST_WINDOW_MS = 15 * 60_000;
 export const guestFlags = (projectId: string = ids.project) => ["video_review", `video_review_pilot:${projectId}`, "video_review_guest", "video_review_guest_comments", "video_review_delivery"] as const;
 export async function openGuestGate(projectId: string = ids.project) { await clearVideoFlags(); await setVideoFlags(...guestFlags(projectId)); }
 
-export type LinkInput = { projectId?: string; expiresAt?: number; passcodeHash?: string | null; kind?: "video_review" | "delivery"; revoked?: boolean; /** A soft-deleted link (#846); implies revoked. */ deleted?: boolean; label?: string | null; generation?: number; allow?: [number, number, number] };
+export type LinkInput = { projectId?: string; /** `null` is no expiry (#847). */ expiresAt?: number | null; /** The Project's Delivery review link (#847): label Delivery, no expiry, a delivery_pages row is seeded when the Project has none. */ deliveryReview?: boolean; passcodeHash?: string | null; kind?: "video_review" | "delivery"; revoked?: boolean; /** A soft-deleted link (#846); implies revoked. */ deleted?: boolean; label?: string | null; generation?: number; allow?: [number, number, number] };
 export async function seedGuestLink(input: LinkInput = {}) {
   const id = crypto.randomUUID(); const token = randomToken(); const tokenHash = await hashToken(token); const now = Date.now();
-  const allow = input.allow ?? [1, 1, 1]; const revoked = input.revoked || input.deleted;
-  await database.DB.prepare(`INSERT INTO client_links (id, project_id, token_hash, publish_version, expires_at, passcode_hash, created_at, kind, label, allow_comments, allow_approve, allow_download, created_by, token_generation, updated_at, revoked_at, revoked_by, deleted_at, deleted_by)
-    VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(id, input.projectId ?? ids.project, tokenHash, input.expiresAt ?? now + 30 * 86_400_000, input.passcodeHash ?? null, now, input.kind ?? "video_review", input.label === undefined ? "Smith family" : input.label,
-      allow[0], allow[1], allow[2], ids.member, input.generation ?? 1, now, revoked ? now : null, revoked ? ids.member : null, input.deleted ? now : null, input.deleted ? ids.member : null).run();
+  const allow = input.allow ?? [1, 1, 1]; const revoked = input.revoked || input.deleted; const projectId = input.projectId ?? ids.project;
+  const expiresAt = input.expiresAt !== undefined ? input.expiresAt : input.deliveryReview ? null : now + 30 * 86_400_000;
+  if (input.deliveryReview && !await database.DB.prepare("SELECT 1 AS one FROM delivery_pages WHERE project_id = ?").bind(projectId).first())
+    await database.DB.prepare("INSERT INTO delivery_pages (project_id, slug, enabled, latest_set_number, created_at, updated_at) VALUES (?, ?, 1, 1, ?, ?)").bind(projectId, `guest-dr-${crypto.randomUUID().slice(0, 12)}`, now, now).run();
+  await database.DB.prepare(`INSERT INTO client_links (id, project_id, token_hash, publish_version, expires_at, passcode_hash, created_at, kind, label, allow_comments, allow_approve, allow_download, created_by, token_generation, updated_at, revoked_at, revoked_by, deleted_at, deleted_by, delivery_review)
+    VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(id, projectId, tokenHash, expiresAt, input.passcodeHash ?? null, now, input.kind ?? "video_review", input.label === undefined ? (input.deliveryReview ? "Delivery" : "Smith family") : input.label,
+      allow[0], allow[1], allow[2], ids.member, input.generation ?? 1, now, revoked ? now : null, revoked ? ids.member : null, input.deleted ? now : null, input.deleted ? ids.member : null, input.deliveryReview ? 1 : 0).run();
   return { id, token, tokenHash };
 }
 
@@ -67,7 +70,7 @@ export async function linkWithSession(input: LinkInput = {}) {
 
 export const HYGIENE = { "referrer-policy": "no-referrer", "cache-control": "private, no-store", "x-robots-tag": "noindex", "x-content-type-options": "nosniff" } as const;
 export async function sha256Hex(value: string) { return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))].map((byte) => byte.toString(16).padStart(2, "0")).join(""); }
-export const clearGuestRows = async () => { await database.DB.batch([database.DB.prepare("DELETE FROM guest_rate_limits"), database.DB.prepare("DELETE FROM guest_sessions"), database.DB.prepare("DELETE FROM review_link_version_grants"), database.DB.prepare("DELETE FROM review_link_videos"), database.DB.prepare("DELETE FROM client_links WHERE kind = 'video_review'")]); };
+export const clearGuestRows = async () => { await database.DB.batch([database.DB.prepare("DELETE FROM guest_rate_limits"), database.DB.prepare("DELETE FROM guest_sessions"), database.DB.prepare("DELETE FROM review_link_version_grants"), database.DB.prepare("DELETE FROM review_link_videos"), database.DB.prepare("DELETE FROM client_links WHERE kind = 'video_review'"), database.DB.prepare("DELETE FROM delivery_pages WHERE slug LIKE 'guest-dr-%'")]); };
 
 export type SentEmail = { from: string; to: string; subject: string; text: string; html: string };
 /**

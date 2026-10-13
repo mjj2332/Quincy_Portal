@@ -57,7 +57,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
   const expired = link.status === "expired";
   const locked = revoked || ui.archived;
   const draft = state.details[linkId] ?? emptyDetail();
-  const currentDay = sydneyDayKey(link.expiresAt);
+  const currentDay = link.expiresAt === null ? "" : sydneyDayKey(link.expiresAt);
   const labelValue = draft.label ?? link.label ?? "";
   const expiryValue = draft.expiryDay ?? currentDay;
   const allowValue: Allow = { ...link.allow, ...draft.allow };
@@ -146,7 +146,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
           <FieldDescription>Press Replace link to get a copyable link.</FieldDescription>
         </Field>)}
       <QuincyField id="review-link-detail-label" label="Label" maxLength={REVIEW_LINK_LABEL_MAX} autoComplete="off" disabled={locked} value={labelValue} onChange={(event) => store.patchDetail(linkId, { label: event.target.value })} />
-      <DateTimeField variant="date" id="review-link-detail-expiry" label="Expires" value={expiryValue} disabled={locked} positionerClassName={DIALOG_FIELD_LAYER} onApply={(next) => { if (next) store.patchDetail(linkId, { expiryDay: next === currentDay ? null : next }); }} description={expiry && !expiry.ok ? expiry.message : expiryChanged ? "The link stops working at the end of this day." : `The link stops working on ${formatAbsoluteTime(link.expiresAt).replace(", ", " at ")}.`} {...(expiry && !expiry.ok ? { descriptionRole: "status" as const } : {})} />
+      <DateTimeField variant="date" id="review-link-detail-expiry" label="Expires" value={expiryValue} disabled={locked} positionerClassName={DIALOG_FIELD_LAYER} onApply={(next) => { if (next) store.patchDetail(linkId, { expiryDay: next === currentDay ? null : next }); }} description={expiry && !expiry.ok ? expiry.message : expiryChanged ? "The link stops working at the end of this day." : link.expiresAt === null ? "The link never expires." : `The link stops working on ${formatAbsoluteTime(link.expiresAt).replace(", ", " at ")}.`} {...(expiry && !expiry.ok ? { descriptionRole: "status" as const } : {})} />
       <div className="grid gap-[var(--space-1)]">
         <QuincyField id="review-link-detail-passcode" label={link.hasPasscode ? "New passcode" : "Passcode"} autoComplete="off" spellCheck={false} disabled={locked || draft.removePasscode} aria-describedby="review-link-detail-passcode-hint" value={draft.passcode} error={passcodeError} onChange={(event) => store.patchDetail(linkId, { passcode: event.target.value })} />
         {link.hasPasscode
