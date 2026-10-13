@@ -50,11 +50,12 @@ let candidatesFail = false; let candidatesHang = false; let videoReviewOff = fal
 let delivery: unknown = NO_PAGE; // an object is the 200 answer; an ApiError instance is thrown
 let photos = [asset(ids.photo1), asset(ids.photo2, { premium: true })];
 let filmPremium = { premium: false, premiumUnlocked: false };
+let filmReview: "in_review" | "approved_internal" | "published" | null = null;
 /** What `GET /delivery/candidates` answers: Publish-eligible items, photos then the Floorplan then the Video. */
 const candidatesBody = () => ({ candidates: [
-  ...photos.filter((item) => item.kind === "photo").map((item) => ({ assetId: item.id, kind: "photo", name: item.originalFilename, videoId: null, premium: item.premium === true, premiumUnlocked: item.premiumUnlocked === true })),
-  { assetId: ids.plan, kind: "floorplan", name: "plan.pdf", videoId: null, premium: false, premiumUnlocked: false },
-  { assetId: ids.videoAsset, kind: "video", name: "Main walkthrough", videoId: ids.video, ...filmPremium },
+  ...photos.filter((item) => item.kind === "photo").map((item) => ({ assetId: item.id, kind: "photo", name: item.originalFilename, videoId: null, premium: item.premium === true, premiumUnlocked: item.premiumUnlocked === true, reviewStatus: null })),
+  { assetId: ids.plan, kind: "floorplan", name: "plan.pdf", videoId: null, premium: false, premiumUnlocked: false, reviewStatus: null },
+  { assetId: ids.videoAsset, kind: "video", name: "Main walkthrough", videoId: ids.video, ...filmPremium, reviewStatus: filmReview },
 ] });
 function install() {
   apiGetMock.mockReset();
@@ -101,7 +102,7 @@ async function openDelivery(role: Role = "admin") { await mount(role); await cli
 async function startEmpty() { for (const box of [...host.querySelectorAll<HTMLInputElement>('input[type="checkbox"][aria-label^="Select "]')]) if (box.checked) await click(box); }
 const api = (status: number, body: Record<string, unknown>) => new ApiError(String(body.error ?? "x"), status, body);
 
-beforeEach(() => { archivedDetail = false; candidatesFail = false; candidatesHang = false; videoReviewOff = false; latchDetailFails = false; apiPostMock.mockReset(); apiPutMock.mockReset(); document.body.innerHTML = ""; delivery = NO_PAGE; filmPremium = { premium: false, premiumUnlocked: false }; photos = [asset(ids.photo1), asset(ids.photo2, { premium: true })]; Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn(() => Promise.resolve()) } }); });
+beforeEach(() => { archivedDetail = false; candidatesFail = false; candidatesHang = false; videoReviewOff = false; latchDetailFails = false; apiPostMock.mockReset(); apiPutMock.mockReset(); document.body.innerHTML = ""; delivery = NO_PAGE; filmPremium = { premium: false, premiumUnlocked: false }; filmReview = null; photos = [asset(ids.photo1), asset(ids.photo2, { premium: true })]; Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn(() => Promise.resolve()) } }); });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; document.body.innerHTML = ""; });
 
 describe("the Delivery tab's existence", () => {
@@ -694,5 +695,68 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
       await click(bodyById("delivery-preview-close")); await flush();
       expect(pause.mock.contexts).toContain(again);
     } finally { pause.mockRestore(); }
+  });
+});
+
+describe("#864 Review status in Publish", () => {
+  const checked = (label: string) => (byLabel(label) as HTMLInputElement | null)?.checked;
+  const sent = () => apiPostMock.mock.calls.filter(([path]) => path.endsWith("/delivery/publish")).map(([, body]) => body as { assetIds: string[] });
+  it("pre-ticks an Approved (internal) Video on a later Publish and leaves everything else as it was", async () => {
+    delivery = stateAfterPublish(2); filmReview = "approved_internal";
+    await openDelivery();
+    expect(checked("Select Main walkthrough")).toBe(true);
+    expect(checked("Select 1.jpg")).toBe(true);
+    expect(checked("Select 2.jpg")).toBe(false);
+  });
+  it("does not pre-tick a Video still In review on a later Publish", async () => {
+    delivery = stateAfterPublish(2); filmReview = "in_review";
+    await openDelivery();
+    expect(checked("Select Main walkthrough")).toBe(false);
+  });
+  it("keeps everything ticked on a first Publish and warns, in the inline notice and the confirm dialog, about a Video In review", async () => {
+    filmReview = "in_review";
+    await openDelivery();
+    expect(checked("Select Main walkthrough")).toBe(true);
+    expect(byId("delivery-in-review-inline")?.textContent).toContain("Main walkthrough");
+    await click(byId("delivery-publish"));
+    expect(bodyById("delivery-in-review-warning")?.textContent).toContain("Main walkthrough");
+  });
+  it("does not warn about an Approved (internal) or Published Video", async () => {
+    for (const status of ["approved_internal", "published"] as const) {
+      filmReview = status;
+      await openDelivery();
+      expect(checked("Select Main walkthrough"), status).toBe(true);
+      expect(byId("delivery-in-review-inline"), status).toBeNull();
+      await click(byId("delivery-publish"));
+      expect(bodyById("delivery-in-review-warning"), status).toBeNull();
+      await act(async () => { root!.unmount(); }); root = null; document.body.innerHTML = "";
+    }
+  });
+  it("drops the warning when the Video is unticked, and Publish still goes ahead without it (advisory only)", async () => {
+    filmReview = "in_review";
+    apiPostMock.mockResolvedValue({ ...stateAfterPublish(1), replayed: false, operationSetNumber: 1 });
+    await openDelivery();
+    await click(byLabel("Select Main walkthrough"));
+    expect(byId("delivery-in-review-inline")).toBeNull();
+    await click(byId("delivery-publish"));
+    expect(bodyById("delivery-in-review-warning")).toBeNull();
+    await click(bodyById("delivery-publish-confirm"));
+    expect(sent()[0]!.assetIds).not.toContain(ids.videoAsset);
+  });
+  it("warns a retry about the Videos in its frozen body, not the selection as it is now", async () => {
+    filmReview = "in_review";
+    apiPostMock.mockRejectedValueOnce(new ApiError("offline", 0));
+    await openDelivery();
+    await click(byId("delivery-publish")); await click(bodyById("delivery-publish-confirm"));
+    expect(byId("delivery-publish")?.textContent).toBe("Retry publish");
+    await click(byLabel("Select Main walkthrough"));
+    await click(byId("delivery-publish"));
+    expect(bodyById("delivery-in-review-warning")?.textContent).toContain("Main walkthrough");
+  });
+  it("neither pre-ticks nor warns when the status is not reported (Video Review closed)", async () => {
+    delivery = stateAfterPublish(2); filmReview = null;
+    await openDelivery();
+    expect(checked("Select Main walkthrough")).toBe(false);
+    expect(byId("delivery-in-review-inline")).toBeNull();
   });
 });

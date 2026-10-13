@@ -38,7 +38,7 @@ describe("Review status writes (#863)", () => {
     expect(await setVideoReviewStatus(ctx(), input)).toEqual(answered);
     expect(api.apiPut).toHaveBeenCalledWith(`/api/projects/${P}/video-versions/${A}/review-status`, { reviewStatus: "approved_internal", expectedStatus: "in_review" });
     expect(client.getQueryData<VideoDto[]>(projectDataKeys.videos(P))).toEqual([answered]);
-    expect(order).toContain("invalidate:videos");
+    expect(order).toContain("invalidate:videos,delivery-candidates");
   });
 
   it("reads an External's answer through the response-only external surface: an extra key throws", async () => {
