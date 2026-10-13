@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
 import { Check, ChevronLeft, ChevronRight, MessageSquare, MessageSquareWarning, Smartphone } from "lucide-react";
-import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto } from "@quincy/shared";
+import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto, type GuestVideoListResponse } from "@quincy/shared";
 import { useFrameLabel } from "../lib/time-format-prefs";
 import { useMediaQuery } from "../lib/use-media-query";
 import type { VideoFrameClock } from "../lib/video-frame-clock";
@@ -94,8 +94,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   /** Present only when there is a list to go back to (a single-Video link has none). */
   onBack: (() => void) | null;
   onUnavailable: () => void;
-  /** The displayed Version is no longer granted: the freshly read list, for the page to show instead. */
-  onGrantsChanged: (fresh: GuestVideoDto[]) => void;
+  /** The displayed Version is no longer granted: the freshly read payload (Videos and Social overlays), for the page to show instead. */
+  onGrantsChanged: (fresh: GuestVideoListResponse) => void;
   /** A decision landed on the Version `assetId` (the one it was sent for, which may no longer be the one on screen). */
   onDecided: (assetId: string, decision: GuestDecision) => void;
   /** A decision may or may not have landed: read the delivery list again. The page reconciles the result against the screen as it is when the answer arrives. */
@@ -187,7 +187,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     if (stale()) return "stale";
     if (list.kind === "gone") { onUnavailable(); return "handled"; }
     if (list.kind !== "ok") return "unknown";
-    if (!list.value.videos.some((candidate) => candidate.versions.some((granted) => granted.assetId === shownAssetId))) { onGrantsChanged(list.value.videos); return "handled"; }
+    if (!list.value.videos.some((candidate) => candidate.versions.some((granted) => granted.assetId === shownAssetId))) { onGrantsChanged(list.value); return "handled"; }
     return "valid";
   }, [api, onUnavailable, onGrantsChanged, shownAssetId]);
   // A stream that fails while the Version is still granted: another Version of this film may have been removed (#776 E), so the picker is read again. Quietly: no notice, no navigation unless the page decides the shown Version left.
@@ -350,11 +350,11 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   };
   const pausedLine = <p data-testid="guest-notes-social-paused" className="m-0 text-foreground-secondary [font:var(--type-label)]">Notes are off in Social preview.</p>;
   const addNote = canWrite
-    ? socialOn ? <>{pausedLine}{compose.isOpen && <div hidden inert>{compose.form}</div>}</> : compose.isOpen ? compose.form : <div className="flex flex-col items-start gap-[var(--space-2)]">
+    ? <>{socialOn && pausedLine}<div hidden={socialOn} inert={socialOn}>{compose.isOpen ? compose.form : <div className="flex flex-col items-start gap-[var(--space-2)]">
       <Button type="button" variant="outline" data-testid="guest-add-note" className={TOUCH} onClick={() => { if (session.verified) startDraft(compose.begin); else requestVerify("compose"); }}>Add a note</Button>
       {canPaste && <Button type="button" variant="ghost" data-testid="guest-paste-open" className={TOUCH} onClick={openPaste}>Copy my notes from another version</Button>}
       {pasted !== null && <p role="status" data-testid="guest-paste-status" className="m-0 text-foreground-secondary [font:var(--type-label)]">{pasted}</p>}
-    </div>
+    </div>}</div></>
     : null;
 
   // Approve / Request changes (#741 14-ui-guest). The note draft is in `drafts` and the write is the writer's, so both outlive this screen; the dialog is per Version and decision.

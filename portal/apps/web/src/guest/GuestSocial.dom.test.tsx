@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GuestNoteThreadDto, GuestSessionResponse, GuestSocialOverlay, GuestVideoDto } from "@quincy/shared";
@@ -12,12 +12,14 @@ import { GuestApp } from "./GuestApp";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 if (!Element.prototype.getAnimations) Element.prototype.getAnimations = () => [];
 /** The rich field is a textarea handle on its props: this file is about what the page does with the document and the upload state (the field itself is tested in GuestNoteEditor.dom.test.tsx). Typing sends a one-paragraph document, which is what the real field sends for plain text. */
-const field = vi.hoisted(() => ({ props: new Map<string, { media: unknown; onUploadingChange?: (uploading: boolean) => void; onChange: (doc: unknown) => void; value: unknown; label: string }>() }));
+const field = vi.hoisted(() => ({ unmounts: 0, props: new Map<string, { media: unknown; onUploadingChange?: (uploading: boolean) => void; onChange: (doc: unknown) => void; value: unknown; label: string }>() }));
 vi.mock("./GuestNoteEditor", async () => {
   const shared = await import("@quincy/shared");
   return {
     GuestNoteEditor: (props: { testId: string; label: string; placeholder?: string; disabled?: boolean; value: import("@quincy/shared").RichTextDoc; onChange: (doc: import("@quincy/shared").RichTextDoc) => void; media: unknown; onUploadingChange?: (uploading: boolean) => void }) => {
       field.props.set(props.testId, props as never);
+      // eslint-disable-next-line react-hooks/rules-of-hooks -- a component body
+      useEffect(() => () => { field.unmounts += 1; }, []);
       return <textarea data-testid={props.testId} aria-label={props.label} placeholder={props.placeholder} disabled={props.disabled} value={shared.videoNoteBody(props.value)}
         onChange={(event) => { props.onChange(event.target.value === "" ? { type: "doc", content: [{ type: "paragraph" }] } : shared.legacyBodyToRichTextDoc(event.target.value)); }} />;
     },
@@ -76,7 +78,7 @@ const flush = async (times = 6) => { for (let i = 0; i < times; i += 1) await ac
 const REEL: GuestSocialOverlay = { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", name: "Instagram Reel", imageUrl: "/social-overlay-images/cccccccc-cccc-4ccc-8ccc-cccccccccccc/dddddddd-dddd-4ddd-8ddd-dddddddddddd" };
 const TIKTOK: GuestSocialOverlay = { id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", name: "TikTok", imageUrl: "/social-overlay-images/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee/ffffffff-ffff-4fff-8fff-ffffffffffff" };
 async function open(initialVideoId: string | null = null) {
-  field.props.clear();
+  field.props.clear(); field.unmounts = 0;
   window.history.replaceState(null, "", `/d/review?link=${LINK}#t=tok123`);
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -196,7 +198,7 @@ describe("Social preview on the Review link (#872)", () => {
     await open();
     expect(byId("guest-add-note")).not.toBeNull();
     await social(true);
-    expect(byId("guest-add-note")).toBeNull();
+    expect(byId("guest-add-note")!.closest("[hidden]")).not.toBeNull();
     expect(byId("guest-notes-social-paused")!.textContent).toContain("Notes are off in Social preview");
     await social(false);
     expect(byId("guest-add-note")).not.toBeNull();
@@ -224,6 +226,54 @@ describe("Social preview on the Review link (#872)", () => {
     expect(byId("guest-composer")!.closest("[hidden]")).toBeNull();
     expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("Half written");
     expect(byId("guest-composer-anchor")!.textContent).toBe(anchor);
+  });
+
+  it("keeps the same composer and editor nodes across Social, and an upload started before it is never torn down", async () => {
+    await open();
+    await click(byId("guest-add-note"));
+    const form = byId("guest-composer"); const editor = byId("guest-composer-body");
+    await act(async () => { field.props.get("guest-composer-body")!.onUploadingChange?.(true); });
+    expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(true);
+    await social(true);
+    await social(false);
+    expect(byId("guest-composer")).toBe(form);
+    expect(byId("guest-composer-body")).toBe(editor);
+    expect(field.unmounts).toBe(0);
+    expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("settles a Post that is still out when Social turns on: the answer lands and the composer is usable again", async () => {
+    let release: (response: Response) => void = () => undefined;
+    extra = (url, init) => (url.endsWith("/notes") && init?.method === "POST" ? new Promise<Response>((resolve) => { release = resolve; }) : undefined);
+    await open();
+    await click(byId("guest-add-note"));
+    await typeInto(byId("guest-composer-body"), "On its way");
+    await submit("guest-composer");
+    expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(true);
+    await social(true);
+    await act(async () => { release(json(mine(5, { body: "On its way" }), 201)); });
+    await flush();
+    await social(false);
+    expect(byId("guest-composer")).toBeNull();
+    expect(byId("guest-add-note")).not.toBeNull();
+  });
+
+  it("settles a Save that is still out when Social turns on", async () => {
+    notes = { [asset(10)]: [mine(2, { revision: 3 })] };
+    let release: (response: Response) => void = () => undefined;
+    extra = (url, init) => (url === `${BASE}/notes/${noteId(2)}` && init?.method === "PATCH" ? new Promise<Response>((resolve) => { release = resolve; }) : undefined);
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    await typeInto(byId("guest-composer-body"), "Changed");
+    await submit("guest-composer");
+    expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(true);
+    await social(true);
+    await act(async () => { release(json(mine(2, { revision: 4, body: "Changed" }))); });
+    await flush();
+    await social(false);
+    expect(byId("guest-composer")).toBeNull();
+    expect(byId("guest-add-note")).not.toBeNull();
   });
 
   it("hides an open own-note Edit form but keeps the saved text readable, and restores the form with its text", async () => {
@@ -311,6 +361,17 @@ describe("Social preview on the Review link (#872)", () => {
     viewport.restore(); viewport = mockViewport({ width: 375 });
     await open();
     expect(toggle()!.getAttribute("aria-label")).toBe("Social preview");
+  });
+
+  it("takes the refreshed overlays with the refreshed Videos when the shown Version leaves the link", async () => {
+    videos = [videoOf(1, [versionOf(11), versionOf(10)]), videoOf(2)];
+    await open(vid(1));
+    videos = [videoOf(1, [versionOf(10)]), videoOf(2)]; socialOverlays = [TIKTOK];
+    await act(async () => { host.querySelector("video")!.dispatchEvent(new Event("error")); });
+    await flush();
+    await click(button("Open Film 1"));
+    await social(true);
+    expect(overlayImage()!.getAttribute("src")).toBe(TIKTOK.imageUrl);
   });
 
   it("follows a changed selection after a resync: a chosen overlay that left the list falls back to the first", async () => {

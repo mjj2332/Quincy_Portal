@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { GuestDecision, GuestSessionResponse, GuestSocialOverlay, GuestVideoDto } from "@quincy/shared";
+import type { GuestDecision, GuestSessionResponse, GuestSocialOverlay, GuestVideoDto, GuestVideoListResponse } from "@quincy/shared";
 import { createGuestApi, type GuestApi } from "./guest-api";
 import { readLinkId } from "./link-fragment";
 import { GuestVideoScreen } from "./GuestVideoScreen";
@@ -127,9 +127,10 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
     void exchange(api, token.current, passcode);
   };
   // Staff took the displayed Video or Version off the link while it was open: show what is still granted, calmly, or nothing if nothing is.
-  const grantsChanged = useCallback((fresh: GuestVideoDto[]) => {
+  const grantsChanged = useCallback(({ videos: fresh, socialOverlays: freshOverlays }: GuestVideoListResponse) => {
     if (fresh.length === 0) { setScreen({ name: "unavailable" }); return; }
     commitVideos(fresh);
+    setOverlays(freshOverlays);
     setNotice("That video was updated by the studio. Here is what's available now.");
     setScreen(fresh.length === 1 ? { name: "video", index: 0 } : { name: "list" });
   }, [commitVideos]);
@@ -165,7 +166,7 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
       if (now.name !== "list" && now.name !== "video") return;
       const onScreen = now.name === "video" ? videosRef.current[now.index] : undefined;
       const index = onScreen ? merged.findIndex((video) => video.id === onScreen.id) : -1;
-      if (now.name === "video" && (index < 0 || (shownVersion.current !== null && !merged[index]!.versions.some((version) => version.assetId === shownVersion.current)))) { grantsChanged(merged); return; }
+      if (now.name === "video" && (index < 0 || (shownVersion.current !== null && !merged[index]!.versions.some((version) => version.assetId === shownVersion.current)))) { grantsChanged({ videos: merged, socialOverlays: fresh.value.socialOverlays }); return; }
       commitVideos(merged);
       if (now.name === "video") setScreen({ name: "video", index });
     });
