@@ -39,8 +39,10 @@ export type VideoElementStub = {
   presentFrame(video: HTMLVideoElement, mediaTime: number): void;
   /** Pending `requestVideoFrameCallback` registrations on `video`. */
   pendingFrameCallbacks(video: HTMLVideoElement): number;
-  /** Sets the decoded size and duration and fires `loadedmetadata`. */
-  loadMetadata(video: HTMLVideoElement, meta: { duration: number; videoWidth?: number; videoHeight?: number }): void;
+  /** Sets the decoded size and duration and fires `loadedmetadata`. `readyState` defaults to 2 (data already there, as on desktop); pass 1 for iOS before a gesture. */
+  loadMetadata(video: HTMLVideoElement, meta: { duration: number; videoWidth?: number; videoHeight?: number; readyState?: number }): void;
+  /** Data for the current position arrived: `readyState` becomes `readyState` (default 2, HAVE_CURRENT_DATA) and `loadeddata` fires. */
+  loadData(video: HTMLVideoElement, readyState?: number): void;
   /** Moves the playhead without seeking (what playback does between frames). */
   advance(video: HTMLVideoElement, seconds: number): void;
   /** Marks the element ended and fires `ended`. */
@@ -70,7 +72,8 @@ export type VideoElementStub = {
 
 const MEMBERS = ["currentTime", "paused", "seeking", "duration", "videoWidth", "videoHeight", "muted", "playbackRate", "readyState", "ended", "error", "play", "pause", "requestVideoFrameCallback", "cancelVideoFrameCallback"] as const;
 
-export function installVideoElementStub(options: { rvfc?: boolean; asyncEvents?: boolean } = {}): VideoElementStub {
+/** `readyState` is what a new element starts with (default 0, no data: the clock holds its seeks until `loadData`; pass 4 for an element whose data is already there). */
+export function installVideoElementStub(options: { rvfc?: boolean; asyncEvents?: boolean; readyState?: number } = {}): VideoElementStub {
   const proto = HTMLVideoElement.prototype as unknown as Record<string, unknown>;
   const saved = new Map<string, PropertyDescriptor | undefined>();
   for (const name of MEMBERS) saved.set(name, Object.getOwnPropertyDescriptor(proto, name));
@@ -89,7 +92,7 @@ export function installVideoElementStub(options: { rvfc?: boolean; asyncEvents?:
   const slot = (element: object): Slot => {
     let found = slots.get(element);
     if (!found) {
-      found = { currentTime: 0, paused: true, seeking: false, duration: NaN, videoWidth: 0, videoHeight: 0, muted: false, playbackRate: 1, readyState: 0, ended: false, error: null, rejectPlay: null, calls: [], writes: [], callbacks: new Map() };
+      found = { currentTime: 0, paused: true, seeking: false, duration: NaN, videoWidth: 0, videoHeight: 0, muted: false, playbackRate: 1, readyState: options.readyState ?? 0, ended: false, error: null, rejectPlay: null, calls: [], writes: [], callbacks: new Map() };
       slots.set(element, found);
     }
     return found;
@@ -142,9 +145,10 @@ export function installVideoElementStub(options: { rvfc?: boolean; asyncEvents?:
     pendingFrameCallbacks: (video) => slot(video).callbacks.size,
     loadMetadata(video, meta) {
       const s = slot(video);
-      s.duration = meta.duration; s.videoWidth = meta.videoWidth ?? s.videoWidth; s.videoHeight = meta.videoHeight ?? s.videoHeight; s.readyState = 1;
+      s.duration = meta.duration; s.videoWidth = meta.videoWidth ?? s.videoWidth; s.videoHeight = meta.videoHeight ?? s.videoHeight; s.readyState = meta.readyState ?? 2;
       video.dispatchEvent(new Event("loadedmetadata"));
     },
+    loadData(video, readyState = 2) { slot(video).readyState = readyState; video.dispatchEvent(new Event("loadeddata")); },
     deliverEvents(count = Infinity, video) {
       let done = 0;
       for (let i = 0; i < queue.length && done < count;) {
