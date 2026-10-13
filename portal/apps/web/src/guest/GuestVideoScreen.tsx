@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
 import { Check, ChevronLeft, ChevronRight, MessageSquare, MessageSquareWarning } from "lucide-react";
 import { framesToTimecode, type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestVideoDto } from "@quincy/shared";
 import { useMediaQuery } from "../lib/use-media-query";
@@ -7,6 +7,7 @@ import { Button } from "../components/reui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/reui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../components/reui/sheet";
 import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "../components/quincy/SheetCloseButton";
+import { ReviewPaneToggle, ReviewSplit, useReviewPane } from "../components/quincy/ReviewPane";
 import { VideoPlayer, type VideoPlayerControl } from "../components/quincy/VideoPlayer";
 import type { TimelineMarker } from "../components/quincy/VideoTimelineMarkers";
 import type { GuestApi, WriteResult } from "./guest-api";
@@ -110,6 +111,10 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const [clock, setClock] = useState<VideoFrameClock | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const phone = useMediaQuery("(max-width: 720px)");
+  // The side pane (#859): open / width are the per-browser preference the staff viewer shares. A phone keeps the drawer and ignores them.
+  const reviewPane = useReviewPane(phone);
+  const paneId = useId();
+  const setPaneOpen = reviewPane.setOpen;
 
   // Copy my notes (13d): the dialog, and what the last paste came to for the Version on screen.
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -210,7 +215,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     const frame = thread.hasMarkup && thread.drawingFrame !== null ? thread.drawingFrame : thread.startFrame;
     if (frame !== null) clock?.seekToFrame(frame);
     setDrawerOpen(false);
-  }, [clock]);
+    setPaneOpen(true); // a marker or note chosen while the pane is collapsed opens it (a phone has the drawer: `setOpen` ignores it there)
+  }, [clock, setPaneOpen]);
   const markupOverlay = useGuestMarkup(api, clock, selected, onMarkupGone, selectionCount);
   const watermark = video.premium && !video.unlocked;
 
@@ -387,7 +393,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     : null;
   const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} top={addNote} footer={footer} writing={writing} />;
 
-  return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-dvh flex-col bg-background text-foreground min-[721px]:h-dvh">
+  return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-dvh flex-1 flex-col bg-background text-foreground min-[721px]:min-h-0">
     <header className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-2)] border-b border-border bg-card px-[var(--space-5)] py-[var(--space-3)] text-card-foreground">
       {onBack && <Button type="button" variant="ghost" className={TOUCH} onClick={onBack}><ChevronLeft aria-hidden="true" />All videos</Button>}
       <h1 data-testid="guest-video-title" className="m-0 min-w-[160px] flex-1 truncate text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{video.title}</h1>
@@ -408,6 +414,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
           </SelectContent>
         </Select>
       </div>
+      {!phone && <ReviewPaneToggle open={reviewPane.open} onOpenChange={setPaneOpen} paneId={paneId} label="Notes" className={TOUCH} />}
       {phone && <Button type="button" variant="outline" aria-label={threads === null ? "Notes" : `Notes, ${threads.length}`} className={`${TOUCH} shrink-0`} onClick={() => { setDrawerOpen(true); }}><MessageSquare aria-hidden="true" />{threads !== null && <span className="[font:var(--type-label)]">{threads.length}</span>}</Button>}
       </div>
       <div data-testid="guest-delivery" className="flex flex-wrap items-center gap-[var(--space-2)] empty:hidden max-[721px]:basis-full">
@@ -422,12 +429,17 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
         {decisionNotice !== null && <p role="status" data-testid="guest-decision-notice" className="m-0 text-foreground-secondary [font:var(--type-label)]">{decisionNotice}</p>}
       </div>
     </header>
-    <div className="flex min-h-0 flex-1 flex-wrap min-[721px]:flex-nowrap min-[721px]:overflow-hidden">
-      <div className="flex min-h-0 min-w-0 flex-[999_1_640px] flex-col p-[var(--space-5)] min-[721px]:flex-1">
-        <VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} onMark={compose.onMark} overlay={overlay} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} />
-      </div>
-      {!phone && <aside data-surface="default" className="flex flex-[1_1_360px] flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-hidden min-[721px]:flex-[0_0_clamp(240px,28vw,360px)]">{panel}</aside>}
-    </div>
+    <ReviewSplit
+      open={reviewPane.open}
+      width={reviewPane.width}
+      onWidth={reviewPane.setWidth}
+      onNarrow={reviewPane.onNarrow}
+      paneId={paneId}
+      handleLabel="Resize notes"
+      stacked={phone}
+      player={<VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} />}
+      pane={phone ? null : <aside data-surface="default" className="flex flex-1 flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-hidden">{panel}</aside>}
+    />
     {phone && <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
       <SheetContent side="bottom" showCloseButton={false} data-testid="guest-notes-drawer" className="data-[side=bottom]:h-[80dvh] max-h-[80dvh] p-[var(--space-4)]">
         <SheetHeader className={`p-0 ${SHEET_CLOSE_CLEARANCE}`}><SheetTitle data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</SheetTitle></SheetHeader>

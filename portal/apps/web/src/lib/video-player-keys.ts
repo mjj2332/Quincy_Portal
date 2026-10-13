@@ -12,7 +12,7 @@ type KeyLike = Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey" | "s
 
 const FIELD = "input, textarea, select, [contenteditable]";
 /** Composites that own every key typed inside them (the Version select, a menu, a listbox). */
-const OWNS_KEYS = '[role="menu"], [role="menubar"], [role="listbox"], [role="combobox"], [role="tablist"], [role="radiogroup"], [role="spinbutton"], [role="textbox"], [role="grid"], [role="tree"]';
+const OWNS_KEYS = '[role="menu"], [role="menubar"], [role="listbox"], [role="combobox"], [role="tablist"], [role="radiogroup"], [role="spinbutton"], [role="textbox"], [role="grid"], [role="tree"], [role="separator"]';
 /** Where Space is the native activation key, so the player must not hijack it. */
 const SPACE_ACTIVATES = 'button, a[href], summary, [role="button"], [role="link"], [role="checkbox"], [role="switch"], [role="radio"], [role="tab"], [role="menuitem"], input[type="checkbox"], input[type="radio"]';
 /** Navigation keys a toggle group (a filter, the visibility switch) uses to move between its items: they must not also seek the film. */
