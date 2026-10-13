@@ -351,7 +351,7 @@ approval alone never releases anything.
 _Avoid_: Publish, deliver, approve (approval is the client's, informational decision)
 
 **Version download (staff)**:
-A staff member taking the original file of one live Version from the review viewer, as an attachment named
+A staff member taking the original file of one live Version from the review viewer or a Video card's ⋯ menu, as an attachment named
 `<Title> v<N>.mp4`. Separate from the stream (which never offers a download) and from a client's download on a
 Review link; each full download is audited as `video_version.download`.
 _Avoid_: Export (that is the NLE marker export), Release (a Release makes a Version available to a client)
