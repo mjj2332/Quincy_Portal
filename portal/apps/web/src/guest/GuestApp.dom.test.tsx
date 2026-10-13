@@ -3,7 +3,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GuestNoteThreadDto, GuestVideoDto } from "@quincy/shared";
 import { installVideoElementStub, type VideoElementStub } from "../testing/video-element";
+import { installLocalStorageShim } from "../testing/local-storage";
 import { mockViewport, type MockViewport } from "../testing/viewport";
+import { REVIEW_PANE_KEY } from "../lib/review-pane-prefs";
+import { resetUiPrefMemory } from "../lib/ui-prefs";
 import { GuestApp } from "./GuestApp";
 import { createGuestMediaTransport, type GuestApi } from "./guest-api";
 import { GuestVideoScreen } from "./GuestVideoScreen";
@@ -45,6 +48,7 @@ let sessionGone = false;
 let fetchMock: ReturnType<typeof vi.fn>;
 let stub: VideoElementStub;
 let viewport: MockViewport;
+let shim: ReturnType<typeof installLocalStorageShim>;
 let root: Root | null = null;
 let host: HTMLElement;
 
@@ -91,6 +95,7 @@ async function withLayout(run: () => Promise<void>) {
 const requests = () => fetchMock.mock.calls.map((call) => String(call[0]));
 
 beforeEach(() => {
+  shim = installLocalStorageShim(); resetUiPrefMemory();
   stub = installVideoElementStub();
   viewport = mockViewport({ width: 1440 });
   videos = [videoOf(1), videoOf(2), videoOf(3)]; notes = []; extra = null; log = []; sessionGone = false;
@@ -99,7 +104,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
-  root = null; host?.remove(); stub.dispose(); viewport.restore();
+  root = null; host?.remove(); stub.dispose(); viewport.restore(); shim.restore();
   window.history.replaceState(null, "", "/");
 });
 
@@ -351,6 +356,115 @@ describe("the video screen", () => {
     const count = byId("guest-notes-count")!;
     expect(count.textContent).toBe("1");
     expect(byId("guest-notes-heading")!.contains(count)).toBe(true);
+  });
+});
+
+describe("the notes pane (#859)", () => {
+  const toggle = () => byId("video-pane-toggle");
+  /** The pane when it is showing; a collapsed pane stays mounted but hidden (`mountedPane`). */
+  const mountedPane = () => byId("video-review-pane");
+  const pane = () => { const el = mountedPane(); return el && !el.hidden ? el : null; };
+  const handle = () => byId("video-review-handle");
+  const now = (el: Element) => Number(el.getAttribute("aria-valuenow"));
+  const press = async (target: Element, key: string, init: KeyboardEventInit = {}) => { await act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init })); }); };
+  const saved = () => JSON.parse(shim.values.get(REVIEW_PANE_KEY) ?? "null") as { open: boolean; width: number } | null;
+
+  it("opens at 360px with the toggle expanded and the notes in the pane", async () => {
+    videos = [videoOf(1)];
+    await open();
+    expect(toggle()!.getAttribute("aria-expanded")).toBe("true");
+    expect(pane()!.querySelector('[data-testid="guest-notes-panel"]')).not.toBeNull();
+    expect(now(handle()!)).toBe(360);
+    expect(pane()!.style.getPropertyValue("--review-pane-w")).toBe("360px");
+  });
+
+  it("the toggle collapses and restores the pane without remounting the film, and saves the choice", async () => {
+    videos = [videoOf(1)];
+    await open();
+    const film = host.querySelector("video");
+    await click(toggle()!);
+    expect(pane()).toBeNull();
+    expect(mountedPane()!.hidden).toBe(true);
+    expect(toggle()!.getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelector("video")).toBe(film);
+    expect(saved()).toEqual({ open: false, width: 360 });
+    await click(toggle()!);
+    expect(pane()).not.toBeNull();
+    expect(host.querySelector("video")).toBe(film);
+  });
+
+  it("keyboard on the handle resizes and persists across a remount, and never steps the film", async () => {
+    videos = [videoOf(1)];
+    await open();
+    const writes = stub.writes.length;
+    const h = handle()!;
+    await act(async () => { h.focus(); });
+    await press(h, "ArrowLeft", { shiftKey: true });
+    expect(now(handle()!)).toBe(424);
+    await press(h, "ArrowRight");
+    expect(now(handle()!)).toBe(408);
+    expect(stub.writes.length).toBe(writes);
+    expect(saved()).toEqual({ open: true, width: 408 });
+    await act(async () => { root!.unmount(); }); root = null; host.remove();
+    await open();
+    expect(now(handle()!)).toBe(408);
+  });
+
+  it("shares one key with the staff viewer: a collapsed choice made there is collapsed here", async () => {
+    shim.values.set(REVIEW_PANE_KEY, JSON.stringify({ open: false, width: 520 }));
+    videos = [videoOf(1)];
+    await open();
+    expect(pane()).toBeNull();
+    await click(toggle()!);
+    expect(now(handle()!)).toBe(520);
+  });
+
+  it("collapsing with focus in the pane moves focus to the toggle", async () => {
+    videos = [videoOf(1)];
+    await open();
+    const panel = byId("guest-notes-panel")!;
+    await act(async () => { panel.focus(); });
+    expect(pane()!.contains(document.activeElement)).toBe(true);
+    await click(toggle()!);
+    expect(document.activeElement).toBe(toggle());
+  });
+
+  it("choosing a marker while the pane is collapsed opens it on the notes", async () => {
+    shim.values.set(REVIEW_PANE_KEY, JSON.stringify({ open: false, width: 360 }));
+    notes = [note()];
+    videos = [videoOf(1)];
+    await open();
+    expect(pane()).toBeNull();
+    const marker = host.querySelector<HTMLElement>("[data-marker-id]")!;
+    expect(marker).not.toBeNull();
+    // The lane picks the nearest marker by x within its box: give the box a width (happy-dom has no layout) and press at the marker's frame (50 of 3000).
+    const lane = marker.parentElement!;
+    lane.getBoundingClientRect = () => ({ left: 0, top: 0, right: 3000, bottom: 12, width: 3000, height: 12, x: 0, y: 0, toJSON: () => ({}) });
+    await act(async () => { lane.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 50 })); });
+    expect(pane()).not.toBeNull();
+    expect(toggle()!.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("a phone keeps the drawer: no toggle, no handle, no pane column", async () => {
+    await viewport.set({ width: 390, coarse: true });
+    videos = [videoOf(1)];
+    await open();
+    expect(toggle()).toBeNull();
+    expect(handle()).toBeNull();
+    expect(pane()).toBeNull();
+  });
+
+  it("puts notices and the video screen in one bounded column, so a notice shortens the screen instead of overflowing", async () => {
+    videos = [videoOf(1)];
+    await open();
+    const screen = byId("guest-video-screen")!;
+    const column = screen.parentElement!;
+    expect(column.getAttribute("data-testid")).toBe("guest-column");
+    expect(column.className).toContain("min-[721px]:h-dvh");
+    expect(column.className).toContain("flex-col");
+    expect(screen.className).toContain("flex-1");
+    expect(screen.className).toContain("min-h-0");
+    expect(screen.className).not.toContain("min-[721px]:h-dvh");
   });
 });
 
