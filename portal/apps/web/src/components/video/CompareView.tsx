@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from "react";
 import { Pause, Play, RotateCcw, StepBack, StepForward, Volume2, VolumeX } from "lucide-react";
-import { aOf, bOf, framesToTimecode, rationalToNumber, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
+import { aOf, bOf, rationalToNumber, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { usePictureBox } from "../../lib/use-picture-box";
 import { useCompareTransport, type CompareSideHandle } from "../../lib/use-compare-transport";
@@ -12,6 +12,8 @@ import { Button } from "../quincy/Button";
 import { Notice } from "../quincy/Notice";
 import { VideoStage } from "../quincy/VideoStage";
 import { COARSE, IconTip, type VideoPlayerControl } from "../quincy/VideoPlayer";
+import { TimeFormatMenu } from "../quincy/TimeFormatMenu";
+import { useFrameLabeller } from "../../lib/time-format-prefs";
 import { VideoPendingRangeBand, VideoTimelineMarkers, type TimelineMarker } from "../quincy/VideoTimelineMarkers";
 import { Badge } from "../reui/badge";
 import { Button as UiButton } from "../reui/button";
@@ -118,7 +120,8 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
   const frameA = clamp(shownA, 0, lastA);
   const frameB = clamp(shownB, 0, lastB);
   const domainLength = state.domain.end - state.domain.start + 1;
-  const timecodeOf = useCallback((version: VideoVersionDto, frame: number) => framesToTimecode(frame, { nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame }, version.startTimecodeFrames ?? 0), []);
+  const labelOf = useFrameLabeller();
+  const timecodeOf = useCallback((version: VideoVersionDto, frame: number) => labelOf(version, frame), [labelOf]);
 
   // --- placing a stage that is mounting: where the shared position maps for it now ---
   const initialA = clamp(position.current, 0, lastA);
@@ -371,6 +374,7 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
             <span>{`${labels.a} ${timecodeOf(versionA, frameA)}`}</span>
             <span className="text-foreground-secondary">{`${labels.b} ${timecodeOf(versionB, frameB)}`}</span>
           </output>
+          <TimeFormatMenu />
         </div>
       </div>
     </div>

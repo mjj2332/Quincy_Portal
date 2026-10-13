@@ -5,6 +5,7 @@ import type { GuestNoteThreadDto, GuestSessionResponse, GuestVideoDto } from "@q
 import { installVideoElementStub, type VideoElementStub } from "../testing/video-element";
 import { installLocalStorageShim } from "../testing/local-storage";
 import { resetUiPrefMemory } from "../lib/ui-prefs";
+import { TIME_FORMAT_KEY } from "../lib/time-format-prefs";
 import { mockViewport, type MockViewport } from "../testing/viewport";
 import { GuestApp } from "./GuestApp";
 
@@ -1355,5 +1356,39 @@ describe("collapsing the notes pane keeps its work (#859)", () => {
     expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(true);
     await act(async () => { field.props.get("guest-reply-body")!.onUploadingChange!(false); });
     expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("the time format on the guest page (#860)", () => {
+  let shim: ReturnType<typeof installLocalStorageShim>;
+  beforeEach(() => { shim = installLocalStorageShim(); resetUiPrefMemory(); });
+  afterEach(() => { shim.restore(); resetUiPrefMemory(); });
+  const trigger = () => document.querySelector<HTMLElement>('[data-testid="video-time-format-trigger"]')!;
+  const choose = async (id: string) => {
+    await act(async () => { trigger().click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush();
+    await act(async () => { document.querySelector<HTMLElement>(`[data-testid="video-time-format-${id}"]`)!.click(); await Promise.resolve(); });
+    await flush();
+  };
+
+  it("offers the menu on the player; picking Frames rewrites the note anchors and the composer's anchor, and the choice is saved", async () => {
+    notes = { [asset(10)]: [note(1, { startFrame: 50 })] };
+    await open();
+    await atSeconds(2);
+    expect(trigger().getAttribute("aria-label")).toBe("Time format: Timecode");
+    expect(byId("guest-note-anchor")!.textContent).toBe("00:00:02:00");
+    await choose("frames");
+    expect(byId("guest-note-anchor")!.textContent).toBe("50");
+    await click(byId("guest-add-note"));
+    expect(byId("guest-composer-anchor")!.textContent).toBe("At 50");
+    expect(JSON.parse(shim.values.get(TIME_FORMAT_KEY)!)).toBe("frames");
+  });
+
+  it("a value written under the one browser-wide key (the staff viewer's) is what the guest shows", async () => {
+    shim.values.set(TIME_FORMAT_KEY, JSON.stringify("standard"));
+    notes = { [asset(10)]: [note(1, { startFrame: 50 })] };
+    await open();
+    expect(trigger().getAttribute("aria-label")).toBe("Time format: Standard");
+    expect(byId("guest-note-anchor")!.textContent).toBe("0:02");
   });
 });

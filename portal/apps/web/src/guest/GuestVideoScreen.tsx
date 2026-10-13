@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
 import { Check, ChevronLeft, ChevronRight, MessageSquare, MessageSquareWarning } from "lucide-react";
-import { framesToTimecode, type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestVideoDto } from "@quincy/shared";
+import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestVideoDto } from "@quincy/shared";
+import { useFrameLabel } from "../lib/time-format-prefs";
 import { useMediaQuery } from "../lib/use-media-query";
 import type { VideoFrameClock } from "../lib/video-frame-clock";
 import { Button } from "../components/reui/button";
@@ -202,8 +203,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const playerRef = useRef<VideoPlayerControl>(null);
   usePlayerKeysFromScreen(playerRef);
 
-  const base = useMemo(() => ({ nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame }), [version.tcNominalFps, version.tcDropFrame]);
-  const timecode = useCallback((frame: number) => framesToTimecode(frame, base, version.startTimecodeFrames ?? 0), [base, version.startTimecodeFrames]);
+  const timecode = useFrameLabel(version);
   const markers = useMemo<TimelineMarker[]>(() => (threads ?? []).filter((thread) => thread.startFrame !== null && !thread.deleted)
     .map((thread) => ({ id: thread.id, startFrame: thread.startFrame!, endFrame: thread.endFrame, tone: "public" as const, selected: thread.id === selectedId, createdAt: thread.createdAt })), [threads, selectedId]);
   const selected = threads?.find((thread) => thread.id === selectedId) ?? null;

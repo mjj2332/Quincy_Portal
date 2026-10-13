@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { framesToTimecode, type VideoNotePasteCommitResponse, type VideoNotePastePreviewResponse, type VideoNotePasteRow, type VideoNotePasteSkipReason, type VideoVersionDto } from "@quincy/shared";
+import { type VideoNotePasteCommitResponse, type VideoNotePastePreviewResponse, type VideoNotePasteRow, type VideoNotePasteSkipReason, type VideoVersionDto } from "@quincy/shared";
 import type { NoteFormStore, PasteClipboard } from "../../lib/video-note-form-store";
+import { useFrameLabeller } from "../../lib/time-format-prefs";
 import { noteAnchorLabel } from "../../lib/video-note-view";
 import { cn } from "../../lib/utils";
 import { Button } from "../quincy/Button";
@@ -28,7 +29,6 @@ type Mapped = Extract<VideoNotePasteRow, { status: "mapped" }>;
 type Skipped = Extract<VideoNotePasteRow, { status: "skipped" }>;
 
 const MONO = "[font:var(--type-mono)] tabular-nums whitespace-nowrap";
-const timecodeOf = (version: VideoVersionDto) => (frame: number) => framesToTimecode(frame, { nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame }, version.startTimecodeFrames ?? 0);
 
 /**
  * Paste the notes copied from another Version of this Video onto the one on screen (#741 5c-ui). It asks the server for the plan (nothing is
@@ -86,8 +86,9 @@ export function VideoNotePasteDialog({ open, onOpenChange, store, assetId, targe
   const nothingPastable = preview !== null && mapped.length === 0 && draft.offset === 0 && !left.some((row) => row.reason === "out_of_range");
   const settled = preview !== null && view.status === "ok" && preview.offsetFrames === draft.offset;
 
-  const sourceTc = useMemo(() => (source ? timecodeOf(source) : (frame: number) => String(frame)), [source]);
-  const targetTc = useMemo(() => timecodeOf(target), [target]);
+  const labelOf = useFrameLabeller();
+  const sourceTc = useMemo(() => (source ? (frame: number) => labelOf(source, frame) : (frame: number) => String(frame)), [source, labelOf]);
+  const targetTc = useMemo(() => (frame: number) => labelOf(target, frame), [target, labelOf]);
   const sourceLabel = `v${clipboard.sourceVersion}`;
 
   function submit() {

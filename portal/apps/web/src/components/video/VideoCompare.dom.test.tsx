@@ -8,6 +8,9 @@ import { QuincyQueryProvider } from "../../lib/query-client";
 import "../../testing/dom-polyfills";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
+import { installLocalStorageShim } from "../../testing/local-storage";
+import { resetUiPrefMemory } from "../../lib/ui-prefs";
+import { TIME_FORMAT_KEY } from "../../lib/time-format-prefs";
 import { mockViewport, type MockViewport } from "../../testing/viewport";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
 vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
@@ -144,7 +147,9 @@ async function land(a: number, b = a) {
 }
 const readoutA = () => tid("video-compare-readout")!.textContent!;
 
+let shim: ReturnType<typeof installLocalStorageShim>;
 beforeEach(() => {
+  shim = installLocalStorageShim(); resetUiPrefMemory();
   notifyManager.setScheduler((callback) => callback());
   stub = installVideoElementStub();
   viewport = mockViewport({ width: 1440 });
@@ -154,7 +159,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
-  root = null; resetVideoUploadStore(); stub.dispose(); viewport.restore(); document.body.replaceChildren(); vi.unstubAllGlobals(); vi.useRealTimers();
+  root = null; resetVideoUploadStore(); stub.dispose(); viewport.restore(); shim.restore(); resetUiPrefMemory(); document.body.replaceChildren(); vi.unstubAllGlobals(); vi.useRealTimers();
 });
 
 describe("Compare: who gets the button (#741 7c)", () => {
@@ -324,6 +329,27 @@ describe("Compare: readouts follow each clock (#741 7c)", () => {
     await act(async () => { stub.finishSeek(vid("a")); stub.presentFrame(vid("a"), 299 / 25); stub.finishSeek(vid("b")); stub.presentFrame(vid("b"), 149 / 25); });
     await flush(2);
     expect(readoutA()).toContain("v2 01:00:05:24");
+  });
+});
+
+describe("Compare: time format (#860)", () => {
+  it("a stored Frames choice shows frame numbers for both sides", async () => {
+    shim.values.set(TIME_FORMAT_KEY, JSON.stringify("frames"));
+    await openCompare({}, 0);
+    expect(readoutA()).toBe("v3 0v2 0");
+  });
+
+  it("hosts the same menu beside its readout: picking Standard there rewrites the readout, and the choice is the shared one", async () => {
+    await openCompare({}, 0);
+    expect(readoutA()).toBe("v3 01:00:00:00v2 01:00:00:00");
+    const menus = document.querySelectorAll('[data-testid="video-time-format-trigger"]');
+    expect(menus.length).toBe(1);
+    await act(async () => { (menus[0] as HTMLElement).click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush(2);
+    await act(async () => { tid("video-time-format-standard")!.click(); await Promise.resolve(); });
+    await flush(2);
+    expect(readoutA()).toBe("v3 0:00v2 0:00");
+    expect(JSON.parse(shim.values.get(TIME_FORMAT_KEY)!)).toBe("standard");
   });
 });
 

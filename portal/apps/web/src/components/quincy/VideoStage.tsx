@@ -16,7 +16,7 @@ const CHIP_CHROME_PX = 40;
  * it is handed the picture box (the box the picture really occupies, null until measured) so markup can be mapped onto the picture and not
  * the letterbox bands (#741 6b-ui). Key it by Version like the player: a new Version is a new element.
  */
-export function VideoStage({ streamUrl, title, width, height, timecode, frame, onVideo, overlay, onMediaError }: {
+export function VideoStage({ streamUrl, title, width, height, timecode, frame, frameSuffix = true, onVideo, overlay, onMediaError }: {
   streamUrl: string;
   title: string;
   /** The stored size: the stage's shape on a phone, and the picture box's stand-in until the decoded size is known. */
@@ -26,6 +26,8 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, o
   timecode: string;
   /** The frame on screen, appended to the chip where the picture is wide enough. */
   frame: number;
+  /** False when `timecode` already is the frame number (the Frames format): the chip then reads `frame N`, not `N · frame N`. */
+  frameSuffix?: boolean;
   onVideo?: (video: HTMLVideoElement | null) => void;
   overlay?: ReactNode | ((box: Box | null) => ReactNode);
   /** The element reported a media error (after the stage has shown its own notice). The guest page rechecks access here: a revoked link fails a range request the same way a bad file does. */
@@ -40,7 +42,7 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, o
   onVideoRef.current = onVideo;
   const attach = useCallback((element: HTMLVideoElement | null) => { setVideo(element); onVideoRef.current?.(element); }, []);
 
-  const chipFull = `${timecode} · frame ${frame}`;
+  const chipFull = frameSuffix ? `${timecode} · frame ${frame}` : `frame ${frame}`;
   const chip = box && box.width >= chipFull.length * CHIP_GLYPH_PX + CHIP_CHROME_PX ? chipFull : timecode;
 
   return <div
