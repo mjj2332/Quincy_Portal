@@ -1,7 +1,8 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { baseEnv, database, ids, request, seedFixture, type Who } from "./embedded-media-support";
 import { clearDeliveryFlags, openDelivery, seedAsset, wipeDelivery } from "./delivery-support";
-import { seedVideoVersion } from "./video-review-support";
+import { clearVideoFlags, seedVideoVersion, setVideoFlags } from "./video-review-support";
+import { openGuestGate } from "./guest-support";
 import { syncDeliveryReviewLink } from "../src/lib/delivery-review-link";
 
 /**
@@ -196,5 +197,44 @@ describe("the Admin backfill route (POST /api/admin/delivery-review-links/sync)"
     const a = await (await sync({ limit: 1 })).json() as Json; expect(a.scanned).toBe(1); expect(a.nextCursor).toBeNull();
     expect((await sync({ cursor: ids.project })).status).toBe(200);
     expect((await sync({ limit: 0 })).status).toBe(400);
+  });
+});
+
+describe("the client digest names only what THIS sync added (#847)", () => {
+  type Row = { event_type: string; video_id: string; asset_id: string | null };
+  const digest = async () => (await database.DB.prepare("SELECT event_type, video_id, asset_id FROM guest_notification_digest ORDER BY rowid").all<Row>()).results;
+  const subscribe = async (linkId: string) => {
+    const guestId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO guest_reviewers (id, email_normalized, display_name, created_at) VALUES (?, ?, 'Gina Guest', ?)").bind(guestId, `${guestId}@guest.test`, now),
+      database.DB.prepare("INSERT INTO guest_link_members (id, link_id, guest_id, first_verified_at, last_verified_at, last_seen_at, unsubscribed_at) VALUES (?, ?, ?, ?, ?, ?, NULL)").bind(crypto.randomUUID(), linkId, guestId, now, now, now),
+    ]);
+  };
+  beforeEach(async () => { await openGuestGate(); await setVideoFlags("video_review_notify_client"); });
+  afterEach(async () => { vi.useRealTimers(); await database.DB.prepare("DELETE FROM guest_reviewers WHERE email_normalized LIKE '%@guest.test'").run(); await clearVideoFlags(); });
+
+  it("two syncs by one staff member in the same millisecond tell the subscriber of each film exactly once", async () => {
+    const a = await film(1, { title: "A" }); const b = await film(1, { title: "B" }); const c = await film(1, { title: "C" });
+    await publish([a.current], null);
+    const [link] = await links(); await subscribe(link!.id);
+    await database.DB.prepare("DELETE FROM guest_notification_digest").run();
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(Date.now() + 5_000);
+    expect((await publish([a.current, b.current], 1)).ok).toBe(true); // B joins; A is already on the link
+    expect((await publish([a.current, b.current, c.current], 2)).ok).toBe(true); // a second sync, same millisecond and actor: C joins
+    expect((await digest()).filter((row) => row.event_type === "video_added").map((row) => row.video_id).sort()).toEqual([b.videoId, c.videoId].sort());
+  });
+
+  it("two syncs in the same millisecond do not repeat a Version grant", async () => {
+    const a = await film(1, { title: "A" }); const c = await film(1, { title: "C" });
+    await publish([a.current], null);
+    const [link] = await links(); await subscribe(link!.id);
+    await database.DB.prepare("DELETE FROM guest_notification_digest").run();
+    const second = await addVersion(a, 2);
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(Date.now() + 5_000);
+    expect((await publish([second], 1)).ok).toBe(true); // A's Version 2 is granted
+    expect((await publish([second, c.current], 2)).ok).toBe(true); // C joins in the same millisecond
+    const rows = await digest();
+    expect(rows.filter((row) => row.event_type === "version_granted")).toEqual([{ event_type: "version_granted", video_id: a.videoId, asset_id: second }]);
+    expect(rows.filter((row) => row.event_type === "video_added")).toEqual([{ event_type: "video_added", video_id: c.videoId, asset_id: null }]);
   });
 });

@@ -28,6 +28,29 @@ describe("Publish settles the stage move's surfaces", () => {
   });
 });
 
+describe("a local Review links invalidation is not swallowed by a read already in flight (#847)", () => {
+  it("the answer to the first read, issued before the Publish, does not become the cache", async () => {
+    const { QueryObserver } = await import("@tanstack/react-query");
+    const { invalidateProjectResources } = await vi.importActual<typeof import("./project-data")>("./project-data");
+    const runtime = new ProjectQueryRuntime(client, "local");
+    const key = projectDataKeys.reviewLinks(P);
+    let resolveOld!: (value: string) => void;
+    const reads = vi.fn<() => Promise<string>>();
+    reads.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+    reads.mockResolvedValueOnce("fresh");
+    const observer = new QueryObserver(client, { queryKey: key, queryFn: reads, staleTime: 15_000 });
+    const unsubscribe = observer.subscribe(() => undefined);
+    await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(1));
+    const done = invalidateProjectResources(client, { projectId: P, resources: [{ kind: "review-links" }] }, false);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveOld("stale");
+    await done;
+    await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(client.getQueryData(key)).toBe("fresh"));
+    unsubscribe(); runtime.dispose();
+  });
+});
+
 describe("premium writes", () => {
   const seed = () => client.setQueryData(projectDataKeys.assets(P, "edited"), [{ id: A, premium: false, premiumUnlocked: false }, { id: "other", premium: false, premiumUnlocked: false }]);
   it("cancel in-flight reads, patch the cached flags from the response, then refetch", async () => {

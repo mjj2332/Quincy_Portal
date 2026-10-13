@@ -3,7 +3,6 @@ import { auditMeta } from "./audit";
 import { guestDigestStatements } from "./guest-digest";
 import { newId } from "./ids";
 import { hashToken, randomToken } from "./opaque-token";
-import { SQL_UUID_V4 } from "./sql-uuid";
 import { LIVE_VERSION, LIVE_VIDEO } from "./video-live-sql";
 
 /**
@@ -115,11 +114,11 @@ export function deliveryReviewSyncStatements(db: D1Database, input: DeliverySync
       WHERE link_id = ${LINK} AND revoked_at IS NULL
         AND NOT EXISTS (SELECT 1 FROM (${QG}) g WHERE g.video_id = review_link_version_grants.video_id AND g.asset_id = review_link_version_grants.asset_id) AND ${AUDITED}`),
     run(`INSERT INTO review_link_videos (id, link_id, video_id, project_id, added_by, added_at)
-      SELECT ${SQL_UUID_V4}, ${LINK}, q.video_id, {project}, {actor}, {now} FROM (${QV}) q WHERE NOT ${LIVE_MEMBER("q.video_id")} AND ${AUDITED}`),
+      SELECT {sync} || '/' || q.video_id, ${LINK}, q.video_id, {project}, {actor}, {now} FROM (${QV}) q WHERE NOT ${LIVE_MEMBER("q.video_id")} AND ${AUDITED}`),
     run(`INSERT INTO review_link_version_grants (id, link_id, video_id, asset_id, granted_by, granted_at)
-      SELECT ${SQL_UUID_V4}, ${LINK}, g.video_id, g.asset_id, {actor}, {now} FROM (${QG}) g WHERE NOT ${LIVE_GRANT("g.asset_id")} AND ${AUDITED}`),
+      SELECT {sync} || '/' || g.asset_id, ${LINK}, g.video_id, g.asset_id, {actor}, {now} FROM (${QG}) g WHERE NOT ${LIVE_GRANT("g.asset_id")} AND ${AUDITED}`),
     // The digest: subscribers are told once of what this sync added, exactly as an ordinary link's add-Video and grant writes tell them (15b).
-    ...guestDigestStatements(db, { kind: "delivery_sync", projectId: input.projectId, actorId: input.principal.id }, syncAuditId, input.now),
+    ...guestDigestStatements(db, { kind: "delivery_sync", projectId: input.projectId, syncId: syncAuditId }, syncAuditId, input.now),
     run(`UPDATE client_links SET updated_at = {now} WHERE id = ${LINK} AND delivery_review = 1 AND ${AUDITED}`),
   );
   return { statements, syncAuditId };

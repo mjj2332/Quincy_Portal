@@ -347,8 +347,8 @@ export function withDependentResources(resources: readonly ProjectDataResource[]
   return [...new Map(all.map((resource) => [JSON.stringify(resource), resource])).values()];
 }
 
-/** Resources whose first read can be in flight when they change (#776 for the Video lists, #787 for the Delivery candidates). */
-export const invalidatesPastPendingRead = (resource: ProjectDataResource) => resource.kind === "videos" || resource.kind === "video-trash" || resource.kind === "video-decisions" || resource.kind === "delivery-candidates";
+/** Resources whose first read can be in flight when they change (#776 for the Video lists, #787 for the Delivery candidates, #847 for the Review links a Publish or Unlock changes). */
+export const invalidatesPastPendingRead = (resource: ProjectDataResource) => resource.kind === "videos" || resource.kind === "video-trash" || resource.kind === "video-decisions" || resource.kind === "delivery-candidates" || resource.kind === "review-links";
 
 export function getProjectQueryRuntime(queryClient: QueryClient): ProjectQueryRuntime | undefined {
   return runtimes.get(queryClient);
