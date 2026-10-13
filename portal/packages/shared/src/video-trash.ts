@@ -37,6 +37,36 @@ export type VideoRemoveInput = z.infer<typeof videoRemoveInputSchema>;
 export const videoRemoveResponseSchema = z.object({ video: videoDtoSchema.nullable() }).strict();
 export type VideoRemoveResponse = z.infer<typeof videoRemoveResponseSchema>;
 
+/**
+ * What deleting a whole Video (#868) takes out of sight: every live Version. `versions` and `latestVersion` identify the Version set the person confirmed (an equal-size replacement changes
+ * `latestVersion`); the counts run over those Versions. `uploading` is an active upload reservation, `published` a Client Delivery current set that holds any Version of the Video (a trashed
+ * one included): either blocks the delete.
+ */
+export const videoDeletionImpactSchema = z.object({
+  versions: z.number().int().positive(),
+  latestVersion: z.number().int().positive(),
+  uploading: z.boolean(),
+  published: z.boolean(),
+  notes: count,
+  decisions: count,
+  releases: count,
+  links: z.array(z.object({ id: uuid, label: z.string().nullable() }).strict()),
+}).strict();
+export type VideoDeletionImpact = z.infer<typeof videoDeletionImpactSchema>;
+
+/** `POST .../videos/:videoId/remove`. `expected` is what the person confirmed (links as a count). */
+export const videoDeleteInputSchema = z.object({
+  expected: z.object({ versions: z.number().int().positive(), latestVersion: z.number().int().positive(), notes: count, decisions: count, releases: count, links: count }).strict(),
+}).strict();
+export type VideoDeleteInput = z.infer<typeof videoDeleteInputSchema>;
+
+/** 200 from delete. Undo is the existing Video restore. */
+export const videoDeleteResponseSchema = z.object({ videoId: uuid, versionCount: z.number().int().positive() }).strict();
+export type VideoDeleteResponse = z.infer<typeof videoDeleteResponseSchema>;
+
+/** 409 `impact_changed` from delete carries the impact as it is now. */
+export const videoDeletionRefusalSchema = z.object({ error: z.string(), code: z.literal("impact_changed"), impact: videoDeletionImpactSchema }).strict();
+
 /** 200 from either restore: the restored Video. */
 export const videoRestoreResponseSchema = z.object({ video: videoDtoSchema }).strict();
 export type VideoRestoreResponse = z.infer<typeof videoRestoreResponseSchema>;

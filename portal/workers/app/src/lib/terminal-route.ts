@@ -280,6 +280,8 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/api/projects/:projectId/delivery/preview-media/:assetId/thumb", class: "scoped" },
   { method: "GET", path: "/api/projects/:projectId/video-versions/:assetId/removal-impact", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/video-versions/:assetId/remove", class: "scoped" },
+  { method: "GET", path: "/api/projects/:projectId/videos/:videoId/removal-impact", class: "scoped" },
+  { method: "POST", path: "/api/projects/:projectId/videos/:videoId/remove", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/video-versions/:assetId/restore", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/videos/:videoId/restore", class: "scoped" },
   { method: "GET", path: "/api/projects/:projectId/video-trash", class: "scoped" },
