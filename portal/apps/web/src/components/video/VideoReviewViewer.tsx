@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, Columns2, DownloadIcon, Link2 } from "lucide-react";
+import { ChevronLeft, Columns2, DownloadIcon, Link2, Trash2 } from "lucide-react";
 import { framesToTimecode, videoVersionDownloadUrl, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
 import { registerToastHost } from "../../lib/toast-host";
 import { hasOpenAlertDialog } from "../../lib/alert-dialog-press";
@@ -7,6 +7,8 @@ import { useMediaQuery } from "../../lib/use-media-query";
 import type { CompareSideId, CompareStore } from "../../lib/video-compare-store";
 import { OverlayContainerContext } from "../OverlayContainerContext";
 import { Button } from "../reui/button";
+import { IconButton } from "../quincy/icon-button";
+import type { VersionRemovalHandle } from "./VideoVersionMenu";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "../reui/dialog";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
 import { CopyTextButton } from "./CopyTextButton";
@@ -191,10 +193,23 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     }
   }, [versionIds, video.id, assetId, video.currentAssetId, compareStore, exitCompare]);
   /** The Version was removed (#776 E): state that holds nothing typed lets go, and the viewer moves to the Video's current Version. Typed state goes through `captureDrafts`. */
+  const assetIdRef = useRef(assetId);
+  assetIdRef.current = assetId;
   const onVersionRemoved = useCallback((removed: { assetId: string; videoId: string; video: VideoDto | null }) => {
     compareStore?.dropVersion(removed.assetId);
-    if (removed.video !== null) { setResume(null); setAssetId(removed.video.currentAssetId); }
+    // Move only when the Version on show is the one that went (#862: a row can remove another Version); the film's other Versions leave the person where they are.
+    if (removed.video !== null && removed.assetId === assetIdRef.current) { setResume(null); setAssetId(removed.video.currentAssetId); }
   }, [compareStore]);
+  // The Version list's own rows (#862): the list closes without handing focus back to its trigger, because the confirmation takes it and returns it to the Version select.
+  const removeRef = useRef<VersionRemovalHandle>(null);
+  const [versionListOpen, setVersionListOpen] = useState(false);
+  const handOff = useRef(false);
+  const rowsDisabled = trash?.archived === true;
+  const removeFromRow = (candidate: VideoDto["versions"][number]) => {
+    handOff.current = true;
+    setVersionListOpen(false);
+    removeRef.current?.open(candidate.assetId, () => document.getElementById(VERSION_SELECT_ID));
+  };
   /**
    * At the moment the person confirms Remove: notes the edit revision of each slot the removal retires. The returned function, run when the answer is applied, retires a slot only if it has not
    * been edited since, so anything typed after the confirmation (the answer was slow, the film came back and was drafted on) survives. `whole`: the Video went, so its payment reference too.
@@ -299,15 +314,22 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       </div>
       {!comparing && <div data-testid="video-version-group" className="flex min-w-0 max-w-full items-center gap-[var(--space-2)]">
         <label htmlFor={VERSION_SELECT_ID} className="shrink-0 text-foreground-secondary [font:var(--type-label)]">Version</label>
-        <Select value={version.assetId} onValueChange={(next) => { if (typeof next === "string") { setResume(null); setAssetId(next); } }}>
+        <Select open={versionListOpen} onOpenChange={(next) => { if (next) handOff.current = false; setVersionListOpen(next); }} value={version.assetId} onValueChange={(next) => { if (typeof next === "string") { setResume(null); setAssetId(next); } }}>
           <SelectTrigger id={VERSION_SELECT_ID} data-testid="video-version-trigger" className="pointer-coarse:min-h-11 max-[721px]:min-h-11 min-w-0 max-w-full">
             <SelectValue>{() => <span data-testid="video-version-label" className="block truncate">{optionLabel(version)}</span>}</SelectValue>
           </SelectTrigger>
-          <SelectContent className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
-            {video.versions.map((candidate) => <SelectItem key={candidate.assetId} value={candidate.assetId} className="pointer-coarse:min-h-11 max-[721px]:min-h-11">{optionLabel(candidate)}</SelectItem>)}
+          <SelectContent finalFocus={() => (handOff.current ? false : undefined)} className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
+            {video.versions.map((candidate) => <SelectItem key={candidate.assetId} value={candidate.assetId} className="pointer-coarse:min-h-11 max-[721px]:min-h-11">{optionLabel(candidate)}{trash && <IconButton
+              tabIndex={-1} aria-hidden="true" data-testid="video-version-row-remove" data-asset-id={candidate.assetId} title={`Remove version ${candidate.version}`}
+              disabled={rowsDisabled || (video.uploading != null && video.versions.length === 1)}
+              className="ml-auto text-foreground"
+              // The option commits on pointerdown/mouseup/click: none of them may reach it from the icon.
+              onPointerDown={(event) => { event.stopPropagation(); }} onMouseUp={(event) => { event.stopPropagation(); }}
+              onClick={(event) => { event.stopPropagation(); event.preventDefault(); removeFromRow(candidate); }}
+            ><Trash2 aria-hidden="true" /></IconButton>}</SelectItem>)}
           </SelectContent>
         </Select>
-        {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} /></Suspense>}
+        {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} removeRef={removeRef} /></Suspense>}
       </div>}
       <div data-testid="video-header-actions" className="ml-auto flex flex-wrap items-center justify-end gap-x-[var(--space-4)] gap-y-[var(--space-2)] max-[721px]:ml-0 max-[721px]:justify-start">
       {deepLink && !comparing && <CopyTextButton text={deepLink.href(version.version)} label="Copy link" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}
