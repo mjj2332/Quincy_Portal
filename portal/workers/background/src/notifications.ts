@@ -3,7 +3,7 @@ import {
   emitNotifications,
   notificationCopy,
   projectNotificationRecipients,
-  pruneReadNotifications,
+  pruneExpiredNotifications,
   STALLED_NOTIFICATION_AGE_MS,
   type NotificationType,
 } from "@quincy/db";
@@ -152,8 +152,9 @@ async function logStalledAutoHdrClaimSkip(env: Env, row: StalledAutoHdrCandidate
 
 export async function pruneNotifications(env: Env, now = Date.now()): Promise<void> {
   try {
-    const deleted = await pruneReadNotifications(env.DB, now);
-    if (deleted) console.log("Pruned read notifications", { deleted });
+    const counts = await pruneExpiredNotifications(env.DB, now);
+    const { drained, ...removed } = counts;
+    if (Object.values(removed).some(Boolean) || !drained) console.log("Pruned expired notifications", counts);
   } catch (error) {
     console.error("Notification retention cleanup failed", { error });
   }

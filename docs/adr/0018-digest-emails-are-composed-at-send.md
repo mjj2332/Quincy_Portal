@@ -50,3 +50,10 @@ many of them. This ADR records where that email is assembled.
   ledger outcome is met for ordinary items and deliberately not for activity). Activity never emails inline,
   for any cadence; an Immediately user's activity goes out in the hourly digest. Turning the switch off
   suppresses pending activity (`activity_excluded`) at the next slot, including a toggle that races composition.
+
+## Note (2026-10-13, #856): digest items are kept for 30 days
+
+The item's `state` and `outcome_code` above are the audit trail for activity email only for as long as the row exists. Since #856 the hourly
+retention job deletes digest items (and digests, ledger rows and outbox intents) once they are 30 days old, so they are a 30-day record, not a permanent one.
+The delete is explicit and atomic with the parent: an item whose `ledger_id` or `digest_id` was nulled by `SET NULL` would be claimable again and
+could send twice.

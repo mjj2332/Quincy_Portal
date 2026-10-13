@@ -111,17 +111,21 @@ export {
 } from "./stage-board-bundles";
 export {
   EMAIL_ENABLED_EVENTS,
-  READ_NOTIFICATION_RETENTION_MS,
   STALLED_NOTIFICATION_AGE_MS,
   emitNotifications,
   notificationCopy,
   projectNotificationRecipients,
-  pruneReadNotifications,
   type EmitNotificationInput,
   type NotificationEmail,
   type NotificationRecipient,
   type NotificationType
 } from "./notifications";
+export {
+  NOTIFICATION_RETENTION_MS,
+  pruneExpiredNotifications,
+  type NotificationRetentionCounts,
+  type NotificationRetentionOptions
+} from "./notification-retention";
 export { NOTIFICATION_TYPES } from "@quincy/shared";
 export {
   EMBEDDED_DISPLAY_LEASE_MS,

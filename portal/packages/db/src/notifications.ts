@@ -9,7 +9,6 @@ export const EMAIL_ENABLED_EVENTS: readonly NotificationType[] = [
   "raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added", "assigned_to_project", "mentioned", "subtask_assigned", "subtask_due_today",
 ];
 export const STALLED_NOTIFICATION_AGE_MS = 3 * 60 * 60 * 1000;
-export const READ_NOTIFICATION_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
 export type NotificationRecipient = { userId: string; email: string; name: string };
 export type NotificationEmail = {
@@ -265,10 +264,4 @@ export async function emitNotifications(
     }
   }
   return insertedCount;
-}
-
-export async function pruneReadNotifications(d1: D1Database, now = Date.now()): Promise<number> {
-  const result = await d1.prepare("DELETE FROM notifications WHERE read_at IS NOT NULL AND read_at < ?")
-    .bind(now - READ_NOTIFICATION_RETENTION_MS).run();
-  return result.meta.changes ?? 0;
 }
