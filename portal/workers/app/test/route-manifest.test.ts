@@ -228,6 +228,22 @@ describe("terminal route manifest", () => {
     expect(order.indexOf("/d/review")).toBeLessThan(order.indexOf("/d/:slug")); expect(order.indexOf("/d/:slug")).toBeLessThan(order.indexOf("/d/*"));
   });
 
+  it("classifies the Social overlay admin routes as withheld and the one image route as public-library (#869)", () => {
+    const admin = PROJECT_SECURITY_ROUTE_CLASSIFICATION.filter((route) => route.path.startsWith("/api/admin/social-overlays"));
+    expect(admin.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
+      "GET /api/admin/social-overlays", "PATCH /api/admin/social-overlays/:id", "POST /api/admin/social-overlays", "POST /api/admin/social-overlays/:id/archive",
+      "POST /api/admin/social-overlays/:id/image", "POST /api/admin/social-overlays/:id/unarchive",
+    ]);
+    for (const route of admin) expect(route, route.path).toMatchObject({ class: "withheld", response: "constant-403" });
+    const library = PROJECT_SECURITY_ROUTE_CLASSIFICATION.filter((route) => route.class === "public-library");
+    expect(library.map((route) => `${route.method} ${route.path}`)).toEqual(["GET /social-overlay-images/:overlayId/:imageUuid"]);
+    expect(library[0]).toMatchObject({ scope: "none", projection: "none", response: "protocol-404" });
+    for (const path of ["/social-overlay-images", "/social-overlay-images/*"]) expect(PROJECT_SECURITY_ROUTE_CLASSIFICATION.find((route) => route.path === path)?.class, path).toBe("terminal-fallback");
+    // Registered before the SPA fallback, or the shell would answer a stale URL with HTML.
+    const order = app.routes.map((route) => route.path);
+    expect(order.indexOf("/social-overlay-images/:overlayId/:imageUuid")).toBeLessThan(order.lastIndexOf("/*"));
+  });
+
   it("classifies GET /api/production-gantt as scoped-project / external-safe", () => {
     for (const path of ["/api/production-gantt", "/api/production-gantt/"]) {
       const route = PROJECT_SECURITY_ROUTE_CLASSIFICATION.find((entry) => entry.method === "GET" && entry.path === path);

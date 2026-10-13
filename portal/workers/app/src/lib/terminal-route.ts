@@ -35,6 +35,7 @@ export type SecurityRouteClass =
   | "withheld"
   | "guest-link"
   | "delivery-public"
+  | "public-library"
   | "terminal-fallback";
 export type SecurityRouteScope = "assigned-project" | "global-self" | "capability" | "none";
 export type SecurityRouteProjection = "external-safe" | "internal" | "guest-public" | "none";
@@ -48,7 +49,7 @@ export type SecurityRouteRegistration = {
   response: SecurityRouteResponse;
   externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar" | "gantt" | "video-review" | "video-list" | "review-link-list" | "video-note-list";
 };
-type LegacySecurityRouteClass = "bearer-protocol" | "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "guest-link" | "delivery-public" | "terminal-fallback";
+type LegacySecurityRouteClass = "bearer-protocol" | "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "guest-link" | "delivery-public" | "public-library" | "terminal-fallback";
 type LegacySecurityRouteRegistrationSeed = { method: string; path: string; class: LegacySecurityRouteClass; externalSurface?: SecurityRouteRegistration["externalSurface"] };
 
 function securityContractForClass(routeClass: SecurityRouteClass): Omit<SecurityRouteRegistration, "method" | "path" | "class"> {
@@ -64,6 +65,8 @@ function securityContractForClass(routeClass: SecurityRouteClass): Omit<Security
     case "guest-link": return { scope: "none", projection: "guest-public", response: "protocol-404" };
     // The public Client Delivery page (#787 slice 6): no principal and no Project scope in the request; the slug, the enabled page, the Client Delivery gate and the latest set are the scope, and every miss is the one `/d` stub.
     case "delivery-public": return { scope: "none", projection: "guest-public", response: "protocol-404" };
+    // The Social overlay image (#869): generic platform graphics with no client data, readable by anyone, so no principal, no Project scope and no projection. A miss is a no-store JSON 404.
+    case "public-library": return { scope: "none", projection: "none", response: "protocol-404" };
     case "terminal-fallback": return { scope: "none", projection: "none", response: "fallback" };
   }
 }
@@ -84,6 +87,15 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "PATCH", path: "/api/admin/agencies/:id", class: "withheld" },
   { method: "GET", path: "/api/admin/agencies", class: "withheld" },
   { method: "POST", path: "/api/admin/agencies", class: "withheld" },
+  { method: "GET", path: "/api/admin/social-overlays", class: "withheld" },
+  { method: "POST", path: "/api/admin/social-overlays", class: "withheld" },
+  { method: "PATCH", path: "/api/admin/social-overlays/:id", class: "withheld" },
+  { method: "POST", path: "/api/admin/social-overlays/:id/image", class: "withheld" },
+  { method: "POST", path: "/api/admin/social-overlays/:id/archive", class: "withheld" },
+  { method: "POST", path: "/api/admin/social-overlays/:id/unarchive", class: "withheld" },
+  { method: "GET", path: "/social-overlay-images/:overlayId/:imageUuid", class: "public-library" },
+  { method: "ALL", path: "/social-overlay-images", class: "terminal-fallback" },
+  { method: "ALL", path: "/social-overlay-images/*", class: "terminal-fallback" },
   { method: "PATCH", path: "/api/admin/agents/:id", class: "withheld" },
   { method: "GET", path: "/api/admin/agents", class: "withheld" },
   { method: "POST", path: "/api/admin/agents", class: "withheld" },
@@ -406,6 +418,7 @@ function securityClassForSeed(route: LegacySecurityRouteRegistrationSeed): Secur
   if (route.class === "bearer-protocol") return "bearer-protocol";
   if (route.class === "guest-link") return "guest-link";
   if (route.class === "delivery-public") return "delivery-public";
+  if (route.class === "public-library") return "public-library";
   if (route.class === "global-self") return "principal-global";
   if (route.class === "terminal-fallback") return "terminal-fallback";
   return "withheld";
