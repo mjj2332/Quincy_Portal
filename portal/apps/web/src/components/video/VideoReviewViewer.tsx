@@ -19,6 +19,7 @@ import { formatBytes, formatDuration, formatFps, formatVideoDate } from "./video
 import type { NoteFormStore } from "../../lib/video-note-form-store";
 import { versionSlot, videoSlot, type VideoApprovalStore } from "../../lib/video-approval-store";
 import type { VideoNotesSession } from "./use-video-notes";
+import { VideoReviewStatusPill } from "./VideoReviewStatusPill";
 
 /** The notes UI is its own chunk: a Project whose notes part is off never loads it. */
 const LazyNotesHost = lazy(() => import("./VideoNotesHost"));
@@ -43,7 +44,7 @@ const VERSION_SELECT_ID = "video-review-version";
  * With `notes` (the Project's `notes` part is on, #741 5b) the Version details column becomes the notes panel, and the Version details
  * move behind a button in its header; without it the viewer is exactly the 4d-ii viewer.
  */
-export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, reviewLinks, deepLink }: {
+export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, reviewLinks, deepLink, reviewStatus }: {
   video: VideoDto;
   onClose: () => void;
   /** The control that opened the viewer; focus goes back to it on close. */
@@ -60,6 +61,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   download?: { projectId: string };
   /** Present only when new Review links may be made (#834): the header's Create Review link, which hands over the Version to grant (the one on screen; side A in Compare). */
   reviewLinks?: { onCreate: (assetId: string) => void };
+  /** Present when Review status is offered (#863): the header pill reports the Video's status and, per role, sets it. */
+  reviewStatus?: { projectId: string; role: Role; archived: boolean };
   /** Present when the URL names this film (#819, staff Project route): `version` is the Version number it names (absent = the current one), `href` the absolute link to a Version, `onVersionShown` how the viewer reports the Version on show. */
   deepLink?: { version?: number; /** The list this Video came from is a settled, successful read: only then is an unknown Version normalised in the URL. */ settled: boolean; href: (version: number) => string; onVersionShown: (version: number) => void };
 }) {
@@ -317,6 +320,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         <DialogTitle className="text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{video.title}</DialogTitle>
         <DialogDescription className="text-foreground-secondary [font:var(--type-label)]">{`${version.width}×${version.height} · ${formatFps(version.fps)} fps · `}<span data-testid="video-start-tc" className="whitespace-nowrap">{`start TC ${startLabel}`}</span></DialogDescription>
       </div>
+      {reviewStatus && <VideoReviewStatusPill video={video} version={version} comparing={comparing} {...reviewStatus} />}
       {!comparing && <div data-testid="video-version-group" className="flex min-w-0 max-w-full items-center gap-[var(--space-2)]">
         <label htmlFor={VERSION_SELECT_ID} className="shrink-0 text-foreground-secondary [font:var(--type-label)]">Version</label>
         <Select open={versionListOpen} onOpenChange={(next) => { if (next) handOff.current = false; setVersionListOpen(next); }} value={version.assetId} onValueChange={(next) => { if (typeof next === "string") { setResume(null); setAssetId(next); } }}>

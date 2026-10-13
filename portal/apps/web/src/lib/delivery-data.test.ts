@@ -23,7 +23,7 @@ describe("Publish settles the stage move's surfaces", () => {
     api.apiPost.mockResolvedValue({ ...state(1), replayed: false, operationSetNumber: 1 });
     await publishDelivery(client, P, { assetIds: [A], coverAssetId: null, expectedLatestSet: null, operationId: "op-1" });
     const call = sync.invalidateProjectSurfaces.mock.calls.map(([, input]) => input as { resources: Array<{ kind: string }>; dashboard: boolean; calendar: boolean; gantt: boolean })[0]!;
-    expect(call.resources.map((r) => r.kind).sort()).toEqual(["activity", "delivery", "detail", "review-links"]);
+    expect(call.resources.map((r) => r.kind).sort()).toEqual(["activity", "delivery", "detail", "review-links", "videos"]);
     expect([call.dashboard, call.calendar, call.gantt]).toEqual([true, true, true]);
   });
 });

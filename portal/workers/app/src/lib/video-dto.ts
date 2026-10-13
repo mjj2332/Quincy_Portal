@@ -1,4 +1,5 @@
 import { ROLE_LABELS, videoDtoSchema, type Role, type VideoDto } from "@quincy/shared";
+import { inCurrentSetSql } from "./delivery-lock";
 import { LIVE_VERSION, LIVE_VIDEO } from "./video-live-sql";
 
 /**
@@ -11,6 +12,7 @@ type VersionRow = {
   asset_id: string; video_id: string; version: number; superseded_at: number | null; original_filename: string; bytes: number; created_at: number;
   fps_num: number; fps_den: number; frame_count: number; duration_ms: number; width: number; height: number; codec: "avc1" | "avc3";
   start_tc_frames: number | null; tc_nominal_fps: number; tc_drop_frame: number; fast_start: number; has_audio: number; poster_key: string | null;
+  review_status: "in_review" | "approved_internal"; in_current_set: number;
   user_id: string; user_name: string; user_role: Role; user_active: number;
 };
 type UploadingRow = { reservation_id: string; video_id: string; version: number; expires_at: number; user_id: string; user_name: string; user_role: Role; user_active: number };
@@ -35,7 +37,8 @@ export async function loadVideoDtos(db: D1Database, projectId: string, videoId: 
     bindScoped(db.prepare(`SELECT v.id, v.title, v.premium, (p.video_id IS NOT NULL) AS premium_unlocked, v.position, v.created_at FROM videos v LEFT JOIN video_premium_unlocks p ON p.video_id = v.id WHERE v.project_id = ?1 AND ${LIVE_VIDEO("v")}${only} ORDER BY v.position, v.created_at, v.id`)),
     bindScoped(db.prepare(
       `SELECT a.id AS asset_id, m.video_id, a.version, a.superseded_at, a.original_filename, a.bytes, m.created_at, m.fps_num, m.fps_den, m.frame_count, m.duration_ms,
-              m.width, m.height, m.codec, m.start_tc_frames, m.tc_nominal_fps, m.tc_drop_frame, m.fast_start, m.has_audio, m.poster_key,
+              m.width, m.height, m.codec, m.start_tc_frames, m.tc_nominal_fps, m.tc_drop_frame, m.fast_start, m.has_audio, m.poster_key, m.review_status,
+              CASE WHEN ${inCurrentSetSql("= a.id")} THEN 1 ELSE 0 END AS in_current_set,
               u.id AS user_id, u.name AS user_name, u.role AS user_role, u.active AS user_active
        FROM video_version_meta m JOIN assets a ON a.id = m.asset_id AND a.kind = 'video' JOIN videos v ON v.id = m.video_id JOIN user u ON u.id = m.uploaded_by
        WHERE v.project_id = ?1 AND ${LIVE_VERSION("m")} AND ${LIVE_VIDEO("v")}${only} ORDER BY a.version DESC`)),
@@ -50,17 +53,22 @@ export async function loadVideoDtos(db: D1Database, projectId: string, videoId: 
   for (const row of (versionResult!.results as VersionRow[])) versionsByVideo.set(row.video_id, [...(versionsByVideo.get(row.video_id) ?? []), row]);
   const uploadingByVideo = new Map((uploadingResult!.results as UploadingRow[]).map((row) => [row.video_id, row]));
   return (videoResult!.results as VideoRow[]).map((video): VideoDto => {
-    const versions = (versionsByVideo.get(video.id) ?? []).map((row) => ({
-      assetId: row.asset_id, version: row.version, current: row.superseded_at === null, uploadedBy: person(row.user_id, row.user_name, row.user_role, row.user_active),
+    const rowsOfVideo = versionsByVideo.get(video.id) ?? [];
+    const versions = rowsOfVideo.map((row) => ({
+      assetId: row.asset_id, version: row.version, current: row.superseded_at === null, reviewStatus: row.review_status, uploadedBy: person(row.user_id, row.user_name, row.user_role, row.user_active),
       createdAt: new Date(row.created_at).toISOString(), originalFilename: row.original_filename, bytes: row.bytes,
       fps: { num: row.fps_num, den: row.fps_den }, frameCount: row.frame_count, durationMs: row.duration_ms, width: row.width, height: row.height, codec: row.codec,
       startTimecodeFrames: row.start_tc_frames, tcNominalFps: row.tc_nominal_fps, tcDropFrame: row.tc_drop_frame === 1, fastStart: row.fast_start === 1, hasAudio: row.has_audio === 1,
       hasPoster: row.poster_key !== null, streamUrl: `/media/video/${row.asset_id}`, posterUrl: row.poster_key !== null ? `/media/video/${row.asset_id}/poster` : null,
     }));
     const uploading = uploadingByVideo.get(video.id);
+    // Review status (#863): the latest live Version's stored status, read as Published while that Version is in the latest Publish (derived, never stored). The newest older Version that is in it is reported beside a Version that is not.
+    const currentRow = rowsOfVideo.find((row) => row.superseded_at === null);
+    const currentPublished = currentRow?.in_current_set === 1;
+    const olderPublished = currentRow === undefined || currentPublished ? undefined : rowsOfVideo.find((row) => row.version < currentRow.version && row.in_current_set === 1);
     // A Video row exists only after a Version 1 completes, so a Video without a current Version is corrupt: parse throws rather than serving it.
     return videoDtoSchema.parse({
-      id: video.id, title: video.title, premium: video.premium === 1, premiumUnlocked: video.premium_unlocked === 1, position: video.position, createdAt: new Date(video.created_at).toISOString(),
+      id: video.id, reviewStatus: currentPublished ? "published" : currentRow?.review_status, olderPublishedVersion: olderPublished?.version ?? null, title: video.title, premium: video.premium === 1, premiumUnlocked: video.premium_unlocked === 1, position: video.position, createdAt: new Date(video.created_at).toISOString(),
       currentAssetId: versions.find((version) => version.current)?.assetId ?? null,
       latestNoteCount: withNoteCounts ? openByAsset.get(versions.find((version) => version.current)?.assetId ?? "") ?? 0 : null,
       uploading: uploading ? { reservationId: uploading.reservation_id, version: uploading.version, uploader: person(uploading.user_id, uploading.user_name, uploading.user_role, uploading.user_active), expiresAt: new Date(uploading.expires_at).toISOString() } : null,

@@ -228,6 +228,17 @@ Migration 0077 adds `client_links.delivery_review` (integer, NOT NULL DEFAULT 0,
 
 **Rollback.** A code rollback is safe for ordinary links. A Delivery review link made after this ships fails closed on an older Worker, which reads a NULL expiry as expired, so roll forward. Restoring the schema is a Time Travel restore, which loses every write since the bookmark.
 
+### Video review status (0078, #863)
+
+Migration 0078 adds one column, `video_version_meta.review_status` (text, NOT NULL DEFAULT `'in_review'`, CHECK in `in_review` or `approved_internal`), and nothing else: no index, no trigger, no rebuild, no PRAGMA. Every existing Version reads In review. **The owner applies it**: the Worker in this PR reads the column on every Video list, so the merge leaves the deploy job red at the migration guard, and production stays on the old Worker, until 0078 is applied and the deploy re-run. Published is derived from the latest Published set and is never stored. Apply checklist (from `portal/workers/app`, `--remote`, owner's go-ahead):
+
+1. Take a Time Travel bookmark (`npx wrangler d1 time-travel info DB`) and record the id in the PR. Note `SELECT COUNT(*) FROM video_version_meta`.
+2. `npx wrangler d1 migrations apply DB --remote`; the pending list must show only 0078. #869 and #870 take 0079 and 0080, so if they are listed too, apply them in order only after their own PRs say so, and anything below 0078 means an earlier migration PR was never applied: stop.
+3. Post-check: `PRAGMA table_info(video_version_meta)` lists `review_status` with notnull 1 and default `'in_review'`; the row count equals step 1; `SELECT COUNT(*) FROM video_version_meta WHERE review_status <> 'in_review'` is 0.
+4. Re-run the deploy (`gh run rerun <run-id> --failed`).
+
+**Rollback.** The column is additive with a default, so an older Worker ignores it and a code rollback is safe (an older upload INSERT omits it and gets In review). Dropping the column is a Time Travel restore, which loses every write since the bookmark.
+
 ### Subtask presets (0052)
 
 0052 converts every date-only Subtask range to a 09:00 start and a 17:00 end (the presets, ADR 0016)

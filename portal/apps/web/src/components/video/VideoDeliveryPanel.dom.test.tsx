@@ -28,7 +28,7 @@ const uuid = () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`;
 const guestEvent = (revision: number, decision: "approved" | "changes_requested", over: Record<string, unknown> = {}) => ({ id: uuid(), revision, decision, note: null, at: "2026-10-10T01:00:00.000Z", actor: { kind: "guest", name: "Sam Client" }, link: { id: uuid(), label: "Owner link" }, ...over });
 const staffEvent = (revision: number, decision: "approved" | "changes_requested") => ({ id: uuid(), revision, decision, note: "phoned", at: "2026-10-10T02:00:00.000Z", actor: { kind: "user", person: mia }, link: null });
 const release = (revision: number) => ({ id: uuid(), approvalRevision: revision, releasedAt: "2026-10-10T03:00:00.000Z", releasedBy: mia });
-const videoOf = (over: Partial<VideoDto> = {}): VideoDto => ({ id: V, title: "Main walkthrough", premium: false, premiumUnlocked: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: A2, latestNoteCount: null, uploading: null, versions: [{ assetId: A2, version: 2 }, { assetId: A1, version: 1 }], ...over }) as unknown as VideoDto;
+const videoOf = (over: Partial<VideoDto> = {}): VideoDto => ({ id: V, reviewStatus: "in_review", olderPublishedVersion: null, title: "Main walkthrough", premium: false, premiumUnlocked: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: A2, latestNoteCount: null, uploading: null, versions: [{ assetId: A2, version: 2 }, { assetId: A1, version: 1 }], ...over }) as unknown as VideoDto;
 let decisions: unknown;
 const decide = (versions: Array<{ assetId: string; version: number; events: unknown[]; release: unknown }>) => { decisions = { versions }; };
 
