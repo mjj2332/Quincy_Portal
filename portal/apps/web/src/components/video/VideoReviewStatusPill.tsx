@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 export const REVIEW_STATUS_LABEL: Record<VideoReviewStatus, string> = { in_review: "In review", approved_internal: "Approved (internal)", published: "Published" };
 export const REVIEW_STATUS_TONE: Record<VideoReviewStatus, StatusTone> = { in_review: "caution", approved_internal: "positive", published: "info" };
 
-export function VideoReviewStatusPill({ video, version, comparing, projectId, role, archived }: {
+export function VideoReviewStatusPill({ video, version, comparing, projectId, role, archived, testId = "video-review-status" }: {
   video: VideoDto;
   /** The Version on show. */
   version: VideoDto["versions"][number];
@@ -24,6 +24,8 @@ export function VideoReviewStatusPill({ video, version, comparing, projectId, ro
   projectId: string;
   role: Role;
   archived: boolean;
+  /** Prefix of every test id (the card's pill must not collide with the viewer's). */
+  testId?: string;
 }) {
   const queryClient = useOptionalProjectQueryClient();
   const [pending, setPending] = useState(false);
@@ -35,11 +37,11 @@ export function VideoReviewStatusPill({ video, version, comparing, projectId, ro
   const allowed = reviewStatusTransitions(role);
   const status = video.reviewStatus;
   const tone = REVIEW_STATUS_TONE[status];
-  const older = video.olderPublishedVersion !== null && <span data-testid="video-review-status-older" className="text-foreground-secondary [font:var(--type-label)] whitespace-nowrap">{`v${video.olderPublishedVersion} published`}</span>;
+  const older = video.olderPublishedVersion !== null && <span data-testid={`${testId}-older`} className="text-foreground-secondary [font:var(--type-label)] whitespace-nowrap">{`v${video.olderPublishedVersion} published`}</span>;
 
   if (status === "published" || archived || allowed.length === 0 || !queryClient) {
     return <div className="flex items-center gap-[var(--space-2)]">
-      <StatusPill tone={tone} data-testid="video-review-status">{REVIEW_STATUS_LABEL[status]}</StatusPill>
+      <StatusPill tone={tone} data-testid={testId}>{REVIEW_STATUS_LABEL[status]}</StatusPill>
       {older}
     </div>;
   }
@@ -56,7 +58,7 @@ export function VideoReviewStatusPill({ video, version, comparing, projectId, ro
 
   return <div className="flex flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)]">
     <Menu
-      triggerLabel={`Review status: ${REVIEW_STATUS_LABEL[status]}`} label="Review status" triggerTestId="video-review-status"
+      triggerLabel={`Review status: ${REVIEW_STATUS_LABEL[status]}`} label="Review status" triggerTestId={testId}
       triggerClassName={cn("pointer-coarse:min-h-11 max-[721px]:min-h-11 rounded-full", blocked && "cursor-not-allowed")}
       disabled={blocked || pending}
       trigger={<StatusPill tone={tone}>{REVIEW_STATUS_LABEL[status]}<span aria-hidden="true" className="ml-[var(--space-1)]">▾</span></StatusPill>}
@@ -64,7 +66,7 @@ export function VideoReviewStatusPill({ video, version, comparing, projectId, ro
       <MenuPrimitive.Group>
         <MenuPrimitive.GroupLabel className="px-[var(--space-3)] py-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">{`Latest v${latest.version}`}</MenuPrimitive.GroupLabel>
         <MenuPrimitive.RadioGroup value={latest.reviewStatus} onValueChange={(next) => { void choose(next as VersionReviewStatus); }}>
-          {allowed.map((option) => <MenuPrimitive.RadioItem key={option} value={option} data-testid={`video-review-status-option-${option}`} className={cn(MENU_ITEM, "justify-between gap-[var(--space-3)]")}>
+          {allowed.map((option) => <MenuPrimitive.RadioItem key={option} value={option} data-testid={`${testId}-option-${option}`} className={cn(MENU_ITEM, "justify-between gap-[var(--space-3)]")}>
             {REVIEW_STATUS_LABEL[option]}
             <MenuPrimitive.RadioItemIndicator><Check aria-hidden="true" className="size-4" /></MenuPrimitive.RadioItemIndicator>
           </MenuPrimitive.RadioItem>)}
@@ -72,7 +74,7 @@ export function VideoReviewStatusPill({ video, version, comparing, projectId, ro
       </MenuPrimitive.Group>
     </Menu>
     {older}
-    {blocked && <span data-testid="video-review-status-hint" className="sr-only">{watchingOlder ? `Switch to the latest version, v${latest.version}, to change the review status.` : "Leave Compare to change the review status."}</span>}
-    {problem && <span role="alert" data-testid="video-review-status-error" className="basis-full text-[length:var(--text-sm)] text-destructive-wash-foreground">{problem}</span>}
+    {blocked && <span data-testid={`${testId}-hint`} className="sr-only">{watchingOlder ? `Switch to the latest version, v${latest.version}, to change the review status.` : "Leave Compare to change the review status."}</span>}
+    {problem && <span role="alert" data-testid={`${testId}-error`} className="basis-full text-[length:var(--text-sm)] text-destructive-wash-foreground">{problem}</span>}
   </div>;
 }
