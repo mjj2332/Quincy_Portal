@@ -148,3 +148,31 @@ describe("VideoPlayer Social preview (#871)", () => {
     expect(byTestId("video-scrubber")).not.toBeNull();
   });
 });
+
+describe("VideoPlayer watermark slot (#872)", () => {
+  // The `<video>` fills a 400x700 frame; its 1920x1080 picture contained in it is 400x225, centred at top 237.5.
+  const stubOffsets = () => {
+    for (const [prop, value] of [["offsetWidth", 400], ["offsetHeight", 700], ["offsetLeft", 0], ["offsetTop", 0]] as const) Object.defineProperty(HTMLElement.prototype, prop, { configurable: true, get: () => value });
+  };
+  afterEach(() => { for (const prop of ["offsetWidth", "offsetHeight", "offsetLeft", "offsetTop"] as const) delete (HTMLElement.prototype as unknown as Record<string, unknown>)[prop]; });
+  const mark = (box: { left: number; top: number; width: number; height: number }) => <div data-testid="wm" data-box={`${box.left},${box.top},${box.width},${box.height}`} />;
+
+  it("draws the watermark over the picture box when Social is off", async () => {
+    stubOffsets();
+    await mount({ watermark: mark });
+    expect(byTestId("wm")).not.toBeNull();
+    expect(byTestId("video-social-frame")!.contains(byTestId("wm"))).toBe(false);
+    expect(byTestId("wm")!.dataset.box).toBe("0,237.5,400,225");
+  });
+
+  it("keeps the watermark inside the Social frame, sized to the frame in Fill and to the picture in Fit, while overlay is still dropped", async () => {
+    stubOffsets();
+    await mount({ social: socialOf(), watermark: mark, overlay: <div data-testid="markup-slot" /> });
+    expect(byTestId("video-social-frame")!.contains(byTestId("wm"))).toBe(true);
+    expect(byTestId("wm")!.dataset.box).toBe("0,0,400,700");
+    expect(byTestId("markup-slot")).toBeNull();
+    await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" social={socialOf({ fit: "fit" })} watermark={mark} />); });
+    expect(byTestId("video-social-frame")!.contains(byTestId("wm"))).toBe(true);
+    expect(byTestId("wm")!.dataset.box).toBe("0,237.5,400,225");
+  });
+});

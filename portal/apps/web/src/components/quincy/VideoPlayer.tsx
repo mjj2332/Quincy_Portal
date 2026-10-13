@@ -64,7 +64,7 @@ export function IconTip({ label, keys, children }: { label: string; keys?: strin
  * surface (`data-surface="inverse"`) around it, like the Lightbox. `keyboard="self"` listens on the player; `"host"` leaves the
  * scope to the caller, who forwards events to `controlRef.handleKeyDown`.
  */
-export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, onMediaError, transportLocked = false, transportActions, transportReplacement, social }: {
+export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, watermark, onMediaError, transportLocked = false, transportActions, transportReplacement, social }: {
   version: VideoPlayerVersion;
   title: string;
   controlRef?: Ref<VideoPlayerControl>;
@@ -89,6 +89,8 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   onClockChange?: (clock: VideoFrameClock | null) => void;
   /** Drawn over the stage (#741 6b-ui); a function is handed the picture box. Built by the host, so this module never imports it. */
   overlay?: ReactNode | ((box: Box | null) => ReactNode);
+  /** Drawn over the picture box and never dropped by Social (#872): the premium watermark. Built by the host. */
+  watermark?: (box: Box) => ReactNode;
   /** The `<video>` reported an error; the stage still shows its own "can't play" notice. */
   onMediaError?: () => void;
   /** Drawing: the transport, the scrubber and the player's keys are inert, so nothing moves the frame under the pen. */
@@ -99,7 +101,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   transportReplacement?: ReactNode;
   /**
    * Social preview (#871): the film framed 9:16 under an overlay. While set the player owns the rule that nothing is marked, drawn or noted: it ignores
-   * `markers`, `pendingRange`, `range`, `onMark`, `overlay`, `transportActions` and `transportReplacement`. Playback, the scrubber, the keys, mute, the time format and full screen work as ever.
+   * `markers`, `pendingRange`, `range`, `onMark`, `overlay`, `transportActions` and `transportReplacement`, but keeps `watermark`. Playback, the scrubber, the keys, mute, the time format and full screen work as ever.
    */
   social?: SocialPreviewMode;
 }) {
@@ -182,7 +184,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     onKeyDown={keyboard === "self" ? (event) => { handleKeyDown(event); } : undefined}
     className={cn("flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", className)}
   >
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} onMediaError={onMediaError} {...(social ? { social: { fit: social.fit, imageUrl: socialOverlay?.imageUrl ?? null, onImageError: () => { setFailedImage(socialOverlay?.imageUrl ?? null); }, onImageLoad: () => { setFailedImage(null); } } } : {})} />
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} {...(social ? { social: { fit: social.fit, imageUrl: socialOverlay?.imageUrl ?? null, onImageError: () => { setFailedImage(socialOverlay?.imageUrl ?? null); }, onImageLoad: () => { setFailedImage(null); } } } : {})} />
 
     {transportReplacement != null ? <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div> : <div ref={transportRef} className="flex flex-col gap-[var(--space-3)]">
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}

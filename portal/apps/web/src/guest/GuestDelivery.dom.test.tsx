@@ -46,7 +46,7 @@ async function route(url: string, init: RequestInit | undefined): Promise<Respon
   const custom = await extra?.(url, init);
   if (custom) return custom;
   if (url === `${BASE}/session`) return json(session);
-  if (url === `${BASE}/videos`) return json({ videos });
+  if (url === `${BASE}/videos`) return json({ videos, socialOverlays: [] });
   if (url === `${BASE}/downloads`) return manifest instanceof Response ? manifest.clone() : json(manifest);
   if (/\/versions\/[^/]+\/notes$/.test(url) && (init?.method ?? "GET") === "GET") return json({ notes: [] });
   return stub404();
@@ -390,7 +390,7 @@ describe("Approve and Request changes", () => {
         const stale = [videoOf(1, [versionOf(10, { decision: decisionOf("approved", 1) })])];
         hold = true;
         await gate;
-        return json({ videos: stale });
+        return json({ videos: stale, socialOverlays: [] });
       }
       return undefined;
     };

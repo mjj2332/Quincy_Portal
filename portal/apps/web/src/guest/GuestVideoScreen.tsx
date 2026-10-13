@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
-import { Check, ChevronLeft, ChevronRight, MessageSquare, MessageSquareWarning } from "lucide-react";
-import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestVideoDto } from "@quincy/shared";
+import { Check, ChevronLeft, ChevronRight, MessageSquare, MessageSquareWarning, Smartphone } from "lucide-react";
+import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto, type GuestVideoListResponse } from "@quincy/shared";
 import { useFrameLabel } from "../lib/time-format-prefs";
 import { useMediaQuery } from "../lib/use-media-query";
 import type { VideoFrameClock } from "../lib/video-frame-clock";
 import { Button } from "../components/reui/button";
+import { Toggle } from "../components/reui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/reui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../components/reui/sheet";
 import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "../components/quincy/SheetCloseButton";
 import { ReviewPaneToggle, ReviewSplit, useReviewPane } from "../components/quincy/ReviewPane";
 import { VideoPlayer, type VideoPlayerControl } from "../components/quincy/VideoPlayer";
+import type { SocialPreviewMode } from "../components/quincy/SocialPreviewControls";
+import { currentOverlay, useSocialPreview } from "../lib/use-social-preview";
 import type { TimelineMarker } from "../components/quincy/VideoTimelineMarkers";
 import type { GuestApi, WriteResult } from "./guest-api";
 import { decisionFailureText, failureText, removeThread, upsertThread, type EditPatch } from "./guest-compose";
@@ -68,7 +71,7 @@ function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
  * One Video on the guest page (#741 12b), read-only: the reused review player on the inverse surface, the granted-Versions select, previous / next Video, and the public notes (a
  * column beside the player, a bottom drawer below 721px). Moving between Videos never returns to the list. State is in memory; the URL does not change.
  */
-export function GuestVideoScreen({ api, verify, writer, drafts, subscription, session, onSession, archived, onArchived, videos, index, onIndex, onBack, onUnavailable, onGrantsChanged, onDecided, onResyncDelivery, onShownVersion }: {
+export function GuestVideoScreen({ api, verify, writer, drafts, subscription, session, onSession, archived, onArchived, videos, socialOverlays, index, onIndex, onBack, onUnavailable, onGrantsChanged, onDecided, onResyncDelivery, onShownVersion }: {
   api: GuestApi;
   /** The page's one verify dialog and continuation slot, owned by `GuestApp`. */
   verify: GuestVerify;
@@ -84,13 +87,15 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   archived: boolean;
   onArchived: () => void;
   videos: readonly GuestVideoDto[];
+  /** The Project's resolved Social overlays (#872); none hides the Social control. */
+  socialOverlays: readonly GuestSocialOverlay[];
   index: number;
   onIndex: (next: number) => void;
   /** Present only when there is a list to go back to (a single-Video link has none). */
   onBack: (() => void) | null;
   onUnavailable: () => void;
-  /** The displayed Version is no longer granted: the freshly read list, for the page to show instead. */
-  onGrantsChanged: (fresh: GuestVideoDto[]) => void;
+  /** The displayed Version is no longer granted: the freshly read payload (Videos and Social overlays), for the page to show instead. */
+  onGrantsChanged: (fresh: GuestVideoListResponse) => void;
   /** A decision landed on the Version `assetId` (the one it was sent for, which may no longer be the one on screen). */
   onDecided: (assetId: string, decision: GuestDecision) => void;
   /** A decision may or may not have landed: read the delivery list again. The page reconciles the result against the screen as it is when the answer arrives. */
@@ -182,7 +187,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     if (stale()) return "stale";
     if (list.kind === "gone") { onUnavailable(); return "handled"; }
     if (list.kind !== "ok") return "unknown";
-    if (!list.value.some((candidate) => candidate.versions.some((granted) => granted.assetId === shownAssetId))) { onGrantsChanged(list.value); return "handled"; }
+    if (!list.value.videos.some((candidate) => candidate.versions.some((granted) => granted.assetId === shownAssetId))) { onGrantsChanged(list.value); return "handled"; }
     return "valid";
   }, [api, onUnavailable, onGrantsChanged, shownAssetId]);
   // A stream that fails while the Version is still granted: another Version of this film may have been removed (#776 E), so the picker is read again. Quietly: no notice, no navigation unless the page decides the shown Version left.
@@ -269,8 +274,23 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     remove: async (root, note, expectedRevision) => settle(await writer.run(root.id, () => api.deleteNote(note.id, expectedRevision)), note.id === root.id ? root.id : null),
   }), [api, writer, settle]);
 
-  const onDrawingChange = useCallback((drawing: boolean) => { if (phone) setDrawerOpen(!drawing); }, [phone]);
+  // Entering Social ends a drawing on purpose; the drawer must not come back over the preview when it does.
+  const socialEntering = useRef(false);
+  const onDrawingChange = useCallback((drawing: boolean) => { if (phone && !socialEntering.current) setDrawerOpen(!drawing); }, [phone]);
   const compose = useGuestCompose({ clock, frameCount: version.frameCount, timecode, markupAllowed: session.link.allow.markup, media: api.media, post, edit: editRoot, latestOf, onDrawingChange });
+  // Social preview (#872): in memory, shared by every Video and Version of this screen, off again after All videos. The notes are paused while it is on; nothing is closed or cleared.
+  const preview = useSocialPreview();
+  const socialOn = preview.on && socialOverlays.length > 0;
+  const { endDrawing } = compose;
+  const setSocial = useCallback((next: boolean) => {
+    if (next) { socialEntering.current = true; endDrawing(); }
+    preview.setOn(next);
+  }, [endDrawing, preview.setOn]); // eslint-disable-line react-hooks/exhaustive-deps -- `setOn` is stable
+  useEffect(() => { socialEntering.current = false; }, [socialOn]);
+  const socialMode: SocialPreviewMode | undefined = socialOn ? {
+    overlays: socialOverlays, currentId: currentOverlay(socialOverlays, preview.overlayId)?.id ?? null, onOverlay: preview.setOverlayId, fit: preview.fit, onFit: preview.setFit,
+    status: "ready", onRetry: () => undefined,
+  } : undefined;
   // The range button and handles (#861) exist where the link allows comments; they take the open draft's marks and are disabled with no draft (the hint says how to start one), an archived Project, or marks the draft has locked (a drawing).
   const rangeProps = session.link.allow.comments ? {
     range: { marks: compose.isOpen ? compose.marks : EMPTY_MARKS, locked: archived || !compose.onMark, ...(!compose.isOpen && !archived ? { hint: "Add a note to mark a range" } : {}), clear: compose.clearMarks },
@@ -313,8 +333,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const { beginEdit } = compose;
   const writing = useMemo<Writing>(() => ({
     canWrite, verified: session.verified, media: api.media, actions, drafts, onNeedVerify: () => { requestVerify("none"); },
-    composerOpen: compose.isOpen, editRoot: (thread) => { startDraft(() => { beginEdit(thread); }); },
-  }), [canWrite, session.verified, api, actions, drafts, requestVerify, compose.isOpen, startDraft, beginEdit]);
+    composerOpen: compose.isOpen, paused: socialOn, editRoot: (thread) => { startDraft(() => { beginEdit(thread); }); },
+  }), [canWrite, session.verified, api, actions, drafts, requestVerify, compose.isOpen, socialOn, startDraft, beginEdit]);
   const canPaste = canWrite && video.versions.length >= 2;
   // On a phone the notes drawer would sit under the dialog: it steps aside and comes back when the dialog closes.
   const openPaste = () => {
@@ -328,12 +348,13 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     setPasteOpen(next);
     if (!next && restorePasteDrawer.current) { restorePasteDrawer.current = false; setDrawerOpen(true); }
   };
+  const pausedLine = <p data-testid="guest-notes-social-paused" className="m-0 text-foreground-secondary [font:var(--type-label)]">Notes are off in Social preview.</p>;
   const addNote = canWrite
-    ? compose.isOpen ? compose.form : <div className="flex flex-col items-start gap-[var(--space-2)]">
+    ? <>{socialOn && pausedLine}<div hidden={socialOn} inert={socialOn}>{compose.isOpen ? compose.form : <div className="flex flex-col items-start gap-[var(--space-2)]">
       <Button type="button" variant="outline" data-testid="guest-add-note" className={TOUCH} onClick={() => { if (session.verified) startDraft(compose.begin); else requestVerify("compose"); }}>Add a note</Button>
       {canPaste && <Button type="button" variant="ghost" data-testid="guest-paste-open" className={TOUCH} onClick={openPaste}>Copy my notes from another version</Button>}
       {pasted !== null && <p role="status" data-testid="guest-paste-status" className="m-0 text-foreground-secondary [font:var(--type-label)]">{pasted}</p>}
-    </div>
+    </div>}</div></>
     : null;
 
   // Approve / Request changes (#741 14-ui-guest). The note draft is in `drafts` and the write is the writer's, so both outlive this screen; the dialog is per Version and decision.
@@ -387,7 +408,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const allowDownload = session.link.allow.download;
 
   const savedHidden = compose.replacesSavedDrawing(selectedId);
-  const overlay = useCallback((box: Box | null) => <>{watermark && box && <PremiumWatermark box={box} />}{!savedHidden && markupOverlay(box)}{compose.overlay(box)}</>, [watermark, savedHidden, markupOverlay, compose.overlay]); // eslint-disable-line react-hooks/exhaustive-deps -- compose.overlay is the dependency that matters
+  const overlay = useCallback((box: Box | null) => <>{!savedHidden && markupOverlay(box)}{compose.overlay(box)}</>, [savedHidden, markupOverlay, compose.overlay]); // eslint-disable-line react-hooks/exhaustive-deps -- compose.overlay is the dependency that matters
 
   const newest = video.versions[0]!.version;
   const optionLabel = (candidate: GuestVideoDto["versions"][number]) => `v${candidate.version}${candidate.version === newest ? " · latest" : ""}`;
@@ -420,6 +441,9 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
           </SelectContent>
         </Select>
       </div>
+      {socialOverlays.length > 0 && <Toggle variant="outline" pressed={socialOn} onPressedChange={setSocial} data-testid="guest-social-toggle" aria-label="Social preview" className={TOUCH}>
+        <Smartphone aria-hidden="true" /><span className="max-[721px]:sr-only">Social</span>
+      </Toggle>}
       {!phone && <ReviewPaneToggle open={reviewPane.open} onOpenChange={setPaneOpen} paneId={paneId} label="Notes" className={TOUCH} />}
       {phone && <Button type="button" variant="outline" aria-label={threads === null ? "Notes" : `Notes, ${threads.length}`} className={`${TOUCH} shrink-0`} onClick={() => { setDrawerOpen(true); }}><MessageSquare aria-hidden="true" />{threads !== null && <span className="[font:var(--type-label)]">{threads.length}</span>}</Button>}
       </div>
@@ -443,7 +467,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       paneId={paneId}
       handleLabel="Resize notes"
       stacked={phone}
-      player={<VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} />}
+      player={<VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} />}
       pane={phone ? null : <aside data-surface="default" className="flex flex-1 flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-hidden">{panel}</aside>}
     />
     {phone && <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>

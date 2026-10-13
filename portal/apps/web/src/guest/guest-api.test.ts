@@ -66,6 +66,20 @@ describe("guest-api: email code", () => {
   });
 });
 
+describe("guest-api: videos (#872)", () => {
+  const OVERLAY = { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", name: "Instagram Reel", imageUrl: "/social-overlay-images/cccccccc-cccc-4ccc-8ccc-cccccccccccc/dddddddd-dddd-4ddd-8ddd-dddddddddddd" };
+  it("returns the whole payload: the Videos and the Social overlays", async () => {
+    answer(json({ videos: [], socialOverlays: [OVERLAY] }));
+    expect(await api().videos()).toEqual({ kind: "ok", value: { videos: [], socialOverlays: [OVERLAY] } });
+  });
+  it("rejects a payload without the field, an overlay with extra metadata, and an image path outside the overlay library", async () => {
+    for (const body of [{ videos: [] }, { videos: [], socialOverlays: [{ ...OVERLAY, platformLabel: "Instagram" }] }, { videos: [], socialOverlays: [{ ...OVERLAY, imageUrl: "https://elsewhere.test/x.png" }] }]) {
+      answer(json(body));
+      expect((await api().videos()).kind).not.toBe("ok");
+    }
+  });
+});
+
 describe("guest-api: note writes", () => {
   it("creates a note with a POST to the Version and parses the thread", async () => {
     answer(json(thread(), 201));

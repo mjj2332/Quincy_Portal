@@ -65,7 +65,7 @@ async function route(url: string, init: RequestInit | undefined): Promise<Respon
   const custom = await extra?.(url, init);
   if (custom) return custom;
   if (url === `${BASE}/session`) return json(session);
-  if (url === `${BASE}/videos`) return json({ videos });
+  if (url === `${BASE}/videos`) return json({ videos, socialOverlays: [] });
   const list = /\/versions\/([^/]+)\/notes$/.exec(url);
   if (list && (init?.method ?? "GET") === "GET") return json({ notes: notes[list[1]!] ?? [] });
   return stub404();
