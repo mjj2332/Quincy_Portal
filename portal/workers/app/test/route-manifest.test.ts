@@ -492,6 +492,12 @@ describe("terminal route manifest", () => {
     const reviewStatus = await send("PUT", `${base}/video-versions/${manifestVideoAssetId}/review-status`, { reviewStatus: "in_review", expectedStatus: "in_review" });
     expect(reviewStatus.status).toBe(200);
     EXTERNAL_API_RESPONSE_SCHEMAS["video-review-status"].parse(await reviewStatus.json());
+    // Rename (#867): an assigned External reaches the handler, and the response-only surface decodes it. Sending the current name is a no-op, so later assertions see no rename.
+    expect((await send("PUT", `${base}/video-versions/${crypto.randomUUID()}/file-name`, { filename: "x.mp4" })).status).toBe(404);
+    const currentName = (await database.DB.prepare("SELECT original_filename AS n FROM assets WHERE id = ?").bind(manifestVideoAssetId).first<{ n: string }>())!.n;
+    const renamed = await send("PUT", `${base}/video-versions/${manifestVideoAssetId}/file-name`, { filename: currentName });
+    expect(renamed.status).toBe(200);
+    EXTERNAL_API_RESPONSE_SCHEMAS["video-rename"].parse(await renamed.json());
   });
 
   it("reaches every Review link route (#834): with the links part on, an assigned External reaches each handler, not the fallback 404", async () => {
