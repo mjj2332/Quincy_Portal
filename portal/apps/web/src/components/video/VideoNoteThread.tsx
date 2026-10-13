@@ -327,7 +327,8 @@ function EditDrawingControls({ store, assetId, note, editing, clock, frameCount,
   const disabled = busy || !clock || framesChosen || drawingNow || !ready || unsupported;
   const why = unsupported ? `video-note-edit-drawing-unsupported-${note.id}` : undefined;
   // The header's anchor button already reads the note's frame: the chip only earns its place when the drawing is on another frame.
-  const chipShown = hasItems && frame !== null && timecode(frame) !== noteAnchorLabel(note, timecode);
+  // Frame numbers, not labels: two frames can share a Standard label.
+  const chipShown = hasItems && frame !== null && !(note.endFrame === null && note.startFrame === frame);
   return <div data-testid="video-note-edit-drawing" className="contents">
     {chipShown && frame !== null && <span data-testid="video-note-edit-drawing-chip" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" /><span className="sr-only">Drawing on </span>{timecode(frame)}</span>}
     {drawing.remove && <span data-testid="video-note-edit-drawing-removed" className="text-foreground-secondary [font:var(--type-label)]">The drawing is removed when you save.</span>}

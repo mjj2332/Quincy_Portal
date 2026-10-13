@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { framesToTimecode, roleHasCapability, type Role, type VideoNoteCreateInput, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto, type VideoVersionDto } from "@quincy/shared";
+import { roleHasCapability, type Role, type VideoNoteCreateInput, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto, type VideoVersionDto } from "@quincy/shared";
+import { useFrameLabel } from "../../lib/time-format-prefs";
 import type { TimelineMarker } from "../quincy/VideoTimelineMarkers";
 import { useOptionalProjectQueryClient } from "../../lib/project-data";
 import type { VideoFrameClock } from "../../lib/video-frame-clock";
@@ -53,9 +54,7 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
   const onClockChange = useCallback((next: VideoFrameClock | null) => { setClockState(next ? { assetId: assetIdRef.current, clock: next } : null); }, []);
   const clock = clockState && clockState.assetId === assetId ? clockState.clock : null;
 
-  const base = useMemo(() => ({ nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame }), [version.tcNominalFps, version.tcDropFrame]);
-  const start = version.startTimecodeFrames ?? 0;
-  const timecode = useCallback((frame: number) => framesToTimecode(frame, base, start), [base, start]);
+  const timecode = useFrameLabel(version);
   const frameCount = version.frameCount;
   const readOnly = archived;
 
