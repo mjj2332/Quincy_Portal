@@ -59,3 +59,21 @@ describe("viewer surface guard (ADR 0024)", () => {
     expect(src).not.toMatch(/DeliveryTab/);
   });
 });
+
+describe("frame roles follow the surface scope (#877)", () => {
+  // --frame-panel-bg / --frame-border-color are declared on :root and read raw aliases, so a
+  // FramePanel in the dark viewer painted paper with paper-050 text unless the scope overrides them.
+  const inverse = readFileSync(join(srcDir, "styles/tokens/inverse.css"), "utf8");
+  const block = (selector: string) =>
+    new RegExp(`\\[data-surface="${selector}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`).exec(inverse)?.[1] ?? "";
+
+  it.each(["inverse", "default"])("the %s scope defines the frame roles", (scope) => {
+    for (const role of ["--frame-panel-bg", "--frame-border-color", "--frame-panel-border-color"]) {
+      expect(block(scope), `${scope} missing ${role}`).toMatch(new RegExp(`${role}\\s*:`));
+    }
+  });
+
+  it("the inverse frame panel resolves to the inverted card role, not paper", () => {
+    expect(block("inverse")).toMatch(/--frame-panel-bg:\s*var\(--card\)/);
+  });
+});
