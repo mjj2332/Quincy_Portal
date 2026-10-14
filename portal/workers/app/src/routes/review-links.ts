@@ -14,9 +14,9 @@ import { readVideoReviewGate } from "../lib/video-review-gate";
 import { terminalRoute } from "../lib/terminal-route";
 import {
   addLinkVideo, createReviewLink, deleteReviewLink, findLinkHead, isLiveMember, loadReviewLinkDtos, patchReviewLink, removeLinkVideo, replaceReviewLinkToken, revokeReviewLink, setLinkGrants, versionsByVideo,
-  type GrantPair, type LinkHead, type Principal,
+  type GrantPair, type LinkHead,
 } from "../lib/review-links";
-import { jsonInput } from "./helpers";
+import { jsonInput, principalOf } from "./helpers";
 
 const uuid = z.string().uuid();
 
@@ -45,7 +45,6 @@ const otherProject = (c: Ctx) => c.json({ error: "Every Video must belong to thi
 const managedResponse = (c: Ctx) => c.json({ error: "This is the Delivery review link. It is managed by the Delivery page and staff cannot change it.", code: "delivery_review_managed" }, 409);
 const expiryOut = (c: Ctx) => c.json({ error: "The expiry must be between one hour and 365 days from now.", code: "expiry_out_of_range" }, 422);
 
-function principalOf(c: Ctx): Principal { const user = c.get("user"); return { id: user.id, impersonatedBy: user.impersonatedBy, via: user.via }; }
 
 /** Gate, capability, access and (for a write) archived. `part: null` is the open check alone, for revoke. Returns the refusal, or null to carry on. */
 async function admit(c: Ctx, projectId: string, options: { write: boolean; part: "links" | null; allowArchived?: boolean }): Promise<Response | null> {

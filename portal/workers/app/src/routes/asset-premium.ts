@@ -6,8 +6,8 @@ import { hasProjectAccess } from "../middleware/capability";
 import { projectIsArchived } from "../lib/project-archive";
 import { terminalRoute } from "../lib/terminal-route";
 import { clientDeliveryGate } from "../lib/client-delivery-gate";
-import { findPremiumAsset, isPremiumEligible, setAssetPremium, setAssetUnlock, type Principal } from "../lib/asset-premium";
-import { jsonInput } from "./helpers";
+import { findPremiumAsset, isPremiumEligible, setAssetPremium, setAssetUnlock } from "../lib/asset-premium";
+import { jsonInput, principalOf } from "./helpers";
 
 const uuid = z.string().uuid();
 
@@ -24,7 +24,6 @@ const archivedResponse = (c: Ctx) => c.json({ error: "Archived projects are read
 const notEligible = (c: Ctx) => c.json({ error: "Only a photo, a Floorplan PDF or a Copy document can be a paid extra.", code: "not_premium_eligible" }, 409);
 const publishedResponse = (c: Ctx) => c.json({ error: "This Asset is on a published Client Delivery page, so it stays premium. Use Unlock or Re-lock instead.", code: "premium_published" }, 409);
 const assetNotFound = (c: Ctx) => c.json({ error: "Asset not found" }, 404);
-const principalOf = (c: Ctx): Principal => { const user = c.get("user"); return { id: user.id, impersonatedBy: user.impersonatedBy, via: user.via }; };
 
 /** Gate, capability, access and archived. Returns the refusal, or null to carry on. */
 async function admit(c: Ctx, projectId: string): Promise<Response | null> {

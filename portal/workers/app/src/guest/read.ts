@@ -1,5 +1,6 @@
 import { reachSql } from "../lib/guest-fence-sql";
-import { resolvedSocialOverlaysStatement, uuidOfKey } from "../lib/project-social-overlays";
+import { resolvedSocialOverlaysStatement } from "../lib/project-social-overlays";
+import { uuidOfKey } from "../lib/social-overlays";
 import { LIVE_VERSION, LIVE_VIDEO } from "../lib/video-live-sql";
 import {
   VIDEO_NOTE_RICH_TEXT_PROFILE, parseRichTextDoc, richTextMediaRefs, richTextMentionsToText, type RichTextDoc,

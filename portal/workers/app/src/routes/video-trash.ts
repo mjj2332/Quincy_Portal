@@ -10,8 +10,8 @@ import { terminalRoute } from "../lib/terminal-route";
 import { readVideoReviewGate } from "../lib/video-review-gate";
 import { loadVideoDtos } from "../lib/video-dto";
 import { DELIVERY_PUBLISHED_BODY } from "../lib/delivery-lock";
-import { deleteVideo, deletionRefusal, deliveryPublishedBlock, findTrashedVersion, findTrashedVideo, listTrash, readRemovalImpact, readVideoDeletionImpact, removalRefusal, removeVersion, restoreVersion, restoreVideo, type Principal } from "../lib/video-trash";
-import { jsonInput } from "./helpers";
+import { deleteVideo, deletionRefusal, deliveryPublishedBlock, findTrashedVersion, findTrashedVideo, listTrash, readRemovalImpact, readVideoDeletionImpact, removalRefusal, removeVersion, restoreVersion, restoreVideo } from "../lib/video-trash";
+import { jsonInput, principalOf } from "./helpers";
 
 const uuid = z.string().uuid();
 
@@ -24,7 +24,6 @@ export const videoTrashRoutes = new Hono<AppEnv>();
 
 type Ctx = Context<AppEnv>;
 const archivedResponse = (c: Ctx) => c.json({ error: "Archived projects are read-only; videos can't be removed or restored.", code: "project_archived" }, 409);
-const principalOf = (c: Ctx): Principal => { const user = c.get("user"); return { id: user.id, impersonatedBy: user.impersonatedBy, via: user.via }; };
 
 /** Gate, capability, access and (for a write) archived. Returns the refusal, or the gate's `notes` part for the Video DTO. */
 async function admit(c: Ctx, projectId: string, write: boolean): Promise<Response | { notes: boolean }> {
