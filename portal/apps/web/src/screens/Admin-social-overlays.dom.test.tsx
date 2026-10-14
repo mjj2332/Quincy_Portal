@@ -248,4 +248,22 @@ describe("Admin > Social overlays (#869)", () => {
     expect(rows()[1]!.querySelector("img")?.getAttribute("src")).toBe(next.imageUrl);
     expect(rows()).toHaveLength(2);
   });
+
+  it("applies nothing and reports no error when the screen unmounts during the list read (#874)", async () => {
+    let finish!: (value: unknown) => void;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/admin/social-overlays") return new Promise((resolve) => { finish = resolve; });
+      if (path === "/api/users") return Promise.resolve({ users: [] });
+      return Promise.resolve({ agencies: [], agents: [], stages: [], events: [], items: [] });
+    });
+    await act(async () => { root!.render(<Admin currentUserId="u1" />); });
+    await flush();
+    await openTab();
+    await act(async () => { root!.unmount(); }); root = null;
+    await act(async () => { finish({ overlays: [overlay()] }); await Promise.resolve(); });
+    await flush();
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
 });

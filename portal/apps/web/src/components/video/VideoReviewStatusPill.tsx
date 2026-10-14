@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { reviewStatusTransitions, type Role, type VersionReviewStatus, type VideoDto, type VideoReviewStatus } from "@quincy/shared";
+import { useRunFence } from "../../lib/use-run-fence";
 import { useOptionalProjectQueryClient } from "../../lib/project-data";
 import { classifyReviewStatusError, reviewStatusErrorText, setVideoReviewStatus } from "../../lib/video-review-status-data";
 import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
@@ -30,8 +31,8 @@ export function VideoReviewStatusPill({ video, version, comparing, projectId, ro
   const queryClient = useOptionalProjectQueryClient();
   const [pending, setPending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const alive = useRef(true);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  // No key: putVideo moves `latest` before a refusal arrives, so keying on the Version would drop the error and strand `pending` (docs/lessons.md).
+  const fence = useRunFence();
 
   const latest = video.versions.find((candidate) => candidate.current) ?? video.versions[0]!;
   const allowed = reviewStatusTransitions(role);
@@ -50,10 +51,11 @@ export function VideoReviewStatusPill({ video, version, comparing, projectId, ro
   const blocked = watchingOlder || comparing;
   const choose = async (next: VersionReviewStatus) => {
     if (next === latest.reviewStatus || pending || !queryClient) return;
+    const ticket = fence.begin();
     setPending(true); setProblem(null);
     try { await setVideoReviewStatus({ queryClient, projectId, role }, { assetId: latest.assetId, reviewStatus: next, expectedStatus: latest.reviewStatus }); }
-    catch (error) { if (alive.current) setProblem(reviewStatusErrorText(classifyReviewStatusError(error).kind)); }
-    finally { if (alive.current) setPending(false); }
+    catch (error) { if (ticket.isCurrent()) setProblem(reviewStatusErrorText(classifyReviewStatusError(error).kind)); }
+    finally { if (ticket.isCurrent()) setPending(false); }
   };
 
   return <div className="flex flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)]">
