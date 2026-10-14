@@ -13,7 +13,7 @@ import { Item, ItemContent } from "../components/reui/item";
 import { ICON_BUTTON } from "../components/quincy/icon-button";
 import { Menu, MENU_ITEM, MenuPrimitive } from "../components/quincy/menu";
 import { ResolvedTick } from "../components/quincy/ResolvedTick";
-import { IconTip } from "../components/quincy/VideoPlayer";
+import { IconTip } from "../components/quincy/IconTip";
 import { noteText, sameDoc } from "./guest-compose";
 import { GuestNoteField } from "./GuestNoteField";
 

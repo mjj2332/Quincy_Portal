@@ -1,9 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { PANE_MIN, PLAYER_MIN, REVIEW_PANE_KEY, clampPaneWidth, normalizeReviewPane, paneCeiling } from "../../lib/review-pane-prefs";
 import { useUiPref } from "../../lib/ui-prefs";
 import { Button } from "../reui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
+import { IconTip } from "./IconTip";
 
 /**
  * The review viewers' split (#859): the player on the left, a collapsible, resizable side pane on the right, one flex row for the staff viewer
@@ -166,14 +166,6 @@ export function ReviewPaneHideSlot() { return <>{useContext(ReviewPaneHideContex
 
 const PANE_ICON = "pointer-coarse:min-h-11 pointer-coarse:min-w-11";
 
-/** A tooltip composed straight from `reui/tooltip` (the player's `IconTip` is in `VideoPlayer`, which `quincy/` must not import). */
-function PaneTip({ label, children }: { label: string; children: ReactElement }) {
-  return <Tooltip>
-    <TooltipTrigger render={children} />
-    <TooltipContent>{label}</TooltipContent>
-  </Tooltip>;
-}
-
 /**
  * The pane's collapse control (#877): ⇥ "Hide {noun}" is placed by the screen inside the pane (`hideButton`); once the pane is collapsed a slim
  * strip on the right edge (`strip`, handed to `ReviewSplit`) holds ⇤ "Show {noun}". Collapsing moves focus to the strip's button, expanding moves it
@@ -191,7 +183,7 @@ export function useReviewPaneControls({ open, onOpenChange, paneId, noun }: { op
   }, [open]);
   const hideLabel = `Hide ${noun}`;
   const showLabel = `Show ${noun}`;
-  const hideButton = <PaneTip label={hideLabel}>
+  const hideButton = <IconTip label={hideLabel}>
     <Button
       ref={hideRef}
       type="button"
@@ -208,9 +200,9 @@ export function useReviewPaneControls({ open, onOpenChange, paneId, noun }: { op
         onOpenChange(false);
       }}
     ><PanelRightClose aria-hidden="true" /></Button>
-  </PaneTip>;
+  </IconTip>;
   const strip = open ? null : <div data-testid="video-review-strip" className="flex w-10 flex-none flex-col items-center border-l border-border bg-card py-[var(--space-2)] max-[721px]:hidden">
-    <PaneTip label={showLabel}>
+    <IconTip label={showLabel}>
       <Button
         ref={showRef}
         type="button"
@@ -223,7 +215,7 @@ export function useReviewPaneControls({ open, onOpenChange, paneId, noun }: { op
         className={PANE_ICON}
         onClick={() => { pendingFocus.current = "hide"; onOpenChange(true); }}
       ><PanelRightOpen aria-hidden="true" /></Button>
-    </PaneTip>
+    </IconTip>
   </div>;
   return { hideButton, strip };
 }

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { Button } from "@/components/reui/button";
 import { pushToast } from "../../lib/toast-store";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
+import { IconTip } from "../quincy/IconTip";
 
 const COPIED_MS = 2000;
 
@@ -48,5 +48,5 @@ export function CopyTextButton({ text, label = "Copy link", success = "Link copi
     </Button>
   );
   if (!tooltip) return button;
-  return <Tooltip><TooltipTrigger render={button} /><TooltipContent>{label}</TooltipContent></Tooltip>;
+  return <IconTip label={label}>{button}</IconTip>;
 }

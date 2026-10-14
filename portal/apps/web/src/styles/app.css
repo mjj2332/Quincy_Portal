@@ -139,8 +139,8 @@
   border-radius: var(--radius-pill); color: var(--foreground-secondary); cursor: pointer; white-space: nowrap;
   transition: all var(--dur-fast);
 }
-.chip:hover { border-color: var(--greige-300); color: var(--foreground); }
-.chip.is-active { background: var(--ink-900); border-color: var(--ink-900); color: var(--paper-050); }
+.chip:hover { border-color: var(--border-hover); color: var(--foreground); }
+.chip.is-active { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
 .chip .cnt { font-variant-numeric: tabular-nums; opacity: .6; }
 .chip.is-active .cnt { opacity: .8; }
 

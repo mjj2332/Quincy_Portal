@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, Columns2, DownloadIcon, Link2, Smartphone, Trash2 } from "lucide-react";
 import { framesToTimecode, videoVersionDownloadUrl, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
 import { registerToastHost } from "../../lib/toast-host";
@@ -12,7 +12,7 @@ import { Button } from "../reui/button";
 import { IconButton } from "../quincy/icon-button";
 import type { VersionRemovalHandle } from "./VideoVersionMenu";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "../reui/dialog";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
+import { IconTip } from "../quincy/IconTip";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
 import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
@@ -45,14 +45,6 @@ const VERSION_SELECT_ID = "video-review-version";
 
 /** Below this bar width (a container query on the header) an action's label is spoken, not drawn, and a tooltip names it, so 721-1080px still fits on one line. */
 const BAR_LABEL = "@max-[1080px]:sr-only";
-
-/** A top-bar action's tooltip, composed straight from `reui/tooltip` (the player's `IconTip` is in `VideoPlayer`, which this file does not import). */
-function BarTip({ label, children }: { label: string; children: ReactElement }) {
-  return <Tooltip>
-    <TooltipTrigger render={children} />
-    <TooltipContent>{label}</TooltipContent>
-  </Tooltip>;
-}
 
 /**
  * The staff review viewer (#741 4d-ii): a collection-local, full-viewport dialog on the inverse surface that plays one Video, one
@@ -399,10 +391,10 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         ? <VideoReviewHeaderMenu copyHref={copyHref} downloadHref={downloadHref} downloadLabel={`Download version ${version.version}`} onCreateReviewLink={createReviewLink} {...(removeVersionFromMenu ? { onRemoveVersion: removeVersionFromMenu, removeDisabled: !removeReady || trash?.archived === true || (video.uploading != null && video.versions.length === 1) } : {})} />
         : <>
           {copyHref && <CopyTextButton text={copyHref} label="Copy link" labelClassName={BAR_LABEL} tooltip className="pointer-coarse:min-h-11" />}
-          {downloadHref && <BarTip label="Download"><Button variant="outline" nativeButton={false} data-testid="video-download" aria-label={`Download version ${version.version}`} className="pointer-coarse:min-h-11" render={<a href={downloadHref} download />}><DownloadIcon aria-hidden="true" /><span className={BAR_LABEL}>Download</span></Button></BarTip>}
-          {createReviewLink && <BarTip label="Create Review link"><Button type="button" variant="outline" data-testid="video-create-review-link" className="pointer-coarse:min-h-11" onClick={createReviewLink}><Link2 aria-hidden="true" /><span className={BAR_LABEL}>Create Review link</span></Button></BarTip>}
+          {downloadHref && <IconTip label="Download"><Button variant="outline" nativeButton={false} data-testid="video-download" aria-label={`Download version ${version.version}`} className="pointer-coarse:min-h-11" render={<a href={downloadHref} download />}><DownloadIcon aria-hidden="true" /><span className={BAR_LABEL}>Download</span></Button></IconTip>}
+          {createReviewLink && <IconTip label="Create Review link"><Button type="button" variant="outline" data-testid="video-create-review-link" className="pointer-coarse:min-h-11" onClick={createReviewLink}><Link2 aria-hidden="true" /><span className={BAR_LABEL}>Create Review link</span></Button></IconTip>}
         </>}
-      {social && <BarTip label="Social preview"><Button
+      {social && <IconTip label="Social preview"><Button
         ref={socialToggleRef}
         type="button"
         variant="outline"
@@ -410,8 +402,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         data-testid="video-social-toggle"
         aria-pressed={socialOn}
         className={"pointer-coarse:min-h-11 max-[721px]:min-h-11 max-[721px]:min-w-11 aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground"}
-      ><Smartphone aria-hidden="true" /><span className={phone ? "sr-only" : BAR_LABEL}>Social preview</span></Button></BarTip>}
-      {(canCompare || comparing) && <BarTip label={comparing ? "Single view" : "Compare"}><Button
+      ><Smartphone aria-hidden="true" /><span className={phone ? "sr-only" : BAR_LABEL}>Social preview</span></Button></IconTip>}
+      {(canCompare || comparing) && <IconTip label={comparing ? "Single view" : "Compare"}><Button
         ref={compareButtonRef}
         type="button"
         variant="outline"
@@ -421,7 +413,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         onPointerEnter={() => { preloadCompare(notesOn); }}
         onFocus={() => { preloadCompare(notesOn); }}
         onClick={() => { if (comparing) exitCompare("button"); else enterCompare(); }}
-      ><Columns2 aria-hidden="true" /><span className={BAR_LABEL}>{comparing ? "Single view" : "Compare"}</span></Button></BarTip>}
+      ><Columns2 aria-hidden="true" /><span className={BAR_LABEL}>{comparing ? "Single view" : "Compare"}</span></Button></IconTip>}
       </div>
     </header>;
   const layout = (slots: { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode } | null): ReactNode => {

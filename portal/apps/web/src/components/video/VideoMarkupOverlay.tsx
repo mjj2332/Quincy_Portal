@@ -9,7 +9,8 @@ import { preloadSavedDrawing, type DrawForm } from "../../lib/video-note-form-st
 import { Button } from "../reui/button";
 import { Kbd } from "../reui/kbd";
 import { cn } from "@/lib/utils";
-import { COARSE, IconTip, LEGEND_KBD } from "../quincy/VideoPlayer";
+import { COARSE, LEGEND_KBD } from "../quincy/VideoPlayer";
+import { IconTip } from "../quincy/IconTip";
 import { MarkupToolbar } from "../quincy/markup-toolbar";
 import { MarkupLayer, StrokeVisible } from "../quincy/freehand-strokes";
 import { Notice } from "../quincy/Notice";

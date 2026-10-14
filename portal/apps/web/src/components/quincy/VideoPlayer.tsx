@@ -10,7 +10,7 @@ import { Button } from "../reui/button";
 import { Kbd, KbdGroup } from "../reui/kbd";
 import { Slider } from "../reui/slider";
 import { Toggle } from "../reui/toggle";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
+import { IconTip } from "./IconTip";
 import { TimeFormatMenu } from "./TimeFormatMenu";
 import { VideoStage } from "./VideoStage";
 import { SocialPreviewControls, useOverlayImage, type SocialPreviewMode } from "./SocialPreviewControls";
@@ -46,13 +46,6 @@ const MONO = "[font:var(--type-mono)] tabular-nums";
 // These chips keep the Lightbox's SHORTCUT_KBD skin (bordered, bg-secondary) rather than the Kbd primitive, to match the Lightbox legend.
 export const LEGEND_KBD = "rounded-[var(--radius-xs)] border border-solid border-[length:var(--border-width-hair)] border-border bg-secondary px-[var(--space-1)] text-foreground [font:var(--weight-regular)_var(--text-2xs)/1.4_var(--font-mono)]";
 const LEGEND = "flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)] text-foreground-secondary [font:var(--type-label)] pointer-coarse:hidden max-[721px]:hidden @max-[64rem]:hidden";
-
-export function IconTip({ label, keys, children }: { label: string; keys?: string; children: React.ReactElement }) {
-  return <Tooltip>
-    <TooltipTrigger render={children} />
-    <TooltipContent>{label}{keys && <Kbd>{keys}</Kbd>}</TooltipContent>
-  </Tooltip>;
-}
 
 /**
  * The frame-accurate review player (#741 4d-ii), Quincy-owned and reusable by the guest page (12b): the stage (a `<video>` with no

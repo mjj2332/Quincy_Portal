@@ -23,7 +23,7 @@ import { Kbd } from "../reui/kbd";
 import { RichTextContent } from "../RichTextContent";
 import { VideoNoteEditor } from "./VideoNoteEditor";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
-import { IconTip } from "../quincy/VideoPlayer";
+import { IconTip } from "../quincy/IconTip";
 import { ANCHOR_CHIP, ANCHOR_CHIP_ROW } from "./VideoNoteComposer";
 
 /** What a thread asks of the panel. Every write rejects with the original error, which the thread classifies. */
