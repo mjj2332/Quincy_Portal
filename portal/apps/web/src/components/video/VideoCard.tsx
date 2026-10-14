@@ -8,7 +8,7 @@ import { useFilePick } from "../quincy/FileDropzone";
 import { VideoTile } from "../quincy/VideoTile";
 import type { VideoUploadState } from "../../lib/video-upload";
 import { IconButton } from "../quincy/icon-button";
-import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
+import { MENU_ITEM, Menu, MenuPrimitive, PANEL } from "../quincy/menu";
 import { cn } from "@/lib/utils";
 import { REVIEW_STATUS_LABEL, REVIEW_STATUS_SHORT, REVIEW_STATUS_TONE } from "./VideoReviewStatusPill";
 import type { ReviewLinkChip } from "./use-review-links-ui";
@@ -17,8 +17,6 @@ const META = "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_v
 
 export const VIDEO_ACCEPT = ".mp4,.mov,video/mp4,video/quicktime";
 
-/** A submenu's popup: the menu panel's paint (`quincy/menu`'s PANEL), drawn here because the shared one is private to its file. */
-const SUB_PANEL = "z-[var(--z-popover)] w-56 max-w-[min(320px,calc(100vw-var(--space-4)))] max-h-[min(420px,calc(100dvh-var(--space-5)))] overflow-auto border border-border bg-popover text-popover-foreground shadow-[var(--shadow-md)] outline-none";
 const SEPARATOR = "my-[var(--space-1)] h-px bg-border";
 
 function Submenu({ label, testId, trigger, children }: { label: string; testId: string; trigger: ReactNode; children: ReactNode }) {
@@ -26,7 +24,7 @@ function Submenu({ label, testId, trigger, children }: { label: string; testId: 
     <MenuPrimitive.SubmenuTrigger className={cn(MENU_ITEM, "justify-between gap-[var(--space-2)]")} data-testid={testId}>{trigger}<ChevronRight aria-hidden="true" className="size-4 shrink-0" /></MenuPrimitive.SubmenuTrigger>
     <MenuPrimitive.Portal>
       <MenuPrimitive.Positioner side="right" align="start" sideOffset={2} collisionPadding={8} className="z-[var(--z-popover)] outline-none">
-        <MenuPrimitive.Popup className={SUB_PANEL} aria-label={label}>{children}</MenuPrimitive.Popup>
+        <MenuPrimitive.Popup className={PANEL} aria-label={label}>{children}</MenuPrimitive.Popup>
       </MenuPrimitive.Positioner>
     </MenuPrimitive.Portal>
   </MenuPrimitive.SubmenuRoot>;
@@ -36,7 +34,7 @@ function Submenu({ label, testId, trigger, children }: { label: string; testId: 
  * One Video as a poster-first tile (#884, was the #741 4d-i card). The whole tile opens the review; "⋯" is its only button and holds everything the card's buttons did. Dropping a file on the poster
  * uploads it as the next Version. `onVersionFile` checks and starts the upload and returns a message when the file is refused.
  */
-export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, reviewLinks, onCreateReviewLink, download, onRename, remove }: {
+export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersionFile, onCancelReservation, onOpen, select, reviewLinks, onCreateReviewLink, download, onRename, remove }: {
   video: VideoDto;
   canUpload: boolean;
   currentUserId: string | null;
@@ -56,8 +54,10 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
   onRename?: (video: VideoDto) => void;
   /** Present when staff may delete (the `trash` part and the capability, #868): "⋯" then ends with Delete…, in its own group. `disabled` on an archived Project. */
   remove?: { disabled: boolean; onOpen: () => void };
-  /** Review links (#741 11b), present only when the links part is on and the role may share: the tick for a new link and the links this Video is on. */
-  reviewLinks?: { selected: boolean; /** Absent when the Project is archived: no new links. */ onToggle?: () => void; chips: ReviewLinkChip[]; onOpenChip: (linkId: string) => void; onOpenAll: () => void };
+  /** The tick (poster corner): present when the person may create a link or download. */
+  select?: { selected: boolean; onToggle: () => void };
+  /** The links part is on and the role may share: the Review links submenu and the chips. */
+  reviewLinks?: { chips: ReviewLinkChip[]; onOpenChip: (linkId: string) => void; onOpenAll: () => void };
 }) {
   // The menu closes before a dialog has focus: while an item hands off, the menu moves no focus (#463); the dialog returns focus to the "⋯" button itself.
   const handOff = useRef(false);
@@ -126,7 +126,7 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
     {...(video.premium ? { premium: true } : {})}
     {...(activeLinks.length > 0 ? { linked: true } : {})}
     onOpen={(trigger) => { onOpen(video, trigger); }}
-    {...(reviewLinks?.onToggle ? { select: { selected: reviewLinks.selected, onToggle: reviewLinks.onToggle } } : {})}
+    {...(select ? { select } : {})}
     menu={menu}
     {...(canUpload ? { drop: { nextVersion: nextNumber, disabled: busy || checking, onFile: sendFile } } : {})}
     {...(footer ? { footer } : {})}

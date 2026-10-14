@@ -85,7 +85,8 @@ export function createReviewLinkStore(key: string) {
       update((s) => ({ selection: new Set([...s.selection].filter((id) => live.has(id))) }));
     },
 
-    openList() { update(() => ({ view: { kind: "list" } })); },
+    /** `returnFocus` (a selector) is where focus goes on close when the opener is not the header button; omitted, any selector already held (a dialog navigating between views) stays. */
+    openList(returnFocus?: string) { update(() => ({ view: { kind: "list" }, ...(returnFocus !== undefined ? { returnFocus } : {}) })); },
     openCreate() { update(() => ({ view: { kind: "create" } })); },
     /**
      * A single-film create (#834): opens the create step for this film alone with `assetIds` granted. It never touches the ticks, and it
@@ -95,7 +96,7 @@ export function createReviewLinkStore(key: string) {
       touch([`grant:${videoId}`]);
       update((s) => ({ create: { ...s.create, grants: { ...s.create.grants, [videoId]: assetIds } }, view: { kind: "create", only: videoId }, returnFocus: returnFocus ?? null }));
     },
-    openDetail(linkId: string) { update(() => ({ view: { kind: "detail", linkId } })); },
+    openDetail(linkId: string, returnFocus?: string) { update(() => ({ view: { kind: "detail", linkId }, ...(returnFocus !== undefined ? { returnFocus } : {}) })); },
     /** Closing never cancels a request and never discards a draft; it does discard the reveal on screen. */
     closeDialog() {
       update((s) => {

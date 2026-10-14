@@ -89,9 +89,8 @@ describe("focus returns to what opened the dialog", () => {
     expect(dialog()).toBeNull();
     expect(document.activeElement).toBe(opener);
   });
-  it("a Review links submenu link (the card's ⋯ menu is gone once the dialog opens, so focus falls back to the header button)", async () => {
+  it("a Review links submenu link returns focus to that tile's ⋯ button", async () => {
     await mount();
-    const header = q<HTMLButtonElement>('[data-testid="review-links-open"]')!;
     const trigger = q<HTMLElement>('[data-testid="video-card-menu"]')!;
     await act(async () => { trigger.focus(); trigger.click(); await Promise.resolve(); await Promise.resolve(); });
     await flush(20);
@@ -102,6 +101,25 @@ describe("focus returns to what opened the dialog", () => {
     expect(q('[data-testid="review-link-detail"]')).not.toBeNull();
     await escape();
     expect(dialog()).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+  it("All Review links from the submenu returns focus to that tile's ⋯ button, and a header opening still returns to the header", async () => {
+    await mount();
+    const trigger = q<HTMLElement>('[data-testid="video-card-menu"]')!;
+    await act(async () => { trigger.focus(); trigger.click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush(20);
+    await act(async () => { q<HTMLElement>('[data-testid="video-card-links"]')!.click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush(20);
+    await act(async () => { q<HTMLElement>('[data-testid="video-card-links-all"]')!.click(); await Promise.resolve(); });
+    await flush(20);
+    expect(q('[data-testid="review-link-list"]') ?? dialog()).not.toBeNull();
+    await escape();
+    expect(dialog()).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    const header = q<HTMLButtonElement>('[data-testid="review-links-open"]')!;
+    await act(async () => { header.focus(); });
+    await openList();
+    await escape();
     expect(document.activeElement).toBe(header);
   });
 });

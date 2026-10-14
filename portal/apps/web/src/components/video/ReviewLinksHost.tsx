@@ -16,12 +16,12 @@ export function ReviewLinksHost({ ui, videos, onBarHeight, onDownload }: { ui: R
   const videoIds = videos.map((video) => video.id).join(",");
   // A Video that left the Project takes its tick with it.
   useEffect(() => { store.pruneSelection(videoIds === "" ? [] : videoIds.split(",")); }, [store, videoIds]);
-  if (!ui.enabled) return null;
-  return ui.canWrite && state.selection.size > 0 ? <ReviewLinkSelectionBar count={state.selection.size} onCreate={store.openCreate} onClear={store.clearSelection} {...(onDownload ? { onDownload: () => { onDownload([...state.selection]); } } : {})} {...(onBarHeight ? { onHeight: onBarHeight } : {})} /> : null;
+  if (!ui.canSelect) return null;
+  return state.selection.size > 0 ? <ReviewLinkSelectionBar count={state.selection.size} {...(ui.canWrite ? { onCreate: store.openCreate } : {})} onClear={store.clearSelection} {...(onDownload ? { onDownload: () => { onDownload([...state.selection]); } } : {})} {...(onBarHeight ? { onHeight: onBarHeight } : {})} /> : null;
 }
 
 /** The "Review links" button, in the Films header (`VideoCollectionPanel`); renders nothing unless Review links are on. */
 export function ReviewLinksOpenButton({ ui }: { ui: ReviewLinksUi }) {
   if (!ui.enabled) return null;
-  return <Button type="button" variant="secondary" className={`min-h-11 ${PROJECT_SHEET_CLOSE_SCROLL_MARGIN}`} data-testid="review-links-open" onClick={ui.store.openList}>Review links</Button>;
+  return <Button type="button" variant="secondary" className={`min-h-11 ${PROJECT_SHEET_CLOSE_SCROLL_MARGIN}`} data-testid="review-links-open" onClick={() => { ui.store.openList(); }}>Review links</Button>;
 }

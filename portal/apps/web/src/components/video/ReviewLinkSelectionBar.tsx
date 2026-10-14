@@ -16,7 +16,7 @@ const BAR =
   "max-[721px]:pl-[var(--space-4)] max-[721px]:pr-[var(--space-4)] max-[721px]:pb-[calc(10px+env(safe-area-inset-bottom))]";
 
 /** `onHeight` reports the bar's measured height while it is mounted (0 once it goes), so the collection can keep its last cards clear of it. */
-export function ReviewLinkSelectionBar({ count, onCreate, onClear, onDownload, onHeight }: { count: number; onCreate: () => void; onClear: () => void; /** Present when staff may download (#884, D24): the bar then offers Download for the ticked films. */ onDownload?: () => void; onHeight?: (height: number) => void }) {
+export function ReviewLinkSelectionBar({ count, onCreate, onClear, onDownload, onHeight }: { count: number; /** Present when the person may create a Review link. */ onCreate?: () => void; onClear: () => void; /** Present when staff may download (#884, D24): the bar then offers Download for the ticked films. */ onDownload?: () => void; onHeight?: (height: number) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = ref.current;
@@ -30,9 +30,9 @@ export function ReviewLinkSelectionBar({ count, onCreate, onClear, onDownload, o
   return <div ref={ref} role="region" aria-label="Selected films" data-surface="inverse" data-testid="review-link-selection-bar" className={BAR}>
     <span className="[font:400_18px/1.18_var(--font-display)]">{count}</span>{" "}
     <span className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-on-inverse-muted max-[721px]:mr-auto">selected</span>
-    {count > REVIEW_LINK_MAX_VIDEOS && <span role="status" className="max-[721px]:order-last max-[721px]:basis-full [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">{`A link can hold at most ${REVIEW_LINK_MAX_VIDEOS} films.`}</span>}
+    {onCreate && count > REVIEW_LINK_MAX_VIDEOS && <span role="status" className="max-[721px]:order-last max-[721px]:basis-full [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">{`A link can hold at most ${REVIEW_LINK_MAX_VIDEOS} films.`}</span>}
     <span className="h-[22px] w-px bg-border max-[721px]:hidden" aria-hidden="true" />
-    <Button type="button" variant="primary" className="min-h-11" disabled={count > REVIEW_LINK_MAX_VIDEOS} onClick={onCreate}>Create Review link</Button>
+    {onCreate && <Button type="button" variant="primary" className="min-h-11" disabled={count > REVIEW_LINK_MAX_VIDEOS} onClick={onCreate}>Create Review link</Button>}
     {onDownload && <Button type="button" variant="secondary" className="min-h-11" onClick={onDownload}>Download</Button>}
     <Button type="button" variant="secondary" className="min-h-11" onClick={onClear}>Clear</Button>
   </div>;
