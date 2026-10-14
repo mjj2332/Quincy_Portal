@@ -292,10 +292,12 @@ describe("guest-api: endSession (#854)", () => {
     expect(await api().endSession()).toBe("ok");
     const { url, init } = lastCall();
     expect(url).toBe(`/d/api/links/${LINK}/session`); expect(init.method).toBe("DELETE"); expect(init.credentials).toBe("same-origin");
+    // The worker's `originRejection` answers 403 to an unsafe request without a JSON content type (and a 403 would read as signed out), so the header is part of the contract.
+    expect(new Headers(init.headers).get("content-type")).toBe("application/json");
   });
   it("reads a 4xx (staff already ended it, or the stub) as gone, and a 5xx, a 429 or a dropped connection as transient", async () => {
     answer(new Response("Not found", { status: 404 })); expect(await api().endSession()).toBe("gone");
-    answer(new Response("", { status: 403 })); expect(await api().endSession()).toBe("gone");
+    answer(json({ error: "invalid_origin" }, 403)); expect(await api().endSession()).toBe("transient");
     answer(new Response("", { status: 503 })); expect(await api().endSession()).toBe("transient");
     answer(new Response("", { status: 429 })); expect(await api().endSession()).toBe("transient");
     fetchMock.mockImplementation(async () => { throw new TypeError("offline"); });

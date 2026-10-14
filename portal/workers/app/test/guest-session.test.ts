@@ -464,19 +464,20 @@ describe("Sol round 1 fixes", () => {
     expect(used!.n === null || used!.n >= 60).toBe(true);
   });
 
-  it("leave resolves the session first: a missing, forged, expired or old-generation credential is the stub and clears nothing", async () => {
+  it("leave: a missing, forged, expired or old-generation credential is the stub (same status and body; a cookie that came is expired) and deletes no live session", async () => {
     const reference = await stubOf(await guestFetch("/d/api/x"));
+    const bodyOf = async (response: Response) => ({ status: response.status, body: await response.text(), headers: reference.headers });
     const leave = (id: string, cookie: string | null) => guestFetch(linkPath(id, "/session"), { method: "DELETE", cookie });
     const live = await linkWithSession();
-    expect(await stubOf(await leave(live.id, null))).toEqual(reference);
-    expect(await stubOf(await leave(live.id, `${cookieName(live.id)}=forged`))).toEqual(reference);
+    expect(await bodyOf(await leave(live.id, null))).toEqual(reference);
+    expect(await bodyOf(await leave(live.id, `${cookieName(live.id)}=forged`))).toEqual(reference);
     expect(await sessionRows(live.id)).toHaveLength(1);
     const lapsed = await linkWithSession();
     await database.DB.prepare("UPDATE guest_sessions SET expires_at = ?, created_at = ? WHERE link_id = ?").bind(Date.now() - 1, Date.now() - 1000, lapsed.id).run();
-    expect(await stubOf(await leave(lapsed.id, lapsed.cookie))).toEqual(reference);
+    expect(await bodyOf(await leave(lapsed.id, lapsed.cookie))).toEqual(reference);
     const replaced = await linkWithSession();
     await database.DB.prepare("UPDATE client_links SET token_generation = token_generation + 1 WHERE id = ?").bind(replaced.id).run();
-    expect(await stubOf(await leave(replaced.id, replaced.cookie))).toEqual(reference);
+    expect(await bodyOf(await leave(replaced.id, replaced.cookie))).toEqual(reference);
     expect((await leave(live.id, live.cookie)).status).toBe(204);
   });
 
@@ -682,7 +683,54 @@ describe("guest leaving writes an audit row (#854)", () => {
     expect(log).toHaveLength(1); expect(log[0]!.actor_id).toBeNull();
     expect(JSON.parse(log[0]!.meta_json)).toMatchObject({ linkId: link.id, guest: { sessionId } });
     const repeat = await guestFetch(linkPath(link.id, "/session"), { method: "DELETE", cookie: link.cookie });
-    expect(await stubOf(repeat)).toEqual(await stubOf(await guestFetch("/d/api/x")));
+    const bare = await stubOf(await guestFetch("/d/api/x"));
+    expect({ status: repeat.status, body: await repeat.text() }).toEqual({ status: bare.status, body: bare.body });
     expect((await database.DB.prepare("SELECT 1 FROM audit_log WHERE action = 'review_link.session_end' AND target_id = ?").bind(link.id).all()).results).toHaveLength(1);
+  });
+});
+
+describe("sign out while the link is suspended (#854)", () => {
+  const leave = (link: { id: string; cookie: string }) => guestFetch(linkPath(link.id, "/session"), { method: "DELETE", cookie: link.cookie });
+  const cleared = (response: Response, linkId: string) => response.headers.getSetCookie().find((entry) => entry.startsWith(`${cookieName(linkId)}=`));
+
+  it("with the guest part off, a same-origin DELETE still expires the cookie and deletes the session, and re-enabling does not bring the identity back", async () => {
+    const reference = await stubOf(await guestFetch("/d/api/x"));
+    const link = await linkWithSession(); await verifySession(link);
+    await database.DB.prepare("UPDATE feature_flags SET enabled = 0 WHERE key = 'video_review_guest'").run();
+    const response = await leave(link);
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe(reference.body);
+    expect(cleared(response, link.id)).toContain("Max-Age=0");
+    expect(await sessionRows(link.id)).toHaveLength(0);
+    await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'video_review_guest'").run();
+    expect(await stubOf(await guestFetch(linkPath(link.id, "/session"), { cookie: link.cookie }))).toEqual(reference);
+  });
+
+  it("with the Delivery page off, the same holds", async () => {
+    const link = await linkWithSession({ deliveryReview: true }); await verifySession(link);
+    await database.DB.prepare("UPDATE delivery_pages SET enabled = 0 WHERE slug LIKE 'guest-dr-%'").run();
+    expect((await leave(link)).status).toBe(404);
+    expect(await sessionRows(link.id)).toHaveLength(0);
+    await database.DB.prepare("UPDATE delivery_pages SET enabled = 1 WHERE slug LIKE 'guest-dr-%'").run();
+    expect((await guestFetch(linkPath(link.id, "/session"), { cookie: link.cookie })).status).toBe(404);
+  });
+
+  it("is still the plain stub with no Set-Cookie when no cookie came, and touches nothing when the Origin is wrong or the body is not JSON", async () => {
+    const reference = await stubOf(await guestFetch("/d/api/x"));
+    const link = await linkWithSession();
+    await database.DB.prepare("UPDATE feature_flags SET enabled = 0 WHERE key = 'video_review_guest'").run();
+    const bare = await guestFetch(linkPath(link.id, "/session"), { method: "DELETE" });
+    expect(await stubOf(bare)).toEqual(reference); expect(cleared(bare, link.id)).toBeUndefined();
+    for (const init of [{ origin: "https://evil.example" }, { contentType: null }] as const) {
+      const refused = await guestFetch(linkPath(link.id, "/session"), { method: "DELETE", cookie: link.cookie, ...init });
+      expect(await stubOf(refused)).toEqual(reference); expect(cleared(refused, link.id)).toBeUndefined();
+    }
+    expect(await sessionRows(link.id)).toHaveLength(1);
+  });
+
+  it("a live session needs the JSON content type the client sends: without it DELETE is 403 and nothing is deleted", async () => {
+    const link = await linkWithSession();
+    expect((await guestFetch(linkPath(link.id, "/session"), { method: "DELETE", cookie: link.cookie, contentType: null })).status).toBe(403);
+    expect(await sessionRows(link.id)).toHaveLength(1);
   });
 });

@@ -262,8 +262,9 @@ export function createGuestApi(linkId: string): GuestApi {
       return { kind: "rejected", error };
     },
     async endSession() {
-      const response = await send("/session", { method: "DELETE" });
-      if (transient(response)) return "transient";
+      // JSON headers like every other guest write: the worker answers an unsafe request without them 403 `invalid_origin`, and nothing is deleted. That 403 is a refusal, not "signed out", so it is transient.
+      const response = await send("/session", { method: "DELETE", headers: JSON_HEADERS, body: "{}" });
+      if (transient(response) || response?.status === 403) return "transient";
       return response!.ok ? "ok" : "gone";
     },
     async downloads() {
