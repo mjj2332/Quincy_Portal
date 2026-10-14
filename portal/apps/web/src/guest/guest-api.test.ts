@@ -66,17 +66,24 @@ describe("guest-api: email code", () => {
   });
 });
 
-describe("guest-api: videos (#872)", () => {
+describe("guest-api: social overlays (#872)", () => {
   const OVERLAY = { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", name: "Instagram Reel", imageUrl: "/social-overlay-images/cccccccc-cccc-4ccc-8ccc-cccccccccccc/dddddddd-dddd-4ddd-8ddd-dddddddddddd" };
-  it("returns the whole payload: the Videos and the Social overlays", async () => {
-    answer(json({ videos: [], socialOverlays: [OVERLAY] }));
-    expect(await api().videos()).toEqual({ kind: "ok", value: { videos: [], socialOverlays: [OVERLAY] } });
+  it("reads the list from its own route", async () => {
+    answer(json({ socialOverlays: [OVERLAY] }));
+    expect(await api().socialOverlays()).toEqual({ kind: "ok", value: [OVERLAY] });
+    expect(lastCall().url).toBe(`/d/api/links/${LINK}/social-overlays`);
   });
   it("rejects a payload without the field, an overlay with extra metadata, and an image path outside the overlay library", async () => {
-    for (const body of [{ videos: [] }, { videos: [], socialOverlays: [{ ...OVERLAY, platformLabel: "Instagram" }] }, { videos: [], socialOverlays: [{ ...OVERLAY, imageUrl: "https://elsewhere.test/x.png" }] }]) {
+    for (const body of [{}, { socialOverlays: [{ ...OVERLAY, platformLabel: "Instagram" }] }, { socialOverlays: [{ ...OVERLAY, imageUrl: "https://elsewhere.test/x.png" }] }]) {
       answer(json(body));
-      expect((await api().videos()).kind).not.toBe("ok");
+      expect((await api().socialOverlays()).kind).not.toBe("ok");
     }
+  });
+  it("leaves /videos as the strict { videos } shape the deployed page parses", async () => {
+    answer(json({ videos: [] }));
+    expect(await api().videos()).toEqual({ kind: "ok", value: [] });
+    answer(json({ videos: [], socialOverlays: [OVERLAY] }));
+    expect((await api().videos()).kind).not.toBe("ok");
   });
 });
 

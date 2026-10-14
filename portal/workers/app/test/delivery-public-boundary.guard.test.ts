@@ -27,7 +27,7 @@ export function violations(source: string): string[] {
   if (/c\.get\(\s*["']user["']\s*\)|requireSession|requireCapability|getAuth\s*\(/.test(source)) found.push("staff principal");
   // #863: Review status is staff-only. No column, DTO key or stored value of it may appear in a guest or public Delivery source (ADR 0021 section 7).
   if (/\b(?:review_status|reviewStatus|approved_internal)\b/.test(source)) found.push("reads Review status");
-  // #872: Social overlays are a Review link payload, never a Delivery page one.
+  // #872: Social overlays are a Review link read (`/d/api/links/:linkId/social-overlays`), never a Delivery page one.
   if (/\bsocial_overlays\b|\bsocialOverlay/.test(source)) found.push("reads Social overlays");
   return found;
 }
@@ -66,7 +66,7 @@ describe("public Delivery surface boundary", () => {
     expect(violations("const dto = { reviewStatus: video.reviewStatus };")).toContain("reads Review status");
     expect(violations("if (row.status === 'approved_internal') hide();")).toContain("reads Review status");
     expect(violations("const approvalStatus = 'approved'; // a client decision is not a Review status")).toEqual([]);
-    // #872: Social overlays reach a client only through the Review link's `/videos` payload; a Delivery page tile gets none.
+    // #872: Social overlays reach a client only through the Review link's own `/social-overlays` read; a Delivery page tile gets none.
     expect(violations("db.prepare('SELECT image_key FROM social_overlays')")).toContain("reads Social overlays");
     expect(violations("const dto = { socialOverlays: [] };")).toContain("reads Social overlays");
     expect(violations('const u = c.get("user");')).toContain("staff principal");

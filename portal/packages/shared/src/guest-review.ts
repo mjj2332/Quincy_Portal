@@ -150,7 +150,10 @@ export const guestVideoDtoSchema = z.object({
 }).strict();
 export type GuestVideoDto = z.infer<typeof guestVideoDtoSchema>;
 
-/** `GET /d/api/links/:linkId/videos`: only current members with at least one live grant, in Video position order. */
+/** `GET /d/api/links/:linkId/videos`: only current members with at least one live grant, in Video position order. Its shape is frozen: an already-open guest page parses it `.strict()` and reads a failure as "unavailable" (#858 deploy skew). */
+export const guestVideoListResponseSchema = z.object({ videos: z.array(guestVideoDtoSchema) }).strict();
+export type GuestVideoListResponse = z.infer<typeof guestVideoListResponseSchema>;
+
 export const guestSocialOverlaySchema = z.object({
   id: uuid,
   /** A client-safe label for the switcher ("Instagram Reel"); never the platform label, the Default flag or archive state. */
@@ -160,9 +163,9 @@ export const guestSocialOverlaySchema = z.object({
 }).strict();
 export type GuestSocialOverlay = z.infer<typeof guestSocialOverlaySchema>;
 
-/** `socialOverlays` (#872) is the Project's resolved Social overlays, library order, Default first; `[]` for an empty library. */
-export const guestVideoListResponseSchema = z.object({ videos: z.array(guestVideoDtoSchema), socialOverlays: z.array(guestSocialOverlaySchema) }).strict();
-export type GuestVideoListResponse = z.infer<typeof guestVideoListResponseSchema>;
+/** `GET /d/api/links/:linkId/social-overlays` (#872): the Project's resolved Social overlays, library order, Default first; `[]` for an empty library. Its own read, so `/videos` keeps its shape. */
+export const guestSocialOverlaysResponseSchema = z.object({ socialOverlays: z.array(guestSocialOverlaySchema) }).strict();
+export type GuestSocialOverlaysResponse = z.infer<typeof guestSocialOverlaysResponseSchema>;
 
 const guestAuthorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("studio"), name: z.string() }).strict(),

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { GuestDecision, GuestSessionResponse, GuestSocialOverlay, GuestVideoDto, GuestVideoListResponse } from "@quincy/shared";
+import type { GuestDecision, GuestSessionResponse, GuestSocialOverlay, GuestVideoDto } from "@quincy/shared";
 import { createGuestApi, type GuestApi } from "./guest-api";
 import { readLinkId } from "./link-fragment";
 import { GuestVideoScreen } from "./GuestVideoScreen";
@@ -29,7 +29,7 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
   const [screen, setScreen] = useState<Screen>({ name: "boot" });
   const [session, setSession] = useState<GuestSessionResponse | null>(null);
   const [videos, setVideos] = useState<GuestVideoDto[]>([]);
-  // The Project's Social overlays (#872), re-read with the list on every resync so a changed selection reaches an open page.
+  // The Project's Social overlays (#872), their own read, repeated wherever the list is: enter, a Delivery resync and a grant change. A failed read is no overlays, never an unavailable link.
   const [overlays, setOverlays] = useState<GuestSocialOverlay[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   // The latest list and screen for async completions; `commitVideos` is the only writer of the list, so the ref is never behind a queued update.
@@ -56,6 +56,14 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
   // The step that failed transiently; the Try again button repeats it.
   const retry = useRef<() => void>(() => undefined);
 
+  // Only the newest overlays read applies.
+  const overlayTicket = useRef(0);
+  const readOverlays = useCallback(async (opened: GuestApi): Promise<GuestSocialOverlay[]> => { const read = await opened.socialOverlays(); return read.kind === "ok" ? read.value : []; }, []);
+  const refreshOverlays = useCallback((opened: GuestApi) => {
+    const mine = ++overlayTicket.current;
+    void readOverlays(opened).then((list) => { if (overlayTicket.current === mine) setOverlays(list); });
+  }, [readOverlays]);
+
   const unavailable = useCallback(() => { setScreen({ name: "unavailable" }); }, []);
   // The one verify dialog for the page and its one continuation slot: Download all, a decision and the single Download all all ask it, so two of them can never each open their own.
   const { verify, dialog: verifyDialog } = useGuestVerify(setSession, unavailable);
@@ -69,15 +77,16 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
 
   const enter = useCallback(async (opened: GuestApi, next: GuestSessionResponse) => {
     setSession(next);
-    const list = await opened.videos();
+    const [list, found] = await Promise.all([opened.videos(), readOverlays(opened)]);
     if (list.kind === "gone") { setScreen({ name: "unavailable" }); return; }
     if (list.kind === "transient") { fail(() => { void enter(opened, next); }); return; }
-    commitVideos(list.value.videos);
-    setOverlays(list.value.socialOverlays);
+    commitVideos(list.value);
+    overlayTicket.current += 1;
+    setOverlays(found);
     const wanted = wantedVideo.current;
     wantedVideo.current = null;
     if (wanted !== null) {
-      const index = list.value.videos.findIndex((video) => video.id === wanted);
+      const index = list.value.findIndex((video) => video.id === wanted);
       if (index >= 0) {
         // The video screen opens a film on its newest granted Version. An unverified guest gets the existing verify dialog, once.
         setScreen({ name: "video", index });
@@ -86,8 +95,8 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
       }
       setNotice("That video is no longer available on this link. Here is what is.");
     }
-    setScreen(list.value.videos.length === 1 ? { name: "video", index: 0 } : { name: "list" });
-  }, [fail, commitVideos, verify]);
+    setScreen(list.value.length === 1 ? { name: "video", index: 0 } : { name: "list" });
+  }, [fail, commitVideos, verify, readOverlays]);
 
   const exchange = useCallback(async (opened: GuestApi, tokenValue: string, passcode?: string) => {
     const result = await opened.exchange(tokenValue, passcode);
@@ -127,13 +136,13 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
     void exchange(api, token.current, passcode);
   };
   // Staff took the displayed Video or Version off the link while it was open: show what is still granted, calmly, or nothing if nothing is.
-  const grantsChanged = useCallback(({ videos: fresh, socialOverlays: freshOverlays }: GuestVideoListResponse) => {
+  const grantsChanged = useCallback((fresh: GuestVideoDto[]) => {
     if (fresh.length === 0) { setScreen({ name: "unavailable" }); return; }
     commitVideos(fresh);
-    setOverlays(freshOverlays);
+    if (api !== null) refreshOverlays(api);
     setNotice("That video was updated by the studio. Here is what's available now.");
     setScreen(fresh.length === 1 ? { name: "video", index: 0 } : { name: "list" });
-  }, [commitVideos]);
+  }, [api, commitVideos, refreshOverlays]);
 
   // A decision lands on the Version it was sent for, by id: whichever Version the guest is looking at now is untouched.
   // A response older than what the page already holds (a refresh showed a newer revision first) is dropped: revisions only move forward.
@@ -155,10 +164,10 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
       if (rereadSeq.current !== mine) return;
       if (fresh.kind === "gone") { setScreen({ name: "unavailable" }); return; }
       if (fresh.kind !== "ok") return;
-      if (fresh.value.videos.length === 0) { setScreen({ name: "unavailable" }); return; }
-      setOverlays(fresh.value.socialOverlays);
+      if (fresh.value.length === 0) { setScreen({ name: "unavailable" }); return; }
+      refreshOverlays(api);
       const local = new Map(videosRef.current.flatMap((video) => video.versions).map((version) => [version.assetId, version] as const));
-      const merged = fresh.value.videos.map((video) => ({ ...video, versions: video.versions.map((version) => {
+      const merged = fresh.value.map((video) => ({ ...video, versions: video.versions.map((version) => {
         const kept = local.get(version.assetId)?.decision;
         return kept && kept.revision > (version.decision?.revision ?? 0) ? { ...version, decision: kept } : version;
       }) }));
@@ -166,11 +175,11 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
       if (now.name !== "list" && now.name !== "video") return;
       const onScreen = now.name === "video" ? videosRef.current[now.index] : undefined;
       const index = onScreen ? merged.findIndex((video) => video.id === onScreen.id) : -1;
-      if (now.name === "video" && (index < 0 || (shownVersion.current !== null && !merged[index]!.versions.some((version) => version.assetId === shownVersion.current)))) { grantsChanged({ videos: merged, socialOverlays: fresh.value.socialOverlays }); return; }
+      if (now.name === "video" && (index < 0 || (shownVersion.current !== null && !merged[index]!.versions.some((version) => version.assetId === shownVersion.current)))) { grantsChanged(merged); return; }
       commitVideos(merged);
       if (now.name === "video") setScreen({ name: "video", index });
     });
-  }, [api, commitVideos, grantsChanged]);
+  }, [api, commitVideos, grantsChanged, refreshOverlays]);
   if (api === null || screen.name === "unavailable") return <UnavailableScreen />;
   if (screen.name === "unreachable") return <UnreachableScreen onRetry={() => { retry.current(); }} />;
   if (screen.name === "limited") return <LimitedScreen retryAfterSeconds={screen.retryAfterSeconds} onRetry={() => { retry.current(); }} />;

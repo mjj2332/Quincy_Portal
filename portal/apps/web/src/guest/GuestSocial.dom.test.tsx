@@ -56,6 +56,8 @@ const stub404 = () => new Response("Not found", { status: 404 });
 let session: GuestSessionResponse;
 let videos: GuestVideoDto[];
 let socialOverlays: GuestSocialOverlay[];
+/** Replaces the Social overlays answer (a failure, a bad body). */
+let overlayAnswer: (() => Response | Promise<Response>) | null;
 let notes: Record<string, GuestNoteThreadDto[]>;
 let extra: Handler | null;
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -68,7 +70,8 @@ async function route(url: string, init: RequestInit | undefined): Promise<Respon
   const custom = await extra?.(url, init);
   if (custom) return custom;
   if (url === `${BASE}/session`) return json(session);
-  if (url === `${BASE}/videos`) return json({ videos, socialOverlays });
+  if (url === `${BASE}/videos`) return json({ videos });
+  if (url === `${BASE}/social-overlays`) return overlayAnswer ? overlayAnswer() : json({ socialOverlays });
   const list = /\/versions\/([^/]+)\/notes$/.exec(url);
   if (list && (init?.method ?? "GET") === "GET") return json({ notes: notes[list[1]!] ?? [] });
   return stub404();
@@ -110,7 +113,7 @@ const requests = (method: string) => fetchMock.mock.calls.filter((call) => ((cal
 beforeEach(() => {
   stub = installVideoElementStub();
   viewport = mockViewport({ width: 1440 });
-  session = VERIFIED; videos = [videoOf(1)]; socialOverlays = [REEL, TIKTOK]; notes = {}; extra = null;
+  session = VERIFIED; videos = [videoOf(1)]; socialOverlays = [REEL, TIKTOK]; overlayAnswer = null; notes = {}; extra = null;
   fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => route(String(input), init));
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
@@ -153,6 +156,24 @@ describe("Social preview on the Review link (#872)", () => {
     socialOverlays = [];
     await open();
     expect(toggle()).toBeNull();
+  });
+
+  it("never marks the link unavailable when the overlays read fails: the film plays and the page simply has no Social toggle", async () => {
+    for (const answer of [() => stub404(), () => new Response("boom", { status: 500 }), () => json({ socialOverlays: [{ ...REEL, platformLabel: "Instagram" }] }), () => json({ videos: [] }), () => Promise.reject(new TypeError("offline"))]) {
+      overlayAnswer = answer;
+      await open();
+      expect(byId("guest-video-title")?.textContent, "the video screen shows").toBe("Film 1");
+      expect(document.body.textContent).not.toContain("unavailable");
+      expect(toggle()).toBeNull();
+      await act(async () => { root!.unmount(); }); root = null; host.remove(); document.body.innerHTML = "";
+    }
+  });
+
+  it("reads the overlays from their own route and leaves /videos alone", async () => {
+    await open();
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls).toContain(`${BASE}/social-overlays`);
+    expect(urls.filter((url) => url === `${BASE}/videos`).length).toBeGreaterThan(0);
   });
 
   it("is a labelled toggle: visible text Social, accessible name Social preview", async () => {

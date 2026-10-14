@@ -179,6 +179,7 @@ describe("terminal route manifest", () => {
       "GET /d/api/links/:linkId/media/:mediaId/rendition",
       "GET /d/api/links/:linkId/notes/:noteId/markup",
       "GET /d/api/links/:linkId/session",
+      "GET /d/api/links/:linkId/social-overlays",
       "GET /d/api/links/:linkId/versions/:assetId/download",
       "GET /d/api/links/:linkId/versions/:assetId/notes",
       "GET /d/api/links/:linkId/versions/:assetId/poster",

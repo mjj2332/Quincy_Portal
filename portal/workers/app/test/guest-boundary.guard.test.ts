@@ -20,6 +20,8 @@ export function violations(source: string): string[] {
   if (/\btoken_secret\b/.test(source)) found.push("reads the stored link secret");
   // #863: Review status is staff-only. No column, DTO key or stored value of it may appear in a guest or public Delivery source (ADR 0021 section 7).
   if (/\b(?:review_status|reviewStatus|approved_internal)\b/.test(source)) found.push("reads Review status");
+  // #872: a guest sees an overlay's id, name and public image path (`listGuestSocialOverlays` maps them). The platform label is staff's.
+  if (/\b(?:platform_label|platformLabel)\b/.test(source)) found.push("reads the Social platform label");
   return found;
 }
 
@@ -43,6 +45,9 @@ describe("guest surface boundary", () => {
     expect(violations("const dto = { reviewStatus: video.reviewStatus };")).toContain("reads Review status");
     expect(violations("if (row.status === 'approved_internal') hide();")).toContain("reads Review status");
     expect(violations("const approvalStatus = 'approved'; // a client decision is not a Review status")).toEqual([]);
+    expect(violations("db.prepare('SELECT platform_label FROM social_overlays')")).toContain("reads the Social platform label");
+    expect(violations("const dto = { platformLabel: row.platform_label };")).toContain("reads the Social platform label");
+    expect(violations("const dto = { id: row.id, name: row.name, imageUrl };")).toEqual([]);
     expect(violations('import { syncDeliveryReviewLink } from "../lib/delivery-review-link";')).toContain("import ../lib/delivery-review-link");
     expect(violations('import { hashToken } from "../lib/opaque-token";\nimport { serveR2Object } from "../lib/r2-serve";')).toEqual([]);
   });

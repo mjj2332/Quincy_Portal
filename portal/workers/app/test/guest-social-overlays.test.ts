@@ -1,13 +1,14 @@
 import { SELF as workerSelf } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { guestVideoListResponseSchema } from "@quincy/shared";
+import { guestSocialOverlaysResponseSchema, guestVideoListResponseSchema } from "@quincy/shared";
+import { z } from "zod";
 import { pngBytes } from "../../../packages/shared/src/testing/png-fixture";
 import { baseEnv, cookie, database, ids, request, seedFixture } from "./embedded-media-support";
 import { socialOverlaysRevision } from "../src/lib/project-social-overlays";
-import { addMember, clearGuestRows, guestFetch, linkPath, linkWithSession, openGuestGate } from "./guest-support";
+import { addMember, clearGuestRows, guestFetch, HYGIENE, linkPath, linkWithSession, openGuestGate } from "./guest-support";
 import { clearVideoFlags, clearVideoNotes, seedVideoVersion } from "./video-review-support";
 
-/** Social overlays on the Review link (#872): the guest `/videos` payload carries the Project's resolved overlays as `{ id, name, imageUrl }` and nothing else. */
+/** Social overlays on the Review link (#872): `GET .../social-overlays` carries the Project's resolved overlays as `{ id, name, imageUrl }` and nothing else, and `/videos` keeps the shape an already-open page parses. */
 type Json = Record<string, any>;
 async function admin(pathname: string, init: { method?: string; json?: unknown; form?: FormData } = {}): Promise<Response> {
   const headers = new Headers({ cookie: await cookie("admin") });
@@ -40,20 +41,19 @@ async function linked(input: Parameters<typeof linkWithSession>[0] = {}) {
   await addMember(session.id, a.videoId, [a.assetId]);
   return session;
 }
-const list = async (session: { id: string; cookie: string }) => {
-  const response = await guestFetch(linkPath(session.id, "/videos"), { cookie: session.cookie }); expect(response.status).toBe(200);
+const read = async (session: { id: string; cookie: string }) => {
+  const response = await guestFetch(linkPath(session.id, "/social-overlays"), { cookie: session.cookie }); expect(response.status).toBe(200);
   const text = await response.text();
-  return { text, body: guestVideoListResponseSchema.parse(JSON.parse(text)) };
+  return { text, response, body: guestSocialOverlaysResponseSchema.parse(JSON.parse(text)) };
 };
-
 describe("Social overlays on the Review link (#872)", () => {
   it("is an empty list for an empty library", async () => {
-    expect((await list(await linked())).body.socialOverlays).toEqual([]);
+    expect((await read(await linked())).body.socialOverlays).toEqual([]);
   });
 
   it("falls back to the Default when the Project selected nothing", async () => {
     const def = await make("Default"); const reel = await make("Instagram Reel");
-    const { body } = await list(await linked());
+    const { body } = await read(await linked());
     expect(body.socialOverlays.map((o) => o.name)).toEqual(["Default"]);
     expect(body.socialOverlays[0]!.id).toBe(def.id);
     expect(reel.id).not.toBe(def.id);
@@ -63,23 +63,23 @@ describe("Social overlays on the Review link (#872)", () => {
     const def = await make("Default"); const tiktok = await make("TikTok"); const shorts = await make("Shorts");
     await database.DB.prepare("UPDATE social_overlays SET is_default = 1 WHERE id = ?").bind(def.id).run();
     await select([shorts.id, tiktok.id]);
-    expect((await list(await linked())).body.socialOverlays.map((o) => o.name)).toEqual(["Shorts", "TikTok"]);
+    expect((await read(await linked())).body.socialOverlays.map((o) => o.name)).toEqual(["Shorts", "TikTok"]);
     await archive(tiktok);
-    expect((await list(await linked())).body.socialOverlays.map((o) => o.name)).toEqual(["Shorts"]);
+    expect((await read(await linked())).body.socialOverlays.map((o) => o.name)).toEqual(["Shorts"]);
     await archive(shorts);
-    expect((await list(await linked())).body.socialOverlays.map((o) => o.name)).toEqual(["Default"]);
+    expect((await read(await linked())).body.socialOverlays.map((o) => o.name)).toEqual(["Default"]);
   });
 
   it("never shows another Project's selection", async () => {
     await make("Default"); const other = await make("Elsewhere");
     await database.DB.prepare("INSERT INTO project_social_overlays (project_id, overlay_id) VALUES (?, ?)").bind(ids.archivedProject, other.id).run();
-    expect((await list(await linked())).body.socialOverlays.map((o) => o.name)).toEqual(["Default"]);
+    expect((await read(await linked())).body.socialOverlays.map((o) => o.name)).toEqual(["Default"]);
   });
 
   it("carries exactly id, imageUrl and name, the image answers without a cookie, and nothing else of the library leaks", async () => {
     const reel = await make("Instagram Reel", "Platform-LABEL-secret");
     await select([reel.id]);
-    const { text, body } = await list(await linked());
+    const { text, body } = await read(await linked());
     expect(Object.keys(body.socialOverlays[0]!).sort()).toEqual(["id", "imageUrl", "name"]);
     const image = await workerSelf.fetch(`https://portal.test${body.socialOverlays[0]!.imageUrl}`);
     expect(image.status).toBe(200); expect(image.headers.get("content-type")).toBe("image/png");
@@ -89,6 +89,34 @@ describe("Social overlays on the Review link (#872)", () => {
 
   it("is the same list on the Delivery review link", async () => {
     await make("Default");
-    expect((await list(await linked({ deliveryReview: true }))).body.socialOverlays.map((o) => o.name)).toEqual(["Default"]);
+    expect((await read(await linked({ deliveryReview: true }))).body.socialOverlays.map((o) => o.name)).toEqual(["Default"]);
+  });
+
+  it("keeps the /videos body exactly the shape the deployed guest page parses (strict, no extra keys), whatever the library holds", async () => {
+    const reel = await make("Instagram Reel"); await select([reel.id]);
+    const session = await linked();
+    const response = await guestFetch(linkPath(session.id, "/videos"), { cookie: session.cookie }); expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(Object.keys(body as object)).toEqual(["videos"]);
+    // The shape main shipped, written out here so it cannot drift with the shared schema.
+    expect(() => z.object({ videos: z.array(z.unknown()) }).strict().parse(body)).not.toThrow();
+    expect(() => guestVideoListResponseSchema.parse(body)).not.toThrow();
+  });
+
+  it("answers the same stub as /videos without a session, for another link, and for a revoked link", async () => {
+    const session = await linked();
+    expect((await guestFetch(linkPath(session.id, "/social-overlays"))).status).toBe(404);
+    expect((await guestFetch(linkPath(session.id, "/social-overlays"), { cookie: "qg_x=nonsense" })).status).toBe(404);
+    const other = await linkWithSession();
+    expect((await guestFetch(linkPath(session.id, "/social-overlays"), { cookie: other.cookie })).status).toBe(404);
+    await database.DB.prepare("UPDATE client_links SET revoked_at = ?, revoked_by = ? WHERE id = ?").bind(Date.now(), ids.member, session.id).run();
+    expect((await guestFetch(linkPath(session.id, "/social-overlays"), { cookie: session.cookie })).status).toBe(404);
+  });
+
+  it("answers an unverified guest (a read, like /videos) with the guest hygiene headers", async () => {
+    await make("Default");
+    const { response, body } = await read(await linked());
+    expect(body.socialOverlays).toHaveLength(1);
+    for (const [name, value] of Object.entries(HYGIENE)) expect(response.headers.get(name), name).toBe(value);
   });
 });

@@ -3,8 +3,8 @@ import { resolvedSocialOverlaysStatement, uuidOfKey } from "../lib/project-socia
 import { LIVE_VERSION, LIVE_VIDEO } from "../lib/video-live-sql";
 import {
   VIDEO_NOTE_RICH_TEXT_PROFILE, parseRichTextDoc, richTextMediaRefs, richTextMentionsToText, type RichTextDoc,
-  guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNoteThreadDtoSchema, guestVideoListResponseSchema, socialOverlayImagePath,
-  type GuestNoteListResponse, type GuestNoteMarkupResponse, type GuestNoteThreadDto, type GuestNoteDto, type GuestVideoListResponse,
+  guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNoteThreadDtoSchema, guestSocialOverlaysResponseSchema, guestVideoListResponseSchema, socialOverlayImagePath,
+  type GuestNoteListResponse, type GuestNoteMarkupResponse, type GuestNoteThreadDto, type GuestNoteDto, type GuestSocialOverlaysResponse, type GuestVideoListResponse,
 } from "@quincy/shared";
 
 /**
@@ -30,7 +30,7 @@ type VersionRow = {
 
 /** Current members with at least one live grant, in Video position order, each with its granted Versions newest first. */
 export async function listGuestVideos(db: D1Database, linkId: string, projectId: string, guestId: string | null = null, canDownload = false): Promise<GuestVideoListResponse> {
-  const [videoResult, versionResult, decisionResult, releaseResult, publishedResult, overlayResult] = await db.batch([
+  const [videoResult, versionResult, decisionResult, releaseResult, publishedResult] = await db.batch([
     db.prepare(`SELECT v.id, v.title, v.premium, (p.video_id IS NOT NULL) AS unlocked
       FROM review_link_videos rv JOIN videos v ON v.id = rv.video_id AND v.project_id = ?2 AND ${LIVE_VIDEO("v")} LEFT JOIN video_premium_unlocks p ON p.video_id = v.id
       WHERE rv.link_id = ?1 AND rv.removed_at IS NULL
@@ -51,8 +51,6 @@ export async function listGuestVideos(db: D1Database, linkId: string, projectId:
     // #847: on the Delivery review link only, the Versions of the latest Published set (the Delivery page's downloads). Empty for every ordinary link.
     db.prepare(`SELECT pdi.asset_id FROM client_links pdl JOIN delivery_pages pdp ON pdp.project_id = pdl.project_id JOIN delivery_sets pds ON pds.project_id = pdl.project_id AND pds.set_number = pdp.latest_set_number
       JOIN delivery_set_items pdi ON pdi.set_id = pds.id WHERE pdl.id = ?1 AND pdl.delivery_review = 1`).bind(linkId),
-    // #872: the Project's resolved Social overlays, the same for every kind of link.
-    resolvedSocialOverlaysStatement(db, projectId),
   ]);
   const decisionByAsset = new Map((decisionResult!.results as Array<{ asset_id: string; decision: "approved" | "changes_requested"; revision: number; created_at: number; actor_guest_id: string | null }>)
     .map((row) => [row.asset_id, { value: row.decision, revision: row.revision, at: iso(row.created_at), self: guestId !== null && row.actor_guest_id === guestId }] as const));
@@ -72,9 +70,13 @@ export async function listGuestVideos(db: D1Database, linkId: string, projectId:
         downloadUrl: canDownload && (releasedAssets.has(row.asset_id) || publishedAssets.has(row.asset_id)) && !(video.premium === 1 && video.unlocked !== 1) ? downloadUrl(linkId, row.asset_id) : null,
       })),
     })).filter((video) => video.versions.length > 0),
-    // Its own projection: a label and a public image path, never the staff DTO.
-    socialOverlays: (overlayResult!.results as Array<{ id: string; name: string; image_key: string }>).map((row) => ({ id: row.id, name: row.name, imageUrl: socialOverlayImagePath(row.id, uuidOfKey(row.image_key)) })),
   });
+}
+
+/** The Project's resolved Social overlays (#872), the same for every kind of link. Its own projection, a label and a public image path, never the staff DTO; its own read, so `/videos` keeps the shape an already-open page parses. */
+export async function listGuestSocialOverlays(db: D1Database, projectId: string): Promise<GuestSocialOverlaysResponse> {
+  const rows = (await resolvedSocialOverlaysStatement(db, projectId).all<{ id: string; name: string; image_key: string }>()).results;
+  return guestSocialOverlaysResponseSchema.parse({ socialOverlays: rows.map((row) => ({ id: row.id, name: row.name, imageUrl: socialOverlayImagePath(row.id, uuidOfKey(row.image_key)) })) });
 }
 
 export type GrantedVersion = { r2Key: string; posterKey: string | null; videoId: string };

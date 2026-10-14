@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
 import { Check, ChevronLeft, ChevronRight, MessageSquare, MessageSquareWarning, Smartphone } from "lucide-react";
-import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto, type GuestVideoListResponse } from "@quincy/shared";
+import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto } from "@quincy/shared";
 import { useFrameLabel } from "../lib/time-format-prefs";
 import { useMediaQuery } from "../lib/use-media-query";
 import type { VideoFrameClock } from "../lib/video-frame-clock";
@@ -94,8 +94,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   /** Present only when there is a list to go back to (a single-Video link has none). */
   onBack: (() => void) | null;
   onUnavailable: () => void;
-  /** The displayed Version is no longer granted: the freshly read payload (Videos and Social overlays), for the page to show instead. */
-  onGrantsChanged: (fresh: GuestVideoListResponse) => void;
+  /** The displayed Version is no longer granted: the freshly read list, for the page to show instead. */
+  onGrantsChanged: (fresh: GuestVideoDto[]) => void;
   /** A decision landed on the Version `assetId` (the one it was sent for, which may no longer be the one on screen). */
   onDecided: (assetId: string, decision: GuestDecision) => void;
   /** A decision may or may not have landed: read the delivery list again. The page reconciles the result against the screen as it is when the answer arrives. */
@@ -187,7 +187,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     if (stale()) return "stale";
     if (list.kind === "gone") { onUnavailable(); return "handled"; }
     if (list.kind !== "ok") return "unknown";
-    if (!list.value.videos.some((candidate) => candidate.versions.some((granted) => granted.assetId === shownAssetId))) { onGrantsChanged(list.value); return "handled"; }
+    if (!list.value.some((candidate) => candidate.versions.some((granted) => granted.assetId === shownAssetId))) { onGrantsChanged(list.value); return "handled"; }
     return "valid";
   }, [api, onUnavailable, onGrantsChanged, shownAssetId]);
   // A stream that fails while the Version is still granted: another Version of this film may have been removed (#776 E), so the picker is read again. Quietly: no notice, no navigation unless the page decides the shown Version left.

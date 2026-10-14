@@ -347,6 +347,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/d/api/links/:linkId/session", class: "guest-link" },
   { method: "DELETE", path: "/d/api/links/:linkId/session", class: "guest-link" },
   { method: "GET", path: "/d/api/links/:linkId/videos", class: "guest-link" },
+  { method: "GET", path: "/d/api/links/:linkId/social-overlays", class: "guest-link" },
   { method: "GET", path: "/d/api/links/:linkId/versions/:assetId/stream", class: "guest-link" },
   { method: "GET", path: "/d/api/links/:linkId/versions/:assetId/poster", class: "guest-link" },
   { method: "GET", path: "/d/api/links/:linkId/versions/:assetId/notes", class: "guest-link" },

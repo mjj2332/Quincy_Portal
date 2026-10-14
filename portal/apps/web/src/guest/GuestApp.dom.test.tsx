@@ -59,7 +59,8 @@ function route(url: string, init: RequestInit | undefined): Response {
   const method = init?.method ?? "GET";
   const base = `/d/api/links/${LINK}`;
   if (url === `${base}/session`) { if (method === "POST") { sessionGone = false; return json(SESSION); } return sessionGone ? stub404() : json(SESSION); }
-  if (url === `${base}/videos`) return json({ videos, socialOverlays });
+  if (url === `${base}/videos`) return json({ videos });
+  if (url === `${base}/social-overlays`) return json({ socialOverlays });
   if (url.startsWith(`${base}/versions/`) && url.endsWith("/notes")) return json({ notes });
   return stub404();
 }
@@ -878,7 +879,8 @@ describe("Sol round 7", () => {
     const api: GuestApi = {
       exchange: async () => ({ ok: false, reason: "unavailable" }),
       session: async () => { await gate; return { kind: "gone" }; },
-      videos: async () => { await gate; return { kind: "ok", value: { videos: [], socialOverlays: [] } }; },
+      videos: async () => { await gate; return { kind: "ok", value: [] }; },
+      socialOverlays: async () => ({ kind: "ok", value: [] }),
       notes: async () => ({ kind: "ok", value: [] }),
       markup: async () => ({ kind: "gone" }),
       sendCode: async () => ({ ok: false, reason: "gone" }),
