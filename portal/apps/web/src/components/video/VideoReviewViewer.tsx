@@ -220,7 +220,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     if (open) return;
     if (details.reason === "escape-key") {
       const snapshot = escapeSnapshot.current;
-      if (snapshot.layer) { details.cancel(); details.allowPropagation(); return; }
+      // The snapshot was taken before any handler ran; a sheet or popup that is still open now owns the key too (a layer that closed first must not hand its Escape to the viewer).
+      if (snapshot.layer || hasOpenFloatingPopup(popupRef.current, slot)) { details.cancel(); details.allowPropagation(); return; }
       if (snapshot.form) { details.cancel(); return; }
       if (snapshot.social) { details.cancel(); preview.setOn(false); socialToggleRef.current?.focus({ preventScroll: true }); return; }
       if (snapshot.compare) { details.cancel(); exitCompare("button"); return; }

@@ -32,19 +32,19 @@ let root: Root | null = null; let host: HTMLElement;
 async function flush(times = 6) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
 const tid = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const onCreate = vi.fn();
-async function mount(props: { shown?: (v: number) => void; deepLink?: boolean; download?: boolean; reviewLinks?: boolean; trash?: boolean; social?: boolean; status?: boolean; notes?: boolean } = {}) {
+async function mount(props: { shown?: (v: number) => void; deepLink?: boolean; download?: boolean; reviewLinks?: boolean; trash?: boolean; social?: boolean; status?: boolean; notes?: boolean; exportOff?: boolean; onClose?: () => void } = {}) {
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   await act(async () => {
     root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><VideoReviewViewer
       video={videoOf()}
-      onClose={() => {}}
+      onClose={props.onClose ?? (() => {})}
       {...(props.shown ? { deepLink: { settled: true, href: (v: number) => `https://quincy.test/p/${PROJECT}?v=${v}`, onVersionShown: props.shown } } : {})}
       {...(props.deepLink ? { deepLink: { settled: true, href: (v: number) => `https://quincy.test/p/${PROJECT}?v=${v}`, onVersionShown: () => {} } } : {})}
       {...(props.download ? { download: { projectId: PROJECT } } : {})}
       {...(props.reviewLinks ? { reviewLinks: { onCreate } } : {})}
       {...(props.trash ? { trash: { projectId: PROJECT, archived: false } } : {})}
       {...(props.social ? { social: { projectId: PROJECT, role: "editor" as const } } : {})}
-      {...(props.notes ? { notes: { projectId: PROJECT, role: "editor" as const, userId: auth.userId, archived: false, forms: createNoteFormStore("phone-test"), exportEnabled: true } } : {})}
+      {...(props.notes ? { notes: { projectId: PROJECT, role: "editor" as const, userId: auth.userId, archived: false, forms: createNoteFormStore("phone-test"), exportEnabled: props.exportOff !== true } } : {})}
       {...(props.status ? { reviewStatus: { projectId: PROJECT, role: "editor" as const, archived: false } } : {})}
     /></QuincyQueryProvider>);
   });
@@ -151,5 +151,45 @@ describe("D4 and focus", () => {
     await flush();
     expect(document.querySelector('aside[aria-label="Version details"]')).toBe(details);
     expect(document.querySelector("video")).toBe(film);
+  });
+
+  const esc = async () => { await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); }); await flush(6); };
+
+  it("Escape with the ⋯ action sheet open closes only the sheet, and the focus goes back to the ⋯", async () => {
+    const onClose = vi.fn();
+    await mount({ shown: () => {}, download: true, onClose });
+    await click(trigger()!);
+    expect(tid("review-action-sheet")).not.toBeNull();
+    await esc();
+    expect(tid("review-action-sheet")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(tid("review-phone-bar")).not.toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it("Escape with the Versions sheet open closes only the sheet; the chip gets focus back on Escape, the close button and a row", async () => {
+    const onClose = vi.fn();
+    await mount({ shown: () => {}, onClose });
+    const chip = tid("video-version-chip")!;
+    await click(chip);
+    await esc();
+    expect(tid("video-versions-sheet")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(chip);
+    await click(chip);
+    await click(document.querySelector<HTMLElement>('[data-testid="video-versions-sheet"] button[aria-label^="Close"]')!);
+    expect(tid("video-versions-sheet")).toBeNull();
+    expect(document.activeElement).toBe(chip);
+    await click(chip);
+    await click(document.querySelectorAll<HTMLElement>('[data-testid="video-version-row"]')[0]!);
+    expect(tid("video-versions-sheet")).toBeNull();
+    expect(document.activeElement).toBe(chip);
+  });
+
+  it("the ⋯ sheet has no Marker export row when the Project's export part is off", async () => {
+    await mount({ notes: true, exportOff: true, download: true, shown: () => {} });
+    const deadline = Date.now() + 5000; while (!trigger() && Date.now() < deadline) await flush(1);
+    await click(trigger()!);
+    expect(tid("video-marker-export-row")).toBeNull();
   });
 });

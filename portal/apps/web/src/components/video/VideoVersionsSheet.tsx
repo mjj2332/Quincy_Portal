@@ -43,7 +43,7 @@ export function VideoVersionsSheet({ open, onOpenChange, container, rows, curren
 }) {
   const newest = Math.max(0, ...rows.map((row) => row.version));
   return <Sheet open={open} onOpenChange={onOpenChange}>
-    <SheetContent side="bottom" container={container} showCloseButton={false} {...(returnFocusTo ? { finalFocus: returnFocusTo } : {})} data-testid="video-versions-sheet" className="max-h-[70dvh] p-[var(--space-4)]">
+    <SheetContent side="bottom" container={container} showCloseButton={false} {...(returnFocusTo ? { finalFocus: () => returnFocusTo.current ?? true } : {})} data-testid="video-versions-sheet" className="max-h-[70dvh] p-[var(--space-4)]">
       <SheetHeader className={`p-0 ${SHEET_CLOSE_CLEARANCE}`}><SheetTitle className="m-0 text-foreground [font:var(--type-h3)]">Version</SheetTitle></SheetHeader>
       <ItemGroup role="group" aria-label="Versions" className="min-h-0 gap-[var(--space-1)] overflow-y-auto">
         {rows.map((row) => {
