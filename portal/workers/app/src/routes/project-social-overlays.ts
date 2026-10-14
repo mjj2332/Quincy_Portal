@@ -5,6 +5,7 @@ import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
 import { readProjectSocialOverlays, setProjectSocialOverlays } from "../lib/project-social-overlays";
 import { terminalRoute } from "../lib/terminal-route";
+import { principalOf } from "./helpers";
 import { readVideoReviewGate } from "../lib/video-review-gate";
 
 const uuid = z.string().uuid();
@@ -46,7 +47,7 @@ projectSocialOverlayRoutes.put("/projects/:projectId/social-overlays", terminalR
   const input = projectSocialOverlayInput.safeParse(body);
   if (!input.success) return c.json({ error: "Invalid input", details: input.error.flatten() }, 400);
   const user = c.get("user");
-  const outcome = await setProjectSocialOverlays(c.env.DB, { projectId: admitted.projectId, ...input.data, principal: { id: user.id, impersonatedBy: user.impersonatedBy, via: user.via }, now: Date.now() });
+  const outcome = await setProjectSocialOverlays(c.env.DB, { projectId: admitted.projectId, ...input.data, principal: principalOf(c), now: Date.now() });
   switch (outcome.kind) {
     case "set": return c.json(outcome.state);
     case "conflict": return c.json({ error: "The Project's Social overlays changed since you looked.", code: "social_overlays_conflict", current: outcome.state }, 409);

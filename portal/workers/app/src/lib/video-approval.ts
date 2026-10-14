@@ -1,6 +1,6 @@
 import { guestDigestStatements } from "./guest-digest";
 import { enqueueObjectCrcs, ROLE_LABELS, type ObjectCrcQueueEnv, type Role, type VideoDecisionEvent, type VideoRelease, type VideoVersionDecisions } from "@quincy/shared";
-import { auditMeta, type AuditPrincipal } from "./audit";
+import { auditMeta, type Principal } from "./audit";
 import { everPublishedSql } from "./delivery-lock";
 import { deliveryReviewSyncStatements } from "./delivery-review-link";
 import { newId } from "./ids";
@@ -12,7 +12,6 @@ import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO, LIVE_VIDEO_EXISTS } from
  * guard (the Version or Video belongs to the Project, the Project is not archived, the Release CAS) as a `WHERE`, and the audit row follows only a statement that landed, so a refused
  * guard writes nothing and leaves no audit row. A decision is append-only and informational (ADR 0021 section 5); a Release names the exact approval event it rests on.
  */
-export type Principal = NonNullable<AuditPrincipal>;
 const NOT_ARCHIVED = (param: string) => `EXISTS (SELECT 1 FROM projects WHERE id = ${param} AND archived_at IS NULL)`;
 const iso = (ms: number) => new Date(ms).toISOString();
 const person = (id: string | null, name: string | null, role: Role | null, active: number | null) =>

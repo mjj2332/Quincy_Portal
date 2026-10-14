@@ -79,7 +79,10 @@ describe("VideoReviewViewer (#741 4d-ii)", () => {
     const labelledBy = open.getAttribute("aria-labelledby")!;
     expect(document.getElementById(labelledBy)?.textContent).toBe("Main walkthrough");
     expect(playerVideo()!.getAttribute("src")).toBe(`/media/video/${ids.asset2}`);
-    expect(open.textContent).toContain("1920×1080 · 25 fps · start TC 01:00:00:00");
+    // The bar is one line (#877 S2): the title only, with no description. Resolution and frame rate live in Version details, beside the start timecode.
+    expect(open.hasAttribute("aria-describedby")).toBe(false);
+    expect(open.textContent).toContain("Resolution1920×1080");
+    expect(open.textContent).toContain("Frame rate25 fps");
     expect(open.getAttribute("data-surface")).toBe("inverse");
     expect(open.querySelector("[data-testid=video-readout]")!.textContent).toMatch(/^01:00:00:00 \//);
   });
@@ -172,7 +175,8 @@ describe("VideoReviewViewer (#741 4d-ii)", () => {
     const trigger = dialog()!.querySelector<HTMLElement>('[role="combobox"]')!;
     expect(trigger.className).toContain("pointer-coarse:min-h-11");
     expect(document.querySelector(`label[for="${trigger.id}"]`)?.textContent).toBe("Version");
-    expect(trigger.textContent).toContain("v2 · latest · Mia Chen · 9 Oct 2026");
+    expect(trigger.textContent).toContain("v2 · latest");
+    expect(trigger.textContent).not.toContain("Mia Chen");
     const aside = dialog()!.querySelector('aside[aria-label="Version details"]')!;
     expect(aside.textContent).toContain("Mia Chen");
     expect(aside.textContent).toContain("120 MB");
@@ -201,9 +205,9 @@ describe("VideoReviewViewer (#741 4d-ii)", () => {
     expect(title.className).toContain("text-foreground-secondary");
     expect(description.className).toContain("text-foreground");
     expect(description.className).not.toContain("text-muted-foreground");
-    const startTc = dialog()!.querySelector('[data-testid="video-start-tc"]')!;
-    expect(startTc.className).toContain("whitespace-nowrap");
-    expect(startTc.textContent).toMatch(/^start TC /);
+    // Start timecode moved here from the bar's description (#877 S2).
+    const startRow = [...aside.querySelectorAll('[data-testid="video-detail-label"]')].find((el) => el.textContent === "Start timecode")!;
+    expect(startRow.parentElement!.querySelector('[data-testid="video-detail-value"]')!.textContent).toBe("01:00:00:00");
   });
 
   it("the Version popup renders inside the player dialog, above it, not in the Project sheet's overlay slot", async () => {

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Check, ChevronLeft, ChevronRight, MessageSquare, MessageSquareWarning, Smartphone } from "lucide-react";
 import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto } from "@quincy/shared";
+import { OverlayContainerContext } from "../components/OverlayContainerContext";
 import { useFrameLabel } from "../lib/time-format-prefs";
 import { useMediaQuery } from "../lib/use-media-query";
 import type { VideoFrameClock } from "../lib/video-frame-clock";
@@ -9,7 +10,7 @@ import { Toggle } from "../components/reui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/reui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../components/reui/sheet";
 import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "../components/quincy/SheetCloseButton";
-import { ReviewPaneToggle, ReviewSplit, useReviewPane } from "../components/quincy/ReviewPane";
+import { ReviewSplit, useReviewPane, useReviewPaneControls } from "../components/quincy/ReviewPane";
 import { VideoPlayer, type VideoPlayerControl } from "../components/quincy/VideoPlayer";
 import type { SocialPreviewMode } from "../components/quincy/SocialPreviewControls";
 import { currentOverlay, useSocialPreview } from "../lib/use-social-preview";
@@ -71,8 +72,10 @@ function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
  * One Video on the guest page (#741 12b), read-only: the reused review player on the inverse surface, the granted-Versions select, previous / next Video, and the public notes (a
  * column beside the player, a bottom drawer below 721px). Moving between Videos never returns to the list. State is in memory; the URL does not change.
  */
-export function GuestVideoScreen({ api, verify, writer, drafts, subscription, session, onSession, archived, onArchived, videos, socialOverlays, index, onIndex, onBack, onUnavailable, onGrantsChanged, onDecided, onResyncDelivery, onShownVersion }: {
+export function GuestVideoScreen({ api, verify, writer, drafts, subscription, session, onSession, archived, onArchived, videos, socialOverlays, index, onIndex, onBack, onUnavailable, onGrantsChanged, onDecided, onResyncDelivery, onShownVersion, identity = null }: {
   api: GuestApi;
+  /** The "Reviewing as … / Not you? Sign out" row (#854), at the top of the notes-panel footer, above the email-updates switch. */
+  identity?: ReactNode;
   /** The page's one verify dialog and continuation slot, owned by `GuestApp`. */
   verify: GuestVerify;
   /** Owned by `GuestApp`, so a write still out survives this screen being left and opened again. */
@@ -112,6 +115,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
 
   const [threads, setThreads] = useState<GuestNoteThreadDto[] | null>(null);
   const [notesFailed, setNotesFailed] = useState(false);
+  // Popups (Version select, notes drawer) portal into this slot, inside the inverse scope, not to body (#877).
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
   const [selectionCount, setSelectionCount] = useState(0);
   const [notesAttempt, setNotesAttempt] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -122,6 +127,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const reviewPane = useReviewPane(phone);
   const paneId = useId();
   const setPaneOpen = reviewPane.setOpen;
+  // The pane's collapse control (#877 S2): ⇥ beside the Notes heading, ⇤ in a strip once collapsed. A phone has the drawer and no toggle.
+  const paneControls = useReviewPaneControls({ open: reviewPane.open, onOpenChange: setPaneOpen, paneId, noun: "notes" });
 
   // Copy my notes (13d): the dialog, and what the last paste came to for the Version on screen.
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -274,21 +281,14 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     remove: async (root, note, expectedRevision) => settle(await writer.run(root.id, () => api.deleteNote(note.id, expectedRevision)), note.id === root.id ? root.id : null),
   }), [api, writer, settle]);
 
-  // Entering Social ends a drawing on purpose; the drawer must not come back over the preview when it does.
-  const socialEntering = useRef(false);
-  const onDrawingChange = useCallback((drawing: boolean) => { if (phone && !socialEntering.current) setDrawerOpen(!drawing); }, [phone]);
+  const onDrawingChange = useCallback((drawing: boolean) => { if (phone) setDrawerOpen(!drawing); }, [phone]);
   const compose = useGuestCompose({ clock, frameCount: version.frameCount, timecode, markupAllowed: session.link.allow.markup, media: api.media, post, edit: editRoot, latestOf, onDrawingChange });
-  // Social preview (#872): in memory, shared by every Video and Version of this screen, off again after All videos. The notes are paused while it is on; nothing is closed or cleared.
+  // Social preview (#872): in memory, shared by every Video and Version of this screen, off again after All videos. Nothing else changes (#877): notes, marks and drawing work with it on, and turning it on or off touches no draft or drawing.
   const preview = useSocialPreview();
   const socialOn = preview.on && socialOverlays.length > 0;
-  const { endDrawing } = compose;
-  const setSocial = useCallback((next: boolean) => {
-    if (next) { socialEntering.current = true; endDrawing(); }
-    preview.setOn(next);
-  }, [endDrawing, preview.setOn]); // eslint-disable-line react-hooks/exhaustive-deps -- `setOn` is stable
-  useEffect(() => { socialEntering.current = false; }, [socialOn]);
+  const setSocial = preview.setOn;
   const socialMode: SocialPreviewMode | undefined = socialOn ? {
-    overlays: socialOverlays, currentId: currentOverlay(socialOverlays, preview.overlayId)?.id ?? null, onOverlay: preview.setOverlayId, fit: preview.fit, onFit: preview.setFit,
+    overlays: socialOverlays, currentId: currentOverlay(socialOverlays, preview.overlayId)?.id ?? null, onOverlay: preview.setOverlayId,
     status: "ready", onRetry: () => undefined,
   } : undefined;
   // The range button and handles (#861) exist where the link allows comments; they take the open draft's marks and are disabled with no draft (the hint says how to start one), an archived Project, or marks the draft has locked (a drawing).
@@ -333,8 +333,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const { beginEdit } = compose;
   const writing = useMemo<Writing>(() => ({
     canWrite, verified: session.verified, media: api.media, actions, drafts, onNeedVerify: () => { requestVerify("none"); },
-    composerOpen: compose.isOpen, paused: socialOn, editRoot: (thread) => { startDraft(() => { beginEdit(thread); }); },
-  }), [canWrite, session.verified, api, actions, drafts, requestVerify, compose.isOpen, socialOn, startDraft, beginEdit]);
+    composerOpen: compose.isOpen, editRoot: (thread) => { startDraft(() => { beginEdit(thread); }); },
+  }), [canWrite, session.verified, api, actions, drafts, requestVerify, compose.isOpen, startDraft, beginEdit]);
   const canPaste = canWrite && video.versions.length >= 2;
   // On a phone the notes drawer would sit under the dialog: it steps aside and comes back when the dialog closes.
   const openPaste = () => {
@@ -348,13 +348,12 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     setPasteOpen(next);
     if (!next && restorePasteDrawer.current) { restorePasteDrawer.current = false; setDrawerOpen(true); }
   };
-  const pausedLine = <p data-testid="guest-notes-social-paused" className="m-0 text-foreground-secondary [font:var(--type-label)]">Notes are off in Social preview.</p>;
   const addNote = canWrite
-    ? <>{socialOn && pausedLine}<div hidden={socialOn} inert={socialOn}>{compose.isOpen ? compose.form : <div className="flex flex-col items-start gap-[var(--space-2)]">
+    ? <>{compose.isOpen ? compose.form : <div className="flex flex-col items-start gap-[var(--space-2)]">
       <Button type="button" variant="outline" data-testid="guest-add-note" className={TOUCH} onClick={() => { if (session.verified) startDraft(compose.begin); else requestVerify("compose"); }}>Add a note</Button>
       {canPaste && <Button type="button" variant="ghost" data-testid="guest-paste-open" className={TOUCH} onClick={openPaste}>Copy my notes from another version</Button>}
       {pasted !== null && <p role="status" data-testid="guest-paste-status" className="m-0 text-foreground-secondary [font:var(--type-label)]">{pasted}</p>}
-    </div>}</div></>
+    </div>}</>
     : null;
 
   // Approve / Request changes (#741 14-ui-guest). The note draft is in `drafts` and the write is the writer's, so both outlive this screen; the dialog is per Version and decision.
@@ -415,39 +414,43 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const headingContent = <>Notes{threads !== null && <><span className="sr-only"> </span><span data-testid="guest-notes-count" className="ms-[var(--space-1)] text-foreground-secondary [font:var(--type-label)]">{threads.length}</span></>}</>;
   const heading = <h2 data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</h2>;
   const toggleSubscription = useCallback((next: boolean, previous: boolean) => { void subscription.toggle(next, previous, () => writer.runLink("subscription", () => api.setSubscription(next))); }, [subscription, writer, api]);
-  const footer = session.verified && session.notifications?.available
+  const subscriptionRow = session.verified && session.notifications?.available
     ? <GuestSubscriptionRow store={subscription} initial={session.notifications.subscribed} readOnly={archived} onToggle={toggleSubscription} />
     : null;
-  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} top={addNote} footer={footer} writing={writing} hideEmpty={socialOn && canWrite} />;
+  const footer = session.verified ? <>{identity}{subscriptionRow}</> : null;
+  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : <div className="flex items-center justify-between gap-[var(--space-2)]">{heading}{paneControls.hideButton}</div>} top={addNote} footer={footer} writing={writing} />;
 
   return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-dvh flex-1 flex-col bg-background text-foreground min-[721px]:min-h-0">
-    <header className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-2)] border-b border-border bg-card px-[var(--space-5)] py-[var(--space-3)] text-card-foreground">
-      {onBack && <Button type="button" variant="ghost" className={TOUCH} onClick={onBack}><ChevronLeft aria-hidden="true" />All videos</Button>}
-      <h1 data-testid="guest-video-title" className="m-0 min-w-[160px] flex-1 truncate text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{video.title}</h1>
-      <div className="flex min-w-0 items-center gap-[var(--space-4)] max-[721px]:basis-full max-[721px]:gap-[var(--space-2)] min-[721px]:contents">
+    <header className="flex flex-col border-b border-border bg-card text-card-foreground">
+     <div data-testid="guest-bar" className="flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] px-[var(--space-4)] py-[var(--space-1)] max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">
+      {onBack && <Button type="button" variant="ghost" className={`${TOUCH} shrink-0 max-[721px]:min-w-11`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span className="max-[721px]:sr-only">All videos</span></Button>}
+      <h1 data-testid="guest-video-title" title={video.title} className="m-0 min-w-0 flex-1 truncate [font:var(--type-body)]">{video.title}</h1>
+      <div className="flex min-w-0 flex-none items-center gap-[var(--space-3)] max-[721px]:gap-[var(--space-2)]">
       {videos.length > 1 && <div className="flex items-center gap-[var(--space-2)]">
         <Button type="button" variant="outline" size="icon" aria-label="Previous video" className={TOUCH} disabled={index === 0} onClick={() => { step(-1); }}><ChevronLeft aria-hidden="true" /></Button>
-        <span data-testid="guest-video-position" className="text-foreground-secondary tabular-nums [font:var(--type-label)]">{`${index + 1} of ${videos.length}`}</span>
+        <span data-testid="guest-video-position" className="text-foreground-secondary tabular-nums [font:var(--type-label)] max-[721px]:sr-only">{`${index + 1} of ${videos.length}`}</span>
         <Button type="button" variant="outline" size="icon" aria-label="Next video" className={TOUCH} disabled={index === videos.length - 1} onClick={() => { step(1); }}><ChevronRight aria-hidden="true" /></Button>
       </div>}
       <div className="flex min-w-0 max-w-full items-center gap-[var(--space-2)] max-[721px]:flex-1">
         <label htmlFor={VERSION_SELECT_ID} className="shrink-0 text-foreground-secondary [font:var(--type-label)] max-[721px]:sr-only">Version</label>
+        <OverlayContainerContext.Provider value={slot}>
         <Select value={version.assetId} onValueChange={(next) => { if (typeof next === "string") setAssetId(next); }}>
           <SelectTrigger id={VERSION_SELECT_ID} data-testid="guest-version-trigger" className={`${TOUCH} min-w-0 max-w-full`}>
-            <SelectValue>{() => <span className="block truncate">{optionLabel(version)}</span>}</SelectValue>
+            <SelectValue>{() => <span className="block truncate">{phone ? `v${version.version}` : optionLabel(version)}</span>}</SelectValue>
           </SelectTrigger>
           <SelectContent className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
             {video.versions.map((candidate) => <SelectItem key={candidate.assetId} value={candidate.assetId} className={TOUCH}>{optionLabel(candidate)}</SelectItem>)}
           </SelectContent>
         </Select>
+        </OverlayContainerContext.Provider>
       </div>
-      {socialOverlays.length > 0 && <Button type="button" variant="outline" aria-pressed={socialOn} onClick={() => { setSocial(!socialOn); }} data-testid="guest-social-toggle" aria-label="Social preview" className={`${TOUCH} aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground`}>
-        <Smartphone aria-hidden="true" /><span className="max-[721px]:sr-only">Social</span>
+      {socialOverlays.length > 0 && <Button type="button" variant="outline" aria-pressed={socialOn} onClick={() => { setSocial(!socialOn); }} data-testid="guest-social-toggle" aria-label="Social preview" className={`${TOUCH} max-[721px]:min-w-11 aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground`}>
+        <Smartphone aria-hidden="true" /><span className="max-[721px]:sr-only">Social preview</span>
       </Button>}
-      {!phone && <ReviewPaneToggle open={reviewPane.open} onOpenChange={setPaneOpen} paneId={paneId} label="Notes" className={TOUCH} />}
       {phone && <Button type="button" variant="outline" aria-label={threads === null ? "Notes" : `Notes, ${threads.length}`} className={`${TOUCH} shrink-0`} onClick={() => { setDrawerOpen(true); }}><MessageSquare aria-hidden="true" />{threads !== null && <span className="[font:var(--type-label)]">{threads.length}</span>}</Button>}
       </div>
-      <div data-testid="guest-delivery" className="flex flex-wrap items-center gap-[var(--space-2)] empty:hidden max-[721px]:basis-full">
+     </div>
+      <div data-testid="guest-delivery" className="flex flex-wrap items-center gap-[var(--space-2)] px-[var(--space-4)] pb-[var(--space-2)] empty:hidden">
         <GuestDeliveryChips version={version} />
         {canDecide && <>
           <Button type="button" variant={version.decision?.value === "approved" ? "outline" : "default"} data-testid="guest-approve" className={TOUCH} onClick={() => { startDecision("approved"); }}><Check aria-hidden="true" />Approve</Button>
@@ -467,11 +470,12 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       paneId={paneId}
       handleLabel="Resize notes"
       stacked={phone}
-      player={<VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} />}
-      pane={phone ? null : <aside data-surface="default" className="flex flex-1 flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-hidden">{panel}</aside>}
+      strip={paneControls.strip}
+      player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} /></OverlayContainerContext.Provider>}
+      pane={phone ? null : <aside className="flex flex-1 flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-hidden">{panel}</aside>}
     />
     {phone && <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
-      <SheetContent side="bottom" showCloseButton={false} data-testid="guest-notes-drawer" className="data-[side=bottom]:h-[80dvh] max-h-[80dvh] p-[var(--space-4)]">
+      <SheetContent side="bottom" container={slot} showCloseButton={false} data-testid="guest-notes-drawer" className="data-[side=bottom]:h-[80dvh] max-h-[80dvh] p-[var(--space-4)]">
         <SheetHeader className={`p-0 ${SHEET_CLOSE_CLEARANCE}`}><SheetTitle data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</SheetTitle></SheetHeader>
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{panel}</div>
         <SheetCloseButton label="Close notes" data-testid="guest-notes-close" />
@@ -481,5 +485,6 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       onGone={onUnavailable}
       onPasted={(landed) => { if (landed !== null) setPasted(landed.copied === 0 ? `Nothing new to copy from v${landed.sourceVersion}.` : `Copied ${landed.copied} ${landed.copied === 1 ? "note" : "notes"} from v${landed.sourceVersion}.`); resync(); }} />}
     {decideFor !== null && canDecide && <GuestDecisionDialog key={`${version.assetId}:${decideFor}`} value={decideFor} assetId={version.assetId} film={video.title} version={version.version} drafts={drafts} open onClose={() => { opening.current += 1; setDecideFor(null); }} onConfirm={(note) => confirmDecision(decideFor, note)} />}
+    <div ref={setSlot} />
   </div>;
 }

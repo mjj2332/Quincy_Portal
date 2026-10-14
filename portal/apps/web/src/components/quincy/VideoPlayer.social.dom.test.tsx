@@ -15,7 +15,7 @@ const version: VideoPlayerVersion = {
 };
 const A = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Reels safe zone", imageUrl: "/social-overlay-images/a/1" };
 const B = { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "TikTok safe zone", imageUrl: "/social-overlay-images/b/2" };
-const socialOf = (over: Partial<SocialPreviewMode> = {}): SocialPreviewMode => ({ overlays: [A, B], currentId: A.id, onOverlay: () => undefined, fit: "fill", onFit: () => undefined, status: "ready", onRetry: () => undefined, ...over });
+const socialOf = (over: Partial<SocialPreviewMode> = {}): SocialPreviewMode => ({ overlays: [A, B], currentId: A.id, onOverlay: () => undefined, status: "ready", onRetry: () => undefined, ...over });
 
 let stub: VideoElementStub;
 let root: Root | null = null;
@@ -38,22 +38,21 @@ afterEach(async () => {
 });
 
 describe("VideoPlayer Social preview (#871)", () => {
-  it("frames the film 9:16 with Fill, and Fit switches the object-fit", async () => {
+  it("frames the film 9:16 and always fitted: no Fill, the whole picture contained in the frame", async () => {
     await mount({ social: socialOf() });
-    expect(byTestId("video-stage")!.dataset.social).toBe("fill");
-    expect(host.querySelector("video")!.className).toContain("object-cover");
-    await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" social={socialOf({ fit: "fit" })} />); });
     expect(byTestId("video-stage")!.dataset.social).toBe("fit");
     expect(host.querySelector("video")!.className).toContain("object-contain");
+    expect(host.querySelector("video")!.className).not.toContain("object-cover");
+    expect(byTestId("video-social-fill")).toBeNull();
+    expect(byTestId("video-social-fit")).toBeNull();
+    expect(document.querySelector('[aria-label="Film fit"]')).toBeNull();
   });
 
-  it("toggling Social and Fit keeps the same <video> element (no remount)", async () => {
+  it("toggling Social keeps the same <video> element (no remount)", async () => {
     await mount({});
     const before = host.querySelector("video");
     const render = (social?: SocialPreviewMode) => act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" {...(social ? { social } : {})} />); });
     await render(socialOf());
-    expect(host.querySelector("video")).toBe(before);
-    await render(socialOf({ fit: "fit" }));
     expect(host.querySelector("video")).toBe(before);
     await render();
     expect(host.querySelector("video")).toBe(before);
@@ -108,11 +107,12 @@ describe("VideoPlayer Social preview (#871)", () => {
     expect(byTestId("video-social-overlay-name")!.textContent).toBe(A.name);
   });
 
-  it("Fill / Fit reports the pick", async () => {
-    const onFit = vi.fn();
-    await mount({ social: socialOf({ onFit }) });
-    await act(async () => { byTestId("video-social-fit")!.click(); });
-    expect(onFit).toHaveBeenCalledWith("fit");
+  it("one overlay: the name is a muted label with its own inline padding, not a control (#878)", async () => {
+    await mount({ social: socialOf({ overlays: [A] }) });
+    const name = byTestId("video-social-overlay-name")!;
+    expect(name.tagName).toBe("SPAN");
+    expect(name.className).toContain("text-foreground-secondary");
+    expect(name.className).toContain("px-[var(--space-2)]");
   });
 
   it("loading, failed (Retry) and empty library each say so, and the film stays framed", async () => {
@@ -125,27 +125,44 @@ describe("VideoPlayer Social preview (#871)", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
     await act(async () => { root!.render(<VideoPlayer version={version} title="x" social={socialOf({ overlays: [], currentId: null })} />); });
     expect(document.body.textContent).toContain("No overlay available");
-    expect(byTestId("video-stage")!.dataset.social).toBe("fill");
+    expect(byTestId("video-stage")!.dataset.social).toBe("fit");
   });
 
-  it("ignores markers, range, marks, draw and the markup overlay while it is on; playback keys still work", async () => {
+  it("keeps markers, range, I/O, Draw and the overlay slot while it is on, the overlay inside the frame and above the artwork", async () => {
     const onMark = vi.fn();
     await mount({
       social: socialOf(), onMark, markers: [{ id: "m", startFrame: 5, endFrame: null, tone: "open" } as never], pendingRange: { startFrame: 1, endFrame: 3 },
       range: { marks: { in: null, out: null }, locked: false, clear: () => undefined },
       transportActions: <button data-testid="draw-slot" type="button">Draw</button>, overlay: <div data-testid="markup-slot" />,
     });
-    expect(byTestId("video-marker-lane")).toBeNull();
-    expect(byTestId("video-pending-band")).toBeNull();
-    expect(byTestId("video-range-button")).toBeNull();
-    expect(byTestId("video-range-handles")).toBeNull();
-    expect(byTestId("draw-slot")).toBeNull();
-    expect(byTestId("markup-slot")).toBeNull();
+    expect(byTestId("video-marker-lane")).not.toBeNull();
+    expect(byTestId("video-pending-band")).not.toBeNull();
+    expect(byTestId("video-range-button")).not.toBeNull();
+    expect(byTestId("draw-slot")).not.toBeNull();
+    const frame = byTestId("video-social-frame")!;
+    expect(frame.contains(byTestId("markup-slot"))).toBe(true);
+    const art = byTestId("video-social-overlay")!;
+    expect(art.compareDocumentPosition(byTestId("markup-slot")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(byTestId("video-key-legend")!.textContent).toContain("in/out");
     await act(async () => { byTestId("video-player")!.dispatchEvent(new KeyboardEvent("keydown", { key: "i", bubbles: true, cancelable: true })); });
-    expect(onMark).not.toHaveBeenCalled();
-    expect(byTestId("video-key-legend")!.textContent).not.toContain("in/out");
-    await act(async () => { byTestId("video-player")!.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true })); });
+    expect(onMark).toHaveBeenCalledWith("in", expect.any(Number));
     expect(byTestId("video-scrubber")).not.toBeNull();
+  });
+
+  it("hands a function overlay the picture box inside the frame (the letterboxed film), and keeps the same node for the overlay across Social on and off", async () => {
+    for (const [prop, value] of [["offsetWidth", 400], ["offsetHeight", 700], ["offsetLeft", 0], ["offsetTop", 0]] as const) Object.defineProperty(HTMLElement.prototype, prop, { configurable: true, get: () => value });
+    try {
+      const overlay = (box: { left: number; top: number; width: number; height: number } | null) => <div data-testid="markup-slot" data-box={box ? `${box.left},${box.top},${box.width},${box.height}` : "none"} />;
+      await mount({ overlay });
+      const off = byTestId("markup-slot")!;
+      expect(off.dataset.box).toBe("0,237.5,400,225");
+      await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" overlay={overlay} social={socialOf()} />); });
+      expect(byTestId("markup-slot")).toBe(off);
+      expect(byTestId("markup-slot")!.dataset.box).toBe("0,237.5,400,225");
+      expect(byTestId("video-social-frame")!.contains(off)).toBe(true);
+    } finally {
+      for (const prop of ["offsetWidth", "offsetHeight", "offsetLeft", "offsetTop"] as const) delete (HTMLElement.prototype as unknown as Record<string, unknown>)[prop];
+    }
   });
 });
 
@@ -161,18 +178,14 @@ describe("VideoPlayer watermark slot (#872)", () => {
     stubOffsets();
     await mount({ watermark: mark });
     expect(byTestId("wm")).not.toBeNull();
-    expect(byTestId("video-social-frame")!.contains(byTestId("wm"))).toBe(false);
     expect(byTestId("wm")!.dataset.box).toBe("0,237.5,400,225");
   });
 
-  it("keeps the watermark inside the Social frame, sized to the frame in Fill and to the picture in Fit, while overlay is still dropped", async () => {
+  it("keeps the watermark inside the Social frame, sized to the contained picture, and the overlay with it", async () => {
     stubOffsets();
     await mount({ social: socialOf(), watermark: mark, overlay: <div data-testid="markup-slot" /> });
     expect(byTestId("video-social-frame")!.contains(byTestId("wm"))).toBe(true);
-    expect(byTestId("wm")!.dataset.box).toBe("0,0,400,700");
-    expect(byTestId("markup-slot")).toBeNull();
-    await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" social={socialOf({ fit: "fit" })} watermark={mark} />); });
-    expect(byTestId("video-social-frame")!.contains(byTestId("wm"))).toBe(true);
     expect(byTestId("wm")!.dataset.box).toBe("0,237.5,400,225");
+    expect(byTestId("video-social-frame")!.contains(byTestId("markup-slot"))).toBe(true);
   });
 });

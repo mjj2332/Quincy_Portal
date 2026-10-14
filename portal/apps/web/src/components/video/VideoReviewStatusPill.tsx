@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { reviewStatusTransitions, type Role, type VersionReviewStatus, type VideoDto, type VideoReviewStatus } from "@quincy/shared";
+import { useRunFence } from "../../lib/use-run-fence";
 import { useOptionalProjectQueryClient } from "../../lib/project-data";
 import { classifyReviewStatusError, reviewStatusErrorText, setVideoReviewStatus } from "../../lib/video-review-status-data";
 import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
@@ -16,7 +17,9 @@ import { cn } from "@/lib/utils";
 export const REVIEW_STATUS_LABEL: Record<VideoReviewStatus, string> = { in_review: "In review", approved_internal: "Approved (internal)", published: "Published" };
 export const REVIEW_STATUS_TONE: Record<VideoReviewStatus, StatusTone> = { in_review: "caution", approved_internal: "positive", published: "info" };
 
-export function VideoReviewStatusPill({ video, version, comparing, projectId, role, archived, testId = "video-review-status" }: {
+export const REVIEW_STATUS_SHORT: Record<VideoReviewStatus, string> = { in_review: "In review", approved_internal: "Approved", published: "Published" };
+
+export function VideoReviewStatusPill({ video, version, comparing, projectId, role, archived, testId = "video-review-status", compact = false }: {
   video: VideoDto;
   /** The Version on show. */
   version: VideoDto["versions"][number];
@@ -26,22 +29,26 @@ export function VideoReviewStatusPill({ video, version, comparing, projectId, ro
   archived: boolean;
   /** Prefix of every test id (the card's pill must not collide with the viewer's). */
   testId?: string;
+  /** A phone bar (#877 S2): the short label is drawn, the older-publication hint is spoken only; the full label stays the accessible name. */
+  compact?: boolean;
 }) {
   const queryClient = useOptionalProjectQueryClient();
   const [pending, setPending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const alive = useRef(true);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  // No key: putVideo moves `latest` before a refusal arrives, so keying on the Version would drop the error and strand `pending` (docs/lessons.md).
+  const fence = useRunFence();
 
   const latest = video.versions.find((candidate) => candidate.current) ?? video.versions[0]!;
   const allowed = reviewStatusTransitions(role);
   const status = video.reviewStatus;
   const tone = REVIEW_STATUS_TONE[status];
-  const older = video.olderPublishedVersion !== null && <span data-testid={`${testId}-older`} className="text-foreground-secondary [font:var(--type-label)] whitespace-nowrap">{`v${video.olderPublishedVersion} published`}</span>;
+  // Compact (a phone bar): the short word is drawn, what it leaves out is still read aloud.
+  const label = compact ? <>{REVIEW_STATUS_SHORT[video.reviewStatus]}<span className="sr-only">{REVIEW_STATUS_LABEL[video.reviewStatus].slice(REVIEW_STATUS_SHORT[video.reviewStatus].length)}</span></> : REVIEW_STATUS_LABEL[video.reviewStatus];
+  const older = video.olderPublishedVersion !== null && <span data-testid={`${testId}-older`} className={cn("text-foreground-secondary [font:var(--type-label)] whitespace-nowrap", compact && "sr-only")}>{`v${video.olderPublishedVersion} published`}</span>;
 
   if (status === "published" || archived || allowed.length === 0 || !queryClient) {
     return <div className="flex flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)]">
-      <StatusPill tone={tone} data-testid={testId}>{REVIEW_STATUS_LABEL[status]}</StatusPill>
+      <StatusPill tone={tone} data-testid={testId}>{label}</StatusPill>
       {older}
     </div>;
   }
@@ -50,18 +57,19 @@ export function VideoReviewStatusPill({ video, version, comparing, projectId, ro
   const blocked = watchingOlder || comparing;
   const choose = async (next: VersionReviewStatus) => {
     if (next === latest.reviewStatus || pending || !queryClient) return;
+    const ticket = fence.begin();
     setPending(true); setProblem(null);
     try { await setVideoReviewStatus({ queryClient, projectId, role }, { assetId: latest.assetId, reviewStatus: next, expectedStatus: latest.reviewStatus }); }
-    catch (error) { if (alive.current) setProblem(reviewStatusErrorText(classifyReviewStatusError(error).kind)); }
-    finally { if (alive.current) setPending(false); }
+    catch (error) { if (ticket.isCurrent()) setProblem(reviewStatusErrorText(classifyReviewStatusError(error).kind)); }
+    finally { if (ticket.isCurrent()) setPending(false); }
   };
 
   return <div className="flex flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)]">
     <Menu
       triggerLabel={`Review status: ${REVIEW_STATUS_LABEL[status]}`} label="Review status" triggerTestId={testId}
-      triggerClassName={cn("pointer-coarse:min-h-11 max-[721px]:min-h-11 rounded-full", blocked && "cursor-not-allowed")}
+      triggerClassName={cn("pointer-coarse:min-h-11 max-[721px]:min-h-11 rounded-full", blocked && "cursor-not-allowed disabled:opacity-50")}
       disabled={blocked || pending}
-      trigger={<StatusPill tone={tone}>{REVIEW_STATUS_LABEL[status]}<ChevronDown aria-hidden="true" className="ml-[var(--space-1)] size-3" /></StatusPill>}
+      trigger={<StatusPill tone={tone}>{label}<ChevronDown aria-hidden="true" className="ml-[var(--space-1)] size-3" /></StatusPill>}
     >
       <MenuPrimitive.Group>
         <MenuPrimitive.GroupLabel className="px-[var(--space-3)] py-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">{`Latest v${latest.version}`}</MenuPrimitive.GroupLabel>

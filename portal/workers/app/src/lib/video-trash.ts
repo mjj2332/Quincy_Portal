@@ -3,7 +3,7 @@ import {
   ROLE_LABELS, VIDEO_TRASH_RETENTION_DAYS, VIDEO_TRASH_RETENTION_MS, VIDEO_UPLOAD_ACTIVE_STATUSES,
   type Role, type VideoDeleteInput, type VideoDeletionImpact, type VideoRemovalImpact, type VideoRemoveInput, type VideoTrashItem, type VideoTrashResponse,
 } from "@quincy/shared";
-import { auditMeta, type AuditPrincipal } from "./audit";
+import { auditMeta, type Principal } from "./audit";
 import { firstInCurrentSet, inCurrentSetSql } from "./delivery-lock";
 import { newId } from "./ids";
 import { fencedRecomputeStatements as fencedRecompute } from "./video-live-sql";
@@ -17,7 +17,6 @@ import { fencedRecomputeStatements as fencedRecompute } from "./video-live-sql";
  * person confirmed, the live-Version count still saying whether this is the last, no active upload when the Video goes, the Project unarchived), the audit row follows it on `changes() > 0`, and
  * every later statement that must not run on a refused write is fenced on that audit row's id. So a refused fence writes nothing and leaves no audit row. There is no check-then-write.
  */
-export type Principal = NonNullable<AuditPrincipal>;
 const NOT_ARCHIVED = (param: string) => `EXISTS (SELECT 1 FROM projects WHERE id = ${param} AND archived_at IS NULL)`;
 const ACTIVE_RESERVATION_STATUSES = VIDEO_UPLOAD_ACTIVE_STATUSES.map((status) => `'${status}'`).join(", ");
 const iso = (ms: number) => new Date(ms).toISOString();

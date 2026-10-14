@@ -1,5 +1,6 @@
 import { SELF as workerSelf } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { app } from "../src/index";
 import { EXTERNAL_API_RESPONSE_SCHEMAS, projectSocialOverlaysResponseSchema, type ProjectSocialOverlaysResponse } from "@quincy/shared";
 import { pngBytes } from "../../../packages/shared/src/testing/png-fixture";
 import { projectSocialOverlayTestHooks, socialOverlaysRevision } from "../src/lib/project-social-overlays";
@@ -130,6 +131,22 @@ describe("resolution", () => {
 });
 
 describe("setting", () => {
+  it("records the impersonating Admin", async () => {
+    const tiktok = await make("TikTok");
+    await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'user_impersonation'").run();
+    try {
+      const started = await request("/api/auth/admin/impersonate-user", "admin", "POST", { userId: ids.member }); expect(started.status).toBe(200);
+      const cookies = new Map<string, string>();
+      for (const value of (started.headers as Headers & { getSetCookie: () => string[] }).getSetCookie()) { const pair = value.split(";", 1)[0]!; const at = pair.indexOf("="); if (at > 0) cookies.set(pair.slice(0, at), pair.slice(at + 1)); }
+      const session = [...cookies].map(([name, value]) => `${name}=${value}`).join("; ");
+      const body = JSON.stringify({ overlayIds: [tiktok.id], expectedRevision: await socialOverlaysRevision([]) });
+      const response = await app.fetch(new Request(`https://portal.test${path()}`, { method: "PUT", headers: { cookie: session, origin: baseEnv.APP_ORIGIN, "content-type": "application/json" }, body }), baseEnv, { waitUntil: () => undefined, passThroughOnException: () => undefined, props: undefined } as unknown as ExecutionContext);
+      expect(response.status, await response.clone().text()).toBe(200);
+      const [row] = await audits(); expect(row).toMatchObject({ actor_id: ids.member, action: "project.social_overlays_set" });
+      expect(JSON.parse(row!.meta_json)).toMatchObject({ impersonatedBy: ids.admin, after: [tiktok.id] });
+    } finally { await database.DB.prepare("UPDATE feature_flags SET enabled = 0 WHERE key = 'user_impersonation'").run(); }
+  });
+
   it("writes one audit row with before and after for a real change, and none for a repeat", async () => {
     const reel = await make("Reel"); const tiktok = await make("TikTok");
     expect((await put([tiktok.id], [])).status).toBe(200);

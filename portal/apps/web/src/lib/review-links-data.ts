@@ -47,6 +47,8 @@ export type ReviewLinkActions = {
   setGrants: (linkId: string, videoId: string, assetIds: string[]) => Promise<ReviewLinkDto>;
   revoke: (linkId: string) => Promise<ReviewLinkDto>;
   replace: (linkId: string) => Promise<ReviewLinkRevealResponse>;
+  /** End every guest session on the link (#854); the address stays the same. Works on the Delivery link too. */
+  endSessions: (linkId: string) => Promise<ReviewLinkDto>;
   /** Delete a revoked link (#846): it leaves the cached list at once; a refusal leaves the row and the refetch tells the truth. */
   deleteLink: (linkId: string) => Promise<void>;
 };
@@ -91,6 +93,7 @@ export function createReviewLinkActions(client: QueryClient, projectId: string):
     setGrants: (linkId, videoId, assetIds) => settled(() => one(apiPut(`${videoPath(projectId, linkId, videoId)}/grants`, { assetIds }))),
     revoke: (linkId) => settled(() => one(apiPost(`${linkPath(projectId, linkId)}/revoke`, {}))),
     replace: (linkId) => settled(() => reveal(apiPost(`${linkPath(projectId, linkId)}/replace`, {}))),
+    endSessions: (linkId) => settled(() => one(apiPost(`${linkPath(projectId, linkId)}/end-sessions`, {}))),
     deleteLink: (linkId) => settled(async () => {
       await apiDelete(linkPath(projectId, linkId));
       await remember((links) => links.filter((link) => link.id !== linkId));

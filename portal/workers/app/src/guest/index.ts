@@ -6,6 +6,7 @@ import { VIDEO_STREAM_HEADERS, serveR2Object } from "../lib/r2-serve";
 import { verifyPasscode } from "../lib/review-passcode";
 import { auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
+import { endGuestSession } from "../lib/review-links";
 import { hashToken, randomToken } from "../lib/opaque-token";
 import type { AppEnv } from "../env";
 import { guestNotFound, guestRoute, INVALID, originRejection, readJson, readSessionCookie, SESSION_MAX_MS, sessionCookieHeader, timingSafeEqualStrings, TOO_LARGE, tooMany, UUID, withHygiene } from "./http";
@@ -114,13 +115,19 @@ export function mountGuest(app: Hono<AppEnv>): void {
     return response;
   })));
   app.delete("/d/api/links/:linkId/session", guestRoute("/d/api/links/:linkId/session", async (c) => {
-    // Resolve the session first: only a live credential for this link can leave, anything else is the stub.
-    const session = await resolveSession(c, c.req.param("linkId"), Date.now());
-    if (!session) return guestNotFound(c);
-    const rejected = originRejection(c); if (rejected) return rejected;
-    const link = session.link;
-    await c.env.DB.prepare("DELETE FROM guest_sessions WHERE id = ?1").bind(session.id).run();
-    return new Response(null, { status: 204, headers: { "set-cookie": sessionCookieHeader(c.env, link.id, "", 0) } });
+    const linkId = c.req.param("linkId");
+    // A live credential for this link can leave (and is told so); anything else is the stub. A same-origin JSON DELETE that carries a cookie still ends that cookie's session when the link is only suspended
+    // (the Delivery page or the guest part off): the row goes and the cookie is expired, so turning the page back on never restores the identity on a shared device (#854). The stub's body and status do not change.
+    const session = await resolveSession(c, linkId, Date.now());
+    const rejected = originRejection(c);
+    if (rejected) return session ? rejected : guestNotFound(c);
+    const token = UUID.test(linkId) ? readSessionCookie(c, linkId) : null;
+    if (token === null) return guestNotFound(c);
+    const tokenHash = session?.tokenHash ?? await hashToken(token);
+    await endGuestSession(c.env.DB, { linkId, tokenHash, known: session ? { id: session.id, guestId: session.guestId } : null, now: Date.now() });
+    const clearing = sessionCookieHeader(c.env, linkId, "", 0);
+    if (!session) { const stub = await guestNotFound(c); stub.headers.append("set-cookie", clearing); return stub; }
+    return new Response(null, { status: 204, headers: { "set-cookie": clearing } });
   }));
 
   app.get("/d/api/links/:linkId/videos", guestRoute("/d/api/links/:linkId/videos", (c) => withSession(c, async (session) => c.json(await listGuestVideos(c.env.DB, session.link.id, session.link.projectId, session.guestId, session.link.allowDownload && session.link.parts.includes("delivery"))))));

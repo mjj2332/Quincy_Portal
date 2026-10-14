@@ -14,6 +14,7 @@ import { StatusPill } from "@/components/quincy/StatusPill";
 import { TableActions, TableWrap, Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from "@/components/quincy/Table";
 import { formatBytes } from "../guest/guest-format";
 import { confirm } from "../lib/confirm";
+import { useRunFence } from "../lib/use-run-fence";
 import { pushToast } from "../lib/toast-store";
 import { formatDate, TOGGLE_ROW } from "./admin-shared";
 import { DIALOG_TITLE } from "./video/ReviewLinkDialogFrame";
@@ -45,17 +46,17 @@ export function SocialOverlaysPanel() {
   const close = () => { currentDialog.current = null; setDialog(null); };
 
   // Every list read takes a ticket. A mutation or a newer read takes the next one, so an older read that finishes late is dropped instead of overwriting fresher rows.
-  const readTicket = useRef(0);
+  const readFence = useRunFence();
   const load = useCallback(async () => {
-    const ticket = ++readTicket.current;
+    const ticket = readFence.begin();
     setLoading(true); setError(undefined);
-    try { const rows = await listSocialOverlays(); if (ticket === readTicket.current) setOverlays(rows); }
-    catch (reason) { if (ticket === readTicket.current) setError(reason instanceof Error ? reason.message : "Social overlays could not be loaded."); }
-    finally { if (ticket === readTicket.current) setLoading(false); }
-  }, []);
+    try { const rows = await listSocialOverlays(); if (ticket.isCurrent()) setOverlays(rows); }
+    catch (reason) { if (ticket.isCurrent()) setError(reason instanceof Error ? reason.message : "Social overlays could not be loaded."); }
+    finally { if (ticket.isCurrent()) setLoading(false); }
+  }, [readFence]);
   useEffect(() => { void load(); }, [load]);
 
-  const replaceRow = (next: SocialOverlayDto) => { readTicket.current += 1; setLoading(false); applyRow(next); };
+  const replaceRow = (next: SocialOverlayDto) => { readFence.invalidate(); setLoading(false); applyRow(next); };
   const applyRow = (next: SocialOverlayDto) => setOverlays((current) => current.some((row) => row.id === next.id) ? current.map((row) => row.id === next.id ? next : row) : [...current, next]);
   const visible = overlays.filter((overlay) => showArchived || overlay.archivedAt === null);
 
@@ -83,7 +84,7 @@ export function SocialOverlaysPanel() {
     {visible.length > 0 && <TableWrap><Table>
       <TableHead><TableRow><TableHeader>Preview</TableHeader><TableHeader>Name</TableHeader><TableHeader>Platform</TableHeader><TableHeader>Image</TableHeader><TableHeader>Updated</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
       <TableBody>{visible.map((overlay) => <TableRow key={overlay.id} data-testid="social-overlay-row">
-        <TableCell data-label="Preview"><div className={`aspect-[9/16] w-[calc(var(--space-8)*1.25)] overflow-hidden border-solid border-[length:var(--border-width-hair)] border-border ${CHECKER}`}>
+        <TableCell data-label="Preview"><div className={`aspect-[9/16] w-[var(--space-8)] overflow-hidden border-solid border-[length:var(--border-width-hair)] border-border ${CHECKER}`}>
           <img src={overlay.imageUrl} alt={`${overlay.name} overlay preview`} className="block size-full object-contain" loading="lazy" />
         </div></TableCell>
         <TableCell data-label="Name"><div className="flex flex-wrap items-center gap-[var(--space-2)]">
@@ -119,7 +120,7 @@ function OverlayDialog({ dialog, onClose, onSaved }: { dialog: Dialog; onClose: 
   const [saveError, setSaveError] = useState<string>();
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
-  const checkTicket = useRef(0);
+  const checkFence = useRunFence();
   const needsFile = dialog.kind !== "rename", needsFields = dialog.kind !== "replace";
   const submitLabel = dialog.kind === "create" ? "Upload" : dialog.kind === "rename" ? "Save" : "Replace";
   const title = dialog.kind === "create" ? "Upload a Social overlay" : dialog.kind === "rename" ? `Rename ${dialog.overlay.name}` : `Replace image for ${dialog.overlay.name}`;
@@ -127,10 +128,10 @@ function OverlayDialog({ dialog, onClose, onSaved }: { dialog: Dialog; onClose: 
 
   async function choose(picked: File) {
     // The previous file stops being submittable the moment a new one is picked, and only the latest check may decide.
-    const ticket = ++checkTicket.current;
+    const ticket = checkFence.begin();
     setSaveError(undefined); setFile(null); setFileError(undefined); setChecking(true);
     const problem = await checkOverlayFile(picked);
-    if (ticket !== checkTicket.current) return;
+    if (!ticket.isCurrent()) return;
     setChecking(false); setFile(problem ? null : picked); setFileError(problem ?? undefined);
   }
   async function submit() {

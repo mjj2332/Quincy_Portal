@@ -111,8 +111,7 @@ describe("the viewer's deep link (#819)", () => {
     expect(clipboard).toHaveBeenLastCalledWith(linkFor(1));
   });
 
-  it("puts Copy link between the Version group and Download, with a phone-sized touch target", async () => {
-    await viewport.set({ width: 390 });
+  it("puts Copy link between the Version group and Download, with a touch-sized target (a phone folds it into the ⋯ menu instead: VideoReviewViewer.header.dom.test.tsx)", async () => {
     await mount({ id: ids.video, version: 2 });
     const header = dialog()!.querySelector("header")!;
     const order = [tid("video-version-group")!, tid("copy-text")!, tid("video-download")!];
@@ -121,7 +120,7 @@ describe("the viewer's deep link (#819)", () => {
       if (index > 0) expect(order[index - 1]!.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(header.contains(element)).toBe(true);
     }
-    expect(tid("copy-text")!.className).toContain("max-[721px]:min-h-11");
+    expect(tid("copy-text")!.className).toContain("pointer-coarse:min-h-11");
   });
 
   it("keeps Copy link, Download and Compare together in one right-aligned cluster", async () => {
@@ -130,7 +129,6 @@ describe("the viewer's deep link (#819)", () => {
     expect(cluster).not.toBeNull();
     for (const id of ["copy-text", "video-download", "video-compare-toggle"]) expect(tid(id)!.parentElement, id).toBe(cluster);
     expect(cluster!.className).toContain("ml-auto");
-    expect(cluster!.className).toContain("max-[721px]:ml-0");
   });
 
   it("takes a change of the URL's Version once, without writing it back", async () => {

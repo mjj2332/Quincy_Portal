@@ -1399,6 +1399,7 @@ export const clientLinks = sqliteTable(
     allowApprove: integer("allow_approve").notNull().default(1),
     allowDownload: integer("allow_download").notNull().default(1),
     createdBy: text("created_by").references(() => user.id),
+    // The session generation (#854): a guest session is live only while its `link_generation` equals this. Revoke, replace and End guest sessions bump it; only replace changes the address (the name predates that).
     tokenGeneration: integer("token_generation").notNull().default(1),
     updatedAt: integer("updated_at"),
     revokedAt: integer("revoked_at"),

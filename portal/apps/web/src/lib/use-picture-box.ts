@@ -9,17 +9,14 @@ import { renderedMediaBox, type Box } from "@quincy/shared";
  * The decoded size wins once metadata is in (a rotated file reports swapped dimensions); until then `fallback` (the stored
  * size) stands in. Null until the element has a layout. Recomputed on resize of the element, on metadata, and on window
  * resize (full screen changes the stage without resizing the element observer's target in every browser).
- * `"cover"` (the Social frame in Fill, #872) is the element's own box: the picture is cropped to it, so it IS the visible picture.
  */
-export function usePictureBox(video: HTMLVideoElement | null, fallback: { width: number; height: number }, mode: "contain" | "cover" = "contain"): Box | null {
+export function usePictureBox(video: HTMLVideoElement | null, fallback: { width: number; height: number }): Box | null {
   const [box, setBox] = useState<Box | null>(null);
   const { width: fallbackWidth, height: fallbackHeight } = fallback;
 
   const measure = useCallback(() => {
     if (!video) { setBox(null); return; }
-    const next = mode === "cover"
-      ? (video.offsetWidth > 0 && video.offsetHeight > 0 ? { left: video.offsetLeft, top: video.offsetTop, width: video.offsetWidth, height: video.offsetHeight } : null)
-      : renderedMediaBox({
+    const next = renderedMediaBox({
       naturalWidth: video.videoWidth || fallbackWidth,
       naturalHeight: video.videoHeight || fallbackHeight,
       elementWidth: video.offsetWidth,
@@ -28,7 +25,7 @@ export function usePictureBox(video: HTMLVideoElement | null, fallback: { width:
       offsetTop: video.offsetTop,
     });
     setBox((previous) => previous && next && previous.left === next.left && previous.top === next.top && previous.width === next.width && previous.height === next.height ? previous : next);
-  }, [video, fallbackWidth, fallbackHeight, mode]);
+  }, [video, fallbackWidth, fallbackHeight]);
 
   useLayoutEffect(() => { measure(); }, [measure]);
 

@@ -17,7 +17,8 @@ const SELECT = `SELECT o.id, o.name, o.platform_label, o.image_key, o.image_rev,
   FROM social_overlays o LEFT JOIN user u ON u.id = o.updated_by`;
 
 export const overlayKey = (overlayId: string, imageUuid: string): string => `social-overlays/${overlayId}/${imageUuid}.png`;
-const uuidOfKey = (key: string): string => key.slice(key.lastIndexOf("/") + 1, -".png".length);
+/** The image uuid inside an overlay's storage key: the inverse of `overlayKey`. */
+export const uuidOfKey = (key: string): string => key.slice(key.lastIndexOf("/") + 1, -".png".length);
 
 export function overlayDto(row: OverlayRow): SocialOverlayDto {
   return socialOverlayDto.parse({

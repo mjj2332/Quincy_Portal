@@ -1,17 +1,17 @@
-import {
-  projectSocialOverlaysResponseSchema, socialOverlayImagePath,
-  type ProjectSocialOverlayChoice, type ProjectSocialOverlayPreview, type ProjectSocialOverlaysResponse,
-} from "@quincy/shared";
-import { auditMeta, type AuditPrincipal } from "./audit";
-import { newId } from "./ids";
-
 /**
  * A Project's Social overlays (#870). `resolveProjectSocialOverlays` is the one rule the Video viewer (#871) and the guest payload (#872) consume: the Project's selected overlays that are not
  * archived, else the non-archived Default, else nothing (an empty library). It reads library order (Default first, then name ignoring case, then id), never selection order. A fallback is never stored.
  * `setProjectSocialOverlays` is one `db.batch`: an audit row whose `WHERE` carries the whole fence (Project unarchived, stored set still the one the caller saw, checked by revision, every wanted overlay real and either
  * selectable or already stored), then the deletes and inserts, each fenced on that audit row's id. A refused fence writes nothing and leaves no audit row.
  */
-export type Principal = NonNullable<AuditPrincipal>;
+
+import {
+  projectSocialOverlaysResponseSchema, socialOverlayImagePath,
+  type ProjectSocialOverlayChoice, type ProjectSocialOverlayPreview, type ProjectSocialOverlaysResponse,
+} from "@quincy/shared";
+import { auditMeta, type Principal } from "./audit";
+import { newId } from "./ids";
+import { uuidOfKey } from "./social-overlays";
 
 /** Seam for the race tests: runs after admission and before the batch. Always cleared by the test that sets it. */
 export const projectSocialOverlayTestHooks: { beforeWrite?: () => Promise<void> } = {};
@@ -20,7 +20,6 @@ type ChoiceRow = { id: string; name: string; platform_label: string; is_default:
 export type PreviewRow = ChoiceRow & { image_key: string; width: number; height: number };
 const ORDER = "ORDER BY is_default DESC, name COLLATE NOCASE, id";
 const choice = (row: ChoiceRow): ProjectSocialOverlayChoice => ({ id: row.id, name: row.name, platformLabel: row.platform_label, isDefault: row.is_default === 1, archivedAt: row.archived_at });
-export const uuidOfKey = (key: string): string => key.slice(key.lastIndexOf("/") + 1, -".png".length);
 export const previewOf = (row: PreviewRow): ProjectSocialOverlayPreview => ({ ...{ id: row.id, name: row.name, platformLabel: row.platform_label, isDefault: row.is_default === 1 }, imageUrl: socialOverlayImagePath(row.id, uuidOfKey(row.image_key)), width: row.width, height: row.height });
 
 const COLUMNS = "id, name, platform_label, is_default, archived_at";

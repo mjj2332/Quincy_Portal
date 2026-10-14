@@ -192,64 +192,79 @@ describe("Social preview on the Review link (#872)", () => {
   it("is a labelled toggle: visible text Social, accessible name Social preview", async () => {
     await open();
     expect(toggle()!.getAttribute("aria-label")).toBe("Social preview");
-    expect(toggle()!.textContent).toContain("Social");
+    expect(toggle()!.textContent).toBe("Social preview");
     expect(toggle()!.getAttribute("aria-pressed")).toBe("false");
     expect(stage()!.dataset.social).toBeUndefined();
   });
 
-  it("frames the film in Fill with the first overlay, switches overlay and Fit, and leaves cleanly", async () => {
+  it("frames the film fitted with the first overlay, switches overlay, offers no Fill or Fit, and leaves cleanly", async () => {
     await open();
     await social(true);
     expect(toggle()!.getAttribute("aria-pressed")).toBe("true");
-    expect(stage()!.dataset.social).toBe("fill");
+    expect(stage()!.dataset.social).toBe("fit");
+    expect(byId("video-social-fill")).toBeNull();
+    expect(byId("video-social-fit")).toBeNull();
     expect(overlayImage()!.getAttribute("src")).toBe(REEL.imageUrl);
     await click(byId("video-social-overlay-select"));
     await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent === TIKTOK.name));
     expect(overlayImage()!.getAttribute("src")).toBe(TIKTOK.imageUrl);
-    await click(byId("video-social-fit"));
-    expect(stage()!.dataset.social).toBe("fit");
     await social(false);
     expect(stage()!.dataset.social).toBeUndefined();
     expect(overlayImage()).toBeNull();
   });
 
-  it("keeps the same <video> element and still plays on Space; the marker lane, range button and I key go away", async () => {
+  it("keeps the same <video> element, the marker lane and the range button, and I marks the in frame of an open note", async () => {
     notes = { [asset(10)]: [note(1)] };
     await open();
     expect(byId("video-marker-lane")).not.toBeNull();
     const before = host.querySelector("video");
+    await click(byId("guest-add-note"));
     await social(true);
     expect(host.querySelector("video")).toBe(before);
-    expect(byId("video-marker-lane")).toBeNull();
-    expect(byId("video-range-button")).toBeNull();
+    expect(byId("video-marker-lane")).not.toBeNull();
+    expect(byId("video-range-button")).not.toBeNull();
+    await atSeconds(2);
     await keyDown("i");
-    expect(byId("guest-composer")).toBeNull();
+    expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:02:00");
     await social(false);
     expect(byId("video-marker-lane")).not.toBeNull();
+    expect(host.querySelector("video")).toBe(before);
   });
 
-  it("replaces Add a note with a line saying notes are off, and brings it back", async () => {
+  it("keeps Add a note and the empty-list line with Social on: no paused line, nothing hidden", async () => {
     await open();
     expect(byId("guest-add-note")).not.toBeNull();
     await social(true);
-    expect(byId("guest-add-note")!.closest("[hidden]")).not.toBeNull();
-    expect(byId("guest-notes-social-paused")!.textContent).toContain("Notes are off in Social preview");
-    expect(document.body.textContent).not.toContain("No notes yet");
+    expect(byId("guest-add-note")!.closest("[hidden]")).toBeNull();
+    expect(byId("guest-add-note")!.closest("[inert]")).toBeNull();
+    expect(byId("guest-notes-social-paused")).toBeNull();
+    expect(document.body.textContent).toContain("No notes yet");
     await social(false);
     expect(document.body.textContent).toContain("No notes yet");
     expect(byId("guest-add-note")).not.toBeNull();
-    expect(byId("guest-notes-social-paused")).toBeNull();
+  });
+
+  it("a guest can Post a note while Social is on", async () => {
+    extra = (url, init) => (url.endsWith("/notes") && init?.method === "POST" ? Promise.resolve(json(mine(5, { body: "From Social" }), 201)) : undefined);
+    await open();
+    await social(true);
+    await click(byId("guest-add-note"));
+    await typeInto(byId("guest-composer-body"), "From Social");
+    await submit("guest-composer");
+    expect(requests("POST")).toHaveLength(1);
+    expect(toggle()!.getAttribute("aria-pressed")).toBe("true");
+    expect(byId("guest-composer")).toBeNull();
   });
 
   it("is offered to a guest who cannot comment, with no paused line", async () => {
     session = SESSION_OFF;
     await open();
     await social(true);
-    expect(stage()!.dataset.social).toBe("fill");
+    expect(stage()!.dataset.social).toBe("fit");
     expect(byId("guest-notes-social-paused")).toBeNull();
   });
 
-  it("keeps a typed composer draft (body and an in mark) while Social is on, and returns it intact", async () => {
+  it("keeps a typed composer draft (body and an in mark) visible and intact while Social is on, and after it", async () => {
     await open();
     await atSeconds(1);
     await click(byId("guest-add-note"));
@@ -257,7 +272,9 @@ describe("Social preview on the Review link (#872)", () => {
     await click(byId("guest-composer-mark-in"));
     const anchor = byId("guest-composer-anchor")!.textContent;
     await social(true);
-    expect(byId("guest-composer")?.hidden === true || byId("guest-composer") === null || byId("guest-composer")!.closest("[hidden]") !== null).toBe(true);
+    expect(byId("guest-composer")!.closest("[hidden]")).toBeNull();
+    expect(byId("guest-composer")!.closest("[inert]")).toBeNull();
+    expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("Half written");
     await social(false);
     expect(byId("guest-composer")!.closest("[hidden]")).toBeNull();
     expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("Half written");
@@ -312,35 +329,37 @@ describe("Social preview on the Review link (#872)", () => {
     expect(byId("guest-add-note")).not.toBeNull();
   });
 
-  it("hides an open own-note Edit form but keeps the saved text readable, and restores the form with its text", async () => {
+  it("keeps an open own-note Edit form usable with Social on, with its text", async () => {
     notes = { [asset(10)]: [note(1, { replies: [(({ replies: _replies, ...reply }) => reply)(mine(2, { parentId: noteId(1), startFrame: null, body: "My reply" }))] })] };
     await open();
     await click(byId("guest-note-actions"));
     await click(menuItem("Edit"));
     expect(byId("guest-note-edit-form")).not.toBeNull();
+    const form = byId("guest-note-edit-form");
     await social(true);
-    expect(allById("guest-note-body").map((el) => el.textContent)).toContain("My reply");
-    expect(byId("guest-note-edit-form")?.hidden ?? true).toBe(true);
-    await social(false);
-    expect(byId("guest-note-edit-form")).not.toBeNull();
+    expect(byId("guest-note-edit-form")).toBe(form);
     expect(byId("guest-note-edit-form")!.hidden).toBe(false);
+    expect(byId("guest-note-edit-form")!.closest("[inert]")).toBeNull();
+    expect((byId("guest-note-edit-body") as HTMLTextAreaElement).value).toBe("My reply");
+    await social(false);
+    expect(byId("guest-note-edit-form")).toBe(form);
     expect((byId("guest-note-edit-body") as HTMLTextAreaElement).value).toBe("My reply");
   });
 
-  it("hides an open reply form while Social is on and restores its draft", async () => {
+  it("keeps an open reply form and the Reply button usable with Social on, with the draft", async () => {
     notes = { [asset(10)]: [note(1)] };
     await open();
     await click(byId("guest-note-reply-button"));
     await typeInto(byId("guest-reply-body"), "Draft reply");
     await social(true);
-    expect(byId("guest-reply-form")?.hidden ?? true).toBe(true);
-    expect(byId("guest-note-reply-button")).toBeNull();
-    await social(false);
     expect(byId("guest-reply-form")!.hidden).toBe(false);
+    expect(byId("guest-reply-form")!.closest("[inert]")).toBeNull();
+    expect((byId("guest-reply-body") as HTMLTextAreaElement).value).toBe("Draft reply");
+    await social(false);
     expect((byId("guest-reply-body") as HTMLTextAreaElement).value).toBe("Draft reply");
   });
 
-  it("ends a drawing in progress on entry, keeps its strokes, and does not reopen the phone drawer", async () => {
+  it("keeps a drawing in progress when Social turns on or off, with its strokes, and does not reopen the phone drawer", async () => {
     viewport.restore(); viewport = mockViewport({ width: 375 });
     await withLayout(async () => {
       await open();
@@ -350,14 +369,17 @@ describe("Social preview on the Review link (#872)", () => {
       await click(button("Notes")); // the draft closed the drawer; the pen button is in the composer, in the drawer
       await click(byId("guest-composer-draw"));
       await atSeconds(1);
-      await draw(byId("guest-draft-layer")!);
+      const layer = byId("guest-draft-layer")!;
+      await draw(layer);
       expect(byId("guest-markup-toolbar")).not.toBeNull();
       await social(true);
-      expect(byId("guest-markup-toolbar")).toBeNull();
+      expect(byId("guest-markup-toolbar")).not.toBeNull();
+      expect(byId("guest-draft-layer")).toBe(layer);
+      expect(byId("video-social-frame")!.contains(layer)).toBe(true);
       expect(byId("guest-notes-drawer")).toBeNull();
       await social(false);
-      await click(button("Notes"));
-      expect(byId("guest-composer-drawing")).not.toBeNull();
+      expect(byId("guest-markup-toolbar")).not.toBeNull();
+      expect(byId("guest-draft-layer")).toBe(layer);
     });
   });
 
@@ -380,7 +402,7 @@ describe("Social preview on the Review link (#872)", () => {
     await click(button("Next video"));
     expect(byId("guest-video-title")!.textContent).toBe("Film 2");
     expect(toggle()!.getAttribute("aria-pressed")).toBe("true");
-    expect(stage()!.dataset.social).toBe("fill");
+    expect(stage()!.dataset.social).toBe("fit");
     await click(button("All videos"));
     await click(button("Open Film 1"));
     expect(toggle()!.getAttribute("aria-pressed")).toBe("false");

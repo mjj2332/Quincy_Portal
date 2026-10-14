@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { PANE_MIN, PLAYER_MIN, REVIEW_PANE_KEY, clampPaneWidth, normalizeReviewPane, paneCeiling } from "../../lib/review-pane-prefs";
 import { useUiPref } from "../../lib/ui-prefs";
 import { Button } from "../reui/button";
+import { IconTip } from "./IconTip";
 
 /**
  * The review viewers' split (#859): the player on the left, a collapsible, resizable side pane on the right, one flex row for the staff viewer
@@ -41,8 +42,10 @@ export function useReviewPane(phone: boolean) {
 const STEP = 16;
 const STEP_BIG = 64;
 
-export function ReviewSplit({ player, pane, open, width, onWidth, onNarrow, paneId, handleLabel, stacked, rowClassName, playerClassName }: {
+export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarrow, paneId, handleLabel, stacked, rowClassName, playerClassName }: {
   player: ReactNode;
+  /** The slim column that stands in for a collapsed pane (`useReviewPaneControls().strip`); the row's last child while the pane is hidden on a wide screen. */
+  strip?: ReactNode;
   pane: ReactNode;
   open: boolean;
   /** The saved (preferred) width in px. */
@@ -151,22 +154,68 @@ export function ReviewSplit({ player, pane, open, width, onWidth, onNarrow, pane
       style={{ ...(stacked ? {} : { [REVIEW_PANE_WIDTH_VAR]: `${shown}px` }), ...(showPane ? {} : { display: "none" }) } as CSSProperties}
       className="flex min-h-0 flex-col max-[721px]:flex-[1_1_360px] min-[721px]:w-[var(--review-pane-w)] min-[721px]:flex-none min-[721px]:overflow-hidden"
     >{pane}</div>}
+    {!stacked && !showPane && strip}
   </div>;
 }
 
-/** The header button that shows or hides the pane. Collapsing while focus is inside the pane moves focus here first, so it is not dropped on the body. */
-export function ReviewPaneToggle({ open, onOpenChange, paneId, label, className }: { open: boolean; onOpenChange: (next: boolean) => void; paneId: string; label: string; className?: string }) {
-  return <Button
-    type="button"
-    variant="outline"
-    data-testid="video-pane-toggle"
-    aria-expanded={open}
-    {...(open ? { "aria-controls": paneId } : {})}
-    className={className}
-    onClick={(event) => {
-      const button = event.currentTarget;
-      if (open && document.getElementById(paneId)?.contains(document.activeElement)) button.focus({ preventScroll: true });
-      onOpenChange(!open);
-    }}
-  >{open ? <PanelRightClose aria-hidden="true" /> : <PanelRightOpen aria-hidden="true" />}{label}</Button>;
+/** The pane's own ⇥ button, for a lazily loaded panel that cannot take it as a prop: the screen that owns the pane provides it, the panel's header renders it. `null` = place none. */
+export const ReviewPaneHideContext = createContext<ReactNode>(null);
+
+/** Renders the hide button the owning screen provided, if any; for a panel built where the provider is not above it (Compare's panel is made by its lazy host and rendered by the body). */
+export function ReviewPaneHideSlot() { return <>{useContext(ReviewPaneHideContext)}</>; }
+
+const PANE_ICON = "pointer-coarse:min-h-11 pointer-coarse:min-w-11";
+
+/**
+ * The pane's collapse control (#877): ⇥ "Hide {noun}" is placed by the screen inside the pane (`hideButton`); once the pane is collapsed a slim
+ * strip on the right edge (`strip`, handed to `ReviewSplit`) holds ⇤ "Show {noun}". Collapsing moves focus to the strip's button, expanding moves it
+ * back to ⇥ (a hidden-and-inert pane would otherwise drop focus on the body); showing the pane any other way (`revealNotes`) moves no focus.
+ */
+export function useReviewPaneControls({ open, onOpenChange, paneId, noun }: { open: boolean; onOpenChange: (next: boolean) => void; paneId: string; noun: "notes" | "details" }): { hideButton: ReactNode; strip: ReactNode } {
+  const pendingFocus = useRef<"strip" | "hide" | null>(null);
+  const hideRef = useRef<HTMLButtonElement | null>(null);
+  const showRef = useRef<HTMLButtonElement | null>(null);
+  useLayoutEffect(() => {
+    const target = pendingFocus.current;
+    pendingFocus.current = null;
+    if (target === "strip") showRef.current?.focus({ preventScroll: true });
+    else if (target === "hide") hideRef.current?.focus({ preventScroll: true });
+  }, [open]);
+  const hideLabel = `Hide ${noun}`;
+  const showLabel = `Show ${noun}`;
+  const hideButton = <IconTip label={hideLabel}>
+    <Button
+      ref={hideRef}
+      type="button"
+      variant="ghost"
+      size="icon"
+      data-testid="video-pane-hide"
+      aria-label={hideLabel}
+      aria-expanded={open}
+      aria-controls={paneId}
+      className={PANE_ICON}
+      onClick={() => {
+        const inside = document.getElementById(paneId)?.contains(document.activeElement) ?? false;
+        if (inside || document.activeElement === document.body) pendingFocus.current = "strip";
+        onOpenChange(false);
+      }}
+    ><PanelRightClose aria-hidden="true" /></Button>
+  </IconTip>;
+  const strip = open ? null : <div data-testid="video-review-strip" className="flex w-10 flex-none flex-col items-center border-l border-border bg-card py-[var(--space-2)] max-[721px]:hidden">
+    <IconTip label={showLabel}>
+      <Button
+        ref={showRef}
+        type="button"
+        variant="ghost"
+        size="icon"
+        data-testid="video-pane-show"
+        aria-label={showLabel}
+        aria-expanded={false}
+        aria-controls={paneId}
+        className={PANE_ICON}
+        onClick={() => { pendingFocus.current = "hide"; onOpenChange(true); }}
+      ><PanelRightOpen aria-hidden="true" /></Button>
+    </IconTip>
+  </div>;
+  return { hideButton, strip };
 }

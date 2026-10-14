@@ -180,8 +180,8 @@ const overlayImg = () => tid("video-social-overlay") as HTMLImageElement | null;
 async function startSocial() { await click(socialToggle()); await flush(6); }
 beforeEach(() => { resolvedOverlays = [OA, OB]; overlayReads = 0; overlaysFail = false; });
 
-describe("Social preview in the staff viewer (#871)", () => {
-  it("is off on open, fetches nothing until the toggle is pressed, then frames the film Fill with the first overlay", async () => {
+describe("Social preview in the staff viewer (#871, #877)", () => {
+  it("is off on open, fetches nothing until the toggle is pressed, then frames the film fitted with the first overlay", async () => {
     await openFilm({ parts: ["notes", "compare"] });
     expect(socialToggle().getAttribute("aria-pressed")).toBe("false");
     expect(overlayReads).toBe(0);
@@ -189,17 +189,18 @@ describe("Social preview in the staff viewer (#871)", () => {
     await startSocial();
     expect(overlayReads).toBe(1);
     expect(socialToggle().getAttribute("aria-pressed")).toBe("true");
-    expect(stage().dataset.social).toBe("fill");
+    expect(stage().dataset.social).toBe("fit");
+    expect(tid("video-social-fill")).toBeNull();
+    expect(tid("video-social-fit")).toBeNull();
     expect(overlayImg()!.getAttribute("src")).toBe(OA.imageUrl);
     expect(tid("video-social-overlay-select")!.textContent).toContain(OA.name);
   });
 
-  it("keeps the same <video> element when Social is turned on, switched to Fit and off again", async () => {
+  it("keeps the same <video> element when Social is turned on and off again", async () => {
     await openFilm();
     const before = playerVideo();
     await startSocial();
-    await click(tid("video-social-fit")!);
-    expect(stage().dataset.social).toBe("fit");
+    expect(playerVideo()).toBe(before);
     await click(socialToggle()); await flush(2);
     expect(playerVideo()).toBe(before);
     expect(stage().dataset.social).toBeUndefined();
@@ -229,23 +230,23 @@ describe("Social preview in the staff viewer (#871)", () => {
     expect(overlayImg()!.getAttribute("src")).toBe(OA.imageUrl);
   });
 
-  it("pauses writing: the composer is replaced by a notice, no marker lane or range button, I marks nothing, and the typed draft is back after exit", async () => {
+  it("is not view-only: the composer, the marker lane and the range button stay, I marks, and the typed draft is untouched", async () => {
     await openFilm({}, 12);
     await type(composerText(), "keep me");
     await startSocial();
-    expect(composerBox()!.closest("[hidden]")).not.toBeNull();
-    expect(composerBox()!.closest("[inert]")).not.toBeNull();
-    expect(tid("video-notes-social-paused")!.textContent).toContain("Notes are off in Social preview");
-    expect(tid("video-marker-lane")).toBeNull();
-    expect(tid("video-range-button")).toBeNull();
-    await key("i", popup());
-    await click(socialToggle()); await flush(2);
-    expect(tid("video-pending-band")).toBeNull();
+    expect(composerBox()!.closest("[hidden]")).toBeNull();
+    expect(composerBox()!.closest("[inert]")).toBeNull();
+    expect(tid("video-notes-social-paused")).toBeNull();
+    expect(tid("video-marker-lane")).not.toBeNull();
     expect(tid("video-range-button")).not.toBeNull();
+    await key("i", popup());
+    expect(tid("video-pending-band")).not.toBeNull();
+    await click(socialToggle()); await flush(2);
+    expect(tid("video-pending-band")).not.toBeNull();
     expect(composerText().value).toBe("keep me");
   });
 
-  it("keeps the composer and an open reply form MOUNTED (same nodes) so a running upload survives a Social round trip", async () => {
+  it("keeps the composer and an open reply form MOUNTED (same nodes) through a Social round trip", async () => {
     const s = seed();
     await openFilm({}, 12);
     await click(tid("video-note-reply-button", threadOf(s.n1.id))!);
@@ -256,7 +257,7 @@ describe("Social preview in the staff viewer (#871)", () => {
     expect(threadOf(s.n1.id).querySelector('[data-notes-form="reply"]')).toBe(reply);
   });
 
-  it("cancels a Post waiting on its frame when Social is entered, keeps the draft, and never posts it", async () => {
+  it("posts a note with Social on, and a Post waiting on its frame is not cancelled by turning Social on", async () => {
     await openFilm({}, 7);
     await type(composerText(), "Point note");
     await present(40);
@@ -264,41 +265,32 @@ describe("Social preview in the staff viewer (#871)", () => {
     await click(tid("video-note-post")!);
     await startSocial();
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 7 / 25); });
-    await flush(4);
-    expect(api.apiPost).not.toHaveBeenCalled();
-    await click(socialToggle()); await flush(2);
-    expect(api.apiPost).not.toHaveBeenCalled();
-    expect(composerText().value).toBe("Point note");
+    await flush(6);
+    expect(api.apiPost).toHaveBeenCalledTimes(1);
+    expect(stage().dataset.social).toBe("fit");
   });
 
-  it("keeps notes readable and hides an open reply form without dropping it", async () => {
+  it("a reply form is usable with Social on: the Reply button and the form are not hidden, and the text is kept", async () => {
     const s = seed();
     await openFilm();
+    await startSocial();
     await click(tid("video-note-reply-button", threadOf(s.n1.id))!);
     await type(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>('[data-testid="video-note-reply-body"] textarea')!, "half a reply");
-    await startSocial();
-    expect(threadOf(s.n1.id)).not.toBeNull();
     const replyForm = threadOf(s.n1.id).querySelector('[data-notes-form="reply"]')!;
-    expect(replyForm.closest("[hidden]")).not.toBeNull();
-    expect(replyForm.closest("[inert]")).not.toBeNull();
-    expect(tid("video-note-reply-button", threadOf(s.n1.id))).toBeNull();
+    expect(replyForm.closest("[hidden]")).toBeNull();
+    expect(replyForm.closest("[inert]")).toBeNull();
     await click(socialToggle()); await flush(2);
     expect(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>('[data-notes-form="reply"] textarea')!.value).toBe("half a reply");
   });
 
-  it("keeps a note readable while its Edit form is open and hidden by Social, and the form is back on exit", async () => {
+  it("an Edit form is usable with Social on, and the note is not drawn twice", async () => {
     const s = seed();
     await openFilm();
+    await startSocial();
     await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit");
     const form = threadOf(s.n1.id).querySelector('[data-notes-form="edit"]')!;
-    await startSocial();
-    expect(threadOf(s.n1.id).querySelector('[data-notes-form="edit"]')).toBe(form);
-    expect(form.closest("[hidden]")).not.toBeNull();
-    const body = tid("video-note-body", threadOf(s.n1.id))!;
-    expect(body.textContent).toBe("Fix the lower third");
-    expect(body.closest("[hidden]")).toBeNull();
-    await click(socialToggle()); await flush(2);
     expect(form.closest("[hidden]")).toBeNull();
+    expect(form.closest("[inert]")).toBeNull();
     expect(tid("video-note-body", threadOf(s.n1.id))).toBeNull();
   });
 
@@ -307,17 +299,18 @@ describe("Social preview in the staff viewer (#871)", () => {
     await startSocial();
     await pickVersion("v1");
     expect(socialToggle().getAttribute("aria-pressed")).toBe("true");
-    expect(stage().dataset.social).toBe("fill");
+    expect(stage().dataset.social).toBe("fit");
   });
 
-  it("Compare and Social exclude each other, each disabled while the other is on", async () => {
+  it("Compare and Social no longer exclude each other: neither button disables the other", async () => {
     await openFilm({ parts: ["notes", "compare"] });
     await startSocial();
-    expect((tid("video-compare-toggle") as HTMLButtonElement).disabled).toBe(true);
-    await click(socialToggle()); await flush(2);
     expect((tid("video-compare-toggle") as HTMLButtonElement).disabled).toBe(false);
+    expect(tid("video-compare-toggle")!.getAttribute("title")).toBeNull();
+    await click(socialToggle()); await flush(2);
     await click(tid("video-compare-toggle")!); await flush(10);
-    expect((socialToggle() as HTMLButtonElement).disabled).toBe(true);
+    expect((socialToggle() as HTMLButtonElement).disabled).toBe(false);
+    expect(socialToggle().getAttribute("title")).toBeNull();
   });
 
   it("Escape leaves Social first, then closes the viewer", async () => {
@@ -332,15 +325,103 @@ describe("Social preview in the staff viewer (#871)", () => {
     expect(dialog()).toBeNull();
   });
 
+  it("Escape inside the composer is the form's, ahead of Social: the draft stays, Social stays on, the next Escape leaves Social", async () => {
+    await openFilm();
+    await type(composerText(), "typed");
+    await startSocial();
+    composerText().focus();
+    await key("Escape", composerText());
+    await flush(4);
+    expect(dialog()).not.toBeNull();
+    expect(socialToggle().getAttribute("aria-pressed")).toBe("true");
+    expect(composerText().value).toBe("typed");
+    await key("Escape", popup());
+    await flush(4);
+    expect(dialog()).not.toBeNull();
+    expect(socialToggle().getAttribute("aria-pressed")).toBe("false");
+    expect(composerText().value).toBe("typed");
+  });
+
   it("is offered on an archived Project", async () => {
     await openFilm({ archivedProject: true });
     await startSocial();
-    expect(stage().dataset.social).toBe("fill");
+    expect(stage().dataset.social).toBe("fit");
   });
 
   it("works with the notes part off", async () => {
     await openFilm({ parts: [] });
     await startSocial();
-    expect(stage().dataset.social).toBe("fill");
+    expect(stage().dataset.social).toBe("fit");
+  });
+});
+
+describe("Drawing with Social on (#877)", () => {
+  // The stage has no layout in happy-dom: the <video> gets an 800x800 box (its 16:9 picture then sits at top 175, 450 tall) and the layer a rect.
+  const RECT = { left: 100, top: 200, width: 800, height: 450 };
+  beforeEach(() => {
+    for (const [prop, value] of [["offsetWidth", 800], ["offsetHeight", 800], ["offsetLeft", 0], ["offsetTop", 0]] as const) Object.defineProperty(HTMLElement.prototype, prop, { configurable: true, get: () => value });
+  });
+  afterEach(() => { for (const prop of ["offsetWidth", "offsetHeight", "offsetLeft", "offsetTop"] as const) delete (HTMLElement.prototype as unknown as Record<string, unknown>)[prop]; });
+  const drawButton = () => tid("video-markup-toolbar-draw") as HTMLButtonElement | null;
+  const layer = () => tid("video-markup-layer") as unknown as SVGSVGElement;
+  async function startDrawing(frame = 12) {
+    await click(drawButton()!);
+    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, frame / 25); });
+    await flush(2);
+    const svg = layer();
+    svg.getBoundingClientRect = () => ({ ...RECT, right: RECT.left + RECT.width, bottom: RECT.top + RECT.height, x: RECT.left, y: RECT.top, toJSON: () => ({}) }) as DOMRect;
+    (svg as unknown as { setPointerCapture: () => void }).setPointerCapture = () => {};
+    return svg;
+  }
+  async function pointer(svg: Element, type: "pointerdown" | "pointermove" | "pointerup", x: number, y: number) {
+    await act(async () => { svg.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, clientX: x, clientY: y })); await Promise.resolve(); });
+  }
+  const stroke = async (svg: Element, from: [number, number], to: [number, number]) => { await pointer(svg, "pointerdown", from[0], from[1]); await pointer(svg, "pointermove", to[0], to[1]); await pointer(svg, "pointerup", to[0], to[1]); };
+  const items = () => stores.made.at(-1)!.slot(ids.asset2).markup.items;
+
+  it("Draw is offered, and the markup layer sits in the Social frame on the letterboxed picture, above the artwork", async () => {
+    await openFilm({ parts: ["notes", "markup"] }, 12);
+    await startSocial();
+    expect(drawButton()).not.toBeNull();
+    const svg = await startDrawing();
+    const markup = tid("video-markup")!;
+    expect(tid("video-social-frame")!.contains(markup)).toBe(true);
+    expect(markup.style.cssText).toContain("top: 175px");
+    expect(markup.style.cssText).toContain("height: 450px");
+    expect(markup.style.cssText).toContain("width: 800px");
+    expect(overlayImg()!.compareDocumentPosition(markup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(svg.closest('[data-testid="video-markup"]')).toBe(markup);
+  });
+
+  it("records the same normalised stroke with Social on and off, and rejects one that starts in the letterbox", async () => {
+    await openFilm({ parts: ["notes", "markup"] }, 12);
+    let svg = await startDrawing();
+    const offBox = tid("video-markup")!.style.cssText;
+    await stroke(svg, [500, 425], [600, 500]);
+    await click(tid("video-markup-done")!);
+    await startSocial();
+    svg = await startDrawing();
+    expect(tid("video-markup")!.style.cssText).toBe(offBox);
+    await stroke(svg, [500, 425], [600, 500]);
+    // Down in the letterbox (right of, then above the picture): no stroke, however it continues over the picture.
+    await pointer(svg, "pointerdown", 950, 425); await pointer(svg, "pointermove", 600, 500); await pointer(svg, "pointerup", 600, 500);
+    await pointer(svg, "pointerdown", 500, 190); await pointer(svg, "pointermove", 600, 500); await pointer(svg, "pointerup", 600, 500);
+    expect(items()).toHaveLength(2);
+    expect(items()[1]!.points).toEqual(items()[0]!.points);
+    expect(items()[0]!.points[0]).toEqual({ x: 0.5, y: 0.5 });
+  });
+
+  it("turning Social on or off while drawing keeps the drawing, the strokes and the layer node", async () => {
+    await openFilm({ parts: ["notes", "markup"] }, 12);
+    const svg = await startDrawing();
+    await stroke(svg, [500, 425], [600, 500]);
+    expect(items()).toHaveLength(1);
+    await startSocial();
+    expect(tid("video-markup")!.dataset.drawing).toBe("true");
+    expect(layer()).toBe(svg);
+    expect(items()).toHaveLength(1);
+    await click(socialToggle()); await flush(2);
+    expect(tid("video-markup")!.dataset.drawing).toBe("true");
+    expect(layer()).toBe(svg);
   });
 });

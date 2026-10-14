@@ -25,6 +25,16 @@ afterEach(async () => {
   host.remove();
 });
 
+describe("a disabled solid button on the inverse surface (#878)", () => {
+  it("is an outline at reduced opacity, not a grey fill that reads as selected; the light surface keeps the cva default", () => {
+    const classes = buttonVariants({ variant: "default" });
+    expect(classes).toContain("in-data-[surface=inverse]:disabled:bg-transparent");
+    expect(classes).toContain("in-data-[surface=inverse]:disabled:border-border");
+    expect(classes).toContain("in-data-[surface=inverse]:disabled:!text-foreground");
+    expect(classes).toContain("disabled:opacity-50");
+  });
+});
+
 describe("buttonClasses", () => {
   it('resolves "text" to a 32px box, not the cva default\'s 38px, while keeping the shared touch-target modifier', () => {
     // Pins twMerge's variant-key semantics — the fact `Admin.tsx:91-96` asserts in prose and

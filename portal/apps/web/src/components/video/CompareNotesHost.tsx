@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useSyncExternalStore, type ReactNode } from "react";
 import type { VideoDto, VideoVersionDto } from "@quincy/shared";
 import type { CompareSideId, CompareStore } from "../../lib/video-compare-store";
+import { ReviewPaneHideContext, ReviewPaneHideSlot } from "../quincy/ReviewPane";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../reui/tabs";
 import type { CompareNotesProps, CompareNotesSlots } from "./CompareView";
 import { useVideoNotes } from "./use-video-notes";
@@ -29,14 +30,19 @@ export default function CompareNotesHost({ notes, video, versionA, versionB, sto
   const active = useSyncExternalStore(store.subscribe, () => store.getState().activeTab);
   const session = active === "a" ? a : b;
 
-  const panel = <div data-surface="default" data-compare-side={active} data-testid="video-compare-notes" className="grid grid-rows-[auto_minmax(0,1fr)] border-l border-border bg-card text-card-foreground min-[721px]:min-h-0 min-[721px]:flex-[0_0_clamp(240px,28vw,360px)]">
+  const panel = <div data-compare-side={active} data-testid="video-compare-notes" className="grid grid-rows-[auto_minmax(0,1fr)] border-l border-border bg-card text-card-foreground min-w-0 flex-1 min-[721px]:min-h-0">
     <Tabs value={active} onValueChange={(next) => { if (next === "a" || next === "b") store.setActiveTab(next); }} className="contents">
-      <TabsList variant="line" aria-label="Notes for" className="w-full justify-start px-[var(--space-4)] pt-[var(--space-3)]">
-        <TabsTrigger value="a" className="min-h-8 pointer-coarse:min-h-11">{`v${versionA.version}`}</TabsTrigger>
-        <TabsTrigger value="b" className="min-h-8 pointer-coarse:min-h-11">{`v${versionB.version}`}</TabsTrigger>
-      </TabsList>
+      <div className="flex items-center pe-[var(--space-2)] pt-[var(--space-3)]">
+        <TabsList variant="line" aria-label="Notes for" className="min-w-0 flex-1 justify-start px-[var(--space-4)]">
+          <TabsTrigger value="a" className="min-h-8 pointer-coarse:min-h-11">{`v${versionA.version}`}</TabsTrigger>
+          <TabsTrigger value="b" className="min-h-8 pointer-coarse:min-h-11">{`v${versionB.version}`}</TabsTrigger>
+        </TabsList>
+        <ReviewPaneHideSlot />
+      </div>
       <TabsContent value={active} className="grid min-h-0">
-        <VideoNotesPanel key={`${active}:${session.assetId}`} session={session} video={video} detailsRows={detailsFor(session.version)} exportEnabled={false} />
+        <ReviewPaneHideContext.Provider value={null}>
+          <VideoNotesPanel key={`${active}:${session.assetId}`} session={session} video={video} detailsRows={detailsFor(session.version)} exportEnabled={false} />
+        </ReviewPaneHideContext.Provider>
       </TabsContent>
     </Tabs>
   </div>;

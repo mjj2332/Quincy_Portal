@@ -69,6 +69,7 @@ function SheetContent({
   side = "right",
   showCloseButton = true,
   overlayProps,
+  container,
   ...props
 }: SheetPrimitive.Popup.Props & {
   side?: "top" | "right" | "bottom" | "left"
@@ -80,9 +81,12 @@ function SheetContent({
   // does — without it, passing `overlayProps={{ "data-testid": … }}` at the call site is an excess-
   // property error, not a real type mismatch.
   overlayProps?: SheetPrimitive.Backdrop.Props & Record<`data-${string}`, string>
+  // Additive: portal into this element instead of `body`, so a sheet opened inside a role scope
+  // (`data-surface="inverse"`) stays inside it (#877).
+  container?: HTMLElement | null
 }) {
   return (
-    <SheetPortal>
+    <SheetPortal {...(container ? { container } : {})}>
       <SheetOverlay {...overlayProps} />
       <SheetPrimitive.Popup
         data-slot="sheet-content"

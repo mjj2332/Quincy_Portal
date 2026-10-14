@@ -330,6 +330,15 @@ Ending a Review link's access at once. The link stays in staff's list, marked re
 history.
 _Avoid_: Disable, expire
 
+**End guest sessions**:
+Signing everyone out of a Review link at once, without changing its address: every guest must verify
+their email again, and keeps their email updates. Staff can do it on the Delivery review link only, where
+it is the only change they can make (an ordinary link ends its sessions by Replace or Revoke). A guest can also sign themselves out ("Not you?
+Sign out"), which ends only their own session. In storage, `client_links.token_generation` is the
+session generation: Ending guest sessions raises it, and a session issued under an older one no longer
+resolves (the column's name predates that use).
+_Avoid_: Revoke (that closes the link), Replace (that changes the address)
+
 **Delete (Review link)**:
 Removing an already-revoked Review link from staff's list. Its notes, approvals and audit trail stay,
 and it cannot be restored. Anyone who may Revoke a link may Delete it.
@@ -367,8 +376,9 @@ Social overlay.
 _Avoid_: Fallback profile
 
 **Social preview**:
-Watching a Video through a Social overlay. It is view-only: no notes, marks or drawing while it is on.
-Staff and Guest reviewers can open it.
+Watching a Video through a Social overlay, the whole film fitted inside the 9:16 frame (never cropped).
+Notes, marks and drawing work as usual while it is on. Staff and Guest reviewers can open it; staff can
+also use it in a Compare, where both sides show the same Social overlay.
 _Avoid_: Social mode, mockup
 
 ### Client delivery

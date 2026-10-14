@@ -1,7 +1,7 @@
-import { auditMeta } from "./audit";
+import { auditMeta, type Principal } from "./audit";
 import { newId } from "./ids";
 import { LIVE_VERSION, LIVE_VIDEO, fencedRecomputeStatements } from "./video-live-sql";
-import { readReviewHead, type Principal } from "./video-review-status";
+import { readReviewHead } from "./video-review-status";
 
 /**
  * Rename a Video (#867): the new file name of its latest Version. One `db.batch`: the audit row first, written by an `INSERT ... SELECT` that carries the whole fence as its `WHERE` (a live Version
@@ -10,7 +10,7 @@ import { readReviewHead, type Principal } from "./video-review-status";
  * writes nothing, a no-op leaves no audit row, and there is no read-then-write. Two simultaneous renames are last-write-wins, each audited with the name it replaced.
  */
 export type RenameOutcome =
-  | { kind: "set" }
+  | { kind: "set"; videoId: string }
   | { kind: "unchanged"; videoId: string }
   | { kind: "archived" }
   | { kind: "not_found" }
@@ -35,7 +35,7 @@ export async function renameVersion(db: D1Database, input: { projectId: string; 
     db.prepare("UPDATE assets SET original_filename = ?1, updated_at = ?2 WHERE id = ?3 AND kind = 'video' AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?4)").bind(filename, now, assetId, auditId),
     ...fencedRecomputeStatements(db, head.videoId, now, auditId),
   ]);
-  if (await db.prepare("SELECT 1 AS one FROM audit_log WHERE id = ?1").bind(auditId).first()) return { kind: "set" };
+  if (await db.prepare("SELECT 1 AS one FROM audit_log WHERE id = ?1").bind(auditId).first()) return { kind: "set", videoId: head.videoId };
   // Nothing was written: say why, from a fresh read.
   const fresh = await readReviewHead(db, projectId, assetId);
   if (!fresh) return { kind: "not_found" };

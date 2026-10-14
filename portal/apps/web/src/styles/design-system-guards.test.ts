@@ -1732,3 +1732,11 @@ describe("guard: a --scrim-* token is never used through a background-color util
     expect(scrimColourUtilityProblems("bg-[image:var(--scrim-hero)] bg-[var(--ink-900)]")).toEqual([]);
   });
 });
+
+describe("guard: the Admin Social overlays thumbnail is token-sized (#876)", () => {
+  const source = readFileSync(join(srcDir, "components", "SocialOverlaysPanel.tsx"), "utf8");
+  it("uses the --space-8 token width, not an ad-hoc multiple of it", () => {
+    expect(source).toContain("aspect-[9/16] w-[var(--space-8)]");
+    expect(source).not.toMatch(/--space-8\)\s*\*\s*1\.25/);
+  });
+});

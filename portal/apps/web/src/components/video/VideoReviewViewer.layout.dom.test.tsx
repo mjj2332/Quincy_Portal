@@ -66,7 +66,12 @@ afterEach(async () => { viewport.restore(); shim.restore(); if (root) await act(
 
 
 const PANE = REVIEW_PANE_KEY;
-const toggle = () => document.querySelector<HTMLButtonElement>('[data-testid="video-pane-toggle"]');
+/** ⇥ lives in the pane (mounted even when collapsed, hidden); ⇤ lives in the strip and exists only while the pane is closed. */
+const hide = () => document.querySelector<HTMLButtonElement>('[data-testid="video-pane-hide"]');
+const show = () => document.querySelector<HTMLButtonElement>('[data-testid="video-pane-show"]');
+const strip = () => document.querySelector<HTMLElement>('[data-testid="video-review-strip"]');
+/** Whichever of the two is the live control right now. */
+const toggle = () => show() ?? hide();
 /** The pane when it is showing; a collapsed pane stays mounted but hidden (`mountedPane`). */
 const mountedPane = () => document.querySelector<HTMLElement>('[data-testid="video-review-pane"]');
 const pane = () => { const el = mountedPane(); return el && !el.hidden ? el : null; };
@@ -82,12 +87,24 @@ const hostWidth = (width: number) => { Object.defineProperty(splitRow(), "client
 /** The notes host is a lazy chunk and the player lives inside it: wait for the film too. */
 async function openViewerWithFilm() { await openViewer(); const deadline = Date.now() + 10_000; while (!document.querySelector("video")) { if (Date.now() > deadline) throw new Error("the film never mounted"); await flush(1); } await flush(4); }
 
+describe("VideoReviewViewer dark panels (ADR 0024, #877)", () => {
+  it("opens no default-scope panel in the viewer: only the toast slot may re-scope to the light look", async () => {
+    await mount(["delivery", "notes"]);
+    await openViewerWithFilm();
+    await panelLoaded(); // the delivery panel is a lazy chunk: the assertion below means nothing until it is in the DOM
+    const viewer = document.querySelector('[data-testid="video-review-viewer"]')!;
+    expect(viewer.querySelector('[data-testid="video-delivery"]')!.closest('[data-surface="default"]')).toBeNull();
+    // Whatever default scope exists is the toast viewport's `display: contents` wrapper, nothing else.
+    for (const el of viewer.querySelectorAll('[data-surface="default"]')) expect(el.classList.contains("contents")).toBe(true);
+  });
+});
+
 describe("VideoReviewViewer layout (#859): full-height player, collapsible and resizable side pane", () => {
   it("opens with the pane open at 360px, the toggle expanded, and the player first in the row", async () => {
     await mount(["notes"]);
     await openViewerWithFilm();
     expect(toggle()!.getAttribute("aria-expanded")).toBe("true");
-    expect(toggle()!.textContent).toContain("Notes");
+    expect(toggle()!.getAttribute("aria-label")).toBe("Hide notes");
     expect(pane()!.querySelector('aside[aria-label="Notes"]')).not.toBeNull();
     expect(now(handle()!)).toBe(360);
     expect(pane()!.style.getPropertyValue("--review-pane-w")).toBe("360px");
@@ -146,14 +163,14 @@ describe("VideoReviewViewer layout (#859): full-height player, collapsible and r
     } finally { if (original) Object.defineProperty(HTMLElement.prototype, "clientWidth", original); else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth; }
   });
 
-  it("collapsing with focus inside the pane moves focus to the toggle", async () => {
+  it("collapsing with focus inside the pane moves focus to the strip button", async () => {
     await mount(["notes"]);
     await openViewerWithFilm();
     const inside = pane()!.querySelector<HTMLElement>("button, textarea, [tabindex]")!;
     await act(async () => { inside.focus(); });
     expect(pane()!.contains(document.activeElement)).toBe(true);
     await act(async () => { toggle()!.click(); });
-    expect(document.activeElement).toBe(toggle());
+    expect(document.activeElement).toBe(show());
   });
 
   it("keyboard on the handle resizes (arrows 16px, Shift 64px, Home 280, End 640), persists, and never steps the film", async () => {
@@ -243,7 +260,7 @@ describe("VideoReviewViewer layout (#859): full-height player, collapsible and r
   it("with notes off the Version details are the pane, the toggle says Details, and it collapses the same way", async () => {
     await mount([]);
     await openViewerWithFilm();
-    expect(toggle()!.textContent).toContain("Details");
+    expect(toggle()!.getAttribute("aria-label")).toBe("Hide details");
     expect(pane()!.querySelector('aside[aria-label="Version details"]')).not.toBeNull();
     await act(async () => { toggle()!.click(); });
     expect(pane()).toBeNull();
@@ -274,7 +291,7 @@ describe("VideoReviewViewer layout (#859): full-height player, collapsible and r
       await openViewerWithFilm();
       await panelLoaded();
       expect([...document.querySelectorAll('[role="tab"]')].map((t) => t.textContent)).toEqual(["Details", "Delivery"]);
-      expect(toggle()!.textContent).toContain("Details");
+      expect(toggle()!.getAttribute("aria-label")).toBe("Hide details");
     });
 
     it("arrows on a focused tab move between tabs and do not step the film", async () => {
@@ -312,5 +329,98 @@ describe("VideoReviewViewer layout (#859): full-height player, collapsible and r
       expect(pane()).not.toBeNull();
       expect(toggle()).toBeNull();
     });
+  });
+});
+
+describe("VideoReviewViewer pane-side collapse control (#877 S2)", () => {
+  it("puts hide (⇥) inside the pane and keeps it out of the top bar; no strip while open", async () => {
+    await mount(["notes"]);
+    await openViewerWithFilm();
+    expect(pane()!.contains(hide())).toBe(true);
+    expect(hide()!.getAttribute("aria-label")).toBe("Hide notes");
+    expect(hide()!.getAttribute("aria-expanded")).toBe("true");
+    expect(hide()!.getAttribute("aria-controls")).toBe(mountedPane()!.id);
+    expect(document.querySelector("header")!.querySelector('[data-testid="video-pane-hide"], [data-testid="video-pane-show"]')).toBeNull();
+    expect(strip()).toBeNull();
+    expect(document.querySelector('[data-testid="video-pane-toggle"]')).toBeNull();
+  });
+
+  it("collapsed: a slim strip with ⇤ is the last child of the row, labelled Show notes", async () => {
+    shim.values.set(PANE, JSON.stringify({ open: false, width: 360 }));
+    await mount(["notes"]);
+    await openViewerWithFilm();
+    expect(strip()).not.toBeNull();
+    expect(splitRow().lastElementChild).toBe(strip());
+    expect(strip()!.contains(show())).toBe(true);
+    expect(show()!.getAttribute("aria-label")).toBe("Show notes");
+    expect(show()!.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("with notes off the labels say details", async () => {
+    await mount([]);
+    await openViewerWithFilm();
+    expect(hide()!.getAttribute("aria-label")).toBe("Hide details");
+    await act(async () => { hide()!.click(); });
+    expect(show()!.getAttribute("aria-label")).toBe("Show details");
+  });
+
+  it("focus goes hide to show to hide, the film node survives, and the width and choice are remembered", async () => {
+    await mount(["notes"]);
+    await openViewerWithFilm();
+    const film = filmNode();
+    await act(async () => { hide()!.focus(); });
+    await act(async () => { hide()!.click(); });
+    expect(document.activeElement).toBe(show());
+    expect(filmNode()).toBe(film);
+    expect(saved()).toEqual({ open: false, width: 360 });
+    await act(async () => { show()!.click(); });
+    expect(document.activeElement).toBe(hide());
+    expect(strip()).toBeNull();
+    expect(filmNode()).toBe(film);
+    expect(saved()).toEqual({ open: true, width: 360 });
+  });
+
+  it("revealing the pane another way (an I mark) moves no focus", async () => {
+    shim.values.set(PANE, JSON.stringify({ open: false, width: 360 }));
+    await mount(["notes"]);
+    await openViewerWithFilm();
+    const film = document.querySelector("video")!;
+    await act(async () => { stub.loadMetadata(film, { duration: 12 }); });
+    const viewer = document.querySelector<HTMLElement>('[data-testid="video-review-viewer"]')!;
+    await act(async () => { viewer.focus(); });
+    await press(viewer, "i");
+    await flush(4);
+    expect(pane()).not.toBeNull();
+    expect(document.activeElement).not.toBe(hide());
+  });
+
+  it("with Delivery on, hide sits beside the tabs and the tab panels keep their parent", async () => {
+    await mount(["delivery", "notes"]);
+    await openViewerWithFilm();
+    await panelLoaded();
+    const tabs = document.querySelector('[role="tablist"]')!;
+    expect(tabs.parentElement!.contains(hide())).toBe(true);
+    const content = document.querySelector('[role="tabpanel"]')!;
+    const parent = content.parentElement;
+    await act(async () => { hide()!.click(); });
+    await act(async () => { show()!.click(); });
+    expect(document.querySelector('[role="tabpanel"]')).toBe(content);
+    expect(content.parentElement).toBe(parent);
+  });
+
+  it("Version details: the heading and hide share one row", async () => {
+    await mount([]);
+    await openViewerWithFilm();
+    const heading = pane()!.querySelector("h3")!;
+    expect(heading.parentElement!.contains(hide())).toBe(true);
+  });
+
+  it("a phone has no collapse control", async () => {
+    viewport.restore(); viewport = mockViewport({ width: 390 });
+    await mount(["notes"]);
+    await openViewerWithFilm();
+    expect(hide()).toBeNull();
+    expect(show()).toBeNull();
+    expect(strip()).toBeNull();
   });
 });

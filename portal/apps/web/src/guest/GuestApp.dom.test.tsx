@@ -149,6 +149,13 @@ describe("the link token", () => {
     expect(byId("guest-row-slot")).not.toBeNull();
   });
 
+  it("opens no default-scope panel on the guest video screen (ADR 0024)", async () => {
+    videos = [videoOf(1, { versions: [versionOf(10)] })];
+    await open(`?link=${LINK}`, "");
+    expect(byId("guest-video-screen")).not.toBeNull();
+    expect(document.querySelector('[data-surface="default"]')).toBeNull();
+  });
+
   it("skips the list for a single video and opens it", async () => {
     videos = [videoOf(1)];
     await open();
@@ -279,6 +286,24 @@ describe("the video screen", () => {
     expect(options.some((text) => text.startsWith("v20"))).toBe(false);
   });
 
+  it("portals the Version select popup inside the inverse scope (#877)", async () => {
+    videos = [videoOf(1, { versions: [versionOf(30), versionOf(10)] })];
+    await open();
+    await click(byId("guest-version-trigger") ?? undefined);
+    const option = document.querySelector<HTMLElement>('[role="option"]')!;
+    expect(option.closest('[data-surface="inverse"]')).not.toBeNull();
+  });
+
+  it("portals the phone notes drawer inside the inverse scope (#877)", async () => {
+    await viewport.set({ width: 390, coarse: true });
+    notes = [note()];
+    videos = [videoOf(1)];
+    await open();
+    await click(button("Notes"));
+    const drawer = document.querySelector<HTMLElement>('[data-testid="guest-notes-drawer"]')!;
+    expect(drawer.closest('[data-surface="inverse"]')).not.toBeNull();
+  });
+
   it("draws the watermark only on a premium video that is not unlocked", async () => {
     await withLayout(async () => {
       videos = [videoOf(1, { premium: true, unlocked: false })];
@@ -362,7 +387,8 @@ describe("the video screen", () => {
 });
 
 describe("the notes pane (#859)", () => {
-  const toggle = () => byId("video-pane-toggle");
+  /** ⇥ is in the pane (mounted even when collapsed), ⇤ in the strip (only while collapsed): whichever is the live control. */
+  const toggle = () => byId("video-pane-show") ?? byId("video-pane-hide");
   /** The pane when it is showing; a collapsed pane stays mounted but hidden (`mountedPane`). */
   const mountedPane = () => byId("video-review-pane");
   const pane = () => { const el = mountedPane(); return el && !el.hidden ? el : null; };
@@ -378,6 +404,46 @@ describe("the notes pane (#859)", () => {
     expect(pane()!.querySelector('[data-testid="guest-notes-panel"]')).not.toBeNull();
     expect(now(handle()!)).toBe(360);
     expect(pane()!.style.getPropertyValue("--review-pane-w")).toBe("360px");
+  });
+
+  it("puts ⇥ in the pane's heading row, none in the top bar, and a strip with ⇤ once collapsed (#877 S2)", async () => {
+    videos = [videoOf(1)];
+    await open();
+    const hide = byId("video-pane-hide")!;
+    expect(hide.getAttribute("aria-label")).toBe("Hide notes");
+    expect(byId("guest-notes-heading")!.parentElement!.contains(hide)).toBe(true);
+    expect(byId("guest-bar")!.contains(hide)).toBe(false);
+    expect(byId("video-review-strip")).toBeNull();
+    await click(hide);
+    expect(byId("video-review-strip")!.contains(byId("video-pane-show"))).toBe(true);
+    expect(byId("video-pane-show")!.getAttribute("aria-label")).toBe("Show notes");
+    expect(document.activeElement).toBe(byId("video-pane-show"));
+    await click(byId("video-pane-show")!);
+    expect(document.activeElement).toBe(byId("video-pane-hide"));
+  });
+
+  it("the bar is one truncating line; Approve and the other deliveries sit in their own row under it (#877 S2)", async () => {
+    videos = [videoOf(1)];
+    await open();
+    const title = byId("guest-video-title")!;
+    expect(title.className).toContain("truncate");
+    expect(title.getAttribute("title")).toBe(title.textContent);
+    expect(byId("guest-bar")!.className).toContain("flex-nowrap");
+    expect(byId("guest-bar")!.contains(byId("guest-delivery"))).toBe(false);
+  });
+
+  it("a phone keeps the bar one non-wrapping row: no basis-full, a short Version label, 44px icon-only Back and Social (#877 S2)", async () => {
+    await viewport.set({ width: 390, coarse: true });
+    videos = [videoOf(1)];
+    await open();
+    const bar = byId("guest-bar")!;
+    expect(bar.className).toContain("flex-nowrap");
+    expect(bar.className).not.toContain("flex-wrap");
+    expect(bar.outerHTML).not.toContain("basis-full");
+    expect(byId("guest-version-trigger")!.textContent).toMatch(/^v\d+/);
+    expect(byId("guest-delivery")!.parentElement!.contains(bar)).toBe(true);
+    expect(bar.contains(byId("guest-delivery"))).toBe(false);
+    expect(byId("guest-version-trigger")!.textContent).not.toContain("latest");
   });
 
   it("the toggle collapses and restores the pane without remounting the film, and saves the choice", async () => {
@@ -879,6 +945,7 @@ describe("Sol round 7", () => {
     const api: GuestApi = {
       exchange: async () => ({ ok: false, reason: "unavailable" }),
       session: async () => { await gate; return { kind: "gone" }; },
+      endSession: async () => "ok",
       videos: async () => { await gate; return { kind: "ok", value: [] }; },
       socialOverlays: async () => ({ kind: "ok", value: [] }),
       notes: async () => ({ kind: "ok", value: [] }),
@@ -1089,5 +1156,70 @@ describe("rich notes on the page (#835 C)", () => {
     await open();
     await click(button("Open Film 1"));
     expect(byId("guest-note-body")!.textContent).toBe("Trim the opening");
+  });
+});
+
+describe("Not you? Sign out (#854)", () => {
+  const VERIFIED = { ...SESSION, verified: true, email: "sam@example.com", name: "Sam" };
+  /** A visitor with a verified session; DELETE `/session` answers `deleteAs` and, on 204 or 404, ends it, so the next exchange mints an unverified one. */
+  function visitor(deleteAs: () => Response = () => new Response(null, { status: 204 })) {
+    const calls: Array<{ method: string; body: string | null }> = [];
+    extra = (url, init) => {
+      if (url !== `/d/api/links/${LINK}/session`) return undefined;
+      const method = init?.method ?? "GET";
+      calls.push({ method, body: typeof init?.body === "string" ? init.body : null });
+      if (method === "DELETE") { const response = deleteAs(); if (response.status === 204 || response.status === 404) sessionGone = true; return response; }
+      if (method === "POST") { sessionGone = false; return json(SESSION); }
+      return sessionGone ? stub404() : json(VERIFIED);
+    };
+    return calls;
+  }
+  const signOut = () => button("Not you? Sign out");
+
+  it("shows the identity row only when the session is verified", async () => {
+    await open();
+    expect(byId("guest-identity")).toBeNull(); expect(signOut()).toBeUndefined();
+    await act(async () => { root!.unmount(); }); root = null; host.remove();
+    visitor();
+    await open();
+    expect(byId("guest-identity")!.textContent).toContain("Reviewing as Sam");
+    expect(signOut()).toBeDefined();
+  });
+
+  it("sends DELETE then POST with the original token, and lands unverified on the list with no identity left", async () => {
+    const calls = visitor();
+    await open();
+    await click(signOut());
+    const sent = calls.filter((call) => call.method !== "GET");
+    expect(sent.map((call) => call.method)).toEqual(["DELETE", "POST"]);
+    expect(JSON.parse(sent[1]!.body!)).toEqual({ token: "tok123" });
+    expect(byId("guest-list")).not.toBeNull();
+    expect(byId("guest-identity")).toBeNull();
+  });
+
+  it("treats a 404 (staff already ended the session) as signed out", async () => {
+    const calls = visitor(() => stub404());
+    await open();
+    await click(signOut());
+    expect(calls.filter((call) => call.method !== "GET").map((call) => call.method)).toEqual(["DELETE", "POST"]);
+    expect(byId("guest-identity")).toBeNull();
+  });
+
+  it("with no token in memory (after a reload) shows the plain signed-out screen, not the unavailable one", async () => {
+    visitor();
+    await open(`?link=${LINK}`, "");
+    await click(signOut());
+    expect(byId("guest-signed-out")).not.toBeNull();
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(byId("guest-signed-out")!.textContent).toContain("Open the review link again");
+  });
+
+  it("a failed sign-out (5xx) says so inline and leaves the guest signed in", async () => {
+    const calls = visitor(() => new Response("", { status: 503 }));
+    await open();
+    await click(signOut());
+    expect(host.querySelector('[role="alert"]')!.textContent).toContain("Couldn't sign out. Try again.");
+    expect(byId("guest-identity")!.textContent).toContain("Reviewing as Sam");
+    expect(calls.filter((call) => call.method === "POST")).toHaveLength(0);
   });
 });

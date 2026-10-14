@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { Button } from "@/components/reui/button";
 import { pushToast } from "../../lib/toast-store";
+import { IconTip } from "../quincy/IconTip";
 
 const COPIED_MS = 2000;
 
@@ -12,7 +13,7 @@ const COPIED_MS = 2000;
  * a clipboard write after an awaited fetch loses the user activation in Safari, so the person presses it.
  * Sits in `components/video/` for this slice only; folding `CopyProjectLinkButton` onto it is a follow-up in a quincy-layer PR.
  */
-export function CopyTextButton({ text, label = "Copy link", success = "Link copied.", failure = "Couldn't copy the link.", className, ariaLabel }: { text: string; label?: string; success?: string; failure?: string; className?: string; /** Overrides the accessible name where the visible label alone is ambiguous, such as one Copy per row. */ ariaLabel?: string }) {
+export function CopyTextButton({ text, label = "Copy link", success = "Link copied.", failure = "Couldn't copy the link.", className, ariaLabel, labelClassName, tooltip = false }: { text: string; label?: string; success?: string; failure?: string; className?: string; /** Overrides the accessible name where the visible label alone is ambiguous, such as one Copy per row. */ ariaLabel?: string; /** Classes on the label text: the top bar makes it `sr-only` when it is narrow. */ labelClassName?: string; /** Name the action in a tooltip (for a label that is not always drawn). */ tooltip?: boolean }) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<number | undefined>(undefined);
   const textRef = useRef(text);
@@ -40,10 +41,12 @@ export function CopyTextButton({ text, label = "Copy link", success = "Link copi
     );
   }
 
-  return (
+  const button = (
     <Button type="button" variant="outline" data-testid="copy-text" className={className} onClick={copy} {...(ariaLabel ? { "aria-label": ariaLabel } : {})}>
       {copied ? <CheckIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" /> : <CopyIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />}
-      {copied ? "Copied" : label}
+      {labelClassName ? <span className={labelClassName}>{copied ? "Copied" : label}</span> : (copied ? "Copied" : label)}
     </Button>
   );
+  if (!tooltip) return button;
+  return <IconTip label={label}>{button}</IconTip>;
 }

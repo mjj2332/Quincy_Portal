@@ -77,6 +77,16 @@ describe("VideoReviewViewer delivery panel (#741 14-ui-staff)", () => {
     expect(apiGetMock.mock.calls.some(([path]) => path.endsWith("/decisions"))).toBe(true);
   });
 
+  it("draws no Frame of its own inside the pane's Delivery tab (one container family, #878)", async () => {
+    await mount(["delivery"]);
+    await openViewer();
+    await panelLoaded();
+    // A Frame carries a border and its panel a bordered, padded card; the bare tab content has neither.
+    expect(panel()!.className).not.toContain("border");
+    expect(panel()!.firstElementChild!.className).not.toContain("border");
+    expect(panel()!.textContent).toContain("Delivery · v2");
+  });
+
   it("sits in a Delivery tab beside the Notes tab when notes are on too", async () => {
     await mount(["delivery", "notes"]);
     await openViewer();

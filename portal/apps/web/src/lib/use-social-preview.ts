@@ -1,19 +1,18 @@
 import { useCallback, useState } from "react";
-import type { SocialFit, SocialOverlayFrame } from "../components/quincy/SocialPreviewControls";
+import type { SocialOverlayFrame } from "../components/quincy/SocialPreviewControls";
 
 /**
- * Social preview state (#871), shared with the guest page (#872): whether it is on, Fill or Fit, and which overlay. In memory for one opening of a viewer: not stored, not in the URL.
- * Turning it on starts afresh (Fill, the first overlay); Version switches inside the opening keep the choice.
+ * Social preview state (#871), shared with the guest page (#872): whether it is on and which overlay. In memory for one opening of a viewer: not stored, not in the URL.
+ * Turning it on starts afresh (the first overlay); Version switches inside the opening keep the choice.
  */
 export function useSocialPreview(initialOn = false) {
   const [on, setOnState] = useState(initialOn);
-  const [fit, setFit] = useState<SocialFit>("fill");
   const [overlayId, setOverlayId] = useState<string | null>(null);
   const setOn = useCallback((next: boolean) => {
-    if (next) { setFit("fill"); setOverlayId(null); }
+    if (next) setOverlayId(null);
     setOnState(next);
   }, []);
-  return { on, setOn, fit, setFit, overlayId, setOverlayId };
+  return { on, setOn, overlayId, setOverlayId };
 }
 
 /** The overlay on screen: the chosen one while it is still listed, else the first (the library puts the Default first), so a refreshed list that drops the chosen one falls back. */
