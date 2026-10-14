@@ -192,7 +192,7 @@ describe("Social preview on the Review link (#872)", () => {
   it("is a labelled toggle: visible text Social, accessible name Social preview", async () => {
     await open();
     expect(toggle()!.getAttribute("aria-label")).toBe("Social preview");
-    expect(toggle()!.textContent).toContain("Social");
+    expect(toggle()!.textContent).toBe("Social preview");
     expect(toggle()!.getAttribute("aria-pressed")).toBe("false");
     expect(stage()!.dataset.social).toBeUndefined();
   });

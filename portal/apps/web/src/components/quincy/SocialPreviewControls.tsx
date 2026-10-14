@@ -55,7 +55,7 @@ export function SocialPreviewControls({ social, imageFailed }: { social: SocialP
     </>}
     {social.status === "ready" && social.overlays.length === 0 && <span className="text-foreground-secondary [font:var(--type-label)]">No overlay available</span>}
     {social.status === "ready" && imageFailed && <Notice tone="caution" role="alert" className="py-[var(--space-1)]">Overlay unavailable</Notice>}
-    {social.status === "ready" && social.overlays.length === 1 && current && <span data-testid="video-social-overlay-name" className="[font:var(--type-label)]">{current.name}</span>}
+    {social.status === "ready" && social.overlays.length === 1 && current && <span data-testid="video-social-overlay-name" className="px-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">{current.name}</span>}
     {social.status === "ready" && social.overlays.length > 1 && <Select value={current?.id ?? null} onValueChange={(next) => { if (typeof next === "string") social.onOverlay(next); }}>
       <SelectTrigger aria-label="Overlay" data-testid="video-social-overlay-select" className={cn("min-w-36", COARSE)}>
         <SelectValue>{() => <span className="block truncate">{current?.name ?? "Overlay"}</span>}</SelectValue>

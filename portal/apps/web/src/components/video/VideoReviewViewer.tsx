@@ -43,8 +43,10 @@ const PHONE_QUERY = "(width < 721px)";
 
 const VERSION_SELECT_ID = "video-review-version";
 
-/** Below this bar width (a container query on the header) an action's label is spoken, not drawn, and a tooltip names it, so 721-1080px still fits on one line. */
-const BAR_LABEL = "@max-[1080px]:sr-only";
+/** Below this bar width (a container query on the header) an action's label is spoken, not drawn, and a tooltip names it, so the title keeps its floor (`TITLE_FLOOR`) from 721px up (#878). */
+/** The title never shrinks below this many characters, so a crowded bar truncates it last, not to nothing (#878). */
+const TITLE_FLOOR = "min-w-[10ch]";
+const BAR_LABEL = "@max-[1400px]:sr-only";
 
 /**
  * The staff review viewer (#741 4d-ii): a collection-local, full-viewport dialog on the inverse surface that plays one Video, one
@@ -362,7 +364,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const downloadHref = download && !comparing ? videoVersionDownloadUrl(download.projectId, version.assetId) : undefined;
   const header = <header className="@container flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-1)] text-card-foreground max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">
       <DialogClose render={<Button type="button" variant="ghost" className="shrink-0 pointer-coarse:min-h-11 max-[721px]:min-h-11 max-[721px]:min-w-11" />}><ChevronLeft aria-hidden="true" /><span className={phone ? "sr-only" : undefined}>Video</span></DialogClose>
-      <DialogTitle title={video.title} className="m-0 min-w-0 flex-1 truncate [font:var(--type-body)]">{video.title}</DialogTitle>
+      <DialogTitle title={video.title} className={`m-0 ${TITLE_FLOOR} flex-1 truncate [font:var(--type-body)]`}>{video.title}</DialogTitle>
       {/* The pill may not grow the bar: its older-publication hint stays on the line and its error copy floats under the bar instead of wrapping it. */}
       {reviewStatus && <div data-testid="video-review-status-slot" className="relative min-w-0 shrink-0 [&>div]:flex-nowrap [&_[role=alert]]:absolute [&_[role=alert]]:top-full [&_[role=alert]]:left-0 [&_[role=alert]]:z-10 [&_[role=alert]]:mt-[var(--space-1)] [&_[role=alert]]:w-max [&_[role=alert]]:max-w-[min(24rem,90vw)] [&_[role=alert]]:border [&_[role=alert]]:border-border [&_[role=alert]]:bg-card [&_[role=alert]]:p-[var(--space-2)]">
         <VideoReviewStatusPill video={video} version={version} comparing={comparing} compact={phone} {...reviewStatus} />
@@ -371,7 +373,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         <label htmlFor={VERSION_SELECT_ID} className={`shrink-0 text-foreground-secondary [font:var(--type-label)]${phone ? " sr-only" : ""}`}>Version</label>
         <Select open={versionListOpen} onOpenChange={(next) => { if (next) handOff.current = false; setVersionListOpen(next); }} value={version.assetId} onValueChange={(next) => { if (typeof next === "string") { setResume(null); setAssetId(next); } }}>
           <SelectTrigger id={VERSION_SELECT_ID} data-testid="video-version-trigger" className="pointer-coarse:min-h-11 max-[721px]:min-h-11 min-w-0 max-w-full">
-            <SelectValue>{() => <span data-testid="video-version-label" className="block truncate">{phone ? `v${version.version}` : optionLabel(version)}</span>}</SelectValue>
+            <SelectValue>{() => <span data-testid="video-version-label" className="block truncate">{`v${version.version}${!phone && version.version === newest ? " · latest" : ""}`}</span>}</SelectValue>
           </SelectTrigger>
           <SelectContent finalFocus={() => !handOff.current} className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
             {video.versions.map((candidate) => <SelectItem key={candidate.assetId} value={candidate.assetId} className="pointer-coarse:min-h-11 max-[721px]:min-h-11">{optionLabel(candidate)}{trash && <IconButton
@@ -417,7 +419,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       </div>
     </header>;
   const layout = (slots: { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode } | null): ReactNode => {
-    const deliveryPanel = delivery ? <Suspense fallback={null}><LazyDeliveryPanel projectId={delivery.projectId} role={delivery.role} archived={delivery.archived} video={video} version={version} store={delivery.store} /></Suspense> : null;
+    const deliveryPanel = delivery ? <Suspense fallback={null}><LazyDeliveryPanel projectId={delivery.projectId} role={delivery.role} archived={delivery.archived} video={video} version={version} store={delivery.store} bare={!phone} /></Suspense> : null;
     const main = slots
       ? slots.panel
       : <aside aria-label="Version details" className="min-[721px]:min-h-0 flex-1 min-[721px]:overflow-y-auto border-l border-border bg-card p-[var(--space-5)] text-card-foreground max-[721px]:border-t max-[721px]:border-l-0">

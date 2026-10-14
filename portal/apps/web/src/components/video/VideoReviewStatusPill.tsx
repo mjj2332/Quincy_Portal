@@ -67,7 +67,7 @@ export function VideoReviewStatusPill({ video, version, comparing, projectId, ro
   return <div className="flex flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)]">
     <Menu
       triggerLabel={`Review status: ${REVIEW_STATUS_LABEL[status]}`} label="Review status" triggerTestId={testId}
-      triggerClassName={cn("pointer-coarse:min-h-11 max-[721px]:min-h-11 rounded-full", blocked && "cursor-not-allowed")}
+      triggerClassName={cn("pointer-coarse:min-h-11 max-[721px]:min-h-11 rounded-full", blocked && "cursor-not-allowed disabled:opacity-50")}
       disabled={blocked || pending}
       trigger={<StatusPill tone={tone}>{label}<ChevronDown aria-hidden="true" className="ml-[var(--space-1)] size-3" /></StatusPill>}
     >

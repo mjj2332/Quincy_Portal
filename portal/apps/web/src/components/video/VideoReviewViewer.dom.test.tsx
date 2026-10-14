@@ -175,7 +175,8 @@ describe("VideoReviewViewer (#741 4d-ii)", () => {
     const trigger = dialog()!.querySelector<HTMLElement>('[role="combobox"]')!;
     expect(trigger.className).toContain("pointer-coarse:min-h-11");
     expect(document.querySelector(`label[for="${trigger.id}"]`)?.textContent).toBe("Version");
-    expect(trigger.textContent).toContain("v2 · latest · Mia Chen · 9 Oct 2026");
+    expect(trigger.textContent).toContain("v2 · latest");
+    expect(trigger.textContent).not.toContain("Mia Chen");
     const aside = dialog()!.querySelector('aside[aria-label="Version details"]')!;
     expect(aside.textContent).toContain("Mia Chen");
     expect(aside.textContent).toContain("120 MB");

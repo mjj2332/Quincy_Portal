@@ -24,7 +24,7 @@ export function VideoReviewHeaderMenu({ copyHref, downloadHref, downloadLabel, o
   return <Menu
     triggerLabel="Video actions" label="Video menu" triggerTestId="video-header-menu"
     triggerRender={<IconButton />}
-    triggerClassName="text-foreground"
+    triggerClassName="rounded-lg border border-solid border-border bg-background text-foreground"
     trigger={<span aria-hidden="true">⋯</span>}
     finalFocus={() => (handOff.current ? false : undefined)}
     onOpenChange={(isOpen) => { if (isOpen) handOff.current = false; }}

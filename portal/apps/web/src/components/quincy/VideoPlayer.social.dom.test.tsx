@@ -107,6 +107,14 @@ describe("VideoPlayer Social preview (#871)", () => {
     expect(byTestId("video-social-overlay-name")!.textContent).toBe(A.name);
   });
 
+  it("one overlay: the name is a muted label with its own inline padding, not a control (#878)", async () => {
+    await mount({ social: socialOf({ overlays: [A] }) });
+    const name = byTestId("video-social-overlay-name")!;
+    expect(name.tagName).toBe("SPAN");
+    expect(name.className).toContain("text-foreground-secondary");
+    expect(name.className).toContain("px-[var(--space-2)]");
+  });
+
   it("loading, failed (Retry) and empty library each say so, and the film stays framed", async () => {
     await mount({ social: socialOf({ status: "loading", overlays: [], currentId: null }) });
     expect(host.querySelector('[role="status"]')!.textContent).toContain("Loading overlays");

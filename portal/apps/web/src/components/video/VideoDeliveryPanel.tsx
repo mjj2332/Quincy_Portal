@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore, type ReactNode } from "react";
+import { useState, useSyncExternalStore, type ComponentProps, type ReactNode } from "react";
 import { roleHasCapability, type Role, type VideoDecisionEvent, type VideoDto, type VideoVersionDto } from "@quincy/shared";
 import { useOptionalProjectQueryClient } from "../../lib/project-data";
 import { recordClientDecision, releaseVideoVersion, setVideoPremium, setVideoPremiumUnlock, useVideoDecisionsQuery, withdrawVideoRelease } from "../../lib/video-approval-data";
@@ -17,6 +17,8 @@ import { Notice } from "../quincy/Notice";
 const formatWhen = (iso: string): string => new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const actorName = (event: VideoDecisionEvent): string => (event.actor.kind === "user" ? event.actor.person.name : event.actor.name ?? "A guest");
+/** A plain box that takes the Frame's props, for the pane's tab (one container family). */
+const BareBox = (props: ComponentProps<"div">) => <div {...props} />;
 const decisionLabel = (event: VideoDecisionEvent): string => (event.decision === "approved" ? "Approved" : "Requested changes");
 type Pending = { kind: "release"; revision: number } | { kind: "withdraw" } | { kind: "record"; decision: "approved" | "changes_requested" } | { kind: "unlock" } | { kind: "relock" } | null;
 
@@ -26,7 +28,7 @@ type Pending = { kind: "release"; revision: number } | { kind: "withdraw" } | { 
  * server and not silently overridden), Withdraw, and a client decision staff record themselves (the client approved by phone). Premium belongs to the Video: the switch and
  * Unlock / Re-lock need `manageVideoPremium` (Admin and Editor). Writes go through `store`, so they and an unsent note outlive this component.
  */
-export function VideoDeliveryPanel({ projectId, role, archived, video, version, store }: { projectId: string; role: Role; archived: boolean; video: VideoDto; version: VideoVersionDto; store: VideoApprovalStore }): ReactNode {
+export function VideoDeliveryPanel({ projectId, role, archived, video, version, store, bare = false }: { projectId: string; role: Role; archived: boolean; video: VideoDto; version: VideoVersionDto; store: VideoApprovalStore; /** Inside the viewer pane's Delivery tab, which is already the one container: no Frame of its own (#878). */ bare?: boolean }): ReactNode {
   const queryClient = useOptionalProjectQueryClient();
   const decisions = useVideoDecisionsQuery(projectId, video.id, true);
   const vSlot = versionSlot(version.assetId);
@@ -60,8 +62,10 @@ export function VideoDeliveryPanel({ projectId, role, archived, video, version, 
     : { label: "Changes requested", variant: "warning-light" };
   const ordered = [...events].reverse();
 
-  return <Frame data-testid="video-delivery" aria-label={`Delivery of version ${version.version}`} role="group" className="shrink-0 text-foreground">
-    <FramePanel className="grid gap-[var(--space-4)]">
+  const Root = bare ? BareBox : Frame;
+  const Panel = bare ? BareBox : FramePanel;
+  return <Root data-testid="video-delivery" aria-label={`Delivery of version ${version.version}`} role="group" className="shrink-0 text-foreground">
+    <Panel className="grid gap-[var(--space-4)]">
       <FrameHeader className="p-0">
         <div className="flex flex-wrap items-center justify-between gap-[var(--space-2)]">
           <FrameTitle>{`Delivery · v${version.version}`}</FrameTitle>
@@ -108,7 +112,7 @@ export function VideoDeliveryPanel({ projectId, role, archived, video, version, 
         <p className="m-0 text-foreground-secondary [font:var(--type-label)]">{video.premium ? (video.premiumUnlocked ? "The client can download released versions of this film." : "The client sees a watermark and can't download until you unlock it.") : "Turn on to watermark this film for the client until it is unlocked."}</p>
         {!canPremium && <p data-testid="delivery-premium-reason" className="m-0 text-foreground-secondary [font:var(--type-label)]">Only an Admin or Editor can change premium or unlock it.</p>}
       </div>
-    </FramePanel>
+    </Panel>
 
     <AlertDialog open={pending?.kind === "release"} onOpenChange={(open) => { if (!open) close(); }}>
       <AlertDialogContent size="default">
@@ -187,5 +191,5 @@ export function VideoDeliveryPanel({ projectId, role, archived, video, version, 
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  </Frame>;
+  </Root>;
 }

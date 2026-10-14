@@ -76,6 +76,32 @@ describe("the one-line top bar (#877 S2)", () => {
     expect(tid("video-start-tc")).toBeNull();
   });
 
+  it("keeps a readable floor on the title and hides action labels before the title is cut (#878)", async () => {
+    await mount({ deepLink: true, download: true, reviewLinks: true, social: true, status: true });
+    const popup = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const title = document.getElementById(popup.getAttribute("aria-labelledby")!)!;
+    expect(title.className).toContain("min-w-[10ch]");
+    const actions = tid("video-header-actions")!;
+    for (const name of ["Download", "Create Review link", "Social preview"]) {
+      const label = [...actions.querySelectorAll("span")].find((span) => span.textContent === name)!;
+      expect(label.className).toContain("@max-[1400px]:sr-only");
+    }
+    expect(actions.innerHTML).not.toContain("@max-[1080px]");
+  });
+
+  it("shows the Version trigger short on a desktop bar ('v2 · latest'); the menu rows keep the full text (#878)", async () => {
+    await mount();
+    expect(tid("video-version-label")!.textContent).toBe("v2 · latest");
+  });
+
+  it("gives the phone ⋯ trigger the outline treatment of its neighbours (#878)", async () => {
+    viewport.restore(); viewport = mockViewport({ width: 390 });
+    await mount({ deepLink: true });
+    expect(trigger()!.className).toContain("border-border");
+    expect(trigger()!.className).toContain("bg-background");
+    expect(trigger()!.className).not.toContain("border-0");
+  });
+
   it("desktop keeps Copy link, Download and Create Review link inline, with no ⋯ menu", async () => {
     await mount({ deepLink: true, download: true, reviewLinks: true });
     expect(trigger()).toBeNull();

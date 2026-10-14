@@ -445,7 +445,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
         </OverlayContainerContext.Provider>
       </div>
       {socialOverlays.length > 0 && <Button type="button" variant="outline" aria-pressed={socialOn} onClick={() => { setSocial(!socialOn); }} data-testid="guest-social-toggle" aria-label="Social preview" className={`${TOUCH} max-[721px]:min-w-11 aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground`}>
-        <Smartphone aria-hidden="true" /><span className="max-[721px]:sr-only">Social</span>
+        <Smartphone aria-hidden="true" /><span className="max-[721px]:sr-only">Social preview</span>
       </Button>}
       {phone && <Button type="button" variant="outline" aria-label={threads === null ? "Notes" : `Notes, ${threads.length}`} className={`${TOUCH} shrink-0`} onClick={() => { setDrawerOpen(true); }}><MessageSquare aria-hidden="true" />{threads !== null && <span className="[font:var(--type-label)]">{threads.length}</span>}</Button>}
       </div>
