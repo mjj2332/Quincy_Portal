@@ -19,6 +19,8 @@ export type ReviewSheetControl = {
   stop: SheetStop;
   onStop: (next: SheetStop) => void;
   mode: SheetMode;
+  /** The editor has focus (the keyboard is up): what the screen sizes its root to the visual viewport for. */
+  composing: boolean;
   onComposing: (composing: boolean) => void;
   /** Width / height of the film on show, for the stops (portrait films take 65% of the space, D7). */
   filmAspect: number;
@@ -32,7 +34,7 @@ export function useReviewSheet({ drawing, filmAspect, label = "Notes" }: { drawi
   const [composing, setComposing] = useState(false);
   const onStop = useCallback((next: SheetStop) => { setStop(next); }, []);
   const onComposing = useCallback((next: boolean) => { setComposing(next); }, []);
-  return { stop, onStop, mode: drawing ? "draw" : composing ? "compose" : "browse", onComposing, filmAspect, label };
+  return { stop, onStop, mode: drawing ? "draw" : composing ? "compose" : "browse", composing, onComposing, filmAspect, label };
 }
 
 export const SHEET_COLLAPSED_MIN = 127;

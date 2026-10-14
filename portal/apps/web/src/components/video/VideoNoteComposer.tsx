@@ -1,10 +1,12 @@
-import { useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore, type ReactNode } from "react";
 import { PencilIcon } from "lucide-react";
 import { VIDEO_NOTE_BODY_MAX, type Role, type VideoNoteCreateInput, type VideoNoteVisibility } from "@quincy/shared";
 import { useFrameClockSelector, type VideoFrameClock } from "../../lib/video-frame-clock";
 import { draftDoc, effectiveMarks, frameOnScreen, type NoteFormStore } from "../../lib/video-note-form-store";
 import { EMPTY_MARKS, marksToFrames } from "../../lib/video-note-marks";
 import { cn } from "../../lib/utils";
+import { PHONE_QUERY } from "../../lib/review-pane-geometry";
+import { useMediaQuery } from "../../lib/use-media-query";
 import { Button } from "../quincy/Button";
 import { Notice } from "../quincy/Notice";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
@@ -31,7 +33,7 @@ const SMALL_BUTTON = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[7
  * is kept and the person refreshes. Visibility starts Internal every time the composer is empty and is never sticky; it is immutable once posted.
  * The draft, the marks and the request all live in the Video tab's form store, so this component only renders them and sends commands.
  */
-export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode, post, onRefresh, markup = false, rich }: {
+export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode, post, onRefresh, markup = false, rich, pen }: {
   store: NoteFormStore;
   assetId: string;
   clock: VideoFrameClock | null;
@@ -43,7 +45,11 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   markup?: boolean;
   /** The rich field (#835): the Project and the person's role, which the @ list and the upload routes need. */
   rich: { projectId: string; role: Role };
+  /** The Draw button on a phone (#879, D11): it sits beside Post, and pressing it hides the keyboard before drawing starts. */
+  pen?: ReactNode;
 }) {
+  const phone = useMediaQuery(PHONE_QUERY);
+  const [focused, setFocused] = useState(false);
   const [uploading, setUploading] = useState(false);
   const slot = useSyncExternalStore(store.subscribe, () => store.slot(assetId));
   const { composer, open, op } = slot;
@@ -70,36 +76,45 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   const anchorText = pendingFrames
     ? marks.in !== null && marks.out !== null ? `In ${timecode(marks.in)} → Out ${timecode(marks.out)}` : marks.in !== null ? `In ${timecode(marks.in)}` : `Out ${timecode(marks.out!)}`
     : timecode(drawn?.drawingFrame ?? composer.anchorFrame ?? liveFrame);
+  // A phone composer at rest is one row (editor, pen, Post); the marks row and the visibility choice appear once it is engaged: focused, holding text, a mark or a drawing, or showing a problem.
+  const engaged = !phone || focused || composer.body !== "" || pendingFrames || drawn !== null || problem !== null || otherForm !== null;
   const label = phase === "confirming" ? "Confirming…" : phase === "posting" ? "Posting…" : problem?.retry ? "Retry" : "Post";
 
   return <form
     data-testid="video-note-composer"
     data-notes-form="composer"
-    className={cn("@container grid gap-[var(--space-2)]", otherForm !== null && "opacity-60")}
+    className={cn("@container grid gap-[var(--space-2)] max-[721px]:grid-cols-[minmax(0,1fr)_auto] max-[721px]:items-end", otherForm !== null && "opacity-60")}
     data-size-container="true"
     data-locked={otherForm !== null ? "true" : "false"}
     onSubmit={(event) => { event.preventDefault(); submit(); }}
   >
-    <div className="grid gap-[var(--space-2)]" data-testid="video-note-marks">
+    {engaged && <div className="grid gap-[var(--space-2)] max-[721px]:col-span-2 max-[721px]:row-start-1" data-testid="video-note-marks">
       <span data-testid="video-note-anchor" aria-live="off" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW, "justify-self-start")}>{!pendingFrames && <span className="sr-only">{merged ? "Note with a drawing at " : "Note at "}</span>}{merged && <PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />}{anchorText}</span>
       <div className="flex flex-wrap items-center gap-[var(--space-2)]">
       <Button type="button" variant="secondary" data-testid="video-note-set-in" className={SMALL_BUTTON} disabled={clock === null || frozen || drawingNow || otherForm !== null} aria-keyshortcuts="I" onClick={() => { mark("in"); }}>Set in <Kbd className={KBD_HINT}>I</Kbd></Button>
       <Button type="button" variant="secondary" data-testid="video-note-set-out" className={SMALL_BUTTON} disabled={clock === null || frozen || drawingNow || otherForm !== null} aria-keyshortcuts="O" onClick={() => { mark("out"); }}>Set out <Kbd className={KBD_HINT}>O</Kbd></Button>
       {pendingFrames && <Button type="button" variant="text" data-testid="video-note-clear-marks" disabled={frozen || drawingNow} onClick={() => { store.clearMarks(assetId); }}>Clear marks</Button>}
       </div>
-    </div>
-    {drawn && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+    </div>}
+    {drawn && <div className="flex flex-wrap items-center gap-[var(--space-2)] max-[721px]:col-span-2 max-[721px]:row-start-2">
       {!merged && <span data-testid="video-note-drawing-chip" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}><span className="sr-only">Drawing on </span><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />{timecode(drawn.drawingFrame!)}</span>}
       <Button type="button" variant="text" data-testid="video-note-remove-drawing" className={SMALL_BUTTON} disabled={frozen} onClick={() => { store.clearMarkup(assetId); }}>Remove drawing</Button>
     </div>}
     <label className="sr-only" htmlFor="video-note-body">Add a note</label>
-    <div data-testid="video-note-editor" onKeyDownCapture={(event) => { if (frozen) event.preventDefault(); }}>
+    <div
+      data-testid="video-note-editor"
+      className="max-[721px]:col-start-1 max-[721px]:row-start-3 max-[721px]:[&_[contenteditable]]:text-[length:var(--text-base)]"
+      onKeyDownCapture={(event) => { if (frozen) event.preventDefault(); }}
+      // A phone note is stamped when typing begins (D10): focusing the field pauses the film on the frame the note will anchor to; the first keystroke freezes it in the form store.
+      onFocusCapture={() => { setFocused(true); if (phone) clock?.pause(); }}
+      onBlurCapture={(event) => { if (!(event.relatedTarget instanceof Element && event.currentTarget.contains(event.relatedTarget))) setFocused(false); }}
+    >
       <VideoNoteEditor id="video-note-body" projectId={rich.projectId} role={rich.role} value={draftDoc(composer.content, composer.body)} disabled={frozen} placeholder="Add a note at this frame… Use @ to mention a colleague."
         onChange={(doc) => { if (!frozen) store.setContent(assetId, doc, clock ? frameOnScreen(clock.getState()) : 0); }} onSubmit={submit} onUploadingChange={setUploading} />
     </div>
-    {tooLong && <Notice tone="critical" role="alert">{`Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.`}</Notice>}
-    {problem && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{problem.text}</span>{problem.refresh && <Button type="button" variant="text" data-testid="video-note-refresh" onClick={onRefresh}>Refresh notes</Button>}</Notice>}
-    <div className="grid gap-[var(--space-1)]">
+    {tooLong && <Notice tone="critical" role="alert" className="max-[721px]:col-span-2 max-[721px]:row-start-4">{`Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.`}</Notice>}
+    {problem && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)] max-[721px]:col-span-2 max-[721px]:row-start-4"><span>{problem.text}</span>{problem.refresh && <Button type="button" variant="text" data-testid="video-note-refresh" onClick={onRefresh}>Refresh notes</Button>}</Notice>}
+    {engaged && <div className="grid gap-[var(--space-1)] max-[721px]:col-span-2 max-[721px]:row-start-5">
       <ToggleGroup
         variant="outline" size="sm" spacing={0} aria-label="Who can see this note"
         value={[visibility]} disabled={frozen}
@@ -109,12 +124,13 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
         <ToggleGroupItem value="public" data-testid="video-note-visibility-public">Client-visible</ToggleGroupItem>
       </ToggleGroup>
       <span data-testid="video-note-visibility-hint" className="text-foreground-secondary [font:var(--type-label)]">{HINT[visibility]}</span>
-    </div>
+    </div>}
     {/* Post stays at the left edge whether or not the composer is locked; the lock hint follows it. */}
-    <div className="flex flex-wrap items-center justify-start gap-[var(--space-2)]">
+    <div className="flex flex-wrap items-center justify-start gap-[var(--space-2)] max-[721px]:col-start-2 max-[721px]:row-start-3 max-[721px]:flex-nowrap">
+      {pen !== undefined && <span data-testid="video-note-pen" className="contents" onClickCapture={() => { const active = document.activeElement; if (active instanceof HTMLElement && active !== document.body) active.blur(); }}>{pen}</span>}
       <Button type="submit" data-testid="video-note-post" disabled={!canPost}>{label}</Button>
-      {otherForm !== null && <span data-testid="video-note-other-form-hint" className="text-foreground-secondary [font:var(--type-label)]">{`Finish or cancel the open ${otherForm} first.`}</span>}
+      {otherForm !== null && <span data-testid="video-note-other-form-hint" className="text-foreground-secondary [font:var(--type-label)] max-[721px]:sr-only">{`Finish or cancel the open ${otherForm} first.`}</span>}
     </div>
-    {clock === null && <span className="text-foreground-secondary [font:var(--type-label)]">Loading the film…</span>}
+    {clock === null && <span className="text-foreground-secondary [font:var(--type-label)] max-[721px]:col-span-2">Loading the film…</span>}
   </form>;
 }

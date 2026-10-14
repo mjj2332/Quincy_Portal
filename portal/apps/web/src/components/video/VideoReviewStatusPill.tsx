@@ -16,7 +16,7 @@ export const REVIEW_STATUS_TONE: Record<VideoReviewStatus, StatusTone> = { in_re
 
 export const REVIEW_STATUS_SHORT: Record<VideoReviewStatus, string> = { in_review: "In review", approved_internal: "Approved", published: "Published" };
 
-export function VideoReviewStatusPill({ video, version, comparing, projectId, role, archived, testId = "video-review-status", compact = false }: {
+export function VideoReviewStatusPill({ video, version, comparing, projectId, role, archived, testId = "video-review-status", compact = false, checked = false }: {
   video: VideoDto;
   /** The Version on show. */
   version: VideoDto["versions"][number];
@@ -28,11 +28,13 @@ export function VideoReviewStatusPill({ video, version, comparing, projectId, ro
   testId?: string;
   /** A phone bar (#877 S2): the short label is drawn, the older-publication hint is spoken only; the full label stays the accessible name. */
   compact?: boolean;
+  /** The phone Approve (#879, D4): once approved, the trigger reads "✓ Approved". */
+  checked?: boolean;
 }) {
   const { latest, allowed, status, readOnly, watchingOlder, blocked, pending, problem, choose } = useReviewStatusWrite({ video, version, comparing, projectId, role, archived });
   const tone = REVIEW_STATUS_TONE[status];
   // Compact (a phone bar): the short word is drawn, what it leaves out is still read aloud.
-  const label = compact ? <>{REVIEW_STATUS_SHORT[video.reviewStatus]}<span className="sr-only">{REVIEW_STATUS_LABEL[video.reviewStatus].slice(REVIEW_STATUS_SHORT[video.reviewStatus].length)}</span></> : REVIEW_STATUS_LABEL[video.reviewStatus];
+  const label = checked && status === "approved_internal" ? <>{"✓ Approved"}<span className="sr-only">{" (internal)"}</span></> : compact ? <>{REVIEW_STATUS_SHORT[video.reviewStatus]}<span className="sr-only">{REVIEW_STATUS_LABEL[video.reviewStatus].slice(REVIEW_STATUS_SHORT[video.reviewStatus].length)}</span></> : REVIEW_STATUS_LABEL[video.reviewStatus];
   const older = video.olderPublishedVersion !== null && <span data-testid={`${testId}-older`} className={cn("text-foreground-secondary [font:var(--type-label)] whitespace-nowrap", compact && "sr-only")}>{`v${video.olderPublishedVersion} published`}</span>;
 
   if (readOnly) {

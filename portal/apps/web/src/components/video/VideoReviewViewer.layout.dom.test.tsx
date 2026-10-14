@@ -306,7 +306,7 @@ describe("VideoReviewViewer layout (#859): full-height player, collapsible and r
   });
 
   describe("phone", () => {
-    it("keeps today's stacked layout: no toggle, no handle, the pane below the player, delivery under the player, and the film is the same node across the breakpoint", async () => {
+    it("is the notes sheet under the film: no toggle, no handle, Notes and Delivery tabs in the sheet (not under the player), and the film is the same node across the breakpoint", async () => {
       await mount(["delivery", "notes"]);
       await openViewerWithFilm();
       await panelLoaded();
@@ -316,8 +316,10 @@ describe("VideoReviewViewer layout (#859): full-height player, collapsible and r
       expect(toggle()).toBeNull();
       expect(handle()).toBeNull();
       expect(pane()!.querySelector('aside[aria-label="Notes"]')).not.toBeNull();
-      expect(document.querySelector('[role="tab"]')).toBeNull();
-      expect(document.querySelector('[data-testid="video-review-player"]')!.contains(panel())).toBe(true);
+      expect([...document.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent!.replace(/\d+$/, ""))).toEqual(["Notes", "Delivery"]);
+      expect(pane()!.getAttribute("data-stop")).toBe("half");
+      expect(document.querySelector('[data-testid="video-review-player"]')!.contains(panel())).toBe(false);
+      expect(pane()!.contains(panel())).toBe(true);
       expect(filmNode()).toBe(film);
     });
 

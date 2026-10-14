@@ -5,6 +5,7 @@ import { ReviewPaneHideContext, ReviewPaneHideSlot } from "../quincy/ReviewPane"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../reui/tabs";
 import type { CompareNotesProps, CompareNotesSlots } from "./CompareView";
 import { useVideoNotes } from "./use-video-notes";
+import { useMarkerExport } from "./VideoMarkerExportMenu";
 import { VideoNotesPanel } from "./VideoNotesPanel";
 
 /**
@@ -29,6 +30,8 @@ export default function CompareNotesHost({ notes, video, versionA, versionB, sto
   const b = useVideoNotes({ ...shared, version: versionB, seekFrame: (frame) => { seekBridge.current("b", frame); } });
   const active = useSyncExternalStore(store.subscribe, () => store.getState().activeTab);
   const session = active === "a" ? a : b;
+  // Marker export is a single-view feature: off in Compare, but the panel takes the same prop.
+  const exp = useMarkerExport({ enabled: false, projectId: notes.projectId, assetId: session.assetId, userId: notes.userId, title: video.title, version: session.version.version, threads: session.threads });
 
   const panel = <div data-compare-side={active} data-testid="video-compare-notes" className="grid grid-rows-[auto_minmax(0,1fr)] border-l border-border bg-card text-card-foreground min-w-0 flex-1 min-[721px]:min-h-0">
     <Tabs value={active} onValueChange={(next) => { if (next === "a" || next === "b") store.setActiveTab(next); }} className="contents">
@@ -41,7 +44,7 @@ export default function CompareNotesHost({ notes, video, versionA, versionB, sto
       </div>
       <TabsContent value={active} className="grid min-h-0">
         <ReviewPaneHideContext.Provider value={null}>
-          <VideoNotesPanel key={`${active}:${session.assetId}`} session={session} video={video} detailsRows={detailsFor(session.version)} exportEnabled={false} />
+          <VideoNotesPanel key={`${active}:${session.assetId}`} session={session} video={video} detailsRows={detailsFor(session.version)} exp={exp} />
         </ReviewPaneHideContext.Provider>
       </TabsContent>
     </Tabs>

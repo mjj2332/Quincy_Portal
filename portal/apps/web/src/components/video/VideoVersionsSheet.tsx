@@ -1,3 +1,4 @@
+import type { RefObject } from "react";
 import { Check } from "lucide-react";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../reui/sheet";
@@ -26,7 +27,9 @@ export function withSummaries<Row extends { assetId: string; version: number; cr
  * one on screen. Staff also see the latest Version's Review status. Choosing a row hands the Asset id to the screen's own Version path, so the URL and the deep link are unchanged.
  * Reuse: `reui/sheet` (`side="bottom"`, portalled into the viewer's slot as the guest drawer was), `reui/item` rows, lucide `Check`.
  */
-export function VideoVersionsSheet({ open, onOpenChange, container, rows, currentAssetId, onChoose, latestStatus }: {
+export function VideoVersionsSheet({ open, onOpenChange, container, rows, currentAssetId, onChoose, latestStatus, returnFocusTo }: {
+  /** What takes focus when the sheet closes (the Version chip). */
+  returnFocusTo?: RefObject<HTMLElement | null>;
   open: boolean;
   onOpenChange: (next: boolean) => void;
   container: HTMLElement | null;
@@ -39,7 +42,7 @@ export function VideoVersionsSheet({ open, onOpenChange, container, rows, curren
 }) {
   const newest = Math.max(0, ...rows.map((row) => row.version));
   return <Sheet open={open} onOpenChange={onOpenChange}>
-    <SheetContent side="bottom" container={container} showCloseButton={false} data-testid="video-versions-sheet" className="max-h-[70dvh] p-[var(--space-4)]">
+    <SheetContent side="bottom" container={container} showCloseButton={false} {...(returnFocusTo ? { finalFocus: returnFocusTo } : {})} data-testid="video-versions-sheet" className="max-h-[70dvh] p-[var(--space-4)]">
       <SheetHeader className={`p-0 ${SHEET_CLOSE_CLEARANCE}`}><SheetTitle className="m-0 text-foreground [font:var(--type-h3)]">Version</SheetTitle></SheetHeader>
       <ItemGroup role="group" aria-label="Versions" className="min-h-0 gap-[var(--space-1)] overflow-y-auto">
         {rows.map((row) => {

@@ -18,6 +18,9 @@ import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
 import { ReviewPaneHideContext, ReviewSplit, useReviewPane, useReviewPaneControls } from "../quincy/ReviewPane";
+import { useReviewSheet } from "../quincy/ReviewSheet";
+import { useVisualViewport } from "../../lib/use-visual-viewport";
+import type { NotesSlots } from "./VideoNotesHost";
 import type { SocialPreviewMode } from "../quincy/SocialPreviewControls";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../reui/tabs";
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
@@ -123,7 +126,13 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const [sideTab, setSideTab] = useState<"main" | "delivery">("main");
   /** An I/O mark, a marker or a note link needs the notes where the person can see them: open the pane on its first tab. */
   const setPaneOpen = pane.setOpen;
-  const revealNotes = useCallback(() => { setPaneOpen(true); setSideTab("main"); }, [setPaneOpen]);
+  const shown = video.versions.find((candidate) => candidate.assetId === assetId) ?? video.versions[0]!;
+  const sheetControl = useReviewSheet({ drawing: false, filmAspect: shown.height > 0 ? shown.width / shown.height : 16 / 9 });
+  const sheetStopRef = useRef(sheetControl.stop);
+  sheetStopRef.current = sheetControl.stop;
+  const setSheetStop = sheetControl.onStop;
+  // A phone's notes sheet opens at half whenever something sends the person to the notes (a marker, an I/O mark, a note link), and never persists (D6).
+  const revealNotes = useCallback(() => { setPaneOpen(true); setSideTab("main"); if (sheetStopRef.current === "collapsed") setSheetStop("half"); }, [setPaneOpen, setSheetStop]);
   const deepNoteId = notes?.openNoteId;
   useEffect(() => { if (deepNoteId !== undefined) revealNotes(); }, [deepNoteId, revealNotes]);
   // One mute choice for both views: the single player and compare each start from it, and report back on exit.
@@ -366,6 +375,9 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const copyHref = deepLink && !comparing ? deepLink.href(version.version) : undefined;
   const downloadHref = download && !comparing ? videoVersionDownloadUrl(download.projectId, version.assetId) : undefined;
   const [versionsOpen, setVersionsOpen] = useState(false);
+  // With the keyboard up (the editor has focus on a phone) the dialog takes the visual viewport, so the film stays on top and the composer sits above the keyboard (D10).
+  const keyboard = useVisualViewport(phone && sheetControl.composing);
+  const chipRef = useRef<HTMLButtonElement | null>(null);
   const summaries = useVideoVersionSummariesQuery(notes?.projectId ?? reviewStatus?.projectId ?? trash?.projectId ?? download?.projectId ?? "", video.id, phone && versionsOpen && (notes ?? reviewStatus ?? trash ?? download) !== undefined, notes?.role ?? reviewStatus?.role);
   const desktopHeader = <header className="@container flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-1)] text-card-foreground max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">
       <DialogClose render={<Button type="button" variant="ghost" className="shrink-0 pointer-coarse:min-h-11 max-[721px]:min-h-11 max-[721px]:min-w-11" />}><ChevronLeft aria-hidden="true" /><span>Video</span></DialogClose>
@@ -422,32 +434,31 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       </div>
     </header>;
   const status = reviewStatus ? REVIEW_STATUS_TONE[video.reviewStatus] : undefined;
-  const phoneHeader = <>
+  const phoneHeader = (markerExport?: NotesSlots["markerExport"]) => <>
     <ReviewPhoneBar
       back={<DialogClose render={<Button type="button" variant="ghost" className="min-h-11 min-w-11 shrink-0" />}><ChevronLeft aria-hidden="true" /><span className="sr-only">Video</span></DialogClose>}
       title={<DialogTitle title={video.title} className={`m-0 ${TITLE_FLOOR} w-full truncate [font:var(--type-body)]`}>{video.title}</DialogTitle>}
-      chip={<VersionChip label={`v${version.version}${version.version === newest ? " · latest" : ""}`} tone={status} statusLabel={reviewStatus ? REVIEW_STATUS_LABEL[video.reviewStatus] : undefined} onClick={() => { setVersionsOpen(true); }} />}
+      chip={<VersionChip buttonRef={chipRef} label={`v${version.version}${version.version === newest ? " · latest" : ""}`} tone={status} statusLabel={reviewStatus ? REVIEW_STATUS_LABEL[video.reviewStatus] : undefined} onClick={() => { setVersionsOpen(true); }} />}
       approve={reviewStatus && !comparing ? <VideoPhoneApprove video={video} version={version} comparing={comparing} {...reviewStatus} /> : undefined}
       actions={<VideoReviewHeaderMenu
         container={slot}
         {...(social ? { social: { on: socialOn, toggle: () => { setSocialOn(!socialOn); } } } : {})}
-        copyHref={copyHref} downloadHref={downloadHref} downloadLabel={`Download version ${version.version}`} onCreateReviewLink={createReviewLink}
+        copyHref={copyHref} downloadHref={downloadHref} downloadLabel={`Download version ${version.version}`} onCreateReviewLink={createReviewLink} {...(markerExport ? { markerExport } : {})}
         {...(removeVersionFromMenu ? { onRemoveVersion: removeVersionFromMenu, removeDisabled: !removeReady || trash?.archived === true || (video.uploading != null && video.versions.length === 1) } : {})}
       />}
     />
     <VideoVersionsSheet
-      open={versionsOpen} onOpenChange={setVersionsOpen} container={slot} currentAssetId={version.assetId} onChoose={(next) => { setResume(null); setAssetId(next); }}
+      open={versionsOpen} onOpenChange={setVersionsOpen} container={slot} returnFocusTo={chipRef} currentAssetId={version.assetId} onChoose={(next) => { setResume(null); setAssetId(next); }}
       rows={withSummaries([...video.versions].sort((x, y) => y.version - x.version), summaries.data?.versions)}
       latestStatus={reviewStatus ? REVIEW_STATUS_LABEL[video.reviewStatus] : undefined}
     />
     {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} removeRef={bindRemove} hideTrigger /></Suspense>}
   </>;
-  const header = phone ? phoneHeader : desktopHeader;
-  const layout = (slots: { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode } | null): ReactNode => {
+  const layout = (slots: NotesSlots | null): ReactNode => {
     const deliveryPanel = delivery ? <Suspense fallback={null}><LazyDeliveryPanel projectId={delivery.projectId} role={delivery.role} archived={delivery.archived} video={video} version={version} store={delivery.store} bare={!phone} /></Suspense> : null;
     const main = slots
       ? slots.panel
-      : <aside aria-label="Version details" className="min-[721px]:min-h-0 flex-1 min-[721px]:overflow-y-auto border-l border-border bg-card p-[var(--space-5)] text-card-foreground max-[721px]:border-t max-[721px]:border-l-0">
+      : <aside aria-label="Version details" data-sheet-part="body" className="min-[721px]:min-h-0 max-[721px]:min-h-0 flex-1 min-[721px]:overflow-y-auto max-[721px]:overflow-y-auto border-l border-border bg-card p-[var(--space-5)] text-card-foreground max-[721px]:border-t max-[721px]:border-l-0">
         <div className="mb-[var(--space-3)] flex items-center justify-between gap-[var(--space-2)]">
           <h3 className="m-0 px-2.5 text-[length:var(--text-lg)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{`Version ${version.version}`}</h3>
           {!phone && delivery === undefined && paneControls.hideButton}
@@ -455,26 +466,34 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         {detailsRows}
       </aside>;
     // Delivery is a tab of the pane on desktop, so the player takes the full column; both panels stay mounted (a draft or a pending write survives switching). A phone keeps today's stack: delivery under the player.
-    const tabbed = delivery !== undefined && !phone;
+    const tabbed = delivery !== undefined;
+    // On a phone the tab row is the sheet's head (it stays when the sheet is collapsed); choosing a tab from collapsed opens the sheet to half (D6).
+    const openSheet = () => { if (phone && sheetControl.stop === "collapsed") sheetControl.onStop("half"); };
+    const notesLabel = slots ? "Notes" : "Details";
     const sidePane = tabbed
       ? <Tabs value={sideTab} onValueChange={(next) => { setSideTab(next === "delivery" ? "delivery" : "main"); }} className="min-h-0 flex-1 gap-0">
-        <div className="flex shrink-0 items-center border-l border-b border-border bg-card pe-[var(--space-2)]">
+        <div data-sheet-part="head" className="flex shrink-0 items-center border-l border-b border-border bg-card pe-[var(--space-2)] max-[721px]:border-l-0">
           <TabsList variant="line" className="min-w-0 flex-1 rounded-none bg-card px-[var(--space-3)]">
-            <TabsTrigger value="main">{slots ? "Notes" : "Details"}</TabsTrigger>
-            <TabsTrigger value="delivery">Delivery</TabsTrigger>
+            <TabsTrigger value="main" data-testid="video-pane-tab-main" className="max-[721px]:min-h-11" onClick={openSheet}>{notesLabel}{phone && slots?.openCount != null && <span className="ms-[var(--space-1)] text-foreground-secondary tabular-nums">{slots.openCount}</span>}</TabsTrigger>
+            <TabsTrigger value="delivery" data-testid="video-pane-tab-delivery" className="max-[721px]:min-h-11" onClick={openSheet}>Delivery</TabsTrigger>
           </TabsList>
-          {paneControls.hideButton}
+          {!phone && paneControls.hideButton}
         </div>
-        <TabsContent value="main" keepMounted className="flex min-h-0 flex-col [&[hidden]]:hidden"><ReviewPaneHideContext.Provider value={null}>{main}</ReviewPaneHideContext.Provider></TabsContent>
-        <TabsContent value="delivery" keepMounted className="min-h-0 overflow-y-auto border-l border-border bg-card p-[var(--space-4)] [&[hidden]]:hidden">{deliveryPanel}</TabsContent>
+        <TabsContent value="main" keepMounted className={`flex min-h-0 flex-col [&[hidden]]:hidden${phone ? " flex-1" : ""}`}><ReviewPaneHideContext.Provider value={null}>{main}</ReviewPaneHideContext.Provider></TabsContent>
+        <TabsContent value="delivery" keepMounted data-sheet-part="body" className={`min-h-0 overflow-y-auto border-l border-border bg-card p-[var(--space-4)] [&[hidden]]:hidden${phone ? " flex-1 border-l-0" : ""}`}>{deliveryPanel}</TabsContent>
       </Tabs>
-      : <ReviewPaneHideContext.Provider value={phone ? null : paneControls.hideButton}>{main}</ReviewPaneHideContext.Provider>;
+      : phone
+        ? <div className="flex min-h-0 flex-1 flex-col">
+          <div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-4)] py-[var(--space-2)] [font:var(--type-body)]" onClick={openSheet}>{notesLabel}{slots?.openCount != null && <span className="ms-[var(--space-2)] text-foreground-secondary tabular-nums">{`${slots.openCount} open`}</span>}</div>
+          <ReviewPaneHideContext.Provider value={null}>{main}</ReviewPaneHideContext.Provider>
+        </div>
+        : <ReviewPaneHideContext.Provider value={paneControls.hideButton}>{main}</ReviewPaneHideContext.Provider>;
     const playerProps = slots ? {
       ...slots.playerProps,
       onMarkerSelect: (id: string) => { revealNotes(); slots.playerProps.onMarkerSelect(id); },
       ...(slots.playerProps.onMark ? { onMark: (kind: "in" | "out", frame: number) => { revealNotes(); slots.playerProps.onMark!(kind, frame); } } : {}),
     } : undefined;
-    return <ReviewSplit
+    const split = <ReviewSplit
       open={pane.open}
       width={pane.width}
       onWidth={pane.setWidth}
@@ -482,15 +501,16 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       paneId={paneId}
       handleLabel="Resize notes"
       stacked={phone}
-      rowClassName="overflow-y-auto"
-      playerClassName="overflow-y-auto"
+      {...(phone ? { sheet: { ...sheetControl, mode: slots?.drawing ? "draw" as const : sheetControl.mode } } : {})}
+      {...(phone ? {} : { rowClassName: "overflow-y-auto", playerClassName: "overflow-y-auto" })}
       player={<>
         <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} />
-        {delivery && phone && <div className="mt-[var(--space-4)] shrink-0">{deliveryPanel}</div>}
       </>}
       pane={sidePane}
       strip={paneControls.strip}
     />;
+    // The phone header is part of the layout (it needs the notes host's marker export for its action sheet); Compare does not exist on a phone, so it never needs to outlive a mode switch.
+    return <>{phone ? phoneHeader(slots?.markerExport) : null}{split}</>;
   };
 
   return <Dialog open onOpenChange={handleOpenChange}>
@@ -507,18 +527,19 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         if (host && host !== event.currentTarget) return;
         (modeRef.current === "compare" ? compareRef.current : playerRef.current)?.handleKeyDown(event);
       }}
+      style={keyboard ? { height: keyboard.height, transform: `translateY(${keyboard.offsetTop}px)` } : undefined}
       className="top-0 left-0 flex h-dvh w-dvw max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none bg-background p-0 text-foreground ring-0 focus-visible:!outline-none sm:max-w-none"
     >
       <OverlayContainerContext.Provider value={slot}>
       {/* The header sits outside the mode switch so the Compare button is the same node in both modes (focus survives the switch). */}
-      {header}
+      {phone ? null : desktopHeader}
       {comparing
         ? <>
           <Suspense fallback={null}>
             <LazyCompareView video={video} store={compareStore} social={socialMode} startFrame={startFrame} onChangeSide={changeSide} controlRef={compareRef} detailsFor={detailsFor} {...(notes ? { notes: { projectId: notes.projectId, role: notes.role, userId: notes.userId, archived: notes.archived, forms: notes.forms } } : {})} />
           </Suspense>
         </>
-        : notes ? <Suspense fallback={null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows}>{layout}</LazyNotesHost></Suspense> : layout(null)}
+        : notes ? <Suspense fallback={phone ? phoneHeader() : null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows}>{layout}</LazyNotesHost></Suspense> : layout(null)}
       </OverlayContainerContext.Provider>
       <div ref={setSlot} />
       <div ref={setToastSlot} />
