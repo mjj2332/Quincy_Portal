@@ -87,7 +87,8 @@ describe("Video Trash dialog (#776 E)", () => {
     await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
     await mount({ parts: ["trash"] });
     expect(opener()).not.toBeNull();
-    expect(opener()!.textContent).toBe("Trash");
+    expect(opener()!.getAttribute("aria-label")).toBe("Trash");
+    expect(opener()!.getAttribute("title")).toBe("Trash");
   });
 
   it("reads nothing about the Trash until it is opened", async () => {

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useContext, useEffect, useMemo, useRef, useState } from "react";
+import TrashIcon from "../reui/icons/trash";
 import { useReportBarHeight } from "./ReviewBarClearance";
 import { roleHasCapability, staffPathFor, type Mp4Probe, type ProjectVideoSelection, type Role, type VideoDto, type VideoReviewResponse } from "@quincy/shared";
 import { useSession } from "../../lib/auth";
@@ -209,11 +210,11 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
       <div className="flex flex-wrap items-center gap-[var(--space-3)]">
         {canUpload && <NewFilmPickButton receive={receiveNewFilms} />}
         <ReviewLinksOpenButton ui={reviewLinks} />
-        {trashEnabled && <Button type="button" variant="secondary" className={`min-h-11 ${PROJECT_SHEET_CLOSE_SCROLL_MARGIN}`} data-testid={TRASH_OPEN_ID} onClick={() => { setTrashMounted(true); setTrashOpen(true); }}>Trash</Button>}
+        {trashEnabled && <Button type="button" variant="secondary" className={`size-11 min-w-11 p-0 ${PROJECT_SHEET_CLOSE_SCROLL_MARGIN}`} data-testid={TRASH_OPEN_ID} aria-label="Trash" title="Trash" onClick={() => { setTrashMounted(true); setTrashOpen(true); }}><TrashIcon className="size-5" /></Button>}
       </div>
     </div>
     {/* The body is the drop target for new films (#884): a drop between tiles must not navigate the browser to the file. A tile's own poster takes its drop alone. */}
-    <FileDropzone multiple={true} onFiles={receiveNewFilms} disabled={!canUpload} className="grid gap-[var(--space-5)] p-[var(--space-6)]" data-testid="video-collection-body">
+    <FileDropzone multiple={true} onFiles={receiveNewFilms} disabled={!canUpload} className="grid gap-[var(--space-5)] p-[var(--space-6)] pb-[calc(var(--space-6)+var(--review-bar-clearance,0px))]" data-testid="video-collection-body">
       <ReviewLinksHost ui={reviewLinks} videos={videos.data ?? []} {...(setBarHeight ? { onBarHeight: setBarHeight } : {})} {...(downloadEnabled ? { onDownload: setDownloadIds } : {})} />
       {canUpload && <NewFilmUploader userId={userId} projectId={projectId} receive={receiveNewFilms} empty={videos.data?.length === 0} />}
       <EmbeddedUploadTray uploads={rows} errors={[]} onCancel={(key) => void cancelVideoUpload(key, queryClient)} onRemove={(key) => removeVideoUpload(key)} onRetry={(key) => retryVideoUpload(key)} testId="video-upload-tray" pluralCaution={pluralCaution} />

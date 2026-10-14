@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from "react";
-import { Link2 } from "lucide-react";
+import { Link2, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LazyImage } from "../LazyImage";
 import { Badge } from "../reui/badge";
@@ -20,6 +20,8 @@ export type VideoTileStatus = { tone: StatusTone; /** Drawn beside the dot. */ s
 
 const DOT: Record<StatusTone, string> = { caution: "bg-signal-caution", positive: "bg-signal-positive", info: "bg-signal-info", critical: "bg-signal-critical", neutral: "bg-muted-foreground" };
 const CHIP = "border-transparent bg-[var(--scrim-badge)] text-invert-foreground";
+// The tick sits on a poster that may be any colour: a paper border on a translucent ink fill reads on dark and light alike (prototype tiles.jsx).
+const TICK = "appearance-none relative rounded-[var(--radius-sm)] border-[length:var(--border-width-bold)] border-solid border-invert-foreground bg-[color-mix(in_srgb,var(--ink-900)_35%,transparent)] checked:bg-invert-foreground checked:before:absolute checked:before:left-[5px] checked:before:top-[1px] checked:before:h-[10px] checked:before:w-[5px] checked:before:rotate-45 checked:before:border-solid checked:before:border-b-2 checked:before:border-r-2 checked:before:border-invert checked:before:content-['']";
 const MONO = "[font-family:var(--font-mono)]";
 
 export function VideoTile({ title, posterUrl, version, durationMs, openNotes, onOpen, tone = "ink", status, linked, premium, select, menu, drop, footer, testId = "video-tile", openTestId = "video-tile-open", dataVideoId }: {
@@ -56,13 +58,13 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, on
       : <div data-testid={`${testId}-no-poster`} className="flex h-full w-full items-center justify-center [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] opacity-70">No poster</div>}
     <div className="pointer-events-none absolute inset-x-[var(--space-2)] top-[var(--space-2)] flex items-start justify-between gap-[var(--space-2)]">
       <div className="flex min-w-0 items-center gap-[var(--space-1)]">
-        {select && <span className="size-11 shrink-0" aria-hidden="true" />}
+        {select && <span data-testid={`${testId}-pill-offset`} className="hidden size-11 shrink-0 group-hover/tile:block group-focus-within/tile:block group-data-[selected=true]/tile:block pointer-coarse:block max-[721px]:block" aria-hidden="true" />}
         {status && <Badge variant="invert" data-testid={`${testId}-status`} className={cn(CHIP, "gap-[var(--space-1)]")}><span aria-hidden="true" className={cn("size-1.5 rounded-full", DOT[status.tone])} />{status.short}</Badge>}
       </div>
       <div className="flex shrink-0 items-center gap-[var(--space-1)]">
         {premium && <Badge variant="invert" className={CHIP}>Premium</Badge>}
         {linked && <Badge variant="invert" data-testid={`${testId}-linked`} className={CHIP}><Link2 aria-hidden="true" /><span className="sr-only">On a Review link</span></Badge>}
-        <Badge variant="invert" data-testid={`${testId}-version`} className={cn(CHIP, MONO)}>{`v${version}`}</Badge>
+        <Badge variant="invert" data-testid={`${testId}-version`} className={cn(CHIP, MONO, "normal-case")}>{`v${version}`}</Badge>
       </div>
     </div>
     <div className="pointer-events-none absolute inset-x-[var(--space-2)] bottom-[var(--space-2)] flex items-end justify-between gap-[var(--space-2)]">
@@ -79,10 +81,10 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, on
       <Zone drop={drop} testId={testId}>
       <div data-testid={`${testId}-poster`} data-fit="contain" className={posterClass}>
         {posterBody}
-        {drop && <div aria-hidden="true" className="absolute inset-0 hidden items-center justify-center bg-[var(--scrim-overlay)] text-invert-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] group-data-[dragging=true]/drop:flex">{`Drop to upload v${drop.nextVersion}`}</div>}
+        {drop && <div aria-hidden="true" className="absolute inset-0 hidden flex-col items-center justify-center gap-[var(--space-2)] bg-[var(--scrim-badge)] text-invert-foreground outline-dashed outline-[length:var(--border-width-bold)] -outline-offset-8 outline-invert-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] group-data-[dragging=true]/drop:flex"><Upload className="size-6" />{`Drop to upload v${drop.nextVersion}`}</div>}
       </div>
       {select && <label className="absolute left-0 top-0 z-10 flex size-11 cursor-pointer items-center justify-center opacity-0 transition-opacity focus-within:opacity-100 group-hover/tile:opacity-100 group-data-[selected=true]/tile:opacity-100 pointer-coarse:opacity-100 max-[721px]:opacity-100">
-        <Checkbox aria-label={`Select ${title}`} checked={select.selected} onChange={select.onToggle} />
+        <Checkbox aria-label={`Select ${title}`} checked={select.selected} onChange={select.onToggle} className={TICK} />
       </label>}
       <div className="flex items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-2)]">
         <button

@@ -16,6 +16,22 @@ afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); h
 const base = { title: "Kitchen walkthrough", posterUrl: null, version: 3, durationMs: 92_000, openNotes: 2 as number | null, onOpen: () => undefined };
 
 describe("VideoTile", () => {
+  it("keeps the status pill in the corner and moves it past the tick only while the tick shows (selected, hover, focus, coarse, narrow)", async () => {
+    const el = await mount(<VideoTile {...base} status={{ tone: "caution", short: "In review", full: "In review" }} select={{ selected: false, onToggle: () => undefined }} />);
+    const gap = el.querySelector<HTMLElement>('[data-testid="video-tile-pill-offset"]')!;
+    const classes = gap.className.split(" ");
+    expect(classes).toContain("hidden");
+    for (const shown of ["group-hover/tile:block", "group-focus-within/tile:block", "group-data-[selected=true]/tile:block", "pointer-coarse:block", "max-[721px]:block"]) expect(classes).toContain(shown);
+  });
+
+  it("draws the drop state over a strong scrim with a dashed outline and an upload icon", async () => {
+    const el = await mount(<VideoTile {...base} drop={{ nextVersion: 4, onFile: () => undefined, disabled: false }} />);
+    const overlay = [...el.querySelectorAll("div")].find((node) => node.textContent === "Drop to upload v4")!;
+    expect(overlay.className).toContain("bg-[var(--scrim-badge)]");
+    expect(overlay.className).toContain("outline-dashed");
+    expect(overlay.querySelector("svg")).not.toBeNull();
+  });
+
   it("shows Version, duration, title and the open-note count, and says them in words for a screen reader", async () => {
     const el = await mount(<VideoTile {...base} status={{ tone: "caution", short: "In review", full: "In review" }} />);
     expect(el.textContent).toContain("v3");
