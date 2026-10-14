@@ -6297,3 +6297,38 @@ Tags: notifications, testing-guards · #856
 - **Proof.** Assert the harness enforces foreign keys first (a raw outbox delete under a ledger row must reject), or every FK assertion passes vacuously. D1 `meta.changes` counts rows touched by foreign-key actions too, so the logged per-table counts can be a little high. The age-only sweep of digest items must be limited to true orphans (no Notification, ledger or digest), or it deletes the pending items of a chain that is being kept; and the chain phase is capped below the page budget so the leaf tables are never starved by a large backlog.
 
 Guards: `workers/background/test/notification-retention.integration.test.ts`.
+
+## A collapsed or mode-hidden pane must stay mounted (hidden and inert), or its uploads and drafts die with it (#858)
+Tags: rich-text, focus-overlays, testing-guards · #859, #871, #872
+
+- **What bit.** Collapsing the notes pane (#859), turning on Social preview in the staff viewer (#871) and on the guest screen (#872) each unmounted the composer and the edit and reply forms. The rich editor's cleanup aborts a pending attachment upload and discards its reservation, so a photo or video attached before the collapse was gone on reopen, along with the undo history. On the guest screen the first fix still re-parented the composer into a hidden wrapper, which is a remount too.
+- **Rule.** Hide with `hidden` and `inert` (and `disabled` where input must stop) on a wrapper whose ancestry never changes. Keep the editor's element identity across the toggle. Render the saved text of a note whose Edit form is hidden, or the note reads as blank (#871).
+- **Gate.** The Social DOM tests assert the same composer and editor nodes before and after, and an upload started before the toggle is not torn down (`apps/web/src/guest/GuestSocial.dom.test.tsx`); the pane test asserts a collapsed pane is mounted with `hidden` (`apps/web/src/guest/GuestApp.dom.test.tsx`).
+
+## A late read or late save must not overwrite or close newer state, and a dialog hosted inside a filtered list unmounts on refresh (#858)
+Tags: focus-overlays, search-filters, testing-guards · #863, #867, #869, #870, #872
+
+- **What bit.** The same race came up in six tickets. A response that finishes after the person moved on (Cancel then reopen, a new file picked, a Refresh then a save, a drawing ended during Post) wrote its result over newer state or closed the dialog now on screen: a slow list GET reverted a just-replaced overlay image (#869), a late PUT closed a second dialog and dropped its draft (#867, #869), a GET started on open replaced the saved selection (#870), and ending a drawing reused the operation id of a pending Post, so its answer was discarded and the composer stayed disabled (#872).
+- **A second trap (#867).** A Rename dialog mounted inside the card unmounts when a conflict refresh filters that card out of the list (filter Approved, another upload makes it In review), taking the typed name with it.
+- **Rule.** Take a ticket when a read or an opening starts and apply the answer only if the ticket is still current: a mutation or a newer read takes the next one. A save fences its close on the opening that started it, but still applies its saved row. Keep one owner per operation (drawing confirmation and submission do not share an id). Host a card's dialog above the filtered list (`use-card-dialog-host.ts`) and resolve its target from the full collection.
+- **Gate.** `Admin-social-overlays.dom.test.tsx` ("a save that finishes after its dialog was cancelled", "a slow list read cannot overwrite a mutation"), `VideoCard.rename.dom.test.tsx`, `GuestSocial.dom.test.tsx` ("settles a Post that is still out when Social turns on").
+
+## A destructive confirm must fence on the exact ids the person confirmed, not on a count (#868)
+Tags: d1-migrations, permissions, testing-guards · #868
+
+- **What bit (avoided).** The first Delete sent counts and the latest Version number. Confirm live Versions `{v1, v3}` while v2 is in Trash; another editor removes v1 and restores v2. The live set is now `{v2, v3}`, with the same count and the same latest, so Delete would trash a v2 the person never saw.
+- **Rule.** The request carries the confirmed Asset ids. The admission check and the committing UPDATE both compare them with the live set by membership (`json_each`), and a mismatch is `impact_changed`. A bounded list of ids is the fence; "same size" never is.
+- **Gate.** `workers/app/test/video-delete.test.ts` (the equal-size swap case).
+
+## Base UI `finalFocus` returning `undefined` means "no focus return" (#862)
+Tags: focus-overlays, reui-vendor · #862
+
+- **What bit.** A `finalFocus` callback on the Version select returned `undefined` on its ordinary path (and `false` for the hand-off to the removal confirmation), which suppressed focus restoration on every ordinary close. Base UI reads `false` as "do not return focus", `true` as "return it to the default target", an element as "focus that", and `undefined` as no return, so Escape or choosing a Version left focus off the trigger.
+- **Rule.** Return a boolean or an element on every path (`() => !handOff.current`, or `opener && opener.isConnected ? opener : true`); never fall off the end of the callback. Test a normal keyboard close as well as the hand-off one.
+
+## Adding a key to a strictly parsed public payload breaks every page that is already open across the deploy (#858)
+Tags: deploy-ci, testing-guards · #872
+
+- **What bit (avoided).** #872 put `socialOverlays` at the top of the guest `/videos` response. The guest client already deployed parses that response with a `.strict()` schema and reads any schema failure as `gone`, the "unavailable" screen. A Review link tab left open across the deploy would have shown "unavailable" until reloaded, for a feature the page does not use.
+- **Rule.** A response a deployed client parses strictly keeps its shape. New data goes in a new read with its own strict schema, and the client treats that read's failure as "no such feature", never as the link being gone. Compare the schema with `origin/main` before merging.
+- **Gate.** `workers/app/test/guest-social-overlays.test.ts` ("keeps the /videos body exactly the shape the deployed guest page parses") and `GuestSocial.dom.test.tsx` ("never marks the link unavailable when the overlays read fails").

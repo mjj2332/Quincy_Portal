@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SOCIAL_OVERLAY_NAME_MAX, SOCIAL_OVERLAY_PLATFORM_MAX, type SocialOverlayDto } from "@quincy/shared";
-import { Modal } from "./Modal";
 import { Button } from "@/components/reui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/reui/dialog";
 import { Switch } from "@/components/reui/switch";
+import { Button as QuincyButton, TEXT_BUTTON } from "@/components/quincy/Button";
 import { EmptyState } from "@/components/quincy/EmptyState";
+import { Eyebrow } from "@/components/quincy/Eyebrow";
 import { FilePickButton } from "@/components/quincy/FileDropzone";
 import { Notice } from "@/components/quincy/Notice";
 import { QuincyField } from "@/components/quincy/QuincyField";
 import { SectionHead } from "@/components/quincy/SectionHead";
 import { StatusPill } from "@/components/quincy/StatusPill";
 import { TableActions, TableWrap, Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from "@/components/quincy/Table";
+import { formatBytes } from "../guest/guest-format";
 import { confirm } from "../lib/confirm";
 import { pushToast } from "../lib/toast-store";
+import { formatDate, TOGGLE_ROW } from "./admin-shared";
+import { DIALOG_TITLE } from "./video/ReviewLinkDialogFrame";
 import {
   checkOverlayFile, createSocialOverlay, listSocialOverlays, overlayErrorMessage, renameSocialOverlay, replaceSocialOverlayImage, setSocialOverlayArchived,
 } from "../lib/social-overlays";
@@ -20,13 +25,8 @@ type DialogKind = { kind: "create" } | { kind: "rename"; overlay: SocialOverlayD
 /** Each opened dialog carries its own id, so a save that outlives its dialog can be told apart from the dialog now on screen. */
 type Dialog = DialogKind & { id: number };
 const HINT = "PNG · 9:16 · transparent · max 8 MB. Export it with an alpha channel; a fully opaque image is not detected.";
-const TEXT_BUTTON = "min-h-[32px] px-0 py-[6px]";
-const TOGGLE_ROW = "flex items-center gap-[var(--space-2)] cursor-pointer min-h-[38px] max-[721px]:min-h-[44px] text-foreground-secondary";
 // A checkerboard so the transparent parts of an overlay read as transparent, built from tokens.
 const CHECKER = "bg-surface-sunken [background-image:repeating-conic-gradient(var(--surface-sunken)_0%_25%,var(--background)_0%_50%)] [background-size:var(--space-3)_var(--space-3)]";
-
-const formatBytes = (bytes: number): string => bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
-const formatDate = (value: number): string => new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric" }).format(new Date(value));
 
 /**
  * Admin > Social overlays (#869): the library of 9:16 platform graphics the Video viewer lays over a Video. The first overlay uploaded becomes the Default. The server validates every
@@ -143,25 +143,34 @@ function OverlayDialog({ dialog, onClose, onSaved }: { dialog: Dialog; onClose: 
     } catch (reason) { setSaveError(overlayErrorMessage(reason)); setSaving(false); }
   }
 
-  return <Modal open title={title} eyebrow="Social overlay" testId="social-overlay-dialog" onClose={onClose}
-    footer={<>
-      <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-      <Button type="button" disabled={!valid || saving} onClick={() => void submit()}>{submitLabel}</Button>
-    </>}>
-    <div className="flex flex-col gap-[var(--space-4)]">
-      {needsFields && <>
-        <QuincyField id="social-overlay-name" label="Name" value={name} maxLength={SOCIAL_OVERLAY_NAME_MAX} onChange={(event) => setName(event.target.value)} />
-        <QuincyField id="social-overlay-platform" label="Platform" value={platformLabel} maxLength={SOCIAL_OVERLAY_PLATFORM_MAX} onChange={(event) => setPlatformLabel(event.target.value)} />
-      </>}
-      {needsFile && <div className="flex flex-col gap-[var(--space-2)]">
-        <div className="flex flex-wrap items-center gap-[var(--space-3)]">
-          <FilePickButton accept="image/png" variant="secondary" onFile={(picked) => void choose(picked)}>{file ? "Choose another PNG" : "Choose PNG"}</FilePickButton>
-          {file && <span className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">{file.name} · {formatBytes(file.size)}</span>}
-        </div>
-        <p className="m-0 [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">{HINT}</p>
-        {fileError && <Notice role="alert">{fileError}</Notice>}
-      </div>}
-      {saveError && <Notice role="alert">{saveError}</Notice>}
-    </div>
-  </Modal>;
+  const description = dialog.kind === "create" ? "Upload a PNG graphic reviewers can lay over a Video." : dialog.kind === "rename" ? "Change the name reviewers see and the platform it belongs to." : "Swap the image. The name and platform stay.";
+  // Escape, a click outside and Cancel all close the same dialog; `onSaved` and the ticket fences in the panel decide what a late save may still touch.
+  return <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+    <DialogContent data-testid="social-overlay-dialog" showCloseButton={false} className="flex flex-col gap-[var(--space-4)] sm:max-w-[460px]">
+      <DialogHeader>
+        <Eyebrow>Social overlay</Eyebrow>
+        <DialogTitle className={DIALOG_TITLE}>{title}</DialogTitle>
+        <DialogDescription className="text-foreground-secondary">{description}</DialogDescription>
+      </DialogHeader>
+      <div className="flex flex-col gap-[var(--space-4)]">
+        {needsFields && <>
+          <QuincyField id="social-overlay-name" label="Name" value={name} maxLength={SOCIAL_OVERLAY_NAME_MAX} onChange={(event) => setName(event.target.value)} />
+          <QuincyField id="social-overlay-platform" label="Platform" value={platformLabel} maxLength={SOCIAL_OVERLAY_PLATFORM_MAX} onChange={(event) => setPlatformLabel(event.target.value)} />
+        </>}
+        {needsFile && <div className="flex flex-col gap-[var(--space-2)]">
+          <div className="flex flex-wrap items-center gap-[var(--space-3)]">
+            <FilePickButton accept="image/png" variant="secondary" onFile={(picked) => void choose(picked)}>{file ? "Choose another PNG" : "Choose PNG"}</FilePickButton>
+            {file && <span className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">{file.name} · {formatBytes(file.size)}</span>}
+          </div>
+          <p className="m-0 [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">{HINT}</p>
+          {fileError && <Notice role="alert">{fileError}</Notice>}
+        </div>}
+        {saveError && <Notice role="alert">{saveError}</Notice>}
+      </div>
+      <DialogFooter>
+        <QuincyButton type="button" variant="secondary" className="min-h-[44px]" onClick={onClose}>Cancel</QuincyButton>
+        <QuincyButton type="button" variant="primary" className="min-h-[44px]" disabled={!valid || saving} onClick={() => void submit()}>{submitLabel}</QuincyButton>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>;
 }
