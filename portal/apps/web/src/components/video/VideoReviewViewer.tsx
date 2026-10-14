@@ -482,12 +482,10 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         <TabsContent value="main" keepMounted className={`flex min-h-0 flex-col [&[hidden]]:hidden${phone ? " flex-1" : ""}`}><ReviewPaneHideContext.Provider value={null}>{main}</ReviewPaneHideContext.Provider></TabsContent>
         <TabsContent value="delivery" keepMounted data-sheet-part="body" className={`min-h-0 overflow-y-auto border-l border-border bg-card p-[var(--space-4)] [&[hidden]]:hidden${phone ? " flex-1 border-l-0" : ""}`}>{deliveryPanel}</TabsContent>
       </Tabs>
-      : phone
-        ? <div className="flex min-h-0 flex-1 flex-col">
-          <div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-4)] py-[var(--space-2)] [font:var(--type-body)]" onClick={openSheet}>{notesLabel}{slots?.openCount != null && <span className="ms-[var(--space-2)] text-foreground-secondary tabular-nums">{`${slots.openCount} open`}</span>}</div>
-          <ReviewPaneHideContext.Provider value={null}>{main}</ReviewPaneHideContext.Provider>
-        </div>
-        : <ReviewPaneHideContext.Provider value={paneControls.hideButton}>{main}</ReviewPaneHideContext.Provider>;
+      : <div className="flex min-h-0 flex-1 flex-col">
+        <div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-4)] py-[var(--space-2)] [font:var(--type-body)] min-[721px]:hidden" onClick={openSheet}>{notesLabel}{slots?.openCount != null && <span className="ms-[var(--space-2)] text-foreground-secondary tabular-nums">{`${slots.openCount} open`}</span>}</div>
+        <ReviewPaneHideContext.Provider value={phone ? null : paneControls.hideButton}>{main}</ReviewPaneHideContext.Provider>
+      </div>;
     const playerProps = slots ? {
       ...slots.playerProps,
       onMarkerSelect: (id: string) => { revealNotes(); slots.playerProps.onMarkerSelect(id); },
@@ -504,7 +502,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       {...(phone ? { sheet: { ...sheetControl, mode: slots?.drawing ? "draw" as const : sheetControl.mode } } : {})}
       {...(phone ? {} : { rowClassName: "overflow-y-auto", playerClassName: "overflow-y-auto" })}
       player={<>
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} />
+        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1 max-[721px]:min-h-0" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} />
       </>}
       pane={sidePane}
       strip={paneControls.strip}

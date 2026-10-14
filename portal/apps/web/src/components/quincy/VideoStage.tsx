@@ -80,7 +80,7 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, f
     data-testid="video-stage"
     {...(framed ? { "data-social": "fit" } : {})}
     style={{ "--stage-ratio": framed ? "9/16" : `${width}/${height}` } as React.CSSProperties}
-    className={cn("relative min-h-0 w-full flex-1 overflow-hidden text-invert-foreground max-[721px]:mx-auto max-[721px]:max-h-[55dvh] max-[721px]:flex-none max-[721px]:[aspect-ratio:var(--stage-ratio)]", clipped ? "bg-transparent" : "bg-invert", framed && "flex [container-type:size]")}
+    className={cn("relative min-h-0 w-full flex-1 overflow-hidden text-invert-foreground", clipped ? "bg-transparent" : "bg-invert", framed && "flex [container-type:size]")}
   >
     {/* One wrapper in both modes, so toggling Social never reparents (and so never remounts) the `<video>`, the watermark or the overlay. Outside Social it is the stage itself, so every coordinate is unchanged. */}
     <div data-testid="video-social-frame" {...(clipped ? { style: frameStyle } : {})} className={cn(framed ? "relative m-auto aspect-[9/16] w-[min(100cqw,calc(100cqh*9/16))] overflow-hidden" : "absolute inset-0", clipped && "bg-invert")}>

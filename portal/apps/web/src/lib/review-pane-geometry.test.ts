@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FLICK_PX_PER_MS, PHONE_QUERY, settleSheet, sheetStops } from "./review-pane-geometry";
+import { FLICK_PX_PER_MS, PHONE_QUERY, releaseVelocity, settleSheet, sheetStops } from "./review-pane-geometry";
 
 describe("review sheet geometry (#879)", () => {
   it("names the phone query once", () => {
@@ -47,4 +47,17 @@ describe("review sheet geometry (#879)", () => {
     expect(settleSheet({ stops, height: 500, velocity: 0.9 })).toBe("full");
     expect(settleSheet({ stops, height: 391, velocity: -0.8 })).toBe("collapsed");
   });
+});
+
+describe("releaseVelocity (#879)", () => {
+  it("is the finger's speed between the last two samples, positive when the sheet grows", () => {
+    expect(releaseVelocity({ y: 400, t: 0 }, { y: 300, t: 100 })).toBe(1);
+    expect(releaseVelocity({ y: 300, t: 100 }, { y: 400, t: 200 })).toBe(-1);
+  });
+  it("a pause before lifting reads as slow: the release sample is the other end of the interval", () => {
+    const v = releaseVelocity({ y: 300, t: 100 }, { y: 300, t: 900 });
+    expect(v).toBe(0);
+    expect(Math.abs(releaseVelocity({ y: 300, t: 100 }, { y: 296, t: 900 }))).toBeLessThan(FLICK_PX_PER_MS);
+  });
+  it("no elapsed time is no velocity", () => { expect(releaseVelocity({ y: 1, t: 5 }, { y: 9, t: 5 })).toBe(0); });
 });

@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { Button } from "../reui/button";
 import { Check } from "lucide-react";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../reui/sheet";
@@ -52,7 +53,7 @@ export function VideoVersionsSheet({ open, onOpenChange, container, rows, curren
             key={row.assetId}
             size="sm"
             variant={current ? "muted" : "default"}
-            render={<button type="button" data-testid="video-version-row" data-asset-id={row.assetId} aria-current={current ? "true" : undefined} className="min-h-11 cursor-pointer text-start" onClick={() => { onChoose(row.assetId); onOpenChange(false); }} />}
+            render={<Button type="button" variant="ghost" data-testid="video-version-row" data-asset-id={row.assetId} aria-current={current ? "true" : undefined} className="h-auto min-h-11 w-full cursor-pointer justify-start text-start font-normal" onClick={() => { onChoose(row.assetId); onOpenChange(false); }} />}
           >
             <ItemContent>
               <ItemTitle>{`v${row.version}${latest ? " · latest" : ""}`}</ItemTitle>

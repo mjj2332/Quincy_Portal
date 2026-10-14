@@ -183,7 +183,7 @@ export function useVideoMarkup(session: VideoNotesSession): { overlay: ((box: Bo
         onWidthChange={(width) => { forms.setTool(assetId, { width }); }}
         canUndo={markup.canUndo} canRedo={markup.canRedo} canClear={items.length > 0}
         onUndo={markup.undo} onRedo={markup.redo} onClear={markup.clear}
-        trailing={<Button ref={doneButton} type="button" data-testid="video-markup-done" className="max-[721px]:min-h-11 min-[721px]:pointer-coarse:min-h-11" onClick={() => { forms.exitDraw(assetId); if (compact && form === "composer") document.getElementById("video-note-body")?.querySelector<HTMLElement>("[contenteditable]")?.focus({ preventScroll: true }); }}>Done</Button>}
+        trailing={<Button ref={doneButton} type="button" data-testid="video-markup-done" className="max-[721px]:min-h-11 min-[721px]:pointer-coarse:min-h-11" onClick={() => { forms.exitDraw(assetId); if (compact && form === "composer") { const field = document.getElementById("video-note-body"); (field?.matches("[contenteditable]") ? field : field?.querySelector<HTMLElement>("[contenteditable]"))?.focus({ preventScroll: true }); }; }}>Done</Button>}
       />
       <div data-testid="video-markup-legend" aria-hidden="true" className="flex flex-wrap items-center justify-center gap-x-[var(--space-2)] gap-y-[var(--space-1)] text-foreground-secondary [font:var(--type-label)] max-[721px]:hidden">
         <span className="inline-flex items-center gap-[var(--space-1)]"><Kbd className={LEGEND_KBD}>⌘Z</Kbd> undo</span><span> · </span>

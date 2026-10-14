@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
-import { settleSheet, sheetStops, type SheetStop, type SheetStops } from "../../lib/review-pane-geometry";
+import { releaseVelocity, settleSheet, sheetStops, type SheetStop, type SheetStops } from "../../lib/review-pane-geometry";
 
 /**
  * The phone review sheet (#879), Quincy-owned: the notes pane under the film with three stops. It is not a dialog and portals nothing: it is the review split's own pane `<div>`, sized by
@@ -127,10 +127,11 @@ export function SheetGrabber({ control, stops, getHeight, onDrag }: {
       return;
     }
     lastTap.current = null;
+    // The release is itself a sample: a pause before lifting makes the last interval long and the velocity small.
+    g.samples.push({ y: event.clientY, t: event.timeStamp });
+    if (g.samples.length > 2) g.samples.shift();
     const [from, to] = [g.samples[0]!, g.samples[g.samples.length - 1]!];
-    const elapsed = to.t - from.t;
-    // Positive when the sheet grows (the finger moves up); the last two samples only, so a pause before release is a slow release.
-    const velocity = elapsed > 0 ? (from.y - to.y) / elapsed : 0;
+    const velocity = releaseVelocity(from, to);
     const height = Math.max(stops.collapsed, Math.min(stops.full, g.startHeight + (g.startY - to.y)));
     onStop(settleSheet({ stops, height, velocity }));
   };

@@ -1271,4 +1271,27 @@ describe("the phone review screen (#879)", () => {
     expect(document.querySelector('[data-testid="guest-social-toggle"]')).not.toBeNull();
     expect(document.querySelector<HTMLAnchorElement>('a[data-testid="guest-download"]')!.getAttribute("href")).toBe("/d/api/links/x/download");
   });
+
+  it("crossing 721px keeps the notes panel and the film as the same nodes", async () => {
+    await viewport.set({ width: 390, coarse: true });
+    notes = [note()];
+    videos = [videoOf(1)];
+    await open();
+    const panel = byId("guest-notes-panel")!;
+    const film = host.querySelector("video");
+    await viewport.set({ width: 1200 });
+    await flush();
+    expect(byId("guest-notes-panel")).toBe(panel);
+    expect(host.querySelector("video")).toBe(film);
+    await viewport.set({ width: 390, coarse: true });
+    await flush();
+    expect(byId("guest-notes-panel")).toBe(panel);
+  });
+
+  it("without the keyboard the phone screen keeps min-h-dvh (the keyboard case drops it)", async () => {
+    await viewport.set({ width: 390, coarse: true });
+    videos = [videoOf(1)];
+    await open();
+    expect(byId("guest-video-screen")!.className).toContain("min-h-dvh");
+  });
 });

@@ -109,7 +109,7 @@ describe("VideoPlayer timecode (#741 4d-ii)", () => {
     expect(thumb.className).toContain("has-[:focus-visible]:outline-offset-2");
   });
 
-  it("sizing: the video is out of flow so the stage takes the free height; phone stage is capped; readout aligns on phones", async () => {
+  it("sizing: the video is out of flow so the stage takes the free height; the phone stage fits the height it is given (no fixed aspect, no cap); readout aligns on phones", async () => {
     await mount(versionOf());
     await load();
     const video = host.querySelector("video")!;
@@ -117,7 +117,8 @@ describe("VideoPlayer timecode (#741 4d-ii)", () => {
     expect(video.className).toContain("inset-0");
     const stage = byTestId("video-stage")!;
     expect(stage.className).toContain("relative");
-    expect(stage.className).toContain("max-[721px]:max-h-[55dvh]");
+    expect(stage.className).not.toContain("max-[721px]:max-h-[55dvh]");
+    expect(stage.className).not.toContain("aspect-ratio");
     expect(stage.className).not.toContain("min-h-[45dvh]");
     expect(byTestId("video-readout")!.className).toContain("max-[721px]:px-0");
   });
@@ -185,8 +186,9 @@ describe("VideoPlayer layout (#741 4d-ii design review)", () => {
     expect(stage.className).not.toContain("aspect-video");
     expect(stage.className).toContain("flex-1");
     expect(stage.className).toContain("min-h-0");
-    expect(stage.className).toContain("max-[721px]:max-h-[55dvh]");
-    expect(stage.className).toContain("max-[721px]:[aspect-ratio:var(--stage-ratio)]");
+    expect(stage.className).not.toContain("max-[721px]:max-h-[55dvh]");
+    expect(stage.className).not.toContain("aspect-ratio");
+    expect(stage.className).not.toContain("[aspect-ratio:var(--stage-ratio)]");
     expect(stage.style.getPropertyValue("--stage-ratio")).toBe("1080/1920");
     expect(byTestId("video-player")!.className).toContain("min-h-0");
   });

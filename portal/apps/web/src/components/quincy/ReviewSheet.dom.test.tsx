@@ -23,7 +23,7 @@ function Harness({ drawing = false, stacked = true }: { drawing?: boolean; stack
     pane={<div data-testid="panel">
       <div data-sheet-part="head" data-testid="head"><button type="button" onClick={() => { setTick(tick + 1); }}>Notes</button></div>
       <div data-sheet-part="body" data-testid="body"><button type="button">Thread</button></div>
-      <div data-sheet-part="composer" data-testid="composer"><textarea data-testid="editor" aria-label="Add a note" /></div>
+      <form data-sheet-part="composer" data-testid="composer" onSubmit={(e) => { e.preventDefault(); }}><textarea data-testid="editor" aria-label="Add a note" /><button type="submit" data-testid="post">Post</button></form>
     </div>}
   />;
 }
@@ -90,6 +90,19 @@ describe("ReviewSheet (#879)", () => {
     await act(async () => { q("editor").blur(); });
     expect(pane().getAttribute("data-mode")).toBe("browse");
     expect(q("head").hasAttribute("inert")).toBe(false);
+  });
+
+  it("moving focus from the editor to Post ends compose mode, and so does a submit", async () => {
+    await mount();
+    await act(async () => { q("editor").focus(); });
+    expect(pane().getAttribute("data-mode")).toBe("compose");
+    await act(async () => { q("post").focus(); });
+    expect(pane().getAttribute("data-mode")).toBe("browse");
+    expect(q("head").hasAttribute("inert")).toBe(false);
+    await act(async () => { q("editor").focus(); });
+    expect(pane().getAttribute("data-mode")).toBe("compose");
+    await act(async () => { q("composer").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(pane().getAttribute("data-mode")).toBe("browse");
   });
 
   it("drawing is draw mode, whatever the stop, with the same nodes", async () => {

@@ -18,6 +18,29 @@ import { SHEET_COLLAPSED_MIN, SheetGrabber, isComposerField, useSheetPane, type 
  */
 export const REVIEW_PANE_WIDTH_VAR = "--review-pane-w";
 
+/** The collapsed sheet's whole height: the grabber, the head and the composer, plus the padding, borders and flex/grid gaps of every box between them and the pane (#879). */
+function collapsedHeight(row: HTMLElement): number {
+  const pane = row.querySelector<HTMLElement>('[data-testid="video-review-pane"]');
+  const px = (value: string) => { const n = parseFloat(value); return Number.isFinite(n) ? n : 0; };
+  let total = 24 + (pane ? px(getComputedStyle(pane).borderTopWidth) + px(getComputedStyle(pane).borderBottomWidth) : 0);
+  if (!pane) return total;
+  const parts = ["head", "composer"].map((name) => pane.querySelector<HTMLElement>(`[data-sheet-part="${name}"]`)).filter((part): part is HTMLElement => part !== null);
+  const boxes = new Set<HTMLElement>();
+  for (const part of parts) {
+    total += part.offsetHeight;
+    for (let node = part.parentElement; node && node !== pane; node = node.parentElement) boxes.add(node);
+  }
+  const onPath = new Set<Element>([...boxes, ...parts]);
+  for (const box of boxes) {
+    const style = getComputedStyle(box);
+    total += px(style.paddingTop) + px(style.paddingBottom) + px(style.borderTopWidth) + px(style.borderBottomWidth);
+    const gap = px(style.rowGap);
+    const shown = [...box.children].filter((child) => onPath.has(child)).length;
+    if (gap > 0 && shown > 1) total += gap * (shown - 1);
+  }
+  return total;
+}
+
 /**
  * The pane's state for a screen: the saved preference (open, width), plus the narrow rule. A row too narrow for the smallest pane AND the
  * 480px player lays out collapsed without touching the saved preference; the toggle then shows it for this visit only (`narrowOpen`),
@@ -76,8 +99,7 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
       // The room for the sheet stops: the row's height, its width, the transport block under the picture (kept while drawing replaces it) and what the collapsed bar needs (head + composer + grabber).
       const transport = row.querySelector<HTMLElement>('[data-testid="video-scrubber"]')?.parentElement?.offsetHeight ?? 0;
       if (transport > 0) transportHeld.current = transport;
-      const part = (name: string) => row.querySelector<HTMLElement>(`[data-sheet-part="${name}"]`)?.offsetHeight ?? 0;
-      const next = { available: row.clientHeight, width: measured, transport: transportHeld.current, collapsed: part("head") + part("composer") + 24 };
+      const next = { available: row.clientHeight, width: measured, transport: transportHeld.current, collapsed: collapsedHeight(row) };
       setRoom((held) => (held.available === next.available && held.width === next.width && held.transport === next.transport && held.collapsed === next.collapsed ? held : next));
     }
     return measured;
@@ -180,7 +202,8 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
       inert={!showPane}
       {...(phoneSheet ? { "data-stop": sheet.stop, "data-mode": sheet.mode, "data-dragging": sheetPane.drag !== null } : {})}
       onFocusCapture={phoneSheet ? (event) => { if (isComposerField(event.target)) sheet.onComposing(true); } : undefined}
-      onBlurCapture={phoneSheet ? (event) => { if (isComposerField(event.target) && !(event.relatedTarget instanceof Element && event.relatedTarget.closest('[data-sheet-part="composer"]'))) sheet.onComposing(false); } : undefined}
+      onBlurCapture={phoneSheet ? (event) => { if (isComposerField(event.target) && !isComposerField(event.relatedTarget)) sheet.onComposing(false); } : undefined}
+      onSubmitCapture={phoneSheet ? () => { sheet.onComposing(false); } : undefined}
       style={{ ...(stacked ? {} : { [REVIEW_PANE_WIDTH_VAR]: `${shown}px` }), ...sheetStyle, ...(showPane ? {} : { display: "none" }) } as CSSProperties}
       className={phoneSheet
         ? "relative flex min-h-0 flex-none flex-col overflow-hidden border-t border-border bg-card motion-safe:transition-[height] motion-safe:duration-[var(--dur-base)] motion-safe:ease-[var(--ease-entrance)] data-[dragging=true]:transition-none data-[mode=compose]:max-h-[60%] [&_[data-sheet-part][inert]]:hidden"

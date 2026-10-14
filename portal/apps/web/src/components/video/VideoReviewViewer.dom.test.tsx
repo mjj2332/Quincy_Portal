@@ -161,7 +161,7 @@ describe("VideoReviewViewer (#741 4d-ii)", () => {
     await openViewer();
     const aside = dialog()!.querySelector<HTMLElement>("aside")!;
     const row = dialog()!.querySelector<HTMLElement>('[data-testid="video-review-split"]')!;
-    const pane = aside.parentElement!;
+    const pane = aside.closest<HTMLElement>('[data-testid="video-review-pane"]')!;
     expect(pane.parentElement).toBe(row);
     for (const token of ["min-[721px]:flex-nowrap", "min-[721px]:overflow-hidden"]) expect(row.className).toContain(token);
     for (const token of ["min-[721px]:min-h-0", "min-[721px]:overflow-y-auto"]) expect(aside.className).toContain(token);

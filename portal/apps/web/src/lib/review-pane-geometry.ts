@@ -28,3 +28,9 @@ export function settleSheet({ stops, height, velocity }: { stops: SheetStops; he
   }
   return ORDER.reduce((best, s) => (Math.abs(stops[s] - height) < Math.abs(stops[best] - height) ? s : best), "collapsed" as SheetStop);
 }
+
+/** The release velocity in px/ms, positive when the sheet grows (the finger moves up): from the last move sample to the release sample, so a pause before lifting is a slow release. */
+export function releaseVelocity(from: { y: number; t: number }, to: { y: number; t: number }): number {
+  const elapsed = to.t - from.t;
+  return elapsed > 0 ? (from.y - to.y) / elapsed : 0;
+}

@@ -1,6 +1,7 @@
 import { DownloadIcon, FileDown, Link2, Smartphone, Trash2 } from "lucide-react";
 import { copyText } from "../../lib/clipboard";
 import { Item, ItemContent, ItemMedia, ItemTitle } from "../reui/item";
+import { Button } from "../reui/button";
 import { ActionRow, ActionSeparator, ReviewActionSheet } from "../quincy/ReviewActionSheet";
 import { EXPORT_PANEL_WIDTH, MarkerExportMenuItems, type MarkerExport } from "./VideoMarkerExportMenu";
 import { Menu } from "../quincy/menu";
@@ -35,7 +36,7 @@ export function VideoReviewHeaderMenu({ container, social, copyHref, downloadHre
       {downloadHref && <ActionRow testId="video-download" icon={<DownloadIcon aria-hidden="true" />} href={downloadHref} download label={downloadLabel} onSelect={() => { close(); }}>Download</ActionRow>}
       {markerExport && exportOn && <Menu
         triggerLabel="Marker export" label="Export markers" triggerTestId="video-marker-export-row" side="top" align="start" panelClassName={EXPORT_PANEL_WIDTH}
-        triggerRender={<Item size="sm" render={<button type="button" className="min-h-11 w-full cursor-pointer text-start" />} />}
+        triggerRender={<Item size="sm" render={<Button type="button" variant="ghost" className="h-auto min-h-11 w-full cursor-pointer justify-start text-start font-normal" />} />}
         trigger={<><ItemMedia variant="icon"><FileDown aria-hidden="true" /></ItemMedia><ItemContent><ItemTitle>Marker export…</ItemTitle></ItemContent></>}
       >
         <MarkerExportMenuItems exp={{ ...markerExport, start: (format, options) => { close(); return markerExport.start(format, options); } }} />

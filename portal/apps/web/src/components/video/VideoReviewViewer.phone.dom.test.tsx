@@ -141,4 +141,15 @@ describe("D4 and focus", () => {
     await click(trigger()!);
     expect(tid("video-marker-export-row")).not.toBeNull();
   });
+
+  it("without Delivery, crossing 721px keeps the details panel and the film as the same nodes", async () => {
+    await mount();
+    const details = document.querySelector('aside[aria-label="Version details"]');
+    const film = document.querySelector("video");
+    expect(details).not.toBeNull();
+    await act(async () => { viewport.restore(); viewport = mockViewport({ width: 1200 }); });
+    await flush();
+    expect(document.querySelector('aside[aria-label="Version details"]')).toBe(details);
+    expect(document.querySelector("video")).toBe(film);
+  });
 });
