@@ -367,8 +367,9 @@ Social overlay.
 _Avoid_: Fallback profile
 
 **Social preview**:
-Watching a Video through a Social overlay. It is view-only: no notes, marks or drawing while it is on.
-Staff and Guest reviewers can open it.
+Watching a Video through a Social overlay, the whole film fitted inside the 9:16 frame (never cropped).
+Notes, marks and drawing work as usual while it is on. Staff and Guest reviewers can open it; staff can
+also use it in a Compare, where both sides show the same Social overlay.
 _Avoid_: Social mode, mockup
 
 ### Client delivery
