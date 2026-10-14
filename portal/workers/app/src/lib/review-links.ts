@@ -1,7 +1,7 @@
 import { reviewLinkExpired, reviewLinkOpenSql } from "@quincy/db";
 import { guestDigestStatements } from "./guest-digest";
 import { ROLE_LABELS, REVIEW_LINK_STATUSES, type ReviewLinkDto, type Role } from "@quincy/shared";
-import { auditMeta, type AuditPrincipal } from "./audit";
+import { auditMeta, type Principal } from "./audit";
 import { newId } from "./ids";
 import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO } from "./video-live-sql";
 
@@ -21,7 +21,6 @@ const LINK_LIVE = "EXISTS (SELECT 1 FROM client_links WHERE id = ? AND project_i
 const LINK_DELETABLE = "EXISTS (SELECT 1 FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NOT NULL AND deleted_at IS NULL AND delivery_review = 0)";
 const MEMBER_LIVE = "EXISTS (SELECT 1 FROM review_link_videos WHERE link_id = ? AND video_id = ? AND removed_at IS NULL)";
 
-export type Principal = NonNullable<AuditPrincipal>;
 export type Allow = { comments: boolean; approve: boolean; download: boolean };
 
 export type LinkHead = { id: string; revoked_at: number | null; /** Null: the Delivery review link never expires. */ expires_at: number | null; deleted_at: number | null; /** 1 for the Project's Delivery review link, which staff routes refuse (409 `delivery_review_managed`). */ delivery_review: number };

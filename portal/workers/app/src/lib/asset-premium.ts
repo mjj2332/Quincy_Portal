@@ -1,5 +1,5 @@
 import { DELIVERY_PREMIUM_KINDS, type AssetPremiumResponse } from "@quincy/shared";
-import { auditMeta, type AuditPrincipal } from "./audit";
+import { auditMeta, type Principal } from "./audit";
 import { newId } from "./ids";
 import { everPublishedSql, inCurrentSetSql } from "./delivery-lock";
 
@@ -9,7 +9,6 @@ import { everPublishedSql, inCurrentSetSql } from "./delivery-lock";
  * guard writes nothing and leaves no audit row. Premium is **live**: marking, Unlocking and Re-locking act on the current page at once and never touch a published set. The payment
  * reference is never put in an audit row, only whether one is set.
  */
-export type Principal = NonNullable<AuditPrincipal>;
 const NOT_ARCHIVED = (param: string) => `EXISTS (SELECT 1 FROM projects WHERE id = ${param} AND archived_at IS NULL)`;
 const ELIGIBLE_KINDS = DELIVERY_PREMIUM_KINDS.map((kind) => `'${kind}'`).join(", ");
 /**

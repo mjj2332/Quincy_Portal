@@ -11,7 +11,7 @@ import type { NoteFormStore } from "../../lib/video-note-form-store";
 import { Button } from "../quincy/Button";
 import { Notice } from "../quincy/Notice";
 import { VideoStage } from "../quincy/VideoStage";
-import { SocialPreviewControls, useOverlayImage, type SocialPreviewMode } from "../quincy/SocialPreviewControls";
+import { SocialPreviewControls, useOverlayImage, type SocialPreviewMode, type SocialStageProps } from "../quincy/SocialPreviewControls";
 import { COARSE, type VideoPlayerControl } from "../quincy/VideoPlayer";
 import { IconTip } from "../quincy/IconTip";
 import { TimeFormatMenu } from "../quincy/TimeFormatMenu";
@@ -426,7 +426,7 @@ function SideStage({ side: id, version, title, label, initialFrame, phase, start
   cellClassName?: string | undefined;
   cellStyle?: React.CSSProperties | undefined;
   /** Social preview (#877): this side's stage is framed 9:16 under the overlay; `frameStyle` is B's Wipe clip, on the frame. */
-  social?: { imageUrl: string | null; onImageError: () => void; onImageLoad: () => void } | undefined;
+  social?: SocialStageProps | undefined;
   frameStyle?: React.CSSProperties | undefined;
 }) {
   const [element, setElement] = useState<HTMLVideoElement | null>(null);

@@ -1,5 +1,5 @@
 import { videoRenameResponseSchema, type VideoDto } from "@quincy/shared";
-import { classifyRenameError } from "./video-rename-errors";
+import { classifyRenameError, type RenameErrorKind } from "./video-rename-errors";
 import { writeVideoVersion, type VersionWriteContext, type VersionWriteSpec } from "./video-version-write";
 
 export { classifyRenameError, renameErrorText } from "./video-rename-errors";
@@ -12,7 +12,7 @@ export type { ClassifiedRenameError, RenameErrorKind } from "./video-rename-erro
 export type RenameWriteContext = VersionWriteContext;
 
 /** The film's title is shown by the list, the Review links that name it and the Delivery candidates. */
-const RENAME: VersionWriteSpec = {
+const RENAME: VersionWriteSpec<RenameErrorKind> = {
   endpoint: "file-name", surface: "video-rename", schema: videoRenameResponseSchema, classify: classifyRenameError,
   freshVideoKinds: ["not_latest"], converge: [{ kind: "videos" }, { kind: "review-links" }, { kind: "delivery-candidates" }, { kind: "delivery" }],
 };

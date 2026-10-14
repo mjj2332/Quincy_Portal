@@ -18,7 +18,7 @@ export function checkRenameName(name: string): ClassifiedRenameError | null {
 
 /** A transport failure or a server error may hide a committed write, so neither is retried: the person is told to check. Rename adds its 400, `invalid`, to the shared refusals. */
 export function classifyRenameError(error: unknown): ClassifiedRenameError {
-  return classifyVersionWriteError<ClassifiedRenameError>(error, (apiError) => (apiError.status === 400 ? { kind: "invalid" } : null)) as ClassifiedRenameError;
+  return classifyVersionWriteError<ClassifiedRenameError>(error, (apiError) => (apiError.status === 400 ? { kind: "invalid" } : null));
 }
 
 export function renameErrorText(classified: ClassifiedRenameError): string {

@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
+import type { SocialStageProps } from "./SocialPreviewControls";
 import type { Box } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { usePictureBox } from "../../lib/use-picture-box";
@@ -40,7 +41,7 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, f
    * `watermark` are, inside the frame and above the artwork, in the coordinates of the letterboxed picture, so a stroke lands on the same point of the film with Social on or off.
    * The same `<video>` element throughout: it moves into the frame by CSS only, never remounts.
    */
-  social?: { imageUrl: string | null; onImageError?: () => void; onImageLoad?: () => void };
+  social?: SocialStageProps;
   /**
    * Compare's Wipe with Social on: a style on the frame itself (a clip), not on the stage, so the wipe lands on the artwork's own percentages whatever the stage measures. With it the stage is
    * transparent and the frame carries the background, so the clipped side shows the other side through the part it does not cover. Ignored unless `social` is set.

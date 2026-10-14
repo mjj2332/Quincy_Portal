@@ -90,8 +90,8 @@ function publishStaffNotifications(c: Ctx, outboxIds: string[] | undefined): voi
   if (outboxIds?.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, outboxIds));
 }
 
-function principalOf(c: Ctx) { const user = c.get("user"); return { id: user.id, role: user.role, impersonatedBy: user.impersonatedBy, via: user.via }; }
-const authorOf = (c: Ctx): NoteAuthor => userAuthor(principalOf(c));
+function principalWithRoleOf(c: Ctx) { const user = c.get("user"); return { id: user.id, role: user.role, impersonatedBy: user.impersonatedBy, via: user.via }; }
+const authorOf = (c: Ctx): NoteAuthor => userAuthor(principalWithRoleOf(c));
 /** A guest author's email is shown to a viewer who holds `shareVideo` (Admin, Editor) and to nobody else: an External editor sees the name alone (#741 13b). */
 const showsGuestEmail = (c: Ctx): boolean => roleHasCapability(c.get("user").role, "shareVideo");
 /** Every staff write answers with the thread read through the viewer's own projection. */
@@ -151,7 +151,7 @@ videoNotesRoutes.patch("/projects/:projectId/video-notes/:noteId", terminalRoute
   if (input.markup !== undefined && (input.startFrame !== undefined || input.endFrame !== undefined)) return c.json({ error: "Move a note or change its drawing, not both in one request.", code: "markup_and_frames" }, 422);
   const stored = input.markup ? canonicalMarkup(input.markup) : null; if (input.markup && !stored) return tooLarge(c);
   const note = await findNoteHead(c.env.DB, projectId, noteId); if (!note) return notFound(c);
-  const principal = principalOf(c);
+  const principal = principalWithRoleOf(c);
   if (note.author_user_id !== principal.id) return c.json({ error: "Forbidden: only the author can edit this note." }, 403);
   if (note.deleted_at !== null) return deletedResponse(c);
   const current = await readerOf(c, projectId)(note.parent_id ?? note.id); if (!current) return notFound(c);
@@ -216,7 +216,7 @@ videoNotesRoutes.delete("/projects/:projectId/video-notes/:noteId", terminalRout
   const refused = await admit(c, projectId, true); if (refused) return refused;
   const input = await jsonInput(c, videoNoteDeleteInputSchema); if (input instanceof Response) return input;
   const note = await findNoteHead(c.env.DB, projectId, noteId); if (!note) return notFound(c);
-  const principal = principalOf(c);
+  const principal = principalWithRoleOf(c);
   if (note.author_user_id !== principal.id) return c.json({ error: "Forbidden: only the author can delete this note." }, 403);
   if (note.deleted_at !== null) return deletedResponse(c);
   if (note.revision !== input.expectedRevision) { const current = await readerOf(c, projectId)(note.parent_id ?? note.id); return current ? conflict(c, current) : notFound(c); }
@@ -242,7 +242,7 @@ videoNotesRoutes.put("/projects/:projectId/video-notes/:noteId/resolution", term
   const input = await jsonInput(c, videoNoteResolutionInputSchema); if (input instanceof Response) return input;
   const note: NoteHead | null = await findNoteHead(c.env.DB, projectId, noteId); if (!note) return notFound(c);
   if (note.parent_id !== null) return c.json({ error: "Only a note can be resolved, not a reply.", code: "not_a_thread" }, 422);
-  const outcome = await setVideoNoteResolution(c.env.DB, { projectId, note, principal: principalOf(c), resolved: input.resolved, now: Date.now(), read: readerOf(c, projectId) });
+  const outcome = await setVideoNoteResolution(c.env.DB, { projectId, note, principal: principalWithRoleOf(c), resolved: input.resolved, now: Date.now(), read: readerOf(c, projectId) });
   if (outcome.kind === "archived") return archivedResponse(c);
   if (outcome.kind === "gone") return notFound(c);
   return thread(c, outcome.value);
@@ -276,7 +276,7 @@ videoNotesRoutes.post(PASTE_COMMIT, terminalRoute(PASTE_COMMIT, async (c) => {
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(assetId).success) return c.json({ error: "Invalid id" }, 400);
   const refused = await admit(c, projectId, true); if (refused) return refused;
   const input = await jsonInput(c, videoNotePasteCommitInputSchema); if (input instanceof Response) return input;
-  const outcome = await commitNotePaste(c.env.DB, { projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, notes: input.notes, offsetFrames: input.offsetFrames, principal: principalOf(c) });
+  const outcome = await commitNotePaste(c.env.DB, { projectId, targetAssetId: assetId, sourceAssetId: input.sourceAssetId, notes: input.notes, offsetFrames: input.offsetFrames, principal: principalWithRoleOf(c) });
   switch (outcome.kind) {
     case "ok": return c.json(videoNotePasteCommitResponseSchema.parse(outcome.value));
     case "stale": return c.json({ error: "Some notes changed since the preview.", code: "paste_stale", preview: videoNotePastePreviewResponseSchema.parse(outcome.preview) }, 409);

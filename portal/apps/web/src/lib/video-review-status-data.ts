@@ -1,6 +1,6 @@
 import type { VersionReviewStatus, VideoDto } from "@quincy/shared";
 import { videoReviewStatusResponseSchema } from "@quincy/shared";
-import { classifyReviewStatusError } from "./video-review-status-errors";
+import { classifyReviewStatusError, type ReviewStatusErrorKind } from "./video-review-status-errors";
 import { writeVideoVersion, type VersionWriteContext, type VersionWriteSpec } from "./video-version-write";
 
 export { classifyReviewStatusError, reviewStatusErrorText } from "./video-review-status-errors";
@@ -14,7 +14,7 @@ export type { ClassifiedReviewStatusError, ReviewStatusErrorKind } from "./video
 export type ReviewStatusWriteContext = VersionWriteContext;
 export type ReviewStatusInput = { assetId: string; reviewStatus: VersionReviewStatus; expectedStatus: VersionReviewStatus };
 
-const REVIEW_STATUS: VersionWriteSpec = {
+const REVIEW_STATUS: VersionWriteSpec<ReviewStatusErrorKind> = {
   endpoint: "review-status", surface: "video-review-status", schema: videoReviewStatusResponseSchema, classify: classifyReviewStatusError,
   freshVideoKinds: ["not_latest", "conflict"], converge: [{ kind: "videos" }, { kind: "delivery-candidates" }],
 };

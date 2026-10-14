@@ -12,13 +12,13 @@ import { onPrincipalTerminal } from "./principal-terminal";
  * it are read again. A refusal that carries the server's fresh Video puts it into the list first. An External reads the answer through the write's response-only surface.
  */
 export type VersionWriteContext = { queryClient: QueryClient; projectId: string; role: Role };
-export type VersionWriteSpec = {
+export type VersionWriteSpec<K extends string = string> = {
   endpoint: "file-name" | "review-status";
   surface: Extract<ExternalApiSurface, "video-rename" | "video-review-status">;
   schema: z.ZodType<{ video: VideoDto }>;
-  classify: (error: unknown) => { kind: string; video?: VideoDto };
+  classify: (error: unknown) => { kind: K | "access" | "archived" | "network" | "uncertain"; video?: VideoDto };
   /** The refusal kinds whose body carries the server's fresh Video. */
-  freshVideoKinds: readonly string[];
+  freshVideoKinds: readonly K[];
   /** The surfaces that show what the write changed. */
   converge: ProjectDataResource[];
 };
@@ -29,16 +29,16 @@ onPrincipalTerminal((queryClient) => { if (queryClient) retired.add(queryClient)
 
 const putVideo = (ctx: VersionWriteContext, video: VideoDto) =>
   ctx.queryClient.setQueryData<VideoDto[]>(projectDataKeys.videos(ctx.projectId), (old) => old?.map((entry) => (entry.id === video.id ? video : entry)));
-const converge = (ctx: VersionWriteContext, spec: VersionWriteSpec) => invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: spec.converge, dashboard: false, calendar: false, gantt: false });
+const converge = <K extends string>(ctx: VersionWriteContext, spec: VersionWriteSpec<K>) => invalidateProjectSurfaces(ctx.queryClient, { projectId: ctx.projectId, resources: spec.converge, dashboard: false, calendar: false, gantt: false });
 
-const parse = (ctx: VersionWriteContext, spec: VersionWriteSpec, value: unknown): VideoDto =>
+const parse = (ctx: VersionWriteContext, spec: VersionWriteSpec<string>, value: unknown): VideoDto =>
   (ctx.role === "external_editor" ? decodeExternalResponse(spec.surface, value) as { video: VideoDto } : spec.schema.parse(value)).video;
 
-async function onFailure(ctx: VersionWriteContext, spec: VersionWriteSpec, error: unknown): Promise<void> {
+async function onFailure<K extends string>(ctx: VersionWriteContext, spec: VersionWriteSpec<K>, error: unknown): Promise<void> {
   terminatePrincipalOnUnauthorized(ctx.queryClient, error);
   if (retired.has(ctx.queryClient)) return;
   const classified = spec.classify(error);
-  if (spec.freshVideoKinds.includes(classified.kind)) {
+  if (spec.freshVideoKinds.some((kind) => kind === classified.kind)) {
     if (classified.video) putVideo(ctx, classified.video);
     await converge(ctx, spec);
   } else if (classified.kind === "access") {
@@ -51,7 +51,7 @@ async function onFailure(ctx: VersionWriteContext, spec: VersionWriteSpec, error
   }
 }
 
-export async function writeVideoVersion<B>(ctx: VersionWriteContext, spec: VersionWriteSpec, assetId: string, body: B): Promise<VideoDto> {
+export async function writeVideoVersion<B, K extends string>(ctx: VersionWriteContext, spec: VersionWriteSpec<K>, assetId: string, body: B): Promise<VideoDto> {
   let video: VideoDto;
   try {
     video = parse(ctx, spec, await apiPut<unknown, B>(`/api/projects/${encodeURIComponent(ctx.projectId)}/video-versions/${encodeURIComponent(assetId)}/${spec.endpoint}`, body));

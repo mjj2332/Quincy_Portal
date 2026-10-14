@@ -9,7 +9,7 @@ export type ClassifiedReviewStatusError = { kind: ReviewStatusErrorKind; video?:
 /** A transport failure or a server error may hide a committed write, so neither is retried: the person is told to check. Review status adds its own 409, `conflict`; its 400 stays `other`. */
 export function classifyReviewStatusError(error: unknown): ClassifiedReviewStatusError {
   return classifyVersionWriteError<ClassifiedReviewStatusError>(error, (apiError, code, details) =>
-    (apiError.status === 409 && code === "review_status_conflict" ? { kind: "conflict", ...freshVideoOf(details) } : null)) as ClassifiedReviewStatusError;
+    (apiError.status === 409 && code === "review_status_conflict" ? { kind: "conflict", ...freshVideoOf(details) } : null));
 }
 
 export function reviewStatusErrorText(kind: ReviewStatusErrorKind): string {

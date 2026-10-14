@@ -27,6 +27,9 @@ const COARSE = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[721px]:min-
  * The overlay on screen and whether its picture loaded (#877): the failed / loaded state, shared by the player and by Compare's one switcher. A failure is about one attempt:
  * a new overlay, or Social turned off and on again, starts clean; a successful load clears it. `onError` / `onLoad` go on every `<img>` that shows the artwork.
  */
+/** What a stage needs to draw the Social overlay picture: the artwork and its load outcome (`useOverlayImage` produces all three). */
+export type SocialStageProps = { imageUrl: string | null; onImageError: () => void; onImageLoad: () => void };
+
 export function useOverlayImage(social: SocialPreviewMode | undefined) {
   const overlay = social?.overlays.find((candidate) => candidate.id === social.currentId) ?? null;
   const active = social !== undefined;

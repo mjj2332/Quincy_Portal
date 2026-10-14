@@ -1,3 +1,10 @@
+/**
+ * A Project's Social overlays (#870). `resolveProjectSocialOverlays` is the one rule the Video viewer (#871) and the guest payload (#872) consume: the Project's selected overlays that are not
+ * archived, else the non-archived Default, else nothing (an empty library). It reads library order (Default first, then name ignoring case, then id), never selection order. A fallback is never stored.
+ * `setProjectSocialOverlays` is one `db.batch`: an audit row whose `WHERE` carries the whole fence (Project unarchived, stored set still the one the caller saw, checked by revision, every wanted overlay real and either
+ * selectable or already stored), then the deletes and inserts, each fenced on that audit row's id. A refused fence writes nothing and leaves no audit row.
+ */
+
 import {
   projectSocialOverlaysResponseSchema, socialOverlayImagePath,
   type ProjectSocialOverlayChoice, type ProjectSocialOverlayPreview, type ProjectSocialOverlaysResponse,
@@ -5,13 +12,6 @@ import {
 import { auditMeta, type Principal } from "./audit";
 import { newId } from "./ids";
 import { uuidOfKey } from "./social-overlays";
-
-/**
- * A Project's Social overlays (#870). `resolveProjectSocialOverlays` is the one rule the Video viewer (#871) and the guest payload (#872) consume: the Project's selected overlays that are not
- * archived, else the non-archived Default, else nothing (an empty library). It reads library order (Default first, then name ignoring case, then id), never selection order. A fallback is never stored.
- * `setProjectSocialOverlays` is one `db.batch`: an audit row whose `WHERE` carries the whole fence (Project unarchived, stored set still the one the caller saw, checked by revision, every wanted overlay real and either
- * selectable or already stored), then the deletes and inserts, each fenced on that audit row's id. A refused fence writes nothing and leaves no audit row.
- */
 
 /** Seam for the race tests: runs after admission and before the batch. Always cleared by the test that sets it. */
 export const projectSocialOverlayTestHooks: { beforeWrite?: () => Promise<void> } = {};

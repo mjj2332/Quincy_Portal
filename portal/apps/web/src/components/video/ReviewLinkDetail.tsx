@@ -32,6 +32,14 @@ const HEADING = "[font:var(--weight-medium)_var(--text-sm)/var(--leading-normal)
 const TARGET = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
 type Confirm = { kind: "remove"; videoId: string; title: string } | { kind: "revoke" } | { kind: "replace" } | { kind: "delete" } | { kind: "end-sessions" };
+/** The wording of each confirmation. `remove`'s title names the film, so the dialog builds that one from the confirm itself. */
+const CONFIRM_COPY: Record<Confirm["kind"], { title: string; description: string; action: string; variant: "default" | "destructive" }> = {
+  remove: { title: "Remove this film?", description: "Guests lose access to it at once. Notes and decisions stay.", action: "Remove film", variant: "destructive" },
+  revoke: { title: "Revoke this link?", description: "Guests can no longer open it, and anyone using it is signed out. This can't be undone.", action: "Revoke", variant: "destructive" },
+  delete: { title: "Delete this link?", description: "It disappears from your Review links. Its notes, approvals and history stay. This can't be undone.", action: "Delete", variant: "destructive" },
+  "end-sessions": { title: "End guest sessions?", description: "Everyone signed in to this link is signed out at once and must verify their email again. The link address stays the same, and guests keep their email updates.", action: "End sessions", variant: "default" },
+  replace: { title: "Replace this link?", description: "The current link stops working at once and anyone using it is signed out. You'll get a new link to share.", action: "Replace", variant: "default" },
+};
 
 /** Every scope a request for this link can have, so its refusals show in its detail. */
 const belongsTo = (scope: string, linkId: string) => scope.split(":")[1] === linkId;
@@ -42,6 +50,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
   const state = useReviewLinkState(store);
   const now = useNow();
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const copy = confirm ? CONFIRM_COPY[confirm.kind] : null;
   const [ended, setEnded] = useState(false);
   const link = links.data?.find((candidate) => candidate.id === linkId);
 
@@ -252,18 +261,12 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
     <AlertDialog open={confirm !== null} onOpenChange={(next) => { if (!next) setConfirm(null); }}>
       <AlertDialogContent size="sm" data-testid="review-link-confirm">
         <AlertDialogHeader>
-          <AlertDialogTitle>{confirm?.kind === "remove" ? `Remove ${confirm.title}?` : confirm?.kind === "revoke" ? "Revoke this link?" : confirm?.kind === "delete" ? "Delete this link?" : confirm?.kind === "end-sessions" ? "End guest sessions?" : "Replace this link?"}</AlertDialogTitle>
-          <AlertDialogDescription className="text-foreground-secondary">
-            {confirm?.kind === "remove" && "Guests lose access to it at once. Notes and decisions stay."}
-            {confirm?.kind === "revoke" && "Guests can no longer open it, and anyone using it is signed out. This can't be undone."}
-            {confirm?.kind === "delete" && "It disappears from your Review links. Its notes, approvals and history stay. This can't be undone."}
-            {confirm?.kind === "end-sessions" && "Everyone signed in to this link is signed out at once and must verify their email again. The link address stays the same, and guests keep their email updates."}
-            {confirm?.kind === "replace" &&"The current link stops working at once and anyone using it is signed out. You'll get a new link to share."}
-          </AlertDialogDescription>
+          <AlertDialogTitle>{confirm?.kind === "remove" ? `Remove ${confirm.title}?` : (copy?.title ?? "Replace this link?")}</AlertDialogTitle>
+          <AlertDialogDescription className="text-foreground-secondary">{copy?.description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction variant={confirm?.kind === "replace" || confirm?.kind === "end-sessions" ? "default" : "destructive"} onClick={() => { if (confirm) run(confirm); }}>{confirm?.kind === "remove" ? "Remove film" : confirm?.kind === "revoke" ? "Revoke" : confirm?.kind === "delete" ? "Delete" : confirm?.kind === "end-sessions" ? "End sessions" : "Replace"}</AlertDialogAction>
+          <AlertDialogAction variant={copy?.variant ?? "destructive"} onClick={() => { if (confirm) run(confirm); }}>{copy?.action ?? "Replace"}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
