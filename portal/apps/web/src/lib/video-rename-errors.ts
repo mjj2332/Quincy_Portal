@@ -1,5 +1,5 @@
-import { videoDtoSchema, videoUploadFilenameSchema, type VideoDto } from "@quincy/shared";
-import { ApiError } from "./api";
+import { videoUploadFilenameSchema, type VideoDto } from "@quincy/shared";
+import { classifyVersionWriteError } from "./video-version-write-errors";
 
 /** Which Rename refusal an error is (#867). Apart from the data layer so the dialog can show its text without importing the query code. */
 export type RenameErrorKind = "invalid" | "archived" | "not_latest" | "access" | "network" | "uncertain" | "other";
@@ -16,22 +16,9 @@ export function checkRenameName(name: string): ClassifiedRenameError | null {
   return { kind: "invalid", ...(/\.(mp4|mov)$/i.test(name) ? {} : { reason: "extension" as const }) };
 }
 
-const detailsOf = (error: ApiError): Record<string, unknown> => (error.details && typeof error.details === "object" ? error.details as Record<string, unknown> : {});
-
-/** A transport failure or a server error may hide a committed write, so neither is retried: the person is told to check. */
+/** A transport failure or a server error may hide a committed write, so neither is retried: the person is told to check. Rename adds its 400, `invalid`, to the shared refusals. */
 export function classifyRenameError(error: unknown): ClassifiedRenameError {
-  if (!(error instanceof ApiError)) return { kind: "uncertain" };
-  const code = detailsOf(error).code;
-  if (error.status === 0) return { kind: "network" };
-  if (error.status === 409 && code === "project_archived") return { kind: "archived" };
-  if (error.status === 409 && code === "not_latest_version") {
-    const video = videoDtoSchema.safeParse(detailsOf(error).video);
-    return { kind: "not_latest", ...(video.success ? { video: video.data } : {}) };
-  }
-  if (error.status === 403 || error.status === 404) return { kind: "access" };
-  if (error.status === 400) return { kind: "invalid" };
-  if (error.status >= 500) return { kind: "uncertain" };
-  return { kind: "other" };
+  return classifyVersionWriteError<ClassifiedRenameError>(error, (apiError) => (apiError.status === 400 ? { kind: "invalid" } : null)) as ClassifiedRenameError;
 }
 
 export function renameErrorText(classified: ClassifiedRenameError): string {
