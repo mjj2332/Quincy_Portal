@@ -2,48 +2,37 @@ import type { VideoDto, VideoReviewStatus } from "@quincy/shared";
 import { uiPrefKey } from "./ui-prefs";
 
 /**
- * The Video collection's grid preferences (#865): card size, thumbnail fit, whether the card info shows, the sort and the Review status filter.
+ * The Video collection's grid preferences (#865, trimmed by #884: the tile has one size and one poster fit, so Appearance is gone): the sort and the Review status filter.
  * One JSON object per person in this browser (`quincy:ui:video-grid:<userId>`, via `useUiPref`). Sort and filter are client-side over the
  * loaded collection; `arrangeVideos` never mutates the query data.
  */
-export type VideoGridSize = "S" | "M" | "L";
 export type VideoGridSort = "uploaded" | "name" | "status";
 export type VideoGridPrefs = {
-  size: VideoGridSize;
-  thumb: "fit" | "fill";
-  info: boolean;
   sort: VideoGridSort;
   dir: "asc" | "desc";
   status: "all" | VideoReviewStatus;
 };
 
-export const DEFAULT_VIDEO_GRID_PREFS: VideoGridPrefs = { size: "M", thumb: "fit", info: true, sort: "uploaded", dir: "desc", status: "all" };
+export const DEFAULT_VIDEO_GRID_PREFS: VideoGridPrefs = { sort: "uploaded", dir: "desc", status: "all" };
 
 export const videoGridKey = (userId: string): string => uiPrefKey(`video-grid:${userId}`);
 
 const pick = <T extends string>(raw: unknown, allowed: readonly T[], fallback: T): T => (allowed as readonly unknown[]).includes(raw) ? raw as T : fallback;
 
-/** Module level (stable for `useUiPref`). Field by field: junk in one field keeps the others. */
+/** Module level (stable for `useUiPref`). Field by field: junk in one field keeps the others; the old `size`, `thumb` and `info` keys are ignored. */
 export function normalizeVideoGridPrefs(raw: unknown): VideoGridPrefs {
   const d = DEFAULT_VIDEO_GRID_PREFS;
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { ...d };
   const o = raw as Record<string, unknown>;
   return {
-    size: pick(o.size, ["S", "M", "L"], d.size),
-    thumb: pick(o.thumb, ["fit", "fill"], d.thumb),
-    info: typeof o.info === "boolean" ? o.info : d.info,
     sort: pick(o.sort, ["uploaded", "name", "status"], d.sort),
     dir: pick(o.dir, ["asc", "desc"], d.dir),
     status: pick(o.status, ["all", "in_review", "approved_internal", "published"], d.status),
   };
 }
 
-/** Literal classes (the Tailwind literal-class guard): S 240, M 320 (the size before this toolbar), L 480 minimum px. */
-export const GRID_COLUMNS: Record<VideoGridSize, string> = {
-  S: "[grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr))]",
-  M: "[grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr))]",
-  L: "[grid-template-columns:repeat(auto-fill,minmax(min(480px,100%),1fr))]",
-};
+/** D26: as many columns as fit, each tile at least 280px; one column on a phone. A literal class (the Tailwind literal-class guard). */
+export const GRID_CLASS = "[grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr))] max-[721px]:grid-cols-1";
 
 const STATUS_ORDER: Record<VideoReviewStatus, number> = { in_review: 0, approved_internal: 1, published: 2 };
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });

@@ -35,7 +35,7 @@ async function openViewer(parts: string[]) {
   const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><Probe /><VideoCollectionPanel projectId={PROJECT} role="editor" review={{ open: true, parts: parts as never }} /></QuincyQueryProvider>); });
   await flush();
-  const open = [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === "Open review")!;
+  const open = document.querySelector<HTMLElement>('[data-testid="video-card-open"]')!;
   await act(async () => { open.click(); });
   const deadline = Date.now() + 10_000;
   while (!document.querySelector('[role="dialog"] video')) { if (Date.now() > deadline) throw new Error("the viewer never mounted"); await flush(1); }

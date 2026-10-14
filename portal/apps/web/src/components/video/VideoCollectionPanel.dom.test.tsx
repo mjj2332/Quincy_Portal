@@ -8,6 +8,7 @@ import { resetVideoUploadStore, startVideoUpload } from "../../lib/video-upload-
 import { NOT_FAST_START_CAUTION, pluralCaution, TIMECODE_MISMATCH_CAUTION, checkVideoFile } from "../../lib/video-upload";
 import { announcePrincipalTerminal } from "../../lib/principal-terminal";
 import { useOptionalProjectQueryClient } from "../../lib/project-data";
+import { mockViewport } from "../../testing/viewport";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -51,10 +52,10 @@ const videoOf = (over: Record<string, unknown> = {}, v: Record<string, unknown> 
 
 let root: Root | null = null; let host: HTMLElement;
 async function flush(times = 8) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
-async function mount(videos: VideoDto[], parts: string[] = ["upload"], role: Role = "editor") {
+async function mount(videos: VideoDto[], parts: string[] = ["upload"], role: Role = "editor", deepLink?: React.ComponentProps<typeof VideoCollectionPanel>["deepLink"]) {
   apiGetMock.mockImplementation(async (path) => { if (path.endsWith("/videos")) return { videos }; throw new Error(`unrouted ${path}`); });
   if (!root) { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
-  await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role={role}><VideoCollectionPanel projectId={PROJECT} role={role} review={{ open: true, parts: parts as never }} /></QuincyQueryProvider>); });
+  await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role={role}><VideoCollectionPanel projectId={PROJECT} role={role} review={{ open: true, parts: parts as never }} {...(deepLink ? { deepLink } : {})} /></QuincyQueryProvider>); });
   await flush();
 }
 async function unmount() { if (root) await act(async () => { root!.unmount(); }); root = null; }
@@ -70,75 +71,60 @@ const button = (label: string | RegExp) => [...host.querySelectorAll("button")].
 const uploadButton = () => button(/^Upload \d+ films?$/);
 const rowsOf = () => [...host.querySelectorAll('[data-testid="new-film-row"]')];
 const rowText = (index = 0) => rowsOf()[index]?.textContent ?? "";
+const versionItem = () => document.querySelector('[data-testid="video-card-upload-version"]');
+async function openMenu() { await press(host.querySelector('[data-testid="video-card-menu"]')!); await flush(4); }
 async function press(el: Element | undefined) { await act(async () => { el!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); }); await flush(); }
 
 beforeEach(() => { FakeXhr.instances = []; apiGetMock.mockReset(); apiPostMock.mockReset(); vi.stubGlobal("XMLHttpRequest", FakeXhr); vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }))); auth.userId = "44444444-4444-4444-8444-444444444444"; });
 afterEach(async () => { await unmount(); resetVideoUploadStore(); document.body.replaceChildren(); vi.unstubAllGlobals(); });
 
-describe("Video cards (#741 4d-i)", () => {
-  it("shows version count, newest version, uploader, date, fps and duration, with the poster and a 'v2' badge", async () => {
+describe("Video tiles (#884, was the #741 4d-i cards)", () => {
+  const tile = () => host.querySelector('[data-testid="video-card"]')!;
+  it("is poster-first: poster, one-line title, Version and duration on the poster, and no card text or buttons", async () => {
     await mount([videoOf()]);
-    const card = host.querySelector('[data-testid="video-card"]')!;
-    expect(card.querySelector("h3")?.textContent).toBe("Main walkthrough");
-    expect(card.querySelector('[data-testid="video-card-meta"]')?.textContent).toBe("v2 by Mia Chen · 9 Oct 2026 · 25\u00a0fps");
-    expect(card.textContent).toContain("2 versions");
-    expect(card.textContent).toContain("2:14");
-    expect(card.textContent).toContain("v2");
-    expect(card.querySelector("img")?.getAttribute("src")).toBe(`/media/video/${ids.asset}/poster`);
-    expect(card.querySelector('[data-testid="video-card-poster"]')?.getAttribute("data-orientation")).toBe("landscape");
-    expect(card.textContent).toContain("Open review");
+    expect(tile().querySelector('[data-testid="video-card-open"]')?.textContent).toBe("Main walkthrough");
+    expect(tile().querySelector('[data-testid="video-card-version"]')?.textContent).toBe("v2");
+    expect(tile().textContent).toContain("2:14");
+    expect(tile().querySelector("img")?.getAttribute("src")).toBe(`/media/video/${ids.asset}/poster`);
+    expect(tile().querySelector('[data-testid="video-card-poster"]')?.getAttribute("data-fit")).toBe("contain");
+    expect(tile().textContent).not.toContain("Open review");
+    expect(tile().textContent).not.toContain("versions");
+    expect(tile().querySelector('[data-testid="video-card-meta"]')).toBeNull();
+    // The only buttons are the open control and the ⋯ menu.
+    expect([...tile().querySelectorAll("button")].map((b) => b.getAttribute("data-testid"))).toEqual(["video-card-open", "video-card-menu"]);
   });
 
-  it("shows an 'N open note(s)' badge only when the count is above zero", async () => {
+  it("shows the open-note count only above zero, and says it in words for a screen reader", async () => {
     await mount([videoOf({ latestNoteCount: 1 })], ["notes"]);
     const chip = () => host.querySelector('[data-testid="video-card-open-notes"]');
-    expect(chip()?.textContent).toBe("1 open note");
-    // On the versions row, not a row of its own, so cards with and without notes keep the same height.
-    expect(chip()?.closest('[data-testid="video-card-versions-row"]')).not.toBeNull();
+    expect(chip()?.textContent).toBe("1");
+    const summary = () => document.getElementById(tile().querySelector('[data-testid="video-card-open"]')!.getAttribute("aria-describedby")!)!.textContent;
+    expect(summary()).toBe("v2, 2:14, 1 open note on v2, In review");
     await unmount();
     await mount([videoOf({ latestNoteCount: 3 })], ["notes"]);
-    expect(chip()?.textContent).toBe("3 open notes");
+    expect(chip()?.textContent).toBe("3");
+    expect(summary()).toBe("v2, 2:14, 3 open notes on v2, In review");
     await unmount();
     await mount([videoOf({ latestNoteCount: 0 })], ["notes"]);
     expect(chip()).toBeNull();
     await unmount();
     await mount([videoOf({ latestNoteCount: null })], ["notes"]);
     expect(chip()).toBeNull();
-    expect(host.querySelector('[data-testid="video-card"]')!.textContent).not.toContain("open note");
+    expect(summary()).toBe("v2, 2:14, In review");
   });
 
-  it.each([[{ num: 30000, den: 1001 }, "29.97\u00a0fps"], [{ num: 24000, den: 1001 }, "23.976\u00a0fps"], [{ num: 25, den: 1 }, "25\u00a0fps"]])("reads %j as %s", async (fps, text) => {
-    await mount([videoOf({}, { fps })]);
-    expect(host.querySelector('[data-testid="video-card-meta"]')?.textContent).toContain(text);
-  });
-
-  it("a single version reads '1 version · by …'; a posterless card says so; a 9:16 film is flagged portrait; Premium shows", async () => {
+  it("a posterless tile says so, a 9:16 film stays letterboxed (never cropped), and Premium shows", async () => {
     await mount([videoOf({ premium: true, versions: [versionOf({ version: 1, width: 1080, height: 1920, posterUrl: null, hasPoster: false })] })]);
-    expect(host.querySelector('[data-testid="video-card-meta"]')?.textContent).toMatch(/^by Mia Chen/);
-    expect(button("1 version")).toBeDefined();
     expect(host.querySelector('[data-testid="video-card-no-poster"]')?.textContent).toBe("No poster");
-    expect(host.querySelector('[data-testid="video-card-poster"]')?.getAttribute("data-orientation")).toBe("portrait");
+    expect(tile().querySelector('[data-testid="video-card-poster"]')?.getAttribute("data-fit")).toBe("contain");
     expect(host.textContent).toContain("Premium");
   });
 
-  it("the versions trigger is a real Button with the coarse tap-target idiom", async () => {
-    await mount([videoOf()]);
-    const trigger = button("2 versions")!;
-    expect(trigger.className).toContain("pointer-coarse:min-h-11");
-    expect(trigger.className).toContain("max-[721px]:min-h-11");
-    expect(trigger.closest('[data-testid="video-card-meta"]')).toBeNull();
-  });
-
-  it("the duration badge has a hairline border so it stays visible on pillarbox bars", async () => {
-    await mount([videoOf()]);
-    expect(host.querySelector('[data-testid="video-card-poster"]')!.innerHTML).toMatch(/border-invert-foreground\/20[^"]*"[^>]*>2:14/);
-  });
-
-  it("the versions list shows every version's number, uploader and date", async () => {
-    await mount([videoOf()]);
-    await press(button("2 versions"));
-    const popup = document.querySelector('[data-slot="popover-content"]')!;
-    expect(popup.textContent).toContain("v2"); expect(popup.textContent).toContain("Mia Chen"); expect(popup.textContent).toContain("v1"); expect(popup.textContent).toContain("Terry"); expect(popup.textContent).toContain("9 Oct 2026");
+  it("puts the Review status on the poster in a short word, with the full one for a screen reader", async () => {
+    await mount([videoOf({ reviewStatus: "approved_internal" })]);
+    expect(tile().querySelector('[data-testid="video-card-status"]')?.textContent).toBe("Approved");
+    const open = tile().querySelector('[data-testid="video-card-open"]')!;
+    expect(document.getElementById(open.getAttribute("aria-describedby")!)!.textContent).toContain("Approved (internal)");
   });
 
   it("someone else's upload reads '{name} is uploading v3' and offers no Upload button", async () => {
@@ -148,13 +134,46 @@ describe("Video cards (#741 4d-i)", () => {
     expect(button("Cancel upload")).toBeUndefined(); // only the owner may cancel
   });
 
-  it("offers 'Upload v3' only when the upload part is on", async () => {
+  it("offers Upload in the header, and 'Upload new Version…' in the ⋯ menu, only when the upload part is on", async () => {
     await mount([videoOf()], ["upload"]);
-    expect(button("Upload v3")).toBeDefined();
+    expect(host.querySelector('[data-testid="video-films-header"] [data-testid="new-film-pick"]')?.textContent).toBe("Upload");
+    await press(host.querySelector('[data-testid="video-card-menu"]')!);
+    expect(document.querySelector('[data-testid="video-card-upload-version"]')?.textContent).toBe("Upload new Version…");
     await unmount();
     await mount([videoOf()], ["notes"]);
-    expect(button("Upload v3")).toBeUndefined();
+    expect(host.querySelector('[data-testid="new-film-pick"]')).toBeNull();
     expect(host.querySelector('[data-testid="new-film-dropzone"]')).toBeNull();
+    await press(host.querySelector('[data-testid="video-card-menu"]')!);
+    expect(document.querySelector('[data-testid="video-card-upload-version"]')).toBeNull();
+  });
+
+  it.each([375, 1280])("has Upload in the header at %ipx wide, on a phone and on a desktop (D25)", async (width) => {
+    const viewport = mockViewport({ width });
+    try {
+      await mount([videoOf()], ["upload"]);
+      const upload = host.querySelector<HTMLElement>('[data-testid="video-films-header"] [data-testid="new-film-pick"]')!;
+      expect(upload.textContent).toBe("Upload");
+      expect(upload.className).toContain("min-h-11");
+    } finally { viewport.restore(); }
+  });
+
+  it("opens the viewer on the Version picked in the ⋯ menu's Versions submenu, and on the current one by default", async () => {
+    const changes: Array<[unknown, unknown]> = [];
+    await mount([videoOf()], ["upload"], "editor", { selection: null, onChange: (selection, from) => { changes.push([selection, from]); } });
+    await press(host.querySelector('[data-testid="video-card-open"]')!);
+    expect(changes.at(-1)![0]).toEqual({ id: ids.video, version: 2 });
+    await press(host.querySelector('[data-testid="video-card-menu"]')!); await flush(4);
+    await press(document.querySelector('[data-testid="video-card-versions"]')!); await flush(4);
+    await press(document.querySelector('[data-testid="video-card-version-1"]')!);
+    expect(changes.at(-1)![0]).toEqual({ id: ids.video, version: 1 });
+  });
+
+  it("keeps the big drop box for the empty state only: with films, Upload sits in the header and the body takes drops", async () => {
+    await mount([videoOf()], ["upload"]);
+    expect(host.querySelector('[data-testid="new-film-dropzone"]')).toBeNull();
+    await unmount();
+    await mount([], ["upload"]);
+    expect(host.querySelector('[data-testid="new-film-dropzone"]')).not.toBeNull();
   });
 
   it("shows the empty state, with the first-film prompt only when uploads are on", async () => {
@@ -170,6 +189,8 @@ describe("Uploader (#741 4d-i)", () => {
     const accepts = [...host.querySelectorAll<HTMLInputElement>('[data-testid="file-pick-input"]')].map((input) => input.getAttribute("accept"));
     expect(accepts).toHaveLength(2);
     for (const accept of accepts) expect(accept).toBe(".mp4,.mov,video/mp4,video/quicktime");
+    await unmount();
+    await mount([], ["upload"]);
     const uploader = host.querySelector('[data-testid="new-film-uploader"]')!.textContent ?? "";
     expect(uploader).toContain("Drop MP4 or MOV films here");
     expect(host.textContent).toContain("H.264 MP4 or MOV");
@@ -304,7 +325,8 @@ describe("Uploader (#741 4d-i)", () => {
     await pick(await good(), host.querySelector('[data-testid="video-card"]')!);
     expect(apiPostMock.mock.calls[0]![1]).toMatchObject({ videoId: ids.video }); expect(apiPostMock.mock.calls[0]![1]).not.toHaveProperty("title");
     expect(host.querySelector('[data-testid="video-card-uploading"]')?.textContent).toBe("Uploading v3 · 0%");
-    expect(button(/^Upload v/)).toBeUndefined();
+    await openMenu();
+    expect(versionItem()).toBeNull();
   });
 
   it("has no Film title field: a row is the file's facts, its cautions and Remove (#828)", async () => {
@@ -441,7 +463,8 @@ describe("Uploader (#741 4d-i)", () => {
     apiPostMock.mockRejectedValueOnce(new ApiError("You already have three uploads in progress in this project. Finish or cancel one first.", 429, { code: "too_many_uploads" }));
     await pick(await good(), host.querySelector('[data-testid="video-card"]')!);
     expect(host.querySelector('[data-testid="video-card"]')?.textContent).toContain("You already have three uploads in progress");
-    expect(button("Upload v3")).toBeDefined();
+    await openMenu();
+    expect(versionItem()).not.toBeNull();
     expect(host.querySelector('[data-testid="video-upload-tray"]')).toBeNull();
   });
 });
@@ -459,7 +482,7 @@ describe("Identity changes (#741 4d-i, Sol review)", () => {
     auth.userId = "55555555-5555-4555-8555-555555555555";
     await mount([videoOf()]);
     apiPostMock.mockResolvedValue(RESERVED());
-    await pick(await good(), host.querySelector('[data-testid="new-film-uploader"]')!); await press(uploadButton());
+    await pick(await good(), host.querySelector('[data-testid="video-films-header"]')!); await press(uploadButton());
     expect(apiPostMock).toHaveBeenCalledTimes(1);
     const mine = FakeXhr.instances[0]!;
     release(); await flush(12);
@@ -485,7 +508,8 @@ describe("Cancel and the list (#741 4d-i, #751)", () => {
     releaseAbort(); await flush(16);
     expect(host.querySelector('[data-testid="video-card-uploading-other"]')).toBeNull();
     expect(host.querySelector('[data-testid="video-card-uploading"]')).toBeNull();
-    expect(button("Upload v3")).toBeDefined();
+    await openMenu();
+    expect(versionItem()).not.toBeNull();
   });
 });
 

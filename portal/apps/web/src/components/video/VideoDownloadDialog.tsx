@@ -1,0 +1,32 @@
+import { videoVersionDownloadUrl, type VideoDto } from "@quincy/shared";
+import { buttonClasses } from "../quincy/Button";
+import { SheetCloseButton } from "../quincy/SheetCloseButton";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../reui/dialog";
+import { Item, ItemContent, ItemGroup } from "../reui/item";
+
+/**
+ * Download the ticked films (#884, D24, story 22): the selection bar's Download opens this, owned by the collection panel. It lists one link per film, to that film's current Version
+ * (`videoVersionDownloadUrl`, the route the card's old Download used), so there is no new server route and no bundle. The films are resolved against the whole collection by the caller.
+ * Reuse: `reui/dialog`, `reui/item`, `quincy/Button`'s classes on the anchors.
+ */
+export function VideoDownloadDialog({ projectId, videos, open, onOpenChange }: { projectId: string; videos: readonly VideoDto[]; open: boolean; onOpenChange: (open: boolean) => void }) {
+  return <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent data-testid="video-download-dialog" showCloseButton={false} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col gap-[var(--space-4)] sm:max-w-[480px]">
+      <DialogHeader>
+        <DialogTitle>Download</DialogTitle>
+        <DialogDescription>{videos.length === 1 ? "The current Version of the selected film." : `The current Version of each of the ${videos.length} selected films.`}</DialogDescription>
+      </DialogHeader>
+      <ItemGroup className="min-h-0 overflow-y-auto">
+        {videos.map((video) => {
+          const current = video.versions.find((version) => version.current) ?? video.versions[0]!;
+          return <Item key={video.id} variant="outline" role="listitem">
+            <ItemContent>
+              <a className={buttonClasses("text", { className: "min-h-11 justify-start" })} href={videoVersionDownloadUrl(projectId, video.currentAssetId)} download>{`${video.title} · v${current.version}`}</a>
+            </ItemContent>
+          </Item>;
+        })}
+      </ItemGroup>
+      <SheetCloseButton label="Close" data-testid="video-download-dialog-close" />
+    </DialogContent>
+  </Dialog>;
+}

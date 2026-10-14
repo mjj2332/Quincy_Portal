@@ -41,7 +41,7 @@ it("a viewer opened while the chunk was still loading is not remounted by a late
   root = createRoot(host);
   await act(async () => { root!.render(tree({ open: true, parts: [] })); });
   await flush();
-  const open = [...document.querySelectorAll("button")].find((b) => b.textContent === "Open review")!;
+  const open = document.querySelector<HTMLElement>('[data-testid="video-card-open"]')!;
   await act(async () => { open.click(); });
   const deadline = Date.now() + 10_000; // lazy viewer chunk: wait on the clock, not a tick count
   while (!document.querySelector('[role="dialog"]')) { if (Date.now() > deadline) throw new Error("the review viewer never mounted"); await flush(1); }

@@ -10,14 +10,14 @@ import { useReviewLinkState, type ReviewLinksUi } from "./use-review-links-ui";
  * reveal) is `ReviewLinksDialogHost`, mounted by `ReviewLinksScope` above the tab switch. Mounted by `VideoCollectionPanel`; renders nothing
  * unless the `links` part is on and the role may share Videos. Reuse ledger: docs/plans/741-11b-ledger.md.
  */
-export function ReviewLinksHost({ ui, videos, onBarHeight }: { ui: ReviewLinksUi; videos: VideoDto[]; onBarHeight?: (height: number) => void }) {
+export function ReviewLinksHost({ ui, videos, onBarHeight, onDownload }: { ui: ReviewLinksUi; videos: VideoDto[]; onBarHeight?: (height: number) => void; /** The selection bar's Download (#884), present when staff may download. */ onDownload?: (selectedIds: string[]) => void }) {
   const { store } = ui;
   const state = useReviewLinkState(store);
   const videoIds = videos.map((video) => video.id).join(",");
   // A Video that left the Project takes its tick with it.
   useEffect(() => { store.pruneSelection(videoIds === "" ? [] : videoIds.split(",")); }, [store, videoIds]);
   if (!ui.enabled) return null;
-  return ui.canWrite && state.selection.size > 0 ? <ReviewLinkSelectionBar count={state.selection.size} onCreate={store.openCreate} onClear={store.clearSelection} {...(onBarHeight ? { onHeight: onBarHeight } : {})} /> : null;
+  return ui.canWrite && state.selection.size > 0 ? <ReviewLinkSelectionBar count={state.selection.size} onCreate={store.openCreate} onClear={store.clearSelection} {...(onDownload ? { onDownload: () => { onDownload([...state.selection]); } } : {})} {...(onBarHeight ? { onHeight: onBarHeight } : {})} /> : null;
 }
 
 /** The "Review links" button, in the Films header (`VideoCollectionPanel`); renders nothing unless Review links are on. */

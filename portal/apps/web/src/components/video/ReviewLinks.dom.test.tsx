@@ -56,7 +56,7 @@ describe("gating: shipped dark, behind the links part and shareVideo", () => {
     await mount({ role: "external_editor" });
     expect(q('[data-testid="review-links-open"]')?.textContent).toContain("Review links");
     expect(checkbox("Select Main walkthrough")).not.toBeNull();
-    expect(text(q('[data-testid="video-card-grid"]'))).toContain("Smith family");
+    expect(q('[data-testid="video-card-linked"]', all('[data-testid="video-card"]')[0]!)).not.toBeNull();
     expect(apiGetMock.mock.calls.some(([path]) => path.endsWith("/review-links"))).toBe(true);
   });
   it("shows nothing to a Photographer (no shareVideo)", async () => {
@@ -73,9 +73,18 @@ describe("gating: shipped dark, behind the links part and shareVideo", () => {
 
 const cardMenu = (videoId: string) => q(`[data-testid="video-card-menu"][data-video-id="${videoId}"]`);
 const menuItemCreate = () => q('[data-testid="video-card-create-review-link"]');
+const linksTrigger = () => q('[data-testid="video-card-links"]');
 async function openCardMenu(videoId: string) {
   await act(async () => { cardMenu(videoId)!.focus(); await Promise.resolve(); });
   await act(async () => { cardMenu(videoId)!.click(); await Promise.resolve(); await Promise.resolve(); });
+  await flush(20);
+}
+/** The ⋯ menu, then its Review links submenu (D23): Create Review link… lives in the submenu. */
+async function openLinksSubmenu(videoId: string) {
+  await openCardMenu(videoId);
+  const trigger = linksTrigger();
+  if (!trigger) return;
+  await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); });
   await flush(20);
 }
 
@@ -83,8 +92,8 @@ describe("create from a Video card's menu (#834)", () => {
   it("opens the create dialog for that film alone with its current Version, leaves the ticks, and posts exactly that", async () => {
     apiPostMock.mockResolvedValue({ link: linkOf(), url: `https://quincy.test/d/review?link=${L1}#t=tok123` });
     await mount(); await selectFilms("Teaser");
-    await openCardMenu(V1);
-    expect(menuItemCreate()?.textContent).toBe("Create Review link");
+    await openLinksSubmenu(V1);
+    expect(menuItemCreate()?.textContent).toBe("Create Review link…");
     await act(async () => { menuItemCreate()!.click(); await Promise.resolve(); });
     await flush(20);
     const d = dialog()!;
@@ -101,7 +110,7 @@ describe("create from a Video card's menu (#834)", () => {
   });
   it("shows the ticked films again when the selection bar opens the dialog afterwards", async () => {
     await mount(); await selectFilms("Teaser");
-    await openCardMenu(V1);
+    await openLinksSubmenu(V1);
     await act(async () => { menuItemCreate()!.click(); await Promise.resolve(); });
     await flush(20);
     await press(buttonIn(dialog(), "Cancel"));
@@ -111,7 +120,7 @@ describe("create from a Video card's menu (#834)", () => {
   });
   it("returns focus to that card's menu button when the dialog closes", async () => {
     await mount();
-    await openCardMenu(V1);
+    await openLinksSubmenu(V1);
     await act(async () => { menuItemCreate()!.click(); await Promise.resolve(); });
     await flush(20);
     await press(buttonIn(dialog(), "Cancel"));
@@ -120,7 +129,7 @@ describe("create from a Video card's menu (#834)", () => {
   });
   it("does not carry a card's return target into a later opening from the header", async () => {
     await mount();
-    await openCardMenu(V1);
+    await openLinksSubmenu(V1);
     await act(async () => { menuItemCreate()!.click(); await Promise.resolve(); });
     await flush(20);
     await press(buttonIn(dialog(), "Cancel"));
@@ -137,16 +146,16 @@ describe("create from a Video card's menu (#834)", () => {
   });
   it("offers Create Review link to an External editor, and not to a Photographer, with the links part off, or on an archived Project (the menu itself stays, #866)", async () => {
     await mount({ role: "external_editor" });
-    await openCardMenu(V1); expect(menuItemCreate()).not.toBeNull();
+    await openLinksSubmenu(V1); expect(menuItemCreate()).not.toBeNull();
     await unmount();
     await mount({ role: "photographer" });
-    await openCardMenu(V1); expect(cardMenu(V1)).not.toBeNull(); expect(menuItemCreate()).toBeNull();
+    await openLinksSubmenu(V1); expect(cardMenu(V1)).not.toBeNull(); expect(linksTrigger()).toBeNull(); expect(menuItemCreate()).toBeNull();
     await unmount();
     await mount({ parts: ["upload"] });
-    await openCardMenu(V1); expect(cardMenu(V1)).not.toBeNull(); expect(menuItemCreate()).toBeNull();
+    await openLinksSubmenu(V1); expect(cardMenu(V1)).not.toBeNull(); expect(linksTrigger()).toBeNull(); expect(menuItemCreate()).toBeNull();
     await unmount();
     await mount({ archived: true });
-    await openCardMenu(V1); expect(cardMenu(V1)).not.toBeNull(); expect(menuItemCreate()).toBeNull();
+    await openLinksSubmenu(V1); expect(cardMenu(V1)).not.toBeNull(); expect(linksTrigger()).not.toBeNull(); expect(menuItemCreate()).toBeNull();
   });
 });
 
@@ -206,15 +215,28 @@ describe("the list", () => {
     expect(q('[role="alert"]', dialog() as ParentNode)).not.toBeNull();
     expect(buttonIn(dialog(), "Retry")).toBeDefined();
   });
-  it("a Video's card carries up to two link chips and +N, and a chip opens that link's detail", async () => {
+  it("a Video's tile shows a link icon for an active link only, and the Review links submenu lists the active links, All Review links and Create (D23)", async () => {
     state.links = [linkOf(), linkOf({ id: L2, label: "Jones", status: "expired" }), linkOf({ id: L3, label: "Wu", status: "revoked", revokedAt: "2026-10-09T05:00:00.000Z" })];
     await mount();
-    const chips = q('[data-testid="video-card-link-chips"]', all('[data-testid="video-card"]')[0]!);
-    expect(text(chips)).toContain("Smith family · Active"); expect(text(chips)).toContain("Jones · Expired"); expect(text(chips)).not.toContain("Wu"); expect(text(chips)).toContain("+1");
-    expect(q('[data-testid="video-card-link-chips"]', all('[data-testid="video-card"]')[1]!)).toBeNull();
-    await press(buttonIn(chips, /Smith family/));
+    const first = all('[data-testid="video-card"]')[0]!;
+    expect(q('[data-testid="video-card-linked"]', first)).not.toBeNull();
+    expect(q('[data-testid="video-card-linked"]', all('[data-testid="video-card"]')[1]!)).toBeNull();
+    await openLinksSubmenu(V1);
+    expect(all('[data-testid="video-card-link-chip"]').map((el) => el.textContent)).toEqual(["Smith family"]);
+    expect(q('[data-testid="video-card-links-all"]')?.textContent).toBe("All Review links");
+    await act(async () => { q('[data-testid="video-card-link-chip"]')!.click(); await Promise.resolve(); });
+    await flush(20);
     expect(q('[data-testid="review-link-detail"]')).not.toBeNull();
     expect(text(dialog())).toContain("Smith family");
+  });
+  it("a tile with only an expired link shows no link icon, and 'All Review links' opens the list", async () => {
+    state.links = [linkOf({ status: "expired" })];
+    await mount();
+    expect(q('[data-testid="video-card-linked"]')).toBeNull();
+    await openLinksSubmenu(V1);
+    await act(async () => { q('[data-testid="video-card-links-all"]')!.click(); await Promise.resolve(); });
+    await flush(20);
+    expect(q('[data-testid="review-link-list"]') ?? dialog()).not.toBeNull();
   });
 });
 
