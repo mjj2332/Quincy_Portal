@@ -38,6 +38,17 @@ async function confirmedFrame(clock: VideoFrameClock): Promise<number | "timeout
   try { return await Promise.race([clock.awaitConfirmedFrame(), timedOut]); } finally { clearTimeout(timer); }
 }
 
+/** A phone note is stamped when typing begins (#879, D10): the editor is a lazy chunk, so focus it as soon as it is in the form. Gives up after ~2s. */
+function focusEditorWhenReady(onFocused?: () => void) {
+  const started = Date.now();
+  const tick = () => {
+    const field = document.querySelector<HTMLElement>('[data-testid="guest-composer-body"]:is(textarea, input), [data-testid="guest-composer-body"] :is([contenteditable="true"], textarea, input)');
+    if (field) { field.focus({ preventScroll: true }); onFocused?.(); return; }
+    if (Date.now() - started < 2000) requestAnimationFrame(tick);
+  };
+  tick();
+}
+
 /**
  * The guest's note composer (#741 13c): the draft (body, in / out marks, an optional drawing), the form that edits it, and the drawing layer on the picture. It is the guest twin of the
  * staff composer + `useVideoMarkup`, which are bound to the staff form store and `lib/api` and so cannot be imported here (`guest-boundary.guard.test.ts`); the pieces that are pure are
@@ -107,6 +118,9 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
   const frameNow = useFrameClockSelector(clock, (state) => (state.targetFrame === null ? state.frame : -1), -1);
   const drawing = phase === "drawing";
   const here = useCallback(() => (clock ? frameOnScreen(clock.getState()) : 0), [clock]);
+  // A new note on a phone: pause on the frame it will anchor to and put the cursor in the field (the keyboard comes up), D10.
+  const opening = isOpen && target === null;
+  useEffect(() => { if (opening && compact) { clock?.pause(); focusEditorWhenReady(); } }, [opening]); // eslint-disable-line react-hooks/exhaustive-deps -- once per opening
 
   // `useMarkup` is called below (it needs `items`), so `reset` reaches its history through a ref.
   const resetHistoryRef = useRef<() => void>(() => undefined);
@@ -256,7 +270,7 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
         onWidthChange={(width) => { setPen((current) => ({ ...current, width })); }}
         canUndo={markup.canUndo} canRedo={markup.canRedo} canClear={items.length > 0}
         onUndo={markup.undo} onRedo={markup.redo} onClear={markup.clear}
-        trailing={<Button type="button" data-testid="guest-markup-done" className={TOUCH} onClick={() => { setPhase("off"); }}>Done</Button>}
+        trailing={<Button type="button" data-testid="guest-markup-done" className={TOUCH} onClick={() => { setPhase("off"); if (compact) focusEditorWhenReady(); }}>Done</Button>}
       />
     </div>
     : null;
@@ -275,14 +289,14 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
     <div className="flex flex-wrap gap-[var(--space-2)]">
       <Button type="button" variant="outline" size="sm" data-testid="guest-composer-mark-in" className={TOUCH} disabled={clock === null || marksLocked || pending} onClick={() => { if (!pending) setMarks((current) => markFrame(current, "in", here())); }}>Mark in</Button>
       <Button type="button" variant="outline" size="sm" data-testid="guest-composer-mark-out" className={TOUCH} disabled={clock === null || marksLocked || pending} onClick={() => { if (!pending) setMarks((current) => markFrame(current, "out", here())); }}>Mark out</Button>
-      {markupAllowed && <Button type="button" variant={drawing ? "default" : "outline"} size="sm" data-testid="guest-composer-draw" aria-pressed={drawing} className={TOUCH} disabled={pending || (!drawing && (clock === null || phase !== "off" || framesChanged))} onClick={() => { if (drawing) setPhase("off"); else void startDrawing(); }}><PencilIcon aria-hidden="true" />{drawLabel}</Button>}
+      {markupAllowed && <Button type="button" variant={drawing ? "default" : "outline"} size="sm" data-testid="guest-composer-draw" aria-pressed={drawing} className={TOUCH} disabled={pending || (!drawing && (clock === null || phase !== "off" || framesChanged))} onClick={() => { if (compact) { const active = document.activeElement; if (active instanceof HTMLElement && active !== document.body) active.blur(); } if (drawing) setPhase("off"); else void startDrawing(); }}><PencilIcon aria-hidden="true" />{drawLabel}</Button>}
     </div>
     {hint !== null && <p data-testid="guest-composer-hint" className="m-0 text-foreground-secondary [font:var(--type-label)]">{hint}</p>}
     {(items.length > 0 || keptDrawing || (removed && hadDrawing)) && <p data-testid="guest-composer-drawing" className="m-0 flex flex-wrap items-center gap-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">
       <span>{items.length > 0 ? `Drawing attached (${items.length} ${items.length === 1 ? "mark" : "marks"})` : keptDrawing ? "This note has a drawing" : "The drawing will be removed when you save"}</span>
       {markupAllowed && (items.length > 0 || keptDrawing) && <Button type="button" variant="ghost" size="sm" data-testid="guest-composer-remove-drawing" className={TOUCH} disabled={pending} onClick={() => { setItems(NO_ITEMS); setDrawFrame(null); if (hadDrawing) setRemoved(true); }}>Remove drawing</Button>}
     </p>}
-    <GuestNoteField testId="guest-composer-body" label="Your note" placeholder="Add a note at this frame…" media={media} value={doc} disabled={pending} onChange={setDoc} onUploadingChange={setUploading} />
+    <div className="max-[721px]:[&_[contenteditable]]:text-[length:var(--text-base)]"><GuestNoteField testId="guest-composer-body" label="Your note" placeholder="Add a note at this frame…" media={media} value={doc} disabled={pending} onChange={setDoc} onUploadingChange={setUploading} /></div>
     {target !== null && latest !== null && latest.revision !== target.baseRevision && <p data-testid="guest-composer-latest" className="m-0 whitespace-pre-wrap text-foreground-secondary [font:var(--type-body-sm)] [overflow-wrap:anywhere]">{`Latest saved version: ${latest.body}`}</p>}
     {problem !== null && <p role="alert" data-testid="guest-composer-problem" className="m-0 text-destructive [font:var(--type-body-sm)]">{problem}</p>}
     <div className="flex flex-wrap justify-end gap-[var(--space-2)]">

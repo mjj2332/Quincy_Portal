@@ -294,14 +294,14 @@ describe("the video screen", () => {
     expect(option.closest('[data-surface="inverse"]')).not.toBeNull();
   });
 
-  it("portals the phone notes drawer inside the inverse scope (#877)", async () => {
+  it("keeps the phone sheet and its Versions and action sheets inside the inverse scope (#877, #879)", async () => {
     await viewport.set({ width: 390, coarse: true });
     notes = [note()];
     videos = [videoOf(1)];
     await open();
-    await click(button("Notes"));
-    const drawer = document.querySelector<HTMLElement>('[data-testid="guest-notes-drawer"]')!;
-    expect(drawer.closest('[data-surface="inverse"]')).not.toBeNull();
+    expect(byId("video-review-pane")!.closest('[data-surface="inverse"]')).not.toBeNull();
+    await click(byId("video-version-chip") ?? undefined);
+    expect(byId("video-versions-sheet")!.closest('[data-surface="inverse"]')).not.toBeNull();
   });
 
   it("draws the watermark only on a premium video that is not unlocked", async () => {
@@ -354,26 +354,17 @@ describe("the video screen", () => {
     expect(host.querySelector("textarea")).toBeNull();
   });
 
-  it("puts the notes in a bottom drawer on a phone", async () => {
+  it("puts the notes in a sheet under the film on a phone: the list is mounted, with its count in the head, and no drawer or Notes button", async () => {
     await viewport.set({ width: 390, coarse: true });
     notes = [note()];
     videos = [videoOf(1)];
     await open();
-    expect(byId("guest-notes-panel")).toBeNull();
-    const trigger = button("Notes")!;
-    expect(trigger.getAttribute("aria-label")).toBe("Notes, 1");
-    expect(trigger.textContent?.trim()).toBe("1");
-    await click(trigger);
-    const drawer = document.querySelector('[data-testid="guest-notes-drawer"][data-side="bottom"]')!;
-    expect(drawer).not.toBeNull();
+    expect(byId("guest-notes-panel")).not.toBeNull();
+    expect(byId("video-review-pane")!.getAttribute("data-stop")).toBe("half");
+    expect(byId("guest-notes-drawer")).toBeNull();
+    expect(button("Notes") ?? null).toBeNull();
     expect(document.body.textContent).toContain("Trim the opening");
-    const heading = drawer.querySelector<HTMLElement>('[data-testid="guest-notes-heading"]')!;
-    expect(heading.textContent).toBe("Notes 1");
-    const closes = drawer.querySelectorAll<HTMLElement>("button[aria-label^=\"Close\"]");
-    expect(closes).toHaveLength(1);
-    expect(closes[0]!.getAttribute("data-testid")).toBe("guest-notes-close");
-    await click(closes[0]!);
-    await vi.waitFor(() => { expect(document.querySelector('[data-testid="guest-notes-drawer"][data-open]')).toBeNull(); });
+    expect(byId("guest-notes-heading")!.textContent).toBe("Notes 1");
   });
 
   it("shows the notes count beside the desktop heading", async () => {
@@ -432,18 +423,18 @@ describe("the notes pane (#859)", () => {
     expect(byId("guest-bar")!.contains(byId("guest-delivery"))).toBe(false);
   });
 
-  it("a phone keeps the bar one non-wrapping row: no basis-full, a short Version label, 44px icon-only Back and Social (#877 S2)", async () => {
+  it("a phone gets the shared header: Back (icon), the title with the Version chip, no Select, no prev/next, and the delivery row moves into the sheet (#879)", async () => {
     await viewport.set({ width: 390, coarse: true });
     videos = [videoOf(1)];
     await open();
-    const bar = byId("guest-bar")!;
-    expect(bar.className).toContain("flex-nowrap");
-    expect(bar.className).not.toContain("flex-wrap");
-    expect(bar.outerHTML).not.toContain("basis-full");
-    expect(byId("guest-version-trigger")!.textContent).toMatch(/^v\d+/);
-    expect(byId("guest-delivery")!.parentElement!.contains(bar)).toBe(true);
+    const bar = byId("review-phone-bar")!;
+    expect(bar).not.toBeNull();
+    expect(byId("guest-bar")).toBeNull();
+    expect(byId("guest-version-trigger")).toBeNull();
+    expect(byId("video-version-chip")!.textContent).toMatch(/^v\d+/);
     expect(bar.contains(byId("guest-delivery"))).toBe(false);
-    expect(byId("guest-version-trigger")!.textContent).not.toContain("latest");
+    expect(byId("video-review-pane")!.contains(byId("guest-delivery"))).toBe(true);
+    expect(byId("guest-video-title")!.textContent).toBeTruthy();
   });
 
   it("the toggle collapses and restores the pane without remounting the film, and saves the choice", async () => {
@@ -513,13 +504,13 @@ describe("the notes pane (#859)", () => {
     expect(toggle()!.getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("a phone keeps the drawer: no toggle, no handle, no pane column", async () => {
+  it("a phone keeps the sheet: no toggle and no resize handle", async () => {
     await viewport.set({ width: 390, coarse: true });
     videos = [videoOf(1)];
     await open();
     expect(toggle()).toBeNull();
     expect(handle()).toBeNull();
-    expect(pane()).toBeNull();
+    expect(pane()).not.toBeNull();
   });
 
   it("puts notices and the video screen in one bounded column, so a notice shortens the screen instead of overflowing", async () => {
@@ -1222,5 +1213,62 @@ describe("Not you? Sign out (#854)", () => {
     expect(host.querySelector('[role="alert"]')!.textContent).toContain("Couldn't sign out. Try again.");
     expect(byId("guest-identity")!.textContent).toContain("Reviewing as Sam");
     expect(calls.filter((call) => call.method === "POST")).toHaveLength(0);
+  });
+});
+
+describe("the phone review screen (#879)", () => {
+  const withAllow = (allow: Partial<typeof SESSION.link.allow>, over: Record<string, unknown> = {}) => ({ ...SESSION, ...over, link: { ...SESSION.link, allow: { ...SESSION.link.allow, ...allow } } });
+  const serve = (session: unknown, summaries?: unknown) => {
+    extra = (url) => {
+      const base = `/d/api/links/${LINK}`;
+      if (url === `${base}/session`) return json(session);
+      if (summaries !== undefined && url.includes("/version-summaries")) return json(summaries);
+      return undefined;
+    };
+  };
+  beforeEach(async () => { await viewport.set({ width: 390, coarse: true }); });
+
+  it("shows Approve in the header where the link allows it, and not Previous or Next video", async () => {
+    serve(withAllow({ approve: true }, { verified: true, email: "g@example.com", name: "Gina" }));
+    await open(`?link=${LINK}`);
+    await click(button("Open Film 1"));
+    expect(byId("review-phone-bar")!.contains(byId("guest-approve"))).toBe(true);
+    expect(byId("guest-approve")!.textContent).toBe("Approve");
+    expect(button("Previous video") ?? null).toBeNull();
+    expect(button("Next video") ?? null).toBeNull();
+  });
+
+  it("reads \"✓ Approved\" once the Version carries an approval", async () => {
+    serve(withAllow({ approve: true }, { verified: true, email: "g@example.com", name: "Gina" }));
+    videos = [videoOf(1, { versions: [versionOf(10, { decision: { value: "approved", revision: 1, at: "2026-10-09T01:00:00.000Z", self: true } })] })];
+    await open(`?link=${LINK}`);
+    expect(byId("guest-approved")!.textContent).toContain("✓ Approved");
+    expect(byId("guest-approve")).toBeNull();
+  });
+
+  it("the chip opens the Versions sheet with dates and open counts from the read, choosing a row switches Version, and focus returns to the chip", async () => {
+    videos = [videoOf(1, { versions: [versionOf(11), versionOf(10)] })];
+    serve(SESSION, { versions: [{ assetId: asset(11), version: 11, createdAt: "2026-10-09T01:00:00.000Z", openNoteCount: 3 }, { assetId: asset(10), version: 10, createdAt: "2026-10-01T01:00:00.000Z", openNoteCount: 0 }] });
+    await open(`?link=${LINK}`);
+    const chip = byId("video-version-chip")!;
+    expect(chip.textContent).toContain("v11 · latest");
+    await click(chip);
+    expect(requests().some((url) => url.endsWith(`/videos/${vid(1)}/version-summaries`))).toBe(true);
+    const rows = [...document.querySelectorAll<HTMLElement>('[data-testid="video-version-row"]')];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.textContent).toContain("3 open");
+    await click(rows[1]);
+    expect(byId("video-version-chip")!.textContent).toContain("v10");
+    expect(document.activeElement).toBe(byId("video-version-chip"));
+  });
+
+  it("the ⋯ sheet offers Social preview when the Project has overlays, and Download only where the Version has a download URL", async () => {
+    socialOverlays = [{ id: "aaaaaaaa-0000-4000-8000-000000000001", name: "Instagram", imageUrl: "/social-overlay-images/aaaaaaaa-0000-4000-8000-000000000001/aaaaaaaa-0000-4000-8000-000000000002" } as GuestSocialOverlay];
+    serve(withAllow({ download: true }, { verified: true, email: "g@example.com", name: "Gina" }));
+    videos = [videoOf(1, { versions: [versionOf(10, { released: true, downloadUrl: "/d/api/links/x/download" })] })];
+    await open(`?link=${LINK}`);
+    await click(byId("video-header-menu") ?? undefined);
+    expect(document.querySelector('[data-testid="guest-social-toggle"]')).not.toBeNull();
+    expect(document.querySelector<HTMLAnchorElement>('a[data-testid="guest-download"]')!.getAttribute("href")).toBe("/d/api/links/x/download");
   });
 });

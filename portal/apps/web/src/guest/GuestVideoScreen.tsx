@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Check, ChevronLeft, ChevronRight, MessageSquare, MessageSquareWarning, Smartphone } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, DownloadIcon, MessageSquareWarning, Smartphone } from "lucide-react";
 import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto } from "@quincy/shared";
 import { OverlayContainerContext } from "../components/OverlayContainerContext";
 import { useFrameLabel } from "../lib/time-format-prefs";
@@ -8,8 +8,12 @@ import type { VideoFrameClock } from "../lib/video-frame-clock";
 import { Button } from "../components/reui/button";
 import { Toggle } from "../components/reui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/reui/select";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../components/reui/sheet";
-import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "../components/quincy/SheetCloseButton";
+import { ReviewPhoneBar, VersionChip } from "../components/quincy/ReviewPhoneBar";
+import { ActionRow, ReviewActionSheet } from "../components/quincy/ReviewActionSheet";
+import { useReviewSheet } from "../components/quincy/ReviewSheet";
+import { PHONE_QUERY } from "../lib/review-pane-geometry";
+import { useVisualViewport } from "../lib/use-visual-viewport";
+import { VideoVersionsSheet, withSummaries, type VersionSheetRow } from "../components/video/VideoVersionsSheet";
 import { ReviewSplit, useReviewPane, useReviewPaneControls } from "../components/quincy/ReviewPane";
 import { VideoPlayer, type VideoPlayerControl } from "../components/quincy/VideoPlayer";
 import type { SocialPreviewMode } from "../components/quincy/SocialPreviewControls";
@@ -113,16 +117,23 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   useEffect(() => { setAssetId(video.versions[0]!.assetId); }, [video.id]); // eslint-disable-line react-hooks/exhaustive-deps -- only a different Video resets the Version
   const version = video.versions.find((candidate) => candidate.assetId === assetId) ?? video.versions[0]!;
 
+  const phone = useMediaQuery(PHONE_QUERY);
   const [threads, setThreads] = useState<GuestNoteThreadDto[] | null>(null);
   const [notesFailed, setNotesFailed] = useState(false);
-  // Popups (Version select, notes drawer) portal into this slot, inside the inverse scope, not to body (#877).
+  // Popups (Version select, Versions and action sheets) portal into this slot, inside the inverse scope, not to body (#877).
   const [slot, setSlot] = useState<HTMLElement | null>(null);
+  const sheetControl = useReviewSheet({ drawing: false, filmAspect: version.height > 0 ? version.width / version.height : 16 / 9 });
+  const sheetStopRef = useRef(sheetControl.stop);
+  sheetStopRef.current = sheetControl.stop;
+  const setSheetStop = sheetControl.onStop;
+  const keyboard = useVisualViewport(phone && sheetControl.composing);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const chipRef = useRef<HTMLButtonElement | null>(null);
+  const [summaries, setSummaries] = useState<{ videoId: string; rows: Parameters<typeof withSummaries>[1] } | null>(null);
   const [selectionCount, setSelectionCount] = useState(0);
   const [notesAttempt, setNotesAttempt] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [clock, setClock] = useState<VideoFrameClock | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const phone = useMediaQuery("(max-width: 720px)");
   // The side pane (#859): open / width are the per-browser preference the staff viewer shares. A phone keeps the drawer and ignores them.
   const reviewPane = useReviewPane(phone);
   const paneId = useId();
@@ -133,15 +144,13 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   // Copy my notes (13d): the dialog, and what the last paste came to for the Version on screen.
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasted, setPasted] = useState<string | null>(null);
-  const restorePasteDrawer = useRef(false);
   const resyncRef = useRef<() => void>(() => undefined);
   const binding = useRef<WriterBinding>({ scope: version.assetId, effects: { onUnverified: () => undefined, onGone: () => undefined, onArchived: () => undefined }, onLostSettle: () => undefined });
   binding.current.scope = version.assetId;
   binding.current.effects = {
     onUnverified: () => {
-      // The paste dialog would sit over the verify dialog: close it (and give a phone its notes drawer back) before asking.
+      // The paste dialog would sit over the verify dialog: close it before asking.
       setPasteOpen(false);
-      if (restorePasteDrawer.current) { restorePasteDrawer.current = false; setDrawerOpen(true); }
       verify.request(); onSession({ ...session, verified: false, email: null, name: null, notifications: null });
     },
     onGone: onUnavailable,
@@ -216,6 +225,13 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const playerRef = useRef<VideoPlayerControl>(null);
   usePlayerKeysFromScreen(playerRef);
 
+  // The Versions sheet's dates and open-note counts (D16), read when it opens; a failure only leaves them off. Fenced by Video.
+  useEffect(() => {
+    if (!phone || !versionsOpen) return;
+    let live = true;
+    void api.versionSummaries(video.id).then((result) => { if (live && result.kind === "ok") setSummaries({ videoId: video.id, rows: result.value }); });
+    return () => { live = false; };
+  }, [phone, versionsOpen, api, video.id]);
   const timecode = useFrameLabel(version);
   const markers = useMemo<TimelineMarker[]>(() => (threads ?? []).filter((thread) => thread.startFrame !== null && !thread.deleted)
     .map((thread) => ({ id: thread.id, startFrame: thread.startFrame!, endFrame: thread.endFrame, tone: "public" as const, selected: thread.id === selectedId, createdAt: thread.createdAt })), [threads, selectedId]);
@@ -227,9 +243,9 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     // A drawing shows only on the exact frame it was drawn on, which can sit anywhere inside the note's range: seek there, else to the anchor.
     const frame = thread.hasMarkup && thread.drawingFrame !== null ? thread.drawingFrame : thread.startFrame;
     if (frame !== null) clock?.seekToFrame(frame);
-    setDrawerOpen(false);
-    setPaneOpen(true); // a marker or note chosen while the pane is collapsed opens it (a phone has the drawer: `setOpen` ignores it there)
-  }, [clock, setPaneOpen]);
+    setPaneOpen(true);
+    if (phone && sheetStopRef.current === "collapsed") setSheetStop("half"); // a note or marker chosen while the sheet is collapsed opens it to half (D6)
+  }, [clock, setPaneOpen, phone, setSheetStop]);
   const markupOverlay = useGuestMarkup(api, clock, selected, onMarkupGone, selectionCount);
   const watermark = video.premium && !video.unlocked;
 
@@ -281,8 +297,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     remove: async (root, note, expectedRevision) => settle(await writer.run(root.id, () => api.deleteNote(note.id, expectedRevision)), note.id === root.id ? root.id : null),
   }), [api, writer, settle]);
 
-  const onDrawingChange = useCallback((drawing: boolean) => { if (phone) setDrawerOpen(!drawing); }, [phone]);
-  const compose = useGuestCompose({ clock, frameCount: version.frameCount, timecode, markupAllowed: session.link.allow.markup, media: api.media, post, edit: editRoot, latestOf, onDrawingChange });
+  const compose = useGuestCompose({ clock, frameCount: version.frameCount, timecode, markupAllowed: session.link.allow.markup, media: api.media, post, edit: editRoot, latestOf });
   // Social preview (#872): in memory, shared by every Video and Version of this screen, off again after All videos. Nothing else changes (#877): notes, marks and drawing work with it on, and turning it on or off touches no draft or drawing.
   const preview = useSocialPreview();
   const socialOn = preview.on && socialOverlays.length > 0;
@@ -308,25 +323,16 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const editedGone = editingId !== null && threads !== null && (latestOf(editingId)?.deleted ?? true);
   useEffect(() => { if (editedGone) closeComposer(); }, [editedGone, closeComposer]);
 
-  // On a phone the composer lives in the notes drawer, which covers the picture the guest is marking: opening a draft closes the drawer, and it comes back when the draft ends.
-  const restoreDrawer = useRef(false);
-  const startDraft = useCallback((start: () => void) => { start(); if (phone) { restoreDrawer.current = true; setDrawerOpen(false); } }, [phone]);
-  const wasComposing = useRef(false);
-  useEffect(() => {
-    if (wasComposing.current && !compose.isOpen && restoreDrawer.current) { restoreDrawer.current = false; if (phone) setDrawerOpen(true); }
-    wasComposing.current = compose.isOpen;
-  }, [compose.isOpen, phone]);
+  // The phone sheet (#879): the film stays on top at every stop, so opening a draft needs no drawer dance; the composer is the sheet's foot (compose and draw modes follow the editor's focus and the pen).
+  const startDraft = useCallback((start: () => void) => { start(); }, []);
 
   // What the guest was doing when verification was asked for, so a successful code lands them where they were going. Each request carries its own, and the page's verify owner keeps only the newest active one.
   const afterVerify = useRef<(then: "compose" | "download" | DecisionValue) => void>(() => undefined);
   const requestVerify = useCallback((then: "compose" | "download" | "none" | DecisionValue, active: () => boolean = () => true) => {
-    const reopen = phone && drawerOpen;
-    if (reopen) setDrawerOpen(false);
     verify.request({ active, done: (verified) => {
-      if (reopen) setDrawerOpen(true);
       if (verified && then !== "none") afterVerify.current(then);
     } });
-  }, [phone, drawerOpen, verify]);
+  }, [verify]);
   // The notes read before verifying carried no 'self' marks: whoever caused the verification (this screen's actions or Download all), read them again as the verified guest.
   const wasVerified = useRef(session.verified);
   useEffect(() => { if (session.verified && !wasVerified.current) setNotesAttempt((n) => n + 1); wasVerified.current = session.verified; }, [session.verified]);
@@ -336,18 +342,12 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     composerOpen: compose.isOpen, editRoot: (thread) => { startDraft(() => { beginEdit(thread); }); },
   }), [canWrite, session.verified, api, actions, drafts, requestVerify, compose.isOpen, startDraft, beginEdit]);
   const canPaste = canWrite && video.versions.length >= 2;
-  // On a phone the notes drawer would sit under the dialog: it steps aside and comes back when the dialog closes.
   const openPaste = () => {
     if (!session.verified) { requestVerify("none"); return; }
-    restorePasteDrawer.current = phone && drawerOpen;
-    if (restorePasteDrawer.current) setDrawerOpen(false);
     setPasted(null);
     setPasteOpen(true);
   };
-  const changePasteOpen = (next: boolean) => {
-    setPasteOpen(next);
-    if (!next && restorePasteDrawer.current) { restorePasteDrawer.current = false; setDrawerOpen(true); }
-  };
+  const changePasteOpen = (next: boolean) => { setPasteOpen(next); };
   const addNote = canWrite
     ? <>{compose.isOpen ? compose.form : <div className="flex flex-col items-start gap-[var(--space-2)]">
       <Button type="button" variant="outline" data-testid="guest-add-note" className={TOUCH} onClick={() => { if (session.verified) startDraft(compose.begin); else requestVerify("compose"); }}>Add a note</Button>
@@ -418,25 +418,61 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     ? <GuestSubscriptionRow store={subscription} initial={session.notifications.subscribed} readOnly={archived} onToggle={toggleSubscription} />
     : null;
   const footer = session.verified ? <>{identity}{subscriptionRow}</> : null;
-  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : <div className="flex items-center justify-between gap-[var(--space-2)]">{heading}{paneControls.hideButton}</div>} top={addNote} footer={footer} writing={writing} />;
+  // The delivery row (chips, Request changes, Download all, the hints). On a phone it is the top of the Notes tab (ruling 5), and Approve and Download live in the header and the action sheet instead.
+  const deliveryRow = <div data-testid="guest-delivery" className="flex flex-wrap items-center gap-[var(--space-2)] empty:hidden min-[721px]:px-[var(--space-4)] min-[721px]:pb-[var(--space-2)]">
+    <GuestDeliveryChips version={version} />
+    {canDecide && <>
+      {!phone && <Button type="button" variant={version.decision?.value === "approved" ? "outline" : "default"} data-testid="guest-approve" className={TOUCH} onClick={() => { startDecision("approved"); }}><Check aria-hidden="true" />Approve</Button>}
+      <Button type="button" variant="outline" data-testid="guest-request-changes" className={TOUCH} onClick={() => { startDecision("changes_requested"); }}><MessageSquareWarning aria-hidden="true" />Request changes</Button>
+    </>}
+    {!phone && <GuestDownload video={video} version={version} allowDownload={allowDownload} verified={session.verified} onNeedVerify={() => { requestVerify("download"); }} />}
+    {videos.length > 1 && <GuestDownloadAll api={api} verify={verify} session={session} onSession={onSession} onUnavailable={onUnavailable} />}
+    {downloadHint && session.verified && version.downloadUrl !== null && <p role="status" data-testid="guest-download-hint" className="m-0 text-foreground-secondary [font:var(--type-label)]">You're verified. Press Download to start it.</p>}
+    {decisionNotice !== null && <p role="status" data-testid="guest-decision-notice" className="m-0 text-foreground-secondary [font:var(--type-label)]">{decisionNotice}</p>}
+  </div>;
+  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? deliveryRow : <div className="flex items-center justify-between gap-[var(--space-2)]">{heading}{paneControls.hideButton}</div>} top={addNote} footer={footer} writing={writing} />;
+  const approved = version.decision?.value === "approved";
+  const openSheet = () => { if (sheetStopRef.current === "collapsed") setSheetStop("half"); };
+  const sheet = phone ? { ...sheetControl, mode: compose.drawing ? "draw" as const : sheetControl.mode } : undefined;
+  const latestLabel = `v${version.version}${version.version === newest ? " · latest" : ""}`;
+  const phoneBar = <>
+    <ReviewPhoneBar
+      back={onBack ? <Button type="button" variant="ghost" className={`${TOUCH} shrink-0 max-[721px]:min-w-11`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span className="sr-only">All videos</span></Button> : null}
+      title={<h1 data-testid="guest-video-title" title={video.title} className="m-0 w-full min-w-[6rem] truncate [font:var(--type-body)]">{video.title}</h1>}
+      chip={<VersionChip buttonRef={chipRef} label={latestLabel} onClick={() => { setVersionsOpen(true); }} />}
+      approve={canDecide ? approved ? <span data-testid="guest-approved" className="inline-flex min-h-11 flex-none items-center gap-[var(--space-1)] px-[var(--space-2)] text-foreground [font:var(--type-label)]">✓ Approved</span> : <Button type="button" size="sm" data-testid="guest-approve" className="min-h-11" onClick={() => { startDecision("approved"); }}>Approve</Button> : undefined}
+      actions={socialOverlays.length > 0 || (allowDownload && version.downloadUrl !== null) ? <ReviewActionSheet container={slot}>
+        {(close) => <>
+          {socialOverlays.length > 0 && <ActionRow testId="guest-social-toggle" icon={<Smartphone aria-hidden="true" />} pressed={socialOn} onSelect={() => { setSocial(!socialOn); close(); }}>Social preview</ActionRow>}
+          {allowDownload && version.downloadUrl !== null && (session.verified
+            ? <ActionRow testId="guest-download" icon={<DownloadIcon aria-hidden="true" />} href={version.downloadUrl} download onSelect={() => { close(); }}>Download</ActionRow>
+            : <ActionRow testId="guest-download" icon={<DownloadIcon aria-hidden="true" />} onSelect={() => { close(true); requestVerify("download"); }}>Download</ActionRow>)}
+        </>}
+      </ReviewActionSheet> : undefined}
+    />
+    <VideoVersionsSheet
+      open={versionsOpen} onOpenChange={setVersionsOpen} container={slot} returnFocusTo={chipRef} currentAssetId={version.assetId} onChoose={setAssetId}
+      rows={withSummaries(video.versions.map((candidate): VersionSheetRow => ({ assetId: candidate.assetId, version: candidate.version })), summaries?.videoId === video.id ? summaries.rows : undefined)}
+    />
+  </>;
 
-  return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-dvh flex-1 flex-col bg-background text-foreground min-[721px]:min-h-0">
-    <header className="flex flex-col border-b border-border bg-card text-card-foreground">
-     <div data-testid="guest-bar" className="flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] px-[var(--space-4)] py-[var(--space-1)] max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">
-      {onBack && <Button type="button" variant="ghost" className={`${TOUCH} shrink-0 max-[721px]:min-w-11`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span className="max-[721px]:sr-only">All videos</span></Button>}
+  return <div data-testid="guest-video-screen" data-surface="inverse" style={keyboard ? { height: keyboard.height, transform: `translateY(${keyboard.offsetTop}px)` } : undefined} className="flex min-h-dvh flex-1 flex-col bg-background text-foreground min-[721px]:min-h-0">
+    {phone ? phoneBar : <header className="flex flex-col border-b border-border bg-card text-card-foreground">
+     <div data-testid="guest-bar" className="flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] px-[var(--space-4)] py-[var(--space-1)]">
+      {onBack && <Button type="button" variant="ghost" className={`${TOUCH} shrink-0`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span>All videos</span></Button>}
       <h1 data-testid="guest-video-title" title={video.title} className="m-0 min-w-0 flex-1 truncate [font:var(--type-body)]">{video.title}</h1>
-      <div className="flex min-w-0 flex-none items-center gap-[var(--space-3)] max-[721px]:gap-[var(--space-2)]">
+      <div className="flex min-w-0 flex-none items-center gap-[var(--space-3)]">
       {videos.length > 1 && <div className="flex items-center gap-[var(--space-2)]">
         <Button type="button" variant="outline" size="icon" aria-label="Previous video" className={TOUCH} disabled={index === 0} onClick={() => { step(-1); }}><ChevronLeft aria-hidden="true" /></Button>
-        <span data-testid="guest-video-position" className="text-foreground-secondary tabular-nums [font:var(--type-label)] max-[721px]:sr-only">{`${index + 1} of ${videos.length}`}</span>
+        <span data-testid="guest-video-position" className="text-foreground-secondary tabular-nums [font:var(--type-label)]">{`${index + 1} of ${videos.length}`}</span>
         <Button type="button" variant="outline" size="icon" aria-label="Next video" className={TOUCH} disabled={index === videos.length - 1} onClick={() => { step(1); }}><ChevronRight aria-hidden="true" /></Button>
       </div>}
-      <div className="flex min-w-0 max-w-full items-center gap-[var(--space-2)] max-[721px]:flex-1">
-        <label htmlFor={VERSION_SELECT_ID} className="shrink-0 text-foreground-secondary [font:var(--type-label)] max-[721px]:sr-only">Version</label>
+      <div className="flex min-w-0 max-w-full items-center gap-[var(--space-2)]">
+        <label htmlFor={VERSION_SELECT_ID} className="shrink-0 text-foreground-secondary [font:var(--type-label)]">Version</label>
         <OverlayContainerContext.Provider value={slot}>
         <Select value={version.assetId} onValueChange={(next) => { if (typeof next === "string") setAssetId(next); }}>
           <SelectTrigger id={VERSION_SELECT_ID} data-testid="guest-version-trigger" className={`${TOUCH} min-w-0 max-w-full`}>
-            <SelectValue>{() => <span className="block truncate">{phone ? `v${version.version}` : optionLabel(version)}</span>}</SelectValue>
+            <SelectValue>{() => <span className="block truncate">{optionLabel(version)}</span>}</SelectValue>
           </SelectTrigger>
           <SelectContent className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
             {video.versions.map((candidate) => <SelectItem key={candidate.assetId} value={candidate.assetId} className={TOUCH}>{optionLabel(candidate)}</SelectItem>)}
@@ -444,24 +480,13 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
         </Select>
         </OverlayContainerContext.Provider>
       </div>
-      {socialOverlays.length > 0 && <Button type="button" variant="outline" aria-pressed={socialOn} onClick={() => { setSocial(!socialOn); }} data-testid="guest-social-toggle" aria-label="Social preview" className={`${TOUCH} max-[721px]:min-w-11 aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground`}>
-        <Smartphone aria-hidden="true" /><span className="max-[721px]:sr-only">Social preview</span>
+      {socialOverlays.length > 0 && <Button type="button" variant="outline" aria-pressed={socialOn} onClick={() => { setSocial(!socialOn); }} data-testid="guest-social-toggle" aria-label="Social preview" className={`${TOUCH} aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground`}>
+        <Smartphone aria-hidden="true" /><span>Social preview</span>
       </Button>}
-      {phone && <Button type="button" variant="outline" aria-label={threads === null ? "Notes" : `Notes, ${threads.length}`} className={`${TOUCH} shrink-0`} onClick={() => { setDrawerOpen(true); }}><MessageSquare aria-hidden="true" />{threads !== null && <span className="[font:var(--type-label)]">{threads.length}</span>}</Button>}
       </div>
      </div>
-      <div data-testid="guest-delivery" className="flex flex-wrap items-center gap-[var(--space-2)] px-[var(--space-4)] pb-[var(--space-2)] empty:hidden">
-        <GuestDeliveryChips version={version} />
-        {canDecide && <>
-          <Button type="button" variant={version.decision?.value === "approved" ? "outline" : "default"} data-testid="guest-approve" className={TOUCH} onClick={() => { startDecision("approved"); }}><Check aria-hidden="true" />Approve</Button>
-          <Button type="button" variant="outline" data-testid="guest-request-changes" className={TOUCH} onClick={() => { startDecision("changes_requested"); }}><MessageSquareWarning aria-hidden="true" />Request changes</Button>
-        </>}
-        <GuestDownload video={video} version={version} allowDownload={allowDownload} verified={session.verified} onNeedVerify={() => { requestVerify("download"); }} />
-        {videos.length > 1 && <GuestDownloadAll api={api} verify={verify} session={session} onSession={onSession} onUnavailable={onUnavailable} />}
-        {downloadHint && session.verified && version.downloadUrl !== null && <p role="status" data-testid="guest-download-hint" className="m-0 text-foreground-secondary [font:var(--type-label)]">You're verified. Press Download to start it.</p>}
-        {decisionNotice !== null && <p role="status" data-testid="guest-decision-notice" className="m-0 text-foreground-secondary [font:var(--type-label)]">{decisionNotice}</p>}
-      </div>
-    </header>
+      {deliveryRow}
+    </header>}
     <ReviewSplit
       open={reviewPane.open}
       width={reviewPane.width}
@@ -470,17 +495,11 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       paneId={paneId}
       handleLabel="Resize notes"
       stacked={phone}
+      {...(sheet ? { sheet } : {})}
       strip={paneControls.strip}
       player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} /></OverlayContainerContext.Provider>}
-      pane={phone ? null : <aside className="flex flex-1 flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-hidden">{panel}</aside>}
+      pane={phone ? <div className="flex min-h-0 flex-1 flex-col"><div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-4)] py-[var(--space-2)]" onClick={openSheet}>{heading}</div><div className="flex min-h-0 flex-1 flex-col p-[var(--space-4)]">{panel}</div></div> : <aside className="flex flex-1 flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-hidden">{panel}</aside>}
     />
-    {phone && <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
-      <SheetContent side="bottom" container={slot} showCloseButton={false} data-testid="guest-notes-drawer" className="data-[side=bottom]:h-[80dvh] max-h-[80dvh] p-[var(--space-4)]">
-        <SheetHeader className={`p-0 ${SHEET_CLOSE_CLEARANCE}`}><SheetTitle data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</SheetTitle></SheetHeader>
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{panel}</div>
-        <SheetCloseButton label="Close notes" data-testid="guest-notes-close" />
-      </SheetContent>
-    </Sheet>}
     {canPaste && <GuestPasteDialog api={api} writer={writer} open={pasteOpen} onOpenChange={changePasteOpen} video={video} target={version} markupAllowed={session.link.allow.markup}
       onGone={onUnavailable}
       onPasted={(landed) => { if (landed !== null) setPasted(landed.copied === 0 ? `Nothing new to copy from v${landed.sourceVersion}.` : `Copied ${landed.copied} ${landed.copied === 1 ? "note" : "notes"} from v${landed.sourceVersion}.`); resync(); }} />}

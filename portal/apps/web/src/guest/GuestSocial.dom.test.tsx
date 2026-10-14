@@ -149,7 +149,8 @@ beforeEach(() => { Element.prototype.setPointerCapture = () => undefined; Elemen
 const toggle = () => byId("guest-social-toggle");
 const stage = () => byId("video-stage");
 const overlayImage = () => byId("video-social-overlay") as HTMLImageElement | null;
-const social = async (on: boolean) => { if ((toggle()?.getAttribute("aria-pressed") === "true") !== on) await click(toggle()); };
+/** On a phone the toggle is a row of the ⋯ action sheet, which closes when the row is chosen. */
+const social = async (on: boolean) => { if (!toggle()) await click(byId("video-header-menu")); if ((toggle()?.getAttribute("aria-pressed") === "true") !== on) await click(toggle()); };
 
 describe("Social preview on the Review link (#872)", () => {
   it("is not offered when the Project resolves no overlays", async () => {
@@ -191,7 +192,7 @@ describe("Social preview on the Review link (#872)", () => {
 
   it("is a labelled toggle: visible text Social, accessible name Social preview", async () => {
     await open();
-    expect(toggle()!.getAttribute("aria-label")).toBe("Social preview");
+    expect(toggle()!.textContent).toContain("Social preview");
     expect(toggle()!.textContent).toBe("Social preview");
     expect(toggle()!.getAttribute("aria-pressed")).toBe("false");
     expect(stage()!.dataset.social).toBeUndefined();
@@ -359,14 +360,12 @@ describe("Social preview on the Review link (#872)", () => {
     expect((byId("guest-reply-body") as HTMLTextAreaElement).value).toBe("Draft reply");
   });
 
-  it("keeps a drawing in progress when Social turns on or off, with its strokes, and does not reopen the phone drawer", async () => {
+  it("keeps a drawing in progress when Social turns on or off, with its strokes, and the notes sheet stays where it is", async () => {
     viewport.restore(); viewport = mockViewport({ width: 375 });
     await withLayout(async () => {
       await open();
-      await click(button("Notes"));
       await atSeconds(1);
       await click(byId("guest-add-note"));
-      await click(button("Notes")); // the draft closed the drawer; the pen button is in the composer, in the drawer
       await click(byId("guest-composer-draw"));
       await atSeconds(1);
       const layer = byId("guest-draft-layer")!;
@@ -376,7 +375,7 @@ describe("Social preview on the Review link (#872)", () => {
       expect(byId("guest-markup-toolbar")).not.toBeNull();
       expect(byId("guest-draft-layer")).toBe(layer);
       expect(byId("video-social-frame")!.contains(layer)).toBe(true);
-      expect(byId("guest-notes-drawer")).toBeNull();
+      expect(byId("video-review-pane")!.getAttribute("data-mode")).toBe("draw");
       await social(false);
       expect(byId("guest-markup-toolbar")).not.toBeNull();
       expect(byId("guest-draft-layer")).toBe(layer);
@@ -418,7 +417,8 @@ describe("Social preview on the Review link (#872)", () => {
   it("names the toggle Social preview on a phone too", async () => {
     viewport.restore(); viewport = mockViewport({ width: 375 });
     await open();
-    expect(toggle()!.getAttribute("aria-label")).toBe("Social preview");
+    await click(byId("video-header-menu"));
+    expect(toggle()!.textContent).toContain("Social preview");
   });
 
   it("takes the refreshed overlays with the refreshed Videos when the shown Version leaves the link", async () => {
