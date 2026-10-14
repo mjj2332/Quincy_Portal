@@ -303,11 +303,11 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
         <span data-testid="video-compare-offset-help" className={cn("flex h-8 items-center text-foreground-secondary [font:var(--type-label)]", TOOL)}>{`e.g. +12: ${labels.b} starts 12 frames after ${labels.a}`}</span>
       </div>
 
-      {offsetProblem && <div data-surface="default"><Notice tone="caution" className="bg-card" role="status" data-testid="video-compare-offset-notice">{offsetProblem}</Notice></div>}
-      {rateDiffers && <div data-surface="default"><Notice tone="caution" className="bg-card" role="status" data-testid="video-compare-rate-notice">{`${labels.a} and ${labels.b} have different frame rates (${formatFps(versionA.fps)} and ${formatFps(versionB.fps)} fps). The sides are matched by time, so frames will not line up one for one.`}</Notice></div>}
-      {aspectDiffers && <div data-surface="default"><Notice tone="caution" className="bg-card" role="status" data-testid="video-compare-aspect-notice">{`${labels.a} and ${labels.b} have different aspect ratios. Each is shown whole, never stretched or cropped.`}</Notice></div>}
-      {state.blocked === "gesture" && <div data-surface="default"><Notice tone="caution" className="bg-card" role="status" data-testid="video-compare-blocked">Press Play to continue.</Notice></div>}
-      {state.blocked === "recovery" && <div data-surface="default"><Notice tone="caution" role="status" data-testid="video-compare-blocked" className="flex flex-wrap items-center justify-between gap-[var(--space-2)] bg-card"><span>Playback stopped because a video kept buffering.</span><Button type="button" variant="text" className={TOOL} onClick={() => { transport?.play(); }}>Resume</Button></Notice></div>}
+      {offsetProblem && <Notice tone="caution" className="bg-card" role="status" data-testid="video-compare-offset-notice">{offsetProblem}</Notice>}
+      {rateDiffers && <Notice tone="caution" className="bg-card" role="status" data-testid="video-compare-rate-notice">{`${labels.a} and ${labels.b} have different frame rates (${formatFps(versionA.fps)} and ${formatFps(versionB.fps)} fps). The sides are matched by time, so frames will not line up one for one.`}</Notice>}
+      {aspectDiffers && <Notice tone="caution" className="bg-card" role="status" data-testid="video-compare-aspect-notice">{`${labels.a} and ${labels.b} have different aspect ratios. Each is shown whole, never stretched or cropped.`}</Notice>}
+      {state.blocked === "gesture" && <Notice tone="caution" className="bg-card" role="status" data-testid="video-compare-blocked">Press Play to continue.</Notice>}
+      {state.blocked === "recovery" && <Notice tone="caution" role="status" data-testid="video-compare-blocked" className="flex flex-wrap items-center justify-between gap-[var(--space-2)] bg-card"><span>Playback stopped because a video kept buffering.</span><Button type="button" variant="text" className={TOOL} onClick={() => { transport?.play(); }}>Resume</Button></Notice>}
 
       <div data-testid="video-compare-stages" style={{ aspectRatio: stagesRatio }} className={cn("relative grid min-h-0 flex-[0_1_auto] grid-rows-[minmax(0,1fr)] gap-[var(--space-3)]", wiping ? "[grid-template-areas:'stack'] grid-cols-[minmax(0,1fr)] gap-0" : "grid-cols-2")}>
         {stage("a")}

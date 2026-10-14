@@ -9,14 +9,15 @@
    renders correctly on the dark stage unchanged, because it was already
    reading these roles rather than raw colours.
 
-   A data attribute resets nothing on its own: a nested light panel
-   (`.vpanel`) inside the dark stage must be given its own scope,
-   `data-surface="default"`, that restores every one of the same roles back
-   to its normal `:root` value — otherwise a role the inverse block sets and
-   the light panel doesn't re-set would inherit the dark value into the
-   light panel. The two blocks below therefore declare the same 28
-   properties, one inverted, one restored. See
-   docs/plans/TB8-09-Lightbox-Controls-Visual-Plan.md §2.3 and §2.3a for the
+   Panels inside a dark viewer (notes, Delivery, the Lightbox review panel,
+   notices) inherit this scope; they do not open their own light one
+   (ADR 0024, guarded by styles/viewer-surface.guard.test.ts). The
+   `[data-surface="default"]` block below stays for the toast viewport, which
+   floats above every screen and keeps the app-wide light look, and for any
+   light surface nested in an inverse one. The two blocks declare the same 28
+   properties, one inverted, one restored, so a role omitted from the restoring
+   block cannot leak the ink value into a light scope. See
+   docs/plans/TB8-09-Lightbox-Controls-Visual-Plan.md §2.3 for the
    full reasoning, including why both --ring and --focus-ring must be set
    together (two independent paths paint a focus ring in this app).
    ========================================================================== */

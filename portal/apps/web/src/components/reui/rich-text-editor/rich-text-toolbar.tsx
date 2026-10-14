@@ -5,7 +5,7 @@
 // 2. The toolbar's `no-scrollbar` / `scroll-fade-x` utilities do not exist in Quincy's Tailwind and
 //    would silently do nothing: replaced with the scrollbar-hiding utilities and the <=721px
 //    right-edge mask the legacy field toolbar used (`RichTextEditor.tsx`, #376).
-// 3. A pressed `RichTextToggle` reads `bg-primary` / `--accent-on`, the legacy toolbar's pressed
+// 3. A pressed `RichTextToggle` reads `bg-primary` / `text-primary-foreground` (was `--accent-on`, which stays paper on the dark viewer where `--primary` is paper; ADR 0024, #877), the legacy toolbar's pressed
 //    state, rather than nova's `bg-muted` (which the hover state shares).
 // 4. `RichTextButton` (Undo/Redo) overrides `reui/button`'s `disabled:opacity-50` with transparent +
 //    muted text and `disabled:opacity-100`: disabled is colour, never dimming (the #376 rule).
@@ -251,7 +251,7 @@ export function RichTextToggle({
             disabled={disabled}
             onPressedChange={onToggle}
             onMouseDown={keepEditorFocus}
-            className="px-0 aria-pressed:bg-primary aria-pressed:!text-[var(--accent-on)]"
+            className="px-0 aria-pressed:bg-primary aria-pressed:!text-primary-foreground"
             data-toolbar-item=""
           />
         }

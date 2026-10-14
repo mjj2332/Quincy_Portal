@@ -6,7 +6,7 @@
 // 3. Five Tailwind-palette colours with `dark:` pairs -> the three the stored contract allows
 //    (yellow, green, blue), on new `--highlight-*` tokens; the painted mark is plain CSS in
 //    `styles/app.css`. `pink` and `violet` are gone: `parseRichTextDoc` would reject them.
-// 4. The pressed toggle reads `bg-primary` / `--accent-on`, as `RichTextToggle` does (#491 edit 3).
+// 4. The pressed toggle reads `bg-primary` / `text-primary-foreground` (#877: role, not `--accent-on`), as `RichTextToggle` does (#491 edit 3).
 // 5. `data-testid="rich-text-highlight"` on the trigger, a Quincy-owned test hook.
 // 6. `finalFocus` depends on the close reason (as the link popover): applying a colour -> the editor,
 //    Escape / outside dismissal -> the trigger. Colour buttons are 44px at <=721px.
@@ -94,7 +94,7 @@ export function RichTextHighlightPopover({
                 pressed={state.highlight !== null}
                 disabled={!state.canHighlight}
                 onMouseDown={keepEditorFocus}
-                className="px-0 aria-pressed:bg-primary aria-pressed:!text-[var(--accent-on)]"
+                className="px-0 aria-pressed:bg-primary aria-pressed:!text-primary-foreground"
                 data-toolbar-item=""
                 data-testid="rich-text-highlight"
               />

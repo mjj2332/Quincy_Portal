@@ -29,7 +29,7 @@ describe("link preview card design (#497)", () => {
     expect(sel).toMatch(/background:\s*transparent/);
     // `inherit` in a ::selection takes the PARENT's ::selection colour (the global paper-050), not the element's colour: explicit tokens only.
     expect(sel).not.toMatch(/inherit|currentColor/i);
-    expect(sel).toMatch(/color:\s*var\(--text-primary\)/);
+    expect(sel).toMatch(/color:\s*var\(--foreground\)/);
     expect(ruleBody(".rich-text__editor-content .rich-text__link-preview [data-slot=item-description]::selection")).toMatch(/color:\s*var\(--foreground-secondary\)/);
     expect(ruleBody(".rich-text__editor-content .rich-text__link-preview [data-slot=link-preview-meta]::selection")).toMatch(/color:\s*var\(--foreground-secondary\)/);
     expect(card).toContain('data-slot="link-preview-meta"');
@@ -37,7 +37,7 @@ describe("link preview card design (#497)", () => {
     expect(ruleBody(".rich-text__editor-content .ProseMirror-selectednode [data-slot=item]")).not.toMatch(/outline/);
   });
   it("2: the card keeps text colour, no underline, and normal paragraph rhythm", () => {
-    expect(ruleBody(":is(.rich-text, .rich-text__editor-content) a[data-slot=item]")).toMatch(/color:\s*var\(--text-primary\)[\s\S]*text-decoration:\s*none/);
+    expect(ruleBody(":is(.rich-text, .rich-text__editor-content) a[data-slot=item]")).toMatch(/color:\s*var\(--foreground\)[\s\S]*text-decoration:\s*none/);
     expect(ruleBody(":is(.rich-text, .rich-text__editor-content) a[data-slot=item]:hover [data-slot=item-title]")).toMatch(/text-decoration:\s*underline/);
     const p = ruleBody(".rich-text [data-slot=item] p");
     expect(p).toMatch(/margin:\s*0/);

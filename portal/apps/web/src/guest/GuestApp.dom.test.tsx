@@ -149,6 +149,13 @@ describe("the link token", () => {
     expect(byId("guest-row-slot")).not.toBeNull();
   });
 
+  it("opens no default-scope panel on the guest video screen (ADR 0024)", async () => {
+    videos = [videoOf(1, { versions: [versionOf(10)] })];
+    await open(`?link=${LINK}`, "");
+    expect(byId("guest-video-screen")).not.toBeNull();
+    expect(document.querySelector('[data-surface="default"]')).toBeNull();
+  });
+
   it("skips the list for a single video and opens it", async () => {
     videos = [videoOf(1)];
     await open();
