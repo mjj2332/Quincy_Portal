@@ -230,4 +230,15 @@ describe("the dialog outlives its card (Sol, #867)", () => {
     expect(dlg()).not.toBeNull();
     expect(input()!.value).toBe("Second.mp4");
   });
+
+  it("still toasts, and throws nothing, when the host unmounts during the save (#874)", async () => {
+    let finish!: (value: unknown) => void;
+    apiPutMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await mount({ parts: ALL });
+    await openRename(V1); await typeInto(input(), "First.mp4");
+    await act(async () => { input()!.form!.requestSubmit(); await Promise.resolve(); }); await flush(5);
+    await unmount();
+    await act(async () => { finish({ video: renamed("First") }); await Promise.resolve(); }); await flush(20);
+    expect(toasts.list).toContain("File renamed.");
+  });
 });

@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { videoListResponseSchema, videoReviewStatusResponseSchema, EXTERNAL_API_RESPONSE_SCHEMAS } from "@quincy/shared";
 import { app } from "../src/index";
+import { setVersionReviewStatus } from "../src/lib/video-review-status";
 import { baseEnv, database, ids, request, seedFixture, type Who } from "./embedded-media-support";
 import { seedPage, wipeDelivery } from "./delivery-support";
 import { clearVideoFlags, markVersionRemoved, seedVideoVersion, setVideoFlags } from "./video-review-support";
@@ -143,6 +144,12 @@ describe("the audit row", () => {
     expect(metaOf(log[0]!)).toEqual({ projectId: ids.project, videoId: v2!.videoId, version: 2, before: "in_review", after: "approved_internal" });
     expect(log[1]).toMatchObject({ actor_id: ids.admin });
     expect(metaOf(log[1]!)).toMatchObject({ before: "approved_internal", after: "in_review" });
+  });
+
+  it("answers a successful set from the Video the write touched: the outcome names it", async () => {
+    const [v1] = await seedVideo(1);
+    const outcome = await setVersionReviewStatus(database.DB, { projectId: ids.project, assetId: v1!.assetId, status: "approved_internal", expected: "in_review", principal: { id: ids.admin, impersonatedBy: null }, now: Date.now() });
+    expect(outcome).toEqual({ kind: "set", videoId: v1!.videoId });
   });
 
   it("records the impersonating Admin", async () => {

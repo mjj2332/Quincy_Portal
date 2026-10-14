@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useRef, useState, type FormEvent } from "react";
 import type { Role } from "@quincy/shared";
+import { useRunFence } from "../../lib/use-run-fence";
 import { useOptionalProjectQueryClient } from "../../lib/project-data";
 import { pushToast } from "../../lib/toast-store";
 import { classifyRenameError, renameErrorText, renameVideoVersion, type ClassifiedRenameError } from "../../lib/video-rename-data";
@@ -51,8 +52,7 @@ function RenameForm({ projectId, role, target, latest, onClose }: { projectId: s
   const [problem, setProblem] = useState<ClassifiedRenameError | null>(null);
   const inFlight = useRef(false);
   // The form is one dialog opening: once it is unmounted (Cancel, Escape) a save that finishes late may still toast, but it touches nothing else.
-  const live = useRef(true);
-  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  const fence = useRunFence();
   // Focus and select the stem once, when the field mounts: a ref that changed identity would reselect on every keystroke.
   const initial = target.originalFilename;
   const focusStem = useCallback((el: HTMLInputElement | null) => { if (el) { el.focus(); el.setSelectionRange(0, stemLength(initial)); } }, [initial]);
@@ -65,14 +65,15 @@ function RenameForm({ projectId, role, target, latest, onClose }: { projectId: s
     if (!canSave || !queryClient || inFlight.current) return;
     const unusable = checkRenameName(trimmed);
     if (unusable) { setProblem(unusable); return; }
+    const ticket = fence.begin();
     inFlight.current = true; setPending(true); setProblem(null);
     try {
       await renameVideoVersion({ queryClient, projectId, role }, { assetId: aimedAt.assetId, filename: trimmed });
       pushToast("File renamed.");
-      if (live.current) onClose();
+      if (ticket.isCurrent()) onClose();
     } catch (error) {
-      if (live.current) setProblem(classifyRenameError(error));
-    } finally { inFlight.current = false; if (live.current) setPending(false); }
+      if (ticket.isCurrent()) setProblem(classifyRenameError(error));
+    } finally { inFlight.current = false; if (ticket.isCurrent()) setPending(false); }
   };
 
   return <form onSubmit={(event) => void submit(event)} className="grid gap-[var(--space-4)]" noValidate>

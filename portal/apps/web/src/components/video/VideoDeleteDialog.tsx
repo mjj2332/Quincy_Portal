@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { VIDEO_TRASH_RETENTION_DAYS, type VideoDeletionImpact } from "@quincy/shared";
+import { useRunFence } from "../../lib/use-run-fence";
 import { useOptionalProjectQueryClient, useProjectAccessTermination } from "../../lib/project-data";
 import { pushTrashToast, trashSession } from "../../lib/video-trash-session";
 import { UNDO_TOAST_TTL_MS } from "../../lib/use-scheduling-undo-toast";
@@ -41,9 +42,7 @@ export function VideoDeleteDialog({ projectId, target, uploadKey, localUpload, o
   const [problem, setProblem] = useState<ClassifiedVideoTrashError | null>(null);
   const [pending, setPending] = useState(false);
   // Each opening and each send owns the state it writes; a completion of an earlier one applies nothing.
-  const run = useRef(0);
-  const alive = useRef(true);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; run.current += 1; }; }, []);
+  const fence = useRunFence();
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   // Both buttons are disabled while Deleting, so focus drops to <body>; a refusal keeps the dialog open, so the problem takes focus (#568).
   const problemRef = useRef<HTMLDivElement | null>(null);
@@ -55,24 +54,24 @@ export function VideoDeleteDialog({ projectId, target, uploadKey, localUpload, o
   const uploadKeyNow = useRef(uploadKey);
   uploadKeyNow.current = uploadKey;
   const load = useCallback(async (next: DeleteTarget) => {
-    const mine = ++run.current;
+    const ticket = fence.begin();
     const issuedUnder = uploadKeyNow.current;
     setImpact(null); setLoadFailure(null); setProblem(null);
     try {
       const read = await readVideoDeletionImpact(projectId, next.videoId);
-      if (!alive.current || run.current !== mine) return;
+      if (!ticket.isCurrent()) return;
       if (uploadKeyNow.current !== issuedUnder) { void load(next); return; }
       setImpact(read);
     } catch (error) {
       terminate(error);
       if (queryClient) void refreshAfterRefusal({ queryClient, projectId, videoId: next.videoId }, error, "delete");
-      if (alive.current && run.current === mine) setLoadFailure(classifyVideoTrashError(error, "delete").message);
+      if (ticket.isCurrent()) setLoadFailure(classifyVideoTrashError(error, "delete").message);
     }
-  }, [projectId, terminate, queryClient]);
+  }, [projectId, terminate, queryClient, fence]);
 
   const videoId = target?.videoId ?? null;
   useEffect(() => {
-    if (videoId === null || target === null) { run.current += 1; setImpact(null); setLoadFailure(null); setProblem(null); setPending(false); return; }
+    if (videoId === null || target === null) { fence.invalidate(); setImpact(null); setLoadFailure(null); setProblem(null); setPending(false); return; }
     lastVideoId.current = videoId; deleted.current = false;
     setPending(false);
     void load(target);
@@ -106,16 +105,16 @@ export function VideoDeleteDialog({ projectId, target, uploadKey, localUpload, o
 
   const confirm = async () => {
     if (!target || !impact || !queryClient) return;
-    const mine = ++run.current;
+    const ticket = fence.begin();
     setPending(true); setProblem(null);
     const sent = target; const confirmed = impact; const started = trashSession(queryClient);
     try {
       await deleteWholeVideo({ queryClient, projectId, videoId: sent.videoId }, confirmed, () => { deleted.current = true; onDeleted(sent.videoId); });
       announce(sent, started);
-      if (alive.current && run.current === mine) onClose();
+      if (ticket.isCurrent()) onClose();
     } catch (error) {
       terminate(error);
-      if (!alive.current || run.current !== mine) return;
+      if (!ticket.isCurrent()) return;
       const classified = classifyVideoTrashError(error, "delete");
       setPending(false);
       if (classified.filmImpact) setImpact(classified.filmImpact);

@@ -2,6 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { videoRenameResponseSchema, EXTERNAL_API_RESPONSE_SCHEMAS } from "@quincy/shared";
 import { app } from "../src/index";
 import { RECOMPUTE_CURRENT_SQL } from "../src/lib/video-live-sql";
+import { renameVersion } from "../src/lib/video-rename";
 import { baseEnv, database, ids, request, seedFixture, type Who } from "./embedded-media-support";
 import { wipeDelivery } from "./delivery-support";
 import { clearVideoFlags, markVersionRemoved, seedVideoVersion, setVideoFlags } from "./video-review-support";
@@ -108,6 +109,25 @@ describe("who and when", () => {
     const denied = await rename(v1!.assetId, "x.mp4", "photographer"); expect(denied.status).toBe(403); expect(await denied.json()).toMatchObject({ capability: "uploadVideo" });
     expect((await rename(v1!.assetId, "x.mp4", "externalOutsider")).status).toBe(404);
     expect(await nameOf(v1!.assetId)).toBe("cut-1.mp4");
+  });
+
+  it("answers in the fixed order: malformed id 400, gate 404, capability 403, External visibility 404, archived 409 before the body 400, then the body and the Version", async () => {
+    const [v1] = await seedVideo(1);
+    const [a] = await seedVideo(1, ids.archivedProject);
+    expect((await request(path("not-a-uuid"), "photographer", "PUT", { filename: 7 })).status).toBe(400);
+    expect((await request(path(v1!.assetId), "externalOutsider", "PUT", { filename: 7 })).status).toBe(404);
+    const archivedBadBody = await request(path(a!.assetId, ids.archivedProject), "admin", "PUT", { filename: 7 });
+    expect(archivedBadBody.status).toBe(409); expect(await archivedBadBody.json()).toMatchObject({ code: "project_archived" });
+    expect((await request(path(a!.assetId, ids.archivedProject), "photographer", "PUT", { filename: 7 })).status).toBe(403);
+    expect((await request(path(v1!.assetId), "admin", "PUT", { filename: 7 })).status).toBe(400);
+    await clearVideoFlags();
+    expect((await request(path(v1!.assetId), "photographer", "PUT", { filename: 7 })).status).toBe(404);
+  });
+
+  it("answers a successful set from the Video the write touched: the outcome names it", async () => {
+    const [v1] = await seedVideo(1);
+    const outcome = await renameVersion(database.DB, { projectId: ids.project, assetId: v1!.assetId, filename: "Pinned.mp4", principal: { id: ids.admin, impersonatedBy: null }, now: Date.now() });
+    expect(outcome).toEqual({ kind: "set", videoId: v1!.videoId });
   });
 
   it("answers 404 when the gate is closed, the id is unknown, the Project is another, and 400 for a malformed id", async () => {
