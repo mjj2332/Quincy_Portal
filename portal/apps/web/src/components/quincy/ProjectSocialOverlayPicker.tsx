@@ -15,7 +15,7 @@ import { META_TRIGGER } from "./icon-button";
 type Failure = { kind: "failed" } | { kind: "conflict"; current: ProjectSocialOverlaysResponse } | { kind: "unavailable" };
 type Request = { overlayIds: string[]; expectedRevision: string };
 
-// Compact like the Stage / Dropbox triggers (#858 round 2): META_TRIGGER is `inline-grid`, which stacked the chevron under the label, and the Field is a stretching flex column, so `self-start w-fit` keeps it content-sized.
+// Compact like the Stage / Dropbox triggers (#858 round 2): META_TRIGGER is `inline-grid`, which stacked the chevron under the label, and the Field stretches its direct children (`*:w-full`), so the trigger sits in a wrapper div and `w-fit` keeps it content-sized.
 const TRIGGER_CLASSES = "inline-flex flex-row items-center justify-between self-start w-fit max-w-full gap-[var(--space-2)] px-[var(--space-3)] rounded-[var(--radius-sm)] bg-card border-solid border-[length:var(--border-width-hair)] border-border [font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)] text-foreground";
 const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((id) => b.includes(id));
 const TRIGGER_ID = "project-social-overlays-trigger";
@@ -165,9 +165,12 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived,
       itemToStringValue={(item: ProjectSocialOverlayChoice) => item.id}
       disabled={libraryEmpty}
     >
-      <ComboboxTrigger ref={triggerRef} id={TRIGGER_ID} aria-label="Social overlays" aria-busy={saving || undefined} className={cn(META_TRIGGER, TRIGGER_CLASSES, "min-h-[44px]")}>
-        <span className="min-w-0 max-w-[28ch] truncate">{shownNames.length > 0 ? shownNames.join(", ") : "Default overlay"}</span>
-      </ComboboxTrigger>
+      {/* The vertical Field gives every direct child `w-full`, which outranks the trigger's own `w-fit`; this wrapper takes the full width so the trigger keeps its content size. */}
+      <div>
+        <ComboboxTrigger ref={triggerRef} id={TRIGGER_ID} aria-label="Social overlays" aria-busy={saving || undefined} className={cn(META_TRIGGER, TRIGGER_CLASSES, "min-h-[44px]")}>
+          <span className="min-w-0 max-w-[28ch] truncate">{shownNames.length > 0 ? shownNames.join(", ") : "Default overlay"}</span>
+        </ComboboxTrigger>
+      </div>
       <ComboboxContent className="min-w-[max(var(--anchor-width),260px)] max-w-[calc(100vw-2*var(--space-4))]">
         <ComboboxInput showTrigger={false} placeholder="Search overlays…" aria-label="Search overlays" />
         <ComboboxEmpty>No matching overlays</ComboboxEmpty>
