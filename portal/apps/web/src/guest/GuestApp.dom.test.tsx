@@ -879,6 +879,7 @@ describe("Sol round 7", () => {
     const api: GuestApi = {
       exchange: async () => ({ ok: false, reason: "unavailable" }),
       session: async () => { await gate; return { kind: "gone" }; },
+      endSession: async () => "ok",
       videos: async () => { await gate; return { kind: "ok", value: [] }; },
       socialOverlays: async () => ({ kind: "ok", value: [] }),
       notes: async () => ({ kind: "ok", value: [] }),
@@ -1089,5 +1090,70 @@ describe("rich notes on the page (#835 C)", () => {
     await open();
     await click(button("Open Film 1"));
     expect(byId("guest-note-body")!.textContent).toBe("Trim the opening");
+  });
+});
+
+describe("Not you? Sign out (#854)", () => {
+  const VERIFIED = { ...SESSION, verified: true, email: "sam@example.com", name: "Sam" };
+  /** A visitor with a verified session; DELETE `/session` answers `deleteAs` and, on 204 or 404, ends it, so the next exchange mints an unverified one. */
+  function visitor(deleteAs: () => Response = () => new Response(null, { status: 204 })) {
+    const calls: Array<{ method: string; body: string | null }> = [];
+    extra = (url, init) => {
+      if (url !== `/d/api/links/${LINK}/session`) return undefined;
+      const method = init?.method ?? "GET";
+      calls.push({ method, body: typeof init?.body === "string" ? init.body : null });
+      if (method === "DELETE") { const response = deleteAs(); if (response.status === 204 || response.status === 404) sessionGone = true; return response; }
+      if (method === "POST") { sessionGone = false; return json(SESSION); }
+      return sessionGone ? stub404() : json(VERIFIED);
+    };
+    return calls;
+  }
+  const signOut = () => button("Not you? Sign out");
+
+  it("shows the identity row only when the session is verified", async () => {
+    await open();
+    expect(byId("guest-identity")).toBeNull(); expect(signOut()).toBeUndefined();
+    await act(async () => { root!.unmount(); }); root = null; host.remove();
+    visitor();
+    await open();
+    expect(byId("guest-identity")!.textContent).toContain("Reviewing as Sam");
+    expect(signOut()).toBeDefined();
+  });
+
+  it("sends DELETE then POST with the original token, and lands unverified on the list with no identity left", async () => {
+    const calls = visitor();
+    await open();
+    await click(signOut());
+    const sent = calls.filter((call) => call.method !== "GET");
+    expect(sent.map((call) => call.method)).toEqual(["DELETE", "POST"]);
+    expect(JSON.parse(sent[1]!.body!)).toEqual({ token: "tok123" });
+    expect(byId("guest-list")).not.toBeNull();
+    expect(byId("guest-identity")).toBeNull();
+  });
+
+  it("treats a 404 (staff already ended the session) as signed out", async () => {
+    const calls = visitor(() => stub404());
+    await open();
+    await click(signOut());
+    expect(calls.filter((call) => call.method !== "GET").map((call) => call.method)).toEqual(["DELETE", "POST"]);
+    expect(byId("guest-identity")).toBeNull();
+  });
+
+  it("with no token in memory (after a reload) shows the plain signed-out screen, not the unavailable one", async () => {
+    visitor();
+    await open(`?link=${LINK}`, "");
+    await click(signOut());
+    expect(byId("guest-signed-out")).not.toBeNull();
+    expect(byId("guest-unavailable")).toBeNull();
+    expect(byId("guest-signed-out")!.textContent).toContain("Open the review link again");
+  });
+
+  it("a failed sign-out (5xx) says so inline and leaves the guest signed in", async () => {
+    const calls = visitor(() => new Response("", { status: 503 }));
+    await open();
+    await click(signOut());
+    expect(host.querySelector('[role="alert"]')!.textContent).toContain("Couldn't sign out. Try again.");
+    expect(byId("guest-identity")!.textContent).toContain("Reviewing as Sam");
+    expect(calls.filter((call) => call.method === "POST")).toHaveLength(0);
   });
 });

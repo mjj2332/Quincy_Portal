@@ -16,7 +16,7 @@ import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO } from "./video-live-sql"
 const AUDIT_INSERT_WHERE = "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, ?, 'review_link', ?, ?, ? WHERE";
 const AUDITED = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)";
 const NOT_ARCHIVED = "EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)";
-// `delivery_review = 0` on every fence below is the SQL backstop of the route refusal (#847): the Delivery review link is changed only by the sync in lib/delivery-review-link.ts.
+// `delivery_review = 0` on every fence below is the SQL backstop of the route refusal (#847): the Delivery review link is changed only by the sync in lib/delivery-review-link.ts, plus `endGuestSessions` (#854), which bumps its generation and deletes its sessions and nothing else.
 const LINK_LIVE = "EXISTS (SELECT 1 FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND delivery_review = 0)";
 const LINK_DELETABLE = "EXISTS (SELECT 1 FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NOT NULL AND deleted_at IS NULL AND delivery_review = 0)";
 const MEMBER_LIVE = "EXISTS (SELECT 1 FROM review_link_videos WHERE link_id = ? AND video_id = ? AND removed_at IS NULL)";

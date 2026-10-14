@@ -285,3 +285,20 @@ describe("guest-api: decisions and downloads (#741 14-ui-guest)", () => {
     answer(new Response("Not found", { status: 404 })); expect(await api().prepareDownloads()).toEqual({ kind: "gone" });
   });
 });
+
+describe("guest-api: endSession (#854)", () => {
+  it("sends DELETE to the session route, same-origin, and reads 204 as ok", async () => {
+    answer(new Response(null, { status: 204 }));
+    expect(await api().endSession()).toBe("ok");
+    const { url, init } = lastCall();
+    expect(url).toBe(`/d/api/links/${LINK}/session`); expect(init.method).toBe("DELETE"); expect(init.credentials).toBe("same-origin");
+  });
+  it("reads a 4xx (staff already ended it, or the stub) as gone, and a 5xx, a 429 or a dropped connection as transient", async () => {
+    answer(new Response("Not found", { status: 404 })); expect(await api().endSession()).toBe("gone");
+    answer(new Response("", { status: 403 })); expect(await api().endSession()).toBe("gone");
+    answer(new Response("", { status: 503 })); expect(await api().endSession()).toBe("transient");
+    answer(new Response("", { status: 429 })); expect(await api().endSession()).toBe("transient");
+    fetchMock.mockImplementation(async () => { throw new TypeError("offline"); });
+    expect(await api().endSession()).toBe("transient");
+  });
+});

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { GUEST_PASSCODE_MAX, type GuestSessionResponse, type GuestVideoDto } from "@quincy/shared";
 import { LazyImage } from "../components/LazyImage";
 import { Badge } from "../components/reui/badge";
@@ -19,6 +19,13 @@ const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 export function UnavailableScreen() {
   return <main className="flex min-h-dvh items-center justify-center bg-background p-[var(--space-4)]">
     <EmptyState data-testid="guest-unavailable" title="This link isn't available.">Open the link from your email again, or ask the studio for a new one.</EmptyState>
+  </main>;
+}
+
+/** After "Not you? Sign out" when this page holds no token to start a fresh session with (it was reloaded after the fragment scrub, #854). The guest chose this, so it says so plainly. */
+export function SignedOutScreen() {
+  return <main className="flex min-h-dvh items-center justify-center bg-background p-[var(--space-4)]">
+    <EmptyState data-testid="guest-signed-out" title="You're signed out.">Open the review link again to keep watching.</EmptyState>
   </main>;
 }
 
@@ -89,12 +96,13 @@ const noteCount = (count: number) => (count === 0 ? "No notes" : `${count} ${cou
  * The Video list (69a). Each row: poster, title, the latest granted Version, a premium badge and the public note count; `guest-row-slot` holds that Version's decision and Release chips
  * (#741 14-ui-guest). When the link allows downloads and has several Videos, Download all sits beside the title.
  */
-export function VideoListScreen({ api, verify, title, videos, session, onSession, onOpen, onUnavailable }: { api: GuestApi; verify: GuestVerify; title: string | null; videos: readonly GuestVideoDto[]; session: GuestSessionResponse; onSession: (next: GuestSessionResponse) => void; onOpen: (index: number) => void; onUnavailable: () => void }) {
+export function VideoListScreen({ api, verify, title, videos, session, onSession, onOpen, onUnavailable, identity }: { api: GuestApi; verify: GuestVerify; title: string | null; videos: readonly GuestVideoDto[]; session: GuestSessionResponse; onSession: (next: GuestSessionResponse) => void; onOpen: (index: number) => void; onUnavailable: () => void; /** The "Reviewing as … / Not you? Sign out" row (#854), under the title row. */ identity: ReactNode }) {
   return <main data-testid="guest-list" className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-[var(--space-4)] bg-background px-[var(--space-4)] py-[var(--space-6)] text-foreground">
     <div className="flex flex-wrap items-center justify-between gap-[var(--space-3)]">
       <h1 className="m-0 min-w-0 text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{title ?? "Review"}</h1>
       {videos.length > 1 && <GuestDownloadAll api={api} verify={verify} session={session} onSession={onSession} onUnavailable={onUnavailable} />}
     </div>
+    {identity}
     {videos.length === 0
       ? <EmptyState title="Nothing to review yet.">The studio hasn't shared any videos on this link.</EmptyState>
       : <Frame><FramePanel><ItemGroup className="gap-[var(--space-2)]">

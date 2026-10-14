@@ -28,8 +28,8 @@ address per film, so the client can reach the review screen with no staff step i
   Version of the film with a version number at or below the published one, Trash included so a restore needs
   no sync. A Version uploaded after the Publish is never granted (it is not the client's to see until the
   next Publish). This is the reading of the ticket's "older Versions" as opposed to "never published".
-- **Staff cannot edit it.** Every staff mutation (edit, add or remove a film, grants, replace, revoke, delete)
-  answers 409 `delivery_review_managed`, with `delivery_review = 0` as a SQL backstop in each fence. It sorts first
+- **Staff cannot edit it.** Every staff mutation except End guest sessions (edit, add or remove a film, grants,
+  replace, revoke, delete) answers 409 `delivery_review_managed`, with `delivery_review = 0` as a SQL backstop in each fence. It sorts first
   in the list. The staff DTO carries `delivery: true` and the address stays copyable.
 - **The published Version downloads without a Release.** On this link only, a Version in the Project's
   latest Published set is downloadable (single, Range, Download all). `released` still means a Release row only.
@@ -57,6 +57,16 @@ address per film, so the client can reach the review screen with no staff step i
   while the link is closed (page off, gate off) and is not renewed while closed. Switching the page on brings back
   sessions that have not expired. Accepted risk: a cookie stays valid while it is used, and staff have no per-guest
   stop on this link. Ordinary Review links are unchanged.
+- **Amended 2026-10-14 (#854): staff can end every guest session on this link.** `POST
+  /api/projects/:projectId/review-links/:linkId/end-sessions` bumps `token_generation` and deletes the link's
+  `guest_sessions`; the address (`token_hash`, `token_secret`, URL) does not change and no migration is needed. It
+  is the one staff mutation the link accepts, so it deliberately has no `delivery_review = 0` fence and no "open"
+  fence: sessions suspended by the page being off die too, and it works with the Delivery page off, on an archived
+  Project and with the `links` part off (Revoke's gate). A revoked or deleted link refuses it. Ordinary links take
+  it too, with the same SQL. There is still no per-guest stop, and a guest keeps their email updates (membership is
+  per email). A guest can also leave on their own ("Not you? Sign out", the existing `DELETE .../session`, now
+  audited as `review_link.session_end`). Rotating the token was rejected: it breaks every address already shared and
+  gains nothing, because this page hands the address to anyone holding the page address (0022).
 - Sync additions notify subscribers through the same digest as an ordinary link's add and grant, once.
 - Rollback: a code rollback is safe for ordinary links. An older Worker reads a NULL expiry as expired, so the
   Delivery review link fails closed there; roll forward. See `docs/Guides/CI-Deploy.md`.

@@ -330,6 +330,13 @@ Ending a Review link's access at once. The link stays in staff's list, marked re
 history.
 _Avoid_: Disable, expire
 
+**End guest sessions**:
+Signing everyone out of a Review link at once, without changing its address: every guest must verify
+their email again, and keeps their email updates. Staff can do it on any open link, and it is the only
+change they can make to the Delivery review link. A guest can also sign themselves out ("Not you?
+Sign out"), which ends only their own session.
+_Avoid_: Revoke (that closes the link), Replace (that changes the address)
+
 **Delete (Review link)**:
 Removing an already-revoked Review link from staff's list. Its notes, approvals and audit trail stay,
 and it cannot be restored. Anyone who may Revoke a link may Delete it.
