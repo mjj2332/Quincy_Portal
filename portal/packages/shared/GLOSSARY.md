@@ -302,6 +302,11 @@ Whether a note on a Video is public (a Guest reviewer can see it) or internal (s
 inherits its parent's visibility, and a guest's note is always public.
 _Avoid_: Private, hidden, staff-only
 
+**Open note**:
+A note thread on one Version not yet marked resolved. Counted per Version, and only among the notes
+the viewer may see: a Guest reviewer counts public notes only.
+_Avoid_: Unresolved, pending
+
 **Marker export**:
 A file of one Version's notes for an editing program, as DaVinci Resolve markers (an EDL) or Final Cut Pro
 markers (FCPXML). Staff choose whether internal notes and which status (all, open, resolved) go in; internal
@@ -321,8 +326,9 @@ tile on the Delivery page opens it. It carries each film in the latest Published
 Version and every older one, until a later Publish leaves the film out. The published Version is
 downloadable there because it is published, not because of a Release; older Versions behave as on any
 Review link. It lives as long as the Delivery page does, has no passcode, always allows comments and
-approval, and staff can neither Revoke nor Delete it. A locked Premium film has no way onto it until
-staff Unlock it.
+approval, and staff can neither Revoke nor Delete it. Unlike any other Review link, a guest downloads
+there without verifying an email; writing a note or giving a Client approval still needs the code. A
+locked Premium film has no way onto it until staff Unlock it.
 _Avoid_: Default link, system link, delivery link
 
 **Revoke**:
@@ -386,8 +392,8 @@ _Avoid_: Social mode, mockup
 **Delivery page**:
 A Project's one public page, at a web address built from the property address, where its latest
 Published set is viewed and downloaded with no sign-in and no code. Clients browse and download there;
-to comment on or approve a film they open it on the Project's Delivery review link, which asks them to
-verify their email.
+tapping a film opens it on the Project's Delivery review link, where they watch and download with no
+code and verify their email only to comment or approve.
 _Avoid_: Gallery (as a domain term; fine as page copy), client portal, client link, Review link
 
 **Publish**:
