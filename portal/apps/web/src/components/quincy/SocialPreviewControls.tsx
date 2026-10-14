@@ -1,31 +1,47 @@
+import { useEffect, useState } from "react";
 import { Notice } from "./Notice";
 import { Button } from "./Button";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
-import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
 
 /** What a Social preview needs of an overlay: the picture and its name. A staff Project's resolved overlay and (#872) a guest payload's both fit. */
 export type SocialOverlayFrame = { id: string; name: string; imageUrl: string };
-export type SocialFit = "fill" | "fit";
 
 /**
- * Social preview (#871), presentation only: the film framed 9:16 under the Project's overlay. The host owns the data and the choices; the player
- * owns the rule that nothing is marked, drawn or noted while it is on. Reused by the guest page (#872).
+ * Social preview (#871), presentation only: the film framed 9:16 (always fitted: the whole picture, letterboxed inside the frame) under the Project's overlay.
+ * The host owns the data and the choices. Nothing else is paused (#877): notes, marks and drawing work as ever, in the picture's own coordinates. Reused by the guest page (#872)
+ * and by Compare (#877), where one switcher drives both sides.
  */
 export type SocialPreviewMode = {
   overlays: readonly SocialOverlayFrame[];
   /** The overlay on screen (null while none is). */
   currentId: string | null;
   onOverlay(id: string): void;
-  fit: SocialFit;
-  onFit(fit: SocialFit): void;
   status: "loading" | "ready" | "error";
   onRetry(): void;
 };
 
 const COARSE = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[721px]:min-h-11 max-[721px]:min-w-11";
 
-/** The overlay switcher and the Fill / Fit choice, in the transport row where the range button sits. */
+/**
+ * The overlay on screen and whether its picture loaded (#877): the failed / loaded state, shared by the player and by Compare's one switcher. A failure is about one attempt:
+ * a new overlay, or Social turned off and on again, starts clean; a successful load clears it. `onError` / `onLoad` go on every `<img>` that shows the artwork.
+ */
+export function useOverlayImage(social: SocialPreviewMode | undefined) {
+  const overlay = social?.overlays.find((candidate) => candidate.id === social.currentId) ?? null;
+  const active = social !== undefined;
+  const [failedImage, setFailedImage] = useState<string | null>(null);
+  useEffect(() => { setFailedImage(null); }, [overlay?.imageUrl, active]);
+  const imageUrl = overlay?.imageUrl ?? null;
+  return {
+    imageUrl,
+    failed: imageUrl !== null && failedImage === imageUrl,
+    onImageError: () => { setFailedImage(imageUrl); },
+    onImageLoad: () => { setFailedImage(null); },
+  };
+}
+
+/** The overlay switcher, in the transport row where the range button sits (and in Compare's toolbar). */
 export function SocialPreviewControls({ social, imageFailed }: { social: SocialPreviewMode; imageFailed: boolean }) {
   const current = social.overlays.find((overlay) => overlay.id === social.currentId) ?? null;
   return <div data-testid="video-social-controls" className="flex flex-wrap items-center gap-[var(--space-2)]">
@@ -45,9 +61,5 @@ export function SocialPreviewControls({ social, imageFailed }: { social: SocialP
         {social.overlays.map((overlay) => <SelectItem key={overlay.id} value={overlay.id} className={COARSE}>{overlay.name}</SelectItem>)}
       </SelectContent>
     </Select>}
-    <ToggleGroup variant="outline" spacing={0} aria-label="Film fit" value={[social.fit]} onValueChange={(next) => { const picked = next[0]; if (picked === "fill" || picked === "fit") social.onFit(picked); }}>
-      <ToggleGroupItem value="fill" data-testid="video-social-fill" className={COARSE}>Fill</ToggleGroupItem>
-      <ToggleGroupItem value="fit" data-testid="video-social-fit" className={COARSE}>Fit</ToggleGroupItem>
-    </ToggleGroup>
   </div>;
 }

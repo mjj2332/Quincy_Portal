@@ -60,6 +60,9 @@ const note = (over: Record<string, unknown> = {}): VideoNoteThreadDto => ({
   body: "A note", deleted: false, resolved: null, revision: 1, createdAt: "2026-10-10T00:00:01.000Z", editedAt: null, copiedFrom: null, replies: [], ...over,
 }) as unknown as VideoNoteThreadDto;
 
+const OA = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Reels safe zone", platformLabel: "Instagram Reels", isDefault: true, imageUrl: "/social-overlay-images/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/11111111-1111-4111-8111-111111111111", width: 1080, height: 1920 };
+const OB = { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "TikTok safe zone", platformLabel: "TikTok", isDefault: false, imageUrl: "/social-overlay-images/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/22222222-2222-4222-8222-222222222222", width: 1080, height: 1920 };
+
 let stub: VideoElementStub;
 let viewport: MockViewport;
 let root: Root | null = null;
@@ -83,6 +86,7 @@ async function mount(opts: { role?: Role; parts?: string[]; notes?: Record<strin
   served = opts.notes ?? {};
   api.apiGet.mockImplementation(async (path) => {
     if (path.endsWith("/videos")) return { videos: [videoOf(versionCount)] };
+    if (path.endsWith("/social-overlays")) return { available: [], selected: [], resolved: [OA, OB], revision: "0".repeat(64) };
     const match = /\/video-versions\/([^/]+)\/notes$/.exec(path);
     if (match) return { notes: served[match[1]!] ?? [] };
     throw new Error(`unrouted ${path}`);
@@ -1147,5 +1151,129 @@ describe("Compare: the capability going away while comparing (#741 7c Sol round 
     expect(compareButton()).toBe(button);
     expect(button.isConnected).toBe(true);
     expect(document.activeElement).toBe(button);
+  });
+});
+
+describe("Compare: Social preview (#877)", () => {
+  const socialToggle = () => tid("video-social-toggle")!;
+  const stageOf = (side: "a" | "b") => cell(side).querySelector<HTMLElement>('[data-testid="video-stage"]')!;
+  const frameOf = (side: "a" | "b") => cell(side).querySelector<HTMLElement>('[data-testid="video-social-frame"]')!;
+  const artOf = (side: "a" | "b") => cell(side).querySelector<HTMLImageElement>('[data-testid="video-social-overlay"]');
+  const stages = () => tid("video-compare-stages")!;
+  const ratio = () => Number.parseFloat(stages().style.aspectRatio);
+  const startSocial = async () => { await click(socialToggle()); await flush(8); };
+
+  it("turns on from inside Compare: both sides get a 9:16 frame with the overlay, in one switcher in the Compare toolbar", async () => {
+    await openCompare();
+    expect(stageOf("a").dataset.social).toBeUndefined();
+    expect((socialToggle() as HTMLButtonElement).disabled).toBe(false);
+    await startSocial();
+    expect(socialToggle().getAttribute("aria-pressed")).toBe("true");
+    for (const side of ["a", "b"] as const) {
+      expect(stageOf(side).dataset.social).toBe("fit");
+      expect(artOf(side)!.getAttribute("src")).toBe(OA.imageUrl);
+      expect(frameOf(side).contains(vid(side))).toBe(true);
+    }
+    expect(dialog()!.querySelectorAll('[data-testid="video-social-overlay-select"]')).toHaveLength(1);
+    expect(tid("video-compare-toolbar")!.contains(tid("video-social-controls"))).toBe(true);
+    expect(tid("video-social-fill")).toBeNull();
+    expect(tid("video-social-fit")).toBeNull();
+  });
+
+  it("turns on before Compare and stays on through entering it, leaving it and entering again", async () => {
+    await mount({ parts: ["compare"] });
+    await openViewer();
+    await loadFilm(0);
+    await startSocial();
+    await enterCompare(0);
+    expect(socialToggle().getAttribute("aria-pressed")).toBe("true");
+    expect(stageOf("a").dataset.social).toBe("fit");
+    expect(stageOf("b").dataset.social).toBe("fit");
+    await click(compareButton()!); await flush(6);
+    expect(compareRoot()).toBeNull();
+    expect(tid("video-stage")!.dataset.social).toBe("fit");
+    await enterCompare(0);
+    expect(socialToggle().getAttribute("aria-pressed")).toBe("true");
+    expect(stageOf("b").dataset.social).toBe("fit");
+  });
+
+  it("one select drives both sides: picking an overlay changes both images", async () => {
+    await openCompare();
+    await startSocial();
+    await click(tid("video-social-overlay-select")!); await flush(4);
+    await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent === OB.name)!); await flush(4);
+    expect(artOf("a")!.getAttribute("src")).toBe(OB.imageUrl);
+    expect(artOf("b")!.getAttribute("src")).toBe(OB.imageUrl);
+  });
+
+  it("keeps the same <video> nodes through Social on and off, and shapes the stages for two 9:16 frames side by side", async () => {
+    await openCompare();
+    const [a, b] = [vid("a"), vid("b")];
+    const plain = ratio();
+    await startSocial();
+    expect(vid("a")).toBe(a);
+    expect(vid("b")).toBe(b);
+    expect(ratio()).toBeCloseTo(9 / 8, 5);
+    expect(ratio()).not.toBeCloseTo(plain, 5);
+    await click(socialToggle()); await flush(4);
+    expect(vid("a")).toBe(a);
+    expect(ratio()).toBeCloseTo(plain, 5);
+    expect(stageOf("a").dataset.social).toBeUndefined();
+  });
+
+  it("Wipe with Social on is one 9:16 frame: B's clip moves from its cell to B's frame, and the wipe surface is the frame", async () => {
+    await openCompare();
+    await startSocial();
+    await click(tid("video-compare-mode-wipe")!);
+    expect(ratio()).toBeCloseTo(9 / 16, 5);
+    expect(cell("b").style.clipPath).toBe("");
+    expect(frameOf("b").style.clipPath).toBe("inset(0 0 0 50%)");
+    expect(frameOf("a").style.clipPath).toBe("");
+    const surface = tid("video-compare-wipe-surface")!;
+    // The frame's own size comes from CSS (container units), so the surface carries no pixel geometry of its own.
+    expect(surface.getAttribute("style")).toBeNull();
+    const slider = dialog()!.querySelector<HTMLInputElement>('input[aria-label="Wipe between v3 and v2"]')!;
+    slider.focus();
+    await key("ArrowRight", slider);
+    expect(frameOf("b").style.clipPath).toBe("inset(0 0 0 51%)");
+    await click(tid("video-compare-mode-side-by-side")!);
+    expect(frameOf("b").style.clipPath).toBe("");
+    expect(ratio()).toBeCloseTo(9 / 8, 5);
+    await click(tid("video-compare-mode-wipe")!);
+    await click(socialToggle()); await flush(4);
+    expect(frameOf("b").style.clipPath).toBe("");
+    expect(cell("b").style.clipPath).toBe("inset(0 0 0 51%)");
+  });
+
+  it("both sides' side labels draw inside their frames", async () => {
+    await openCompare();
+    await startSocial();
+    for (const side of ["a", "b"] as const) expect(frameOf(side).querySelector('[data-testid="video-compare-side-labels"]')).not.toBeNull();
+  });
+
+  it("gets no drawing (Compare never had it), but notes stay usable with Social on", async () => {
+    await mount({ parts: ["notes", "markup", "compare"] });
+    await openViewer();
+    await loadFilm(0);
+    await enterCompare(0);
+    await click(tid("video-pane-show")!);
+    await startSocial();
+    expect(tid("video-markup-toolbar-draw")).toBeNull();
+    const composer = tid("video-note-composer")!;
+    expect(composer.closest("[hidden]")).toBeNull();
+    expect(composer.closest("[inert]")).toBeNull();
+  });
+
+  it("Escape order with Social on: Social, then Compare, then the viewer", async () => {
+    await openCompare();
+    await startSocial();
+    await key("Escape", dialog()!); await flush(4);
+    expect(socialToggle().getAttribute("aria-pressed")).toBe("false");
+    expect(compareRoot()).not.toBeNull();
+    await key("Escape", dialog()!); await flush(4);
+    expect(compareRoot()).toBeNull();
+    expect(dialog()).not.toBeNull();
+    await key("Escape", dialog()!); await flush(6);
+    expect(dialog()).toBeNull();
   });
 });

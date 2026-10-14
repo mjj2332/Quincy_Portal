@@ -278,21 +278,14 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     remove: async (root, note, expectedRevision) => settle(await writer.run(root.id, () => api.deleteNote(note.id, expectedRevision)), note.id === root.id ? root.id : null),
   }), [api, writer, settle]);
 
-  // Entering Social ends a drawing on purpose; the drawer must not come back over the preview when it does.
-  const socialEntering = useRef(false);
-  const onDrawingChange = useCallback((drawing: boolean) => { if (phone && !socialEntering.current) setDrawerOpen(!drawing); }, [phone]);
+  const onDrawingChange = useCallback((drawing: boolean) => { if (phone) setDrawerOpen(!drawing); }, [phone]);
   const compose = useGuestCompose({ clock, frameCount: version.frameCount, timecode, markupAllowed: session.link.allow.markup, media: api.media, post, edit: editRoot, latestOf, onDrawingChange });
-  // Social preview (#872): in memory, shared by every Video and Version of this screen, off again after All videos. The notes are paused while it is on; nothing is closed or cleared.
+  // Social preview (#872): in memory, shared by every Video and Version of this screen, off again after All videos. Nothing else changes (#877): notes, marks and drawing work with it on, and turning it on or off touches no draft or drawing.
   const preview = useSocialPreview();
   const socialOn = preview.on && socialOverlays.length > 0;
-  const { endDrawing } = compose;
-  const setSocial = useCallback((next: boolean) => {
-    if (next) { socialEntering.current = true; endDrawing(); }
-    preview.setOn(next);
-  }, [endDrawing, preview.setOn]); // eslint-disable-line react-hooks/exhaustive-deps -- `setOn` is stable
-  useEffect(() => { socialEntering.current = false; }, [socialOn]);
+  const setSocial = preview.setOn;
   const socialMode: SocialPreviewMode | undefined = socialOn ? {
-    overlays: socialOverlays, currentId: currentOverlay(socialOverlays, preview.overlayId)?.id ?? null, onOverlay: preview.setOverlayId, fit: preview.fit, onFit: preview.setFit,
+    overlays: socialOverlays, currentId: currentOverlay(socialOverlays, preview.overlayId)?.id ?? null, onOverlay: preview.setOverlayId,
     status: "ready", onRetry: () => undefined,
   } : undefined;
   // The range button and handles (#861) exist where the link allows comments; they take the open draft's marks and are disabled with no draft (the hint says how to start one), an archived Project, or marks the draft has locked (a drawing).
@@ -337,8 +330,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const { beginEdit } = compose;
   const writing = useMemo<Writing>(() => ({
     canWrite, verified: session.verified, media: api.media, actions, drafts, onNeedVerify: () => { requestVerify("none"); },
-    composerOpen: compose.isOpen, paused: socialOn, editRoot: (thread) => { startDraft(() => { beginEdit(thread); }); },
-  }), [canWrite, session.verified, api, actions, drafts, requestVerify, compose.isOpen, socialOn, startDraft, beginEdit]);
+    composerOpen: compose.isOpen, editRoot: (thread) => { startDraft(() => { beginEdit(thread); }); },
+  }), [canWrite, session.verified, api, actions, drafts, requestVerify, compose.isOpen, startDraft, beginEdit]);
   const canPaste = canWrite && video.versions.length >= 2;
   // On a phone the notes drawer would sit under the dialog: it steps aside and comes back when the dialog closes.
   const openPaste = () => {
@@ -352,13 +345,12 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     setPasteOpen(next);
     if (!next && restorePasteDrawer.current) { restorePasteDrawer.current = false; setDrawerOpen(true); }
   };
-  const pausedLine = <p data-testid="guest-notes-social-paused" className="m-0 text-foreground-secondary [font:var(--type-label)]">Notes are off in Social preview.</p>;
   const addNote = canWrite
-    ? <>{socialOn && pausedLine}<div hidden={socialOn} inert={socialOn}>{compose.isOpen ? compose.form : <div className="flex flex-col items-start gap-[var(--space-2)]">
+    ? <>{compose.isOpen ? compose.form : <div className="flex flex-col items-start gap-[var(--space-2)]">
       <Button type="button" variant="outline" data-testid="guest-add-note" className={TOUCH} onClick={() => { if (session.verified) startDraft(compose.begin); else requestVerify("compose"); }}>Add a note</Button>
       {canPaste && <Button type="button" variant="ghost" data-testid="guest-paste-open" className={TOUCH} onClick={openPaste}>Copy my notes from another version</Button>}
       {pasted !== null && <p role="status" data-testid="guest-paste-status" className="m-0 text-foreground-secondary [font:var(--type-label)]">{pasted}</p>}
-    </div>}</div></>
+    </div>}</>
     : null;
 
   // Approve / Request changes (#741 14-ui-guest). The note draft is in `drafts` and the write is the writer's, so both outlive this screen; the dialog is per Version and decision.
@@ -423,7 +415,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     ? <GuestSubscriptionRow store={subscription} initial={session.notifications.subscribed} readOnly={archived} onToggle={toggleSubscription} />
     : null;
   const footer = session.verified ? <>{identity}{subscriptionRow}</> : null;
-  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : <div className="flex items-center justify-between gap-[var(--space-2)]">{heading}{paneControls.hideButton}</div>} top={addNote} footer={footer} writing={writing} hideEmpty={socialOn && canWrite} />;
+  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : <div className="flex items-center justify-between gap-[var(--space-2)]">{heading}{paneControls.hideButton}</div>} top={addNote} footer={footer} writing={writing} />;
 
   return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-dvh flex-1 flex-col bg-background text-foreground min-[721px]:min-h-0">
     <header className="flex flex-col border-b border-border bg-card text-card-foreground">

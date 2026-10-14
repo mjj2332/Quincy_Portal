@@ -162,15 +162,11 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const frames = useMemo(() => overlaysQuery.data?.resolved.map(({ id, name, imageUrl }) => ({ id, name, imageUrl })), [overlaysQuery.data]);
   const refetchOverlays = overlaysQuery.refetch;
   const socialMode: SocialPreviewMode | undefined = socialOn ? {
-    overlays: frames ?? [], currentId: currentOverlay(frames, preview.overlayId)?.id ?? null, onOverlay: preview.setOverlayId, fit: preview.fit, onFit: preview.setFit,
+    overlays: frames ?? [], currentId: currentOverlay(frames, preview.overlayId)?.id ?? null, onOverlay: preview.setOverlayId,
     status: overlaysQuery.isError ? "error" : frames ? "ready" : "loading", onRetry: () => { void refetchOverlays(); },
   } : undefined;
-  const setSocialOn = (next: boolean) => {
-    // Drawing ends on entry (the strokes stay in the draft); nothing else of the notes is closed or forgotten.
-    // A Post waiting on its frame or a drawing awaiting confirmation must not complete while hidden; the drafts stay.
-    if (next) { forms?.cancelConfirmation(assetId); forms?.exitDraw(assetId); }
-    preview.setOn(next);
-  };
+  // Social preview pauses nothing (#877): notes, marks and drawing work in it, so turning it on or off touches no form, draft or drawing.
+  const setSocialOn = (next: boolean) => { preview.setOn(next); };
   const escapeSnapshot = useRef({ layer: false, form: false, compare: false, social: false });
   const exitCompare = useCallback((focus: "button" | "dialog") => {
     if (modeRef.current !== "compare") return;
@@ -196,8 +192,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       let consumed = false;
       const inForm = active instanceof Element && popup.contains(active) && active.closest("[data-notes-form]") !== null;
       // In compare a form is only the Escape's when focus is inside that side's note form: a hidden or unfocused draft never swallows it.
-      // Social preview hides the forms: a hidden draft must not swallow the Escape that leaves it.
-      if (notesOn && forms && !socialOnRef.current && (modeRef.current !== "compare" || inForm)) {
+      // The order is the form or the drawing first, then Social, then Compare, then the viewer (#877): Social leaves the forms visible, so a form that is open owns the key.
+      if (notesOn && forms && (modeRef.current !== "compare" || inForm)) {
         // In compare the form belongs to the side whose panel holds focus (else the side whose tab is showing).
         const pair = compareStore?.getState().pair;
         const sideOf = active instanceof Element ? active.closest("[data-compare-side]")?.getAttribute("data-compare-side") : null;
@@ -410,11 +406,9 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         ref={socialToggleRef}
         type="button"
         variant="outline"
-        disabled={comparing}
         onClick={() => { setSocialOn(!socialOn); }}
         data-testid="video-social-toggle"
         aria-pressed={socialOn}
-        {...(comparing ? { title: "Leave Compare to preview for Social" } : {})}
         className={"pointer-coarse:min-h-11 max-[721px]:min-h-11 max-[721px]:min-w-11 aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground"}
       ><Smartphone aria-hidden="true" /><span className={phone ? "sr-only" : BAR_LABEL}>Social preview</span></Button></BarTip>}
       {(canCompare || comparing) && <BarTip label={comparing ? "Single view" : "Compare"}><Button
@@ -423,8 +417,6 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         variant="outline"
         data-testid="video-compare-toggle"
         aria-pressed={comparing}
-        disabled={socialOn}
-        {...(socialOn ? { title: "Turn off Social preview to compare" } : {})}
         className="pointer-coarse:min-h-11 max-[721px]:hidden"
         onPointerEnter={() => { preloadCompare(notesOn); }}
         onFocus={() => { preloadCompare(notesOn); }}
@@ -504,10 +496,10 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       {comparing
         ? <>
           <Suspense fallback={null}>
-            <LazyCompareView video={video} store={compareStore} startFrame={startFrame} onChangeSide={changeSide} controlRef={compareRef} detailsFor={detailsFor} {...(notes ? { notes: { projectId: notes.projectId, role: notes.role, userId: notes.userId, archived: notes.archived, forms: notes.forms } } : {})} />
+            <LazyCompareView video={video} store={compareStore} social={socialMode} startFrame={startFrame} onChangeSide={changeSide} controlRef={compareRef} detailsFor={detailsFor} {...(notes ? { notes: { projectId: notes.projectId, role: notes.role, userId: notes.userId, archived: notes.archived, forms: notes.forms } } : {})} />
           </Suspense>
         </>
-        : notes ? <Suspense fallback={null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows} paused={socialOn}>{layout}</LazyNotesHost></Suspense> : layout(null)}
+        : notes ? <Suspense fallback={null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows}>{layout}</LazyNotesHost></Suspense> : layout(null)}
       </OverlayContainerContext.Provider>
       <div ref={setSlot} />
       <div ref={setToastSlot} />

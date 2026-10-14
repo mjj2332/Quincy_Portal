@@ -11,6 +11,7 @@ import type { NoteFormStore } from "../../lib/video-note-form-store";
 import { Button } from "../quincy/Button";
 import { Notice } from "../quincy/Notice";
 import { VideoStage } from "../quincy/VideoStage";
+import { SocialPreviewControls, useOverlayImage, type SocialPreviewMode } from "../quincy/SocialPreviewControls";
 import { COARSE, IconTip, type VideoPlayerControl } from "../quincy/VideoPlayer";
 import { TimeFormatMenu } from "../quincy/TimeFormatMenu";
 import { ReviewPaneHideContext, useReviewPaneControls } from "../quincy/ReviewPane";
@@ -52,7 +53,7 @@ const versionLabel = (v: VideoVersionDto, newest: number) => `v${v.version}${v.v
  * the same React tree: only CSS differs, so a mode switch never remounts a `<video>`. Not offered below 721px. Loaded lazily by the
  * review viewer, which never imports the transport.
  */
-export default function CompareView({ video, store, startFrame, onChangeSide, controlRef, notes, detailsFor }: {
+export default function CompareView({ video, store, startFrame, onChangeSide, controlRef, notes, detailsFor, social }: {
   video: VideoDto;
   store: CompareStore;
   /** A's frame on entry (the frame the single player showed). */
@@ -62,6 +63,8 @@ export default function CompareView({ video, store, startFrame, onChangeSide, co
   controlRef: Ref<VideoPlayerControl>;
   notes?: CompareNotesProps;
   detailsFor: (version: VideoVersionDto) => ReactNode;
+  /** Social preview (#877), owned by the viewer: present while it is on. One switcher drives both sides; Compare adds no drawing, so "not view-only" here means notes and marks. */
+  social?: SocialPreviewMode | undefined;
 }) {
   const compare = useSyncExternalStore(store.subscribe, store.getState);
   const pair = compare.pair;
@@ -74,7 +77,7 @@ export default function CompareView({ video, store, startFrame, onChangeSide, co
   const [slotStore] = useState(createSlotStore);
   if (!versionA || !versionB) return null;
   return <>
-    <CompareBody video={video} store={store} startFrame={startFrame} versionA={versionA} versionB={versionB} onChangeSide={onChangeSide} controlRef={controlRef} slotStore={slotStore} seekBridge={seekBridge} />
+    <CompareBody video={video} store={store} startFrame={startFrame} versionA={versionA} versionB={versionB} onChangeSide={onChangeSide} controlRef={controlRef} slotStore={slotStore} seekBridge={seekBridge} social={social} />
     {notes && <Suspense fallback={null}><LazyNotesHost notes={notes} video={video} versionA={versionA} versionB={versionB} store={store} seekBridge={seekBridge} detailsFor={detailsFor} publish={slotStore.set} /></Suspense>}
   </>;
 }
@@ -90,7 +93,7 @@ function createSlotStore(): SlotStore {
   };
 }
 
-function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSide, controlRef, slotStore, seekBridge }: {
+function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSide, controlRef, slotStore, seekBridge, social }: {
   video: VideoDto;
   store: CompareStore;
   startFrame: number;
@@ -100,6 +103,7 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
   controlRef: Ref<VideoPlayerControl>;
   slotStore: SlotStore;
   seekBridge: { current: (side: CompareSideId, frame: number) => void };
+  social: SocialPreviewMode | undefined;
 }) {
   const compare = useSyncExternalStore(store.subscribe, store.getState);
   const slots = useSyncExternalStore(slotStore.subscribe, slotStore.get);
@@ -107,6 +111,9 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
   const notesPaneId = useId();
   const setNotesOpen = store.setNotesOpen;
   const notesControls = useReviewPaneControls({ open: compare.notesOpen, onOpenChange: (next) => { setNotesOpen(next); }, paneId: notesPaneId, noun: "notes" });
+  // Social preview (#877): one overlay on screen for both sides, so one failed / loaded state.
+  const socialImage = useOverlayImage(social);
+  const framed = social !== undefined;
   const position = useRef(startFrame);
   const [handles, setHandles] = useState<{ a: CompareSideHandle | null; b: CompareSideHandle | null }>({ a: null, b: null });
   const onHandleA = useCallback((handle: CompareSideHandle | null) => { setHandles((held) => (held.a === handle ? held : { ...held, a: handle })); }, []);
@@ -258,13 +265,17 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
     onClockChange={slots ? slots[target].playerProps.onClockChange : undefined}
     labelCorner={wiping && target === "b" ? "top-right" : "top-left"}
     cellClassName={wiping ? "[grid-area:stack]" : undefined}
-    cellStyle={wiping && target === "b" ? { clipPath: `inset(0 0 0 ${clipLeft})` } : undefined}
+    // Wipe: B is clipped to the right of the handle. With Social on the clip is on B's 9:16 frame, in the frame's own percentages; otherwise on B's cell, in the union's pixels.
+    cellStyle={wiping && target === "b" && !framed ? { clipPath: `inset(0 0 0 ${clipLeft})` } : undefined}
+    {...(framed ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})}
+    {...(framed && wiping && target === "b" ? { frameStyle: { clipPath: `inset(0 0 0 ${Number((wipe * 100).toFixed(2))}%)` } } : {})}
   />;
 
   // The stages take the height their pictures need (the taller of the two shapes, side by side counting two of them), so the scrubber
   // sits just under the pictures like the single player's, and the room left over falls below it. They still shrink to fit a short window.
   const narrowest = Math.min(aspect(versionA), aspect(versionB));
-  const stagesRatio = wiping ? narrowest : narrowest * 2;
+  // Social on: every frame is 9:16, one in Wipe, two side by side.
+  const stagesRatio = framed ? (wiping ? 9 / 16 : 9 / 8) : wiping ? narrowest : narrowest * 2;
   const wipeSliderLabel = `Wipe between ${labels.a} and ${labels.b}`;
   return <div data-testid="video-compare" data-mode={compare.mode} className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-3)] p-[var(--space-5)]">
@@ -284,6 +295,7 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
         <IconTip label={compare.muted ? "Unmute" : "Mute"}>
           <Toggle variant="default" size="default" pressed={compare.muted} onPressedChange={(next) => { transport?.setMuted(next); }} aria-label="Mute" className={cn("size-8", COARSE)}>{compare.muted ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}</Toggle>
         </IconTip>
+        {social && <SocialPreviewControls social={social} imageFailed={socialImage.failed} />}
       </div>
 
       <div className="flex flex-wrap items-end gap-x-[var(--space-4)] gap-y-[var(--space-2)]">
@@ -313,13 +325,14 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
       {state.blocked === "gesture" && <Notice tone="caution" className="bg-card" role="status" data-testid="video-compare-blocked">Press Play to continue.</Notice>}
       {state.blocked === "recovery" && <Notice tone="caution" role="status" data-testid="video-compare-blocked" className="flex flex-wrap items-center justify-between gap-[var(--space-2)] bg-card"><span>Playback stopped because a video kept buffering.</span><Button type="button" variant="text" className={TOOL} onClick={() => { transport?.play(); }}>Resume</Button></Notice>}
 
-      <div data-testid="video-compare-stages" style={{ aspectRatio: stagesRatio }} className={cn("relative grid min-h-0 flex-[0_1_auto] grid-rows-[minmax(0,1fr)] gap-[var(--space-3)]", wiping ? "[grid-template-areas:'stack'] grid-cols-[minmax(0,1fr)] gap-0" : "grid-cols-2")}>
+      <div data-testid="video-compare-stages" style={{ aspectRatio: stagesRatio }} className={cn("relative grid min-h-0 flex-[0_1_auto] grid-rows-[minmax(0,1fr)] gap-[var(--space-3)]", wiping ? "[grid-template-areas:'stack'] grid-cols-[minmax(0,1fr)] gap-0" : "grid-cols-2", framed && "[container-type:size]")}>
         {stage("a")}
         {stage("b")}
         {wiping && <div
           data-testid="video-compare-wipe-surface"
-          className="absolute z-10 touch-none"
-          style={union ? { left: union.left, top: union.top, width: union.width, height: union.height } : { inset: 0 }}
+          // Social on: the surface is the 9:16 frame itself, sized in CSS from the stages' own container (the union's pixel boxes are relative to a frame and drift whenever the stages are not exactly 9:16).
+          className={cn("absolute z-10 touch-none", framed && "inset-0 m-auto h-[min(100cqh,calc(100cqw*16/9))] w-[min(100cqw,calc(100cqh*9/16))]")}
+          {...(framed ? {} : { style: union ? { left: union.left, top: union.top, width: union.width, height: union.height } : { inset: 0 } })}
           onPointerDown={(event) => {
             if (event.target instanceof Element && event.target.closest('[data-slot="slider"]')) return;
             dragging.current = true;
@@ -396,7 +409,7 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
 }
 
 /** One side: its stage (own `<video>`, own clock), the version and phase badges, and the buffering line. Keyed by side and Version by the body. */
-function SideStage({ side: id, version, title, label, initialFrame, phase, startsIn, buffering, timecode, onHandle, onClockChange, labelCorner, cellClassName, cellStyle }: {
+function SideStage({ side: id, version, title, label, initialFrame, phase, startsIn, buffering, timecode, onHandle, onClockChange, labelCorner, cellClassName, cellStyle, social, frameStyle }: {
   side: CompareSideId;
   version: VideoVersionDto;
   title: string;
@@ -411,6 +424,9 @@ function SideStage({ side: id, version, title, label, initialFrame, phase, start
   labelCorner: "top-left" | "top-right";
   cellClassName?: string | undefined;
   cellStyle?: React.CSSProperties | undefined;
+  /** Social preview (#877): this side's stage is framed 9:16 under the overlay; `frameStyle` is B's Wipe clip, on the frame. */
+  social?: { imageUrl: string | null; onImageError: () => void; onImageLoad: () => void } | undefined;
+  frameStyle?: React.CSSProperties | undefined;
 }) {
   const [element, setElement] = useState<HTMLVideoElement | null>(null);
   const [timeFormat] = useTimeFormat();
@@ -429,7 +445,7 @@ function SideStage({ side: id, version, title, label, initialFrame, phase, start
   }, [instance, onClockChange]);
 
   return <div data-compare-cell={id} data-phase={phase} style={cellStyle} className={cn("relative flex h-full min-h-0 min-w-0 flex-col", cellClassName)}>
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setElement} overlay={(box) => <>
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setElement} {...(social ? { social } : {})} {...(frameStyle ? { frameStyle } : {})} overlay={(box) => <>
       <div data-testid="video-compare-side-labels" data-corner={labelCorner} className="pointer-events-none absolute" style={box ? { left: box.left, top: box.top, width: box.width, height: box.height } : { inset: 0 }}>
         <div className={cn("absolute top-[var(--space-2)] flex flex-wrap items-center gap-[var(--space-1)]", labelCorner === "top-right" ? "right-[var(--space-2)] justify-end" : "left-[var(--space-2)]")}>
           <Badge variant="invert">{label}</Badge>

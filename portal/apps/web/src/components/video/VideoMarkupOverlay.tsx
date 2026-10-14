@@ -92,7 +92,8 @@ export function useVideoMarkup(session: VideoNotesSession): { overlay: ((box: Bo
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave } = markup.handlers;
   const handlers = {
     ...markup.handlers,
-    onPointerDown: (event: ReactPointerEvent<Element>) => { if (!event.isPrimary || event.button !== 0) return; return onPointerDown(event); },
+    // A stroke starts on the picture only (#877): a press in a letterbox band, which Social's 9:16 frame makes wide, is no stroke (the layer is the picture, so only a stray event can land outside it).
+    onPointerDown: (event: ReactPointerEvent<Element>) => { if (!event.isPrimary || event.button !== 0) return; const rect = svgRef.current?.getBoundingClientRect(); if (rect && !overPicture(rect, event)) return; return onPointerDown(event); },
     onPointerMove: (event: ReactPointerEvent<Element>) => { const rect = svgRef.current?.getBoundingClientRect(); if (rect && !overPicture(rect, event)) onPointerLeave(event); else onPointerMove(event); },
     onPointerUp: (event: ReactPointerEvent<Element>) => { const rect = svgRef.current?.getBoundingClientRect(); if (rect && !overPicture(rect, event)) onPointerLeave(event); else onPointerUp(event); },
   };
