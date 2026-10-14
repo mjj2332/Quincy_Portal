@@ -170,14 +170,10 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
     </ToggleGroup>
   );
 
-  return <aside
-    aria-label="Notes"
-    data-testid="video-notes-panel"
-    className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)] min-[721px]:overflow-clip max-[721px]:overflow-clip border-l border-border bg-card p-[var(--space-4)] text-card-foreground max-[721px]:border-l-0"
-  >
-    <div data-sheet-part="body" className="flex flex-wrap items-baseline justify-between max-[721px]:justify-end gap-x-[var(--space-3)] gap-y-[var(--space-1)]">
-      <div className="grid gap-[var(--space-1)] max-[721px]:sr-only">
-        <h3 data-testid="video-notes-title" className="m-0 text-[length:var(--text-lg)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{`Notes on v${version.version}`}</h3>
+  const headerRow = (
+    <div data-sheet-part="body" className="flex flex-wrap items-baseline justify-between max-[721px]:flex-nowrap max-[721px]:items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)]">
+      <div className="grid gap-[var(--space-1)]">
+        <h3 data-testid="video-notes-title" className="m-0 max-[721px]:sr-only text-[length:var(--text-lg)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{`Notes on v${version.version}`}</h3>
         <span data-testid="video-notes-counts" className="text-foreground-secondary [font:var(--type-label)]">{`${counts.totals.open} open · ${counts.totals.resolved} resolved`}</span>
       </div>
       <div className="flex items-center gap-[var(--space-1)]">
@@ -193,19 +189,30 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
         {hideButton}
       </div>
     </div>
-
-    <div data-sheet-part="body" className="contents"><MarkerExportNotices exp={exp} /></div>
-
-    {(pasteResult ?? pasted) && <Notice tone="positive" role="status" data-testid="video-notes-paste-status" data-sheet-part="body">{pasteResult ?? pasted}</Notice>}
-
-    {total > 0 && <div className="grid gap-[var(--space-2)]" data-sheet-part="body" data-testid="video-notes-filters">
+  );
+  const filtersBlock = (
+    <>{total > 0 && <div className="grid gap-[var(--space-2)]" data-sheet-part="body" data-testid="video-notes-filters">
       {filterGroup<NoteStatusFilter>("Show notes that are", "status", filters.status, [
         { value: "open", label: "Open", count: counts.status.open }, { value: "resolved", label: "Resolved", count: counts.status.resolved }, { value: "all", label: "All", count: counts.status.all },
       ], (status) => { setFilters({ ...filters, status }); })}
       {filterGroup<NoteVisibilityFilter>("Show notes visible to", "visibility", filters.visibility, [
         { value: "all", label: "All", count: counts.visibility.all }, { value: "public", label: "Client-visible", count: counts.visibility.public }, { value: "internal", label: "Internal", count: counts.visibility.internal },
       ], (visibility) => { setFilters({ ...filters, visibility }); })}
-    </div>}
+    </div>}</>
+  );
+
+  return <aside
+    aria-label="Notes"
+    data-testid="video-notes-panel"
+    className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)] min-[721px]:overflow-clip max-[721px]:overflow-clip border-l border-border bg-card p-[var(--space-4)] text-card-foreground max-[721px]:border-l-0"
+  >
+    {!phone && headerRow}
+
+    <div data-sheet-part="body" className="contents"><MarkerExportNotices exp={exp} /></div>
+
+    {(pasteResult ?? pasted) && <Notice tone="positive" role="status" data-testid="video-notes-paste-status" data-sheet-part="body">{pasteResult ?? pasted}</Notice>}
+
+    {!phone && filtersBlock}
 
     {orphanNotice && <Notice tone="critical" role="alert" data-testid="video-notes-orphan-notice" data-sheet-part="body" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]">
       <span>{orphanNotice.text}</span>
@@ -215,6 +222,8 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
     <div ref={listRef} data-sheet-part="body" className="flex flex-1 flex-col min-[721px]:min-h-32 max-[721px]:min-h-0">
       <ScrollArea className="min-h-0 flex-1" data-testid="video-notes-list" viewportProps={{ tabIndex: -1 }}>
         <div className="grid gap-[var(--space-2)] pe-[var(--space-1)]">
+          {phone && headerRow}
+          {phone && filtersBlock}
           {loading && <span data-testid="video-notes-loading" role="status" className="text-foreground-secondary [font:var(--type-label)]">Loading notes…</span>}
           {failed && <Notice tone="critical" role="alert" data-testid="video-notes-error" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>Notes could not be loaded.</span><Button type="button" variant="text" data-testid="video-notes-retry" onClick={session.refresh}>Retry</Button></Notice>}
           {!loading && !failed && listed.length === 0 && <EmptyState size="compact" data-testid="video-notes-empty" title={total === 0 ? "No notes on this version yet." : "No notes match these filters."} />}

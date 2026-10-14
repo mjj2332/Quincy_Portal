@@ -15,7 +15,7 @@ export function VideoPhoneApprove({ video, version, comparing, projectId, role, 
   if (status !== "in_review") return <div data-testid="video-phone-approved" className="flex-none"><VideoReviewStatusPill video={video} version={version} comparing={comparing} projectId={projectId} role={role} archived={archived} compact checked /></div>;
   if (!allowed.includes("approved_internal")) return null;
   return <div className="relative flex-none">
-    <Button type="button" size="sm" data-testid="video-phone-approve" disabled={blocked || pending} className="min-h-11" onClick={() => { void choose("approved_internal"); }}>Approve (internal)</Button>
+    <Button type="button" size="sm" variant="outline" data-testid="video-phone-approve" disabled={blocked || pending} className="min-h-11 px-[var(--space-2)]" onClick={() => { void choose("approved_internal"); }}>Approve (internal)</Button>
     {blocked && <span data-testid="video-phone-approve-hint" className="sr-only">{watchingOlder ? `Switch to the latest version, v${latest.version}, to approve.` : "Leave Compare to approve."}</span>}
     {problem && <span role="alert" data-testid="video-phone-approve-error" className="absolute top-full right-0 z-10 mt-[var(--space-1)] w-max max-w-[min(24rem,90vw)] border border-border bg-card p-[var(--space-2)] text-[length:var(--text-sm)] text-destructive-wash-foreground">{problem}</span>}
   </div>;

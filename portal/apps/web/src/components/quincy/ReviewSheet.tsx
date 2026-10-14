@@ -151,7 +151,7 @@ export function SheetGrabber({ control, stops, getHeight, onDrag }: {
     onPointerMove={onPointerMove}
     onPointerUp={finish}
     onPointerCancel={finish}
-    className="relative flex h-6 flex-none cursor-row-resize touch-none items-center justify-center before:absolute before:inset-x-0 before:-top-2 before:bottom-0 before:content-[''] focus-visible:outline-2 -outline-offset-2 focus-visible:!-outline-offset-2 focus-visible:outline-ring"
+    className={`relative flex h-6 flex-none ${control.mode !== "browse" ? "hidden " : ""} cursor-row-resize touch-none items-center justify-center before:absolute before:inset-x-0 before:-top-2 before:bottom-0 before:content-[''] focus-visible:outline-2 -outline-offset-2 focus-visible:!-outline-offset-2 focus-visible:outline-ring`}
   ><span aria-hidden="true" className="block h-1 w-10 rounded-full bg-border" /></div>;
 }
 

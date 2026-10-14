@@ -13,7 +13,7 @@ import { VideoNoteComposer } from "./VideoNoteComposer";
 /** The phone composer (#879, D10/D11): one row at rest, engaged on focus, focus pauses the film, the pen blurs the keyboard away. */
 function fakeClock() {
   const state: FrameClockState = { frame: 12, targetFrame: null, confirmed: true, playing: true, rate: 1, stalled: false };
-  const clock = { getState: () => state, subscribe: () => () => undefined, pause: vi.fn(), seekToFrame: vi.fn(), awaitConfirmedFrame: vi.fn(() => Promise.resolve(12)) };
+  const clock = { getState: () => state, subscribe: () => () => undefined, pause: vi.fn(), step: vi.fn(), seekToFrame: vi.fn(), awaitConfirmedFrame: vi.fn(() => Promise.resolve(12)) };
   return { clock: clock as unknown as VideoFrameClock, raw: clock };
 }
 let root: Root | null = null; let host: HTMLElement; let store: NoteFormStore; let viewport: MockViewport;
@@ -60,5 +60,17 @@ describe("VideoNoteComposer on a phone (#879)", () => {
     expect(f.raw.pause).not.toHaveBeenCalled();
     expect(by("video-note-marks")).not.toBeNull();
     expect(by("pen-stub")).toBeNull();
+  });
+
+  it("at rest the field is one line with the short placeholder and no formatting toolbar; engaged it shows the stamp line with Cancel and the frame steps", async () => {
+    const f = await render(390);
+    expect(host.querySelector("textarea")!.getAttribute("placeholder")).toBe("Add a note…");
+    expect(by("video-note-stamp")).toBeNull();
+    await act(async () => { host.querySelector<HTMLTextAreaElement>("textarea")!.focus(); });
+    expect(by("video-note-stamp")!.textContent).toContain("Paused at TC12 · the note is stamped here");
+    await act(async () => { by("video-note-step-forward")!.click(); });
+    expect(f.raw.step).toHaveBeenCalledWith(1);
+    await act(async () => { by("video-note-cancel")!.click(); });
+    expect(document.activeElement).not.toBe(host.querySelector("textarea"));
   });
 });

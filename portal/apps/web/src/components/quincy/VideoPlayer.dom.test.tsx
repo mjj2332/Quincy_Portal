@@ -3,6 +3,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { frameSeekSeconds } from "@quincy/shared";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
+import "../../testing/dom-polyfills";
+import { mockViewport } from "../../testing/viewport";
 import { VideoPlayer, type VideoPlayerControl, type VideoPlayerVersion } from "./VideoPlayer";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -591,5 +593,32 @@ describe("VideoPlayer control (#741 7a)", () => {
     expect(control.current!.currentFrame()).toBe(1);
     await act(async () => { stub.finishSeek(video()); stub.presentFrame(video(), 1 / 25); });
     expect(control.current!.currentFrame()).toBe(1);
+  });
+});
+
+describe("the phone control bar (#879)", () => {
+  it("is one row: play, timecode, mute and full screen, with no frame steps, shuttle legend, time-format menu or in/out; padded by --space-3; the marker lane collapses with no markers", async () => {
+    const viewport = mockViewport({ width: 390 });
+    try {
+      await mount(versionOf(), { markers: [], onMark: () => {}, range: { marks: { in: null, out: null, seed: 0 } as never, locked: false, clear: () => {} } });
+      await load();
+      expect(button("Play")).toBeTruthy();
+      expect(button("Mute") ?? null).not.toBeNull();
+      expect(host.querySelector('[aria-label="Previous frame"]')).toBeNull();
+      expect(host.querySelector('[aria-label="Next frame"]')).toBeNull();
+      expect(byTestId("video-key-legend")).toBeNull();
+      expect(byTestId("video-range-button")).toBeNull();
+      expect(byTestId("video-scrubber")!.parentElement!.className).toContain("max-[721px]:px-[var(--space-3)]");
+      expect(byTestId("video-marker-lane")).toBeNull();
+    } finally { viewport.restore(); }
+  });
+  it("a wide window keeps the desktop two-row transport", async () => {
+    const viewport = mockViewport({ width: 1280 });
+    try {
+      await mount();
+      await load();
+      expect(host.querySelector('[aria-label="Previous frame"]')).not.toBeNull();
+      expect(byTestId("video-key-legend")).not.toBeNull();
+    } finally { viewport.restore(); }
   });
 });

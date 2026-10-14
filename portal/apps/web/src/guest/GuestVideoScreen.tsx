@@ -8,6 +8,7 @@ import type { VideoFrameClock } from "../lib/video-frame-clock";
 import { Button } from "../components/reui/button";
 import { Toggle } from "../components/reui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/reui/select";
+import { Tabs, TabsList, TabsTrigger } from "../components/reui/tabs";
 import { ReviewPhoneBar, VersionChip } from "../components/quincy/ReviewPhoneBar";
 import { ActionRow, ReviewActionSheet } from "../components/quincy/ReviewActionSheet";
 import { useReviewSheet } from "../components/quincy/ReviewSheet";
@@ -440,7 +441,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       back={onBack ? <Button type="button" variant="ghost" className={`${TOUCH} shrink-0 max-[721px]:min-w-11`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span className="sr-only">All videos</span></Button> : null}
       title={<h1 data-testid="guest-video-title" title={video.title} className="m-0 w-full min-w-[6rem] truncate [font:var(--type-body)]">{video.title}</h1>}
       chip={<VersionChip buttonRef={chipRef} label={latestLabel} onClick={() => { setVersionsOpen(true); }} />}
-      approve={canDecide ? approved ? <span data-testid="guest-approved" className="inline-flex min-h-11 flex-none items-center gap-[var(--space-1)] px-[var(--space-2)] text-foreground [font:var(--type-label)]">✓ Approved</span> : <Button type="button" size="sm" data-testid="guest-approve" className="min-h-11" onClick={() => { startDecision("approved"); }}>Approve</Button> : undefined}
+      approve={canDecide ? approved ? <span data-testid="guest-approved" className="inline-flex min-h-11 flex-none items-center gap-[var(--space-1)] px-[var(--space-2)] text-foreground [font:var(--type-label)]"><Check aria-hidden="true" className="size-4" />Approved</span> : <Button type="button" size="sm" data-testid="guest-approve" className="min-h-11" onClick={() => { startDecision("approved"); }}>Approve</Button> : undefined}
       actions={socialOverlays.length > 0 || (allowDownload && version.downloadUrl !== null) ? <ReviewActionSheet container={slot}>
         {(close) => <>
           {socialOverlays.length > 0 && <ActionRow testId="guest-social-toggle" icon={<Smartphone aria-hidden="true" />} pressed={socialOn} onSelect={() => { setSocial(!socialOn); close(); }}>Social preview</ActionRow>}
@@ -498,7 +499,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       {...(sheet ? { sheet } : {})}
       strip={paneControls.strip}
       player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} /></OverlayContainerContext.Provider>}
-      pane={<aside className="flex min-h-0 flex-1 flex-col bg-card text-card-foreground min-[721px]:overflow-hidden min-[721px]:border-l min-[721px]:border-border min-[721px]:p-[var(--space-5)]"><div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-4)] py-[var(--space-2)] min-[721px]:hidden" onClick={openSheet}>{phone ? heading : null}</div><div className="flex min-h-0 flex-1 flex-col max-[721px]:p-[var(--space-4)]">{panel}</div></aside>}
+      pane={<aside className="flex min-h-0 flex-1 flex-col bg-card text-card-foreground min-[721px]:overflow-hidden min-[721px]:border-l min-[721px]:border-border min-[721px]:p-[var(--space-5)]"><div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-4)] py-[var(--space-2)] min-[721px]:hidden" onClick={openSheet}>{phone && <Tabs value="notes" className="w-full"><TabsList variant="line" className="w-full justify-start rounded-none bg-card px-0 max-[721px]:h-11"><TabsTrigger value="notes" data-testid="guest-notes-heading" className="max-[721px]:min-h-11">{headingContent}</TabsTrigger></TabsList></Tabs>}</div><div className="flex min-h-0 flex-1 flex-col max-[721px]:p-[var(--space-4)]">{panel}</div></aside>}
     />
     {canPaste && <GuestPasteDialog api={api} writer={writer} open={pasteOpen} onOpenChange={changePasteOpen} video={video} target={version} markupAllowed={session.link.allow.markup}
       onGone={onUnavailable}

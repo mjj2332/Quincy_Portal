@@ -24,7 +24,7 @@ export function ReviewActionSheet({ container, triggerTestId = "video-header-men
   return <>
     <IconButton ref={triggerRef} type="button" aria-label={triggerLabel} aria-haspopup="dialog" data-testid={triggerTestId} className="rounded-lg border border-solid border-border bg-background text-foreground" onClick={() => { handOff.current = false; setOpen(true); }}><span aria-hidden="true">⋯</span></IconButton>
     <Sheet open={open} onOpenChange={setOpen}>
-      <SheetContent side="bottom" container={container} showCloseButton={false} finalFocus={() => (handOff.current ? false : triggerRef.current)} data-testid="review-action-sheet" className="max-h-[80dvh] p-[var(--space-4)]">
+      <SheetContent side="bottom" container={container} showCloseButton={false} overlayProps={{ className: SHEET_SCRIM, forceRender: true, "data-testid": "review-sheet-overlay" }} finalFocus={() => (handOff.current ? false : triggerRef.current)} data-testid="review-action-sheet" className="max-h-[80dvh] p-[var(--space-4)]">
         <SheetHeader className={`p-0 ${SHEET_CLOSE_CLEARANCE}`}><SheetTitle className="m-0 text-foreground [font:var(--type-h3)]">{title}</SheetTitle></SheetHeader>
         <ItemGroup role="group" aria-label={title} className="min-h-0 gap-0 overflow-y-auto">{children(close)}</ItemGroup>
         <SheetCloseButton label="Close actions" data-testid="review-action-close" />
@@ -32,6 +32,9 @@ export function ReviewActionSheet({ container, triggerTestId = "video-header-men
     </Sheet>
   </>;
 }
+
+/** The phone sheets sit on the dark inverse surface, where the default 50% scrim barely shows: a stronger one, the same for every sheet (staff and guest). */
+export const SHEET_SCRIM = "bg-[color-mix(in_srgb,var(--ink-900)_75%,transparent)]";
 
 const ROW = "min-h-11 w-full cursor-pointer text-start data-[disabled]:cursor-not-allowed data-[disabled]:opacity-60 aria-disabled:cursor-not-allowed aria-disabled:opacity-60";
 

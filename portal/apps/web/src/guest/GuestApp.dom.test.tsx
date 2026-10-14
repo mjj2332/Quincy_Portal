@@ -362,7 +362,9 @@ describe("the video screen", () => {
     expect(byId("guest-notes-panel")).not.toBeNull();
     expect(byId("video-review-pane")!.getAttribute("data-stop")).toBe("half");
     expect(byId("guest-notes-drawer")).toBeNull();
-    expect(button("Notes") ?? null).toBeNull();
+    expect(byId("guest-notes-heading")!.getAttribute("role")).toBe("tab");
+    expect(byId("guest-notes-heading")!.closest("[role=tablist]")).not.toBeNull();
+    expect(host.querySelectorAll("[role=tab]")).toHaveLength(1);
     expect(document.body.textContent).toContain("Trim the opening");
     expect(byId("guest-notes-heading")!.textContent).toBe("Notes 1");
   });
@@ -1242,7 +1244,8 @@ describe("the phone review screen (#879)", () => {
     serve(withAllow({ approve: true }, { verified: true, email: "g@example.com", name: "Gina" }));
     videos = [videoOf(1, { versions: [versionOf(10, { decision: { value: "approved", revision: 1, at: "2026-10-09T01:00:00.000Z", self: true } })] })];
     await open(`?link=${LINK}`);
-    expect(byId("guest-approved")!.textContent).toContain("✓ Approved");
+    expect(byId("guest-approved")!.textContent).toContain("Approved");
+    expect(byId("guest-approved")!.querySelector("svg")).not.toBeNull();
     expect(byId("guest-approve")).toBeNull();
   });
 

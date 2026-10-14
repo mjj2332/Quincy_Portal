@@ -29,7 +29,7 @@ const DOT: Record<StatusTone, string> = {
  * guests get no dot. Reuse: `reui/button` (ghost), the `quincy/StatusPill` tone tokens for the dot.
  */
 export function VersionChip({ label, tone, statusLabel, onClick, className, buttonRef }: { buttonRef?: Ref<HTMLButtonElement>; label: string; tone?: StatusTone | undefined; statusLabel?: string | undefined; onClick: () => void; className?: string }) {
-  return <Button ref={buttonRef} type="button" variant="ghost" size="sm" data-testid="video-version-chip" aria-haspopup="dialog" className={cn("-ms-[var(--space-2)] h-auto min-h-11 max-w-full gap-[var(--space-1)] px-[var(--space-2)] py-0 text-foreground-secondary [font:var(--type-label)]", className)} onClick={onClick}>
+  return <Button ref={buttonRef} type="button" variant="ghost" size="sm" data-testid="video-version-chip" aria-haspopup="dialog" className={cn("-ms-[var(--space-2)] h-auto min-h-11 max-w-full gap-[var(--space-1)] px-[var(--space-2)] py-0 text-foreground-secondary normal-case [font:var(--type-body-sm)]", className)} onClick={onClick}>
     {tone !== undefined && <span aria-hidden="true" data-testid="video-version-chip-dot" data-tone={tone} className={cn("size-2 flex-none rounded-full", DOT[tone])} />}
     {statusLabel !== undefined && <span className="sr-only">{`Review status: ${statusLabel}. `}</span>}
     <span className="truncate">{label}</span>

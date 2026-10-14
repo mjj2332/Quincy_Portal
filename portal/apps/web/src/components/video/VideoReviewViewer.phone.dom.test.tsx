@@ -192,4 +192,19 @@ describe("D4 and focus", () => {
     await click(trigger()!);
     expect(tid("video-marker-export-row")).toBeNull();
   });
+
+  it("the phone sheets dim the film with the stronger scrim, the Version chip is lowercase body-sm, and Approve is an outline button", async () => {
+    await mount({ shown: () => {}, status: true, download: true });
+    expect(tid("video-version-chip")!.className).toContain("normal-case");
+    expect(tid("video-phone-approve")!.className).toContain("min-h-11");
+    await click(trigger()!);
+    expect(tid("review-sheet-overlay")).not.toBeNull(); // Base UI leaves a nested dialog's backdrop out unless it is forced
+  });
+
+  it("on a phone the Version details row and the filters scroll inside the notes list", async () => {
+    await mount({ notes: true });
+    const deadline = Date.now() + 5000; while (!tid("video-details-button") && Date.now() < deadline) await flush(1);
+    expect(tid("video-notes-list")!.contains(tid("video-details-button"))).toBe(true);
+    expect(tid("video-notes-counts")!.className).not.toContain("sr-only");
+  });
 });

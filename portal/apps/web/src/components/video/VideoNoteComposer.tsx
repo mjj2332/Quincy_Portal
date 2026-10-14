@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore, type ReactNode } from "react";
-import { PencilIcon } from "lucide-react";
+import { PencilIcon, StepBack, StepForward } from "lucide-react";
 import { VIDEO_NOTE_BODY_MAX, type Role, type VideoNoteCreateInput, type VideoNoteVisibility } from "@quincy/shared";
 import { useFrameClockSelector, type VideoFrameClock } from "../../lib/video-frame-clock";
 import { draftDoc, effectiveMarks, frameOnScreen, type NoteFormStore } from "../../lib/video-note-form-store";
@@ -89,8 +89,14 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     onSubmit={(event) => { event.preventDefault(); submit(); }}
   >
     {engaged && <div className="grid gap-[var(--space-2)] max-[721px]:col-span-2 max-[721px]:row-start-1" data-testid="video-note-marks">
+      {phone && <div data-testid="video-note-stamp" className="flex items-center justify-between gap-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">
+        <span>{`Paused at ${timecode(composer.anchorFrame ?? liveFrame)} · the note is stamped here`}</span>
+        <Button type="button" variant="text" data-testid="video-note-cancel" className={SMALL_BUTTON} disabled={frozen} onClick={() => { store.setContent(assetId, { type: "doc", content: [{ type: "paragraph" }] } as never, clock ? frameOnScreen(clock.getState()) : 0); store.clearMarks(assetId); const active = document.activeElement; if (active instanceof HTMLElement && active !== document.body) active.blur(); }}>Cancel</Button>
+      </div>}
       <span data-testid="video-note-anchor" aria-live="off" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW, "justify-self-start")}>{!pendingFrames && <span className="sr-only">{merged ? "Note with a drawing at " : "Note at "}</span>}{merged && <PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />}{anchorText}</span>
       <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+      {phone && <Button type="button" variant="secondary" data-testid="video-note-step-back" aria-label="Back one frame" className="min-h-11 min-w-11" disabled={clock === null || frozen || drawingNow || otherForm !== null} onClick={() => { clock?.step(-1); }}><StepBack aria-hidden="true" /></Button>}
+      {phone && <Button type="button" variant="secondary" data-testid="video-note-step-forward" aria-label="Forward one frame" className="min-h-11 min-w-11" disabled={clock === null || frozen || drawingNow || otherForm !== null} onClick={() => { clock?.step(1); }}><StepForward aria-hidden="true" /></Button>}
       <Button type="button" variant="secondary" data-testid="video-note-set-in" className={SMALL_BUTTON} disabled={clock === null || frozen || drawingNow || otherForm !== null} aria-keyshortcuts="I" onClick={() => { mark("in"); }}>Set in <Kbd className={KBD_HINT}>I</Kbd></Button>
       <Button type="button" variant="secondary" data-testid="video-note-set-out" className={SMALL_BUTTON} disabled={clock === null || frozen || drawingNow || otherForm !== null} aria-keyshortcuts="O" onClick={() => { mark("out"); }}>Set out <Kbd className={KBD_HINT}>O</Kbd></Button>
       {pendingFrames && <Button type="button" variant="text" data-testid="video-note-clear-marks" disabled={frozen || drawingNow} onClick={() => { store.clearMarks(assetId); }}>Clear marks</Button>}
@@ -103,13 +109,13 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     <label className="sr-only" htmlFor="video-note-body">Add a note</label>
     <div
       data-testid="video-note-editor"
-      className="max-[721px]:col-start-1 max-[721px]:row-start-3 max-[721px]:[&_[contenteditable]]:text-[length:var(--text-base)]"
+      className={cn("max-[721px]:col-start-1 max-[721px]:row-start-3 max-[721px]:[&_[contenteditable]]:text-[length:var(--text-base)]", phone && !engaged && "[&_[role=toolbar]]:hidden")}
       onKeyDownCapture={(event) => { if (frozen) event.preventDefault(); }}
       // A phone note is stamped when typing begins (D10): focusing the field pauses the film on the frame the note will anchor to; the first keystroke freezes it in the form store.
       onFocusCapture={() => { setFocused(true); if (phone) clock?.pause(); }}
       onBlurCapture={(event) => { if (!(event.relatedTarget instanceof Element && event.currentTarget.contains(event.relatedTarget))) setFocused(false); }}
     >
-      <VideoNoteEditor id="video-note-body" projectId={rich.projectId} role={rich.role} value={draftDoc(composer.content, composer.body)} disabled={frozen} placeholder="Add a note at this frame… Use @ to mention a colleague."
+      <VideoNoteEditor id="video-note-body" projectId={rich.projectId} role={rich.role} value={draftDoc(composer.content, composer.body)} disabled={frozen} placeholder={phone ? "Add a note…" : "Add a note at this frame… Use @ to mention a colleague."}
         onChange={(doc) => { if (!frozen) store.setContent(assetId, doc, clock ? frameOnScreen(clock.getState()) : 0); }} onSubmit={submit} onUploadingChange={setUploading} />
     </div>
     {tooLong && <Notice tone="critical" role="alert" className="max-[721px]:col-span-2 max-[721px]:row-start-4">{`Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.`}</Notice>}
