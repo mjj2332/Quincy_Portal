@@ -146,13 +146,13 @@ function OverlayDialog({ dialog, onClose, onSaved }: { dialog: Dialog; onClose: 
   const description = dialog.kind === "create" ? "Upload a PNG graphic reviewers can lay over a Video." : dialog.kind === "rename" ? "Change the name reviewers see and the platform it belongs to." : "Swap the image. The name and platform stay.";
   // Escape, a click outside and Cancel all close the same dialog; `onSaved` and the ticket fences in the panel decide what a late save may still touch.
   return <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
-    <DialogContent data-testid="social-overlay-dialog" showCloseButton={false} className="flex flex-col gap-[var(--space-4)] sm:max-w-[460px]">
+    <DialogContent data-testid="social-overlay-dialog" showCloseButton={false} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col gap-[var(--space-4)] sm:max-w-[460px]">
       <DialogHeader>
         <Eyebrow>Social overlay</Eyebrow>
         <DialogTitle className={DIALOG_TITLE}>{title}</DialogTitle>
         <DialogDescription className="text-foreground-secondary">{description}</DialogDescription>
       </DialogHeader>
-      <div className="flex flex-col gap-[var(--space-4)]">
+      <div className="flex min-h-0 flex-1 flex-col gap-[var(--space-4)] overflow-y-auto" data-testid="social-overlay-dialog-body">
         {needsFields && <>
           <QuincyField id="social-overlay-name" label="Name" value={name} maxLength={SOCIAL_OVERLAY_NAME_MAX} onChange={(event) => setName(event.target.value)} />
           <QuincyField id="social-overlay-platform" label="Platform" value={platformLabel} maxLength={SOCIAL_OVERLAY_PLATFORM_MAX} onChange={(event) => setPlatformLabel(event.target.value)} />

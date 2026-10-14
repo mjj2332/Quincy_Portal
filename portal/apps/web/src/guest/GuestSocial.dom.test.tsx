@@ -169,6 +169,19 @@ describe("Social preview on the Review link (#872)", () => {
     }
   });
 
+  it("shows the film as soon as /videos answers while the overlays read is still out, then adds the toggle when it lands", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    overlayAnswer = async () => { await held; return json({ socialOverlays }); };
+    await open();
+    expect(byId("guest-video-title")?.textContent, "the film screen shows with the overlays read held open").toBe("Film 1");
+    expect(toggle()).toBeNull();
+    await act(async () => { release(); });
+    await flush();
+    expect(toggle()).not.toBeNull();
+    expect(byId("guest-video-title")?.textContent).toBe("Film 1");
+  });
+
   it("reads the overlays from their own route and leaves /videos alone", async () => {
     await open();
     const urls = fetchMock.mock.calls.map((call) => String(call[0]));

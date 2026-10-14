@@ -77,12 +77,12 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
 
   const enter = useCallback(async (opened: GuestApi, next: GuestSessionResponse) => {
     setSession(next);
-    const [list, found] = await Promise.all([opened.videos(), readOverlays(opened)]);
+    const list = await opened.videos();
     if (list.kind === "gone") { setScreen({ name: "unavailable" }); return; }
     if (list.kind === "transient") { fail(() => { void enter(opened, next); }); return; }
     commitVideos(list.value);
-    overlayTicket.current += 1;
-    setOverlays(found);
+    // The optional overlays read lands on its own, under the ticket fence: a stalled read never holds the Videos back.
+    refreshOverlays(opened);
     const wanted = wantedVideo.current;
     wantedVideo.current = null;
     if (wanted !== null) {
@@ -96,7 +96,7 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
       setNotice("That video is no longer available on this link. Here is what is.");
     }
     setScreen(list.value.length === 1 ? { name: "video", index: 0 } : { name: "list" });
-  }, [fail, commitVideos, verify, readOverlays]);
+  }, [fail, commitVideos, verify, refreshOverlays]);
 
   const exchange = useCallback(async (opened: GuestApi, tokenValue: string, passcode?: string) => {
     const result = await opened.exchange(tokenValue, passcode);
