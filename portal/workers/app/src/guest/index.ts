@@ -119,7 +119,13 @@ export function mountGuest(app: Hono<AppEnv>): void {
     if (!session) return guestNotFound(c);
     const rejected = originRejection(c); if (rejected) return rejected;
     const link = session.link;
-    await c.env.DB.prepare("DELETE FROM guest_sessions WHERE id = ?1").bind(session.id).run();
+    // The audit row mirrors `session_start` and goes in first, only for a session row that still holds this credential; the DELETE follows in the same batch (#854).
+    await c.env.DB.batch([
+      c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+        SELECT ?1, NULL, 'review_link.session_end', 'review_link', ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM guest_sessions WHERE id = ?5 AND token_hash = ?6)`)
+        .bind(newId(), link.id, auditMeta(null, { guest: { sessionId: session.id, guestId: session.guestId }, linkId: link.id }), Date.now(), session.id, session.tokenHash),
+      c.env.DB.prepare("DELETE FROM guest_sessions WHERE id = ?1 AND token_hash = ?2").bind(session.id, session.tokenHash),
+    ]);
     return new Response(null, { status: 204, headers: { "set-cookie": sessionCookieHeader(c.env, link.id, "", 0) } });
   }));
 

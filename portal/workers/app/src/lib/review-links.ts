@@ -260,3 +260,19 @@ export async function deleteReviewLink(db: D1Database, input: { projectId: strin
       .bind(input.now, input.principal.id, input.now, input.linkId, input.projectId, auditId),
   ]);
 }
+
+/**
+ * Ends every guest session on the link (#854) and keeps its address: the generation goes up (so a session resolved before this batch fails `liveSql`/`renewDeliverySession`)
+ * and the link's `guest_sessions` rows go. Unlike every other fence in this file it names NO `delivery_review = 0` and NO `reviewLinkOpenSql`: the Delivery review link is
+ * the one link this operation is for (ADR 0023 amendment), and sessions suspended by the Delivery page being off must die as well. Revoked and deleted links are refused (false).
+ */
+export async function endGuestSessions(db: D1Database, input: { projectId: string; linkId: string; principal: Principal; now: number; delivery: boolean }): Promise<boolean> {
+  const auditId = newId();
+  const audit: Audit = { id: auditId, action: "review_link.sessions_end", linkId: input.linkId, principal: input.principal, now: input.now, meta: { projectId: input.projectId, linkId: input.linkId, delivery: input.delivery } };
+  const fence = "id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND deleted_at IS NULL";
+  return commit(db, audit, [
+    auditStatement(db, audit, `EXISTS (SELECT 1 FROM client_links WHERE ${fence})`, [input.linkId, input.projectId]),
+    db.prepare(`UPDATE client_links SET token_generation = token_generation + 1, updated_at = ? WHERE ${fence} AND ${AUDITED}`).bind(input.now, input.linkId, input.projectId, auditId),
+    db.prepare(`DELETE FROM guest_sessions WHERE link_id = ? AND ${AUDITED}`).bind(input.linkId, auditId),
+  ]);
+}

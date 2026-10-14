@@ -4,11 +4,11 @@ import { guestSessionResponseSchema } from "@quincy/shared";
 import { app } from "../src/index";
 import { hashPasscode } from "../src/lib/review-passcode";
 import { hashToken } from "../src/lib/opaque-token";
-import { renewDeliverySession } from "../src/guest/link";
+import { renewDeliverySession, sessionStillValid } from "../src/guest/link";
 import type { Env } from "../src/env";
 import { baseEnv, cookie as staffCookie, database, ids, request as staffRequest, seedFixture } from "./embedded-media-support";
 import {
-  addMember, clearGuestRows, cookieName, freshIp, GUEST_WINDOW_MS, guestFetch, guestOrigin, HYGIENE, linkPath, linkWithSession, openGuestGate, seedGuestLink, sessionCookie, sha256Hex, startSession,
+  addMember, clearGuestRows, cookieName, freshIp, GUEST_WINDOW_MS, guestFetch, guestOrigin, HYGIENE, linkPath, linkWithSession, openGuestGate, seedGuestLink, sessionCookie, sha256Hex, startSession, verifySession,
 } from "./guest-support";
 import { clearVideoFlags, seedVideoVersion, setVideoFlags } from "./video-review-support";
 
@@ -630,5 +630,59 @@ describe("verified Delivery guests stay signed in (ADR 0023 amendment)", () => {
     const stream = await guestFetch(linkPath(link.id, `/versions/${crypto.randomUUID()}/stream`), { cookie: link.cookie });
     expect(videos.headers.getSetCookie()).toEqual([]); expect(stream.headers.getSetCookie()).toEqual([]);
     expect((await row(link.id)).expires_at).toBe(before);
+  });
+});
+
+describe("staff ending guest sessions (#854)", () => {
+  const endSessions = (linkId: string) => staffRequest(`/api/projects/${ids.project}/review-links/${linkId}/end-sessions`, "admin", "POST", {});
+  const sessionIdOf = async (link: { cookie: string }) => (await database.DB.prepare("SELECT id FROM guest_sessions WHERE token_hash = ?").bind(await hashToken(link.cookie.split("=")[1]!)).first<{ id: string }>())!.id;
+
+  it("turns the old cookie into the stub at once, and the same address exchanges again into a generation-2 session", async () => {
+    const reference = await stubOf(await guestFetch("/d/api/x"));
+    const link = await linkWithSession({ deliveryReview: true }); await verifySession(link);
+    expect((await guestFetch(linkPath(link.id, "/session"), { cookie: link.cookie })).status).toBe(200);
+    expect((await endSessions(link.id)).status).toBe(200);
+    expect(await stubOf(await guestFetch(linkPath(link.id, "/session"), { cookie: link.cookie }))).toEqual(reference);
+    const again = await startSession(link);
+    expect(again.response.status).toBe(200); expect(guestSessionResponseSchema.parse(await again.response.json())).toMatchObject({ verified: false });
+    expect((await sessionRows(link.id)).map((row) => row.link_generation)).toEqual([2]);
+  });
+
+  it("a session resolved before the end cannot renew or pass the re-check, and a renewal racing the end leaves no session behind", async () => {
+    const link = await linkWithSession({ deliveryReview: true }); const { guestId } = await verifySession(link);
+    const held = { id: await sessionIdOf(link), tokenHash: await hashToken(link.cookie.split("=")[1]!), guestId, link: { id: link.id, projectId: ids.project } } as unknown as Parameters<typeof renewDeliverySession>[1];
+    await database.DB.prepare("UPDATE guest_sessions SET expires_at = ? WHERE link_id = ?").bind(Date.now() + DAY, link.id).run();
+    expect((await endSessions(link.id)).status).toBe(200);
+    expect(await renewDeliverySession(database.DB, held, Date.now())).toBeNull();
+    expect(await sessionStillValid(database.DB, held, Date.now())).toBe(false);
+
+    const restarted = await startSession(link); const racing = { ...link, cookie: restarted.cookie! }; await verifySession(racing);
+    await database.DB.prepare("UPDATE guest_sessions SET expires_at = ? WHERE link_id = ?").bind(Date.now() + DAY, racing.id).run();
+    const [read] = await Promise.all([guestFetch(linkPath(racing.id, "/session"), { cookie: racing.cookie }), endSessions(racing.id)]);
+    expect([200, 404]).toContain(read.status);
+    expect(await sessionRows(racing.id)).toHaveLength(0);
+    expect((await guestFetch(linkPath(racing.id, "/session"), { cookie: racing.cookie })).status).toBe(404);
+  });
+
+  it("the Delivery page off and back on does not resurrect an ended session", async () => {
+    const link = await linkWithSession({ deliveryReview: true });
+    await database.DB.prepare("UPDATE delivery_pages SET enabled = 0 WHERE slug LIKE 'guest-dr-%'").run();
+    expect((await endSessions(link.id)).status).toBe(200);
+    await database.DB.prepare("UPDATE delivery_pages SET enabled = 1 WHERE slug LIKE 'guest-dr-%'").run();
+    expect((await guestFetch(linkPath(link.id, "/session"), { cookie: link.cookie })).status).toBe(404);
+  });
+});
+
+describe("guest leaving writes an audit row (#854)", () => {
+  it("DELETE /session audits review_link.session_end with no actor, and a repeat is the stub", async () => {
+    const link = await linkWithSession();
+    const sessionId = (await database.DB.prepare("SELECT id FROM guest_sessions WHERE link_id = ?").bind(link.id).first<{ id: string }>())!.id;
+    expect((await guestFetch(linkPath(link.id, "/session"), { method: "DELETE", cookie: link.cookie })).status).toBe(204);
+    const log = (await database.DB.prepare("SELECT actor_id, target_id, meta_json FROM audit_log WHERE action = 'review_link.session_end' AND target_id = ?").bind(link.id).all<{ actor_id: string | null; meta_json: string }>()).results;
+    expect(log).toHaveLength(1); expect(log[0]!.actor_id).toBeNull();
+    expect(JSON.parse(log[0]!.meta_json)).toMatchObject({ linkId: link.id, guest: { sessionId } });
+    const repeat = await guestFetch(linkPath(link.id, "/session"), { method: "DELETE", cookie: link.cookie });
+    expect(await stubOf(repeat)).toEqual(await stubOf(await guestFetch("/d/api/x")));
+    expect((await database.DB.prepare("SELECT 1 FROM audit_log WHERE action = 'review_link.session_end' AND target_id = ?").bind(link.id).all()).results).toHaveLength(1);
   });
 });
