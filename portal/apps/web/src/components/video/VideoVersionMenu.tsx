@@ -31,7 +31,7 @@ const MENU_TRIGGER_SELECTOR = '[data-testid="video-version-menu"]';
 /** Errors a second press of Remove cannot fix: the row is gone, the Project is archived, or access is lost. */
 const FINAL: ReadonlySet<ClassifiedVideoTrashError["kind"]> = new Set(["gone", "archived", "access"]);
 
-export function VideoVersionMenu({ projectId, archived, video, version, hasDraft, captureDrafts, onRemoved, removeRef }: {
+export function VideoVersionMenu({ projectId, archived, video, version, hasDraft, captureDrafts, onRemoved, removeRef, hideTrigger = false }: {
   projectId: string;
   archived: boolean;
   video: VideoDto;
@@ -44,6 +44,8 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
   onRemoved: (removed: RemovedVersion) => void;
   /** Receives `open`, so a Version's own row in the list can start the same removal (#862). */
   removeRef?: Ref<VersionRemovalHandle>;
+  /** A phone folds Remove version into the viewer's own ⋯ menu (#877 S2): this trigger is not drawn, the confirmation below stays. */
+  hideTrigger?: boolean;
 }) {
   const queryClient = useOptionalProjectQueryClient();
   const terminate = useProjectAccessTermination();
@@ -161,7 +163,7 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
   return <>
     <Menu
       triggerLabel="Version actions" label="Version menu" triggerTestId="video-version-menu"
-      triggerClassName={cn(ICON_BUTTON, "text-foreground")}
+      triggerClassName={cn(ICON_BUTTON, "text-foreground", hideTrigger && "hidden")}
       trigger={<span aria-hidden="true">⋯</span>}
       finalFocus={() => (handOff.current ? false : undefined)}
       onOpenChange={(isOpen) => { if (isOpen) handOff.current = false; }}

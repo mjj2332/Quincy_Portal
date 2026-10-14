@@ -424,27 +424,27 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
 
   return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-dvh flex-1 flex-col bg-background text-foreground min-[721px]:min-h-0">
     <header className="flex flex-col border-b border-border bg-card text-card-foreground">
-     <div data-testid="guest-bar" className="flex min-h-12 flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-2)] px-[var(--space-4)] py-[var(--space-1)] min-[721px]:flex-nowrap">
-      {onBack && <Button type="button" variant="ghost" className={TOUCH} onClick={onBack}><ChevronLeft aria-hidden="true" />All videos</Button>}
+     <div data-testid="guest-bar" className="flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] px-[var(--space-4)] py-[var(--space-1)] max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">
+      {onBack && <Button type="button" variant="ghost" className={`${TOUCH} shrink-0 max-[721px]:min-w-11`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span className="max-[721px]:sr-only">All videos</span></Button>}
       <h1 data-testid="guest-video-title" title={video.title} className="m-0 min-w-0 flex-1 truncate [font:var(--type-body)]">{video.title}</h1>
-      <div className="flex min-w-0 flex-none items-center gap-[var(--space-3)] max-[721px]:basis-full max-[721px]:gap-[var(--space-2)]">
+      <div className="flex min-w-0 flex-none items-center gap-[var(--space-3)] max-[721px]:gap-[var(--space-2)]">
       {videos.length > 1 && <div className="flex items-center gap-[var(--space-2)]">
         <Button type="button" variant="outline" size="icon" aria-label="Previous video" className={TOUCH} disabled={index === 0} onClick={() => { step(-1); }}><ChevronLeft aria-hidden="true" /></Button>
-        <span data-testid="guest-video-position" className="text-foreground-secondary tabular-nums [font:var(--type-label)]">{`${index + 1} of ${videos.length}`}</span>
+        <span data-testid="guest-video-position" className="text-foreground-secondary tabular-nums [font:var(--type-label)] max-[721px]:sr-only">{`${index + 1} of ${videos.length}`}</span>
         <Button type="button" variant="outline" size="icon" aria-label="Next video" className={TOUCH} disabled={index === videos.length - 1} onClick={() => { step(1); }}><ChevronRight aria-hidden="true" /></Button>
       </div>}
       <div className="flex min-w-0 max-w-full items-center gap-[var(--space-2)] max-[721px]:flex-1">
         <label htmlFor={VERSION_SELECT_ID} className="shrink-0 text-foreground-secondary [font:var(--type-label)] max-[721px]:sr-only">Version</label>
         <Select value={version.assetId} onValueChange={(next) => { if (typeof next === "string") setAssetId(next); }}>
           <SelectTrigger id={VERSION_SELECT_ID} data-testid="guest-version-trigger" className={`${TOUCH} min-w-0 max-w-full`}>
-            <SelectValue>{() => <span className="block truncate">{optionLabel(version)}</span>}</SelectValue>
+            <SelectValue>{() => <span className="block truncate">{phone ? `v${version.version}` : optionLabel(version)}</span>}</SelectValue>
           </SelectTrigger>
           <SelectContent className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
             {video.versions.map((candidate) => <SelectItem key={candidate.assetId} value={candidate.assetId} className={TOUCH}>{optionLabel(candidate)}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
-      {socialOverlays.length > 0 && <Button type="button" variant="outline" aria-pressed={socialOn} onClick={() => { setSocial(!socialOn); }} data-testid="guest-social-toggle" aria-label="Social preview" className={`${TOUCH} aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground`}>
+      {socialOverlays.length > 0 && <Button type="button" variant="outline" aria-pressed={socialOn} onClick={() => { setSocial(!socialOn); }} data-testid="guest-social-toggle" aria-label="Social preview" className={`${TOUCH} max-[721px]:min-w-11 aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground`}>
         <Smartphone aria-hidden="true" /><span className="max-[721px]:sr-only">Social</span>
       </Button>}
       {phone && <Button type="button" variant="outline" aria-label={threads === null ? "Notes" : `Notes, ${threads.length}`} className={`${TOUCH} shrink-0`} onClick={() => { setDrawerOpen(true); }}><MessageSquare aria-hidden="true" />{threads !== null && <span className="[font:var(--type-label)]">{threads.length}</span>}</Button>}

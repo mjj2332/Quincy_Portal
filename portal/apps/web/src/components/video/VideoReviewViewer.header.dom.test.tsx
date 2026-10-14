@@ -29,7 +29,7 @@ let root: Root | null = null; let host: HTMLElement;
 async function flush(times = 6) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
 const tid = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const onCreate = vi.fn();
-async function mount(props: { deepLink?: boolean; download?: boolean; reviewLinks?: boolean } = {}) {
+async function mount(props: { deepLink?: boolean; download?: boolean; reviewLinks?: boolean; trash?: boolean; social?: boolean; status?: boolean } = {}) {
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   await act(async () => {
     root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><VideoReviewViewer
@@ -38,11 +38,15 @@ async function mount(props: { deepLink?: boolean; download?: boolean; reviewLink
       {...(props.deepLink ? { deepLink: { settled: true, href: (v: number) => `https://quincy.test/p/${PROJECT}?v=${v}`, onVersionShown: () => {} } } : {})}
       {...(props.download ? { download: { projectId: PROJECT } } : {})}
       {...(props.reviewLinks ? { reviewLinks: { onCreate } } : {})}
+      {...(props.trash ? { trash: { projectId: PROJECT, archived: false } } : {})}
+      {...(props.social ? { social: { projectId: PROJECT, role: "editor" as const } } : {})}
+      {...(props.status ? { reviewStatus: { projectId: PROJECT, role: "editor" as const, archived: false } } : {})}
     /></QuincyQueryProvider>);
   });
   await flush();
 }
 const trigger = () => tid("video-header-menu");
+async function untilVersionMenu() { const deadline = Date.now() + 5000; while (!tid("video-version-menu") && Date.now() < deadline) await flush(1); }
 async function openMenu() {
   await act(async () => { trigger()!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); trigger()!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); trigger()!.click(); });
   await flush(6);
@@ -123,6 +127,33 @@ describe("the one-line top bar (#877 S2)", () => {
       await act(async () => { tid("video-menu-copy-link")!.click(); });
       await flush(6);
       expect(document.activeElement).toBe(trigger());
+    });
+
+    it("folds Remove version… into the one ⋯ menu and does not draw the Version ⋯ trigger", async () => {
+      await mount({ trash: true });
+      await flush(8);
+      await untilVersionMenu();
+      expect(tid("video-version-menu")!.className).toContain("hidden");
+      expect(trigger()).not.toBeNull();
+      await openMenu();
+      expect(tid("video-header-remove-version")!.textContent).toBe("Remove version…");
+    });
+
+    it("keeps the Version ⋯ trigger on a desktop bar", async () => {
+      viewport.restore(); viewport = mockViewport({ width: 1440 });
+      await mount({ trash: true });
+      await untilVersionMenu();
+      expect(tid("video-version-menu")!.className).not.toContain("hidden");
+      expect(trigger()).toBeNull();
+    });
+
+    it("gives icon-only Back and Social a 44px minimum width, and draws the status pill compact (the full name and the older hint stay readable by assistive tech)", async () => {
+      await mount({ social: true, status: true });
+      const back = document.querySelector<HTMLElement>('[data-testid="video-review-viewer"] header button')!;
+      expect(back.className).toContain("min-w-11");
+      expect(tid("video-social-toggle")!.className).toContain("min-w-11");
+      const pill = tid("video-review-status")!;
+      expect(pill.getAttribute("aria-label")).toBe("Review status: In review");
     });
 
     it("each item keeps its own condition, and the trigger is absent when nothing is allowed", async () => {

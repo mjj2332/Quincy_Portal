@@ -410,8 +410,22 @@ describe("the notes pane (#859)", () => {
     const title = byId("guest-video-title")!;
     expect(title.className).toContain("truncate");
     expect(title.getAttribute("title")).toBe(title.textContent);
-    expect(byId("guest-bar")!.className).toContain("min-[721px]:flex-nowrap");
+    expect(byId("guest-bar")!.className).toContain("flex-nowrap");
     expect(byId("guest-bar")!.contains(byId("guest-delivery"))).toBe(false);
+  });
+
+  it("a phone keeps the bar one non-wrapping row: no basis-full, a short Version label, 44px icon-only Back and Social (#877 S2)", async () => {
+    await viewport.set({ width: 390, coarse: true });
+    videos = [videoOf(1)];
+    await open();
+    const bar = byId("guest-bar")!;
+    expect(bar.className).toContain("flex-nowrap");
+    expect(bar.className).not.toContain("flex-wrap");
+    expect(bar.outerHTML).not.toContain("basis-full");
+    expect(byId("guest-version-trigger")!.textContent).toMatch(/^v\d+/);
+    expect(byId("guest-delivery")!.parentElement!.contains(bar)).toBe(true);
+    expect(bar.contains(byId("guest-delivery"))).toBe(false);
+    expect(byId("guest-version-trigger")!.textContent).not.toContain("latest");
   });
 
   it("the toggle collapses and restores the pane without remounting the film, and saves the choice", async () => {

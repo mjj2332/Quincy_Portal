@@ -368,14 +368,16 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     const sideA = comparing ? compareStore?.getState().pair?.a : undefined;
     reviewLinks.onCreate(sideA && video.versions.some((candidate) => candidate.assetId === sideA) ? sideA : version.assetId);
   } : undefined;
+  /** A phone folds the Version ⋯ menu's Remove into the viewer's one ⋯ menu; the confirmation is the same one (`VersionRemovalHandle`), and focus returns to that menu's trigger. */
+  const removeVersionFromMenu = trash ? () => { removeRef.current?.open(version.assetId, () => document.querySelector<HTMLElement>('[data-testid="video-header-menu"]')); } : undefined;
   const copyHref = deepLink && !comparing ? deepLink.href(version.version) : undefined;
   const downloadHref = download && !comparing ? videoVersionDownloadUrl(download.projectId, version.assetId) : undefined;
-  const header = <header className="@container flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-1)] text-card-foreground">
-      <DialogClose render={<Button type="button" variant="ghost" className="shrink-0 pointer-coarse:min-h-11 max-[721px]:min-h-11" />}><ChevronLeft aria-hidden="true" /><span className={phone ? "sr-only" : undefined}>Video</span></DialogClose>
+  const header = <header className="@container flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-1)] text-card-foreground max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">
+      <DialogClose render={<Button type="button" variant="ghost" className="shrink-0 pointer-coarse:min-h-11 max-[721px]:min-h-11 max-[721px]:min-w-11" />}><ChevronLeft aria-hidden="true" /><span className={phone ? "sr-only" : undefined}>Video</span></DialogClose>
       <DialogTitle title={video.title} className="m-0 min-w-0 flex-1 truncate [font:var(--type-body)]">{video.title}</DialogTitle>
       {/* The pill may not grow the bar: its older-publication hint stays on the line and its error copy floats under the bar instead of wrapping it. */}
       {reviewStatus && <div data-testid="video-review-status-slot" className="relative min-w-0 shrink-0 [&>div]:flex-nowrap [&_[role=alert]]:absolute [&_[role=alert]]:top-full [&_[role=alert]]:left-0 [&_[role=alert]]:z-10 [&_[role=alert]]:mt-[var(--space-1)] [&_[role=alert]]:w-max [&_[role=alert]]:max-w-[min(24rem,90vw)] [&_[role=alert]]:border [&_[role=alert]]:border-border [&_[role=alert]]:bg-card [&_[role=alert]]:p-[var(--space-2)]">
-        <VideoReviewStatusPill video={video} version={version} comparing={comparing} {...reviewStatus} />
+        <VideoReviewStatusPill video={video} version={version} comparing={comparing} compact={phone} {...reviewStatus} />
       </div>}
       {!comparing && <div data-testid="video-version-group" className="flex min-w-0 max-w-full shrink items-center gap-[var(--space-2)]">
         <label htmlFor={VERSION_SELECT_ID} className={`shrink-0 text-foreground-secondary [font:var(--type-label)]${phone ? " sr-only" : ""}`}>Version</label>
@@ -394,11 +396,11 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
             ><Trash2 aria-hidden="true" /></IconButton>}</SelectItem>)}
           </SelectContent>
         </Select>
-        {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} removeRef={bindRemove} /></Suspense>}
+        {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} removeRef={bindRemove} hideTrigger={phone} /></Suspense>}
       </div>}
       <div data-testid="video-header-actions" className="ml-auto flex flex-none flex-nowrap items-center gap-[var(--space-2)]">
       {phone
-        ? <VideoReviewHeaderMenu copyHref={copyHref} downloadHref={downloadHref} downloadLabel={`Download version ${version.version}`} onCreateReviewLink={createReviewLink} />
+        ? <VideoReviewHeaderMenu copyHref={copyHref} downloadHref={downloadHref} downloadLabel={`Download version ${version.version}`} onCreateReviewLink={createReviewLink} {...(removeVersionFromMenu ? { onRemoveVersion: removeVersionFromMenu, removeDisabled: !removeReady || trash?.archived === true || (video.uploading != null && video.versions.length === 1) } : {})} />
         : <>
           {copyHref && <CopyTextButton text={copyHref} label="Copy link" labelClassName={BAR_LABEL} tooltip className="pointer-coarse:min-h-11" />}
           {downloadHref && <BarTip label="Download"><Button variant="outline" nativeButton={false} data-testid="video-download" aria-label={`Download version ${version.version}`} className="pointer-coarse:min-h-11" render={<a href={downloadHref} download />}><DownloadIcon aria-hidden="true" /><span className={BAR_LABEL}>Download</span></Button></BarTip>}
@@ -413,7 +415,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         data-testid="video-social-toggle"
         aria-pressed={socialOn}
         {...(comparing ? { title: "Leave Compare to preview for Social" } : {})}
-        className={"pointer-coarse:min-h-11 max-[721px]:min-h-11 aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground"}
+        className={"pointer-coarse:min-h-11 max-[721px]:min-h-11 max-[721px]:min-w-11 aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground"}
       ><Smartphone aria-hidden="true" /><span className={phone ? "sr-only" : BAR_LABEL}>Social preview</span></Button></BarTip>}
       {(canCompare || comparing) && <BarTip label={comparing ? "Single view" : "Compare"}><Button
         ref={compareButtonRef}
