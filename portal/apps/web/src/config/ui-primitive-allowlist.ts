@@ -34,6 +34,8 @@ export const UI_PRIMITIVE_ALLOWLIST: Record<string, UiPrimitiveAllowance> = {
   "components/ProjectTeamCombobox.tsx": { count: 2, ledger: "baseline (#262)" },
   "components/SubtaskChecklist.tsx": { count: 5, ledger: "baseline (#262); the schedule picker (6 raw controls) moved to quincy/SubtaskScheduleControl.tsx (#372)" },
   "components/UploadDropzone.tsx": { count: 2, ledger: "baseline (#262)" },
+  "components/video/VideoReviewHeaderMenu.tsx": { count: 1, ledger: "#879: the Marker export row of the phone action sheet — quincy/menu triggerRender of a reui/item rendered as a <button>, so the row looks like the sheet's other reui/item rows; no reui/quincy trigger renders an item row" },
+  "components/video/VideoVersionsSheet.tsx": { count: 1, ledger: "#879: a Version row — reui/item rendered as a <button> inside reui/sheet; reui/item has no button mode and the row must be one tap target with aria-current" },
   "screens/Admin.tsx": { count: 2, ledger: "baseline (#262)" },
   "screens/ProjectWorkspace.tsx": { count: 3, ledger: "baseline (#262)" },
 };
