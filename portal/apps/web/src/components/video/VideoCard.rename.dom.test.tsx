@@ -120,13 +120,33 @@ describe("the dialog", () => {
 });
 
 describe("refusals", () => {
-  it("shows the server's message on a 400 and keeps the dialog and the typed text", async () => {
-    apiPutMock.mockRejectedValue(refusal(400, { error: "Only MP4 or MOV files can be uploaded" }));
+  it("checks the name before sending: a wrong extension says it must end in .mp4 or .mov, sends nothing, and keeps the dialog and the typed text", async () => {
     await mount({ parts: ALL });
     await openRename(); await typeInto(input(), "Walk final.avi");
     await act(async () => { input()!.form!.requestSubmit(); await Promise.resolve(); }); await flush(20);
-    expect(dlg()!.querySelector('[role="alert"]')!.textContent).toContain("Only MP4 or MOV");
+    expect(apiPutMock).not.toHaveBeenCalled();
+    expect(dlg()!.querySelector('[role="alert"]')!.textContent).toContain(".mp4 or .mov");
     expect(input()!.value).toBe("Walk final.avi");
+    await typeInto(input(), "Walk final.mp4");
+    expect(dlg()!.querySelector('[role="alert"]')).toBeNull();
+  });
+  it("says a name with a control character can't be used, without sending it", async () => {
+    await mount({ parts: ALL });
+    await openRename(); await typeInto(input(), "Walk\u0007final.mp4");
+    await act(async () => { input()!.form!.requestSubmit(); await Promise.resolve(); }); await flush(20);
+    expect(apiPutMock).not.toHaveBeenCalled();
+    expect(dlg()!.querySelector('[role="alert"]')!.textContent).toContain("can't be used");
+  });
+  it("on a 400 from the route shows a plain line, never the route's \"Invalid input\", and keeps the dialog and the typed text", async () => {
+    // The route's real body (`jsonInput`): { error: "Invalid input", details }.
+    apiPutMock.mockRejectedValue(refusal(400, { error: "Invalid input", details: [{ path: ["filename"], message: "The file name can be at most 120 characters before the extension" }] }));
+    await mount({ parts: ALL });
+    await openRename(); await typeInto(input(), "Walk final.mp4");
+    await act(async () => { input()!.form!.requestSubmit(); await Promise.resolve(); }); await flush(20);
+    const text = dlg()!.querySelector('[role="alert"]')!.textContent!;
+    expect(text).toContain("can't be used");
+    expect(text).not.toContain("Invalid input");
+    expect(input()!.value).toBe("Walk final.mp4");
   });
   it("on not_latest_version takes the fresh Video, keeps the typed text and retargets only when the person asks", async () => {
     const fresh = videoOf(V1, "Main walkthrough", [["00000000-0000-4000-8000-000000000299", 3, true], [A2, 2, false], [A1, 1, false]]);

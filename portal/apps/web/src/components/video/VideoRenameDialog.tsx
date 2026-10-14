@@ -3,6 +3,7 @@ import type { Role } from "@quincy/shared";
 import { useOptionalProjectQueryClient } from "../../lib/project-data";
 import { pushToast } from "../../lib/toast-store";
 import { classifyRenameError, renameErrorText, renameVideoVersion, type ClassifiedRenameError } from "../../lib/video-rename-data";
+import { checkRenameName } from "../../lib/video-rename-errors";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../reui/dialog";
 import { Button } from "../quincy/Button";
 import { Notice } from "../quincy/Notice";
@@ -62,6 +63,8 @@ function RenameForm({ projectId, role, target, latest, onClose }: { projectId: s
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!canSave || !queryClient || inFlight.current) return;
+    const unusable = checkRenameName(trimmed);
+    if (unusable) { setProblem(unusable); return; }
     inFlight.current = true; setPending(true); setProblem(null);
     try {
       await renameVideoVersion({ queryClient, projectId, role }, { assetId: aimedAt.assetId, filename: trimmed });
