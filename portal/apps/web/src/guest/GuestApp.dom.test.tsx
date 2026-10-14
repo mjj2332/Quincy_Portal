@@ -286,6 +286,24 @@ describe("the video screen", () => {
     expect(options.some((text) => text.startsWith("v20"))).toBe(false);
   });
 
+  it("portals the Version select popup inside the inverse scope (#877)", async () => {
+    videos = [videoOf(1, { versions: [versionOf(30), versionOf(10)] })];
+    await open();
+    await click(byId("guest-version-trigger") ?? undefined);
+    const option = document.querySelector<HTMLElement>('[role="option"]')!;
+    expect(option.closest('[data-surface="inverse"]')).not.toBeNull();
+  });
+
+  it("portals the phone notes drawer inside the inverse scope (#877)", async () => {
+    await viewport.set({ width: 390, coarse: true });
+    notes = [note()];
+    videos = [videoOf(1)];
+    await open();
+    await click(button("Notes"));
+    const drawer = document.querySelector<HTMLElement>('[data-testid="guest-notes-drawer"]')!;
+    expect(drawer.closest('[data-surface="inverse"]')).not.toBeNull();
+  });
+
   it("draws the watermark only on a premium video that is not unlocked", async () => {
     await withLayout(async () => {
       videos = [videoOf(1, { premium: true, unlocked: false })];
