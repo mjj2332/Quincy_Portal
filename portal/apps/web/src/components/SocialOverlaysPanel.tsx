@@ -83,7 +83,7 @@ export function SocialOverlaysPanel() {
     {visible.length > 0 && <TableWrap><Table>
       <TableHead><TableRow><TableHeader>Preview</TableHeader><TableHeader>Name</TableHeader><TableHeader>Platform</TableHeader><TableHeader>Image</TableHeader><TableHeader>Updated</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
       <TableBody>{visible.map((overlay) => <TableRow key={overlay.id} data-testid="social-overlay-row">
-        <TableCell data-label="Preview"><div className={`aspect-[9/16] w-[calc(var(--space-8)*1.25)] overflow-hidden border-solid border-[length:var(--border-width-hair)] border-border ${CHECKER}`}>
+        <TableCell data-label="Preview"><div className={`aspect-[9/16] w-[var(--space-8)] overflow-hidden border-solid border-[length:var(--border-width-hair)] border-border ${CHECKER}`}>
           <img src={overlay.imageUrl} alt={`${overlay.name} overlay preview`} className="block size-full object-contain" loading="lazy" />
         </div></TableCell>
         <TableCell data-label="Name"><div className="flex flex-wrap items-center gap-[var(--space-2)]">
