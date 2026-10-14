@@ -1323,7 +1323,7 @@ describe("collapsing the notes pane keeps its work (#859)", () => {
   let shim: ReturnType<typeof installLocalStorageShim>;
   beforeEach(() => { shim = installLocalStorageShim(); resetUiPrefMemory(); });
   afterEach(() => { shim.restore(); resetUiPrefMemory(); });
-  const toggle = () => byId("video-pane-toggle")!;
+  const toggle = () => (byId("video-pane-show") ?? byId("video-pane-hide"))!;
 
   it("a reply that is in flight when the pane is collapsed still shows its failure when the pane is reopened", async () => {
     notes = { [asset(10)]: [note(1)] };

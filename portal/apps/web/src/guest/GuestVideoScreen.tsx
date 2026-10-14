@@ -9,7 +9,7 @@ import { Toggle } from "../components/reui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/reui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../components/reui/sheet";
 import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "../components/quincy/SheetCloseButton";
-import { ReviewPaneToggle, ReviewSplit, useReviewPane } from "../components/quincy/ReviewPane";
+import { ReviewSplit, useReviewPane, useReviewPaneControls } from "../components/quincy/ReviewPane";
 import { VideoPlayer, type VideoPlayerControl } from "../components/quincy/VideoPlayer";
 import type { SocialPreviewMode } from "../components/quincy/SocialPreviewControls";
 import { currentOverlay, useSocialPreview } from "../lib/use-social-preview";
@@ -122,6 +122,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const reviewPane = useReviewPane(phone);
   const paneId = useId();
   const setPaneOpen = reviewPane.setOpen;
+  // The pane's collapse control (#877 S2): ⇥ beside the Notes heading, ⇤ in a strip once collapsed. A phone has the drawer and no toggle.
+  const paneControls = useReviewPaneControls({ open: reviewPane.open, onOpenChange: setPaneOpen, paneId, noun: "notes" });
 
   // Copy my notes (13d): the dialog, and what the last paste came to for the Version on screen.
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -418,13 +420,14 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const footer = session.verified && session.notifications?.available
     ? <GuestSubscriptionRow store={subscription} initial={session.notifications.subscribed} readOnly={archived} onToggle={toggleSubscription} />
     : null;
-  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} top={addNote} footer={footer} writing={writing} hideEmpty={socialOn && canWrite} />;
+  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : <div className="flex items-center justify-between gap-[var(--space-2)]">{heading}{paneControls.hideButton}</div>} top={addNote} footer={footer} writing={writing} hideEmpty={socialOn && canWrite} />;
 
   return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-dvh flex-1 flex-col bg-background text-foreground min-[721px]:min-h-0">
-    <header className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-2)] border-b border-border bg-card px-[var(--space-5)] py-[var(--space-3)] text-card-foreground">
+    <header className="flex flex-col border-b border-border bg-card text-card-foreground">
+     <div data-testid="guest-bar" className="flex min-h-12 flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-2)] px-[var(--space-4)] py-[var(--space-1)] min-[721px]:flex-nowrap">
       {onBack && <Button type="button" variant="ghost" className={TOUCH} onClick={onBack}><ChevronLeft aria-hidden="true" />All videos</Button>}
-      <h1 data-testid="guest-video-title" className="m-0 min-w-[160px] flex-1 truncate text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{video.title}</h1>
-      <div className="flex min-w-0 items-center gap-[var(--space-4)] max-[721px]:basis-full max-[721px]:gap-[var(--space-2)] min-[721px]:contents">
+      <h1 data-testid="guest-video-title" title={video.title} className="m-0 min-w-0 flex-1 truncate [font:var(--type-body)]">{video.title}</h1>
+      <div className="flex min-w-0 flex-none items-center gap-[var(--space-3)] max-[721px]:basis-full max-[721px]:gap-[var(--space-2)]">
       {videos.length > 1 && <div className="flex items-center gap-[var(--space-2)]">
         <Button type="button" variant="outline" size="icon" aria-label="Previous video" className={TOUCH} disabled={index === 0} onClick={() => { step(-1); }}><ChevronLeft aria-hidden="true" /></Button>
         <span data-testid="guest-video-position" className="text-foreground-secondary tabular-nums [font:var(--type-label)]">{`${index + 1} of ${videos.length}`}</span>
@@ -444,10 +447,10 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       {socialOverlays.length > 0 && <Button type="button" variant="outline" aria-pressed={socialOn} onClick={() => { setSocial(!socialOn); }} data-testid="guest-social-toggle" aria-label="Social preview" className={`${TOUCH} aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground`}>
         <Smartphone aria-hidden="true" /><span className="max-[721px]:sr-only">Social</span>
       </Button>}
-      {!phone && <ReviewPaneToggle open={reviewPane.open} onOpenChange={setPaneOpen} paneId={paneId} label="Notes" className={TOUCH} />}
       {phone && <Button type="button" variant="outline" aria-label={threads === null ? "Notes" : `Notes, ${threads.length}`} className={`${TOUCH} shrink-0`} onClick={() => { setDrawerOpen(true); }}><MessageSquare aria-hidden="true" />{threads !== null && <span className="[font:var(--type-label)]">{threads.length}</span>}</Button>}
       </div>
-      <div data-testid="guest-delivery" className="flex flex-wrap items-center gap-[var(--space-2)] empty:hidden max-[721px]:basis-full">
+     </div>
+      <div data-testid="guest-delivery" className="flex flex-wrap items-center gap-[var(--space-2)] px-[var(--space-4)] pb-[var(--space-2)] empty:hidden">
         <GuestDeliveryChips version={version} />
         {canDecide && <>
           <Button type="button" variant={version.decision?.value === "approved" ? "outline" : "default"} data-testid="guest-approve" className={TOUCH} onClick={() => { startDecision("approved"); }}><Check aria-hidden="true" />Approve</Button>
@@ -467,6 +470,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       paneId={paneId}
       handleLabel="Resize notes"
       stacked={phone}
+      strip={paneControls.strip}
       player={<VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} />}
       pane={phone ? null : <aside className="flex flex-1 flex-col border-l border-border bg-card p-[var(--space-5)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-hidden">{panel}</aside>}
     />

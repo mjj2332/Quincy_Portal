@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { roleHasCapability, VIDEO_NOTE_PASTE_MAX, type VideoDto, type VideoNoteDto, type VideoNoteThreadDto } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
 import { useNow } from "../../lib/use-now";
@@ -11,6 +11,7 @@ import { ICON_BUTTON } from "../quincy/icon-button";
 import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
 import { EmptyState } from "../quincy/EmptyState";
 import { Notice } from "../quincy/Notice";
+import { ReviewPaneHideContext } from "../quincy/ReviewPane";
 import { Popover, PopoverContent, PopoverTrigger } from "../reui/popover";
 import { ScrollArea } from "../reui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
@@ -159,6 +160,8 @@ export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = f
     && deleting.root.replies.some((reply) => !reply.deleted && JSON.stringify(reply.author) !== JSON.stringify(deleting.note.author));
   const excerpt = deleting && !deleting.note.deleted ? deleting.note.body.replace(/\s+/g, " ").trim().slice(0, 60) : "";
 
+  // The screen that owns the pane places its hide (⇥) button here (#877 S2); Compare's panel and a phone provide none.
+  const hideButton = useContext(ReviewPaneHideContext);
   const total = (counts.totals.open + counts.totals.resolved);
   const loading = query.isPending;
   const failed = query.isError && !query.data;
@@ -189,6 +192,7 @@ export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = f
           {canCopy && pasteFrom && <MenuPrimitive.Item className={MENU_ITEM} onClick={() => { setPasteOpen(true); }}>{`Paste ${pasteFrom.noteIds.length} ${pasteFrom.noteIds.length === 1 ? "note" : "notes"} from v${pasteFrom.sourceVersion}…`}</MenuPrimitive.Item>}
           {canExport && <MarkerExportMenuItems exp={exp} separated={canCopy} />}
         </Menu>}
+        {hideButton}
       </div>
     </div>
 

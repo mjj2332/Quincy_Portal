@@ -369,7 +369,8 @@ describe("the video screen", () => {
 });
 
 describe("the notes pane (#859)", () => {
-  const toggle = () => byId("video-pane-toggle");
+  /** ⇥ is in the pane (mounted even when collapsed), ⇤ in the strip (only while collapsed): whichever is the live control. */
+  const toggle = () => byId("video-pane-show") ?? byId("video-pane-hide");
   /** The pane when it is showing; a collapsed pane stays mounted but hidden (`mountedPane`). */
   const mountedPane = () => byId("video-review-pane");
   const pane = () => { const el = mountedPane(); return el && !el.hidden ? el : null; };
@@ -385,6 +386,32 @@ describe("the notes pane (#859)", () => {
     expect(pane()!.querySelector('[data-testid="guest-notes-panel"]')).not.toBeNull();
     expect(now(handle()!)).toBe(360);
     expect(pane()!.style.getPropertyValue("--review-pane-w")).toBe("360px");
+  });
+
+  it("puts ⇥ in the pane's heading row, none in the top bar, and a strip with ⇤ once collapsed (#877 S2)", async () => {
+    videos = [videoOf(1)];
+    await open();
+    const hide = byId("video-pane-hide")!;
+    expect(hide.getAttribute("aria-label")).toBe("Hide notes");
+    expect(byId("guest-notes-heading")!.parentElement!.contains(hide)).toBe(true);
+    expect(byId("guest-bar")!.contains(hide)).toBe(false);
+    expect(byId("video-review-strip")).toBeNull();
+    await click(hide);
+    expect(byId("video-review-strip")!.contains(byId("video-pane-show"))).toBe(true);
+    expect(byId("video-pane-show")!.getAttribute("aria-label")).toBe("Show notes");
+    expect(document.activeElement).toBe(byId("video-pane-show"));
+    await click(byId("video-pane-show")!);
+    expect(document.activeElement).toBe(byId("video-pane-hide"));
+  });
+
+  it("the bar is one truncating line; Approve and the other deliveries sit in their own row under it (#877 S2)", async () => {
+    videos = [videoOf(1)];
+    await open();
+    const title = byId("guest-video-title")!;
+    expect(title.className).toContain("truncate");
+    expect(title.getAttribute("title")).toBe(title.textContent);
+    expect(byId("guest-bar")!.className).toContain("min-[721px]:flex-nowrap");
+    expect(byId("guest-bar")!.contains(byId("guest-delivery"))).toBe(false);
   });
 
   it("the toggle collapses and restores the pane without remounting the film, and saves the choice", async () => {

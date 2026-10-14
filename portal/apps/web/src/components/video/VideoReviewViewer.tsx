@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { ChevronLeft, Columns2, DownloadIcon, Link2, Smartphone, Trash2 } from "lucide-react";
 import { framesToTimecode, videoVersionDownloadUrl, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
 import { registerToastHost } from "../../lib/toast-host";
@@ -11,12 +11,13 @@ import { OverlayContainerContext } from "../OverlayContainerContext";
 import { Button } from "../reui/button";
 import { IconButton } from "../quincy/icon-button";
 import type { VersionRemovalHandle } from "./VideoVersionMenu";
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "../reui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogTitle } from "../reui/dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
 import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
-import { ReviewPaneToggle, ReviewSplit, useReviewPane } from "../quincy/ReviewPane";
+import { ReviewPaneHideContext, ReviewSplit, useReviewPane, useReviewPaneControls } from "../quincy/ReviewPane";
 import type { SocialPreviewMode } from "../quincy/SocialPreviewControls";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../reui/tabs";
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
@@ -25,6 +26,7 @@ import type { NoteFormStore } from "../../lib/video-note-form-store";
 import { versionSlot, videoSlot, type VideoApprovalStore } from "../../lib/video-approval-store";
 import type { VideoNotesSession } from "./use-video-notes";
 import { VideoReviewStatusPill } from "./VideoReviewStatusPill";
+import { VideoReviewHeaderMenu } from "./VideoReviewHeaderMenu";
 
 /** The notes UI is its own chunk: a Project whose notes part is off never loads it. */
 const LazyNotesHost = lazy(() => import("./VideoNotesHost"));
@@ -40,6 +42,17 @@ const preloadCompare = (withNotes: boolean) => { void loadCompare(); if (withNot
 const PHONE_QUERY = "(width < 721px)";
 
 const VERSION_SELECT_ID = "video-review-version";
+
+/** Below this bar width (a container query on the header) an action's label is spoken, not drawn, and a tooltip names it, so 721-1080px still fits on one line. */
+const BAR_LABEL = "@max-[1080px]:sr-only";
+
+/** A top-bar action's tooltip, composed straight from `reui/tooltip` (the player's `IconTip` is in `VideoPlayer`, which this file does not import). */
+function BarTip({ label, children }: { label: string; children: ReactElement }) {
+  return <Tooltip>
+    <TooltipTrigger render={children} />
+    <TooltipContent>{label}</TooltipContent>
+  </Tooltip>;
+}
 
 /**
  * The staff review viewer (#741 4d-ii): a collection-local, full-viewport dialog on the inverse surface that plays one Video, one
@@ -131,6 +144,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const [toastSlot, setToastSlot] = useState<HTMLElement | null>(null);
   useEffect(() => (toastSlot ? registerToastHost(toastSlot) : undefined), [toastSlot]);
   const notesOn = notes !== undefined;
+  // The pane's collapse control (#877): hide (⇥) lives in the pane, show (⇤) in a slim strip once it is collapsed. The top bar holds neither.
+  const paneControls = useReviewPaneControls({ open: pane.open, onOpenChange: setPaneOpen, paneId, noun: notesOn ? "notes" : "details" });
   // Escape order with the notes panel (#741 5b), decided from a snapshot taken at keydown, before any handler has run: Base UI reports one
   // Escape to `onOpenChange` more than once, so the answer cannot come from state the first call changed (the ProjectSheet note).
   // 1. an open menu, popover, list, confirm or modal dialog owns it; 2. the form store decides for the Version's form (draw mode first: a confirmation is cancelled, or
@@ -320,8 +335,6 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     if (!deepLinkRef.current || modeRef.current !== "compare") return;
     if (compareStore?.getState().pair?.a !== assetId) exitCompare("dialog");
   }, [assetId, compareStore, exitCompare]);
-  const base = { nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame };
-  const startLabel = framesToTimecode(0, base, version.startTimecodeFrames ?? 0);
   const newest = Math.max(...video.versions.map((candidate) => candidate.version));
   const optionLabel = (candidate: VideoDto["versions"][number]) => `v${candidate.version}${candidate.version === newest ? " · latest" : ""} · ${candidate.uploadedBy.name} · ${formatVideoDate(candidate.createdAt)}`;
   const detailsFor = (target: VideoVersionDto): ReactNode => {
@@ -350,18 +363,25 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const detailsRows = detailsFor(version);
 
   const comparing = mode === "compare" && compareStore !== undefined;
-  const header = <header className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-2)] border-b border-border bg-card px-[var(--space-5)] py-[var(--space-3)] text-card-foreground">
-      <DialogClose render={<Button type="button" variant="ghost" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}><ChevronLeft aria-hidden="true" />Video</DialogClose>
-      <div className="flex min-w-[220px] flex-1 flex-col gap-[var(--space-1)]">
-        <DialogTitle className="text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{video.title}</DialogTitle>
-        <DialogDescription className="text-foreground-secondary [font:var(--type-label)]">{`${version.width}×${version.height} · ${formatFps(version.fps)} fps · `}<span data-testid="video-start-tc" className="whitespace-nowrap">{`start TC ${startLabel}`}</span></DialogDescription>
-      </div>
-      {reviewStatus && <VideoReviewStatusPill video={video} version={version} comparing={comparing} {...reviewStatus} />}
-      {!comparing && <div data-testid="video-version-group" className="flex min-w-0 max-w-full items-center gap-[var(--space-2)]">
-        <label htmlFor={VERSION_SELECT_ID} className="shrink-0 text-foreground-secondary [font:var(--type-label)]">Version</label>
+  /** Create Review link grants side A in Compare (read at click time; a side A no longer in this film falls back to the Version on screen), else the Version on screen. */
+  const createReviewLink = reviewLinks ? () => {
+    const sideA = comparing ? compareStore?.getState().pair?.a : undefined;
+    reviewLinks.onCreate(sideA && video.versions.some((candidate) => candidate.assetId === sideA) ? sideA : version.assetId);
+  } : undefined;
+  const copyHref = deepLink && !comparing ? deepLink.href(version.version) : undefined;
+  const downloadHref = download && !comparing ? videoVersionDownloadUrl(download.projectId, version.assetId) : undefined;
+  const header = <header className="@container flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-1)] text-card-foreground">
+      <DialogClose render={<Button type="button" variant="ghost" className="shrink-0 pointer-coarse:min-h-11 max-[721px]:min-h-11" />}><ChevronLeft aria-hidden="true" /><span className={phone ? "sr-only" : undefined}>Video</span></DialogClose>
+      <DialogTitle title={video.title} className="m-0 min-w-0 flex-1 truncate [font:var(--type-body)]">{video.title}</DialogTitle>
+      {/* The pill may not grow the bar: its older-publication hint stays on the line and its error copy floats under the bar instead of wrapping it. */}
+      {reviewStatus && <div data-testid="video-review-status-slot" className="relative min-w-0 shrink-0 [&>div]:flex-nowrap [&_[role=alert]]:absolute [&_[role=alert]]:top-full [&_[role=alert]]:left-0 [&_[role=alert]]:z-10 [&_[role=alert]]:mt-[var(--space-1)] [&_[role=alert]]:w-max [&_[role=alert]]:max-w-[min(24rem,90vw)] [&_[role=alert]]:border [&_[role=alert]]:border-border [&_[role=alert]]:bg-card [&_[role=alert]]:p-[var(--space-2)]">
+        <VideoReviewStatusPill video={video} version={version} comparing={comparing} {...reviewStatus} />
+      </div>}
+      {!comparing && <div data-testid="video-version-group" className="flex min-w-0 max-w-full shrink items-center gap-[var(--space-2)]">
+        <label htmlFor={VERSION_SELECT_ID} className={`shrink-0 text-foreground-secondary [font:var(--type-label)]${phone ? " sr-only" : ""}`}>Version</label>
         <Select open={versionListOpen} onOpenChange={(next) => { if (next) handOff.current = false; setVersionListOpen(next); }} value={version.assetId} onValueChange={(next) => { if (typeof next === "string") { setResume(null); setAssetId(next); } }}>
           <SelectTrigger id={VERSION_SELECT_ID} data-testid="video-version-trigger" className="pointer-coarse:min-h-11 max-[721px]:min-h-11 min-w-0 max-w-full">
-            <SelectValue>{() => <span data-testid="video-version-label" className="block truncate">{optionLabel(version)}</span>}</SelectValue>
+            <SelectValue>{() => <span data-testid="video-version-label" className="block truncate">{phone ? `v${version.version}` : optionLabel(version)}</span>}</SelectValue>
           </SelectTrigger>
           <SelectContent finalFocus={() => !handOff.current} className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
             {video.versions.map((candidate) => <SelectItem key={candidate.assetId} value={candidate.assetId} className="pointer-coarse:min-h-11 max-[721px]:min-h-11">{optionLabel(candidate)}{trash && <IconButton
@@ -376,16 +396,15 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         </Select>
         {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} removeRef={bindRemove} /></Suspense>}
       </div>}
-      <div data-testid="video-header-actions" className="ml-auto flex flex-wrap items-center justify-end gap-x-[var(--space-4)] gap-y-[var(--space-2)] max-[721px]:ml-0 max-[721px]:justify-start">
-      {!comparing && !phone && <ReviewPaneToggle open={pane.open} onOpenChange={setPaneOpen} paneId={paneId} label={notesOn ? "Notes" : "Details"} className="pointer-coarse:min-h-11" />}
-      {deepLink && !comparing && <CopyTextButton text={deepLink.href(version.version)} label="Copy link" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}
-      {download && !comparing && <Button variant="outline" nativeButton={false} data-testid="video-download" aria-label={`Download version ${version.version}`} className="pointer-coarse:min-h-11 max-[721px]:min-h-11" render={<a href={videoVersionDownloadUrl(download.projectId, version.assetId)} download />}><DownloadIcon aria-hidden="true" />Download</Button>}
-      {reviewLinks && <Button type="button" variant="outline" data-testid="video-create-review-link" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={() => {
-        // Compare grants side A, read at click time; a side A that is no longer a Version of this film falls back to the one on screen.
-        const sideA = comparing ? compareStore?.getState().pair?.a : undefined;
-        reviewLinks.onCreate(sideA && video.versions.some((candidate) => candidate.assetId === sideA) ? sideA : version.assetId);
-      }}><Link2 aria-hidden="true" />Create Review link</Button>}
-      {social && <Button
+      <div data-testid="video-header-actions" className="ml-auto flex flex-none flex-nowrap items-center gap-[var(--space-2)]">
+      {phone
+        ? <VideoReviewHeaderMenu copyHref={copyHref} downloadHref={downloadHref} downloadLabel={`Download version ${version.version}`} onCreateReviewLink={createReviewLink} />
+        : <>
+          {copyHref && <CopyTextButton text={copyHref} label="Copy link" labelClassName={BAR_LABEL} tooltip className="pointer-coarse:min-h-11" />}
+          {downloadHref && <BarTip label="Download"><Button variant="outline" nativeButton={false} data-testid="video-download" aria-label={`Download version ${version.version}`} className="pointer-coarse:min-h-11" render={<a href={downloadHref} download />}><DownloadIcon aria-hidden="true" /><span className={BAR_LABEL}>Download</span></Button></BarTip>}
+          {createReviewLink && <BarTip label="Create Review link"><Button type="button" variant="outline" data-testid="video-create-review-link" className="pointer-coarse:min-h-11" onClick={createReviewLink}><Link2 aria-hidden="true" /><span className={BAR_LABEL}>Create Review link</span></Button></BarTip>}
+        </>}
+      {social && <BarTip label="Social preview"><Button
         ref={socialToggleRef}
         type="button"
         variant="outline"
@@ -395,8 +414,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         aria-pressed={socialOn}
         {...(comparing ? { title: "Leave Compare to preview for Social" } : {})}
         className={"pointer-coarse:min-h-11 max-[721px]:min-h-11 aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground"}
-      ><Smartphone aria-hidden="true" />Social preview</Button>}
-      {(canCompare || comparing) && <Button
+      ><Smartphone aria-hidden="true" /><span className={phone ? "sr-only" : BAR_LABEL}>Social preview</span></Button></BarTip>}
+      {(canCompare || comparing) && <BarTip label={comparing ? "Single view" : "Compare"}><Button
         ref={compareButtonRef}
         type="button"
         variant="outline"
@@ -408,7 +427,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         onPointerEnter={() => { preloadCompare(notesOn); }}
         onFocus={() => { preloadCompare(notesOn); }}
         onClick={() => { if (comparing) exitCompare("button"); else enterCompare(); }}
-      ><Columns2 aria-hidden="true" />{comparing ? "Single view" : "Compare"}</Button>}
+      ><Columns2 aria-hidden="true" /><span className={BAR_LABEL}>{comparing ? "Single view" : "Compare"}</span></Button></BarTip>}
       </div>
     </header>;
   const layout = (slots: { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode } | null): ReactNode => {
@@ -416,21 +435,27 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     const main = slots
       ? slots.panel
       : <aside aria-label="Version details" className="min-[721px]:min-h-0 flex-1 min-[721px]:overflow-y-auto border-l border-border bg-card p-[var(--space-5)] text-card-foreground max-[721px]:border-t max-[721px]:border-l-0">
-        <h3 className="mb-[var(--space-3)] px-2.5 text-[length:var(--text-lg)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{`Version ${version.version}`}</h3>
+        <div className="mb-[var(--space-3)] flex items-center justify-between gap-[var(--space-2)]">
+          <h3 className="m-0 px-2.5 text-[length:var(--text-lg)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{`Version ${version.version}`}</h3>
+          {!phone && delivery === undefined && paneControls.hideButton}
+        </div>
         {detailsRows}
       </aside>;
     // Delivery is a tab of the pane on desktop, so the player takes the full column; both panels stay mounted (a draft or a pending write survives switching). A phone keeps today's stack: delivery under the player.
     const tabbed = delivery !== undefined && !phone;
     const sidePane = tabbed
       ? <Tabs value={sideTab} onValueChange={(next) => { setSideTab(next === "delivery" ? "delivery" : "main"); }} className="min-h-0 flex-1 gap-0">
-        <TabsList variant="line" className="w-full shrink-0 rounded-none border-l border-b border-border bg-card px-[var(--space-3)]">
-          <TabsTrigger value="main">{slots ? "Notes" : "Details"}</TabsTrigger>
-          <TabsTrigger value="delivery">Delivery</TabsTrigger>
-        </TabsList>
-        <TabsContent value="main" keepMounted className="flex min-h-0 flex-col [&[hidden]]:hidden">{main}</TabsContent>
+        <div className="flex shrink-0 items-center border-l border-b border-border bg-card pe-[var(--space-2)]">
+          <TabsList variant="line" className="min-w-0 flex-1 rounded-none bg-card px-[var(--space-3)]">
+            <TabsTrigger value="main">{slots ? "Notes" : "Details"}</TabsTrigger>
+            <TabsTrigger value="delivery">Delivery</TabsTrigger>
+          </TabsList>
+          {paneControls.hideButton}
+        </div>
+        <TabsContent value="main" keepMounted className="flex min-h-0 flex-col [&[hidden]]:hidden"><ReviewPaneHideContext.Provider value={null}>{main}</ReviewPaneHideContext.Provider></TabsContent>
         <TabsContent value="delivery" keepMounted className="min-h-0 overflow-y-auto border-l border-border bg-card p-[var(--space-4)] [&[hidden]]:hidden">{deliveryPanel}</TabsContent>
       </Tabs>
-      : main;
+      : <ReviewPaneHideContext.Provider value={phone ? null : paneControls.hideButton}>{main}</ReviewPaneHideContext.Provider>;
     const playerProps = slots ? {
       ...slots.playerProps,
       onMarkerSelect: (id: string) => { revealNotes(); slots.playerProps.onMarkerSelect(id); },
@@ -451,6 +476,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         {delivery && phone && <div className="mt-[var(--space-4)] shrink-0">{deliveryPanel}</div>}
       </>}
       pane={sidePane}
+      strip={paneControls.strip}
     />;
   };
 

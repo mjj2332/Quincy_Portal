@@ -92,10 +92,16 @@ describe("the viewer's Download control (#818)", () => {
     expect(tid("video-download")).toBeNull();
   });
 
-  it("stays visible on a phone", async () => {
+  it("on a phone it is the ⋯ menu's Download item, the same anchor", async () => {
     await viewport.set({ width: 390 });
     await mount(["download"]); await openViewer();
-    expect(tid("video-download")).not.toBeNull();
+    expect(tid("video-download")).toBeNull();
+    const trigger = tid("video-header-menu")!;
+    await act(async () => { trigger.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); trigger.click(); });
+    await flush(6);
+    const link = tid("video-download") as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe(videoVersionDownloadUrl(PROJECT, ids.asset2));
+    expect(link.hasAttribute("download")).toBe(true);
   });
 
   it("is hidden while comparing and back in the single view", async () => {

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useImperativeHandle, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from "react";
 import { Pause, Play, RotateCcw, StepBack, StepForward, Volume2, VolumeX } from "lucide-react";
 import { aOf, bOf, rationalToNumber, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,7 @@ import { Notice } from "../quincy/Notice";
 import { VideoStage } from "../quincy/VideoStage";
 import { COARSE, IconTip, type VideoPlayerControl } from "../quincy/VideoPlayer";
 import { TimeFormatMenu } from "../quincy/TimeFormatMenu";
+import { ReviewPaneHideContext, useReviewPaneControls } from "../quincy/ReviewPane";
 import { useFrameLabeller, useTimeFormat } from "../../lib/time-format-prefs";
 import { VideoPendingRangeBand, VideoTimelineMarkers, type TimelineMarker } from "../quincy/VideoTimelineMarkers";
 import { Badge } from "../reui/badge";
@@ -102,6 +103,10 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
 }) {
   const compare = useSyncExternalStore(store.subscribe, store.getState);
   const slots = useSyncExternalStore(slotStore.subscribe, slotStore.get);
+  // The notes column's collapse control (#877 S2): ⇥ in the column's tab row, ⇤ in a strip once it is closed. Compare keeps its own `notesOpen`, apart from the single view's preference.
+  const notesPaneId = useId();
+  const setNotesOpen = store.setNotesOpen;
+  const notesControls = useReviewPaneControls({ open: compare.notesOpen, onOpenChange: (next) => { setNotesOpen(next); }, paneId: notesPaneId, noun: "notes" });
   const position = useRef(startFrame);
   const [handles, setHandles] = useState<{ a: CompareSideHandle | null; b: CompareSideHandle | null }>({ a: null, b: null });
   const onHandleA = useCallback((handle: CompareSideHandle | null) => { setHandles((held) => (held.a === handle ? held : { ...held, a: handle })); }, []);
@@ -279,7 +284,6 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
         <IconTip label={compare.muted ? "Unmute" : "Mute"}>
           <Toggle variant="default" size="default" pressed={compare.muted} onPressedChange={(next) => { transport?.setMuted(next); }} aria-label="Mute" className={cn("size-8", COARSE)}>{compare.muted ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}</Toggle>
         </IconTip>
-        {slots && <Toggle variant="outline" size="sm" pressed={compare.notesOpen} onPressedChange={(next) => { store.setNotesOpen(next); }} aria-label="Notes" data-testid="video-compare-notes-toggle" className={cn(BAR, "shrink-0")}>Notes</Toggle>}
       </div>
 
       <div className="flex flex-wrap items-end gap-x-[var(--space-4)] gap-y-[var(--space-2)]">
@@ -379,7 +383,15 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
       </div>
     </div>
 
-    {slots && compare.notesOpen && slots.panel}
+    {/* A closed column stays mounted, hidden and inert (a draft or an upload in flight lives in it); it used to unmount. */}
+    {slots && <div
+      id={notesPaneId}
+      hidden={!compare.notesOpen}
+      inert={!compare.notesOpen}
+      style={compare.notesOpen ? undefined : { display: "none" }}
+      className="flex min-h-0 min-w-0 max-[721px]:flex-1 min-[721px]:flex-[0_0_clamp(240px,28vw,360px)]"
+    ><ReviewPaneHideContext.Provider value={notesControls.hideButton}>{slots.panel}</ReviewPaneHideContext.Provider></div>}
+    {slots && notesControls.strip}
   </div>;
 }
 

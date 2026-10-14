@@ -792,13 +792,49 @@ describe("Compare: the keyboard drives the transport (#741 7c)", () => {
   });
 });
 
+describe("Compare: the notes column's collapse control (#877 S2)", () => {
+  it("starts closed with ⇤ in a strip, not in the toolbar; the column is mounted but hidden and inert", async () => {
+    await openCompare({ parts: ["notes", "compare"] }, 5);
+    expect(tid("video-review-strip")!.contains(tid("video-pane-show"))).toBe(true);
+    expect(tid("video-compare-toolbar")!.querySelector('[data-testid="video-pane-show"], [data-testid="video-pane-hide"]')).toBeNull();
+    const column = tid("video-compare-notes")!.parentElement!;
+    expect(column.hidden).toBe(true);
+    expect(column.hasAttribute("inert")).toBe(true);
+    expect(tid("video-pane-show")!.getAttribute("aria-label")).toBe("Show notes");
+  });
+
+  it("opening puts ⇥ in the column's tab row and moves focus to it; closing keeps the same nodes and moves focus to ⇤", async () => {
+    await openCompare({ parts: ["notes", "compare"] }, 5);
+    await openNotes();
+    const panel = tid("video-notes-panel");
+    expect(tid("video-review-strip")).toBeNull();
+    expect(tid("video-compare-notes")!.querySelector('[role="tablist"]')!.parentElement!.contains(tid("video-pane-hide"))).toBe(true);
+    expect(document.activeElement).toBe(tid("video-pane-hide"));
+    await click(tid("video-pane-hide")!);
+    expect(tid("video-notes-panel")).toBe(panel);
+    expect(tid("video-compare-notes")!.parentElement!.hidden).toBe(true);
+    expect(document.activeElement).toBe(tid("video-pane-show"));
+  });
+
+  it("a draft typed in the column survives closing and reopening it", async () => {
+    await openCompare({ parts: ["notes", "compare"] }, 5);
+    await openNotes();
+    const text = tid("video-note-composer")!.querySelector<HTMLTextAreaElement>("textarea")!;
+    await type(text, "Kept");
+    await click(tid("video-pane-hide")!);
+    await click(tid("video-pane-show")!);
+    expect(tid("video-note-composer")!.querySelector<HTMLTextAreaElement>("textarea")).toBe(text);
+    expect(text.value).toBe("Kept");
+  });
+});
+
 describe("Compare: Escape order (#741 7c)", () => {
   it("a draft left in a hidden composer does not swallow Escape when focus is elsewhere", async () => {
     await openCompare({ parts: ["notes", "compare"] }, 5);
     await openNotes();
     const text = tid("video-note-composer")!.querySelector<HTMLTextAreaElement>("textarea")!;
     await type(text, "A draft");
-    await click(tid("video-compare-notes-toggle")!);
+    await click(tid("video-pane-hide")!);
     const play = dialog()!.querySelector<HTMLElement>('button[aria-label="Play"]')!;
     play.focus();
     await key("Escape", play);
@@ -862,8 +898,9 @@ async function pick(testId: string, label: string) {
   await flush(8);
 }
 async function openNotes() {
-  const toggle = tid("video-compare-notes-toggle")!;
-  if (toggle.getAttribute("aria-pressed") !== "true") await click(toggle);
+  // The notes column is closed until ⇤ (in the strip) opens it; once open the strip is gone and ⇥ sits in the column.
+  const show = tid("video-pane-show");
+  if (show) await click(show);
   await waitFor(() => tid("video-notes-panel"), "the notes panel");
   await flush(4);
 }
@@ -880,7 +917,9 @@ describe("Compare: notes, one column with a tab per side (#741 7c)", () => {
 
   it("offers no notes column without the notes part", async () => {
     await openCompare();
-    expect(tid("video-compare-notes-toggle")).toBeNull();
+    expect(tid("video-pane-show")).toBeNull();
+    expect(tid("video-pane-hide")).toBeNull();
+    expect(tid("video-review-strip")).toBeNull();
     expect(tid("video-notes-panel")).toBeNull();
   });
 
@@ -897,10 +936,10 @@ describe("Compare: notes, one column with a tab per side (#741 7c)", () => {
     expect(tid("video-export-fcpxml")).toBeNull();
   });
 
-  it("the Notes toggle opens a column with exactly one panel and a tab per side", async () => {
+  it("the show button opens a column with exactly one panel and a tab per side", async () => {
     const s = seed();
     await openCompare({ parts: ["notes", "compare"], notes: s.notes }, 5);
-    expect(tid("video-notes-panel")).toBeNull();
+    expect(tid("video-notes-panel")!.closest("[hidden]")).not.toBeNull(); // mounted but hidden while the column is closed (#877 S2)
     await openNotes();
     expect(document.querySelectorAll('[data-testid="video-notes-panel"]').length).toBe(1);
     expect(tabs().map((t) => t.textContent)).toEqual(["v3", "v2"]);
@@ -1043,7 +1082,7 @@ describe("Compare: toolbar and stage furniture (#741 7c design review)", () => {
 
   it("keeps the notes column on the inverse surface, like the single viewer", async () => {
     await openCompare({ parts: ["notes", "compare"] }, 5);
-    await click(tid("video-compare-notes-toggle")!);
+    await click(tid("video-pane-show")!);
     await flush(4);
     expect(tid("video-compare-notes")!.hasAttribute("data-surface")).toBe(false);
     expect(tid("video-compare-notes")!.closest('[data-surface="default"]')).toBeNull();
@@ -1095,7 +1134,7 @@ describe("Compare: the capability going away while comparing (#741 7c Sol round 
     expect(vid("a")).toBe(a);
     expect(vid("b")).toBe(b);
     expect(frameShown()).toBe(before);
-    expect(tid("video-compare-notes-toggle")).not.toBeNull();
+    expect(tid("video-pane-show") ?? tid("video-pane-hide")).not.toBeNull();
   });
 
   it("with notes on, Single view leaves focus on the (same, connected) Compare button", async () => {
