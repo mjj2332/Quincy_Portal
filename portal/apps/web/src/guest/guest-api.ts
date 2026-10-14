@@ -1,9 +1,9 @@
 import {
   guestArchivePrepareResponseSchema, guestDecisionResponseSchema, guestDownloadManifestSchema, guestEmailCodeErrorSchema, guestEmailCodeResponseSchema, guestNoteConflictSchema, guestNoteDeleteResponseSchema, guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNotePasteCommitResponseSchema,
-  guestNotePastePreviewResponseSchema, guestNotePasteStaleSchema, guestNoteWriteResponseSchema, guestPasscodeErrorSchema, guestSessionResponseSchema, guestSocialOverlaysResponseSchema, guestSubscriptionResponseSchema, guestVideoListResponseSchema,
+  guestNotePastePreviewResponseSchema, guestNotePasteStaleSchema, guestNoteWriteResponseSchema, guestPasscodeErrorSchema, guestSessionResponseSchema, guestSocialOverlaysResponseSchema, guestSubscriptionResponseSchema, guestVideoListResponseSchema, videoVersionSummariesResponseSchema,
   type GuestArchivePrepareResponse, type GuestDecision, type GuestDecisionInput, type GuestDownloadManifest, type GuestNoteCreateInput, type GuestNoteEditInput, type GuestNoteMarkupResponse, type GuestNotePasteCommitInput, type GuestNotePasteCommitResponse,
   type GuestNotePastePreviewInput, type GuestNotePastePreviewResponse, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto,
-  type RichTextDoc,
+  type RichTextDoc, type VideoVersionSummariesResponse,
 } from "@quincy/shared";
 import { uploadImageVia, uploadVideoVia, type EditorMediaTransport, type MediaIo } from "../lib/embedded-media-core";
 
@@ -148,6 +148,8 @@ export type GuestApi = {
   videos(): Promise<Read<GuestVideoDto[]>>;
   /** The Project's Social overlays (#872), their own read: a failure here is never a statement about the link (callers treat it as "no overlays"). */
   socialOverlays(): Promise<Read<GuestSocialOverlay[]>>;
+  /** The phone Versions sheet's read (#879): the granted Versions of one Video with their upload date and public open-note count. Its own route, so `/videos` keeps its shape; a failure only hides the numbers. */
+  versionSummaries(videoId: string): Promise<Read<VideoVersionSummariesResponse["versions"]>>;
   notes(assetId: string): Promise<Read<GuestNoteThreadDto[]>>;
   markup(noteId: string): Promise<Read<GuestNoteMarkupResponse>>;
   sendCode(email: string): Promise<SendCodeResult>;
@@ -343,6 +345,7 @@ export function createGuestApi(linkId: string): GuestApi {
     session: () => read("/session", (body) => learn(guestSessionResponseSchema.parse(body))),
     videos: () => read("/videos", (body) => guestVideoListResponseSchema.parse(body).videos),
     socialOverlays: () => read("/social-overlays", (body) => guestSocialOverlaysResponseSchema.parse(body).socialOverlays),
+    versionSummaries: (videoId) => read(`/videos/${videoId}/version-summaries`, (body) => videoVersionSummariesResponseSchema.parse(body).versions),
     notes: (assetId) => read(`/versions/${assetId}/notes`, (body) => guestNoteListResponseSchema.parse(body).notes),
     markup: (noteId) => read(`/notes/${noteId}/markup`, (body) => guestNoteMarkupResponseSchema.parse(body)),
   };

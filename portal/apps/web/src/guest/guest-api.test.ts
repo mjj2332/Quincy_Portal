@@ -304,3 +304,19 @@ describe("guest-api: endSession (#854)", () => {
     expect(await api().endSession()).toBe("transient");
   });
 });
+
+describe("guest-api: version summaries (#879)", () => {
+  const VIDEO = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const ROW = { assetId: ASSET, version: 2, createdAt: "2026-10-09T01:00:00.000Z", openNoteCount: 3 };
+  it("reads the Versions from the Video's own route", async () => {
+    answer(json({ versions: [ROW] }));
+    expect(await api().versionSummaries(VIDEO)).toEqual({ kind: "ok", value: [ROW] });
+    expect(lastCall().url).toBe(`/d/api/links/${LINK}/videos/${VIDEO}/version-summaries`);
+  });
+  it("rejects a payload with another key, and is not a statement about the link when the read fails", async () => {
+    answer(json({ versions: [ROW], extra: 1 }));
+    expect((await api().versionSummaries(VIDEO)).kind).not.toBe("ok");
+    answer(new Response("boom", { status: 500 }));
+    expect((await api().versionSummaries(VIDEO)).kind).toBe("transient");
+  });
+});

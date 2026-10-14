@@ -304,6 +304,14 @@ describe("terminal route manifest", () => {
         path: `/api/projects/${manifestProjectId}/videos`,
         parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS["video-list"].parse(body),
       },
+      "video-version-summaries": {
+        path: `/api/projects/${manifestProjectId}/videos/${manifestVideoId}/version-summaries`,
+        parse: (body: unknown) => {
+          const parsed = EXTERNAL_API_RESPONSE_SCHEMAS["video-version-summaries"].parse(body) as { versions: Array<{ assetId: string }> };
+          expect(parsed.versions.map((version) => version.assetId)).toEqual([manifestVideoAssetId]);
+          return parsed;
+        },
+      },
       "project-social-overlays": {
         path: `/api/projects/${manifestProjectId}/social-overlays`,
         parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS["project-social-overlays"].parse(body),
@@ -335,6 +343,7 @@ describe("terminal route manifest", () => {
       activity: "assigned-project",
       "video-review": "assigned-project",
       "video-list": "assigned-project",
+      "video-version-summaries": "assigned-project",
       "project-social-overlays": "assigned-project",
       "review-link-list": "assigned-project",
       "video-note-list": "assigned-project",

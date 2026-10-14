@@ -7,7 +7,7 @@ import { useNow } from "./use-now";
 import { externalApiGet, externalProjectDetailToWorkspace } from "./external-api-response";
 import { ZodError } from "zod";
 import { fetchProjectSocialOverlays } from "./project-social-overlays";
-import { videoListResponseSchema, videoReviewResponseSchema, type ProjectSocialOverlaysResponse, type ExternalProjectDetailDto, type VideoDto, type VideoReviewResponse } from "@quincy/shared";
+import { videoListResponseSchema, videoReviewResponseSchema, videoVersionSummariesResponseSchema, type VideoVersionSummariesResponse, type ProjectSocialOverlaysResponse, type ExternalProjectDetailDto, type VideoDto, type VideoReviewResponse } from "@quincy/shared";
 import { createActiveProjectDetailsInvalidatedMessage, createDashboardBoardInvalidatedMessage, createProductionCalendarInvalidatedMessage, createProductionGanttInvalidatedMessage, getProjectQueryRuntime, invalidatesPastPendingRead, projectResourceKey, useProjectQueryRuntime, withDependentResources, type ProjectDataResource, type ProjectQueryRuntime } from "./project-query-sync";
 import type { ReviewPatch, WorkspaceAsset, Review } from "../components/PhotoGrid";
 import type { ProjectStageKey } from "./stages";
@@ -51,6 +51,8 @@ export const projectDataKeys = {
   videoReview: (projectId: string) => ["project-data", projectId, "video-review"] as const,
   /** The Project's Videos with every Version (#741). */
   videos: (projectId: string) => ["project-data", projectId, "videos"] as const,
+  /** One Video's Versions with their upload date and open-note count, for the phone Versions sheet (#879). */
+  videoVersionSummaries: (projectId: string, videoId: string) => ["project-data", projectId, "video-version-summaries", videoId] as const,
   /** The Project's Client Delivery page state (#787 slice 10); its answer is also whether the Delivery tab exists. */
   delivery: (projectId: string) => ["project-data", projectId, "delivery"] as const,
   /** What the Delivery tab may offer to publish (#787 slice 10): Publish's own eligibility, behind the Client Delivery gate alone. */
@@ -160,6 +162,21 @@ export function useProjectSocialOverlaysQuery(projectId: string, enabled: boolea
     queryKey: projectDataKeys.socialOverlays(projectId), enabled, staleTime: 0, retry: (count, error) => (error instanceof ZodError || (error instanceof ApiError && (error.status === 403 || error.status === 404)) ? false : projectQueryRetry(count, error)),
     queryFn: async ({ signal, client }: QueryFunctionContext) => {
       const response = await fetchProjectSocialOverlays(projectId, role === "external_editor", signal);
+      if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
+      return response;
+    },
+  });
+}
+
+/** The phone Versions sheet's read (#879): each Version's upload date and open-note count. Read when the sheet opens; a failure just hides the numbers. */
+export function useVideoVersionSummariesQuery(projectId: string, videoId: string, enabled: boolean, role: Role = "admin"): UseQueryResult<VideoVersionSummariesResponse, Error> {
+  return useQuery<VideoVersionSummariesResponse, Error>({
+    queryKey: projectDataKeys.videoVersionSummaries(projectId, videoId), enabled, staleTime: 0, retry: false,
+    queryFn: async ({ signal, client }: QueryFunctionContext) => {
+      const path = `${videosPath(projectId)}/${videoId}/version-summaries`;
+      const response = role === "external_editor"
+        ? await externalApiGet("video-version-summaries", path, signal) as VideoVersionSummariesResponse
+        : videoVersionSummariesResponseSchema.parse(await apiGet<unknown>(path, { signal }));
       if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
       return response;
     },

@@ -948,6 +948,7 @@ describe("Sol round 7", () => {
       endSession: async () => "ok",
       videos: async () => { await gate; return { kind: "ok", value: [] }; },
       socialOverlays: async () => ({ kind: "ok", value: [] }),
+      versionSummaries: async () => ({ kind: "gone" }),
       notes: async () => ({ kind: "ok", value: [] }),
       markup: async () => ({ kind: "gone" }),
       sendCode: async () => ({ ok: false, reason: "gone" }),
