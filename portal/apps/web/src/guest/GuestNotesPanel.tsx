@@ -11,7 +11,7 @@ import { GuestThreadItem, type Writing } from "./GuestNoteItem";
  * reply to, edit and delete notes through `writing`; `top` is the "Add a note" entry or the open composer. It reads no staff store and no staff DTO: `VideoNoteThread` is coupled to the
  * form store and the staff person, so this is built from the installed `item`, `badge` and `scroll-area`. `threads` is null while the first read is out.
  */
-export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect, timecode, header, top, footer, writing }: {
+export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect, timecode, header, top, footer, writing, hideEmpty }: {
   threads: readonly GuestNoteThreadDto[] | null;
   /** The notes read failed in transit (not a revoked link): say so in place and offer to repeat it. */
   failed: boolean;
@@ -26,6 +26,8 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
   /** A quiet row below the list, outside the scroll area (the email-updates switch). */
   footer?: ReactNode;
   writing: Writing;
+  /** Social preview is on: the pane says notes are off, so the empty line would contradict it. */
+  hideEmpty?: boolean;
 }) {
   return <section data-testid="guest-notes-panel" aria-label="Notes" tabIndex={-1} className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-3)]">
     {header && <div className="shrink-0">{header}</div>}
@@ -35,7 +37,7 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
       : threads === null
       ? <p className="m-0 text-foreground-secondary [font:var(--type-body-sm)]">Loading notes…</p>
       : threads.length === 0
-        ? <EmptyState size="compact" title="No notes yet" />
+        ? (hideEmpty ? null : <EmptyState size="compact" title="No notes yet" />)
         : <ScrollArea className="min-h-0 flex-1">
           <ItemGroup className="gap-[var(--space-2)]">
             {threads.map((thread) => <GuestThreadItem key={thread.id} thread={thread} selected={thread.id === selectedId} onSelect={onSelect} timecode={timecode} writing={writing} />)}

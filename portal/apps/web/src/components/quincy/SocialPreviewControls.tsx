@@ -45,7 +45,7 @@ export function SocialPreviewControls({ social, imageFailed }: { social: SocialP
         {social.overlays.map((overlay) => <SelectItem key={overlay.id} value={overlay.id} className={COARSE}>{overlay.name}</SelectItem>)}
       </SelectContent>
     </Select>}
-    <ToggleGroup variant="outline" size="sm" spacing={0} aria-label="Film fit" value={[social.fit]} onValueChange={(next) => { const picked = next[0]; if (picked === "fill" || picked === "fit") social.onFit(picked); }}>
+    <ToggleGroup variant="outline" spacing={0} aria-label="Film fit" value={[social.fit]} onValueChange={(next) => { const picked = next[0]; if (picked === "fill" || picked === "fit") social.onFit(picked); }}>
       <ToggleGroupItem value="fill" data-testid="video-social-fill" className={COARSE}>Fill</ToggleGroupItem>
       <ToggleGroupItem value="fit" data-testid="video-social-fit" className={COARSE}>Fit</ToggleGroupItem>
     </ToggleGroup>

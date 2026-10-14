@@ -418,7 +418,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const footer = session.verified && session.notifications?.available
     ? <GuestSubscriptionRow store={subscription} initial={session.notifications.subscribed} readOnly={archived} onToggle={toggleSubscription} />
     : null;
-  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} top={addNote} footer={footer} writing={writing} />;
+  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? undefined : heading} top={addNote} footer={footer} writing={writing} hideEmpty={socialOn && canWrite} />;
 
   return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-dvh flex-1 flex-col bg-background text-foreground min-[721px]:min-h-0">
     <header className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-2)] border-b border-border bg-card px-[var(--space-5)] py-[var(--space-3)] text-card-foreground">
@@ -441,9 +441,9 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
           </SelectContent>
         </Select>
       </div>
-      {socialOverlays.length > 0 && <Toggle variant="outline" pressed={socialOn} onPressedChange={setSocial} data-testid="guest-social-toggle" aria-label="Social preview" className={TOUCH}>
+      {socialOverlays.length > 0 && <Button type="button" variant="outline" aria-pressed={socialOn} onClick={() => { setSocial(!socialOn); }} data-testid="guest-social-toggle" aria-label="Social preview" className={`${TOUCH} aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground`}>
         <Smartphone aria-hidden="true" /><span className="max-[721px]:sr-only">Social</span>
-      </Toggle>}
+      </Button>}
       {!phone && <ReviewPaneToggle open={reviewPane.open} onOpenChange={setPaneOpen} paneId={paneId} label="Notes" className={TOUCH} />}
       {phone && <Button type="button" variant="outline" aria-label={threads === null ? "Notes" : `Notes, ${threads.length}`} className={`${TOUCH} shrink-0`} onClick={() => { setDrawerOpen(true); }}><MessageSquare aria-hidden="true" />{threads !== null && <span className="[font:var(--type-label)]">{threads.length}</span>}</Button>}
       </div>

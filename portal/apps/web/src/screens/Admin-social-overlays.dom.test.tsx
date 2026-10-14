@@ -86,12 +86,14 @@ describe("Admin > Social overlays (#869)", () => {
     expect(rows()).toHaveLength(0);
   });
 
-  it("lists overlays with the Default badge and no Archive action on the Default", async () => {
+  it("lists overlays with the Default badge and a disabled, explained Archive on the Default", async () => {
     await mount(); await openTab();
     expect(rows()).toHaveLength(2);
     const [first, second] = rows() as [HTMLElement, HTMLElement];
     expect(first.textContent).toContain("Default");
-    expect(button("Archive Instagram Reel", first)).toBeUndefined();
+    const defaultArchive = button("Archive Instagram Reel", first) as HTMLButtonElement;
+    expect(defaultArchive.disabled).toBe(true);
+    expect(defaultArchive.title).toMatch(/can't be archived/);
     expect(button("Archive TikTok", second)).toBeDefined();
     expect(first.querySelector("img")?.getAttribute("src")).toBe(overlay().imageUrl);
   });

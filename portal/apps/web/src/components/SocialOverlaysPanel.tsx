@@ -97,7 +97,7 @@ export function SocialOverlaysPanel() {
         <TableCell><TableActions>
           <Button type="button" variant="ghost" className={TEXT_BUTTON} aria-label={`Rename ${overlay.name}`} onClick={() => open({ kind: "rename", overlay })}>Rename</Button>
           <Button type="button" variant="ghost" className={TEXT_BUTTON} aria-label={`Replace image for ${overlay.name}`} onClick={() => open({ kind: "replace", overlay })}>Replace image</Button>
-          {!overlay.isDefault && <Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={busy} aria-label={`${overlay.archivedAt === null ? "Archive" : "Unarchive"} ${overlay.name}`} onClick={() => void toggleArchive(overlay)}>{overlay.archivedAt === null ? "Archive" : "Unarchive"}</Button>}
+          <Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={busy || overlay.isDefault} title={overlay.isDefault ? "The Default overlay can't be archived." : undefined} aria-label={`${overlay.archivedAt === null ? "Archive" : "Unarchive"} ${overlay.name}`} onClick={() => void toggleArchive(overlay)}>{overlay.archivedAt === null ? "Archive" : "Unarchive"}</Button>
         </TableActions></TableCell>
       </TableRow>)}</TableBody>
     </Table></TableWrap>}

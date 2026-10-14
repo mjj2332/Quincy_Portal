@@ -234,7 +234,9 @@ describe("Social preview on the Review link (#872)", () => {
     await social(true);
     expect(byId("guest-add-note")!.closest("[hidden]")).not.toBeNull();
     expect(byId("guest-notes-social-paused")!.textContent).toContain("Notes are off in Social preview");
+    expect(document.body.textContent).not.toContain("No notes yet");
     await social(false);
+    expect(document.body.textContent).toContain("No notes yet");
     expect(byId("guest-add-note")).not.toBeNull();
     expect(byId("guest-notes-social-paused")).toBeNull();
   });

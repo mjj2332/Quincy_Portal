@@ -394,7 +394,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         data-testid="video-social-toggle"
         aria-pressed={socialOn}
         {...(comparing ? { title: "Leave Compare to preview for Social" } : {})}
-        className="pointer-coarse:min-h-11 max-[721px]:min-h-11"
+        className={"pointer-coarse:min-h-11 max-[721px]:min-h-11 aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground"}
       ><Smartphone aria-hidden="true" />Social preview</Button>}
       {(canCompare || comparing) && <Button
         ref={compareButtonRef}
