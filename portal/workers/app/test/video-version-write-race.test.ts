@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { videoRenameResponseSchema, videoReviewStatusResponseSchema } from "@quincy/shared";
+import { videoRenameResponseSchema, videoReviewStatusResponseSchema, type VideoDto } from "@quincy/shared";
 import { RECOMPUTE_CURRENT_SQL } from "../src/lib/video-live-sql";
 import { database, ids, request, seedFixture } from "./embedded-media-support";
 import { wipeDelivery } from "./delivery-support";
@@ -52,6 +52,14 @@ async function seedTwo() {
   return { v1, v2 };
 }
 
+/** The answer is the Video as it stands after the trash: only v1 remains, it is current, and the title follows it. */
+function expectFresh(video: VideoDto, v1: { videoId: string; assetId: string }) {
+  expect(video.id).toBe(v1.videoId);
+  expect(video.currentAssetId).toBe(v1.assetId);
+  expect(video.versions.map((version) => version.assetId)).toEqual([v1.assetId]);
+  expect(video.title).toBe("cut-1");
+}
+
 beforeAll(async () => { await seedFixture(); });
 beforeEach(async () => { await wipe(); await clearVideoFlags(); await setVideoFlags(...OPEN); trash.remove = removeAndRecompute; });
 afterEach(async () => { trash.assetId = null; trash.remove = null; await wipe(); await clearVideoFlags(); });
@@ -62,7 +70,7 @@ describe("a Version trashed between the write and the fresh-Video read", () => {
     trash.assetId = v2.assetId;
     const response = await request(`${base(v2.assetId)}/file-name`, "admin", "PUT", { filename: "Renamed.mp4" });
     expect(response.status, await response.clone().text()).toBe(200);
-    expect(videoRenameResponseSchema.parse(await response.json()).video.id).toBe(v1.videoId);
+    expectFresh(videoRenameResponseSchema.parse(await response.json()).video, v1);
   });
 
   it("Review status answers 200 with the fresh Video", async () => {
@@ -71,6 +79,6 @@ describe("a Version trashed between the write and the fresh-Video read", () => {
     const current = (await database.DB.prepare("SELECT review_status AS s FROM video_version_meta WHERE asset_id = ?").bind(v2.assetId).first<{ s: string }>())!.s;
     const response = await request(`${base(v2.assetId)}/review-status`, "admin", "PUT", { reviewStatus: "approved_internal", expectedStatus: current });
     expect(response.status, await response.clone().text()).toBe(200);
-    expect(videoReviewStatusResponseSchema.parse(await response.json()).video.id).toBe(v1.videoId);
+    expectFresh(videoReviewStatusResponseSchema.parse(await response.json()).video, v1);
   });
 });
