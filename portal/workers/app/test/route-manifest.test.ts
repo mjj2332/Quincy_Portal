@@ -185,6 +185,7 @@ describe("terminal route manifest", () => {
       "GET /d/api/links/:linkId/versions/:assetId/poster",
       "GET /d/api/links/:linkId/versions/:assetId/stream",
       "GET /d/api/links/:linkId/videos",
+      "GET /d/api/links/:linkId/videos/:videoId/version-summaries",
       "GET /d/review",
       "GET /d/unsubscribe",
       "PATCH /d/api/links/:linkId/notes/:noteId",
