@@ -13,7 +13,7 @@ import { projectIsArchived } from "../lib/project-archive";
 import { readVideoReviewGate } from "../lib/video-review-gate";
 import { terminalRoute } from "../lib/terminal-route";
 import {
-  addLinkVideo, createReviewLink, deleteReviewLink, findLinkHead, isLiveMember, loadReviewLinkDtos, patchReviewLink, removeLinkVideo, replaceReviewLinkToken, revokeReviewLink, setLinkGrants, versionsByVideo,
+  addLinkVideo, createReviewLink, deleteReviewLink, endGuestSessions, findLinkHead, isLiveMember, loadReviewLinkDtos, patchReviewLink, removeLinkVideo, replaceReviewLinkToken, revokeReviewLink, setLinkGrants, versionsByVideo,
   type GrantPair, type LinkHead,
 } from "../lib/review-links";
 import { jsonInput, principalOf } from "./helpers";
@@ -222,6 +222,20 @@ reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/revoke", termi
     // Lost a race to another revoke: the link is revoked either way, which is what was asked.
     if (!ok && (await findLinkHead(c.env.DB, projectId, linkId))?.revoked_at === null) return c.json({ error: "The Review link changed; reload and try again.", code: "link_conflict" }, 409);
   }
+  const link = await oneLink(c, projectId, linkId, now);
+  return link === null ? linkNotFound(c) : c.json(reviewLinkResponseSchema.parse({ link }));
+}));
+
+/** End guest sessions (#854): Revoke's gate (the open check alone, archived Projects allowed), but it works on the Delivery review link, which `liveLink` would refuse as managed. It is the Delivery review link's only staff action: an ordinary link is an unknown id here (404), and ends its sessions by Replace or Revoke. */
+reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/end-sessions", terminalRoute("/projects/:projectId/review-links/:linkId/end-sessions", async (c) => {
+  noStore(c);
+  const projectId = c.req.param("projectId"); const linkId = c.req.param("linkId");
+  if (!uuid.safeParse(projectId).success || !uuid.safeParse(linkId).success) return c.json({ error: "Invalid id" }, 400);
+  const refused = await admit(c, projectId, { write: true, part: null, allowArchived: true }); if (refused) return refused;
+  const head = await findLinkHead(c.env.DB, projectId, linkId); if (!head || head.delivery_review !== 1) return linkNotFound(c);
+  const now = Date.now();
+  const ok = await endGuestSessions(c.env.DB, { projectId, linkId, principal: principalOf(c), now });
+  if (!ok) return refusedBecause(c, projectId, linkId);
   const link = await oneLink(c, projectId, linkId, now);
   return link === null ? linkNotFound(c) : c.json(reviewLinkResponseSchema.parse({ link }));
 }));

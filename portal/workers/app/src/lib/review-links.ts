@@ -16,7 +16,7 @@ import { LIVE_VERSION, LIVE_VERSION_EXISTS, LIVE_VIDEO } from "./video-live-sql"
 const AUDIT_INSERT_WHERE = "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, ?, 'review_link', ?, ?, ? WHERE";
 const AUDITED = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)";
 const NOT_ARCHIVED = "EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)";
-// `delivery_review = 0` on every fence below is the SQL backstop of the route refusal (#847): the Delivery review link is changed only by the sync in lib/delivery-review-link.ts.
+// `delivery_review = 0` on every fence below is the SQL backstop of the route refusal (#847): the Delivery review link is changed only by the sync in lib/delivery-review-link.ts, plus `endGuestSessions` (#854), which bumps its generation and deletes its sessions and nothing else.
 const LINK_LIVE = "EXISTS (SELECT 1 FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NULL AND delivery_review = 0)";
 const LINK_DELETABLE = "EXISTS (SELECT 1 FROM client_links WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NOT NULL AND deleted_at IS NULL AND delivery_review = 0)";
 const MEMBER_LIVE = "EXISTS (SELECT 1 FROM review_link_videos WHERE link_id = ? AND video_id = ? AND removed_at IS NULL)";
@@ -258,5 +258,20 @@ export async function deleteReviewLink(db: D1Database, input: { projectId: strin
     auditStatement(db, audit, LINK_DELETABLE, [input.linkId, input.projectId]),
     db.prepare(`UPDATE client_links SET deleted_at = ?, deleted_by = ?, updated_at = ? WHERE id = ? AND project_id = ? AND kind = 'video_review' AND revoked_at IS NOT NULL AND deleted_at IS NULL AND delivery_review = 0 AND ${AUDITED}`)
       .bind(input.now, input.principal.id, input.now, input.linkId, input.projectId, auditId),
+  ]);
+}
+
+/**
+ * Ends every guest session on the link (#854) and keeps its address: the generation goes up (so a session resolved before this batch fails `liveSql`/`renewDeliverySession`)
+ * and the link's `guest_sessions` rows go. Unlike every other fence in this file it requires `delivery_review = 1` (the Delivery review link is the only link this operation is for, ADR 0023 amendment) and names NO `reviewLinkOpenSql`: sessions suspended by the Delivery page being off must die as well. Revoked and deleted links are refused (false).
+ */
+export async function endGuestSessions(db: D1Database, input: { projectId: string; linkId: string; principal: Principal; now: number }): Promise<boolean> {
+  const auditId = newId();
+  const audit: Audit = { id: auditId, action: "review_link.sessions_end", linkId: input.linkId, principal: input.principal, now: input.now, meta: { projectId: input.projectId, linkId: input.linkId, delivery: true } };
+  const fence = "id = ? AND project_id = ? AND kind = 'video_review' AND delivery_review = 1 AND revoked_at IS NULL AND deleted_at IS NULL";
+  return commit(db, audit, [
+    auditStatement(db, audit, `EXISTS (SELECT 1 FROM client_links WHERE ${fence})`, [input.linkId, input.projectId]),
+    db.prepare(`UPDATE client_links SET token_generation = token_generation + 1, updated_at = ? WHERE ${fence} AND ${AUDITED}`).bind(input.now, input.linkId, input.projectId, auditId),
+    db.prepare(`DELETE FROM guest_sessions WHERE link_id = ? AND ${AUDITED}`).bind(input.linkId, auditId),
   ]);
 }

@@ -8,7 +8,8 @@ import { createGuestDrafts } from "./guest-drafts";
 import { createGuestSubscription } from "./guest-subscription";
 import { GuestVerifyDialog } from "./GuestVerifyDialog";
 import { useGuestVerify } from "./use-guest-verify";
-import { LimitedScreen, PasscodeScreen, UnavailableScreen, UnreachableScreen, VideoListScreen } from "./GuestScreens";
+import { GuestIdentityRow } from "./GuestIdentityRow";
+import { LimitedScreen, PasscodeScreen, SignedOutScreen, UnavailableScreen, UnreachableScreen, VideoListScreen } from "./GuestScreens";
 
 type Screen =
   | { name: "boot" }
@@ -25,7 +26,16 @@ type Screen =
  * boot (exchange the token handed in as a prop, or resume the session on a reload) -> passcode | limited | unreachable | unavailable | list -> video(index). A single-Video link skips the list.
  * A 404 or a lost 401 is `unavailable` (no oracle); a network error or 5xx is `unreachable`, a calm retry of the step that failed.
  */
-export function GuestApp({ token: initialToken, initialVideoId = null }: { token: string | null; initialVideoId?: string | null }) {
+export function GuestApp({ token, initialVideoId = null }: { token: string | null; initialVideoId?: string | null }) {
+  // Sign out (#854) remounts the whole page under a new key, so the writer, drafts, subscription store and verify dialog are fresh and the next person on a shared device sees nothing of the last one. The token
+  // stays here in memory (never storage) to start the next session with; with none (the page was reloaded after the fragment scrub) there is nothing to start one with, and the guest is told so plainly.
+  const [epoch, setEpoch] = useState(0);
+  const [signedOut, setSignedOut] = useState(false);
+  if (signedOut) return <SignedOutScreen />;
+  return <GuestPage key={epoch} token={token} initialVideoId={epoch === 0 ? initialVideoId : null} onSignedOut={() => { if (token !== null) setEpoch((n) => n + 1); else setSignedOut(true); }} />;
+}
+
+function GuestPage({ token: initialToken, initialVideoId, onSignedOut }: { token: string | null; initialVideoId: string | null; onSignedOut: () => void }) {
   const [screen, setScreen] = useState<Screen>({ name: "boot" });
   const [session, setSession] = useState<GuestSessionResponse | null>(null);
   const [videos, setVideos] = useState<GuestVideoDto[]>([]);
@@ -180,6 +190,18 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
       if (now.name === "video") setScreen({ name: "video", index });
     });
   }, [api, commitVideos, grantsChanged, refreshOverlays]);
+  // "Not you? Sign out" (#854): the server ends this browser's session, then the page remounts. `gone` (staff already ended it) is as good as `ok`; a transient failure leaves the guest signed in.
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutFailed, setSignOutFailed] = useState(false);
+  const signOut = () => {
+    if (api === null || signingOut) return;
+    setSigningOut(true); setSignOutFailed(false);
+    void api.endSession().then((result) => {
+      if (result === "transient") { setSigningOut(false); setSignOutFailed(true); return; }
+      onSignedOut();
+    });
+  };
+  const identity = (bordered: boolean) => (session === null ? null : <GuestIdentityRow session={session} pending={signingOut} failed={signOutFailed} bordered={bordered} onSignOut={signOut} />);
   if (api === null || screen.name === "unavailable") return <UnavailableScreen />;
   if (screen.name === "unreachable") return <UnreachableScreen onRetry={() => { retry.current(); }} />;
   if (screen.name === "limited") return <LimitedScreen retryAfterSeconds={screen.retryAfterSeconds} onRetry={() => { retry.current(); }} />;
@@ -189,8 +211,8 @@ export function GuestApp({ token: initialToken, initialVideoId = null }: { token
   // Invariant: the video screen never renders without its Video. Reconciling keeps the index valid; this is the net under it.
   if (screen.name === "video" && videos[screen.index] === undefined) return <UnavailableScreen />;
   const shown = screen.name === "list"
-    ? <VideoListScreen api={api} title={session?.link.label ?? null} videos={videos} session={session} onSession={setSession} verify={verify} onOpen={(index) => { setNotice(null); setScreen({ name: "video", index }); }} onUnavailable={unavailable} />
-    : <GuestVideoScreen api={api} verify={verify} writer={writer} drafts={drafts} subscription={subscription} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} socialOverlays={overlays} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} onDecided={decided} onResyncDelivery={resyncDelivery} onShownVersion={onShownVersion} />;
+    ? <VideoListScreen api={api} title={session?.link.label ?? null} videos={videos} session={session} onSession={setSession} verify={verify} onOpen={(index) => { setNotice(null); setScreen({ name: "video", index }); }} onUnavailable={unavailable} identity={identity(false)} />
+    : <GuestVideoScreen api={api} verify={verify} writer={writer} drafts={drafts} subscription={subscription} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} socialOverlays={overlays} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} onDecided={decided} onResyncDelivery={resyncDelivery} onShownVersion={onShownVersion} identity={identity(true)} />;
   // On the video screen the notices and the screen share one bounded column (#859): a notice shortens the screen (it is `flex-1` in here) instead of pushing it past the window.
   // The notices sit above the dark video screen, so they take the inverse roles there (ADR 0024); on the list they stay on the light page.
   const noticeSurface = screen.name === "video" ? "inverse" : undefined;

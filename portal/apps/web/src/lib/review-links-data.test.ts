@@ -67,6 +67,18 @@ describe("review link writes and the list cache", () => {
   });
 });
 
+describe("end guest sessions (#854)", () => {
+  it("posts to end-sessions and seeds the answered link into the loaded list, then invalidates it", async () => {
+    const client = new QueryClient();
+    client.setQueryData(reviewLinksKey(PROJECT), [linkOf({ id: L1 }), linkOf({ id: L2 })]);
+    apiPostMock.mockResolvedValue({ link: linkOf({ id: L1, label: "Ended" }) });
+    await createReviewLinkActions(client, PROJECT).endSessions(L1);
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${PROJECT}/review-links/${L1}/end-sessions`, {});
+    expect((client.getQueryData(reviewLinksKey(PROJECT)) as Array<{ id: string; label: string | null }>).map((l) => [l.id, l.label])).toEqual([[L1, "Ended"], [L2, expect.anything()]]);
+    expect(client.getQueryState(reviewLinksKey(PROJECT))?.isInvalidated).toBe(true);
+  });
+});
+
 describe("delete (#846)", () => {
   it("drops the link from a loaded cache before the call resolves, and keeps the others", async () => {
     const client = new QueryClient();

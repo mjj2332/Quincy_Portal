@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { reviewLinkListResponseSchema, reviewLinkResponseSchema, reviewLinkRevealResponseSchema, type ReviewLinkDto } from "@quincy/shared";
+import { app } from "../src/index";
 import { hashToken } from "../src/lib/opaque-token";
 import { baseEnv, database, ids, request, seedFixture, type Who } from "./embedded-media-support";
 import { addMember, seedGuestLink } from "./guest-support";
@@ -833,5 +834,98 @@ describe("the Delivery review link (#847)", () => {
     const id = await deliveryLink();
     expect((await request(`${base(ids.otherProject)}/${id}/revoke`, "admin", "POST", {})).status).toBe(404);
     expect((await request(`${base()}/${id}/revoke`, "photographer", "POST", {})).status).toBe(403);
+  });
+});
+
+describe("end guest sessions (#854)", () => {
+  const endPath = (linkId: string, projectId: string = ids.project) => `${base(projectId)}/${linkId}/end-sessions`;
+  async function deliveryWithSessions(projectId: string = ids.project) {
+    const seeded = await seedGuestLink({ deliveryReview: true, projectId }); await seedSession(seeded.id); await seedSession(seeded.id);
+    return seeded;
+  }
+
+  it("ends every session on the Delivery link, keeps the address, bumps the generation and writes one audit row", async () => {
+    const seeded = await deliveryWithSessions(); const sibling = await seedGuestLink(); await seedSession(sibling.id);
+    const before = (await row(seeded.id))!;
+    const response = await request(endPath(seeded.id), "member", "POST", {});
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(reviewLinkResponseSchema.parse(await response.json()).link).toMatchObject({ id: seeded.id, delivery: true, status: "active" });
+    const after = (await row(seeded.id))!;
+    expect(after).toMatchObject({ token_hash: before.token_hash, token_secret: before.token_secret, token_generation: 2, revoked_at: null, deleted_at: null });
+    expect(after.updated_at).toBeGreaterThanOrEqual(before.updated_at);
+    expect(await sessionCount(seeded.id)).toBe(0); expect(await sessionCount(sibling.id)).toBe(1);
+    const log = await audits("review_link.sessions_end");
+    expect(log).toHaveLength(1);
+    expect(log[0]).toMatchObject({ actor_id: ids.member, target_id: seeded.id });
+    expect(JSON.parse(log[0]!.meta_json!)).toMatchObject({ projectId: ids.project, linkId: seeded.id, delivery: true });
+    expect(await row(sibling.id)).toMatchObject({ token_generation: 1 });
+  });
+
+  it("works with the Delivery page off, the links part off, and on an archived Project; the ended sessions stay dead when the page comes back", async () => {
+    const seeded = await deliveryWithSessions();
+    await database.DB.prepare("UPDATE delivery_pages SET enabled = 0 WHERE project_id = ?").bind(ids.project).run();
+    await clearVideoFlags(); await setVideoFlags("video_review", `video_review_pilot:${ids.project}`);
+    expect((await request(endPath(seeded.id), "admin", "POST", {})).status).toBe(200);
+    expect(await sessionCount(seeded.id)).toBe(0);
+    await database.DB.prepare("UPDATE delivery_pages SET enabled = 1 WHERE project_id = ?").bind(ids.project).run();
+    expect(await sessionCount(seeded.id)).toBe(0); expect((await row(seeded.id))!.token_generation).toBe(2);
+    await setVideoFlags(`video_review_pilot:${ids.archivedProject}`);
+    const archived = await deliveryWithSessions(ids.archivedProject);
+    const response = await request(endPath(archived.id, ids.archivedProject), "admin", "POST", {});
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(await sessionCount(archived.id)).toBe(0);
+  });
+
+  it("answers 400, 404, 403 and 409 in the revoke order, and refuses the closed master gate", async () => {
+    const seeded = await deliveryWithSessions();
+    expect((await request(endPath("nope"), "admin", "POST", {})).status).toBe(400);
+    expect((await request(endPath(seeded.id), "photographer", "POST", {})).status).toBe(403);
+    expect((await request(endPath(seeded.id, ids.otherProject), "admin", "POST", {})).status).toBe(404);
+    expect((await request(endPath(crypto.randomUUID()), "admin", "POST", {})).status).toBe(404);
+    expect((await request(endPath(seeded.id), "externalOutsider", "POST", {})).status).toBe(404);
+    const revoked = await seedGuestLink({ revoked: true }); const gone = await seedGuestLink({ deleted: true });
+    expect((await request(endPath(revoked.id), "admin", "POST", {})).status, "a revoked ordinary link is not the Delivery link").toBe(404);
+    expect((await request(endPath(gone.id), "admin", "POST", {})).status).toBe(404);
+    expect(await sessionCount(seeded.id)).toBe(2); expect(await audits("review_link.sessions_end")).toHaveLength(0);
+    await clearVideoFlags(); await setVideoFlags(`video_review_pilot:${ids.project}`);
+    expect((await request(endPath(seeded.id), "admin", "POST", {})).status).toBe(404);
+    expect(await sessionCount(seeded.id)).toBe(2);
+  });
+
+  it("an assigned External may end sessions on the Delivery link (shareVideo)", async () => {
+    const seeded = await deliveryWithSessions();
+    expect((await request(endPath(seeded.id), "external", "POST", {})).status).toBe(200);
+    expect(await sessionCount(seeded.id)).toBe(0); expect((await row(seeded.id))!.token_generation).toBe(2);
+  });
+
+  it("an ordinary link is an unknown id: 404, its sessions and generation untouched, no audit row", async () => {
+    const { link } = await createOk({ videoIds: [v1.videoId] }); await seedSession(link.id);
+    for (const who of ["admin", "member"] as const) expect((await request(endPath(link.id), who, "POST", {})).status, who).toBe(404);
+    expect(await sessionCount(link.id)).toBe(1); expect((await row(link.id))!.token_generation).toBe(1);
+    expect(await audits("review_link.sessions_end")).toHaveLength(0);
+  });
+
+  it("while an Admin impersonates a member the audit row carries impersonatedBy", async () => {
+    const seeded = await deliveryWithSessions();
+    await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'user_impersonation'").run();
+    try {
+      const started = await request("/api/auth/admin/impersonate-user", "admin", "POST", { userId: ids.member }); expect(started.status).toBe(200);
+      const cookies = new Map<string, string>();
+      for (const value of (started.headers as Headers & { getSetCookie: () => string[] }).getSetCookie()) { const pair = value.split(";", 1)[0]!; const at = pair.indexOf("="); if (at > 0) cookies.set(pair.slice(0, at), pair.slice(at + 1)); }
+      const session = [...cookies].map(([name, value]) => `${name}=${value}`).join("; ");
+      const executionContext = { waitUntil: () => undefined, passThroughOnException: () => undefined, props: undefined } as unknown as ExecutionContext;
+      const response = await app.fetch(new Request(`https://portal.test${endPath(seeded.id)}`, { method: "POST", headers: { cookie: session, origin: baseEnv.APP_ORIGIN, "content-type": "application/json" }, body: "{}" }), baseEnv, executionContext);
+      expect(response.status).toBe(200);
+      const log = await audits("review_link.sessions_end");
+      expect(log).toHaveLength(1); expect(log[0]!.actor_id).toBe(ids.member);
+      expect(JSON.parse(log[0]!.meta_json!)).toMatchObject({ impersonatedBy: ids.admin });
+    } finally { await database.DB.prepare("UPDATE feature_flags SET enabled = 0 WHERE key = 'user_impersonation'").run(); }
+  });
+
+  it("the managed-link refusals are untouched: replace and revoke on the Delivery link are still 409", async () => {
+    const seeded = await deliveryWithSessions();
+    for (const path of ["replace", "revoke"]) expect((await request(`${base()}/${seeded.id}/${path}`, "admin", "POST", {})).status).toBe(409);
+    expect(await sessionCount(seeded.id)).toBe(2);
   });
 });

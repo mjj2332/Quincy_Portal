@@ -44,7 +44,7 @@ const hangList = () => apiGetMock.mockImplementation(async (path) => { if (path.
 const save = () => buttonIn(detail(), "Save changes")!;
 
 describe("detail: the Delivery link (#847)", () => {
-  const DELIVERY_NOTE = "Managed by the Delivery page. Films follow Publish and Unlock; this link has no expiry and cannot be revoked or deleted.";
+  const DELIVERY_NOTE = "Managed by the Delivery page. Films follow Publish and Unlock; this link has no expiry and cannot be revoked or deleted. You can end guest sessions.";
   it("shows the note, keeps the URL, films and Versions read-only, and hides every control that would change the link", async () => {
     state.links = [linkOf({ label: "Delivery", delivery: true, expiresAt: null })];
     await mount(); await openDetailOf("Delivery");
@@ -56,13 +56,58 @@ describe("detail: the Delivery link (#847)", () => {
     expect(box === null || box === undefined).toBe(true);
     expect(text(detail())).toContain("v2");
     for (const gone of ["#review-link-detail-label", "#review-link-detail-expiry", "#review-link-detail-passcode"]) expect(q(gone, detail()), gone).toBeNull();
-    expect(q('[aria-label="Danger zone"]', detail())).toBeNull();
+    // The one change it allows (#854): End guest sessions, on its own in the Danger zone.
+    expect(all("button", q('[aria-label="Danger zone"]', detail())).map((b) => b.textContent)).toEqual(["End guest sessions"]);
     for (const name of ["Save changes", "Replace link", "Revoke link", "Delete link", "Add a film", "Remove Main walkthrough from link"]) expect(buttonIn(detail(), name), name).toBeFalsy();
     expect(all('input[type="checkbox"]', detail())).toHaveLength(0);
   });
   it("an ordinary link has no such note", async () => {
     await mount(); await openDetailOf("Smith family");
     expect(text(detail())).not.toContain("Managed by the Delivery page");
+  });
+});
+
+describe("detail: End guest sessions (#854)", () => {
+  const confirmBox = () => q('[data-testid="review-link-confirm"]');
+  it("asks first: Cancel sends nothing; confirming posts once, refetches the list and says so", async () => {
+    state.links = [linkOf({ label: "Delivery", delivery: true, expiresAt: null })];
+    apiPostMock.mockResolvedValue({ link: state.links[0] });
+    await mount(); await openDetailOf("Delivery");
+    await press(buttonIn(detail(), "End guest sessions"));
+    expect(text(confirmBox())).toContain("The link address stays the same");
+    await press(buttonIn(confirmBox(), "Cancel"));
+    expect(apiPostMock).not.toHaveBeenCalled();
+    const before = listCalls();
+    await confirm("End guest sessions", "End sessions");
+    expect(apiPostMock).toHaveBeenCalledTimes(1);
+    expect(apiPostMock).toHaveBeenCalledWith(`${base}/end-sessions`, {});
+    expect(listCalls()).toBeGreaterThan(before);
+    expect(text(detail())).toContain("Guest sessions ended.");
+  });
+  const delivery = () => { state.links = [linkOf({ label: "Delivery", delivery: true, expiresAt: null })]; };
+  it("is not gated on the open-session count (suspended sessions are not counted)", async () => {
+    delivery(); await mount(); await openDetailOf("Delivery");
+    expect(buttonIn(detail(), "End guest sessions")!.disabled).toBe(false);
+  });
+  it("a double press sends once, and the button is off while the write is out", async () => {
+    delivery(); apiPostMock.mockImplementation(() => new Promise(() => undefined));
+    await mount(); await openDetailOf("Delivery");
+    await confirm("End guest sessions", "End sessions");
+    expect(buttonIn(detail(), "End guest sessions")!.disabled).toBe(true);
+    await press(buttonIn(detail(), "End guest sessions"));
+    expect(apiPostMock).toHaveBeenCalledTimes(1);
+  });
+  it("is absent on an ordinary link, whether active, expired or revoked", async () => {
+    for (const over of [{}, { status: "expired" }, { status: "revoked", revokedAt: "2026-10-10T03:00:00.000Z", url: null }]) {
+      state.links = [linkOf(over)];
+      await mount(); await openDetailOf("Smith family");
+      expect(buttonIn(detail(), "End guest sessions"), JSON.stringify(over)).toBeUndefined();
+      await unmount();
+    }
+  });
+  it("is enabled on the Delivery link of an archived Project", async () => {
+    delivery(); await mount({ archived: true }); await openDetailOf("Delivery");
+    expect(buttonIn(detail(), "End guest sessions")!.disabled).toBe(false);
   });
 });
 

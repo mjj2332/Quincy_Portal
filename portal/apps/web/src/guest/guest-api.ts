@@ -143,6 +143,8 @@ export type GuestApi = {
   prepareDownloads(): Promise<DownloadsPrepare>;
   exchange(token: string, passcode?: string): Promise<ExchangeResult>;
   session(): Promise<Read<GuestSessionResponse>>;
+  /** `DELETE .../session` (#854, "Not you? Sign out"): `ok` (204) and `gone` (staff already ended it, or the stub) both mean this browser holds no session now; `transient` says nothing, so the guest stays signed in. */
+  endSession(): Promise<"ok" | "gone" | "transient">;
   videos(): Promise<Read<GuestVideoDto[]>>;
   /** The Project's Social overlays (#872), their own read: a failure here is never a statement about the link (callers treat it as "no overlays"). */
   socialOverlays(): Promise<Read<GuestSocialOverlay[]>>;
@@ -258,6 +260,12 @@ export function createGuestApi(linkId: string): GuestApi {
         if (error === "decision_conflict") return { kind: "conflict" };
       }
       return { kind: "rejected", error };
+    },
+    async endSession() {
+      // JSON headers like every other guest write: the worker answers an unsafe request without them 403 `invalid_origin`, and nothing is deleted. That 403 is a refusal, not "signed out", so it is transient.
+      const response = await send("/session", { method: "DELETE", headers: JSON_HEADERS, body: "{}" });
+      if (transient(response) || response?.status === 403) return "transient";
+      return response!.ok ? "ok" : "gone";
     },
     async downloads() {
       const response = await send("/downloads");
