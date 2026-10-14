@@ -4,7 +4,7 @@ import { framesToTimecode, videoVersionDownloadUrl, type Role, type VideoDto, ty
 import { registerToastHost } from "../../lib/toast-host";
 import { hasOpenAlertDialog } from "../../lib/alert-dialog-press";
 import { useMediaQuery } from "../../lib/use-media-query";
-import { useProjectSocialOverlaysQuery } from "../../lib/project-data";
+import { useProjectSocialOverlaysQuery, useVideoVersionSummariesQuery } from "../../lib/project-data";
 import { currentOverlay, useSocialPreview } from "../../lib/use-social-preview";
 import type { CompareSideId, CompareStore } from "../../lib/video-compare-store";
 import { OverlayContainerContext } from "../OverlayContainerContext";
@@ -21,11 +21,14 @@ import { ReviewPaneHideContext, ReviewSplit, useReviewPane, useReviewPaneControl
 import type { SocialPreviewMode } from "../quincy/SocialPreviewControls";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../reui/tabs";
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
+import { ReviewPhoneBar, VersionChip } from "../quincy/ReviewPhoneBar";
+import { VideoPhoneApprove } from "./VideoPhoneApprove";
+import { VideoVersionsSheet, withSummaries } from "./VideoVersionsSheet";
 import { formatBytes, formatDuration, formatFps, formatVideoDate } from "./video-format";
 import type { NoteFormStore } from "../../lib/video-note-form-store";
 import { versionSlot, videoSlot, type VideoApprovalStore } from "../../lib/video-approval-store";
 import type { VideoNotesSession } from "./use-video-notes";
-import { VideoReviewStatusPill } from "./VideoReviewStatusPill";
+import { REVIEW_STATUS_LABEL, REVIEW_STATUS_TONE, VideoReviewStatusPill } from "./VideoReviewStatusPill";
 import { VideoReviewHeaderMenu } from "./VideoReviewHeaderMenu";
 
 /** The notes UI is its own chunk: a Project whose notes part is off never loads it. */
@@ -362,8 +365,10 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const removeVersionFromMenu = trash ? () => { removeRef.current?.open(version.assetId, () => document.querySelector<HTMLElement>('[data-testid="video-header-menu"]')); } : undefined;
   const copyHref = deepLink && !comparing ? deepLink.href(version.version) : undefined;
   const downloadHref = download && !comparing ? videoVersionDownloadUrl(download.projectId, version.assetId) : undefined;
-  const header = <header className="@container flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-1)] text-card-foreground max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">
-      <DialogClose render={<Button type="button" variant="ghost" className="shrink-0 pointer-coarse:min-h-11 max-[721px]:min-h-11 max-[721px]:min-w-11" />}><ChevronLeft aria-hidden="true" /><span className={phone ? "sr-only" : undefined}>Video</span></DialogClose>
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const summaries = useVideoVersionSummariesQuery(notes?.projectId ?? reviewStatus?.projectId ?? trash?.projectId ?? download?.projectId ?? "", video.id, phone && versionsOpen && (notes ?? reviewStatus ?? trash ?? download) !== undefined, notes?.role ?? reviewStatus?.role);
+  const desktopHeader = <header className="@container flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-1)] text-card-foreground max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">
+      <DialogClose render={<Button type="button" variant="ghost" className="shrink-0 pointer-coarse:min-h-11 max-[721px]:min-h-11 max-[721px]:min-w-11" />}><ChevronLeft aria-hidden="true" /><span>Video</span></DialogClose>
       <DialogTitle title={video.title} className={`m-0 ${TITLE_FLOOR} flex-1 truncate [font:var(--type-body)]`}>{video.title}</DialogTitle>
       {/* The pill may not grow the bar: its older-publication hint stays on the line and its error copy floats under the bar instead of wrapping it. */}
       {reviewStatus && <div data-testid="video-review-status-slot" className="relative min-w-0 shrink-0 [&>div]:flex-nowrap [&_[role=alert]]:absolute [&_[role=alert]]:top-full [&_[role=alert]]:left-0 [&_[role=alert]]:z-10 [&_[role=alert]]:mt-[var(--space-1)] [&_[role=alert]]:w-max [&_[role=alert]]:max-w-[min(24rem,90vw)] [&_[role=alert]]:border [&_[role=alert]]:border-border [&_[role=alert]]:bg-card [&_[role=alert]]:p-[var(--space-2)]">
@@ -389,13 +394,11 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} removeRef={bindRemove} hideTrigger={phone} /></Suspense>}
       </div>}
       <div data-testid="video-header-actions" className="ml-auto flex flex-none flex-nowrap items-center gap-[var(--space-2)]">
-      {phone
-        ? <VideoReviewHeaderMenu copyHref={copyHref} downloadHref={downloadHref} downloadLabel={`Download version ${version.version}`} onCreateReviewLink={createReviewLink} {...(removeVersionFromMenu ? { onRemoveVersion: removeVersionFromMenu, removeDisabled: !removeReady || trash?.archived === true || (video.uploading != null && video.versions.length === 1) } : {})} />
-        : <>
+      {<>
           {copyHref && <CopyTextButton text={copyHref} label="Copy link" labelClassName={BAR_LABEL} tooltip className="pointer-coarse:min-h-11" />}
           {downloadHref && <IconTip label="Download"><Button variant="outline" nativeButton={false} data-testid="video-download" aria-label={`Download version ${version.version}`} className="pointer-coarse:min-h-11" render={<a href={downloadHref} download />}><DownloadIcon aria-hidden="true" /><span className={BAR_LABEL}>Download</span></Button></IconTip>}
           {createReviewLink && <IconTip label="Create Review link"><Button type="button" variant="outline" data-testid="video-create-review-link" className="pointer-coarse:min-h-11" onClick={createReviewLink}><Link2 aria-hidden="true" /><span className={BAR_LABEL}>Create Review link</span></Button></IconTip>}
-        </>}
+      </>}
       {social && <IconTip label="Social preview"><Button
         ref={socialToggleRef}
         type="button"
@@ -418,6 +421,28 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       ><Columns2 aria-hidden="true" /><span className={BAR_LABEL}>{comparing ? "Single view" : "Compare"}</span></Button></IconTip>}
       </div>
     </header>;
+  const status = reviewStatus ? REVIEW_STATUS_TONE[video.reviewStatus] : undefined;
+  const phoneHeader = <>
+    <ReviewPhoneBar
+      back={<DialogClose render={<Button type="button" variant="ghost" className="min-h-11 min-w-11 shrink-0" />}><ChevronLeft aria-hidden="true" /><span className="sr-only">Video</span></DialogClose>}
+      title={<DialogTitle title={video.title} className={`m-0 ${TITLE_FLOOR} w-full truncate [font:var(--type-body)]`}>{video.title}</DialogTitle>}
+      chip={<VersionChip label={`v${version.version}${version.version === newest ? " · latest" : ""}`} tone={status} statusLabel={reviewStatus ? REVIEW_STATUS_LABEL[video.reviewStatus] : undefined} onClick={() => { setVersionsOpen(true); }} />}
+      approve={reviewStatus && !comparing ? <VideoPhoneApprove video={video} version={version} comparing={comparing} {...reviewStatus} /> : undefined}
+      actions={<VideoReviewHeaderMenu
+        container={slot}
+        {...(social ? { social: { on: socialOn, toggle: () => { setSocialOn(!socialOn); } } } : {})}
+        copyHref={copyHref} downloadHref={downloadHref} downloadLabel={`Download version ${version.version}`} onCreateReviewLink={createReviewLink}
+        {...(removeVersionFromMenu ? { onRemoveVersion: removeVersionFromMenu, removeDisabled: !removeReady || trash?.archived === true || (video.uploading != null && video.versions.length === 1) } : {})}
+      />}
+    />
+    <VideoVersionsSheet
+      open={versionsOpen} onOpenChange={setVersionsOpen} container={slot} currentAssetId={version.assetId} onChoose={(next) => { setResume(null); setAssetId(next); }}
+      rows={withSummaries([...video.versions].sort((x, y) => y.version - x.version), summaries.data?.versions)}
+      latestStatus={reviewStatus ? REVIEW_STATUS_LABEL[video.reviewStatus] : undefined}
+    />
+    {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} removeRef={bindRemove} hideTrigger /></Suspense>}
+  </>;
+  const header = phone ? phoneHeader : desktopHeader;
   const layout = (slots: { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode } | null): ReactNode => {
     const deliveryPanel = delivery ? <Suspense fallback={null}><LazyDeliveryPanel projectId={delivery.projectId} role={delivery.role} archived={delivery.archived} video={video} version={version} store={delivery.store} bare={!phone} /></Suspense> : null;
     const main = slots
