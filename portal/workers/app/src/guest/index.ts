@@ -6,6 +6,7 @@ import { VIDEO_STREAM_HEADERS, serveR2Object } from "../lib/r2-serve";
 import { verifyPasscode } from "../lib/review-passcode";
 import { auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
+import { endGuestSession } from "../lib/review-links";
 import { hashToken, randomToken } from "../lib/opaque-token";
 import type { AppEnv } from "../env";
 import { guestNotFound, guestRoute, INVALID, originRejection, readJson, readSessionCookie, SESSION_MAX_MS, sessionCookieHeader, timingSafeEqualStrings, TOO_LARGE, tooMany, UUID, withHygiene } from "./http";
@@ -123,16 +124,7 @@ export function mountGuest(app: Hono<AppEnv>): void {
     const token = UUID.test(linkId) ? readSessionCookie(c, linkId) : null;
     if (token === null) return guestNotFound(c);
     const tokenHash = session?.tokenHash ?? await hashToken(token);
-    const held = session ? { id: session.id, guestId: session.guestId } : await c.env.DB.prepare("SELECT id, guest_id AS guestId FROM guest_sessions WHERE token_hash = ?1 AND link_id = ?2").bind(tokenHash, linkId).first<{ id: string; guestId: string | null }>();
-    if (held) {
-      // The audit row mirrors `session_start` and goes in first, only for a session row that still holds this credential; the DELETE follows in the same batch.
-      await c.env.DB.batch([
-        c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
-          SELECT ?1, NULL, 'review_link.session_end', 'review_link', ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM guest_sessions WHERE id = ?5 AND token_hash = ?6)`)
-          .bind(newId(), linkId, auditMeta(null, { guest: { sessionId: held.id, guestId: held.guestId }, linkId }), Date.now(), held.id, tokenHash),
-        c.env.DB.prepare("DELETE FROM guest_sessions WHERE id = ?1 AND token_hash = ?2").bind(held.id, tokenHash),
-      ]);
-    }
+    await endGuestSession(c.env.DB, { linkId, tokenHash, known: session ? { id: session.id, guestId: session.guestId } : null, now: Date.now() });
     const clearing = sessionCookieHeader(c.env, linkId, "", 0);
     if (!session) { const stub = await guestNotFound(c); stub.headers.append("set-cookie", clearing); return stub; }
     return new Response(null, { status: 204, headers: { "set-cookie": clearing } });

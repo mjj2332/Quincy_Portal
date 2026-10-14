@@ -334,7 +334,9 @@ _Avoid_: Disable, expire
 Signing everyone out of a Review link at once, without changing its address: every guest must verify
 their email again, and keeps their email updates. Staff can do it on the Delivery review link only, where
 it is the only change they can make (an ordinary link ends its sessions by Replace or Revoke). A guest can also sign themselves out ("Not you?
-Sign out"), which ends only their own session.
+Sign out"), which ends only their own session. In storage, `client_links.token_generation` is the
+session generation: Ending guest sessions raises it, and a session issued under an older one no longer
+resolves (the column's name predates that use).
 _Avoid_: Revoke (that closes the link), Replace (that changes the address)
 
 **Delete (Review link)**:

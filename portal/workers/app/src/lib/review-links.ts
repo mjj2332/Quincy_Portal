@@ -274,3 +274,20 @@ export async function endGuestSessions(db: D1Database, input: { projectId: strin
     db.prepare(`DELETE FROM guest_sessions WHERE link_id = ? AND ${AUDITED}`).bind(input.linkId, auditId),
   ]);
 }
+
+/**
+ * Ends ONE guest session, the one holding `tokenHash` on the link (the guest's own sign-out, #854). `known` is the session the caller already resolved; without it the row is looked up by hash, so a link
+ * that is only suspended still lets the credential leave. The audit row mirrors `session_start` and goes in first, only for a session row that still holds this credential; the DELETE follows in the same batch.
+ * Returns whether a session row was held.
+ */
+export async function endGuestSession(db: D1Database, input: { linkId: string; tokenHash: string; known: { id: string; guestId: string | null } | null; now: number }): Promise<boolean> {
+  const held = input.known ?? await db.prepare("SELECT id, guest_id AS guestId FROM guest_sessions WHERE token_hash = ?1 AND link_id = ?2").bind(input.tokenHash, input.linkId).first<{ id: string; guestId: string | null }>();
+  if (!held) return false;
+  await db.batch([
+    db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?1, NULL, 'review_link.session_end', 'review_link', ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM guest_sessions WHERE id = ?5 AND token_hash = ?6)`)
+      .bind(newId(), input.linkId, auditMeta(null, { guest: { sessionId: held.id, guestId: held.guestId }, linkId: input.linkId }), input.now, held.id, input.tokenHash),
+    db.prepare("DELETE FROM guest_sessions WHERE id = ?1 AND token_hash = ?2").bind(held.id, input.tokenHash),
+  ]);
+  return true;
+}
