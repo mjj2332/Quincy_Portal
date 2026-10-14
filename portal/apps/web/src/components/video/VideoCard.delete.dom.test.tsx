@@ -102,7 +102,7 @@ describe("the Delete item", () => {
   it("on an archived Project (no Rename) the disabled Delete… still gets the separator", async () => {
     await mount({ archived: true });
     await openMenu(ids.video);
-    expect(menuItems()).not.toContain("Rename");
+    expect(menuItems()).not.toContain("Rename…");
     const children = [...document.querySelector('[role="menu"]')!.children];
     expect(children.at(-1)).toBe(tid("video-card-delete"));
     expect(children.at(-2)?.getAttribute("role")).toBe("separator");

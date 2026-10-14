@@ -45,7 +45,7 @@ export const COARSE = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[721p
 const MONO = "[font:var(--type-mono)] tabular-nums";
 // These chips keep the Lightbox's SHORTCUT_KBD skin (bordered, bg-secondary) rather than the Kbd primitive, to match the Lightbox legend.
 export const LEGEND_KBD = "rounded-[var(--radius-xs)] border border-solid border-[length:var(--border-width-hair)] border-border bg-secondary px-[var(--space-1)] text-foreground [font:var(--weight-regular)_var(--text-2xs)/1.4_var(--font-mono)]";
-const LEGEND = "flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)] text-foreground-secondary [font:var(--type-label)] pointer-coarse:hidden max-[721px]:hidden";
+const LEGEND = "flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)] text-foreground-secondary [font:var(--type-label)] pointer-coarse:hidden max-[721px]:hidden @max-[64rem]:hidden";
 
 export function IconTip({ label, keys, children }: { label: string; keys?: string; children: React.ReactElement }) {
   return <Tooltip>
@@ -182,7 +182,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     data-testid="video-player"
     tabIndex={-1}
     onKeyDown={keyboard === "self" ? (event) => { handleKeyDown(event); } : undefined}
-    className={cn("flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", className)}
+    className={cn("@container flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", className)}
   >
     <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} {...(social ? { social: { fit: social.fit, imageUrl: socialOverlay?.imageUrl ?? null, onImageError: () => { setFailedImage(socialOverlay?.imageUrl ?? null); }, onImageLoad: () => { setFailedImage(null); } } } : {})} />
 

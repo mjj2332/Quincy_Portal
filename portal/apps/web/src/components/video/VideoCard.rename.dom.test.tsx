@@ -68,14 +68,14 @@ describe("who sees Rename", () => {
   it.each(["editor", "admin", "external_editor"] as const)("%s sees it last, after its own separator", async (role) => {
     await mount({ role, parts: ALL });
     await openCardMenu(V1);
-    expect(items().at(-1)).toBe("Rename");
+    expect(items().at(-1)).toBe("Rename…");
   });
   it("is absent for a Photographer and on an archived Project", async () => {
     await mount({ role: "photographer", parts: ALL }); await openCardMenu(V1);
-    expect(items()).not.toContain("Rename");
+    expect(items()).not.toContain("Rename…");
     await unmount();
     await mount({ archived: true, parts: ALL }); await openCardMenu(V1);
-    expect(items()).not.toContain("Rename");
+    expect(items()).not.toContain("Rename…");
   });
 });
 

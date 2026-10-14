@@ -59,13 +59,13 @@ describe("which items the menu offers", () => {
   it.each(["editor", "external_editor", "admin"] as const)("%s with links and download sees Open, Create Review link, Download v2, Copy link, Rename, in that order, in three groups", async (role) => {
     await mount({ role, parts: ALL });
     await openCardMenu(V1);
-    expect(items()).toEqual(["Open", "Create Review link", "Social preview", "Download v2", "Copy link", "Rename"]);
+    expect(items()).toEqual(["Open", "Create Review link", "Social preview", "Download v2", "Copy link", "Rename…"]);
     expect(separators()).toHaveLength(2);
   });
   it("offers only Open, Copy link and Rename without the links and download parts, in three groups", async () => {
     await mount({ parts: ["upload"] });
     await openCardMenu(V1);
-    expect(items()).toEqual(["Open", "Social preview", "Copy link", "Rename"]);
+    expect(items()).toEqual(["Open", "Social preview", "Copy link", "Rename…"]);
     expect(separators()).toHaveLength(2);
   });
   it("on an archived Project drops Create Review link only", async () => {

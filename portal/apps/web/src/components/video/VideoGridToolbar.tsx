@@ -37,7 +37,7 @@ export function VideoGridToolbar({ prefs, onChange, shown, total }: { prefs: Vid
   const DirIcon = prefs.dir === "desc" ? ArrowDownWideNarrow : ArrowUpNarrowWide;
   return <div data-testid="video-grid-toolbar" className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-2)]">
     <Popover>
-      <PopoverTrigger render={<Button type="button" variant="secondary" data-testid="video-grid-appearance" className={TOOL} />}><SlidersHorizontal aria-hidden="true" className="size-4" />Appearance</PopoverTrigger>
+      <PopoverTrigger render={<Button type="button" variant="secondary" data-testid="video-grid-appearance" className={BAR} />}><SlidersHorizontal aria-hidden="true" className="size-4" />Appearance</PopoverTrigger>
       <PopoverContent align="start" aria-label="Appearance" className="grid w-72 gap-[var(--space-4)]">
         <PopoverTitle>Appearance</PopoverTitle>
         <div className="grid gap-[var(--space-2)]">

@@ -106,7 +106,7 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
     onDoubleClick={(event) => { if (onCardSurface(event)) onOpen(video, event.currentTarget); }}
     onKeyDown={onKeyDown}
   >
-    <FramePanel className="flex flex-col gap-[var(--space-3)] p-0">
+    <FramePanel className="@container flex flex-col gap-[var(--space-3)] p-0">
       <div data-testid="video-card-poster" data-thumbnail={appearance.thumb} data-orientation={portrait ? "portrait" : "landscape"} className="relative aspect-video overflow-hidden bg-invert text-invert-foreground">
         {newest.posterUrl
           ? <LazyImage src={newest.posterUrl} alt={`Poster of ${video.title}`} className={`h-full w-full ${appearance.thumb === "fill" ? "object-cover" : "object-contain"}`} />
@@ -152,16 +152,16 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
           <Button type="button" variant="secondary" className="min-h-[44px]" disabled={cancelling} onClick={() => { setCancelling(true); void onCancelReservation(cancellable.reservationId).finally(() => setCancelling(false)); }}>{cancelling ? "Cancelling…" : "Cancel upload"}</Button>
         </div>}
         {message && <Notice tone="critical" role="alert">{message}</Notice>}
-        <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-          <Button type="button" variant="primary" className="min-h-[44px]" data-testid="video-card-open" data-video-id={video.id} onClick={(event) => onOpen(video, event.currentTarget)}>Open review</Button>
+        <div className="flex flex-wrap items-center gap-[var(--space-2)] @max-[19rem]:flex-nowrap @max-[19rem]:gap-[var(--space-1)]">
+          <Button type="button" variant="primary" className="min-h-[44px] @max-[19rem]:px-[var(--space-2)]" data-testid="video-card-open" data-video-id={video.id} onClick={(event) => onOpen(video, event.currentTarget)}>Open review</Button>
           {canUpload && !busy && <FilePickButton
             accept={VIDEO_ACCEPT}
             variant="secondary"
-            className="min-h-[44px]"
+            className="min-h-[44px] @max-[19rem]:px-[var(--space-2)]"
             disabled={checking}
             onFile={(file) => { setMessage(null); setChecking(true); void onVersionFile(video, file).then((refused) => setMessage(refused)).finally(() => setChecking(false)); }}
           >{checking ? "Checking…" : `Upload v${nextNumber}`}</FilePickButton>}
-          <div className="ml-auto">
+          <div className="ml-auto shrink-0">
             <Menu
               triggerLabel="Film actions" label="Film menu" triggerTestId="video-card-menu"
               triggerRender={<IconButton ref={menuTrigger} data-video-id={video.id} />}
@@ -179,7 +179,7 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
               <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-copy-link" onClick={() => copyText(new URL(staffPathFor({ kind: "project", projectId, arrivalTab: "video", video: { id: video.id } }), window.location.origin).href)}>Copy link</MenuPrimitive.Item>
               {(onRename || remove) && <>
                 <MenuPrimitive.Separator className="my-[var(--space-1)] h-px bg-border" />
-                {onRename && <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-rename" onClick={() => { handOff.current = true; onRename(video); }}>Rename</MenuPrimitive.Item>}
+                {onRename && <MenuPrimitive.Item className={MENU_ITEM} data-testid="video-card-rename" onClick={() => { handOff.current = true; onRename(video); }}>Rename…</MenuPrimitive.Item>}
                 {remove && <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive-wash-foreground")} disabled={remove.disabled} data-testid="video-card-delete" onClick={() => { handOff.current = true; remove.onOpen(); }}>Delete…</MenuPrimitive.Item>}
               </>}
             </Menu>

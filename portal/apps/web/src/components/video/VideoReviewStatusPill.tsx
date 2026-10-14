@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { reviewStatusTransitions, type Role, type VersionReviewStatus, type VideoDto, type VideoReviewStatus } from "@quincy/shared";
 import { useOptionalProjectQueryClient } from "../../lib/project-data";
 import { classifyReviewStatusError, reviewStatusErrorText, setVideoReviewStatus } from "../../lib/video-review-status-data";
@@ -61,7 +61,7 @@ export function VideoReviewStatusPill({ video, version, comparing, projectId, ro
       triggerLabel={`Review status: ${REVIEW_STATUS_LABEL[status]}`} label="Review status" triggerTestId={testId}
       triggerClassName={cn("pointer-coarse:min-h-11 max-[721px]:min-h-11 rounded-full", blocked && "cursor-not-allowed")}
       disabled={blocked || pending}
-      trigger={<StatusPill tone={tone}>{REVIEW_STATUS_LABEL[status]}<span aria-hidden="true" className="ml-[var(--space-1)]">▾</span></StatusPill>}
+      trigger={<StatusPill tone={tone}>{REVIEW_STATUS_LABEL[status]}<ChevronDown aria-hidden="true" className="ml-[var(--space-1)] size-3" /></StatusPill>}
     >
       <MenuPrimitive.Group>
         <MenuPrimitive.GroupLabel className="px-[var(--space-3)] py-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">{`Latest v${latest.version}`}</MenuPrimitive.GroupLabel>

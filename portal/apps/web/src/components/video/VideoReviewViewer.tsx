@@ -17,7 +17,6 @@ import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
 import { ReviewPaneToggle, ReviewSplit, useReviewPane } from "../quincy/ReviewPane";
-import { Toggle } from "../reui/toggle";
 import type { SocialPreviewMode } from "../quincy/SocialPreviewControls";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../reui/tabs";
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
@@ -386,17 +385,17 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         const sideA = comparing ? compareStore?.getState().pair?.a : undefined;
         reviewLinks.onCreate(sideA && video.versions.some((candidate) => candidate.assetId === sideA) ? sideA : version.assetId);
       }}><Link2 aria-hidden="true" />Create Review link</Button>}
-      {social && <Toggle
+      {social && <Button
         ref={socialToggleRef}
+        type="button"
         variant="outline"
-        pressed={socialOn}
         disabled={comparing}
-        onPressedChange={setSocialOn}
+        onClick={() => { setSocialOn(!socialOn); }}
         data-testid="video-social-toggle"
         aria-pressed={socialOn}
         {...(comparing ? { title: "Leave Compare to preview for Social" } : {})}
         className="pointer-coarse:min-h-11 max-[721px]:min-h-11"
-      ><Smartphone aria-hidden="true" />Social preview</Toggle>}
+      ><Smartphone aria-hidden="true" />Social preview</Button>}
       {(canCompare || comparing) && <Button
         ref={compareButtonRef}
         type="button"
