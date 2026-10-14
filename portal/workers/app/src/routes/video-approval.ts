@@ -10,8 +10,8 @@ import { projectIsArchived } from "../lib/project-archive";
 import { terminalRoute } from "../lib/terminal-route";
 import { readVideoReviewGate } from "../lib/video-review-gate";
 import { publishOutboxDetached } from "../lib/server-timing";
-import { findVersion, findVideo, loadDecisions, recordStaffDecision, releaseVerdict, releaseVersion, setPremium, setPremiumUnlock, videoPublished, withdrawRelease, type Principal } from "../lib/video-approval";
-import { jsonInput } from "./helpers";
+import { findVersion, findVideo, loadDecisions, recordStaffDecision, releaseVerdict, releaseVersion, setPremium, setPremiumUnlock, videoPublished, withdrawRelease } from "../lib/video-approval";
+import { jsonInput, principalOf } from "./helpers";
 
 const uuid = z.string().uuid();
 
@@ -28,7 +28,6 @@ const publishedResponse = (c: Ctx) => c.json({ error: "This Video is on a publis
 const archivedResponse = (c: Ctx) => c.json({ error: "Archived projects are read-only; approvals, Releases and premium can't be changed.", code: "project_archived" }, 409);
 const versionNotFound = (c: Ctx) => c.json({ error: "Version not found" }, 404);
 const videoNotFound = (c: Ctx) => c.json({ error: "Video not found" }, 404);
-const principalOf = (c: Ctx): Principal => { const user = c.get("user"); return { id: user.id, impersonatedBy: user.impersonatedBy, via: user.via }; };
 
 /** Gate, capability, access and (for a write) archived. Returns the refusal, or null to carry on. */
 async function admit(c: Ctx, projectId: string, capability: Capability, write: boolean): Promise<Response | null> {

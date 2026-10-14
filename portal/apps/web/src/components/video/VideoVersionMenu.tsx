@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { VIDEO_TRASH_RETENTION_DAYS, type VideoDto, type VideoRemovalImpact } from "@quincy/shared";
+import { useRunFence } from "../../lib/use-run-fence";
 import { useOptionalProjectQueryClient, useProjectAccessTermination } from "../../lib/project-data";
 import { pushTrashToast, trashSession } from "../../lib/video-trash-session";
 import { UNDO_TOAST_TTL_MS } from "../../lib/use-scheduling-undo-toast";
@@ -52,9 +53,7 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
   const [problem, setProblem] = useState<ClassifiedVideoTrashError | null>(null);
   const [pending, setPending] = useState(false);
   // Each opening and each send owns the state it writes; a completion of an earlier one (a closed dialog's read, a Version left behind) applies nothing.
-  const run = useRef(0);
-  const alive = useRef(true);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; run.current += 1; }; }, []);
+  const fence = useRunFence();
   // The menu closes before the dialog has focus: while Remove is handing off, the menu moves no focus (#463); the dialog returns focus to the trigger itself.
   const handOff = useRef(false);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
@@ -67,21 +66,21 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
   const uploadKeyNow = useRef(uploadKey);
   uploadKeyNow.current = uploadKey;
   const load = useCallback(async (next: Target) => {
-    const mine = ++run.current;
+    const ticket = fence.begin();
     const issuedUnder = uploadKeyNow.current;
     setImpact(null); setLoadFailure(null); setProblem(null);
     try {
       const read = await readRemovalImpact(projectId, next.assetId);
-      if (!alive.current || run.current !== mine) return;
+      if (!ticket.isCurrent()) return;
       if (uploadKeyNow.current !== issuedUnder) { void load(next); return; }
       setImpact(read);
     } catch (error) {
       terminate(error);
       // A refusal here means what it means for the removal itself: the Version is gone, or the Project or gate is.
       if (queryClient) void refreshAfterRefusal({ queryClient, projectId, videoId: next.videoId }, error, "remove");
-      if (alive.current && run.current === mine) setLoadFailure(classifyVideoTrashError(error, "remove").message);
+      if (ticket.isCurrent()) setLoadFailure(classifyVideoTrashError(error, "remove").message);
     }
-  }, [projectId, terminate, queryClient]);
+  }, [projectId, terminate, queryClient, fence]);
 
   // An upload that blocks removing the whole film ends (finished or cancelled) in the Video the list already observes: read the impact again, so Remove is offered without reopening.
   const seenUploadKey = useRef(uploadKey);
@@ -109,7 +108,7 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
       if (found) openNow.current(found, returnFocusTo);
     },
   }), []);
-  const close = () => { run.current += 1; setTarget(null); setImpact(null); setLoadFailure(null); setProblem(null); setPending(false); };
+  const close = () => { fence.invalidate(); setTarget(null); setImpact(null); setLoadFailure(null); setProblem(null); setPending(false); };
 
   /** `whole`: what the person confirmed (the last Version, so the whole film), never what the answer turned out to be: another editor may have removed the other Versions first. */
   const announce = useCallback((done: Target, whole: boolean, started: string) => {
@@ -130,7 +129,7 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
 
   const confirm = async () => {
     if (!target || !impact || !queryClient) return;
-    const mine = ++run.current;
+    const ticket = fence.begin();
     setPending(true); setProblem(null);
     const sent = target; const confirmed = impact; const retireDrafts = captureDrafts(sent.assetId, sent.videoId); const started = trashSession(queryClient);
     try {
@@ -141,10 +140,10 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
       });
       // ...and say so.
       announce(sent, confirmed.lastVersion, started);
-      if (alive.current && run.current === mine) close();
+      if (ticket.isCurrent()) close();
     } catch (error) {
       terminate(error);
-      if (!alive.current || run.current !== mine) return;
+      if (!ticket.isCurrent()) return;
       const classified = classifyVideoTrashError(error, "remove");
       setPending(false);
       if (classified.impact) setImpact(classified.impact);

@@ -251,4 +251,27 @@ describe("ProjectSocialOverlayPicker (#870)", () => {
     expect(apiGetMock).toHaveBeenCalledWith(`/api/projects/${projectId}/social-overlays`);
     expect(text()).toContain("TikTok");
   });
+
+  it("publishes nothing and touches no state when the picker unmounts during a save (#874)", async () => {
+    let finish!: (value: ProjectSocialOverlaysResponse) => void;
+    apiPutMock.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    await mount();
+    const set = vi.spyOn(queryClient, "setQueryData");
+    await open(); await pick("TikTok"); await closeWithEscape();
+    await act(async () => { root!.unmount(); await Promise.resolve(); });
+    root = null;
+    await act(async () => { finish(state([tiktok])); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it("shows no failure for the old Project when the Project changes during a save (#874)", async () => {
+    const otherProject = "66666666-6666-4666-8666-666666666666";
+    let fail!: (error: unknown) => void;
+    apiPutMock.mockReturnValueOnce(new Promise((_, reject) => { fail = reject; }));
+    await mount();
+    await open(); await pick("TikTok"); await closeWithEscape();
+    await rerender({ projectId: otherProject });
+    await act(async () => { fail(new ApiError("Boom", 500, { error: "Boom" })); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
 });

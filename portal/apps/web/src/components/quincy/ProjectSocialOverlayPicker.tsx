@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useRunFence, type RunTicket } from "../../lib/use-run-fence";
 import { useQueryClient } from "@tanstack/react-query";
 import { PROJECT_SOCIAL_OVERLAYS_MAX, type ProjectSocialOverlayChoice, type ProjectSocialOverlaysResponse, type Role } from "@quincy/shared";
 import { projectDataKeys, useProjectSocialOverlaysQuery } from "../../lib/project-data";
@@ -40,9 +41,8 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived,
   const draftRef = useRef<string[]>([]);
   const baselineRef = useRef<{ ids: string[]; revision: string }>({ ids: [], revision: "" });
   const lastRequest = useRef<Request | null>(null);
-  const live = useRef({ projectId, mounted: true });
-  live.current.projectId = projectId;
-  useEffect(() => { live.current.mounted = true; return () => { live.current.mounted = false; }; }, []);
+  // The picker is re-keyed on its Project (ProjectHeader), so keying the fence on projectId matches that remount.
+  const fence = useRunFence(projectId);
   const readOnly = !canEdit || archived || latched;
   // Restore (the prop goes true to false) drops a latch set by a refusal.
   const priorArchived = useRef(archived);
@@ -66,24 +66,26 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived,
   const nothingChosen = shownIds.length === 0;
 
   // A read still in flight began before this answer: cancel it so it cannot land on top (a cancelled query keeps the data set after).
-  async function publish(next: ProjectSocialOverlaysResponse) {
+  async function publish(next: ProjectSocialOverlaysResponse, ticket: RunTicket) {
     await queryClient.cancelQueries({ queryKey: projectDataKeys.socialOverlays(projectId) });
+    if (!ticket.isCurrent()) return;
     queryClient.setQueryData(projectDataKeys.socialOverlays(projectId), next);
     getProjectQueryRuntime(queryClient)?.publish(createProjectDataInvalidationMessage(projectId, [{ kind: "social-overlays" }]));
   }
 
   async function send(request: Request) {
     const originating = projectId;
+    const ticket = fence.begin();
     lastRequest.current = request;
     setAttempt(request.overlayIds); setFailure(null); setSaving(true);
     try {
       const next = await saveProjectSocialOverlays(originating, request.overlayIds, request.expectedRevision);
-      if (!live.current.mounted || live.current.projectId !== originating) return;
-      await publish(next);
-      if (!live.current.mounted || live.current.projectId !== originating) return;
+      if (!ticket.isCurrent()) return;
+      await publish(next, ticket);
+      if (!ticket.isCurrent()) return;
       setAttempt(null);
     } catch (error) {
-      if (!live.current.mounted || live.current.projectId !== originating) return;
+      if (!ticket.isCurrent()) return;
       const reason = error instanceof SocialOverlaysSaveError ? error.failure : { kind: "failed" as const, message: "" };
       if (reason.kind === "archived") {
         setLatched(true); setAttempt(null); onArchivedRefusal?.();
@@ -93,7 +95,7 @@ export function ProjectSocialOverlayPicker({ projectId, role, canEdit, archived,
       else if (reason.kind === "unavailable") setFailure({ kind: "unavailable" });
       else setFailure({ kind: "failed" });
     } finally {
-      if (live.current.mounted && live.current.projectId === originating) setSaving(false);
+      if (ticket.isCurrent()) setSaving(false);
     }
   }
 

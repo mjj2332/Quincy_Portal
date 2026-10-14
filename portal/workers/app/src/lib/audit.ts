@@ -3,6 +3,8 @@ import type { Env, SessionUser } from "../env";
 import { newId } from "./ids";
 
 export type AuditPrincipal = Pick<SessionUser, "id" | "impersonatedBy" | "via"> | null;
+/** The acting person of a write that is always attributed (a route reads it with `principalOf`). */
+export type Principal = NonNullable<AuditPrincipal>;
 
 /**
  * Provenance keys the audit layer owns. `via` and `client` mark a row written for an MCP connection (#704);

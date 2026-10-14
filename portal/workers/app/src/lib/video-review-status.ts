@@ -1,5 +1,5 @@
 import type { VersionReviewStatus } from "@quincy/shared";
-import { auditMeta, type AuditPrincipal } from "./audit";
+import { auditMeta, type Principal } from "./audit";
 import { newId } from "./ids";
 import { LIVE_VERSION, LIVE_VIDEO } from "./video-live-sql";
 
@@ -8,10 +8,8 @@ import { LIVE_VERSION, LIVE_VIDEO } from "./video-live-sql";
  * Video's current Version, the Project unarchived, the stored status still the one the caller saw, and a real change), then the UPDATE fenced on that audit row's id. A refused fence writes nothing and
  * leaves no audit row, a no-op leaves none either, and there is no read-then-write: `before` is the status the fence matched. Published is derived on read and never written here.
  */
-export type Principal = NonNullable<AuditPrincipal>;
-
 export type ReviewStatusOutcome =
-  | { kind: "set" }
+  | { kind: "set"; videoId: string }
   | { kind: "unchanged"; videoId: string }
   | { kind: "archived" }
   | { kind: "not_found" }
@@ -52,7 +50,7 @@ async function write(db: D1Database, input: { projectId: string; assetId: string
          AND EXISTS (SELECT 1 FROM projects pr WHERE pr.id = v.project_id AND pr.archived_at IS NULL)`).bind(auditId, input.principal.id, base, now, assetId, projectId, expected, status),
     db.prepare(`UPDATE video_version_meta SET review_status = ?1 WHERE asset_id = ?2 AND ${LIVE_VERSION("video_version_meta")} AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?3)`).bind(status, assetId, auditId),
   ]);
-  if (await db.prepare("SELECT 1 AS one FROM audit_log WHERE id = ?1").bind(auditId).first()) return { kind: "set" };
+  if (await db.prepare("SELECT 1 AS one FROM audit_log WHERE id = ?1").bind(auditId).first()) return { kind: "set", videoId: head.videoId };
   // Nothing was written: say why, from a fresh read.
   const fresh = await readReviewHead(db, projectId, assetId);
   if (!fresh) return { kind: "not_found" };
