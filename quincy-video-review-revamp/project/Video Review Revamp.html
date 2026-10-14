@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Video Review Revamp</title>
+  <link rel="stylesheet" href="quincy.css" />
+  <style>
+    .dv-status { display: inline-flex; gap: 8px; align-items: center; padding: 4px 10px; border-radius: 999px; background: var(--ink-900); color: var(--paper-050); font-size: 13px; }
+    .dv-box { max-width: 1100px; border: 1px solid var(--greige-300); background: var(--paper-000); padding: 16px 20px; margin: 16px 0; font-size: 15px; line-height: 1.5; }
+    .dv-box h3 { margin: 0 0 8px; font: 400 20px/1.3 var(--font-display); }
+    .dv-box ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+    .dv-dt { width: 100%; max-width: 1100px; border-collapse: collapse; font-size: 14px; background: var(--paper-000); }
+    .dv-dt th, .dv-dt td { text-align: left; vertical-align: top; padding: 7px 10px; border-bottom: 1px solid var(--greige-200); }
+    .dv-dt th { font-weight: 400; color: var(--greige-600); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .dv-dt td:first-child { white-space: nowrap; }
+    .dv-dt td:nth-child(3) { white-space: nowrap; color: var(--greige-600); font-size: 13px; }
+    .dv-dt tr.dv-grp td { padding-top: 16px; font-size: 12px; color: var(--greige-600); text-transform: uppercase; letter-spacing: .04em; border-bottom-color: var(--greige-300); }
+    .dv-d { display: inline-block; padding: 1px 6px; margin: 0 2px; border-radius: 4px; background: var(--ink-900); color: var(--paper-050); font: 12px var(--font-mono); text-decoration: none; }
+    .dv-ref { opacity: .55; }
+    .dv-ref .dv-olabel::after { content: "  ·  reference only — not the design"; color: var(--tone-critical); }
+  </style>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script src="icons.js"></script>
+  <script type="text/babel" src="kit.jsx"></script>
+  <script type="text/babel" src="mobile.jsx"></script>
+  <script type="text/babel" src="desktop.jsx"></script>
+  <script type="text/babel" src="tiles.jsx"></script>
+  <script type="text/babel" src="delivery.jsx"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const D = ({ n }) => <a className="dv-d" href={`#D${n}`}>D{n}</a>;
+    const Ds = ({ ns }) => <>{ns.map((n) => <D key={n} n={n} />)}</>;
+    const O = ({ id }) => <a className="dv-oid" href={`#${id}`}>{id}</a>;
+    const Frame = ({ id, label, ds = [], children, note, cls }) => <div className={`dv-opt ${cls || ""}`} id={id} data-screen-label={id}>
+      <div className="dv-olabel"><O id={id} />{label}</div>
+      {children}
+      {(note || ds.length > 0) && <p className="dv-onote">{note} {ds.length > 0 && <Ds ns={ds} />}</p>}
+    </div>;
+
+    // Every decision, with the grilling question it came from (2026-10-14). "Q" = the review/tiles grilling; "DQ" = the Delivery page grilling. The frames cite these ids.
+    const DECISIONS = [
+      ["Review viewer and Video collection tiles"],
+      [1, "One layout for the staff viewer and the guest (Review link) viewer; controls are gated by role.", "Q1"],
+      [2, "Phone: the film on top, the notes in a sheet below with three stops — collapsed, half, full. Dragging the sheet shrinks the film.", "Q2"],
+      [3, "Phone header: back · title (one line, cut short) with the Version chip under it · approve button · ⋯. Staff see the Review status as a dot on the Version chip.", "Q4, Q25"],
+      [4, "The approve button is in the phone header for everyone: guests see “Approve” (a Client approval), staff see “Approve (internal)”. Once given it shows ✓ Approved.", "Q25"],
+      [5, "Everything else on the phone moves into ⋯ — staff: Social preview, Download, Marker export, Copy link, Create Review link, Open in iPhone player, Remove; guests: Social preview, Download (when downloadable — see D35), Open in iPhone player.", "Q4, Q22"],
+      [6, "The sheet always opens at half. A link to one note (&note=) opens it at half with that thread selected.", "Q18"],
+      [7, "A 9:16 film's area grows to 65% of the space under the header, and the half stop moves down to suit.", "Q11"],
+      [8, "Sheet / rail tabs — staff: Notes · Delivery. Guests: Notes only. There is no Details tab.", "Q6, follow-up"],
+      [9, "Compare is hidden below 721 px.", "Q5"],
+      [10, "Tapping the composer pauses the film and stamps the note at that frame. The film stays visible; only the composer floats above the keyboard.", "Q12"],
+      [11, "Drawing is the pen on the composer: it hides the keyboard, the film becomes the canvas, and Done returns to the composer.", "Q12"],
+      [12, "The ⤢ button, labelled “Full screen”, opens Quincy's own immersive full screen. “Immersive” is a code/design name only, never on screen.", "Q3, Q22"],
+      [13, "Full screen: a tap shows / hides the controls, which hide themselves after 3 s of play. Note markers stay on the scrubber; tapping one shows that note as a card. An Add note button opens the composer over the film. No notes list.", "Q13"],
+      [14, "Turning the phone sideways enters Full screen; turning it back leaves it.", "Q14"],
+      [15, "⋯ → “Open in iPhone player” (“Open in system player” elsewhere) hands the film to the device's own player, without Quincy's layers. This replaces today's Full-screen button, which does nothing on iPhone.", "Q3, Q22"],
+      [16, "Tapping the Version chip opens a bottom sheet of Versions: number, upload date, open-note count, and (staff) the latest Version's Review status.", "Q20"],
+      [17, "Desktop: the notes rail can be resized by its left edge and collapsed to a strip (theatre view) by a button or a keyboard shortcut. Width and collapsed state are remembered per device.", "Q7"],
+      [18, "Tablets get the desktop layout; in portrait the rail starts collapsed. The phone layout stays below 721 px.", "Q19"],
+      [19, "Notes do not pop up over the film while it plays — anywhere.", "follow-up"],
+      [20, "Collection tiles use the ink look: dark tiles, 8 px corners (like Frame.io).", "follow-up"],
+      [21, "Tile content — guests: Version, duration, title, open-note count. Staff: the same plus the Review status.", "Q8"],
+      [22, "Open-note count = open note threads on the latest Version, among the notes the viewer may see (guests: public only); replies don't count; hidden at 0. Glossary: Open note.", "Q10, Q23"],
+      [23, "Tapping a tile opens its review. Staff: ⋯ is the only button — Upload new Version, Rename, Download, Versions, Review links, Delete. A Review link shows as a link icon on the poster. On desktop, dropping a file on a tile uploads a new Version.", "Q9"],
+      [24, "Staff tiles have a tick (top-left) to select several; a selection bar offers Create Review link and Download. Guests have no tick.", "follow-up"],
+      [25, "Upload is a button in the collection header, on phone and desktop.", "Q21"],
+      [26, "Desktop grid: as many columns as fit, each tile at least 280 px wide. Phone: one column.", "Q15"],
+      [27, "Posters keep a 16:9 box; a 9:16 film shows as a centred strip on black (never cropped).", "Q16"],
+      [28, "No hover-scrub on desktop posters in this revamp; it's a separate follow-up issue.", "Q17"],
+      [29, "Desktop header is unchanged from today for staff, including where staff approve.", "Q25"],
+      ["Delivery page film tiles"],
+      [30, "The Delivery page's film tiles are the guest collection tile (D21): Version, duration, title, open-note count (D22). On this page they describe the film's published Version, not its latest.", "DQ2, DQ6"],
+      [31, "The same tile in paper colours: a light tile with a hairline border on the paper page. The poster itself stays black.", "DQ3"],
+      [32, "Grid as the collection (D26): as many columns as fit, each at least 280 px; one column on phone. A single film spans the full width.", "DQ4, DQ7"],
+      [33, "Posters keep the 16:9 box; a 9:16 film is a centred strip (D27). Today's own-shape portrait poster goes.", "DQ5"],
+      [34, "Tapping a tile opens that film on the Delivery review link, in the same tab; the review's back button returns to the Delivery page. Watching needs no code.", "DQ1, DQ11"],
+      [35, "⋯ holds Download original, with no code. On the Delivery review link a guest downloads with no code too; writing a note and giving a Client approval still need it. A download with no code is audited against the link and Version only. ADR 0025.", "DQ8, DQ12–DQ15"],
+      [36, "Where the page has no review to open (guest review switched off, staff Preview), tapping plays the film in a plain player over the page — no notes, no code — and the tile shows no open-note count.", "DQ9"],
+      [37, "A locked Premium film: the poster is a 16:9 box with a lock and “Film · locked”; the Premium badge replaces ⋯; no Version, duration or count. Tapping it requests an unlock (today's Request unlock flow and wording).", "DQ10"],
+    ];
+
+    function App() {
+      return <>
+        <div className="dv-top">
+          <h1>Video review revamp — agreed design</h1>
+          <p><span className="dv-status">Settled · grilling 2026-10-14 · review & tiles Q1–Q25 + 4 follow-ups · Delivery page DQ1–DQ15</span></p>
+          <p>The single reference for the revamp of the Video review viewer (phone, full screen, desktop), the Video collection tiles, and the film tiles on the Delivery page. There are no alternatives on this page: every frame is the chosen design.</p>
+        </div>
+
+        <div className="dv-box">
+          <h3>How to read this page</h3>
+          <ul>
+            <li><b>Decisions <span className="dv-d">D1</span>–<span className="dv-d">D37</span></b> (table below) are the spec. Each frame cites the decisions it shows; where a frame and a decision disagree, the decision wins.</li>
+            <li><b>Frame ids</b> (<O id="P1" />, <O id="F2" />, <O id="W1" />, <O id="T1" />, <O id="V1" />) are stable — cite them in issues, plans and reviews.</li>
+            <li><b>Live:</b> every frame plays, scrubs and reacts — drag the sheet or rail edge, tap a note, a marker, the composer, the pen, the Version chip, ⋯, Full screen, a tile, a tick. Frames that show a state (open menu, keyboard up) just start in it.</li>
+            <li><b>“demo” buttons</b> (dashed border) simulate turning the phone. They are not part of the design.</li>
+            <li><b>Placeholder data:</b> grey frames stand in for the film, the people and notes are made up. The film has 5 notes: 2 are internal, 1 is done — so staff count <b>4 open</b> and guests <b>2 open</b> (<D n={22} />).</li>
+            <li><b>Look:</b> built on Quincy's live tokens (ink viewer, Apfel Grotezk, Mazius Review), but the prototype's own markup is not the ReUI component set — build with the Portal's components and a reuse ledger, not by copying this code.</li>
+            <li>Anything this page does not show or decide is <b>unchanged from today</b> — see “Not covered” at the end.</li>
+          </ul>
+        </div>
+
+        <section className="dv-turn" id="decisions">
+          <div className="dv-thd"><a className="dv-tid" href="#decisions">D</a><span className="dv-tname">Decisions</span></div>
+          <table className="dv-dt">
+            <thead><tr><th>Id</th><th>Decision</th><th>From</th></tr></thead>
+            <tbody>{DECISIONS.map((row) => row.length === 1
+              ? <tr key={row[0]} className="dv-grp"><td colSpan={3}>{row[0]}</td></tr>
+              : <tr key={row[0]} id={`D${row[0]}`}><td><span className="dv-d">D{row[0]}</span></td><td>{row[1]}</td><td>{row[2]}</td></tr>)}</tbody>
+          </table>
+        </section>
+
+        <section className="dv-turn" id="tP">
+          <div className="dv-thd"><a className="dv-tid" href="#tP">P</a><span className="dv-tname">Phone review</span></div>
+          <p className="dv-tdesc">iPhone 14-size frames (390 × 844) in Safari. The grey grabber drags between the three stops; double-tap it to collapse / return to half.</p>
+          <div className="dv-opts">
+            <Frame id="P1" label="Staff · opens at half" ds={[2, 3, 4, 6, 8]} note={<>The default view. Delivery is a tab. The dot on “v3” is the Review status.</>}><MobileReview role="staff" /></Frame>
+            <Frame id="P2" label="Guest · opens at half" ds={[1, 3, 4, 8, 22]} note={<>Notes only, public notes only (2 open). No status dot.</>}><MobileReview role="guest" /></Frame>
+            <Frame id="P3" label="Sheet collapsed" ds={[2]} note={<>The film takes the room; the tab row keeps the open-note count and the composer stays.</>}><MobileReview role="staff" sheetAt="peek" /></Frame>
+            <Frame id="P4" label="Sheet full" ds={[2]} note={<>The film shrinks to a strip and keeps playing.</>}><MobileReview role="staff" sheetAt="full" /></Frame>
+          </div>
+          <div className="dv-opts" style={{ marginTop: 48 }}>
+            <Frame id="P5" label="9:16 film · opens at half" ds={[7]} note={<>The film area takes 65% of the space; half sits lower.</>}><MobileReview role="staff" orientation="portrait" /></Frame>
+            <Frame id="P6" label="Writing a note" ds={[10]} note={<>Tapping the composer pauses and stamps the frame; the keyboard comes up and the film stays visible.</>}><MobileReview role="staff" mode="compose" /></Frame>
+            <Frame id="P7" label="Drawing on the frame" ds={[11]} note={<>The pen hides the keyboard; draw on the film; Done goes back to the composer.</>}><MobileReview role="staff" mode="draw" /></Frame>
+          </div>
+          <div className="dv-opts" style={{ marginTop: 48 }}>
+            <Frame id="P8" label="Versions sheet" ds={[16]} note={<>From the Version chip.</>}><MobileReview role="staff" openMenu="version" /></Frame>
+            <Frame id="P9" label="⋯ · staff" ds={[5, 15]}><MobileReview role="staff" openMenu="more" /></Frame>
+            <Frame id="P10" label="⋯ · guest" ds={[5, 15, 35]} note={<>Download appears once the Version is downloadable: released by staff on any Review link, or the published Version on the Delivery review link — with no code there (<D n={35} />).</>}><MobileReview role="guest" openMenu="more" /></Frame>
+          </div>
+        </section>
+
+        <section className="dv-turn" id="tF">
+          <div className="dv-thd"><a className="dv-tid" href="#tF">F</a><span className="dv-tname">Full screen (phone)</span></div>
+          <p className="dv-tdesc">Quincy's own full screen keeps the markers, the composer, drawing and the Social overlay. Tap the film to show or hide the controls.</p>
+          <div className="dv-opts">
+            <Frame id="F1" label="Full screen · portrait" ds={[12, 13]} note={<>Opened by the ⤢ button.</>}><MobileReview role="staff" mode="full" /></Frame>
+            <Frame id="F2" label="Full screen · landscape" ds={[13, 14]} note={<>Opened by turning the phone; turning it back returns to the split view.</>}><MobileReview role="staff" mode="fullLand" /></Frame>
+            <Frame id="F3" label="Marker tapped" ds={[13]} note={<>Tapping a marker on the scrubber pauses and shows that note as a card.</>}><MobileReview role="guest" mode="fullLand" markerNote="n4" /></Frame>
+            <Frame id="F4" label="Open in iPhone player (⋯)" ds={[15]} note={<>The device's own player (<code>video.webkitEnterFullscreen()</code>). Nothing of Quincy shows.</>}><NativeFullscreen /></Frame>
+          </div>
+        </section>
+
+        <section className="dv-turn" id="tW">
+          <div className="dv-thd"><a className="dv-tid" href="#tW">W</a><span className="dv-tname">Desktop and tablet review</span></div>
+          <p className="dv-tdesc">Today's header and player, unchanged; the notes rail is new. Drag its left edge; the panel button collapses it to a strip with the open-note count.</p>
+          <div className="dv-opts" style={{ flexDirection: "column" }}>
+            <Frame id="W1" label="Staff · rail open" ds={[8, 17, 29]}><DesktopReview role="staff" /></Frame>
+            <Frame id="W2" label="Staff · rail collapsed (theatre)" ds={[17]}><DesktopReview role="staff" open={false} /></Frame>
+            <Frame id="W3" label="Guest · rail open" ds={[1, 8, 22]} note={<>Notes only, public notes only. Approve sits in the header.</>}><DesktopReview role="guest" /></Frame>
+            <Frame id="W4" label="Tablet, portrait (834 × 1112) · rail starts collapsed" ds={[18]}><DesktopReview role="staff" open={false} w={834} h={1112} /></Frame>
+          </div>
+        </section>
+
+        <section className="dv-turn" id="tT">
+          <div className="dv-thd"><a className="dv-tid" href="#tT">T</a><span className="dv-tname">Video collection tiles</span></div>
+          <p className="dv-tdesc">Poster first. On the poster — top-left: tick (staff) and Review status (staff); top-right: Review-link icon (staff) and Version; bottom-left: open notes; bottom-right: duration. Below: the title on one line and ⋯ (staff). Tapping a tile opens its review.</p>
+          <div className="dv-opts">
+            <Frame id="T1" label="Staff · phone" ds={[20, 21, 22, 23, 25, 26, 27]}><MobileCollection role="staff" /></Frame>
+            <Frame id="T2" label="Guest · phone" ds={[21, 22, 24]} note={<>No status, no tick, no ⋯. Counts are public notes only.</>}><MobileCollection role="guest" /></Frame>
+          </div>
+          <div className="dv-opts" style={{ marginTop: 48, flexDirection: "column" }}>
+            <Frame id="T3" label="Staff · desktop" ds={[20, 21, 23, 26, 27, 28]}><div style={{ width: 1180, boxShadow: "0 24px 64px rgba(10,10,10,.16)" }}><Collection role="staff" /></div></Frame>
+            <Frame id="T4" label="Staff · desktop · selection, ⋯ open, file dragged onto a tile" ds={[23, 24]}><div style={{ width: 1180, boxShadow: "0 24px 64px rgba(10,10,10,.16)" }}><Collection role="staff" selected={["f1", "f2"]} menuOn="f2" dropOn="f3" /></div></Frame>
+            <Frame id="T5" label="Guest · desktop" ds={[21, 22, 24]}><div style={{ width: 1180, boxShadow: "0 24px 64px rgba(10,10,10,.16)" }}><Collection role="guest" /></div></Frame>
+          </div>
+        </section>
+
+        <section className="dv-turn" id="tV">
+          <div className="dv-thd"><a className="dv-tid" href="#tV">V</a><span className="dv-tname">Delivery page film tiles</span></div>
+          <p className="dv-tdesc">The public Delivery page (no sign-in). The guest collection tile in paper colours. On the poster — top-right: Version; bottom-left: open notes; bottom-right: duration. Below: the title on one line and ⋯ (Download original). Tap a tile to open its review; tap the locked tile to request an unlock. Only the Video section is the design — the hero and “Photos …” are context.</p>
+          <div className="dv-opts">
+            <Frame id="V1" label="Client · phone" ds={[30, 31, 32, 33, 34, 37]} note={<>Three films and one locked Premium film, one column.</>}><MobileDelivery /></Frame>
+            <Frame id="V2" label="Client · phone · ⋯ open" ds={[35]} note={<>Download original, no code.</>}><MobileDelivery menuOn="d1" /></Frame>
+            <Frame id="V3" label="Client · phone · unlock requested" ds={[37]} note={<>After tapping the locked tile.</>}><MobileDelivery films={["d4", "d1"]} requestedOn="d4" /></Frame>
+          </div>
+          <div className="dv-opts" style={{ marginTop: 48, flexDirection: "column" }}>
+            <Frame id="V4" label="Client · desktop" ds={[30, 31, 32, 33, 34, 37]}><div style={{ width: 1180, boxShadow: "0 24px 64px rgba(10,10,10,.16)" }}><DeliveryFilms /></div></Frame>
+            <Frame id="V5" label="Client · desktop · a single film" ds={[32]} note={<>One film spans the full width.</>}><div style={{ width: 1180, boxShadow: "0 24px 64px rgba(10,10,10,.16)" }}><DeliveryFilms films={["d1"]} /></div></Frame>
+            <Frame id="V6" label="Staff Preview (or guest review off) · desktop · film tapped" ds={[36]} note={<>No review to open: tiles carry no open-note count, and a tap plays the film in a plain player over the page.</>}><div style={{ width: 1180, boxShadow: "0 24px 64px rgba(10,10,10,.16)" }}><DeliveryFilms preview playingOn="d1" /></div></Frame>
+          </div>
+        </section>
+
+        <div className="dv-box" id="choices">
+          <h3>Prototype choices — proposed, not discussed</h3>
+          <p style={{ margin: "0 0 8px" }}>The grilling didn't settle these; the prototype picked a value so the frames are concrete. Treat them as defaults to confirm in each plan, not as decisions.</p>
+          <ul>
+            <li>Sheet stop sizes: collapsed = 127 px (tab row + composer — the composer is present at every stop); a 16:9 film area = 308 px; full leaves 200 px for the film.</li>
+            <li>Turning back after a turn: returns to the split view if the turn opened Full screen, or to portrait Full screen if you were already in it.</li>
+            <li>Desktop rail: 300–560 px wide, 380 px by default.</li>
+            <li>Guests on desktop approve with a header button (<O id="W3" />).</li>
+            <li>Full screen's Add note composer floats over the film, just above the controls.</li>
+            <li>Tile layout on the poster as described in section T, including the Review-link icon top-right.</li>
+            <li>Delivery tiles: a hairline border on the paper tile; the locked poster's light fill and “Film · locked” label; the Premium badge in the title row; the plain player's layout (title, Download original, close).</li>
+          </ul>
+        </div>
+
+        <div className="dv-box" id="not-covered">
+          <h3>Not covered — unchanged from today unless a plan decides otherwise</h3>
+          <ul>
+            <li>Guest tile actions in the Video collection (e.g. downloading a released Version) — guest collection tiles show no ⋯ here.</li>
+            <li>Collection tile states for Premium / locked films and an upload in progress (the Delivery page's locked tile is <D n={37} />).</li>
+            <li>Collection filters and sort.</li>
+            <li>The staff composer's Note visibility control, replies, Mark done, and the notes filters.</li>
+            <li>Social preview and Compare layouts; the Delivery panel's contents.</li>
+            <li>The keyboard shortcut key for collapsing the rail (pick a free key at build).</li>
+            <li>Hover-scrub on desktop posters — follow-up issue (<D n={28} />).</li>
+            <li>The rest of the Delivery page: hero, Download all, photos, documents, Paid extras, the photo lightbox.</li>
+          </ul>
+        </div>
+
+        <div className="dv-box">
+          <h3>Build order</h3>
+          <ol style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 4 }}>
+            <li><b>Tiles</b> — section T.</li>
+            <li><b>Phone review</b> — section P.</li>
+            <li><b>Full screen</b> — section F (also fixes the dead Full-screen button on iPhone).</li>
+            <li><b>Desktop rail</b> — section W.</li>
+            <li><b>Delivery page tiles</b> — section V, with the no-code download on the Delivery review link (ADR 0025 — an authorization change, so its plan goes through Opus and Codex).</li>
+          </ol>
+        </div>
+
+        <section className="dv-turn" id="tR">
+          <div className="dv-thd"><a className="dv-tid" href="#tR">R</a><span className="dv-tname">Reference — today's phone viewer</span></div>
+          <div className="dv-opts">
+            <Frame id="R1" cls="dv-ref" label="Today" note={<>One long scrolling page: player (min 20 rem, 24 px padding), frame buttons, shortcut legend, Delivery, then the composer and notes. Notes can't be collapsed or resized; the Full-screen button does nothing on iPhone.</>}><CurrentMobile /></Frame>
+          </div>
+        </section>
+      </>;
+    }
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
