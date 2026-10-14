@@ -60,10 +60,10 @@ address per film, so the client can reach the review screen with no staff step i
 - **Amended 2026-10-14 (#854): staff can end every guest session on this link.** `POST
   /api/projects/:projectId/review-links/:linkId/end-sessions` bumps `token_generation` and deletes the link's
   `guest_sessions`; the address (`token_hash`, `token_secret`, URL) does not change and no migration is needed. It
-  is the one staff mutation the link accepts, so it deliberately has no `delivery_review = 0` fence and no "open"
-  fence: sessions suspended by the page being off die too, and it works with the Delivery page off, on an archived
-  Project and with the `links` part off (Revoke's gate). A revoked or deleted link refuses it. Ordinary links take
-  it too, with the same SQL. There is still no per-guest stop, and a guest keeps their email updates (membership is
+  is the one staff mutation the link accepts, and it works on this link only (`delivery_review = 1` in route and SQL;
+  an ordinary link answers 404 and ends sessions with Replace or Revoke). It has no "open" fence: sessions
+  suspended by the page being off die too, and it works with the Delivery page off, on an archived Project and with
+  the `links` part off (Revoke's gate). There is still no per-guest stop, and a guest keeps their email updates (membership is
   per email). A guest can also leave on their own ("Not you? Sign out", the existing `DELETE .../session`, now
   audited as `review_link.session_end`). Rotating the token was rejected: it breaks every address already shared and
   gains nothing, because this page hands the address to anyone holding the page address (0022).

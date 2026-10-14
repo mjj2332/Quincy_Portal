@@ -332,8 +332,8 @@ _Avoid_: Disable, expire
 
 **End guest sessions**:
 Signing everyone out of a Review link at once, without changing its address: every guest must verify
-their email again, and keeps their email updates. Staff can do it on any open link, and it is the only
-change they can make to the Delivery review link. A guest can also sign themselves out ("Not you?
+their email again, and keeps their email updates. Staff can do it on the Delivery review link only, where
+it is the only change they can make (an ordinary link ends its sessions by Replace or Revoke). A guest can also sign themselves out ("Not you?
 Sign out"), which ends only their own session.
 _Avoid_: Revoke (that closes the link), Replace (that changes the address)
 

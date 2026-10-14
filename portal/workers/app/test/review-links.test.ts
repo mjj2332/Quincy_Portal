@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { reviewLinkListResponseSchema, reviewLinkResponseSchema, reviewLinkRevealResponseSchema, type ReviewLinkDto } from "@quincy/shared";
+import { app } from "../src/index";
 import { hashToken } from "../src/lib/opaque-token";
 import { baseEnv, database, ids, request, seedFixture, type Who } from "./embedded-media-support";
 import { addMember, seedGuestLink } from "./guest-support";
@@ -884,8 +885,7 @@ describe("end guest sessions (#854)", () => {
     expect((await request(endPath(crypto.randomUUID()), "admin", "POST", {})).status).toBe(404);
     expect((await request(endPath(seeded.id), "externalOutsider", "POST", {})).status).toBe(404);
     const revoked = await seedGuestLink({ revoked: true }); const gone = await seedGuestLink({ deleted: true });
-    const conflict = await request(endPath(revoked.id), "admin", "POST", {});
-    expect(conflict.status).toBe(409); expect(await json(conflict)).toMatchObject({ code: "link_revoked" });
+    expect((await request(endPath(revoked.id), "admin", "POST", {})).status, "a revoked ordinary link is not the Delivery link").toBe(404);
     expect((await request(endPath(gone.id), "admin", "POST", {})).status).toBe(404);
     expect(await sessionCount(seeded.id)).toBe(2); expect(await audits("review_link.sessions_end")).toHaveLength(0);
     await clearVideoFlags(); await setVideoFlags(`video_review_pilot:${ids.project}`);
@@ -893,11 +893,34 @@ describe("end guest sessions (#854)", () => {
     expect(await sessionCount(seeded.id)).toBe(2);
   });
 
-  it("an assigned External may end sessions (shareVideo), and an ordinary link works the same way", async () => {
+  it("an assigned External may end sessions on the Delivery link (shareVideo)", async () => {
+    const seeded = await deliveryWithSessions();
+    expect((await request(endPath(seeded.id), "external", "POST", {})).status).toBe(200);
+    expect(await sessionCount(seeded.id)).toBe(0); expect((await row(seeded.id))!.token_generation).toBe(2);
+  });
+
+  it("an ordinary link is an unknown id: 404, its sessions and generation untouched, no audit row", async () => {
     const { link } = await createOk({ videoIds: [v1.videoId] }); await seedSession(link.id);
-    expect((await request(endPath(link.id), "external", "POST", {})).status).toBe(200);
-    expect(await sessionCount(link.id)).toBe(0); expect((await row(link.id))!.token_generation).toBe(2);
-    expect((await linkOf(link.id)).url).not.toBeNull();
+    for (const who of ["admin", "member"] as const) expect((await request(endPath(link.id), who, "POST", {})).status, who).toBe(404);
+    expect(await sessionCount(link.id)).toBe(1); expect((await row(link.id))!.token_generation).toBe(1);
+    expect(await audits("review_link.sessions_end")).toHaveLength(0);
+  });
+
+  it("while an Admin impersonates a member the audit row carries impersonatedBy", async () => {
+    const seeded = await deliveryWithSessions();
+    await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'user_impersonation'").run();
+    try {
+      const started = await request("/api/auth/admin/impersonate-user", "admin", "POST", { userId: ids.member }); expect(started.status).toBe(200);
+      const cookies = new Map<string, string>();
+      for (const value of (started.headers as Headers & { getSetCookie: () => string[] }).getSetCookie()) { const pair = value.split(";", 1)[0]!; const at = pair.indexOf("="); if (at > 0) cookies.set(pair.slice(0, at), pair.slice(at + 1)); }
+      const session = [...cookies].map(([name, value]) => `${name}=${value}`).join("; ");
+      const executionContext = { waitUntil: () => undefined, passThroughOnException: () => undefined, props: undefined } as unknown as ExecutionContext;
+      const response = await app.fetch(new Request(`https://portal.test${endPath(seeded.id)}`, { method: "POST", headers: { cookie: session, origin: baseEnv.APP_ORIGIN, "content-type": "application/json" }, body: "{}" }), baseEnv, executionContext);
+      expect(response.status).toBe(200);
+      const log = await audits("review_link.sessions_end");
+      expect(log).toHaveLength(1); expect(log[0]!.actor_id).toBe(ids.member);
+      expect(JSON.parse(log[0]!.meta_json!)).toMatchObject({ impersonatedBy: ids.admin });
+    } finally { await database.DB.prepare("UPDATE feature_flags SET enabled = 0 WHERE key = 'user_impersonation'").run(); }
   });
 
   it("the managed-link refusals are untouched: replace and revoke on the Delivery link are still 409", async () => {

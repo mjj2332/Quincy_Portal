@@ -234,8 +234,8 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
 
     {!revoked && <section aria-label="Danger zone" className="grid gap-[var(--space-2)]">
       <div data-testid="review-link-actions" className="flex flex-wrap gap-[var(--space-2)]">
-        {/* Never gated on `openSessions` (#854): that count leaves out sessions suspended by the Delivery page being off, which is exactly when staff need this. */}
-        <Button type="button" variant="secondary" className="min-h-11" disabled={busyLink} onClick={() => setConfirm({ kind: "end-sessions" })}>End guest sessions</Button>
+        {/* The Delivery link's only staff action (#854); ordinary links end sessions with Replace or Revoke. Never gated on `openSessions`: that count leaves out sessions suspended by the Delivery page being off, which is exactly when staff need this. */}
+        {managed && <Button type="button" variant="secondary" className="min-h-11" disabled={busyLink} onClick={() => setConfirm({ kind: "end-sessions" })}>End guest sessions</Button>}
         {!managed && <Button type="button" variant="secondary" className="min-h-11" disabled={ui.archived || expired || busyLink} onClick={() => setConfirm({ kind: "replace" })}>Replace link</Button>}
         {!managed && <Button type="button" variant="danger" className="min-h-11" disabled={busyLink} onClick={() => setConfirm({ kind: "revoke" })}>Revoke link</Button>}
       </div>

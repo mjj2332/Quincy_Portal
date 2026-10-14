@@ -227,16 +227,15 @@ reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/revoke", termi
   return link === null ? linkNotFound(c) : c.json(reviewLinkResponseSchema.parse({ link }));
 }));
 
-/** End guest sessions (#854): Revoke's gate (the open check alone, archived Projects allowed), but it works on the Delivery review link, which `liveLink` would refuse as managed. Ordinary links take it too (same SQL). */
+/** End guest sessions (#854): Revoke's gate (the open check alone, archived Projects allowed), but it works on the Delivery review link, which `liveLink` would refuse as managed. It is the Delivery review link's only staff action: an ordinary link is an unknown id here (404), and ends its sessions by Replace or Revoke. */
 reviewLinksRoutes.post("/projects/:projectId/review-links/:linkId/end-sessions", terminalRoute("/projects/:projectId/review-links/:linkId/end-sessions", async (c) => {
   noStore(c);
   const projectId = c.req.param("projectId"); const linkId = c.req.param("linkId");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(linkId).success) return c.json({ error: "Invalid id" }, 400);
   const refused = await admit(c, projectId, { write: true, part: null, allowArchived: true }); if (refused) return refused;
-  const head = await findLinkHead(c.env.DB, projectId, linkId); if (!head) return linkNotFound(c);
-  if (head.revoked_at !== null) return revokedResponse(c);
+  const head = await findLinkHead(c.env.DB, projectId, linkId); if (!head || head.delivery_review !== 1) return linkNotFound(c);
   const now = Date.now();
-  const ok = await endGuestSessions(c.env.DB, { projectId, linkId, principal: principalOf(c), now, delivery: head.delivery_review === 1 });
+  const ok = await endGuestSessions(c.env.DB, { projectId, linkId, principal: principalOf(c), now });
   if (!ok) return refusedBecause(c, projectId, linkId);
   const link = await oneLink(c, projectId, linkId, now);
   return link === null ? linkNotFound(c) : c.json(reviewLinkResponseSchema.parse({ link }));

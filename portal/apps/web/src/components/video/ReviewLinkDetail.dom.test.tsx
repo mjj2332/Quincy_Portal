@@ -84,28 +84,29 @@ describe("detail: End guest sessions (#854)", () => {
     expect(listCalls()).toBeGreaterThan(before);
     expect(text(detail())).toContain("Guest sessions ended.");
   });
-  it("is not gated on the open-session count (suspended sessions are not counted), and is off while another write is in flight", async () => {
-    await mount(); await openDetailOf("Smith family");
+  const delivery = () => { state.links = [linkOf({ label: "Delivery", delivery: true, expiresAt: null })]; };
+  it("is not gated on the open-session count (suspended sessions are not counted)", async () => {
+    delivery(); await mount(); await openDetailOf("Delivery");
     expect(buttonIn(detail(), "End guest sessions")!.disabled).toBe(false);
-    apiPostMock.mockImplementation(() => new Promise(() => undefined));
-    await press(buttonIn(detail(), "Revoke link")); await press(buttonIn(confirmBox(), "Revoke"));
-    expect(buttonIn(detail(), "End guest sessions")!.disabled).toBe(true);
-    expect(apiPostMock).toHaveBeenCalledTimes(1);
   });
-  it("a double press sends once", async () => {
-    apiPostMock.mockImplementation(() => new Promise(() => undefined));
-    await mount(); await openDetailOf("Smith family");
+  it("a double press sends once, and the button is off while the write is out", async () => {
+    delivery(); apiPostMock.mockImplementation(() => new Promise(() => undefined));
+    await mount(); await openDetailOf("Delivery");
     await confirm("End guest sessions", "End sessions");
+    expect(buttonIn(detail(), "End guest sessions")!.disabled).toBe(true);
     await press(buttonIn(detail(), "End guest sessions"));
     expect(apiPostMock).toHaveBeenCalledTimes(1);
   });
-  it("is hidden on a revoked link and enabled on an archived Project", async () => {
-    state.links = [linkOf({ status: "revoked", revokedAt: "2026-10-10T03:00:00.000Z", url: null })];
-    await mount(); await openDetailOf("Smith family");
-    expect(buttonIn(detail(), "End guest sessions")).toBeUndefined();
-    await unmount();
-    state.links = [linkOf()];
-    await mount({ archived: true }); await openDetailOf("Smith family");
+  it("is absent on an ordinary link, whether active, expired or revoked", async () => {
+    for (const over of [{}, { status: "expired" }, { status: "revoked", revokedAt: "2026-10-10T03:00:00.000Z", url: null }]) {
+      state.links = [linkOf(over)];
+      await mount(); await openDetailOf("Smith family");
+      expect(buttonIn(detail(), "End guest sessions"), JSON.stringify(over)).toBeUndefined();
+      await unmount();
+    }
+  });
+  it("is enabled on the Delivery link of an archived Project", async () => {
+    delivery(); await mount({ archived: true }); await openDetailOf("Delivery");
     expect(buttonIn(detail(), "End guest sessions")!.disabled).toBe(false);
   });
 });
