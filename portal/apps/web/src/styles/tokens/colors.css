@@ -134,4 +134,6 @@
   /* #836: the Delivery page's photo scrims. The hero's rises from the bottom (the address sits there), a touch of the top held for the wordmark; the caption's is the tile's own bottom band. */
   --scrim-hero: linear-gradient(to top, color-mix(in srgb, var(--ink-900) 78%, transparent), color-mix(in srgb, var(--ink-900) 12%, transparent) 55%, color-mix(in srgb, var(--ink-900) 32%, transparent));
   --scrim-caption: linear-gradient(to top, color-mix(in srgb, var(--ink-900) 62%, transparent), transparent);
+  /* #884: the Video tile's badge chips on a poster: ink at 72% reads on any frame. */
+  --scrim-badge: color-mix(in srgb, var(--ink-900) 72%, transparent);
 }

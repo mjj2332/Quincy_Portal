@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { FileDropzone, FilePickButton } from "./FileDropzone";
+import { FileDropzone, FilePickButton, useFilePick } from "./FileDropzone";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -50,5 +50,39 @@ describe("FilePickButton / FileDropzone", () => {
     expect(onFile).toHaveBeenCalledTimes(2);
     expect(onFile).toHaveBeenNthCalledWith(1, files[0]);
     expect(onFile).toHaveBeenNthCalledWith(2, files[0]);
+  });
+
+  it("a drop on a nested zone stays with it and never also reaches the zone around it (#884)", async () => {
+    const outer = vi.fn(); const inner = vi.fn();
+    const el = await mount(<FileDropzone multiple onFiles={outer} data-testid="outer"><FileDropzone onFile={inner} data-testid="inner">x</FileDropzone></FileDropzone>);
+    await drop(el.querySelector('[data-testid="inner"]')!);
+    expect(inner).toHaveBeenCalledTimes(1);
+    expect(outer).not.toHaveBeenCalled();
+  });
+
+  it("shows the dragging state only for a drag that carries files (#884)", async () => {
+    const el = await mount(<FileDropzone onFile={vi.fn()} data-testid="z">x</FileDropzone>);
+    const zone = el.querySelector('[data-testid="z"]')!;
+    const enter = async (types: string[]) => {
+      const event = new Event("dragenter", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "dataTransfer", { value: { types } });
+      await act(async () => { zone.dispatchEvent(event); });
+    };
+    await enter(["text/plain"]);
+    expect(zone.hasAttribute("data-dragging")).toBe(false);
+    await enter(["Files"]);
+    expect(zone.getAttribute("data-dragging")).toBe("true");
+  });
+
+  it("useFilePick opens the picker from any control and passes the chosen file on (#884)", async () => {
+    const onFile = vi.fn();
+    function Probe() { const pick = useFilePick({ accept: ".mp4", onFile }); return <><button type="button" onClick={pick.open}>Go</button>{pick.input}</>; }
+    const el = await mount(<Probe />);
+    const input = el.querySelector("input")!;
+    const click = vi.spyOn(input, "click");
+    await act(async () => { el.querySelector("button")!.click(); });
+    expect(click).toHaveBeenCalledTimes(1);
+    await choose(input);
+    expect(onFile).toHaveBeenCalledWith(files[0]);
   });
 });

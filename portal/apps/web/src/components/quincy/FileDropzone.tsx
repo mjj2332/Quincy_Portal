@@ -16,6 +16,27 @@ function splitPickHandler<P extends PickHandler>(props: P) {
   return { multiple: multiple === true, onFile: onFile as (file: File) => void, onFiles: onFiles as (files: File[]) => void, rest: rest as Omit<P, "multiple" | "onFile" | "onFiles"> };
 }
 
+/** The hidden `<input type="file">` and its change handler, shared by `FilePickButton` and `useFilePick`. */
+function PickInput({ input, accept, multiple, onFile, onFiles }: { input: React.RefObject<HTMLInputElement | null>; accept: string; multiple: boolean; onFile: (file: File) => void; onFiles: (files: File[]) => void }) {
+  return <input
+    ref={input}
+    type="file"
+    name="file"
+    accept={accept}
+    multiple={multiple}
+    className="sr-only"
+    tabIndex={-1}
+    aria-hidden="true"
+    data-testid="file-pick-input"
+    onChange={(event) => {
+      // Read the list before the reset: clearing `value` empties the live FileList.
+      const picked = Array.from(event.target.files ?? []);
+      event.target.value = "";
+      if (multiple) { if (picked.length > 0) onFiles(picked); } else if (picked[0]) onFile(picked[0]);
+    }}
+  />;
+}
+
 /** A real Button that opens the file picker. Tab to it, Enter or Space opens the picker; the input itself is not a tab stop. */
 export function FilePickButton({ accept, variant = "secondary", disabled, className, children, ...props }: {
   accept: string;
@@ -25,27 +46,22 @@ export function FilePickButton({ accept, variant = "secondary", disabled, classN
   const input = React.useRef<HTMLInputElement>(null);
   return <>
     <Button type="button" variant={variant} disabled={disabled} className={className} onClick={() => input.current?.click()} {...rest}>{children}</Button>
-    <input
-      ref={input}
-      type="file"
-      name="file"
-      accept={accept}
-      multiple={multiple}
-      className="sr-only"
-      tabIndex={-1}
-      aria-hidden="true"
-      data-testid="file-pick-input"
-      onChange={(event) => {
-        // Read the list before the reset: clearing `value` empties the live FileList.
-        const picked = Array.from(event.target.files ?? []);
-        event.target.value = "";
-        if (multiple) { if (picked.length > 0) onFiles(picked); } else if (picked[0]) onFile(picked[0]);
-      }}
-    />
+    <PickInput input={input} accept={accept} multiple={multiple} onFile={onFile} onFiles={onFiles} />
   </>;
 }
 
-/** A drop target for one file. Sets `data-dragging` while a file is over it. Drops are ignored while `disabled`. */
+/**
+ * The same picker for a control that is not a button of ours (a menu item, #884): render `input` once beside the control and call `open` from its click handler,
+ * synchronously, since iOS refuses `input.click()` from a later tick. Keep `input` out of a portalled popup, which unmounts when the menu closes.
+ */
+export function useFilePick({ accept, onFile }: { accept: string; onFile: (file: File) => void }) {
+  const ref = React.useRef<HTMLInputElement>(null);
+  const open = React.useCallback(() => { ref.current?.click(); }, []);
+  const input = <PickInput input={ref} accept={accept} multiple={false} onFile={onFile} onFiles={() => undefined} />;
+  return { open, input };
+}
+
+/** A drop target for one file. Sets `data-dragging` while a file is over it. Drops are ignored while `disabled`. Drag events stop here, so a zone inside another zone (a tile in the collection, #884) takes its own drop alone. */
 export function FileDropzone({ disabled, className, children, ...props }: {
   disabled?: boolean;
 } & PickHandler & Omit<React.ComponentProps<"div">, "onDrop" | "onDragOver" | "onDragEnter" | "onDragLeave">) {
@@ -56,11 +72,15 @@ export function FileDropzone({ disabled, className, children, ...props }: {
     {...rest}
     data-dragging={dragging ? "true" : undefined}
     className={cn(className)}
-    onDragEnter={(event) => { if (disabled) return; event.preventDefault(); depth.current += 1; setDragging(true); }}
-    onDragOver={(event) => { if (!disabled) event.preventDefault(); }}
-    onDragLeave={() => { depth.current = Math.max(0, depth.current - 1); if (depth.current === 0) setDragging(false); }}
+    onDragEnter={(event) => {
+      event.stopPropagation();
+      if (disabled || !Array.from(event.dataTransfer?.types ?? []).includes("Files")) return;
+      event.preventDefault(); depth.current += 1; setDragging(true);
+    }}
+    onDragOver={(event) => { event.stopPropagation(); if (!disabled) event.preventDefault(); }}
+    onDragLeave={(event) => { event.stopPropagation(); depth.current = Math.max(0, depth.current - 1); if (depth.current === 0) setDragging(false); }}
     onDrop={(event) => {
-      event.preventDefault(); depth.current = 0; setDragging(false);
+      event.preventDefault(); event.stopPropagation(); depth.current = 0; setDragging(false);
       if (disabled) return;
       const dropped = Array.from(event.dataTransfer?.files ?? []);
       if (multiple) { if (dropped.length > 0) onFiles(dropped); } else if (dropped[0]) onFile(dropped[0]);
