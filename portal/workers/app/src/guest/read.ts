@@ -1,9 +1,10 @@
 import { reachSql } from "../lib/guest-fence-sql";
+import { resolvedSocialOverlaysStatement, uuidOfKey } from "../lib/project-social-overlays";
 import { LIVE_VERSION, LIVE_VIDEO } from "../lib/video-live-sql";
 import {
   VIDEO_NOTE_RICH_TEXT_PROFILE, parseRichTextDoc, richTextMediaRefs, richTextMentionsToText, type RichTextDoc,
-  guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNoteThreadDtoSchema, guestVideoListResponseSchema,
-  type GuestNoteListResponse, type GuestNoteMarkupResponse, type GuestNoteThreadDto, type GuestNoteDto, type GuestVideoListResponse,
+  guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNoteThreadDtoSchema, guestSocialOverlaysResponseSchema, guestVideoListResponseSchema, socialOverlayImagePath,
+  type GuestNoteListResponse, type GuestNoteMarkupResponse, type GuestNoteThreadDto, type GuestNoteDto, type GuestSocialOverlaysResponse, type GuestVideoListResponse,
 } from "@quincy/shared";
 
 /**
@@ -70,6 +71,12 @@ export async function listGuestVideos(db: D1Database, linkId: string, projectId:
       })),
     })).filter((video) => video.versions.length > 0),
   });
+}
+
+/** The Project's resolved Social overlays (#872), the same for every kind of link. Its own projection, a label and a public image path, never the staff DTO; its own read, so `/videos` keeps the shape an already-open page parses. */
+export async function listGuestSocialOverlays(db: D1Database, projectId: string): Promise<GuestSocialOverlaysResponse> {
+  const rows = (await resolvedSocialOverlaysStatement(db, projectId).all<{ id: string; name: string; image_key: string }>()).results;
+  return guestSocialOverlaysResponseSchema.parse({ socialOverlays: rows.map((row) => ({ id: row.id, name: row.name, imageUrl: socialOverlayImagePath(row.id, uuidOfKey(row.image_key)) })) });
 }
 
 export type GrantedVersion = { r2Key: string; posterKey: string | null; videoId: string };

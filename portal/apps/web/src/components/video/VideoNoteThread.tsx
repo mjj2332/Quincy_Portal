@@ -89,11 +89,13 @@ function focusField(host: HTMLElement | null) {
   requestAnimationFrame(() => { find()?.focus(); });
 }
 
-export function VideoNoteThread({ thread, selected, userId, readOnly, now, timecode, frameCount, actions, onSeek, store, assetId, clock, pinned = false, drawings, rich }: {
+export function VideoNoteThread({ thread, selected, userId, readOnly, paused = false, now, timecode, frameCount, actions, onSeek, store, assetId, clock, pinned = false, drawings, rich }: {
   thread: VideoNoteThreadDto;
   selected: boolean;
   userId: string | null;
   readOnly: boolean;
+  /** Social preview is on (#871): open reply and edit forms stay mounted (a running upload must survive), but hidden, inert and not reachable. */
+  paused?: boolean;
   now: number;
   timecode: (frame: number) => string;
   frameCount: number;
@@ -114,7 +116,8 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
   // A form that closes (Cancel, Save, a conflict) takes its in-flight uploads with it; the next one starts clean.
   useEffect(() => { setUploading(false); }, [openKey]);
   const articleRef = useRef<HTMLElement>(null);
-  const form = useSyncExternalStore(store.subscribe, () => { const open = store.slot(assetId).open; return open && open.rootId === thread.id ? open : null; });
+  const storedForm = useSyncExternalStore(store.subscribe, () => { const open = store.slot(assetId).open; return open && open.rootId === thread.id ? open : null; });
+  const form = storedForm;
   const op = useSyncExternalStore(store.subscribe, () => store.slot(assetId).op);
   const marksHeld = useSyncExternalStore(store.subscribe, () => store.slot(assetId).marks);
   const closedNotice = useSyncExternalStore(store.subscribe, () => { const held = store.slot(assetId).notice; return held && held.rootId === thread.id ? held : null; });
@@ -208,6 +211,8 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     const showDrawControls = Boolean(drawings?.on && drawings.canAnnotate && note.id === thread.id && thread.startFrame !== null);
     return <form
     data-notes-form="edit"
+    hidden={paused}
+    inert={paused}
     data-size-container="true"
     className="@container grid gap-[var(--space-2)]"
     onSubmit={(event) => { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit, markup: drawings?.on ?? false }); }}
@@ -248,15 +253,15 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
         {drawings && thread.hasMarkup && !thread.deleted && <IconTip label="Has a drawing"><span data-testid="video-note-has-drawing" className={cn(META_TEXT, "inline-flex items-center !normal-case")}><PencilIcon aria-hidden="true" className="size-3" /><span className="sr-only">{drawings.on ? "Drawing" : "Drawing hidden"}</span></span></IconTip>}
         <span className="ms-auto">{renderMenu(thread)}</span>
       </div>
-      {editing?.noteId === thread.id ? editForm(thread) : <NoteText note={thread} />}
+      {editing?.noteId === thread.id ? <>{editForm(thread)}{paused && <NoteText note={thread} />}</> : <NoteText note={thread} />}
       {thread.replies.length > 0 && <div className="grid gap-[var(--space-2)] border-s border-border ps-[var(--space-3)]">
         {thread.replies.map((reply) => <div key={reply.id} data-testid="video-note-reply" data-note-id={reply.id} className="grid gap-[var(--space-1)]">
           {header(reply, false)}
-          {editing?.noteId === reply.id ? editForm(reply) : <NoteText note={reply} />}
+          {editing?.noteId === reply.id ? <>{editForm(reply)}{paused && <NoteText note={reply} />}</> : <NoteText note={reply} />}
         </div>)}
       </div>}
       {notice && <Notice tone="critical" role="alert" data-testid="video-note-notice" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{notice.text}</span>{notice.refresh && <Button type="button" variant="text" data-testid="video-note-notice-refresh" onClick={actions.refresh}>Refresh notes</Button>}</Notice>}
-      {form?.kind === "reply" && <form data-notes-form="reply" className="grid gap-[var(--space-2)]" onSubmit={(event) => { event.preventDefault(); void store.reply(assetId, { send: actions.reply }); }}>
+      {form?.kind === "reply" && <form data-notes-form="reply" hidden={paused} inert={paused} className="grid gap-[var(--space-2)]" onSubmit={(event) => { event.preventDefault(); void store.reply(assetId, { send: actions.reply }); }}>
         <span className="flex items-center gap-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">{`Reply · ${thread.visibility === "internal" ? "Internal" : "Client-visible"}`}<VisibilityBadge visibility={thread.visibility} /></span>
         <label className="sr-only" htmlFor={`video-note-reply-${thread.id}`}>Write a reply</label>
         <div data-testid="video-note-reply-body"><VideoNoteEditor id={`video-note-reply-${thread.id}`} projectId={rich.projectId} role={rich.role} value={draftDoc(form.content, form.text)} disabled={busy} placeholder="Write a reply… Use @ to mention a colleague."
@@ -327,7 +332,8 @@ function EditDrawingControls({ store, assetId, note, editing, clock, frameCount,
   const disabled = busy || !clock || framesChosen || drawingNow || !ready || unsupported;
   const why = unsupported ? `video-note-edit-drawing-unsupported-${note.id}` : undefined;
   // The header's anchor button already reads the note's frame: the chip only earns its place when the drawing is on another frame.
-  const chipShown = hasItems && frame !== null && timecode(frame) !== noteAnchorLabel(note, timecode);
+  // Frame numbers, not labels: two frames can share a Standard label.
+  const chipShown = hasItems && frame !== null && !(note.endFrame === null && note.startFrame === frame);
   return <div data-testid="video-note-edit-drawing" className="contents">
     {chipShown && frame !== null && <span data-testid="video-note-edit-drawing-chip" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" /><span className="sr-only">Drawing on </span>{timecode(frame)}</span>}
     {drawing.remove && <span data-testid="video-note-edit-drawing-removed" className="text-foreground-secondary [font:var(--type-label)]">The drawing is removed when you save.</span>}

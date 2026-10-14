@@ -61,7 +61,7 @@ const settle = (queryClient: QueryClient, projectId: string, extra: ProjectDataR
 
 /** A Publish can move the Project to Delivered: the same surfaces a stage move settles (Project detail and activity, Dashboard Board, Production Calendar and Gantt), here and in the other tabs. */
 const settlePublished = (queryClient: QueryClient, projectId: string) =>
-  invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "delivery" }, { kind: "detail" }, { kind: "activity" }, { kind: "review-links" }], dashboard: true, calendar: true, gantt: true });
+  invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "delivery" }, { kind: "detail" }, { kind: "activity" }, { kind: "review-links" }, { kind: "videos" }], dashboard: true, calendar: true, gantt: true });
 
 /**
  * A write that answered with the page state: stop Delivery reads already in flight (they predate it), put the answer into the cache so the page does not wait on a re-read, then

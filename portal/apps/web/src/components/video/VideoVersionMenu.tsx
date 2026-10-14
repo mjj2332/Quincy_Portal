@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { VIDEO_TRASH_RETENTION_DAYS, type VideoDto, type VideoRemovalImpact } from "@quincy/shared";
 import { useOptionalProjectQueryClient, useProjectAccessTermination } from "../../lib/project-data";
 import { pushTrashToast, trashSession } from "../../lib/video-trash-session";
@@ -6,8 +6,7 @@ import { UNDO_TOAST_TTL_MS } from "../../lib/use-scheduling-undo-toast";
 import { readRemovalImpact, refreshAfterRefusal, removeVideoVersion, restoreVideoVersion, restoreWholeVideo } from "../../lib/video-trash-data";
 import { classifyVideoTrashError, type ClassifiedVideoTrashError } from "../../lib/video-trash-errors";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../reui/alert-dialog";
-import { Badge } from "../reui/badge";
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
+import { plural, RemovalImpactList, type ImpactRow } from "./RemovalImpactList";
 import { Spinner } from "../reui/spinner";
 import { Button } from "../quincy/Button";
 import { ICON_BUTTON } from "../quincy/icon-button";
@@ -23,13 +22,15 @@ import { cn } from "@/lib/utils";
  */
 export type RemovedVersion = { assetId: string; videoId: string; /** The Video as it stands, or null when removing the last Version removed the Video. */ video: VideoDto | null };
 
+/** How the viewer opens the removal confirmation for a Version (its list rows, #862). The Version is resolved against the Video at call time; an unknown id does nothing. `returnFocusTo`: where focus goes when the confirmation closes. */
+export type VersionRemovalHandle = { open: (assetId: string, returnFocusTo: () => HTMLElement | null) => void };
+
 type Target = { assetId: string; version: number; videoId: string; title: string };
 const MENU_TRIGGER_SELECTOR = '[data-testid="video-version-menu"]';
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 /** Errors a second press of Remove cannot fix: the row is gone, the Project is archived, or access is lost. */
 const FINAL: ReadonlySet<ClassifiedVideoTrashError["kind"]> = new Set(["gone", "archived", "access"]);
 
-export function VideoVersionMenu({ projectId, archived, video, version, hasDraft, captureDrafts, onRemoved }: {
+export function VideoVersionMenu({ projectId, archived, video, version, hasDraft, captureDrafts, onRemoved, removeRef }: {
   projectId: string;
   archived: boolean;
   video: VideoDto;
@@ -40,6 +41,8 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
   captureDrafts: (assetId: string, videoId: string) => (whole: boolean) => void;
   /** The removal went through: retire everything that points at that Version. */
   onRemoved: (removed: RemovedVersion) => void;
+  /** Receives `open`, so a Version's own row in the list can start the same removal (#862). */
+  removeRef?: Ref<VersionRemovalHandle>;
 }) {
   const queryClient = useOptionalProjectQueryClient();
   const terminate = useProjectAccessTermination();
@@ -88,11 +91,24 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
     if (target && impact?.uploading === true && !pending) void load(target);
   }, [uploadKey, target, impact, pending, load]);
 
-  const open = () => {
-    const next: Target = { assetId: version.assetId, version: version.version, videoId: video.id, title: video.title };
+  // Where focus returns when the confirmation closes: read from a ref, because closing clears the state (#463). Unset: the ⋯ trigger.
+  const returnFocus = useRef<(() => HTMLElement | null) | null>(null);
+  const open = (source: VideoDto["versions"][number], returnFocusTo: (() => HTMLElement | null) | null) => {
+    const next: Target = { assetId: source.assetId, version: source.version, videoId: video.id, title: video.title };
+    returnFocus.current = returnFocusTo;
     setTarget(next); setPending(false);
     void load(next);
   };
+  const videoNow = useRef(video);
+  videoNow.current = video;
+  const openNow = useRef(open);
+  openNow.current = open;
+  useImperativeHandle(removeRef, () => ({
+    open: (assetId, returnFocusTo) => {
+      const found = videoNow.current.versions.find((candidate) => candidate.assetId === assetId);
+      if (found) openNow.current(found, returnFocusTo);
+    },
+  }), []);
   const close = () => { run.current += 1; setTarget(null); setImpact(null); setLoadFailure(null); setProblem(null); setPending(false); };
 
   /** `whole`: what the person confirmed (the last Version, so the whole film), never what the answer turned out to be: another editor may have removed the other Versions first. */
@@ -151,10 +167,10 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
       finalFocus={() => (handOff.current ? false : undefined)}
       onOpenChange={(isOpen) => { if (isOpen) handOff.current = false; }}
     >
-      <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive-wash-foreground")} disabled={archived || !queryClient} data-testid="video-version-remove" onClick={() => { handOff.current = true; open(); }}>Remove version…</MenuPrimitive.Item>
+      <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive-wash-foreground")} disabled={archived || !queryClient} data-testid="video-version-remove" onClick={() => { handOff.current = true; open(version, null); }}>Remove version…</MenuPrimitive.Item>
     </Menu>
     <AlertDialog open={target !== null} onOpenChange={(next) => { if (!next && !pending) close(); }}>
-      <AlertDialogContent data-testid="video-remove-dialog" initialFocus={cancelRef} finalFocus={() => document.querySelector<HTMLElement>(MENU_TRIGGER_SELECTOR) ?? true}>
+      <AlertDialogContent data-testid="video-remove-dialog" initialFocus={cancelRef} finalFocus={() => returnFocus.current?.() ?? document.querySelector<HTMLElement>(MENU_TRIGGER_SELECTOR) ?? true}>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription className="text-foreground-secondary">
@@ -165,14 +181,7 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
         </AlertDialogHeader>
         {impact === null && loadFailure === null && <p className="m-0 flex items-center gap-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]" role="status"><Spinner aria-hidden="true" />Checking what this affects…</p>}
         {loadFailure !== null && <Notice tone="critical" role="alert" data-testid="video-remove-load-error">{loadFailure}</Notice>}
-        {impact !== null && <ItemGroup data-testid="video-remove-impact">
-          {rows.length === 0
-            ? <Item size="xs" className="px-0"><ItemContent><ItemTitle className="font-normal">Nothing else is affected.</ItemTitle></ItemContent></Item>
-            : rows.map((row) => <Item key={row.key} size="xs" className="px-0"><ItemContent>
-              <ItemTitle className="font-normal">{row.title}{row.badge && <Badge variant="warning-light" size="sm">{row.badge}</Badge>}</ItemTitle>
-              <ItemDescription className="line-clamp-none">{row.description}</ItemDescription>
-            </ItemContent></Item>)}
-        </ItemGroup>}
+        {impact !== null && <RemovalImpactList rows={rows} testId="video-remove-impact" />}
         {blockedByUpload && <Notice tone="caution" role="status">A new version is being uploaded to this film. Wait for it to finish or cancel it before removing the whole film.</Notice>}
         {draft && <Notice tone="caution" role="status" data-testid="video-remove-draft">You have an unsent note or entry on this version. It will be discarded.</Notice>}
         {problem !== null && <Notice ref={problemRef} tabIndex={-1} tone="critical" role="alert" data-testid="video-remove-problem">{problem.message}</Notice>}
@@ -186,10 +195,9 @@ export function VideoVersionMenu({ projectId, archived, video, version, hasDraft
   </>;
 }
 
-type Row = { key: string; title: string; description: string; badge?: string };
 /** What the removal hides, one row each; empty when nothing else is touched. */
-function impactRows(impact: VideoRemovalImpact): Row[] {
-  const rows: Row[] = [];
+function impactRows(impact: VideoRemovalImpact): ImpactRow[] {
+  const rows: ImpactRow[] = [];
   if (impact.notes > 0) rows.push({ key: "notes", title: plural(impact.notes, "note"), description: "Notes, replies and drawings on this version are hidden. A restore brings them back." });
   if (impact.decisions > 0) rows.push({ key: "decisions", title: plural(impact.decisions, "client decision"), description: "The client's approvals and change requests are hidden with it." });
   if (impact.release) rows.push({ key: "release", title: "Released to the client", badge: "Live", description: "Clients lose this version while it is in Trash. A restore brings the release back." });

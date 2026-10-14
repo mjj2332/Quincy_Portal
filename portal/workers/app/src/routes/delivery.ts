@@ -11,6 +11,7 @@ import { previewDelivery, readDeliveryCandidates, readDeliveryState } from "../l
 import { enqueueDeliveryDerivatives, enqueueDeliveryOriginalCrcs, publishDelivery, setDeliveryPageEnabled } from "../lib/delivery-publish";
 import { publishOutboxDetached } from "../lib/server-timing";
 import { queueProjectShootDateFollowUps } from "../lib/project-shoot-date";
+import { readVideoReviewGate } from "../lib/video-review-gate";
 import { jsonInput } from "./helpers";
 import { putVideoPremium, putVideoPremiumUnlock } from "./video-approval";
 
@@ -43,12 +44,12 @@ deliveryRoutes.get("/projects/:projectId/delivery", terminalRoute("/projects/:pr
   return c.json(deliveryStateSchema.parse(await readDeliveryState(c.env.DB, projectId)));
 }));
 
-/** What the tab may offer to publish: Publish's own eligibility, behind the Client Delivery gate alone (Video Review may be closed). */
+/** What the tab may offer to publish: Publish's own eligibility, behind the Client Delivery gate alone (Video Review may be closed; only each Video's `reviewStatus` is null then). */
 deliveryRoutes.get("/projects/:projectId/delivery/candidates", terminalRoute("/projects/:projectId/delivery/candidates", async (c) => {
   const projectId = c.req.param("projectId");
   if (!uuid.safeParse(projectId).success) return c.json({ error: "Invalid id" }, 400);
   const refused = await admitDelivery(c, projectId, "viewClientPreview", false); if (refused) return refused;
-  return c.json(deliveryCandidatesResponseSchema.parse({ candidates: await readDeliveryCandidates(c.env.DB, projectId) }));
+  return c.json(deliveryCandidatesResponseSchema.parse({ candidates: await readDeliveryCandidates(c.env.DB, projectId, { reviewStatus: (await readVideoReviewGate(c.env.DB, projectId)).open }) }));
 }));
 
 /** A Video's premium and Unlock from the Delivery tab: the Video Review routes' handlers over the Client Delivery gate (same capability, `manageVideoPremium`; archived 409). */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clusterMarkers, clusterWidthPx, markerHitTargets, frameFraction, nearestMarkerId, spanFractions } from "./video-timeline-geometry";
+import { frameAtX, clusterMarkers, clusterWidthPx, markerHitTargets, frameFraction, nearestMarkerId, spanFractions } from "./video-timeline-geometry";
 
 describe("video-timeline-geometry (#741 5b)", () => {
   it("frame 0 is 0 and the last frame is 1", () => {
@@ -121,5 +121,21 @@ describe("cluster pills never overlap (#741 5b, Sol r16)", () => {
       const targets = markerHitTargets(clusters);
       for (const pill of drawn) expect(nearestMarkerId(targets, 1001, pill.x, 1012, 6)).toBe(pill.id);
     }
+  });
+});
+
+describe("frameAtX (#861)", () => {
+  // width 112, thumb half 6 -> a 100px usable track; 101 frames -> one frame per px.
+  it("inverts the thumb-centre coordinate system, rounding to the nearest frame", () => {
+    expect(frameAtX(6, 112, 6, 101)).toBe(0);
+    expect(frameAtX(46.4, 112, 6, 101)).toBe(40);
+    expect(frameAtX(46.6, 112, 6, 101)).toBe(41);
+    expect(frameAtX(106, 112, 6, 101)).toBe(100);
+  });
+  it("clamps outside the track and survives a one-frame film", () => {
+    expect(frameAtX(-50, 112, 6, 101)).toBe(0);
+    expect(frameAtX(900, 112, 6, 101)).toBe(100);
+    expect(frameAtX(60, 112, 6, 1)).toBe(0);
+    expect(frameAtX(60, 12, 6, 101)).toBe(0);
   });
 });

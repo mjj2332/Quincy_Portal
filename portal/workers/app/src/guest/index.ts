@@ -18,7 +18,7 @@ import { mountGuestPaste } from "./paste";
 import { mountGuestSubscription } from "./subscription";
 import { guestGloballyOpen, identityOf, loadActiveLink, notificationsOf, renewDeliverySession, resolveSession, sessionBody } from "./link";
 import { clientAddress, GUEST_LIMITS, ipBucket, reserveAttempts, windowStart } from "./rate-limit";
-import { listGuestNotes, listGuestVideos, readGuestMarkup, resolveGrantedVersion } from "./read";
+import { listGuestNotes, listGuestSocialOverlays, listGuestVideos, readGuestMarkup, resolveGrantedVersion } from "./read";
 
 /**
  * The guest surface of a Review link (#741 12a): `/d/review` (the SPA shell) and `/d/api/links/:linkId/...`. It shares a Worker with the staff app and nothing else: no
@@ -124,6 +124,8 @@ export function mountGuest(app: Hono<AppEnv>): void {
   }));
 
   app.get("/d/api/links/:linkId/videos", guestRoute("/d/api/links/:linkId/videos", (c) => withSession(c, async (session) => c.json(await listGuestVideos(c.env.DB, session.link.id, session.link.projectId, session.guestId, session.link.allowDownload && session.link.parts.includes("delivery"))))));
+
+  app.get("/d/api/links/:linkId/social-overlays", guestRoute("/d/api/links/:linkId/social-overlays", (c) => withSession(c, async (session) => c.json(await listGuestSocialOverlays(c.env.DB, session.link.projectId)))));
 
   app.get("/d/api/links/:linkId/versions/:assetId/stream", guestRoute("/d/api/links/:linkId/versions/:assetId/stream", (c) => withSession(c, async (session) => {
     const version = await resolveGrantedVersion(c.env.DB, session.link.id, session.link.projectId, c.req.param("assetId"));

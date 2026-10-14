@@ -50,10 +50,10 @@ describe("StatusPill", () => {
     // positive one. Each tone is asserted against its actual signal token, and against the
     // absence of every other tone's token.
     const TOKEN: Record<StatusTone, string> = {
-      positive: "text-signal-positive",
-      caution: "text-signal-caution-text",
-      critical: "text-signal-critical",
-      info: "text-signal-info",
+      positive: "text-success-foreground",
+      caution: "text-warning-foreground",
+      critical: "text-destructive-wash-foreground",
+      info: "text-info-foreground",
       neutral: "text-foreground-secondary",
     };
     for (const [tone, token] of Object.entries(TOKEN) as [StatusTone, string][]) {

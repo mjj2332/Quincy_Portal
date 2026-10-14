@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from "react";
 import { Pause, Play, RotateCcw, StepBack, StepForward, Volume2, VolumeX } from "lucide-react";
-import { aOf, bOf, framesToTimecode, rationalToNumber, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
+import { aOf, bOf, rationalToNumber, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { usePictureBox } from "../../lib/use-picture-box";
 import { useCompareTransport, type CompareSideHandle } from "../../lib/use-compare-transport";
@@ -12,6 +12,8 @@ import { Button } from "../quincy/Button";
 import { Notice } from "../quincy/Notice";
 import { VideoStage } from "../quincy/VideoStage";
 import { COARSE, IconTip, type VideoPlayerControl } from "../quincy/VideoPlayer";
+import { TimeFormatMenu } from "../quincy/TimeFormatMenu";
+import { useFrameLabeller, useTimeFormat } from "../../lib/time-format-prefs";
 import { VideoPendingRangeBand, VideoTimelineMarkers, type TimelineMarker } from "../quincy/VideoTimelineMarkers";
 import { Badge } from "../reui/badge";
 import { Button as UiButton } from "../reui/button";
@@ -118,7 +120,8 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
   const frameA = clamp(shownA, 0, lastA);
   const frameB = clamp(shownB, 0, lastB);
   const domainLength = state.domain.end - state.domain.start + 1;
-  const timecodeOf = useCallback((version: VideoVersionDto, frame: number) => framesToTimecode(frame, { nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame }, version.startTimecodeFrames ?? 0), []);
+  const labelOf = useFrameLabeller();
+  const timecodeOf = useCallback((version: VideoVersionDto, frame: number) => labelOf(version, frame), [labelOf]);
 
   // --- placing a stage that is mounting: where the shared position maps for it now ---
   const initialA = clamp(position.current, 0, lastA);
@@ -371,6 +374,7 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
             <span>{`${labels.a} ${timecodeOf(versionA, frameA)}`}</span>
             <span className="text-foreground-secondary">{`${labels.b} ${timecodeOf(versionB, frameB)}`}</span>
           </output>
+          <TimeFormatMenu />
         </div>
       </div>
     </div>
@@ -397,6 +401,7 @@ function SideStage({ side: id, version, title, label, initialFrame, phase, start
   cellStyle?: React.CSSProperties | undefined;
 }) {
   const [element, setElement] = useState<HTMLVideoElement | null>(null);
+  const [timeFormat] = useTimeFormat();
   const clock = useVideoFrameClock(element, version, { initialFrame });
   const instance = clock.instance;
   const { fps, frameCount, hasAudio } = version;
@@ -412,7 +417,7 @@ function SideStage({ side: id, version, title, label, initialFrame, phase, start
   }, [instance, onClockChange]);
 
   return <div data-compare-cell={id} data-phase={phase} style={cellStyle} className={cn("relative flex h-full min-h-0 min-w-0 flex-col", cellClassName)}>
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} onVideo={setElement} overlay={(box) => <>
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setElement} overlay={(box) => <>
       <div data-testid="video-compare-side-labels" data-corner={labelCorner} className="pointer-events-none absolute" style={box ? { left: box.left, top: box.top, width: box.width, height: box.height } : { inset: 0 }}>
         <div className={cn("absolute top-[var(--space-2)] flex flex-wrap items-center gap-[var(--space-1)]", labelCorner === "top-right" ? "right-[var(--space-2)] justify-end" : "left-[var(--space-2)]")}>
           <Badge variant="invert">{label}</Badge>

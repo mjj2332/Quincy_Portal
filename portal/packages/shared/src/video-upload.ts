@@ -52,6 +52,9 @@ export function filmTitleFromFilename(filename: string): string {
 const uuid = z.string().uuid();
 const isoTimestamp = z.string().datetime();
 
+/** A video file name as upload and rename accept it: 1 to 255 characters, no control characters (C0 and DEL), ending `.mp4` or `.mov` of any case. */
+export const videoUploadFilenameSchema = z.string().min(1).max(255).regex(/^[^\u0000-\u001f\u007f]*$/, "The file name contains a control character").regex(/\.(mp4|mov)$/i, "Only MP4 or MOV files can be uploaded");
+
 /**
  * `POST /api/projects/:projectId/video-uploads`. `contentType` stays a plain string so the route answers a wrong one with 415 rather than 400.
  * `videoId` present is a new Version of that Video; absent is a new film, Version 1, whose title the server derives from `filename` (#828). `title` is no longer read: an older tab that
@@ -61,13 +64,28 @@ export const videoUploadReserveInputSchema = z.object({
   videoId: uuid.optional(),
   title: z.unknown().transform(() => undefined).optional(),
   // No control characters (C0 and DEL): the film title is cut from this name by SQLite and by TypeScript, and they disagree about NUL (#828).
-  filename: z.string().min(1).max(255).regex(/^[^\u0000-\u001f\u007f]*$/, "The file name contains a control character").regex(/\.(mp4|mov)$/i, "Only MP4 or MOV files can be uploaded"),
+  filename: videoUploadFilenameSchema,
   bytes: z.number().int().positive(),
   contentType: z.string(),
   clientProbe: z.record(z.string(), z.unknown()).optional(),
 }).strict().superRefine((value, context) => {
   if (value.clientProbe !== undefined && new TextEncoder().encode(JSON.stringify(value.clientProbe)).byteLength > VIDEO_CLIENT_PROBE_MAX_BYTES) context.addIssue({ code: "custom", path: ["clientProbe"], message: "The client probe is too large" });
 });
+
+/**
+ * `PUT /api/projects/:projectId/video-versions/:assetId/file-name` (#867): the new file name of the latest Version, whose stem is the film's title until the next upload. Trimmed first, so the
+ * server is the authority on surrounding spaces; the stem is never empty and never longer than a title, so a rename cannot silently truncate.
+ */
+export const videoRenameInputSchema = z.object({
+  filename: z.string().trim().pipe(videoUploadFilenameSchema),
+}).strict().superRefine((value, context) => {
+  const stem = value.filename.replace(/\.(mp4|mov)$/i, "").trim();
+  if (stem === "") context.addIssue({ code: "custom", path: ["filename"], message: "Enter a file name" });
+  else if (Array.from(stem).length > FILM_TITLE_MAX_CODE_POINTS) context.addIssue({ code: "custom", path: ["filename"], message: `The file name can be at most ${FILM_TITLE_MAX_CODE_POINTS} characters before the extension` });
+});
+export type VideoRenameInput = z.infer<typeof videoRenameInputSchema>;
+export const videoRenameResponseSchema = z.object({ video: videoDtoSchema }).strict();
+export type VideoRenameResponse = z.infer<typeof videoRenameResponseSchema>;
 
 export const videoUploadCompleteInputSchema = z.object({
   parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) }).strict()).optional(),

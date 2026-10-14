@@ -228,6 +228,43 @@ Migration 0077 adds `client_links.delivery_review` (integer, NOT NULL DEFAULT 0,
 
 **Rollback.** A code rollback is safe for ordinary links. A Delivery review link made after this ships fails closed on an older Worker, which reads a NULL expiry as expired, so roll forward. Restoring the schema is a Time Travel restore, which loses every write since the bookmark.
 
+### Video review status (0078, #863)
+
+Migration 0078 adds one column, `video_version_meta.review_status` (text, NOT NULL DEFAULT `'in_review'`, CHECK in `in_review` or `approved_internal`), and nothing else: no index, no trigger, no rebuild, no PRAGMA. Every existing Version reads In review. **The owner applies it**: the Worker in this PR reads the column on every Video list, so the merge leaves the deploy job red at the migration guard, and production stays on the old Worker, until 0078 is applied and the deploy re-run. Published is derived from the latest Published set and is never stored. Apply checklist (from `portal/workers/app`, `--remote`, owner's go-ahead):
+
+1. Take a Time Travel bookmark (`npx wrangler d1 time-travel info DB`) and record the id in the PR. Note `SELECT COUNT(*) FROM video_version_meta`.
+2. `npx wrangler d1 migrations apply DB --remote`; the pending list must show only 0078. #869 and #870 take 0079 and 0080, so if they are listed too, apply them in order only after their own PRs say so, and anything below 0078 means an earlier migration PR was never applied: stop.
+3. Post-check: `PRAGMA table_info(video_version_meta)` lists `review_status` with notnull 1 and default `'in_review'`; the row count equals step 1; `SELECT COUNT(*) FROM video_version_meta WHERE review_status <> 'in_review'` is 0.
+4. Re-run the deploy (`gh run rerun <run-id> --failed`).
+
+**Rollback.** The column is additive with a default, so an older Worker ignores it and a code rollback is safe (an older upload INSERT omits it and gets In review). Dropping the column is a Time Travel restore, which loses every write since the bookmark.
+
+### Social overlays (0079, #869)
+
+Migration 0079 creates `social_overlays` (the Admin-managed library of 9:16 platform graphics the Video viewer lays over a Video) with three indexes: unique `image_key`, a partial unique `is_default` (one Default) and a unique `name COLLATE NOCASE`. Additive only: no ALTER, no rebuild, no PRAGMA, no backfill. The number is 0079 because #863 holds 0078; if the integration PR carries both, the pending list shows 0078 then 0079 (plus 0080 for #870 if it has landed), all from that PR, and anything else listed means an earlier migration PR was never applied: stop. Renumber on a clash with a later free number, never share an idx. The Worker in this PR reads the table, so production stays on the old Worker until the owner applies the migration and re-runs the deploy (the "A PR that adds a D1 migration" flow above, with a Time Travel bookmark first).
+
+This PR also adds one **public** read route, `GET /social-overlay-images/:overlayId/:imageUuid`, on purpose: the overlays are generic platform graphics with no client data, so staff and guests share one cacheable URL (`public, max-age=31536000, immutable`; the uuid changes on every replace). It serves only the row's current PNG key, archived overlays included. Anything else is a `no-store` JSON 404, never the SPA shell. It is listed in `run_worker_first` in `wrangler.jsonc` and classified `public-library` in the route manifest.
+
+Owner steps after the deploy:
+
+1. Post-check the schema: `PRAGMA table_info(social_overlays)` lists the columns, `PRAGMA index_list(social_overlays)` shows the three indexes, and `SELECT COUNT(*) FROM social_overlays` is 0.
+2. From the signed-in Admin browser, open Admin, Social overlays and upload **Instagram Reel** first (name "Instagram Reel", platform "Instagram"). The first overlay uploaded becomes the Default. Then upload TikTok and YouTube Shorts. Each must be a 9:16 PNG with transparency, 540 to 2160 px wide, at most 8 MB. There is no bundled seed: a migration cannot write R2.
+3. Post-check the data: `SELECT name, is_default, archived_at FROM social_overlays` returns 3 rows with exactly one `is_default = 1`.
+4. Until step 2 is done the library is empty, and the Social preview (#870 to #872) treats that as "Social preview unavailable", not as an error.
+
+**Rollback.** An old Worker ignores the table, so a code rollback is safe, and the R2 objects under `social-overlays/` can stay. Dropping the table means a Time Travel restore, which loses every write since the bookmark.
+
+### Project Social overlays (0080, #870)
+
+Migration 0080 creates `project_social_overlays` (which Social overlays a Project offers in the Video viewer, chosen in the Project sheet) with a composite primary key `(project_id, overlay_id)` and one index on `overlay_id`. Deleting a Project removes its rows (cascade). An overlay row cannot be deleted while a Project selects it (restrict), which is safe because overlays are archived, never deleted. Additive only: no ALTER, no rebuild, no PRAGMA, no backfill, no trigger. A Project with no row resolves to the Default overlay at read time, so the apply changes no behaviour until someone picks. The number is 0080 because #869 holds 0079; with the integration PR the pending list shows 0078, 0079, then 0080, and anything else listed means an earlier migration PR was never applied: stop. The Worker in this PR reads the table on the Project sheet, so production stays on the old Worker until the owner applies the migration and re-runs the deploy (the "A PR that adds a D1 migration" flow above, with a Time Travel bookmark first).
+
+Owner steps after the deploy:
+
+1. Post-check the schema: `PRAGMA table_info(project_social_overlays)` lists `project_id` and `overlay_id`, `PRAGMA index_list(project_social_overlays)` shows the overlay index, and `SELECT COUNT(*) FROM project_social_overlays` is 0.
+2. Optional: in a Project sheet with Video review open, pick an overlay under Social overlays and confirm `SELECT project_id, overlay_id FROM project_social_overlays` shows the row.
+
+**Rollback.** An old Worker ignores the table, so a code rollback is safe. Dropping the table means a Time Travel restore, which loses every write since the bookmark.
+
 ### Subtask presets (0052)
 
 0052 converts every date-only Subtask range to a 09:00 start and a 17:00 end (the presets, ADR 0016)

@@ -164,6 +164,11 @@ describe("VideoNoteComposer (#741 5b)", () => {
     expect(byTestId("video-note-anchor")!.textContent).toBe("In TC40");
     await click(byTestId("video-note-set-out")!);
     expect(byTestId("video-note-anchor")!.textContent).toBe("In TC40 → Out TC40");
+    // The readout sits on its own line; the mark buttons stay together in one row beneath it.
+    const buttons = byTestId("video-note-set-in")!.parentElement!;
+    expect(buttons).not.toContain(byTestId("video-note-anchor"));
+    expect(buttons).toBe(byTestId("video-note-set-out")!.parentElement);
+    expect(buttons).toBe(byTestId("video-note-clear-marks")!.parentElement);
     await click(byTestId("video-note-clear-marks")!);
     expect(byTestId("video-note-anchor")!.textContent).toBe("Note at TC40");
   });

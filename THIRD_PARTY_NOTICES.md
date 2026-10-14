@@ -6,7 +6,7 @@ Quincy Portal includes code ported or adapted from the following open-source pro
 
 - Source: https://github.com/Techiebutler/freeframe
 - Commit: e9c6e2ccd27d728a549e921024d611c8239462cb
-- Used for: pure frame and timecode logic, contained-picture geometry, compare-offset maths, and the specification of the NLE marker export (rewritten in this repository).
+- Used for: pure frame and timecode logic, contained-picture geometry, compare-offset maths, the specification of the NLE marker export (rewritten in this repository), and the behaviour of the grid appearance and sort popovers and the card hover, click-select and double-click-open interaction, and the item set and grouping of the card menu, and the rename dialog (prefill, stem selection, Enter to save, from `components/projects/name-dialog.tsx`) (reimplemented on ReUI parts).
 - Licence: MIT
 
 MIT License

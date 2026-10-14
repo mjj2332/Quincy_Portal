@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { deliveryCandidatesResponseSchema } from "@quincy/shared";
 import { database, ids, request, seedFixture, type Who } from "./embedded-media-support";
 import { clearDeliveryFlags, openDelivery, seedAsset, seedOpenProject, seedPage, seedRawPhoto, seedUnlock, setDeliveryFlags, wipeDelivery } from "./delivery-support";
-import { clearVideoFlags, seedVideoVersion } from "./video-review-support";
+import { clearVideoFlags, seedVideoVersion, setVideoFlags } from "./video-review-support";
 
 /**
  * The Client Delivery tab's own reads and Video premium writes (#787 slice 10 round 3). They sit behind the Client Delivery gate alone: the Video Review gate is NOT consulted, so a Project
@@ -61,6 +61,42 @@ describe("GET /delivery/candidates", () => {
     expect((await candidates("member")).status).toBe(200);
     await clearDeliveryFlags(); await setDeliveryFlags("client_delivery");
     expect((await candidates()).status).toBe(404);
+  });
+});
+
+describe("GET /delivery/candidates reviewStatus (#864)", () => {
+  const status = (assetId: string, value: string) => database.DB.prepare("UPDATE video_version_meta SET review_status = ? WHERE asset_id = ?").bind(value, assetId).run();
+  const openReview = () => setVideoFlags("video_review", "video_review_all_projects");
+
+  it("carries a Video's Review status while Video Review is open, Published while its Version is in the latest set, and null for everything else", async () => {
+    await openReview();
+    const photo = await seedAsset("photo"); const plan = await seedAsset("floorplan_pdf"); const copy = await seedAsset("copy_pdf");
+    const film = await seedVideoVersion({ title: "Hero" });
+    expect((await listed()).find((item) => item.kind === "video")?.reviewStatus).toBe("in_review");
+    await status(film.assetId, "approved_internal");
+    expect((await listed()).find((item) => item.kind === "video")?.reviewStatus).toBe("approved_internal");
+    expect((await publish([film.assetId])).status).toBe(201);
+    const items = await listed();
+    expect(items.find((item) => item.kind === "video")?.reviewStatus).toBe("published");
+    expect(items.filter((item) => item.kind !== "video").map((item) => item.reviewStatus)).toEqual([null, null, null]);
+    expect([photo.id, plan.id, copy.id].length).toBe(3);
+  });
+
+  it("reads a new Version as In review after the previous one was published", async () => {
+    await openReview();
+    const v1 = await seedVideoVersion({ title: "Hero" });
+    expect((await publish([v1.assetId])).status).toBe(201);
+    const v2 = await seedVideoVersion({ videoId: v1.videoId, version: 2 });
+    await database.DB.prepare("UPDATE assets SET superseded_at = ? WHERE id = ?").bind(Date.now(), v1.assetId).run();
+    expect((await listed()).find((item) => item.assetId === v2.assetId)?.reviewStatus).toBe("in_review");
+  });
+
+  it("is null for a Video while Video Review is closed, and the list is still served", async () => {
+    const film = await seedVideoVersion({ title: "Hero" });
+    await status(film.assetId, "approved_internal");
+    const response = await candidates();
+    expect(response.status).toBe(200);
+    expect((await listed()).find((item) => item.kind === "video")?.reviewStatus).toBeNull();
   });
 });
 

@@ -1,7 +1,7 @@
 import { useQuery, type QueryClient, type QueryFunctionContext, type UseQueryResult } from "@tanstack/react-query";
 import {
-  videoRemovalImpactSchema, videoRemoveResponseSchema, videoRestoreResponseSchema, videoTrashResponseSchema,
-  type VideoDto, type VideoRemovalImpact, type VideoRemoveInput, type VideoRemoveResponse, type VideoRestoreResponse, type VideoTrashResponse,
+  videoDeleteResponseSchema, videoDeletionImpactSchema, videoRemovalImpactSchema, videoRemoveResponseSchema, videoRestoreResponseSchema, videoTrashResponseSchema,
+  type VideoDeleteInput, type VideoDeleteResponse, type VideoDeletionImpact, type VideoDto, type VideoRemovalImpact, type VideoRemoveInput, type VideoRemoveResponse, type VideoRestoreResponse, type VideoTrashResponse,
 } from "@quincy/shared";
 import { apiGet, apiPost } from "./api";
 import { getProjectQueryRuntime } from "./project-query-sync";
@@ -18,6 +18,8 @@ const enc = encodeURIComponent;
 const projectPath = (projectId: string) => `/api/projects/${enc(projectId)}`;
 const impactPath = (projectId: string, assetId: string) => `${projectPath(projectId)}/video-versions/${enc(assetId)}/removal-impact`;
 const removePath = (projectId: string, assetId: string) => `${projectPath(projectId)}/video-versions/${enc(assetId)}/remove`;
+const filmImpactPath = (projectId: string, videoId: string) => `${projectPath(projectId)}/videos/${enc(videoId)}/removal-impact`;
+const deletePath = (projectId: string, videoId: string) => `${projectPath(projectId)}/videos/${enc(videoId)}/remove`;
 const restoreVersionPath = (projectId: string, assetId: string) => `${projectPath(projectId)}/video-versions/${enc(assetId)}/restore`;
 const restoreVideoPath = (projectId: string, videoId: string) => `${projectPath(projectId)}/videos/${enc(videoId)}/restore`;
 const trashPath = (projectId: string) => `${projectPath(projectId)}/video-trash`;
@@ -27,6 +29,11 @@ export type TrashWriteContext = { queryClient: QueryClient; projectId: string; v
 
 export async function readRemovalImpact(projectId: string, assetId: string, signal?: AbortSignal): Promise<VideoRemovalImpact> {
   return videoRemovalImpactSchema.parse(await apiGet<unknown>(impactPath(projectId, assetId), signal ? { signal } : undefined));
+}
+
+/** What deleting the whole film affects (#868), over its live Versions. */
+export async function readVideoDeletionImpact(projectId: string, videoId: string, signal?: AbortSignal): Promise<VideoDeletionImpact> {
+  return videoDeletionImpactSchema.parse(await apiGet<unknown>(filmImpactPath(projectId, videoId), signal ? { signal } : undefined));
 }
 
 export async function listVideoTrash(projectId: string, signal?: AbortSignal): Promise<VideoTrashResponse> {
@@ -67,7 +74,7 @@ const converge = (ctx: TrashWriteContext) => Promise.all([
  * archive is recorded; a missing row, a lost connection or a server error (where the write may have landed) brings the Videos and the Trash up to date. A changed impact is the dialog's
  * to show, so nothing is refreshed for it. Also the recovery for a refused removal-impact read (the same refusals mean the same thing there).
  */
-export async function refreshAfterRefusal(ctx: TrashWriteContext, error: unknown, op: "remove" | "restore"): Promise<void> {
+export async function refreshAfterRefusal(ctx: TrashWriteContext, error: unknown, op: "remove" | "restore" | "delete"): Promise<void> {
   terminatePrincipalOnUnauthorized(ctx.queryClient, error);
   if (retired.has(ctx.queryClient)) return;
   const { kind } = classifyVideoTrashError(error, op);
@@ -109,6 +116,32 @@ export async function removeVideoVersion(ctx: TrashWriteContext & { assetId: str
   queryClient.setQueryData<VideoDto[]>(projectDataKeys.videos(projectId), (old) => old && (response.video ? old.map((candidate) => (candidate.id === response.video!.id ? response.video! : candidate)) : old.filter((candidate) => candidate.id !== videoId)));
   // Nothing may keep pointing at the removed Version: its notes leave the cache, and the Video's decisions are read again without it.
   queryClient.removeQueries({ queryKey: projectDataKeys.videoNotes(projectId, assetId), exact: true });
+  onApplied?.(response);
+  await converge(ctx);
+  return response;
+}
+
+/**
+ * Deletes the whole film (#868): every live Version moves to Trash with it. `impact` is what the person confirmed; its link list is sent as a count. `onApplied` runs once, as soon as the answer
+ * is applied and before the convergence is awaited. A refusal is rethrown after the local recovery.
+ */
+export async function deleteWholeVideo(ctx: TrashWriteContext, impact: VideoDeletionImpact, onApplied?: (response: VideoDeleteResponse) => void): Promise<VideoDeleteResponse> {
+  const body: VideoDeleteInput = { expected: { assetIds: impact.assetIds, notes: impact.notes, decisions: impact.decisions, releases: impact.releases, links: impact.links.length } };
+  let response: VideoDeleteResponse;
+  try {
+    response = videoDeleteResponseSchema.parse(await apiPost<unknown, VideoDeleteInput>(deletePath(ctx.projectId, ctx.videoId), body));
+  } catch (error) {
+    await refreshAfterRefusal(ctx, error, "delete");
+    throw error;
+  }
+  if (retired.has(ctx.queryClient)) { onApplied?.(response); return response; }
+  await cancelStaleReads(ctx);
+  if (retired.has(ctx.queryClient)) { onApplied?.(response); return response; }
+  const { queryClient, projectId, videoId } = ctx;
+  // Nothing may keep pointing at the deleted film: its Versions' notes leave the cache (read before the film leaves the list).
+  const gone = queryClient.getQueryData<VideoDto[]>(projectDataKeys.videos(projectId))?.find((candidate) => candidate.id === videoId);
+  queryClient.setQueryData<VideoDto[]>(projectDataKeys.videos(projectId), (old) => old && old.filter((candidate) => candidate.id !== videoId));
+  for (const version of gone?.versions ?? []) queryClient.removeQueries({ queryKey: projectDataKeys.videoNotes(projectId, version.assetId), exact: true });
   onApplied?.(response);
   await converge(ctx);
   return response;

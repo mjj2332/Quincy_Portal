@@ -179,6 +179,7 @@ describe("terminal route manifest", () => {
       "GET /d/api/links/:linkId/media/:mediaId/rendition",
       "GET /d/api/links/:linkId/notes/:noteId/markup",
       "GET /d/api/links/:linkId/session",
+      "GET /d/api/links/:linkId/social-overlays",
       "GET /d/api/links/:linkId/versions/:assetId/download",
       "GET /d/api/links/:linkId/versions/:assetId/notes",
       "GET /d/api/links/:linkId/versions/:assetId/poster",
@@ -226,6 +227,22 @@ describe("terminal route manifest", () => {
     // Registered after the Review routes and before the `/d` stubs, so neither shadows the other.
     const order = app.routes.filter((route) => route.path === "/d" || route.path.startsWith("/d/")).map((route) => route.path);
     expect(order.indexOf("/d/review")).toBeLessThan(order.indexOf("/d/:slug")); expect(order.indexOf("/d/:slug")).toBeLessThan(order.indexOf("/d/*"));
+  });
+
+  it("classifies the Social overlay admin routes as withheld and the one image route as public-library (#869)", () => {
+    const admin = PROJECT_SECURITY_ROUTE_CLASSIFICATION.filter((route) => route.path.startsWith("/api/admin/social-overlays"));
+    expect(admin.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
+      "GET /api/admin/social-overlays", "PATCH /api/admin/social-overlays/:id", "POST /api/admin/social-overlays", "POST /api/admin/social-overlays/:id/archive",
+      "POST /api/admin/social-overlays/:id/image", "POST /api/admin/social-overlays/:id/unarchive",
+    ]);
+    for (const route of admin) expect(route, route.path).toMatchObject({ class: "withheld", response: "constant-403" });
+    const library = PROJECT_SECURITY_ROUTE_CLASSIFICATION.filter((route) => route.class === "public-library");
+    expect(library.map((route) => `${route.method} ${route.path}`)).toEqual(["GET /social-overlay-images/:overlayId/:imageUuid"]);
+    expect(library[0]).toMatchObject({ scope: "none", projection: "none", response: "protocol-404" });
+    for (const path of ["/social-overlay-images", "/social-overlay-images/*"]) expect(PROJECT_SECURITY_ROUTE_CLASSIFICATION.find((route) => route.path === path)?.class, path).toBe("terminal-fallback");
+    // Registered before the SPA fallback, or the shell would answer a stale URL with HTML.
+    const order = app.routes.map((route) => route.path);
+    expect(order.indexOf("/social-overlay-images/:overlayId/:imageUuid")).toBeLessThan(order.lastIndexOf("/*"));
   });
 
   it("classifies GET /api/production-gantt as scoped-project / external-safe", () => {
@@ -286,6 +303,10 @@ describe("terminal route manifest", () => {
         path: `/api/projects/${manifestProjectId}/videos`,
         parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS["video-list"].parse(body),
       },
+      "project-social-overlays": {
+        path: `/api/projects/${manifestProjectId}/social-overlays`,
+        parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS["project-social-overlays"].parse(body),
+      },
       "review-link-list": {
         path: `/api/projects/${manifestProjectId}/review-links`,
         parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS["review-link-list"].parse(body),
@@ -313,6 +334,7 @@ describe("terminal route manifest", () => {
       activity: "assigned-project",
       "video-review": "assigned-project",
       "video-list": "assigned-project",
+      "project-social-overlays": "assigned-project",
       "review-link-list": "assigned-project",
       "video-note-list": "assigned-project",
     };
@@ -470,6 +492,18 @@ describe("terminal route manifest", () => {
     const removed = await send("DELETE", `${base}/video-notes/${thread.id}`, { expectedRevision: 2 });
     expect(removed.status).toBe(200);
     EXTERNAL_API_RESPONSE_SCHEMAS["video-note-delete"].parse(await removed.json());
+    // Review status (#863): an assigned External reaches the handler (not the fallback 404), may not approve, and may set In review with a response-only external surface.
+    expect((await send("PUT", `${base}/video-versions/${crypto.randomUUID()}/review-status`, { reviewStatus: "in_review", expectedStatus: "in_review" })).status).toBe(404);
+    expect((await send("PUT", `${base}/video-versions/${manifestVideoAssetId}/review-status`, { reviewStatus: "approved_internal", expectedStatus: "in_review" })).status).toBe(403);
+    const reviewStatus = await send("PUT", `${base}/video-versions/${manifestVideoAssetId}/review-status`, { reviewStatus: "in_review", expectedStatus: "in_review" });
+    expect(reviewStatus.status).toBe(200);
+    EXTERNAL_API_RESPONSE_SCHEMAS["video-review-status"].parse(await reviewStatus.json());
+    // Rename (#867): an assigned External reaches the handler, and the response-only surface decodes it. Sending the current name is a no-op, so later assertions see no rename.
+    expect((await send("PUT", `${base}/video-versions/${crypto.randomUUID()}/file-name`, { filename: "x.mp4" })).status).toBe(404);
+    const currentName = (await database.DB.prepare("SELECT original_filename AS n FROM assets WHERE id = ?").bind(manifestVideoAssetId).first<{ n: string }>())!.n;
+    const renamed = await send("PUT", `${base}/video-versions/${manifestVideoAssetId}/file-name`, { filename: currentName });
+    expect(renamed.status).toBe(200);
+    EXTERNAL_API_RESPONSE_SCHEMAS["video-rename"].parse(await renamed.json());
   });
 
   it("reaches every Review link route (#834): with the links part on, an assigned External reaches each handler, not the fallback 404", async () => {

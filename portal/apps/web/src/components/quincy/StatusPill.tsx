@@ -20,13 +20,13 @@ import { Badge } from "@/components/reui/badge";
 type StatusTone = "positive" | "caution" | "critical" | "info" | "neutral";
 
 const PILL_TONE: Record<StatusTone, string> = {
-  positive: "text-signal-positive border-signal-positive/45 bg-signal-positive/8",
+  positive: "text-success-foreground border-signal-positive/45 bg-signal-positive/8",
   // Text uses the darkened ochre, border and wash keep the brand value — see
   // `--signal-caution-text` in tokens/colors.css for why this tone alone needs the split.
   // `--signal-caution-text` measures 6.65:1 on `--paper-000`.
-  caution:  "text-signal-caution-text border-signal-caution/45 bg-signal-caution/8",
-  critical: "text-signal-critical border-signal-critical/45 bg-signal-critical/8",
-  info:     "text-signal-info border-signal-info/45 bg-signal-info/8",
+  caution:  "text-warning-foreground border-signal-caution/45 bg-signal-caution/8",
+  critical: "text-destructive-wash-foreground border-signal-critical/45 bg-signal-critical/8",
+  info:     "text-info-foreground border-signal-info/45 bg-signal-info/8",
   neutral:  "text-foreground-secondary border-border bg-surface-sunken",
 };
 

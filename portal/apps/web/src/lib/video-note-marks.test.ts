@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMPTY_MARKS, markFrame, marksToFrames } from "./video-note-marks";
+import { EMPTY_MARKS, clampMark, markFrame, marksToFrames, rangeStep } from "./video-note-marks";
 
 describe("video-note-marks (#741 5b)", () => {
   it("I only and O only are point notes at the marked frame", () => {
@@ -44,4 +44,24 @@ describe("video-note-marks (#741 5b)", () => {
     expect(marksToFrames({ in: 10, out: 999 }, 300)).toEqual({ startFrame: 10, endFrame: 300 });
   });
 
+});
+
+describe("rangeStep / clampMark (#861)", () => {
+  it("the button cycles in -> out -> clear, and an out-only mark reads as Set in", () => {
+    expect(rangeStep(EMPTY_MARKS)).toBe("in");
+    expect(rangeStep({ in: 4, out: null })).toBe("out");
+    expect(rangeStep({ in: 4, out: 9 })).toBe("clear");
+    expect(rangeStep({ in: null, out: 9 })).toBe("in");
+  });
+
+  it("dragging In never passes Out and Out never passes In, and both stay inside the film; equal is a one-frame range", () => {
+    const marks = { in: 10, out: 20 };
+    expect(clampMark(marks, "in", 25, 99)).toBe(20);
+    expect(clampMark(marks, "out", 3, 99)).toBe(10);
+    expect(clampMark(marks, "in", -5, 99)).toBe(0);
+    expect(clampMark(marks, "out", 500, 99)).toBe(99);
+    expect(clampMark({ in: 10, out: null }, "out", 2, 99)).toBe(10);
+    expect(clampMark({ in: null, out: 7 }, "in", 50, 99)).toBe(7);
+    expect(clampMark(EMPTY_MARKS, "in", 3.6, 99)).toBe(4);
+  });
 });

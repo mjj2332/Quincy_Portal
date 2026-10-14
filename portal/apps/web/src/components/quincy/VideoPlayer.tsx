@@ -1,19 +1,38 @@
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
-import { Maximize, Pause, Play, StepBack, StepForward, Volume2, VolumeX } from "lucide-react";
-import { framesToTimecode, rationalToNumber, type Box, type VideoVersionDto } from "@quincy/shared";
+import { useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
+import { ArrowRightFromLine, ArrowRightToLine, Maximize, Pause, Play, StepBack, StepForward, Volume2, VolumeX, X } from "lucide-react";
+import { rationalToNumber, type Box, type VideoVersionDto } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { useVideoFrameClock, type VideoFrameClock } from "../../lib/video-frame-clock";
 import { usePlayerKeys } from "../../lib/use-player-keys";
+import { useFrameLabel, useTimeFormat } from "../../lib/time-format-prefs";
+import { OverlayContainerContext } from "../OverlayContainerContext";
 import { Button } from "../reui/button";
 import { Kbd, KbdGroup } from "../reui/kbd";
 import { Slider } from "../reui/slider";
 import { Toggle } from "../reui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
+import { TimeFormatMenu } from "./TimeFormatMenu";
 import { VideoStage } from "./VideoStage";
-import { VideoPendingRangeBand, VideoTimelineMarkers, type TimelineMarker } from "./VideoTimelineMarkers";
+import { SocialPreviewControls, type SocialPreviewMode } from "./SocialPreviewControls";
+import { rangeStep, type NoteMarks } from "../../lib/video-note-marks";
+import { VideoPendingRangeBand, VideoRangeHandles, VideoTimelineMarkers, type TimelineMarker } from "./VideoTimelineMarkers";
 
 /** What the player reads of a Version: where it streams, how it is timed, and how its timecode is labelled. */
 export type VideoPlayerVersion = Pick<VideoVersionDto, "streamUrl" | "fps" | "frameCount" | "width" | "height" | "tcNominalFps" | "tcDropFrame" | "startTimecodeFrames" | "hasAudio">;
+
+/**
+ * The composer's in / out range as the player draws and edits it (#861): the marks to show, whether the host takes changes right now, and how to
+ * clear them. Marking itself goes through `onMark`, the path I and O use, so a host's wrappers run for the button and the handles too.
+ * Absent, the player has no range button and no handles.
+ */
+export type VideoRangeControl = {
+  marks: NoteMarks;
+  /** The host takes no change to the marks right now (archived Project, a reply open, a request out, no open composer). The controls stay, disabled. */
+  locked: boolean;
+  /** Why it is locked, for the disabled button's tooltip. */
+  hint?: string;
+  clear(): void;
+};
 
 /** For a host that owns the keyboard scope (the review dialog): hands it the player's shortcut handler. True when the key was the player's. */
 export type VideoPlayerControl = {
@@ -26,7 +45,7 @@ export const COARSE = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[721p
 const MONO = "[font:var(--type-mono)] tabular-nums";
 // These chips keep the Lightbox's SHORTCUT_KBD skin (bordered, bg-secondary) rather than the Kbd primitive, to match the Lightbox legend.
 export const LEGEND_KBD = "rounded-[var(--radius-xs)] border border-solid border-[length:var(--border-width-hair)] border-border bg-secondary px-[var(--space-1)] text-foreground [font:var(--weight-regular)_var(--text-2xs)/1.4_var(--font-mono)]";
-const LEGEND = "flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)] text-foreground-secondary [font:var(--type-label)] pointer-coarse:hidden max-[721px]:hidden";
+const LEGEND = "flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)] text-foreground-secondary [font:var(--type-label)] pointer-coarse:hidden max-[721px]:hidden @max-[64rem]:hidden";
 
 export function IconTip({ label, keys, children }: { label: string; keys?: string; children: React.ReactElement }) {
   return <Tooltip>
@@ -45,7 +64,7 @@ export function IconTip({ label, keys, children }: { label: string; keys?: strin
  * surface (`data-surface="inverse"`) around it, like the Lightbox. `keyboard="self"` listens on the player; `"host"` leaves the
  * scope to the caller, who forwards events to `controlRef.handleKeyDown`.
  */
-export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, onClockChange, overlay, onMediaError, transportLocked = false, transportActions, transportReplacement }: {
+export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, watermark, onMediaError, transportLocked = false, transportActions, transportReplacement, social }: {
   version: VideoPlayerVersion;
   title: string;
   controlRef?: Ref<VideoPlayerControl>;
@@ -64,10 +83,14 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   onMarkerSelect?: (id: string) => void;
   /** Takes I and O: called with the frame on screen (the one on its way while a seek is in flight). Without it I and O are not bound. */
   onMark?: (kind: "in" | "out", frame: number) => void;
+  /** The in / out range, drawn as handles on the scrubber and driven by one cycling button next to the time format (#861). Without it neither exists. */
+  range?: VideoRangeControl;
   /** The frame clock, once the element is ready, and null when it goes away; siblings (the notes composer) subscribe to it on their own. */
   onClockChange?: (clock: VideoFrameClock | null) => void;
   /** Drawn over the stage (#741 6b-ui); a function is handed the picture box. Built by the host, so this module never imports it. */
   overlay?: ReactNode | ((box: Box | null) => ReactNode);
+  /** Drawn over the picture box and never dropped by Social (#872): the premium watermark. Built by the host. */
+  watermark?: (box: Box) => ReactNode;
   /** The `<video>` reported an error; the stage still shows its own "can't play" notice. */
   onMediaError?: () => void;
   /** Drawing: the transport, the scrubber and the player's keys are inert, so nothing moves the frame under the pen. */
@@ -76,8 +99,16 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   transportActions?: ReactNode;
   /** Replaces the whole transport block (scrubber, controls, key legend) in place, under the picture, while the host needs the room (drawing). Never overlaid on the picture. */
   transportReplacement?: ReactNode;
+  /**
+   * Social preview (#871): the film framed 9:16 under an overlay. While set the player owns the rule that nothing is marked, drawn or noted: it ignores
+   * `markers`, `pendingRange`, `range`, `onMark`, `overlay`, `transportActions` and `transportReplacement`, but keeps `watermark`. Playback, the scrubber, the keys, mute, the time format and full screen work as ever.
+   */
+  social?: SocialPreviewMode;
 }) {
+  if (social) { markers = undefined; pendingRange = undefined; onMark = undefined; range = undefined; overlay = undefined; transportActions = undefined; transportReplacement = undefined; }
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
+  const [failedImage, setFailedImage] = useState<string | null>(null);
+  const socialActive = social !== undefined;
   const [muted, setMutedState] = useState(initialMuted);
   const playerRef = useRef<HTMLElement | null>(null);
   // The transport block's height, kept while it shows so its replacement (drawing) takes at least the same room: the picture above never moves when Draw is pressed.
@@ -86,9 +117,20 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   useLayoutEffect(() => { if (transportReplacement == null && transportRef.current) transportHeight.current = transportRef.current.offsetHeight; });
   const clock = useVideoFrameClock(video, version, initialFrame === undefined ? {} : { initialFrame });
 
-  const base = useMemo(() => ({ nominalFps: version.tcNominalFps, dropFrame: version.tcDropFrame }), [version.tcNominalFps, version.tcDropFrame]);
-  const start = version.startTimecodeFrames ?? 0;
-  const timecode = useCallback((frame: number) => framesToTimecode(frame, base, start), [base, start]);
+  const timecode = useFrameLabel(version);
+  const [timeFormat] = useTimeFormat();
+  // Full screen shows only the player's own subtree, so the time-format menu portals into it while it is up (else it opens behind, unseen).
+  const [section, setSection] = useState<HTMLElement | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const inheritedOverlay = useContext(OverlayContainerContext);
+  useEffect(() => {
+    const onChange = () => { setIsFullscreen(section !== null && document.fullscreenElement === section); };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => { document.removeEventListener("fullscreenchange", onChange); };
+  }, [section]);
+  const socialOverlay = social?.overlays.find((candidate) => candidate.id === social.currentId) ?? null;
+  // A failure is about one attempt: a new overlay, or Social turned off and on again, starts clean; a successful load clears it.
+  useEffect(() => { setFailedImage(null); }, [socialOverlay?.imageUrl, socialActive]);
   const lastFrame = Math.max(0, version.frameCount - 1);
   const shownFrame = clock.targetFrame ?? clock.frame;
   const fullscreenAvailable = typeof document !== "undefined" && document.fullscreenEnabled === true;
@@ -119,18 +161,30 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const currentFrame = useCallback(() => currentFrameRef.current(), []);
   useImperativeHandle(controlRef, () => ({ handleKeyDown, currentFrame }), [handleKeyDown, currentFrame]);
 
+  const step = range ? rangeStep(range.marks) : "in";
+  const rangeLocked = transportLocked || (range?.locked ?? true);
+  const marksTaken = !rangeLocked && onMark !== undefined;
+  const pressRange = () => {
+    if (!range || rangeLocked) return;
+    if (step === "clear") range.clear();
+    else onMark?.(step, markFrame());
+  };
+  // A handle moved: it marks its own end, and the paused playhead follows so the frame under the handle is the one on screen.
+  const moveHandle = (kind: "in" | "out", frame: number) => { onMark?.(kind, frame); clock.seekToFrame(frame); };
+  const stepLabel = step === "in" ? "Set in point" : step === "out" ? "Set out point" : "Clear in and out";
+
   const toggleMuted = (next: boolean) => { setMutedState(next); clock.setMuted(next); onMutedChange?.(next); };
   const playLabel = clock.playing ? "Pause" : "Play";
 
   return <section
-    ref={playerRef}
+    ref={(element) => { playerRef.current = element; setSection(element); }}
     aria-label="Player"
     data-testid="video-player"
     tabIndex={-1}
     onKeyDown={keyboard === "self" ? (event) => { handleKeyDown(event); } : undefined}
-    className={cn("flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", className)}
+    className={cn("@container flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", className)}
   >
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} onVideo={setVideo} overlay={overlay} onMediaError={onMediaError} />
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} {...(social ? { social: { fit: social.fit, imageUrl: socialOverlay?.imageUrl ?? null, onImageError: () => { setFailedImage(socialOverlay?.imageUrl ?? null); }, onImageLoad: () => { setFailedImage(null); } } } : {})} />
 
     {transportReplacement != null ? <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div> : <div ref={transportRef} className="flex flex-col gap-[var(--space-3)]">
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}
@@ -148,6 +202,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
           onValueChange={(value) => { clock.seekToFrame(Array.isArray(value) ? (value[0] ?? 0) : value); }}
           thumbProps={{ getAriaLabel: () => "Timeline", getAriaValueText: (_formatted, value) => timecode(value) }}
         />
+        {range !== undefined && <VideoRangeHandles marks={range.marks} frameCount={version.frameCount} label={timecode} largeStep={Math.max(1, Math.round(rationalToNumber(version.fps)))} interactive={marksTaken} onMove={moveHandle} onGrab={clock.pause} />}
       </div>
       {markers !== undefined && <VideoTimelineMarkers markers={markers} frameCount={version.frameCount} {...(onMarkerSelect ? { onSelect: onMarkerSelect } : {})} />}
     </div>
@@ -165,6 +220,16 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
       <output data-testid="video-readout" aria-live={clock.playing || !clock.confirmed ? "off" : "polite"} className={cn("px-[var(--space-2)] max-[721px]:px-0", MONO)}>
         <span>{timecode(clock.frame)}</span><span className="text-foreground-secondary">{` / ${timecode(version.frameCount)}`}</span>
       </output>
+      <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><TimeFormatMenu /></OverlayContainerContext.Provider>
+      {social && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><SocialPreviewControls social={social} imageFailed={socialOverlay !== null && failedImage === socialOverlay.imageUrl} /></OverlayContainerContext.Provider>}
+      {range !== undefined && (() => {
+        const rangeButton = <Button type="button" variant="outline" size="icon" aria-label={stepLabel} data-testid="video-range-button" data-step={step} className={COARSE} disabled={rangeLocked} onClick={pressRange}>
+          {step === "in" ? <ArrowRightFromLine aria-hidden="true" /> : step === "out" ? <ArrowRightToLine aria-hidden="true" /> : <X aria-hidden="true" />}
+        </Button>;
+        // A disabled button gets no hover or focus, so its reason hangs on an enabled wrapper the tooltip can open from.
+        if (rangeLocked && range.hint) return <IconTip label={range.hint}><span tabIndex={0} data-testid="video-range-tip" className="inline-flex rounded-[var(--radius-md)] focus-visible:ring-2 focus-visible:ring-ring">{rangeButton}</span></IconTip>;
+        return <IconTip label={stepLabel} {...(rangeLocked ? {} : { keys: step === "clear" ? "I / O" : step === "in" ? "I" : "O" })}>{rangeButton}</IconTip>;
+      })()}
       <div data-testid="video-key-legend" className={LEGEND}>
         <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>J</Kbd><Kbd className={LEGEND_KBD}>K</Kbd><Kbd className={LEGEND_KBD}>L</Kbd></KbdGroup>shuttle</span>
         <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>←</Kbd><Kbd className={LEGEND_KBD}>→</Kbd></KbdGroup>frame</span>

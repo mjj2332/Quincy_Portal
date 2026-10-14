@@ -71,9 +71,15 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
   isOpen: boolean; editingId: string | null;
   /** True while the draft of an edit stands in for the saved drawing of the note `id` (a redraw is under way, drawn, or the drawing is being removed), so the saved strokes must not show under it. */
   replacesSavedDrawing: (id: string | null) => boolean;
+  /** The pen is on the picture. */
+  drawing: boolean;
+  /** Puts the pen down (also from `confirming`: a late confirmation then does nothing); the strokes stay in the draft. Social preview (#872) ends a drawing this way on entry. */
+  endDrawing: () => void;
   begin: () => void; beginEdit: (thread: GuestNoteThreadDto) => void; close: () => void; form: ReactNode; overlay: (box: Box | null) => ReactNode; transportReplacement: ReactNode;
   /** The player's I / O marks, or undefined while the marks cannot change (no draft, locked by a drawing, drawing in progress, or posting). */
   onMark: ((kind: "in" | "out", frame: number) => void) | undefined;
+  /** The draft's marks, for the player's range button and handles (#861), and the Clear they offer: an edit keeps a frame (a point), a new draft empties. Both inert while `onMark` is. */
+  marks: NoteMarks; clearMarks: () => void;
 } {
   const [isOpen, setOpen] = useState(false);
   const [doc, setDoc] = useState<RichTextDoc>(EMPTY_DOC);
@@ -92,6 +98,8 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
   const compact = useMediaQuery("(max-width: 720px)");
   const svgRef = useRef<SVGSVGElement | null>(null);
   const opId = useRef(0);
+  // Owns a drawing confirmation only. Post / Save own `opId`; ending a drawing (Social preview, #872) must never discard a submission's answer.
+  const drawOp = useRef(0);
   // The frame the drawing history was built on; it survives the off / confirming phases so a later start on another frame can tell.
   const drawingFor = useRef<number | null>(null);
 
@@ -103,7 +111,7 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
   // `useMarkup` is called below (it needs `items`), so `reset` reaches its history through a ref.
   const resetHistoryRef = useRef<() => void>(() => undefined);
   const reset = useCallback(() => {
-    opId.current += 1;
+    opId.current += 1; drawOp.current += 1;
     resetHistoryRef.current(); // a new draft starts with no undo / redo steps from the last one
     setDoc(EMPTY_DOC); setUploading(false); setMarks(EMPTY_MARKS); setItems(NO_ITEMS); setDrawFrame(null); setPhase("off"); setProblem(null); setPending(false); setRefusedFor(null); setTarget(null); setRemoved(false); drawingFor.current = null;
   }, []);
@@ -169,6 +177,7 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
     return () => { window.removeEventListener("keydown", onKeyDown); };
   }, [drawing, canUndo, canRedo, undo, redo]);
 
+  const endDrawing = useCallback(() => { drawOp.current += 1; setPhase("off"); }, []);
   const startDrawing = async () => {
     if (!clock || phase !== "off" || pending) return;
     clock.pause();
@@ -180,11 +189,11 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
     else if (marks.out === null) setMarks({ in: onScreen, out: null }); // a point note follows its drawing
     else if (frames !== null && frames.endFrame !== null && (onScreen < frames.startFrame || onScreen >= frames.endFrame)) frame = frames.startFrame;
     setProblem(null); setPhase("confirming");
-    const mine = ++opId.current;
+    const mine = ++drawOp.current;
     clock.seekToFrame(frame);
     let landed: number | "timeout";
-    try { landed = await confirmedFrame(clock); } catch { if (opId.current === mine) { setPhase("off"); setProblem("The frame could not be confirmed. Try Draw again."); } return; }
-    if (opId.current !== mine) return;
+    try { landed = await confirmedFrame(clock); } catch { if (drawOp.current === mine) { setPhase("off"); setProblem("The frame could not be confirmed. Try Draw again."); } return; }
+    if (drawOp.current !== mine) return;
     if (landed === "timeout") { setPhase("off"); setProblem("The frame took too long to show. Try Draw again."); return; }
     if (landed !== frame) { setPhase("off"); setProblem("The frame moved. Press Draw again."); return; }
     setDrawFrame(frame);
@@ -225,6 +234,8 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
   const marksLocked = target !== null && (hadDrawing || items.length > 0);
   const marksOpen = isOpen && !marksLocked && !pending && phase === "off";
   const onMark = useMemo(() => (marksOpen ? (kind: "in" | "out", frame: number) => { setMarks((current) => markFrame(current, kind, frame)); } : undefined), [marksOpen]);
+
+  const clearMarks = useMemo(() => (marksOpen ? () => { setMarks((current) => (target === null ? EMPTY_MARKS : { in: current.in ?? current.out, out: null })); } : () => undefined), [marksOpen, target]);
 
   const showsDraft = drawing || (isOpen && items.length > 0 && drawFrame !== null && !playing && frameNow === drawFrame);
   const overlay = useCallback((box: Box | null): ReactNode => {
@@ -283,7 +294,7 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
   const editingId = isOpen && target !== null ? target.id : null;
   const replacing = editingId !== null && (items.length > 0 || phase !== "off" || removed);
   const replacesSavedDrawing = useCallback((id: string | null) => replacing && id === editingId, [replacing, editingId]);
-  return useMemo(() => ({ isOpen, editingId, replacesSavedDrawing, begin, beginEdit, close, form, overlay, transportReplacement, onMark }), [isOpen, editingId, replacesSavedDrawing, begin, beginEdit, close, form, overlay, transportReplacement, onMark]);
+  return useMemo(() => ({ isOpen, editingId, drawing, endDrawing, replacesSavedDrawing, begin, beginEdit, close, form, overlay, transportReplacement, onMark, marks, clearMarks }), [isOpen, editingId, drawing, endDrawing, replacesSavedDrawing, begin, beginEdit, close, form, overlay, transportReplacement, onMark, marks, clearMarks]);
 }
 
 /** The SVG on the picture box. A gesture never outlives draw mode or the picture it started on: leaving, or a resize, drops the stroke in progress and keeps the finished ones. */

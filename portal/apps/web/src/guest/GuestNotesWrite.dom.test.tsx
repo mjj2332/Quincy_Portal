@@ -3,6 +3,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GuestNoteThreadDto, GuestSessionResponse, GuestVideoDto } from "@quincy/shared";
 import { installVideoElementStub, type VideoElementStub } from "../testing/video-element";
+import { installLocalStorageShim } from "../testing/local-storage";
+import { resetUiPrefMemory } from "../lib/ui-prefs";
+import { TIME_FORMAT_KEY } from "../lib/time-format-prefs";
 import { mockViewport, type MockViewport } from "../testing/viewport";
 import { GuestApp } from "./GuestApp";
 
@@ -1313,5 +1316,151 @@ describe("rich notes (#835 C): pictures, no mentions", () => {
     await act(async () => { props("guest-composer-body").onChange(withImage("My note")); });
     await submit("guest-composer");
     expect(patched).toEqual({ expectedRevision: 3, content: withImage("My note") });
+  });
+});
+
+describe("collapsing the notes pane keeps its work (#859)", () => {
+  let shim: ReturnType<typeof installLocalStorageShim>;
+  beforeEach(() => { shim = installLocalStorageShim(); resetUiPrefMemory(); });
+  afterEach(() => { shim.restore(); resetUiPrefMemory(); });
+  const toggle = () => byId("video-pane-toggle")!;
+
+  it("a reply that is in flight when the pane is collapsed still shows its failure when the pane is reopened", async () => {
+    notes = { [asset(10)]: [note(1)] };
+    let reject: () => void = () => undefined;
+    extra = (url, init) => (url.endsWith("/replies") && init?.method === "POST" ? new Promise<Response>((resolve) => { reject = () => { resolve(json({ error: "server_error" }, 500)); }; }) : undefined);
+    await open();
+    await click(byId("guest-note-reply-button"));
+    await typeInto(byId("guest-reply-body"), "On it");
+    await submit("guest-reply-form");
+    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(true);
+    await click(toggle());
+    expect(byId("video-review-pane")!.hidden).toBe(true);
+    await act(async () => { reject(); });
+    await flush();
+    await click(toggle());
+    expect(byId("video-review-pane")!.hidden).toBe(false);
+    expect(byId("guest-reply-problem")).not.toBeNull();
+    expect(byId("guest-reply-problem")!.textContent).not.toBe("");
+  });
+
+  it("an attachment still uploading when the pane is collapsed is still uploading (Send stays held) when it is reopened", async () => {
+    notes = { [asset(10)]: [note(1)] };
+    await open();
+    await click(byId("guest-note-reply-button"));
+    await act(async () => { field.props.get("guest-reply-body")!.onUploadingChange!(true); });
+    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(true);
+    await click(toggle());
+    await click(toggle());
+    expect(byId("guest-reply-form")).not.toBeNull();
+    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { field.props.get("guest-reply-body")!.onUploadingChange!(false); });
+    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("the time format on the guest page (#860)", () => {
+  let shim: ReturnType<typeof installLocalStorageShim>;
+  beforeEach(() => { shim = installLocalStorageShim(); resetUiPrefMemory(); });
+  afterEach(() => { shim.restore(); resetUiPrefMemory(); });
+  const trigger = () => document.querySelector<HTMLElement>('[data-testid="video-time-format-trigger"]')!;
+  const choose = async (id: string) => {
+    await act(async () => { trigger().click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush();
+    await act(async () => { document.querySelector<HTMLElement>(`[data-testid="video-time-format-${id}"]`)!.click(); await Promise.resolve(); });
+    await flush();
+  };
+
+  it("offers the menu on the player; picking Frames rewrites the note anchors and the composer's anchor, and the choice is saved", async () => {
+    notes = { [asset(10)]: [note(1, { startFrame: 50 })] };
+    await open();
+    await atSeconds(2);
+    expect(trigger().getAttribute("aria-label")).toBe("Time format: Timecode");
+    expect(byId("guest-note-anchor")!.textContent).toBe("00:00:02:00");
+    await choose("frames");
+    expect(byId("guest-note-anchor")!.textContent).toBe("50");
+    await click(byId("guest-add-note"));
+    expect(byId("guest-composer-anchor")!.textContent).toBe("At 50");
+    expect(JSON.parse(shim.values.get(TIME_FORMAT_KEY)!)).toBe("frames");
+  });
+
+  it("a value written under the one browser-wide key (the staff viewer's) is what the guest shows", async () => {
+    shim.values.set(TIME_FORMAT_KEY, JSON.stringify("standard"));
+    notes = { [asset(10)]: [note(1, { startFrame: 50 })] };
+    await open();
+    expect(trigger().getAttribute("aria-label")).toBe("Time format: Standard");
+    expect(byId("guest-note-anchor")!.textContent).toBe("0:02");
+  });
+});
+
+describe("In / Out range button and handles (#861)", () => {
+  const rangeButton = () => byId("video-range-button") as HTMLButtonElement | null;
+  const handle = (kind: "in" | "out") => byId(`video-range-${kind}`);
+  const keyOn = async (target: Element, k: string) => { await act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); }); await flush(); };
+
+  it("with no open composer the button is there but disabled, and it starts nothing", async () => {
+    await open();
+    expect(rangeButton()!.disabled).toBe(true);
+    expect(byId("guest-composer")).toBeNull();
+  });
+
+  it("with an open composer the button cycles Set out -> Clear -> Set in, and the anchor and pending band follow", async () => {
+    await open();
+    await atSeconds(2);
+    await click(byId("guest-add-note"));
+    expect(rangeButton()!.disabled).toBe(false);
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+    await atSeconds(4);
+    await click(rangeButton());
+    expect(byId("guest-composer-anchor")?.textContent).toMatch(/00:00:02:00.*00:00:04:00/);
+    expect(byId("video-pending-band")).not.toBeNull();
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Clear in and out");
+    await click(rangeButton());
+    expect(byId("guest-composer-anchor")?.textContent).toBe("No frame marked");
+    expect(byId("video-pending-band")).toBeNull();
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set in point");
+  });
+
+  it("a handle moves one end and the POST carries the exclusive end frame", async () => {
+    let posted: unknown = null;
+    extra = (url, init) => {
+      if (url.endsWith("/notes") && init?.method === "POST") { posted = JSON.parse(String(init.body)); return json(mine(5, { startFrame: 51, endFrame: 101 }), 201); }
+      return undefined;
+    };
+    await open();
+    await atSeconds(2);
+    await click(byId("guest-add-note"));
+    await atSeconds(4);
+    await click(rangeButton());
+    await keyOn(handle("in")!, "ArrowRight");
+    expect(byId("guest-composer-anchor")?.textContent).toMatch(/00:00:02:01.*00:00:04:00/);
+    await typeInto(byId("guest-composer-body"), "Nudged");
+    await submit("guest-composer");
+    expect(posted).toEqual({ startFrame: 51, endFrame: 101, content: para("Nudged") });
+  });
+
+  it("the range controls give way to the pen while drawing, and a note with a drawing locks its frames", async () => {
+    await open();
+    await atSeconds(2);
+    await click(byId("guest-add-note"));
+    await click(byId("guest-composer-draw"));
+    expect(rangeButton()).toBeNull();
+  });
+
+  it("Clear on a note being edited keeps its first frame as a point", async () => {
+    notes = { [asset(10)]: [mine(2, { revision: 3, startFrame: 50, endFrame: 101 })] };
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Clear in and out");
+    await click(rangeButton());
+    expect(byId("guest-composer-anchor")?.textContent).toMatch(/^At 00:00:02:00/);
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+  });
+
+  it("a link that allows no comments has no range button", async () => {
+    session = SESSION_OFF;
+    await open();
+    expect(rangeButton()).toBeNull();
   });
 });

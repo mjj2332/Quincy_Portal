@@ -129,6 +129,7 @@ export const SHARED_PARENT_TABLES: Readonly<Record<string, string>> = {
   integration_connections: "the one Dropbox/AutoHDR connection every project's AutoHDR handoffs, mappings and claims share; teardown never deletes it",
   notification_digests: "per-recipient digest send records (#489): digest items point at one with ON DELETE SET NULL, but a digest belongs to a recipient and a slot, never to a fixture project; teardown never deletes them",
   guest_reviewers: "global directory of external video reviewers (#741): video_notes.author_guest_id points at one, but a guest belongs to an email and not to a fixture project; teardown never deletes them",
+  social_overlays: "global Social overlay library (#869, #870): project_social_overlays.overlay_id points at a shared overlay an Admin manages, never one a fixture project owns; teardown never deletes library rows",
   pipeline_stages: "global stage lookup named in the round-3 review; no FK points at it today (projects.stage_key is a bare text key), so this entry is inert until one does",
 };
 

@@ -18,6 +18,8 @@ import { reviewRoutes } from "./routes/review";
 import { mediaRoutes } from "./routes/media";
 import { annotationsRoutes } from "./routes/annotations";
 import { adminRoutes } from "./routes/admin";
+import { mountSocialOverlayImages, socialOverlayAdminRoutes } from "./routes/social-overlays";
+import { projectSocialOverlayRoutes } from "./routes/project-social-overlays";
 import { stagesRoutes } from "./routes/stages";
 import { collectionsRoutes } from "./routes/collections";
 import { noticeBoardRoutes } from "./routes/notice-board";
@@ -35,6 +37,8 @@ import { deliveryRoutes } from "./routes/delivery";
 import { deliveryMediaRoutes } from "./routes/delivery-media";
 import { videoApprovalRoutes } from "./routes/video-approval";
 import { videoTrashRoutes } from "./routes/video-trash";
+import { videoReviewStatusRoutes } from "./routes/video-review-status";
+import { videoRenameRoutes } from "./routes/video-rename";
 import { videoMarkerExportRoutes } from "./routes/video-marker-export";
 import { videoDownloadRoutes } from "./routes/video-download";
 import { linkPreviewRoutes } from "./routes/link-previews";
@@ -90,7 +94,7 @@ app.all("/api/auth/*", terminalRoute("/api/auth/*", (c) => getAuth(c.env).handle
 const api = new Hono<AppEnv>();
 api.use("/*", requireSession);
 api.get("/me", terminalRoute("/me", (c) => { const { via: _via, ...user } = c.get("user"); const response = { user, capabilities: [...(ROLE_CAPABILITIES[user.role] ?? [])] }; return c.json(user.role === "external_editor" ? externalMeResponseSchema.parse(response) : response); }));
-api.route("/", usersRoutes).route("/", projectsRoutes).route("/", projectDeadlineRoutes).route("/", notificationPreferencesRoutes).route("/", externalUploadsRoutes).route("/", uploadsRoutes).route("/", collectionsRoutes).route("/", integrationsRoutes).route("/", reviewRoutes).route("/", annotationsRoutes).route("/", stagesRoutes).route("/", adminRoutes).route("/", noticeBoardRoutes).route("/", mentionableUsersRoutes).route("/", projectCommentsRoutes).route("/", embeddedMediaRoutes).route("/", videosRoutes).route("/", videoUploadsRoutes).route("/", videoNotesRoutes).route("/", reviewLinksRoutes).route("/", videoApprovalRoutes).route("/", videoTrashRoutes).route("/", assetPremiumRoutes).route("/", deliveryRoutes).route("/", deliveryMediaRoutes).route("/", videoMarkerExportRoutes).route("/", videoDownloadRoutes).route("/", linkPreviewRoutes).route("/", projectSubtasksRoutes).route("/", notificationsRoutes).route("/", assetsRoutes).route("/", projectAccessSnapshotRoutes).route("/", dashboardPeopleRoutes).route("/", productionCalendarRoutes).route("/", productionGanttRoutes).route("/", projectActivityRoutes).route("/", projectWhiteboardRoutes).route("/", connectedAppsRoutes).route("/", bootTimingRoutes);
+api.route("/", usersRoutes).route("/", projectsRoutes).route("/", projectDeadlineRoutes).route("/", notificationPreferencesRoutes).route("/", externalUploadsRoutes).route("/", uploadsRoutes).route("/", collectionsRoutes).route("/", integrationsRoutes).route("/", reviewRoutes).route("/", annotationsRoutes).route("/", stagesRoutes).route("/", adminRoutes).route("/", socialOverlayAdminRoutes).route("/", projectSocialOverlayRoutes).route("/", noticeBoardRoutes).route("/", mentionableUsersRoutes).route("/", projectCommentsRoutes).route("/", embeddedMediaRoutes).route("/", videosRoutes).route("/", videoUploadsRoutes).route("/", videoNotesRoutes).route("/", reviewLinksRoutes).route("/", videoApprovalRoutes).route("/", videoTrashRoutes).route("/", videoReviewStatusRoutes).route("/", videoRenameRoutes).route("/", assetPremiumRoutes).route("/", deliveryRoutes).route("/", deliveryMediaRoutes).route("/", videoMarkerExportRoutes).route("/", videoDownloadRoutes).route("/", linkPreviewRoutes).route("/", projectSubtasksRoutes).route("/", notificationsRoutes).route("/", assetsRoutes).route("/", projectAccessSnapshotRoutes).route("/", dashboardPeopleRoutes).route("/", productionCalendarRoutes).route("/", productionGanttRoutes).route("/", projectActivityRoutes).route("/", projectWhiteboardRoutes).route("/", connectedAppsRoutes).route("/", bootTimingRoutes);
 app.route("/api", api);
 app.all("/api", terminalRoute("/api", (c) => c.json({ error: "Not found" }, 404)));
 app.all("/api/*", terminalRoute("/api/*", (c) => c.json({ error: "Not found" }, 404)));
@@ -121,6 +125,8 @@ app.get("/__transform-source/*", terminalRoute("/__transform-source/*", async (c
   if (object.httpEtag) headers.etag = object.httpEtag;
   return new Response(object.body, { headers });
 }));
+// The Social overlay image (#869): one public, image-only route for staff and guests alike, before the SPA fallback (and in `run_worker_first`).
+mountSocialOverlayImages(app);
 // MCP door (#702): outside `/api` (router-wide middleware leaks across sibling mounts), before the SPA fallback.
 mountMcp(app, (request, env, ctx) => app.fetch(request, env, ctx));
 // Signed MCP downloads (#707): outside `/api` for the same reason, no cookie CORS. Redemption dispatches back through `app.fetch`.

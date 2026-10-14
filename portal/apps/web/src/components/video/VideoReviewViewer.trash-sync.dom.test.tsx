@@ -43,7 +43,7 @@ async function openViewer(parts: string[]) {
 }
 const refetch = async () => { await act(async () => { await client.invalidateQueries({ queryKey: projectDataKeys.videos(PROJECT) }); }); await flush(6); };
 async function pickVersion(label: string) {
-  const trigger = document.querySelector<HTMLElement>('[role="combobox"]')!;
+  const trigger = document.querySelector<HTMLElement>('[role="dialog"] [role="combobox"]')!;
   await act(async () => { trigger.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); trigger.click(); });
   await flush(6);
   await act(async () => { [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent?.startsWith(label))!.click(); });

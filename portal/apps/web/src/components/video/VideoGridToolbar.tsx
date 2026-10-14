@@ -1,0 +1,93 @@
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, SlidersHorizontal } from "lucide-react";
+import type { VideoReviewStatus } from "@quincy/shared";
+import { cn } from "@/lib/utils";
+import { Button } from "../quincy/Button";
+import { IconButton } from "../quincy/icon-button";
+import { Label } from "../reui/label";
+import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "../reui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
+import { Switch } from "../reui/switch";
+import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
+import type { VideoGridPrefs, VideoGridSize, VideoGridSort } from "../../lib/video-grid-prefs";
+import { REVIEW_STATUS_LABEL } from "./VideoReviewStatusPill";
+
+const TOOL = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
+const BAR = cn(TOOL, "h-8");
+const LABEL = "text-foreground-secondary [font:var(--type-label)]";
+
+const SORT_LABEL: Record<VideoGridSort, string> = { uploaded: "Upload date", name: "Name", status: "Review status" };
+/** The direction a key reads naturally in when it is first picked. */
+const NATURAL_DIR: Record<VideoGridSort, VideoGridPrefs["dir"]> = { uploaded: "desc", name: "asc", status: "asc" };
+const DIR_LABEL: Record<VideoGridSort, Record<VideoGridPrefs["dir"], string>> = {
+  uploaded: { desc: "Newest first", asc: "Oldest first" },
+  name: { asc: "A–Z", desc: "Z–A" },
+  status: { asc: "Needs review first", desc: "Published first" },
+};
+const SIZE_LABEL: Record<VideoGridSize, string> = { S: "Small", M: "Medium", L: "Large" };
+const STATUS_OPTIONS: Array<VideoGridPrefs["status"]> = ["all", "in_review", "approved_internal", "published"];
+const statusLabel = (status: VideoGridPrefs["status"]): string => status === "all" ? "All films" : REVIEW_STATUS_LABEL[status as VideoReviewStatus];
+
+/**
+ * The Video collection's toolbar (#865): Appearance (card size, thumbnail Fit or Fill, card info), Sort (key and direction) and the Review status filter. The behaviour is FreeFrame's
+ * appearance and sort popovers (MIT, see THIRD_PARTY_NOTICES) on ReUI parts. `shown` of `total` is the filter's footprint, so a filter that hides films never hides that it does.
+ */
+export function VideoGridToolbar({ prefs, onChange, shown, total }: { prefs: VideoGridPrefs; onChange: (next: VideoGridPrefs) => void; shown: number; total: number }) {
+  const set = (patch: Partial<VideoGridPrefs>) => onChange({ ...prefs, ...patch });
+  const filtered = prefs.status !== "all";
+  const DirIcon = prefs.dir === "desc" ? ArrowDownWideNarrow : ArrowUpNarrowWide;
+  return <div data-testid="video-grid-toolbar" className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-2)]">
+    <Popover>
+      <PopoverTrigger render={<Button type="button" variant="secondary" data-testid="video-grid-appearance" className={BAR} />}><SlidersHorizontal aria-hidden="true" className="size-4" />Appearance</PopoverTrigger>
+      <PopoverContent align="start" aria-label="Appearance" className="grid w-72 gap-[var(--space-4)]">
+        <PopoverTitle>Appearance</PopoverTitle>
+        <div className="grid gap-[var(--space-2)]">
+          <span id="video-grid-size-label" className={LABEL}>Card size</span>
+          <ToggleGroup variant="outline" size="sm" spacing={0} aria-labelledby="video-grid-size-label" value={[prefs.size]} onValueChange={(next) => { const picked = next[0]; if (picked === "S" || picked === "M" || picked === "L") set({ size: picked }); }}>
+            {(["S", "M", "L"] as const).map((size) => <ToggleGroupItem key={size} value={size} aria-label={SIZE_LABEL[size]} data-testid={`video-grid-size-${size}`} className={BAR}>{size}</ToggleGroupItem>)}
+          </ToggleGroup>
+        </div>
+        <div className="grid gap-[var(--space-2)]">
+          <span id="video-grid-thumb-label" className={LABEL}>Thumbnail</span>
+          <ToggleGroup variant="outline" size="sm" spacing={0} aria-labelledby="video-grid-thumb-label" value={[prefs.thumb]} onValueChange={(next) => { const picked = next[0]; if (picked === "fit" || picked === "fill") set({ thumb: picked }); }}>
+            <ToggleGroupItem value="fit" data-testid="video-grid-thumb-fit" className={BAR}>Fit</ToggleGroupItem>
+            <ToggleGroupItem value="fill" data-testid="video-grid-thumb-fill" className={BAR}>Fill</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+        <div className="flex items-center justify-between gap-[var(--space-3)]">
+          <Label htmlFor="video-grid-info" className="text-foreground">Show card info</Label>
+          <Switch id="video-grid-info" data-testid="video-grid-info" checked={prefs.info} onCheckedChange={(next) => { set({ info: next }); }} />
+        </div>
+      </PopoverContent>
+    </Popover>
+
+    <div className="flex items-center gap-[var(--space-2)]">
+      <Label htmlFor="video-grid-sort" className={LABEL}>Sort</Label>
+      <Select value={prefs.sort} onValueChange={(next) => { if (next === "uploaded" || next === "name" || next === "status") { if (next !== prefs.sort) set({ sort: next, dir: NATURAL_DIR[next] }); } }}>
+        <SelectTrigger id="video-grid-sort" data-testid="video-grid-sort" className={cn(BAR, "min-w-36")}>
+          <SelectValue>{() => <span className="block truncate">{SORT_LABEL[prefs.sort]}</span>}</SelectValue>
+        </SelectTrigger>
+        <SelectContent className="w-auto min-w-(--anchor-width)">
+          {(Object.keys(SORT_LABEL) as VideoGridSort[]).map((key) => <SelectItem key={key} value={key} className={TOOL}>{SORT_LABEL[key]}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      <IconButton data-testid="video-grid-dir" aria-label={DIR_LABEL[prefs.sort][prefs.dir]} title={DIR_LABEL[prefs.sort][prefs.dir]} onClick={() => { set({ dir: prefs.dir === "asc" ? "desc" : "asc" }); }}><DirIcon aria-hidden="true" className="size-4" /></IconButton>
+    </div>
+
+    <div className="flex items-center gap-[var(--space-2)]">
+      <Label htmlFor="video-grid-status" className={LABEL}>Status</Label>
+      <Select value={prefs.status} onValueChange={(next) => { if (STATUS_OPTIONS.includes(next as VideoGridPrefs["status"])) set({ status: next as VideoGridPrefs["status"] }); }}>
+        <SelectTrigger id="video-grid-status" data-testid="video-grid-status" className={cn(BAR, "min-w-40")}>
+          <SelectValue>{() => <span className="block truncate">{statusLabel(prefs.status)}</span>}</SelectValue>
+        </SelectTrigger>
+        <SelectContent className="w-auto min-w-(--anchor-width)">
+          {STATUS_OPTIONS.map((status) => <SelectItem key={status} value={status} className={TOOL}>{statusLabel(status)}</SelectItem>)}
+        </SelectContent>
+      </Select>
+    </div>
+
+    {filtered && <div className="flex items-center gap-[var(--space-2)]">
+      <p role="status" data-testid="video-grid-count" className={LABEL}>{`Showing ${shown} of ${total} films`}</p>
+      <Button type="button" variant="text" data-testid="video-grid-show-all" className={TOOL} onClick={() => { set({ status: "all" }); }}>Show all films</Button>
+    </div>}
+  </div>;
+}

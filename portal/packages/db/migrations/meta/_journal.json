@@ -547,6 +547,27 @@
       "when": 1791100000000,
       "tag": "0077_delivery_review_link",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "6",
+      "when": 1791200000000,
+      "tag": "0078_video_version_review_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "6",
+      "when": 1791300000000,
+      "tag": "0079_social_overlays",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "6",
+      "when": 1791400000000,
+      "tag": "0080_project_social_overlays",
+      "breakpoints": true
     }
   ]
 }

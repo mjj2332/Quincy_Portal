@@ -8,6 +8,9 @@ import { QuincyQueryProvider } from "../../lib/query-client";
 import "../../testing/dom-polyfills";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
+import { installLocalStorageShim } from "../../testing/local-storage";
+import { resetUiPrefMemory } from "../../lib/ui-prefs";
+import { TIME_FORMAT_KEY } from "../../lib/time-format-prefs";
 import { mockViewport, type MockViewport } from "../../testing/viewport";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
 vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
@@ -38,15 +41,15 @@ const ids = { video: "88888888-8888-4888-8888-888888888888", asset3: "55555555-5
 const mia = { id: "99999999-9999-4999-8999-999999999999", name: "Mia Chen", roleLabel: "Editor", isExternal: false, active: true };
 const me = { id: auth.userId, name: "Terry", roleLabel: "Admin", isExternal: false, active: true };
 const F25 = { num: 25, den: 1 };
-const versionOf = (over: Record<string, unknown> = {}) => ({ assetId: ids.asset3, version: 3, current: true, uploadedBy: mia, createdAt: "2026-10-09T01:00:00.000Z", originalFilename: "film.mp4", bytes: 120_000_000, fps: F25, frameCount: 300, durationMs: 12000, width: 1920, height: 1080, codec: "avc1", startTimecodeFrames: 90000, tcNominalFps: 25, tcDropFrame: false, fastStart: true, hasAudio: true, hasPoster: true, streamUrl: `/media/video/${ids.asset3}`, posterUrl: null, ...over });
+const versionOf = (over: Record<string, unknown> = {}) => ({ assetId: ids.asset3, version: 3, current: true, reviewStatus: "in_review", uploadedBy: mia, createdAt: "2026-10-09T01:00:00.000Z", originalFilename: "film.mp4", bytes: 120_000_000, fps: F25, frameCount: 300, durationMs: 12000, width: 1920, height: 1080, codec: "avc1", startTimecodeFrames: 90000, tcNominalFps: 25, tcDropFrame: false, fastStart: true, hasAudio: true, hasPoster: true, streamUrl: `/media/video/${ids.asset3}`, posterUrl: null, ...over });
 /** v3 (A by default), v2 (B by default), v1. `over` patches v2 and v1 by version number. */
 let patch: Record<number, Record<string, unknown>> = {};
 const videoOf = (versions = 3): VideoDto => ({
-  id: ids.video, title: "Main walkthrough", premium: false, premiumUnlocked: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ids.asset3, latestNoteCount: null, uploading: null,
+  id: ids.video, reviewStatus: "in_review", olderPublishedVersion: null, title: "Main walkthrough", premium: false, premiumUnlocked: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ids.asset3, latestNoteCount: null, uploading: null,
   versions: [
     versionOf(patch[3]),
-    ...(versions >= 2 ? [versionOf({ assetId: ids.asset2, version: 2, current: false, uploadedBy: me, streamUrl: `/media/video/${ids.asset2}`, ...patch[2] })] : []),
-    ...(versions >= 3 ? [versionOf({ assetId: ids.asset1, version: 1, current: false, uploadedBy: me, streamUrl: `/media/video/${ids.asset1}`, ...patch[1] })] : []),
+    ...(versions >= 2 ? [versionOf({ assetId: ids.asset2, version: 2, current: false, reviewStatus: "in_review", uploadedBy: me, streamUrl: `/media/video/${ids.asset2}`, ...patch[2] })] : []),
+    ...(versions >= 3 ? [versionOf({ assetId: ids.asset1, version: 1, current: false, reviewStatus: "in_review", uploadedBy: me, streamUrl: `/media/video/${ids.asset1}`, ...patch[1] })] : []),
   ],
 }) as unknown as VideoDto;
 
@@ -144,7 +147,9 @@ async function land(a: number, b = a) {
 }
 const readoutA = () => tid("video-compare-readout")!.textContent!;
 
+let shim: ReturnType<typeof installLocalStorageShim>;
 beforeEach(() => {
+  shim = installLocalStorageShim(); resetUiPrefMemory();
   notifyManager.setScheduler((callback) => callback());
   stub = installVideoElementStub();
   viewport = mockViewport({ width: 1440 });
@@ -154,7 +159,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
-  root = null; resetVideoUploadStore(); stub.dispose(); viewport.restore(); document.body.replaceChildren(); vi.unstubAllGlobals(); vi.useRealTimers();
+  root = null; resetVideoUploadStore(); stub.dispose(); viewport.restore(); shim.restore(); resetUiPrefMemory(); document.body.replaceChildren(); vi.unstubAllGlobals(); vi.useRealTimers();
 });
 
 describe("Compare: who gets the button (#741 7c)", () => {
@@ -324,6 +329,44 @@ describe("Compare: readouts follow each clock (#741 7c)", () => {
     await act(async () => { stub.finishSeek(vid("a")); stub.presentFrame(vid("a"), 299 / 25); stub.finishSeek(vid("b")); stub.presentFrame(vid("b"), 149 / 25); });
     await flush(2);
     expect(readoutA()).toContain("v2 01:00:05:24");
+  });
+});
+
+describe("Compare: time format (#860)", () => {
+  it("a stored Frames choice shows frame numbers for both sides", async () => {
+    shim.values.set(TIME_FORMAT_KEY, JSON.stringify("frames"));
+    await openCompare({}, 0);
+    expect(readoutA()).toBe("v3 0v2 0");
+  });
+
+  it("in Frames the stage chips read 'frame N' with no repeated number", async () => {
+    shim.values.set(TIME_FORMAT_KEY, JSON.stringify("frames"));
+    const original = Object.getOwnPropertyDescriptors(HTMLElement.prototype);
+    for (const [prop, value] of [["offsetWidth", 800], ["offsetHeight", 800], ["offsetLeft", 0], ["offsetTop", 0]] as const) Object.defineProperty(HTMLElement.prototype, prop, { configurable: true, get: () => value });
+    try {
+      await openCompare({}, 0);
+      await land(7);
+      const chips = [...document.querySelectorAll('[data-testid="video-timecode-chip"]')].map((c) => c.textContent);
+      expect(chips).toEqual(["frame 7", "frame 7"]);
+    } finally {
+      for (const prop of ["offsetWidth", "offsetHeight", "offsetLeft", "offsetTop"] as const) {
+        const d = original[prop];
+        if (d) Object.defineProperty(HTMLElement.prototype, prop, d); else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[prop];
+      }
+    }
+  });
+
+  it("hosts the same menu beside its readout: picking Standard there rewrites the readout, and the choice is the shared one", async () => {
+    await openCompare({}, 0);
+    expect(readoutA()).toBe("v3 01:00:00:00v2 01:00:00:00");
+    const menus = document.querySelectorAll('[data-testid="video-time-format-trigger"]');
+    expect(menus.length).toBe(1);
+    await act(async () => { (menus[0] as HTMLElement).click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush(2);
+    await act(async () => { tid("video-time-format-standard")!.click(); await Promise.resolve(); });
+    await flush(2);
+    expect(readoutA()).toBe("v3 0:00v2 0:00");
+    expect(JSON.parse(shim.values.get(TIME_FORMAT_KEY)!)).toBe("standard");
   });
 });
 

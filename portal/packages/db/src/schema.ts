@@ -1846,6 +1846,8 @@ export const videoVersionMeta = sqliteTable(
     removedBy: text("removed_by").references(() => user.id),
     purgeAt: integer("purge_at"),
     removedWithVideo: integer("removed_with_video").notNull().default(0),
+    /** Review status (#863): stored per Version. Published is derived from the latest Published set and never stored. */
+    reviewStatus: text("review_status", { enum: ["in_review", "approved_internal"] as const }).notNull().default("in_review"),
   },
   (t) => [
     index("video_version_meta_video_idx").on(t.videoId),
@@ -1854,6 +1856,7 @@ export const videoVersionMeta = sqliteTable(
     check("video_version_meta_removed_at_check", sql`${t.removedAt} IS NULL OR typeof(${t.removedAt}) = 'integer'`),
     check("video_version_meta_purge_at_check", sql`${t.purgeAt} IS NULL OR typeof(${t.purgeAt}) = 'integer'`),
     check("video_version_meta_removed_with_video_check", sql`${t.removedWithVideo} IN (0, 1)`),
+    check("video_version_meta_review_status_check", sql`${t.reviewStatus} IN ('in_review', 'approved_internal')`),
     check("video_version_meta_fps_num_check", sql`${t.fpsNum} > 0`),
     check("video_version_meta_fps_den_check", sql`${t.fpsDen} > 0`),
     check("video_version_meta_media_timescale_check", sql`${t.mediaTimescale} > 0`),
@@ -2356,4 +2359,48 @@ export const objectCrc32Work = sqliteTable(
     check("object_crc32_work_offset_check", sql`typeof(${t.offset}) = 'integer' AND ${t.offset} >= 0`),
     check("object_crc32_work_crc_partial_check", sql`typeof(${t.crcPartial}) = 'integer' AND ${t.crcPartial} >= 0 AND ${t.crcPartial} <= 4294967295`),
   ],
+);
+
+/**
+ * Social overlay library (#869; migration 0079). PNG bytes live in R2 at `imageKey` (never overwritten: a replace writes a new key). `imageRev` is the row revision, bumped by every mutation.
+ * One partial unique index allows a single `isDefault` row, a table CHECK keeps the Default un-archivable, and names are unique ignoring case.
+ */
+export const socialOverlays = sqliteTable(
+  "social_overlays",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    platformLabel: text("platform_label").notNull(),
+    imageKey: text("image_key").notNull(),
+    imageRev: integer("image_rev").notNull().default(1),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    bytes: integer("bytes").notNull(),
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+    archivedAt: integer("archived_at"),
+    archivedBy: text("archived_by").references(() => user.id),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    updatedBy: text("updated_by").notNull().references(() => user.id),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("social_overlays_image_key_unique").on(t.imageKey),
+    uniqueIndex("social_overlays_default_unique").on(t.isDefault).where(sql`${t.isDefault} = 1`),
+    uniqueIndex("social_overlays_name_unique").on(sql`${t.name} COLLATE NOCASE`),
+    check("social_overlays_default_not_archived", sql`NOT (${t.isDefault} = 1 AND ${t.archivedAt} IS NOT NULL)`),
+  ],
+);
+
+/**
+ * Project social overlay selection (#870; migration 0080). One row per (Project, overlay). A Project with no usable row resolves to the Default overlay at read time.
+ * Rows go with the Project (cascade). An overlay row cannot be deleted while selected (restrict): overlays are archived, and an archived one stays on the Projects that had it.
+ */
+export const projectSocialOverlays = sqliteTable(
+  "project_social_overlays",
+  {
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    overlayId: text("overlay_id").notNull().references(() => socialOverlays.id, { onDelete: "restrict" }),
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.overlayId] }), index("project_social_overlays_overlay_idx").on(t.overlayId)],
 );

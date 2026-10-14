@@ -12,6 +12,9 @@ import { ArchivedFromCache } from "../../testing/archived-from-cache";
 import "../../testing/dom-polyfills";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
+import { installLocalStorageShim } from "../../testing/local-storage";
+import { resetUiPrefMemory } from "../../lib/ui-prefs";
+import { TIME_FORMAT_KEY } from "../../lib/time-format-prefs";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
 vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 
@@ -40,8 +43,8 @@ const PROJECT = "11111111-1111-4111-8111-111111111111";
 const ids = { video: "88888888-8888-4888-8888-888888888888", asset2: "77777777-7777-4777-8777-777777777777", asset1: "66666666-6666-4666-8666-666666666666" };
 const mia = { id: "99999999-9999-4999-8999-999999999999", name: "Mia Chen", roleLabel: "Editor", isExternal: false, active: true };
 const me = { id: auth.userId, name: "Terry", roleLabel: "Admin", isExternal: false, active: true };
-const versionOf = (over: Record<string, unknown> = {}) => ({ assetId: ids.asset2, version: 2, current: true, uploadedBy: mia, createdAt: "2026-10-09T01:00:00.000Z", originalFilename: "film.mp4", bytes: 120_000_000, fps: { num: 25, den: 1 }, frameCount: 300, durationMs: 12000, width: 1920, height: 1080, codec: "avc1", startTimecodeFrames: 90000, tcNominalFps: 25, tcDropFrame: false, fastStart: true, hasAudio: true, hasPoster: true, streamUrl: `/media/video/${ids.asset2}`, posterUrl: `/media/video/${ids.asset2}/poster`, ...over });
-const videoOf = (): VideoDto => ({ id: ids.video, title: "Main walkthrough", premium: false, premiumUnlocked: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ids.asset2, latestNoteCount: null, uploading: null, versions: [versionOf(), versionOf({ assetId: ids.asset1, version: 1, current: false, uploadedBy: me, createdAt: "2026-10-06T01:00:00.000Z", fps: { num: 25, den: 1 }, tcNominalFps: 25, startTimecodeFrames: 90000, streamUrl: `/media/video/${ids.asset1}`, posterUrl: null, hasPoster: false })] }) as VideoDto;
+const versionOf = (over: Record<string, unknown> = {}) => ({ assetId: ids.asset2, version: 2, current: true, reviewStatus: "in_review", uploadedBy: mia, createdAt: "2026-10-09T01:00:00.000Z", originalFilename: "film.mp4", bytes: 120_000_000, fps: { num: 25, den: 1 }, frameCount: 300, durationMs: 12000, width: 1920, height: 1080, codec: "avc1", startTimecodeFrames: 90000, tcNominalFps: 25, tcDropFrame: false, fastStart: true, hasAudio: true, hasPoster: true, streamUrl: `/media/video/${ids.asset2}`, posterUrl: `/media/video/${ids.asset2}/poster`, ...over });
+const videoOf = (): VideoDto => ({ id: ids.video, reviewStatus: "in_review", olderPublishedVersion: null, title: "Main walkthrough", premium: false, premiumUnlocked: false, position: 0, createdAt: "2026-10-09T01:00:00.000Z", currentAssetId: ids.asset2, latestNoteCount: null, uploading: null, versions: [versionOf(), versionOf({ assetId: ids.asset1, version: 1, current: false, reviewStatus: "in_review", uploadedBy: me, createdAt: "2026-10-06T01:00:00.000Z", fps: { num: 25, den: 1 }, tcNominalFps: 25, startTimecodeFrames: 90000, streamUrl: `/media/video/${ids.asset1}`, posterUrl: null, hasPoster: false })] }) as VideoDto;
 
 let seq = 100;
 const nid = () => `00000000-0000-4000-8000-${String(++seq).padStart(12, "0")}`;
@@ -140,7 +143,9 @@ async function pickVersion(label: string) {
   await flush(8);
 }
 
+let shim: ReturnType<typeof installLocalStorageShim>;
 beforeEach(() => {
+  shim = installLocalStorageShim(); resetUiPrefMemory();
   notifyManager.setScheduler((callback) => callback());
   seedCache = null;
   stub = installVideoElementStub();
@@ -149,7 +154,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
-  root = null; resetVideoUploadStore(); stub.dispose(); document.body.replaceChildren(); vi.unstubAllGlobals(); vi.useRealTimers();
+  root = null; resetVideoUploadStore(); stub.dispose(); shim.restore(); resetUiPrefMemory(); document.body.replaceChildren(); vi.unstubAllGlobals(); vi.useRealTimers();
 });
 
 describe("Video notes panel (#741 5b)", () => {
@@ -1223,6 +1228,15 @@ describe("Copy and paste notes (#741 5c-ui)", () => {
     expect(sent[1]).toEqual({ sourceAssetId: ids.asset1, noteIds: v1.all.map((n) => n.id), offsetFrames: 0 });
   });
 
+  it("the dialog's source and new labels follow the time format (#860)", async () => {
+    shim.values.set(TIME_FORMAT_KEY, JSON.stringify("frames"));
+    await copyOnV1();
+    await openPasteDialog();
+    expect(tid("video-note-paste-source", rows()[0]!)!.textContent).toBe("5");
+    expect(tid("video-note-paste-target", rows()[0]!)!.textContent).toBe("5");
+    expect(tid("video-note-paste-source", rows()[1]!)!.textContent).toBe("20 → 49");
+  });
+
   it("lists skipped notes with their reason in plain words and never ticks them", async () => {
     const v1 = v1Notes();
     await copyOnV1(v1, { [v1.a.id]: "already_copied", [v1.c.id]: "out_of_range" });
@@ -1475,3 +1489,133 @@ describe("Copy and paste notes (#741 5c-ui)", () => {
   });
 });
 const viewerStillOpen = () => document.querySelector('[data-testid="video-review-viewer"]') !== null;
+
+// ---- The time format follows the player's menu (#860) ----
+describe("Time format in the notes (#860)", () => {
+  const trigger = () => tid("video-time-format-trigger")!;
+  const choose = async (id: string) => {
+    await act(async () => { trigger().click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush(2);
+    await act(async () => { tid(`video-time-format-${id}`)!.click(); await Promise.resolve(); });
+    await flush(2);
+  };
+
+  it("picking Standard in the player rewrites the notes' anchors and the composer's anchor in the same tab, and the choice survives a Version switch", async () => {
+    const s = seed();
+    await openFilm({}, 25);
+    expect(tid("video-note-anchor", document)!.textContent).toContain("01:00:01:00");
+    await choose("standard");
+    expect(tid("video-note-anchor-button", threadOf(s.n1.id))!.textContent).toContain("0:00");
+    expect(tid("video-note-anchor-button", threadOf(s.n1.id))!.textContent).not.toContain("01:00");
+    expect(tid("video-note-anchor-button", threadOf(s.n3.id))!.textContent).toContain("0:04 → 0:05");
+    expect(tid("video-note-anchor")!.textContent).toContain("0:01");
+    await pickVersion("v1");
+    expect(trigger().getAttribute("aria-label")).toBe("Time format: Standard");
+    expect(threads().map((t) => tid("video-note-anchor-button", t)!.textContent)).toEqual(["0:00"]);
+  });
+
+  it("Frames show the frame numbers", async () => {
+    const s = seed();
+    await openFilm({}, 0);
+    await choose("frames");
+    expect(tid("video-note-anchor-button", threadOf(s.n1.id))!.textContent).toContain("10");
+    expect(tid("video-note-anchor-button", threadOf(s.n3.id))!.textContent).toContain("100 → 125");
+  });
+
+  it("Escape with the time-format menu open closes only the menu, not the viewer", async () => {
+    await openFilm({}, 0);
+    await act(async () => { trigger().click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush(2);
+    const item = tid("video-time-format-timecode")!;
+    expect(item).not.toBeNull();
+    await key("Escape", item);
+    await flush(4);
+    expect(tid("video-time-format-timecode")).toBeNull();
+    expect(viewerStillOpen()).toBe(true);
+  });
+});
+
+describe("In / Out range button and handles (#861)", () => {
+  const rangeButton = () => tid("video-range-button", popup()) as HTMLButtonElement | null;
+  const handle = (kind: "in" | "out") => tid(`video-range-${kind}`, popup());
+  const anchor = () => tid("video-note-anchor")!.textContent ?? "";
+  const trackRect = (width = 311) => { tid("video-range-handles", popup())!.getBoundingClientRect = () => ({ left: 0, top: 0, width, height: 12, right: width, bottom: 12, x: 0, y: 0, toJSON: () => ({}) }); };
+  async function pointer(type: string, target: Element, clientX: number) {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, button: 0 });
+    Object.defineProperties(event, { pointerId: { value: 1 }, isPrimary: { value: true } });
+    await act(async () => { target.dispatchEvent(event); });
+  }
+
+  it("the button cycles the composer's marks In -> Out -> cleared, and the keys and the button agree", async () => {
+    await openFilm({}, 12);
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set in point");
+    await click(rangeButton()!);
+    expect(anchor()).toContain("In 01:00:00:12");
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+    await present(20);
+    await click(rangeButton()!);
+    expect(anchor()).toContain("Out 01:00:00:20");
+    expect(tid("video-pending-band")).not.toBeNull();
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Clear in and out");
+    await click(rangeButton()!);
+    expect(tid("video-note-clear-marks")).toBeNull();
+    expect(tid("video-pending-band")).toBeNull();
+    await dispatchKey(popup(), "i");
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+  });
+
+  it("a handle moves its own end only, the pending band follows, and Post sends the exclusive end", async () => {
+    await openFilm({}, 12);
+    await click(rangeButton()!);
+    await present(20);
+    await click(rangeButton()!);
+    trackRect();
+    await key("ArrowRight", handle("in")!);
+    expect(anchor()).toContain("In 01:00:00:13");
+    expect(anchor()).toContain("Out 01:00:00:20");
+    await pointer("pointerdown", handle("out")!, 6 + 20);
+    await pointer("pointermove", handle("out")!, 6 + 30);
+    await pointer("pointerup", handle("out")!, 6 + 30);
+    expect(anchor()).toContain("Out 01:00:01:05");
+    api.apiPost.mockResolvedValue(commit(note({ startFrame: 13, endFrame: 31, body: "Dragged" })));
+    await type(composerText(), "Dragged");
+    await click(tid("video-note-post")!);
+    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 13 / 25); });
+    await flush(4);
+    expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 13, endFrame: 31, visibility: "internal", content: legacyBodyToRichTextDoc("Dragged") });
+  });
+
+  it("while editing a note the controls drive the edit's marks, and Clear makes it a point note, never frameless", async () => {
+    const s = seed();
+    await openFilm({}, 20);
+    await click(tid("video-notes-filter-status-all")!);
+    await chooseNoteAction(threadOf(s.n4.id), "Terry", "Edit");
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Clear in and out");
+    await click(rangeButton()!);
+    expect(tid("video-note-edit-anchor")!.textContent).not.toContain("→");
+    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+    api.apiPatch.mockResolvedValue(commit({ ...s.n4, endFrame: null, revision: 2 } as VideoNoteThreadDto));
+    await click(tid("video-note-edit-save")!);
+    await flush(4);
+    expect(api.apiPatch).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n4.id}`, { expectedRevision: 1, startFrame: 200, endFrame: null });
+  });
+
+  it("is present but disabled on an archived Project, and I / O stay inert", async () => {
+    await openFilm({ archivedProject: true }, 12);
+    expect(rangeButton()!.disabled).toBe(true);
+    await dispatchKey(popup(), "i");
+    expect(tid("video-pending-band")).toBeNull();
+  });
+
+  it("a reply form locks the range controls", async () => {
+    const s = seed();
+    await openFilm({}, 12);
+    await click(tid("video-note-reply-button", threadOf(s.n2.id))!);
+    expect(rangeButton()!.disabled).toBe(true);
+  });
+
+  it("with the notes part off there is no range button", async () => {
+    await openFilm({ parts: [] });
+    expect(rangeButton()).toBeNull();
+  });
+});

@@ -3,7 +3,7 @@ import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import {
   PROJECT_DATA_CHANNEL, ProjectQueryRuntime, createActiveProjectDetailsInvalidatedMessage,
   createDashboardBoardInvalidatedMessage, createProductionCalendarInvalidatedMessage, createProjectDataInvalidationMessage, createProjectDataRemovedMessage,
-  parseProjectDataSyncMessage, projectResourceKey,
+  invalidatesPastPendingRead, parseProjectDataSyncMessage, projectResourceKey,
 } from "./project-query-sync";
 import { beginAssetOptimisticMutation, beginProjectMembershipMutation, projectDataKeys } from "./project-data";
 import { dashboardProjectsKey } from "./dashboard-projects";
@@ -449,6 +449,20 @@ describe("video-trash resource (#776 E)", () => {
   });
 });
 
+describe("social-overlays resource (#870)", () => {
+  it("resolves to the Project's Social overlays key and parses only with nothing else", () => {
+    expect(projectResourceKey("a", { kind: "social-overlays" })).toEqual(projectDataKeys.socialOverlays("a"));
+    const message = createProjectDataInvalidationMessage("a", [{ kind: "social-overlays" }]);
+    const ok = parseProjectDataSyncMessage({ ...message, sourceTabId: "s" });
+    expect(ok && ok.type === "project-data-invalidated" ? ok.resources : []).toEqual([{ kind: "social-overlays" }]);
+    expect(parseProjectDataSyncMessage({ ...message, sourceTabId: "s", resources: [{ kind: "social-overlays", extra: 1 }] })).toBeNull();
+  });
+
+  it("is invalidated past a read already in flight, as the other Video surfaces are", () => {
+    expect(invalidatesPastPendingRead({ kind: "social-overlays" })).toBe(true);
+  });
+});
+
 describe("a received Trash or decisions broadcast is not swallowed by a read already in flight (#776 E)", () => {
   class FakeChannel {
     static channels: FakeChannel[] = [];
@@ -462,6 +476,7 @@ describe("a received Trash or decisions broadcast is not swallowed by a read alr
   it.each([
     ["videos", { kind: "videos" } as const, projectDataKeys.videos("p")],
     ["video-trash", { kind: "video-trash" } as const, projectDataKeys.videoTrash("p")],
+    ["social-overlays (#870)", { kind: "social-overlays" } as const, projectDataKeys.socialOverlays("p")],
     ["review-links (#847)", { kind: "review-links" } as const, projectDataKeys.reviewLinks("p")],
     ["video-decisions", { kind: "video-decisions", videoId: video } as const, projectDataKeys.videoDecisions("p", video)],
   ])("%s: the answer to the first read, issued before the broadcast, does not become the cache", async (_name, resource, key) => {

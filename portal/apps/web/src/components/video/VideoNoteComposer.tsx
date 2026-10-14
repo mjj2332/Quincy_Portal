@@ -80,11 +80,13 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     data-locked={otherForm !== null ? "true" : "false"}
     onSubmit={(event) => { event.preventDefault(); submit(); }}
   >
-    <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-      <span data-testid="video-note-anchor" aria-live="off" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}>{!pendingFrames && <span className="sr-only">{merged ? "Note with a drawing at " : "Note at "}</span>}{merged && <PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />}{anchorText}</span>
+    <div className="grid gap-[var(--space-2)]" data-testid="video-note-marks">
+      <span data-testid="video-note-anchor" aria-live="off" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW, "justify-self-start")}>{!pendingFrames && <span className="sr-only">{merged ? "Note with a drawing at " : "Note at "}</span>}{merged && <PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />}{anchorText}</span>
+      <div className="flex flex-wrap items-center gap-[var(--space-2)]">
       <Button type="button" variant="secondary" data-testid="video-note-set-in" className={SMALL_BUTTON} disabled={clock === null || frozen || drawingNow || otherForm !== null} aria-keyshortcuts="I" onClick={() => { mark("in"); }}>Set in <Kbd className={KBD_HINT}>I</Kbd></Button>
       <Button type="button" variant="secondary" data-testid="video-note-set-out" className={SMALL_BUTTON} disabled={clock === null || frozen || drawingNow || otherForm !== null} aria-keyshortcuts="O" onClick={() => { mark("out"); }}>Set out <Kbd className={KBD_HINT}>O</Kbd></Button>
       {pendingFrames && <Button type="button" variant="text" data-testid="video-note-clear-marks" disabled={frozen || drawingNow} onClick={() => { store.clearMarks(assetId); }}>Clear marks</Button>}
+      </div>
     </div>
     {drawn && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
       {!merged && <span data-testid="video-note-drawing-chip" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}><span className="sr-only">Drawing on </span><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />{timecode(drawn.drawingFrame!)}</span>}

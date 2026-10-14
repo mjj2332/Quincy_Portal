@@ -86,6 +86,11 @@ describe("playerKeyAction (#741 4d-ii)", () => {
     expect(playerKeyAction(keydown("ArrowRight", { repeat: true }))).toEqual({ type: "step", delta: 1 });
   });
 
+  it("a focused resize separator owns the arrows, Home and End (#859: they size the notes pane, they do not step the film)", () => {
+    const handle = mount('<div role="separator" aria-orientation="vertical" tabindex="0"></div>');
+    for (const key of ["ArrowLeft", "ArrowRight", "Home", "End"]) expect(playerKeyAction(keydown(key, { target: handle })), key).toBeNull();
+  });
+
   describe("in / out marks (#741 5b)", () => {
     it("I and O map to a mark only when the host asks for marks", () => {
       expect(playerKeyAction(keydown("i"), { marks: true })).toEqual({ type: "mark", kind: "in" });

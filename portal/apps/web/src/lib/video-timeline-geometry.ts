@@ -87,3 +87,11 @@ export function nearestMarkerId(markers: ReadonlyArray<Target>, frameCount: numb
   }
   return best?.marker.id ?? null;
 }
+
+/** The frame under a pointer `x` px from the scrubber's left edge: the inverse of `frameFraction` and the thumb-centre coordinate system (#861). */
+export function frameAtX(x: number, width: number, thumbHalf: number, frameCount: number): number {
+  const usable = width - 2 * thumbHalf;
+  if (usable <= 0) return 0;
+  const fraction = Math.min(1, Math.max(0, (x - thumbHalf) / usable));
+  return Math.min(Math.max(0, frameCount - 1), Math.round(fraction * Math.max(1, frameCount - 1)));
+}

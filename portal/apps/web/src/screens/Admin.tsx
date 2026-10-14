@@ -26,8 +26,11 @@ import { EmptyState } from "@/components/quincy/EmptyState";
 import { QuincyField } from "@/components/quincy/QuincyField";
 import { QuincySelectField } from "@/components/quincy/QuincySelectField";
 import { AdminAttention } from "../components/AdminAttention";
+import { SocialOverlaysPanel } from "../components/SocialOverlaysPanel";
+import { formatDate, TOGGLE_ROW } from "../components/admin-shared";
+import { TEXT_BUTTON } from "../components/quincy/Button";
 
-type AdminTab = "users" | "directory" | "pipeline" | "integrations";
+type AdminTab = "users" | "directory" | "pipeline" | "social" | "integrations";
 type User = { id: string; name: string; email: string; role: Role; active: boolean; defaultEditor: boolean; createdAt: string | null };
 type IntegrationStatus = "connected" | "disconnected" | "expired" | "error";
 type Integration = { provider: string; status: IntegrationStatus; expiresAt: string | null; lastEventAt: string | null; lastError: string | null };
@@ -65,7 +68,7 @@ type NotificationDeliveryResponse = { view: NotificationDeliveryView; items: Not
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PROVIDERS = ["dropbox", "tonomo", "vimeo"] as const;
-const TAB_LABELS: Record<AdminTab, string> = { users: "Users", directory: "Directory", pipeline: "Pipeline", integrations: "Integrations" };
+const TAB_LABELS: Record<AdminTab, string> = { users: "Users", directory: "Directory", pipeline: "Pipeline", social: "Social overlays", integrations: "Integrations" };
 const DELIVERY_VIEWS: NotificationDeliveryView[] = ["pending_stuck", "dlq", "failed", "unknown", "preference_suppressed"];
 const DELIVERY_LABELS: Record<NotificationDeliveryView, string> = {
   pending_stuck: "Pending / stuck",
@@ -78,23 +81,11 @@ const DELIVERY_LABELS: Record<NotificationDeliveryView, string> = {
 // column stay native `<input type="checkbox">`s (inlined from the legacy `ui/checkbox` primitive), the same
 // device as `screens/NotificationPreferences.tsx`'s `TOGGLE_ROW` and `components/ProjectFields.tsx`'s
 // `CHECK_TILE`/`CHECKBOX_INPUT`.
-const TOGGLE_ROW =
-  "flex items-center gap-[var(--space-2)] cursor-pointer " +
-  "min-h-[38px] max-[721px]:min-h-[44px] text-foreground-secondary " + // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token
-  "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]";
-
 const CHECKBOX_INPUT =
   "size-[18px] shrink-0 m-0 accent-[var(--accent)] cursor-pointer " +
   "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
   "focus-visible:outline-ring focus-visible:outline-offset-2 " +
   "disabled:cursor-not-allowed";
-
-// Quincy's `text` button variant was a compact, padding-free label (`min-h-[32px] px-0 py-[6px]`);
-// nova's nearest analogue, `ghost`, is a fully padded 38px button. In this screen's dense table
-// action cells that reads wrong, so the Quincy metrics are restored on top of `variant="ghost"`.
-// The `max-[721px]:min-h-[44px]` touch target in the cva base is a different modifier and survives
-// the merge, exactly as it did under `ui/button.tsx`'s own `text` variant.
-const TEXT_BUTTON = "min-h-[32px] px-0 py-[6px]";
 
 const TONE_FOR_STATUS: Record<IntegrationStatus | "not-configured", StatusTone> = {
   connected: "positive",
@@ -103,13 +94,6 @@ const TONE_FOR_STATUS: Record<IntegrationStatus | "not-configured", StatusTone> 
   error: "critical",
   "not-configured": "neutral",
 };
-
-function formatDate(value: string | null): string {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return "—";
-  return new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric" }).format(date);
-}
 
 function relativeTime(value: string | null): string {
   if (!value) return "No events recorded";
@@ -147,7 +131,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
   const canAdminBackend = can("adminBackend");
   const availableTabs: AdminTab[] = [
     ...(canManageUsers ? ["users" as const] : []),
-    ...(canAdminBackend ? ["directory" as const, "pipeline" as const] : []),
+    ...(canAdminBackend ? ["directory" as const, "pipeline" as const, "social" as const] : []),
     ...(canManageIntegrations ? ["integrations" as const] : []),
   ];
   const [activeTab, setActiveTab] = useState<AdminTab>(availableTabs[0] ?? "users");
@@ -671,6 +655,8 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           </TableRow>)}</TableBody>
         </Table></TableWrap>
       </section>}
+
+      {activeTab === "social" && canAdminBackend && <section role="tabpanel" id="admin-panel-social" aria-labelledby="admin-tab-social" tabIndex={0}><SocialOverlaysPanel /></section>}
 
       {activeTab === "pipeline" && canAdminBackend && <section role="tabpanel" id="admin-panel-pipeline" aria-labelledby="admin-tab-pipeline" tabIndex={0}>
         <AdminAttention />

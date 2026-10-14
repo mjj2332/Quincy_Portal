@@ -1,12 +1,12 @@
 import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, SQL_UUID_V4, videoRemovalSuppressionStatements, reviewLinkOpenSql } from "@quincy/db";
 import {
   ROLE_LABELS, VIDEO_TRASH_RETENTION_DAYS, VIDEO_TRASH_RETENTION_MS, VIDEO_UPLOAD_ACTIVE_STATUSES,
-  type Role, type VideoRemovalImpact, type VideoRemoveInput, type VideoTrashItem, type VideoTrashResponse,
+  type Role, type VideoDeleteInput, type VideoDeletionImpact, type VideoRemovalImpact, type VideoRemoveInput, type VideoTrashItem, type VideoTrashResponse,
 } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { firstInCurrentSet, inCurrentSetSql } from "./delivery-lock";
 import { newId } from "./ids";
-import { RECOMPUTE_CURRENT_SQL } from "./video-live-sql";
+import { fencedRecomputeStatements as fencedRecompute } from "./video-live-sql";
 
 /**
  * Video Trash (#776 C): remove a Version or a Video, restore it, and list what is in Trash. A removal HIDES; it deletes nothing. Grants, notes, decisions, Releases and memberships are not
@@ -25,15 +25,24 @@ const person = (id: string, name: string, role: Role, active: number) => ({ id, 
 
 // ---- the impact: one set of fragments for the read and for the fence ---------------------------------------------------------------------------------------
 
-/** Notes and replies on the Version that still exist (a tombstone is not counted). `asset` is a SQL expression. */
-const NOTES_SQL = (asset: string) => `(SELECT COUNT(*) FROM video_notes WHERE asset_id = ${asset} AND deleted_at IS NULL)`;
-const DECISIONS_SQL = (asset: string) => `(SELECT COUNT(*) FROM video_approval_events WHERE asset_id = ${asset})`;
-const RELEASED_SQL = (asset: string) => `(CASE WHEN EXISTS (SELECT 1 FROM video_releases WHERE asset_id = ${asset} AND withdrawn_at IS NULL) THEN 1 ELSE 0 END)`;
-/** The live Review links that grant the Version: an unrevoked grant, on a link that is a video review link, unrevoked and unexpired, whose Video membership is live. */
-const LINKS_FROM_SQL = (asset: string, now: string) =>
+/**
+ * Each fragment takes a PREDICATE over the Asset id (`= ?3` for one Version, `IN (...)` for every live Version of a Video), so the read and the fence of both removals share one text.
+ * Notes and replies on the Version(s) that still exist (a tombstone is not counted).
+ */
+const NOTES_SQL = (assets: string) => `(SELECT COUNT(*) FROM video_notes WHERE asset_id ${assets} AND deleted_at IS NULL)`;
+const DECISIONS_SQL = (assets: string) => `(SELECT COUNT(*) FROM video_approval_events WHERE asset_id ${assets})`;
+const RELEASED_SQL = (assets: string) => `(CASE WHEN EXISTS (SELECT 1 FROM video_releases WHERE asset_id ${assets} AND withdrawn_at IS NULL) THEN 1 ELSE 0 END)`;
+/** The number of live Releases (a Video delete counts them; a Version has at most one). */
+const RELEASES_SQL = (assets: string) => `(SELECT COUNT(*) FROM video_releases WHERE asset_id ${assets} AND withdrawn_at IS NULL)`;
+/** The live Review links that grant the Version(s): an unrevoked grant, on a link that is a video review link, unrevoked and unexpired, whose Video membership is live. */
+const LINKS_FROM_SQL = (assets: string, now: string) =>
   `FROM review_link_version_grants g JOIN client_links l ON l.id = g.link_id AND ${reviewLinkOpenSql("l", now)}
      JOIN review_link_videos rv ON rv.link_id = g.link_id AND rv.video_id = g.video_id AND rv.removed_at IS NULL
-   WHERE g.asset_id = ${asset} AND g.revoked_at IS NULL`;
+   WHERE g.asset_id ${assets} AND g.revoked_at IS NULL`;
+/** Every live Version of the Video, as an Asset predicate. */
+const LIVE_ASSETS = (video: string) => `IN (SELECT lm.asset_id FROM video_version_meta lm WHERE lm.video_id = ${video} AND lm.removed_at IS NULL)`;
+const LIVE_VERSIONS_SQL = (video: string) => `(SELECT COUNT(*) FROM video_version_meta lm WHERE lm.video_id = ${video} AND lm.removed_at IS NULL)`;
+const LATEST_VERSION_SQL = (video: string) => `(SELECT COALESCE(MAX(la.version), 0) FROM video_version_meta lm JOIN assets la ON la.id = lm.asset_id AND la.kind = 'video' WHERE lm.video_id = ${video} AND lm.removed_at IS NULL)`;
 const ACTIVE_UPLOAD_SQL = (video: string) => `EXISTS (SELECT 1 FROM video_upload_reservations r WHERE r.video_id = ${video} AND r.status IN (${ACTIVE_RESERVATION_STATUSES}))`;
 /** 1 when the Video has exactly one live Version. */
 const LAST_VERSION_SQL = (video: string) => `(CASE WHEN (SELECT COUNT(*) FROM video_version_meta lm WHERE lm.video_id = ${video} AND lm.removed_at IS NULL) = 1 THEN 1 ELSE 0 END)`;
@@ -44,10 +53,10 @@ export type RemovalTarget = { impact: VideoRemovalImpact; videoId: string; colle
 export async function readRemovalImpact(db: D1Database, projectId: string, assetId: string, now: number): Promise<RemovalTarget | null> {
   const [head, links] = await db.batch([
     db.prepare(`SELECT m.video_id AS videoId, v.collection_id AS collectionId, a.version AS version, ${LAST_VERSION_SQL("m.video_id")} AS lastVersion, ${ACTIVE_UPLOAD_SQL("m.video_id")} AS uploading,
-        ${NOTES_SQL("m.asset_id")} AS notes, ${DECISIONS_SQL("m.asset_id")} AS decisions, ${RELEASED_SQL("m.asset_id")} AS release
+        ${NOTES_SQL("= m.asset_id")} AS notes, ${DECISIONS_SQL("= m.asset_id")} AS decisions, ${RELEASED_SQL("= m.asset_id")} AS release
       FROM video_version_meta m JOIN videos v ON v.id = m.video_id JOIN assets a ON a.id = m.asset_id AND a.kind = 'video'
       WHERE m.asset_id = ?1 AND v.project_id = ?2 AND m.removed_at IS NULL AND v.removed_at IS NULL`).bind(assetId, projectId),
-    db.prepare(`SELECT l.id, l.label ${LINKS_FROM_SQL("?1", "?2")} ORDER BY COALESCE(l.label, ''), l.id`).bind(assetId, now),
+    db.prepare(`SELECT l.id, l.label ${LINKS_FROM_SQL("= ?1", "?2")} ORDER BY COALESCE(l.label, ''), l.id`).bind(assetId, now),
   ]);
   const row = head!.results[0] as { videoId: string; collectionId: string; version: number; lastVersion: number; uploading: number; notes: number; decisions: number; release: number } | undefined;
   if (!row) return null;
@@ -70,9 +79,6 @@ export function removalRefusal(impact: VideoRemovalImpact, input: VideoRemoveInp
 // ---- statements fenced on the mutation's audit row -------------------------------------------------------------------------------------------------------
 
 const AUDIT_FENCE = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)";
-/** The current-Version recompute, each statement also fenced on the mutation's audit row, so a refused fence moves no asset. */
-const fencedRecompute = (db: D1Database, videoId: string, now: number, auditId: string): D1PreparedStatement[] =>
-  RECOMPUTE_CURRENT_SQL.map((sql) => db.prepare(`${sql.trimEnd()} AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?3)`).bind(videoId, now, auditId));
 /** The collection count and status, fenced on the mutation's audit row, so a refused fence leaves `collections.updated_at` alone. */
 const fencedCollectionCount = (db: D1Database, collectionId: string, now: number, auditId: string): D1PreparedStatement =>
   db.prepare(`${COLLECTION_RECEIVED_COUNT_SQL.trimEnd()} AND ${AUDIT_FENCE}`).bind(...collectionReceivedCountBindings(collectionId, now), auditId);
@@ -113,8 +119,8 @@ export async function removeVersion(db: D1Database, input: { projectId: string; 
         AND ${NOT_ARCHIVED("?4")}
         AND NOT ${inCurrentSetSql("= ?3")}
         AND (?6 = 0 OR NOT ${inCurrentSetSql("IN (SELECT dm.asset_id FROM video_version_meta dm WHERE dm.video_id = ?13)")})
-        AND ${NOTES_SQL("?3")} = ?8 AND ${DECISIONS_SQL("?3")} = ?9 AND ${RELEASED_SQL("?3")} = ?10
-        AND (SELECT COUNT(*) ${LINKS_FROM_SQL("?3", "?2")}) = ?11
+        AND ${NOTES_SQL("= ?3")} = ?8 AND ${DECISIONS_SQL("= ?3")} = ?9 AND ${RELEASED_SQL("= ?3")} = ?10
+        AND (SELECT COUNT(*) ${LINKS_FROM_SQL("= ?3", "?2")}) = ?11
         AND ${LAST_VERSION_SQL("?13")} = ?6
         AND (?6 = 0 OR NOT ${ACTIVE_UPLOAD_SQL("?13")})`, 13),
     bind("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?1, ?5, 'video_version.remove', 'asset', ?3, ?12, ?2 WHERE changes() > 0", 12),
@@ -140,6 +146,82 @@ async function diagnoseRemoval(db: D1Database, projectId: string, assetId: strin
 
 async function projectArchived(db: D1Database, projectId: string): Promise<boolean> {
   return (await db.prepare("SELECT archived_at FROM projects WHERE id = ?1").bind(projectId).first<{ archived_at: number | null }>())?.archived_at != null;
+}
+
+// ---- delete a whole Video (#868) -----------------------------------------------------------------------------------------------------------------------
+
+export type DeletionTarget = { impact: VideoDeletionImpact; collectionId: string };
+
+/** The whole-Video impact over its live Versions from a fresh read, or null when it is not a live Video of this Project. */
+export async function readVideoDeletionImpact(db: D1Database, projectId: string, videoId: string, now: number): Promise<DeletionTarget | null> {
+  const [head, links, assets] = await db.batch([
+    db.prepare(`SELECT v.collection_id AS collectionId, ${LIVE_VERSIONS_SQL("v.id")} AS versions, ${LATEST_VERSION_SQL("v.id")} AS latestVersion, ${ACTIVE_UPLOAD_SQL("v.id")} AS uploading,
+        ${NOTES_SQL(LIVE_ASSETS("v.id"))} AS notes, ${DECISIONS_SQL(LIVE_ASSETS("v.id"))} AS decisions, ${RELEASES_SQL(LIVE_ASSETS("v.id"))} AS releases
+      FROM videos v WHERE v.id = ?1 AND v.project_id = ?2 AND v.removed_at IS NULL`).bind(videoId, projectId),
+    db.prepare(`SELECT DISTINCT l.id, l.label ${LINKS_FROM_SQL(LIVE_ASSETS("?1"), "?2")} ORDER BY COALESCE(l.label, ''), l.id`).bind(videoId, now),
+    db.prepare(`SELECT lm.asset_id AS id FROM video_version_meta lm WHERE lm.video_id = ?1 AND lm.removed_at IS NULL ORDER BY lm.asset_id`).bind(videoId),
+  ]);
+  const row = head!.results[0] as { collectionId: string; versions: number; latestVersion: number; uploading: number; notes: number; decisions: number; releases: number } | undefined;
+  if (!row || row.versions < 1) return null;
+  const published = await deliveryPublishedBlock(db, videoId, "", true);
+  return {
+    collectionId: row.collectionId,
+    impact: { assetIds: (assets!.results as Array<{ id: string }>).map((asset) => asset.id), versions: row.versions, latestVersion: row.latestVersion, uploading: row.uploading === 1, published, notes: row.notes, decisions: row.decisions, releases: row.releases, links: links!.results as Array<{ id: string; label: string | null }> },
+  };
+}
+
+export type DeletionRefusal = "impact_changed" | "upload_in_progress";
+/** The refusal a delete meets against the impact as it stands: the confirmed counts and Version set first, then an active upload. A published set is answered before either, by the caller. */
+export function deletionRefusal(impact: VideoDeletionImpact, input: VideoDeleteInput): DeletionRefusal | null {
+  const e = input.expected;
+  if (e.assetIds.length !== impact.assetIds.length || [...e.assetIds].sort().some((id, i) => id !== impact.assetIds[i]) || e.notes !== impact.notes || e.decisions !== impact.decisions || e.releases !== impact.releases || e.links !== impact.links.length) return "impact_changed";
+  return impact.uploading ? "upload_in_progress" : null;
+}
+
+export type DeleteOutcome = { kind: "deleted"; versionCount: number } | { kind: "archived" } | { kind: "not_found" } | { kind: "delivery_published" } | { kind: DeletionRefusal; impact: VideoDeletionImpact };
+
+/**
+ * Deletes a Video (moves it and every live Version to Trash) in ONE batch. The first statement carries the whole fence (live Video of this Project, unarchived, no upload, nothing in a
+ * Delivery current set, and the Version count, the newest Version number and every consequence count still the ones confirmed); everything after it is fenced on its audit row. The per-Version
+ * audit rows are written before the Versions are marked, because they SELECT the live ones. A Version trashed on its own earlier keeps its own flags and clock.
+ */
+export async function deleteVideo(db: D1Database, input: { projectId: string; videoId: string; target: DeletionTarget; principal: Principal; request: VideoDeleteInput; now: number }): Promise<DeleteOutcome> {
+  const { projectId, videoId, target, request, now } = input; const e = request.expected; const auditId = newId();
+  const meta = auditMeta(input.principal, { projectId, versionCount: e.assetIds.length, notes: e.notes, decisions: e.decisions, releases: e.releases, links: e.links, wholeVideo: true })!;
+  const versionMeta = auditMeta(input.principal, { projectId, videoId, wholeVideo: true })!;
+  const bind = (sql: string, ...args: unknown[]) => db.prepare(sql).bind(...args);
+  const fence = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?1)";
+  await db.batch([
+    bind(`UPDATE videos SET removed_at = ?2, removed_by = ?5, purge_at = ?6, updated_at = ?2
+      WHERE id = ?3 AND project_id = ?4 AND removed_at IS NULL
+        AND ${NOT_ARCHIVED("?4")}
+        AND NOT ${ACTIVE_UPLOAD_SQL("?3")}
+        AND NOT ${inCurrentSetSql("IN (SELECT dm.asset_id FROM video_version_meta dm WHERE dm.video_id = ?3)")}
+        AND ${LIVE_VERSIONS_SQL("?3")} = (SELECT COUNT(DISTINCT value) FROM json_each(?7))
+        AND NOT EXISTS (SELECT 1 FROM video_version_meta xm WHERE xm.video_id = ?3 AND xm.removed_at IS NULL AND xm.asset_id NOT IN (SELECT value FROM json_each(?7)))
+        AND ${NOTES_SQL(LIVE_ASSETS("?3"))} = ?8 AND ${DECISIONS_SQL(LIVE_ASSETS("?3"))} = ?9 AND ${RELEASES_SQL(LIVE_ASSETS("?3"))} = ?10
+        AND (SELECT COUNT(DISTINCT l.id) ${LINKS_FROM_SQL(LIVE_ASSETS("?3"), "?2")}) = ?11`, auditId, now, videoId, projectId, input.principal.id, now + VIDEO_TRASH_RETENTION_MS, JSON.stringify(e.assetIds), e.notes, e.decisions, e.releases, e.links),
+    bind("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?1, ?2, 'video.remove', 'video', ?3, ?4, ?5 WHERE changes() > 0", auditId, input.principal.id, videoId, meta, now),
+    bind(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ${SQL_UUID_V4}, ?2, 'video_version.remove', 'asset', m.asset_id, json_patch(?4, json_object('version', a.version)), ?5
+      FROM video_version_meta m JOIN assets a ON a.id = m.asset_id AND a.kind = 'video'
+      WHERE m.video_id = ?3 AND m.removed_at IS NULL AND ${fence}`, auditId, input.principal.id, videoId, versionMeta, now),
+    bind(`UPDATE video_version_meta SET removed_at = ?2, removed_by = ?3, purge_at = ?4, removed_with_video = 1 WHERE video_id = ?5 AND removed_at IS NULL AND ${fence}`, auditId, now, input.principal.id, now + VIDEO_TRASH_RETENTION_MS, videoId),
+    ...fencedRecompute(db, videoId, now, auditId),
+    fencedCollectionCount(db, target.collectionId, now, auditId),
+    ...videoRemovalSuppressionStatements(db, { projectId, path: "$.video.videoId", subjectId: videoId, auditId, now }),
+  ]);
+  if (await db.prepare("SELECT 1 AS one FROM audit_log WHERE id = ?1").bind(auditId).first()) return { kind: "deleted", versionCount: e.assetIds.length };
+  return await diagnoseDeletion(db, projectId, videoId, request, now);
+}
+
+/** Why a delete wrote nothing, from a fresh read, in a fixed order: archived, gone, Published, then the refusal the handler would give. */
+async function diagnoseDeletion(db: D1Database, projectId: string, videoId: string, request: VideoDeleteInput, now: number): Promise<DeleteOutcome> {
+  if (await projectArchived(db, projectId)) return { kind: "archived" };
+  const fresh = await readVideoDeletionImpact(db, projectId, videoId, now);
+  if (!fresh) return { kind: "not_found" };
+  if (fresh.impact.published) return { kind: "delivery_published" };
+  return { kind: deletionRefusal(fresh.impact, request) ?? "impact_changed", impact: fresh.impact };
 }
 
 // ---- restore -----------------------------------------------------------------------------------------------------------------------------------------
