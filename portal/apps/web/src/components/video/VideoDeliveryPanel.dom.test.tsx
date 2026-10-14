@@ -56,10 +56,12 @@ beforeEach(() => {
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; store.retire(); document.body.replaceChildren(); });
 
 describe("VideoDeliveryPanel decisions (#741 14-ui-staff)", () => {
-  it("re-scopes its tokens to the light surface so it stays legible inside the viewer's inverse scope", async () => {
+  it("inherits the viewer inverse surface instead of opening a light scope (ADR 0024)", async () => {
     decide([{ assetId: A2, version: 2, events: [], release: null }]);
     await mount();
-    expect(document.querySelector('[data-testid="video-delivery"]')?.getAttribute("data-surface")).toBe("default");
+    const panel = document.querySelector('[data-testid="video-delivery"]')!;
+    expect(panel.hasAttribute("data-surface")).toBe(false);
+    expect(panel.closest('[data-surface="default"]')).toBeNull();
   });
 
   it("lists the shown Version's decisions with who, what, when, the note and where they came from", async () => {

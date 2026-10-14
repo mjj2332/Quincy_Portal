@@ -1031,21 +1031,22 @@ describe("Compare: toolbar and stage furniture (#741 7c design review)", () => {
     expect(labels("b").closest('[data-testid="video-stage"]')).not.toBeNull();
   });
 
-  it("puts the caution notices on the light surface", async () => {
+  it("keeps the caution notices on the inverse surface", async () => {
     await openCompare({}, 5);
     const input = tid("video-compare-offset") as HTMLInputElement;
     input.focus();
     await type(input, "5000");
     await act(async () => { input.blur(); });
     await flush(2);
-    expect(tid("video-compare-offset-notice")!.closest('[data-surface="default"]')).not.toBeNull();
+    expect(tid("video-compare-offset-notice")!.closest('[data-surface="default"]')).toBeNull();
   });
 
-  it("keeps the notes column on the light surface, like the single viewer", async () => {
+  it("keeps the notes column on the inverse surface, like the single viewer", async () => {
     await openCompare({ parts: ["notes", "compare"] }, 5);
     await click(tid("video-compare-notes-toggle")!);
     await flush(4);
-    expect(tid("video-compare-notes")!.dataset.surface).toBe("default");
+    expect(tid("video-compare-notes")!.hasAttribute("data-surface")).toBe(false);
+    expect(tid("video-compare-notes")!.closest('[data-surface="default"]')).toBeNull();
   });
 });
 

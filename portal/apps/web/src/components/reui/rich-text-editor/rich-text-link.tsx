@@ -191,7 +191,7 @@ export function RichTextLinkPopover({
                 pressed={state.link !== null}
                 disabled={disabled || !state.canLink}
                 onMouseDown={keepEditorFocus}
-                className="px-0 aria-pressed:bg-primary aria-pressed:!text-[var(--accent-on)]"
+                className="px-0 aria-pressed:bg-primary aria-pressed:!text-primary-foreground"
                 data-toolbar-item=""
               />
             }

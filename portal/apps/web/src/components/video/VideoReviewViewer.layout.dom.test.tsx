@@ -82,6 +82,17 @@ const hostWidth = (width: number) => { Object.defineProperty(splitRow(), "client
 /** The notes host is a lazy chunk and the player lives inside it: wait for the film too. */
 async function openViewerWithFilm() { await openViewer(); const deadline = Date.now() + 10_000; while (!document.querySelector("video")) { if (Date.now() > deadline) throw new Error("the film never mounted"); await flush(1); } await flush(4); }
 
+describe("VideoReviewViewer dark panels (ADR 0024, #877)", () => {
+  it("opens no default-scope panel in the viewer: only the toast slot may re-scope to the light look", async () => {
+    await mount(["delivery", "notes"]);
+    await openViewerWithFilm();
+    const viewer = document.querySelector('[data-testid="video-review-viewer"]')!;
+    expect(viewer.querySelector('[data-testid="video-delivery"]')?.closest('[data-surface="default"]')).toBeNull();
+    // Whatever default scope exists is the toast viewport's `display: contents` wrapper, nothing else.
+    for (const el of viewer.querySelectorAll('[data-surface="default"]')) expect(el.classList.contains("contents")).toBe(true);
+  });
+});
+
 describe("VideoReviewViewer layout (#859): full-height player, collapsible and resizable side pane", () => {
   it("opens with the pane open at 360px, the toggle expanded, and the player first in the row", async () => {
     await mount(["notes"]);

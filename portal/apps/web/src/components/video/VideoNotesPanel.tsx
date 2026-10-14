@@ -172,7 +172,6 @@ export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = f
   return <aside
     aria-label="Notes"
     data-testid="video-notes-panel"
-    data-surface="default"
     className="flex flex-1 flex-col gap-[var(--space-3)] border-l border-border bg-card p-[var(--space-4)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-clip max-[721px]:border-t max-[721px]:border-l-0"
   >
     <div className="flex flex-wrap items-baseline justify-between gap-x-[var(--space-3)] gap-y-[var(--space-1)] max-[721px]:order-0">

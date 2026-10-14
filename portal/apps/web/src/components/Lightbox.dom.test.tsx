@@ -198,6 +198,13 @@ afterEach(async () => {
 });
 
 describe("Lightbox — always-on drawing and draft protection", () => {
+  it("opens no default-scope panel: the review panel inherits the dark viewer (ADR 0024)", async () => {
+    const host = mount();
+    await render(<Lightbox {...baseProps()} />);
+    expect(host.querySelector("#lightbox-review-panel")).not.toBeNull();
+    expect(host.querySelector('[data-surface="default"]')).toBeNull();
+  });
+
   it("is draw-ready immediately for annotators, with no Draw button, and no confirm prompt with no inline edit open", async () => {
     const host = mount();
     const confirm = confirmMock;

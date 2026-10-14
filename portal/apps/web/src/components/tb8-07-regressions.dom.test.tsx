@@ -62,10 +62,10 @@ describe("TB8-07 — the schedule conflict paints as a warning (§2.4)", () => {
 
   it("gives Notice a caution tone that splits text from border and wash", () => {
     // `--signal-caution` is the one signal too light to carry small text; the darkened
-    // `--signal-caution-text` is 6.65:1 on white while the border and wash keep the brand ochre.
+    // `--signal-caution-text` (via `--warning-foreground`, which re-scopes on a dark viewer) is 6.65:1 on white while the border and wash keep the brand ochre.
     const notice = read("./quincy/Notice.tsx");
     expect(notice).toContain("caution:");
-    expect(notice).toContain("text-signal-caution-text");
+    expect(notice).toContain("text-warning-foreground");
     expect(notice).toContain("border-signal-caution/");
   });
 });
