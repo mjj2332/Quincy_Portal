@@ -76,12 +76,11 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, on
     className="group/tile gap-0 bg-background p-0 text-foreground [--frame-radius:var(--radius-md)] [--frame-panel-radius:var(--radius-md)] data-[selected=true]:border-[var(--border-strong)]"
   >
     <FramePanel className="flex flex-col gap-0 border-0 bg-transparent p-0">
-      {drop
-        ? <FileDropzone data-testid={`${testId}-poster`} data-fit="contain" disabled={drop.disabled} onFile={drop.onFile} className={cn(posterClass, "group/drop")}>
-          {posterBody}
-          <div aria-hidden="true" className="absolute inset-0 hidden items-center justify-center bg-[var(--scrim-overlay)] text-invert-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] group-data-[dragging=true]/drop:flex">{`Drop to upload v${drop.nextVersion}`}</div>
-        </FileDropzone>
-        : <div data-testid={`${testId}-poster`} data-fit="contain" className={posterClass}>{posterBody}</div>}
+      <Zone drop={drop} testId={testId}>
+      <div data-testid={`${testId}-poster`} data-fit="contain" className={posterClass}>
+        {posterBody}
+        {drop && <div aria-hidden="true" className="absolute inset-0 hidden items-center justify-center bg-[var(--scrim-overlay)] text-invert-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] group-data-[dragging=true]/drop:flex">{`Drop to upload v${drop.nextVersion}`}</div>}
+      </div>
       {select && <label className="absolute left-0 top-0 z-10 flex size-11 cursor-pointer items-center justify-center opacity-0 transition-opacity focus-within:opacity-100 group-hover/tile:opacity-100 group-data-[selected=true]/tile:opacity-100 pointer-coarse:opacity-100 max-[721px]:opacity-100">
         <Checkbox aria-label={`Select ${title}`} checked={select.selected} onChange={select.onToggle} />
       </label>}
@@ -95,6 +94,13 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, on
         {menu && <div className="relative z-10 shrink-0">{menu}</div>}
       </div>
       {footer && <div className="relative z-10 grid gap-[var(--space-2)] px-[var(--space-3)] pb-[var(--space-3)]">{footer}</div>}
+      </Zone>
     </FramePanel>
   </Frame>;
+}
+
+/** The whole tile is the drop target when a `drop` is given, so the stretched open control (its ::after covers the poster) is inside the zone, not over it. */
+function Zone({ drop, testId, children }: { drop: { onFile: (file: File) => void; disabled: boolean } | undefined; testId: string; children: ReactNode }) {
+  if (!drop) return <>{children}</>;
+  return <FileDropzone data-testid={`${testId}-drop`} disabled={drop.disabled} onFile={drop.onFile} className="group/drop relative flex flex-col">{children}</FileDropzone>;
 }

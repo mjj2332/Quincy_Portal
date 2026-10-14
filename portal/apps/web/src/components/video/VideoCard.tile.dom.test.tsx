@@ -171,11 +171,14 @@ describe("what opens it and what selects (D23, D24)", () => {
 describe("drop to upload a Version (D23)", () => {
   it("dragging a file over a tile says which Version it will become; a drag of anything else does not", async () => {
     await mount();
-    const poster = tileOf("Main walkthrough").querySelector('[data-testid="video-card-poster"]')!;
+    const tile = tileOf("Main walkthrough");
+    const poster = tile.querySelector('[data-testid="video-card-poster"]')!;
+    const zone = tile.querySelector('[data-testid="video-card-drop"]')!;
     expect(poster.textContent).toContain("Drop to upload v3");
-    expect(poster.hasAttribute("data-dragging")).toBe(false);
-    await dragEnter(poster);
-    expect(poster.getAttribute("data-dragging")).toBe("true");
+    expect(zone.hasAttribute("data-dragging")).toBe(false);
+    // elementFromPoint over the poster centre returns the stretched open control (its ::after), not the poster div
+    await dragEnter(tile.querySelector('[data-testid="video-card-open"]')!);
+    expect(zone.getAttribute("data-dragging")).toBe("true");
   });
 
   it("a drop checks the file, then reserves the next Version of that film", async () => {
@@ -184,6 +187,15 @@ describe("drop to upload a Version (D23)", () => {
     await dropOn(tileOf("Main walkthrough").querySelector('[data-testid="video-card-poster"]')!, [await goodFile()]);
     expect(apiPostMock).toHaveBeenCalledTimes(1);
     expect(apiPostMock.mock.calls[0]![1]).toMatchObject({ videoId: V1 });
+  });
+
+  it("a drop on the stretched open control over the poster uploads the next Version, not a new film", async () => {
+    apiPostMock.mockImplementation(() => new Promise(() => undefined));
+    await mount();
+    await dropOn(tileOf("Main walkthrough").querySelector('[data-testid="video-card-open"]')!, [await goodFile()]);
+    expect(apiPostMock).toHaveBeenCalledTimes(1);
+    expect(apiPostMock.mock.calls[0]![1]).toMatchObject({ videoId: V1 });
+    expect(all('[data-testid="new-film-row"]')).toHaveLength(0);
   });
 
   it("a drop while that film is uploading is a no-op", async () => {
