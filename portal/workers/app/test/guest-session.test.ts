@@ -20,6 +20,15 @@ beforeEach(async () => { await clearGuestRows(); await openGuestGate(); });
 afterEach(async () => { await clearGuestRows(); await clearVideoFlags(); });
 
 const stubOf = async (response: Response) => ({ status: response.status, body: await response.text(), headers: [...response.headers].filter(([name]) => name !== "server-timing").sort() });
+/** A stub that carries exactly one expiring `Set-Cookie` for this link's cookie (#854): the stub without that header, so everything else is compared exactly. */
+const stubExpiring = async (response: Response, linkId: string) => {
+  const cookies = response.headers.getSetCookie();
+  expect(cookies, "exactly one Set-Cookie").toHaveLength(1);
+  expect(cookies[0]!.startsWith(`${cookieName(linkId)}=`)).toBe(true);
+  expect(cookies[0]).toContain("Max-Age=0"); expect(cookies[0]).toContain(`Path=/d/api/links/${linkId}`);
+  const seen = await stubOf(response);
+  return { ...seen, headers: seen.headers.filter(([name]) => name !== "set-cookie") };
+};
 const sessionRows = async (linkId: string) => (await database.DB.prepare("SELECT * FROM guest_sessions WHERE link_id = ?").bind(linkId).all<Record<string, unknown>>()).results;
 
 describe("POST /d/api/links/:linkId/session", () => {
@@ -464,20 +473,19 @@ describe("Sol round 1 fixes", () => {
     expect(used!.n === null || used!.n >= 60).toBe(true);
   });
 
-  it("leave: a missing, forged, expired or old-generation credential is the stub (same status and body; a cookie that came is expired) and deletes no live session", async () => {
+  it("leave: a missing, forged, expired or old-generation credential is the stub (the stub plus one expiring Set-Cookie when a cookie came) and deletes no live session", async () => {
     const reference = await stubOf(await guestFetch("/d/api/x"));
-    const bodyOf = async (response: Response) => ({ status: response.status, body: await response.text(), headers: reference.headers });
     const leave = (id: string, cookie: string | null) => guestFetch(linkPath(id, "/session"), { method: "DELETE", cookie });
     const live = await linkWithSession();
-    expect(await bodyOf(await leave(live.id, null))).toEqual(reference);
-    expect(await bodyOf(await leave(live.id, `${cookieName(live.id)}=forged`))).toEqual(reference);
+    expect(await stubOf(await leave(live.id, null)), "no cookie: the full stub, no Set-Cookie").toEqual(reference);
+    expect(await stubExpiring(await leave(live.id, `${cookieName(live.id)}=forged`), live.id)).toEqual(reference);
     expect(await sessionRows(live.id)).toHaveLength(1);
     const lapsed = await linkWithSession();
     await database.DB.prepare("UPDATE guest_sessions SET expires_at = ?, created_at = ? WHERE link_id = ?").bind(Date.now() - 1, Date.now() - 1000, lapsed.id).run();
-    expect(await bodyOf(await leave(lapsed.id, lapsed.cookie))).toEqual(reference);
+    expect(await stubExpiring(await leave(lapsed.id, lapsed.cookie), lapsed.id)).toEqual(reference);
     const replaced = await linkWithSession();
     await database.DB.prepare("UPDATE client_links SET token_generation = token_generation + 1 WHERE id = ?").bind(replaced.id).run();
-    expect(await bodyOf(await leave(replaced.id, replaced.cookie))).toEqual(reference);
+    expect(await stubExpiring(await leave(replaced.id, replaced.cookie), replaced.id)).toEqual(reference);
     expect((await leave(live.id, live.cookie)).status).toBe(204);
   });
 
@@ -683,8 +691,7 @@ describe("guest leaving writes an audit row (#854)", () => {
     expect(log).toHaveLength(1); expect(log[0]!.actor_id).toBeNull();
     expect(JSON.parse(log[0]!.meta_json)).toMatchObject({ linkId: link.id, guest: { sessionId } });
     const repeat = await guestFetch(linkPath(link.id, "/session"), { method: "DELETE", cookie: link.cookie });
-    const bare = await stubOf(await guestFetch("/d/api/x"));
-    expect({ status: repeat.status, body: await repeat.text() }).toEqual({ status: bare.status, body: bare.body });
+    expect(await stubExpiring(repeat, link.id)).toEqual(await stubOf(await guestFetch("/d/api/x")));
     expect((await database.DB.prepare("SELECT 1 FROM audit_log WHERE action = 'review_link.session_end' AND target_id = ?").bind(link.id).all()).results).toHaveLength(1);
   });
 });
