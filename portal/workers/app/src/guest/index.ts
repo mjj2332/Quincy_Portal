@@ -20,6 +20,7 @@ import { mountGuestSubscription } from "./subscription";
 import { guestGloballyOpen, identityOf, loadActiveLink, notificationsOf, renewDeliverySession, resolveSession, sessionBody } from "./link";
 import { clientAddress, GUEST_LIMITS, ipBucket, reserveAttempts, windowStart } from "./rate-limit";
 import { listGuestNotes, listGuestSocialOverlays, listGuestVideos, readGuestMarkup, resolveGrantedVersion } from "./read";
+import { loadGuestVersionSummaries } from "../lib/video-version-summaries";
 
 /**
  * The guest surface of a Review link (#741 12a): `/d/review` (the SPA shell) and `/d/api/links/:linkId/...`. It shares a Worker with the staff app and nothing else: no
@@ -131,6 +132,13 @@ export function mountGuest(app: Hono<AppEnv>): void {
   }));
 
   app.get("/d/api/links/:linkId/videos", guestRoute("/d/api/links/:linkId/videos", (c) => withSession(c, async (session) => c.json(await listGuestVideos(c.env.DB, session.link.id, session.link.projectId, session.guestId, session.link.allowDownload && session.link.parts.includes("delivery"))))));
+
+  app.get("/d/api/links/:linkId/videos/:videoId/version-summaries", guestRoute("/d/api/links/:linkId/videos/:videoId/version-summaries", (c) => withSession(c, async (session) => {
+    const videoId = c.req.param("videoId");
+    if (!UUID.test(videoId)) return guestNotFound(c);
+    const summaries = await loadGuestVersionSummaries(c.env.DB, session.link.id, session.link.projectId, videoId);
+    return summaries ? c.json(summaries) : guestNotFound(c);
+  })));
 
   app.get("/d/api/links/:linkId/social-overlays", guestRoute("/d/api/links/:linkId/social-overlays", (c) => withSession(c, async (session) => c.json(await listGuestSocialOverlays(c.env.DB, session.link.projectId)))));
 

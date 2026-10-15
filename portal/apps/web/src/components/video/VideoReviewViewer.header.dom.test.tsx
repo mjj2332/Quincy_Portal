@@ -173,13 +173,13 @@ describe("the one-line top bar (#877 S2)", () => {
       expect(trigger()).toBeNull();
     });
 
-    it("gives icon-only Back and Social a 44px minimum width, and draws the status pill compact (the full name and the older hint stay readable by assistive tech)", async () => {
+    it("gives icon-only Back a 44px minimum width; the Review status is read from the Version chip, not an inline pill (#879 D3)", async () => {
       await mount({ social: true, status: true });
       const back = document.querySelector<HTMLElement>('[data-testid="video-review-viewer"] header button')!;
       expect(back.className).toContain("min-w-11");
-      expect(tid("video-social-toggle")!.className).toContain("min-w-11");
-      const pill = tid("video-review-status")!;
-      expect(pill.getAttribute("aria-label")).toBe("Review status: In review");
+      expect(tid("video-social-toggle")).toBeNull();
+      expect(tid("video-review-status")).toBeNull();
+      expect(tid("video-version-chip")!.textContent).toContain("Review status: In review");
     });
 
     it("each item keeps its own condition, and the trigger is absent when nothing is allowed", async () => {

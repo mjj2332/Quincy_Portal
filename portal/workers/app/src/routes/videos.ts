@@ -5,6 +5,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
 import { loadVideoDtos } from "../lib/video-dto";
+import { loadStaffVersionSummaries } from "../lib/video-version-summaries";
 import { readVideoReviewGate } from "../lib/video-review-gate";
 
 const uuid = z.string().uuid();
@@ -45,4 +46,20 @@ videosRoutes.get("/projects/:projectId/videos", terminalRoute("/projects/:projec
   if (!roleHasCapability(user.role, "viewVideo")) return c.json({ error: "Forbidden" }, 403);
   if (!await hasProjectAccess(c, projectId)) return user.role === "external_editor" ? c.json({ error: "Project not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   return c.json(videoListResponseSchema.parse({ videos: await loadVideoDtos(c.env.DB, projectId, undefined, gate.parts.includes("notes")) }));
+}));
+
+/**
+ * The phone Versions sheet's read (#879): each live Version of one Video with its upload date and open-note count. Same gate ordering as the list (the open check alone, 404; `viewVideo`; Project
+ * visibility); the count is `null` while the `notes` part is off. A read of its own so `/videos` keeps its shape.
+ */
+videosRoutes.get("/projects/:projectId/videos/:videoId/version-summaries", terminalRoute("/projects/:projectId/videos/:videoId/version-summaries", async (c) => {
+  const projectId = c.req.param("projectId"); const videoId = c.req.param("videoId");
+  if (!uuid.safeParse(projectId).success || !uuid.safeParse(videoId).success) return c.json({ error: "Invalid id" }, 400);
+  const user = c.get("user");
+  const gate = await readVideoReviewGate(c.env.DB, projectId);
+  if (!gate.open) return c.json({ error: "Not found" }, 404);
+  if (!roleHasCapability(user.role, "viewVideo")) return c.json({ error: "Forbidden" }, 403);
+  if (!await hasProjectAccess(c, projectId)) return user.role === "external_editor" ? c.json({ error: "Project not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  const summaries = await loadStaffVersionSummaries(c.env.DB, projectId, videoId, gate.parts.includes("notes"));
+  return summaries ? c.json(summaries) : c.json({ error: "Video not found" }, 404);
 }));

@@ -123,3 +123,15 @@ export type VideoReviewStatusResponse = z.infer<typeof videoReviewStatusResponse
 export function reviewStatusTransitions(role: Role): VersionReviewStatus[] {
   return VERSION_REVIEW_STATUSES.filter((status) => roleHasCapability(role, status === "approved_internal" ? "approveVideoInternal" : "annotateVideo"));
 }
+
+/**
+ * `GET /api/projects/:id/videos/:videoId/version-summaries` and the guest `GET /d/api/links/:linkId/videos/:videoId/version-summaries` (#879): what the phone Versions sheet lists per
+ * Version, newest first. A read of its own so neither `/videos` payload gains a key. `openNoteCount` is the open root notes (resolved and empty tombstones excluded; a staff count covers both
+ * visibilities, a guest count only public ones); `null` when the `notes` part is off.
+ */
+export const videoVersionSummariesResponseSchema = z.object({
+  versions: z.array(z.object({
+    assetId: z.string().uuid(), version: z.number().int().positive(), createdAt: z.string().datetime(), openNoteCount: z.number().int().nonnegative().nullable(),
+  }).strict()),
+}).strict();
+export type VideoVersionSummariesResponse = z.infer<typeof videoVersionSummariesResponseSchema>;

@@ -1,9 +1,6 @@
-import { useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
-import { reviewStatusTransitions, type Role, type VersionReviewStatus, type VideoDto, type VideoReviewStatus } from "@quincy/shared";
-import { useRunFence } from "../../lib/use-run-fence";
-import { useOptionalProjectQueryClient } from "../../lib/project-data";
-import { classifyReviewStatusError, reviewStatusErrorText, setVideoReviewStatus } from "../../lib/video-review-status-data";
+import type { Role, VersionReviewStatus, VideoDto, VideoReviewStatus } from "@quincy/shared";
+import { useReviewStatusWrite } from "./use-review-status-write";
 import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
 import { StatusPill, type StatusTone } from "../quincy/StatusPill";
 import { cn } from "@/lib/utils";
@@ -19,7 +16,7 @@ export const REVIEW_STATUS_TONE: Record<VideoReviewStatus, StatusTone> = { in_re
 
 export const REVIEW_STATUS_SHORT: Record<VideoReviewStatus, string> = { in_review: "In review", approved_internal: "Approved", published: "Published" };
 
-export function VideoReviewStatusPill({ video, version, comparing, projectId, role, archived, testId = "video-review-status", compact = false }: {
+export function VideoReviewStatusPill({ video, version, comparing, projectId, role, archived, testId = "video-review-status", compact = false, checked = false }: {
   video: VideoDto;
   /** The Version on show. */
   version: VideoDto["versions"][number];
@@ -31,38 +28,21 @@ export function VideoReviewStatusPill({ video, version, comparing, projectId, ro
   testId?: string;
   /** A phone bar (#877 S2): the short label is drawn, the older-publication hint is spoken only; the full label stays the accessible name. */
   compact?: boolean;
+  /** The phone Approve (#879, D4): once approved, the trigger reads "✓ Approved". */
+  checked?: boolean;
 }) {
-  const queryClient = useOptionalProjectQueryClient();
-  const [pending, setPending] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
-  // No key: putVideo moves `latest` before a refusal arrives, so keying on the Version would drop the error and strand `pending` (docs/lessons.md).
-  const fence = useRunFence();
-
-  const latest = video.versions.find((candidate) => candidate.current) ?? video.versions[0]!;
-  const allowed = reviewStatusTransitions(role);
-  const status = video.reviewStatus;
+  const { latest, allowed, status, readOnly, watchingOlder, blocked, pending, problem, choose } = useReviewStatusWrite({ video, version, comparing, projectId, role, archived });
   const tone = REVIEW_STATUS_TONE[status];
   // Compact (a phone bar): the short word is drawn, what it leaves out is still read aloud.
-  const label = compact ? <>{REVIEW_STATUS_SHORT[video.reviewStatus]}<span className="sr-only">{REVIEW_STATUS_LABEL[video.reviewStatus].slice(REVIEW_STATUS_SHORT[video.reviewStatus].length)}</span></> : REVIEW_STATUS_LABEL[video.reviewStatus];
+  const label = checked && status === "approved_internal" ? <>{"✓ Approved"}<span className="sr-only">{" (internal)"}</span></> : compact ? <>{REVIEW_STATUS_SHORT[video.reviewStatus]}<span className="sr-only">{REVIEW_STATUS_LABEL[video.reviewStatus].slice(REVIEW_STATUS_SHORT[video.reviewStatus].length)}</span></> : REVIEW_STATUS_LABEL[video.reviewStatus];
   const older = video.olderPublishedVersion !== null && <span data-testid={`${testId}-older`} className={cn("text-foreground-secondary [font:var(--type-label)] whitespace-nowrap", compact && "sr-only")}>{`v${video.olderPublishedVersion} published`}</span>;
 
-  if (status === "published" || archived || allowed.length === 0 || !queryClient) {
+  if (readOnly) {
     return <div className="flex flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)]">
       <StatusPill tone={tone} data-testid={testId}>{label}</StatusPill>
       {older}
     </div>;
   }
-
-  const watchingOlder = version.assetId !== video.currentAssetId;
-  const blocked = watchingOlder || comparing;
-  const choose = async (next: VersionReviewStatus) => {
-    if (next === latest.reviewStatus || pending || !queryClient) return;
-    const ticket = fence.begin();
-    setPending(true); setProblem(null);
-    try { await setVideoReviewStatus({ queryClient, projectId, role }, { assetId: latest.assetId, reviewStatus: next, expectedStatus: latest.reviewStatus }); }
-    catch (error) { if (ticket.isCurrent()) setProblem(reviewStatusErrorText(classifyReviewStatusError(error).kind)); }
-    finally { if (ticket.isCurrent()) setPending(false); }
-  };
 
   return <div className="flex flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)]">
     <Menu

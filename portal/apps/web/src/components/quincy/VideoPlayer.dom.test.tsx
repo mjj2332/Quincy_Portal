@@ -3,6 +3,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { frameSeekSeconds } from "@quincy/shared";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
+import "../../testing/dom-polyfills";
+import { mockViewport } from "../../testing/viewport";
 import { VideoPlayer, type VideoPlayerControl, type VideoPlayerVersion } from "./VideoPlayer";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -109,7 +111,7 @@ describe("VideoPlayer timecode (#741 4d-ii)", () => {
     expect(thumb.className).toContain("has-[:focus-visible]:outline-offset-2");
   });
 
-  it("sizing: the video is out of flow so the stage takes the free height; phone stage is capped; readout aligns on phones", async () => {
+  it("sizing: the video is out of flow so the stage takes the free height; the phone stage fits the height it is given (no fixed aspect, no cap); readout aligns on phones", async () => {
     await mount(versionOf());
     await load();
     const video = host.querySelector("video")!;
@@ -117,7 +119,8 @@ describe("VideoPlayer timecode (#741 4d-ii)", () => {
     expect(video.className).toContain("inset-0");
     const stage = byTestId("video-stage")!;
     expect(stage.className).toContain("relative");
-    expect(stage.className).toContain("max-[721px]:max-h-[55dvh]");
+    expect(stage.className).not.toContain("max-[721px]:max-h-[55dvh]");
+    expect(stage.className).not.toContain("aspect-ratio");
     expect(stage.className).not.toContain("min-h-[45dvh]");
     expect(byTestId("video-readout")!.className).toContain("max-[721px]:px-0");
   });
@@ -185,8 +188,9 @@ describe("VideoPlayer layout (#741 4d-ii design review)", () => {
     expect(stage.className).not.toContain("aspect-video");
     expect(stage.className).toContain("flex-1");
     expect(stage.className).toContain("min-h-0");
-    expect(stage.className).toContain("max-[721px]:max-h-[55dvh]");
-    expect(stage.className).toContain("max-[721px]:[aspect-ratio:var(--stage-ratio)]");
+    expect(stage.className).not.toContain("max-[721px]:max-h-[55dvh]");
+    expect(stage.className).not.toContain("aspect-ratio");
+    expect(stage.className).not.toContain("[aspect-ratio:var(--stage-ratio)]");
     expect(stage.style.getPropertyValue("--stage-ratio")).toBe("1080/1920");
     expect(byTestId("video-player")!.className).toContain("min-h-0");
   });
@@ -589,5 +593,67 @@ describe("VideoPlayer control (#741 7a)", () => {
     expect(control.current!.currentFrame()).toBe(1);
     await act(async () => { stub.finishSeek(video()); stub.presentFrame(video(), 1 / 25); });
     expect(control.current!.currentFrame()).toBe(1);
+  });
+});
+
+describe("the phone control bar (#879)", () => {
+  it("is one row: play, timecode, mute and full screen, with no frame steps, shuttle legend, time-format menu or in/out; padded by --space-3; the marker lane collapses with no markers", async () => {
+    const viewport = mockViewport({ width: 390 });
+    try {
+      await mount(versionOf(), { markers: [], onMark: () => {}, range: { marks: { in: null, out: null, seed: 0 } as never, locked: false, clear: () => {} } });
+      await load();
+      expect(button("Play")).toBeTruthy();
+      expect(button("Mute") ?? null).not.toBeNull();
+      expect(host.querySelector('[aria-label="Previous frame"]')).toBeNull();
+      expect(host.querySelector('[aria-label="Next frame"]')).toBeNull();
+      expect(byTestId("video-key-legend")).toBeNull();
+      expect(byTestId("video-range-button")).toBeNull();
+      expect(byTestId("video-scrubber")!.parentElement!.className).toContain("max-[721px]:px-[var(--space-3)]");
+      expect(byTestId("video-marker-lane")).toBeNull();
+      const row = byTestId("video-controls-row")!;
+      expect(row.className).toContain("max-[721px]:flex-nowrap");
+      expect([...row.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual(["Play", "Mute"]);
+    } finally { viewport.restore(); }
+  });
+  it("a wide window keeps the desktop two-row transport", async () => {
+    const viewport = mockViewport({ width: 1280 });
+    try {
+      await mount();
+      await load();
+      expect(host.querySelector('[aria-label="Previous frame"]')).not.toBeNull();
+      expect(byTestId("video-key-legend")).not.toBeNull();
+    } finally { viewport.restore(); }
+  });
+});
+
+describe("the phone control bar's frame step and Social row (#879 review)", () => {
+  it("a host with no composer turns the frame steps back on, and Social controls take their own row", async () => {
+    const viewport = mockViewport({ width: 390 });
+    try {
+      await mount(versionOf(), { phoneFrameStep: true, social: { overlays: [{ id: "a", name: "Reels", imageUrl: "/a" }], currentId: "a", onOverlay: () => undefined, status: "ready", onRetry: () => undefined } });
+      await load();
+      expect(host.querySelector('[aria-label="Previous frame"]')).not.toBeNull();
+      expect(host.querySelector('[aria-label="Next frame"]')).not.toBeNull();
+      // Five controls plus the timecode do not fit at 375: the short readout (no " / total") keeps it from running under Mute and Full screen.
+      expect(byTestId("video-readout-total")).toBeNull();
+      const row = byTestId("video-controls-row")!;
+      const social = byTestId("video-social-row")!;
+      expect(social).not.toBeNull();
+      expect(row.contains(social)).toBe(false);
+    } finally { viewport.restore(); }
+  });
+
+  it("on a phone a short picture drops its timecode chip (the transport shows the time); a tall one keeps it", async () => {
+    const viewport = mockViewport({ width: 390 });
+    try {
+      await withLayout(390, 110, async () => { await mount(); await load(); expect(byTestId("video-timecode-chip")).toBeNull(); });
+      await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
+      await withLayout(390, 300, async () => { await mount(); await load(); expect(byTestId("video-timecode-chip")).not.toBeNull(); });
+    } finally { viewport.restore(); }
+  });
+
+  it("without frame steps on a phone the readout keeps its total", async () => {
+    const viewport = mockViewport({ width: 375 });
+    try { await mount(); await load(); expect(byTestId("video-readout-total")).not.toBeNull(); } finally { viewport.restore(); }
   });
 });

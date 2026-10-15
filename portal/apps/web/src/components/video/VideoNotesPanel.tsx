@@ -15,7 +15,7 @@ import { ReviewPaneHideContext } from "../quincy/ReviewPane";
 import { Popover, PopoverContent, PopoverTrigger } from "../reui/popover";
 import { ScrollArea } from "../reui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
-import { EXPORT_PANEL_WIDTH, MarkerExportMenuItems, MarkerExportNotices, useMarkerExport } from "./VideoMarkerExportMenu";
+import { EXPORT_PANEL_WIDTH, MarkerExportMenuItems, MarkerExportNotices, type MarkerExport } from "./VideoMarkerExportMenu";
 import { VideoNoteComposer } from "./VideoNoteComposer";
 import { VideoNotePasteDialog } from "./VideoNotePasteDialog";
 import { VideoNoteThread } from "./VideoNoteThread";
@@ -43,7 +43,7 @@ function deleteCopy(tombstone: boolean, conflicted: boolean) {
  * 721px) nothing inside scrolls on its own: the whole dialog scrolls, with the composer directly under the player ahead of the list.
  * It holds no data of its own: `session` (from `useVideoNotes`) is shared with the player, which draws the markers and takes I and O.
  */
-export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = false }: { session: VideoNotesSession; video: VideoDto; detailsRows: ReactNode; /** The Project's `export` part is on (#741 9): the ⋯ menu gains the marker export. */ exportEnabled?: boolean; }) {
+export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone = false }: { session: VideoNotesSession; video: VideoDto; detailsRows: ReactNode; /** The marker export (#741 9), owned by the notes host so the phone header can reach it: `enabled` is the Project's `export` part and the role. */ exp: MarkerExport; /** The Draw button, handed to the composer on a phone (D11). */ pen?: ReactNode; /** The phone layout (#879): the panel is the sheet's body, its composer the sheet's foot. */ phone?: boolean; }) {
   const { query, threads, shown, filters, setFilters, selectedId, version } = session;
   const archived = session.readOnly;
   const readOnly = archived;
@@ -83,8 +83,7 @@ export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = f
   };
 
   // NLE marker export (#741 9): its options and request live in the hook, keyed by this Version; the ⋯ menu shows for anyone who can copy or export.
-  const canExport = exportEnabled && roleHasCapability(session.role, "viewVideo");
-  const exp = useMarkerExport({ enabled: canExport, projectId: session.projectId, assetId: session.assetId, userId: session.userId, title: video.title, version: version.version, threads });
+  const canExport = exp.enabled;
 
   const counts = useMemo(() => noteCounts(threads ?? [], filters), [threads, filters]);
   // The thread holding the open edit or reply stays listed when the filters exclude it, so the form is never invisible. Counts and markers still follow the filters.
@@ -171,14 +170,10 @@ export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = f
     </ToggleGroup>
   );
 
-  return <aside
-    aria-label="Notes"
-    data-testid="video-notes-panel"
-    className="flex flex-1 flex-col gap-[var(--space-3)] border-l border-border bg-card p-[var(--space-4)] text-card-foreground min-[721px]:min-h-0 min-[721px]:overflow-clip max-[721px]:border-t max-[721px]:border-l-0"
-  >
-    <div className="flex flex-wrap items-baseline justify-between gap-x-[var(--space-3)] gap-y-[var(--space-1)] max-[721px]:order-0">
+  const headerRow = (
+    <div data-sheet-part="body" className="flex flex-wrap items-baseline justify-between max-[721px]:flex-nowrap max-[721px]:items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)]">
       <div className="grid gap-[var(--space-1)]">
-        <h3 data-testid="video-notes-title" className="m-0 text-[length:var(--text-lg)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{`Notes on v${version.version}`}</h3>
+        <h3 data-testid="video-notes-title" className="m-0 max-[721px]:sr-only text-[length:var(--text-lg)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{`Notes on v${version.version}`}</h3>
         <span data-testid="video-notes-counts" className="text-foreground-secondary [font:var(--type-label)]">{`${counts.totals.open} open · ${counts.totals.resolved} resolved`}</span>
       </div>
       <div className="flex items-center gap-[var(--space-1)]">
@@ -186,36 +181,49 @@ export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = f
           <PopoverTrigger render={<Button type="button" variant="text" data-testid="video-details-button" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}>Version details</PopoverTrigger>
           <PopoverContent align="end" className="w-[min(320px,calc(100vw-var(--space-5)))] max-h-[min(70dvh,520px)] overflow-y-auto" data-testid="video-details-popover">{detailsRows}</PopoverContent>
         </Popover>
-        {(canCopy || canExport) && <Menu triggerLabel="Notes actions" label="Notes actions" triggerClassName={ICON_BUTTON} panelClassName={canExport ? EXPORT_PANEL_WIDTH : undefined} triggerTestId="video-notes-menu" trigger={<span aria-hidden="true">⋯</span>}>
+        {(canCopy || (canExport && !phone)) && <Menu triggerLabel="Notes actions" label="Notes actions" triggerClassName={ICON_BUTTON} panelClassName={canExport ? EXPORT_PANEL_WIDTH : undefined} triggerTestId="video-notes-menu" trigger={<span aria-hidden="true">⋯</span>}>
           {canCopy && <MenuPrimitive.Item className={MENU_ITEM} disabled={shown.length === 0} onClick={copyShown}>Copy shown notes</MenuPrimitive.Item>}
           {canCopy && pasteFrom && <MenuPrimitive.Item className={MENU_ITEM} onClick={() => { setPasteOpen(true); }}>{`Paste ${pasteFrom.noteIds.length} ${pasteFrom.noteIds.length === 1 ? "note" : "notes"} from v${pasteFrom.sourceVersion}…`}</MenuPrimitive.Item>}
-          {canExport && <MarkerExportMenuItems exp={exp} separated={canCopy} />}
+          {canExport && !phone && <MarkerExportMenuItems exp={exp} separated={canCopy} />}
         </Menu>}
         {hideButton}
       </div>
     </div>
-
-    <MarkerExportNotices exp={exp} className="max-[721px]:order-2" />
-
-    {(pasteResult ?? pasted) && <Notice tone="positive" role="status" data-testid="video-notes-paste-status" className="max-[721px]:order-2">{pasteResult ?? pasted}</Notice>}
-
-    {total > 0 && <div className="grid gap-[var(--space-2)] max-[721px]:order-2" data-testid="video-notes-filters">
+  );
+  const filtersBlock = (
+    <>{total > 0 && <div className="grid gap-[var(--space-2)]" data-sheet-part="body" data-testid="video-notes-filters">
       {filterGroup<NoteStatusFilter>("Show notes that are", "status", filters.status, [
         { value: "open", label: "Open", count: counts.status.open }, { value: "resolved", label: "Resolved", count: counts.status.resolved }, { value: "all", label: "All", count: counts.status.all },
       ], (status) => { setFilters({ ...filters, status }); })}
       {filterGroup<NoteVisibilityFilter>("Show notes visible to", "visibility", filters.visibility, [
         { value: "all", label: "All", count: counts.visibility.all }, { value: "public", label: "Client-visible", count: counts.visibility.public }, { value: "internal", label: "Internal", count: counts.visibility.internal },
       ], (visibility) => { setFilters({ ...filters, visibility }); })}
-    </div>}
+    </div>}</>
+  );
 
-    {orphanNotice && <Notice tone="critical" role="alert" data-testid="video-notes-orphan-notice" className="flex flex-wrap items-center justify-between gap-[var(--space-2)] max-[721px]:order-3">
+  return <aside
+    aria-label="Notes"
+    data-testid="video-notes-panel"
+    className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)] min-[721px]:overflow-clip max-[721px]:overflow-clip border-l border-border bg-card p-[var(--space-4)] text-card-foreground max-[721px]:border-l-0"
+  >
+    {!phone && headerRow}
+
+    <div data-sheet-part="body" className="contents"><MarkerExportNotices exp={exp} /></div>
+
+    {(pasteResult ?? pasted) && <Notice tone="positive" role="status" data-testid="video-notes-paste-status" data-sheet-part="body">{pasteResult ?? pasted}</Notice>}
+
+    {!phone && filtersBlock}
+
+    {orphanNotice && <Notice tone="critical" role="alert" data-testid="video-notes-orphan-notice" data-sheet-part="body" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]">
       <span>{orphanNotice.text}</span>
       <Button type="button" variant="text" data-testid="video-notes-orphan-dismiss" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={() => { session.forms.dismissNotice(session.assetId); }}>Dismiss</Button>
     </Notice>}
 
-    <div ref={listRef} className="flex flex-col min-[721px]:min-h-32 min-[721px]:flex-1 max-[721px]:order-3">
-      <ScrollArea className="min-[721px]:min-h-0 min-[721px]:flex-1" data-testid="video-notes-list" viewportProps={{ tabIndex: -1 }}>
+    <div ref={listRef} data-sheet-part="body" className="flex flex-1 flex-col min-[721px]:min-h-32 max-[721px]:min-h-0">
+      <ScrollArea className="min-h-0 flex-1" data-testid="video-notes-list" viewportProps={{ tabIndex: -1 }}>
         <div className="grid gap-[var(--space-2)] pe-[var(--space-1)]">
+          {phone && headerRow}
+          {phone && filtersBlock}
           {loading && <span data-testid="video-notes-loading" role="status" className="text-foreground-secondary [font:var(--type-label)]">Loading notes…</span>}
           {failed && <Notice tone="critical" role="alert" data-testid="video-notes-error" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>Notes could not be loaded.</span><Button type="button" variant="text" data-testid="video-notes-retry" onClick={session.refresh}>Retry</Button></Notice>}
           {!loading && !failed && listed.length === 0 && <EmptyState size="compact" data-testid="video-notes-empty" title={total === 0 ? "No notes on this version yet." : "No notes match these filters."} />}
@@ -241,10 +249,10 @@ export function VideoNotesPanel({ session, video, detailsRows, exportEnabled = f
       </ScrollArea>
     </div>
 
-    <div className="min-[721px]:shrink-0 min-[721px]:border-t min-[721px]:border-border min-[721px]:pt-[var(--space-3)] max-[721px]:order-1">
+    <div data-sheet-part="composer" className="shrink-0 border-t border-border pt-[var(--space-3)]">
       {archived
         ? <p data-testid="video-notes-archived" className={ARCHIVED_NOTICE_CLASS}>Read-only while archived. Restore the project before adding or changing notes.</p>
-        : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} markup={session.markup} rich={{ projectId: session.projectId, role: session.role }} />}
+        : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} markup={session.markup} rich={{ projectId: session.projectId, role: session.role }} {...(pen !== undefined ? { pen } : {})} />}
     </div>
 
     {canCopy && pasteFrom && <VideoNotePasteDialog

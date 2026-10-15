@@ -4,6 +4,7 @@ import { PANE_MIN, PLAYER_MIN, REVIEW_PANE_KEY, clampPaneWidth, normalizeReviewP
 import { useUiPref } from "../../lib/ui-prefs";
 import { Button } from "../reui/button";
 import { IconTip } from "./IconTip";
+import { SHEET_COLLAPSED_MIN, SheetGrabber, isComposerField, useSheetPane, type ReviewSheetControl, type SheetRoom } from "./ReviewSheet";
 
 /**
  * The review viewers' split (#859): the player on the left, a collapsible, resizable side pane on the right, one flex row for the staff viewer
@@ -16,6 +17,29 @@ import { IconTip } from "./IconTip";
  * measured width, never a percentage inside the flex row. `stacked` (phone) drops the handle and the width: the pane wraps below the player.
  */
 export const REVIEW_PANE_WIDTH_VAR = "--review-pane-w";
+
+/** The collapsed sheet's whole height: the grabber, the head and the composer, plus the padding, borders and flex/grid gaps of every box between them and the pane (#879). */
+function collapsedHeight(row: HTMLElement): number {
+  const pane = row.querySelector<HTMLElement>('[data-testid="video-review-pane"]');
+  const px = (value: string) => { const n = parseFloat(value); return Number.isFinite(n) ? n : 0; };
+  let total = 24 + (pane ? px(getComputedStyle(pane).borderTopWidth) + px(getComputedStyle(pane).borderBottomWidth) : 0);
+  if (!pane) return total;
+  const parts = ["head", "composer"].map((name) => pane.querySelector<HTMLElement>(`[data-sheet-part="${name}"]`)).filter((part): part is HTMLElement => part !== null);
+  const boxes = new Set<HTMLElement>();
+  for (const part of parts) {
+    total += part.offsetHeight;
+    for (let node = part.parentElement; node && node !== pane; node = node.parentElement) boxes.add(node);
+  }
+  const onPath = new Set<Element>([...boxes, ...parts]);
+  for (const box of boxes) {
+    const style = getComputedStyle(box);
+    total += px(style.paddingTop) + px(style.paddingBottom) + px(style.borderTopWidth) + px(style.borderBottomWidth);
+    const gap = px(style.rowGap);
+    const shown = [...box.children].filter((child) => onPath.has(child)).length;
+    if (gap > 0 && shown > 1) total += gap * (shown - 1);
+  }
+  return total;
+}
 
 /**
  * The pane's state for a screen: the saved preference (open, width), plus the narrow rule. A row too narrow for the smallest pane AND the
@@ -42,7 +66,7 @@ export function useReviewPane(phone: boolean) {
 const STEP = 16;
 const STEP_BIG = 64;
 
-export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarrow, paneId, handleLabel, stacked, rowClassName, playerClassName }: {
+export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarrow, paneId, handleLabel, stacked, sheet, rowClassName, playerClassName }: {
   player: ReactNode;
   /** The slim column that stands in for a collapsed pane (`useReviewPaneControls().strip`); the row's last child while the pane is hidden on a wide screen. */
   strip?: ReactNode;
@@ -57,14 +81,27 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
   paneId: string;
   handleLabel: string;
   stacked: boolean;
+  /** The phone sheet (#879): with `stacked`, the pane becomes the three-stop sheet under the film. Absent, a stacked pane wraps below the player as before. */
+  sheet?: ReviewSheetControl;
   rowClassName?: string;
   playerClassName?: string;
 }) {
   const rowRef = useRef<HTMLDivElement | null>(null);
+  const paneRef = useRef<HTMLDivElement | null>(null);
   const [hostWidth, setHostWidth] = useState(0);
+  const [room, setRoom] = useState<SheetRoom>({ available: 0, width: 0, transport: 0, collapsed: SHEET_COLLAPSED_MIN });
+  const transportHeld = useRef(0);
   const measure = useCallback((): number => {
-    const measured = rowRef.current?.clientWidth ?? 0;
+    const row = rowRef.current;
+    const measured = row?.clientWidth ?? 0;
     setHostWidth((held) => (held === measured ? held : measured));
+    if (row) {
+      // The room for the sheet stops: the row's height, its width, the transport block under the picture (kept while drawing replaces it) and what the collapsed bar needs (head + composer + grabber).
+      const transport = row.querySelector<HTMLElement>('[data-testid="video-scrubber"]')?.parentElement?.offsetHeight ?? 0;
+      if (transport > 0) transportHeld.current = transport;
+      const next = { available: row.clientHeight, width: measured, transport: transportHeld.current, collapsed: collapsedHeight(row) };
+      setRoom((held) => (held.available === next.available && held.width === next.width && held.transport === next.transport && held.collapsed === next.collapsed ? held : next));
+    }
     return measured;
   }, []);
   useLayoutEffect(() => {
@@ -124,8 +161,19 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
   useEffect(() => { if (!open || stacked) { dragRef.current = null; setDrag(null); } }, [open, stacked]);
 
   const showPane = stacked || open;
-  return <div ref={rowRef} data-testid="video-review-split" className={`flex min-h-0 flex-1 flex-wrap min-[721px]:flex-nowrap min-[721px]:overflow-hidden ${rowClassName ?? ""}`}>
-    <div data-testid="video-review-player" className={`flex min-h-0 min-w-0 flex-[999_1_640px] flex-col p-[var(--space-5)] min-[721px]:flex-1 ${playerClassName ?? ""}`}>{player}</div>
+  const phoneSheet = stacked && sheet !== undefined;
+  const sheetPane = useSheetPane({ enabled: phoneSheet, control: sheet, room, paneRef });
+  // The sheet's height follows what is measured: a layout pass after the stop, the mode or the film changes (the part sizes are those of the stop being shown).
+  useLayoutEffect(() => { if (phoneSheet) measure(); });
+  const sheetStyle = phoneSheet && sheetPane.height !== undefined ? { height: sheetPane.height } : undefined;
+  const rowClass = phoneSheet
+    ? "flex min-h-0 flex-1 flex-col flex-nowrap overflow-hidden"
+    : "flex min-h-0 flex-1 flex-wrap min-[721px]:flex-nowrap min-[721px]:overflow-hidden";
+  const playerClass = phoneSheet
+    ? "flex min-h-0 min-w-0 flex-1 flex-col p-0"
+    : "flex min-h-0 min-w-0 flex-[999_1_640px] flex-col p-[var(--space-5)] min-[721px]:flex-1";
+  return <div ref={rowRef} data-testid="video-review-split" className={`${rowClass} ${rowClassName ?? ""}`}>
+    <div data-testid="video-review-player" className={`${playerClass} ${playerClassName ?? ""}`}>{player}</div>
     {showPane && !stacked && !narrow && <div
       role="separator"
       data-testid="video-review-handle"
@@ -147,13 +195,23 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
     />}
     {/* Collapsing hides the pane, it does not unmount it: an upload in flight, a pending reply and a draft all live in it. */}
     {pane !== null && <div
+      ref={paneRef}
       id={paneId}
       data-testid="video-review-pane"
       hidden={!showPane}
       inert={!showPane}
-      style={{ ...(stacked ? {} : { [REVIEW_PANE_WIDTH_VAR]: `${shown}px` }), ...(showPane ? {} : { display: "none" }) } as CSSProperties}
-      className="flex min-h-0 flex-col max-[721px]:flex-[1_1_360px] min-[721px]:w-[var(--review-pane-w)] min-[721px]:flex-none min-[721px]:overflow-hidden"
-    >{pane}</div>}
+      {...(phoneSheet ? { "data-stop": sheet.stop, "data-mode": sheet.mode, "data-dragging": sheetPane.drag !== null } : {})}
+      onFocusCapture={phoneSheet ? (event) => { if (isComposerField(event.target)) sheet.onComposing(true); } : undefined}
+      onBlurCapture={phoneSheet ? (event) => { if (isComposerField(event.target) && !isComposerField(event.relatedTarget)) sheet.onComposing(false); } : undefined}
+      onSubmitCapture={phoneSheet ? () => { sheet.onComposing(false); } : undefined}
+      style={{ ...(stacked ? {} : { [REVIEW_PANE_WIDTH_VAR]: `${shown}px` }), ...sheetStyle, ...(showPane ? {} : { display: "none" }) } as CSSProperties}
+      className={phoneSheet
+        ? "relative flex min-h-0 flex-none flex-col overflow-hidden border-t border-border bg-card motion-safe:transition-[height] motion-safe:duration-[var(--dur-base)] motion-safe:ease-[var(--ease-entrance)] data-[dragging=true]:transition-none data-[mode=compose]:max-h-[60%] [&_[data-sheet-part][inert]]:hidden"
+        : "flex min-h-0 flex-col max-[721px]:flex-[1_1_360px] min-[721px]:w-[var(--review-pane-w)] min-[721px]:flex-none min-[721px]:overflow-hidden"}
+    >
+      {phoneSheet && <SheetGrabber control={sheet} stops={sheetPane.stops} getHeight={() => sheetPane.drag ?? sheetPane.stops[sheet.stop]} onDrag={sheetPane.setDrag} />}
+      {pane}
+    </div>}
     {!stacked && !showPane && strip}
   </div>;
 }

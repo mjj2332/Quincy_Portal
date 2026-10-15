@@ -72,6 +72,7 @@ const typeInto = async (element: HTMLElement | null, value: string) => {
   await act(async () => { Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(field, value); field.dispatchEvent(new Event("input", { bubbles: true })); });
 };
 const submit = async (id: string) => { await act(async () => { byId(id)!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); }); await flush(); };
+const sheetKey = async (key: string) => { const grabber = document.querySelector<HTMLElement>('[data-testid="review-sheet-grabber"]')!; await act(async () => { grabber.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); }); };
 const button = (label: string) => [...document.body.querySelectorAll<HTMLElement>("button")].find((item) => item.getAttribute("aria-label")?.startsWith(label) || item.textContent?.trim() === label);
 const keyDown = async (key: string) => { await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); }); await flush(); };
 const menuItem = (label: string) => [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.trim() === label);
@@ -193,18 +194,17 @@ describe("Email-updates switch (#741 15b)", () => {
     expect(puts()).toHaveLength(1);
   });
 
-  it("a toggle pending while the phone drawer closes is not lost: the reopened drawer shows its result", async () => {
+  it("a toggle pending while the phone sheet collapses is not lost: the reopened sheet shows its result", async () => {
     await viewport.set({ width: 400 });
     let release: (response: Response) => void = () => undefined;
     extra = putHandler(() => new Promise<Response>((resolve) => { release = resolve; }));
     await open();
-    await click(button("Notes"));
     await click(switchEl());
     expect(checked()).toBe("false");
-    await click(byId("guest-notes-close"));
+    await sheetKey("ArrowDown");
     await act(async () => { release(json({ subscribed: false })); });
     await flush();
-    await click(button("Notes"));
+    await sheetKey("ArrowUp");
     expect(checked()).toBe("false");
     expect(puts()).toHaveLength(1);
   });

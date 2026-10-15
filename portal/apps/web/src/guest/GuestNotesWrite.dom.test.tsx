@@ -90,6 +90,7 @@ const typeInto = async (element: HTMLElement | null, value: string) => {
   await act(async () => { Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(field, value); field.dispatchEvent(new Event("input", { bubbles: true })); });
 };
 const submit = async (id: string) => { await act(async () => { byId(id)!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); }); await flush(); };
+const sheetKey = async (key: string) => { const grabber = document.querySelector<HTMLElement>('[data-testid="review-sheet-grabber"]')!; await act(async () => { grabber.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); }); };
 const button = (label: string) => [...document.body.querySelectorAll<HTMLElement>("button")].find((item) => item.getAttribute("aria-label")?.startsWith(label) || item.textContent?.trim() === label);
 const keyDown = async (key: string) => { await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); }); await flush(); };
 const menuItem = (label: string) => [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.trim() === label);
@@ -780,16 +781,17 @@ describe("replies", () => {
     expect(allById("guest-note-reply")).toHaveLength(1);
     expect(byId("guest-reply-form")).toBeNull();
   });
-  it("keeps a reply draft when the phone drawer closes and opens again", async () => {
+  it("keeps a reply draft when the phone sheet collapses and opens again", async () => {
     await viewport.set({ width: 390, coarse: true });
     notes = { [asset(10)]: [note(1)] };
     await open();
-    await click(button("Notes"));
     await click(byId("guest-note-reply-button"));
     await typeInto(byId("guest-reply-body"), "half written");
-    await click(byId("guest-notes-close"));
-    expect(byId("guest-reply-form")).toBeNull();
-    await click(button("Notes"));
+    await sheetKey("ArrowDown");
+    expect(byId("video-review-pane")!.getAttribute("data-stop")).toBe("collapsed");
+    expect(byId("guest-reply-body")!.closest("[inert]")).not.toBeNull();
+    await sheetKey("ArrowUp");
+    expect(byId("guest-reply-body")!.closest("[inert]")).toBeNull();
     expect((byId("guest-reply-body") as HTMLTextAreaElement | null)?.value).toBe("half written");
   });
   it("keeps a reply edit draft across the list unmounting, and drops it on cancel", async () => {
@@ -797,17 +799,16 @@ describe("replies", () => {
     const reply = (({ replies: _replies, ...rest }) => rest)(mine(7, { parentId: noteId(1), startFrame: null, body: "Will do", revision: 2 }));
     notes = { [asset(10)]: [{ ...note(1), replies: [reply] }] };
     await open();
-    await click(button("Notes"));
     const menus = allById("guest-note-actions");
     await click(menus[0]);
     await click(menuItem("Edit"));
     await typeInto(byId("guest-note-edit-body"), "Will do it");
-    await click(byId("guest-notes-close"));
-    await click(button("Notes"));
+    await sheetKey("ArrowDown");
+    await sheetKey("ArrowUp");
     expect((byId("guest-note-edit-body") as HTMLTextAreaElement | null)?.value).toBe("Will do it");
     await click(byId("guest-note-edit-cancel"));
-    await click(byId("guest-notes-close"));
-    await click(button("Notes"));
+    await sheetKey("ArrowDown");
+    await sheetKey("ArrowUp");
     expect(byId("guest-note-edit-form")).toBeNull();
   });
   it("asks an unverified guest to verify first", async () => {
@@ -1131,29 +1132,29 @@ describe("round 4 findings", () => {
   });
 });
 
-describe("the phone drawer", () => {
+describe("the phone sheet composer", () => {
   beforeEach(async () => { await viewport.set({ width: 390, coarse: true }); });
-  const drawer = () => document.querySelector('[data-testid="guest-notes-drawer"][data-open]');
-  it("closes when the composer opens, so the picture is visible, and stays closed until the guest opens it", async () => {
+  it("Add a note opens the composer in the sheet's foot, with the film still on top and the sheet where it was; Cancel puts Add a note back", async () => {
     await open();
-    // The drawer is where Add a note lives on a phone.
-    await click(button("Notes"));
-    expect(drawer()).not.toBeNull();
+    const film = document.querySelector("video");
     await click(byId("guest-add-note"));
-    expect(byId("guest-composer")).toBeNull();
-    expect(drawer()).toBeNull();
-    await click(button("Notes"));
+    const pane = byId("video-review-pane")!;
     expect(byId("guest-composer")).not.toBeNull();
-  });
-  it("opens again once the draft is posted or cancelled", async () => {
-    await open();
-    await click(button("Notes"));
-    await click(byId("guest-add-note"));
-    expect(drawer()).toBeNull();
-    await click(button("Notes"));
+    expect(pane.contains(byId("guest-composer"))).toBe(true);
+    expect(byId("guest-composer")!.closest('[data-sheet-part="composer"]')).not.toBeNull();
+    expect(pane.getAttribute("data-stop")).toBe("half");
+    expect(document.querySelector("video")).toBe(film);
     await click(byId("guest-composer-cancel"));
     expect(byId("guest-composer")).toBeNull();
-    expect(drawer()).not.toBeNull();
+    expect(byId("guest-add-note")).not.toBeNull();
+  });
+  it("Add a note puts the cursor in the editor (D10), and the pen blurs it so the keyboard goes away (D11)", async () => {
+    await open();
+    await click(byId("guest-add-note"));
+    const field = () => document.querySelector<HTMLElement>('[data-testid="guest-composer-body"]');
+    await vi.waitFor(() => { expect(field()).not.toBeNull(); expect(document.activeElement).toBe(field()); });
+    await click(byId("guest-composer-draw"));
+    expect(document.activeElement).not.toBe(field());
   });
 });
 

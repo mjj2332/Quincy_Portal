@@ -28,8 +28,9 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
   writing: Writing;
 }) {
   return <section data-testid="guest-notes-panel" aria-label="Notes" tabIndex={-1} className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-3)]">
-    {header && <div className="shrink-0">{header}</div>}
-    {top && <div className="-m-1 max-h-[60%] min-h-0 shrink-0 overflow-y-auto p-1">{top}</div>}
+    {header && <div data-sheet-part="body" className="shrink-0">{header}</div>}
+    {top && <div data-sheet-part="composer" className="-m-1 max-h-[60%] min-h-0 shrink-0 overflow-y-auto p-1 max-[721px]:order-last max-[721px]:max-h-none">{top}</div>}
+    <div data-sheet-part="body" className="flex min-h-0 flex-1 flex-col">
     {failed
       ? <EmptyState size="compact" tone="error" data-testid="guest-notes-unreachable" title="Couldn't reach Quincy. Check your connection and try again."><Button type="button" variant="outline" size="sm" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={onRetry}>Try again</Button></EmptyState>
       : threads === null
@@ -41,6 +42,7 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
             {threads.map((thread) => <GuestThreadItem key={thread.id} thread={thread} selected={thread.id === selectedId} onSelect={onSelect} timecode={timecode} writing={writing} />)}
           </ItemGroup>
         </ScrollArea>}
-    {footer && <div className="shrink-0">{footer}</div>}
+    </div>
+    {footer && <div data-sheet-part="body" className="shrink-0">{footer}</div>}
   </section>;
 }
