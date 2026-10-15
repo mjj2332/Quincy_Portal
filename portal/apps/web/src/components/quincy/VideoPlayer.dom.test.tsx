@@ -724,3 +724,42 @@ describe("the phone transport band (#879 PR 3a, P1 ControlBar: scrubber band, 44
     } finally { viewport.restore(); }
   });
 });
+
+describe("the phone play badge on the paused film (#879 PR 3a, P1 PlayBadge, owner decision)", () => {
+  const badge = () => byTestId("video-play-badge");
+  it("a paused phone film shows a centred play badge that plays; it goes while playing and comes back on pause", async () => {
+    const viewport = mockViewport({ width: 390 });
+    try {
+      await mount(); await load();
+      const b = badge()!;
+      expect(b).not.toBeNull();
+      expect(byTestId("video-stage")!.contains(b)).toBe(true);
+      expect(b.tagName).toBe("BUTTON");
+      expect(b.getAttribute("data-slot")).toBe("button");
+      // A pointer shortcut for the transport's Play, which keeps the name: out of the tab order and the accessibility tree.
+      expect(b.getAttribute("tabindex")).toBe("-1");
+      expect(b.getAttribute("aria-hidden")).toBe("true");
+      await act(async () => { b.click(); });
+      expect(video().paused).toBe(false);
+      expect(badge()).toBeNull();
+      await act(async () => { button("Pause").click(); });
+      expect(badge()).not.toBeNull();
+    } finally { viewport.restore(); }
+  });
+
+  it("is hidden while composing (the transport hidden) and while drawing (the transport replaced or locked)", async () => {
+    const viewport = mockViewport({ width: 390 });
+    try {
+      await mount(versionOf(), { transportHidden: true }); await load();
+      expect(badge()).toBeNull();
+      await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
+      await mount(versionOf(), { transportReplacement: <div>Drawing</div>, transportLocked: true }); await load();
+      expect(badge()).toBeNull();
+    } finally { viewport.restore(); }
+  });
+
+  it("a wide window has no badge", async () => {
+    const viewport = mockViewport({ width: 1280 });
+    try { await mount(); await load(); expect(badge()).toBeNull(); } finally { viewport.restore(); }
+  });
+});

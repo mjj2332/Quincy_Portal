@@ -20,7 +20,7 @@ const CHIP_CHROME_PX = 40;
  * it is handed the picture box (the box the picture really occupies, null until measured) so markup can be mapped onto the picture and not
  * the letterbox bands (#741 6b-ui). Key it by Version like the player: a new Version is a new element.
  */
-export function VideoStage({ streamUrl, title, width, height, timecode, frame, frameSuffix = true, onVideo, overlay, watermark, onMediaError, social, frameStyle }: {
+export function VideoStage({ streamUrl, title, width, height, timecode, frame, frameSuffix = true, onVideo, overlay, watermark, onMediaError, social, frameStyle, badge }: {
   streamUrl: string;
   title: string;
   /** The stored size: the stage's shape on a phone, and the picture box's stand-in until the decoded size is known. */
@@ -50,6 +50,8 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, f
    * transparent and the frame carries the background, so the clipped side shows the other side through the part it does not cover. Ignored unless `social` is set.
    */
   frameStyle?: React.CSSProperties;
+  /** Centred over the whole stage, above the picture and the overlay (#879 PR 3a: the phone player's play badge). Not drawn while the film cannot play. */
+  badge?: ReactNode;
 }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [failed, setFailed] = useState(false);
@@ -98,6 +100,7 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, f
       {framed && social.imageUrl && <img data-testid="video-social-overlay" src={social.imageUrl} alt="" aria-hidden="true" draggable={false} onError={social.onImageError} onLoad={social.onImageLoad} className="pointer-events-none absolute inset-0 size-full select-none object-fill" />}
       {typeof overlay === "function" ? overlay(box) : overlay}
     </div>
+    {badge != null && !failed && <div className="pointer-events-none absolute inset-0 flex items-center justify-center">{badge}</div>}
     {failed && <div className="absolute inset-x-[var(--space-3)] top-[var(--space-3)]"><Notice tone="caution" role="alert" className="bg-card">This version can't play in this browser.</Notice></div>}
   </div>;
 }

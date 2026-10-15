@@ -47,6 +47,8 @@ export const COARSE = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[721p
 /** An icon control inside the phone note pill (#879 fix, kit.jsx `ibtn sm`): drawn at 32px so the text keeps the room, with a 44px hit area from a transparent pseudo-element. */
 export const PILL_ICON = "relative size-8 after:absolute after:-inset-1.5 after:content-['']";
 const MONO = "[font:var(--type-mono)] tabular-nums";
+/** P1's PlayBadge: a 60px round, translucent ink disc on the film (`--space-8` less `--space-1`), the inverse surface's paper icon. */
+const PLAY_BADGE = "pointer-events-auto size-[calc(var(--space-8)-var(--space-1))] rounded-[var(--radius-pill)] bg-[color-mix(in_srgb,var(--ink-900)_55%,transparent)] !text-foreground hover:bg-[color-mix(in_srgb,var(--ink-900)_70%,transparent)]";
 // These chips keep the Lightbox's SHORTCUT_KBD skin (bordered, bg-secondary) rather than the Kbd primitive, to match the Lightbox legend.
 export const LEGEND_KBD = "rounded-[var(--radius-xs)] border border-solid border-[length:var(--border-width-hair)] border-border bg-secondary px-[var(--space-1)] text-foreground [font:var(--weight-regular)_var(--text-2xs)/1.4_var(--font-mono)]";
 const LEGEND = "flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)] text-foreground-secondary [font:var(--type-label)] pointer-coarse:hidden max-[721px]:hidden @max-[64rem]:hidden";
@@ -174,6 +176,11 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const phone = useMediaQuery(PHONE_QUERY);
   const toggleMuted = (next: boolean) => { setMutedState(next); clock.setMuted(next); onMutedChange?.(next); };
   const playLabel = clock.playing ? "Pause" : "Play";
+  // P1's PlayBadge (#879 PR 3a, owner decision): the paused phone film carries a centred play button, gone while playing, drawing or composing. It is a pointer shortcut for the
+  // transport's Play, which keeps the name and the keyboard: so it is out of the tab order and the accessibility tree.
+  const badge = phone && !clock.playing && !transportHidden && !transportLocked && transportReplacement == null
+    ? <Button type="button" variant="ghost" size="icon" tabIndex={-1} aria-hidden="true" data-testid="video-play-badge" className={PLAY_BADGE} onClick={() => { clock.play(); }}><Play aria-hidden="true" className="size-6" /></Button>
+    : null;
 
   return <section
     ref={(element) => { playerRef.current = element; setSection(element); }}
@@ -183,7 +190,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     onKeyDown={keyboard === "self" ? (event) => { handleKeyDown(event); } : undefined}
     className={cn("@container flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] max-[721px]:gap-0 focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", className)}
   >
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} {...(social ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})} />
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} badge={badge} {...(social ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})} />
 
     {/* The replacement sits ABOVE the transport, which stays mounted and hidden under it (#879 PR 2): unmounted, the slider came back as a new node, measured its thumb inside whatever
         box hid it next (a phone's Done lands in compose mode, where the transport is hidden) and drew no thumb until the frame moved. */}
