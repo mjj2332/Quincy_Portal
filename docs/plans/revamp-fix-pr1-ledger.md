@@ -93,3 +93,13 @@ No new elements.
 | Pill focus on a tap | `QuincyRichTextEditorBase.tsx` (`revealOnFocus`, `handleDOMEvents`, `focusField`), `VideoNoteEditor.tsx`, `VideoNoteComposer.tsx`, `VideoNotesPanel.tsx` | No UI. With `pill` and `revealOnFocus={false}` (the staff viewer's notes host only), a touch or pen press on the unfocused field is focused with `preventScroll` and the caret placed at the press, so iOS does not pan the viewer to reveal it. Mouse, trackpad, an already-focused field and the guest screen keep the browser's focus. The pill's refocus paths (upload tray Cancel/Remove, table tools) use `preventScroll` too. |
 | Viewer backdrop (phone) | `components/reui/dialog.tsx` (`overlayProps`, divergence note), `VideoReviewViewer.tsx` | The base-nova dialog backdrop, re-styled on a phone only: `data-surface="inverse"` with `bg-background` (ink-900) and no blur, instead of the scrim. Desktop keeps the scrim. |
 | Keyboard box | `lib/use-visual-viewport.ts` | Unchanged behaviour; doc comment corrected (the pan is drawn by Safari's UI process, so the fix is not to pan). |
+
+## Round 8 (Simulator measurement of the first-focus flash)
+
+No new elements.
+
+| Element | Where | Change |
+|---|---|---|
+| Keyboard box | `lib/use-visual-viewport.ts` | No UI. The hook sets `transition: none` on the root it drives (cleared on release): reui `DialogContent`'s `duration-100` (transition-property `all`) eased every write, which was the flash. |
+| Pill focus on a tap | `QuincyRichTextEditorBase.tsx`, `VideoNoteEditor.tsx`, `VideoNoteComposer.tsx`, `VideoNotesPanel.tsx` | Round 7's `revealOnFocus` / `focusField` reverted: measured no effect on iOS's keyboard scroll. |
+| Viewer backdrop (phone) | `components/reui/dialog.tsx`, `VideoReviewViewer.tsx` | Kept from round 7 (solid ink on a phone) as the floor. |
