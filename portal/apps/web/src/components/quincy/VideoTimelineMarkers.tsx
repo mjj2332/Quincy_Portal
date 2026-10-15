@@ -15,6 +15,8 @@ const THUMB_HALF = "[--thumb-half:6px] pointer-coarse:[--thumb-half:8px]";
 const LEFT = "left-[calc(var(--thumb-half)+(100%-2*var(--thumb-half))*var(--f))]";
 const SPAN = "w-[max(2px,calc((var(--f2)-var(--f))*(100%-2*var(--thumb-half))))]";
 const AMBER = "var(--signal-caution-on-inverse)";
+/** A fingertip's reach to a marker in full screen: 22px, half a 44px target. */
+const TOUCH_REACH_PX = 22;
 
 const fractionStyle = (from: number, to: number) => ({ "--f": from, "--f2": to }) as CSSProperties;
 
@@ -25,11 +27,16 @@ const fractionStyle = (from: number, to: number) => ({ "--f": from, "--f2": to }
  * It is a plain `div` with a pointer handler, not buttons. Markers that would overlap at the measured lane width merge into one cluster marker
  * showing a count (recomputed as the lane resizes); a press on it picks its earliest note. The notes list is still the way to every note.
  */
-export function VideoTimelineMarkers({ markers, frameCount, onSelect, className }: {
+export function VideoTimelineMarkers({ markers, frameCount, onSelect, className, touch = false }: {
   markers: readonly TimelineMarker[];
   frameCount: number;
   onSelect?: (id: string) => void;
   className?: string;
+  /**
+   * Full screen (#880): the lane takes touch. It drops the inert-on-touch rule, reaches 22px for a tap instead of 8, and grows a 44px hit band from the lane's top DOWN over 32px of space it
+   * reserves for it (lesson "Touch targets: grow a 44px box toward empty space"): never up into the slider, never over the controls row. Outside full screen the lane stays inert on touch.
+   */
+  touch?: boolean;
 }) {
   const laneRef = useRef<HTMLDivElement>(null);
   // The lane's measured width (and the thumb half it is laid out with): clustering depends on how many pixels a frame gets.
@@ -53,13 +60,14 @@ export function VideoTimelineMarkers({ markers, frameCount, onSelect, className 
     ref={laneRef}
     data-testid="video-marker-lane"
     aria-hidden="true"
+    {...(touch ? { "data-touch": "true" } : {})}
     onPointerDown={onSelect ? (event) => {
       const rect = event.currentTarget.getBoundingClientRect();
       const half = Number.parseFloat(getComputedStyle(event.currentTarget).getPropertyValue("--thumb-half")) || 6;
-      const id = nearestMarkerId(markerHitTargets(clusters), frameCount, event.clientX - rect.left, rect.width, half);
+      const id = nearestMarkerId(markerHitTargets(clusters), frameCount, event.clientX - rect.left, rect.width, half, touch ? TOUCH_REACH_PX : undefined);
       if (id) onSelect(id);
     } : undefined}
-    className={cn("relative h-3 w-full", THUMB_HALF, onSelect && "cursor-pointer", "pointer-coarse:pointer-events-none max-[721px]:pointer-events-none", className)}
+    className={cn("relative h-3 w-full", THUMB_HALF, onSelect && "cursor-pointer", touch ? "mb-[var(--space-6)] before:absolute before:inset-x-0 before:top-0 before:h-11 before:content-['']" : "pointer-coarse:pointer-events-none max-[721px]:pointer-events-none", className)}
   >
     {clusters.map((cluster) => {
       const marker = cluster.first;

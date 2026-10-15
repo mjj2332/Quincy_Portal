@@ -267,6 +267,15 @@ export function createNoteFormStore(key: string) {
       const anchorFrame = body === "" ? null : composer.body === "" && composer.anchorFrame === null ? frameNow : composer.anchorFrame;
       put(assetId, { composer: { ...composer, body, content, anchorFrame, visibility: body === "" ? "internal" : composer.visibility, revision: composer.revision + 1 }, spent: false });
     },
+    /**
+     * Add note in full screen (#880): the press stamps the frame on screen as the composer's anchor at once, as the first keystroke would, so a note started by the button anchors where the person
+     * paused. An anchor already there, a draft, or a request out in the Version is left alone.
+     */
+    beginComposer(assetId: string, frame: number) {
+      const held = slot(assetId);
+      if (held.op || held.composer.anchorFrame !== null || held.composer.body !== "") return;
+      put(assetId, { composer: { ...held.composer, anchorFrame: frame, revision: held.composer.revision + 1 } });
+    },
     setVisibility(assetId: string, visibility: VideoNoteVisibility) {
       const composer = slot(assetId).composer;
       put(assetId, { composer: { ...composer, visibility, revision: composer.revision + 1 } });

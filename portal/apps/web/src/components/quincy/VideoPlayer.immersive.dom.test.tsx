@@ -1,0 +1,268 @@
+import { act, createRef } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
+import "../../testing/dom-polyfills";
+import { mockViewport, type MockViewport } from "../../testing/viewport";
+import { VideoPlayer, type VideoImmersiveHost, type VideoPlayerControl, type VideoPlayerVersion } from "./VideoPlayer";
+import type { TimelineMarker } from "./VideoTimelineMarkers";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const version: VideoPlayerVersion = {
+  streamUrl: "/media/video/77777777-7777-4777-8777-777777777777", fps: { num: 25, den: 1 }, frameCount: 3000, width: 1920, height: 1080,
+  tcNominalFps: 25, tcDropFrame: false, startTimecodeFrames: null, hasAudio: true,
+};
+const markers: TimelineMarker[] = [{ id: "n1", startFrame: 1500, endFrame: null, tone: "public", selected: false }];
+
+let stub: VideoElementStub;
+let root: Root | null = null;
+let host: HTMLElement;
+let viewport: MockViewport | null = null;
+const video = () => host.querySelector("video")!;
+const byTestId = (id: string) => host.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+const button = (name: string) => [...host.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === name) ?? null;
+const hostOf = (over: Partial<VideoImmersiveHost> = {}): VideoImmersiveHost => ({ on: true, onToggle: vi.fn(), heading: "Main walkthrough · v2", ...over });
+type Props = Partial<React.ComponentProps<typeof VideoPlayer>>;
+
+async function mount(props: Props = {}) {
+  host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+  await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" {...props} />); });
+  await act(async () => { stub.loadMetadata(video(), { duration: 3000 / 25, videoWidth: 1920, videoHeight: 1080 }); });
+  await act(async () => { stub.finishSeek(video()); stub.presentFrame(video(), 0); });
+  stub.writes.length = 0; stub.calls.length = 0;
+}
+const rerender = (props: Props) => act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" {...props} />); });
+const chrome = () => byTestId("video-player")!.dataset.chrome;
+const play = () => act(async () => { button("Play")!.click(); });
+const advance = (ms: number) => act(async () => { vi.advanceTimersByTime(ms); });
+const tapStage = () => act(async () => { byTestId("video-stage")!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+beforeEach(() => { stub = installVideoElementStub(); });
+afterEach(async () => {
+  if (root) await act(async () => { root!.unmount(); });
+  root = null; stub.dispose(); viewport?.restore(); viewport = null; vi.useRealTimers(); vi.unstubAllGlobals();
+  delete (document as unknown as Record<string, unknown>).fullscreenEnabled; delete (HTMLElement.prototype as unknown as Record<string, unknown>).requestFullscreen;
+  document.body.replaceChildren();
+});
+
+describe("VideoPlayer Full screen button (#880)", () => {
+  it("shows with a host that offers Full screen even where the browser has no element full screen (iPhone), and presses through to the host", async () => {
+    const onToggle = vi.fn(); const request = vi.fn(() => Promise.resolve());
+    (HTMLElement.prototype as unknown as { requestFullscreen: () => Promise<void> }).requestFullscreen = request;
+    expect(document.fullscreenEnabled).not.toBe(true);
+    await mount({ immersive: hostOf({ on: false, onToggle }) });
+    await act(async () => { button("Full screen")!.click(); });
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("is absent without a host and without browser support, exactly as before (Compare, any other host)", async () => {
+    await mount();
+    expect(button("Full screen")).toBeNull();
+  });
+
+  it("in full screen it is replaced by a top-bar Exit full screen with the title; the dock drops it", async () => {
+    const onToggle = vi.fn();
+    await mount({ immersive: hostOf({ onToggle }) });
+    expect(byTestId("video-player")!.hasAttribute("data-immersive")).toBe(true);
+    expect(button("Full screen")).toBeNull();
+    expect(byTestId("video-immersive-bar")!.textContent).toContain("Main walkthrough · v2");
+    await act(async () => { button("Exit full screen")!.click(); });
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("is not in full screen unless the host says so: no data-immersive, no top bar, no auto-hide", async () => {
+    await mount({ immersive: hostOf({ on: false }) });
+    expect(byTestId("video-player")!.hasAttribute("data-immersive")).toBe(false);
+    expect(byTestId("video-immersive-bar")).toBeNull();
+    expect(chrome()).toBeUndefined();
+  });
+});
+
+describe("VideoPlayer controls auto-hide (#880, D13)", () => {
+  it("hides 3000ms after playback starts and shows again on a key", async () => {
+    await mount({ immersive: hostOf() });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    expect(chrome()).toBe("shown");
+    await play();
+    await advance(2900);
+    expect(chrome()).toBe("shown");
+    await advance(200);
+    expect(chrome()).toBe("hidden");
+    expect(byTestId("video-immersive-dock")!.hasAttribute("inert")).toBe(true);
+    expect(byTestId("video-immersive-dock")!.className).toContain("opacity-0");
+    const control = createRef<VideoPlayerControl>();
+    await rerender({ immersive: hostOf(), controlRef: control });
+    await act(async () => { control.current!.handleKeyDown(new KeyboardEvent("keydown", { key: "ArrowRight" })); });
+    expect(chrome()).toBe("shown");
+    expect(byTestId("video-immersive-dock")!.hasAttribute("inert")).toBe(false);
+  });
+
+  it("stays up while paused", async () => {
+    await mount({ immersive: hostOf() });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await advance(10_000);
+    expect(chrome()).toBe("shown");
+  });
+
+  it("stays up while Add note is open, a card is showing or the pen is down, however long it plays", async () => {
+    await mount({ immersive: hostOf({ addNote: { pressed: true, onToggle: () => undefined } }) });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await play();
+    await advance(10_000);
+    expect(chrome()).toBe("shown");
+    await rerender({ immersive: hostOf({ card: <div>A note</div> }) });
+    await advance(10_000);
+    expect(chrome()).toBe("shown");
+    await rerender({ immersive: hostOf(), transportLocked: true, transportReplacement: <div>Pen tools</div> });
+    await advance(10_000);
+    expect(chrome()).toBe("shown");
+  });
+
+  it("stays up while the keyboard has focus inside it", async () => {
+    await mount({ immersive: hostOf() });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await play();
+    const mute = button("Mute")!;
+    await act(async () => { mute.focus(); });
+    await advance(10_000);
+    expect(chrome()).toBe("shown");
+    await act(async () => { mute.blur(); });
+    await advance(3100);
+    expect(chrome()).toBe("hidden");
+  });
+
+  it("a tap on the film toggles the controls, even while paused, and does not play or pause", async () => {
+    await mount({ immersive: hostOf() });
+    expect(chrome()).toBe("shown");
+    await tapStage();
+    expect(chrome()).toBe("hidden");
+    await tapStage();
+    expect(chrome()).toBe("shown");
+    expect(stub.calls).not.toContain("play");
+    expect(stub.calls).not.toContain("pause");
+  });
+
+  it("a tap on the controls themselves is not a tap on the film", async () => {
+    await mount({ immersive: hostOf() });
+    await act(async () => { byTestId("video-immersive-dock")!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(chrome()).toBe("shown");
+  });
+
+  it("a tap while the pen is down or Add note is open leaves the controls alone", async () => {
+    await mount({ immersive: hostOf({ addNote: { pressed: true, onToggle: () => undefined } }) });
+    await tapStage();
+    expect(chrome()).toBe("shown");
+  });
+
+  it("a card opening shows hidden controls", async () => {
+    await mount({ immersive: hostOf() });
+    await tapStage();
+    expect(chrome()).toBe("hidden");
+    await rerender({ immersive: hostOf({ card: <div>A note</div> }) });
+    expect(chrome()).toBe("shown");
+  });
+
+  it("a centre Play button shows while paused, plays, and goes while playing", async () => {
+    await mount({ immersive: hostOf() });
+    const centre = byTestId("video-immersive-play")!;
+    expect(centre).not.toBeNull();
+    await act(async () => { centre.click(); });
+    expect(stub.calls).toContain("play");
+    expect(byTestId("video-immersive-play")).toBeNull();
+  });
+});
+
+describe("VideoPlayer full screen controls (#880, D13)", () => {
+  it("keeps the Add note button, with its state, and the host's card in the controls", async () => {
+    const onToggle = vi.fn();
+    await mount({ immersive: hostOf({ addNote: { pressed: false, onToggle }, card: <div data-testid="the-card">A note</div> }) });
+    const add = button("Add note")!;
+    expect(add.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => { add.click(); });
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(byTestId("video-immersive-bar")!.parentElement!.contains(byTestId("the-card"))).toBe(true);
+  });
+
+  it("a marker press goes to the host's marker tap, with the lane in touch mode; outside full screen it is the ordinary select", async () => {
+    const onMarkerTap = vi.fn(); const onMarkerSelect = vi.fn();
+    await mount({ markers, onMarkerSelect, immersive: hostOf({ onMarkerTap }) });
+    const lane = byTestId("video-marker-lane")!;
+    expect(lane.dataset.touch).toBe("true");
+    lane.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 12, right: 1000, bottom: 12, x: 0, y: 0, toJSON: () => ({}) });
+    await act(async () => { lane.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 6 + (988 * 1500) / 2999 })); });
+    expect(onMarkerTap).toHaveBeenCalledWith("n1");
+    expect(onMarkerSelect).not.toHaveBeenCalled();
+    await rerender({ markers, onMarkerSelect, immersive: hostOf({ on: false, onMarkerTap }) });
+    const plain = byTestId("video-marker-lane")!;
+    expect(plain.dataset.touch).toBeUndefined();
+    plain.getBoundingClientRect = lane.getBoundingClientRect;
+    await act(async () => { plain.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 6 + (988 * 1500) / 2999 })); });
+    expect(onMarkerSelect).toHaveBeenCalledWith("n1");
+    expect(onMarkerTap).toHaveBeenCalledTimes(1);
+  });
+
+  it("a phone leaves frame step, the time format and the key legend out of full screen; a desktop keeps them", async () => {
+    viewport = mockViewport({ width: 844, height: 390, coarse: true });
+    await mount({ immersive: hostOf() });
+    for (const name of ["Previous frame", "Next frame"]) expect(button(name), name).toBeNull();
+    expect(byTestId("video-key-legend")).toBeNull();
+    expect(host.querySelector('[aria-label="Time format"], [data-testid="video-time-format"]')).toBeNull();
+    await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren(); viewport.restore();
+    viewport = mockViewport({ width: 1400, height: 900, coarse: false });
+    await mount({ immersive: hostOf() });
+    for (const name of ["Previous frame", "Next frame"]) expect(button(name), name).not.toBeNull();
+    expect(byTestId("video-key-legend")).not.toBeNull();
+  });
+
+  it("a hidden control is not reachable: hidden controls are inert", async () => {
+    await mount({ immersive: hostOf() });
+    await tapStage();
+    for (const id of ["video-immersive-bar", "video-immersive-dock"]) expect(byTestId(id)!.hasAttribute("inert"), id).toBe(true);
+  });
+});
+
+describe("VideoPlayer F key (#880)", () => {
+  it("F toggles Full screen through the player's keys, and is not the player's without a host", async () => {
+    const onToggle = vi.fn(); const control = createRef<VideoPlayerControl>();
+    await mount({ controlRef: control, keyboard: "host", immersive: hostOf({ on: false, onToggle }) });
+    const press = (key: string) => act(async () => { control.current!.handleKeyDown(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); });
+    await press("f");
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    await press("m");
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    await rerender({ controlRef: control, keyboard: "host" });
+    await press("f");
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists F in the key legend on a desktop only", async () => {
+    viewport = mockViewport({ width: 1400, height: 900, coarse: false });
+    await mount({ immersive: hostOf({ on: false }) });
+    expect(byTestId("video-key-legend")!.textContent).toContain("full screen");
+    await rerender({});
+    expect(byTestId("video-key-legend")!.textContent).not.toContain("full screen");
+  });
+});
+
+describe("VideoPlayer native player (#880, D15)", () => {
+  it("prefers webkitEnterFullscreen on the video element, inside the press", async () => {
+    const control = createRef<VideoPlayerControl>();
+    await mount({ controlRef: control, immersive: hostOf({ on: false }) });
+    const webkit = vi.fn(); const standard = vi.fn(() => Promise.resolve());
+    Object.assign(video(), { webkitEnterFullscreen: webkit, requestFullscreen: standard });
+    expect(control.current!.nativePlayerSupported!()).toBe(true);
+    await act(async () => { control.current!.openSystemPlayer!(); });
+    expect(webkit).toHaveBeenCalledTimes(1);
+    expect(standard).not.toHaveBeenCalled();
+  });
+
+  it("says so in a visible notice when the device refuses", async () => {
+    const control = createRef<VideoPlayerControl>();
+    await mount({ controlRef: control });
+    Object.assign(video(), { webkitEnterFullscreen: () => { throw new Error("no metadata"); } });
+    await act(async () => { control.current!.openSystemPlayer!(); });
+    expect(host.querySelector('[role="alert"]')!.textContent).toContain("system player");
+  });
+});

@@ -62,6 +62,35 @@ describe("VideoTimelineMarkers (#741 5b)", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
+  it("touch (full screen, #880) takes the lane back from the pointer-coarse cascade, with a 44px hit band that grows below the track only", async () => {
+    await render(<VideoTimelineMarkers markers={markers} frameCount={300} onSelect={vi.fn()} touch />);
+    const classes = lane().className;
+    expect(classes).not.toContain("pointer-coarse:pointer-events-none");
+    expect(classes).not.toContain("max-[721px]:pointer-events-none");
+    expect(lane().dataset.touch).toBe("true");
+    expect(classes).toContain("before:h-11");
+    expect(classes).toContain("before:top-0");
+    expect(classes).not.toContain("before:-top");
+  });
+
+  it("touch reaches 22px: a tap 18px off a marker selects it, 30px does not; without touch 18px is out of reach", async () => {
+    const onSelect = vi.fn();
+    await render(<VideoTimelineMarkers markers={markers} frameCount={300} onSelect={onSelect} touch />);
+    lane().getBoundingClientRect = () => ({ left: 100, top: 0, width: 1000, height: 12, right: 1100, bottom: 12, x: 0, y: 0, toJSON: () => ({}) });
+    const down = async (clientX: number) => act(async () => { lane().dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX })); });
+    const at150 = 100 + 6 + (988 * 150) / 299;
+    await down(at150 + 18);
+    expect(onSelect).toHaveBeenCalledWith("i");
+    onSelect.mockClear();
+    await down(at150 + 30);
+    expect(onSelect).not.toHaveBeenCalled();
+    await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
+    await render(<VideoTimelineMarkers markers={markers} frameCount={300} onSelect={onSelect} />);
+    lane().getBoundingClientRect = () => ({ left: 100, top: 0, width: 1000, height: 12, right: 1100, bottom: 12, x: 0, y: 0, toJSON: () => ({}) });
+    await act(async () => { lane().dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: at150 + 18 })); });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it("with no onSelect the lane has no handler to run", async () => {
     await render(<VideoTimelineMarkers markers={markers} frameCount={300} />);
     lane().getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 12, right: 1000, bottom: 12, x: 0, y: 0, toJSON: () => ({}) });

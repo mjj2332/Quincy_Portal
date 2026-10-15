@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
-import { ArrowRightFromLine, ArrowRightToLine, Maximize, Pause, Play, StepBack, StepForward, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowRightFromLine, ArrowRightToLine, Maximize, Minimize, Pause, Play, SquarePen, StepBack, StepForward, Volume2, VolumeX, X } from "lucide-react";
 import { rationalToNumber, type Box, type VideoVersionDto } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { useVideoFrameClock, type VideoFrameClock } from "../../lib/video-frame-clock";
@@ -15,6 +15,9 @@ import { TimeFormatMenu } from "./TimeFormatMenu";
 import { VideoStage } from "./VideoStage";
 import { SocialPreviewControls, useOverlayImage, type SocialPreviewMode } from "./SocialPreviewControls";
 import { useMediaQuery } from "../../lib/use-media-query";
+import { CHROME_HIDE_MS, chromeHeld, readPhoneDevice } from "../../lib/immersive";
+import { nativePlayerSupported, openNativePlayer } from "../../lib/video-native-player";
+import { Notice } from "./Notice";
 import { PHONE_QUERY } from "../../lib/review-pane-geometry";
 import { rangeStep, type NoteMarks } from "../../lib/video-note-marks";
 import { VideoPendingRangeBand, VideoRangeHandles, VideoTimelineMarkers, type TimelineMarker } from "./VideoTimelineMarkers";
@@ -41,6 +44,29 @@ export type VideoPlayerControl = {
   handleKeyDown(event: KeyboardEvent | ReactKeyboardEvent): boolean;
   /** The frame on screen: while playing the one last presented; paused, the one a seek in flight is bringing (what an I / O mark takes). */
   currentFrame(): number;
+  /** Single player only (Compare's two players have no such menu row). Hands the film to the device's own player (#880, D15): `webkitEnterFullscreen()` on iOS, else the video's `requestFullscreen()`. Call it inside the press; a refusal shows a notice in the player. */
+  openSystemPlayer?(): void;
+  /** Whether the device has a native player to hand the film to; the menu row is disabled with a reason where it has none. */
+  nativePlayerSupported?(): boolean;
+};
+
+/**
+ * Quincy's own Full screen (#880, "immersive" in code only; D12). The screen owns the mode and passes it here: the player applies it IN PLACE, so the `<video>`, the overlays and the
+ * composer keep their nodes (a new parent would remount the clock and the editor). Absent (Compare, any other host) the player keeps today's element full screen, and only where the
+ * browser has one. Present, the button always renders: iPhone Safari has no `fullscreenEnabled`, and that is what made the old button missing there.
+ */
+export type VideoImmersiveHost = {
+  on: boolean;
+  /** Full screen, Exit full screen and the F key. */
+  onToggle(): void;
+  /** The top bar's title: "Film name · v2". */
+  heading: string;
+  /** Add note (aria-pressed while the composer is open over the film). Absent where the screen offers none. */
+  addNote?: { pressed: boolean; onToggle(): void };
+  /** The note card a marker press opened; it sits top-centre and goes with the controls. */
+  card?: ReactNode;
+  /** A press on a marker while in full screen: the host pauses and shows that note as a card. Without it the ordinary `onMarkerSelect` runs. */
+  onMarkerTap?(id: string): void;
 };
 
 export const COARSE = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[721px]:min-h-11 max-[721px]:min-w-11";
@@ -59,7 +85,7 @@ const LEGEND = "flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--
  * surface (`data-surface="inverse"`) around it, like the Lightbox. `keyboard="self"` listens on the player; `"host"` leaves the
  * scope to the caller, who forwards events to `controlRef.handleKeyDown`.
  */
-export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, watermark, onMediaError, transportLocked = false, transportActions, transportReplacement, social, phoneFrameStep = false }: {
+export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, watermark, onMediaError, transportLocked = false, transportActions, transportReplacement, social, phoneFrameStep = false, immersive }: {
   version: VideoPlayerVersion;
   title: string;
   controlRef?: Ref<VideoPlayerControl>;
@@ -101,6 +127,8 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   social?: SocialPreviewMode;
   /** The phone control bar drops frame step because the notes composer carries it (#879). A host with no such composer (the guest screen, a staff edit in progress) turns it back on. */
   phoneFrameStep?: boolean;
+  /** Quincy's Full screen (#880). */
+  immersive?: VideoImmersiveHost;
 }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [muted, setMutedState] = useState(initialMuted);
@@ -149,9 +177,50 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     home: () => { clock.seekToFrame(0); },
     end: () => { clock.seekToFrame(lastFrame); },
     markFrame,
-  }, onMark, transportLocked);
+  }, onMark, transportLocked, immersive ? () => { immersive.onToggle(); } : undefined);
   const currentFrame = useCallback(() => currentFrameRef.current(), []);
-  useImperativeHandle(controlRef, () => ({ handleKeyDown, currentFrame }), [handleKeyDown, currentFrame]);
+
+  // Full screen (#880). The mode is the host's; this is what the player does with it.
+  const imm = immersive?.on === true;
+  // A phone is a device, not a width: a landscape iPhone is 844px wide and still gets the handheld controls.
+  const [phoneDevice] = useState(readPhoneDevice);
+  const phone = useMediaQuery(PHONE_QUERY);
+  const compact = imm && (phone || phoneDevice);
+  const [chromeShown, setChromeShown] = useState(true);
+  const [activity, setActivity] = useState(0);
+  const [focusHeld, setFocusHeld] = useState(false);
+  const [popupOpen, setPopupOpen] = useState(false);
+  const [scrubbing, setScrubbing] = useState(false);
+  const composing = immersive?.addNote?.pressed === true;
+  const cardOpen = immersive?.card != null;
+  const drawing = transportReplacement != null || transportLocked;
+  const paused = !clock.playing;
+  const held = chromeHeld({ playing: clock.playing, composing, drawing, card: cardOpen, focusWithin: focusHeld, popupOpen, scrubbing });
+  const lastWake = useRef(0);
+  const wake = useCallback(() => { setChromeShown(true); setActivity((count) => count + 1); }, []);
+  const wakeRef = useRef(wake);
+  wakeRef.current = wake;
+  // Hide 3s after playback starts, unless something holds the controls (D13). Any activity starts the count again.
+  useEffect(() => {
+    if (!imm || !chromeShown || held) return undefined;
+    const timer = setTimeout(() => { setChromeShown(false); }, CHROME_HIDE_MS);
+    return () => { clearTimeout(timer); };
+  }, [imm, chromeShown, held, activity]);
+  // Whatever needs the controls brings them back: pausing, a card, the composer, the pen.
+  useEffect(() => { if (imm && (paused || cardOpen || composing || drawing)) setChromeShown(true); }, [imm, paused, cardOpen, composing, drawing]);
+  useEffect(() => { if (!imm) { setChromeShown(true); setFocusHeld(false); setPopupOpen(false); setScrubbing(false); } }, [imm]);
+  useEffect(() => {
+    if (!scrubbing) return undefined;
+    const done = () => { setScrubbing(false); };
+    window.addEventListener("pointerup", done); window.addEventListener("pointercancel", done);
+    return () => { window.removeEventListener("pointerup", done); window.removeEventListener("pointercancel", done); };
+  }, [scrubbing]);
+  const keyDown = useCallback((event: KeyboardEvent | ReactKeyboardEvent): boolean => { wakeRef.current(); return handleKeyDown(event); }, [handleKeyDown]);
+  const [nativeFailed, setNativeFailed] = useState(false);
+  const openSystemPlayer = useCallback(() => { void openNativePlayer(video).then((started) => { setNativeFailed(!started); }); }, [video]);
+  const nativeSupported = useCallback(() => nativePlayerSupported(video), [video]);
+  useImperativeHandle(controlRef, () => ({ handleKeyDown: keyDown, currentFrame, openSystemPlayer, nativePlayerSupported: nativeSupported }), [keyDown, currentFrame, openSystemPlayer, nativeSupported]);
+  const chromeVisible = !imm || chromeShown;
 
   const step = range ? rangeStep(range.marks) : "in";
   const rangeLocked = transportLocked || (range?.locked ?? true);
@@ -166,23 +235,87 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const stepLabel = step === "in" ? "Set in point" : step === "out" ? "Set out point" : "Clear in and out";
 
   // A phone gets the single-row control bar (#879, the prototype's ControlBar): scrubber, play, timecode, mute, full screen. Frame step and in / out live in the composer there.
-  const phone = useMediaQuery(PHONE_QUERY);
   const toggleMuted = (next: boolean) => { setMutedState(next); clock.setMuted(next); onMutedChange?.(next); };
   const playLabel = clock.playing ? "Pause" : "Play";
+
+  const fade = chromeVisible ? "opacity-100" : "pointer-events-none opacity-0";
+  const FADE = "motion-safe:transition-opacity motion-safe:duration-[var(--dur-base)] motion-safe:ease-[var(--ease-entrance)]";
+  // The press target for Full screen: the host's mode, else the browser's element full screen where it has one (Compare and every other host).
+  const fullscreenButton = immersive && !imm
+    ? <IconTip label="Full screen">
+      <Button type="button" variant="ghost" size="icon" aria-label="Full screen" data-testid="video-fullscreen" className={cn("size-8", COARSE)} onClick={immersive.onToggle}><Maximize aria-hidden="true" /></Button>
+    </IconTip>
+    : !immersive && fullscreenAvailable
+      ? <IconTip label="Full screen">
+        <Button type="button" variant="ghost" size="icon" aria-label="Full screen" className={cn("size-8", COARSE)} onClick={() => { void playerRef.current?.requestFullscreen?.(); }}><Maximize aria-hidden="true" /></Button>
+      </IconTip>
+      : null;
+  // In full screen the controls are a bottom overlay on a scrim, in the player's own tree (safe-area insets keep it off the notch and the home bar).
+  const dockClass = imm
+    ? cn("absolute inset-x-0 bottom-0 z-10 flex flex-col gap-[var(--space-2)] bg-[image:var(--scrim-chrome)] pt-[var(--space-6)] pr-[max(var(--space-3),env(safe-area-inset-right))] pb-[max(var(--space-2),env(safe-area-inset-bottom))] pl-[max(var(--space-3),env(safe-area-inset-left))]", FADE, fade)
+    : "flex flex-col gap-[var(--space-3)] max-[721px]:px-[var(--space-3)]";
+  const dockProps = imm ? { "data-testid": "video-immersive-dock", inert: !chromeVisible } : {};
+  const dockRef = useRef<HTMLDivElement | null>(null);
+  // The composer floats just above the controls: publish their height on the split row (the pane is the player's sibling, not its child).
+  useLayoutEffect(() => {
+    if (!imm || !section) return undefined;
+    const target = section.closest<HTMLElement>('[data-testid="video-review-split"]') ?? section.parentElement;
+    if (!target) return undefined;
+    const write = () => { const dock = dockRef.current; if (dock) target.style.setProperty("--immersive-controls-h", `${dock.offsetHeight}px`); };
+    write();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(write);
+    if (observer && dockRef.current) observer.observe(dockRef.current);
+    return () => { observer?.disconnect(); target.style.removeProperty("--immersive-controls-h"); };
+  }, [imm, section, transportReplacement != null]); // eslint-disable-line react-hooks/exhaustive-deps -- the dock is the same node either way; the replacement changes its height
+  const markerSelect = imm && immersive?.onMarkerTap ? immersive.onMarkerTap : onMarkerSelect;
+  const noticeClass = imm ? "absolute inset-x-[var(--space-3)] top-[var(--space-7)] z-20" : "";
 
   return <section
     ref={(element) => { playerRef.current = element; setSection(element); }}
     aria-label="Player"
     data-testid="video-player"
+    {...(imm ? { "data-immersive": "", "data-chrome": chromeVisible ? "shown" : "hidden" } : {})}
     tabIndex={-1}
-    onKeyDown={keyboard === "self" ? (event) => { handleKeyDown(event); } : undefined}
-    className={cn("@container flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", className)}
+    onKeyDown={keyboard === "self" ? (event) => { keyDown(event); } : undefined}
+    onFocus={imm ? (event) => {
+      const target = event.target as Element;
+      let visible = true;
+      try { visible = target.matches(":focus-visible"); } catch { /* no :focus-visible here: hold, as keyboard focus would */ }
+      setFocusHeld(visible);
+      setPopupOpen(target.closest('[role="menu"], [role="listbox"], [role="dialog"]') !== null);
+    } : undefined}
+    onBlur={imm ? () => { setFocusHeld(false); setPopupOpen(false); } : undefined}
+    onPointerMove={imm ? (event) => {
+      if (event.pointerType === "touch") return;
+      const now = Date.now();
+      if (now - lastWake.current > 250) { lastWake.current = now; wake(); }
+    } : undefined}
+    onClick={imm ? (event) => {
+      // A tap on the film shows or hides the controls and never plays or pauses (D13). Taps on the controls are theirs, and the pen and the composer keep the controls up.
+      const target = event.target as Element;
+      if (!target.closest('[data-testid="video-stage"]') || composing || drawing) return;
+      setChromeShown((shown) => !shown);
+      setActivity((count) => count + 1);
+    } : undefined}
+    className={cn("group/player @container flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", imm && "relative flex-1 gap-0 bg-invert", className)}
   >
     <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} {...(social ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})} />
 
-    {transportReplacement != null ? <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div> : <div ref={transportRef} className="flex flex-col gap-[var(--space-3)] max-[721px]:px-[var(--space-3)]">
+    {imm && immersive && <div data-testid="video-immersive-bar" inert={!chromeVisible} className={cn("absolute inset-x-0 top-0 z-10 flex items-center gap-[var(--space-2)] bg-[image:var(--scrim-chrome-top)] pt-[max(var(--space-2),env(safe-area-inset-top))] pr-[max(var(--space-3),env(safe-area-inset-right))] pb-[var(--space-5)] pl-[max(var(--space-3),env(safe-area-inset-left))] text-invert-foreground", FADE, fade)}>
+      <IconTip label="Exit full screen">
+        <Button type="button" variant="ghost" size="icon" aria-label="Exit full screen" data-testid="video-exit-fullscreen" className={cn("size-8 shrink-0", COARSE)} onClick={immersive.onToggle}><Minimize aria-hidden="true" /></Button>
+      </IconTip>
+      <span data-testid="video-immersive-title" title={immersive.heading} className="min-w-0 flex-1 truncate [font:var(--type-body)]">{immersive.heading}</span>
+    </div>}
+    {imm && immersive?.card != null && <div data-testid="video-immersive-card" inert={!chromeVisible} className={cn("pointer-events-none absolute inset-x-[var(--space-3)] top-[var(--space-7)] z-10 flex justify-center", FADE, fade)}><div className="pointer-events-auto w-full max-w-[420px]">{immersive.card}</div></div>}
+    {imm && paused && <div className={cn("pointer-events-none absolute inset-0 z-[5] flex items-center justify-center", FADE, fade)}>
+      <Button type="button" variant="default" size="icon" aria-hidden="true" tabIndex={-1} data-testid="video-immersive-play" inert={!chromeVisible} className="pointer-events-auto size-16 rounded-full" onClick={() => { clock.play(); }}><Play aria-hidden="true" className="size-8" /></Button>
+    </div>}
+    {nativeFailed && <Notice tone="caution" role="alert" data-testid="video-native-failed" className={cn("bg-card", noticeClass)}>The system player couldn't open this film on this device.</Notice>}
+
+    {transportReplacement != null ? <div ref={(element) => { dockRef.current = element; }} {...dockProps} className={cn(imm ? dockClass : "flex flex-col justify-center")} style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div> : <div ref={(element) => { transportRef.current = element; dockRef.current = element; }} {...dockProps} className={dockClass}>
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}
-    <div data-testid="video-scrubber">
+    <div data-testid="video-scrubber" onPointerDownCapture={imm ? () => { setScrubbing(true); } : undefined}>
       {/* The band is placed against the slider alone: inside the same box as the marker lane it would sit centred on the whole scrubber, 6px below the track. */}
       <div className="relative">
         {pendingRange !== undefined && <VideoPendingRangeBand range={pendingRange} frameCount={version.frameCount} />}
@@ -196,27 +329,27 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
           onValueChange={(value) => { clock.seekToFrame(Array.isArray(value) ? (value[0] ?? 0) : value); }}
           thumbProps={{ getAriaLabel: () => "Timeline", getAriaValueText: (_formatted, value) => timecode(value) }}
         />
-        {range !== undefined && <VideoRangeHandles marks={range.marks} frameCount={version.frameCount} label={timecode} largeStep={Math.max(1, Math.round(rationalToNumber(version.fps)))} interactive={marksTaken} onMove={moveHandle} onGrab={clock.pause} />}
+        {range !== undefined && !compact && <VideoRangeHandles marks={range.marks} frameCount={version.frameCount} label={timecode} largeStep={Math.max(1, Math.round(rationalToNumber(version.fps)))} interactive={marksTaken} onMove={moveHandle} onGrab={clock.pause} />}
       </div>
-      {markers !== undefined && (!phone || markers.length > 0) && <VideoTimelineMarkers markers={markers} frameCount={version.frameCount} {...(onMarkerSelect ? { onSelect: onMarkerSelect } : {})} />}
+      {markers !== undefined && (!phone || markers.length > 0) && <VideoTimelineMarkers markers={markers} frameCount={version.frameCount} touch={imm} {...(markerSelect ? { onSelect: markerSelect } : {})} />}
     </div>
 
     <div data-testid="video-controls-row" className="flex flex-wrap items-center gap-[var(--space-2)] max-[721px]:flex-nowrap">
-      {(!phone || phoneFrameStep) && <IconTip label="Previous frame" keys="←">
+      {((!phone && !compact) || phoneFrameStep && !compact) && <IconTip label="Previous frame" keys="←">
         <Button type="button" variant="outline" size="icon" aria-label="Previous frame" className={COARSE} disabled={transportLocked} onClick={() => { clock.step(-1); }}><StepBack aria-hidden="true" /></Button>
       </IconTip>}
       <IconTip label={playLabel} keys="Space">
         <Button type="button" variant="default" size="icon" aria-label={playLabel} className={cn("w-[var(--space-7)]", COARSE)} disabled={transportLocked} onClick={() => { if (clock.playing) clock.pause(); else clock.play(); }}>{clock.playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}</Button>
       </IconTip>
-      {(!phone || phoneFrameStep) && <IconTip label="Next frame" keys="→">
+      {((!phone && !compact) || phoneFrameStep && !compact) && <IconTip label="Next frame" keys="→">
         <Button type="button" variant="outline" size="icon" aria-label="Next frame" className={COARSE} disabled={transportLocked} onClick={() => { clock.step(1); }}><StepForward aria-hidden="true" /></Button>
       </IconTip>}
       <output data-testid="video-readout" aria-live={clock.playing || !clock.confirmed ? "off" : "polite"} className={cn("px-[var(--space-2)] max-[721px]:min-w-0 max-[721px]:px-0 max-[721px]:text-xs max-[721px]:whitespace-nowrap", MONO)}>
         <span>{timecode(clock.frame)}</span>{!(phone && phoneFrameStep) && <span data-testid="video-readout-total" className="text-foreground-secondary">{` / ${timecode(version.frameCount)}`}</span>}
       </output>
-      {!phone && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><TimeFormatMenu /></OverlayContainerContext.Provider>}
+      {!phone && !compact && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><TimeFormatMenu /></OverlayContainerContext.Provider>}
       {social && !phone && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><SocialPreviewControls social={social} imageFailed={socialImage.failed} /></OverlayContainerContext.Provider>}
-      {!phone && range !== undefined && (() => {
+      {!phone && !compact && range !== undefined && (() => {
         const rangeButton = <Button type="button" variant="outline" size="icon" aria-label={stepLabel} data-testid="video-range-button" data-step={step} className={COARSE} disabled={rangeLocked} onClick={pressRange}>
           {step === "in" ? <ArrowRightFromLine aria-hidden="true" /> : step === "out" ? <ArrowRightToLine aria-hidden="true" /> : <X aria-hidden="true" />}
         </Button>;
@@ -224,20 +357,22 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         if (rangeLocked && range.hint) return <IconTip label={range.hint}><span tabIndex={0} data-testid="video-range-tip" className="inline-flex rounded-[var(--radius-md)] focus-visible:ring-2 focus-visible:ring-ring">{rangeButton}</span></IconTip>;
         return <IconTip label={stepLabel} {...(rangeLocked ? {} : { keys: step === "clear" ? "I / O" : step === "in" ? "I" : "O" })}>{rangeButton}</IconTip>;
       })()}
-      {!phone && <div data-testid="video-key-legend" className={LEGEND}>
+      {!phone && !compact && <div data-testid="video-key-legend" className={LEGEND}>
         <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>J</Kbd><Kbd className={LEGEND_KBD}>K</Kbd><Kbd className={LEGEND_KBD}>L</Kbd></KbdGroup>shuttle</span>
         <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>←</Kbd><Kbd className={LEGEND_KBD}>→</Kbd></KbdGroup>frame</span>
         <span className="inline-flex items-center gap-[var(--space-1)]"><Kbd className={LEGEND_KBD}>Space</Kbd>play</span>
         {onMark && <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>I</Kbd><Kbd className={LEGEND_KBD}>O</Kbd></KbdGroup>in/out</span>}
+        {immersive && <span className="inline-flex items-center gap-[var(--space-1)]"><Kbd className={LEGEND_KBD}>F</Kbd>full screen</span>}
       </div>}
       <div className="ml-auto flex items-center gap-[var(--space-1)]">
+        {imm && immersive?.addNote && <IconTip label="Add note">
+          <Button type="button" variant="outline" aria-label="Add note" aria-pressed={immersive.addNote.pressed} data-testid="video-immersive-add-note" className={cn(COARSE, "aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground")} onClick={immersive.addNote.onToggle}><SquarePen aria-hidden="true" /><span className="max-[721px]:sr-only">Add note</span></Button>
+        </IconTip>}
         {transportActions}
         <IconTip label={muted ? "Unmute" : "Mute"}>
           <Toggle variant="default" size="default" pressed={muted} onPressedChange={toggleMuted} aria-label="Mute" className={cn("size-8", COARSE)}>{muted ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}</Toggle>
         </IconTip>
-        {fullscreenAvailable && <IconTip label="Full screen">
-          <Button type="button" variant="ghost" size="icon" aria-label="Full screen" className={cn("size-8", COARSE)} onClick={() => { void playerRef.current?.requestFullscreen?.(); }}><Maximize aria-hidden="true" /></Button>
-        </IconTip>}
+        {fullscreenButton}
       </div>
     </div>
     {/* On a phone the overlay selector gets its own row, so it never sits on the timecode. */}

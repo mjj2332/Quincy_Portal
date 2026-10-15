@@ -91,6 +91,26 @@ describe("playerKeyAction (#741 4d-ii)", () => {
     for (const key of ["ArrowLeft", "ArrowRight", "Home", "End"]) expect(playerKeyAction(keydown(key, { target: handle })), key).toBeNull();
   });
 
+  describe("Full screen (#880)", () => {
+    it("F maps to Full screen only when the host has one; M and N stay free", () => {
+      expect(playerKeyAction(keydown("f"), { fullscreen: true })).toEqual({ type: "fullscreen" });
+      expect(playerKeyAction(keydown("F"), { fullscreen: true })).toEqual({ type: "fullscreen" });
+      expect(playerKeyAction(keydown("f"))).toBeNull();
+      expect(playerKeyAction(keydown("f"), { fullscreen: false })).toBeNull();
+      for (const key of ["m", "n"]) expect(playerKeyAction(keydown(key), { fullscreen: true }), key).toBeNull();
+    });
+
+    it("ignores F under a modifier, on key repeat, and typed into a field", () => {
+      expect(playerKeyAction(keydown("f", { metaKey: true }), { fullscreen: true })).toBeNull();
+      expect(playerKeyAction(keydown("f", { ctrlKey: true }), { fullscreen: true })).toBeNull();
+      expect(playerKeyAction(keydown("f", { repeat: true }), { fullscreen: true })).toBeNull();
+      const field = mount("<textarea></textarea>");
+      expect(playerKeyAction(keydown("f", { target: field }), { fullscreen: true })).toBeNull();
+      const editor = mount('<div contenteditable="true"></div>');
+      expect(playerKeyAction(keydown("f", { target: editor }), { fullscreen: true })).toBeNull();
+    });
+  });
+
   describe("in / out marks (#741 5b)", () => {
     it("I and O map to a mark only when the host asks for marks", () => {
       expect(playerKeyAction(keydown("i"), { marks: true })).toEqual({ type: "mark", kind: "in" });

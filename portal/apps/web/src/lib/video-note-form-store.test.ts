@@ -771,3 +771,42 @@ describe("hasUnsent: what Remove would discard (#776 E)", () => {
     expect(store.hasUnsent(V2)).toBe(true);
   });
 });
+
+describe("beginComposer (#880: Add note in full screen stamps at activation)", () => {
+  it("stamps the frame on screen as the anchor before any text is typed", () => {
+    store.beginComposer(V2, 40);
+    expect(store.slot(V2).composer.anchorFrame).toBe(40);
+    expect(store.slot(V2).composer.body).toBe("");
+  });
+
+  it("keeps the anchor the first keystroke would have taken: typing afterwards does not move it", () => {
+    store.beginComposer(V2, 40);
+    store.setBody(V2, "Soft", 55);
+    expect(store.slot(V2).composer.anchorFrame).toBe(40);
+  });
+
+  it("does not clobber a draft or an anchor that is already there", () => {
+    store.setBody(V2, "Already typing", 12);
+    store.beginComposer(V2, 99);
+    expect(store.slot(V2).composer.anchorFrame).toBe(12);
+    expect(store.slot(V2).composer.body).toBe("Already typing");
+  });
+
+  it("is per Version, and a discarded draft is stamped fresh the next time", () => {
+    store.beginComposer(V2, 40);
+    expect(store.slot(V1).composer.anchorFrame).toBeNull();
+    store.discardComposer(V2);
+    expect(store.slot(V2).composer.anchorFrame).toBeNull();
+    store.beginComposer(V2, 70);
+    expect(store.slot(V2).composer.anchorFrame).toBe(70);
+  });
+
+  it("stamps nothing while a request is out in the Version", async () => {
+    const { fc, sent, done } = await startPost(V2, "In flight", 12);
+    store.beginComposer(V2, 90);
+    expect(store.slot(V2).composer.anchorFrame).toBe(12);
+    fc.confirm(12);
+    sent.resolve({});
+    await done;
+  });
+});
