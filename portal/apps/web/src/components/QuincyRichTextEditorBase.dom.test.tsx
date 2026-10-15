@@ -116,6 +116,64 @@ describe("QuincyRichTextEditorBase", () => {
     expect(field.className).toContain("[&_[contenteditable]]:py-0");
   });
 
+  describe("the pill's wrapped layout (#879 fix r9)", () => {
+    // The layout the test runtime cannot do: lines of text (24px each, `width` wide), the field 300px, the addons 80 + 40, the text's inline padding 12 + 12.
+    let lines = 1; let width = 50;
+    const restore: Array<() => void> = [];
+    const stub = <T extends object>(proto: T, key: string, get: () => unknown, kind: "value" | "get" = "get") => {
+      const held = Object.getOwnPropertyDescriptor(proto, key);
+      Object.defineProperty(proto, key, { configurable: true, ...(kind === "get" ? { get } : { value: get() }) });
+      restore.push(() => { if (held) Object.defineProperty(proto, key, held); else delete (proto as Record<string, unknown>)[key]; });
+    };
+    const rect = (top: number, w: number) => ({ top, bottom: top + 24, left: 0, right: w, width: w, height: 24, x: 0, y: top, toJSON: () => ({}) });
+    afterEach(() => { restore.splice(0).reverse().forEach((undo) => undo()); lines = 1; width = 50; });
+    const setUp = async () => {
+      stub(Range.prototype, "getClientRects", () => function (this: Range) { return Array.from({ length: lines }, (_, i) => rect(i * 24, width)); }, "value");
+      stub(Range.prototype, "getBoundingClientRect", () => function (this: Range) { return rect(0, width); }, "value");
+      stub(HTMLElement.prototype, "clientWidth", function (this: HTMLElement) { return this.dataset.testid === "rich-text-field" ? 300 : 0; } as () => number);
+      stub(HTMLElement.prototype, "offsetWidth", function (this: HTMLElement) { return this.dataset.align === "inline-start" ? 80 : this.dataset.align === "inline-end" ? 40 : 0; } as () => number);
+      const host = await mount({ pill: true, toolbarContainer: null, inlineStart: <span>+ TC</span>, inlineEnd: <span>pen</span>, value: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "a" }] }] } });
+      const field = host.querySelector<HTMLElement>('[data-testid="rich-text-field"]')!;
+      const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+      editor.style.paddingLeft = "12px"; editor.style.paddingRight = "12px";
+      return { field, editor };
+    };
+
+    it("one line keeps the inline row; a second line moves the text on top at full width and the addons under it, in the same transaction", async () => {
+      const { field, editor } = await setUp();
+      expect(field.dataset.wrapped).toBeUndefined();
+      lines = 2;
+      await typeAt(editor, " more words");
+      expect(field.dataset.wrapped).toBe("true");
+      const box = [...field.children].find((el) => el.querySelector('[contenteditable="true"]') !== null)!;
+      expect(box.className).toContain("group-data-[wrapped=true]/input-group:order-first");
+      expect(box.className).toContain("group-data-[wrapped=true]/input-group:basis-full");
+      expect(field.className).toContain("data-[wrapped=true]:flex-wrap");
+      expect(field.querySelector('[data-align="inline-end"]')!.className).toContain("group-data-[wrapped=true]/input-group:ms-auto");
+    });
+
+    it("wrapped, one line at full width stays wrapped while it is wider than the inline row would give it (no flip-flop), and unwraps once it fits", async () => {
+      const { field, editor } = await setUp();
+      lines = 2;
+      await typeAt(editor, " x");
+      expect(field.dataset.wrapped).toBe("true");
+      // Full width it is one line again, but 160px: the inline row gives 300 - 80 - 40 - 24 = 156.
+      lines = 1; width = 160;
+      await typeAt(editor, "y");
+      expect(field.dataset.wrapped).toBe("true");
+      width = 150;
+      await typeAt(editor, "z");
+      expect(field.dataset.wrapped).toBeUndefined();
+    });
+
+    it("a second paragraph is a second line", async () => {
+      const { field, editor } = await setUp();
+      await act(async () => { editor.append(Object.assign(document.createElement("p"), { textContent: "two" })); await Promise.resolve(); });
+      await typeAt(editor, "!");
+      expect(field.dataset.wrapped).toBe("true");
+    });
+  });
+
   it("a null toolbarContainer renders no toolbar yet; inlineStart and inlineEnd sit inside the field around the text", async () => {
     const host = await mount({ toolbarContainer: null, inlineStart: <span data-testid="chip">TC</span>, inlineEnd: <span data-testid="pen">pen</span>, contentClassName: "max-h-28" });
     const field = host.querySelector<HTMLElement>('[data-testid="rich-text-field"]')!;

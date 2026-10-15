@@ -114,10 +114,12 @@ const PILL_GROUP =
   "has-[[contenteditable=true]:focus]:outline-solid " +
   "has-[[contenteditable=true]:focus]:outline-border-hover " +
   "outline-offset-[calc(var(--border-width-hair)*-1)] has-[[contenteditable=true]:focus]:outline-offset-[calc(var(--border-width-hair)*-1)] " +
-  "[&_[contenteditable]]:min-h-0 [&_[contenteditable]]:py-0";
+  "[&_[contenteditable]]:min-h-0 [&_[contenteditable]]:py-0 " +
+  // Wrapped (#879 fix r9): the text takes the full width on top and the addons a row under it (`data-wrapped`, set by `usePillWrap`).
+  "data-[wrapped=true]:flex-wrap";
 /** The pill's text box (#879 fix r9): the field's block padding sits on this box and the scroll is the inner node, so scrolled text clips inside the
  * padding rather than at the hairline. The host's clamp (max height, overflow) goes on the box; it reaches the scroller as `[&>*]:overflow-*`. */
-const PILL_TEXT = "flex flex-1 flex-col py-[var(--space-2)]";
+const PILL_TEXT = "flex flex-1 flex-col py-[var(--space-2)] group-data-[wrapped=true]/input-group:order-first group-data-[wrapped=true]/input-group:basis-full";
 const PILL_SCROLLER = "min-h-0 w-full min-w-0 flex-1";
 
 /** The character counter appears only from 90% of the limit (or when over it). */
@@ -356,6 +358,8 @@ export function QuincyRichTextEditorBase({
   const editor = created && !created.isDestroyed ? created : null;
   editorRef.current = editor;
   const state = useRichTextState(editor);
+  const fieldRef = useRef<HTMLDivElement>(null);
+  usePillWrap(pill ? editor : null, fieldRef);
   // Below 721px the table controls are a toolbar group and the floating bar is not mounted; on a desktop the group
   // takes over too when the bar has no room around the table (tier "none": the bar stays mounted but inert) (#535).
   const phone = useMediaQuery(RICH_TEXT_PHONE_QUERY);
@@ -674,7 +678,7 @@ export function QuincyRichTextEditorBase({
         </RichTextToolbar>;
 
   return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
-    <InputGroup data-testid="rich-text-field" variant={pill ? "pill" : "default"} className={pill ? PILL_GROUP : FIELD_GROUP} data-disabled={disabled || undefined}>
+    <InputGroup ref={fieldRef} data-testid="rich-text-field" variant={pill ? "pill" : "default"} className={pill ? PILL_GROUP : FIELD_GROUP} data-disabled={disabled || undefined}>
       {toolbarContainer === undefined ? <InputGroupAddon ref={addonRef} align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
         {toolbar}
       </InputGroupAddon> : null}
@@ -683,7 +687,7 @@ export function QuincyRichTextEditorBase({
         <EditorContent editor={editor} className={pill ? PILL_SCROLLER : "w-full min-w-0"} />
         {isDocument && outline.length >= 2 && <RichTextOutlineRail outline={outline} activeIndex={activeHeading} onSelect={(index) => scrollToRichTextHeading(editor, index)} className="absolute end-1 top-2 z-[1] max-[721px]:hidden" />}
       </div>
-      {inlineEnd !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-end" className={cn("cursor-default", pill && "pb-[calc(var(--space-1)*1.5)] pr-[var(--space-1)]")}>{inlineEnd}</InputGroupAddon> : null}
+      {inlineEnd !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-end" className={cn("cursor-default", pill && "pb-[calc(var(--space-1)*1.5)] pr-[var(--space-1)] group-data-[wrapped=true]/input-group:ms-auto")}>{inlineEnd}</InputGroupAddon> : null}
     </InputGroup>
     {toolbarContainer ? createPortal(toolbar, toolbarContainer) : null}
     {isDocument && <>
@@ -702,3 +706,51 @@ export function QuincyRichTextEditorBase({
   </div>;
 }
 
+/**
+ * The pill's wrapped layout (#879 fix r9): while the draft fits one line the + / chip / pen stay inline around it; once it needs a second line
+ * the text takes the pill's full width on top and the addons move to a row under it. The switch is a `data-wrapped` attribute written straight
+ * onto the field, inside the editor's transaction (after ProseMirror has updated the DOM) or a ResizeObserver callback, so it lands before the
+ * next paint: a React state would render a frame later and paint the two-line inline row first.
+ *
+ * Hysteresis, so it cannot flip-flop: inline, it wraps once the text takes a second line. Wrapped, it unwraps only when the text is one line
+ * AND that line would fit the inline row's text width (the field less both addons and the text's own inline padding).
+ */
+function usePillWrap(editor: Editor | null, fieldRef: RefObject<HTMLDivElement | null>) {
+  useLayoutEffect(() => {
+    const field = fieldRef.current;
+    if (!editor || editor.isDestroyed || !field) return undefined;
+    const dom = editor.view.dom as HTMLElement;
+    const measure = () => {
+      if (editor.isDestroyed) return;
+      const wrapped = field.dataset.wrapped === "true";
+      const next = pillTextWraps(dom, field, wrapped);
+      if (next !== wrapped) { if (next) field.dataset.wrapped = "true"; else delete field.dataset.wrapped; }
+    };
+    const onTransaction = ({ transaction }: { transaction: { docChanged: boolean } }) => { if (transaction.docChanged) measure(); };
+    editor.on("transaction", onTransaction);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(field);
+    observer?.observe(dom);
+    measure();
+    return () => { editor.off("transaction", onTransaction); observer?.disconnect(); delete field.dataset.wrapped; };
+  }, [editor, fieldRef]);
+}
+
+/** Whether the pill's text needs the wrapped layout; `wrapped` is the layout it is in now (see `usePillWrap`). */
+export function pillTextWraps(dom: HTMLElement, field: HTMLElement, wrapped: boolean): boolean {
+  const blocks = [...dom.children].filter((child) => !child.classList.contains("ProseMirror-trailingBreak"));
+  if (blocks.length === 0) return false;
+  // More than one block (a second paragraph, a list, an image) is more than one line.
+  if (blocks.length > 1 || blocks[0]!.tagName !== "P") return true;
+  const range = document.createRange();
+  range.selectNodeContents(blocks[0]!);
+  const rects = [...range.getClientRects()].filter((rect) => rect.height > 0);
+  if (rects.length === 0) return false;
+  const first = rects[0]!;
+  if (rects.some((rect) => rect.top - first.top >= first.height / 2)) return true;
+  if (!wrapped) return false;
+  const style = getComputedStyle(dom);
+  const addons = [...field.children].filter((child): child is HTMLElement => child instanceof HTMLElement && child.dataset.align?.startsWith("inline-") === true);
+  const inline = field.clientWidth - addons.reduce((sum, addon) => sum + addon.offsetWidth, 0) - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+  return range.getBoundingClientRect().width > inline - 1;
+}
