@@ -83,3 +83,13 @@ No new elements.
 | Element | Where | Change |
 |---|---|---|
 | Pill focus | `QuincyRichTextEditorBase.tsx` (`PILL_GROUP`) | A `--border-hover` hairline (`--border-width-hair`) drawn as the outline over the transparent border, on any focus of the field (`:focus`, a tap included), replacing round 3's 2px `--ring` edge ring. 4.41:1 on the ink-700 pill (greige-400 on the inverse surface). Still one focus line (#613): the border is never recoloured. |
+
+## Round 7 (the first-focus flash, from the deep-reasoner diagnosis)
+
+No new elements.
+
+| Element | Where | Change |
+|---|---|---|
+| Pill focus on a tap | `QuincyRichTextEditorBase.tsx` (`revealOnFocus`, `handleDOMEvents`, `focusField`), `VideoNoteEditor.tsx`, `VideoNoteComposer.tsx`, `VideoNotesPanel.tsx` | No UI. With `pill` and `revealOnFocus={false}` (the staff viewer's notes host only), a touch or pen press on the unfocused field is focused with `preventScroll` and the caret placed at the press, so iOS does not pan the viewer to reveal it. Mouse, trackpad, an already-focused field and the guest screen keep the browser's focus. The pill's refocus paths (upload tray Cancel/Remove, table tools) use `preventScroll` too. |
+| Viewer backdrop (phone) | `components/reui/dialog.tsx` (`overlayProps`, divergence note), `VideoReviewViewer.tsx` | The base-nova dialog backdrop, re-styled on a phone only: `data-surface="inverse"` with `bg-background` (ink-900) and no blur, instead of the scrim. Desktop keeps the scrim. |
+| Keyboard box | `lib/use-visual-viewport.ts` | Unchanged behaviour; doc comment corrected (the pan is drawn by Safari's UI process, so the fix is not to pan). |

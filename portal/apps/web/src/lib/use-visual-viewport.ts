@@ -13,9 +13,11 @@ const SETTLE_MS = 1000;
  * keyboard and the compose strip, the root's last child, ends on the keyboard's top edge.
  *
  * - `root` and `track` (#879 fix r5): the hook alone writes the root's `height` and `transform`, inside the viewport's own events, for as long as `track` is on (the phone viewer
- *   is open; it defaults to `enabled`). Compose mode decides what the strip shows, never whether the root follows the viewport: iOS starts its scroll-into-view and keyboard pan
- *   synchronously on focus, before React has turned compose mode on, so a listener that waited for compose mode missed the first rise and the viewer flashed off screen once.
- *   (Base UI's scroll lock is `overflow: hidden` only on iOS, which iOS ignores when it brings a focused field into view.) The caller renders no style of its own for these two.
+ *   is open; it defaults to `enabled`). Compose mode decides what the strip shows, never whether the root follows the viewport. The caller renders no style of its own for these two.
+ * - What this cannot do (#879 fix r7): undo iOS's reveal-the-focused-field pan in time. iOS animates that pan in Safari's UI process (`_zoomToRevealFocusedElement`); these
+ *   events, and the `translateY` written from them, reach the screen at least a frame behind it, on every focus. The phone viewer avoids the pan instead: its pill takes a
+ *   tap's focus with `preventScroll` (`revealOnFocus={false}` on the editor), and its backdrop is solid ink. With no pan, `offsetTop` stays 0 and the hook only sizes the root
+ *   to the keyboard; the offset still covers a pinch zoom and a focus that does not come through the pill. (Base UI's scroll lock is `overflow: hidden` only on iOS, no help.)
  * - Leaving compose mode keeps the box while the keyboard animates away (until it is back to the layout height, a second at most), then puts back the page scroll iOS can leave
  *   panned, and only then drops the box.
  * - A pinch zoom (`scale > 1`) is not the keyboard: the last box is kept.
@@ -26,7 +28,7 @@ export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void,
   const [box, setBox] = useState<VisualViewportBox | null>(null);
   const goneRef = useRef(onKeyboardGone);
   goneRef.current = onKeyboardGone;
-  // The root follows the visual viewport for as long as it is tracked, written inside the viewport's events (the same frame as iOS's pan), never through a render.
+  // The root follows the visual viewport for as long as it is tracked, written inside the viewport's events (a frame behind iOS's own pan at best, see above), never through a render.
   useLayoutEffect(() => {
     const viewport = typeof window === "undefined" ? undefined : window.visualViewport;
     if (!track || !viewport || !root) return undefined;
