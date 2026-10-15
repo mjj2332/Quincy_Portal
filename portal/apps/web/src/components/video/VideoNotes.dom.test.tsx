@@ -112,7 +112,7 @@ async function mount(opts: { role?: Role; parts?: string[]; archivedProject?: bo
   await flush();
 }
 async function openViewer() {
-  const open = [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === "Open review")!;
+  const open = document.querySelector<HTMLElement>('[data-testid="video-card-open"]')!;
   open.focus();
   await click(open);
   // The viewer is a lazy chunk: under a loaded verify run its import can outlast a fixed number of
@@ -716,7 +716,7 @@ describe("Escape order (test 24, decision 2)", () => {
     await escape(popup());
     await settle(200);
     expect(viewerOpen()).toBe(false);
-    expect((document.activeElement as HTMLElement | null)?.textContent).toBe("Open review");
+    expect((document.activeElement as HTMLElement | null)?.getAttribute("data-testid")).toBe("video-card-open");
   });
 });
 

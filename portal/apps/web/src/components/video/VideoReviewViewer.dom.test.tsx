@@ -50,7 +50,7 @@ async function mountInSheet(role: Role = "editor") {
   await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role={role}><ProjectSheet open kind="project" sheetKey="p:1" backdropHref="/" onRequestClose={() => {}}><VideoCollectionPanel projectId={PROJECT} role={role} review={{ open: true, parts: [] }} /></ProjectSheet></QuincyQueryProvider>); });
   await flush();
 }
-const openButton = () => [...document.querySelectorAll("button")].find((b) => b.textContent === "Open review")!;
+const openButton = () => document.querySelector<HTMLElement>('[data-testid="video-card-open"]')!;
 const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
 const playerVideo = () => dialog()?.querySelector("video") ?? null;
 async function openViewer() {

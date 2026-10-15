@@ -534,7 +534,7 @@ describe("a delivery refresh that finds access changed", () => {
       return undefined;
     };
     await open();
-    const openFilm = (title: string) => click(document.body.querySelector(`button[aria-label="Open ${title}"]`));
+    const openFilm = (title: string) => click([...document.body.querySelectorAll('[data-testid="guest-row-title"]')].find((el) => el.textContent === title));
     await openFilm("Film 1");
     await decide();
     await click(byId("guest-decision-cancel"));
@@ -584,7 +584,7 @@ describe("the decision and Release chips", () => {
     expect(allById("guest-decision-chip")).toEqual([]);
   });
 
-  it("appear on the rows of the Video list from the newest Version of each film", async () => {
+  it("do not appear on the rows of the Video list: the tile shows no decision or Release (#884, D21), but the video screen keeps them", async () => {
     videos = [
       videoOf(1, [versionOf(10, { decision: decisionOf("approved"), released: true, downloadUrl: downloadUrl(asset(10)) })]),
       videoOf(2, [versionOf(20)]),
@@ -592,10 +592,13 @@ describe("the decision and Release chips", () => {
     await open();
     const rows = allById("guest-video-row");
     expect(rows).toHaveLength(2);
-    expect(rows[0]!.querySelector('[data-testid="guest-decision-chip"]')?.textContent?.trim()).toBe("Approved");
-    expect(rows[0]!.querySelector('[data-testid="guest-released-chip"]')?.textContent?.trim()).toBe("Released");
-    expect(rows[1]!.querySelector('[data-testid="guest-decision-chip"]')).toBeNull();
-    expect(rows[1]!.querySelector('[data-testid="guest-released-chip"]')).toBeNull();
+    for (const row of rows) {
+      expect(row.querySelector('[data-testid="guest-decision-chip"]')).toBeNull();
+      expect(row.querySelector('[data-testid="guest-released-chip"]')).toBeNull();
+    }
+    await click(allById("guest-row-title")[0]!);
+    expect(chipText()).toEqual(["Approved"]);
+    expect(allById("guest-released-chip")).toHaveLength(1);
   });
 });
 

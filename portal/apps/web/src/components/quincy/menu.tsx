@@ -27,7 +27,7 @@ const TRIGGER = cn(
 );
 
 // §7.3's shared popover paint, reused for the app's two menus (§8.2).
-const PANEL = cn(
+export const PANEL = cn(
   "max-w-[min(320px,calc(100vw-var(--space-4)))]",
   "max-h-[min(420px,calc(100dvh-var(--space-5)))] overflow-auto",
   "bg-popover border-solid border-[length:var(--border-width-hair)] border-border",

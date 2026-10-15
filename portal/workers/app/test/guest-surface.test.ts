@@ -82,6 +82,18 @@ describe("GET /d/api/links/:linkId/videos", () => {
     expect((await guestFetch(linkPath(session.id, `/versions/${a.assetId}/notes`), { cookie: session.cookie })).status).toBe(404);
   });
 
+  it("counts OPEN public root threads: a resolved thread drops out, the shape stays pinned (#884)", async () => {
+    const { session, a } = await world();
+    await seedVideoNote({ assetId: a.assetId, body: PUBLIC_BODY });
+    await seedVideoNote({ assetId: a.assetId, body: PUBLIC_BODY, startFrame: 20, resolvedBy: ids.member });
+    const list = async () => guestVideoListResponseSchema.parse(await (await guestFetch(linkPath(session.id, "/videos"), { cookie: session.cookie })).json());
+    expect((await list()).videos[0]!.versions[0]!.publicNoteCount).toBe(1);
+    // The tile's count reuses `publicNoteCount`: no key may be added to a payload the deployed page parses strictly.
+    const raw = await (await guestFetch(linkPath(session.id, "/videos"), { cookie: session.cookie })).json() as { videos: Array<Record<string, unknown> & { versions: Array<Record<string, unknown>> }> };
+    expect(Object.keys(raw.videos[0]!).sort()).toEqual(["id", "premium", "title", "unlocked", "versions"]);
+    expect(Object.keys(raw.videos[0]!.versions[0]!).sort()).toEqual(["assetId", "decision", "downloadUrl", "durationMs", "fps", "frameCount", "hasAudio", "height", "posterUrl", "publicNoteCount", "released", "startTimecodeFrames", "streamUrl", "tcDropFrame", "tcNominalFps", "version", "width"]);
+  });
+
   it("is the stub without a session, and scoped to this link: another link's members never show", async () => {
     const { session, a } = await world();
     expect((await guestFetch(linkPath(session.id, "/videos"))).status).toBe(404);

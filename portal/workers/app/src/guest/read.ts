@@ -40,7 +40,7 @@ export async function listGuestVideos(db: D1Database, linkId: string, projectId:
       ORDER BY v.position, v.created_at, v.id`).bind(linkId, projectId),
     db.prepare(`SELECT a.id AS asset_id, m.video_id, a.version, m.fps_num, m.fps_den, m.frame_count, m.duration_ms, m.width, m.height, m.start_tc_frames, m.tc_nominal_fps, m.tc_drop_frame, m.has_audio,
         (m.poster_key IS NOT NULL) AS has_poster,
-        (SELECT COUNT(*) FROM video_notes n WHERE n.asset_id = a.id AND n.visibility = 'public' AND n.parent_id IS NULL
+        (SELECT COUNT(*) FROM video_notes n WHERE n.asset_id = a.id AND n.visibility = 'public' AND n.parent_id IS NULL AND n.resolved_at IS NULL
            AND (n.deleted_at IS NULL OR EXISTS (SELECT 1 FROM video_notes r WHERE r.parent_id = n.id))) AS note_count
       FROM review_link_version_grants g ${LIVE_ACCESS}
       WHERE g.link_id = ?1 AND g.revoked_at IS NULL ORDER BY a.version DESC`).bind(linkId, projectId),

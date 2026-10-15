@@ -136,17 +136,38 @@ describe("the link token", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("resumes a session on reload with GET and lists the videos with their note counts", async () => {
+  it("resumes a session on reload with GET and lists poster-first tiles: Version, duration, title and the open-note count only (#884)", async () => {
     videos = [videoOf(1, { versions: [versionOf(10, { publicNoteCount: 4 })] }), videoOf(2, { premium: true, unlocked: false })];
     await open(`?link=${LINK}`, "");
     expect(fetchMock.mock.calls[0]![0]).toBe(`/d/api/links/${LINK}/session`);
     expect((fetchMock.mock.calls[0]![1] as RequestInit | undefined)?.method ?? "GET").toBe("GET");
     const rows = allById("guest-video-row");
     expect(rows.map((row) => row.querySelector('[data-testid="guest-row-title"]')?.textContent)).toEqual(["Film 1", "Film 2"]);
-    expect(rows[0]!.textContent).toContain("Version 10");
-    expect(rows[0]!.textContent).toContain("4 notes");
+    expect(rows[0]!.querySelector('[data-testid="guest-video-row-version"]')?.textContent).toBe("v10");
+    expect(rows[0]!.textContent).toContain("2:00");
+    expect(rows[0]!.querySelector('[data-testid="guest-video-row-open-notes"]')?.textContent).toBe("4");
+    expect(document.getElementById(rows[0]!.querySelector('[data-testid="guest-row-title"]')!.getAttribute("aria-describedby")!)!.textContent).toContain("4 open notes on v10");
+    expect(rows[1]!.querySelector('[data-testid="guest-video-row-open-notes"]')).toBeNull();
     expect(rows[1]!.textContent).toMatch(/premium/i);
-    expect(byId("guest-row-slot")).not.toBeNull();
+  });
+
+  it("gives a guest tile no tick, no menu, no status, and only the open control as a button (#884, story 32)", async () => {
+    videos = [videoOf(1, { versions: [versionOf(10, { decision: { value: "approved", revision: 1, at: "2026-10-09T01:00:00.000Z", self: false }, released: true })] }), videoOf(2)];
+    await open(`?link=${LINK}`, "");
+    const row = allById("guest-video-row")[0]!;
+    expect(row.querySelector('input[type="checkbox"]')).toBeNull();
+    expect([...row.querySelectorAll("button")].map((b) => b.getAttribute("data-testid"))).toEqual(["guest-row-title"]);
+    expect(row.querySelector('[data-testid="guest-video-row-status"]')).toBeNull();
+    expect(row.querySelector('[data-testid="guest-decision-chip"]')).toBeNull();
+    expect(row.querySelector('[data-testid="guest-released-chip"]')).toBeNull();
+    expect(row.textContent).not.toMatch(/in review|approved|released/i);
+  });
+
+  it("a tap anywhere on a tile opens that film's screen (#884, story 33)", async () => {
+    videos = [videoOf(1), videoOf(2)];
+    await open(`?link=${LINK}`, "");
+    await click(allById("guest-row-title")[1]!);
+    expect(byId("guest-video-screen")).not.toBeNull();
   });
 
   it("opens no default-scope panel on the guest video screen (ADR 0024)", async () => {
@@ -168,7 +189,7 @@ describe("the link token", () => {
   it("goes to the unavailable screen when a later read is the stub (a revoked link)", async () => {
     await open();
     extra = (url) => (url.endsWith("/videos") || url.endsWith("/notes") ? stub404() : undefined);
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     expect(byId("guest-unavailable")).not.toBeNull();
   });
 });
@@ -255,7 +276,7 @@ describe("a Delivery deep link (#847)", () => {
 describe("the video screen", () => {
   it("moves through the videos with Previous / Next and [ / ], without the list", async () => {
     await open();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     expect(title()).toBe("Film 1");
     expect(button("Previous video")!.disabled).toBe(true);
     await click(button("Next video"));
@@ -567,7 +588,7 @@ describe("Sol round 1: a revoked link is noticed everywhere", () => {
   it("a 401 on a later read is the same unavailable screen", async () => {
     await open();
     extra = (url) => (url.endsWith("/videos") || url.endsWith("/notes") ? new Response("no", { status: 401 }) : undefined);
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     expect(byId("guest-unavailable")).not.toBeNull();
   });
 });
@@ -1100,7 +1121,7 @@ describe("#776 E: a removed Version's stream 404 refreshes the list", () => {
   it("when the shown Version is the one removed, the guest lands on what is still granted with the studio's notice", async () => {
     videos = [videoOf(1, { versions: [versionOf(30), versionOf(10)] }), videoOf(2)];
     await open();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     await pickVersion("v10");
     videos = [videoOf(1, { versions: [versionOf(30)] }), videoOf(2)];
     await act(async () => { stub.fireError(host.querySelector("video")!); });
@@ -1121,7 +1142,7 @@ describe("rich notes on the page (#835 C)", () => {
     // The server has already turned the node into "@Mia" text (story 9); the page shows it as the words it is.
     notes = [note({ body: "Ask @Mia Chen about it", content: doc(para(text("Ask "), text("@Mia Chen"), text(" about it"))) })];
     await open();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     const body = byId("guest-note-body")!;
     expect(body.textContent).toBe("Ask @Mia Chen about it");
     expect(body.querySelector("a, [data-type=\"mention\"]")).toBeNull();
@@ -1130,7 +1151,7 @@ describe("rich notes on the page (#835 C)", () => {
   it("a stray mention node still reads as the plain name", async () => {
     notes = [note({ body: "Ask @Mia", content: doc(para(text("Ask "), { type: "mention", attrs: { id: "11111111-1111-4111-8111-111111111111", label: "Mia" } })) })];
     await open();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     expect(byId("guest-note-body")!.textContent).toBe("Ask @Mia");
     expect(host.innerHTML).not.toContain("11111111-1111-4111-8111-111111111111");
   });
@@ -1138,7 +1159,7 @@ describe("rich notes on the page (#835 C)", () => {
   it("a picture and a video in a note are read from the link's own media routes", async () => {
     notes = [note({ body: "Look [1 image] [1 video]", content: doc(para(text("Look")), { type: "image", attrs: { mediaId: MEDIA, alt: "Site photo" } }, { type: "video", attrs: { mediaId: CLIP } }) })];
     await open();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     const image = byId("guest-note-body")!.querySelector("img")!;
     expect(image.getAttribute("src")).toBe(`/d/api/links/${LINK}/media/${MEDIA}`);
     expect(image.getAttribute("alt")).toBe("Site photo");
@@ -1151,7 +1172,7 @@ describe("rich notes on the page (#835 C)", () => {
   it("a note with no document still reads from its text", async () => {
     notes = [note()];
     await open();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     expect(byId("guest-note-body")!.textContent).toBe("Trim the opening");
   });
 });

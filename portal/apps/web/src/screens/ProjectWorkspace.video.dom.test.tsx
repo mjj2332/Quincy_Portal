@@ -235,14 +235,14 @@ describe("Video tab mount (#741 4d-i)", () => {
     expect(linksSection.textContent).toContain("No video links yet.");
     expect(paths().some((path) => path.includes("/assets?collection=video"))).toBe(false);
     expect(paths().some((path) => path.includes("/assets?collection=raw"))).toBe(false);
-    expect(host.querySelector('[data-testid="new-film-dropzone"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="new-film-pick"]')).not.toBeNull();
   });
 
   it("gate open without the upload part: cards but no dropzone and no Upload button", async () => {
     review = { open: true, parts: ["notes"] };
     const host = await openVideo("admin");
     expect(host.querySelectorAll('[data-testid="video-card"]')).toHaveLength(1);
-    expect(host.querySelector('[data-testid="new-film-dropzone"]')).toBeNull();
+    expect(host.querySelector('[data-testid="new-film-pick"]')).toBeNull();
     expect(host.textContent).not.toContain("Upload v3");
   });
 
@@ -250,7 +250,7 @@ describe("Video tab mount (#741 4d-i)", () => {
     review = { open: true, parts: ["upload"] };
     const host = await openVideo("external_editor");
     expect(host.querySelectorAll('[data-testid="video-card"]')).toHaveLength(1);
-    expect(host.querySelector('[data-testid="new-film-dropzone"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="new-film-pick"]')).not.toBeNull();
   });
 
   it("a malformed list is refused by the strict External schema, not rendered", async () => {

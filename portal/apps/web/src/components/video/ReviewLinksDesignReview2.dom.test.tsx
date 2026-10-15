@@ -57,7 +57,7 @@ describe("the selection bar's clearance", () => {
     await mount();
     const body = q('[data-testid="video-links-section"]')!.parentElement!;
     expect(body.contains(q('[data-testid="video-collection-body"]'))).toBe(true);
-    expect(q('[data-testid="video-collection-body"]')!.className).not.toContain("review-bar-clearance");
+    expect(q('[data-testid="video-collection-body"]')!.className).toContain("pb-[calc(var(--space-6)+var(--review-bar-clearance,0px))]"); // the last row of titles clears the bar too (#884)
     const clearance = () => body.style.getPropertyValue("--review-bar-clearance");
     expect(clearance()).toBe("");
     await selectFilms("Main walkthrough");

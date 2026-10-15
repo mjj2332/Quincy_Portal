@@ -403,7 +403,7 @@ describe("Social preview on the Review link (#872)", () => {
     expect(toggle()!.getAttribute("aria-pressed")).toBe("true");
     expect(stage()!.dataset.social).toBe("fit");
     await click(button("All videos"));
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     expect(toggle()!.getAttribute("aria-pressed")).toBe("false");
   });
 
@@ -427,7 +427,7 @@ describe("Social preview on the Review link (#872)", () => {
     videos = [videoOf(1, [versionOf(10)]), videoOf(2)]; socialOverlays = [TIKTOK];
     await act(async () => { host.querySelector("video")!.dispatchEvent(new Event("error")); });
     await flush();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     await social(true);
     expect(overlayImage()!.getAttribute("src")).toBe(TIKTOK.imageUrl);
   });

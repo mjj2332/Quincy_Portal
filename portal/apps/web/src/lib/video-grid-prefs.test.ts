@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { VideoDto } from "@quincy/shared";
-import { arrangeVideos, GRID_COLUMNS, DEFAULT_VIDEO_GRID_PREFS, normalizeVideoGridPrefs, videoGridKey, type VideoGridPrefs } from "./video-grid-prefs";
+import { arrangeVideos, GRID_CLASS, DEFAULT_VIDEO_GRID_PREFS, normalizeVideoGridPrefs, videoGridKey, type VideoGridPrefs } from "./video-grid-prefs";
 
 const video = (id: string, title: string, status: VideoDto["reviewStatus"], current: string, older = "2026-01-01T00:00:00.000Z"): VideoDto => ({
   id, title, reviewStatus: status,
@@ -10,12 +10,15 @@ const prefs = (over: Partial<VideoGridPrefs>): VideoGridPrefs => ({ ...DEFAULT_V
 const ids = (list: VideoDto[]) => list.map((v) => v.id);
 
 describe("normalizeVideoGridPrefs", () => {
-  it("defaults: Medium, Fit, info on, upload date newest first, all statuses", () => {
-    expect(normalizeVideoGridPrefs(undefined)).toEqual({ size: "M", thumb: "fit", info: true, sort: "uploaded", dir: "desc", status: "all" });
+  it("defaults: upload date newest first, all statuses", () => {
+    expect(normalizeVideoGridPrefs(undefined)).toEqual({ sort: "uploaded", dir: "desc", status: "all" });
   });
   it("keeps the good fields when one is junk", () => {
-    expect(normalizeVideoGridPrefs({ size: "XL", thumb: "fill", info: "yes", sort: "name", dir: "asc", status: "published" }))
-      .toEqual({ size: "M", thumb: "fill", info: true, sort: "name", dir: "asc", status: "published" });
+    expect(normalizeVideoGridPrefs({ sort: "name", dir: "sideways", status: "published" }))
+      .toEqual({ sort: "name", dir: "desc", status: "published" });
+  });
+  it("ignores the old Appearance keys (size, thumb, info) a browser may still hold (#884)", () => {
+    expect(normalizeVideoGridPrefs({ size: "L", thumb: "fill", info: false, sort: "name", dir: "asc", status: "all" })).toEqual({ sort: "name", dir: "asc", status: "all" });
   });
   it.each([null, 7, "x", []])("falls back to defaults for %j", (raw) => {
     expect(normalizeVideoGridPrefs(raw)).toEqual(DEFAULT_VIDEO_GRID_PREFS);
@@ -23,11 +26,10 @@ describe("normalizeVideoGridPrefs", () => {
   it("keys per user", () => { expect(videoGridKey("u1")).toBe("quincy:ui:video-grid:u1"); });
 });
 
-describe("GRID_COLUMNS", () => {
-  it("is S 240, M 320 (the size before the toolbar), L 480 minimum px", () => {
-    expect(GRID_COLUMNS.S).toContain("min(240px,100%)");
-    expect(GRID_COLUMNS.M).toContain("min(320px,100%)");
-    expect(GRID_COLUMNS.L).toContain("min(480px,100%)");
+describe("GRID_CLASS", () => {
+  it("is as many columns as fit at 280px minimum, and one column on a phone (D26)", () => {
+    expect(GRID_CLASS).toContain("min(280px,100%)");
+    expect(GRID_CLASS).toContain("max-[721px]:grid-cols-1");
   });
 });
 

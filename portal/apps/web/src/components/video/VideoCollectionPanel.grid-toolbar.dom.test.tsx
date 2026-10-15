@@ -7,7 +7,7 @@ import { installLocalStorageShim } from "../../testing/local-storage";
 import { USER, all, flush, id, mount, press, q, state, unmount, videoOf } from "@/testing/review-links-harness";
 import "@/testing/dom-polyfills";
 
-/** #865: the Video collection's toolbar (Appearance, Sort, Status filter), driven through the panel the way a person meets it. */
+/** #865: the Video collection's toolbar (Sort, Status filter; Appearance left with the single tile size, #884), driven through the panel the way a person meets it. */
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const auth = vi.hoisted(() => ({ userId: "44444444-4444-4444-8444-444444444444" as string | null }));
@@ -27,7 +27,7 @@ const film = (n: number, title: string, over: { status?: VideoDto["reviewStatus"
 const OLD_RECUT = film(1, "Film 10", { at: "2026-10-01T00:00:00.000Z", older: "2026-12-30T00:00:00.000Z" });
 const NEWEST = film(2, "Film 2", { at: "2026-10-05T00:00:00.000Z", status: "published" });
 const MIDDLE = film(3, "Alpha", { at: "2026-10-03T00:00:00.000Z", status: "approved_internal" });
-const titles = () => all('[data-testid="video-card"]').map((card) => card.querySelector("h3")?.textContent);
+const titles = () => all('[data-testid="video-card"]').map((card) => card.querySelector('[data-testid="video-card-open"]')?.textContent);
 const tid = (testId: string) => q(`[data-testid="${testId}"]`);
 let storage: ReturnType<typeof installLocalStorageShim>;
 const KEY = `quincy:ui:video-grid:${USER}`;
@@ -43,7 +43,6 @@ async function pickOption(testId: string, label: string) {
   await act(async () => { option.click(); });
   await flush(8);
 }
-async function openAppearance() { await press(tid("video-grid-appearance")); await flush(4); }
 
 beforeEach(() => {
   storage = installLocalStorageShim(); resetUiPrefMemory(); auth.userId = USER;
@@ -62,7 +61,7 @@ describe("the toolbar", () => {
     state.videos = [];
     await mount();
     expect(tid("video-grid-toolbar")).toBeNull();
-    expect(q("h3")).toBeNull();
+    expect(q('[data-testid="video-card-open"]')).toBeNull();
   });
 
   it("sorts by upload date, newest first, by the latest live Version (a re-cut old film does not rise on an older Version's date)", async () => {
@@ -112,60 +111,40 @@ describe("the toolbar", () => {
   });
 });
 
-describe("appearance", () => {
-  it("sets the card size (Small 240, Medium 320, Large 480)", async () => {
+describe("the grid (D26, D27)", () => {
+  it("has no Appearance control: one tile size, and a poster that is always letterboxed", async () => {
     await mount();
-    const grid = () => tid("video-card-grid")!;
-    expect(grid().getAttribute("data-size")).toBe("M");
-    await openAppearance();
-    await press(tid("video-grid-size-S"));
-    expect(grid().getAttribute("data-size")).toBe("S");
-    await press(tid("video-grid-size-L"));
-    expect(grid().getAttribute("data-size")).toBe("L");
+    expect(tid("video-grid-appearance")).toBeNull();
+    expect(q('[data-testid="video-card"] [data-testid="video-card-poster"]')!.getAttribute("data-fit")).toBe("contain");
+    expect(q('[data-testid="video-card"] img')!.className).toContain("object-contain");
   });
 
-  it("swaps only object-fit for Fit and Fill", async () => {
+  it("is a one-column-below-721px grid (the 280px auto-fit minimum is pinned on GRID_CLASS in video-grid-prefs.test.ts)", async () => {
     await mount();
-    const poster = () => q("[data-testid=\"video-card\"] img")!;
-    expect(poster().className).toContain("object-contain");
-    await openAppearance();
-    await press(tid("video-grid-thumb-fill"));
-    expect(poster().className).toContain("object-cover");
-    expect(poster().className).not.toContain("object-contain");
-    await press(tid("video-grid-thumb-fit"));
-    expect(poster().className).toContain("object-contain");
-  });
-
-  it("hides descriptive text with card info off, keeping title, pill, Open review and the poster badges", async () => {
-    await mount();
-    const card = () => q("[data-testid=\"video-card\"]")!;
-    expect(card().querySelector('[data-testid="video-card-meta"]')).not.toBeNull();
-    await openAppearance();
-    await press(tid("video-grid-info"));
-    expect(card().querySelector('[data-testid="video-card-meta"]')).toBeNull();
-    expect(card().querySelector('[data-testid="video-card-versions-row"]')).toBeNull();
-    expect(card().querySelector("h3")).not.toBeNull();
-    expect(card().querySelector('[data-testid="video-card-review-status"]')).not.toBeNull();
-    expect(card().querySelector('[data-testid="video-card-open"]')).not.toBeNull();
-    expect(card().querySelector('[data-testid="video-card-poster"]')!.textContent).toContain("v2");
+    expect(tid("video-card-grid")!.className).toContain("max-[721px]:grid-cols-1");
   });
 });
 
 describe("persistence", () => {
-  async function choose() { await pickOption("video-grid-status", "Published"); await openAppearance(); await press(tid("video-grid-size-L")); }
+  async function choose() { await pickOption("video-grid-status", "Published"); await pickOption("video-grid-sort", "Name"); }
 
   it("restores the choices on a fresh mount, per person", async () => {
     await mount(); await choose();
-    expect(JSON.parse(storage.values.get(KEY)!)).toMatchObject({ status: "published", size: "L" });
+    expect(JSON.parse(storage.values.get(KEY)!)).toMatchObject({ status: "published", sort: "name" });
     await unmount();
     await mount();
     expect(titles()).toEqual(["Film 2"]);
-    expect(tid("video-card-grid")!.getAttribute("data-size")).toBe("L");
     await unmount();
     auth.userId = "55555555-5555-4555-8555-555555555555";
     await mount();
     expect(titles()).toHaveLength(3);
-    expect(tid("video-card-grid")!.getAttribute("data-size")).toBe("M");
+  });
+
+  it("ignores the old Appearance keys a browser may still hold", async () => {
+    storage.values.set(KEY, JSON.stringify({ size: "L", thumb: "fill", info: false, sort: "uploaded", dir: "desc", status: "published" }));
+    await mount();
+    expect(titles()).toEqual(["Film 2"]);
+    expect(q('[data-testid="video-card"] img')!.className).toContain("object-contain");
   });
 
   it("writes nothing until the person is known", async () => {
@@ -179,7 +158,6 @@ describe("persistence", () => {
     storage.values.set(KEY, "{not json");
     await mount();
     expect(titles()).toHaveLength(3);
-    expect(tid("video-card-grid")!.getAttribute("data-size")).toBe("M");
   });
 
   it("keeps working in memory when storage is blocked", async () => {

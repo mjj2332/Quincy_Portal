@@ -102,7 +102,7 @@ export const guestVersionDtoSchema = z.object({
   hasAudio: z.boolean(),
   posterUrl: z.string().nullable(),
   streamUrl: z.string(),
-  /** Public root threads on this Version (a tombstone that kept replies included). */
+  /** Open public root threads on this Version: resolved threads do not count, a tombstone that kept replies does (#884: the Video tile's open-note count reads the latest granted Version's). */
   publicNoteCount: z.number().int().nonnegative(),
   /** The latest decision made on this link for this Version, or null. */
   decision: guestDecisionSchema.nullable(),

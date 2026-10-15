@@ -250,13 +250,21 @@ from the photo Stages.
 Its title is the file name of its latest live Version (spaces trimmed, `.mp4` or `.mov` dropped, 200
 characters at most, "Untitled film" if nothing is left). It moves when a Version is uploaded, removed
 or restored (#828), and staff rename it only by renaming the latest Version's file name (#867), from a
-Video card's ⋯ menu, which the next upload replaces.
+Video tile's ⋯ menu, which the next upload replaces.
 _Avoid_: Asset (a Video is the group of its Versions)
 
 **Version**:
 One immutable uploaded Asset of a Video, numbered in upload order. A re-cut is a new Version, never
 an edit. Notes, approvals and Releases belong to one exact Version.
 _Avoid_: Revision, take
+
+**Video tile**:
+How a Video appears in a collection or on a Review link: its poster on a 16:9 box (a 9:16 film is a
+strip on black, never cropped), with small badges for the Version, duration and open-note count, and,
+for staff only, the Review status and a link icon while it is on an active Review link. The title is
+one line under it. A tap anywhere on the tile opens the review; for staff "⋯" is its only button.
+A Guest reviewer's tile shows the Version, duration, title and the open public-note count, nothing else.
+_Avoid_: Video card (the pre-#884 tile with buttons), thumbnail (that is just the poster)
 
 **Review status**:
 Where a Video stands inside the studio: In review or Approved (internal), held by its latest Version,

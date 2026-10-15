@@ -17,14 +17,23 @@ function facts(entry: NewFilmEntry) {
   return probe ? `${formatFps(probe.fps)} fps · ${probe.width}×${probe.height} · ${formatDuration(probe.durationMs)}` : null;
 }
 
+/** Files picked or dropped for new films go to the upload store (checked in the browser first). Null user: signed out, nothing starts. */
+export function useReceiveNewFilms({ userId, queryClient, projectId, role }: { userId: string | null; queryClient: QueryClient | undefined; projectId: string; role: Role }) {
+  return (files: File[]) => { if (userId) addNewFilms({ userId, queryClient, projectId, role, files }); };
+}
+
+/** The collection header's Upload (#884, D25): picks new films on a phone or a desktop. The queue below the header shows what was picked. */
+export function NewFilmPickButton({ receive }: { receive: (files: File[]) => void }) {
+  return <FilePickButton multiple accept={VIDEO_ACCEPT} variant="primary" className={`min-h-11 ${TOUCH}`} data-testid="new-film-pick" onFiles={receive}>Upload</FilePickButton>;
+}
+
 /**
- * The "new films" drop box and its list (#845). Every picked file is checked in the browser first; nothing is requested from the server until Upload. Each film
- * is titled by its file name (#828), so there is no title to type. The queue lives in the upload store, so it outlives this panel; a started film leaves the
- * list for the upload tray. The drop box is never locked: more films can be added while others are checking or uploading.
+ * The "new films" queue (#845), and the big drop box while the collection is empty (#884: with films, the whole collection body is the drop target and Upload is in the header).
+ * Every picked file is checked in the browser first; nothing is requested from the server until Upload. Each film is titled by its file name (#828), so there is no title to type.
+ * The queue lives in the upload store, so it outlives this panel; a started film leaves the list for the upload tray. More films can be added while others are checking or uploading.
  */
-export function NewFilmUploader({ userId, queryClient, projectId, role }: { userId: string | null; queryClient: QueryClient | undefined; projectId: string; role: Role }) {
+export function NewFilmUploader({ userId, projectId, receive, empty }: { userId: string | null; projectId: string; receive: (files: File[]) => void; /** No films yet: show the big drop box. */ empty: boolean }) {
   const rows = useNewFilmBatch(userId, projectId);
-  const receive = (files: File[]) => { if (userId) addNewFilms({ userId, queryClient, projectId, role, files }); };
   const waiting = rows.filter((row) => row.status === "ready");
   // A caution several rows carry (the fast-start warning) is said once above the list; one unique to a row stays on it.
   const counts = new Map<string, number>();
@@ -33,12 +42,12 @@ export function NewFilmUploader({ userId, queryClient, projectId, role }: { user
   const checking = rows.some((row) => row.status === "checking");
 
   return <div className="grid gap-[var(--space-3)]" data-testid="new-film-uploader">
-    <FileDropzone multiple onFiles={receive} data-testid="new-film-dropzone" className="upload-zone">
+    {empty && <FileDropzone multiple onFiles={receive} data-testid="new-film-dropzone" className="upload-zone">
       <div className="ey">New films</div>
       <h2 className="upload-zone__title">Drop MP4 or MOV films here</h2>
       <p>H.264, constant frame rate, up to 2 GB each. Frame rate and timecode are read from each file.</p>
       <FilePickButton multiple accept={VIDEO_ACCEPT} variant="secondary" className={`min-h-[44px] ${TOUCH}`} onFiles={receive}>Choose files</FilePickButton>
-    </FileDropzone>
+    </FileDropzone>}
     {shared.length > 0 && <div className="grid gap-[var(--space-2)]" data-testid="new-film-shared-cautions">
       {shared.map((caution) => <Notice key={caution} tone="caution" role="status">{pluralCaution(caution)}</Notice>)}
     </div>}

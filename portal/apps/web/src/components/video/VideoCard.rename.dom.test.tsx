@@ -36,7 +36,7 @@ const dlg = () => q('[data-testid="video-rename-dialog"]');
 const input = () => q<HTMLInputElement>('#video-rename-filename');
 const save = () => all<HTMLButtonElement>("button", dlg()).find((b) => b.textContent === "Save" || b.textContent === "Saving…")!;
 const cancel = () => all<HTMLButtonElement>("button", dlg()).find((b) => b.textContent === "Cancel")!;
-const cardTitle = (videoId: string) => cardMenu(videoId)!.closest('[data-testid="video-card"]')!.querySelector("h3")!.textContent;
+const cardTitle = (videoId: string) => cardMenu(videoId)!.closest('[data-testid="video-card"]')!.querySelector('[data-testid="video-card-open"]')!.textContent;
 const filePath = (assetId: string) => `/api/projects/${PROJECT}/video-versions/${assetId}/file-name`;
 async function openCardMenu(videoId: string) {
   await act(async () => { cardMenu(videoId)!.focus(); await Promise.resolve(); });
@@ -65,10 +65,10 @@ beforeEach(() => {
 afterEach(async () => { await unmount(); resetVideoUploadStore(); resetUiPrefMemory(); storage.restore(); stub.dispose(); document.body.replaceChildren(); vi.unstubAllGlobals(); });
 
 describe("who sees Rename", () => {
-  it.each(["editor", "admin", "external_editor"] as const)("%s sees it last, after its own separator", async (role) => {
+  it.each(["editor", "admin", "external_editor"] as const)("%s sees it right after Upload new Version… (D23)", async (role) => {
     await mount({ role, parts: ALL });
     await openCardMenu(V1);
-    expect(items().at(-1)).toBe("Rename…");
+    expect(items().slice(0, 2)).toEqual(["Upload new Version…", "Rename…"]);
   });
   it("is absent for a Photographer and on an archived Project", async () => {
     await mount({ role: "photographer", parts: ALL }); await openCardMenu(V1);

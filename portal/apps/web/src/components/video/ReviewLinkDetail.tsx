@@ -54,7 +54,7 @@ export function ReviewLinkDetail({ ui, videos, linkId }: { ui: ReviewLinksUi; vi
   const [ended, setEnded] = useState(false);
   const link = links.data?.find((candidate) => candidate.id === linkId);
 
-  const back = <Button type="button" variant="text" className={`${TARGET} -ml-[var(--space-1)] justify-start`} onClick={store.openList}><ChevronLeft aria-hidden="true" className="size-4" />All links</Button>;
+  const back = <Button type="button" variant="text" className={`${TARGET} -ml-[var(--space-1)] justify-start`} onClick={() => { store.openList(); }}><ChevronLeft aria-hidden="true" className="size-4" />All links</Button>;
   if (!link) {
     return <div data-testid="review-link-detail" className="contents">
       <ReviewLinkDialogFrame header={<DialogHeader><DialogTitle className={DIALOG_TITLE}>Review link</DialogTitle><DialogDescription className="text-foreground-secondary">{links.isPending ? "Loading…" : "This Review link no longer exists."}</DialogDescription></DialogHeader>}>
