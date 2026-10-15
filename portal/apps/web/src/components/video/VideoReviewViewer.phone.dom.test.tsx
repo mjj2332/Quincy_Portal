@@ -242,7 +242,7 @@ describe("D4 and focus", () => {
     expect(row.textContent).toContain("latest");
   });
 
-  it("compose mode sizes the dialog to the visual viewport and hides the transport; leaving the field clears both (#879 fix)", async () => {
+  it("the phone dialog follows the visual viewport from the moment it opens, so a rise before compose mode is applied; compose hides the transport, leaving the field shows it (#879 fix r5)", async () => {
     class FakeViewport extends EventTarget { height = window.innerHeight - 340; offsetTop = 24; scale = 1; }
     const original = Object.getOwnPropertyDescriptor(window, "visualViewport");
     Object.defineProperty(window, "visualViewport", { configurable: true, value: new FakeViewport() });
@@ -251,8 +251,15 @@ describe("D4 and focus", () => {
       const deadline = Date.now() + 5000; while (!document.querySelector("textarea") && Date.now() < deadline) await flush(1);
       const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
       const transport = () => tid("video-scrubber")!.parentElement!;
-      expect(dialog.style.height).toBe("");
+      // Already following before any focus: the fake viewport (keyboard-sized) is on the dialog in browse mode.
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+      expect(dialog.style.height).toBe(`${window.innerHeight - 340}px`);
       expect(transport().hasAttribute("hidden")).toBe(false);
+      // A pan that lands before React turns compose mode on is applied inside the event.
+      const early = window.visualViewport as unknown as FakeViewport;
+      early.offsetTop = 30; early.dispatchEvent(new Event("scroll"));
+      expect(dialog.style.transform).toBe("translateY(30px)");
+      early.offsetTop = 24; early.dispatchEvent(new Event("scroll"));
       await act(async () => { document.querySelector<HTMLTextAreaElement>("textarea")!.focus(); });
       await flush(2);
       expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("compose");
@@ -265,7 +272,9 @@ describe("D4 and focus", () => {
       await act(async () => { document.querySelector<HTMLTextAreaElement>("textarea")!.blur(); });
       await flush(4);
       expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
-      expect(dialog.style.height).toBe("");
+      viewportNow.dispatchEvent(new Event("resize"));
+      expect(dialog.style.height).toBe(`${window.innerHeight}px`);
+      expect(dialog.style.transform).toBe("translateY(0px)");
       expect(transport().hasAttribute("hidden")).toBe(false);
     } finally {
       if (original) Object.defineProperty(window, "visualViewport", original); else delete (window as unknown as Record<string, unknown>).visualViewport;

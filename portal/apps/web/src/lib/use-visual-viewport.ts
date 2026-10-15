@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export type VisualViewportBox = { height: number; offsetTop: number };
 
@@ -9,29 +9,47 @@ const SETTLE_MS = 1000;
 
 /**
  * The visual viewport's height and offset (#879, D10): what is left above the on-screen keyboard. `enabled` is the phone compose mode; off (or with no `visualViewport`, as in a
- * desktop test), it is `null` and the caller keeps its own `100dvh` layout. The viewer's root takes `height` and shifts by `offsetTop` (once: nothing else adds a keyboard inset),
- * so the film stays above the keyboard and the compose strip, the root's last child, ends on the keyboard's top edge.
+ * desktop test), the returned box is `null`. The viewer's root takes `height` and shifts by `offsetTop` (once: nothing else adds a keyboard inset), so the film stays above the
+ * keyboard and the compose strip, the root's last child, ends on the keyboard's top edge.
  *
- * The #879 fix adds three things:
- * - Leaving compose mode keeps following the viewport while the keyboard animates away (until it is back to the layout height, a second at most), then puts back the page
- *   scroll iOS can leave panned after the keyboard closes.
+ * - `root` and `track` (#879 fix r5): the hook alone writes the root's `height` and `transform`, inside the viewport's own events, for as long as `track` is on (the phone viewer
+ *   is open; it defaults to `enabled`). Compose mode decides what the strip shows, never whether the root follows the viewport: iOS starts its scroll-into-view and keyboard pan
+ *   synchronously on focus, before React has turned compose mode on, so a listener that waited for compose mode missed the first rise and the viewer flashed off screen once.
+ *   (Base UI's scroll lock is `overflow: hidden` only on iOS, which iOS ignores when it brings a focused field into view.) The caller renders no style of its own for these two.
+ * - Leaving compose mode keeps the box while the keyboard animates away (until it is back to the layout height, a second at most), then puts back the page scroll iOS can leave
+ *   panned, and only then drops the box.
  * - A pinch zoom (`scale > 1`) is not the keyboard: the last box is kept.
- * - `root` (#879 fix r3): the element that takes the box. The hook writes its `height` and `transform` itself, inside the viewport event, so iOS's pan and
- *   the box land in the same frame: through a React render alone they arrive a frame apart and the viewer flashes off screen while the keyboard rises.
- *   The caller still renders the same style from the returned box, so React and the hook never disagree.
  * - `onKeyboardGone`: the software keyboard went away while compose mode is still on (the viewport shrank by 150px or more, then grew back to the layout height). Some iOS
  *   paths dismiss the keyboard without blurring the field; the caller blurs it. Never called with a hardware keyboard, which never shrinks the viewport.
  */
-export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void, root?: RefObject<HTMLElement | null>): VisualViewportBox | null {
+export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void, root?: HTMLElement | null, track: boolean = enabled): VisualViewportBox | null {
   const [box, setBox] = useState<VisualViewportBox | null>(null);
   const goneRef = useRef(onKeyboardGone);
   goneRef.current = onKeyboardGone;
-  const rootRef = useRef(root);
-  rootRef.current = root;
+  // The root follows the visual viewport for as long as it is tracked, written inside the viewport's events (the same frame as iOS's pan), never through a render.
+  useLayoutEffect(() => {
+    const viewport = typeof window === "undefined" ? undefined : window.visualViewport;
+    if (!track || !viewport || !root) return undefined;
+    const element = root;
+    const write = () => {
+      if (viewport.scale > 1.01) return;
+      element.style.height = `${viewport.height}px`; element.style.transform = `translateY(${viewport.offsetTop}px)`;
+    };
+    write();
+    viewport.addEventListener("resize", write);
+    viewport.addEventListener("scroll", write);
+    // iOS may also scroll the page itself to bring the field into view; that moves the visual viewport too, so it is read in the same task.
+    window.addEventListener("scroll", write, { passive: true });
+    return () => {
+      viewport.removeEventListener("resize", write);
+      viewport.removeEventListener("scroll", write);
+      window.removeEventListener("scroll", write);
+      element.style.height = ""; element.style.transform = "";
+    };
+    // The root is a dependency, not a ref: a dialog popup mounts a commit after its host, and the box must land on it the moment it exists.
+  }, [track, root]);
   // Whether the box is still following after compose mode ended (the keyboard is on its way down).
   const settling = useRef<(() => void) | null>(null);
-  // A layout effect (#879 fix r4): the listener is on, and the box written onto the root, before the frame that follows compose mode turning on. On the first focus after a
-  // load iOS starts panning in that very frame; a passive effect attached a frame late and the viewer flashed off screen once.
   useLayoutEffect(() => {
     const viewport = typeof window === "undefined" ? undefined : window.visualViewport;
     if (!enabled || !viewport) return undefined;
@@ -40,8 +58,6 @@ export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void,
     let shrunk = false;
     const read = () => {
       if (viewport.scale > 1.01) return;
-      const element = rootRef.current?.current;
-      if (element) { element.style.height = `${viewport.height}px`; element.style.transform = `translateY(${viewport.offsetTop}px)`; }
       setBox((held) => (held && held.height === viewport.height && held.offsetTop === viewport.offsetTop ? held : { height: viewport.height, offsetTop: viewport.offsetTop }));
     };
     const onResize = () => {
@@ -55,23 +71,17 @@ export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void,
     if (window.innerHeight - viewport.height >= KEYBOARD_MIN_PX) shrunk = true;
     viewport.addEventListener("resize", onResize);
     viewport.addEventListener("scroll", read);
-    // iOS may also scroll the page itself to bring the field into view; that moves the visual viewport too, so it is read in the same task.
-    window.addEventListener("scroll", read, { passive: true });
     return () => {
       viewport.removeEventListener("resize", onResize);
       viewport.removeEventListener("scroll", read);
-      window.removeEventListener("scroll", read);
-      // Keep following while the keyboard goes down; then drop the box and undo any pan iOS left behind.
+      // Keep following while the keyboard goes down; then put back any pan iOS left behind, and only then drop the box (the other way round shows a frame of the panned page).
       let timer: ReturnType<typeof setTimeout> | undefined;
       const finish = () => {
         viewport.removeEventListener("resize", follow);
         viewport.removeEventListener("scroll", follow);
         clearTimeout(timer);
         settling.current = null;
-        // Put the page scroll back first, then release the box: the other way round shows one frame of the panned page (#879 fix r4).
         if (viewport.offsetTop !== 0 || window.scrollY !== scrollY) window.scrollTo(0, scrollY);
-        const element = rootRef.current?.current;
-        if (element) { element.style.height = ""; element.style.transform = ""; }
         setBox(null);
       };
       const follow = () => { if (window.innerHeight - viewport.height <= 1) finish(); else read(); };

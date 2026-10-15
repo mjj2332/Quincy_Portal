@@ -128,8 +128,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   sheetStopRef.current = sheetControl.stop;
   const setSheetStop = sheetControl.onStop;
   // The software keyboard went away without blurring the field (some iOS paths): blur it, so compose mode ends the ordinary way (#879 fix).
-  const screenRef = useRef<HTMLDivElement | null>(null);
-  const keyboard = useVisualViewport(phone && sheetControl.composing, () => { if (!sheetControl.held) blurComposerField(); }, screenRef);
+  // The guest page sizes itself from the returned box, as before #879 fix r5 (the guest composer's own pass follows in a later PR).
+  const keyboard = useVisualViewport(phone && sheetControl.composing, () => { if (!sheetControl.held) blurComposerField(); });
   const [versionsOpen, setVersionsOpen] = useState(false);
   const chipRef = useRef<HTMLButtonElement | null>(null);
   const [summaries, setSummaries] = useState<{ videoId: string; rows: Parameters<typeof withSummaries>[1] } | null>(null);
@@ -459,7 +459,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     />
   </>;
 
-  return <div ref={screenRef} data-testid="guest-video-screen" data-surface="inverse" data-keyboard={keyboard ? "true" : "false"} style={keyboard ? { height: keyboard.height, transform: `translateY(${keyboard.offsetTop}px)` } : undefined} className={`flex flex-1 flex-col bg-background text-foreground min-[721px]:min-h-0 ${keyboard ? "min-h-0" : "min-h-dvh"}`}>
+  return <div data-testid="guest-video-screen" data-surface="inverse" data-keyboard={keyboard ? "true" : "false"} style={keyboard ? { height: keyboard.height, transform: `translateY(${keyboard.offsetTop}px)` } : undefined} className={`flex flex-1 flex-col bg-background text-foreground min-[721px]:min-h-0 ${keyboard ? "min-h-0" : "min-h-dvh"}`}>
     {phone ? phoneBar : <header className="flex flex-col border-b border-border bg-card text-card-foreground">
      <div data-testid="guest-bar" className="flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] px-[var(--space-4)] py-[var(--space-1)]">
       {onBack && <Button type="button" variant="ghost" className={`${TOUCH} shrink-0`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span>All videos</span></Button>}

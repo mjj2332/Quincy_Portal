@@ -65,3 +65,13 @@ No new elements.
 | Send | `components/reui/button.tsx` `size="icon-round"` | Always the primary fill; disabled dims only the icon (`disabled:opacity-100 [&:disabled_svg]:opacity-50`). Adaptation note 7 updated. |
 | Pill focus | `QuincyRichTextEditorBase.tsx` | Unchanged this round (round 3's 2px edge ring). Not switched to a `--border-strong` hairline: that token is not re-scoped on the inverse surface (ink-900 on the ink-700 pill), so the focus state would all but vanish. Reported for a decision. |
 | Keyboard box | `lib/use-visual-viewport.ts` | No UI. Attached in a layout effect (on before the next frame), also follows page scroll, and on the way out restores the page scroll before releasing the root. |
+
+## Round 5 (Simulator pass of round 4)
+
+No new elements.
+
+| Element | Where | Change |
+|---|---|---|
+| Keyboard box | `lib/use-visual-viewport.ts` (`root`, `track`), `video/VideoReviewViewer.tsx` | No UI. The phone dialog follows the visual viewport for as long as it is open (`track`), not only in compose mode, so iOS's first pan on focus, which lands before React turns compose mode on, is followed in the same event. The root is passed as an element (the popup's callback ref into state). The guest screen keeps its compose-only box (its own pass is a later PR). |
+| Pill focus | `QuincyRichTextEditorBase.tsx` | Unchanged (round 3's 2px ring). Stopped, not switched: a `--border-strong` hairline is 1.26:1 on the ink-700 pill (`--border-strong` is ink-900 and inverse.css does not re-scope it), under the 3:1 a focus indicator needs. Reported for a decision with the options. |
+| Pill radius | `components/reui/input-group.tsx` | `rounded-[22px]` kept: the design guards pass on it, and there is no height token for the 44px phone control (the codebase spells 44px raw as the WCAG target). |

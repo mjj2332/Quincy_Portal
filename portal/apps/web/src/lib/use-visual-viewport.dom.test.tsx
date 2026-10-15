@@ -80,7 +80,7 @@ describe("useVisualViewport (#879)", () => {
   });
   it("writes the box onto its root inside the viewport event, before any render, and clears it when done (#879 fix r3)", async () => {
     const element = document.createElement("div"); document.body.appendChild(element);
-    const ref = { current: element };
+    const ref = element;
     function Rooted({ enabled }: { enabled: boolean }) { useVisualViewport(enabled, undefined, ref); return null; }
     await act(async () => { root.render(<Rooted enabled />); });
     // Outside act: React has not rendered yet when the event returns, so only a write inside the event can have put the box there.
@@ -94,21 +94,38 @@ describe("useVisualViewport (#879)", () => {
     expect(element.style.height).toBe("");
     expect(element.style.transform).toBe("");
   });
-  it("follows a scroll of the page itself, and on the way out puts the page scroll back before it releases the root (#879 fix r4)", async () => {
+  it("with tracking on, the root follows the viewport before compose mode turns on: a keyboard rise that beats React is still applied (#879 fix r5)", async () => {
     const element = document.createElement("div"); document.body.appendChild(element);
-    const ref = { current: element };
-    function Rooted({ enabled }: { enabled: boolean }) { useVisualViewport(enabled, undefined, ref); return null; }
-    await act(async () => { root.render(<Rooted enabled />); });
-    Object.assign(fake, { height: 400, offsetTop: 50 });
+    const ref = element;
+    function Tracked({ enabled }: { enabled: boolean }) { const box = useVisualViewport(enabled, undefined, ref, true); return <output>{box ? `${box.height}/${box.offsetTop}` : "none"}</output>; }
+    await act(async () => { root.render(<Tracked enabled={false} />); });
+    expect(element.style.height).toBe(`${window.innerHeight}px`);
+    // iOS pans and shrinks on focus, before React has turned compose mode on: the root follows inside the event, with no render.
+    Object.assign(fake, { height: 430, offsetTop: 120 });
+    fake.dispatchEvent(new Event("resize"));
+    expect(element.style.height).toBe("430px");
+    expect(element.style.transform).toBe("translateY(120px)");
+    expect(text()).toBe("none");
+    // A scroll of the page itself is followed too.
+    fake.offsetTop = 60;
     window.dispatchEvent(new Event("scroll"));
-    expect(element.style.transform).toBe("translateY(50px)");
-    let heightWhenScrolled: string | null = null;
-    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => { heightWhenScrolled = element.style.height; });
-    await act(async () => { root.render(<Rooted enabled={false} />); });
-    await fire("resize", { height: window.innerHeight, offsetTop: 50 });
+    expect(element.style.transform).toBe("translateY(60px)");
+    await act(async () => { root.render(<Tracked enabled />); });
+    expect(text()).toBe("430/60");
+    // Leaving compose mode: the page scroll is put back while the box is still held, and only then is the box dropped; the root keeps following.
+    let boxWhenScrolled: string | null = null;
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => { boxWhenScrolled = text(); });
+    await act(async () => { root.render(<Tracked enabled={false} />); });
+    await fire("resize", { height: window.innerHeight, offsetTop: 60 });
     expect(scrollTo).toHaveBeenCalledWith(0, 0);
-    expect(heightWhenScrolled).toBe("400px");
-    expect(element.style.height).toBe("");
+    expect(boxWhenScrolled).toBe("430/60");
+    expect(text()).toBe("none");
+    expect(element.style.height).toBe(`${window.innerHeight}px`);
     scrollTo.mockRestore();
+    // Tracking off (the phone viewer closed, or a desktop width): the root is released.
+    function Off() { useVisualViewport(false, undefined, ref, false); return null; }
+    await act(async () => { root.render(<Off />); });
+    expect(element.style.height).toBe("");
+    expect(element.style.transform).toBe("");
   });
 });
