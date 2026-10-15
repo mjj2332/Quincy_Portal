@@ -905,12 +905,12 @@ describe("round 1 findings", () => {
       return undefined;
     };
     await open();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "maybe sent");
     await submit("guest-composer");
     await click(button("All videos"));
-    await click(button("Open Film 2"));
+    await click(button("Film 2"));
     expect(byId("guest-video-screen")).not.toBeNull();
     // Staff removed A's access; its delayed 404 stub arrives while B is showing.
     await act(async () => { answerA(); });
@@ -981,13 +981,13 @@ describe("round 2 findings", () => {
       return undefined;
     };
     await open();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "slow");
     await submit("guest-composer");
     expect(requests("POST")).toHaveLength(1);
     await click(button("All videos"));
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "slow");
     await submit("guest-composer");
@@ -1039,13 +1039,13 @@ describe("round 4 findings", () => {
     extra = (url, init) => (url === `${BASE}/notes/${noteId(7)}` && init?.method === "PATCH"
       ? conflict({ ...note(1), replies: [reply7({ revision: 4, body: "Edited elsewhere" })] }) : undefined);
     await open();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     await click(byId("guest-note-actions"));
     await click(menuItem("Edit"));
     await typeInto(byId("guest-note-edit-body"), "Will do it");
     await click(button("All videos"));
     notes = { [asset(10)]: [{ ...note(1), replies: [reply7({ revision: 4, body: "Edited elsewhere" })] }] };
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     await submit("guest-note-edit-form");
     expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 2, content: para("Will do it") });
     expect(byId("guest-note-edit-problem")?.textContent).toMatch(/changed/i);
@@ -1060,12 +1060,12 @@ describe("round 4 findings", () => {
     videos = [videoOf(1), videoOf(2)];
     notes = { [asset(10)]: [{ ...note(1), replies: [reply7()] }] };
     await open();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     await click(byId("guest-note-actions"));
     await click(menuItem("Edit"));
     await click(button("All videos"));
     notes = { [asset(10)]: [{ ...note(1), replies: [reply7({ revision: 4, body: "Edited elsewhere" })] }] };
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     await submit("guest-note-edit-form");
     expect(requests("PATCH")).toHaveLength(0);
     expect(byId("guest-note-edit-form")).toBeNull();
@@ -1088,14 +1088,14 @@ describe("round 4 findings", () => {
       return undefined;
     };
     await open();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     await click(byId("guest-note-reply-button"));
     await typeInto(byId("guest-reply-body"), "Will do");
     await submit("guest-reply-form");
     await click(button("All videos"));
     await act(async () => { release(); });
     await flush();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     expect(allById("guest-note-reply")).toHaveLength(1);
     expect(byId("guest-reply-form")).toBeNull();
   });
@@ -1117,7 +1117,7 @@ describe("round 4 findings", () => {
       return undefined;
     };
     await open();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     await click(byId("guest-note-actions"));
     await click(menuItem("Edit"));
     await typeInto(byId("guest-note-edit-body"), "Done");
@@ -1125,7 +1125,7 @@ describe("round 4 findings", () => {
     await click(button("All videos"));
     await act(async () => { release(); });
     await flush();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     expect(byId("guest-note-edit-form")).toBeNull();
     expect(allById("guest-note-body").map((item) => item.textContent)).toContain("Done");
   });
@@ -1210,7 +1210,7 @@ describe("the video step keys and modals", () => {
   it("keeps [ / ] out of the verify dialog, and still steps from the screen itself", async () => {
     session = ANON; videos = [videoOf(1), videoOf(2)];
     await open();
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     await click(byId("guest-add-note"));
     const dialog = document.body.querySelector('[role=dialog]');
     expect(dialog).not.toBeNull();

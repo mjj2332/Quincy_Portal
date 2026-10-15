@@ -55,83 +55,69 @@ beforeEach(() => {
 });
 afterEach(async () => { await unmount(); resetVideoUploadStore(); resetUiPrefMemory(); storage.restore(); stub.dispose(); document.body.replaceChildren(); vi.unstubAllGlobals(); Reflect.deleteProperty(navigator, "clipboard"); });
 
-describe("which items the menu offers", () => {
-  it.each(["editor", "external_editor", "admin"] as const)("%s with links and download sees Open, Create Review link, Download v2, Copy link, Rename, in that order, in three groups", async (role) => {
+describe("which items the menu offers (D23)", () => {
+  it.each(["editor", "external_editor", "admin"] as const)("%s with links and download sees Upload new Version…, Rename…, Download v2, Versions, Review links, in that order, with no separator without Delete", async (role) => {
     await mount({ role, parts: ALL });
     await openCardMenu(V1);
-    expect(items()).toEqual(["Open", "Create Review link", "Social preview", "Download v2", "Copy link", "Rename…"]);
-    expect(separators()).toHaveLength(2);
+    expect(items()).toEqual(["Upload new Version…", "Rename…", "Download v2", "Versions (2)", "Review links"]);
+    expect(separators()).toHaveLength(0);
   });
-  it("offers only Open, Copy link and Rename without the links and download parts, in three groups", async () => {
+  it("offers only Upload new Version…, Rename… and Versions without the links and download parts", async () => {
     await mount({ parts: ["upload"] });
     await openCardMenu(V1);
-    expect(items()).toEqual(["Open", "Social preview", "Copy link", "Rename…"]);
-    expect(separators()).toHaveLength(2);
+    expect(items()).toEqual(["Upload new Version…", "Rename…", "Versions (2)"]);
   });
-  it("on an archived Project drops Create Review link only", async () => {
+  it("has no Copy link, Social preview or Open: those stay in the viewer (D5)", async () => {
+    await mount({ parts: ALL });
+    await openCardMenu(V1);
+    expect(item("video-card-copy-link")).toBeNull();
+    expect(item("video-card-social-preview")).toBeNull();
+    expect(item("video-card-menu-open")).toBeNull();
+  });
+  it("on an archived Project drops Rename (and Create Review link inside its submenu)", async () => {
     await mount({ archived: true, parts: ALL });
     await openCardMenu(V1);
-    expect(items()).toEqual(["Open", "Social preview", "Download v2", "Copy link"]);
+    expect(items()).toEqual(["Upload new Version…", "Download v2", "Versions (2)", "Review links"]);
   });
-  it("gives a Photographer no Download (capability) and no Create Review link", async () => {
+  it("gives a Photographer no Download (capability), no Rename and no Review links", async () => {
     await mount({ role: "photographer", parts: ALL });
     await openCardMenu(V1);
-    expect(items()).toEqual(["Open", "Social preview", "Copy link"]);
+    expect(items()).toEqual(["Upload new Version…", "Versions (2)"]);
   });
-  it("keeps the trigger when the card's descriptive text is hidden", async () => {
+  it("hides Upload new Version… while a Version is uploading", async () => {
+    state.videos = [{ ...WALK, uploading: { reservationId: "22222222-2222-4222-8222-222222222222", version: 3, uploader: { id: "99999999-9999-4999-8999-999999999999", name: "Mia Chen", roleLabel: "Editor", isExternal: false, active: true }, expiresAt: "2026-10-09T08:00:00.000Z" } } as typeof WALK, TEASER];
+    await mount({ parts: ALL });
+    await openCardMenu(V1);
+    expect(items()).not.toContain("Upload new Version…");
+  });
+  it("keeps the trigger on every tile", async () => {
     await mount({ parts: ALL });
     expect(cardMenu(V1)).not.toBeNull();
     expect(cardMenu(V2)).not.toBeNull();
   });
 });
 
-describe("Open", () => {
-  it("opens the viewer on that film, leaves the selection, and Escape returns focus to that card's ⋯", async () => {
+describe("Upload new Version…", () => {
+  it("opens the file picker from the menu item's own click (iOS needs it in the same tick)", async () => {
     await mount({ parts: ALL });
-    await openCardMenu(V2);
-    await pick("video-card-menu-open");
-    const deadline = Date.now() + 10_000; while (!viewer() && Date.now() < deadline) await flush(1);
-    expect(viewer()).not.toBeNull();
-    expect(checkbox("Select Teaser")!.checked).toBe(false);
-    await act(async () => { viewer()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
-    await flush(20);
-    expect(viewer()).toBeNull();
-    expect(document.activeElement).toBe(cardMenu(V2));
+    await openCardMenu(V1);
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => undefined);
+    await pick("video-card-upload-version");
+    expect(click).toHaveBeenCalledTimes(1);
+    click.mockRestore();
   });
 });
 
-describe("Social preview", () => {
-  const toggle = () => q<HTMLElement>('[data-testid="video-social-toggle"]');
-  const waitViewer = async () => { const deadline = Date.now() + 10_000; while (!viewer() && Date.now() < deadline) await flush(1); await flush(6); };
-  it("opens the viewer on that film with Social on, and Escape leaves Social, then closes with focus back on that card's ⋯", async () => {
+describe("Versions submenu", () => {
+  it("lists every Version, newest first, and a pick opens the viewer (the menu hands focus off)", async () => {
     await mount({ parts: ALL });
-    await openCardMenu(V2);
-    await pick("video-card-social-preview");
-    await waitViewer();
+    await openCardMenu(V1);
+    await pick("video-card-versions");
+    expect(all('[data-testid^="video-card-version-"]').map((el) => el.textContent)).toEqual(["v2", "v1"]);
+    await pick("video-card-version-1");
+    const deadline = Date.now() + 10_000; while (!viewer() && Date.now() < deadline) await flush(1);
     expect(viewer()).not.toBeNull();
-    expect(toggle()!.getAttribute("aria-pressed")).toBe("true");
-    expect(checkbox("Select Teaser")!.checked).toBe(false);
-    await act(async () => { viewer()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
-    await flush(10);
-    expect(toggle()!.getAttribute("aria-pressed")).toBe("false");
-    await act(async () => { viewer()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
-    await flush(20);
-    expect(viewer()).toBeNull();
-    expect(document.activeElement).toBe(cardMenu(V2));
-  });
-  it("a plain Open afterwards opens with Social off", async () => {
-    await mount({ parts: ALL });
-    await openCardMenu(V2);
-    await pick("video-card-social-preview");
-    await waitViewer();
-    await act(async () => { viewer()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
-    await flush(10);
-    await act(async () => { viewer()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
-    await flush(20);
-    await openCardMenu(V2);
-    await pick("video-card-menu-open");
-    await waitViewer();
-    expect(toggle()!.getAttribute("aria-pressed")).toBe("false");
+    expect(checkbox("Select Main walkthrough")!.checked).toBe(false);
   });
 });
 
@@ -152,35 +138,5 @@ describe("Download", () => {
     await pick("video-card-download");
     expect(checkbox("Select Teaser")!.checked).toBe(false);
     expect(viewer()).toBeNull();
-  });
-});
-
-describe("Copy link", () => {
-  it("writes the absolute film deep link with no Version pinned, toasts, closes the menu and returns focus to the ⋯", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined); stubClipboard(writeText);
-    await mount({ parts: ALL });
-    await openCardMenu(V1);
-    await pick("video-card-copy-link");
-    expect(writeText).toHaveBeenCalledTimes(1);
-    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/projects/${PROJECT}?tab=video&video=${V1}`);
-    expect(toasts.list).toEqual(["Link copied."]);
-    expect(item("video-card-copy-link")).toBeNull();
-    expect(document.activeElement).toBe(cardMenu(V1));
-    expect(viewer()).toBeNull();
-    expect(checkbox("Select Main walkthrough")!.checked).toBe(false);
-  });
-  it("toasts an error when the write is rejected", async () => {
-    stubClipboard(vi.fn().mockRejectedValue(new Error("denied")));
-    await mount({ parts: ALL });
-    await openCardMenu(V1);
-    await pick("video-card-copy-link");
-    expect(toasts.list).toEqual(["error: Couldn't copy the link."]);
-  });
-  it("toasts an error when there is no clipboard", async () => {
-    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
-    await mount({ parts: ALL });
-    await openCardMenu(V1);
-    await pick("video-card-copy-link");
-    expect(toasts.list).toEqual(["error: Couldn't copy the link."]);
   });
 });

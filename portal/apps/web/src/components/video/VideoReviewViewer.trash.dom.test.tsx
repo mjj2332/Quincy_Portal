@@ -78,7 +78,7 @@ const dialog = () => document.querySelector<HTMLElement>('[data-testid="video-re
 const tid = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const confirm = () => document.querySelector<HTMLElement>('[role="alertdialog"]');
 async function openViewer() {
-  const open = [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === "Open review")!;
+  const open = document.querySelector<HTMLElement>('[data-testid="video-card-open"]')!;
   open.focus();
   await act(async () => { open.click(); });
   const deadline = Date.now() + 10_000;

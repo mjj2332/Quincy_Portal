@@ -114,7 +114,7 @@ async function mount(opts: { role?: Role; parts?: string[]; archivedProject?: bo
   await flush();
 }
 async function openViewer() {
-  const open = [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === "Open review")!;
+  const open = document.querySelector<HTMLElement>('[data-testid="video-card-open"]')!;
   open.focus();
   await click(open);
   // The viewer is a lazy chunk: under a loaded verify run its import can outlast a fixed number of

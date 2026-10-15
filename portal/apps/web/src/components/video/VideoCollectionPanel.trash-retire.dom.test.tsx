@@ -57,7 +57,7 @@ async function mount(parts: string[]) {
   await flush();
 }
 async function openViewer() {
-  const open = [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === "Open review")!;
+  const open = document.querySelector<HTMLElement>('[data-testid="video-card-open"]')!;
   await act(async () => { open.click(); });
   const deadline = Date.now() + 10_000;
   while (!document.querySelector('[role="dialog"] video')) { if (Date.now() > deadline) throw new Error("the viewer never mounted"); await flush(1); }

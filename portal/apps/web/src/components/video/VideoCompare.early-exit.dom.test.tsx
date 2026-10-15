@@ -38,7 +38,7 @@ it("leaving compare before its chunk has loaded reopens the single player on the
   root = createRoot(host);
   await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><VideoCollectionPanel projectId="11111111-1111-4111-8111-111111111111" role="editor" review={{ open: true, parts: ["compare"] as never }} /></QuincyQueryProvider>); });
   await flush();
-  const open = [...document.querySelectorAll("button")].find((b) => b.textContent === "Open review")!;
+  const open = document.querySelector<HTMLElement>('[data-testid="video-card-open"]')!;
   await act(async () => { open.click(); });
   const deadline = Date.now() + 10_000;
   while (!document.querySelector('[role="dialog"] video')) { if (Date.now() > deadline) throw new Error("the viewer never mounted"); await flush(1); }

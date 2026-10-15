@@ -49,7 +49,7 @@ async function mount(parts: Array<"delivery" | "notes">, role: Role = "editor", 
   await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role={role}><VideoCollectionPanel projectId={PROJECT} role={role} review={{ open: true, parts }} /></QuincyQueryProvider>); });
   await flush();
 }
-const openButton = () => [...document.querySelectorAll("button")].find((b) => b.textContent === "Open review")!;
+const openButton = () => document.querySelector<HTMLElement>('[data-testid="video-card-open"]')!;
 const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
 async function openViewer() {
   await act(async () => { openButton().click(); });

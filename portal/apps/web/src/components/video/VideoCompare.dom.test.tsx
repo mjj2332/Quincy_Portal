@@ -99,7 +99,7 @@ async function mount(opts: { role?: Role; parts?: string[]; notes?: Record<strin
 }
 const playerVideo = () => dialog()?.querySelector("video") ?? null;
 async function openViewer() {
-  const open = [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === "Open review")!;
+  const open = document.querySelector<HTMLElement>('[data-testid="video-card-open"]')!;
   open.focus();
   await click(open);
   const deadline = Date.now() + 10_000;

@@ -15,6 +15,8 @@ export type ReviewLinksUi = {
   enabled: boolean;
   /** Enabled and the Project is not archived: create, edit, add, remove and replace. Revoke and Delete (#846) need only `enabled`. */
   canWrite: boolean;
+  /** The ticks and the selection bar exist: Review links are enabled, or the person may download (each bar action is gated on its own). */
+  canSelect: boolean;
   archived: boolean;
   store: ReviewLinkStore;
   /** The ticked Videos. The collection re-renders on this alone, not on every keystroke in a dialog. */
@@ -59,9 +61,10 @@ const INERT_STORE = createReviewLinkStore("inert");
  * renders; `ReviewLinksHost`, `ReviewLinksDialogHost` and the cards read it. `review` is the gate answer (undefined: not known yet).
  * `fetchLinks` is off for the scope's own reader while its dialog is closed, so other tabs never fetch the list.
  */
-export function useReviewLinksUi({ projectId, role, review, archived, store: scoped, fetchLinks = true }: { projectId: string; role: Role; review: VideoReviewResponse | undefined; archived: boolean; store: ReviewLinkStore | null; fetchLinks?: boolean }): ReviewLinksUi {
+export function useReviewLinksUi({ projectId, role, review, archived, store: scoped, fetchLinks = true, download = false }: { projectId: string; role: Role; review: VideoReviewResponse | undefined; archived: boolean; store: ReviewLinkStore | null; fetchLinks?: boolean; /** The `download` part is on and the role may download Videos. */ download?: boolean }): ReviewLinksUi {
   const store = scoped ?? INERT_STORE;
   const enabled = scoped !== null && review?.open === true && review.parts.includes("links") && roleHasCapability(role, "shareVideo");
+  const canSelect = scoped !== null && review?.open === true && (enabled || download);
   const selection = useSyncExternalStore(store.subscribe, () => store.getState().selection);
   const links = useReviewLinksQuery(projectId, enabled && fetchLinks);
   const actions = useReviewLinkActions(projectId);
@@ -70,5 +73,5 @@ export function useReviewLinksUi({ projectId, role, review, archived, store: sco
     .filter((link) => link.videos.some((member) => member.videoId === videoId))
     .sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || b.createdAt.localeCompare(a.createdAt))
     .map(({ id, label, status }) => ({ id, label, status }));
-  return { projectId, enabled, canWrite: enabled && !archived, archived, store, selection, links, actions, chipsFor };
+  return { projectId, enabled, canWrite: enabled && !archived, canSelect, archived, store, selection, links, actions, chipsFor };
 }

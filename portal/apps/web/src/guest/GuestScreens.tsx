@@ -1,15 +1,12 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { GUEST_PASSCODE_MAX, type GuestSessionResponse, type GuestVideoDto } from "@quincy/shared";
-import { LazyImage } from "../components/LazyImage";
-import { Badge } from "../components/reui/badge";
 import { Button } from "../components/reui/button";
 import { Field, FieldError, FieldGroup, FieldLabel } from "../components/reui/field";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "../components/reui/frame";
 import { Input } from "../components/reui/input";
-import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "../components/reui/item";
 import { EmptyState } from "../components/quincy/EmptyState";
+import { VideoTile } from "../components/quincy/VideoTile";
 import type { GuestApi } from "./guest-api";
-import { GuestDeliveryChips } from "./GuestDeliveryChips";
 import { GuestDownloadAll } from "./GuestDownloadAll";
 import type { GuestVerify } from "./use-guest-verify";
 
@@ -90,14 +87,13 @@ export function PasscodeScreen({ error, retryAfterSeconds, pending, onSubmit }: 
   </main>;
 }
 
-const noteCount = (count: number) => (count === 0 ? "No notes" : `${count} ${count === 1 ? "note" : "notes"}`);
-
 /**
- * The Video list (69a). Each row: poster, title, the latest granted Version, a premium badge and the public note count; `guest-row-slot` holds that Version's decision and Release chips
- * (#741 14-ui-guest). When the link allows downloads and has several Videos, Download all sits beside the title.
+ * The Video list (69a, tiles #884): the staff collection's poster-first tile, with only what a guest may see (D21): the latest granted Version, duration, title, Premium and the open public-note
+ * count (`publicNoteCount`, the open public root threads of that Version). No tick, menu, status, decision or Release chip; those stay on the video screen. A tap opens the film. When the link allows
+ * downloads and has several Videos, Download all sits beside the title.
  */
 export function VideoListScreen({ api, verify, title, videos, session, onSession, onOpen, onUnavailable, identity }: { api: GuestApi; verify: GuestVerify; title: string | null; videos: readonly GuestVideoDto[]; session: GuestSessionResponse; onSession: (next: GuestSessionResponse) => void; onOpen: (index: number) => void; onUnavailable: () => void; /** The "Reviewing as … / Not you? Sign out" row (#854), under the title row. */ identity: ReactNode }) {
-  return <main data-testid="guest-list" className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-[var(--space-4)] bg-background px-[var(--space-4)] py-[var(--space-6)] text-foreground">
+  return <main data-testid="guest-list" className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col gap-[var(--space-4)] bg-background px-[var(--space-4)] py-[var(--space-6)] text-foreground">
     <div className="flex flex-wrap items-center justify-between gap-[var(--space-3)]">
       <h1 className="m-0 min-w-0 text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{title ?? "Review"}</h1>
       {videos.length > 1 && <GuestDownloadAll api={api} verify={verify} session={session} onSession={onSession} onUnavailable={onUnavailable} />}
@@ -105,21 +101,16 @@ export function VideoListScreen({ api, verify, title, videos, session, onSession
     {identity}
     {videos.length === 0
       ? <EmptyState title="Nothing to review yet.">The studio hasn't shared any videos on this link.</EmptyState>
-      : <Frame><FramePanel><ItemGroup className="gap-[var(--space-2)]">
+      : <div className="grid gap-[var(--space-4)] [grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr))] max-[721px]:grid-cols-1" data-testid="guest-video-grid">
         {videos.map((video, index) => {
           const latest = video.versions[0]!;
-          return <Item key={video.id} variant="outline" data-testid="guest-video-row">
-            {latest.posterUrl !== null && <ItemMedia variant="image"><LazyImage src={latest.posterUrl} alt={`${video.title} poster`} /></ItemMedia>}
-            <ItemContent>
-              <ItemTitle><span data-testid="guest-row-title">{video.title}</span>{video.premium && <Badge variant="secondary" size="xs">Premium</Badge>}</ItemTitle>
-              <ItemDescription>{`Version ${latest.version} · ${noteCount(latest.publicNoteCount)}`}</ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <span data-testid="guest-row-slot" className="inline-flex flex-wrap items-center gap-[var(--space-1)]"><GuestDeliveryChips version={latest} /></span>
-              <Button type="button" variant="outline" aria-label={`Open ${video.title}`} className={TOUCH} onClick={() => { onOpen(index); }}>Open</Button>
-            </ItemActions>
-          </Item>;
+          return <VideoTile
+            key={video.id} testId="guest-video-row" openTestId="guest-row-title"
+            title={video.title} posterUrl={latest.posterUrl} version={latest.version} durationMs={latest.durationMs} openNotes={latest.publicNoteCount}
+            {...(video.premium ? { premium: true } : {})}
+            onOpen={() => { onOpen(index); }}
+          />;
         })}
-      </ItemGroup></FramePanel></Frame>}
+      </div>}
   </main>;
 }
