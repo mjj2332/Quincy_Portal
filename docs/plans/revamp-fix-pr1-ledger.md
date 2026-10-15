@@ -118,3 +118,14 @@ No new elements: every change is to an element with a line above.
 | Film floor (compose mode) | `quincy/ReviewSheet.tsx` (`useSheetTextRoom`, `SHEET_FILM_FLOOR`), `ReviewPane.tsx`, `VideoNoteComposer.tsx` (`data-sheet-text`), `VideoNoteEditor.tsx` / `QuincyRichTextEditorBase.tsx` (`contentAttributes`) | The film keeps `--space-9` (96px, the plan's K1 / K3 rows): the sheet publishes `--sheet-text-room` (the row's height less the floor less the rest of the sheet) and the pill's text clamp reads it, one line at least. Below one line the film yields. |
 | Safari bars after Cancel | none | Investigated, not changed: Safari re-tints its bars from the fixed viewer's edges (ink-800) after the document scroll iOS makes for the keyboard. See lessons.md, "Safari tints its bars from the page's edges only after the document scrolls". |
 
+
+## Round 10 (Simulator pass of round 9)
+
+No new elements: every change is to an element with a line above.
+
+| Element | Where | Change |
+|---|---|---|
+| Pill wrapped layout | `QuincyRichTextEditorBase.tsx` (inline-start addon) | One row under the text: the inline-start addon gets `group-data-[wrapped=true]/input-group:order-none`. base-nova's inline-start addon is itself `order-first`, which tied with the text box's `order-first` and kept + and the chip on a row above the text, so wrapped mode had three rows (icons, text, pen). Now it is the text at full width, then +, the chip and the pen (right end) on one row. |
+| Pill text box (compose clamp) | `VideoNoteComposer.tsx` (`COMPOSE_CLAMP`) | The room the sheet publishes is rounded down to whole 24px lines (`--space-5`) inside the box's 16px of padding, so the window never shows a sliver of a line. |
+| Pill at rest | `QuincyRichTextEditorBase.tsx` (`pillWrap`, `usePillWrap`), `VideoNoteEditor.tsx`, `VideoNoteComposer.tsx` | The wrapped layout is compose mode's alone (`pillWrap={composing}`): at rest the pill is the inline row and the text's scroller goes back to its top, so the one-line clamp shows the draft's first line. A wrapped pill at rest was a row taller than the browse stop allows for and squeezed the notes list, and its head row, out of sight. |
+| Film floor (compose mode) | unchanged | Measured on the iPhone 18 Pro with the keyboard up and the tray closed: 384pt visible = header 77 + hint line 44 + the pill's icon row 38 + Cancel row 60 + film + text box (16 + 24 per line). Film = 149 - 24n: two lines leave the film 101pt, so the 96px floor allows two; three would need a floor at or below 77 (`--space-8`), four 53. |
