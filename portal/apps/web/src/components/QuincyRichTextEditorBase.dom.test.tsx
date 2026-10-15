@@ -81,6 +81,11 @@ describe("QuincyRichTextEditorBase", () => {
     const text = [...field.children].find((el) => el.querySelector('[contenteditable="true"]') !== null)!;
     expect(text.className).toContain("flex-1");
     expect(text.className).not.toContain("w-full");
+    // P6 `.composer-input` (#879 fix r3): a sunken fill, no visible border, focus drawn on the edge rather than offset outside it, and no 64px floor under the text.
+    expect(field.className).toContain("bg-surface-sunken");
+    expect(field.className).toContain("border-transparent");
+    expect(field.className).not.toContain("has-[[contenteditable=true]:focus-visible]:outline-offset-2");
+    expect(field.className).toContain("[&_[contenteditable]]:min-h-0");
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await act(async () => { editor.focus(); document.getSelection()!.selectAllChildren(editor.querySelector("p")!); document.dispatchEvent(new Event("selectionchange")); await Promise.resolve(); });
     await act(async () => { tray.querySelector<HTMLButtonElement>('[aria-label="Bold"]')!.click(); await Promise.resolve(); });

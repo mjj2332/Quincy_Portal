@@ -204,8 +204,8 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
   return <aside
     aria-label="Notes"
     data-testid="video-notes-panel"
-    // In the phone sheet's compose mode only the composer shows, and the strip carries P6's own tighter padding (#879 fix).
-    className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)] min-[721px]:overflow-clip max-[721px]:overflow-clip border-l border-border bg-card p-[var(--space-4)] text-card-foreground max-[721px]:border-l-0 in-data-[mode=compose]:px-[var(--space-3)] in-data-[mode=compose]:py-[var(--space-2)]"
+    // In the phone sheet's compose mode only the composer shows, with a tighter top and bottom; the side gutter stays the browse one, so the pill and Send never shift (#879 fix r3).
+    className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)] min-[721px]:overflow-clip max-[721px]:overflow-clip border-l border-border bg-card p-[var(--space-4)] text-card-foreground max-[721px]:border-l-0 in-data-[mode=compose]:py-[var(--space-2)]"
   >
     {!phone && headerRow}
 

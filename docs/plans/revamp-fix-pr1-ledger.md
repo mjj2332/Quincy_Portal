@@ -38,3 +38,16 @@ No new elements; existing ones restyled to the prototype (P6, kit.jsx `Composer`
 | + tray | `VideoNoteComposer.tsx` (`video-note-tray-row`) | Two rows: visibility, frame steps, Set in / out (and Clear marks, drawing chip, Remove drawing when present) on one `flex-nowrap overflow-x-auto` row; the toolbar (already a sideways scroller) on the second. The visibility description is dropped on the phone; the hint line names the visibility. |
 | Hint line | `VideoNoteComposer.tsx` | 12px per P6; the `line-clamp` moves to an inner `<p>` so the grid row cannot shrink it to nothing. |
 | Cancel | `VideoNoteComposer.tsx` | Same `quincy/Button` `variant="text"`, drawn 32px (`.ibtn.sm`) with a vertical `after:` hit area; keeps the field's focus on press, like Send. |
+
+## Round 3 (design review of round 2)
+
+No new hand-built elements. One reused item is added: `components/reui/separator.tsx` (vertical) between the marks and the formatting in the tray row.
+
+| Element | Where | Change |
+|---|---|---|
+| + tray | `VideoNoteComposer.tsx` (`video-note-tray-scroller`, `video-note-tray-row`) | One row: visibility, frame steps, Set in / out (and Clear marks, drawing chip, Remove drawing), `reui/separator`, then the formatting toolbar (still the editor's `RichTextToolbar`, portalled in). The scroller is the outer node; the row inside it is `w-max py-px`, so the scroller never clips the controls vertically. The right-edge fade is `lib/use-scroll-fade.ts` (`useScrollFade` + `SCROLL_FADE_MASK_CLASSES`), the same one the rich-text toolbar uses. The tray's grid row is `auto` (it no longer shrinks). |
+| Timecode chip | `VideoNoteComposer.tsx` (`PILL_CHIP`) | `.tc-chip` amber on semantic tokens: `text-warning-foreground` and an 18% `color-mix` of `--warning-foreground` (on the inverse surface that is `--signal-caution-on-inverse`, star-amber). Not the `warning-light` Badge: Badge would bring its own height, padding and type to a mono timecode. |
+| Pill | `QuincyRichTextEditorBase.tsx` (`PILL_GROUP`) | P6 `.composer-input`: `bg-surface-sunken` (ink-700 on inverse), `border-transparent`. Focus is a 2px `outline-ring` drawn on the edge (negative offset by `--border-width-bold`, with its at-rest twin per the #552 guard), not FIELD_GROUP's offset outline. `[&_[contenteditable]]:min-h-0` drops the editor's 64px floor in the pill only. `FIELD_GROUP` is unchanged. |
+| Send | `components/reui/button.tsx` `size="icon-round"`, `VideoNoteComposer.tsx` | lucide `Send` (P6's angled glyph). Disabled keeps the primary fill at the base's reduced opacity on the inverse surface; adaptation note 7 updated. |
+| Strip gutter | `VideoNotesPanel.tsx` | Compose keeps the browse side padding (`--space-4`); only top and bottom tighten. |
+| Keyboard pan | `lib/use-visual-viewport.ts` (`root`), `VideoReviewViewer.tsx`, `guest/GuestVideoScreen.tsx` | No UI. The hook writes the root's height and transform inside the visual-viewport event; in the pill, ProseMirror's scroll-to-selection scrolls only the pill's own box. |

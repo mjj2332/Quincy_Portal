@@ -1,5 +1,5 @@
 import { useContext, useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { PencilIcon, Plus, SendHorizontal, StepBack, StepForward } from "lucide-react";
+import { PencilIcon, Plus, Send, StepBack, StepForward } from "lucide-react";
 import { VIDEO_NOTE_BODY_MAX, type Role, type VideoNoteCreateInput, type VideoNoteVisibility } from "@quincy/shared";
 import { useFrameClockSelector, type VideoFrameClock } from "../../lib/video-frame-clock";
 import { draftDoc, effectiveMarks, frameOnScreen, type NoteFormStore } from "../../lib/video-note-form-store";
@@ -7,12 +7,14 @@ import { EMPTY_MARKS, marksToFrames } from "../../lib/video-note-marks";
 import { cn } from "../../lib/utils";
 import { PHONE_QUERY } from "../../lib/review-pane-geometry";
 import { useMediaQuery } from "../../lib/use-media-query";
+import { SCROLL_FADE_MASK_CLASSES, useScrollFade } from "../../lib/use-scroll-fade";
 import { Button } from "../quincy/Button";
 import { Notice } from "../quincy/Notice";
 import { SheetModeContext } from "../quincy/ReviewSheet";
 import { PILL_ICON } from "../quincy/VideoPlayer";
 import { Button as ReuiButton } from "../reui/button";
 import { Collapsible, CollapsibleContent } from "../reui/collapsible";
+import { Separator } from "../reui/separator";
 import { Spinner } from "../reui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
 import { Kbd } from "../reui/kbd";
@@ -37,7 +39,8 @@ const COMPOSE_CLAMP = "max-h-[calc(var(--space-9)+var(--space-4))] overflow-y-au
 /** The phone line under the film (hint, lock, problem): one meta line, two at most, at P6's 12px. */
 const PHONE_LINE = "col-span-2 row-start-1 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)]";
 /** The pill's timecode chip (quincy.css `.tc-chip`): small mono, so the text keeps the pill's width (#879 fix). */
-const PILL_CHIP = "shrink-0 whitespace-nowrap rounded-md bg-muted px-[var(--space-2)] py-[var(--space-1)] text-foreground [font:var(--weight-regular)_var(--text-xs)/1_var(--font-mono)] tabular-nums";
+// The `.tc-chip` amber tint on the caution token: on the viewer's inverse surface `--warning-foreground` is `--signal-caution-on-inverse` (star-amber), elsewhere the caution text ochre.
+const PILL_CHIP = "shrink-0 whitespace-nowrap rounded-md bg-[color-mix(in_oklch,var(--warning-foreground)_18%,transparent)] px-[var(--space-2)] py-[var(--space-1)] text-warning-foreground [font:var(--weight-regular)_var(--text-xs)/1_var(--font-mono)] tabular-nums";
 /** A text control in the phone strip (Cancel, kit.jsx `ibtn sm`): drawn 32px tall, with a 44px hit area from a transparent pseudo-element. */
 const STRIP_TEXT_BUTTON = "relative min-h-8 px-[var(--space-2)] after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-['']";
 /** Keeps the focus where it is: a press on these controls must not take it from the field, or iOS drops the keyboard (#879 fix, §3.4). */
@@ -115,6 +118,8 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   const trayId = useId();
   const [trayToolbar, setTrayToolbar] = useState<HTMLDivElement | null>(null);
   const trayRef = useRef<HTMLDivElement | null>(null);
+  const trayScroller = useRef<HTMLDivElement | null>(null);
+  const { fade: trayFade, onScroll: onTrayScroll } = useScrollFade(trayScroller);
   // A post sent from the compose strip holds compose mode until it settles (the strip shows its phase); a success then returns to browse with the note listed (C7).
   const fromCompose = useRef(false);
   const posting = op?.form === "composer";
@@ -181,7 +186,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     data-notes-form="composer"
     data-compose={phone ? (composing ? "true" : "false") : undefined}
     className={cn(phone
-      ? "@container grid min-h-0 grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-x-[var(--space-2)] gap-y-[var(--space-2)]"
+      ? "@container grid min-h-0 grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_auto_auto_auto] gap-x-[var(--space-2)] gap-y-[var(--space-2)]"
       : "@container grid gap-[var(--space-2)] max-[721px]:grid-cols-[minmax(0,1fr)_auto] max-[721px]:items-end", otherForm !== null && "opacity-60")}
     data-size-container="true"
     data-locked={otherForm !== null ? "true" : "false"}
@@ -207,11 +212,13 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
       </div>
       // The clamp lives on an inner node: a grid item that clips (line-clamp) may shrink to nothing when the strip runs short, and the hint must render whole (#879 fix).
       : <div className={PHONE_LINE}><p data-testid="video-note-stamp" className="m-0 line-clamp-2 text-foreground-secondary">{hintText}</p></div>)}
-    {/* Phone: the + tray (Q1, C1), inline above the pill and inside the strip, so it is always above the keyboard. Mounted for the whole phone layout (the toolbar's portal target stays put); only it shrinks and scrolls when room runs out. */}
-    {phone && <Collapsible open={trayOpen} className="col-span-2 row-start-2 min-h-0 overflow-y-auto">
-      {/* Two rows at most, each one line that scrolls sideways rather than wraps, so the tray fits above the keyboard (#879 fix). The visibility's description is the hint line's job here. */}
-      <CollapsibleContent ref={trayRef} keepMounted id={trayId} role="region" aria-label="Note options" data-testid="video-note-tray" inert={!trayOpen} className="grid gap-[var(--space-2)] [&[hidden]]:hidden">
-        <div data-testid="video-note-tray-row" className="flex flex-nowrap items-center gap-[var(--space-2)] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0">
+    {/* Phone: the + tray (Q1, C1), inline above the pill and inside the strip, so it is always above the keyboard. Mounted for the whole phone layout (the toolbar's portal target stays put). */}
+    {phone && <Collapsible open={trayOpen} className="col-span-2 row-start-2 min-w-0">
+      {/* One row (#879 fix r3): visibility, frame steps, Set in / out, then the formatting toolbar, scrolling sideways rather than wrapping, so all of it is reachable above the keyboard.
+          The row takes its full height (the scroller is the outer node, the row inside it carries a pixel of room for the borders), and a fade at the edge says there is more. */}
+      <CollapsibleContent ref={trayRef} keepMounted id={trayId} role="region" aria-label="Note options" data-testid="video-note-tray" inert={!trayOpen} className="min-w-0 [&[hidden]]:hidden">
+        <div ref={trayScroller} data-testid="video-note-tray-scroller" data-fade={trayFade} onScroll={onTrayScroll} className={cn("min-w-0 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", SCROLL_FADE_MASK_CLASSES)}>
+        <div data-testid="video-note-tray-row" className="flex w-max flex-nowrap items-center gap-[var(--space-2)] py-px [&>*]:shrink-0">
           <ToggleGroup
             variant="outline" size="sm" spacing={0} aria-label="Who can see this note"
             value={[visibility]} disabled={frozen}
@@ -227,8 +234,10 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
           {pendingFrames && <Button type="button" variant="text" data-testid="video-note-clear-marks" className={SMALL_BUTTON} disabled={frozen || drawingNow} onClick={() => { store.clearMarks(assetId); }}>Clear marks</Button>}
           {drawn && !merged && <span data-testid="video-note-drawing-chip" className={PILL_CHIP}><span className="sr-only">Drawing on </span><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />{timecode(drawn.drawingFrame!)}</span>}
           {drawn && <Button type="button" variant="text" data-testid="video-note-remove-drawing" className={SMALL_BUTTON} disabled={frozen} onClick={() => { store.clearMarkup(assetId); }}>Remove drawing</Button>}
+          <Separator orientation="vertical" />
+          <div ref={setTrayToolbar} data-testid="video-note-tray-toolbar" />
         </div>
-        <div ref={setTrayToolbar} data-testid="video-note-tray-toolbar" className="min-w-0" />
+        </div>
       </CollapsibleContent>
     </Collapsible>}
     <label className="sr-only" htmlFor="video-note-body">Add a note</label>
@@ -266,7 +275,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     {!phone && clock === null && <span className="text-foreground-secondary [font:var(--type-label)]">Loading the film…</span>}
     {/* Phone: the round Send (C5), icon-only; its phase is a spinner and its name. A press never takes the focus, so the keyboard stays and nothing jumps before the post. */}
     {phone && <ReuiButton type="submit" size="icon-round" data-testid="video-note-post" aria-label={label} disabled={!canPost} onPointerDown={keepFocus} onMouseDown={keepFocus} className="col-start-2 row-start-3 self-start">
-      {frozen ? <Spinner aria-hidden="true" /> : <SendHorizontal aria-hidden="true" />}
+      {frozen ? <Spinner aria-hidden="true" /> : <Send aria-hidden="true" />}
     </ReuiButton>}
     {phone && composing && <div className="col-span-2 row-start-4 flex justify-end">
       {/* Cancel keeps the field's focus on press like Send: a blur first would drop the keyboard and move the strip under the finger, and the tap would miss (#879 fix). */}

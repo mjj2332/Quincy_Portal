@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 export type VisualViewportBox = { height: number; offsetTop: number };
 
@@ -16,13 +16,18 @@ const SETTLE_MS = 1000;
  * - Leaving compose mode keeps following the viewport while the keyboard animates away (until it is back to the layout height, a second at most), then puts back the page
  *   scroll iOS can leave panned after the keyboard closes.
  * - A pinch zoom (`scale > 1`) is not the keyboard: the last box is kept.
+ * - `root` (#879 fix r3): the element that takes the box. The hook writes its `height` and `transform` itself, inside the viewport event, so iOS's pan and
+ *   the box land in the same frame: through a React render alone they arrive a frame apart and the viewer flashes off screen while the keyboard rises.
+ *   The caller still renders the same style from the returned box, so React and the hook never disagree.
  * - `onKeyboardGone`: the software keyboard went away while compose mode is still on (the viewport shrank by 150px or more, then grew back to the layout height). Some iOS
  *   paths dismiss the keyboard without blurring the field; the caller blurs it. Never called with a hardware keyboard, which never shrinks the viewport.
  */
-export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void): VisualViewportBox | null {
+export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void, root?: RefObject<HTMLElement | null>): VisualViewportBox | null {
   const [box, setBox] = useState<VisualViewportBox | null>(null);
   const goneRef = useRef(onKeyboardGone);
   goneRef.current = onKeyboardGone;
+  const rootRef = useRef(root);
+  rootRef.current = root;
   // Whether the box is still following after compose mode ended (the keyboard is on its way down).
   const settling = useRef<(() => void) | null>(null);
   useEffect(() => {
@@ -33,6 +38,8 @@ export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void)
     let shrunk = false;
     const read = () => {
       if (viewport.scale > 1.01) return;
+      const element = rootRef.current?.current;
+      if (element) { element.style.height = `${viewport.height}px`; element.style.transform = `translateY(${viewport.offsetTop}px)`; }
       setBox((held) => (held && held.height === viewport.height && held.offsetTop === viewport.offsetTop ? held : { height: viewport.height, offsetTop: viewport.offsetTop }));
     };
     const onResize = () => {
@@ -56,6 +63,8 @@ export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void)
         viewport.removeEventListener("scroll", follow);
         clearTimeout(timer);
         settling.current = null;
+        const element = rootRef.current?.current;
+        if (element) { element.style.height = ""; element.style.transform = ""; }
         setBox(null);
         if (viewport.offsetTop !== 0 || window.scrollY !== scrollY) window.scrollTo(0, scrollY);
       };

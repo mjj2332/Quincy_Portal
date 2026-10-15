@@ -100,8 +100,18 @@ const FIELD_GROUP =
   "has-[[contenteditable=true]:focus-visible]:outline-solid " +
   "has-[[contenteditable=true]:focus-visible]:outline-ring " +
   "has-[[contenteditable=true]:focus-visible]:outline-offset-2";
-/** The same field as one row on the pill radius (#879, the phone note composer): the addons sit inline, the toolbar lives elsewhere. */
-const PILL_GROUP = FIELD_GROUP.replace("flex-col items-stretch", "flex-row items-center");
+/**
+ * The same field as one row on the pill radius (#879, the phone note composer, P6 `.composer-input`): the addons sit inline, the toolbar lives elsewhere.
+ * A sunken fill with a transparent border; focus is a 2px ring drawn on the edge (no offset), not FIELD_GROUP's offset outline. The text box drops the
+ * editor's 64px floor, so an empty pill is one line tall and grows only with text (the host clamps it), centred with the chip.
+ */
+const PILL_GROUP =
+  "group h-auto flex-row items-center bg-surface-sunken border-transparent hover:border-transparent has-disabled:bg-surface-sunken data-[disabled]:bg-surface-sunken! " +
+  "has-[[contenteditable=true]:focus-visible]:outline-[length:var(--border-width-bold)] " +
+  "has-[[contenteditable=true]:focus-visible]:outline-solid " +
+  "has-[[contenteditable=true]:focus-visible]:outline-ring " +
+  "outline-offset-[calc(var(--border-width-bold)*-1)] has-[[contenteditable=true]:focus-visible]:outline-offset-[calc(var(--border-width-bold)*-1)] " +
+  "[&_[contenteditable]]:min-h-0";
 
 /** The character counter appears only from 90% of the limit (or when over it). */
 const COUNTER_THRESHOLD = 0.9;
@@ -210,6 +220,8 @@ export function QuincyRichTextEditorBase({
   const announceCancelled = () => { clearCancelTimer(); setUploadCancelled(false); cancelTimer.current = setTimeout(() => { cancelTimer.current = null; setUploadCancelled(true); }, 0); };
   const [deleteTableOpen, setDeleteTableOpen] = useState(false);
   const pageRef = useRef<HTMLDivElement>(null);
+  const pillRef = useRef(pill);
+  pillRef.current = pill;
   const addonRef = useRef<HTMLDivElement>(null);
   const [uploads, setUploads] = useState<UploadingMedia[]>([]);
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
@@ -265,6 +277,19 @@ export function QuincyRichTextEditorBase({
         event.preventDefault();
         // The drop lands where it was released, not wherever the selection is by the time the upload finishes.
         if (mediaRef.current && !disabledRef.current) addImagesRef.current(files, view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos);
+        return true;
+      },
+      // In the pill (#879 fix r3) the caret is kept in view inside the field's own clamped box only: a scroll of any outer box, or of the page, is
+      // what makes iOS pan the whole viewer while its keyboard rises. Elsewhere ProseMirror scrolls as usual.
+      handleScrollToSelection: (view) => {
+        if (!pillRef.current) return false;
+        const box = pageRef.current;
+        if (box) {
+          const caret = view.coordsAtPos(view.state.selection.head);
+          const frame = box.getBoundingClientRect();
+          if (caret.bottom > frame.bottom) box.scrollTop += caret.bottom - frame.bottom;
+          else if (caret.top < frame.top) box.scrollTop -= frame.top - caret.top;
+        }
         return true;
       },
       handleKeyDown: (view, event) => {

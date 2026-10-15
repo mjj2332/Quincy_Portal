@@ -229,15 +229,23 @@ describe("VideoNoteComposer on a phone: the compose strip (P6)", () => {
     expect(by("video-note-cancel")).toBeNull();
   });
 
-  it("the tray is two short rows: visibility, frame steps and Set in / out on one sideways-scrolling row, then the toolbar; no visibility description on a phone (#879 fix)", async () => {
+  it("the tray is one row: visibility, frame steps, Set in / out, then the formatting toolbar, in one sideways scroller that never clips the row's height; no visibility description on a phone (#879 fix r3)", async () => {
     await render();
     await focusField();
     await press(by("video-note-extras")!);
-    expect([...tray().children].map((el) => el.getAttribute("data-testid"))).toEqual(["video-note-tray-row", "video-note-tray-toolbar"]);
+    const scroller = by("video-note-tray-scroller")!;
+    expect([...tray().children]).toEqual([scroller]);
     const row = by("video-note-tray-row")!;
-    for (const id of ["video-note-visibility-internal", "video-note-visibility-public", "video-note-step-back", "video-note-step-forward", "video-note-set-in", "video-note-set-out"]) expect(row.contains(by(id))).toBe(true);
+    expect(row.parentElement).toBe(scroller);
+    const order = ["video-note-visibility-internal", "video-note-step-back", "video-note-step-forward", "video-note-set-in", "video-note-set-out", "video-note-tray-toolbar"].map((id) => by(id)!);
+    for (const el of order) expect(row.contains(el)).toBe(true);
+    for (let i = 1; i < order.length; i += 1) expect(order[i - 1]!.compareDocumentPosition(order[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(by("video-note-tray-toolbar")!.contains(by("stub-toolbar"))).toBe(true);
+    expect(scroller.className).toContain("overflow-x-auto");
+    expect(scroller.getAttribute("data-fade")).not.toBeNull();
     expect(row.className).toContain("flex-nowrap");
-    expect(row.className).toContain("overflow-x-auto");
+    expect(row.className).toContain("py-px");
+    expect(row.className).not.toContain("overflow");
     expect(by("video-note-visibility-hint")).toBeNull();
     expect(by("video-note-stamp")!.textContent).toMatch(/^Internal · /);
   });
@@ -247,6 +255,8 @@ describe("VideoNoteComposer on a phone: the compose strip (P6)", () => {
     await focusField();
     const chip = by("video-note-anchor")!;
     expect(chip.className).toContain("[font:var(--weight-regular)_var(--text-xs)/1_var(--font-mono)]");
+    expect(chip.className).toContain("text-warning-foreground");
+    expect(chip.className).not.toContain("bg-muted");
     expect(chip.className).toContain("whitespace-nowrap");
     const plus = by("video-note-extras")!;
     expect(plus.className).toContain("size-8");
@@ -256,6 +266,11 @@ describe("VideoNoteComposer on a phone: the compose strip (P6)", () => {
     expect(stamp.parentElement).not.toBe(by("video-note-composer"));
     expect(stamp.parentElement!.className).not.toContain("line-clamp");
     expect(by("video-note-cancel")!.className).toContain("after:-inset-y-1.5");
+    // Send (P6 `.send`): disabled with nothing typed, it keeps the primary fill at reduced opacity on the viewer's inverse surface rather than turning into an outline.
+    const send = by("video-note-post")!;
+    expect(send.hasAttribute("disabled")).toBe(true);
+    expect(send.className).toContain("in-data-[surface=inverse]:disabled:bg-primary");
+    expect(send.className).not.toContain("in-data-[surface=inverse]:disabled:bg-transparent");
   });
 
   it("Cancel throws the whole draft away: the next note starts clean, with no old drawing and its own anchor frame", async () => {

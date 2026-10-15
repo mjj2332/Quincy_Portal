@@ -382,7 +382,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const [versionsOpen, setVersionsOpen] = useState(false);
   // With the keyboard up (the editor has focus on a phone) the dialog takes the visual viewport, so the film stays on top and the composer sits above the keyboard (D10).
   // The software keyboard went away without blurring the field (some iOS paths): blur it, so compose mode ends the ordinary way (#879 fix). A hold (the + tray, a post) keeps it.
-  const keyboard = useVisualViewport(phone && sheetControl.composing, () => { if (!sheetControl.held) blurComposerField(); });
+  const keyboard = useVisualViewport(phone && sheetControl.composing, () => { if (!sheetControl.held) blurComposerField(); }, popupRef);
   const chipRef = useRef<HTMLButtonElement | null>(null);
   const summaries = useVideoVersionSummariesQuery(notes?.projectId ?? reviewStatus?.projectId ?? trash?.projectId ?? download?.projectId ?? "", video.id, phone && versionsOpen && (notes ?? reviewStatus ?? trash ?? download) !== undefined, notes?.role ?? reviewStatus?.role);
   const desktopHeader = <header className="@container flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-1)] text-card-foreground max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">

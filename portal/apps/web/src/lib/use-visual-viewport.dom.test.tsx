@@ -78,4 +78,20 @@ describe("useVisualViewport (#879)", () => {
     await fire("resize", { height: window.innerHeight });
     expect(gone).toHaveBeenCalledTimes(1);
   });
+  it("writes the box onto its root inside the viewport event, before any render, and clears it when done (#879 fix r3)", async () => {
+    const element = document.createElement("div"); document.body.appendChild(element);
+    const ref = { current: element };
+    function Rooted({ enabled }: { enabled: boolean }) { useVisualViewport(enabled, undefined, ref); return null; }
+    await act(async () => { root.render(<Rooted enabled />); });
+    // Outside act: React has not rendered yet when the event returns, so only a write inside the event can have put the box there.
+    Object.assign(fake, { height: 430, offsetTop: 120 });
+    fake.dispatchEvent(new Event("scroll"));
+    expect(element.style.height).toBe("430px");
+    expect(element.style.transform).toBe("translateY(120px)");
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { root.render(<Rooted enabled={false} />); });
+    await fire("resize", { height: window.innerHeight, offsetTop: 0 });
+    expect(element.style.height).toBe("");
+    expect(element.style.transform).toBe("");
+  });
 });
