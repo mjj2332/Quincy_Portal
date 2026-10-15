@@ -255,6 +255,13 @@ describe("D4 and focus", () => {
     expect(overlay.className).toContain("z-[var(--z-dialog)]");
   });
 
+  it("while the phone viewer is open the document's canvas is ink, and closing it gives the canvas back (#879 fix r11)", async () => {
+    await mount();
+    expect(document.documentElement.hasAttribute("data-ink-canvas")).toBe(true);
+    await act(async () => { root!.unmount(); }); root = null;
+    expect(document.documentElement.hasAttribute("data-ink-canvas")).toBe(false);
+  });
+
   it("the phone dialog follows the visual viewport from the moment it opens, so a rise before compose mode is applied; compose hides the transport, leaving the field shows it (#879 fix r5)", async () => {
     class FakeViewport extends EventTarget { height = window.innerHeight - 340; offsetTop = 24; scale = 1; }
     const original = Object.getOwnPropertyDescriptor(window, "visualViewport");

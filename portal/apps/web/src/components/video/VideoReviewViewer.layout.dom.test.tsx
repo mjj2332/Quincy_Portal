@@ -105,6 +105,8 @@ describe("VideoReviewViewer dark panels (ADR 0024, #877)", () => {
     expect(overlay.className).toContain("bg-[var(--scrim-overlay)]");
     expect(overlay.className).not.toContain("bg-background");
     expect(overlay.hasAttribute("data-surface")).toBe(false);
+    // The ink canvas under the viewer is the phone's only (#879 fix r11).
+    expect(document.documentElement.hasAttribute("data-ink-canvas")).toBe(false);
   });
 });
 
