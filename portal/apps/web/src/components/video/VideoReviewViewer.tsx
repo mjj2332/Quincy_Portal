@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ChevronLeft, Columns2, DownloadIcon, Link2, Smartphone, Trash2 } from "lucide-react";
 import { framesToTimecode, videoVersionDownloadUrl, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
 import { registerToastHost } from "../../lib/toast-host";
@@ -20,6 +20,7 @@ import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet
 import { ReviewPaneHideContext, ReviewSplit, useReviewPane, useReviewPaneControls } from "../quincy/ReviewPane";
 import { blurComposerField, useReviewSheet } from "../quincy/ReviewSheet";
 import { useVisualViewport } from "../../lib/use-visual-viewport";
+import { useInkCanvas } from "../../lib/use-ink-canvas";
 import type { NotesSlots } from "./VideoNotesHost";
 import type { SocialPreviewMode } from "../quincy/SocialPreviewControls";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../reui/tabs";
@@ -38,8 +39,6 @@ import { VideoReviewHeaderMenu } from "./VideoReviewHeaderMenu";
 const LazyNotesHost = lazy(() => import("./VideoNotesHost"));
 /** The viewer's backdrop: the dialog scrim on a desktop; on a phone (#879 fix r7) the inverse surface's own background, ink-900, and no blur (there is nothing to see through it). */
 const DESKTOP_BACKDROP = { "data-testid": "video-review-backdrop" } as const;
-/** On `<html>` while the phone viewer is open: app.css paints html and body with the viewer's ink (#879 fix r11). */
-export const INK_CANVAS_ATTR = "data-ink-canvas";
 const PHONE_BACKDROP = { "data-testid": "video-review-backdrop", "data-surface": "inverse", className: "bg-background supports-backdrop-filter:backdrop-blur-none" } as const;
 /** Decisions, Release and premium (#741 14-ui-staff) are their own chunk: a Project whose `delivery` part is off never loads it. */
 const LazyDeliveryPanel = lazy(() => import("./VideoDeliveryPanel").then((module) => ({ default: module.VideoDeliveryPanel })));
@@ -392,12 +391,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   // on focus and the hook puts the dialog back in the same task, with no transition (fix r8). The ink backdrop (fix r7) is the floor under any frame that still shows through.
   useVisualViewport(phone && sheetControl.composing, () => { if (!sheetControl.held) blurComposerField(); }, popupElement, phone);
   // While the phone viewer is open the document's canvas is ink (#879 fix r11): iOS shows it below the viewer while it scrolls the document back as the keyboard drops.
-  useLayoutEffect(() => {
-    if (!phone) return undefined;
-    const html = document.documentElement;
-    html.setAttribute(INK_CANVAS_ATTR, "");
-    return () => { html.removeAttribute(INK_CANVAS_ATTR); };
-  }, [phone]);
+  useInkCanvas(phone);
   const chipRef = useRef<HTMLButtonElement | null>(null);
   const summaries = useVideoVersionSummariesQuery(notes?.projectId ?? reviewStatus?.projectId ?? trash?.projectId ?? download?.projectId ?? "", video.id, phone && versionsOpen && (notes ?? reviewStatus ?? trash ?? download) !== undefined, notes?.role ?? reviewStatus?.role);
   const desktopHeader = <header className="@container flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-1)] text-card-foreground max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">

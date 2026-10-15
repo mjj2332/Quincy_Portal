@@ -15,6 +15,6 @@ export function GuestSubscriptionRow({ store, initial, readOnly, onToggle }: { s
       <label htmlFor={id} className="text-foreground-secondary [font:var(--type-label)]">Email me updates about this review</label>
       <Switch id={id} checked={checked} disabled={readOnly || state.pending} onCheckedChange={(next) => { onToggle(next, checked); }} />
     </div>
-    {state.failed && <p role="alert" className="m-0 text-destructive [font:var(--type-label)]">That didn't go through. Try again.</p>}
+    {state.failed && <p role="alert" className="m-0 text-destructive-wash-foreground [font:var(--type-label)]">That didn't go through. Try again.</p>}
   </div>;
 }

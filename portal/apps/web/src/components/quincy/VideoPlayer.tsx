@@ -184,7 +184,10 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   >
     <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} {...(social ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})} />
 
-    {transportReplacement != null ? <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div> : <div ref={transportRef} hidden={transportHidden} className="flex flex-col gap-[var(--space-3)] max-[721px]:px-[var(--space-3)] [&[hidden]]:hidden">
+    {/* The replacement sits ABOVE the transport, which stays mounted and hidden under it (#879 PR 2): unmounted, the slider came back as a new node, measured its thumb inside whatever
+        box hid it next (a phone's Done lands in compose mode, where the transport is hidden) and drew no thumb until the frame moved. */}
+    {transportReplacement != null && <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div>}
+    <div ref={transportRef} hidden={transportHidden || transportReplacement != null} className="flex flex-col gap-[var(--space-3)] max-[721px]:px-[var(--space-3)] [&[hidden]]:hidden">
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}
     <div data-testid="video-scrubber">
       {/* The band is placed against the slider alone: inside the same box as the marker lane it would sit centred on the whole scrubber, 6px below the track. */}
@@ -246,6 +249,6 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     </div>
     {/* On a phone the overlay selector gets its own row, so it never sits on the timecode. */}
     {social && phone && <div data-testid="video-social-row" className="flex flex-wrap items-center gap-[var(--space-2)]"><OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><SocialPreviewControls social={social} imageFailed={socialImage.failed} /></OverlayContainerContext.Provider></div>}
-    </div>}
+    </div>
   </section>;
 }

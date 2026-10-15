@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Check, ChevronLeft, ChevronRight, DownloadIcon, MessageSquareWarning, Smartphone } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Copy, DownloadIcon, MessageSquareWarning, Smartphone } from "lucide-react";
 import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto } from "@quincy/shared";
 import { OverlayContainerContext } from "../components/OverlayContainerContext";
 import { useFrameLabel } from "../lib/time-format-prefs";
@@ -14,6 +14,7 @@ import { ActionRow, ReviewActionSheet } from "../components/quincy/ReviewActionS
 import { blurComposerField, useReviewSheet } from "../components/quincy/ReviewSheet";
 import { PHONE_QUERY } from "../lib/review-pane-geometry";
 import { useVisualViewport } from "../lib/use-visual-viewport";
+import { useInkCanvas } from "../lib/use-ink-canvas";
 import { VideoVersionsSheet, withSummaries, type VersionSheetRow } from "../components/video/VideoVersionsSheet";
 import { ReviewSplit, useReviewPane, useReviewPaneControls } from "../components/quincy/ReviewPane";
 import { VideoPlayer, type VideoPlayerControl } from "../components/quincy/VideoPlayer";
@@ -21,7 +22,7 @@ import type { SocialPreviewMode } from "../components/quincy/SocialPreviewContro
 import { currentOverlay, useSocialPreview } from "../lib/use-social-preview";
 import type { TimelineMarker } from "../components/quincy/VideoTimelineMarkers";
 import type { GuestApi, WriteResult } from "./guest-api";
-import { decisionFailureText, failureText, removeThread, upsertThread, type EditPatch } from "./guest-compose";
+import { decisionFailureText, failureText, openThreadCount, removeThread, upsertThread, type EditPatch } from "./guest-compose";
 import type { ActionOutcome, NoteActions, Writing } from "./GuestNoteItem";
 import { GuestNotesPanel } from "./GuestNotesPanel";
 import { GuestSubscriptionRow } from "./GuestSubscriptionRow";
@@ -33,6 +34,8 @@ import { GuestDownload } from "./GuestDownload";
 import { GuestDownloadAll } from "./GuestDownloadAll";
 import type { GuestDrafts } from "./guest-drafts";
 import { useGuestCompose } from "./use-guest-compose";
+import { GuestNoteComposer } from "./GuestNoteComposer";
+import { preloadGuestNoteEditor } from "./GuestNoteField";
 import { EMPTY_MARKS, marksToFrames } from "../lib/video-note-marks";
 import type { GuestVerify } from "./use-guest-verify";
 import type { GuestWriter, Skipped, WriterBinding } from "./use-guest-writer";
@@ -77,8 +80,10 @@ function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
  * One Video on the guest page (#741 12b), read-only: the reused review player on the inverse surface, the granted-Versions select, previous / next Video, and the public notes (a
  * column beside the player, a bottom drawer below 721px). Moving between Videos never returns to the list. State is in memory; the URL does not change.
  */
-export function GuestVideoScreen({ api, verify, writer, drafts, subscription, session, onSession, archived, onArchived, videos, socialOverlays, index, onIndex, onBack, onUnavailable, onGrantsChanged, onDecided, onResyncDelivery, onShownVersion, identity = null }: {
+export function GuestVideoScreen({ api, verify, writer, drafts, subscription, session, onSession, archived, onArchived, videos, socialOverlays, index, onIndex, onBack, onUnavailable, onGrantsChanged, onDecided, onResyncDelivery, onShownVersion, identity = null, viewportRoot = null }: {
   api: GuestApi;
+  /** The element the phone keyboard box is written on (#879 PR 2): `GuestApp`'s guest column, which holds the notices above this screen too. */
+  viewportRoot?: HTMLElement | null;
   /** The "Reviewing as … / Not you? Sign out" row (#854), at the top of the notes-panel footer, above the email-updates switch. */
   identity?: ReactNode;
   /** The page's one verify dialog and continuation slot, owned by `GuestApp`. */
@@ -128,8 +133,11 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   sheetStopRef.current = sheetControl.stop;
   const setSheetStop = sheetControl.onStop;
   // The software keyboard went away without blurring the field (some iOS paths): blur it, so compose mode ends the ordinary way (#879 fix).
-  // The guest page sizes itself from the returned box, as before #879 fix r5 (the guest composer's own pass follows in a later PR).
-  const keyboard = useVisualViewport(phone && sheetControl.composing, () => { if (!sheetControl.held) blurComposerField(); });
+  // The guest column follows the visual viewport for as long as the phone screen is up (#879 PR 2, the staff viewer's r5 mechanism): the hook alone writes its height, transform
+  // and transition, so the strip ends on the keyboard's top edge and the notices above the screen stay inside the box.
+  useVisualViewport(phone && sheetControl.composing, () => { if (!sheetControl.held) blurComposerField(); }, viewportRoot, phone);
+  // Meanwhile the document's canvas is ink: iOS shows it under the page while it scrolls back as the keyboard drops (#879 fix r11).
+  useInkCanvas(phone);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const chipRef = useRef<HTMLButtonElement | null>(null);
   const [summaries, setSummaries] = useState<{ videoId: string; rows: Parameters<typeof withSummaries>[1] } | null>(null);
@@ -300,7 +308,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     remove: async (root, note, expectedRevision) => settle(await writer.run(root.id, () => api.deleteNote(note.id, expectedRevision)), note.id === root.id ? root.id : null),
   }), [api, writer, settle]);
 
-  const compose = useGuestCompose({ clock, frameCount: version.frameCount, timecode, markupAllowed: session.link.allow.markup, media: api.media, post, edit: editRoot, latestOf });
+  const compose = useGuestCompose({ phone, clock, frameCount: version.frameCount, timecode, markupAllowed: session.link.allow.markup, media: api.media, post, edit: editRoot, latestOf });
   // Social preview (#872): in memory, shared by every Video and Version of this screen, off again after All videos. Nothing else changes (#877): notes, marks and drawing work with it on, and turning it on or off touches no draft or drawing.
   const preview = useSocialPreview();
   const socialOn = preview.on && socialOverlays.length > 0;
@@ -332,18 +340,21 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   // What the guest was doing when verification was asked for, so a successful code lands them where they were going. Each request carries its own, and the page's verify owner keeps only the newest active one.
   const afterVerify = useRef<(then: "compose" | "download" | DecisionValue) => void>(() => undefined);
   const requestVerify = useCallback((then: "compose" | "download" | "none" | DecisionValue, active: () => boolean = () => true) => {
-    verify.request({ active, done: (verified) => {
+    // On a phone, verifying for a note ends in the pill's field with the focus, which the closing dialog must leave there (#879 PR 2).
+    verify.request({ active, keepFocus: phone && then === "compose", done: (verified) => {
       if (verified && then !== "none") afterVerify.current(then);
     } });
-  }, [verify]);
+  }, [verify, phone]);
   // The notes read before verifying carried no 'self' marks: whoever caused the verification (this screen's actions or Download all), read them again as the verified guest.
   const wasVerified = useRef(session.verified);
   useEffect(() => { if (session.verified && !wasVerified.current) setNotesAttempt((n) => n + 1); wasVerified.current = session.verified; }, [session.verified]);
   const { beginEdit } = compose;
+  const { focusField } = compose.strip;
   const writing = useMemo<Writing>(() => ({
     canWrite, verified: session.verified, media: api.media, actions, drafts, onNeedVerify: () => { requestVerify("none"); },
-    composerOpen: compose.isOpen, editRoot: (thread) => { startDraft(() => { beginEdit(thread); }); },
-  }), [canWrite, session.verified, api, actions, drafts, requestVerify, compose.isOpen, startDraft, beginEdit]);
+    // On a phone the edit opens in the pill, and its field takes the focus inside ⋯ Edit's click, so iOS raises the keyboard (#879 PR 2).
+    composerOpen: compose.isOpen, editRoot: (thread) => { startDraft(() => { beginEdit(thread); }); if (phone) focusField(); }, editTakesFocus: phone,
+  }), [canWrite, session.verified, api, actions, drafts, requestVerify, compose.isOpen, startDraft, beginEdit, phone, focusField]);
   const canPaste = canWrite && video.versions.length >= 2;
   const openPaste = () => {
     if (!session.verified) { requestVerify("none"); return; }
@@ -351,13 +362,15 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     setPasteOpen(true);
   };
   const changePasteOpen = (next: boolean) => { setPasteOpen(next); };
-  const addNote = canWrite
-    ? <>{compose.isOpen ? compose.form : <div className="flex flex-col items-start gap-[var(--space-2)]">
+  const pasteStatus = pasted !== null ? <p role="status" data-testid="guest-paste-status" className="m-0 text-foreground-secondary [font:var(--type-label)]">{pasted}</p> : null;
+  // On a phone the sheet ends in the pill at every stop (#879 PR 2, P2); Copy my notes is a row of the ⋯ sheet there, and its status a line in the notes body.
+  const addNote = !canWrite ? null : phone
+    ? <GuestNoteComposer strip={compose.strip} clock={clock} timecode={timecode} media={api.media} verified={session.verified} onShellPress={() => { preloadGuestNoteEditor(); requestVerify("compose"); }} />
+    : <>{compose.isOpen ? compose.form : <div className="flex flex-col items-start gap-[var(--space-2)]">
       <Button type="button" variant="outline" data-testid="guest-add-note" className={TOUCH} onClick={() => { if (session.verified) startDraft(compose.begin); else requestVerify("compose"); }}>Add a note</Button>
       {canPaste && <Button type="button" variant="ghost" data-testid="guest-paste-open" className={TOUCH} onClick={openPaste}>Copy my notes from another version</Button>}
-      {pasted !== null && <p role="status" data-testid="guest-paste-status" className="m-0 text-foreground-secondary [font:var(--type-label)]">{pasted}</p>}
-    </div>}</>
-    : null;
+      {pasteStatus}
+    </div>}</>;
 
   // Approve / Request changes (#741 14-ui-guest). The note draft is in `drafts` and the write is the writer's, so both outlive this screen; the dialog is per Version and decision.
   const [decideFor, setDecideFor] = useState<DecisionValue | null>(null);
@@ -402,7 +415,10 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     return { ok: false, message: decisionFailureText(settled) };
   }, [api, writer, drafts, version.assetId, onDecided, onResyncDelivery, onSession, requestVerify]);
   afterVerify.current = (then) => {
-    if (then === "compose") startDraft(compose.begin);
+    // On a phone the code lands the guest in the pill's field (the focus starts the draft) when the keyboard is still up: the code field kept the focus through the check, and iOS
+    // keeps the keyboard for a focus moving from one field to another. A focus after the check with the keyboard gone (the guest put it away) is not a tap, so iOS would show a caret
+    // with no keyboard and then drop compose mode: the guest lands at rest instead, and one tap on the pill starts the note (PR 2 fix round 1).
+    if (then === "compose") { if (!phone) startDraft(compose.begin); else if (keyboardField(document.activeElement)) focusField(); }
     else if (then === "download") setDownloadHint(true);
     else openDecision(then);
   };
@@ -414,7 +430,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
 
   const newest = video.versions[0]!.version;
   const optionLabel = (candidate: GuestVideoDto["versions"][number]) => `v${candidate.version}${candidate.version === newest ? " · latest" : ""}`;
-  const headingContent = <>Notes{threads !== null && <><span className="sr-only"> </span><span data-testid="guest-notes-count" className="ms-[var(--space-1)] text-foreground-secondary [font:var(--type-label)]">{threads.length}</span></>}</>;
+  // The open notes (#879 PR 2, owner decision: the phone tab and the desktop heading both, 0 included).
+  const headingContent = <>Notes{threads !== null && <><span className="sr-only"> </span><span data-testid="guest-notes-count" className="ms-[var(--space-1)] text-foreground-secondary [font:var(--type-label)]">{openThreadCount(threads)}</span><span className="sr-only"> open</span></>}</>;
   const heading = <h2 data-testid="guest-notes-heading" className={NOTES_HEADING}>{headingContent}</h2>;
   const toggleSubscription = useCallback((next: boolean, previous: boolean) => { void subscription.toggle(next, previous, () => writer.runLink("subscription", () => api.setSubscription(next))); }, [subscription, writer, api]);
   const subscriptionRow = session.verified && session.notifications?.available
@@ -432,11 +449,13 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     {videos.length > 1 && <GuestDownloadAll api={api} verify={verify} session={session} onSession={onSession} onUnavailable={onUnavailable} />}
     {downloadHint && session.verified && version.downloadUrl !== null && <p role="status" data-testid="guest-download-hint" className="m-0 text-foreground-secondary [font:var(--type-label)]">You're verified. Press Download to start it.</p>}
     {decisionNotice !== null && <p role="status" data-testid="guest-decision-notice" className="m-0 text-foreground-secondary [font:var(--type-label)]">{decisionNotice}</p>}
+    {phone && pasteStatus}
   </div>;
-  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? deliveryRow : <div className="flex items-center justify-between gap-[var(--space-2)]">{heading}{paneControls.hideButton}</div>} top={addNote} footer={footer} writing={writing} />;
+  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? deliveryRow : <div className="flex items-center justify-between gap-[var(--space-2)]">{heading}{paneControls.hideButton}</div>} top={addNote} footer={footer} writing={writing} phone={phone} />;
   const approved = version.decision?.value === "approved";
   const openSheet = () => { if (sheetStopRef.current === "collapsed") setSheetStop("half"); };
-  const sheet = phone ? { ...sheetControl, mode: compose.drawing ? "draw" as const : sheetControl.mode } : undefined;
+  // Draw mode from the moment the pen goes down (its frame confirm included), so the sheet does not flash back to its browse stop meanwhile (#879 PR 2).
+  const sheet = phone ? { ...sheetControl, mode: compose.penDown ? "draw" as const : sheetControl.mode } : undefined;
   const latestLabel = `v${version.version}${version.version === newest ? " · latest" : ""}`;
   const phoneBar = <>
     <ReviewPhoneBar
@@ -444,8 +463,9 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       title={<h1 data-testid="guest-video-title" title={video.title} className="m-0 w-full min-w-[6rem] truncate [font:var(--type-body)]">{video.title}</h1>}
       chip={<VersionChip buttonRef={chipRef} label={latestLabel} onClick={() => { setVersionsOpen(true); }} />}
       approve={canDecide ? approved ? <span data-testid="guest-approved" className="inline-flex min-h-11 flex-none items-center gap-[var(--space-1)] px-[var(--space-2)] text-foreground [font:var(--type-label)]"><Check aria-hidden="true" className="size-4" />Approved</span> : <Button type="button" size="sm" data-testid="guest-approve" className="min-h-11" onClick={() => { startDecision("approved"); }}>Approve</Button> : undefined}
-      actions={socialOverlays.length > 0 || (allowDownload && version.downloadUrl !== null) ? <ReviewActionSheet container={slot}>
+      actions={socialOverlays.length > 0 || (allowDownload && version.downloadUrl !== null) || canPaste ? <ReviewActionSheet container={slot}>
         {(close) => <>
+          {canPaste && <ActionRow testId="guest-paste-open" icon={<Copy aria-hidden="true" />} onSelect={() => { close(true); openPaste(); }}>Copy my notes from another version</ActionRow>}
           {socialOverlays.length > 0 && <ActionRow testId="guest-social-toggle" icon={<Smartphone aria-hidden="true" />} pressed={socialOn} onSelect={() => { setSocial(!socialOn); close(); }}>Social preview</ActionRow>}
           {allowDownload && version.downloadUrl !== null && (session.verified
             ? <ActionRow testId="guest-download" icon={<DownloadIcon aria-hidden="true" />} href={version.downloadUrl} download onSelect={() => { close(); }}>Download</ActionRow>
@@ -459,7 +479,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     />
   </>;
 
-  return <div data-testid="guest-video-screen" data-surface="inverse" data-keyboard={keyboard ? "true" : "false"} style={keyboard ? { height: keyboard.height, transform: `translateY(${keyboard.offsetTop}px)` } : undefined} className={`flex flex-1 flex-col bg-background text-foreground min-[721px]:min-h-0 ${keyboard ? "min-h-0" : "min-h-dvh"}`}>
+  return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
     {phone ? phoneBar : <header className="flex flex-col border-b border-border bg-card text-card-foreground">
      <div data-testid="guest-bar" className="flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] px-[var(--space-4)] py-[var(--space-1)]">
       {onBack && <Button type="button" variant="ghost" className={`${TOUCH} shrink-0`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span>All videos</span></Button>}
@@ -500,8 +520,9 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       stacked={phone}
       {...(sheet ? { sheet } : {})}
       strip={paneControls.strip}
-      player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" phoneFrameStep version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} transportHidden={phone && sheetControl.mode === "compose" && !compose.drawing} /></OverlayContainerContext.Provider>}
-      pane={<aside className="flex min-h-0 flex-1 flex-col bg-card text-card-foreground min-[721px]:overflow-hidden min-[721px]:border-l min-[721px]:border-border min-[721px]:p-[var(--space-5)]"><div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-4)] py-[var(--space-2)] min-[721px]:hidden" onClick={openSheet}>{phone && <Tabs value="notes" className="w-full"><TabsList variant="line" className="w-full justify-start rounded-none bg-card px-0 max-[721px]:!h-11 max-[721px]:!p-0"><TabsTrigger value="notes" data-testid="guest-notes-heading" className="max-[721px]:!h-11 max-[721px]:after:!bottom-0">{headingContent}</TabsTrigger></TabsList></Tabs>}</div><div className="flex min-h-0 flex-1 flex-col max-[721px]:p-[var(--space-4)]">{panel}</div></aside>}
+      player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" phoneFrameStep version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} transportHidden={phone && sheetControl.mode === "compose" && !compose.penDown} /></OverlayContainerContext.Provider>}
+      // The pane's popups (a note's ⋯ menu) portal into the same slot as the player's, inside the inverse scope (fix round 1: they drew light on the dark viewer).
+      pane={<OverlayContainerContext.Provider value={slot}><aside className="flex min-h-0 flex-1 flex-col bg-card text-card-foreground min-[721px]:overflow-hidden min-[721px]:border-l min-[721px]:border-border min-[721px]:p-[var(--space-5)]"><div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-4)] py-[var(--space-2)] min-[721px]:hidden" onClick={openSheet}>{phone && <Tabs value="notes" className="w-full"><TabsList variant="line" className="w-full justify-start rounded-none bg-card px-0 max-[721px]:!h-11 max-[721px]:!p-0"><TabsTrigger value="notes" data-testid="guest-notes-heading" className="max-[721px]:!h-11 max-[721px]:after:!bottom-0">{headingContent}</TabsTrigger></TabsList></Tabs>}</div><div className="flex min-h-0 flex-1 flex-col max-[721px]:p-[var(--space-4)] max-[721px]:in-data-[mode=compose]:py-[var(--space-2)]">{panel}</div></aside></OverlayContainerContext.Provider>}
     />
     {canPaste && <GuestPasteDialog api={api} writer={writer} open={pasteOpen} onOpenChange={changePasteOpen} video={video} target={version} markupAllowed={session.link.allow.markup}
       onGone={onUnavailable}
@@ -509,4 +530,10 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     {decideFor !== null && canDecide && <GuestDecisionDialog key={`${version.assetId}:${decideFor}`} value={decideFor} assetId={version.assetId} film={video.title} version={version.version} drafts={drafts} open onClose={() => { opening.current += 1; setDecideFor(null); }} onConfirm={(note) => confirmDecision(decideFor, note)} />}
     <div ref={setSlot} />
   </div>;
+}
+
+/** Whether the focus is in a field that holds the on-screen keyboard (an enabled text input, textarea or editable element). */
+function keyboardField(element: Element | null): boolean {
+  if (!(element instanceof HTMLElement) || element.matches(":disabled")) return false;
+  return element.matches('textarea, input:not([type="button"],[type="submit"],[type="checkbox"],[type="radio"],[type="range"],[type="file"],[type="hidden"]), [contenteditable]:not([contenteditable="false"])');
 }

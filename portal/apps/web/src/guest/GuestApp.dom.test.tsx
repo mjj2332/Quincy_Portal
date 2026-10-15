@@ -390,7 +390,7 @@ describe("the video screen", () => {
     expect(byId("guest-notes-heading")!.closest("[role=tablist]")!.className).toContain("max-[721px]:!h-11");
     expect(byId("guest-notes-heading")!.className).toContain("max-[721px]:after:!bottom-0");
     expect(document.body.textContent).toContain("Trim the opening");
-    expect(byId("guest-notes-heading")!.textContent).toBe("Notes 1");
+    expect(byId("guest-notes-heading")!.textContent).toBe("Notes 1 open");
   });
 
   it("shows the notes count beside the desktop heading", async () => {
@@ -400,6 +400,39 @@ describe("the video screen", () => {
     const count = byId("guest-notes-count")!;
     expect(count.textContent).toBe("1");
     expect(byId("guest-notes-heading")!.contains(count)).toBe(true);
+  });
+
+  // The count is the open notes (#879 PR 2, owner decision): resolved roots and empty tombstones do not count, a tombstone that kept its replies does, replies never do. Shown at 0.
+  const openFixture = () => {
+    const { replies: _unused, ...rootFields } = note();
+    void _unused;
+    const reply = { ...rootFields, id: "44444444-4444-4444-8444-444444444444", parentId: "22222222-2222-4222-8222-222222222222", startFrame: null, body: "Reply" };
+    return [
+      note({ replies: [reply] as never }),
+      note({ id: "55555555-5555-4555-8555-555555555555", resolved: true }),
+      note({ id: "66666666-6666-4666-8666-666666666666", deleted: true, body: "", replies: [{ ...reply, parentId: "66666666-6666-4666-8666-666666666666" }] as never }),
+      note({ id: "77777777-7777-4777-8777-777777777777", deleted: true, body: "" }),
+    ];
+  };
+  it("counts open notes on the phone tab", async () => {
+    await viewport.set({ width: 390, coarse: true });
+    notes = openFixture();
+    videos = [videoOf(1)];
+    await open();
+    expect(byId("guest-notes-count")!.textContent).toBe("2");
+    expect(byId("guest-notes-heading")!.textContent).toBe("Notes 2 open");
+  });
+  it("counts open notes beside the desktop heading, and shows 0", async () => {
+    notes = openFixture();
+    videos = [videoOf(1)];
+    await open();
+    expect(byId("guest-notes-count")!.textContent).toBe("2");
+  });
+  it("shows 0 when every note is resolved", async () => {
+    notes = [note({ resolved: true })];
+    videos = [videoOf(1)];
+    await open();
+    expect(byId("guest-notes-count")!.textContent).toBe("0");
   });
 });
 
@@ -545,7 +578,7 @@ describe("the notes pane (#859)", () => {
     const screen = byId("guest-video-screen")!;
     const column = screen.parentElement!;
     expect(column.getAttribute("data-testid")).toBe("guest-column");
-    expect(column.className).toContain("min-[721px]:h-dvh");
+    expect(column.className).toContain("h-dvh");
     expect(column.className).toContain("flex-col");
     expect(screen.className).toContain("flex-1");
     expect(screen.className).toContain("min-h-0");
@@ -794,7 +827,7 @@ describe("Sol round 4", () => {
     notes = [note(), note({ id: "33333333-3333-4333-8333-333333333333" })];
     videos = [videoOf(1)];
     await open();
-    expect(byId("guest-notes-heading")?.textContent).toMatch(/^Notes\s+2$/);
+    expect(byId("guest-notes-heading")?.textContent).toMatch(/^Notes\s+2 open$/);
   });
 
   it("marks a note that carries a drawing, and no other", async () => {
@@ -1315,10 +1348,15 @@ describe("the phone review screen (#879)", () => {
     expect(byId("guest-notes-panel")).toBe(panel);
   });
 
-  it("without the keyboard the phone screen keeps min-h-dvh (the keyboard case drops it)", async () => {
+  it("on a phone the column is the window and the screen fills it: no min-height floor that the keyboard box would have to beat (#879 PR 2)", async () => {
     await viewport.set({ width: 390, coarse: true });
     videos = [videoOf(1)];
     await open();
-    expect(byId("guest-video-screen")!.className).toContain("min-h-dvh");
+    const column = byId("guest-column")!;
+    expect(column.className).toContain("h-dvh");
+    expect(column.className).toContain("max-[721px]:overflow-hidden");
+    expect(column.className).not.toContain("min-h-dvh");
+    expect(byId("guest-video-screen")!.className).toContain("min-h-0");
+    expect(byId("guest-video-screen")!.className).not.toContain("min-h-dvh");
   });
 });
