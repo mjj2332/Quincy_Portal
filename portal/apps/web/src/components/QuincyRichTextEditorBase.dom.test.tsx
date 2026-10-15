@@ -59,7 +59,7 @@ describe("QuincyRichTextEditorBase", () => {
   it("with no placement props the field is as it was: the toolbar is its first child, no inline addons, the default radius", async () => {
     const host = await mount({});
     const field = host.querySelector<HTMLElement>('[data-testid="rich-text-field"]')!;
-    const addons = [...field.querySelectorAll(':scope > [data-slot="input-group-addon"]')].map((el) => el.getAttribute("data-align"));
+    const addons = [...field.querySelectorAll(':scope > [data-testid="rich-text-addon"]')].map((el) => el.getAttribute("data-align"));
     expect(addons).toEqual(["block-start"]);
     expect(field.firstElementChild!.querySelector('[role="toolbar"][aria-label="Formatting"]')).not.toBeNull();
     expect(field.getAttribute("data-variant")).toBeNull();
@@ -84,13 +84,13 @@ describe("QuincyRichTextEditorBase", () => {
   });
 
   it("a null toolbarContainer renders no toolbar yet; inlineStart and inlineEnd sit inside the field around the text", async () => {
-    const host = await mount({ toolbarContainer: null, inlineStart: <span data-testid="chip">TC</span>, inlineEnd: <span data-testid="pen">pen</span>, contentClassName: "clamp-me" });
+    const host = await mount({ toolbarContainer: null, inlineStart: <span data-testid="chip">TC</span>, inlineEnd: <span data-testid="pen">pen</span>, contentClassName: "max-h-28" });
     const field = host.querySelector<HTMLElement>('[data-testid="rich-text-field"]')!;
     expect(document.querySelector('[role="toolbar"]')).toBeNull();
     const kids = [...field.children];
     expect(kids[0]!.getAttribute("data-align")).toBe("inline-start");
     expect(kids[0]!.contains(host.querySelector('[data-testid="chip"]'))).toBe(true);
-    expect(kids[1]!.className).toContain("clamp-me");
+    expect(kids[1]!.className).toContain("max-h-28");
     expect(kids[1]!.querySelector('[contenteditable="true"]')).not.toBeNull();
     expect(kids[2]!.getAttribute("data-align")).toBe("inline-end");
     expect(kids[2]!.contains(host.querySelector('[data-testid="pen"]'))).toBe(true);

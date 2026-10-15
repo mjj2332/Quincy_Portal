@@ -643,15 +643,15 @@ export function QuincyRichTextEditorBase({
 
   return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
     <InputGroup data-testid="rich-text-field" variant={pill ? "pill" : "default"} className={pill ? PILL_GROUP : FIELD_GROUP} data-disabled={disabled || undefined}>
-      {toolbarContainer === undefined ? <InputGroupAddon ref={addonRef} align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
+      {toolbarContainer === undefined ? <InputGroupAddon ref={addonRef} data-testid="rich-text-addon" align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
         {toolbar}
       </InputGroupAddon> : null}
-      {inlineStart !== undefined ? <InputGroupAddon align="inline-start" className="cursor-default">{inlineStart}</InputGroupAddon> : null}
+      {inlineStart !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-start" className="cursor-default">{inlineStart}</InputGroupAddon> : null}
       <div ref={pageRef} className={cn("relative w-full min-w-0", contentClassName)}>
         <EditorContent editor={editor} className="w-full min-w-0" />
         {isDocument && outline.length >= 2 && <RichTextOutlineRail outline={outline} activeIndex={activeHeading} onSelect={(index) => scrollToRichTextHeading(editor, index)} className="absolute end-1 top-2 z-[1] max-[721px]:hidden" />}
       </div>
-      {inlineEnd !== undefined ? <InputGroupAddon align="inline-end" className="cursor-default">{inlineEnd}</InputGroupAddon> : null}
+      {inlineEnd !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-end" className="cursor-default">{inlineEnd}</InputGroupAddon> : null}
     </InputGroup>
     {toolbarContainer ? createPortal(toolbar, toolbarContainer) : null}
     {isDocument && <>
