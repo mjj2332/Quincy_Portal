@@ -7,9 +7,11 @@ deploys it** from CI. Before merging a D1 migration, or to redeploy or roll back
 ## Orchestration workflow
 
 The session orchestrates — plans, decomposes, delegates, synthesizes — regardless of which Claude
-model is driving. Default build task → **fast-worker** subagent (mechanical, well-specified work:
-boilerplate, tests, formatting, straightforward edits — it stops and reports back rather than
-guessing on anything ambiguous or design-level). Reasoning-heavy phase → **deep-reasoner** subagent
+model is driving. UI build task → **ui-builder** subagent (Opus, high effort: reads the prototype
+frame and the ReUI skill, stops on a conflict, runs verify, never opens a PR). Other build tasks →
+**fast-worker** subagent (Sonnet: mechanical, well-specified work — boilerplate, tests, formatting,
+straightforward edits — it stops and reports back rather than guessing on anything ambiguous or
+design-level). Reasoning-heavy phase → **deep-reasoner** subagent
 (architecture, hard debugging, algorithm design, tradeoff analysis). **Codex**
 (`/codex:rescue --background`) is a peer, not a reviewer — same standing as deep-reasoner, a
 different model family's take on the same problem.
@@ -18,19 +20,25 @@ different model family's take on the same problem.
 revamps, and high-stakes work (a production schema migration, an auth/authorization logic change,
 an irreversible data operation, a cross-cutting architecture change) all route the plan through
 both, each blind to the other's answer, synthesized by the session before build starts.
-**fast-worker still executes the build** once the plan is settled — this step is planning/review,
-not a build-routing change. Keep your own context lean: fork or spawn rather than pasting full
-transcripts back and forth.
+Once the plan is settled, ui-builder or fast-worker executes the build — this step is
+planning/review, not a build-routing change. Keep your own context lean: fork or spawn rather than
+pasting full transcripts back and forth.
 
-Sol owns diff review. Luna owns test code and non-browser QA. **The session owns the browser pass**
-(owner decision, 2026-10-15; Agy is retired from it): the session drives the browser and the iOS
-Simulator itself and may hand mechanical capture to a Sonnet subagent, but judges every
-screenshot itself. **Every UI change gets a two-stage browser pass:** the session measures, then
-**design-reviewer** (Opus) judges the screenshots, blind to the session's verdicts until it has
-looked. Phone layouts are checked in Safari on the iOS Simulator with the on-screen keyboard up,
-not only in a narrow desktop window. When a Claude design prototype is the spec (below), both
-stages compare each build screenshot with the prototype frame at the same size and state. Full roster, the pass contract and
-invocation mechanics live in `docs/subagents/Subagent-Orchestration.md`.
+Sol owns diff review. Luna owns test code and non-browser QA. **The session runs every browser
+pass** — Agy is retired from it. **Every UI change gets a two-stage browser pass:**
+
+1. **The session measures**: the built-in browser for desktop and tablet widths; **Safari on the
+   iOS Simulator for every phone row**, with the on-screen keyboard up for any input surface. A
+   narrow desktop window cannot raise the keyboard or reproduce iOS's visual viewport.
+   `scripts/agents/ios-pass.sh <path>` boots the Simulator, opens the served branch and makes the
+   screenshot folder. The session may hand mechanical capture to a Sonnet subagent, but judges
+   every screenshot itself.
+2. **design-reviewer** (Opus) judges the screenshots, blind to the session's verdicts until it has
+   looked. Its yardstick is the prototype frame when one exists, otherwise the rest of the Portal.
+
+Full roster, the pass contract and invocation mechanics live in
+`docs/subagents/Subagent-Orchestration.md`. The agent definitions are committed in
+`.claude/agents/`.
 
 ## One codebase
 
@@ -54,7 +62,8 @@ through `InternalLink` / `locationStore()`. See docs/lessons.md § "A router tha
 canonicalise it" and `lib/routing-transport.guard.test.ts`, which makes that a build failure.
 
 The original `prototype/` design export was retired in #48. What was worth keeping is
-archived under `docs/archive/` — **historical, explicitly not authoritative**.
+archived under `docs/archive/` — **historical, explicitly not authoritative**. Current prototypes
+live in `design/prototypes/` (see "Design" below).
 
 ## Read first
 
@@ -70,27 +79,39 @@ routing, or the review lightbox, and keep it current as you work. Find entries w
 - **Area maps:** `docs/maps/README.md` — notifications, queues, routes, Project sheet, date/time
   controls, new tables, Base UI, tokens. Read the matching map before exploring.
 - **MCP (AI clients):** `docs/Guides/MCP.md` — connecting, scopes, tool table, controls, rollback.
-- **Orchestration tooling:** `scripts/agents/` (`preflight.sh`, `serve-branch.sh`, `sol-review.sh`,
-  `codex-plan.sh`, `agy-pass.sh`) and brief templates in `docs/subagents/templates/`. QA serves a
+- **Orchestration tooling:** `scripts/agents/` (`preflight.sh`, `serve-branch.sh`, `ios-pass.sh`,
+  `sol-review.sh`, `codex-plan.sh`) and brief templates in `docs/subagents/templates/`. QA serves a
   branch only through `serve-branch.sh`, never from the main checkout. Settled plans go to the
   issue or `docs/plans/`. Production D1 and session cookies: `docs/agents/production-data.md`.
 
 Authority order when docs conflict: `docs/PRD/PRD.md` → `Personas.md` / `Sitemap.md`.
 
-**Design authority — `portal/apps/web/src/styles/`.** The live token set is the only source
-of truth for design; `design-system-guards.test.ts` beside it mechanises the rules that have
-already shipped defects more than once. The 2026-06-19 export in `docs/archive/` records where
-the tokens came from and has since been diverged from — never reconcile the app back to it.
+## Design: the prototype decides, the tokens express it
 
-**Prototype as spec (owner decision, 2026-10-15).** When the owner names a Claude design prototype
-as the spec for a piece of work, its frames are the layout, hierarchy, copy and behaviour that work
-must match; the tokens still govern colour, type and spacing values. The video review revamp
-(#879–#884) is such work: `quincy-video-review-revamp/project/`, frame ids P1–P10, F1–F4, W1–W4,
-T1–T5, V1–V6. UI for it is built by an Opus agent that reads the prototype source, not by
-fast-worker from a text plan, and every plan maps each frame to the component that renders it.
-Where the prototype conflicts with a ReUI component, a token rule or a product capability it does
-not show, the builder stops and the session asks the owner — never a silent choice either way.
-The audit of what shipped against it: `docs/plans/video-revamp-prototype-audit.md`.
+**The prototype decides layout and look.** A revamp or a new screen starts from a Claude design
+prototype, committed under `design/prototypes/<name>/` (see `design/README.md`). Its frames are the
+layout, hierarchy, sizes, copy and behaviour the build must match. Smaller UI changes need no
+prototype; they match the rest of the Portal.
+
+**The tokens are the vocabulary** — `portal/apps/web/src/styles/`. The build expresses the
+prototype in Quincy tokens (colour, type, spacing, radius, motion), not in the prototype's raw
+values. `design-system-guards.test.ts` beside them still mechanises the rules that have shipped
+defects more than once, and stays green. The 2026-06-19 export in `docs/archive/` records where the
+tokens came from and has since been diverged from — never reconcile the app back to that export.
+
+**Building from a prototype:**
+
+- Every plan maps each prototype frame id to the component that renders it.
+- ui-builder reads the prototype source (the frame's JSX and CSS), not only the text plan.
+- Where the prototype conflicts with a ReUI component's structure, a guard, or a product
+  capability it does not show, the builder stops and the session asks the owner. Never a silent
+  choice either way.
+- Both browser-pass stages compare each build screenshot with the prototype frame at the same
+  size and state.
+
+The video review revamp (#879–#884) is the first such work:
+`design/prototypes/video-review-revamp/project/`, frame ids P1–P10, F1–F4, W1–W4, T1–T5, V1–V6.
+The audit of what shipped against it is `docs/plans/video-revamp-prototype-audit.md`.
 
 ## Author-only rules and impersonation
 
@@ -138,7 +159,9 @@ than the registry's `rating` (`docs/adr/0003`), so do not "restore" it to `compo
 
 ## Reuse ReUI before building UI
 
-Every UI element starts from something premade. Search in this order and take the first that fits:
+Reuse means don't reinvent the wheel, not don't change the wheel. Every UI element starts from
+something premade, and adapting it — a scoped variant, a different size, radius or layout to match
+the prototype — is expected. Search in this order and take the first that fits:
 
 1. What is already installed: `portal/apps/web/src/components/reui/` and `components/quincy/`.
 2. A ReUI component, or one of its `c-*` examples.
@@ -148,27 +171,25 @@ Every UI element starts from something premade. Search in this order and take th
 5. Hand-built, only when nothing above fits.
 
 **Query the ReUI MCP for steps 2–4** (`mcp__ReUI__search` → `get_component` / `get_examples`): it
-serves the current registry. The local copy in `tmp/ReUI_Full_Source_Code/` is the fallback for
-when the MCP is unavailable, and can be out of date; a ledger line built from it says so. When the
-MCP shows a newer version of an item already installed, reuse the installed copy and note the gap
-in the ledger: updating a vendored item is its own change, because it carries Quincy's adaptations.
+serves the current registry. The local source copy in `~/quincy-ref/reui/` (outside the repo:
+it holds paid Pro blocks and the repo is public, so **never copy it into the repo**) is the
+fallback for when the MCP is unavailable, and can be out of date. When the MCP shows a newer
+version of an item already installed, reuse the installed copy and say so in the PR: updating a
+vendored item is its own change, because it carries Quincy's adaptations.
 
 Load the ReUI skill (`.claude/skills/reui/SKILL.md`, with its `rules/`) for the find → read-the-API
 → adapt loop, and read `docs/reui-reuse.md` for how this repo installs: through the sandbox, since
 `shadcn add` in `portal/apps/web` overwrites Quincy's adapted `button` and `badge`. Where the two
-differ, the doc wins. Adapt by wiring real data and theming with Quincy tokens; keep the item's
-structure and behaviour.
+differ, the doc wins. Adapt by wiring real data, theming with Quincy tokens, and changing whatever
+the prototype calls for; keep the item's behaviour and accessibility. A change to a shared
+`components/reui/` item goes in as a scoped variant with an adaptation note in the file, so other
+callers render as before.
 
-**Reuse ledger.** Every plan and every PR that adds or changes UI carries a reuse ledger: one line
-per UI element, naming the ReUI or base-nova item it uses (registry name or file path). A
-hand-built element's line records the searches run, the closest candidates, and why each one fails
-(an ADR, a proven token conflict, a behaviour ReUI lacks). The ledger is complete when every new
-element in the diff has its line. Sol, `/code-review` and design-reviewer each report a new element
-with no ledger line as a finding.
-`portal/apps/web/src/config/ui-primitive-ratchet.guard.test.ts` makes part of this mechanical: a new
-raw `<button>`/`<input>`/`<select>`/`<textarea>`/`<dialog>` or widget `role` outside
+There is no reuse ledger any more (owner decision, #891). What stays mechanical is
+`portal/apps/web/src/config/ui-primitive-ratchet.guard.test.ts`: a new raw
+`<button>`/`<input>`/`<select>`/`<textarea>`/`<dialog>` or widget `role` outside
 `components/reui/` and `components/quincy/` fails the build unless `config/ui-primitive-allowlist.ts`
-gains an entry carrying its ledger line. The allowlist may only shrink.
+gains an entry whose `ledger` field says why nothing premade fits. The allowlist may only shrink.
 
 <!-- BEGIN:reui-agent-rules -->
 ## ReUI design rules (every UI edit, follow-ups included)
@@ -187,6 +208,10 @@ Managed by the ReUI installer. Edits between the markers are replaced on the nex
 
 **How the installer block reads in this repo** (outside the markers, so the installer leaves it):
 
+- **The prototype wins over rule 1.** "Never set height, radius, padding, shadow or motion" holds
+  for screens with no prototype. Where a prototype frame needs a different size, radius, padding
+  or layout, adapt the component to match it — through a scoped `variant`/`size` or a token-built
+  class, never a raw value — and keep its behaviour. Rules 2–5 still apply.
 - `components/ui/` does not exist here (see "One codebase"); "installed" means `components/reui/` and
   `components/quincy/`. The Portal's surface is `frame` (ADR 0014), not `card`.
 - Quincy's tokens in `portal/apps/web/src/styles/` are the semantic tokens of rule 2. Where the
@@ -210,8 +235,10 @@ Default canonical labels (needs-triage, needs-info, ready-for-agent, ready-for-h
 Multi-context: root `GLOSSARY-MAP.md` + one `GLOSSARY.md` per workspace package under `portal/`. See `docs/agents/domain.md`.
 
 A UI browser pass is stage 1 of two: a Claude design reviewer reads its output next. Save every
-screenshot as a file in one folder, named per viewport and open state, and give every PASS/FAIL row
-its measurement and screenshot. See `docs/subagents/Subagent-Orchestration.md` §2a.
+screenshot as a file in one folder, named per viewport and open state (phone shots from the iOS
+Simulator, keyboard states included), and give every PASS/FAIL row its measurement and screenshot.
+When a prototype exists, name the frame each row is checked against. See
+`docs/subagents/Subagent-Orchestration.md` §2a.
 
 ### TypeSafe verdicts
 

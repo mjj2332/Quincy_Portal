@@ -5,14 +5,14 @@ You are planning, not building. Return a plan only.
 ## Context
 
 Quincy Portal (`portal/`, React 19 + Vite SPA, Hono on Workers). The owner made the Claude design
-prototype in `quincy-video-review-revamp/project/` the spec for the video review revamp
+prototype in `design/prototypes/video-review-revamp/project/` the spec for the video review revamp
 (AGENTS.md, "Prototype as spec"). Its frames govern layout, hierarchy, copy and behaviour; the
 token set in `portal/apps/web/src/styles/` still governs colour, type and spacing values.
 
 Read first:
 - `docs/plans/video-revamp-prototype-audit.md` — the deviation list (rows 1–11) and the owner's
   decisions Q1 and Q2. **This is the scope.**
-- Prototype source: `quincy-video-review-revamp/project/mobile.jsx` (MobileReview: split, compose,
+- Prototype source: `design/prototypes/video-review-revamp/project/mobile.jsx` (MobileReview: split, compose,
   draw modes; MobileHeader; ControlBar; ActionSheet use), `kit.jsx` (Composer, NotesFilter,
   NoteItem, ActionSheet, Scrubber), `tiles.jsx`, `quincy.css`, and `Video Review Revamp.html`
   for the frame list and decision numbers (D1–D37).

@@ -13,9 +13,10 @@ mechanics of spawning them.
 | Agent | Spawned via | Model | Job |
 |---|---|---|---|
 | **The session** | runs in Claude Code| whichever Claude model the user started on: Sonnet, Opus, Fable, any | Orchestrates: plans, decomposes, delegates, synthesizes, at its own discretion |
-| **fast-worker** | `Agent` tool, `subagent_type: fast-worker` (`~/.claude/agents/fast-worker.md`) | Claude Opus 5.5, medium effort | **Default builder** — mechanical, well-specified work: boilerplate, tests, formatting, straightforward edits. Stops and reports back on anything ambiguous or design-level rather than guessing |
-| **deep-reasoner** | `Agent` tool, `subagent_type: deep-reasoner` (`~/.claude/agents/deep-reasoner.md`) | Claude Opus 5.5, high effort | Reasoning-heavy phases: architecture decisions, hard debugging, algorithm design, tradeoff analysis. Returns a concise, actionable conclusion |
-| **design-reviewer** | `Agent` tool, `subagent_type: design-reviewer` (`~/.claude/agents/design-reviewer.md`) | Claude Opus 5.5, medium effort | Second stage of every UI browser pass ([§2a](#2a-the-browser-pass-two-stages)): judges the screenshots as a designer against the design tokens, the rest of the Portal and, when one is the spec, the prototype frame; audits the session's PASS/FAIL table. Read-only |
+| **ui-builder** | `Agent` tool, `subagent_type: ui-builder` (`.claude/agents/ui-builder.md`) | Claude Opus 5.5, high effort | **UI builder** — builds from the settled plan and, for revamps and new screens, the prototype frame's source in `design/prototypes/`. Adapts ReUI to match, stops on any conflict between frame, component and guard, runs verify. Never opens a PR |
+| **fast-worker** | `Agent` tool, `subagent_type: fast-worker` (`.claude/agents/fast-worker.md`) | Claude Sonnet 5.5, medium effort | **Mechanical builder** — well-specified non-UI work: boilerplate, tests, formatting, straightforward edits, path rewrites. Stops and reports back on anything ambiguous or design-level rather than guessing |
+| **deep-reasoner** | `Agent` tool, `subagent_type: deep-reasoner` (`.claude/agents/deep-reasoner.md`) | Claude Opus 5.5, high effort | Reasoning-heavy phases: architecture decisions, hard debugging, algorithm design, tradeoff analysis. Returns a concise, actionable conclusion |
+| **design-reviewer** | `Agent` tool, `subagent_type: design-reviewer` (`.claude/agents/design-reviewer.md`) | Claude Opus 5.5, medium effort | Second stage of every UI browser pass ([§2a](#2a-the-browser-pass-two-stages)): judges the screenshots as a designer against the prototype frame when one exists, otherwise the rest of the Portal, always in Quincy tokens; audits the session's PASS/FAIL table. Read-only |
 | **Sol** | `codex exec` — [§3](codex-cli.md) | `gpt-6.1-sol`, always high effort | Diff reviewer |
 | **Luna** | `codex exec` — [§3](codex-cli.md) | `gpt-6-luna`, always xhigh effort | Test code and non-browser QA: diagnosis, authoring and fixing tests. No browser-pass role |
 | **Codex (peer)** | `/codex:rescue --background` | shared Codex runtime | A second, independent-model-family opinion on high-stakes decisions — a peer worked in parallel with Opus/deep-reasoner, not a reviewer of their output |
@@ -28,7 +29,8 @@ mechanics of spawning them.
 roster is model-agnostic by design: it names *roles*, never the session's model, so the same
 routing holds whether the user started on Sonnet, Opus or Fable. Distinct from the `Agent` tool's
 `fast-worker`/`deep-reasoner` subagents, which are separate Claude processes with their own scoped
-system prompts.
+system prompts. Their definitions are committed in `.claude/agents/` and carry the Quincy rules;
+they override the owner's personal copies of the same name in `~/.claude/agents/`.
 
 
 
@@ -45,8 +47,8 @@ system prompts.
    (`feedback-no-autonomous-google-signin`), and an agent borrows the session that click created:
 
    - **Local dev:** the owner's everyday Chrome, signed into `http://localhost:8787`, reached
-     through the `huashu-chrome` extension. Agy works only in tabs it opens itself, on localhost
-     only ([agy-cli.md §Browser pass](agy-cli.md)). Mutate freely there. The dedicated debugging
+     through the `huashu-chrome` extension, or the built-in browser and the iOS Simulator's
+     Safari, each signed in by the owner. Mutate freely there. The dedicated debugging
      Chrome on 9333 (a separate profile the owner signs into once, [agy-cli.md §Option A](agy-cli.md))
      serves the `chrome-devtools-mcp` fallback and the session's trusted-input re-checks.
    - **Production:** the owner's already signed-in Chrome tab, **passive only**: read, measure,
@@ -65,7 +67,7 @@ system prompts.
 Every UI change runs both stages, in order. Measurement and judgement are different skills, so
 they are different agents, and the second is blind to the first's verdicts until it has looked.
 
-1. **The session measures** (owner decision, 2026-10-15, replacing Agy): in the built-in browser
+1. **The session measures** (owner decision, #891; Agy is retired): in the built-in browser
    or the owner's Chrome for desktop and tablet widths, and **in Safari on the iOS Simulator for
    every phone row** — a narrow desktop window cannot raise the on-screen keyboard, rotate, or
    reproduce iOS's visual viewport, which is how #879 shipped a composer hidden behind the
@@ -75,13 +77,19 @@ they are different agents, and the second is blind to the first's verdicts until
    writes and judges every PASS/FAIL row itself, on Opus. Report contract unchanged: screenshots
    as files in one folder named per viewport and state, and every row carries its measurement
    and screenshot.
-   **When a prototype is the spec** (AGENTS.md, "Prototype as spec"), capture the prototype frame
-   at the same size and state beside each build screenshot, and a row passes only when the two
-   match in layout, hierarchy, copy and behaviour.
-2. **design-reviewer judges** (Opus, `Agent` tool): given the design tokens, the prototype frames when one is the spec, the measurer's
+   **The iOS Simulator.** `scripts/agents/ios-pass.sh <path> [device]` boots the device, opens
+   Safari on the served branch (`http://localhost:8787<path>`) and creates the screenshot folder.
+   The session then drives it with the iOS Simulator tool: real taps on the on-screen keyboard,
+   not text injection, because injected text drops characters once a field wraps. Phone rows for
+   an input surface cover the keyboard up, the field wrapping, the keyboard dropping, and leaving
+   the surface. The owner signs in once in the Simulator's Safari.
+   **When a prototype exists** (AGENTS.md, "Design: the prototype decides, the tokens express
+   it"), every row names the frame it is checked against, and passes only when the build matches
+   it in layout, hierarchy, sizes, copy and behaviour.
+2. **design-reviewer judges** (Opus, `Agent` tool): given the design tokens, the prototype frames when one exists, the measurer's
    screenshot folder, its report and the diff range, it looks at every screenshot before reading
    the table, writes designer's notes per screenshot (hierarchy, spacing, typography, colour, wrap,
-   states, fit with the rest of the Portal), maps each deviation to a token or a literal, then
+   states, fit with the prototype frame or the rest of the Portal), maps each deviation to a token or a literal, then
    marks every row *agree*/*disagree* and lists what the table missed. It returns Ship / Fix first,
    ranked defects, disagreements with evidence, and suggestions kept apart from defects.
 
@@ -95,8 +103,7 @@ from the dedicated worktree `~/quincy-wt/serve` — never from the main checkout
 sessions switch (a pass once ran against a checkout that changed under it). Every browser-pass
 report, the session's and design-reviewer's, starts with the server's **pid, cwd, HEAD and bundle**
 (`index-*.js`), read before the pass and again after it; a pass whose server changed in between is
-void. `scripts/agents/agy-pass.sh` writes both into the report; `scripts/agents/preflight.sh`
-prints them on its `serve` line for any other runner.
+void. `scripts/agents/preflight.sh` prints them on its `serve` line.
 
 The session then gates both (§5): open the screenshots, confirm every disagreement one way or the
 other, and treat an unmeasured PASS as a FAIL. Defects go back through the fix loop and a fresh
@@ -146,7 +153,7 @@ planning or building inline (§1).
    prompts reviewable and reusable when a fix loop needs a second round. Start from
    `docs/subagents/templates/`: `plan-brief.md`, `build-brief.md`, `sol-brief.md` (used by
    `scripts/agents/sol-review.sh`), and `agy-brief-head.md` + `agy-common-rules.md` (assembled by
-   `scripts/agents/agy-pass.sh`). Codex runs go through `scripts/agents/codex-plan.sh` and
+   `scripts/agents/agy-pass.sh`; historical since Agy left the browser pass). Codex runs go through `scripts/agents/codex-plan.sh` and
    `sol-review.sh` ([codex-cli.md](codex-cli.md)).
    - **Resume notes.** Every plan and build brief says: "Keep running notes (file:line findings,
      decisions) in `<scratch>/notes-<task>.md`; on resume read it first and do not re-explore what

@@ -266,7 +266,7 @@ What was new:
 
 - **Collapsed 48px rail** (`board.tsx`, `w-12` `KanbanColumn` with `[writing-mode:vertical-rl]` label): composed from
   the installed `reui/kanban` `KanbanColumn` plus the block's own `DealLane` shape (`solution-crm-7`). Searched the ReUI
-  MCP (`kanban column collapse to rail collapsible`) and `tmp/ReUI_Full_Source_Code/reui-blocks-main/blocks/`.
+  MCP (`kanban column collapse to rail collapsible`) and `~/quincy-ref/reui/reui-blocks-main/blocks/`.
   Closest candidates: `kanban-board-2` and `kanban-board-5` (Pro, `card` surface: collapse to vertical rails) and
   `c-sidebar-2` (icon rail). The kanban blocks are whole-board blocks that bring their own card, item and avatar
   dependencies and their own collapse state, and a rail there still needs the same `KanbanColumn` we already use; adopting one

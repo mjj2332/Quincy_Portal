@@ -9,7 +9,8 @@ You are planning ONE ticket for the Quincy Portal repo. Read-only: do not edit f
 
 Read: the ticket and parent spec below, `AGENTS.md`, the `CONTEXT.md` of each package you touch,
 the relevant `docs/adr/*`, the relevant `docs/lessons.md` sections, and the code you would change.
-For a UI ticket that adopts a ReUI block, also `docs/reui-block-adoption.md` and
+For a UI ticket, the prototype frames it implements (`design/prototypes/<name>/project/`, the
+frame's JSX and CSS); for one that adopts a ReUI block, also `docs/reui-block-adoption.md` and
 `docs/reui-reuse.md`.
 
 Produce an implementation plan of AT MOST 70 lines, no preamble:
@@ -18,8 +19,11 @@ Produce an implementation plan of AT MOST 70 lines, no preamble:
 3. Test plan: the seams, which existing test files are prior art, the key cases (red tests first).
 4. Risks and traps specific to this codebase (cite lessons.md / ADR / guard tests), and each
    decision the ticket leaves open with your recommendation.
-5. For UI: the reuse ledger, one line per element (registry name or file path, or the searches run
-   and why each candidate fails).
+5. For UI: the installed or ReUI item each element starts from and how it is adapted. For a revamp
+   or new screen, the frame-to-component map: every prototype frame id in
+   `design/prototypes/<name>/` and the component that renders it, plus each conflict between the
+   frame and a ReUI component or guard, left open for the owner. A plan without the map is not
+   settled.
 
 Base: <origin/main at sha>. Other open work touching the same files: <PRs, or "none">.
 
