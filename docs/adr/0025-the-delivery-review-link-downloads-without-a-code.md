@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # The Delivery review link downloads without a code
@@ -32,3 +32,6 @@ the code; viewing and downloading carry none.
   as a download from the public Delivery page already is. A verified guest's download keeps their email.
 - Which Versions download is unchanged: the published Version without a Release, an older one only once
   Released (ADR 0023). Every Review link other than the Delivery review link keeps the code for download.
+- Only the guest download routes widen, and each re-reads in SQL, at its commit and byte fences, that the
+  link is still a Delivery review link. A link that stops being one mid-request is refused with 401, no
+  audit row and no bytes. Every write (notes, approvals, uploads) stays verified-only.
