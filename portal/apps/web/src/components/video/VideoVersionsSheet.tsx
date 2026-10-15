@@ -56,7 +56,7 @@ export function VideoVersionsSheet({ open, onOpenChange, container, rows, curren
             key={row.assetId}
             size="sm"
             variant={current ? "muted" : "default"}
-            render={<Button type="button" variant="ghost" data-testid="video-version-row" data-asset-id={row.assetId} aria-current={current ? "true" : undefined} className="h-auto min-h-11 w-full cursor-pointer justify-start text-start font-normal" onClick={() => { onChoose(row.assetId); changeOpen(false); }} />}
+            render={<Button type="button" variant="ghost" data-testid="video-version-row" data-asset-id={row.assetId} aria-current={current ? "true" : undefined} className="h-auto min-h-11 w-full cursor-pointer justify-start text-start font-normal normal-case" onClick={() => { onChoose(row.assetId); changeOpen(false); }} />}
           >
             <ItemContent>
               <ItemTitle>{`v${row.version}${latest ? " · latest" : ""}`}</ItemTitle>

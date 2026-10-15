@@ -59,7 +59,7 @@ const LEGEND = "flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--
  * surface (`data-surface="inverse"`) around it, like the Lightbox. `keyboard="self"` listens on the player; `"host"` leaves the
  * scope to the caller, who forwards events to `controlRef.handleKeyDown`.
  */
-export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, watermark, onMediaError, transportLocked = false, transportActions, transportReplacement, social }: {
+export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, watermark, onMediaError, transportLocked = false, transportActions, transportReplacement, social, phoneFrameStep = false }: {
   version: VideoPlayerVersion;
   title: string;
   controlRef?: Ref<VideoPlayerControl>;
@@ -99,6 +99,8 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
    * on the letterboxed picture, so a stroke is the same fraction of the film with Social on or off. Playback, the scrubber, the keys, mute, the time format and full screen work as ever.
    */
   social?: SocialPreviewMode;
+  /** The phone control bar drops frame step because the notes composer carries it (#879). A host with no such composer (the guest screen, a staff edit in progress) turns it back on. */
+  phoneFrameStep?: boolean;
 }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [muted, setMutedState] = useState(initialMuted);
@@ -200,20 +202,20 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     </div>
 
     <div data-testid="video-controls-row" className="flex flex-wrap items-center gap-[var(--space-2)] max-[721px]:flex-nowrap">
-      {!phone && <IconTip label="Previous frame" keys="←">
+      {(!phone || phoneFrameStep) && <IconTip label="Previous frame" keys="←">
         <Button type="button" variant="outline" size="icon" aria-label="Previous frame" className={COARSE} disabled={transportLocked} onClick={() => { clock.step(-1); }}><StepBack aria-hidden="true" /></Button>
       </IconTip>}
       <IconTip label={playLabel} keys="Space">
         <Button type="button" variant="default" size="icon" aria-label={playLabel} className={cn("w-[var(--space-7)]", COARSE)} disabled={transportLocked} onClick={() => { if (clock.playing) clock.pause(); else clock.play(); }}>{clock.playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}</Button>
       </IconTip>
-      {!phone && <IconTip label="Next frame" keys="→">
+      {(!phone || phoneFrameStep) && <IconTip label="Next frame" keys="→">
         <Button type="button" variant="outline" size="icon" aria-label="Next frame" className={COARSE} disabled={transportLocked} onClick={() => { clock.step(1); }}><StepForward aria-hidden="true" /></Button>
       </IconTip>}
       <output data-testid="video-readout" aria-live={clock.playing || !clock.confirmed ? "off" : "polite"} className={cn("px-[var(--space-2)] max-[721px]:min-w-0 max-[721px]:px-0 max-[721px]:text-xs max-[721px]:whitespace-nowrap", MONO)}>
         <span>{timecode(clock.frame)}</span><span className="text-foreground-secondary">{` / ${timecode(version.frameCount)}`}</span>
       </output>
       {!phone && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><TimeFormatMenu /></OverlayContainerContext.Provider>}
-      {social && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><SocialPreviewControls social={social} imageFailed={socialImage.failed} /></OverlayContainerContext.Provider>}
+      {social && !phone && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><SocialPreviewControls social={social} imageFailed={socialImage.failed} /></OverlayContainerContext.Provider>}
       {!phone && range !== undefined && (() => {
         const rangeButton = <Button type="button" variant="outline" size="icon" aria-label={stepLabel} data-testid="video-range-button" data-step={step} className={COARSE} disabled={rangeLocked} onClick={pressRange}>
           {step === "in" ? <ArrowRightFromLine aria-hidden="true" /> : step === "out" ? <ArrowRightToLine aria-hidden="true" /> : <X aria-hidden="true" />}
@@ -238,6 +240,8 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         </IconTip>}
       </div>
     </div>
+    {/* On a phone the overlay selector gets its own row, so it never sits on the timecode. */}
+    {social && phone && <div data-testid="video-social-row" className="flex flex-wrap items-center gap-[var(--space-2)]"><OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><SocialPreviewControls social={social} imageFailed={socialImage.failed} /></OverlayContainerContext.Provider></div>}
     </div>}
   </section>;
 }

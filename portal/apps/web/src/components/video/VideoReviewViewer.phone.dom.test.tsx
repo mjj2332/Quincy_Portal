@@ -225,4 +225,21 @@ describe("D4 and focus", () => {
     expect(main.className).toContain("max-[721px]:after:!bottom-0");
     expect(tid("video-pane-tab-delivery")!.className).toContain("max-[721px]:after:!bottom-0");
   });
+
+  it("the player keeps its frame steps on a phone where the composer cannot carry them (no notes), and drops them where it does", async () => {
+    await mount();
+    expect(document.querySelector('[aria-label="Previous frame"]')).not.toBeNull();
+    await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
+    await mount({ notes: true });
+    const deadline = Date.now() + 5000; while (!tid("video-player") && Date.now() < deadline) await flush(1);
+    expect(document.querySelector('[aria-label="Previous frame"]')).toBeNull();
+  });
+  it("the Versions sheet rows keep the chip's lowercase", async () => {
+    await mount();
+    await act(async () => { tid("video-version-chip")!.click(); });
+    const row = tid("video-version-row")!;
+    expect(row.className).toContain("normal-case");
+    expect(row.textContent).toContain("latest");
+  });
 });
+

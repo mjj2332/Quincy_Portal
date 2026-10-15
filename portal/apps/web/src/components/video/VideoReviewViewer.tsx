@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ChevronLeft, Columns2, DownloadIcon, Link2, Smartphone, Trash2 } from "lucide-react";
 import { framesToTimecode, videoVersionDownloadUrl, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
 import { registerToastHost } from "../../lib/toast-host";
@@ -62,6 +62,8 @@ const BAR_LABEL = "@max-[1400px]:sr-only";
  * With `notes` (the Project's `notes` part is on, #741 5b) the Version details column becomes the notes panel, and the Version details
  * move behind a button in its header; without it the viewer is exactly the 4d-ii viewer.
  */
+const noSubscribe = () => () => undefined;
+
 export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, reviewLinks, deepLink, reviewStatus, social }: {
   video: VideoDto;
   onClose: () => void;
@@ -158,6 +160,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   // drawing ends and the strokes stay; then a frame confirmation is cancelled, a clean edit or reply closes, a dirty form or the composer keeps its text on the first Escape);
   // 3. only then does it close the viewer.
   const forms = notes?.forms;
+  // The phone control bar leaves frame step to the composer; with no composer, or an edit or reply open (the composer's step buttons are off then), the player keeps its own.
+  const formOpen = useSyncExternalStore(forms ? forms.subscribe : noSubscribe, () => (forms ? forms.slot(assetId).open !== null : false));
   // Social preview (#871): the Project's resolved overlays are read only while it is on (so a viewer that never uses it makes no request), and the choice lives in this opening alone.
   const preview = useSocialPreview(social?.initialOn ?? false);
   const socialOn = social !== undefined && preview.on;
@@ -503,7 +507,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       {...(phone ? { sheet: { ...sheetControl, mode: slots?.drawing ? "draw" as const : sheetControl.mode } } : {})}
       {...(phone ? {} : { rowClassName: "overflow-y-auto", playerClassName: "overflow-y-auto" })}
       player={<>
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1 max-[721px]:min-h-0" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} />
+        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" phoneFrameStep={forms === undefined || formOpen} initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1 max-[721px]:min-h-0" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} />
       </>}
       pane={sidePane}
       strip={paneControls.strip}

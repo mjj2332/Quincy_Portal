@@ -51,6 +51,8 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   const phone = useMediaQuery(PHONE_QUERY);
   const [focused, setFocused] = useState(false);
   const [uploading, setUploading] = useState(false);
+  // Cancel remounts the field: unmounting aborts its pending uploads and drops their cards.
+  const [editorKey, setEditorKey] = useState(0);
   const slot = useSyncExternalStore(store.subscribe, () => store.slot(assetId));
   const { composer, open, op } = slot;
   const liveFrame = useFrameClockSelector(clock, (state) => state.targetFrame ?? state.frame, 0);
@@ -91,7 +93,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     {engaged && <div className="grid gap-[var(--space-2)] max-[721px]:col-span-2 max-[721px]:row-start-1" data-testid="video-note-marks">
       {phone && <div data-testid="video-note-stamp" className="flex items-center justify-between gap-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">
         <span>{`Paused at ${timecode(composer.anchorFrame ?? liveFrame)} · the note is stamped here`}</span>
-        <Button type="button" variant="text" data-testid="video-note-cancel" className={SMALL_BUTTON} disabled={frozen} onClick={() => { store.setContent(assetId, { type: "doc", content: [{ type: "paragraph" }] } as never, clock ? frameOnScreen(clock.getState()) : 0); store.clearMarks(assetId); const active = document.activeElement; if (active instanceof HTMLElement && active !== document.body) active.blur(); }}>Cancel</Button>
+        <Button type="button" variant="text" data-testid="video-note-cancel" className={SMALL_BUTTON} disabled={frozen} onClick={() => { store.discardComposer(assetId); setEditorKey((k) => k + 1); const active = document.activeElement; if (active instanceof HTMLElement && active !== document.body) active.blur(); }}>Cancel</Button>
       </div>}
       <span data-testid="video-note-anchor" aria-live="off" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW, "justify-self-start")}>{!pendingFrames && <span className="sr-only">{merged ? "Note with a drawing at " : "Note at "}</span>}{merged && <PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />}{anchorText}</span>
       <div className="flex flex-wrap items-center gap-[var(--space-2)]">
@@ -115,7 +117,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
       onFocusCapture={() => { setFocused(true); if (phone) clock?.pause(); }}
       onBlurCapture={(event) => { if (!(event.relatedTarget instanceof Element && event.currentTarget.contains(event.relatedTarget))) setFocused(false); }}
     >
-      <VideoNoteEditor id="video-note-body" projectId={rich.projectId} role={rich.role} value={draftDoc(composer.content, composer.body)} disabled={frozen} placeholder={phone ? "Add a note…" : "Add a note at this frame… Use @ to mention a colleague."}
+      <VideoNoteEditor key={editorKey} id="video-note-body" projectId={rich.projectId} role={rich.role} value={draftDoc(composer.content, composer.body)} disabled={frozen} placeholder={phone ? "Add a note…" : "Add a note at this frame… Use @ to mention a colleague."}
         onChange={(doc) => { if (!frozen) store.setContent(assetId, doc, clock ? frameOnScreen(clock.getState()) : 0); }} onSubmit={submit} onUploadingChange={setUploading} />
     </div>
     {tooLong && <Notice tone="critical" role="alert" className="max-[721px]:col-span-2 max-[721px]:row-start-4">{`Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.`}</Notice>}

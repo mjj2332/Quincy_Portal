@@ -499,6 +499,12 @@ export function createNoteFormStore(key: string) {
       if (!open_ || open_.kind !== "edit" || open_.noteId !== noteId || open_.drawing.items !== null) return;
       put(assetId, { open: { ...open_, drawing: { ...open_.drawing, items, drawingFrame: frame, baseFrame: open_.drawing.baseFrame ?? frame } }, history: { ...slot(assetId).history, edit: null } });
     },
+    /** Throws the whole composer draft away (Cancel): text, anchor, drawing and its history, marks and the last error. The next note starts clean. */
+    discardComposer(assetId: string) {
+      const held = slot(assetId);
+      if (held.op) return;
+      put(assetId, { composer: { ...EMPTY_COMPOSER, revision: held.composer.revision + 1 }, markup: emptyMarkup(held.markup.revision + 1), history: { ...held.history, composer: null }, marks: { ...NO_MARKS, seed: held.marks.seed }, spent: false, ...(held.draw?.form === "composer" ? { draw: null } : {}) });
+    },
     /** Takes the composer's drawing away (the chip's Remove). */
     clearMarkup(assetId: string) {
       const held = slot(assetId);

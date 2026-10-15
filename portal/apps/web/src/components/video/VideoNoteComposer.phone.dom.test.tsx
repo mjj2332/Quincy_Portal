@@ -11,9 +11,11 @@ import { VideoNoteComposer } from "./VideoNoteComposer";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 /** The phone composer (#879, D10/D11): one row at rest, engaged on focus, focus pauses the film, the pen blurs the keyboard away. */
+let frameNow = 12;
 function fakeClock() {
+  frameNow = 12;
   const state: FrameClockState = { frame: 12, targetFrame: null, confirmed: true, playing: true, rate: 1, stalled: false };
-  const clock = { getState: () => state, subscribe: () => () => undefined, pause: vi.fn(), step: vi.fn(), seekToFrame: vi.fn(), awaitConfirmedFrame: vi.fn(() => Promise.resolve(12)) };
+  const clock = { getState: () => ({ ...state, frame: frameNow }), subscribe: () => () => undefined, pause: vi.fn(), step: vi.fn(), seekToFrame: vi.fn(), awaitConfirmedFrame: vi.fn(() => Promise.resolve(12)) };
   return { clock: clock as unknown as VideoFrameClock, raw: clock };
 }
 let root: Root | null = null; let host: HTMLElement; let store: NoteFormStore; let viewport: MockViewport;
@@ -72,5 +74,23 @@ describe("VideoNoteComposer on a phone (#879)", () => {
     expect(f.raw.step).toHaveBeenCalledWith(1);
     await act(async () => { by("video-note-cancel")!.click(); });
     expect(document.activeElement).not.toBe(host.querySelector("textarea"));
+  });
+
+  it("Cancel throws the whole draft away: the next note starts clean, with no old drawing and its own anchor frame", async () => {
+    const f = await render(390);
+    await act(async () => { host.querySelector<HTMLTextAreaElement>("textarea")!.focus(); });
+    await act(async () => { await store.enterDraw("a", { clock: f.clock, form: "composer", frameCount: 300 }); });
+    await act(async () => { store.setItems("a", "composer", [{ kind: "pen" } as never]); store.exitDraw("a"); });
+    expect(store.slot("a").markup.drawingFrame).toBe(12);
+    await act(async () => { by("video-note-cancel")!.click(); });
+    const held = store.slot("a");
+    expect(held.markup.items).toEqual([]);
+    expect(held.markup.drawingFrame).toBeNull();
+    expect(held.composer.problem).toBeNull();
+    expect(held.composer.anchorFrame).toBeNull();
+    frameNow = 100;
+    await act(async () => { store.setContent("a", { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "second" }] }] } as never, 100); });
+    expect(store.slot("a").composer.anchorFrame).toBe(100);
+    expect(store.slot("a").markup.drawingFrame).toBeNull();
   });
 });

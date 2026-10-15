@@ -625,3 +625,28 @@ describe("the phone control bar (#879)", () => {
     } finally { viewport.restore(); }
   });
 });
+
+describe("the phone control bar's frame step and Social row (#879 review)", () => {
+  it("a host with no composer turns the frame steps back on, and Social controls take their own row", async () => {
+    const viewport = mockViewport({ width: 390 });
+    try {
+      await mount(versionOf(), { phoneFrameStep: true, social: { overlays: [{ id: "a", name: "Reels", imageUrl: "/a" }], currentId: "a", onOverlay: () => undefined, status: "ready", onRetry: () => undefined } });
+      await load();
+      expect(host.querySelector('[aria-label="Previous frame"]')).not.toBeNull();
+      expect(host.querySelector('[aria-label="Next frame"]')).not.toBeNull();
+      const row = byTestId("video-controls-row")!;
+      const social = byTestId("video-social-row")!;
+      expect(social).not.toBeNull();
+      expect(row.contains(social)).toBe(false);
+    } finally { viewport.restore(); }
+  });
+
+  it("on a phone a short picture drops its timecode chip (the transport shows the time); a tall one keeps it", async () => {
+    const viewport = mockViewport({ width: 390 });
+    try {
+      await withLayout(390, 110, async () => { await mount(); await load(); expect(byTestId("video-timecode-chip")).toBeNull(); });
+      await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
+      await withLayout(390, 300, async () => { await mount(); await load(); expect(byTestId("video-timecode-chip")).not.toBeNull(); });
+    } finally { viewport.restore(); }
+  });
+});

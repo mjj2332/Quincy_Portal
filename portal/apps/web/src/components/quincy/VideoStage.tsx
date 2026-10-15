@@ -3,9 +3,12 @@ import type { SocialStageProps } from "./SocialPreviewControls";
 import type { Box } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { usePictureBox } from "../../lib/use-picture-box";
+import { useMediaQuery } from "../../lib/use-media-query";
+import { PHONE_QUERY } from "../../lib/review-pane-geometry";
 import { Notice } from "./Notice";
 
 const MONO = "[font:var(--type-mono)] tabular-nums";
+const CHIP_MIN_PICTURE_PX = 140;
 // What the timecode chip needs to show its frame part: mono glyph advance plus padding, border and the offset from the picture's edge.
 const CHIP_GLYPH_PX = 9;
 const CHIP_CHROME_PX = 40;
@@ -57,6 +60,9 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, f
   onVideoRef.current = onVideo;
   const attach = useCallback((element: HTMLVideoElement | null) => { setVideo(element); onVideoRef.current?.(element); }, []);
 
+  /** A picture this short is mostly covered by its own chip: the transport already shows the time then. */
+  const phone = useMediaQuery(PHONE_QUERY);
+  const chipHidden = phone && box !== null && box.height < CHIP_MIN_PICTURE_PX;
   const chipFull = frameSuffix ? `${timecode} · frame ${frame}` : `frame ${frame}`;
   const chip = box && box.width >= chipFull.length * CHIP_GLYPH_PX + CHIP_CHROME_PX ? chipFull : timecode;
 
@@ -86,7 +92,7 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, f
     <div data-testid="video-social-frame" {...(clipped ? { style: frameStyle } : {})} className={cn(framed ? "relative m-auto aspect-[9/16] w-[min(100cqw,calc(100cqh*9/16))] overflow-hidden" : "absolute inset-0", clipped && "bg-invert")}>
       {videoElement}
       {!framed && box && <div data-testid="video-picture-box" className="pointer-events-none absolute" style={{ left: box.left, top: box.top, width: box.width, height: box.height }}>
-        <span data-testid="video-timecode-chip" aria-hidden="true" className={cn("absolute bottom-[var(--space-2)] left-[var(--space-2)] max-w-[calc(100%-var(--space-4))] overflow-hidden whitespace-nowrap border border-invert-foreground/20 bg-invert px-[var(--space-2)] py-[var(--space-1)] text-invert-foreground", MONO)}>{chip}</span>
+        {!chipHidden && <span data-testid="video-timecode-chip" aria-hidden="true" className={cn("absolute bottom-[var(--space-2)] left-[var(--space-2)] max-w-[calc(100%-var(--space-4))] overflow-hidden whitespace-nowrap border border-invert-foreground/20 bg-invert px-[var(--space-2)] py-[var(--space-1)] text-invert-foreground", MONO)}>{chip}</span>}
       </div>}
       {box && watermark?.(box)}
       {framed && social.imageUrl && <img data-testid="video-social-overlay" src={social.imageUrl} alt="" aria-hidden="true" draggable={false} onError={social.onImageError} onLoad={social.onImageLoad} className="pointer-events-none absolute inset-0 size-full select-none object-fill" />}
