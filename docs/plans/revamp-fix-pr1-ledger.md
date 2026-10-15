@@ -51,3 +51,17 @@ No new hand-built elements. One reused item is added: `components/reui/separator
 | Send | `components/reui/button.tsx` `size="icon-round"`, `VideoNoteComposer.tsx` | lucide `Send` (P6's angled glyph). Disabled keeps the primary fill at the base's reduced opacity on the inverse surface; adaptation note 7 updated. |
 | Strip gutter | `VideoNotesPanel.tsx` | Compose keeps the browse side padding (`--space-4`); only top and bottom tighten. |
 | Keyboard pan | `lib/use-visual-viewport.ts` (`root`), `VideoReviewViewer.tsx`, `guest/GuestVideoScreen.tsx` | No UI. The hook writes the root's height and transform inside the visual-viewport event; in the pill, ProseMirror's scroll-to-selection scrolls only the pill's own box. |
+
+## Round 4 (Simulator pass and design review of round 3)
+
+No new elements.
+
+| Element | Where | Change |
+|---|---|---|
+| Compose layout | `components/quincy/ReviewPane.tsx` | The strip is fixed and the film flexes (plan §3): in compose the sheet stays `flex-none` up to `max-h-full` (was `100% - --space-9`), and the film's cell (`flex-1 min-h-0 overflow-hidden`) gives up its height first. The 96px film floor is gone in compose, so the strip always fits whole above the keyboard. |
+| + | `VideoNoteComposer.tsx` | Rendered at rest too, ahead of the chip, so nothing inside the pill moves on focus; at rest it opens the tray and enters compose. |
+| Pill alignment and shape | `QuincyRichTextEditorBase.tsx` (`PILL_GROUP`, inline addons), `components/reui/input-group.tsx` | `items-end` with the addons lifted 6px, so +, chip and pen sit on the last line; Send `self-end`. The pill radius is half the 44px phone control height (`rounded-[22px]`, adaptation note 6 updated): a stadium on one line, capped corners once it wraps. |
+| Tray separator | `VideoNoteComposer.tsx` | The toolbar's own `RichTextToolbarSeparator` (from `reui/rich-text-editor/rich-text-toolbar.tsx`), replacing the bare `reui/separator`: 16px, centred, the same divider the toolbar uses. |
+| Send | `components/reui/button.tsx` `size="icon-round"` | Always the primary fill; disabled dims only the icon (`disabled:opacity-100 [&:disabled_svg]:opacity-50`). Adaptation note 7 updated. |
+| Pill focus | `QuincyRichTextEditorBase.tsx` | Unchanged this round (round 3's 2px edge ring). Not switched to a `--border-strong` hairline: that token is not re-scoped on the inverse surface (ink-900 on the ink-700 pill), so the focus state would all but vanish. Reported for a decision. |
+| Keyboard box | `lib/use-visual-viewport.ts` | No UI. Attached in a layout effect (on before the next frame), also follows page scroll, and on the way out restores the page scroll before releasing the root. |

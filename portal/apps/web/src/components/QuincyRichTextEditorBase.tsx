@@ -102,11 +102,12 @@ const FIELD_GROUP =
   "has-[[contenteditable=true]:focus-visible]:outline-offset-2";
 /**
  * The same field as one row on the pill radius (#879, the phone note composer, P6 `.composer-input`): the addons sit inline, the toolbar lives elsewhere.
+ * The addons sit on the last line of text (`items-end`, lifted to its centre), so +, chip and pen line up with the caret as the field grows.
  * A sunken fill with a transparent border; focus is a 2px ring drawn on the edge (no offset), not FIELD_GROUP's offset outline. The text box drops the
  * editor's 64px floor, so an empty pill is one line tall and grows only with text (the host clamps it), centred with the chip.
  */
 const PILL_GROUP =
-  "group h-auto flex-row items-center bg-surface-sunken border-transparent hover:border-transparent has-disabled:bg-surface-sunken data-[disabled]:bg-surface-sunken! " +
+  "group h-auto flex-row items-end bg-surface-sunken border-transparent hover:border-transparent has-disabled:bg-surface-sunken data-[disabled]:bg-surface-sunken! " +
   "has-[[contenteditable=true]:focus-visible]:outline-[length:var(--border-width-bold)] " +
   "has-[[contenteditable=true]:focus-visible]:outline-solid " +
   "has-[[contenteditable=true]:focus-visible]:outline-ring " +
@@ -671,12 +672,12 @@ export function QuincyRichTextEditorBase({
       {toolbarContainer === undefined ? <InputGroupAddon ref={addonRef} align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
         {toolbar}
       </InputGroupAddon> : null}
-      {inlineStart !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-start" className={cn("cursor-default", pill && "gap-[var(--space-1)] pl-[var(--space-1)]")}>{inlineStart}</InputGroupAddon> : null}
+      {inlineStart !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-start" className={cn("cursor-default", pill && "gap-[var(--space-1)] pb-[calc(var(--space-1)*1.5)] pl-[var(--space-1)]")}>{inlineStart}</InputGroupAddon> : null}
       <div ref={pageRef} className={cn("relative min-w-0", pill ? "flex-1" : "w-full", contentClassName)}>
         <EditorContent editor={editor} className="w-full min-w-0" />
         {isDocument && outline.length >= 2 && <RichTextOutlineRail outline={outline} activeIndex={activeHeading} onSelect={(index) => scrollToRichTextHeading(editor, index)} className="absolute end-1 top-2 z-[1] max-[721px]:hidden" />}
       </div>
-      {inlineEnd !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-end" className={cn("cursor-default", pill && "pr-[var(--space-1)]")}>{inlineEnd}</InputGroupAddon> : null}
+      {inlineEnd !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-end" className={cn("cursor-default", pill && "pb-[calc(var(--space-1)*1.5)] pr-[var(--space-1)]")}>{inlineEnd}</InputGroupAddon> : null}
     </InputGroup>
     {toolbarContainer ? createPortal(toolbar, toolbarContainer) : null}
     {isDocument && <>

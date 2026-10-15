@@ -144,12 +144,21 @@ describe("ReviewSheet (#879)", () => {
     expect(pane().getAttribute("data-mode")).toBe("browse");
   });
 
-  it("compose mode puts no percentage cap on the sheet, and the film's cell clips what it cannot fit", async () => {
+  it("in compose mode the strip is fixed and the film flexes: the sheet keeps its content height up to the whole split, the film's cell gives up its height first and clips (#879 fix r4)", async () => {
     await mount();
     await act(async () => { q("editor").focus(); });
+    expect(pane().getAttribute("data-mode")).toBe("compose");
+    // The sheet never shrinks (flex-none) and may take the whole split, so the hint, tray, pill and Cancel always fit whole.
+    expect(pane().className).toContain("flex-none");
+    expect(pane().className).toContain("data-[mode=compose]:max-h-full");
     expect(pane().className).not.toContain("max-h-[60%]");
-    expect(pane().className).toContain("data-[mode=compose]:max-h-[calc(100%-var(--space-9))]");
-    expect(q("video-review-player").className).toContain("overflow-hidden");
+    expect(pane().className).not.toContain("max-h-[calc(");
+    expect(pane().style.height).toBe("");
+    // The film's cell is the one that flexes, down to nothing if it must, and never paints past itself.
+    const film = q("video-review-player");
+    expect(film.className).toContain("flex-1");
+    expect(film.className).toContain("min-h-0");
+    expect(film.className).toContain("overflow-hidden");
     await act(async () => { q("editor").blur(); });
     await frame();
     expect(q("video-review-player").className).not.toContain("overflow-hidden");

@@ -14,7 +14,7 @@ import { SheetModeContext } from "../quincy/ReviewSheet";
 import { PILL_ICON } from "../quincy/VideoPlayer";
 import { Button as ReuiButton } from "../reui/button";
 import { Collapsible, CollapsibleContent } from "../reui/collapsible";
-import { Separator } from "../reui/separator";
+import { RichTextToolbarSeparator } from "../reui/rich-text-editor/rich-text-toolbar";
 import { Spinner } from "../reui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
 import { Kbd } from "../reui/kbd";
@@ -234,7 +234,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
           {pendingFrames && <Button type="button" variant="text" data-testid="video-note-clear-marks" className={SMALL_BUTTON} disabled={frozen || drawingNow} onClick={() => { store.clearMarks(assetId); }}>Clear marks</Button>}
           {drawn && !merged && <span data-testid="video-note-drawing-chip" className={PILL_CHIP}><span className="sr-only">Drawing on </span><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />{timecode(drawn.drawingFrame!)}</span>}
           {drawn && <Button type="button" variant="text" data-testid="video-note-remove-drawing" className={SMALL_BUTTON} disabled={frozen} onClick={() => { store.clearMarkup(assetId); }}>Remove drawing</Button>}
-          <Separator orientation="vertical" />
+          <RichTextToolbarSeparator />
           <div ref={setTrayToolbar} data-testid="video-note-tray-toolbar" />
         </div>
         </div>
@@ -251,7 +251,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     >
       <VideoNoteEditor key={editorKey} id="video-note-body" projectId={rich.projectId} role={rich.role} value={draftDoc(composer.content, composer.body)} disabled={frozen} placeholder={phone ? (drawingNow ? "Add a note with this drawing…" : "Add a note…") : "Add a note at this frame… Use @ to mention a colleague."}
         onChange={(doc) => { if (!frozen) store.setContent(assetId, doc, clock ? frameOnScreen(clock.getState()) : 0); }} onSubmit={send} onUploadingChange={setUploading}
-        {...(phone ? { pill: true, toolbarContainer: trayToolbar, inlineStart: <>{composing && plus}{chip}</>, ...(penSlot ? { inlineEnd: penSlot } : {}), contentClassName: composing ? COMPOSE_CLAMP : REST_CLAMP } : {})}
+        {...(phone ? { pill: true, toolbarContainer: trayToolbar, inlineStart: <>{plus}{chip}</>, ...(penSlot ? { inlineEnd: penSlot } : {}), contentClassName: composing ? COMPOSE_CLAMP : REST_CLAMP } : {})}
       />
     </div>
     {!phone && tooLong && <Notice tone="critical" role="alert">{`Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.`}</Notice>}
@@ -274,7 +274,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     </div>}
     {!phone && clock === null && <span className="text-foreground-secondary [font:var(--type-label)]">Loading the film…</span>}
     {/* Phone: the round Send (C5), icon-only; its phase is a spinner and its name. A press never takes the focus, so the keyboard stays and nothing jumps before the post. */}
-    {phone && <ReuiButton type="submit" size="icon-round" data-testid="video-note-post" aria-label={label} disabled={!canPost} onPointerDown={keepFocus} onMouseDown={keepFocus} className="col-start-2 row-start-3 self-start">
+    {phone && <ReuiButton type="submit" size="icon-round" data-testid="video-note-post" aria-label={label} disabled={!canPost} onPointerDown={keepFocus} onMouseDown={keepFocus} className="col-start-2 row-start-3 self-end">
       {frozen ? <Spinner aria-hidden="true" /> : <Send aria-hidden="true" />}
     </ReuiButton>}
     {phone && composing && <div className="col-span-2 row-start-4 flex justify-end">

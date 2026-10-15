@@ -94,4 +94,21 @@ describe("useVisualViewport (#879)", () => {
     expect(element.style.height).toBe("");
     expect(element.style.transform).toBe("");
   });
+  it("follows a scroll of the page itself, and on the way out puts the page scroll back before it releases the root (#879 fix r4)", async () => {
+    const element = document.createElement("div"); document.body.appendChild(element);
+    const ref = { current: element };
+    function Rooted({ enabled }: { enabled: boolean }) { useVisualViewport(enabled, undefined, ref); return null; }
+    await act(async () => { root.render(<Rooted enabled />); });
+    Object.assign(fake, { height: 400, offsetTop: 50 });
+    window.dispatchEvent(new Event("scroll"));
+    expect(element.style.transform).toBe("translateY(50px)");
+    let heightWhenScrolled: string | null = null;
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => { heightWhenScrolled = element.style.height; });
+    await act(async () => { root.render(<Rooted enabled={false} />); });
+    await fire("resize", { height: window.innerHeight, offsetTop: 50 });
+    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+    expect(heightWhenScrolled).toBe("400px");
+    expect(element.style.height).toBe("");
+    scrollTo.mockRestore();
+  });
 });

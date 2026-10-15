@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 export type VisualViewportBox = { height: number; offsetTop: number };
 
@@ -30,7 +30,9 @@ export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void,
   rootRef.current = root;
   // Whether the box is still following after compose mode ended (the keyboard is on its way down).
   const settling = useRef<(() => void) | null>(null);
-  useEffect(() => {
+  // A layout effect (#879 fix r4): the listener is on, and the box written onto the root, before the frame that follows compose mode turning on. On the first focus after a
+  // load iOS starts panning in that very frame; a passive effect attached a frame late and the viewer flashed off screen once.
+  useLayoutEffect(() => {
     const viewport = typeof window === "undefined" ? undefined : window.visualViewport;
     if (!enabled || !viewport) return undefined;
     settling.current?.();
@@ -53,9 +55,12 @@ export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void,
     if (window.innerHeight - viewport.height >= KEYBOARD_MIN_PX) shrunk = true;
     viewport.addEventListener("resize", onResize);
     viewport.addEventListener("scroll", read);
+    // iOS may also scroll the page itself to bring the field into view; that moves the visual viewport too, so it is read in the same task.
+    window.addEventListener("scroll", read, { passive: true });
     return () => {
       viewport.removeEventListener("resize", onResize);
       viewport.removeEventListener("scroll", read);
+      window.removeEventListener("scroll", read);
       // Keep following while the keyboard goes down; then drop the box and undo any pan iOS left behind.
       let timer: ReturnType<typeof setTimeout> | undefined;
       const finish = () => {
@@ -63,10 +68,11 @@ export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void,
         viewport.removeEventListener("scroll", follow);
         clearTimeout(timer);
         settling.current = null;
+        // Put the page scroll back first, then release the box: the other way round shows one frame of the panned page (#879 fix r4).
+        if (viewport.offsetTop !== 0 || window.scrollY !== scrollY) window.scrollTo(0, scrollY);
         const element = rootRef.current?.current;
         if (element) { element.style.height = ""; element.style.transform = ""; }
         setBox(null);
-        if (viewport.offsetTop !== 0 || window.scrollY !== scrollY) window.scrollTo(0, scrollY);
       };
       const follow = () => { if (window.innerHeight - viewport.height <= 1) finish(); else read(); };
       if (window.innerHeight - viewport.height <= 1) { finish(); return; }

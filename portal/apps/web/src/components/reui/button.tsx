@@ -54,8 +54,8 @@ import { cn } from "@/lib/utils"
 //
 // 7. `size["icon-round"]` (owner decision C5, 2026-10-15): the phone note composer's round Send.
 //    A 44px circle on the pill radius token, used by that one call site only; every other size and
-//    every variant renders exactly as before. Disabled it keeps the primary fill at the base's reduced
-//    opacity (P6 `.send`), where `default` on an inverse surface would otherwise draw an outline.
+//    every variant renders exactly as before. Disabled it keeps the full primary fill and dims only its icon
+//    (P6 `.send` is always primary), where `default` on an inverse surface would draw an outline.
 
 /** Quincy's control height contract: 38px, 44px at <=721px (correction 3). */
 export const BUTTON_HEIGHT_CLASS = "min-h-[38px] max-[721px]:min-h-[44px]"
@@ -88,7 +88,7 @@ const buttonVariants = cva(
         "icon-sm":
           "size-7 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg",
         "icon-lg": "size-9",
-        "icon-round": "size-11 rounded-[var(--radius-pill)] in-data-[surface=inverse]:disabled:border-transparent in-data-[surface=inverse]:disabled:bg-primary in-data-[surface=inverse]:disabled:!text-primary-foreground",
+        "icon-round": "size-11 rounded-[var(--radius-pill)] disabled:opacity-100 [&:disabled_svg]:opacity-50 in-data-[surface=inverse]:disabled:border-transparent in-data-[surface=inverse]:disabled:bg-primary in-data-[surface=inverse]:disabled:!text-primary-foreground",
       },
     },
     defaultVariants: {

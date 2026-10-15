@@ -76,7 +76,7 @@ beforeEach(() => { store = createNoteFormStore("t"); drawing = false; outside = 
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; viewport.restore(); document.body.replaceChildren(); });
 
 describe("VideoNoteComposer on a phone: the pill at rest (P1)", () => {
-  it("rests as the pill: chip, field, pen and a round Send, with no +, hint line, Cancel, visibility or toolbar on show", async () => {
+  it("rests as the pill: +, chip, field, pen and a round Send, with no hint line, Cancel, visibility or toolbar on show", async () => {
     await render();
     expect(by("video-note-anchor")!.textContent).toContain("TC12");
     expect(by("stub-inline-start")!.contains(by("video-note-anchor"))).toBe(true);
@@ -86,7 +86,10 @@ describe("VideoNoteComposer on a phone: the pill at rest (P1)", () => {
     expect(send.getAttribute("aria-label")).toBe("Post");
     expect(send.className).toContain("rounded-[var(--radius-pill)]");
     expect(send.textContent).toBe("");
-    expect(by("video-note-extras")).toBeNull();
+    // + rests in the pill too (#879 fix r4), ahead of the chip, so nothing inside the pill moves when the field takes the focus.
+    const plus = by("video-note-extras")!;
+    expect(by("stub-inline-start")!.contains(plus)).toBe(true);
+    expect(plus.compareDocumentPosition(by("video-note-anchor")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(by("video-note-stamp")).toBeNull();
     expect(by("video-note-cancel")).toBeNull();
     expect(by("video-note-marks")).toBeNull();
@@ -105,7 +108,6 @@ describe("VideoNoteComposer on a phone: the pill at rest (P1)", () => {
     await blurTo(outside);
     expect(sheetMode()).toBe("browse");
     expect(by("video-note-composer")!.dataset.compose).toBe("false");
-    expect(by("video-note-extras")).toBeNull();
     expect(by("video-note-stamp")).toBeNull();
     expect(by("video-note-cancel")).toBeNull();
     expect(area().value).toBe("first line\nsecond line");
@@ -142,6 +144,24 @@ describe("VideoNoteComposer on a phone: the compose strip (P6)", () => {
     await press(by("video-note-extras")!);
     await press(by("video-note-visibility-public")!);
     expect(by("video-note-stamp")!.textContent).toBe("Client-visible · paused at TC12 · the note is stamped here");
+  });
+
+  it("+ at rest opens the tray and enters compose mode, the field and chip staying where they were (#879 fix r4)", async () => {
+    await render();
+    const before = by("stub-inline-start")!.innerHTML;
+    expect(await press(by("video-note-extras")!)).toBe(true);
+    expect(trayOpen()).toBe(true);
+    expect(sheetMode()).toBe("compose");
+    expect(by("stub-inline-start")!.innerHTML.replace(/aria-expanded="true"/, 'aria-expanded="false"')).toBe(before);
+  });
+
+  it("Send sits on the pill's last line, and keeps its primary fill when there is nothing to post: only the icon dims (#879 fix r4)", async () => {
+    await render();
+    const send = by("video-note-post")!;
+    expect(send.className).toContain("self-end");
+    expect(send.className).toContain("disabled:opacity-100");
+    expect(send.className).toContain("[&:disabled_svg]:opacity-50");
+    expect(send.className).toContain("in-data-[surface=inverse]:disabled:bg-primary");
   });
 
   it("+ opens and closes the tray without taking the focus from the field, so the keyboard stays up", async () => {
@@ -376,9 +396,8 @@ describe("VideoNoteComposer on a phone: draw (P7) and the field's identity", () 
 
   it("outside a sheet (no mode handed down) the field's focus stands in for compose mode", async () => {
     await render({ sheet: false });
-    expect(by("video-note-extras")).toBeNull();
+    expect(by("video-note-cancel")).toBeNull();
     await focusField();
-    expect(by("video-note-extras")).not.toBeNull();
     expect(by("video-note-cancel")).not.toBeNull();
   });
 });
