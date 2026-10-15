@@ -17,6 +17,7 @@ import { Button } from "../quincy/Button";
 import { EmbeddedUploadTray, type EmbeddedUpload } from "../quincy/EmbeddedUploadTray";
 import { EmptyState } from "../quincy/EmptyState";
 import { Notice } from "../quincy/Notice";
+import { Skeleton } from "../reui/skeleton";
 import { FileDropzone } from "../quincy/FileDropzone";
 import { VideoDownloadDialog } from "./VideoDownloadDialog";
 import { NewFilmPickButton, NewFilmUploader, useReceiveNewFilms } from "./NewFilmUploader";
@@ -205,7 +206,12 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
 
   return <section aria-labelledby="video-films-heading" data-testid="video-films">
     <div className="workspace-intro workspace-intro--stack" data-testid="video-films-header">
-      <div><div className="ey">Video review</div><h1 className="serif" id="video-films-heading">Films</h1></div>
+      {/* T3 (#879 PR 3a): the title and the count share one baseline row, no eyebrow. The count is every live film (not the filtered grid); a skeleton while the list loads, nothing when it fails (the body carries the error and Retry). */}
+      <div className="flex items-baseline gap-[var(--space-2)]">
+        <h1 className="serif" id="video-films-heading">Video</h1>
+        {videos.data ? <span className="text-sm text-foreground-secondary tabular-nums" data-testid="video-films-count">{videos.data.length === 1 ? "1 film" : `${videos.data.length} films`}</span>
+          : videos.isPending ? <Skeleton className="h-[var(--space-4)] w-[var(--space-8)] self-center" data-testid="video-films-count-loading" aria-hidden="true" /> : null}
+      </div>
       <div className="muted">Upload web-ready H.264 MP4 or MOV cuts. A re-cut becomes a new version of the same film; notes stay with the version they were made on.</div>
       <div className="flex flex-wrap items-center gap-[var(--space-3)]">
         {canUpload && <NewFilmPickButton receive={receiveNewFilms} />}

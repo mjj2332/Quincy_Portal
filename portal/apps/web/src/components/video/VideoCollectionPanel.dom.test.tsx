@@ -183,6 +183,38 @@ describe("Video tiles (#884, was the #741 4d-i cards)", () => {
   });
 });
 
+describe("Collection header (T3, #879 PR 3a)", () => {
+  const header = () => host.querySelector<HTMLElement>('[data-testid="video-films-header"]')!;
+  const count = () => header().querySelector('[data-testid="video-films-count"]');
+  it("is titled Video with no eyebrow, and counts the films beside the title", async () => {
+    await mount([videoOf(), videoOf({ id: "55555555-5555-4555-8555-555555555555", title: "Twilight cut" })]);
+    expect(header().querySelector("#video-films-heading")?.textContent).toBe("Video");
+    expect(header().textContent).not.toContain("Video review");
+    expect(count()?.textContent).toBe("2 films");
+    await unmount();
+    await mount([videoOf()]);
+    expect(count()?.textContent).toBe("1 film");
+  });
+
+  it("holds a skeleton while the list loads, and shows no count when it fails", async () => {
+    apiGetMock.mockImplementation(() => new Promise(() => undefined));
+    host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><VideoCollectionPanel projectId={PROJECT} role="editor" review={{ open: true, parts: ["upload"] }} /></QuincyQueryProvider>); });
+    await flush();
+    expect(header().querySelector('[data-testid="video-films-count-loading"]')?.getAttribute("aria-hidden")).toBe("true");
+    expect(count()).toBeNull();
+    await unmount();
+    const { ApiError } = await import("../../lib/api");
+    apiGetMock.mockImplementation(async () => { throw new ApiError("Films could not be loaded.", 404, { code: "not_found" }); }); // a 4xx is not retried
+    host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><VideoCollectionPanel projectId={PROJECT} role="editor" review={{ open: true, parts: ["upload"] }} /></QuincyQueryProvider>); });
+    await flush(16);
+    expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    expect(count()).toBeNull();
+    expect(header().querySelector('[data-testid="video-films-count-loading"]')).toBeNull();
+  });
+});
+
 describe("Uploader (#741 4d-i)", () => {
   it("offers MP4 and MOV on both pickers and says so in its copy (#813)", async () => {
     await mount([videoOf()], ["upload"]);
