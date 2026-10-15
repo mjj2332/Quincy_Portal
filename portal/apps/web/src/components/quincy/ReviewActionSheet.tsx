@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactNode } from "react";
 import { IconButton } from "./icon-button";
-import { Item, ItemContent, ItemGroup, ItemMedia, ItemSeparator, ItemTitle } from "../reui/item";
+import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemSeparator, ItemTitle } from "../reui/item";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../reui/sheet";
 import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "./SheetCloseButton";
 import { cn } from "@/lib/utils";
@@ -41,7 +41,7 @@ export const SHEET_SCRIM = "bg-[color-mix(in_srgb,var(--ink-900)_75%,transparent
 const ROW = "min-h-11 w-full cursor-pointer text-start data-[disabled]:cursor-not-allowed data-[disabled]:opacity-60 aria-disabled:cursor-not-allowed aria-disabled:opacity-60";
 
 /** One row of the action sheet: a button, or a real anchor (`href`, so the browser's own download runs on it). */
-export function ActionRow({ icon, children, onSelect, href, download, label, danger = false, disabled = false, pressed, testId }: {
+export function ActionRow({ icon, children, onSelect, href, download, label, danger = false, disabled = false, pressed, testId, hint }: {
   icon?: ReactNode;
   children: ReactNode;
   onSelect?: ((event?: unknown) => void) | undefined;
@@ -54,6 +54,8 @@ export function ActionRow({ icon, children, onSelect, href, download, label, dan
   /** A toggle row (Social preview): its state, spoken as `aria-pressed`. */
   pressed?: boolean | undefined;
   testId?: string | undefined;
+  /** A line under the title: why a row is disabled (#880: no native player here). */
+  hint?: string | undefined;
 }) {
   const common = { "data-testid": testId, "aria-label": label, className: cn(ROW, danger && "text-destructive-wash-foreground") };
   const render = href !== undefined
@@ -61,7 +63,7 @@ export function ActionRow({ icon, children, onSelect, href, download, label, dan
     : <button {...common} type="button" disabled={disabled} {...(pressed !== undefined ? { "aria-pressed": pressed } : {})} onClick={onSelect} />;
   return <Item size="sm" render={render}>
     {icon && <ItemMedia variant="icon">{icon}</ItemMedia>}
-    <ItemContent><ItemTitle>{children}</ItemTitle></ItemContent>
+    <ItemContent><ItemTitle>{children}</ItemTitle>{hint && <ItemDescription>{hint}</ItemDescription>}</ItemContent>
   </Item>;
 }
 

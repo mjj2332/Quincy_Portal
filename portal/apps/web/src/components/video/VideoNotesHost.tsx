@@ -14,7 +14,7 @@ import { VideoNotesPanel } from "./VideoNotesPanel";
  * Project without notes never pays for it (and the notes-off viewer is exactly the 4d-ii viewer).
  */
 /** What the notes host hands the viewer: the player's props, the panel, and (#879) what the phone header and sheet need from the session: the marker export, whether the pen is down, the open count. */
-export type NotesSlots = { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode; markerExport: MarkerExport; drawing: boolean; openCount: number | null };
+export type NotesSlots = { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode; markerExport: MarkerExport; drawing: boolean; openCount: number | null; /** Full screen (#880): what the marker card and Add note need from the session. */ immersive: Pick<VideoNotesSession, "threads" | "clock" | "timecode" | "readOnly" | "assetId"> };
 
 export default function VideoNotesHost({ notes, video, version, detailsRows, children }: {
   notes: { projectId: string; role: Role; userId: string | null; archived: boolean; forms: NoteFormStore; /** The Project's `markup` part is on. */ markup?: boolean; /** The Project's `export` part is on (#741 9). */ exportEnabled?: boolean; /** #835: the note the link names. */ openNoteId?: string };
@@ -38,5 +38,6 @@ export default function VideoNotesHost({ notes, video, version, detailsRows, chi
     playerProps: { ...session.playerProps, ...(overlay ? { overlay } : {}), ...(transportActions && !phone ? { transportActions } : {}), ...(transportReplacement ? { transportReplacement } : {}) },
     panel: <VideoNotesPanel key={version.assetId} session={session} video={video} detailsRows={detailsRows} exp={exp} phone={phone} {...(pen ? { pen } : {})} />,
     markerExport: exp, drawing, openCount: session.threads ? session.threads.filter((thread) => thread.resolved === null).length : null,
+    immersive: { threads: session.threads, clock: session.clock, timecode: session.timecode, readOnly: session.readOnly, assetId: session.assetId },
   })}</>;
 }

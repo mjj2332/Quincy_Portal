@@ -1,4 +1,4 @@
-import { DownloadIcon, FileDown, Link2, Smartphone, Trash2 } from "lucide-react";
+import { DownloadIcon, FileDown, Link2, Maximize, Smartphone, Trash2 } from "lucide-react";
 import { copyText } from "../../lib/clipboard";
 import { Item, ItemContent, ItemMedia, ItemTitle } from "../reui/item";
 import { Button } from "../reui/button";
@@ -8,11 +8,10 @@ import { Menu } from "../quincy/menu";
 
 /**
  * The staff review viewer's ⋯ on a phone (#879, D5, P9/P10): a bottom action sheet of Social preview, Download, Marker export, Copy link, Create Review link and, below a rule,
- * Remove version…. Each row exists only when the viewer would have offered its desktop control, and the trigger is not rendered when none does. "Open in iPhone player" is #880's: add its row
- * between Create Review link and the rule. Same pieces as before, re-homed: Download is a real anchor; Marker export opens the notes ⋯ menu's own export options (`MarkerExportMenuItems`) as a menu from its row.
+ * Remove version…. Each row exists only when the viewer would have offered its desktop control, and the trigger is not rendered when none does. "Open in iPhone player" (#880) sits between Create Review link and the rule. Same pieces as before, re-homed: Download is a real anchor; Marker export opens the notes ⋯ menu's own export options (`MarkerExportMenuItems`) as a menu from its row.
  * Reuse: `quincy/ReviewActionSheet` (`reui/sheet` + `reui/item`), `quincy/menu` for the export options.
  */
-export function VideoReviewHeaderMenu({ container, social, copyHref, downloadHref, downloadLabel, markerExport, onCreateReviewLink, onRemoveVersion, removeDisabled = false }: {
+export function VideoReviewHeaderMenu({ container, social, copyHref, downloadHref, downloadLabel, markerExport, onCreateReviewLink, systemPlayer, onRemoveVersion, removeDisabled = false }: {
   /** The viewer's overlay slot: the sheet portals into it. */
   container: HTMLElement | null;
   /** Social preview: its state and toggle. Absent where the Project offers none. */
@@ -24,12 +23,14 @@ export function VideoReviewHeaderMenu({ container, social, copyHref, downloadHre
   /** The notes host's marker export, lifted so the header can reach it. Absent when the `export` part is off or the notes are not loaded. */
   markerExport?: MarkerExport | undefined;
   onCreateReviewLink?: (() => void) | undefined;
+  /** "Open in iPhone player" / "Open in system player" (#880, D15): hands the film to the device's own player. `supported` is read when the sheet opens; `open` runs inside the press, before the sheet closes. */
+  systemPlayer?: { label: string; supported: () => boolean; open: () => void } | undefined;
   /** Opens the Version removal confirmation. */
   onRemoveVersion?: (() => void) | undefined;
   removeDisabled?: boolean;
 }) {
   const exportOn = markerExport?.enabled === true;
-  if (!social && !copyHref && !downloadHref && !exportOn && !onCreateReviewLink && !onRemoveVersion) return null;
+  if (!social && !copyHref && !downloadHref && !exportOn && !onCreateReviewLink && !systemPlayer && !onRemoveVersion) return null;
   return <ReviewActionSheet container={container}>
     {(close) => <>
       {social && <ActionRow testId="video-social-toggle" icon={<Smartphone aria-hidden="true" />} pressed={social.on} onSelect={() => { social.toggle(); close(); }}>Social preview</ActionRow>}
@@ -43,8 +44,12 @@ export function VideoReviewHeaderMenu({ container, social, copyHref, downloadHre
       </Menu>}
       {copyHref && <ActionRow testId="video-menu-copy-link" icon={<Link2 aria-hidden="true" />} onSelect={() => { copyText(copyHref); close(); }}>Copy link</ActionRow>}
       {onCreateReviewLink && <ActionRow testId="video-create-review-link" icon={<Link2 aria-hidden="true" />} onSelect={() => { close(true); onCreateReviewLink(); }}>Create Review link</ActionRow>}
+      {systemPlayer && (() => {
+        const supported = systemPlayer.supported();
+        return <ActionRow testId="video-open-system-player" icon={<Maximize aria-hidden="true" />} disabled={!supported} hint={supported ? undefined : "This browser has no player of its own to open the film in."} onSelect={() => { systemPlayer.open(); close(); }}>{systemPlayer.label}</ActionRow>;
+      })()}
       {onRemoveVersion && <>
-        {(social || copyHref || downloadHref || exportOn || onCreateReviewLink) && <ActionSeparator />}
+        {(social || copyHref || downloadHref || exportOn || onCreateReviewLink || systemPlayer) && <ActionSeparator />}
         <ActionRow testId="video-header-remove-version" icon={<Trash2 aria-hidden="true" />} danger disabled={removeDisabled} onSelect={() => { close(true); onRemoveVersion(); }}>Remove version…</ActionRow>
       </>}
     </>}

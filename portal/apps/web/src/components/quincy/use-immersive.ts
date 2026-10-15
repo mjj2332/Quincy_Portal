@@ -78,7 +78,7 @@ export function useImmersive({ rootRef, state, setState }: { rootRef: RefObject<
     } else if (was !== null && state === null) {
       const back = recorded.current;
       recorded.current = null;
-      const target = back instanceof HTMLElement && back.isConnected && back !== document.body ? back : root?.querySelector<HTMLElement>('[data-testid="video-fullscreen"]') ?? null;
+      const target = back instanceof HTMLElement && back.isConnected && back !== document.body && back !== root ? back : root?.querySelector<HTMLElement>('[data-testid="video-fullscreen"]') ?? null;
       target?.focus({ preventScroll: true });
     }
   }, [state, rootRef]);

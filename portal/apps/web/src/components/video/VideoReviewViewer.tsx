@@ -1,6 +1,11 @@
+import { flushSync } from "react-dom";
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ChevronLeft, Columns2, DownloadIcon, Link2, Smartphone, Trash2 } from "lucide-react";
 import { framesToTimecode, videoVersionDownloadUrl, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
+import { rotate, type ImmersiveState, readPhoneDevice } from "../../lib/immersive";
+import { readLandscape, useDeviceOrientation } from "../../lib/use-device-orientation";
+import { nativePlayerLabel } from "../../lib/video-native-player";
+import { frameOnScreen } from "../../lib/video-note-form-store";
 import { registerToastHost } from "../../lib/toast-host";
 import { hasOpenAlertDialog } from "../../lib/alert-dialog-press";
 import { useMediaQuery } from "../../lib/use-media-query";
@@ -24,6 +29,9 @@ import type { NotesSlots } from "./VideoNotesHost";
 import type { SocialPreviewMode } from "../quincy/SocialPreviewControls";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../reui/tabs";
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
+import { useImmersive } from "../quincy/use-immersive";
+import type { VideoFrameClock } from "../../lib/video-frame-clock";
+import { VideoImmersiveNoteCard } from "./VideoImmersiveNoteCard";
 import { ReviewPhoneBar, VersionChip } from "../quincy/ReviewPhoneBar";
 import { VideoPhoneApprove } from "./VideoPhoneApprove";
 import { VideoVersionsSheet, withSummaries } from "./VideoVersionsSheet";
@@ -63,6 +71,8 @@ const BAR_LABEL = "@max-[1400px]:sr-only";
  * move behind a button in its header; without it the viewer is exactly the 4d-ii viewer.
  */
 const noSubscribe = () => () => undefined;
+type EscapeSnapshot = { layer: boolean; form: boolean; compare: boolean; social: boolean; immersive: "card" | "compose" | "leave" | null };
+const NO_ESCAPE: EscapeSnapshot = { layer: false, form: false, compare: false, social: false, immersive: null };
 
 export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, reviewLinks, deepLink, reviewStatus, social }: {
   video: VideoDto;
@@ -122,6 +132,11 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const startFrameRef = useRef(0);
   const [resume, setResume] = useState<{ assetId: string; frame: number } | null>(null);
   const phone = useMediaQuery(PHONE_QUERY);
+  // Full screen (#880; "immersive" is the code name). Held up here, above the layout, so it survives the 721px crossing a rotation makes. A phone that opens already sideways starts in it (D14).
+  const [immersive, setImmersive] = useState<ImmersiveState>(() => rotate(null, { landscape: readLandscape(), phoneDevice: readPhoneDevice() }));
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [cardId, setCardId] = useState<string | null>(null);
+  useDeviceOrientation((landscape) => { setImmersive((current) => rotate(current, { landscape, phoneDevice: readPhoneDevice() })); });
   // The side pane (#859): open / width are a per-browser preference shared with the guest page. `sideTab` picks Notes (or Details) or Delivery inside it.
   const pane = useReviewPane(phone);
   const paneId = useId();
@@ -144,6 +159,19 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const canCompare = liveStore !== undefined && video.versions.length >= 2 && !phone;
   // Focus opens on the dialog itself, not its first button: Space on the Video button would close it (and the player leaves Space to a focused button).
   const popupRef = useRef<HTMLDivElement | null>(null);
+  const full = useImmersive({ rootRef: popupRef, state: immersive, setState: setImmersive });
+  const imm = immersive !== null && mode === "single";
+  const immRef = useRef(imm);
+  immRef.current = imm;
+  const composeRef = useRef(composeOpen);
+  composeRef.current = composeOpen;
+  const cardRef = useRef(cardId);
+  cardRef.current = cardId;
+  // Leaving Full screen (or Compare, or a Version change) puts the card and the floating composer away.
+  useEffect(() => { if (!imm) { setComposeOpen(false); setCardId(null); } }, [imm]);
+  useEffect(() => { setCardId(null); }, [assetId]);
+  /** Put the floating composer away with focus already on Add note (lesson P3: move focus before the pane that holds it is hidden). */
+  const closeCompose = useCallback(() => { document.querySelector<HTMLElement>('[data-testid="video-immersive-add-note"]')?.focus({ preventScroll: true }); setComposeOpen(false); }, []);
   // Base UI moves focus a frame after mount; a key typed in that gap (Enter, then Space) would still hit the opener. Take focus in the commit itself.
   const takePopup = useCallback((element: HTMLDivElement | null) => { popupRef.current = element; element?.focus({ preventScroll: true }); }, []);
   // The Project sheet's overlay slot sits under this dialog: popups opened in here (Version, tooltips) portal into a slot of the dialog's own.
@@ -177,7 +205,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   } : undefined;
   // Social preview pauses nothing (#877): notes, marks and drawing work in it, so turning it on or off touches no form, draft or drawing.
   const setSocialOn = (next: boolean) => { preview.setOn(next); };
-  const escapeSnapshot = useRef({ layer: false, form: false, compare: false, social: false });
+  const escapeSnapshot = useRef<EscapeSnapshot>(NO_ESCAPE);
   const exitCompare = useCallback((focus: "button" | "dialog") => {
     if (modeRef.current !== "compare") return;
     // The view may not have loaded yet (leaving at once): then the frame it was entered at is still the position.
@@ -197,7 +225,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       const popup = popupRef.current;
       // A modal dialog opened from the panel (the notes paste dialog) is not a floating popup but owns Escape just the same.
       const layer = hasOpenAlertDialog() || hasOpenFloatingPopup(popup, slot) || hasOpenModalAbove(popup, document);
-      if (layer || popup === null) { escapeSnapshot.current = { layer, form: false, compare: false, social: false }; return; }
+      if (layer || popup === null) { escapeSnapshot.current = { ...NO_ESCAPE, layer }; return; }
       const active = document.activeElement;
       let consumed = false;
       const inForm = active instanceof Element && popup.contains(active) && active.closest("[data-notes-form]") !== null;
@@ -215,10 +243,12 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         // focus === "draw": the pill is still expanded here, so the overlay returns focus to its Draw button itself once drawing has ended.
         else if (result.focus === "textarea") (popup.querySelector<HTMLElement>('[data-notes-form="edit"] :is(textarea, [contenteditable="true"]), [data-notes-form="reply"] :is(textarea, [contenteditable="true"])') ?? popup.querySelector<HTMLElement>("#video-note-body"))?.focus({ preventScroll: true });
       }
-      escapeSnapshot.current = { layer, form: consumed, compare: !consumed && modeRef.current === "compare", social: !consumed && socialOnRef.current };
+      // Full screen's rung (#880) comes after the form and Social and before Compare: the card closes first, then a floating composer, then Full screen itself. The viewer never closes from it.
+      const rung = !consumed && !socialOnRef.current && immRef.current ? (cardRef.current !== null ? "card" : composeRef.current ? "compose" : "leave") : null;
+      escapeSnapshot.current = { layer, form: consumed, compare: !consumed && modeRef.current === "compare", social: !consumed && socialOnRef.current, immersive: rung };
     };
     window.addEventListener("keydown", onKeyDown, true);
-    return () => { window.removeEventListener("keydown", onKeyDown, true); escapeSnapshot.current = { layer: false, form: false, compare: false, social: false }; };
+    return () => { window.removeEventListener("keydown", onKeyDown, true); escapeSnapshot.current = NO_ESCAPE; };
   }, [notesOn, forms, assetId, slot, compareStore]);
   const handleOpenChange = (open: boolean, details: { reason: string; cancel: () => void; allowPropagation: () => void }) => {
     if (open) return;
@@ -228,6 +258,11 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       if (snapshot.layer || hasOpenFloatingPopup(popupRef.current, slot)) { details.cancel(); details.allowPropagation(); return; }
       if (snapshot.form) { details.cancel(); return; }
       if (snapshot.social) { details.cancel(); preview.setOn(false); socialToggleRef.current?.focus({ preventScroll: true }); return; }
+      if (snapshot.immersive) {
+        details.cancel();
+        if (snapshot.immersive === "card") setCardId(null); else if (snapshot.immersive === "compose") closeCompose(); else full.leave();
+        return;
+      }
       if (snapshot.compare) { details.cancel(); exitCompare("button"); return; }
     }
     onClose();
@@ -381,7 +416,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const downloadHref = download && !comparing ? videoVersionDownloadUrl(download.projectId, version.assetId) : undefined;
   const [versionsOpen, setVersionsOpen] = useState(false);
   // With the keyboard up (the editor has focus on a phone) the dialog takes the visual viewport, so the film stays on top and the composer sits above the keyboard (D10).
-  const keyboard = useVisualViewport(phone && sheetControl.composing);
+  const keyboard = useVisualViewport(phone && (sheetControl.composing || (imm && composeOpen)));
   const chipRef = useRef<HTMLButtonElement | null>(null);
   const summaries = useVideoVersionSummariesQuery(notes?.projectId ?? reviewStatus?.projectId ?? trash?.projectId ?? download?.projectId ?? "", video.id, phone && versionsOpen && (notes ?? reviewStatus ?? trash ?? download) !== undefined, notes?.role ?? reviewStatus?.role);
   const desktopHeader = <header className="@container flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-1)] text-card-foreground max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">
@@ -449,6 +484,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         container={slot}
         {...(social ? { social: { on: socialOn, toggle: () => { setSocialOn(!socialOn); } } } : {})}
         copyHref={copyHref} downloadHref={downloadHref} downloadLabel={`Download version ${version.version}`} onCreateReviewLink={createReviewLink} {...(markerExport ? { markerExport } : {})}
+        systemPlayer={{ label: nativePlayerLabel(), supported: () => playerRef.current?.nativePlayerSupported?.() ?? false, open: () => { playerRef.current?.openSystemPlayer?.(); } }}
         {...(removeVersionFromMenu ? { onRemoveVersion: removeVersionFromMenu, removeDisabled: !removeReady || trash?.archived === true || (video.uploading != null && video.versions.length === 1) } : {})}
       />}
     />
@@ -496,6 +532,36 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       onMarkerSelect: (id: string) => { revealNotes(); slots.playerProps.onMarkerSelect(id); },
       ...(slots.playerProps.onMark ? { onMark: (kind: "in" | "out", frame: number) => { revealNotes(); slots.playerProps.onMark!(kind, frame); } } : {}),
     } : undefined;
+    // Full screen (#880). A marker press in it pauses and shows the root note as a card (the sheet stays where it is: D19); Add note pauses, stamps that frame and floats the composer, focusing the
+    // editor inside the press so a phone's keyboard comes up (the pane is shown in the same commit, by flushSync, because a hidden field cannot take focus).
+    const cardThread = cardId === null ? undefined : slots?.immersive.threads?.find((thread) => thread.id === cardId);
+    const writable = notes !== undefined && !notes.archived && slots !== null && !slots.immersive.readOnly && slots.immersive.clock !== null;
+    const toggleAddNote = () => {
+      if (composeOpen) { closeCompose(); return; }
+      const clock = slots?.immersive.clock;
+      if (!clock || !forms) return;
+      clock.pause();
+      setCardId(null);
+      forms.beginComposer(assetId, frameOnScreen(clock.getState()));
+      flushSync(() => { setComposeOpen(true); });
+      const field = document.getElementById("video-note-body");
+      (field?.matches("[contenteditable]") ? field : field?.querySelector<HTMLElement>("[contenteditable]"))?.focus({ preventScroll: true });
+    };
+    const immersiveHost = {
+      on: imm,
+      onToggle: full.toggle,
+      heading: `${video.title} · v${version.version}`,
+      ...(writable ? { addNote: { pressed: composeOpen, onToggle: toggleAddNote } } : {}),
+      ...(slots ? {
+        onMarkerTap: (id: string) => {
+          if (forms && forms.slot(assetId).draw !== null) return;
+          slots.immersive.clock?.pause();
+          slots.playerProps.onMarkerSelect(id);
+          setCardId(id);
+        },
+        ...(cardThread ? { card: <VideoImmersiveNoteCard thread={cardThread} timecode={slots.immersive.timecode} onClose={() => { setCardId(null); }} onShowInNotes={() => { full.leave(); revealNotes(); }} /> } : {}),
+      } : {}),
+    };
     const split = <ReviewSplit
       open={pane.open}
       width={pane.width}
@@ -504,16 +570,18 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       paneId={paneId}
       handleLabel="Resize notes"
       stacked={phone}
+      immersive={imm ? (composeOpen ? "compose" : "watch") : "off"}
       {...(phone ? { sheet: { ...sheetControl, mode: slots?.drawing ? "draw" as const : sheetControl.mode } } : {})}
       {...(phone ? {} : { rowClassName: "overflow-y-auto", playerClassName: "overflow-y-auto" })}
       player={<>
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" phoneFrameStep={forms === undefined || formOpen} initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1 max-[721px]:min-h-0" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} />
+        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" phoneFrameStep={forms === undefined || formOpen} initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1 max-[721px]:min-h-0" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} immersive={immersiveHost} />
+        {imm && slots && <CloseCardOnPlay clock={slots.immersive.clock} active={cardId !== null} onClose={() => { setCardId(null); }} />}
       </>}
       pane={sidePane}
       strip={paneControls.strip}
     />;
     // The phone header is part of the layout (it needs the notes host's marker export for its action sheet); Compare does not exist on a phone, so it never needs to outlive a mode switch.
-    return <>{phone ? phoneHeader(slots?.markerExport) : null}{split}</>;
+    return <>{phone ? <div data-testid="video-review-header-hide" className={imm ? "hidden" : "contents"} inert={imm}>{phoneHeader(slots?.markerExport)}</div> : null}{split}</>;
   };
 
   return <Dialog open onOpenChange={handleOpenChange}>
@@ -530,12 +598,13 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         if (host && host !== event.currentTarget) return;
         (modeRef.current === "compare" ? compareRef.current : playerRef.current)?.handleKeyDown(event);
       }}
-      style={keyboard ? { height: keyboard.height, transform: `translateY(${keyboard.offsetTop}px)` } : undefined}
+      // In Full screen the dialog is already the whole screen: only the height follows the keyboard, never the offset (#880).
+      style={keyboard ? { height: keyboard.height, ...(imm ? {} : { transform: `translateY(${keyboard.offsetTop}px)` }) } : undefined}
       className="top-0 left-0 flex h-dvh w-dvw max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none bg-background p-0 text-foreground ring-0 focus-visible:!outline-none sm:max-w-none"
     >
       <OverlayContainerContext.Provider value={slot}>
       {/* The header sits outside the mode switch so the Compare button is the same node in both modes (focus survives the switch). */}
-      {phone ? null : desktopHeader}
+      {phone ? null : <div data-testid="video-review-header-hide" className={imm ? "hidden" : "contents"} inert={imm}>{desktopHeader}</div>}
       {comparing
         ? <>
           <Suspense fallback={null}>
@@ -548,4 +617,14 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       <div ref={setToastSlot} />
     </DialogContent>
   </Dialog>;
+}
+
+/** Playing closes the marker card in Full screen (#880): the film moves on, the note it showed no longer matches the frame. */
+function CloseCardOnPlay({ clock, active, onClose }: { clock: VideoFrameClock | null; active: boolean; onClose: () => void }) {
+  useEffect(() => {
+    if (!clock || !active) return undefined;
+    let was = clock.getState().playing;
+    return clock.subscribe(() => { const now = clock.getState().playing; if (now && !was) onClose(); was = now; });
+  }, [clock, active, onClose]);
+  return null;
 }
