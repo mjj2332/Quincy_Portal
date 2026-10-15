@@ -53,7 +53,7 @@ export type SheetRoom = { available: number; width: number; transport: number; c
  * Wires a pane `<div>` as the sheet: its stops, the live height while dragging, and the inert toggling of the screen's marked parts. `enabled` is the phone layout; off, every value is inert
  * and the pane is exactly the desktop pane.
  */
-export function useSheetPane({ enabled, control, room, paneRef }: { enabled: boolean; control: ReviewSheetControl | undefined; room: SheetRoom; paneRef: RefObject<HTMLDivElement | null> }) {
+export function useSheetPane({ enabled, control, room, paneRef, immersive = "off" }: { enabled: boolean; control: ReviewSheetControl | undefined; room: SheetRoom; paneRef: RefObject<HTMLDivElement | null>; /** Full screen (#880): while composing, only the composer shows, on a phone and on a desktop width alike. */ immersive?: "off" | "watch" | "compose" }) {
   const active = enabled && control !== undefined;
   const stop = control?.stop ?? "half";
   const mode = control?.mode ?? "browse";
@@ -68,7 +68,7 @@ export function useSheetPane({ enabled, control, room, paneRef }: { enabled: boo
     if (!pane) return;
     for (const element of pane.querySelectorAll(PART)) {
       const part = element.getAttribute("data-sheet-part");
-      const hide = active && ((part === "body" && (stop === "collapsed" || mode !== "browse")) || (part === "head" && mode !== "browse"));
+      const hide = (active && ((part === "body" && (stop === "collapsed" || mode !== "browse")) || (part === "head" && mode !== "browse"))) || (immersive === "compose" && (part === "body" || part === "head"));
       setInert(element, hide);
     }
   });
