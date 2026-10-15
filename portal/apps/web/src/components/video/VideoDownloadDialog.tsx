@@ -7,7 +7,7 @@ import { Item, ItemContent, ItemGroup } from "../reui/item";
 /**
  * Download the ticked films (#884, D24, story 22): the selection bar's Download opens this, owned by the collection panel. It lists one link per film, to that film's current Version
  * (`videoVersionDownloadUrl`, the route the card's old Download used), so there is no new server route and no bundle. The films are resolved against the whole collection by the caller.
- * Reuse: `reui/dialog`, `reui/item`, lucide `Download` on the anchors.
+ * Reuse: `reui/dialog`, `reui/item` rows, lucide `Download`. The anchors are hand-styled: `reui/item` rendered as the anchor drops the focus ring (`outline-none`) and is under 44px (see the #884 ledger).
  */
 export function VideoDownloadDialog({ projectId, videos, open, onOpenChange }: { projectId: string; videos: readonly VideoDto[]; open: boolean; onOpenChange: (open: boolean) => void }) {
   return <Dialog open={open} onOpenChange={onOpenChange}>
