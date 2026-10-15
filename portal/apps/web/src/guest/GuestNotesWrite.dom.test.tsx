@@ -1379,6 +1379,139 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     await click(byId("video-header-menu"));
     expect(byId("guest-paste-open")).not.toBeNull();
   });
+
+  // Fix round 1 (row 2): the keyboard dropped about a second after the code was accepted, and the pill went back to rest. The code field was disabled while the code was
+  // checked, which blurred it and sent the keyboard down before the answer came; the pill's focus after the check (not a tap) could not bring it back.
+  const verifyWithHeldAnswer = () => {
+    let answer: (() => void) | null = null;
+    session = ANON;
+    extra = (url, init) => {
+      if (url === `${BASE}/email/code` && init?.method === "POST") return json({ sent: true, resendAfterSeconds: 60 }, 202);
+      if (url === `${BASE}/email/verify` && init?.method === "POST") return new Promise<Response>((resolve) => { answer = () => { session = VERIFIED; resolve(json(VERIFIED)); }; });
+      return undefined;
+    };
+    return { release: async () => { await act(async () => { answer!(); }); await flush(); } };
+  };
+  const enterCode = async () => {
+    await click(byId("guest-compose-shell-open"));
+    await typeInto(byId("guest-verify-email"), "sam@example.com");
+    await typeInto(byId("guest-verify-name"), "Sam");
+    await submit("guest-verify-identity-form");
+    const code = byId("guest-verify-code") as HTMLInputElement;
+    await act(async () => { code.focus(); });
+    await typeInto(code, "123456");
+    await flush(2);
+    return code;
+  };
+
+  it("while the code is checked the code field keeps the focus (the keyboard stays up), and the answer hands the focus to the pill", async () => {
+    const held = verifyWithHeldAnswer();
+    await open();
+    const code = await enterCode();
+    expect(requests("POST").map((call) => call.url)).toContain(`${BASE}/email/verify`);
+    expect(code.disabled).toBe(false);
+    expect(document.activeElement).toBe(code);
+    // Edits while the check is out are not taken.
+    await typeInto(code, "1");
+    expect(code.value).toBe("123456");
+    await held.release();
+    await fieldReady();
+    await vi.waitFor(() => { expect(document.activeElement).toBe(area()); });
+    expect(byId("guest-verify-dialog")).toBeNull();
+    expect(mode()).toBe("compose");
+  });
+
+  it("when the keyboard is already gone at the answer (the code field lost the focus), the guest lands at rest: no caret in the pill, no compose mode", async () => {
+    const held = verifyWithHeldAnswer();
+    await open();
+    const code = await enterCode();
+    await act(async () => { code.blur(); });
+    await held.release();
+    await fieldReady();
+    await flush(4);
+    expect(byId("guest-verify-dialog")).toBeNull();
+    expect(document.activeElement).not.toBe(area());
+    expect(mode()).toBe("browse");
+    expect(byId("guest-compose-strip")!.dataset.open).toBe("false");
+    // One tap on the pill then starts the note as usual.
+    await focusField();
+    expect(mode()).toBe("compose");
+  });
+
+  // Fix round 1 (row 9, row 13): every state of the notes body scrolls in the one list, which ends where the pill's strip begins, so nothing sits behind the pinned pill.
+  const listOf = () => byId("guest-notes-list");
+  const expectScrolledAbovePill = () => {
+    const list = listOf();
+    expect(list).not.toBeNull();
+    expect(list!.getAttribute("data-slot")).toBe("scroll-area");
+    expect(list!.contains(byId("guest-identity"))).toBe(true);
+    expect(list!.contains(byId("guest-subscription"))).toBe(true);
+    // The delivery row (Request changes) scrolls with the notes rather than taking its own fixed band above them.
+    expect(byId("guest-request-changes")).not.toBeNull();
+    expect(list!.contains(byId("guest-request-changes"))).toBe(true);
+    const strip = byId("guest-compose-strip")!;
+    expect(list!.contains(strip)).toBe(false);
+    // The strip's part is the list's sibling in the panel's column, laid out after it: the list ends where the strip's top border begins.
+    const composer = strip.closest<HTMLElement>('[data-sheet-part="composer"]')!;
+    expect(composer.parentElement).toBe(list!.closest('[data-sheet-part="body"]')!.parentElement);
+    expect(composer.className.split(" ")).toContain("order-last");
+    // The panel clips, so nothing overflowing its body can paint under the pill.
+    expect(byId("guest-notes-panel")!.className).toContain("overflow-clip");
+  };
+  const withRows = () => { session = { ...VERIFIED, link: { ...VERIFIED.link, allow: { ...VERIFIED.link.allow, approve: true } }, notifications: { available: true, subscribed: false } } as GuestSessionResponse; };
+
+  it("with no notes, the empty state, the delivery row and the identity / email rows all scroll in the list above the pill", async () => {
+    withRows();
+    await open();
+    await vi.waitFor(() => { expect(byId("guest-identity")).not.toBeNull(); });
+    expect(listOf()!.textContent).toContain("No notes yet");
+    expectScrolledAbovePill();
+  });
+
+  it("while the notes load, and when they fail, the rows still scroll in the list above the pill", async () => {
+    withRows();
+    let fail = false;
+    extra = (url, init) => {
+      if (/\/notes$/.test(url) && (init?.method ?? "GET") === "GET") return fail ? new Response("down", { status: 503 }) : new Promise<Response>(() => undefined);
+      return undefined;
+    };
+    await open();
+    await vi.waitFor(() => { expect(byId("guest-identity")).not.toBeNull(); });
+    expect(listOf()!.textContent).toContain("Loading notes…");
+    expectScrolledAbovePill();
+    await act(async () => { root!.unmount(); });
+    root = null; host.remove();
+    fail = true;
+    await open();
+    await vi.waitFor(() => { expect(byId("guest-notes-unreachable")).not.toBeNull(); });
+    expect(listOf()!.contains(byId("guest-notes-unreachable"))).toBe(true);
+    expectScrolledAbovePill();
+  });
+
+  it("with notes, the cards and the rows share the one list", async () => {
+    withRows();
+    notes = { [asset(10)]: [mine(2)] };
+    await open();
+    await vi.waitFor(() => { expect(byId("guest-note")).not.toBeNull(); });
+    expect(listOf()!.contains(byId("guest-note"))).toBe(true);
+    expectScrolledAbovePill();
+  });
+
+  it("a note's ⋯ menu opens in the viewer's inverse scope, not on the light page", async () => {
+    notes = { [asset(10)]: [mine(2)] };
+    await open();
+    await click(byId("guest-note-actions"));
+    const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
+    expect(menu).not.toBeNull();
+    expect(byId("guest-video-screen")!.contains(menu)).toBe(true);
+    expect(menu.closest('[data-surface="inverse"]')).not.toBeNull();
+  });
+
+  it("the placeholder at rest is one line ending in an ellipsis, as typed text is (P7's 'Add a note with this drawing…')", async () => {
+    await open();
+    await fieldReady();
+    for (const name of ["[&_[data-placeholder]]:before:max-w-full", "[&_[data-placeholder]]:before:overflow-hidden", "[&_[data-placeholder]]:before:text-ellipsis", "[&_[data-placeholder]]:before:whitespace-nowrap"]) expect(area()!.className.split(" ")).toContain(name);
+  });
 });
 
 describe("delete revision", () => {

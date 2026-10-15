@@ -167,8 +167,10 @@ function VerifyFlow({ api, generation, onCancel, onVerified, onGone }: { api: Gu
         </p>
         <Field>
           <FieldLabel htmlFor="guest-verify-code">Code</FieldLabel>
-          <InputOTP id="guest-verify-code" data-testid="guest-verify-code" aria-label="6-digit code" maxLength={6} pattern={REGEXP_ONLY_DIGITS} inputMode="numeric" autoComplete="one-time-code" autoFocus value={code} disabled={pending}
-            onChange={setCode} onComplete={(value) => { void submitCode(value); }}>
+          <InputOTP id="guest-verify-code" data-testid="guest-verify-code" aria-label="6-digit code" maxLength={6} pattern={REGEXP_ONLY_DIGITS} inputMode="numeric" autoComplete="one-time-code" autoFocus value={code} aria-busy={pending || undefined}
+            // Not disabled while the code is checked: disabling blurs the field, which sends a phone's keyboard down before the answer comes, and the note field the answer
+            // hands the focus to (#879 PR 2) could not bring it back without a tap. Edits are not taken meanwhile instead (PR 2 fix round 1).
+            onChange={(next) => { if (!pending) setCode(next); }} onComplete={(value) => { void submitCode(value); }}>
             <InputOTPGroup>
               {[0, 1, 2, 3, 4, 5].map((index) => <InputOTPSlot key={index} index={index} aria-invalid={error !== null} />)}
             </InputOTPGroup>

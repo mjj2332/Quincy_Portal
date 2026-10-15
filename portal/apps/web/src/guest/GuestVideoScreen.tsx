@@ -415,8 +415,10 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     return { ok: false, message: decisionFailureText(settled) };
   }, [api, writer, drafts, version.assetId, onDecided, onResyncDelivery, onSession, requestVerify]);
   afterVerify.current = (then) => {
-    // On a phone the code lands the guest in the pill's field (the focus starts the draft); iOS may want one more tap to raise the keyboard after the async check.
-    if (then === "compose") { if (phone) focusField(); else startDraft(compose.begin); }
+    // On a phone the code lands the guest in the pill's field (the focus starts the draft) when the keyboard is still up: the code field kept the focus through the check, and iOS
+    // keeps the keyboard for a focus moving from one field to another. A focus after the check with the keyboard gone (the guest put it away) is not a tap, so iOS would show a caret
+    // with no keyboard and then drop compose mode: the guest lands at rest instead, and one tap on the pill starts the note (PR 2 fix round 1).
+    if (then === "compose") { if (!phone) startDraft(compose.begin); else if (keyboardField(document.activeElement)) focusField(); }
     else if (then === "download") setDownloadHint(true);
     else openDecision(then);
   };
@@ -519,7 +521,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       {...(sheet ? { sheet } : {})}
       strip={paneControls.strip}
       player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" phoneFrameStep version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} transportHidden={phone && sheetControl.mode === "compose" && !compose.penDown} /></OverlayContainerContext.Provider>}
-      pane={<aside className="flex min-h-0 flex-1 flex-col bg-card text-card-foreground min-[721px]:overflow-hidden min-[721px]:border-l min-[721px]:border-border min-[721px]:p-[var(--space-5)]"><div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-4)] py-[var(--space-2)] min-[721px]:hidden" onClick={openSheet}>{phone && <Tabs value="notes" className="w-full"><TabsList variant="line" className="w-full justify-start rounded-none bg-card px-0 max-[721px]:!h-11 max-[721px]:!p-0"><TabsTrigger value="notes" data-testid="guest-notes-heading" className="max-[721px]:!h-11 max-[721px]:after:!bottom-0">{headingContent}</TabsTrigger></TabsList></Tabs>}</div><div className="flex min-h-0 flex-1 flex-col max-[721px]:p-[var(--space-4)] max-[721px]:in-data-[mode=compose]:py-[var(--space-2)]">{panel}</div></aside>}
+      // The pane's popups (a note's ⋯ menu) portal into the same slot as the player's, inside the inverse scope (fix round 1: they drew light on the dark viewer).
+      pane={<OverlayContainerContext.Provider value={slot}><aside className="flex min-h-0 flex-1 flex-col bg-card text-card-foreground min-[721px]:overflow-hidden min-[721px]:border-l min-[721px]:border-border min-[721px]:p-[var(--space-5)]"><div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-4)] py-[var(--space-2)] min-[721px]:hidden" onClick={openSheet}>{phone && <Tabs value="notes" className="w-full"><TabsList variant="line" className="w-full justify-start rounded-none bg-card px-0 max-[721px]:!h-11 max-[721px]:!p-0"><TabsTrigger value="notes" data-testid="guest-notes-heading" className="max-[721px]:!h-11 max-[721px]:after:!bottom-0">{headingContent}</TabsTrigger></TabsList></Tabs>}</div><div className="flex min-h-0 flex-1 flex-col max-[721px]:p-[var(--space-4)] max-[721px]:in-data-[mode=compose]:py-[var(--space-2)]">{panel}</div></aside></OverlayContainerContext.Provider>}
     />
     {canPaste && <GuestPasteDialog api={api} writer={writer} open={pasteOpen} onOpenChange={changePasteOpen} video={video} target={version} markupAllowed={session.link.allow.markup}
       onGone={onUnavailable}
@@ -527,4 +530,10 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     {decideFor !== null && canDecide && <GuestDecisionDialog key={`${version.assetId}:${decideFor}`} value={decideFor} assetId={version.assetId} film={video.title} version={version.version} drafts={drafts} open onClose={() => { opening.current += 1; setDecideFor(null); }} onConfirm={(note) => confirmDecision(decideFor, note)} />}
     <div ref={setSlot} />
   </div>;
+}
+
+/** Whether the focus is in a field that holds the on-screen keyboard (an enabled text input, textarea or editable element). */
+function keyboardField(element: Element | null): boolean {
+  if (!(element instanceof HTMLElement) || element.matches(":disabled")) return false;
+  return element.matches('textarea, input:not([type="button"],[type="submit"],[type="checkbox"],[type="radio"],[type="range"],[type="file"],[type="hidden"]), [contenteditable]:not([contenteditable="false"])');
 }

@@ -24,8 +24,9 @@ export const SHEET_TEXT = { [SHEET_TEXT_ATTR]: "" } as const;
 /** The phone pill's text box (C4): one line at rest (the draft clamped to its first line), up to four while writing, then it scrolls. Line 24px + the box's 8px padding top and bottom.
  * The padding is on the box and the scroll on its child (the editor's scroller, `[&>*]`), so scrolled text clips inside the padding, never at the pill's hairline (#879 fix r9). */
 /** At rest the draft is one unwrapped line that ends in an ellipsis at the field's edge, as the prototype's single-line `.composer-input input` clips (#879 fix r11):
- * cut at a word break with no ellipsis, a long draft read as the whole note. `pre` rather than `nowrap`, so the draft's spaces stay as typed. */
-export const REST_CLAMP = "max-h-[calc(var(--space-6)+var(--space-2))] overflow-hidden [&>*]:overflow-hidden [&_p]:overflow-hidden [&_p]:text-ellipsis [&_p]:whitespace-pre";
+ * cut at a word break with no ellipsis, a long draft read as the whole note. `pre` rather than `nowrap`, so the draft's spaces stay as typed. The empty field's placeholder (the editor root's
+ * `::before`, `data-placeholder`) is clipped the same way (PR 2 fix round 1: P7's "Add a note with this drawing…" wrapped and was cut at a word). */
+export const REST_CLAMP = "max-h-[calc(var(--space-6)+var(--space-2))] overflow-hidden [&>*]:overflow-hidden [&_p]:overflow-hidden [&_p]:text-ellipsis [&_p]:whitespace-pre [&_[data-placeholder]]:before:max-w-full [&_[data-placeholder]]:before:overflow-hidden [&_[data-placeholder]]:before:text-ellipsis [&_[data-placeholder]]:before:whitespace-nowrap";
 /** In the review sheet the four lines give way to the film's floor first (#879 fix r9): the sheet publishes `--sheet-text-room` (`useSheetTextRoom`), clamped here to one line at least.
  * The room is rounded down to whole 24px lines (`--space-5`) inside the box's 16px of padding (#879 fix r10), so the window never shows a sliver of a line. */
 export const COMPOSE_CLAMP = "max-h-[clamp(calc(var(--space-6)+var(--space-2)),calc(round(down,calc(var(--sheet-text-room,calc(var(--space-9)+var(--space-4)))-var(--space-4)),var(--space-5))+var(--space-4)),calc(var(--space-9)+var(--space-4)))] [&>*]:overflow-y-auto";
