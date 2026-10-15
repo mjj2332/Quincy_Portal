@@ -152,7 +152,7 @@ describe("VideoNoteComposer on a phone: the compose strip (P6)", () => {
     expect(await press(by("video-note-extras")!)).toBe(true);
     expect(trayOpen()).toBe(true);
     expect(sheetMode()).toBe("compose");
-    expect(by("stub-inline-start")!.innerHTML.replace(/aria-expanded="true"/, 'aria-expanded="false"')).toBe(before);
+    expect(by("stub-inline-start")!.innerHTML.replace(/aria-expanded="true"/, 'aria-expanded="false"').replace(/aria-pressed="true"/, 'aria-pressed="false"')).toBe(before);
   });
 
   it("Send sits on the pill's last line, and keeps its primary fill when there is nothing to post: only the icon dims (#879 fix r4)", async () => {
@@ -171,6 +171,10 @@ describe("VideoNoteComposer on a phone: the compose strip (P6)", () => {
     expect(await press(plus)).toBe(true);
     expect(document.activeElement).toBe(area());
     expect(plus.getAttribute("aria-expanded")).toBe("true");
+    // Pressed while the tray is open (#879 fix r9): aria-pressed, with the pill's pressed treatment (the fill is the pill's own ink-700 on the inverse surface, so the --border-hover hairline carries it).
+    expect(plus.getAttribute("aria-pressed")).toBe("true");
+    expect(plus.className).toContain("aria-pressed:bg-secondary");
+    expect(plus.className).toContain("aria-pressed:shadow-[inset_0_0_0_var(--border-width-hair)_var(--border-hover)]");
     expect(plus.getAttribute("aria-controls")).toBe(tray().id);
     expect(tray().getAttribute("role")).toBe("region");
     expect(tray().getAttribute("aria-label")).toBe("Note options");
@@ -181,6 +185,7 @@ describe("VideoNoteComposer on a phone: the compose strip (P6)", () => {
     expect(by("video-note-tray-toolbar")!.contains(by("stub-toolbar"))).toBe(true);
     await press(plus);
     expect(plus.getAttribute("aria-expanded")).toBe("false");
+    expect(plus.getAttribute("aria-pressed")).toBe("false");
     expect(trayOpen()).toBe(false);
     expect(document.activeElement).toBe(area());
   });

@@ -12,6 +12,7 @@ import { Button } from "../quincy/Button";
 import { Notice } from "../quincy/Notice";
 import { SheetModeContext } from "../quincy/ReviewSheet";
 import { PILL_ICON } from "../quincy/VideoPlayer";
+import { SELECTED_HAIRLINE_PRESSED } from "../quincy/markup-toolbar";
 import { Button as ReuiButton } from "../reui/button";
 import { Collapsible, CollapsibleContent } from "../reui/collapsible";
 import { RichTextToolbarSeparator } from "../reui/rich-text-editor/rich-text-toolbar";
@@ -175,8 +176,8 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     <span aria-hidden={pendingFrames ? true : undefined}>{chipText}</span>
   </span>;
   const plus = <ReuiButton
-    type="button" variant="ghost" size="icon" data-testid="video-note-extras" aria-label="Note options" aria-expanded={trayOpen} aria-controls={trayId}
-    disabled={otherForm !== null || frozen} className={cn("aria-expanded:bg-muted", PILL_ICON)}
+    type="button" variant="ghost" size="icon" data-testid="video-note-extras" aria-label="Note options" aria-expanded={trayOpen} aria-pressed={trayOpen} aria-controls={trayId}
+    disabled={otherForm !== null || frozen} className={cn("aria-pressed:bg-secondary", SELECTED_HAIRLINE_PRESSED, PILL_ICON)}
     onPointerDown={keepFocus} onMouseDown={keepFocus} onClick={() => { store.setExtras(assetId, !trayOpen); }}
   ><Plus aria-hidden="true" /></ReuiButton>;
   const penSlot = pen !== undefined ? <span data-testid="video-note-pen" className="contents" onClickCapture={() => { store.setExtras(assetId, false); const active = document.activeElement; if (active instanceof HTMLElement && active !== document.body) active.blur(); }}>{pen}</span> : null;
