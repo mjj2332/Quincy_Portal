@@ -94,6 +94,21 @@ describe("useVisualViewport (#879)", () => {
     expect(element.style.height).toBe("");
     expect(element.style.transform).toBe("");
   });
+  it("its writes on the root never animate: transition is none while it drives the root, and cleared on release (#879 fix r8)", async () => {
+    // The phone viewer's popup carried reui DialogContent's `duration-100` with transition-property left at `all`, so every height/transform write eased over 100ms.
+    const element = document.createElement("div"); element.className = "duration-100"; document.body.appendChild(element);
+    function Tracked({ track }: { track: boolean }) { useVisualViewport(false, undefined, element, track); return null; }
+    await act(async () => { root.render(<Tracked track />); });
+    expect(element.style.transition).toBe("none");
+    Object.assign(fake, { height: 384, offsetTop: 330 });
+    fake.dispatchEvent(new Event("scroll"));
+    expect(element.style.transform).toBe("translateY(330px)");
+    expect(element.style.transition).toBe("none");
+    await act(async () => { root.render(<Tracked track={false} />); });
+    expect(element.style.transition).toBe("");
+    expect(element.style.height).toBe("");
+    expect(element.style.transform).toBe("");
+  });
   it("with tracking on, the root follows the viewport before compose mode turns on: a keyboard rise that beats React is still applied (#879 fix r5)", async () => {
     const element = document.createElement("div"); document.body.appendChild(element);
     const ref = element;

@@ -267,6 +267,8 @@ describe("D4 and focus", () => {
       // Already following before any focus: the fake viewport (keyboard-sized) is on the dialog in browse mode.
       expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
       expect(dialog.style.height).toBe(`${window.innerHeight - 340}px`);
+      // The popup's `duration-100` (transition-property `all`) must not ease these writes: that easing was the first-focus flash (#879 fix r8).
+      expect(dialog.style.transition).toBe("none");
       expect(transport().hasAttribute("hidden")).toBe(false);
       // A pan that lands before React turns compose mode on is applied inside the event.
       const early = window.visualViewport as unknown as FakeViewport;

@@ -35,6 +35,9 @@ export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void,
     const element = root;
     const write = () => {
       if (viewport.scale > 1.01) return;
+      // No transition on these writes: an inherited `duration-*` (reui DialogContent's `duration-100`, with transition-property left at `all`) eased each one over 100ms,
+      // which was the phone viewer's first-focus flash (#879 fix r8).
+      element.style.transition = "none";
       element.style.height = `${viewport.height}px`; element.style.transform = `translateY(${viewport.offsetTop}px)`;
     };
     write();
@@ -46,7 +49,7 @@ export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void,
       viewport.removeEventListener("resize", write);
       viewport.removeEventListener("scroll", write);
       window.removeEventListener("scroll", write);
-      element.style.height = ""; element.style.transform = "";
+      element.style.height = ""; element.style.transform = ""; element.style.transition = "";
     };
     // The root is a dependency, not a ref: a dialog popup mounts a commit after its host, and the box must land on it the moment it exists.
   }, [track, root]);
