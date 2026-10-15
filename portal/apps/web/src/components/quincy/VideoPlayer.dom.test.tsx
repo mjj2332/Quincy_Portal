@@ -634,6 +634,8 @@ describe("the phone control bar's frame step and Social row (#879 review)", () =
       await load();
       expect(host.querySelector('[aria-label="Previous frame"]')).not.toBeNull();
       expect(host.querySelector('[aria-label="Next frame"]')).not.toBeNull();
+      // Five controls plus the timecode do not fit at 375: the short readout (no " / total") keeps it from running under Mute and Full screen.
+      expect(byTestId("video-readout-total")).toBeNull();
       const row = byTestId("video-controls-row")!;
       const social = byTestId("video-social-row")!;
       expect(social).not.toBeNull();
@@ -648,5 +650,10 @@ describe("the phone control bar's frame step and Social row (#879 review)", () =
       await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
       await withLayout(390, 300, async () => { await mount(); await load(); expect(byTestId("video-timecode-chip")).not.toBeNull(); });
     } finally { viewport.restore(); }
+  });
+
+  it("without frame steps on a phone the readout keeps its total", async () => {
+    const viewport = mockViewport({ width: 375 });
+    try { await mount(); await load(); expect(byTestId("video-readout-total")).not.toBeNull(); } finally { viewport.restore(); }
   });
 });

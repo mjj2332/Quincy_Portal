@@ -212,7 +212,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         <Button type="button" variant="outline" size="icon" aria-label="Next frame" className={COARSE} disabled={transportLocked} onClick={() => { clock.step(1); }}><StepForward aria-hidden="true" /></Button>
       </IconTip>}
       <output data-testid="video-readout" aria-live={clock.playing || !clock.confirmed ? "off" : "polite"} className={cn("px-[var(--space-2)] max-[721px]:min-w-0 max-[721px]:px-0 max-[721px]:text-xs max-[721px]:whitespace-nowrap", MONO)}>
-        <span>{timecode(clock.frame)}</span><span className="text-foreground-secondary">{` / ${timecode(version.frameCount)}`}</span>
+        <span>{timecode(clock.frame)}</span>{!(phone && phoneFrameStep) && <span data-testid="video-readout-total" className="text-foreground-secondary">{` / ${timecode(version.frameCount)}`}</span>}
       </output>
       {!phone && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><TimeFormatMenu /></OverlayContainerContext.Provider>}
       {social && !phone && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><SocialPreviewControls social={social} imageFailed={socialImage.failed} /></OverlayContainerContext.Provider>}
