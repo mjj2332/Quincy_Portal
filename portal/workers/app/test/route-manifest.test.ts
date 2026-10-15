@@ -172,6 +172,7 @@ describe("terminal route manifest", () => {
     expect(guest.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
       "DELETE /d/api/links/:linkId/notes/:noteId",
       "DELETE /d/api/links/:linkId/session",
+      "GET /d/api/links/:linkId/download-policy",
       "GET /d/api/links/:linkId/downloads",
       "GET /d/api/links/:linkId/downloads/all.zip",
       "GET /d/api/links/:linkId/media/:mediaId",

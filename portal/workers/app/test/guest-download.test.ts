@@ -831,3 +831,216 @@ describe("the Delivery review link serves the published Version without a Releas
     expect(((await listed(link)).videos[0]!.versions).map((entry) => entry.downloadUrl !== null)).toEqual([true, true]);
   });
 });
+
+/**
+ * #882, ADR 0025: the Delivery review link downloads without a verified session. The ONLY widening is rows 1 to 5 of the plan's authorisation table on a link with `delivery_review = 1`;
+ * every ordinary Review link still answers 401 to an unverified session, and the credential is re-read from SQL at every commit and byte fence, never from the cached session.
+ */
+describe("the Delivery review link downloads without a code (#882, ADR 0025)", () => {
+  afterEach(async () => { await clearGuestRows(); await wipeDelivery(); });
+  const prepPath = (linkId: string) => linkPath(linkId, "/downloads/prepare");
+  const policyPath = (linkId: string) => linkPath(linkId, "/download-policy");
+  const countOf = async (like: string) => (await database.DB.prepare("SELECT COALESCE(SUM(count), 0) AS n FROM guest_rate_limits WHERE bucket LIKE ?").bind(like).first<Json>())!.n as number;
+  /** An UNVERIFIED session on a link, with a film of two Versions (v2 published, v1 not), nothing released. `ordinary` is a plain Review link with the same Videos and a Release of v2. */
+  async function unverified(options: { ordinary?: boolean; allow?: [number, number, number] } = {}) {
+    const v1 = await seedVideoVersion({ title: "Hero" }); const v2 = await seedVideoVersion({ videoId: v1.videoId, version: 2 });
+    if (!options.ordinary) await seedPage({ assetIds: [v2.assetId] });
+    const link = await seedGuestLink({ ...(options.ordinary ? {} : { deliveryReview: true }), ...(options.allow ? { allow: options.allow } : {}) });
+    const { cookie } = await startSession(link); if (!cookie) throw new Error("no session");
+    await addMember(link.id, v1.videoId, [v1.assetId, v2.assetId]);
+    if (options.ordinary) await release(v2);
+    return { link: { ...link, cookie }, v1, v2 };
+  }
+  const post = (link: { id: string; cookie: string }, path: string, ip?: string) => guestFetch(path, { method: "POST", cookie: link.cookie, ...(ip ? { ip } : {}) });
+
+  describe("rows 1 and 2: the single download", () => {
+    it("an unverified session on the Delivery link gets the published Version; the audit row has no guest identity but keeps the link, project, Version and session", async () => {
+      const { link, v2 } = await unverified();
+      const response = await get(link, link.cookie, v2.assetId); expect(response.status, await response.clone().text()).toBe(200);
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(mp4Bytes(4096));
+      const [entry, ...rest] = await audits(); expect(rest).toEqual([]);
+      expect(entry).toMatchObject({ actor_id: null, target_type: "review_link", target_id: link.id });
+      const meta = JSON.parse(entry!.meta_json);
+      expect(meta).toMatchObject({ guest: null, linkId: link.id, projectId: ids.project, assetId: v2.assetId, videoId: v2.videoId, version: 2, bytes: 4096 });
+      expect(typeof meta.sessionId).toBe("string");
+      expect(JSON.stringify(meta)).not.toMatch(/guest-14b|@/);
+    });
+    it("Range answers 206 and HEAD 200 with no audit row; `bytes=0-` is the one download", async () => {
+      const { link, v2 } = await unverified();
+      const ranged = await get(link, link.cookie, v2.assetId, { range: "bytes=10-19" }); expect(ranged.status).toBe(206); await dispose(ranged);
+      expect((await get(link, link.cookie, v2.assetId, {}, "HEAD")).status).toBe(200);
+      expect(await audits()).toHaveLength(0);
+      const whole = await get(link, link.cookie, v2.assetId, { range: "bytes=0-" }); await dispose(whole); expect(await audits()).toHaveLength(1);
+    });
+    it("a verified guest on the same link is audited with their identity, exactly as before", async () => {
+      const v = await seedVideoVersion(); await seedPage({ assetIds: [v.assetId] });
+      const link = await verifiedLink({ deliveryReview: true }); await addMember(link.id, v.videoId, [v.assetId]);
+      const response = await get(link, link.cookie, v.assetId); expect(response.status).toBe(200); await dispose(response);
+      expect(JSON.parse((await audits())[0]!.meta_json)).toMatchObject({ guest: { guestId: link.guestId } });
+    });
+    it("an older Version is still 409 until Released; a locked premium film is 403; allow_download off is 403; a Version outside the link is the stub", async () => {
+      const { link, v1, v2 } = await unverified();
+      const older = await get(link, link.cookie, v1.assetId); expect(older.status).toBe(409); expect(await older.json()).toEqual({ error: "not_released" });
+      await release(v1); const released = await get(link, link.cookie, v1.assetId); expect(released.status).toBe(200); await dispose(released);
+      await setPremium(v2.videoId, true); const locked = await get(link, link.cookie, v2.assetId); expect(locked.status).toBe(403); expect(await locked.json()).toEqual({ error: "premium_locked" });
+      const stranger = await seedVideoVersion();
+      expect((await get(link, link.cookie, stranger.assetId)).status).toBe(404);
+    });
+    it("allow_download off is 403 download_disabled, not the 401", async () => {
+      const { link, v2 } = await unverified({ allow: [1, 1, 0] });
+      const response = await get(link, link.cookie, v2.assetId); expect(response.status).toBe(403); expect(await response.json()).toEqual({ error: "download_disabled" });
+    });
+    it("gate shut, delivery part off, no cookie: the byte-identical stub, nothing audited", async () => {
+      const { link, v2 } = await unverified(); const stub = await stubBody();
+      expect(await probe(await get(link, null, v2.assetId))).toEqual(stub);
+      await database.DB.prepare("DELETE FROM feature_flags WHERE key = 'video_review_delivery'").run();
+      expect(await probe(await get(link, link.cookie, v2.assetId))).toEqual(stub);
+      expect(await allAudits()).toHaveLength(0);
+    });
+    for (const [method, headers, label] of requests2()) {
+      it(`${label}: an ordinary Review link still answers 401 verification_required to an unverified session`, async () => {
+        const { link, v2 } = await unverified({ ordinary: true });
+        const response = await get(link, link.cookie, v2.assetId, headers, method); expect(response.status).toBe(401);
+        if (method !== "HEAD") expect(await response.json()).toEqual({ error: "verification_required" });
+        expect(await allAudits()).toHaveLength(0);
+      });
+    }
+  });
+
+  describe("the fresh-read fence: the credential is re-read in SQL, not taken from the session", () => {
+    const flipDelivery = (linkId: string) => () => database.DB.prepare("UPDATE client_links SET delivery_review = 0 WHERE id = ?").bind(linkId).run();
+    it("GET (whole file): a link that stops being the Delivery link before the audit INSERT is 401, with no audit row and no bytes", async () => {
+      const { link, v2 } = await unverified();
+      const { call, reads } = interposed({ before: [[/INSERT INTO audit_log/, flipDelivery(link.id)]] });
+      const response = await call(downloadPath(link.id, v2.assetId), link.cookie, "GET");
+      expect(response.status).toBe(401); expect(await response.json()).toEqual({ error: "verification_required" });
+      expect(reads).toEqual([]); expect(await allAudits()).toHaveLength(0);
+    });
+    for (const [method, headers, label] of [["HEAD", {}, "HEAD"], ["GET", { range: "bytes=100-" }, "Range"]] as const) {
+      it(`${label}: a link that stops being the Delivery link before the last fence is 401 and R2 is never read`, async () => {
+        const { link, v2 } = await unverified();
+        const { call, reads } = interposed({ after: [[versionRead, flipDelivery(link.id)]] });
+        const response = await call(downloadPath(link.id, v2.assetId), link.cookie, method, headers);
+        expect(response.status).toBe(401); expect(reads).toEqual([]); expect(await allAudits()).toHaveLength(0);
+      });
+    }
+    it("a session that verifies mid-request is 401 so the page re-reads it, never served under the stale null guest", async () => {
+      const { link, v2 } = await unverified();
+      const { call, reads } = interposed({ before: [[/INSERT INTO audit_log/, async () => { await verifyCookie(link.cookie); }]] });
+      const response = await call(downloadPath(link.id, v2.assetId), link.cookie, "GET");
+      expect(response.status).toBe(401); expect(reads).toEqual([]); expect(await allAudits()).toHaveLength(0);
+    });
+    it("Download all: the zip audit INSERT refuses when the link stops being the Delivery link, and gives the quota slots back", async () => {
+      const { link } = await unverified();
+      const { call } = interposed({ before: [[/INSERT INTO audit_log/, flipDelivery(link.id)]] });
+      const response = await call(zipPath(link.id), link.cookie, "GET");
+      expect(response.status).toBe(401); expect(await allAudits()).toHaveLength(0); expect(await countOf("zip:%")).toBe(0);
+    });
+    it("Download all: an unverified zip aborts between entries when the link stops being the Delivery link", async () => {
+      const a = await seedVideoVersion({ title: "Big" }); const b = await seedVideoVersion({ title: "Small" }); await seedPage({ assetIds: [a.assetId, b.assetId] });
+      const link = await seedGuestLink({ deliveryReview: true }); const { cookie } = await startSession(link);
+      await addMember(link.id, a.videoId, [a.assetId]); await addMember(link.id, b.videoId, [b.assetId]);
+      const big = new Uint8Array(6 * 1024 * 1024); big.set(mp4Bytes(4096)); await database.MEDIA.put(a.key, big); await setBytes(a.assetId, big.length);
+      const response = await guestFetch(zipPath(link.id), { cookie }); expect(response.status).toBe(200);
+      const reader = response.body!.getReader(); expect((await reader.read()).done).toBe(false);
+      await database.DB.prepare("UPDATE client_links SET delivery_review = 0 WHERE id = ?").bind(link.id).run();
+      const outcome = await (async () => { try { for (;;) { const { done } = await reader.read(); if (done) return "complete"; } } catch { return "aborted"; } })();
+      expect(outcome).toBe("aborted");
+    });
+  });
+
+  describe("rows 3 to 5: the manifest, prepare and Download all", () => {
+    it("the manifest lists the published Version for an unverified session; an ordinary link is 401", async () => {
+      const { link } = await unverified();
+      const manifest = await guestFetch(manifestPath(link.id), { cookie: link.cookie }); expect(manifest.status).toBe(200);
+      expect(((await manifest.json()) as Json).included.map((entry: Json) => entry.version)).toEqual([2]);
+      const ordinary = await unverified({ ordinary: true });
+      expect((await guestFetch(manifestPath(ordinary.link.id), { cookie: ordinary.link.cookie })).status).toBe(401);
+    });
+    it("prepare and all.zip work unverified (zip holds the published Version, audit row has no guest); on an ordinary link both are 401", async () => {
+      const { link } = await unverified();
+      const prepared = await post(link, prepPath(link.id)); expect(prepared.status, await prepared.clone().text()).toBe(200);
+      const zip = await guestFetch(zipPath(link.id), { cookie: link.cookie }); expect(zip.status).toBe(200); expect([...(await unzip(zip)).keys()]).toEqual(["Hero v2.mp4"]);
+      const [entry, ...rest] = await audits("review_link.download_all"); expect(rest).toEqual([]);
+      expect(JSON.parse(entry!.meta_json)).toMatchObject({ guest: null, linkId: link.id, projectId: ids.project });
+      const ordinary = await unverified({ ordinary: true });
+      expect((await post(ordinary.link, prepPath(ordinary.link.id))).status).toBe(401);
+      expect((await guestFetch(zipPath(ordinary.link.id), { cookie: ordinary.link.cookie })).status).toBe(401);
+    });
+    it("a verified guest keeps the per-guest buckets and their email in the Download all audit row", async () => {
+      const v = await seedVideoVersion(); await seedPage({ assetIds: [v.assetId] });
+      const link = await verifiedLink({ deliveryReview: true }); await addMember(link.id, v.videoId, [v.assetId]);
+      expect((await post(link, prepPath(link.id))).status).toBe(200); const zip = await guestFetch(zipPath(link.id), { cookie: link.cookie }); expect(zip.status).toBe(200); await zip.arrayBuffer();
+      expect(await countOf(`zipprep:guest:${link.guestId}`)).toBe(1); expect(await countOf(`zip:guest:${link.guestId}`)).toBe(1);
+      expect(await countOf("zip%:ip:%")).toBe(0);
+      expect(JSON.parse((await audits("review_link.download_all"))[0]!.meta_json)).toMatchObject({ guest: { guestId: link.guestId } });
+    });
+  });
+
+  describe("rate limits for sessions that cost nothing to mint", () => {
+    it("prepare is 20 per address in 15 minutes: another address and the link bucket are separate, and the guest buckets are not used", async () => {
+      const { link } = await unverified();
+      for (let index = 0; index < 20; index += 1) expect((await post(link, prepPath(link.id), "203.0.113.7")).status, `prepare ${index + 1}`).toBe(200);
+      const limited = await post(link, prepPath(link.id), "203.0.113.7"); expect(limited.status).toBe(429); expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
+      expect((await post(link, prepPath(link.id), "203.0.113.8")).status).toBe(200);
+      expect(await countOf("zipprep:guest:%")).toBe(0); expect(await countOf("zipprep:ip:%")).toBe(21);
+      expect(await countOf(`zipprep:link:${link.id}`)).toBe(21); // the refused 21st took nothing from the link bucket
+    });
+    it("a zip start is 10 per address in 15 minutes; a refused start spends nothing; the address bucket never holds the raw address", async () => {
+      const { link } = await unverified();
+      for (let index = 0; index < 10; index += 1) { const zip = await guestFetch(zipPath(link.id), { cookie: link.cookie, ip: "203.0.113.9" }); expect(zip.status, `zip ${index + 1}`).toBe(200); await zip.arrayBuffer(); }
+      const limited = await guestFetch(zipPath(link.id), { cookie: link.cookie, ip: "203.0.113.9" }); expect(limited.status).toBe(429);
+      expect(await countOf("zip:ip:%")).toBe(10); expect(await countOf(`zip:link:${link.id}`)).toBe(10); expect(await countOf("zip:guest:%")).toBe(0);
+      expect(await allAudits()).toHaveLength(10);
+      const buckets = (await database.DB.prepare("SELECT bucket FROM guest_rate_limits").all<Json>()).results.map((row) => row.bucket as string);
+      expect(buckets.join(" ")).not.toContain("203.0.113.9");
+    });
+    it("a zip that then fails to start gives both slots back", async () => {
+      const { link } = await unverified();
+      const { call } = interposed({ before: [[/INSERT INTO audit_log/, () => database.DB.prepare("UPDATE client_links SET allow_download = 0 WHERE id = ?").bind(link.id).run()]] });
+      expect((await call(zipPath(link.id), link.cookie, "GET", { "cf-connecting-ip": "203.0.113.10" })).status).toBe(403);
+      expect(await countOf("zip:%")).toBe(0);
+    });
+  });
+
+  describe("every write on the Delivery link stays verified-only", () => {
+    it("note create, reply, edit, delete, paste, media upload, Client approval and the email subscription all still answer 401 verification_required to an unverified session", async () => {
+      const { link, v2 } = await unverified(); const note = crypto.randomUUID();
+      const calls: Array<[string, string, unknown]> = [
+        ["POST", linkPath(link.id, `/versions/${v2.assetId}/notes`), { body: "hello", timecodeMs: 0 }],
+        ["POST", linkPath(link.id, `/notes/${note}/replies`), { body: "hello" }],
+        ["PATCH", linkPath(link.id, `/notes/${note}`), { body: "hello" }],
+        ["DELETE", linkPath(link.id, `/notes/${note}`), undefined],
+        ["POST", linkPath(link.id, `/versions/${v2.assetId}/note-paste`), { text: "0:01 hi" }],
+        ["POST", linkPath(link.id, `/versions/${v2.assetId}/note-paste/preview`), { text: "0:01 hi" }],
+        ["POST", linkPath(link.id, "/media"), { name: "a.png", contentType: "image/png", bytes: 10 }],
+        ["POST", linkPath(link.id, `/versions/${v2.assetId}/decision`), { decision: "approved" }],
+        ["PUT", linkPath(link.id, "/subscription"), { subscribed: false }],
+      ];
+      for (const [method, path, body] of calls) {
+        const response = await guestFetch(path, { method, cookie: link.cookie, ...(body === undefined ? {} : { body }) });
+        expect(response.status, `${method} ${path}`).toBe(401); expect(await response.json(), `${method} ${path}`).toEqual({ error: "verification_required" });
+      }
+    });
+  });
+
+  describe("row 6: GET .../download-policy", () => {
+    const policy = async (link: { id: string }, cookie: string | null) => guestFetch(policyPath(link.id), { cookie });
+    it("is {codeRequired:false} on the Delivery review link and {codeRequired:true} on any other, for an unverified session", async () => {
+      const dr = await unverified(); const response = await policy(dr.link, dr.link.cookie);
+      expect(response.status).toBe(200); expect(await response.json()).toEqual({ codeRequired: false });
+      const ordinary = await unverified({ ordinary: true }); expect(await (await policy(ordinary.link, ordinary.link.cookie)).json()).toEqual({ codeRequired: true });
+    });
+    it("is the same stub as the other guest reads with no session, a revoked link or the delivery part off; it has no write method; the body carries nothing else", async () => {
+      const dr = await unverified(); const stub = await stubBody();
+      expect(await probe(await policy(dr.link, null))).toEqual(stub);
+      expect((await guestFetch(policyPath(dr.link.id), { method: "POST", cookie: dr.link.cookie })).status).toBe(404);
+      await database.DB.prepare("DELETE FROM feature_flags WHERE key = 'video_review_delivery'").run();
+      expect(await probe(await policy(dr.link, dr.link.cookie))).toEqual(stub);
+    });
+    it("does not leak across links: another link's cookie is the stub", async () => {
+      const a = await unverified(); const b = await unverified({ ordinary: true }); const stub = await stubBody();
+      expect(await probe(await policy(b.link, a.link.cookie))).toEqual(stub);
+    });
+  });
+});

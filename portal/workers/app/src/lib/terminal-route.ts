@@ -367,6 +367,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/d/api/links/:linkId/versions/:assetId/download", class: "guest-link" },
   { method: "GET", path: "/d/api/links/:linkId/downloads", class: "guest-link" },
   { method: "GET", path: "/d/api/links/:linkId/downloads/all.zip", class: "guest-link" },
+  { method: "GET", path: "/d/api/links/:linkId/download-policy", class: "guest-link" },
   { method: "POST", path: "/d/api/links/:linkId/downloads/prepare", class: "guest-link" },
   // Guest media (#835 C): presign, the dev PUT, complete, poster, abort, the uploader's HEIC status, and the reads.
   { method: "POST", path: "/d/api/links/:linkId/media", class: "guest-link" },

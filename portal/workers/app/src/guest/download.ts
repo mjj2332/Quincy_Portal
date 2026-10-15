@@ -1,5 +1,5 @@
 import type { Context, Hono } from "hono";
-import { GUEST_ZIP_MAX_BYTES, GUEST_ZIP_MAX_ENTRIES, guestDownloadManifestSchema, type GuestArchiveState, type GuestDownloadManifest, type VideoReviewPart } from "@quincy/shared";
+import { GUEST_ZIP_MAX_BYTES, GUEST_ZIP_MAX_ENTRIES, guestDownloadManifestSchema, guestDownloadPolicySchema, type GuestArchiveState, type GuestDownloadManifest, type VideoReviewPart } from "@quincy/shared";
 import { auditMeta } from "../lib/audit";
 import { attachment, safeFileName, videoVersionFileName } from "../lib/download-name";
 import { newId } from "../lib/ids";
@@ -13,7 +13,7 @@ import type { AppEnv, Env } from "../env";
 import { classifyRefusal, type RefusalScope } from "./fence";
 import { guestNotFound, guestRoute, originRejection, tooMany, UUID } from "./http";
 import { loadActiveLink, resolveSession, type GuestLink, type GuestSession } from "./link";
-import { GUEST_LIMITS, refundAttempt, reserveAllOrNone, reserveAttempts } from "./rate-limit";
+import { GUEST_LIMITS, clientAddress, ipBucket, refundAttempt, reserveAllOrNone, reserveAttempts, windowStart } from "./rate-limit";
 
 /**
  * Guest downloads (#741 14b): one released Version, the manifest of Download all, and the streaming zip. A download is a READ, so there is no body and no Origin step (the shared check passes
@@ -35,11 +35,18 @@ const open = (link: GuestLink | null): link is GuestLink => link !== null && PAR
 const SECURITY_HEADERS = { "cache-control": "private, no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox", "cross-origin-resource-policy": "same-origin" } as const;
 
 const entryName = videoVersionFileName;
+/** The audit identity: the verified guest and session, or null for an unverified Delivery-link session (ADR 0025: no guest identity; the opaque `sessionId` sits beside it). */
+const guestMeta = (guestId: string | null, sessionId: string) => (guestId === null ? null : { guestId, sessionId });
 export { attachment, safeFileName };
 
 // -- SQL: the fence a committing statement and every zip entry repeat. Aliases: `s` guest_sessions, `l` client_links. Downloads read, so there is NO unarchived test here. --
 type Binds = { session: string; token: string; guest: string; now: string };
-const sessionFence = (b: Binds): string => `s.id = ${b.session} AND s.token_hash = ${b.token} AND s.guest_id = ${b.guest} AND s.verified_at IS NOT NULL AND l.allow_download = 1 AND ${liveSql(b.now)} AND ${gateSql(PARTS)}`;
+/**
+ * The credential, re-read in SQL (ADR 0025): either the verified guest this request authenticated as, or, with `guest` bound NULL, an UNVERIFIED session on a link whose `delivery_review` is 1 RIGHT NOW. The
+ * cached `session.link.deliveryReview` only decides whether to try; it is never what authorises a commit or a byte. A link that stops being the Delivery link, or a session that verifies, mid-request misses this.
+ */
+const credentialSql = (guest: string): string => `((${guest} IS NOT NULL AND s.guest_id = ${guest} AND s.verified_at IS NOT NULL) OR (${guest} IS NULL AND s.guest_id IS NULL AND l.delivery_review = 1))`;
+const sessionFence = (b: Binds): string => `s.id = ${b.session} AND s.token_hash = ${b.token} AND ${credentialSql(b.guest)} AND l.allow_download = 1 AND ${liveSql(b.now)} AND ${gateSql(PARTS)}`;
 /**
  * The Version may be handed over now: a live Version of a live Video that is not a locked premium one, and either released or (the Delivery review link only, #847) in the latest Published set.
  * `link` and `asset` are SQL expressions. One predicate for the audit INSERT, the last fence before R2, and every zip entry.
@@ -49,14 +56,13 @@ const deliverableSql = (link: string, asset: string): string => `EXISTS (SELECT 
 
 /** Whether this session may still be handed `assetId` (or, with null, anything at all): the same predicate the audit INSERT carries, at a fresh time. */
 async function stillAllowed(db: D1Database, session: GuestSession, assetId: string | null): Promise<boolean> {
-  if (session.guestId === null) return false;
   const asset = assetId === null ? "" : ` AND ${reachSql("l.id", "l.project_id", "?5")} AND ${deliverableSql("l.id", "?5")}`;
   const row = await db.prepare(`SELECT 1 AS ok FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE ${sessionFence({ session: "?1", token: "?2", guest: "?3", now: "?4" })}${asset}`)
     .bind(session.id, session.tokenHash, session.guestId, Date.now(), ...(assetId === null ? [] : [assetId])).first();
   return row !== null;
 }
 
-type Entered = { session: GuestSession; guestId: string; answer: (response: Response) => Promise<Response> };
+type Entered = { session: GuestSession; /** Null: an unverified session on the Delivery review link (ADR 0025). */ guestId: string | null; answer: (response: Response) => Promise<Response> };
 /** Steps 1 to 5: the response that ends the request, or the session with an `answer` that re-classifies any non-success first. */
 async function enter(c: Ctx, assetId?: string): Promise<Entered | Response> {
   const linkId = c.req.param("linkId") ?? "";
@@ -69,7 +75,8 @@ async function enter(c: Ctx, assetId?: string): Promise<Entered | Response> {
   if (!open(session.link)) return stub();
   const early = (response: Response) => classifyRefusal(c, session, true, { parts: PARTS, archived: false }).then((refused) => refused ?? response);
   // The capability is not a stub on purpose: the session body already tells the page whether it is verified and what the link allows.
-  if (session.guestId === null) return early(c.json({ error: "verification_required" }, 401));
+  // Only the Delivery review link downloads without a verified session (ADR 0025). The fences below re-read this in SQL; this is the cheap early answer.
+  if (session.guestId === null && !session.link.deliveryReview) return early(c.json({ error: "verification_required" }, 401));
   if (!session.link.allowDownload) return early(c.json({ error: "download_disabled" }, 403));
   const scope: RefusalScope = { parts: PARTS, download: true, archived: false, ...(assetId === undefined ? {} : { assetId }) };
   const answer = async (response: Response): Promise<Response> => await classifyRefusal(c, session, true, scope) ?? response;
@@ -91,9 +98,10 @@ async function readVersion(db: D1Database, linkId: string, projectId: string, as
 /** Nothing landed: say why from a fresh read, in the order of the entry. The stub or the capability first, then the Version's state, else the stub. */
 async function refusedBecause(c: Ctx, session: GuestSession, assetId: string | undefined): Promise<Response> {
   const refused = await classifyRefusal(c, session, true, { parts: PARTS, download: true, archived: false, ...(assetId === undefined ? {} : { assetId }) }); if (refused) return refused;
-  const row = await c.env.DB.prepare("SELECT guest_id, verified_at FROM guest_sessions WHERE id = ?1").bind(session.id).first<{ guest_id: string | null; verified_at: number | null }>();
+  const row = await c.env.DB.prepare("SELECT s.guest_id, s.verified_at, l.delivery_review FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE s.id = ?1").bind(session.id).first<{ guest_id: string | null; verified_at: number | null; delivery_review: number }>();
   if (!row) return guestNotFound(c);
-  if (row.guest_id === null || row.verified_at === null || row.guest_id !== session.guestId) return c.json({ error: "verification_required" }, 401);
+  // 401 whenever the credential this request held no longer matches the row: a verified guest changed or unverified; an unverified one is no longer on a Delivery link, or has verified since (the page re-reads the session and retries).
+  if (session.guestId === null ? row.guest_id !== null || row.delivery_review !== 1 : row.guest_id === null || row.verified_at === null || row.guest_id !== session.guestId) return c.json({ error: "verification_required" }, 401);
   if (assetId !== undefined) {
     const state = await readVersion(c.env.DB, session.link.id, session.link.projectId, assetId);
     if (state && !state.downloadable) return c.json({ error: "not_released" }, 409);
@@ -118,7 +126,7 @@ async function downloadOne(c: Ctx): Promise<Response> {
     const written = await c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?1, NULL, 'review_link.download', 'review_link', l.id, ?2, ?3 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id
       WHERE ${sessionFence({ session: "?4", token: "?5", guest: "?6", now: "?3" })} AND ${reachSql("l.id", "l.project_id", "?7")} AND ${deliverableSql("l.id", "?7")}`)
-      .bind(newId(), auditMeta(null, { guest: { guestId, sessionId: session.id }, linkId: session.link.id, projectId: session.link.projectId, videoId: state.videoId, assetId, version: state.version, bytes: state.bytes }), at, session.id, session.tokenHash, guestId, assetId).run();
+      .bind(newId(), auditMeta(null, { guest: guestMeta(guestId, session.id), ...(guestId === null ? { sessionId: session.id } : {}), linkId: session.link.id, projectId: session.link.projectId, videoId: state.videoId, assetId, version: state.version, bytes: state.bytes }), at, session.id, session.tokenHash, guestId, assetId).run();
     if (written.meta.changes === 0) return refusedBecause(c, session, assetId);
   }
   // The last fence before any R2 read, for every method: HEAD and a resumed Range write no audit row, so the audit INSERT cannot be what stops them, and a revoke can land after `readVersion`.
@@ -192,7 +200,12 @@ async function manifest(c: Ctx): Promise<Response> {
 async function prepare(c: Ctx): Promise<Response> {
   const entered = await enter(c); if (entered instanceof Response) return entered;
   const { session, guestId, answer } = entered;
-  const attempt = await reserveAttempts(c.env.DB, [{ bucket: `zipprep:guest:${guestId}`, limit: GUEST_LIMITS.zipPrepareGuest }, { bucket: `zipprep:link:${session.link.id}`, limit: GUEST_LIMITS.zipPrepareLink }], Date.now());
+  const now = Date.now();
+  // A session with no guest costs nothing to mint, so its per-guest bucket would mean nothing: key it by address (hashed, as the Delivery zips do). The link bucket is the same for both.
+  const principal = guestId === null ? { bucket: await ipBucket("zipprep", clientAddress(c.req.raw), windowStart(now)), limit: GUEST_LIMITS.zipPrepareIp } : { bucket: `zipprep:guest:${guestId}`, limit: GUEST_LIMITS.zipPrepareGuest };
+  const buckets = [principal, { bucket: `zipprep:link:${session.link.id}`, limit: GUEST_LIMITS.zipPrepareLink }];
+  // An address already over its limit must not also burn the link's slots (anyone holding the link could then lock every other visitor out of Download all): the unverified path takes both buckets or neither.
+  const attempt = guestId === null ? await reserveAllOrNone(c.env.DB, buckets, now) : await reserveAttempts(c.env.DB, buckets, now);
   if (attempt.limited) return answer(tooMany(attempt.retryAfterSeconds));
   const { included } = await readDownloadSet(c.env.DB, session.link.id, session.link.projectId);
   if (included.length === 0) return answer(c.json({ error: "nothing_to_download" }, 409));
@@ -278,14 +291,14 @@ async function downloadAll(c: Ctx): Promise<Response> {
   // failed plan never costs a start.
   // Both buckets are taken together or not at all (#824), so a refused start changes neither; a start that then fails gives back exactly one slot in each, as the Delivery zips do.
   const at = Date.now();
-  const guestBucket = `zip:guest:${guestId}`; const linkBucket = `zip:link:${session.link.id}`;
-  const attempt = await reserveAllOrNone(c.env.DB, [{ bucket: guestBucket, limit: GUEST_LIMITS.zipGuest }, { bucket: linkBucket, limit: GUEST_LIMITS.zipLink }], at);
+  const guestBucket = guestId === null ? await ipBucket("zip", clientAddress(c.req.raw), windowStart(at)) : `zip:guest:${guestId}`; const linkBucket = `zip:link:${session.link.id}`;
+  const attempt = await reserveAllOrNone(c.env.DB, [{ bucket: guestBucket, limit: guestId === null ? GUEST_LIMITS.zipIp : GUEST_LIMITS.zipGuest }, { bucket: linkBucket, limit: GUEST_LIMITS.zipLink }], at);
   if (attempt.limited) return answer(tooMany(attempt.retryAfterSeconds));
   const refund = async () => { await refundAttempt(c.env.DB, guestBucket, at); await refundAttempt(c.env.DB, linkBucket, at); };
   const written = await c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?1, NULL, 'review_link.download_all', 'review_link', l.id, ?2, ?3 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE ${sessionFence({ session: "?4", token: "?5", guest: "?6", now: "?3" })}`)
     .bind(newId(), auditMeta(null, {
-      guest: { guestId, sessionId: session.id }, linkId: session.link.id, projectId: session.link.projectId,
+      guest: guestMeta(guestId, session.id), ...(guestId === null ? { sessionId: session.id } : {}), linkId: session.link.id, projectId: session.link.projectId,
       assetIds: included.map((entry) => entry.assetId), leftOut: leftOut.map(({ videoId, reason }) => ({ videoId, reason })), totalBytes: totalOf(included),
     }), at, session.id, session.tokenHash, guestId).run().catch(async (error: unknown) => { await refund(); throw error; });
   if (written.meta.changes === 0) { await refund(); return refusedBecause(c, session, undefined); }
@@ -295,7 +308,15 @@ async function downloadAll(c: Ctx): Promise<Response> {
   return new Response(stream, { status: 200, headers: { ...SECURITY_HEADERS, "content-type": "application/zip", "content-disposition": filename } });
 }
 
+/** `GET .../download-policy`: read-only, the same stub as every session read (no cookie, no link, no gate), then whether a download still needs the code. Authorises nothing: the download routes decide for themselves. */
+async function downloadPolicy(c: Ctx): Promise<Response> {
+  const session = await resolveSession(c, c.req.param("linkId") ?? "", Date.now());
+  // The `delivery` part is what the download routes need, so without it this is the stub too (the page then treats a failed read as "code required" for downloads only).
+  return session && open(session.link) ? c.json(guestDownloadPolicySchema.parse({ codeRequired: !session.link.deliveryReview })) : guestNotFound(c);
+}
+
 export function mountGuestDownloads(app: Hono<AppEnv>): void {
+  app.get("/d/api/links/:linkId/download-policy", guestRoute("/d/api/links/:linkId/download-policy", (c) => downloadPolicy(plain(c))));
   // `app.get` also answers HEAD (Hono runs the GET handler and drops the body), so `c.req.method` is what tells them apart inside.
   app.get("/d/api/links/:linkId/versions/:assetId/download", guestRoute("/d/api/links/:linkId/versions/:assetId/download", (c) => downloadOne(plain(c))));
   app.get("/d/api/links/:linkId/downloads", guestRoute("/d/api/links/:linkId/downloads", (c) => manifest(plain(c))));
