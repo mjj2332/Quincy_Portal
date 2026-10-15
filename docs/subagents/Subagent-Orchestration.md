@@ -77,7 +77,7 @@ they are different agents, and the second is blind to the first's verdicts until
    writes and judges every PASS/FAIL row itself, on Opus. Report contract unchanged: screenshots
    as files in one folder named per viewport and state, and every row carries its measurement
    and screenshot.
-   **The iOS Simulator.** `scripts/agents/ios-pass.sh <path> [device]` boots the device, opens
+   **The iOS Simulator.** `scripts/agents/ios-pass.sh <path> [--device NAME]` boots the device, opens
    Safari on the served branch (`http://localhost:8787<path>`) and creates the screenshot folder.
    The session then drives it with the iOS Simulator tool: real taps on the on-screen keyboard,
    not text injection, because injected text drops characters once a field wraps. Phone rows for

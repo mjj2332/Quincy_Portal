@@ -28,9 +28,9 @@ URL_PATH=""; DEVICE="${IOS_DEVICE:-iPhone 18 Pro}"; SCRATCH_ARG=""; LABEL=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --device) DEVICE="${2:-}"; shift 2 ;;
-    --scratch) SCRATCH_ARG="${2:-}"; shift 2 ;;
-    --label) LABEL="${2:-}"; shift 2 ;;
+    --device) [ $# -ge 2 ] || die "--device needs a value"; DEVICE="$2"; shift 2 ;;
+    --scratch) [ $# -ge 2 ] || die "--scratch needs a value"; SCRATCH_ARG="$2"; shift 2 ;;
+    --label) [ $# -ge 2 ] || die "--label needs a value"; LABEL="$2"; shift 2 ;;
     -*) usage >&2; exit 1 ;;
     *) [ -z "$URL_PATH" ] || { usage >&2; exit 1; }; URL_PATH="$1"; shift ;;
   esac
