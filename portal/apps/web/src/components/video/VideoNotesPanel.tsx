@@ -1,6 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { roleHasCapability, VIDEO_NOTE_PASTE_MAX, type VideoDto, type VideoNoteDto, type VideoNoteThreadDto } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
+import { useHairlineWithHead } from "../../lib/use-hairline-with-head";
 import { useNow } from "../../lib/use-now";
 import { noteCounts, type NoteStatusFilter, type NoteVisibilityFilter } from "../../lib/video-note-view";
 import { classifyVideoNoteError } from "../../lib/video-notes-data";
@@ -49,6 +50,9 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
   const readOnly = archived;
   const now = useNow();
   const listRef = useRef<HTMLDivElement>(null);
+  const countsRef = useRef<HTMLSpanElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  useHairlineWithHead(phone, listRef, countsRef, composerRef);
   const [deleting, setDeleting] = useState<Deleting | null>(null);
   /** Where focus may land once the confirm closes: kept in a ref because `deleting` is already null by then. */
   const focusIds = useRef<string[]>([]);
@@ -174,7 +178,7 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
     <div data-sheet-part="body" className="flex flex-wrap items-baseline justify-between max-[721px]:flex-nowrap max-[721px]:items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)]">
       <div className="grid gap-[var(--space-1)]">
         <h3 data-testid="video-notes-title" className="m-0 max-[721px]:sr-only text-[length:var(--text-lg)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{`Notes on v${version.version}`}</h3>
-        <span data-testid="video-notes-counts" className="text-foreground-secondary [font:var(--type-label)]">{`${counts.totals.open} open · ${counts.totals.resolved} resolved`}</span>
+        <span ref={countsRef} data-testid="video-notes-counts" className="text-foreground-secondary [font:var(--type-label)]">{`${counts.totals.open} open · ${counts.totals.resolved} resolved`}</span>
       </div>
       <div className="flex items-center gap-[var(--space-1)]">
         <Popover>
@@ -251,7 +255,7 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
     </div>
 
     {/* In compose mode the composer is the strip: it may shrink (only its + tray gives way), and the sheet's own top border is the strip's. */}
-    <div data-sheet-part="composer" className="shrink-0 border-t border-border pt-[var(--space-3)] in-data-[mode=compose]:flex in-data-[mode=compose]:min-h-0 in-data-[mode=compose]:shrink in-data-[mode=compose]:flex-col in-data-[mode=compose]:border-t-0 in-data-[mode=compose]:pt-0">
+    <div ref={composerRef} data-sheet-part="composer" className="shrink-0 border-t border-border data-[head-cut=true]:border-t-transparent pt-[var(--space-3)] in-data-[mode=compose]:flex in-data-[mode=compose]:min-h-0 in-data-[mode=compose]:shrink in-data-[mode=compose]:flex-col in-data-[mode=compose]:border-t-0 in-data-[mode=compose]:pt-0">
       {archived
         ? <p data-testid="video-notes-archived" className={ARCHIVED_NOTICE_CLASS}>Read-only while archived. Restore the project before adding or changing notes.</p>
         : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} markup={session.markup} rich={{ projectId: session.projectId, role: session.role }} {...(pen !== undefined ? { pen } : {})} />}

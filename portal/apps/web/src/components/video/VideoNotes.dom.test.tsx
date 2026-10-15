@@ -1096,6 +1096,14 @@ describe("Panel layout classes (design r4)", () => {
     expect(list.className).toContain("min-[721px]:min-h-32");
     expect(list.className).not.toContain("40%");
   });
+
+  it("the composer's top line can be hidden with the notes' head row (#879 fix r11), and on a desktop it is not", async () => {
+    await openFilm();
+    const composer = tid("video-note-composer")!.closest<HTMLElement>('[data-sheet-part="composer"]')!;
+    expect(composer.className).toContain("border-t");
+    expect(composer.className).toContain("data-[head-cut=true]:border-t-transparent");
+    expect(composer.dataset.headCut).toBeUndefined();
+  });
 });
 
 describe("Orphan notices (#741 5b, Sol r6)", () => {
