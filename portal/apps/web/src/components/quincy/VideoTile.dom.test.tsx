@@ -21,6 +21,9 @@ describe("VideoTile", () => {
     const gap = el.querySelector<HTMLElement>('[data-testid="video-tile-pill-offset"]')!;
     const classes = gap.className.split(" ");
     expect(classes).toContain("hidden");
+    expect(classes).toContain("w-11");
+    expect(gap.parentElement!.className).toContain("items-start");
+    expect(el.querySelector('[data-testid="video-tile-status"]')!.parentElement!.className).toContain("items-start");
     for (const shown of ["group-hover/tile:block", "group-focus-within/tile:block", "group-data-[selected=true]/tile:block", "pointer-coarse:block", "max-[721px]:block"]) expect(classes).toContain(shown);
   });
 

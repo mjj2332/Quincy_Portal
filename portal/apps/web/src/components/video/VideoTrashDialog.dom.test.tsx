@@ -7,6 +7,7 @@ import { QuincyQueryProvider } from "../../lib/query-client";
 import { clearToasts, getToasts } from "../../lib/toast-store";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
 import { FIXTURE_PERSON, fixtureVersion, fixtureVideo } from "../../testing/video-trash-fixtures";
+import { ProjectSheet } from "../quincy/ProjectSheet";
 import { ToastViewport } from "../quincy/ToastViewport";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
 import "../../testing/dom-polyfills";
@@ -36,7 +37,7 @@ let restoreOutcome: () => Promise<unknown>;
 async function flush(times = 8) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
 let rerender: () => Promise<void>;
 const ORIGINAL_USER = auth.userId;
-async function mount(opts: { parts?: string[]; role?: Role; archived?: boolean } = {}) {
+async function mount(opts: { parts?: string[]; role?: Role; archived?: boolean; sheet?: boolean } = {}) {
   api.apiGet.mockImplementation(async (path) => {
     if (path.endsWith("/videos")) return { videos: [fixtureVideo({ id: ids.video, versions: [fixtureVersion({ assetId: ids.asset1, version: 1 })] })] };
     if (path.endsWith("/video-trash")) return { retentionDays: 30, items: trash };
@@ -45,7 +46,8 @@ async function mount(opts: { parts?: string[]; role?: Role; archived?: boolean }
   });
   const role = opts.role ?? "editor";
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
-  const tree = () => <QuincyQueryProvider principalId={auth.userId} role={role}><ToastViewport /><VideoCollectionPanel projectId={PROJECT} role={role} archived={opts.archived ?? false} review={{ open: true, parts: (opts.parts ?? ["trash"]) as never }} /></QuincyQueryProvider>;
+  const panel = () => <VideoCollectionPanel projectId={PROJECT} role={role} archived={opts.archived ?? false} review={{ open: true, parts: (opts.parts ?? ["trash"]) as never }} />;
+  const tree = () => <QuincyQueryProvider principalId={auth.userId} role={role}><ToastViewport />{opts.sheet ? <ProjectSheet open={true} kind="project" sheetKey="p" backdropHref="/" onRequestClose={() => undefined}>{panel()}</ProjectSheet> : panel()}</QuincyQueryProvider>;
   rerender = async () => { await act(async () => { root!.render(tree()); }); await flush(4); };
   await act(async () => { root!.render(tree()); });
   await flush();
@@ -214,22 +216,6 @@ describe("Video Trash dialog (#776 E)", () => {
     expect(getToasts().filter((candidate) => /Restored/.test(candidate.message))).toEqual([]);
   });
 
-  it("returns focus to the icon button after Escape, even when the click never focused it (Safari) and the dialog is the one thing open (R7.2)", async () => {
-    await mount();
-    expect(opener()!.getAttribute("aria-label")).toBe("Trash");
-    expect(document.activeElement).not.toBe(opener());
-    await act(async () => { opener()!.click(); });
-    const deadline = Date.now() + 10_000;
-    while (!trashDialog()) { if (Date.now() > deadline) throw new Error("the Trash dialog never mounted"); await flush(1); }
-    await flush(6);
-    await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
-    const sheet = document.body.appendChild(document.createElement("div")); sheet.tabIndex = -1; sheet.setAttribute("data-testid", "project-sheet");
-    sheet.focus(); // what the browser did: focus settled on the surrounding sheet
-    await new Promise((resolve) => setTimeout(resolve, 100)); await flush(4);
-    expect(trashDialog()).toBeNull();
-    expect(document.activeElement).toBe(opener());
-  });
-
   it("reads the list afresh on every opening, and Escape closes it with focus back on the Trash button", async () => {
     await mount();
     await openTrash();
@@ -249,5 +235,19 @@ describe("Video Trash dialog (#776 E)", () => {
     await flush(12);
     expect(trashDialog()!.querySelector('[role="alert"]')).not.toBeNull();
     expect([...trashDialog()!.querySelectorAll("button")].some((b) => b.textContent === "Retry")).toBe(true);
+  });
+
+  it("returns focus to the icon button after Escape, even when the click never focused it (Safari) and the dialog is the one thing open (R7.2)", async () => {
+    await mount({ sheet: true });
+    expect(opener()!.getAttribute("aria-label")).toBe("Trash");
+    expect(document.activeElement).not.toBe(opener());
+    await act(async () => { opener()!.click(); });
+    const deadline = Date.now() + 10_000;
+    while (!trashDialog()) { if (Date.now() > deadline) throw new Error("the Trash dialog never mounted"); await flush(1); }
+    await flush(6);
+    await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    await flush(8);
+    expect(trashDialog()).toBeNull();
+    expect(document.activeElement).toBe(opener());
   });
 });

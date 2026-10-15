@@ -86,12 +86,6 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   const downloadEnabled = review.parts.includes("download") && roleHasCapability(role, "downloadVideo");
   const trashEnabled = review.parts.includes("trash") && roleHasCapability(role, "manageVideoTrash");
   const [trashOpen, setTrashOpen] = useState(false);
-  // The Trash dialog sits over the Project sheet: as the sheet leaves its inert state, focus can settle on the sheet itself instead of the opener (#884 R7.2). Closing re-asserts it on the Trash button after the close has settled.
-  const closeTrash = (open: boolean) => {
-    setTrashOpen(open);
-    if (open) return;
-    window.setTimeout(() => { const button = document.querySelector<HTMLElement>(`[data-testid="${TRASH_OPEN_ID}"]`); if (button && document.activeElement !== button) button.focus({ preventScroll: true }); }, 50);
-  };
   // The selection bar's Download (#884): the ticked films, captured when it opens and resolved against the whole collection, so a film a filter hides is still listed.
   const [downloadIds, setDownloadIds] = useState<string[] | null>(null);
   // The film whose Delete confirmation is open (#868): one dialog for the grid, captured with its title when it opens.
@@ -243,7 +237,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     {trashEnabled && <VideoDeleteDialog projectId={projectId} target={deleting} uploadKey={deletingVideo?.uploading?.reservationId ?? ""} localUpload={deletingVideo ? myVersionUpload(deletingVideo) !== undefined : false}
       onClose={() => setDeleting(null)} onDeleted={() => { focusedCard.current = null; }} />}
     {trashEnabled && trashMounted && <ViewLoadBoundary viewLabel="Trash">
-      <Suspense fallback={null}><LazyTrashDialog projectId={projectId} archived={archived} open={trashOpen} onOpenChange={closeTrash} returnFocusId={TRASH_OPEN_ID} /></Suspense>
+      <Suspense fallback={null}><LazyTrashDialog projectId={projectId} archived={archived} open={trashOpen} onOpenChange={setTrashOpen} returnFocusId={TRASH_OPEN_ID} /></Suspense>
     </ViewLoadBoundary>}
     {openVideo && <ViewLoadBoundary viewLabel="video player">
       <Suspense fallback={null}>

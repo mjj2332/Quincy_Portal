@@ -54,11 +54,11 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, on
   const summary = [`v${version}`, formatDuration(durationMs), noteWords, status?.full].filter((part): part is string => part !== null && part !== undefined).join(", ");
   const posterBody = <>
     {posterUrl
-      ? <LazyImage src={posterUrl} alt={`Poster of ${title}`} className="h-full w-full object-contain" />
+      ? <LazyImage src={posterUrl} alt={`Poster of ${title}`} className="h-full w-full object-contain !bg-invert" />
       : <div data-testid={`${testId}-no-poster`} className="flex h-full w-full items-center justify-center [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] opacity-70">No poster</div>}
     <div className="pointer-events-none absolute inset-x-[var(--space-2)] top-[var(--space-2)] flex items-start justify-between gap-[var(--space-2)]">
-      <div className="flex min-w-0 items-center gap-[var(--space-1)]">
-        {select && <span data-testid={`${testId}-pill-offset`} className="hidden size-11 shrink-0 group-hover/tile:block group-focus-within/tile:block group-data-[selected=true]/tile:block pointer-coarse:block max-[721px]:block" aria-hidden="true" />}
+      <div className="flex min-w-0 items-start gap-[var(--space-1)]">
+        {select && <span data-testid={`${testId}-pill-offset`} className="hidden h-11 w-11 shrink-0 group-hover/tile:block group-focus-within/tile:block group-data-[selected=true]/tile:block pointer-coarse:block max-[721px]:block" aria-hidden="true" />}
         {status && <Badge variant="invert" data-testid={`${testId}-status`} className={cn(CHIP, "gap-[var(--space-1)]")}><span aria-hidden="true" className={cn("size-1.5 rounded-full", DOT[status.tone])} />{status.short}</Badge>}
       </div>
       <div className="flex shrink-0 items-center gap-[var(--space-1)]">
