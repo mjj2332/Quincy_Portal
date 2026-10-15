@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { createContext, useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { releaseVelocity, settleSheet, sheetStops, type SheetStop, type SheetStops } from "../../lib/review-pane-geometry";
 
 /**
@@ -11,6 +11,10 @@ import { releaseVelocity, settleSheet, sheetStops, type SheetStop, type SheetSto
  * - half / full: all three show.
  * - compose (the editor has focus, the keyboard is up) and draw (the picture is the canvas): only the composer shows; the sheet takes its own height.
  *
+ * The mode is the one switch for the phone composer's layout too (#879 fix): `useReviewSheet` computes it from the field's focus and the composer's holds (its + tray is
+ * open, a post is out), and `ReviewSplit` hands it to the composer through `SheetModeContext`. Nothing else decides whether the composer is the compose strip or the pill
+ * at rest, so the sheet and the composer can never disagree (the bug where the composer stayed tall after the keyboard went and the tab row slid under the play bar).
+ *
  * The stop is the screen's state (`useReviewSheet`), opens at half every time and is never persisted (D6). The numbers live in `lib/review-pane-geometry.ts` (#881 adds the rail clamp there).
  */
 export type SheetMode = "browse" | "compose" | "draw";
@@ -19,23 +23,44 @@ export type ReviewSheetControl = {
   stop: SheetStop;
   onStop: (next: SheetStop) => void;
   mode: SheetMode;
-  /** The editor has focus (the keyboard is up): what the screen sizes its root to the visual viewport for. */
+  /** Compose mode: the editor has focus (the keyboard is up) or the composer holds it. What the screen sizes its root to the visual viewport for. */
   composing: boolean;
+  /** The composer's field took or lost the focus. */
   onComposing: (composing: boolean) => void;
+  /** Whether something other than the field's focus keeps compose mode on (the + tray, a post that is out). */
+  held: boolean;
+  /** Takes or releases a hold on compose mode, by name. */
+  setHold: (reason: string, on: boolean) => void;
   /** Width / height of the film on show, for the stops (portrait films take 65% of the space, D7). */
   filmAspect: number;
   /** Names the grabber: "Notes". */
   label: string;
 };
 
-/** The screen's sheet state: opens at half, never persisted, and `mode` follows drawing and the editor's focus. */
+/** The screen's sheet state: opens at half, never persisted, and `mode` follows drawing, the editor's focus and the composer's holds. */
 export function useReviewSheet({ drawing, filmAspect, label = "Notes" }: { drawing: boolean; filmAspect: number; label?: string }): ReviewSheetControl {
   const [stop, setStop] = useState<SheetStop>("half");
-  const [composing, setComposing] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [holds, setHolds] = useState<ReadonlySet<string>>(NO_HOLDS);
   const onStop = useCallback((next: SheetStop) => { setStop(next); }, []);
-  const onComposing = useCallback((next: boolean) => { setComposing(next); }, []);
-  return { stop, onStop, mode: drawing ? "draw" : composing ? "compose" : "browse", composing, onComposing, filmAspect, label };
+  const onComposing = useCallback((next: boolean) => { setFocused(next); }, []);
+  const setHold = useCallback((reason: string, on: boolean) => {
+    setHolds((held) => {
+      if (held.has(reason) === on) return held;
+      const next = new Set(held);
+      if (on) next.add(reason); else next.delete(reason);
+      return next;
+    });
+  }, []);
+  const held = holds.size > 0;
+  const composing = focused || held;
+  return { stop, onStop, mode: drawing ? "draw" : composing ? "compose" : "browse", composing, onComposing, held, setHold, filmAspect, label };
 }
+const NO_HOLDS: ReadonlySet<string> = new Set();
+
+/** What the phone composer reads of the sheet it sits in: the mode, and its own holds. Absent (null) outside a phone sheet: the composer is the desktop form. */
+export type SheetModeValue = { mode: SheetMode; setHold: (reason: string, on: boolean) => void };
+export const SheetModeContext = createContext<SheetModeValue | null>(null);
 
 export const SHEET_COLLAPSED_MIN = 127;
 const PART = "[data-sheet-part]";
@@ -158,4 +183,15 @@ export function SheetGrabber({ control, stops, getHeight, onDrag }: {
 /** Whether a focus event target is the composer's editable field (what puts the sheet in compose mode). */
 export function isComposerField(target: EventTarget | null): boolean {
   return target instanceof Element && target.matches(EDITABLE) && target.closest('[data-sheet-part="composer"]') !== null;
+}
+
+/** Whether a node is inside the composer part (its field, its + tray, Send, Cancel): focus moving there keeps compose mode. */
+export function isInComposer(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('[data-sheet-part="composer"]') !== null;
+}
+
+/** Blurs the focused element when it is in the composer part: compose mode then ends through the pane's ordinary blur path (the keyboard-gone fallback, #879 fix). */
+export function blurComposerField(): void {
+  const active = document.activeElement;
+  if (active instanceof HTMLElement && isInComposer(active)) active.blur();
 }

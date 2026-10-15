@@ -204,7 +204,8 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
   return <aside
     aria-label="Notes"
     data-testid="video-notes-panel"
-    className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)] min-[721px]:overflow-clip max-[721px]:overflow-clip border-l border-border bg-card p-[var(--space-4)] text-card-foreground max-[721px]:border-l-0"
+    // In the phone sheet's compose mode only the composer shows, and the strip carries P6's own tighter padding (#879 fix).
+    className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)] min-[721px]:overflow-clip max-[721px]:overflow-clip border-l border-border bg-card p-[var(--space-4)] text-card-foreground max-[721px]:border-l-0 in-data-[mode=compose]:px-[var(--space-3)] in-data-[mode=compose]:py-[var(--space-2)]"
   >
     {!phone && headerRow}
 
@@ -249,7 +250,8 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
       </ScrollArea>
     </div>
 
-    <div data-sheet-part="composer" className="shrink-0 border-t border-border pt-[var(--space-3)]">
+    {/* In compose mode the composer is the strip: it may shrink (only its + tray gives way), and the sheet's own top border is the strip's. */}
+    <div data-sheet-part="composer" className="shrink-0 border-t border-border pt-[var(--space-3)] in-data-[mode=compose]:flex in-data-[mode=compose]:min-h-0 in-data-[mode=compose]:shrink in-data-[mode=compose]:flex-col in-data-[mode=compose]:border-t-0 in-data-[mode=compose]:pt-0">
       {archived
         ? <p data-testid="video-notes-archived" className={ARCHIVED_NOTICE_CLASS}>Read-only while archived. Restore the project before adding or changing notes.</p>
         : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} markup={session.markup} rich={{ projectId: session.projectId, role: session.role }} {...(pen !== undefined ? { pen } : {})} />}

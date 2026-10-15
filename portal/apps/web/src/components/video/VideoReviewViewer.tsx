@@ -18,7 +18,7 @@ import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
 import { ReviewPaneHideContext, ReviewSplit, useReviewPane, useReviewPaneControls } from "../quincy/ReviewPane";
-import { useReviewSheet } from "../quincy/ReviewSheet";
+import { blurComposerField, useReviewSheet } from "../quincy/ReviewSheet";
 import { useVisualViewport } from "../../lib/use-visual-viewport";
 import type { NotesSlots } from "./VideoNotesHost";
 import type { SocialPreviewMode } from "../quincy/SocialPreviewControls";
@@ -381,7 +381,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const downloadHref = download && !comparing ? videoVersionDownloadUrl(download.projectId, version.assetId) : undefined;
   const [versionsOpen, setVersionsOpen] = useState(false);
   // With the keyboard up (the editor has focus on a phone) the dialog takes the visual viewport, so the film stays on top and the composer sits above the keyboard (D10).
-  const keyboard = useVisualViewport(phone && sheetControl.composing);
+  // The software keyboard went away without blurring the field (some iOS paths): blur it, so compose mode ends the ordinary way (#879 fix). A hold (the + tray, a post) keeps it.
+  const keyboard = useVisualViewport(phone && sheetControl.composing, () => { if (!sheetControl.held) blurComposerField(); });
   const chipRef = useRef<HTMLButtonElement | null>(null);
   const summaries = useVideoVersionSummariesQuery(notes?.projectId ?? reviewStatus?.projectId ?? trash?.projectId ?? download?.projectId ?? "", video.id, phone && versionsOpen && (notes ?? reviewStatus ?? trash ?? download) !== undefined, notes?.role ?? reviewStatus?.role);
   const desktopHeader = <header className="@container flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-1)] text-card-foreground max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">
@@ -507,7 +508,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       {...(phone ? { sheet: { ...sheetControl, mode: slots?.drawing ? "draw" as const : sheetControl.mode } } : {})}
       {...(phone ? {} : { rowClassName: "overflow-y-auto", playerClassName: "overflow-y-auto" })}
       player={<>
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" phoneFrameStep={forms === undefined || formOpen} initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1 max-[721px]:min-h-0" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} />
+        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" phoneFrameStep={forms === undefined || formOpen} transportHidden={phone && sheetControl.mode === "compose" && !slots?.drawing} initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1 max-[721px]:min-h-0" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} />
       </>}
       pane={sidePane}
       strip={paneControls.strip}

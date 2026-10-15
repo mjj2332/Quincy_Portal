@@ -1,10 +1,10 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { PANE_MIN, PLAYER_MIN, REVIEW_PANE_KEY, clampPaneWidth, normalizeReviewPane, paneCeiling } from "../../lib/review-pane-prefs";
 import { useUiPref } from "../../lib/ui-prefs";
 import { Button } from "../reui/button";
 import { IconTip } from "./IconTip";
-import { SHEET_COLLAPSED_MIN, SheetGrabber, isComposerField, useSheetPane, type ReviewSheetControl, type SheetRoom } from "./ReviewSheet";
+import { SHEET_COLLAPSED_MIN, SheetGrabber, SheetModeContext, isComposerField, isInComposer, useSheetPane, type ReviewSheetControl, type SheetModeValue, type SheetRoom } from "./ReviewSheet";
 
 /**
  * The review viewers' split (#859): the player on the left, a collapsible, resizable side pane on the right, one flex row for the staff viewer
@@ -166,11 +166,27 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
   // The sheet's height follows what is measured: a layout pass after the stop, the mode or the film changes (the part sizes are those of the stop being shown).
   useLayoutEffect(() => { if (phoneSheet) measure(); });
   const sheetStyle = phoneSheet && sheetPane.height !== undefined ? { height: sheetPane.height } : undefined;
+  // The composer reads the mode from here (#879 fix): one source for the sheet's layout and the composer's. Always provided (null off the phone sheet), so the pane's subtree never changes shape across the 721px crossing.
+  const sheetMode = phoneSheet ? sheet.mode : null;
+  const setHold = sheet?.setHold;
+  const modeValue = useMemo<SheetModeValue | null>(() => (sheetMode !== null && setHold ? { mode: sheetMode, setHold } : null), [sheetMode, setHold]);
+  const onComposing = sheet?.onComposing;
+  // Leaving the field ends compose mode unless the focus went somewhere inside the composer (its tray, Send, Cancel). iOS often reports no `relatedTarget` even then,
+  // so with none the check waits a frame and looks at where the focus actually is. Ending it never touches the draft: the composer and its editor stay mounted.
+  const leaveCheck = useRef<number | null>(null);
+  useEffect(() => () => { if (leaveCheck.current !== null) cancelAnimationFrame(leaveCheck.current); }, []);
+  const onPaneBlur = (event: { target: EventTarget | null; relatedTarget: EventTarget | null }) => {
+    if (!onComposing || !isInComposer(event.target) || isInComposer(event.relatedTarget)) return;
+    if (event.relatedTarget instanceof Element) { onComposing(false); return; }
+    if (leaveCheck.current !== null) cancelAnimationFrame(leaveCheck.current);
+    leaveCheck.current = requestAnimationFrame(() => { leaveCheck.current = null; if (!isInComposer(document.activeElement)) onComposing(false); });
+  };
   const rowClass = phoneSheet
     ? "flex min-h-0 flex-1 flex-col flex-nowrap overflow-hidden"
     : "flex min-h-0 flex-1 flex-wrap min-[721px]:flex-nowrap min-[721px]:overflow-hidden";
+  // In compose mode the film flexes into whatever the strip leaves (its transport is hidden), and never paints past its cell.
   const playerClass = phoneSheet
-    ? "flex min-h-0 min-w-0 flex-1 flex-col p-0"
+    ? `flex min-h-0 min-w-0 flex-1 flex-col p-0${sheet.mode === "compose" ? " overflow-hidden" : ""}`
     : "flex min-h-0 min-w-0 flex-[999_1_640px] flex-col p-[var(--space-5)] min-[721px]:flex-1";
   return <div ref={rowRef} data-testid="video-review-split" className={`${rowClass} ${rowClassName ?? ""}`}>
     <div data-testid="video-review-player" className={`${playerClass} ${playerClassName ?? ""}`}>{player}</div>
@@ -202,15 +218,14 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
       inert={!showPane}
       {...(phoneSheet ? { "data-stop": sheet.stop, "data-mode": sheet.mode, "data-dragging": sheetPane.drag !== null } : {})}
       onFocusCapture={phoneSheet ? (event) => { if (isComposerField(event.target)) sheet.onComposing(true); } : undefined}
-      onBlurCapture={phoneSheet ? (event) => { if (isComposerField(event.target) && !isComposerField(event.relatedTarget)) sheet.onComposing(false); } : undefined}
-      onSubmitCapture={phoneSheet ? () => { sheet.onComposing(false); } : undefined}
+      onBlurCapture={phoneSheet ? onPaneBlur : undefined}
       style={{ ...(stacked ? {} : { [REVIEW_PANE_WIDTH_VAR]: `${shown}px` }), ...sheetStyle, ...(showPane ? {} : { display: "none" }) } as CSSProperties}
       className={phoneSheet
-        ? "relative flex min-h-0 flex-none flex-col overflow-hidden border-t border-border bg-card motion-safe:transition-[height] motion-safe:duration-[var(--dur-base)] motion-safe:ease-[var(--ease-entrance)] data-[dragging=true]:transition-none data-[mode=compose]:max-h-[60%] [&_[data-sheet-part][inert]]:hidden"
+        ? "relative flex min-h-0 flex-none flex-col overflow-hidden border-t border-border bg-card motion-safe:transition-[height] motion-safe:duration-[var(--dur-base)] motion-safe:ease-[var(--ease-entrance)] data-[dragging=true]:transition-none data-[mode=compose]:max-h-[calc(100%-var(--space-9))] [&_[data-sheet-part][inert]]:hidden"
         : "flex min-h-0 flex-col max-[721px]:flex-[1_1_360px] min-[721px]:w-[var(--review-pane-w)] min-[721px]:flex-none min-[721px]:overflow-hidden"}
     >
       {phoneSheet && <SheetGrabber control={sheet} stops={sheetPane.stops} getHeight={() => sheetPane.drag ?? sheetPane.stops[sheet.stop]} onDrag={sheetPane.setDrag} />}
-      {pane}
+      <SheetModeContext.Provider value={modeValue}>{pane}</SheetModeContext.Provider>
     </div>}
     {!stacked && !showPane && strip}
   </div>;

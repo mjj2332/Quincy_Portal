@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { exitSuggestion } from "@tiptap/suggestion";
 import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon, VideoIcon } from "lucide-react";
@@ -99,6 +100,8 @@ const FIELD_GROUP =
   "has-[[contenteditable=true]:focus-visible]:outline-solid " +
   "has-[[contenteditable=true]:focus-visible]:outline-ring " +
   "has-[[contenteditable=true]:focus-visible]:outline-offset-2";
+/** The same field as one row on the pill radius (#879, the phone note composer): the addons sit inline, the toolbar lives elsewhere. */
+const PILL_GROUP = FIELD_GROUP.replace("flex-col items-stretch", "flex-row items-center");
 
 /** The character counter appears only from 90% of the limit (or when over it). */
 const COUNTER_THRESHOLD = 0.9;
@@ -133,6 +136,19 @@ export type QuincyRichTextEditorBaseProps = {
   linkPreviews?: LinkPreviewRequest;
   /** Reports whether an image is still uploading, so the host can hold Post / Save until it lands. */
   onUploadingChange?: (uploading: boolean) => void;
+  /**
+   * Where the formatting toolbar renders (#879, the phone note composer's + tray). Absent: inside the field, as ever. An element: the same toolbar is portalled
+   * into it and the field has no toolbar row. `null`: that element is not mounted yet, so there is no toolbar for now.
+   */
+  toolbarContainer?: HTMLElement | null;
+  /** Inside the field, before the text (an inline-start addon): the phone composer's + and timecode chip. */
+  inlineStart?: ReactNode;
+  /** Inside the field, after the text (an inline-end addon): the phone composer's pen. */
+  inlineEnd?: ReactNode;
+  /** Classes on the text's box: the phone composer clamps it to one line at rest and four while writing. */
+  contentClassName?: string;
+  /** The field as one row on the pill radius (the phone note composer, owner decision C5). */
+  pill?: boolean;
 };
 
 type UploadingMedia = EmbeddedUpload;
@@ -159,6 +175,11 @@ export function QuincyRichTextEditorBase({
   media,
   linkPreviews,
   onUploadingChange,
+  toolbarContainer,
+  inlineStart,
+  inlineEnd,
+  contentClassName,
+  pill = false,
 }: QuincyRichTextEditorBaseProps) {
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -563,10 +584,8 @@ export function QuincyRichTextEditorBase({
   const liveMessage = overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : uploadCancelled ? CANCELLED_MESSAGE : "";
   const off = (can: boolean) => disabled || !can;
 
-  return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
-    <InputGroup data-testid="rich-text-field" className={FIELD_GROUP} data-disabled={disabled || undefined}>
-      <InputGroupAddon ref={addonRef} align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
-        <RichTextToolbar aria-label="Formatting" className="w-full min-w-0 gap-[var(--space-2)]">
+  // Built once and placed in one of two homes: the field's own toolbar row (the default), or the host's element (`toolbarContainer`).
+  const toolbar = <RichTextToolbar aria-label="Formatting" className="w-full min-w-0 gap-[var(--space-2)]">
           {/* On a phone the table controls lead the scrolling toolbar; they stay while the editor is busy, disabled. On a desktop they are the Table menu in the Insert-table slot (#595). */}
           {isDocument && phone && state.inTable && <RichTextTableTools editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} disabled={disabled || !state.editable} />}
           <RichTextToolbarGroup label="Text style">
@@ -620,13 +639,21 @@ export function QuincyRichTextEditorBase({
             <RichTextButton label="Undo" shortcut={["mod", "Z"]} disabled={off(state.canUndo)} onClick={() => editor.chain().focus().undo().run()}><Undo2Icon aria-hidden="true" /></RichTextButton>
             <RichTextButton label="Redo" shortcut={["mod", "shift", "Z"]} disabled={off(state.canRedo)} onClick={() => editor.chain().focus().redo().run()}><Redo2Icon aria-hidden="true" /></RichTextButton>
           </RichTextToolbarGroup>
-        </RichTextToolbar>
-      </InputGroupAddon>
-      <div ref={pageRef} className="relative w-full min-w-0">
+        </RichTextToolbar>;
+
+  return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
+    <InputGroup data-testid="rich-text-field" variant={pill ? "pill" : "default"} className={pill ? PILL_GROUP : FIELD_GROUP} data-disabled={disabled || undefined}>
+      {toolbarContainer === undefined ? <InputGroupAddon ref={addonRef} align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
+        {toolbar}
+      </InputGroupAddon> : null}
+      {inlineStart !== undefined ? <InputGroupAddon align="inline-start" className="cursor-default">{inlineStart}</InputGroupAddon> : null}
+      <div ref={pageRef} className={cn("relative w-full min-w-0", contentClassName)}>
         <EditorContent editor={editor} className="w-full min-w-0" />
         {isDocument && outline.length >= 2 && <RichTextOutlineRail outline={outline} activeIndex={activeHeading} onSelect={(index) => scrollToRichTextHeading(editor, index)} className="absolute end-1 top-2 z-[1] max-[721px]:hidden" />}
       </div>
+      {inlineEnd !== undefined ? <InputGroupAddon align="inline-end" className="cursor-default">{inlineEnd}</InputGroupAddon> : null}
     </InputGroup>
+    {toolbarContainer ? createPortal(toolbar, toolbarContainer) : null}
     {isDocument && <>
       {!phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tier={tableTier} onTierChange={setTableTier} ceiling={() => addonRef.current?.getBoundingClientRect().bottom ?? 0} />}
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />

@@ -59,7 +59,7 @@ const LEGEND = "flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--
  * surface (`data-surface="inverse"`) around it, like the Lightbox. `keyboard="self"` listens on the player; `"host"` leaves the
  * scope to the caller, who forwards events to `controlRef.handleKeyDown`.
  */
-export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, watermark, onMediaError, transportLocked = false, transportActions, transportReplacement, social, phoneFrameStep = false }: {
+export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, watermark, onMediaError, transportLocked = false, transportActions, transportReplacement, social, phoneFrameStep = false, transportHidden = false }: {
   version: VideoPlayerVersion;
   title: string;
   controlRef?: Ref<VideoPlayerControl>;
@@ -101,6 +101,8 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   social?: SocialPreviewMode;
   /** The phone control bar drops frame step because the notes composer carries it (#879). A host with no such composer (the guest screen, a staff edit in progress) turns it back on. */
   phoneFrameStep?: boolean;
+  /** The phone compose mode (#879 fix, P6): the transport block is hidden (still mounted), so the film takes the room above the compose strip. */
+  transportHidden?: boolean;
 }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [muted, setMutedState] = useState(initialMuted);
@@ -108,7 +110,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   // The transport block's height, kept while it shows so its replacement (drawing) takes at least the same room: the picture above never moves when Draw is pressed.
   const transportRef = useRef<HTMLDivElement | null>(null);
   const transportHeight = useRef<number | null>(null);
-  useLayoutEffect(() => { if (transportReplacement == null && transportRef.current) transportHeight.current = transportRef.current.offsetHeight; });
+  useLayoutEffect(() => { if (transportReplacement == null && !transportHidden && transportRef.current) transportHeight.current = transportRef.current.offsetHeight; });
   const clock = useVideoFrameClock(video, version, initialFrame === undefined ? {} : { initialFrame });
 
   const timecode = useFrameLabel(version);
@@ -180,7 +182,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   >
     <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} {...(social ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})} />
 
-    {transportReplacement != null ? <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div> : <div ref={transportRef} className="flex flex-col gap-[var(--space-3)] max-[721px]:px-[var(--space-3)]">
+    {transportReplacement != null ? <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div> : <div ref={transportRef} hidden={transportHidden} className="flex flex-col gap-[var(--space-3)] max-[721px]:px-[var(--space-3)] [&[hidden]]:hidden">
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}
     <div data-testid="video-scrubber">
       {/* The band is placed against the slider alone: inside the same box as the marker lane it would sit centred on the whole scrubber, 6px below the track. */}

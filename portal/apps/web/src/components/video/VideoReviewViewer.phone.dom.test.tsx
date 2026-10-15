@@ -241,5 +241,55 @@ describe("D4 and focus", () => {
     expect(row.className).toContain("normal-case");
     expect(row.textContent).toContain("latest");
   });
-});
 
+  it("compose mode sizes the dialog to the visual viewport and hides the transport; leaving the field clears both (#879 fix)", async () => {
+    class FakeViewport extends EventTarget { height = window.innerHeight - 340; offsetTop = 24; scale = 1; }
+    const original = Object.getOwnPropertyDescriptor(window, "visualViewport");
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: new FakeViewport() });
+    try {
+      await mount({ notes: true });
+      const deadline = Date.now() + 5000; while (!document.querySelector("textarea") && Date.now() < deadline) await flush(1);
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+      const transport = () => tid("video-scrubber")!.parentElement!;
+      expect(dialog.style.height).toBe("");
+      expect(transport().hasAttribute("hidden")).toBe(false);
+      await act(async () => { document.querySelector<HTMLTextAreaElement>("textarea")!.focus(); });
+      await flush(2);
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("compose");
+      expect(dialog.style.height).toBe(`${window.innerHeight - 340}px`);
+      expect(dialog.style.transform).toBe("translateY(24px)");
+      expect(transport().hasAttribute("hidden")).toBe(true);
+      expect(tid("video-review-player")!.className).toContain("overflow-hidden");
+      const viewportNow = window.visualViewport as unknown as FakeViewport;
+      viewportNow.height = window.innerHeight; viewportNow.offsetTop = 0;
+      await act(async () => { document.querySelector<HTMLTextAreaElement>("textarea")!.blur(); });
+      await flush(4);
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+      expect(dialog.style.height).toBe("");
+      expect(transport().hasAttribute("hidden")).toBe(false);
+    } finally {
+      if (original) Object.defineProperty(window, "visualViewport", original); else delete (window as unknown as Record<string, unknown>).visualViewport;
+    }
+  });
+
+  it("the software keyboard going away without a blur ends compose mode: the field is blurred for it (#879 fix)", async () => {
+    class FakeViewport extends EventTarget { height = window.innerHeight; offsetTop = 0; scale = 1; }
+    const fake = new FakeViewport();
+    const original = Object.getOwnPropertyDescriptor(window, "visualViewport");
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: fake });
+    try {
+      await mount({ notes: true });
+      const deadline = Date.now() + 5000; while (!document.querySelector("textarea") && Date.now() < deadline) await flush(1);
+      const field = document.querySelector<HTMLTextAreaElement>("textarea")!;
+      await act(async () => { field.focus(); });
+      await act(async () => { fake.height = window.innerHeight - 320; fake.dispatchEvent(new Event("resize")); });
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("compose");
+      await act(async () => { fake.height = window.innerHeight; fake.dispatchEvent(new Event("resize")); });
+      await flush(4);
+      expect(document.activeElement).not.toBe(field);
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+    } finally {
+      if (original) Object.defineProperty(window, "visualViewport", original); else delete (window as unknown as Record<string, unknown>).visualViewport;
+    }
+  });
+});

@@ -55,4 +55,44 @@ describe("QuincyRichTextEditorBase", () => {
     const host = await mount({});
     expect(host.querySelector('button[aria-label="Insert image"]')).toBeNull();
   });
+
+  it("with no placement props the field is as it was: the toolbar is its first child, no inline addons, the default radius", async () => {
+    const host = await mount({});
+    const field = host.querySelector<HTMLElement>('[data-testid="rich-text-field"]')!;
+    const addons = [...field.querySelectorAll(':scope > [data-slot="input-group-addon"]')].map((el) => el.getAttribute("data-align"));
+    expect(addons).toEqual(["block-start"]);
+    expect(field.firstElementChild!.querySelector('[role="toolbar"][aria-label="Formatting"]')).not.toBeNull();
+    expect(field.getAttribute("data-variant")).toBeNull();
+    expect(field.className).toContain("flex-col items-stretch");
+  });
+
+  it("toolbarContainer portals the same toolbar there and drops the block-start addon; its Bold still formats the field (#879 fix)", async () => {
+    const tray = document.createElement("div"); document.body.appendChild(tray);
+    const onChange = vi.fn();
+    const host = await mount({ toolbarContainer: tray, pill: true, onChange, value: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "word" }] }] } });
+    const field = host.querySelector<HTMLElement>('[data-testid="rich-text-field"]')!;
+    expect(field.querySelector('[data-align="block-start"]')).toBeNull();
+    expect(host.querySelector('[role="toolbar"]')).toBeNull();
+    expect(tray.querySelector('[role="toolbar"][aria-label="Formatting"]')).not.toBeNull();
+    expect(field.getAttribute("data-variant")).toBe("pill");
+    expect(field.className).toContain("rounded-[var(--radius-pill)]");
+    expect(field.className).toContain("flex-row items-center");
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await act(async () => { editor.focus(); document.getSelection()!.selectAllChildren(editor.querySelector("p")!); document.dispatchEvent(new Event("selectionchange")); await Promise.resolve(); });
+    await act(async () => { tray.querySelector<HTMLButtonElement>('[aria-label="Bold"]')!.click(); await Promise.resolve(); });
+    expect(editor.querySelector("strong")?.textContent).toBe("word");
+  });
+
+  it("a null toolbarContainer renders no toolbar yet; inlineStart and inlineEnd sit inside the field around the text", async () => {
+    const host = await mount({ toolbarContainer: null, inlineStart: <span data-testid="chip">TC</span>, inlineEnd: <span data-testid="pen">pen</span>, contentClassName: "clamp-me" });
+    const field = host.querySelector<HTMLElement>('[data-testid="rich-text-field"]')!;
+    expect(document.querySelector('[role="toolbar"]')).toBeNull();
+    const kids = [...field.children];
+    expect(kids[0]!.getAttribute("data-align")).toBe("inline-start");
+    expect(kids[0]!.contains(host.querySelector('[data-testid="chip"]'))).toBe(true);
+    expect(kids[1]!.className).toContain("clamp-me");
+    expect(kids[1]!.querySelector('[contenteditable="true"]')).not.toBeNull();
+    expect(kids[2]!.getAttribute("data-align")).toBe("inline-end");
+    expect(kids[2]!.contains(host.querySelector('[data-testid="pen"]'))).toBe(true);
+  });
 });

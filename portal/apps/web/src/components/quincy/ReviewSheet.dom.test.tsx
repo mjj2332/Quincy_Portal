@@ -1,11 +1,11 @@
-import { act, useState } from "react";
+import { act, useContext, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { installLocalStorageShim } from "../../testing/local-storage";
 import { resetUiPrefMemory } from "../../lib/ui-prefs";
 import "../../testing/dom-polyfills";
 import { ReviewSplit } from "./ReviewPane";
-import { useReviewSheet } from "./ReviewSheet";
+import { SheetModeContext, blurComposerField, useReviewSheet } from "./ReviewSheet";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,6 +14,12 @@ let root: Root | null = null; let host: HTMLElement; let shim: ReturnType<typeof
 beforeEach(() => { shim = installLocalStorageShim(); resetUiPrefMemory(); host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; shim.restore(); document.body.replaceChildren(); });
 
+/** Stands in for the composer's holds (its + tray, a post that is out): it reads the mode and takes a hold the way the composer does. */
+function HoldButton() {
+  const sheet = useContext(SheetModeContext);
+  const [held, setHeld] = useState(false);
+  return <button type="button" data-testid="hold" data-mode={sheet?.mode ?? "none"} onMouseDown={(e) => { e.preventDefault(); }} onClick={() => { sheet?.setHold("tray", !held); setHeld(!held); }}>Hold</button>;
+}
 function Harness({ drawing = false, stacked = true }: { drawing?: boolean; stacked?: boolean }) {
   const sheet = useReviewSheet({ drawing, filmAspect: 16 / 9 });
   const [tick, setTick] = useState(0);
@@ -23,7 +29,7 @@ function Harness({ drawing = false, stacked = true }: { drawing?: boolean; stack
     pane={<div data-testid="panel">
       <div data-sheet-part="head" data-testid="head"><button type="button" onClick={() => { setTick(tick + 1); }}>Notes</button></div>
       <div data-sheet-part="body" data-testid="body"><button type="button">Thread</button></div>
-      <form data-sheet-part="composer" data-testid="composer" onSubmit={(e) => { e.preventDefault(); }}><textarea data-testid="editor" aria-label="Add a note" /><button type="submit" data-testid="post">Post</button></form>
+      <form data-sheet-part="composer" data-testid="composer" onSubmit={(e) => { e.preventDefault(); }}><textarea data-testid="editor" aria-label="Add a note" /><button type="submit" data-testid="post">Post</button><HoldButton /></form>
     </div>}
   />;
 }
@@ -32,6 +38,8 @@ const grabber = () => q("review-sheet-grabber");
 const pane = () => q("video-review-pane");
 async function mount(props: { drawing?: boolean; stacked?: boolean } = {}) { await act(async () => { root!.render(<Harness {...props} />); }); }
 const key = async (el: Element, k: string) => { await act(async () => { el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); }); };
+/** The pane's blur check waits a frame when the browser names no next focus (iOS often does not). */
+const frame = () => act(async () => { await new Promise((resolve) => { requestAnimationFrame(() => { resolve(undefined); }); }); });
 const mouse = async (el: Element, type: string, clientY: number) => { await act(async () => { el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientY, button: 0 })); }); };
 
 describe("ReviewSheet (#879)", () => {
@@ -83,26 +91,68 @@ describe("ReviewSheet (#879)", () => {
     await mount();
     await act(async () => { q("editor").focus(); });
     expect(pane().getAttribute("data-mode")).toBe("compose");
+    expect(q("hold").dataset.mode).toBe("compose");
     expect(q("head").hasAttribute("inert")).toBe(true);
     expect(q("body").hasAttribute("inert")).toBe(true);
     expect(q("composer").hasAttribute("inert")).toBe(false);
     expect(pane().getAttribute("data-stop")).toBe("half");
     await act(async () => { q("editor").blur(); });
+    await frame();
     expect(pane().getAttribute("data-mode")).toBe("browse");
+    expect(q("hold").dataset.mode).toBe("browse");
     expect(q("head").hasAttribute("inert")).toBe(false);
   });
 
-  it("moving focus from the editor to Post ends compose mode, and so does a submit", async () => {
+  it("moving focus within the composer (to Post) keeps compose mode, and a submit does not end it; focus leaving the composer does", async () => {
     await mount();
     await act(async () => { q("editor").focus(); });
-    expect(pane().getAttribute("data-mode")).toBe("compose");
     await act(async () => { q("post").focus(); });
-    expect(pane().getAttribute("data-mode")).toBe("browse");
-    expect(q("head").hasAttribute("inert")).toBe(false);
-    await act(async () => { q("editor").focus(); });
+    await frame();
     expect(pane().getAttribute("data-mode")).toBe("compose");
     await act(async () => { q("composer").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(pane().getAttribute("data-mode")).toBe("compose");
+    await act(async () => { q("film").setAttribute("tabindex", "-1"); q("film").focus(); });
     expect(pane().getAttribute("data-mode")).toBe("browse");
+  });
+
+  it("a blur that names no next focus waits a frame, and stays in compose when the focus is back in the composer by then", async () => {
+    await mount();
+    await act(async () => { q("editor").focus(); });
+    await act(async () => { q("editor").blur(); q("editor").focus(); });
+    await frame();
+    expect(pane().getAttribute("data-mode")).toBe("compose");
+  });
+
+  it("a hold (the + tray, a post that is out) keeps compose mode after the field blurs, and releasing it returns to browse", async () => {
+    await mount();
+    await act(async () => { q("editor").focus(); });
+    await act(async () => { q("hold").click(); });
+    await act(async () => { q("editor").blur(); });
+    await frame();
+    expect(pane().getAttribute("data-mode")).toBe("compose");
+    expect(q("head").hasAttribute("inert")).toBe(true);
+    await act(async () => { q("hold").click(); });
+    expect(pane().getAttribute("data-mode")).toBe("browse");
+  });
+
+  it("the keyboard-gone fallback blurs the composer's field, which ends compose mode the ordinary way", async () => {
+    await mount();
+    await act(async () => { q("editor").focus(); });
+    await act(async () => { blurComposerField(); });
+    await frame();
+    expect(document.activeElement).not.toBe(q("editor"));
+    expect(pane().getAttribute("data-mode")).toBe("browse");
+  });
+
+  it("compose mode puts no percentage cap on the sheet, and the film's cell clips what it cannot fit", async () => {
+    await mount();
+    await act(async () => { q("editor").focus(); });
+    expect(pane().className).not.toContain("max-h-[60%]");
+    expect(pane().className).toContain("data-[mode=compose]:max-h-[calc(100%-var(--space-9))]");
+    expect(q("video-review-player").className).toContain("overflow-hidden");
+    await act(async () => { q("editor").blur(); });
+    await frame();
+    expect(q("video-review-player").className).not.toContain("overflow-hidden");
   });
 
   it("drawing is draw mode, whatever the stop, with the same nodes", async () => {

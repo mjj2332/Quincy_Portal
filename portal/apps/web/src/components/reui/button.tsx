@@ -51,6 +51,10 @@ import { cn } from "@/lib/utils"
 //    filter chip (`reui/filters/filters-chip.tsx`, which must stand as tall as the buttons beside
 //    it) imports the contract instead of copying its literal. `size.default` renders the same
 //    classes it did before.
+//
+// 7. `size["icon-round"]` (owner decision C5, 2026-10-15): the phone note composer's round Send.
+//    A 44px circle on the pill radius token, used by that one call site only; every other size and
+//    every variant renders exactly as before.
 
 /** Quincy's control height contract: 38px, 44px at <=721px (correction 3). */
 export const BUTTON_HEIGHT_CLASS = "min-h-[38px] max-[721px]:min-h-[44px]"
@@ -83,6 +87,7 @@ const buttonVariants = cva(
         "icon-sm":
           "size-7 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg",
         "icon-lg": "size-9",
+        "icon-round": "size-11 rounded-[var(--radius-pill)]",
       },
     },
     defaultVariants: {
