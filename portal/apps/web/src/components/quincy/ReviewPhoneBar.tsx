@@ -13,7 +13,8 @@ import type { StatusTone } from "./StatusPill";
 export function ReviewPhoneBar({ back, title, chip, approve, actions }: { back: ReactNode; title: ReactNode; chip: ReactNode; approve?: ReactNode; actions?: ReactNode }) {
   return <header data-testid="review-phone-bar" className="flex h-[calc(var(--space-7)+var(--space-2))] flex-none flex-nowrap items-center gap-x-[var(--space-1)] border-b border-border bg-card px-[var(--space-1)] text-card-foreground">
     {back}
-    <div className="flex min-w-0 flex-1 flex-col items-start justify-center">
+    {/* No leading control (a guest on a one-video link): P1/P2 always lead with the 44px back, and the bar's `--space-1` gutter alone left the title ~4pt from the edge (#879 PR 3a round 2). */}
+    <div data-testid="review-phone-bar-title" className={cn("flex min-w-0 flex-1 flex-col items-start justify-center", back == null && "ps-[var(--space-3)]")}>
       {title}
       {chip}
     </div>
