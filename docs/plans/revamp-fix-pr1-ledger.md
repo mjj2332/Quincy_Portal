@@ -4,7 +4,7 @@ One line per new or changed UI element in the phone note composer (audit rows 1,
 `revamp-fix.md` (settled), `revamp-fix-opus.md` §3–§4. Paths are under `portal/apps/web/src/`.
 
 ReUI MCP (`mcp__ReUI__search`) timed out on two queries on 2026-10-15, so the searches below ran against the local copy
-`tmp/ReUI_Full_Source_Code/` (it may be out of date). Nothing new is installed. `config/ui-primitive-allowlist.ts` is
+`~/quincy-ref/reui/` (it may be out of date). Nothing new is installed. `config/ui-primitive-allowlist.ts` is
 unchanged: the diff adds no raw `<button>`, `<input>`, `<select>`, `<textarea>`, `<dialog>` or widget `role` outside
 `components/reui/` and `components/quincy/` (the tray's `role="region"` is a landmark on `CollapsibleContent`, not a
 widget role).

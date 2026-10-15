@@ -1,6 +1,6 @@
 # Video review revamp — audit against the prototype
 
-Owner decision, 2026-10-15: the Claude design prototype in `quincy-video-review-revamp/project/`
+Owner decision, 2026-10-15: the Claude design prototype in `design/prototypes/video-review-revamp/project/`
 is the spec for the revamp (#879–#884). This audits what shipped in #888 (#884, tiles) and #889
 (#879, phone review) against its frames, at `main` 983a08d6.
 
