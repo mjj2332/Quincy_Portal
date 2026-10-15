@@ -16,12 +16,14 @@ const field = vi.hoisted(() => ({ unmounts: 0, props: new Map<string, { media: u
 vi.mock("./GuestNoteEditor", async () => {
   const shared = await import("@quincy/shared");
   return {
-    GuestNoteEditor: (props: { testId: string; label: string; placeholder?: string; disabled?: boolean; value: import("@quincy/shared").RichTextDoc; onChange: (doc: import("@quincy/shared").RichTextDoc) => void; media: unknown; onUploadingChange?: (uploading: boolean) => void }) => {
+    GuestNoteEditor: (props: { testId: string; label: string; placeholder?: string; disabled?: boolean; value: import("@quincy/shared").RichTextDoc; onChange: (doc: import("@quincy/shared").RichTextDoc) => void; media: unknown; onUploadingChange?: (uploading: boolean) => void; pill?: boolean; inlineStart?: import("react").ReactNode; inlineEnd?: import("react").ReactNode }) => {
       field.props.set(props.testId, props as never);
       // eslint-disable-next-line react-hooks/rules-of-hooks -- a component body
       useEffect(() => () => { field.unmounts += 1; }, []);
-      return <textarea data-testid={props.testId} aria-label={props.label} placeholder={props.placeholder} disabled={props.disabled} value={shared.videoNoteBody(props.value)}
+      const area = <textarea data-testid={props.testId} aria-label={props.label} placeholder={props.placeholder} disabled={props.disabled} value={shared.videoNoteBody(props.value)}
         onChange={(event) => { props.onChange(event.target.value === "" ? { type: "doc", content: [{ type: "paragraph" }] } : shared.legacyBodyToRichTextDoc(event.target.value)); }} />;
+      // The phone pill (#879 PR 2) puts its +, chip and pen around the field.
+      return props.pill ? <div>{props.inlineStart}{area}{props.inlineEnd}</div> : area;
     },
   };
 });
@@ -365,7 +367,8 @@ describe("Social preview on the Review link (#872)", () => {
     await withLayout(async () => {
       await open();
       await atSeconds(1);
-      await click(byId("guest-add-note"));
+      // A phone has no Add a note: the pen sits in the pill (#879 PR 2), with the field mounted at rest for a verified guest.
+      await vi.waitFor(() => { expect(byId("guest-composer-body")).not.toBeNull(); });
       await click(byId("guest-composer-draw"));
       await atSeconds(1);
       const layer = byId("guest-draft-layer")!;

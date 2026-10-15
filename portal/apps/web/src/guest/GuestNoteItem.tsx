@@ -45,6 +45,8 @@ export type Writing = {
   composerOpen: boolean;
   /** Edit the guest's own root note in the composer (body, frames, drawing). Replies are edited inline, body only. */
   editRoot: (thread: GuestNoteThreadDto) => void;
+  /** `editRoot` puts the focus in the composer's field inside the menu's click (the phone pill, #879 PR 2), so the menu must not hand it back to ⋯ as it closes. */
+  editTakesFocus?: boolean;
 };
 
 function Author({ note }: { note: GuestNoteDto }) {
@@ -155,9 +157,17 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
     return deleteFallbackFocus()();
   };
 
+  // Edit on a phone hands the focus to the composer's field inside the click (#879 PR 2), so iOS raises the keyboard: the menu then leaves the focus there. Base UI's own click
+  // handling would focus the clicked item after ours (list navigation) and so take the field's focus away; on that path the item vetoes it and closes the menu itself, which is
+  // why the menu's open state is held here. Reset each time a menu opens.
+  const editHandOff = useRef(false);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
   const menu = (note: GuestNoteDto) => own(note)
-    ? <Menu triggerLabel="Actions for your note" label="Note actions" triggerClassName={cn(ICON_BUTTON, "ms-auto")} triggerTestId="guest-note-actions" trigger={<span aria-hidden="true">⋯</span>}>
-      <MenuPrimitive.Item className={MENU_ITEM} disabled={busy || (note.id === thread.id && writing.composerOpen)} onClick={() => { if (note.id === thread.id) writing.editRoot(thread); else { setEditStatus(IDLE); { const doc = note.content ?? legacyBodyToRichTextDoc(note.body); drafts.set(editKey, { noteId: note.id, baseRevision: note.revision, baseDoc: doc, ackRevision: null, doc }); } } }}>Edit</MenuPrimitive.Item>
+    ? <Menu
+      triggerLabel="Actions for your note" label="Note actions" triggerClassName={cn(ICON_BUTTON, "ms-auto")} triggerTestId="guest-note-actions" trigger={<span aria-hidden="true">⋯</span>}
+      open={menuFor === note.id} onOpenChange={(open) => { if (open) editHandOff.current = false; setMenuFor(open ? note.id : null); }} finalFocus={() => (editHandOff.current ? false : undefined)}
+    >
+      <MenuPrimitive.Item className={MENU_ITEM} disabled={busy || (note.id === thread.id && writing.composerOpen)} onClick={(event) => { if (note.id === thread.id) { editHandOff.current = writing.editTakesFocus === true; if (editHandOff.current) { event.preventBaseUIHandler(); setMenuFor(null); } writing.editRoot(thread); } else { setEditStatus(IDLE); { const doc = note.content ?? legacyBodyToRichTextDoc(note.body); drafts.set(editKey, { noteId: note.id, baseRevision: note.revision, baseDoc: doc, ackRevision: null, doc }); } } }}>Edit</MenuPrimitive.Item>
       <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={busy} onClick={() => { setDeleteConflict(null); setDeleting({ noteId: note.id, problem: null, pending: false, baseRevision: note.revision }); }}>Delete</MenuPrimitive.Item>
     </Menu>
     : null;

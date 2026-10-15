@@ -23,9 +23,11 @@ type Step = "identity" | "code";
  * side), so `onVerified` receives it and nothing is refetched, except when the code is reported expired or the session already verified: a double submit has two correct codes racing, one
  * wins, and the loser must find out by reading the session. State lives in the inner flow, so closing and reopening starts clean.
  */
-export function GuestVerifyDialog({ api, open, onOpenChange, onVerified, onGone }: {
+export function GuestVerifyDialog({ api, open, onOpenChange, onVerified, onGone, finalFocus }: {
   api: GuestApi;
   open: boolean;
+  /** Where the focus goes as the dialog closes (Base UI `finalFocus`): false leaves it where a continuation put it (#879 PR 2). */
+  finalFocus?: () => boolean;
   onOpenChange: (open: boolean) => void;
   onVerified: (session: GuestSessionResponse) => void;
   /** A stub answer: the link is gone, the page's unavailable path. */
@@ -40,7 +42,7 @@ export function GuestVerifyDialog({ api, open, onOpenChange, onVerified, onGone 
   if (open && !wasOpen.current) setOpening((n) => n + 1);
   wasOpen.current = open;
   return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent data-testid="guest-verify-dialog" showCloseButton={false} className="sm:max-w-[460px]">
+    <DialogContent data-testid="guest-verify-dialog" showCloseButton={false} {...(finalFocus ? { finalFocus } : {})} className="sm:max-w-[460px]">
       <VerifyFlow key={opening} api={api} generation={generation} onCancel={() => { generation.current += 1; onOpenChange(false); }} onVerified={onVerified} onGone={onGone} />
     </DialogContent>
   </Dialog>;

@@ -15,11 +15,18 @@ if (!Element.prototype.getAnimations) Element.prototype.getAnimations = () => []
 const field = vi.hoisted(() => ({ props: new Map<string, { media: unknown; onUploadingChange?: (uploading: boolean) => void; onChange: (doc: unknown) => void; value: unknown; label: string }>() }));
 vi.mock("./GuestNoteEditor", async () => {
   const shared = await import("@quincy/shared");
+  const { createPortal } = await import("react-dom");
   return {
-    GuestNoteEditor: (props: { testId: string; label: string; placeholder?: string; disabled?: boolean; value: import("@quincy/shared").RichTextDoc; onChange: (doc: import("@quincy/shared").RichTextDoc) => void; media: unknown; onUploadingChange?: (uploading: boolean) => void }) => {
+    // The phone pill's props (#879 PR 2) are placed the way the real field places them: `inlineStart` / `inlineEnd` around the text, and a stand-in toolbar portalled into `toolbarContainer`.
+    GuestNoteEditor: (props: { testId: string; id?: string; label: string; placeholder?: string; disabled?: boolean; value: import("@quincy/shared").RichTextDoc; onChange: (doc: import("@quincy/shared").RichTextDoc) => void; media: unknown; onUploadingChange?: (uploading: boolean) => void; pill?: boolean; pillWrap?: boolean; inlineStart?: import("react").ReactNode; inlineEnd?: import("react").ReactNode; toolbarContainer?: HTMLElement | null; contentClassName?: string }) => {
       field.props.set(props.testId, props as never);
-      return <textarea data-testid={props.testId} aria-label={props.label} placeholder={props.placeholder} disabled={props.disabled} value={shared.videoNoteBody(props.value)}
+      const area = <textarea data-testid={props.testId} id={props.id} aria-label={props.label} placeholder={props.placeholder} disabled={props.disabled} className={props.contentClassName} value={shared.videoNoteBody(props.value)}
         onChange={(event) => { props.onChange(event.target.value === "" ? { type: "doc", content: [{ type: "paragraph" }] } : shared.legacyBodyToRichTextDoc(event.target.value)); }} />;
+      if (!props.pill) return area;
+      return <div data-testid="stub-pill" data-pill-wrap={String(props.pillWrap ?? true)}>
+        <div data-testid="stub-inline-start">{props.inlineStart}</div>{area}<div data-testid="stub-inline-end">{props.inlineEnd}</div>
+        {props.toolbarContainer ? createPortal(<div role="toolbar" aria-label="Formatting" data-testid="stub-toolbar"><button type="button" data-testid="stub-bold">B</button></div>, props.toolbarContainer) : null}
+      </div>;
     },
   };
 });
@@ -1132,29 +1139,245 @@ describe("round 4 findings", () => {
   });
 });
 
-describe("the phone sheet composer", () => {
+describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as guest)", () => {
   beforeEach(async () => { await viewport.set({ width: 390, coarse: true }); });
-  it("Add a note opens the composer in the sheet's foot, with the film still on top and the sheet where it was; Cancel puts Add a note back", async () => {
+  const area = () => byId("guest-composer-body") as HTMLTextAreaElement | null;
+  const mode = () => byId("video-review-pane")!.getAttribute("data-mode");
+  const tray = () => byId("guest-composer-tray")!;
+  const fieldReady = async () => { await vi.waitFor(() => { expect(area()).not.toBeNull(); }); };
+  const focusField = async () => { await act(async () => { area()!.focus(); }); await flush(2); };
+  const blurField = async () => { await act(async () => { area()!.blur(); }); await flush(4); };
+  /** A press the way a finger makes one: the pointerdown (whose default decides whether the focus moves), then the click. */
+  const press = async (element: HTMLElement | null): Promise<boolean> => {
+    const down = new MouseEvent("pointerdown", { bubbles: true, cancelable: true });
+    await act(async () => { element!.dispatchEvent(down); element!.click(); });
+    await flush(2);
+    return down.defaultPrevented;
+  };
+
+  it("a verified guest's sheet ends in the pill at rest: +, chip, field, pen and a disabled round Send; no Add a note, hint or Cancel", async () => {
     await open();
-    const film = document.querySelector("video");
-    await click(byId("guest-add-note"));
-    const pane = byId("video-review-pane")!;
-    expect(byId("guest-composer")).not.toBeNull();
-    expect(pane.contains(byId("guest-composer"))).toBe(true);
-    expect(byId("guest-composer")!.closest('[data-sheet-part="composer"]')).not.toBeNull();
-    expect(pane.getAttribute("data-stop")).toBe("half");
-    expect(document.querySelector("video")).toBe(film);
-    await click(byId("guest-composer-cancel"));
+    await atSeconds(2);
+    await fieldReady();
+    const strip = byId("guest-compose-strip")!;
+    expect(strip.closest('[data-sheet-part="composer"]')).not.toBeNull();
+    expect(byId("guest-add-note")).toBeNull();
     expect(byId("guest-composer")).toBeNull();
-    expect(byId("guest-add-note")).not.toBeNull();
+    expect(byId("stub-inline-start")!.contains(byId("guest-composer-extras"))).toBe(true);
+    expect(byId("stub-inline-start")!.contains(byId("guest-composer-anchor"))).toBe(true);
+    expect(byId("guest-composer-anchor")!.textContent).toContain("00:00:02:00");
+    expect(byId("stub-inline-end")!.contains(byId("guest-composer-draw"))).toBe(true);
+    const send = byId("guest-composer-post") as HTMLButtonElement;
+    expect(send.getAttribute("aria-label")).toBe("Post note");
+    expect(send.className).toContain("rounded-[var(--radius-pill)]");
+    expect(send.disabled).toBe(true);
+    expect(byId("guest-composer-stamp")).toBeNull();
+    expect(byId("guest-composer-cancel")).toBeNull();
+    expect(byId("stub-pill")!.dataset.pillWrap).toBe("false");
+    expect(tray().hasAttribute("inert")).toBe(true);
+    expect(tray().contains(byId("stub-toolbar"))).toBe(true);
+    expect(area()!.getAttribute("placeholder")).toBe("Add a note…");
+    expect(mode()).toBe("browse");
   });
-  it("Add a note puts the cursor in the editor (D10), and the pen blurs it so the keyboard goes away (D11)", async () => {
+
+  it("focus pauses the film and stamps the frame: compose mode with the hint, + and Cancel; the stamp holds while the film moves", async () => {
     await open();
-    await click(byId("guest-add-note"));
-    const field = () => document.querySelector<HTMLElement>('[data-testid="guest-composer-body"]');
-    await vi.waitFor(() => { expect(field()).not.toBeNull(); expect(document.activeElement).toBe(field()); });
-    await click(byId("guest-composer-draw"));
-    expect(document.activeElement).not.toBe(field());
+    await atSeconds(2);
+    await fieldReady();
+    await focusField();
+    expect(mode()).toBe("compose");
+    expect(host.querySelector("video")!.paused).toBe(true);
+    expect(byId("guest-composer-stamp")!.textContent).toBe("Paused at 00:00:02:00 · the note is stamped here");
+    expect(byId("guest-composer-cancel")).not.toBeNull();
+    expect(byId("stub-pill")!.dataset.pillWrap).toBe("true");
+    await atSeconds(4);
+    await typeInto(area(), "Too dark");
+    expect(byId("guest-composer-anchor")!.textContent).toContain("00:00:02:00");
+  });
+
+  it("blur keeps a draft with text (one line, browse mode); a pristine draft is released, so the chip follows the film again", async () => {
+    await open();
+    await atSeconds(2);
+    await fieldReady();
+    await focusField();
+    await typeInto(area(), "Keep me");
+    await blurField();
+    expect(mode()).toBe("browse");
+    expect(area()!.value).toBe("Keep me");
+    expect(area()!.className).toContain("[&_p]:text-ellipsis");
+    expect(byId("guest-composer-cancel")).toBeNull();
+    // The draft's anchor stays on the chip, and the range button takes the draft's marks.
+    await atSeconds(4);
+    expect(byId("guest-composer-anchor")!.textContent).toContain("00:00:02:00");
+    await focusField();
+    await typeInto(area(), "");
+    await blurField();
+    await atSeconds(5);
+    expect(byId("guest-composer-anchor")!.textContent).toContain("00:00:05:00");
+    expect(byId("guest-compose-strip")!.dataset.open).toBe("false");
+  });
+
+  it("+ opens the tray without taking the focus; the open tray holds compose after a blur; frame step moves an empty note's stamp; the toolbar is in the tray", async () => {
+    await open();
+    await atSeconds(2);
+    await fieldReady();
+    await focusField();
+    const plus = byId("guest-composer-extras")!;
+    expect(await press(plus)).toBe(true);
+    expect(plus.getAttribute("aria-expanded")).toBe("true");
+    expect(plus.getAttribute("aria-pressed")).toBe("true");
+    expect(document.activeElement).toBe(area());
+    expect(tray().hasAttribute("inert")).toBe(false);
+    expect(byId("guest-composer-tray-toolbar")!.contains(byId("stub-toolbar"))).toBe(true);
+    expect(await press(byId("stub-bold"))).toBe(true);
+    expect(await press(byId("guest-composer-step-forward"))).toBe(true);
+    await atSeconds(2.04);
+    expect(byId("guest-composer-stamp")!.textContent).toContain("Paused at 00:00:02:01");
+    expect(byId("guest-composer-anchor")!.textContent).toContain("00:00:02:01");
+    await press(byId("guest-composer-mark-out"));
+    expect(byId("guest-composer-stamp")!.textContent).toBe("From 00:00:02:01 to 00:00:02:01");
+    await blurField();
+    expect(mode()).toBe("compose");
+    expect(byId("guest-composer-cancel")).not.toBeNull();
+    await press(plus);
+    expect(mode()).toBe("browse");
+  });
+
+  it("Send is disabled while the note is empty; a post holds compose until it lands, then the strip rests with the note listed", async () => {
+    let answer: (response: Response) => void = () => undefined;
+    let posted: unknown = null;
+    extra = (url, init) => {
+      if (url === `${BASE}/versions/${asset(10)}/notes` && init?.method === "POST") { posted = JSON.parse(String(init.body)); return new Promise<Response>((resolve) => { answer = resolve; }); }
+      return undefined;
+    };
+    await open();
+    await atSeconds(2);
+    await fieldReady();
+    await focusField();
+    const send = () => byId("guest-composer-post") as HTMLButtonElement;
+    expect(send().disabled).toBe(true);
+    await typeInto(area(), "Too dark here");
+    expect(send().disabled).toBe(false);
+    expect(await press(send())).toBe(true);
+    expect(posted).toEqual({ startFrame: 50, content: para("Too dark here") });
+    expect(send().getAttribute("aria-label")).toBe("Posting…");
+    await blurField();
+    expect(mode()).toBe("compose");
+    await act(async () => { answer(json(mine(5, { startFrame: 50 }), 201)); });
+    await flush();
+    expect(mode()).toBe("browse");
+    expect(area()!.value).toBe("");
+    expect(allById("guest-note")).toHaveLength(1);
+  });
+
+  it("a refused post keeps the draft and shows the problem in place of the hint", async () => {
+    extra = (url, init) => (url.endsWith("/notes") && init?.method === "POST" ? json({ error: "rate_limited" }, 429, { "retry-after": "30" }) : undefined);
+    await open();
+    await fieldReady();
+    await focusField();
+    await typeInto(area(), "Again");
+    await press(byId("guest-composer-post"));
+    expect(byId("guest-composer-problem")!.getAttribute("role")).toBe("alert");
+    expect(byId("guest-composer-problem")!.textContent).toContain("too quickly");
+    expect(byId("guest-composer-stamp")).toBeNull();
+    expect(area()!.value).toBe("Again");
+  });
+
+  it("Cancel keeps the focus on press, then discards the draft, closes the tray, remounts the field and returns to browse", async () => {
+    await open();
+    await fieldReady();
+    await focusField();
+    await typeInto(area(), "draft");
+    await press(byId("guest-composer-extras"));
+    const before = area();
+    expect(await press(byId("guest-composer-cancel"))).toBe(true);
+    expect(area()).not.toBe(before);
+    expect(area()!.value).toBe("");
+    expect(tray().hasAttribute("inert")).toBe(true);
+    expect(mode()).toBe("browse");
+  });
+
+  it("the pen blurs the field and puts the sheet in draw mode from the frame confirm on; pressing it again is Done and the field takes the focus back", async () => {
+    await open();
+    await atSeconds(2);
+    await fieldReady();
+    await focusField();
+    const pen = byId("guest-composer-draw")!;
+    await act(async () => { pen.click(); });
+    expect(document.activeElement).not.toBe(area());
+    expect(mode()).toBe("draw");
+    await atSeconds(2);
+    expect(byId("guest-markup-toolbar")).not.toBeNull();
+    expect(byId("guest-composer-draw")!.getAttribute("aria-pressed")).toBe("true");
+    expect(area()!.getAttribute("placeholder")).toBe("Add a note with this drawing…");
+    await act(async () => { byId("guest-composer-draw")!.click(); });
+    await flush(2);
+    expect(byId("guest-markup-toolbar")).toBeNull();
+    expect(document.activeElement).toBe(area());
+    expect(mode()).toBe("compose");
+  });
+
+  it("Edit from ⋯ fills the pill inside the click: the field has the focus, the hint says Editing, Send is Save, and Save sends the patch", async () => {
+    notes = { [asset(10)]: [mine(2, { revision: 3 })] };
+    let patched: unknown = null;
+    extra = (url, init) => {
+      if (url === `${BASE}/notes/${noteId(2)}` && init?.method === "PATCH") { patched = JSON.parse(String(init.body)); return json(mine(2, { revision: 4, body: "Reworded" })); }
+      return undefined;
+    };
+    await open();
+    await fieldReady();
+    await click(byId("guest-note-actions"));
+    // Inside the click: the menu item takes no focus back after it (Base UI's list navigation refocuses a clicked item), and the menu closes.
+    await act(async () => { menuItem("Edit")!.click(); });
+    await flush();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(area()!.value).toBe("My note");
+    expect(document.activeElement).toBe(area());
+    expect(mode()).toBe("compose");
+    expect(byId("guest-composer-stamp")!.textContent).toBe("Editing your note · at 00:00:02:00");
+    expect(byId("guest-composer-post")!.getAttribute("aria-label")).toBe("Save");
+    await typeInto(area(), "Reworded");
+    await press(byId("guest-composer-post"));
+    expect(patched).toEqual({ expectedRevision: 3, content: para("Reworded") });
+    expect(byId("guest-note-body")?.textContent).toBe("Reworded");
+  });
+
+  it("an unverified guest sees the pill's shell: a tap asks for verification, and the code lands them in a focused draft", async () => {
+    session = ANON;
+    extra = (url, init) => {
+      if (url === `${BASE}/email/code` && init?.method === "POST") return json({ sent: true, resendAfterSeconds: 60 }, 202);
+      if (url === `${BASE}/email/verify` && init?.method === "POST") { session = VERIFIED; return json(VERIFIED); }
+      return undefined;
+    };
+    await open();
+    expect(area()).toBeNull();
+    const shell = byId("guest-compose-shell-open")!;
+    expect(shell.getAttribute("aria-label")).toBe("Add a note");
+    expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(true);
+    await click(shell);
+    expect(byId("guest-verify-dialog")).not.toBeNull();
+    await typeInto(byId("guest-verify-email"), "sam@example.com");
+    await typeInto(byId("guest-verify-name"), "Sam");
+    await submit("guest-verify-identity-form");
+    await typeInto(byId("guest-verify-code"), "123456");
+    await flush();
+    await fieldReady();
+    await vi.waitFor(() => { expect(document.activeElement).toBe(area()); });
+    expect(byId("guest-verify-dialog")).toBeNull();
+    expect(mode()).toBe("compose");
+    expect(byId("guest-compose-strip")!.dataset.open).toBe("true");
+  });
+
+  it("the identity and email-updates rows end the notes list's scroll; Copy my notes is a row of the ⋯ sheet", async () => {
+    videos = [videoOf(1, [versionOf(11), versionOf(10)])];
+    notes = { [asset(11)]: [note(1)] };
+    session = { ...VERIFIED, notifications: { available: true, subscribed: false } } as GuestSessionResponse;
+    await open();
+    const list = byId("guest-notes-panel")!.querySelector('[data-slot="scroll-area"]') ?? byId("guest-notes-panel")!;
+    expect(list.contains(byId("guest-identity"))).toBe(true);
+    expect(byId("guest-paste-open")).toBeNull();
+    await click(byId("video-header-menu"));
+    expect(byId("guest-paste-open")).not.toBeNull();
   });
 });
 
