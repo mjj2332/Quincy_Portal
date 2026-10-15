@@ -76,7 +76,9 @@ describe("QuincyRichTextEditorBase", () => {
     expect(tray.querySelector('[role="toolbar"][aria-label="Formatting"]')).not.toBeNull();
     expect(field.getAttribute("data-variant")).toBe("pill");
     // Half the 44px phone control height: a stadium on one line, capped corners once the text wraps (#879 fix r4); the addons sit on the last line.
-    expect(field.className).toContain("rounded-[22px]");
+    // The radius comes from the spacing tokens, (48 - 4) / 2 = 22px, not a literal (#879 fix r9).
+    expect(field.className).toContain("rounded-[calc((var(--space-7)-var(--space-1))/2)]");
+    expect(field.className).not.toMatch(/rounded-\[\d+px\]/);
     expect(field.className).toContain("flex-row items-end");
     // In the pill the text takes whatever the addons leave (#879 fix): it flexes rather than claiming the full width.
     const text = [...field.children].find((el) => el.querySelector('[contenteditable="true"]') !== null)!;

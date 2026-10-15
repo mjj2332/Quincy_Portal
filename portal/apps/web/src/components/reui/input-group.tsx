@@ -80,8 +80,8 @@ function InputGroup({ className, variant = "default", ...props }: React.Componen
       role="group"
       className={cn(
         "group/input-group relative flex min-h-[38px] max-[721px]:min-h-[44px] w-full min-w-0 items-center rounded-[var(--radius-sm)] border border-border bg-card transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:border-border-hover has-[input:focus-visible]:outline-[length:var(--border-width-bold)] has-[input:focus-visible]:outline-solid has-[input:focus-visible]:outline-ring has-[input:focus-visible]:outline-offset-2 has-disabled:bg-surface-sunken has-disabled:cursor-not-allowed has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>textarea]:h-auto has-[>[data-align=block-end]]:[&>input]:pt-3 has-[>[data-align=block-start]]:[&>input]:pb-3",
-        // Half the 44px phone control height: a stadium on one line, rounded corners rather than a stadium once the text wraps (#879 fix r4).
-        variant === "pill" && "rounded-[22px]",
+        // Half the 44px phone control height, from tokens (48 - 4 = 44, halved: 22px): a stadium on one line, rounded corners rather than a stadium once the text wraps (#879 fix r4, r9).
+        variant === "pill" && "rounded-[calc((var(--space-7)-var(--space-1))/2)]",
         className
       )}
       {...props}
