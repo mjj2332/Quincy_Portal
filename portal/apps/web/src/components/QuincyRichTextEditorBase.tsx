@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { exitSuggestion } from "@tiptap/suggestion";
-import { TextSelection } from "@tiptap/pm/state";
 import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon, VideoIcon } from "lucide-react";
 import { RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_LINK_PREVIEWS, imageAltFromFileName, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { cn } from "../lib/utils";
@@ -163,14 +162,6 @@ export type QuincyRichTextEditorBaseProps = {
   contentClassName?: string;
   /** The field as one row on the pill radius (the phone note composer, owner decision C5). */
   pill?: boolean;
-  /**
-   * Whether a tap that focuses the pill lets iOS pan the page to reveal it (default true: the browser's own focus). False (#879 fix r7, the phone staff viewer only):
-   * a touch or pen press on the unfocused pill focuses it with `preventScroll` and places the caret itself. iOS draws its reveal-the-field pan in Safari's UI process
-   * (`_zoomToRevealFocusedElement`), ahead of anything the page can write, and skips it for a focus made with `preventScroll` (WebKit r290646, Safari 15.5): so the
-   * viewer does not pan at all, rather than correcting a pan it can only follow a frame late. A mouse or trackpad, and a press on a field that has the focus, are
-   * left alone. Only with `pill`.
-   */
-  revealOnFocus?: boolean;
 };
 
 type UploadingMedia = EmbeddedUpload;
@@ -202,7 +193,6 @@ export function QuincyRichTextEditorBase({
   inlineEnd,
   contentClassName,
   pill = false,
-  revealOnFocus = true,
 }: QuincyRichTextEditorBaseProps) {
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -235,10 +225,6 @@ export function QuincyRichTextEditorBase({
   const pageRef = useRef<HTMLDivElement>(null);
   const pillRef = useRef(pill);
   pillRef.current = pill;
-  // The quiet pill (#879 fix r7): a tap focuses it without iOS's reveal pan. The last press's pointer type tells a tap from a mouse click (iOS's mousedown is synthetic).
-  const quietRef = useRef(pill && !revealOnFocus);
-  quietRef.current = pill && !revealOnFocus;
-  const pressPointer = useRef<string | null>(null);
   const addonRef = useRef<HTMLDivElement>(null);
   const [uploads, setUploads] = useState<UploadingMedia[]>([]);
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
@@ -309,22 +295,6 @@ export function QuincyRichTextEditorBase({
         }
         return true;
       },
-      handleDOMEvents: {
-        pointerdown: (_view, event) => { pressPointer.current = event.pointerType; return false; },
-        // The quiet pill (#879 fix r7): a touch or pen press on the unfocused field focuses it with `preventScroll`, so iOS does not pan the page to reveal it,
-        // and puts the caret where the finger landed (the end when that is not a text position). The mousedown is the tap's synthetic one, a user gesture, so
-        // the keyboard still opens. No scrollIntoView: the pill keeps its own caret in view (`handleScrollToSelection`).
-        mousedown: (view, event) => {
-          const pointer = pressPointer.current;
-          pressPointer.current = null;
-          if (!quietRef.current || (pointer !== "touch" && pointer !== "pen") || !view.editable || view.hasFocus()) return false;
-          event.preventDefault();
-          const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? view.state.doc.content.size;
-          view.dom.focus({ preventScroll: true });
-          view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(pos))));
-          return true;
-        },
-      },
       handleKeyDown: (view, event) => {
         if (menu.current?.handleKeyDown(event)) return true;
         if (shouldBlockListIndent(event, itemContainerDepth(view.state.selection.$from))) {
@@ -381,14 +351,6 @@ export function QuincyRichTextEditorBase({
   // below checks `isDestroyed` again, because React re-runs a committed render's effects after that tick has already destroyed its editor.
   const editor = created && !created.isDestroyed ? created : null;
   editorRef.current = editor;
-  // Puts the focus back in the field after a control outside it had it. In the pill it is a `preventScroll` focus (#879 fix r7): Tiptap's `focus` command is a bare
-  // `view.dom.focus()` on iOS, which lets iOS pan the page to reveal the field. ProseMirror's focus handler puts the selection back.
-  const focusField = useCallback(() => {
-    const current = editorRef.current;
-    if (!current || current.isDestroyed) return;
-    if (pillRef.current) current.view.dom.focus({ preventScroll: true });
-    else current.commands.focus();
-  }, []);
   const state = useRichTextState(editor);
   // Below 721px the table controls are a toolbar group and the floating bar is not mounted; on a desktop the group
   // takes over too when the bar has no room around the table (tier "none": the bar stays mounted but inert) (#535).
@@ -411,8 +373,8 @@ export function QuincyRichTextEditorBase({
   useLayoutEffect(() => {
     if (!refocusRef.current) return;
     refocusRef.current = false;
-    focusField();
-  }, [presentation, focusField]);
+    if (editorRef.current && !editorRef.current.isDestroyed) editorRef.current.commands.focus();
+  }, [presentation]);
   // Leaving the table forgets the tier; the bar's options are rebuilt on entering, so it is reported afresh.
   useEffect(() => { if (!state.inTable) setTableTier(null); }, [state.inTable]);
   // The derived outline rail (document preset only; `null` keeps the composer's selector idle).
@@ -729,7 +691,7 @@ export function QuincyRichTextEditorBase({
       onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const kind = picking.kind; setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to, kind); }}
       {...{ onCancel: () => setPicking(null) }}
     />}
-    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} onCancel={(key) => { running.current.get(key)?.release(); announceCancelled(); focusField(); }} onRemove={(key) => { running.current.get(key)?.release(); focusField(); }} onRetry={(key) => running.current.get(key)?.retry()} />
+    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} onCancel={(key) => { running.current.get(key)?.release(); announceCancelled(); editorRef.current?.commands.focus(); }} onRemove={(key) => { running.current.get(key)?.release(); editorRef.current?.commands.focus(); }} onRetry={(key) => running.current.get(key)?.retry()} />
     {mentionsOn && <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />}
     {plainText.length >= limit * COUNTER_THRESHOLD && <div ref={counterRef} data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
     <div className={liveMessage && liveMessage !== CANCELLED_MESSAGE ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>

@@ -7,10 +7,9 @@ import { legacyBodyToRichTextDoc, videoNoteBody, type RichTextDoc } from "@quinc
  * rich field has its own tests. Typing sends a one-paragraph document, which is what the real field sends for plain text.
  *
  * The phone pill's props (#879 fix) are honoured the way the real field places them: `inlineStart` / `inlineEnd` around the text, and a stand-in formatting toolbar (one Bold button)
- * portalled into `toolbarContainer` when that is an element. The inline toolbar of the desktop field is not stood in for. `revealOnFocus={false}` (#879 fix r7, the
- * quiet pill focus) shows as `data-reveal-on-focus="false"`, so a viewer test can see which host turns it on; its behaviour is tested on the real field.
+ * portalled into `toolbarContainer` when that is an element. The inline toolbar of the desktop field is not stood in for.
  */
-export function VideoNoteEditor({ id, value, onChange, disabled, placeholder, onSubmit, toolbarContainer, inlineStart, inlineEnd, contentClassName, pill, revealOnFocus }: { id?: string; value: RichTextDoc; onChange: (value: RichTextDoc) => void; disabled?: boolean; placeholder?: string; onSubmit?: () => void; toolbarContainer?: HTMLElement | null; inlineStart?: ReactNode; inlineEnd?: ReactNode; contentClassName?: string; pill?: boolean; revealOnFocus?: boolean }) {
+export function VideoNoteEditor({ id, value, onChange, disabled, placeholder, onSubmit, toolbarContainer, inlineStart, inlineEnd, contentClassName, pill }: { id?: string; value: RichTextDoc; onChange: (value: RichTextDoc) => void; disabled?: boolean; placeholder?: string; onSubmit?: () => void; toolbarContainer?: HTMLElement | null; inlineStart?: ReactNode; inlineEnd?: ReactNode; contentClassName?: string; pill?: boolean }) {
   const toolbar = <div role="toolbar" aria-label="Formatting" data-testid="stub-toolbar"><button type="button" data-testid="stub-bold">B</button></div>;
   const area = <textarea
     id={id} value={videoNoteBody(value)} placeholder={placeholder} readOnly={disabled} className={contentClassName}
@@ -18,7 +17,7 @@ export function VideoNoteEditor({ id, value, onChange, disabled, placeholder, on
     onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); onSubmit?.(); } }}
   />;
   // One shape at every width (the real field keeps its editor across the 721px crossing), so a node-identity test can hold on to the textarea.
-  return <div data-testid="stub-field" data-pill={pill ? "true" : undefined} data-reveal-on-focus={revealOnFocus === false ? "false" : undefined}>
+  return <div data-testid="stub-field" data-pill={pill ? "true" : undefined}>
     {inlineStart !== undefined ? <div data-testid="stub-inline-start">{inlineStart}</div> : null}
     {area}
     {inlineEnd !== undefined ? <div data-testid="stub-inline-end">{inlineEnd}</div> : null}

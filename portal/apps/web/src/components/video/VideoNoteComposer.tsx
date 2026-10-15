@@ -64,7 +64,7 @@ function shortRange(from: string, to: string): string {
  * tray (visibility, frame step, Set in / out, the formatting toolbar), and Cancel under it. The editor is the same node in every layout and across the 721px
  * crossing: each layout's pieces are siblings in fixed slots around it.
  */
-export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode, post, onRefresh, markup = false, rich, pen, revealOnFocus = true }: {
+export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode, post, onRefresh, markup = false, rich, pen }: {
   store: NoteFormStore;
   assetId: string;
   clock: VideoFrameClock | null;
@@ -78,11 +78,6 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   rich: { projectId: string; role: Role };
   /** The Draw button on a phone (#879, D11): it sits inside the pill, and pressing it hides the keyboard before drawing starts. */
   pen?: ReactNode;
-  /**
-   * False (#879 fix r7): a tap on the pill focuses it without iOS's reveal pan. Only the phone staff viewer sets it, where the viewer is a fixed dialog that a pan
-   * would carry off screen; a composer anywhere else focuses as the browser does.
-   */
-  revealOnFocus?: boolean;
 }) {
   const phone = useMediaQuery(PHONE_QUERY);
   const sheet = useContext(SheetModeContext);
@@ -256,7 +251,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     >
       <VideoNoteEditor key={editorKey} id="video-note-body" projectId={rich.projectId} role={rich.role} value={draftDoc(composer.content, composer.body)} disabled={frozen} placeholder={phone ? (drawingNow ? "Add a note with this drawing…" : "Add a note…") : "Add a note at this frame… Use @ to mention a colleague."}
         onChange={(doc) => { if (!frozen) store.setContent(assetId, doc, clock ? frameOnScreen(clock.getState()) : 0); }} onSubmit={send} onUploadingChange={setUploading}
-        {...(phone ? { pill: true, revealOnFocus, toolbarContainer: trayToolbar, inlineStart: <>{plus}{chip}</>, ...(penSlot ? { inlineEnd: penSlot } : {}), contentClassName: composing ? COMPOSE_CLAMP : REST_CLAMP } : {})}
+        {...(phone ? { pill: true, toolbarContainer: trayToolbar, inlineStart: <>{plus}{chip}</>, ...(penSlot ? { inlineEnd: penSlot } : {}), contentClassName: composing ? COMPOSE_CLAMP : REST_CLAMP } : {})}
       />
     </div>
     {!phone && tooLong && <Notice tone="critical" role="alert">{`Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.`}</Notice>}

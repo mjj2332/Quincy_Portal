@@ -2,7 +2,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RichTextDoc } from "@quincy/shared";
-import type { Editor } from "@tiptap/react";
 import type { EditorMediaTransport } from "../lib/embedded-media-core";
 import { QuincyRichTextEditorBase } from "./QuincyRichTextEditorBase";
 
@@ -112,92 +111,3 @@ describe("QuincyRichTextEditorBase", () => {
     expect(kids[2]!.contains(host.querySelector('[data-testid="pen"]'))).toBe(true);
   });
 });
-
-// #879 fix r7: iOS draws its reveal-the-field pan in Safari's UI process, ahead of anything the page writes, and skips it for a `preventScroll` focus. The phone
-// staff viewer's pill (`revealOnFocus={false}`) therefore takes a tap's focus itself. happy-dom has no layout: `posAtCoords` is stubbed.
-describe("QuincyRichTextEditorBase: the quiet pill focus (#879 fix r7)", () => {
-  const word = (): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "word" }] }] });
-  const surface = (host: HTMLElement) => host.querySelector<HTMLElement>('[contenteditable="true"]')!;
-  const editorOf = (host: HTMLElement) => (surface(host) as unknown as { editor: Editor }).editor;
-  const stubCoords = (host: HTMLElement, pos: number | null) => { editorOf(host).view.posAtCoords = () => (pos === null ? null : { pos, inside: -1 }); };
-  /** A tap as iOS sends it: the pointer's own pointerdown, then the synthetic mousedown. */
-  async function press(target: HTMLElement, pointerType: string) {
-    const mousedown = new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: 4, clientY: 4 });
-    await act(async () => {
-      target.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType }));
-      target.dispatchEvent(mousedown);
-      await Promise.resolve();
-    });
-    return mousedown;
-  }
-
-  it("a touch press on the unfocused pill focuses it with preventScroll, puts the caret where it landed, and the focus still bubbles", async () => {
-    const host = await mount({ pill: true, revealOnFocus: false, value: word() });
-    stubCoords(host, 3);
-    const field = surface(host);
-    const focus = vi.spyOn(field, "focus");
-    const focusin = vi.fn();
-    host.addEventListener("focusin", focusin);
-    const mousedown = await press(field, "touch");
-    expect(mousedown.defaultPrevented).toBe(true);
-    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
-    expect(document.activeElement).toBe(field);
-    // The host's compose mode starts from this focus (VideoNoteComposer's onFocusCapture): it must reach the ancestors.
-    expect(focusin).toHaveBeenCalled();
-    expect(editorOf(host).state.selection.from).toBe(3);
-  });
-
-  it("a pen press counts as a tap; where the press is not a text position the caret goes to the end", async () => {
-    const host = await mount({ pill: true, revealOnFocus: false, value: word() });
-    stubCoords(host, null);
-    const mousedown = await press(surface(host), "pen");
-    expect(mousedown.defaultPrevented).toBe(true);
-    expect(document.activeElement).toBe(surface(host));
-    // "word" ends at 5 (the doc's content is 6: the paragraph's open and close).
-    expect(editorOf(host).state.selection.from).toBe(5);
-  });
-
-  it.each([
-    ["the field already has the focus", { pill: true, revealOnFocus: false }, "touch", true],
-    ["a mouse or trackpad press", { pill: true, revealOnFocus: false }, "mouse", false],
-    ["the prop is absent (the guest screen, a composer elsewhere)", { pill: true }, "touch", false],
-    ["the field is not a pill (desktop)", { revealOnFocus: false }, "touch", false],
-  ] as const)("leaves the browser's own focus alone when %s", async (_case, props, pointerType, focusedFirst) => {
-    const host = await mount({ ...props, value: word() });
-    stubCoords(host, null);
-    if (focusedFirst) await act(async () => { surface(host).focus(); await Promise.resolve(); });
-    const focus = vi.spyOn(surface(host), "focus");
-    const mousedown = await press(surface(host), pointerType);
-    expect(mousedown.defaultPrevented).toBe(false);
-    expect(focus).not.toHaveBeenCalled();
-  });
-
-  it("puts the focus back in the pill with preventScroll after a control outside it had it (the upload tray's Cancel), never with Tiptap's bare iOS focus", async () => {
-    let finish: (id: string) => void = () => undefined;
-    const transport: EditorMediaTransport = {
-      heicEnabled: false, video: true, mediaUrl: (id) => `/m/${id}`, posterUrl: (id) => `/m/${id}/poster`,
-      uploadImage: vi.fn(async () => "m1"), uploadVideo: vi.fn(() => new Promise<string>((resolve) => { finish = resolve; })), abort: vi.fn(async () => undefined),
-    };
-    const host = await mount({ pill: true, revealOnFocus: false, media: transport, value: word() });
-    const field = surface(host);
-    const paste = new Event("paste", { bubbles: true, cancelable: true }) as Event & { clipboardData?: unknown };
-    paste.clipboardData = { files: [new File([new Uint8Array(100)], "clip.mp4", { type: "video/mp4" })], getData: () => "", types: ["Files"] };
-    await act(async () => { field.focus(); field.dispatchEvent(paste); await Promise.resolve(); });
-    const cancel = host.querySelector<HTMLButtonElement>('button[aria-label="Cancel upload of clip.mp4"]')!;
-    expect(cancel).not.toBeNull();
-    await act(async () => { cancel.focus(); await Promise.resolve(); });
-    // Pose as iOS, where Tiptap's focus command is a bare `view.dom.focus()` (elsewhere it ends in ProseMirror's preventScroll focus and would pass unnoticed).
-    Object.defineProperty(navigator, "platform", { value: "iPhone", configurable: true });
-    try {
-      const focus = vi.spyOn(field, "focus");
-      await act(async () => { cancel.click(); await new Promise((resolve) => setTimeout(resolve, 20)); });
-      expect(focus).toHaveBeenCalled();
-      expect(focus.mock.calls.every(([options]) => (options as FocusOptions | undefined)?.preventScroll === true)).toBe(true);
-      expect(document.activeElement).toBe(field);
-    } finally {
-      delete (navigator as unknown as { platform?: string }).platform;
-    }
-    finish("v1");
-  });
-});
-
