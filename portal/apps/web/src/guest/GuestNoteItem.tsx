@@ -20,7 +20,8 @@ import { GuestNoteField } from "./GuestNoteField";
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const BODY = "m-0 whitespace-pre-wrap text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [overflow-wrap:anywhere]";
 const EMPTY_DOC: RichTextDoc = { type: "doc", content: [{ type: "paragraph" }] };
-const PROBLEM = "m-0 text-destructive [font:var(--type-body-sm)]";
+// Danger text on the viewer's inverse surface reads the wash role (fix round 4): the fill role stays oxblood there, about 1.8:1 on ink.
+const PROBLEM = "m-0 text-destructive-wash-foreground [font:var(--type-body-sm)]";
 
 /** What a note action came to. `message` is what to tell the guest, or null when the answer is not for this form any more (a stale one). */
 /** `saved` is a write that landed but whose answer is not for this view any more (the guest went to All videos meanwhile): the form's draft is done with all the same. `conflict` is the thread a conflict answered with: the latest version the guest was shown. */
@@ -168,7 +169,7 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
       open={menuFor === note.id} onOpenChange={(open) => { if (open) editHandOff.current = false; setMenuFor(open ? note.id : null); }} finalFocus={() => (editHandOff.current ? false : undefined)}
     >
       <MenuPrimitive.Item className={MENU_ITEM} disabled={busy || (note.id === thread.id && writing.composerOpen)} onClick={(event) => { if (note.id === thread.id) { editHandOff.current = writing.editTakesFocus === true; if (editHandOff.current) { event.preventBaseUIHandler(); setMenuFor(null); } writing.editRoot(thread); } else { setEditStatus(IDLE); { const doc = note.content ?? legacyBodyToRichTextDoc(note.body); drafts.set(editKey, { noteId: note.id, baseRevision: note.revision, baseDoc: doc, ackRevision: null, doc }); } } }}>Edit</MenuPrimitive.Item>
-      <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={busy} onClick={() => { setDeleteConflict(null); setDeleting({ noteId: note.id, problem: null, pending: false, baseRevision: note.revision }); }}>Delete</MenuPrimitive.Item>
+      <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive-wash-foreground")} disabled={busy} onClick={() => { setDeleteConflict(null); setDeleting({ noteId: note.id, problem: null, pending: false, baseRevision: note.revision }); }}>Delete</MenuPrimitive.Item>
     </Menu>
     : null;
 

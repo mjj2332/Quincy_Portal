@@ -1522,6 +1522,36 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     expectScrolledAbovePill();
   });
 
+  // Fix round 4 (design review): Delete read oxblood on ink (about 1.8:1); the inverse surface re-points only the tone text roles.
+  it("the ⋯ menu's Delete reads the danger text role, not the oxblood fill", async () => {
+    notes = { [asset(10)]: [mine(2)] };
+    await open();
+    await click(byId("guest-note-actions"));
+    const del = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent === "Delete")!;
+    expect(del.className.split(" ")).toContain("text-destructive-wash-foreground");
+    expect(del.className.split(" ")).not.toContain("text-destructive");
+  });
+
+  // Fix round 4: the list's 10px overlay scrollbar sat on the cards' right border (the list kept 4px at its end); the end gutter is now 12px, the start untouched.
+  it("the notes list keeps a gutter for its scrollbar at the end only", async () => {
+    notes = { [asset(10)]: [mine(2)] };
+    await open();
+    const grid = byId("guest-notes-list-body")!;
+    expect(byId("guest-notes-list")!.contains(grid)).toBe(true);
+    expect(grid.className.split(" ")).toContain("pe-[var(--space-3)]");
+    expect(grid.className).not.toMatch(/(?:^|\s)(?:px|ps|pl)-/);
+  });
+
+  // Fix round 4: "Not you? Sign out" ended 10px short of the cards' right edge (the small button's trailing inset); in the notes pane it ends flush, at its full 44px height.
+  it("the sign-out link in the notes pane ends flush with the cards, keeping its touch height", async () => {
+    notes = { [asset(10)]: [mine(2)] };
+    await open();
+    const signOut = byId("guest-sign-out")!;
+    expect(byId("guest-notes-list")!.contains(signOut)).toBe(true);
+    expect(signOut.className.split(" ")).toContain("pe-0");
+    expect(signOut.className.split(" ")).toContain("max-[721px]:min-h-11");
+  });
+
   it("a note's ⋯ menu opens in the viewer's inverse scope, not on the light page", async () => {
     notes = { [asset(10)]: [mine(2)] };
     await open();

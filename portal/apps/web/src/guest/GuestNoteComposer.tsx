@@ -115,7 +115,7 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
     {/* The line above the pill. A problem takes its place (and shows at rest too); after an edit conflict the latest saved text follows it, whole, in its own scroll. */}
     {lineShown && <div className={cn(PHONE_LINE, "grid gap-[var(--space-1)]")}>
       {strip.problem !== null
-        ? <p role="alert" data-testid="guest-composer-problem" className="m-0 max-h-[var(--space-9)] overflow-y-auto text-destructive">{strip.problem}</p>
+        ? <p role="alert" data-testid="guest-composer-problem" className="m-0 max-h-[var(--space-9)] overflow-y-auto text-destructive-wash-foreground">{strip.problem}</p>
         : <p data-testid="guest-composer-stamp" className="m-0 line-clamp-2 text-foreground-secondary">{hint}</p>}
       {strip.latest !== null && <p data-testid="guest-composer-latest" className="m-0 max-h-[var(--space-9)] overflow-y-auto whitespace-pre-wrap text-foreground-secondary [overflow-wrap:anywhere]">{`Latest saved version: ${strip.latest}`}</p>}
     </div>}

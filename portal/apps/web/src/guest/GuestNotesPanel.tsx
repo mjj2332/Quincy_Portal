@@ -47,7 +47,8 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
     {top && <div data-sheet-part="composer" className="order-last shrink-0 border-t border-border pt-[var(--space-3)] in-data-[mode=compose]:flex in-data-[mode=compose]:min-h-0 in-data-[mode=compose]:shrink in-data-[mode=compose]:flex-col in-data-[mode=compose]:border-t-0 in-data-[mode=compose]:pt-0">{top}</div>}
     <div data-sheet-part="body" className="flex min-h-0 flex-1 flex-col">
       <ScrollArea className="min-h-0 flex-1" data-testid="guest-notes-list" viewportProps={{ tabIndex: -1 }}>
-        <div className="grid gap-[var(--space-3)] pe-[var(--space-1)]">
+        {/* The end gutter holds the overlay scrollbar (`w-2.5`) clear of the cards' right border (fix round 4); the start stays flush. */}
+        <div data-testid="guest-notes-list-body" className="grid gap-[var(--space-3)] pe-[var(--space-3)]">
           {header}
           {state ?? (threads && items(threads))}
           {footer}

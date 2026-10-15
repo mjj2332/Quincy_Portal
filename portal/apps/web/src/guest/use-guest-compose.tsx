@@ -358,7 +358,7 @@ export function useGuestCompose({ phone, clock, frameCount, timecode, markupAllo
     </p>}
     <div className="max-[721px]:[&_[contenteditable]]:text-[length:var(--text-base)]"><GuestNoteField testId="guest-composer-body" label="Your note" placeholder="Add a note at this frame…" media={media} value={doc} disabled={pending} onChange={setDoc} onUploadingChange={setUploading} /></div>
     {target !== null && latest !== null && latest.revision !== target.baseRevision && <p data-testid="guest-composer-latest" className="m-0 whitespace-pre-wrap text-foreground-secondary [font:var(--type-body-sm)] [overflow-wrap:anywhere]">{`Latest saved version: ${latest.body}`}</p>}
-    {problem !== null && <p role="alert" data-testid="guest-composer-problem" className="m-0 text-destructive [font:var(--type-body-sm)]">{problem}</p>}
+    {problem !== null && <p role="alert" data-testid="guest-composer-problem" className="m-0 text-destructive-wash-foreground [font:var(--type-body-sm)]">{problem}</p>}
     <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
       <Button type="button" variant="ghost" data-testid="guest-composer-cancel" className={TOUCH} disabled={pending} onClick={close}>Cancel</Button>
       <Button type="submit" data-testid="guest-composer-post" className={TOUCH} disabled={pending || phase !== "off" || uploading}>{target === null ? "Post note" : "Save"}</Button>
