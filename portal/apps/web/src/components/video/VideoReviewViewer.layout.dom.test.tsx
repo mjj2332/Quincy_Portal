@@ -97,6 +97,15 @@ describe("VideoReviewViewer dark panels (ADR 0024, #877)", () => {
     // Whatever default scope exists is the toast viewport's `display: contents` wrapper, nothing else.
     for (const el of viewer.querySelectorAll('[data-surface="default"]')) expect(el.classList.contains("contents")).toBe(true);
   });
+
+  it("keeps the dialog scrim behind the viewer on a desktop: the phone's solid ink backdrop is the phone's only (#879 fix r7)", async () => {
+    await mount(["notes"]);
+    await openViewerWithFilm();
+    const overlay = document.querySelector<HTMLElement>('[data-testid="video-review-backdrop"]')!;
+    expect(overlay.className).toContain("bg-[var(--scrim-overlay)]");
+    expect(overlay.className).not.toContain("bg-background");
+    expect(overlay.hasAttribute("data-surface")).toBe(false);
+  });
 });
 
 describe("VideoReviewViewer layout (#859): full-height player, collapsible and resizable side pane", () => {

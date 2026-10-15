@@ -36,6 +36,9 @@ import { VideoReviewHeaderMenu } from "./VideoReviewHeaderMenu";
 
 /** The notes UI is its own chunk: a Project whose notes part is off never loads it. */
 const LazyNotesHost = lazy(() => import("./VideoNotesHost"));
+/** The viewer's backdrop: the dialog scrim on a desktop; on a phone (#879 fix r7) the inverse surface's own background, ink-900, and no blur (there is nothing to see through it). */
+const DESKTOP_BACKDROP = { "data-testid": "video-review-backdrop" } as const;
+const PHONE_BACKDROP = { "data-testid": "video-review-backdrop", "data-surface": "inverse", className: "bg-background supports-backdrop-filter:backdrop-blur-none" } as const;
 /** Decisions, Release and premium (#741 14-ui-staff) are their own chunk: a Project whose `delivery` part is off never loads it. */
 const LazyDeliveryPanel = lazy(() => import("./VideoDeliveryPanel").then((module) => ({ default: module.VideoDeliveryPanel })));
 /** The Version menu (Remove, #776 E) is its own chunk: a Project whose `trash` part is off never loads it. */
@@ -526,6 +529,9 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       ref={takePopup}
       initialFocus={popupRef}
       showCloseButton={false}
+      // On a phone the backdrop is solid ink (#879 fix r7): while iOS raises the keyboard the dialog is shortened to what is left above it, and the band below
+      // shows the backdrop, never the light Project page through the scrim. Desktop keeps the scrim.
+      overlayProps={phone ? PHONE_BACKDROP : DESKTOP_BACKDROP}
       finalFocus={() => { const opener = returnFocusTo?.(); return opener && opener.isConnected ? opener : true; }}
       onKeyDown={(event) => {
         // A dialog portalled out of the viewer (a confirm, a note-delete) still bubbles its keys here through React: leave them to that dialog.

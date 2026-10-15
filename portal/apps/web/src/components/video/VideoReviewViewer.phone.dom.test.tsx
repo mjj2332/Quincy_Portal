@@ -249,6 +249,19 @@ describe("D4 and focus", () => {
     expect(tid("stub-field")!.getAttribute("data-reveal-on-focus")).toBe("false");
   });
 
+  it("on a phone the viewer's backdrop is solid ink, the inverse surface's background with no blur, never the scrim over the Project page (#879 fix r7)", async () => {
+    await mount();
+    const overlay = tid("video-review-backdrop")!;
+    expect(overlay).not.toBeNull();
+    expect(overlay.getAttribute("data-surface")).toBe("inverse");
+    expect(overlay.className).toContain("bg-background");
+    expect(overlay.className).not.toContain("--scrim-overlay");
+    expect(overlay.className).toContain("supports-backdrop-filter:backdrop-blur-none");
+    expect(overlay.className).not.toContain("backdrop-blur-[3px]");
+    // Still the dialog's own backdrop: its stacking (#493) is kept.
+    expect(overlay.className).toContain("z-[var(--z-dialog)]");
+  });
+
   it("past 721px the viewer's composer focuses as the browser does (#879 fix r7)", async () => {
     viewport.restore(); viewport = mockViewport({ width: 1200 });
     await mount({ notes: true });
