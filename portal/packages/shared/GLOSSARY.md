@@ -395,6 +395,12 @@ Notes, marks and drawing work as usual while it is on. Staff and Guest reviewers
 also use it in a Compare, where both sides show the same Social overlay.
 _Avoid_: Social mode, mockup
 
+**Full screen**:
+The review player taking the whole screen: the film, a small bar to leave and the transport, with notes put away. Pressing a marker shows that note as a card; Add note floats the composer above
+the controls. Staff and Guest reviewers both have it, and a phone turned sideways enters it. It is not the device's own player: "Open in iPhone player" (or "Open in system player") hands the film
+to that, and nothing of Quincy shows there. "Immersive" is the name in code only.
+_Avoid_: Immersive (in anything a person reads), cinema mode, theatre mode
+
 ### Client delivery
 
 **Delivery page**:
