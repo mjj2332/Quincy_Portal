@@ -22,12 +22,14 @@ both, each blind to the other's answer, synthesized by the session before build 
 not a build-routing change. Keep your own context lean: fork or spawn rather than pasting full
 transcripts back and forth.
 
-Sol owns diff review. Luna owns test code and non-browser QA. **Agy owns the browser pass**
-(Antigravity CLI, Gemini 3.8 Flash at medium effort, driving the owner's Chrome through `huashu-chrome`, with `chrome-devtools-mcp` as the fallback).
-**Every UI change gets a two-stage browser pass:** Agy measures, then **design-reviewer** (Opus)
-judges the screenshots against the design tokens and the rest of the Portal, and audits Agy's
-table, blind to its verdicts until it has looked. The session verifies both reports against the
-screenshots. Full roster, the pass contract and
+Sol owns diff review. Luna owns test code and non-browser QA. **The session owns the browser pass**
+(owner decision, 2026-10-15; Agy is retired from it): the session drives the browser and the iOS
+Simulator itself and may hand mechanical capture to a Sonnet subagent, but judges every
+screenshot itself. **Every UI change gets a two-stage browser pass:** the session measures, then
+**design-reviewer** (Opus) judges the screenshots, blind to the session's verdicts until it has
+looked. Phone layouts are checked in Safari on the iOS Simulator with the on-screen keyboard up,
+not only in a narrow desktop window. When a Claude design prototype is the spec (below), both
+stages compare each build screenshot with the prototype frame at the same size and state. Full roster, the pass contract and
 invocation mechanics live in `docs/subagents/Subagent-Orchestration.md`.
 
 ## One codebase
@@ -79,6 +81,16 @@ Authority order when docs conflict: `docs/PRD/PRD.md` → `Personas.md` / `Sitem
 of truth for design; `design-system-guards.test.ts` beside it mechanises the rules that have
 already shipped defects more than once. The 2026-06-19 export in `docs/archive/` records where
 the tokens came from and has since been diverged from — never reconcile the app back to it.
+
+**Prototype as spec (owner decision, 2026-10-15).** When the owner names a Claude design prototype
+as the spec for a piece of work, its frames are the layout, hierarchy, copy and behaviour that work
+must match; the tokens still govern colour, type and spacing values. The video review revamp
+(#879–#884) is such work: `quincy-video-review-revamp/project/`, frame ids P1–P10, F1–F4, W1–W4,
+T1–T5, V1–V6. UI for it is built by an Opus agent that reads the prototype source, not by
+fast-worker from a text plan, and every plan maps each frame to the component that renders it.
+Where the prototype conflicts with a ReUI component, a token rule or a product capability it does
+not show, the builder stops and the session asks the owner — never a silent choice either way.
+The audit of what shipped against it: `docs/plans/video-revamp-prototype-audit.md`.
 
 ## Author-only rules and impersonation
 

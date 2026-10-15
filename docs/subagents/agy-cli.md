@@ -1,5 +1,8 @@
 # Agy (Antigravity) CLI mechanics
 
+> **Retired from the browser pass, 2026-10-15 (owner decision).** The session now measures in the
+> browser and on the iOS Simulator itself (`Subagent-Orchestration.md` §2a). Kept for reference only.
+
 Loaded on demand from `Subagent-Orchestration.md` §3a. Browser pass on `huashu-chrome` at medium
 effort, `chrome-devtools-mcp` as the fallback, since 2026-09-28; CLI mechanics verified live 2026-07-24, including a real
 accept-edits build test.
