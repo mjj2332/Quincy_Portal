@@ -45,7 +45,8 @@ export function NewFilmUploader({ userId, projectId, receive, empty }: { userId:
     {empty && <FileDropzone multiple onFiles={receive} data-testid="new-film-dropzone" className="upload-zone">
       <div className="ey">New films</div>
       <h2 className="upload-zone__title">Drop MP4 or MOV films here</h2>
-      <p>H.264, constant frame rate, up to 2 GB each. Frame rate and timecode are read from each file.</p>
+      {/* The upload help moved here from the collection header (T3, #879 PR 3a), merged with this guidance so it is said once. */}
+      <p>H.264 MP4 or MOV, constant frame rate, up to 2 GB each. Frame rate and timecode are read from each file. A re-cut becomes a new version of the same film; notes stay with the version they were made on.</p>
       <FilePickButton multiple accept={VIDEO_ACCEPT} variant="secondary" className={`min-h-[44px] ${TOUCH}`} onFiles={receive}>Choose files</FilePickButton>
     </FileDropzone>}
     {shared.length > 0 && <div className="grid gap-[var(--space-2)]" data-testid="new-film-shared-cautions">

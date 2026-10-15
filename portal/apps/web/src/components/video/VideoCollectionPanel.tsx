@@ -206,13 +206,12 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
 
   return <section aria-labelledby="video-films-heading" data-testid="video-films">
     <div className="workspace-intro workspace-intro--stack" data-testid="video-films-header">
-      {/* T3 (#879 PR 3a): the title and the count share one baseline row, no eyebrow. The count is every live film (not the filtered grid); a skeleton while the list loads, nothing when it fails (the body carries the error and Retry). */}
+      {/* T3 (#879 PR 3a): the title and the count share one baseline row, no eyebrow and no help line (it lives in the uploader's drop box). The count is every live film (not the filtered grid); a skeleton while the list loads, nothing when it fails (the body carries the error and Retry). */}
       <div className="flex items-baseline gap-[var(--space-2)]">
         <h1 className="serif" id="video-films-heading">Video</h1>
         {videos.data ? <span className="text-sm text-foreground-secondary tabular-nums" data-testid="video-films-count">{videos.data.length === 1 ? "1 film" : `${videos.data.length} films`}</span>
           : videos.isPending ? <Skeleton className="h-[var(--space-4)] w-[var(--space-8)] self-center" data-testid="video-films-count-loading" aria-hidden="true" /> : null}
       </div>
-      <div className="muted">Upload web-ready H.264 MP4 or MOV cuts. A re-cut becomes a new version of the same film; notes stay with the version they were made on.</div>
       <div className="flex flex-wrap items-center gap-[var(--space-3)]">
         {canUpload && <NewFilmPickButton receive={receiveNewFilms} />}
         <ReviewLinksOpenButton ui={reviewLinks} />

@@ -190,6 +190,8 @@ describe("Collection header (T3, #879 PR 3a)", () => {
     await mount([videoOf(), videoOf({ id: "55555555-5555-4555-8555-555555555555", title: "Twilight cut" })]);
     expect(header().querySelector("#video-films-heading")?.textContent).toBe("Video");
     expect(header().textContent).not.toContain("Video review");
+    // T3's header is only the title, the count and its actions: the upload help lives in the uploader's drop box.
+    expect(header().textContent).not.toMatch(/H\.264|re-cut/);
     expect(count()?.textContent).toBe("2 films");
     await unmount();
     await mount([videoOf()]);
@@ -225,7 +227,10 @@ describe("Uploader (#741 4d-i)", () => {
     await mount([], ["upload"]);
     const uploader = host.querySelector('[data-testid="new-film-uploader"]')!.textContent ?? "";
     expect(uploader).toContain("Drop MP4 or MOV films here");
-    expect(host.textContent).toContain("H.264 MP4 or MOV");
+    expect(uploader).toContain("H.264 MP4 or MOV");
+    // The upload help moved out of the T3 header into the drop box, said once there.
+    expect(uploader).toContain("A re-cut becomes a new version of the same film; notes stay with the version they were made on.");
+    expect(host.textContent!.split("re-cut").length - 1).toBe(1);
   });
 
   it("takes an H.264 .mov and reserves it as video/mp4 with its own name and no title (#813, #828)", async () => {
