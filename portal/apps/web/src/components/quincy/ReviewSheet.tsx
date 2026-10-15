@@ -100,6 +100,41 @@ export function useSheetPane({ enabled, control, room, paneRef }: { enabled: boo
   return { active, stop, mode, stops, drag, setDrag, height };
 }
 
+/** The film's floor in compose mode (#879 fix r9; the plan's K1 / K3 rows: film > 96px with the keyboard up and the tray open). */
+export const SHEET_FILM_FLOOR = "var(--space-9)";
+/** Marks the box in the composer that gives up height first (the pill's text, which scrolls), so the film keeps its floor. */
+export const SHEET_TEXT_ATTR = "data-sheet-text";
+/** The room the marked box may take, published on the pane in compose mode; the composer's clamp reads it (`var(--sheet-text-room, …)`). */
+export const SHEET_TEXT_ROOM_VAR = "--sheet-text-room";
+
+/**
+ * Compose mode (#879 fix r9): the sheet takes its own height and the film flexes, so a tall strip (the tray open, a long draft) would squeeze
+ * the film to a sliver. The text gives way first: the room it may take is the row's height, less the film's floor, less everything else in
+ * the sheet (`pane.scrollHeight` minus the text box), published as a CSS variable the composer's clamp reads. Shrinking the box shrinks the
+ * pane by the same amount, so the result is stable. The clamp keeps one line at least; below that the film yields.
+ */
+export function useSheetTextRoom(active: boolean, rowRef: RefObject<HTMLDivElement | null>, paneRef: RefObject<HTMLDivElement | null>) {
+  useLayoutEffect(() => {
+    const pane = paneRef.current;
+    const row = rowRef.current;
+    if (!pane) return undefined;
+    if (!active || !row) { pane.style.removeProperty(SHEET_TEXT_ROOM_VAR); return undefined; }
+    const update = () => {
+      const box = pane.querySelector<HTMLElement>(`[${SHEET_TEXT_ATTR}]`);
+      if (!box) { pane.style.removeProperty(SHEET_TEXT_ROOM_VAR); return; }
+      const rest = pane.scrollHeight - box.offsetHeight;
+      const next = `calc(${row.clientHeight - rest}px - ${SHEET_FILM_FLOOR})`;
+      if (pane.style.getPropertyValue(SHEET_TEXT_ROOM_VAR) !== next) pane.style.setProperty(SHEET_TEXT_ROOM_VAR, next);
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") return () => { pane.style.removeProperty(SHEET_TEXT_ROOM_VAR); };
+    const observer = new ResizeObserver(update);
+    observer.observe(row);
+    observer.observe(pane);
+    return () => { observer.disconnect(); pane.style.removeProperty(SHEET_TEXT_ROOM_VAR); };
+  }, [active, rowRef, paneRef]);
+}
+
 /** The grabber: a horizontal window splitter between the picture and the sheet. */
 export function SheetGrabber({ control, stops, getHeight, onDrag }: {
   control: ReviewSheetControl;

@@ -1,6 +1,6 @@
 import { act, useContext, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installLocalStorageShim } from "../../testing/local-storage";
 import { resetUiPrefMemory } from "../../lib/ui-prefs";
 import "../../testing/dom-polyfills";
@@ -29,7 +29,7 @@ function Harness({ drawing = false, stacked = true }: { drawing?: boolean; stack
     pane={<div data-testid="panel">
       <div data-sheet-part="head" data-testid="head"><button type="button" onClick={() => { setTick(tick + 1); }}>Notes</button></div>
       <div data-sheet-part="body" data-testid="body"><button type="button">Thread</button></div>
-      <form data-sheet-part="composer" data-testid="composer" onSubmit={(e) => { e.preventDefault(); }}><textarea data-testid="editor" aria-label="Add a note" /><button type="submit" data-testid="post">Post</button><HoldButton /></form>
+      <form data-sheet-part="composer" data-testid="composer" onSubmit={(e) => { e.preventDefault(); }}><div data-sheet-text="" data-testid="text-box"><textarea data-testid="editor" aria-label="Add a note" /></div><button type="submit" data-testid="post">Post</button><HoldButton /></form>
     </div>}
   />;
 }
@@ -85,6 +85,31 @@ describe("ReviewSheet (#879)", () => {
     expect([q("film"), q("panel"), q("head"), q("body"), q("composer"), q("editor")]).toEqual(nodes);
     await key(grabber(), "ArrowUp");
     expect(q("body").hasAttribute("inert")).toBe(false);
+  });
+
+  it("compose mode keeps the film's floor: the text box may take the row less the floor less the rest of the sheet, re-measured on a resize, and gone after (#879 fix r9)", async () => {
+    const observed: Array<() => void> = [];
+    vi.stubGlobal("ResizeObserver", class { constructor(cb: () => void) { observed.push(cb); } observe() {} unobserve() {} disconnect() {} });
+    try {
+      await mount();
+      const size = (el: HTMLElement, key: "clientHeight" | "scrollHeight" | "offsetHeight", value: number) => { Object.defineProperty(el, key, { configurable: true, get: () => value }); };
+      size(q("video-review-split"), "clientHeight", 400);
+      size(pane(), "scrollHeight", 250);
+      size(q("text-box"), "offsetHeight", 112);
+      expect(pane().style.getPropertyValue("--sheet-text-room")).toBe("");
+      await act(async () => { q("editor").focus(); });
+      expect(pane().getAttribute("data-mode")).toBe("compose");
+      // 400 - (250 - 112) = 262, less the floor token.
+      expect(pane().style.getPropertyValue("--sheet-text-room")).toBe("calc(262px - var(--space-9))");
+      // The tray opens: the rest of the sheet grows by 54, the room shrinks by as much.
+      size(pane(), "scrollHeight", 304);
+      await act(async () => { observed.forEach((cb) => { cb(); }); });
+      expect(pane().style.getPropertyValue("--sheet-text-room")).toBe("calc(208px - var(--space-9))");
+      await act(async () => { q("editor").blur(); });
+      await frame();
+      expect(pane().getAttribute("data-mode")).toBe("browse");
+      expect(pane().style.getPropertyValue("--sheet-text-room")).toBe("");
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it("focusing the editor is compose mode: only the composer is left, and leaving it restores the sheet", async () => {

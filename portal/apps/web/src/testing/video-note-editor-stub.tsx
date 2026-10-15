@@ -9,10 +9,10 @@ import { legacyBodyToRichTextDoc, videoNoteBody, type RichTextDoc } from "@quinc
  * The phone pill's props (#879 fix) are honoured the way the real field places them: `inlineStart` / `inlineEnd` around the text, and a stand-in formatting toolbar (one Bold button)
  * portalled into `toolbarContainer` when that is an element. The inline toolbar of the desktop field is not stood in for.
  */
-export function VideoNoteEditor({ id, value, onChange, disabled, placeholder, onSubmit, toolbarContainer, inlineStart, inlineEnd, contentClassName, pill }: { id?: string; value: RichTextDoc; onChange: (value: RichTextDoc) => void; disabled?: boolean; placeholder?: string; onSubmit?: () => void; toolbarContainer?: HTMLElement | null; inlineStart?: ReactNode; inlineEnd?: ReactNode; contentClassName?: string; pill?: boolean }) {
+export function VideoNoteEditor({ id, value, onChange, disabled, placeholder, onSubmit, toolbarContainer, inlineStart, inlineEnd, contentClassName, contentAttributes, pill }: { id?: string; value: RichTextDoc; onChange: (value: RichTextDoc) => void; disabled?: boolean; placeholder?: string; onSubmit?: () => void; toolbarContainer?: HTMLElement | null; inlineStart?: ReactNode; inlineEnd?: ReactNode; contentClassName?: string; contentAttributes?: Readonly<Record<`data-${string}`, string>>; pill?: boolean }) {
   const toolbar = <div role="toolbar" aria-label="Formatting" data-testid="stub-toolbar"><button type="button" data-testid="stub-bold">B</button></div>;
   const area = <textarea
-    id={id} value={videoNoteBody(value)} placeholder={placeholder} readOnly={disabled} className={contentClassName}
+    id={id} value={videoNoteBody(value)} placeholder={placeholder} readOnly={disabled} className={contentClassName} {...contentAttributes}
     onChange={(event) => { onChange(event.target.value === "" ? { type: "doc", content: [{ type: "paragraph" }] } : legacyBodyToRichTextDoc(event.target.value)); }}
     onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); onSubmit?.(); } }}
   />;

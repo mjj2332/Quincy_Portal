@@ -128,6 +128,9 @@ describe("VideoNoteComposer on a phone: the compose strip (P6)", () => {
     expect(area().className).toContain("overflow-y-auto");
     // The scroll is the text box's child, inside the box's padding (#879 fix r9).
     expect(area().className).toContain("[&>*]:overflow-y-auto");
+    // The text gives way to the film's floor first (#879 fix r9): it is the sheet's marked box, and its four lines are capped by the room the sheet publishes, one line at least.
+    expect(area().hasAttribute("data-sheet-text")).toBe(true);
+    expect(area().className).toContain("max-h-[clamp(calc(var(--space-6)+var(--space-2)),var(--sheet-text-room,calc(var(--space-9)+var(--space-4))),calc(var(--space-9)+var(--space-4)))]");
     expect(by("video-note-composer")!.dataset.compose).toBe("true");
   });
 

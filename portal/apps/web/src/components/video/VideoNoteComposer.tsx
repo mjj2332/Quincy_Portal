@@ -10,7 +10,7 @@ import { useMediaQuery } from "../../lib/use-media-query";
 import { SCROLL_FADE_MASK_CLASSES, useScrollFade } from "../../lib/use-scroll-fade";
 import { Button } from "../quincy/Button";
 import { Notice } from "../quincy/Notice";
-import { SheetModeContext } from "../quincy/ReviewSheet";
+import { SHEET_TEXT_ATTR, SheetModeContext } from "../quincy/ReviewSheet";
 import { PILL_ICON } from "../quincy/VideoPlayer";
 import { SELECTED_HAIRLINE_PRESSED } from "../quincy/markup-toolbar";
 import { Button as ReuiButton } from "../reui/button";
@@ -32,12 +32,15 @@ const VISIBILITY_LABEL: Record<VideoNoteVisibility, string> = { internal: "Inter
 export const ANCHOR_CHIP_ROW = "@max-[280px]:basis-full";
 export const ANCHOR_CHIP = "rounded-md bg-muted px-[var(--space-2)] py-[var(--space-1)] text-foreground [font:var(--type-mono)] tabular-nums";
 /** The key hint is visual only at panel widths from 280px (the form is a size container); below that it stays for assistive tech but takes no room. */
+/** Marks the pill's text box for the review sheet's film floor (#879 fix r9). */
+const SHEET_TEXT = { [SHEET_TEXT_ATTR]: "" } as const;
 const KBD_HINT = "@max-[280px]:sr-only";
 const SMALL_BUTTON = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
 /** The phone pill's text box (C4): one line at rest (the draft clamped to its first line), up to four while writing, then it scrolls. Line 24px + the box's 8px padding top and bottom.
  * The padding is on the box and the scroll on its child (the editor's scroller, `[&>*]`), so scrolled text clips inside the padding, never at the pill's hairline (#879 fix r9). */
 const REST_CLAMP = "max-h-[calc(var(--space-6)+var(--space-2))] overflow-hidden [&>*]:overflow-hidden";
-const COMPOSE_CLAMP = "max-h-[calc(var(--space-9)+var(--space-4))] [&>*]:overflow-y-auto";
+/** In the review sheet the four lines give way to the film's floor first (#879 fix r9): the sheet publishes `--sheet-text-room` (`useSheetTextRoom`), clamped here to one line at least. */
+const COMPOSE_CLAMP = "max-h-[clamp(calc(var(--space-6)+var(--space-2)),var(--sheet-text-room,calc(var(--space-9)+var(--space-4))),calc(var(--space-9)+var(--space-4)))] [&>*]:overflow-y-auto";
 /** The phone line under the film (hint, lock, problem): one meta line, two at most, at P6's 12px. */
 const PHONE_LINE = "col-span-2 row-start-1 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)]";
 /** The pill's timecode chip (quincy.css `.tc-chip`): small mono, so the text keeps the pill's width (#879 fix). */
@@ -253,7 +256,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     >
       <VideoNoteEditor key={editorKey} id="video-note-body" projectId={rich.projectId} role={rich.role} value={draftDoc(composer.content, composer.body)} disabled={frozen} placeholder={phone ? (drawingNow ? "Add a note with this drawing…" : "Add a note…") : "Add a note at this frame… Use @ to mention a colleague."}
         onChange={(doc) => { if (!frozen) store.setContent(assetId, doc, clock ? frameOnScreen(clock.getState()) : 0); }} onSubmit={send} onUploadingChange={setUploading}
-        {...(phone ? { pill: true, toolbarContainer: trayToolbar, inlineStart: <>{plus}{chip}</>, ...(penSlot ? { inlineEnd: penSlot } : {}), contentClassName: composing ? COMPOSE_CLAMP : REST_CLAMP } : {})}
+        {...(phone ? { pill: true, toolbarContainer: trayToolbar, inlineStart: <>{plus}{chip}</>, ...(penSlot ? { inlineEnd: penSlot } : {}), contentClassName: composing ? COMPOSE_CLAMP : REST_CLAMP, contentAttributes: SHEET_TEXT } : {})}
       />
     </div>
     {!phone && tooLong && <Notice tone="critical" role="alert">{`Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.`}</Notice>}

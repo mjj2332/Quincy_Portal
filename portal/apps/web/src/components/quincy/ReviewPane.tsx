@@ -4,7 +4,7 @@ import { PANE_MIN, PLAYER_MIN, REVIEW_PANE_KEY, clampPaneWidth, normalizeReviewP
 import { useUiPref } from "../../lib/ui-prefs";
 import { Button } from "../reui/button";
 import { IconTip } from "./IconTip";
-import { SHEET_COLLAPSED_MIN, SheetGrabber, SheetModeContext, isComposerField, isInComposer, useSheetPane, type ReviewSheetControl, type SheetModeValue, type SheetRoom } from "./ReviewSheet";
+import { SHEET_COLLAPSED_MIN, SheetGrabber, SheetModeContext, isComposerField, isInComposer, useSheetPane, useSheetTextRoom, type ReviewSheetControl, type SheetModeValue, type SheetRoom } from "./ReviewSheet";
 
 /**
  * The review viewers' split (#859): the player on the left, a collapsible, resizable side pane on the right, one flex row for the staff viewer
@@ -165,6 +165,7 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
   const sheetPane = useSheetPane({ enabled: phoneSheet, control: sheet, room, paneRef });
   // The sheet's height follows what is measured: a layout pass after the stop, the mode or the film changes (the part sizes are those of the stop being shown).
   useLayoutEffect(() => { if (phoneSheet) measure(); });
+  useSheetTextRoom(phoneSheet && sheet.mode === "compose", rowRef, paneRef);
   const sheetStyle = phoneSheet && sheetPane.height !== undefined ? { height: sheetPane.height } : undefined;
   // The composer reads the mode from here (#879 fix): one source for the sheet's layout and the composer's. Always provided (null off the phone sheet), so the pane's subtree never changes shape across the 721px crossing.
   const sheetMode = phoneSheet ? sheet.mode : null;

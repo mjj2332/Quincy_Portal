@@ -12,7 +12,7 @@ type Mentionable = MentionableUser[];
  * Collaboration tab's list), images and videos upload as the note's own media, and `onUploadingChange` lets the host hold Post / Save until each has landed. No link previews: the profile does not
  * allow them.
  */
-export function VideoNoteEditor({ projectId, role, value, onChange, disabled, id, placeholder, onSubmit, onUploadingChange, pill, toolbarContainer, inlineStart, inlineEnd, contentClassName }: {
+export function VideoNoteEditor({ projectId, role, value, onChange, disabled, id, placeholder, onSubmit, onUploadingChange, pill, toolbarContainer, inlineStart, inlineEnd, contentClassName, contentAttributes }: {
   projectId: string;
   role: Role;
   value: RichTextDoc;
@@ -28,6 +28,7 @@ export function VideoNoteEditor({ projectId, role, value, onChange, disabled, id
   inlineStart?: ReactNode;
   inlineEnd?: ReactNode;
   contentClassName?: string;
+  contentAttributes?: Readonly<Record<`data-${string}`, string>>;
 }) {
   const loadMentionables = useCallback(async (query: string): Promise<Mentionable> => {
     const path = `/api/mentionable-users?scope=video&projectId=${encodeURIComponent(projectId)}&q=${encodeURIComponent(query)}`;
@@ -38,6 +39,6 @@ export function VideoNoteEditor({ projectId, role, value, onChange, disabled, id
     preset="composer" id={id} value={value} onChange={onChange} limit={VIDEO_NOTE_BODY_MAX} disabled={disabled}
     loadMentionables={loadMentionables} placeholder={placeholder} onSubmit={onSubmit}
     media={{ projectId, owner: "video_note" }} onUploadingChange={onUploadingChange}
-    pill={pill} toolbarContainer={toolbarContainer} inlineStart={inlineStart} inlineEnd={inlineEnd} contentClassName={contentClassName}
+    pill={pill} toolbarContainer={toolbarContainer} inlineStart={inlineStart} inlineEnd={inlineEnd} contentClassName={contentClassName} {...(contentAttributes ? { contentAttributes } : {})}
   />;
 }

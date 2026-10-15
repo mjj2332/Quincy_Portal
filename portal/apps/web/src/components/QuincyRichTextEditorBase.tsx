@@ -166,6 +166,8 @@ export type QuincyRichTextEditorBaseProps = {
   inlineEnd?: ReactNode;
   /** Classes on the text's box: the phone composer clamps it to one line at rest and four while writing. */
   contentClassName?: string;
+  /** Data attributes on the text's box: the phone composer marks it as the part of the review sheet that gives up height first (#879 fix r9). */
+  contentAttributes?: Readonly<Record<`data-${string}`, string>>;
   /** The field as one row on the pill radius (the phone note composer, owner decision C5). */
   pill?: boolean;
 };
@@ -198,6 +200,7 @@ export function QuincyRichTextEditorBase({
   inlineStart,
   inlineEnd,
   contentClassName,
+  contentAttributes,
   pill = false,
 }: QuincyRichTextEditorBaseProps) {
   const valueRef = useRef(JSON.stringify(value));
@@ -683,7 +686,7 @@ export function QuincyRichTextEditorBase({
         {toolbar}
       </InputGroupAddon> : null}
       {inlineStart !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-start" className={cn("cursor-default", pill && "gap-[var(--space-1)] pb-[calc(var(--space-1)*1.5)] pl-[var(--space-1)]")}>{inlineStart}</InputGroupAddon> : null}
-      <div ref={pageRef} className={cn("relative min-w-0", pill ? PILL_TEXT : "w-full", contentClassName)}>
+      <div ref={pageRef} {...contentAttributes} className={cn("relative min-w-0", pill ? PILL_TEXT : "w-full", contentClassName)}>
         <EditorContent editor={editor} className={pill ? PILL_SCROLLER : "w-full min-w-0"} />
         {isDocument && outline.length >= 2 && <RichTextOutlineRail outline={outline} activeIndex={activeHeading} onSelect={(index) => scrollToRichTextHeading(editor, index)} className="absolute end-1 top-2 z-[1] max-[721px]:hidden" />}
       </div>
