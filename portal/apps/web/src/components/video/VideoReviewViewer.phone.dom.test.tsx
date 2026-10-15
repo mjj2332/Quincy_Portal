@@ -241,5 +241,86 @@ describe("D4 and focus", () => {
     expect(row.className).toContain("normal-case");
     expect(row.textContent).toContain("latest");
   });
-});
 
+  it("on a phone the viewer's backdrop is solid ink, the inverse surface's background with no blur, never the scrim over the Project page (#879 fix r7)", async () => {
+    await mount();
+    const overlay = tid("video-review-backdrop")!;
+    expect(overlay).not.toBeNull();
+    expect(overlay.getAttribute("data-surface")).toBe("inverse");
+    expect(overlay.className).toContain("bg-background");
+    expect(overlay.className).not.toContain("--scrim-overlay");
+    expect(overlay.className).toContain("supports-backdrop-filter:backdrop-blur-none");
+    expect(overlay.className).not.toContain("backdrop-blur-[3px]");
+    // Still the dialog's own backdrop: its stacking (#493) is kept.
+    expect(overlay.className).toContain("z-[var(--z-dialog)]");
+  });
+
+  it("while the phone viewer is open the document's canvas is ink, and closing it gives the canvas back (#879 fix r11)", async () => {
+    await mount();
+    expect(document.documentElement.hasAttribute("data-ink-canvas")).toBe(true);
+    await act(async () => { root!.unmount(); }); root = null;
+    expect(document.documentElement.hasAttribute("data-ink-canvas")).toBe(false);
+  });
+
+  it("the phone dialog follows the visual viewport from the moment it opens, so a rise before compose mode is applied; compose hides the transport, leaving the field shows it (#879 fix r5)", async () => {
+    class FakeViewport extends EventTarget { height = window.innerHeight - 340; offsetTop = 24; scale = 1; }
+    const original = Object.getOwnPropertyDescriptor(window, "visualViewport");
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: new FakeViewport() });
+    try {
+      await mount({ notes: true });
+      const deadline = Date.now() + 5000; while (!document.querySelector("textarea") && Date.now() < deadline) await flush(1);
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+      const transport = () => tid("video-scrubber")!.parentElement!;
+      // Already following before any focus: the fake viewport (keyboard-sized) is on the dialog in browse mode.
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+      expect(dialog.style.height).toBe(`${window.innerHeight - 340}px`);
+      // The popup's `duration-100` (transition-property `all`) must not ease these writes: that easing was the first-focus flash (#879 fix r8).
+      expect(dialog.style.transition).toBe("none");
+      expect(transport().hasAttribute("hidden")).toBe(false);
+      // A pan that lands before React turns compose mode on is applied inside the event.
+      const early = window.visualViewport as unknown as FakeViewport;
+      early.offsetTop = 30; early.dispatchEvent(new Event("scroll"));
+      expect(dialog.style.transform).toBe("translateY(30px)");
+      early.offsetTop = 24; early.dispatchEvent(new Event("scroll"));
+      await act(async () => { document.querySelector<HTMLTextAreaElement>("textarea")!.focus(); });
+      await flush(2);
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("compose");
+      expect(dialog.style.height).toBe(`${window.innerHeight - 340}px`);
+      expect(dialog.style.transform).toBe("translateY(24px)");
+      expect(transport().hasAttribute("hidden")).toBe(true);
+      expect(tid("video-review-player")!.className).toContain("overflow-hidden");
+      const viewportNow = window.visualViewport as unknown as FakeViewport;
+      viewportNow.height = window.innerHeight; viewportNow.offsetTop = 0;
+      await act(async () => { document.querySelector<HTMLTextAreaElement>("textarea")!.blur(); });
+      await flush(4);
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+      viewportNow.dispatchEvent(new Event("resize"));
+      expect(dialog.style.height).toBe(`${window.innerHeight}px`);
+      expect(dialog.style.transform).toBe("translateY(0px)");
+      expect(transport().hasAttribute("hidden")).toBe(false);
+    } finally {
+      if (original) Object.defineProperty(window, "visualViewport", original); else delete (window as unknown as Record<string, unknown>).visualViewport;
+    }
+  });
+
+  it("the software keyboard going away without a blur ends compose mode: the field is blurred for it (#879 fix)", async () => {
+    class FakeViewport extends EventTarget { height = window.innerHeight; offsetTop = 0; scale = 1; }
+    const fake = new FakeViewport();
+    const original = Object.getOwnPropertyDescriptor(window, "visualViewport");
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: fake });
+    try {
+      await mount({ notes: true });
+      const deadline = Date.now() + 5000; while (!document.querySelector("textarea") && Date.now() < deadline) await flush(1);
+      const field = document.querySelector<HTMLTextAreaElement>("textarea")!;
+      await act(async () => { field.focus(); });
+      await act(async () => { fake.height = window.innerHeight - 320; fake.dispatchEvent(new Event("resize")); });
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("compose");
+      await act(async () => { fake.height = window.innerHeight; fake.dispatchEvent(new Event("resize")); });
+      await flush(4);
+      expect(document.activeElement).not.toBe(field);
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+    } finally {
+      if (original) Object.defineProperty(window, "visualViewport", original); else delete (window as unknown as Record<string, unknown>).visualViewport;
+    }
+  });
+});

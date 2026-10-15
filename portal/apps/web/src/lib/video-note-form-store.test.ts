@@ -771,3 +771,64 @@ describe("hasUnsent: what Remove would discard (#776 E)", () => {
     expect(store.hasUnsent(V2)).toBe(true);
   });
 });
+
+describe("the phone composer's + tray and focus stamp (#879 fix)", () => {
+  it("extras opens and closes the tray, and is no part of the draft: hasUnsent ignores it", () => {
+    store.setExtras(V2, true);
+    expect(store.slot(V2).extras).toBe(true);
+    expect(store.hasUnsent(V2)).toBe(false);
+    store.setExtras(V2, false);
+    expect(store.slot(V2).extras).toBe(false);
+  });
+
+  it("leaving the Version, Cancel and a post that lands each close the tray", async () => {
+    store.setExtras(V2, true); store.leave(V2);
+    expect(store.slot(V2).extras).toBe(false);
+    store.setExtras(V2, true); store.discardComposer(V2);
+    expect(store.slot(V2).extras).toBe(false);
+    const { fc, sent, done } = await startPost(V2, "ship it");
+    store.setExtras(V2, true);
+    fc.confirm(12); await tick();
+    expect(store.slot(V2).extras).toBe(true);
+    sent.resolve({}); await done;
+    expect(store.slot(V2).extras).toBe(false);
+  });
+
+  it("a failed post keeps the tray as it was", async () => {
+    const { fc, sent, done } = await startPost(V2, "maybe");
+    store.setExtras(V2, true);
+    fc.confirm(12); await tick();
+    sent.reject(new ApiError("Failed to fetch", 0)); await done;
+    expect(store.slot(V2).extras).toBe(true);
+  });
+
+  it("Escape: draw mode and a frame confirmation go first, then the tray closes alone, then the dirty-form hold", async () => {
+    store.setBody(V2, "draft", 12);
+    store.setExtras(V2, true);
+    expect(store.escape(V2, { focusInForm: true })).toEqual({ consumed: true, focus: "textarea" });
+    expect(store.slot(V2).extras).toBe(false);
+    expect(store.slot(V2).spent).toBe(false);
+    expect(store.slot(V2).composer.body).toBe("draft");
+    expect(store.escape(V2, { focusInForm: true })).toEqual({ consumed: true, focus: "textarea" });
+    expect(store.slot(V2).spent).toBe(true);
+  });
+
+  it("stamp sets the anchor of an empty draft, and the first keystroke keeps it; once there is text it no longer moves", () => {
+    store.stamp(V2, 12);
+    expect(store.slot(V2).composer.anchorFrame).toBe(12);
+    store.stamp(V2, 13);
+    expect(store.slot(V2).composer.anchorFrame).toBe(13);
+    store.setBody(V2, "hello", 40);
+    expect(store.slot(V2).composer.anchorFrame).toBe(13);
+    store.stamp(V2, 50);
+    expect(store.slot(V2).composer.anchorFrame).toBe(13);
+    expect(store.hasUnsent(V2)).toBe(true);
+  });
+
+  it("stamp(null) gives an abandoned empty draft's frame back", () => {
+    store.stamp(V2, 12);
+    store.stamp(V2, null);
+    expect(store.slot(V2).composer.anchorFrame).toBeNull();
+    expect(store.hasUnsent(V2)).toBe(false);
+  });
+});

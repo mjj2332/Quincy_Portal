@@ -25,6 +25,13 @@ import { XIcon } from "lucide-react"
  * treats this dialog as nested and renders its Backdrop only when `forceRender || !nested`. Without
  * it the scrim never appeared and the sheet stayed at full brightness behind the dialog.
  *
+ * Divergence (#879 fix r7): `DialogContent` takes `overlayProps`, passed to its `DialogOverlay`, so a
+ * caller can set the backdrop's attributes and classes without composing the parts by hand. The
+ * phone review viewer uses it to make its backdrop solid ink (`data-surface="inverse"` with
+ * `bg-background`): while iOS raises the keyboard the viewer is shortened to what is left above it,
+ * and the band below it shows the backdrop, which must never be the light page under the scrim. The
+ * overlay's own classes (z, `forceRender`) still apply; `cn` lets the caller's background win.
+ *
  * NOTE: this repo already has a `components/reui/sheet.tsx` (base-nova's `sheet`, #56) that
  * covers most of the Portal's existing overlay needs. `dialog` is vendored separately here
  * because it is a `registryDependencies` entry of `@reui/gantt` (task/dependency editing
@@ -69,13 +76,16 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  overlayProps,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
+  /** Attributes and classes for this dialog's backdrop (#879 fix r7, see the header). */
+  overlayProps?: DialogPrimitive.Backdrop.Props & { "data-surface"?: "inverse" | "default"; "data-testid"?: string }
 }) {
   return (
     <DialogPortal>
-      <DialogOverlay />
+      <DialogOverlay {...overlayProps} />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(

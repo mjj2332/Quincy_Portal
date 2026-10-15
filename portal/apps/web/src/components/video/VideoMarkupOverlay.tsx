@@ -9,9 +9,9 @@ import { preloadSavedDrawing, type DrawForm } from "../../lib/video-note-form-st
 import { Button } from "../reui/button";
 import { Kbd } from "../reui/kbd";
 import { cn } from "@/lib/utils";
-import { COARSE, LEGEND_KBD } from "../quincy/VideoPlayer";
+import { COARSE, LEGEND_KBD, PILL_ICON } from "../quincy/VideoPlayer";
 import { IconTip } from "../quincy/IconTip";
-import { MarkupToolbar } from "../quincy/markup-toolbar";
+import { MarkupToolbar, SELECTED_HAIRLINE_PRESSED } from "../quincy/markup-toolbar";
 import { MarkupLayer, StrokeVisible } from "../quincy/freehand-strokes";
 import { Notice } from "../quincy/Notice";
 import type { VideoNotesSession } from "./use-video-notes";
@@ -166,9 +166,13 @@ export function useVideoMarkup(session: VideoNotesSession): { overlay: ((box: Bo
     {drawing && markup.active && <StrokeVisible stroke={markup.active} opacity={1} testId="video-markup-stroke" pixelDots />}
   </MarkupSurface> : undefined;
 
-  const transportActions = restShows
+  // Done: drawing ends; on a phone the composer's field takes the focus back inside the tap, so iOS raises the keyboard again (compose mode).
+  const done = () => { forms.exitDraw(assetId); if (compact && form === "composer") { const field = document.getElementById("video-note-body"); (field?.matches("[contenteditable]") ? field : field?.querySelector<HTMLElement>("[contenteditable]"))?.focus({ preventScroll: true }); } };
+  // On a phone the pen sits in the composer's pill (#879, P7): while the composer's drawing is up it stays there, pressed, and pressing it again is Done.
+  const penDown = compact && drawing && form === "composer";
+  const transportActions = restShows || penDown
     ? <IconTip label="Draw">
-      <Button ref={drawButton} type="button" variant="ghost" size="icon" aria-label="Draw" data-testid="video-markup-toolbar-draw" disabled={confirming} className={cn("size-8", COARSE)} onClick={expand}><PencilIcon aria-hidden="true" /></Button>
+      <Button ref={drawButton} type="button" variant="ghost" size="icon" aria-label="Draw" data-testid="video-markup-toolbar-draw" disabled={confirming} {...(penDown ? { "aria-pressed": true } : {})} className={cn("size-8 aria-pressed:bg-secondary", compact ? cn(PILL_ICON, SELECTED_HAIRLINE_PRESSED) : COARSE)} onClick={penDown ? done : expand}><PencilIcon aria-hidden="true" /></Button>
     </IconTip>
     : null;
 
@@ -183,7 +187,7 @@ export function useVideoMarkup(session: VideoNotesSession): { overlay: ((box: Bo
         onWidthChange={(width) => { forms.setTool(assetId, { width }); }}
         canUndo={markup.canUndo} canRedo={markup.canRedo} canClear={items.length > 0}
         onUndo={markup.undo} onRedo={markup.redo} onClear={markup.clear}
-        trailing={<Button ref={doneButton} type="button" data-testid="video-markup-done" className="max-[721px]:min-h-11 min-[721px]:pointer-coarse:min-h-11" onClick={() => { forms.exitDraw(assetId); if (compact && form === "composer") { const field = document.getElementById("video-note-body"); (field?.matches("[contenteditable]") ? field : field?.querySelector<HTMLElement>("[contenteditable]"))?.focus({ preventScroll: true }); }; }}>Done</Button>}
+        trailing={<Button ref={doneButton} type="button" data-testid="video-markup-done" className="max-[721px]:min-h-11 min-[721px]:pointer-coarse:min-h-11" onClick={done}>Done</Button>}
       />
       <div data-testid="video-markup-legend" aria-hidden="true" className="flex flex-wrap items-center justify-center gap-x-[var(--space-2)] gap-y-[var(--space-1)] text-foreground-secondary [font:var(--type-label)] max-[721px]:hidden">
         <span className="inline-flex items-center gap-[var(--space-1)]"><Kbd className={LEGEND_KBD}>⌘Z</Kbd> undo</span><span> · </span>

@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { exitSuggestion } from "@tiptap/suggestion";
 import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon, VideoIcon } from "lucide-react";
@@ -99,6 +100,28 @@ const FIELD_GROUP =
   "has-[[contenteditable=true]:focus-visible]:outline-solid " +
   "has-[[contenteditable=true]:focus-visible]:outline-ring " +
   "has-[[contenteditable=true]:focus-visible]:outline-offset-2";
+/**
+ * The same field as one row on the pill radius (#879, the phone note composer, P6 `.composer-input`): the addons sit inline, the toolbar lives elsewhere.
+ * The addons sit on the last line of text (`items-end`, lifted to its centre), so +, chip and pen line up with the caret as the field grows.
+ * A sunken fill with a transparent border; focus is a `--border-hover` hairline drawn as an outline over that border (4.41:1 on the inverse pill, greige-400 on ink-700), on
+ * any focus of the field, a tap included (#879 fix r6, owner decision): the composer's focus is what raises the keyboard, so it is never keyboard-only. Still one focus line
+ * (#613): the border stays transparent. Not `--border-strong`, which inverse.css does not re-scope (ink-900 on ink-700 is 1.26:1). The text box drops the
+ * editor's 64px floor, so an empty pill is one line tall and grows only with text (the host clamps it), centred with the chip.
+ */
+const PILL_GROUP =
+  "group h-auto flex-row items-end bg-surface-sunken border-transparent hover:border-transparent has-disabled:bg-surface-sunken data-[disabled]:bg-surface-sunken! " +
+  "has-[[contenteditable=true]:focus]:outline-[length:var(--border-width-hair)] " +
+  "has-[[contenteditable=true]:focus]:outline-solid " +
+  "has-[[contenteditable=true]:focus]:outline-border-hover " +
+  "outline-offset-[calc(var(--border-width-hair)*-1)] has-[[contenteditable=true]:focus]:outline-offset-[calc(var(--border-width-hair)*-1)] " +
+  "[&_[contenteditable]]:min-h-0 [&_[contenteditable]]:py-0 " +
+  // Wrapped (#879 fix r9): the text takes the full width on top and the addons a row under it (`data-wrapped`, set by `usePillWrap`).
+  "data-[wrapped=true]:flex-wrap";
+/** The pill's text box (#879 fix r9): the field's block padding sits on this box and the scroll is the inner node, so scrolled text clips inside the
+ * padding rather than at the hairline. The host's clamp (max height, overflow) goes on the box; it reaches the scroller as `[&>*]:overflow-*`. */
+// Wrapped, the text box is `order-first`; the inline-start addon is `order-first` too (base-nova's addon), and a tie keeps DOM order, so the addon drops to `order-none` (#879 fix r10).
+const PILL_TEXT = "flex flex-1 flex-col py-[var(--space-2)] group-data-[wrapped=true]/input-group:order-first group-data-[wrapped=true]/input-group:basis-full";
+const PILL_SCROLLER = "min-h-0 w-full min-w-0 flex-1";
 
 /** The character counter appears only from 90% of the limit (or when over it). */
 const COUNTER_THRESHOLD = 0.9;
@@ -133,6 +156,24 @@ export type QuincyRichTextEditorBaseProps = {
   linkPreviews?: LinkPreviewRequest;
   /** Reports whether an image is still uploading, so the host can hold Post / Save until it lands. */
   onUploadingChange?: (uploading: boolean) => void;
+  /**
+   * Where the formatting toolbar renders (#879, the phone note composer's + tray). Absent: inside the field, as ever. An element: the same toolbar is portalled
+   * into it and the field has no toolbar row. `null`: that element is not mounted yet, so there is no toolbar for now.
+   */
+  toolbarContainer?: HTMLElement | null;
+  /** Inside the field, before the text (an inline-start addon): the phone composer's + and timecode chip. */
+  inlineStart?: ReactNode;
+  /** Inside the field, after the text (an inline-end addon): the phone composer's pen. */
+  inlineEnd?: ReactNode;
+  /** Classes on the text's box: the phone composer clamps it to one line at rest and four while writing. */
+  contentClassName?: string;
+  /** Data attributes on the text's box: the phone composer marks it as the part of the review sheet that gives up height first (#879 fix r9). */
+  contentAttributes?: Readonly<Record<`data-${string}`, string>>;
+  /** The field as one row on the pill radius (the phone note composer, owner decision C5). */
+  pill?: boolean;
+  /** Whether the pill may take its wrapped layout (#879 fix r10; default true). The phone composer passes false at rest: browse shows the inline row
+   * with the draft clamped to its first line, and the wrapped layout comes back when compose mode does. */
+  pillWrap?: boolean;
 };
 
 type UploadingMedia = EmbeddedUpload;
@@ -159,6 +200,13 @@ export function QuincyRichTextEditorBase({
   media,
   linkPreviews,
   onUploadingChange,
+  toolbarContainer,
+  inlineStart,
+  inlineEnd,
+  contentClassName,
+  contentAttributes,
+  pill = false,
+  pillWrap = true,
 }: QuincyRichTextEditorBaseProps) {
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -189,6 +237,8 @@ export function QuincyRichTextEditorBase({
   const announceCancelled = () => { clearCancelTimer(); setUploadCancelled(false); cancelTimer.current = setTimeout(() => { cancelTimer.current = null; setUploadCancelled(true); }, 0); };
   const [deleteTableOpen, setDeleteTableOpen] = useState(false);
   const pageRef = useRef<HTMLDivElement>(null);
+  const pillRef = useRef(pill);
+  pillRef.current = pill;
   const addonRef = useRef<HTMLDivElement>(null);
   const [uploads, setUploads] = useState<UploadingMedia[]>([]);
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
@@ -244,6 +294,19 @@ export function QuincyRichTextEditorBase({
         event.preventDefault();
         // The drop lands where it was released, not wherever the selection is by the time the upload finishes.
         if (mediaRef.current && !disabledRef.current) addImagesRef.current(files, view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos);
+        return true;
+      },
+      // In the pill (#879 fix r3) the caret is kept in view inside the field's own clamped box only: a scroll of any outer box, or of the page, is
+      // what makes iOS pan the whole viewer while its keyboard rises. Elsewhere ProseMirror scrolls as usual.
+      handleScrollToSelection: (view) => {
+        if (!pillRef.current) return false;
+        const box = pageRef.current;
+        if (box) {
+          const caret = view.coordsAtPos(view.state.selection.head);
+          const frame = box.getBoundingClientRect();
+          if (caret.bottom > frame.bottom) box.scrollTop += caret.bottom - frame.bottom;
+          else if (caret.top < frame.top) box.scrollTop -= frame.top - caret.top;
+        }
         return true;
       },
       handleKeyDown: (view, event) => {
@@ -303,6 +366,8 @@ export function QuincyRichTextEditorBase({
   const editor = created && !created.isDestroyed ? created : null;
   editorRef.current = editor;
   const state = useRichTextState(editor);
+  const fieldRef = useRef<HTMLDivElement>(null);
+  usePillWrap(pill ? editor : null, fieldRef, pillWrap);
   // Below 721px the table controls are a toolbar group and the floating bar is not mounted; on a desktop the group
   // takes over too when the bar has no room around the table (tier "none": the bar stays mounted but inert) (#535).
   const phone = useMediaQuery(RICH_TEXT_PHONE_QUERY);
@@ -563,10 +628,8 @@ export function QuincyRichTextEditorBase({
   const liveMessage = overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : uploadCancelled ? CANCELLED_MESSAGE : "";
   const off = (can: boolean) => disabled || !can;
 
-  return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
-    <InputGroup data-testid="rich-text-field" className={FIELD_GROUP} data-disabled={disabled || undefined}>
-      <InputGroupAddon ref={addonRef} align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
-        <RichTextToolbar aria-label="Formatting" className="w-full min-w-0 gap-[var(--space-2)]">
+  // Built once and placed in one of two homes: the field's own toolbar row (the default), or the host's element (`toolbarContainer`).
+  const toolbar = <RichTextToolbar aria-label="Formatting" className="w-full min-w-0 gap-[var(--space-2)]">
           {/* On a phone the table controls lead the scrolling toolbar; they stay while the editor is busy, disabled. On a desktop they are the Table menu in the Insert-table slot (#595). */}
           {isDocument && phone && state.inTable && <RichTextTableTools editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} disabled={disabled || !state.editable} />}
           <RichTextToolbarGroup label="Text style">
@@ -620,13 +683,21 @@ export function QuincyRichTextEditorBase({
             <RichTextButton label="Undo" shortcut={["mod", "Z"]} disabled={off(state.canUndo)} onClick={() => editor.chain().focus().undo().run()}><Undo2Icon aria-hidden="true" /></RichTextButton>
             <RichTextButton label="Redo" shortcut={["mod", "shift", "Z"]} disabled={off(state.canRedo)} onClick={() => editor.chain().focus().redo().run()}><Redo2Icon aria-hidden="true" /></RichTextButton>
           </RichTextToolbarGroup>
-        </RichTextToolbar>
-      </InputGroupAddon>
-      <div ref={pageRef} className="relative w-full min-w-0">
-        <EditorContent editor={editor} className="w-full min-w-0" />
+        </RichTextToolbar>;
+
+  return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
+    <InputGroup ref={fieldRef} data-testid="rich-text-field" variant={pill ? "pill" : "default"} className={pill ? PILL_GROUP : FIELD_GROUP} data-disabled={disabled || undefined}>
+      {toolbarContainer === undefined ? <InputGroupAddon ref={addonRef} align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
+        {toolbar}
+      </InputGroupAddon> : null}
+      {inlineStart !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-start" className={cn("cursor-default", pill && "gap-[var(--space-1)] pb-[calc(var(--space-1)*1.5)] pl-[var(--space-1)] has-[>button]:ml-0 group-data-[wrapped=true]/input-group:order-none")}>{inlineStart}</InputGroupAddon> : null}
+      <div ref={pageRef} {...contentAttributes} className={cn("relative min-w-0", pill ? PILL_TEXT : "w-full", contentClassName)}>
+        <EditorContent editor={editor} className={pill ? PILL_SCROLLER : "w-full min-w-0"} />
         {isDocument && outline.length >= 2 && <RichTextOutlineRail outline={outline} activeIndex={activeHeading} onSelect={(index) => scrollToRichTextHeading(editor, index)} className="absolute end-1 top-2 z-[1] max-[721px]:hidden" />}
       </div>
+      {inlineEnd !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-end" className={cn("cursor-default", pill && "pb-[calc(var(--space-1)*1.5)] pr-[var(--space-1)] group-data-[wrapped=true]/input-group:ms-auto")}>{inlineEnd}</InputGroupAddon> : null}
     </InputGroup>
+    {toolbarContainer ? createPortal(toolbar, toolbarContainer) : null}
     {isDocument && <>
       {!phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tier={tableTier} onTierChange={setTableTier} ceiling={() => addonRef.current?.getBoundingClientRect().bottom ?? 0} />}
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
@@ -641,4 +712,62 @@ export function QuincyRichTextEditorBase({
     {plainText.length >= limit * COUNTER_THRESHOLD && <div ref={counterRef} data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
     <div className={liveMessage && liveMessage !== CANCELLED_MESSAGE ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>
   </div>;
+}
+
+/**
+ * The pill's wrapped layout (#879 fix r9): while the draft fits one line the + / chip / pen stay inline around it; once it needs a second line
+ * the text takes the pill's full width on top and the addons move to a row under it. The switch is a `data-wrapped` attribute written straight
+ * onto the field, inside the editor's transaction (after ProseMirror has updated the DOM) or a ResizeObserver callback, so it lands before the
+ * next paint: a React state would render a frame later and paint the two-line inline row first.
+ *
+ * Hysteresis, so it cannot flip-flop: inline, it wraps once the text takes a second line. Wrapped, it unwraps only when the text is one line
+ * AND that line would fit the inline row's text width (the field less both addons and the text's own inline padding).
+ *
+ * Off (`allowed` false, the phone composer at rest, #879 fix r10) the pill is the inline row whatever the draft, and the text's scroller goes
+ * back to its top so the one-line clamp shows the draft's first line. A wrapped pill at rest is a row taller than the sheet's browse stop
+ * allows for, and it squeezed the notes list (and its head row) out of sight.
+ */
+function usePillWrap(editor: Editor | null, fieldRef: RefObject<HTMLDivElement | null>, allowed: boolean) {
+  useLayoutEffect(() => {
+    const field = fieldRef.current;
+    if (!editor || editor.isDestroyed || !field) return undefined;
+    const dom = editor.view.dom as HTMLElement;
+    if (!allowed) {
+      delete field.dataset.wrapped;
+      if (dom.parentElement) dom.parentElement.scrollTop = 0;
+      return undefined;
+    }
+    const measure = () => {
+      if (editor.isDestroyed) return;
+      const wrapped = field.dataset.wrapped === "true";
+      const next = pillTextWraps(dom, field, wrapped);
+      if (next !== wrapped) { if (next) field.dataset.wrapped = "true"; else delete field.dataset.wrapped; }
+    };
+    const onTransaction = ({ transaction }: { transaction: { docChanged: boolean } }) => { if (transaction.docChanged) measure(); };
+    editor.on("transaction", onTransaction);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(field);
+    observer?.observe(dom);
+    measure();
+    return () => { editor.off("transaction", onTransaction); observer?.disconnect(); delete field.dataset.wrapped; };
+  }, [editor, fieldRef, allowed]);
+}
+
+/** Whether the pill's text needs the wrapped layout; `wrapped` is the layout it is in now (see `usePillWrap`). */
+export function pillTextWraps(dom: HTMLElement, field: HTMLElement, wrapped: boolean): boolean {
+  const blocks = [...dom.children].filter((child) => !child.classList.contains("ProseMirror-trailingBreak"));
+  if (blocks.length === 0) return false;
+  // More than one block (a second paragraph, a list, an image) is more than one line.
+  if (blocks.length > 1 || blocks[0]!.tagName !== "P") return true;
+  const range = document.createRange();
+  range.selectNodeContents(blocks[0]!);
+  const rects = [...range.getClientRects()].filter((rect) => rect.height > 0);
+  if (rects.length === 0) return false;
+  const first = rects[0]!;
+  if (rects.some((rect) => rect.top - first.top >= first.height / 2)) return true;
+  if (!wrapped) return false;
+  const style = getComputedStyle(dom);
+  const addons = [...field.children].filter((child): child is HTMLElement => child instanceof HTMLElement && child.dataset.align?.startsWith("inline-") === true);
+  const inline = field.clientWidth - addons.reduce((sum, addon) => sum + addon.offsetWidth, 0) - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+  return range.getBoundingClientRect().width > inline - 1;
 }

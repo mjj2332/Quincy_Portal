@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Tabs, TabsList, TabsTrigger } from "../components/reui/tabs";
 import { ReviewPhoneBar, VersionChip } from "../components/quincy/ReviewPhoneBar";
 import { ActionRow, ReviewActionSheet } from "../components/quincy/ReviewActionSheet";
-import { useReviewSheet } from "../components/quincy/ReviewSheet";
+import { blurComposerField, useReviewSheet } from "../components/quincy/ReviewSheet";
 import { PHONE_QUERY } from "../lib/review-pane-geometry";
 import { useVisualViewport } from "../lib/use-visual-viewport";
 import { VideoVersionsSheet, withSummaries, type VersionSheetRow } from "../components/video/VideoVersionsSheet";
@@ -127,7 +127,9 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const sheetStopRef = useRef(sheetControl.stop);
   sheetStopRef.current = sheetControl.stop;
   const setSheetStop = sheetControl.onStop;
-  const keyboard = useVisualViewport(phone && sheetControl.composing);
+  // The software keyboard went away without blurring the field (some iOS paths): blur it, so compose mode ends the ordinary way (#879 fix).
+  // The guest page sizes itself from the returned box, as before #879 fix r5 (the guest composer's own pass follows in a later PR).
+  const keyboard = useVisualViewport(phone && sheetControl.composing, () => { if (!sheetControl.held) blurComposerField(); });
   const [versionsOpen, setVersionsOpen] = useState(false);
   const chipRef = useRef<HTMLButtonElement | null>(null);
   const [summaries, setSummaries] = useState<{ videoId: string; rows: Parameters<typeof withSummaries>[1] } | null>(null);
@@ -498,7 +500,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       stacked={phone}
       {...(sheet ? { sheet } : {})}
       strip={paneControls.strip}
-      player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" phoneFrameStep version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} /></OverlayContainerContext.Provider>}
+      player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" phoneFrameStep version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} transportHidden={phone && sheetControl.mode === "compose" && !compose.drawing} /></OverlayContainerContext.Provider>}
       pane={<aside className="flex min-h-0 flex-1 flex-col bg-card text-card-foreground min-[721px]:overflow-hidden min-[721px]:border-l min-[721px]:border-border min-[721px]:p-[var(--space-5)]"><div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-4)] py-[var(--space-2)] min-[721px]:hidden" onClick={openSheet}>{phone && <Tabs value="notes" className="w-full"><TabsList variant="line" className="w-full justify-start rounded-none bg-card px-0 max-[721px]:!h-11 max-[721px]:!p-0"><TabsTrigger value="notes" data-testid="guest-notes-heading" className="max-[721px]:!h-11 max-[721px]:after:!bottom-0">{headingContent}</TabsTrigger></TabsList></Tabs>}</div><div className="flex min-h-0 flex-1 flex-col max-[721px]:p-[var(--space-4)]">{panel}</div></aside>}
     />
     {canPaste && <GuestPasteDialog api={api} writer={writer} open={pasteOpen} onOpenChange={changePasteOpen} video={video} target={version} markupAllowed={session.link.allow.markup}

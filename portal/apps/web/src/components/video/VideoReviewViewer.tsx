@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ChevronLeft, Columns2, DownloadIcon, Link2, Smartphone, Trash2 } from "lucide-react";
 import { framesToTimecode, videoVersionDownloadUrl, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
 import { registerToastHost } from "../../lib/toast-host";
@@ -18,7 +18,7 @@ import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
 import { ReviewPaneHideContext, ReviewSplit, useReviewPane, useReviewPaneControls } from "../quincy/ReviewPane";
-import { useReviewSheet } from "../quincy/ReviewSheet";
+import { blurComposerField, useReviewSheet } from "../quincy/ReviewSheet";
 import { useVisualViewport } from "../../lib/use-visual-viewport";
 import type { NotesSlots } from "./VideoNotesHost";
 import type { SocialPreviewMode } from "../quincy/SocialPreviewControls";
@@ -36,6 +36,11 @@ import { VideoReviewHeaderMenu } from "./VideoReviewHeaderMenu";
 
 /** The notes UI is its own chunk: a Project whose notes part is off never loads it. */
 const LazyNotesHost = lazy(() => import("./VideoNotesHost"));
+/** The viewer's backdrop: the dialog scrim on a desktop; on a phone (#879 fix r7) the inverse surface's own background, ink-900, and no blur (there is nothing to see through it). */
+const DESKTOP_BACKDROP = { "data-testid": "video-review-backdrop" } as const;
+/** On `<html>` while the phone viewer is open: app.css paints html and body with the viewer's ink (#879 fix r11). */
+export const INK_CANVAS_ATTR = "data-ink-canvas";
+const PHONE_BACKDROP = { "data-testid": "video-review-backdrop", "data-surface": "inverse", className: "bg-background supports-backdrop-filter:backdrop-blur-none" } as const;
 /** Decisions, Release and premium (#741 14-ui-staff) are their own chunk: a Project whose `delivery` part is off never loads it. */
 const LazyDeliveryPanel = lazy(() => import("./VideoDeliveryPanel").then((module) => ({ default: module.VideoDeliveryPanel })));
 /** The Version menu (Remove, #776 E) is its own chunk: a Project whose `trash` part is off never loads it. */
@@ -145,7 +150,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   // Focus opens on the dialog itself, not its first button: Space on the Video button would close it (and the player leaves Space to a focused button).
   const popupRef = useRef<HTMLDivElement | null>(null);
   // Base UI moves focus a frame after mount; a key typed in that gap (Enter, then Space) would still hit the opener. Take focus in the commit itself.
-  const takePopup = useCallback((element: HTMLDivElement | null) => { popupRef.current = element; element?.focus({ preventScroll: true }); }, []);
+  const [popupElement, setPopupElement] = useState<HTMLDivElement | null>(null);
+  const takePopup = useCallback((element: HTMLDivElement | null) => { popupRef.current = element; setPopupElement(element); element?.focus({ preventScroll: true }); }, []);
   // The Project sheet's overlay slot sits under this dialog: popups opened in here (Version, tooltips) portal into a slot of the dialog's own.
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   // The toast viewport renders in here while the viewer is open, so an Undo toast sits inside the focus trap.
@@ -381,7 +387,17 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const downloadHref = download && !comparing ? videoVersionDownloadUrl(download.projectId, version.assetId) : undefined;
   const [versionsOpen, setVersionsOpen] = useState(false);
   // With the keyboard up (the editor has focus on a phone) the dialog takes the visual viewport, so the film stays on top and the composer sits above the keyboard (D10).
-  const keyboard = useVisualViewport(phone && sheetControl.composing);
+  // The software keyboard went away without blurring the field (some iOS paths): blur it, so compose mode ends the ordinary way (#879 fix). A hold (the + tray, a post) keeps it.
+  // The dialog follows the visual viewport for as long as the phone viewer is open, not only in compose mode (#879 fix r5): iOS scrolls the document by the keyboard height
+  // on focus and the hook puts the dialog back in the same task, with no transition (fix r8). The ink backdrop (fix r7) is the floor under any frame that still shows through.
+  useVisualViewport(phone && sheetControl.composing, () => { if (!sheetControl.held) blurComposerField(); }, popupElement, phone);
+  // While the phone viewer is open the document's canvas is ink (#879 fix r11): iOS shows it below the viewer while it scrolls the document back as the keyboard drops.
+  useLayoutEffect(() => {
+    if (!phone) return undefined;
+    const html = document.documentElement;
+    html.setAttribute(INK_CANVAS_ATTR, "");
+    return () => { html.removeAttribute(INK_CANVAS_ATTR); };
+  }, [phone]);
   const chipRef = useRef<HTMLButtonElement | null>(null);
   const summaries = useVideoVersionSummariesQuery(notes?.projectId ?? reviewStatus?.projectId ?? trash?.projectId ?? download?.projectId ?? "", video.id, phone && versionsOpen && (notes ?? reviewStatus ?? trash ?? download) !== undefined, notes?.role ?? reviewStatus?.role);
   const desktopHeader = <header className="@container flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-1)] text-card-foreground max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">
@@ -507,7 +523,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       {...(phone ? { sheet: { ...sheetControl, mode: slots?.drawing ? "draw" as const : sheetControl.mode } } : {})}
       {...(phone ? {} : { rowClassName: "overflow-y-auto", playerClassName: "overflow-y-auto" })}
       player={<>
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" phoneFrameStep={forms === undefined || formOpen} initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1 max-[721px]:min-h-0" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} />
+        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" phoneFrameStep={forms === undefined || formOpen} transportHidden={phone && sheetControl.mode === "compose" && !slots?.drawing} initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1 max-[721px]:min-h-0" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} />
       </>}
       pane={sidePane}
       strip={paneControls.strip}
@@ -523,6 +539,9 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       ref={takePopup}
       initialFocus={popupRef}
       showCloseButton={false}
+      // On a phone the backdrop is solid ink (#879 fix r7): while iOS raises the keyboard the dialog is shortened to what is left above it, and the band below
+      // shows the backdrop, never the light Project page through the scrim. Desktop keeps the scrim.
+      overlayProps={phone ? PHONE_BACKDROP : DESKTOP_BACKDROP}
       finalFocus={() => { const opener = returnFocusTo?.(); return opener && opener.isConnected ? opener : true; }}
       onKeyDown={(event) => {
         // A dialog portalled out of the viewer (a confirm, a note-delete) still bubbles its keys here through React: leave them to that dialog.
@@ -530,7 +549,6 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         if (host && host !== event.currentTarget) return;
         (modeRef.current === "compare" ? compareRef.current : playerRef.current)?.handleKeyDown(event);
       }}
-      style={keyboard ? { height: keyboard.height, transform: `translateY(${keyboard.offsetTop}px)` } : undefined}
       className="top-0 left-0 flex h-dvh w-dvw max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none bg-background p-0 text-foreground ring-0 focus-visible:!outline-none sm:max-w-none"
     >
       <OverlayContainerContext.Provider value={slot}>
