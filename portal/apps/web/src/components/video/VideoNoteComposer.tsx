@@ -10,7 +10,7 @@ import { useMediaQuery } from "../../lib/use-media-query";
 import { Button } from "../quincy/Button";
 import { Notice } from "../quincy/Notice";
 import { SheetModeContext } from "../quincy/ReviewSheet";
-import { COMPOSE_CLAMP, ComposeTray, PHONE_LINE, PILL_CHIP, PillPlus, PillSend, REST_CLAMP, SHEET_TEXT, STRIP_GRID, STRIP_TEXT_BUTTON, keepFocus, shortRange } from "../quincy/compose-strip";
+import { COMPOSE_CLAMP, ComposeTray, PHONE_LINE, PILL_CHIP, PillPlus, PillSend, REST_CLAMP, SHEET_TEXT, STRIP_GRID, STRIP_TEXT_BUTTON, keepFocus, shortRange, useRestPlaceholder } from "../quincy/compose-strip";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
 import { Kbd } from "../reui/kbd";
 import { VideoNoteEditor } from "./VideoNoteEditor";
@@ -93,6 +93,8 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   // The phone layout follows the sheet's mode and nothing else (#879 fix). Outside a phone sheet (a composer rendered on its own) the field's focus and the tray stand in for it.
   const trayOpen = phone && slot.extras;
   const composing = phone && (sheet ? sheet.mode === "compose" : focused || trayOpen);
+  // The pill's placeholder at rest ends at a word (#879 PR 3a); compose mode shows it whole.
+  const restPlaceholder = useRestPlaceholder(drawingNow ? "Add a note with this drawing…" : "Add a note…", phone && !composing);
   const trayId = useId();
   const [trayToolbar, setTrayToolbar] = useState<HTMLDivElement | null>(null);
   // A post sent from the compose strip holds compose mode until it settles (the strip shows its phase); a success then returns to browse with the note listed (C7).
@@ -194,6 +196,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     </ComposeTray>}
     <label className="sr-only" htmlFor="video-note-body">Add a note</label>
     <div
+      ref={restPlaceholder.ref}
       data-testid="video-note-editor"
       className={cn("max-[721px]:col-start-1 max-[721px]:row-start-3 max-[721px]:[&_[contenteditable]]:text-[length:var(--text-base)]", phone && "min-w-0")}
       onKeyDownCapture={(event) => { if (frozen) event.preventDefault(); }}
@@ -201,7 +204,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
       onFocusCapture={() => { setFocused(true); if (phone && clock) { clock.pause(); store.stamp(assetId, frameOnScreen(clock.getState())); } }}
       onBlurCapture={(event) => { if (!(event.relatedTarget instanceof Element && event.currentTarget.contains(event.relatedTarget))) setFocused(false); }}
     >
-      <VideoNoteEditor key={editorKey} id="video-note-body" projectId={rich.projectId} role={rich.role} value={draftDoc(composer.content, composer.body)} disabled={frozen} placeholder={phone ? (drawingNow ? "Add a note with this drawing…" : "Add a note…") : "Add a note at this frame… Use @ to mention a colleague."}
+      <VideoNoteEditor key={editorKey} id="video-note-body" projectId={rich.projectId} role={rich.role} value={draftDoc(composer.content, composer.body)} disabled={frozen} placeholder={phone ? restPlaceholder.text : "Add a note at this frame… Use @ to mention a colleague."}
         onChange={(doc) => { if (!frozen) store.setContent(assetId, doc, clock ? frameOnScreen(clock.getState()) : 0); }} onSubmit={send} onUploadingChange={setUploading}
         {...(phone ? { pill: true, pillWrap: composing, toolbarContainer: trayToolbar, inlineStart: <>{plus}{chip}</>, ...(penSlot ? { inlineEnd: penSlot } : {}), contentClassName: composing ? COMPOSE_CLAMP : REST_CLAMP, contentAttributes: SHEET_TEXT } : {})}
       />

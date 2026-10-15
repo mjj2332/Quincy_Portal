@@ -75,6 +75,21 @@ let outside: HTMLButtonElement;
 beforeEach(() => { store = createNoteFormStore("t"); drawing = false; outside = document.createElement("button"); outside.textContent = "film"; document.body.appendChild(outside); });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; viewport.restore(); document.body.replaceChildren(); });
 
+describe("VideoNoteComposer on a phone: the rest placeholder (#879 PR 3a)", () => {
+  it("at rest a placeholder too wide for the field ends at a word with one ellipsis; compose mode shows it whole", async () => {
+    // 8px a character; the field is 64px wide, so 8 characters fit: "Add a…", not "Add a no".
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((() => ({ font: "", measureText: (text: string) => ({ width: text.length * 8 }) })) as never);
+    Object.defineProperty(HTMLTextAreaElement.prototype, "clientWidth", { configurable: true, get: () => 64 });
+    try {
+      await render();
+      expect(area().getAttribute("placeholder")).toBe("Add a…");
+      await focusField();
+      expect(sheetMode()).toBe("compose");
+      expect(area().getAttribute("placeholder")).toBe("Add a note…");
+    } finally { delete (HTMLTextAreaElement.prototype as unknown as Record<string, unknown>).clientWidth; vi.mocked(HTMLCanvasElement.prototype.getContext).mockRestore(); }
+  });
+});
+
 describe("VideoNoteComposer on a phone: the pill at rest (P1)", () => {
   it("rests as the pill: +, chip, field, pen and a round Send, with no hint line, Cancel, visibility or toolbar on show", async () => {
     await render();

@@ -1181,6 +1181,21 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     expect(mode()).toBe("browse");
   });
 
+  it("at rest a placeholder too wide for the field ends at a word with one ellipsis; compose mode shows it whole (#879 PR 3a)", async () => {
+    // 8px a character; the field is 64px wide, so 8 characters fit: "Add a…", not "Add a no".
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((() => ({ font: "", measureText: (text: string) => ({ width: text.length * 8 }) })) as never);
+    Object.defineProperty(HTMLTextAreaElement.prototype, "clientWidth", { configurable: true, get: () => 64 });
+    try {
+      await open();
+      await fieldReady();
+      await flush(2);
+      expect(area()!.getAttribute("placeholder")).toBe("Add a…");
+      await focusField();
+      expect(mode()).toBe("compose");
+      expect(area()!.getAttribute("placeholder")).toBe("Add a note…");
+    } finally { delete (HTMLTextAreaElement.prototype as unknown as Record<string, unknown>).clientWidth; vi.mocked(HTMLCanvasElement.prototype.getContext).mockRestore(); }
+  });
+
   it("focus pauses the film and stamps the frame: compose mode with the hint, + and Cancel; the stamp holds while the film moves", async () => {
     await open();
     await atSeconds(2);
