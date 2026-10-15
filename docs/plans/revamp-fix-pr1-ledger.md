@@ -103,3 +103,18 @@ No new elements.
 | Keyboard box | `lib/use-visual-viewport.ts` | No UI. The hook sets `transition: none` on the root it drives (cleared on release): reui `DialogContent`'s `duration-100` (transition-property `all`) eased every write, which was the flash. |
 | Pill focus on a tap | `QuincyRichTextEditorBase.tsx`, `VideoNoteEditor.tsx`, `VideoNoteComposer.tsx`, `VideoNotesPanel.tsx` | Round 7's `revealOnFocus` / `focusField` reverted: measured no effect on iOS's keyboard scroll. |
 | Viewer backdrop (phone) | `components/reui/dialog.tsx`, `VideoReviewViewer.tsx` | Kept from round 7 (solid ink on a phone) as the floor. |
+
+## Round 9 (design review of round 8)
+
+No new elements: every change is to an element with a line above.
+
+| Element | Where | Change |
+|---|---|---|
+| Pill radius | `components/reui/input-group.tsx` | `rounded-[calc((var(--space-7)-var(--space-1))/2)]`: half the 44px control height from the spacing tokens ((48 - 4) / 2 = 22px), replacing the `22px` literal. |
+| + (Note options) | `VideoNoteComposer.tsx` | `aria-pressed` while the tray is open (alongside `aria-expanded`), with the markup toolbar's pressed treatment (`aria-pressed:bg-secondary` plus `SELECTED_HAIRLINE_PRESSED`, the inset `--border-hover` hairline, now exported from `quincy/markup-toolbar.tsx`). On the inverse pill `--secondary` and `--muted` are the pill's own ink-700, so a fill alone (the old `aria-expanded:bg-muted`, and the pen's `aria-pressed:bg-secondary`) was invisible. |
+| Pen (Draw) in the pill | `VideoMarkupOverlay.tsx` | The same hairline on the phone pill's pen while drawing (compact only; the desktop transport's pen is unchanged). |
+| Pill text box | `QuincyRichTextEditorBase.tsx` (`PILL_TEXT`, `PILL_SCROLLER`), `VideoNoteComposer.tsx` (`REST_CLAMP`, `COMPOSE_CLAMP`) | The block padding (`--space-2`) moves from the ProseMirror node to the text box, and the scroll moves to the box's child, so scrolled text clips inside the padding, never at the hairline. One line is the same 8 + 24 + 8 px as before. |
+| Pill wrapped layout | `QuincyRichTextEditorBase.tsx` (`usePillWrap`, `pillTextWraps`) | Once the draft takes a second line the field gets `data-wrapped`: the text box takes the full width on top (`order-first basis-full`), + and the chip stay left and the pen goes right (`ms-auto`) on a row under it; Send keeps `self-end` beside the pill. The attribute is written in the editor's transaction or a ResizeObserver callback, before the next paint. It unwraps only when the text is one line that would fit the inline row (no flip-flop). The 4-line clamp now applies at full width. |
+| Film floor (compose mode) | `quincy/ReviewSheet.tsx` (`useSheetTextRoom`, `SHEET_FILM_FLOOR`), `ReviewPane.tsx`, `VideoNoteComposer.tsx` (`data-sheet-text`), `VideoNoteEditor.tsx` / `QuincyRichTextEditorBase.tsx` (`contentAttributes`) | The film keeps `--space-9` (96px, the plan's K1 / K3 rows): the sheet publishes `--sheet-text-room` (the row's height less the floor less the rest of the sheet) and the pill's text clamp reads it, one line at least. Below one line the film yields. |
+| Safari bars after Cancel | none | Investigated, not changed: Safari re-tints its bars from the fixed viewer's edges (ink-800) after the document scroll iOS makes for the keyboard. See lessons.md, "Safari tints its bars from the page's edges only after the document scrolls". |
+

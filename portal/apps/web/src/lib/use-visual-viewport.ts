@@ -15,7 +15,7 @@ const SETTLE_MS = 1000;
  * - `root` and `track` (#879 fix r5): the hook alone writes the root's `height`, `transform` and `transition`, inside the viewport's own events, for as long as `track` is on
  *   (the phone viewer is open; it defaults to `enabled`). Compose mode decides what the strip shows, never whether the root follows the viewport. The caller renders no style of
  *   its own for these three.
- * - What iOS does on focus (#879 fix r8, measured on the iOS 18.7 Simulator): about 120-190ms after the tap it scrolls the document by the keyboard height (scrollY, the html's
+ * - What iOS does on focus (#879 fix r8, measured on the iPhone 18 Pro Simulator, iOS 27.0 runtime): about 120-190ms after the tap it scrolls the document by the keyboard height (scrollY, the html's
  *   scrollTop and the viewport's `offsetTop` all 330), carrying the fixed viewer up with it; a `preventScroll` focus does not stop it on this runtime. The write here lands in
  *   that same task and puts the root back (`translateY(offsetTop)`), which is fine as long as nothing animates it.
  * - `transition: none` (#879 fix r8): set with every write and cleared on release, so no caller can animate these writes. The phone viewer's popup carried reui DialogContent's
