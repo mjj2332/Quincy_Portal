@@ -39,7 +39,7 @@ async function confirmedFrame(clock: VideoFrameClock): Promise<number | "timeout
 }
 
 /** A phone note is stamped when typing begins (#879, D10): the editor is a lazy chunk, so focus it as soon as it is in the form. Gives up after ~2s. */
-function focusEditorWhenReady(onFocused?: () => void) {
+export function focusEditorWhenReady(onFocused?: () => void) {
   const started = Date.now();
   const tick = () => {
     const field = document.querySelector<HTMLElement>('[data-testid="guest-composer-body"]:is(textarea, input), [data-testid="guest-composer-body"] :is([contenteditable="true"], textarea, input)');

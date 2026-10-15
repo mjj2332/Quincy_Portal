@@ -30,6 +30,7 @@ import type { SocialPreviewMode } from "../quincy/SocialPreviewControls";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../reui/tabs";
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
 import { useImmersive } from "../quincy/use-immersive";
+import { useCloseOnPlay } from "../quincy/use-close-on-play";
 import type { VideoFrameClock } from "../../lib/video-frame-clock";
 import { VideoImmersiveNoteCard } from "./VideoImmersiveNoteCard";
 import { ReviewPhoneBar, VersionChip } from "../quincy/ReviewPhoneBar";
@@ -170,6 +171,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   // Leaving Full screen (or Compare, or a Version change) puts the card and the floating composer away.
   useEffect(() => { if (!imm) { setComposeOpen(false); setCardId(null); } }, [imm]);
   useEffect(() => { setCardId(null); }, [assetId]);
+  const closeCard = useCallback(() => { setCardId(null); }, []);
   /** Put the floating composer away with focus already on Add note (lesson P3: move focus before the pane that holds it is hidden). */
   const closeCompose = useCallback(() => { document.querySelector<HTMLElement>('[data-testid="video-immersive-add-note"]')?.focus({ preventScroll: true }); setComposeOpen(false); }, []);
   // Base UI moves focus a frame after mount; a key typed in that gap (Enter, then Space) would still hit the opener. Take focus in the commit itself.
@@ -575,7 +577,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       {...(phone ? {} : { rowClassName: "overflow-y-auto", playerClassName: "overflow-y-auto" })}
       player={<>
         <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" phoneFrameStep={forms === undefined || formOpen} initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1 max-[721px]:min-h-0" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} immersive={immersiveHost} />
-        {imm && slots && <CloseCardOnPlay clock={slots.immersive.clock} active={cardId !== null} onClose={() => { setCardId(null); }} />}
+        <CloseCardOnPlay clock={imm && slots ? slots.immersive.clock : null} active={cardId !== null} onClose={closeCard} />
       </>}
       pane={sidePane}
       strip={paneControls.strip}
@@ -619,12 +621,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   </Dialog>;
 }
 
-/** Playing closes the marker card in Full screen (#880): the film moves on, the note it showed no longer matches the frame. */
+/** Renders nothing: closes the marker card when the film plays (#880). A component so it can use the slot's clock inside the notes host's render. */
 function CloseCardOnPlay({ clock, active, onClose }: { clock: VideoFrameClock | null; active: boolean; onClose: () => void }) {
-  useEffect(() => {
-    if (!clock || !active) return undefined;
-    let was = clock.getState().playing;
-    return clock.subscribe(() => { const now = clock.getState().playing; if (now && !was) onClose(); was = now; });
-  }, [clock, active, onClose]);
+  useCloseOnPlay(clock, active, onClose);
   return null;
 }

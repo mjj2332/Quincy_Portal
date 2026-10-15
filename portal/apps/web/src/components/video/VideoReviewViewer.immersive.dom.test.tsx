@@ -33,7 +33,7 @@ const NOTE: VideoNoteThreadDto = {
 } as unknown as VideoNoteThreadDto;
 
 let stub: VideoElementStub; let viewport: MockViewport; let shim: ReturnType<typeof installLocalStorageShim>;
-let root: Root | null = null; let host: HTMLElement; let onClose: ReturnType<typeof vi.fn>;
+let root: Root | null = null; let host: HTMLElement; let onClose: ReturnType<typeof vi.fn<() => void>>;
 async function flush(times = 6) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
 const tid = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const dialog = () => tid("video-review-viewer")!;
@@ -43,7 +43,7 @@ async function escape() { await act(async () => { (document.activeElement ?? doc
 const escapeOutOfTooltip = async () => { if (document.querySelector('[data-slot="tooltip-content"][data-open]')) await escape(); };
 async function mount() {
   api.apiGet.mockImplementation(async (path) => { if (/\/notes$/.test(path)) return { notes: [NOTE] }; return {}; });
-  host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); onClose = vi.fn();
+  host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); onClose = vi.fn<() => void>();
   await act(async () => {
     root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><VideoReviewViewer
       video={videoOf()} onClose={onClose}
