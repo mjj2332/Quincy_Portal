@@ -1,0 +1,27 @@
+# Video-review revamp fix, PR 1 (staff compose) reuse ledger
+
+One line per new or changed UI element in the phone note composer (audit rows 1, 2, and the row-9 draw check). Plan:
+`revamp-fix.md` (settled), `revamp-fix-opus.md` §3–§4. Paths are under `portal/apps/web/src/`.
+
+ReUI MCP (`mcp__ReUI__search`) timed out on two queries on 2026-10-15, so the searches below ran against the local copy
+`tmp/ReUI_Full_Source_Code/` (it may be out of date). Nothing new is installed. `config/ui-primitive-allowlist.ts` is
+unchanged: the diff adds no raw `<button>`, `<input>`, `<select>`, `<textarea>`, `<dialog>` or widget `role` outside
+`components/reui/` and `components/quincy/` (the tray's `role="region"` is a landmark on `CollapsibleContent`, not a
+widget role).
+
+| Element | Where | Uses |
+|---|---|---|
+| Compose pill (the field as one row) | `QuincyRichTextEditorBase.tsx` (`pill`, `inlineStart`, `inlineEnd`) | `components/reui/input-group.tsx`: the editor's own `InputGroup`, with `InputGroupAddon` `align="inline-start"` / `"inline-end"`. The same composition as the registry's `blocks/ai-chat-8/components/composer.tsx` (InputGroup, inline-end addon, round icon Send). |
+| Pill radius | `components/reui/input-group.tsx` | New scoped `variant="pill"` → `rounded-[var(--radius-pill)]` (owner decision C5). The default variant renders as before; the only caller is the phone composer. Adaptation note 6 in the file. |
+| Timecode chip (in the pill) | `VideoNoteComposer.tsx` (`video-note-anchor`) | The existing `ANCHOR_CHIP` span, moved into the inline-start addon. Range shown in the short form (C6). |
+| + (Note options) | `VideoNoteComposer.tsx` (`video-note-extras`) | `components/reui/button.tsx` `variant="ghost" size="icon"` + lucide `Plus`, the same control as the pen beside it (`COARSE` 44px hit target). No `quincy/IconButton` exists. Not a `CollapsibleTrigger`: the open state lives in the form store (`extras`) so Escape, Cancel, a post and `leave` close it; `aria-expanded` / `aria-controls` are set by hand. |
+| + tray | `VideoNoteComposer.tsx` (`video-note-tray`) | `components/reui/collapsible.tsx` (`Collapsible`, `CollapsibleContent keepMounted`), a `region` named "Note options". Searched: `reui/sheet` (modal, takes focus and drops the keyboard), `reui/popover` (takes focus; outside presses close it while typing), drawer (not installed; modal). Collapsible is the non-modal fit (owner decision C1). |
+| Visibility choice (in the tray) | `VideoNoteComposer.tsx` | `components/reui/toggle-group.tsx`, the existing desktop usage, repeated in the tray. |
+| Frame step, Set in, Set out, Clear marks, Remove drawing, drawing chip (in the tray) | `VideoNoteComposer.tsx` | `components/quincy/Button.tsx` (the existing buttons, moved); the drawing chip is the existing `ANCHOR_CHIP` span. |
+| Formatting toolbar (in the tray) | `QuincyRichTextEditorBase.tsx` (`toolbarContainer`) | The existing `components/reui/rich-text-editor` `RichTextToolbar`, portalled into the tray; the whole toolbar (C2). |
+| Pen (in the pill) | `VideoNoteComposer.tsx` (inline-end addon), `VideoMarkupOverlay.tsx` | The existing Draw button (`components/reui/button.tsx` ghost icon). While the composer draws it stays in the pill with `aria-pressed`, and pressing it again is Done (P7). |
+| Send | `VideoNoteComposer.tsx` (`video-note-post`, phone only) | `components/reui/button.tsx` new scoped `size="icon-round"` (`size-11 rounded-[var(--radius-pill)]`, owner decision C5; adaptation note 7) + lucide `SendHorizontal`; while posting `components/reui/spinner.tsx`, phase in `aria-label`. Desktop keeps the `quincy/Button` "Post". |
+| Hint line ("Internal · paused at TC · the note is stamped here"), lock line, problem line | `VideoNoteComposer.tsx` (`video-note-stamp`, `video-note-problem`) | Plain `<p>` / `<div role="alert">` in the existing `[font:var(--type-label)]` role (C3). Refresh notes: `components/quincy/Button.tsx` `variant="text"`. |
+| Cancel | `VideoNoteComposer.tsx` (`video-note-cancel`) | `components/quincy/Button.tsx` `variant="text"` (existing). |
+| Compose-mode context and holds | `components/quincy/ReviewSheet.tsx` (`SheetModeContext`, `setHold`) | Quincy-owned; no UI. |
+| Transport hidden in compose | `components/quincy/VideoPlayer.tsx` (`transportHidden`) | The existing transport block, `hidden` (still mounted). |
