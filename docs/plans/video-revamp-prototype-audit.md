@@ -42,12 +42,14 @@ composer has the same weight problem as the phone (row 2).
 Guest phone review (P2, P10), the Delivery screens (V1–V6) and full screen (F1–F4) ship in
 #880–#882 and get their side-by-side when they are built.
 
-## Owner questions
+## Owner decisions (2026-10-15)
 
-- **Q1.** P6 shows only the pill, Send and Cancel. Today's composer also has Set in / Set out,
-  frame step, the formatting toolbar (image, video, B/I/U) and Internal / Client-visible. Where do
-  they go on a phone?
-- **Q2.** The notes head: P1's filter chips, or keep today's counts and Version details?
+- **Q1 — compose extras go behind a + button.** The phone compose strip matches P6 (pill with
+  timecode chip, input and pen; round Send; Cancel), with a **+** at the pill's start. It opens a
+  small sheet holding Internal / Client-visible, Set in / Set out, frame step and the formatting
+  tools (image, video, B/I/U).
+- **Q2 — the notes head takes P1's chips:** "Open · N ⌄", "Everyone ⌄" and a search icon.
+  Version details moves into the ⋯ sheet.
 
 ## Process
 
