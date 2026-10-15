@@ -28,7 +28,7 @@ export function FilmList({ items, hrefs, unlock, onRequestUnlock, pageSlug = nul
   const trigger = useRef<HTMLElement | null>(null);
   const player = playing === null ? null : items.find((item) => item.handle === playing) ?? null;
   return <>
-    <ul aria-label="Film" data-testid="delivery-film" className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-[var(--space-5)] p-0 has-[>li:only-child]:grid-cols-1 max-[720px]:grid-cols-1">
+    <ul aria-label="Film" data-testid="delivery-film" className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-[var(--space-5)] p-0 has-[>li:only-child]:grid-cols-1 max-[721px]:grid-cols-1">
       {items.map((item) => <li key={item.handle} data-testid="delivery-film-item" data-handle={item.handle} className="min-w-0">
         {item.locked
           ? <VideoTile

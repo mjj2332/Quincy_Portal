@@ -661,7 +661,10 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
     await click(lightbox.querySelector('[aria-label="Close"]')); await flush();
     expect(bodyById("delivery-lightbox")).toBeNull();
     await click(previewTab(dialog, "Film"));
-    expect(dialog.querySelector("video")?.getAttribute("src")).toBe("/video/1");
+    await click(dialog.querySelector('[data-testid="delivery-film-open"]'));
+    expect(bodyById("delivery-film-player-video")?.getAttribute("src")).toBe("/video/1");
+    expect(bodyById("delivery-film-player")!.querySelectorAll("a[download]")).toHaveLength(0); // Preview offers no download
+    await click(bodyById("delivery-film-player-close")); await flush();
     await click(previewTab(dialog, "Floorplan"));
     const pdf = control("View Floorplan 01") as HTMLAnchorElement;
     expect(pdf.getAttribute("href")).toBe("/pdf/1"); expect(pdf.getAttribute("target")).toBe("_blank"); expect(pdf.getAttribute("rel")).toBe("noopener noreferrer");
@@ -677,23 +680,19 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
     expect(tile.querySelector('[data-testid="delivery-processing"]')).not.toBeNull();
     expect(tile.querySelector('[data-testid="delivery-premium-badge"]')?.textContent).toBe("Premium");
   });
-  it("pauses a playing Preview Video when the tab changes or Preview closes", async () => {
+  it("pauses a playing Preview film when its player closes", async () => {
     const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
     try {
       apiPostMock.mockResolvedValue(lockedPreviewDto);
       await openDelivery(); await click(byId("delivery-preview"));
       const dialog = bodyById("delivery-preview-dialog")!;
       await click(previewTab(dialog, "Film"));
-      const video = dialog.querySelector("video");
+      await click(dialog.querySelector('[data-testid="delivery-film-open"]'));
+      const video = bodyById("delivery-film-player-video");
       expect(video).not.toBeNull();
       pause.mockClear();
-      await click(previewTab(dialog, "Gallery"));
+      await click(bodyById("delivery-film-player-close")); await flush();
       expect(pause.mock.contexts).toContain(video);
-      await click(previewTab(dialog, "Film"));
-      const again = dialog.querySelector("video");
-      pause.mockClear();
-      await click(bodyById("delivery-preview-close")); await flush();
-      expect(pause.mock.contexts).toContain(again);
     } finally { pause.mockRestore(); }
   });
 });
