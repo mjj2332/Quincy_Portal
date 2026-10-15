@@ -86,10 +86,10 @@ the whole tree:
   below lacks, and whenever the snapshot and the MCP disagree. Read it for source and dependencies;
   install only through `add` (above).
 - **`~/quincy-ref/reui/` as the offline fallback**, when neither works. Snapshot of
-  2026-09-13 (`reui-blocks-main/` dated 2026-09-09); it lags the registry and lacks newer items,
-  e.g. `solution-crm-7` (it stops at `solution-crm-6`). Layout:
+  2026-10-08 (replacing the 2026-09-13 one); it lags the registry by whatever shipped since, so the
+  MCP or `shadcn view` wins where they disagree. A `.zip` of each top folder sits beside it. Layout:
   - `reui-blocks-main/blocks/<name>/` — blocks (`sheet-2`, `stats-14`, `filters`, …)
-  - `reui-blocks-main/solutions/<name>/` — solution blocks (`solution-crm-1` … `-6`, …)
+  - `reui-blocks-main/solutions/<name>/` — solution blocks (`solution-crm-1` … `-9`, …)
   - `reui-blocks-main/components/`, `reui-blocks-main/hooks/` — what blocks import
   - `reui-icons-main/`, `reui-templates-main/<template>/`
 
