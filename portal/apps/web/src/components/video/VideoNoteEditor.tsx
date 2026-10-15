@@ -12,7 +12,7 @@ type Mentionable = MentionableUser[];
  * Collaboration tab's list), images and videos upload as the note's own media, and `onUploadingChange` lets the host hold Post / Save until each has landed. No link previews: the profile does not
  * allow them.
  */
-export function VideoNoteEditor({ projectId, role, value, onChange, disabled, id, placeholder, onSubmit, onUploadingChange, pill, toolbarContainer, inlineStart, inlineEnd, contentClassName }: {
+export function VideoNoteEditor({ projectId, role, value, onChange, disabled, id, placeholder, onSubmit, onUploadingChange, pill, toolbarContainer, inlineStart, inlineEnd, contentClassName, revealOnFocus }: {
   projectId: string;
   role: Role;
   value: RichTextDoc;
@@ -28,6 +28,8 @@ export function VideoNoteEditor({ projectId, role, value, onChange, disabled, id
   inlineStart?: ReactNode;
   inlineEnd?: ReactNode;
   contentClassName?: string;
+  /** False: a tap on the pill focuses it without iOS's reveal pan (#879 fix r7, the phone staff viewer). See `QuincyRichTextEditorBase`. */
+  revealOnFocus?: boolean;
 }) {
   const loadMentionables = useCallback(async (query: string): Promise<Mentionable> => {
     const path = `/api/mentionable-users?scope=video&projectId=${encodeURIComponent(projectId)}&q=${encodeURIComponent(query)}`;
@@ -39,5 +41,6 @@ export function VideoNoteEditor({ projectId, role, value, onChange, disabled, id
     loadMentionables={loadMentionables} placeholder={placeholder} onSubmit={onSubmit}
     media={{ projectId, owner: "video_note" }} onUploadingChange={onUploadingChange}
     pill={pill} toolbarContainer={toolbarContainer} inlineStart={inlineStart} inlineEnd={inlineEnd} contentClassName={contentClassName}
+    {...(revealOnFocus !== undefined ? { revealOnFocus } : {})}
   />;
 }

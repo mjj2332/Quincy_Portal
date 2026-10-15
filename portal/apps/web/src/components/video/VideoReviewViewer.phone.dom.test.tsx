@@ -242,6 +242,22 @@ describe("D4 and focus", () => {
     expect(row.textContent).toContain("latest");
   });
 
+  it("the staff phone viewer's composer pill focuses without iOS's reveal pan (#879 fix r7)", async () => {
+    await mount({ notes: true });
+    const deadline = Date.now() + 5000; while (!tid("stub-field") && Date.now() < deadline) await flush(1);
+    expect(tid("stub-field")!.getAttribute("data-pill")).toBe("true");
+    expect(tid("stub-field")!.getAttribute("data-reveal-on-focus")).toBe("false");
+  });
+
+  it("past 721px the viewer's composer focuses as the browser does (#879 fix r7)", async () => {
+    viewport.restore(); viewport = mockViewport({ width: 1200 });
+    await mount({ notes: true });
+    const deadline = Date.now() + 5000; while (!tid("stub-field") && Date.now() < deadline) await flush(1);
+    expect(tid("stub-field")).not.toBeNull();
+    expect(tid("stub-field")!.hasAttribute("data-pill")).toBe(false);
+    expect(tid("stub-field")!.hasAttribute("data-reveal-on-focus")).toBe(false);
+  });
+
   it("the phone dialog follows the visual viewport from the moment it opens, so a rise before compose mode is applied; compose hides the transport, leaving the field shows it (#879 fix r5)", async () => {
     class FakeViewport extends EventTarget { height = window.innerHeight - 340; offsetTop = 24; scale = 1; }
     const original = Object.getOwnPropertyDescriptor(window, "visualViewport");
