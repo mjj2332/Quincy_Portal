@@ -54,7 +54,7 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, on
   const summary = [`v${version}`, formatDuration(durationMs), noteWords, status?.full].filter((part): part is string => part !== null && part !== undefined).join(", ");
   const posterBody = <>
     {posterUrl
-      ? <LazyImage src={posterUrl} alt={`Poster of ${title}`} className="h-full w-full object-contain !bg-invert" />
+      ? <LazyImage src={posterUrl} alt={`Poster of ${title}`} className="h-full w-full object-contain !bg-invert !text-invert-foreground" />
       : <div data-testid={`${testId}-no-poster`} className="flex h-full w-full items-center justify-center [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] opacity-70">No poster</div>}
     <div className="pointer-events-none absolute inset-x-[var(--space-2)] top-[var(--space-2)] flex items-start justify-between gap-[var(--space-2)]">
       <div className="flex min-w-0 items-start gap-[var(--space-1)]">
