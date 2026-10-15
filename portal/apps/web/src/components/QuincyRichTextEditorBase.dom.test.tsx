@@ -86,6 +86,11 @@ describe("QuincyRichTextEditorBase", () => {
     expect(field.className).toContain("bg-surface-sunken");
     expect(field.className).toContain("border-transparent");
     expect(field.className).not.toContain("has-[[contenteditable=true]:focus-visible]:outline-offset-2");
+    // Focus is a --border-hover hairline on ANY focus, a tap included (#879 fix r6, owner decision): --border-strong is 1.26:1 on the inverse pill, --border-hover 4.41:1.
+    expect(field.className).toContain("has-[[contenteditable=true]:focus]:outline-border-hover");
+    expect(field.className).toContain("has-[[contenteditable=true]:focus]:outline-[length:var(--border-width-hair)]");
+    expect(field.className).not.toContain("has-[[contenteditable=true]:focus-visible]:outline");
+    expect(field.className).not.toContain("outline-border-strong");
     expect(field.className).toContain("[&_[contenteditable]]:min-h-0");
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await act(async () => { editor.focus(); document.getSelection()!.selectAllChildren(editor.querySelector("p")!); document.dispatchEvent(new Event("selectionchange")); await Promise.resolve(); });

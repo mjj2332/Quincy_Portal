@@ -103,15 +103,17 @@ const FIELD_GROUP =
 /**
  * The same field as one row on the pill radius (#879, the phone note composer, P6 `.composer-input`): the addons sit inline, the toolbar lives elsewhere.
  * The addons sit on the last line of text (`items-end`, lifted to its centre), so +, chip and pen line up with the caret as the field grows.
- * A sunken fill with a transparent border; focus is a 2px ring drawn on the edge (no offset), not FIELD_GROUP's offset outline. The text box drops the
+ * A sunken fill with a transparent border; focus is a `--border-hover` hairline drawn as an outline over that border (4.41:1 on the inverse pill, greige-400 on ink-700), on
+ * any focus of the field, a tap included (#879 fix r6, owner decision): the composer's focus is what raises the keyboard, so it is never keyboard-only. Still one focus line
+ * (#613): the border stays transparent. Not `--border-strong`, which inverse.css does not re-scope (ink-900 on ink-700 is 1.26:1). The text box drops the
  * editor's 64px floor, so an empty pill is one line tall and grows only with text (the host clamps it), centred with the chip.
  */
 const PILL_GROUP =
   "group h-auto flex-row items-end bg-surface-sunken border-transparent hover:border-transparent has-disabled:bg-surface-sunken data-[disabled]:bg-surface-sunken! " +
-  "has-[[contenteditable=true]:focus-visible]:outline-[length:var(--border-width-bold)] " +
-  "has-[[contenteditable=true]:focus-visible]:outline-solid " +
-  "has-[[contenteditable=true]:focus-visible]:outline-ring " +
-  "outline-offset-[calc(var(--border-width-bold)*-1)] has-[[contenteditable=true]:focus-visible]:outline-offset-[calc(var(--border-width-bold)*-1)] " +
+  "has-[[contenteditable=true]:focus]:outline-[length:var(--border-width-hair)] " +
+  "has-[[contenteditable=true]:focus]:outline-solid " +
+  "has-[[contenteditable=true]:focus]:outline-border-hover " +
+  "outline-offset-[calc(var(--border-width-hair)*-1)] has-[[contenteditable=true]:focus]:outline-offset-[calc(var(--border-width-hair)*-1)] " +
   "[&_[contenteditable]]:min-h-0";
 
 /** The character counter appears only from 90% of the limit (or when over it). */

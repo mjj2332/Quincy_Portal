@@ -75,3 +75,11 @@ No new elements.
 | Keyboard box | `lib/use-visual-viewport.ts` (`root`, `track`), `video/VideoReviewViewer.tsx` | No UI. The phone dialog follows the visual viewport for as long as it is open (`track`), not only in compose mode, so iOS's first pan on focus, which lands before React turns compose mode on, is followed in the same event. The root is passed as an element (the popup's callback ref into state). The guest screen keeps its compose-only box (its own pass is a later PR). |
 | Pill focus | `QuincyRichTextEditorBase.tsx` | Unchanged (round 3's 2px ring). Stopped, not switched: a `--border-strong` hairline is 1.26:1 on the ink-700 pill (`--border-strong` is ink-900 and inverse.css does not re-scope it), under the 3:1 a focus indicator needs. Reported for a decision with the options. |
 | Pill radius | `components/reui/input-group.tsx` | `rounded-[22px]` kept: the design guards pass on it, and there is no height token for the 44px phone control (the codebase spells 44px raw as the WCAG target). |
+
+## Round 6 (owner decision on the pill focus)
+
+No new elements.
+
+| Element | Where | Change |
+|---|---|---|
+| Pill focus | `QuincyRichTextEditorBase.tsx` (`PILL_GROUP`) | A `--border-hover` hairline (`--border-width-hair`) drawn as the outline over the transparent border, on any focus of the field (`:focus`, a tap included), replacing round 3's 2px `--ring` edge ring. 4.41:1 on the ink-700 pill (greige-400 on the inverse surface). Still one focus line (#613): the border is never recoloured. |
