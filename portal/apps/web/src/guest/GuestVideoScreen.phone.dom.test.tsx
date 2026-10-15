@@ -180,6 +180,10 @@ describe("the guest phone chrome (#879 PR 3a, P2)", () => {
     expect(composer.className).toContain("in-data-[mode=browse]:py-[var(--space-2)]");
     expect(byId("guest-notes-panel")!.className).toContain("in-data-[mode=browse]:gap-0");
     expect(byId("guest-notes-panel")!.parentElement!.className).toContain("in-data-[mode=browse]:py-0");
+    // The strip's empty rows add no gap around the pill at rest (#879 PR 3a round 2: 85pt band on the Simulator, P1/P2's is 61).
+    const strip = byId("guest-compose-strip")!;
+    expect(strip.dataset.compose).toBe("false");
+    expect(strip.className).toContain("data-[compose=false]:gap-y-0");
   });
 
   it("the transport drops frame step where the composer carries it, and keeps it for a guest who cannot write (C14)", async () => {

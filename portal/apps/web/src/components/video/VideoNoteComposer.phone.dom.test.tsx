@@ -135,6 +135,22 @@ describe("VideoNoteComposer on a phone: the pill at rest (P1)", () => {
   });
 });
 
+describe("VideoNoteComposer on a phone: the rest band (#879 PR 3a round 2)", () => {
+  it("at rest the strip's grid has no row gap, so its empty rows add nothing around the pill; the rows that can show at rest carry their own space", async () => {
+    await render();
+    const strip = by("video-note-composer")!;
+    expect(strip.dataset.compose).toBe("false");
+    // The empty line, tray and Cancel tracks rendered 16px above the pill and 8px below it (85pt band, Simulator); at rest the row gap is gone.
+    expect(strip.className).toContain("data-[compose=false]:gap-y-0");
+    // The + tray can open at rest (round 5 of PR 2): its own bottom padding keeps it off the pill.
+    expect(tray().className).toContain("in-data-[compose=false]:pb-[var(--space-2)]");
+    await focusField();
+    // Compose mode keeps its row gap (P6 unchanged).
+    expect(strip.dataset.compose).toBe("true");
+    expect(strip.className).toContain("gap-y-[var(--space-2)]");
+  });
+});
+
 describe("VideoNoteComposer on a phone: the compose strip (P6)", () => {
   it("focusing the field pauses the film and stamps the frame; the strip shows the hint with visibility, the +, and Cancel", async () => {
     const f = await render();
