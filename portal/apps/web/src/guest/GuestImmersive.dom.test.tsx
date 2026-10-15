@@ -136,7 +136,7 @@ const tapMarker = async () => {
   await flush(3);
 };
 async function escape() { await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); }); await flush(3); }
-const escapeOutOfTooltip = async () => { if (document.querySelector('[data-slot="tooltip-content"][data-open]')) await escape(); };
+const escapeOutOfTooltip = async () => { if ([...document.querySelectorAll("[data-open]")].some((popup) => popup.tagName === "DIV" && /^(Add note|Full screen|Exit full screen)$/.test(popup.textContent ?? ""))) await escape(); };
 const immersiveOn = () => byId("video-player")!.hasAttribute("data-immersive");
 
 describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["a desktop at 1200", { width: 1200, height: 900, coarse: false }]] as const)("the guest page's Full screen on %s (#880)", (_name, size) => {

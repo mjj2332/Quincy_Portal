@@ -145,7 +145,9 @@ describe("D4 and focus", () => {
 
   it("the ⋯ sheet carries a Marker export row once the notes host is up and the Project's export part is on", async () => {
     await mount({ notes: true });
-    const deadline = Date.now() + 5000; while (!trigger() && Date.now() < deadline) await flush(1);
+    // The trigger is always there on a phone (the system-player row, #880), so wait on the notes host itself.
+    const deadline = Date.now() + 5000; while (!tid("video-notes-panel") && Date.now() < deadline) await flush(1);
+    await flush(4);
     await click(trigger()!);
     expect(tid("video-marker-export-row")).not.toBeNull();
   });

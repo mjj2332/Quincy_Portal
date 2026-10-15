@@ -40,7 +40,7 @@ const dialog = () => tid("video-review-viewer")!;
 const film = () => dialog().querySelector("video")!;
 const click = async (element: HTMLElement) => { await act(async () => { element.click(); }); await flush(3); };
 async function escape() { await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); }); await flush(3); }
-const escapeOutOfTooltip = async () => { if (document.querySelector('[data-slot="tooltip-content"][data-open]')) await escape(); };
+const escapeOutOfTooltip = async () => { if ([...document.querySelectorAll("[data-open]")].some((popup) => popup.tagName === "DIV" && /^(Add note|Full screen|Exit full screen)$/.test(popup.textContent ?? ""))) await escape(); };
 async function mount() {
   api.apiGet.mockImplementation(async (path) => { if (/\/notes$/.test(path)) return { notes: [NOTE] }; return {}; });
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); onClose = vi.fn<() => void>();
