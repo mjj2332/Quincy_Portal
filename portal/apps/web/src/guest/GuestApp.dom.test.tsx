@@ -1257,7 +1257,7 @@ describe("the phone review screen (#879)", () => {
   it("shows Approve in the header where the link allows it, and not Previous or Next video", async () => {
     serve(withAllow({ approve: true }, { verified: true, email: "g@example.com", name: "Gina" }));
     await open(`?link=${LINK}`);
-    await click(button("Open Film 1"));
+    await click(button("Film 1"));
     expect(byId("review-phone-bar")!.contains(byId("guest-approve"))).toBe(true);
     expect(byId("guest-approve")!.textContent).toBe("Approve");
     expect(button("Previous video") ?? null).toBeNull();
