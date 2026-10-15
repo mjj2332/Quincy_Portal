@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FLICK_PX_PER_MS, PHONE_QUERY, releaseVelocity, settleSheet, sheetStops } from "./review-pane-geometry";
+import { FLICK_PX_PER_MS, PICTURE_MIN, PHONE_QUERY, releaseVelocity, settleSheet, sheetStops } from "./review-pane-geometry";
 
 describe("review sheet geometry (#879)", () => {
   it("names the phone query once", () => {
@@ -14,7 +14,13 @@ describe("review sheet geometry (#879)", () => {
     // film area = 390/(16/9) + 90 = 309.1 -> 309; the sheet is what is left
     expect(s.half).toBe(700 - 309);
     expect(s.collapsed).toBe(127);
-    expect(s.full).toBe(700 - 200);
+    expect(s.full).toBe(700 - (PICTURE_MIN + 12 + 90));
+  });
+
+  it("the full stop leaves the picture at least PICTURE_MIN above the measured transport", () => {
+    const s = sheetStops({ ...base, available: 844 - 77, transport: 100 });
+    expect(844 - 77 - s.full).toBe(PICTURE_MIN + 12 + 100);
+    expect(844 - 77 - s.full - 12 - 100).toBeGreaterThanOrEqual(110);
   });
 
   it("caps the landscape film area at 65% of the space", () => {

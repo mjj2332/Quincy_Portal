@@ -1,3 +1,4 @@
+import { createVideoApprovalStore } from "../../lib/video-approval-store";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -45,7 +46,7 @@ async function mount(props: { shown?: (v: number) => void; deepLink?: boolean; d
       {...(props.trash ? { trash: { projectId: PROJECT, archived: false } } : {})}
       {...(props.social ? { social: { projectId: PROJECT, role: "editor" as const } } : {})}
       {...(props.notes ? { notes: { projectId: PROJECT, role: "editor" as const, userId: auth.userId, archived: false, forms: createNoteFormStore("phone-test"), exportEnabled: props.exportOff !== true } } : {})}
-      {...(props.delivery ? { delivery: { projectId: PROJECT, role: "editor" as const, archived: false, store: {} as never } } : {})}
+      {...(props.delivery ? { delivery: { projectId: PROJECT, role: "editor" as const, archived: false, store: createVideoApprovalStore("phone-test") } } : {})}
       {...(props.status ? { reviewStatus: { projectId: PROJECT, role: "editor" as const, archived: false } } : {})}
     /></QuincyQueryProvider>);
   });
@@ -100,7 +101,13 @@ describe("the phone header", () => {
 
   it("Approve (internal) shows at in_review for an Editor and is absent without a Review status", async () => {
     await mount({ status: true });
-    expect(tid("video-phone-approve")!.textContent).toContain("Approve (internal)");
+    const approve = tid("video-phone-approve")!;
+    expect(approve.textContent).toBe("Approve");
+    expect(approve.getAttribute("aria-label")).toBe("Approve (internal)");
+    expect(approve.getAttribute("title")).toBe("Approve (internal)");
+    const chip = tid("video-version-chip")!;
+    expect(chip.className).toContain("flex-none");
+    expect(chip.textContent).toContain("latest");
   });
   it("no Approve button when Review status is not offered", async () => {
     await mount();

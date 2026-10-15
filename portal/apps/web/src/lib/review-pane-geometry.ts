@@ -6,6 +6,9 @@ export const PHONE_QUERY = "(width < 721px)";
 export const FLICK_PX_PER_MS = 0.5;
 export const FILM_FLOOR = 200;
 const FILM_SHARE = 0.65;
+/** The shortest picture the full stop may leave (#879): the film area at full is this plus the measured transport and the gap between them, never less than `FILM_FLOOR`. */
+export const PICTURE_MIN = 110;
+const STAGE_GAP = 12;
 
 export type SheetStop = "collapsed" | "half" | "full";
 export type SheetStops = Record<SheetStop, number>;
@@ -13,7 +16,8 @@ export type SheetStops = Record<SheetStop, number>;
 export function sheetStops({ available, collapsed, filmAspect, width, transport }: { available: number; collapsed: number; filmAspect: number; width: number; transport: number }): SheetStops {
   const cap = Math.round(FILM_SHARE * available);
   const film = filmAspect < 1 ? cap : Math.min(cap, Math.round(width / filmAspect + transport));
-  const full = Math.max(0, available - FILM_FLOOR);
+  const filmFloor = Math.max(FILM_FLOOR, PICTURE_MIN + STAGE_GAP + transport);
+  const full = Math.max(0, available - filmFloor);
   const floor = Math.min(collapsed, full);
   const half = Math.min(full, Math.max(floor, available - film));
   return { collapsed: floor, half, full };
