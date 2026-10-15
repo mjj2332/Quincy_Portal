@@ -129,3 +129,14 @@ No new elements: every change is to an element with a line above.
 | Pill text box (compose clamp) | `VideoNoteComposer.tsx` (`COMPOSE_CLAMP`) | The room the sheet publishes is rounded down to whole 24px lines (`--space-5`) inside the box's 16px of padding, so the window never shows a sliver of a line. |
 | Pill at rest | `QuincyRichTextEditorBase.tsx` (`pillWrap`, `usePillWrap`), `VideoNoteEditor.tsx`, `VideoNoteComposer.tsx` | The wrapped layout is compose mode's alone (`pillWrap={composing}`): at rest the pill is the inline row and the text's scroller goes back to its top, so the one-line clamp shows the draft's first line. A wrapped pill at rest was a row taller than the browse stop allows for and squeezed the notes list, and its head row, out of sight. |
 | Film floor (compose mode) | unchanged | Measured on the iPhone 18 Pro with the keyboard up and the tray closed: 384pt visible = header 77 + hint line 44 + the pill's icon row 38 + Cancel row 60 + film + text box (16 + 24 per line). Film = 149 - 24n: two lines leave the film 101pt, so the 96px floor allows two; three would need a floor at or below 77 (`--space-8`), four 53. |
+
+## Round 11 (design review of round 10)
+
+No new elements: every change is to an element with a line above, or to the document canvas.
+
+| Element | Where | Change |
+|---|---|---|
+| Pill radius | `components/reui/input-group.tsx` | From the radius scale: `--radius-pill` on one line, `--radius-lg` once wrapped (`data-wrapped`), replacing round 9's 22px built from spacing tokens (above the scale's 14px cap). |
+| Pill text at rest | `VideoNoteComposer.tsx` (`REST_CLAMP`) | One unwrapped line (`white-space: pre`, so typed spaces stay) that ends in an ellipsis at the field's edge, like the prototype's single-line `.composer-input input`. Compose mode's wrapped text is unchanged. |
+| Document canvas (phone viewer open) | `VideoReviewViewer.tsx` (`data-ink-canvas` on `<html>`), `styles/app.css` | While the phone viewer is open the html and body background is `--ink-800`, the viewer sheet's surface, so iOS's scroll back as the keyboard drops shows ink rather than `--bg-canvas` cream. Set in a layout effect, removed on close or when crossing to desktop. Safari's bars on a fresh load are unchanged (still cream at rest). |
+| Line above the composer | `lib/use-hairline-with-head.ts`, `VideoNotesPanel.tsx` | On a phone the composer's top border is hidden (`data-head-cut`) while the notes head row's text is outside the squeezed list, so the row and its line show and hide together. Checked in a ResizeObserver callback and on the list's scroll, before the next paint. |
