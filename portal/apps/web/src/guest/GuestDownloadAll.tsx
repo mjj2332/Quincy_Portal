@@ -30,7 +30,7 @@ type Loaded = { kind: "loading" } | { kind: "failed" } | { kind: "ok"; manifest:
  * A manifest 401 (verification lost) does the same, and is never the Unavailable page. A manifest 403 `download_disabled` (staff turned downloads off while the page was open) closes the dialog, sets
  * the session's `allow.download` false so every download control goes, and leaves a short notice where this button was; the review stays.
  */
-export function GuestDownloadAll({ api, verify, session, onSession, onUnavailable }: { api: GuestApi; verify: GuestVerify; session: GuestSessionResponse; onSession: (next: GuestSessionResponse) => void; onUnavailable: () => void }) {
+export function GuestDownloadAll({ api, verify, canDownloadWithoutCode = false, session, onSession, onUnavailable }: { api: GuestApi; verify: GuestVerify; /** The Delivery review link (#882, ADR 0025): no code. The server decides; this only skips the dialog. */ canDownloadWithoutCode?: boolean; session: GuestSessionResponse; onSession: (next: GuestSessionResponse) => void; onUnavailable: () => void }) {
   const [open, setOpen] = useState(false);
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -97,7 +97,7 @@ export function GuestDownloadAll({ api, verify, session, onSession, onUnavailabl
   if (!session.link.allow.download && !turnedOff) return null;
   if (!session.link.allow.download) return <p role="status" data-testid="guest-download-all-disabled" className="m-0 text-foreground-secondary [font:var(--type-label)]">Downloads are turned off for this review.</p>;
   return <>
-    <Button type="button" variant="outline" data-testid="guest-download-all" className={TOUCH} onClick={() => { if (session.verified) { setOpen(true); load(); } else verify.request({ active: () => true, done: (verified) => { if (verified) openAndLoad.current(); } }); }}><DownloadIcon aria-hidden="true" />Download all</Button>
+    <Button type="button" variant="outline" data-testid="guest-download-all" className={TOUCH} onClick={() => { if (session.verified || canDownloadWithoutCode) { setOpen(true); load(); } else verify.request({ active: () => true, done: (verified) => { if (verified) openAndLoad.current(); } }); }}><DownloadIcon aria-hidden="true" />Download all</Button>
     <Dialog open={open} onOpenChange={(next) => { if (next) setOpen(true); else close(); }}>
       <DialogContent data-testid="guest-download-all-dialog" showCloseButton={false} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col sm:max-w-[520px]">
         <DialogHeader className="shrink-0">

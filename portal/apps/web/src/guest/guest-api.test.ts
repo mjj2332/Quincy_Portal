@@ -87,6 +87,24 @@ describe("guest-api: social overlays (#872)", () => {
   });
 });
 
+describe("guest-api: download policy (#882)", () => {
+  it("reads {codeRequired} from its own route", async () => {
+    answer(json({ codeRequired: false }));
+    expect(await api().downloadPolicy()).toEqual({ codeRequired: false });
+    expect(lastCall().url).toBe(`/d/api/links/${LINK}/download-policy`);
+  });
+  it("any failure is codeRequired true: the stub, a 500, a bad body, an extra key, a dropped connection", async () => {
+    for (const make of [() => new Response("nope", { status: 404 }), () => new Response("boom", { status: 500 }), () => json({ codeRequired: "no" }), () => json({ codeRequired: false, extra: 1 }), () => json({})]) {
+      answer(make());
+      expect(await api().downloadPolicy()).toEqual({ codeRequired: true });
+    }
+  });
+  it("leaves /session as the strict shape the deployed page parses", async () => {
+    answer(json({ ...SESSION, codeRequired: false }));
+    expect((await api().session()).kind).not.toBe("ok");
+  });
+});
+
 describe("guest-api: note writes", () => {
   it("creates a note with a POST to the Version and parses the thread", async () => {
     answer(json(thread(), 201));

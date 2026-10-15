@@ -26,22 +26,24 @@ type Screen =
  * boot (exchange the token handed in as a prop, or resume the session on a reload) -> passcode | limited | unreachable | unavailable | list -> video(index). A single-Video link skips the list.
  * A 404 or a lost 401 is `unavailable` (no oracle); a network error or 5xx is `unreachable`, a calm retry of the step that failed.
  */
-export function GuestApp({ token, initialVideoId = null }: { token: string | null; initialVideoId?: string | null }) {
+export function GuestApp({ token, initialVideoId = null, pageSlug = null }: { token: string | null; initialVideoId?: string | null; /** The Delivery page this link was opened from (#882, D34), already validated; Back returns to it. */ pageSlug?: string | null }) {
   // Sign out (#854) remounts the whole page under a new key, so the writer, drafts, subscription store and verify dialog are fresh and the next person on a shared device sees nothing of the last one. The token
   // stays here in memory (never storage) to start the next session with; with none (the page was reloaded after the fragment scrub) there is nothing to start one with, and the guest is told so plainly.
   const [epoch, setEpoch] = useState(0);
   const [signedOut, setSignedOut] = useState(false);
   if (signedOut) return <SignedOutScreen />;
-  return <GuestPage key={epoch} token={token} initialVideoId={epoch === 0 ? initialVideoId : null} onSignedOut={() => { if (token !== null) setEpoch((n) => n + 1); else setSignedOut(true); }} />;
+  return <GuestPage key={epoch} token={token} initialVideoId={epoch === 0 ? initialVideoId : null} pageSlug={pageSlug} onSignedOut={() => { if (token !== null) setEpoch((n) => n + 1); else setSignedOut(true); }} />;
 }
 
-function GuestPage({ token: initialToken, initialVideoId, onSignedOut }: { token: string | null; initialVideoId: string | null; onSignedOut: () => void }) {
+function GuestPage({ token: initialToken, initialVideoId, pageSlug, onSignedOut }: { token: string | null; initialVideoId: string | null; pageSlug: string | null; onSignedOut: () => void }) {
   const [screen, setScreen] = useState<Screen>({ name: "boot" });
   const [session, setSession] = useState<GuestSessionResponse | null>(null);
   const [videos, setVideos] = useState<GuestVideoDto[]>([]);
   // The Project's Social overlays (#872), their own read, repeated wherever the list is: enter, a Delivery resync and a grant change. A failed read is no overlays, never an unavailable link.
   const [overlays, setOverlays] = useState<GuestSocialOverlay[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  // Whether a download needs the email code (#882, ADR 0025). True until the policy read says otherwise, and again on any failure of it: only downloads ever wait on this, never watching.
+  const [codeRequired, setCodeRequired] = useState(true);
   // The latest list and screen for async completions; `commitVideos` is the only writer of the list, so the ref is never behind a queued update.
   const videosRef = useRef<GuestVideoDto[]>([]);
   const screenRef = useRef<Screen>({ name: "boot" });
@@ -91,6 +93,7 @@ function GuestPage({ token: initialToken, initialVideoId, onSignedOut }: { token
     if (list.kind === "gone") { setScreen({ name: "unavailable" }); return; }
     if (list.kind === "transient") { fail(() => { void enter(opened, next); }); return; }
     commitVideos(list.value);
+    void opened.downloadPolicy().then((policy) => { setCodeRequired(policy.codeRequired); });
     // The optional overlays read lands on its own, under the ticket fence: a stalled read never holds the Videos back.
     refreshOverlays(opened);
     const wanted = wantedVideo.current;
@@ -98,15 +101,14 @@ function GuestPage({ token: initialToken, initialVideoId, onSignedOut }: { token
     if (wanted !== null) {
       const index = list.value.findIndex((video) => video.id === wanted);
       if (index >= 0) {
-        // The video screen opens a film on its newest granted Version. An unverified guest gets the existing verify dialog, once.
+        // The video screen opens a film on its newest granted Version. Watching needs no code (D34): an unverified guest is asked only when they write a note or approve.
         setScreen({ name: "video", index });
-        if (!next.verified) verify.request();
         return;
       }
       setNotice("That video is no longer available on this link. Here is what is.");
     }
     setScreen(list.value.length === 1 ? { name: "video", index: 0 } : { name: "list" });
-  }, [fail, commitVideos, verify, refreshOverlays]);
+  }, [fail, commitVideos, refreshOverlays]);
 
   const exchange = useCallback(async (opened: GuestApi, tokenValue: string, passcode?: string) => {
     const result = await opened.exchange(tokenValue, passcode);
@@ -211,8 +213,8 @@ function GuestPage({ token: initialToken, initialVideoId, onSignedOut }: { token
   // Invariant: the video screen never renders without its Video. Reconciling keeps the index valid; this is the net under it.
   if (screen.name === "video" && videos[screen.index] === undefined) return <UnavailableScreen />;
   const shown = screen.name === "list"
-    ? <VideoListScreen api={api} title={session?.link.label ?? null} videos={videos} session={session} onSession={setSession} verify={verify} onOpen={(index) => { setNotice(null); setScreen({ name: "video", index }); }} onUnavailable={unavailable} identity={identity(false)} />
-    : <GuestVideoScreen api={api} verify={verify} writer={writer} drafts={drafts} subscription={subscription} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} socialOverlays={overlays} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} onDecided={decided} onResyncDelivery={resyncDelivery} onShownVersion={onShownVersion} identity={identity(true)} />;
+    ? <VideoListScreen api={api} title={session?.link.label ?? null} videos={videos} session={session} onSession={setSession} verify={verify} canDownloadWithoutCode={!codeRequired} onOpen={(index) => { setNotice(null); setScreen({ name: "video", index }); }} onUnavailable={unavailable} identity={identity(false)} />
+    : <GuestVideoScreen api={api} verify={verify} canDownloadWithoutCode={!codeRequired} pageHref={pageSlug === null ? null : `/d/${pageSlug}`} writer={writer} drafts={drafts} subscription={subscription} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} socialOverlays={overlays} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} onDecided={decided} onResyncDelivery={resyncDelivery} onShownVersion={onShownVersion} identity={identity(true)} />;
   // On the video screen the notices and the screen share one bounded column (#859): a notice shortens the screen (it is `flex-1` in here) instead of pushing it past the window.
   // The notices sit above the dark video screen, so they take the inverse roles there (ADR 0024); on the list they stay on the light page.
   const noticeSurface = screen.name === "video" ? "inverse" : undefined;

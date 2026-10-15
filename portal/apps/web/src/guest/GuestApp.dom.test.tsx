@@ -42,6 +42,8 @@ const stub404 = () => new Response("Not found", { status: 404 });
 let videos: GuestVideoDto[] = [];
 let socialOverlays: GuestSocialOverlay[] = [];
 let notes: GuestNoteThreadDto[] = [];
+/** The `download-policy` answer; null is the stub (an old Worker or a failed read). */
+let policy: { codeRequired: boolean } | null = { codeRequired: true };
 let extra: Handler | null = null;
 let log: string[] = [];
 /** True: this visitor holds no session yet, so a GET on the session is the stub until an exchange lands. Resume-first (ADR 0023) makes that the precondition of every exchange test. */
@@ -61,6 +63,7 @@ function route(url: string, init: RequestInit | undefined): Response {
   if (url === `${base}/session`) { if (method === "POST") { sessionGone = false; return json(SESSION); } return sessionGone ? stub404() : json(SESSION); }
   if (url === `${base}/videos`) return json({ videos });
   if (url === `${base}/social-overlays`) return json({ socialOverlays });
+  if (url === `${base}/download-policy`) return policy === null ? stub404() : json(policy);
   if (url.startsWith(`${base}/versions/`) && url.endsWith("/notes")) return json({ notes });
   return stub404();
 }
@@ -100,7 +103,7 @@ beforeEach(() => {
   shim = installLocalStorageShim(); resetUiPrefMemory();
   stub = installVideoElementStub();
   viewport = mockViewport({ width: 1440 });
-  videos = [videoOf(1), videoOf(2), videoOf(3)]; socialOverlays = []; notes = []; extra = null; log = []; sessionGone = false;
+  videos = [videoOf(1), videoOf(2), videoOf(3)]; socialOverlays = []; notes = []; policy = { codeRequired: true }; extra = null; log = []; sessionGone = false;
   fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => route(String(input), init));
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
@@ -196,18 +199,43 @@ describe("the link token", () => {
 
 describe("a Delivery deep link (#847)", () => {
   const posts = () => fetchMock.mock.calls.filter((call) => (call[1] as RequestInit | undefined)?.method === "POST" && String(call[0]).endsWith("/session"));
-  async function openDeep(videoId: string | null, token: string | null = "tok123") {
+  async function openDeep(videoId: string | null, token: string | null = "tok123", pageSlug: string | null = null) {
     window.history.replaceState(null, "", `/d/review?link=${LINK}`);
     host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
-    await act(async () => { root!.render(<GuestApp token={token} initialVideoId={videoId} />); });
+    await act(async () => { root!.render(<GuestApp token={token} initialVideoId={videoId} pageSlug={pageSlug} />); });
     await flush();
   }
 
-  it("with a live session, resumes first (no exchange), opens that film and asks an unverified guest to verify once", async () => {
+  it("with a live session, resumes first (no exchange) and opens that film WITHOUT asking an unverified guest for a code (D34: watching needs none)", async () => {
     await openDeep(vid(2));
     expect(posts()).toHaveLength(0);
     expect(title()).toBe("Film 2");
+    expect(document.querySelectorAll('[data-testid="guest-verify-dialog"]')).toHaveLength(0);
+  });
+
+  it("still asks for the code when the guest approves or writes a note", async () => {
+    extra = (url) => (url === `/d/api/links/${LINK}/session` ? json({ ...SESSION, link: { ...SESSION.link, allow: { ...SESSION.link.allow, approve: true, comments: true } } }) : undefined);
+    videos = [videoOf(1, { versions: [versionOf(10, { released: false })] })];
+    await openDeep(vid(1));
+    expect(document.querySelectorAll('[data-testid="guest-verify-dialog"]')).toHaveLength(0);
+    await click(byId("guest-approve") ?? undefined);
     expect(document.querySelectorAll('[data-testid="guest-verify-dialog"]')).toHaveLength(1);
+  });
+
+  describe("Back to the Delivery page (D34)", () => {
+    const PAGE = "14-harbour-st-mosman-d234xz";
+    it("is a native link to /d/<slug>, not a button, and survives without any history call", async () => {
+      const push = vi.spyOn(window.history, "pushState"); const replace = vi.spyOn(window.history, "replaceState");
+      replace.mockClear();
+      await openDeep(vid(2), "tok123", PAGE);
+      const back = byId("guest-back-to-page") as HTMLAnchorElement;
+      expect(back.tagName).toBe("A"); expect(back.getAttribute("href")).toBe(`/d/${PAGE}`);
+      expect(push).not.toHaveBeenCalled();
+    });
+    it("is absent when the link was not opened from a Delivery page", async () => {
+      await openDeep(vid(2));
+      expect(byId("guest-back-to-page")).toBeNull();
+    });
   });
 
   it("opens the film's newest granted Version, which the list gives first", async () => {
@@ -965,6 +993,7 @@ describe("Sol round 7", () => {
       endSession: async () => "ok",
       videos: async () => { await gate; return { kind: "ok", value: [] }; },
       socialOverlays: async () => ({ kind: "ok", value: [] }),
+      downloadPolicy: async () => ({ codeRequired: true }),
       versionSummaries: async () => ({ kind: "gone" }),
       notes: async () => ({ kind: "ok", value: [] }),
       markup: async () => ({ kind: "gone" }),
@@ -1320,5 +1349,44 @@ describe("the phone review screen (#879)", () => {
     videos = [videoOf(1)];
     await open();
     expect(byId("guest-video-screen")!.className).toContain("min-h-dvh");
+  });
+});
+
+describe("downloads on the Delivery review link need no code (#882, ADR 0025)", () => {
+  const download = () => document.querySelector<HTMLElement>('[data-testid="guest-download"]');
+  const withDownload = () => {
+    extra = (url) => (url === `/d/api/links/${LINK}/session` ? json({ ...SESSION, link: { ...SESSION.link, allow: { ...SESSION.link.allow, download: true } } }) : undefined);
+    videos = [videoOf(1, { versions: [versionOf(10, { released: true, downloadUrl: "/d/api/links/x/download" })] })];
+  };
+  it("codeRequired false: an unverified guest gets a Download anchor straight away, no verify dialog", async () => {
+    policy = { codeRequired: false }; withDownload();
+    await open();
+    expect(download()?.tagName).toBe("A"); expect(download()?.getAttribute("href")).toBe("/d/api/links/x/download");
+    expect(document.querySelectorAll('[data-testid="guest-verify-dialog"]')).toHaveLength(0);
+  });
+  it("codeRequired true: Download is the verify button, and pressing it opens the dialog", async () => {
+    policy = { codeRequired: true }; withDownload();
+    await open();
+    expect(download()?.tagName).toBe("BUTTON");
+    await click(download() ?? undefined);
+    expect(document.querySelectorAll('[data-testid="guest-verify-dialog"]')).toHaveLength(1);
+  });
+  it("a failed policy read (the stub, a bad body) is codeRequired true for downloads only: the film still plays and the link is not gone", async () => {
+    withDownload();
+    for (const answer of [null, "bad" as const]) {
+      if (answer === null) policy = null; else extra = (url) => (url.endsWith("/download-policy") ? json({ codeRequired: "yes" }) : url === `/d/api/links/${LINK}/session` ? json({ ...SESSION, link: { ...SESSION.link, allow: { ...SESSION.link.allow, download: true } } }) : undefined);
+      await act(async () => { root?.unmount(); }); root = null; host?.remove();
+      await open();
+      expect(byId("guest-video-screen")).not.toBeNull(); expect(byId("guest-unavailable")).toBeNull();
+      expect(download()?.tagName).toBe("BUTTON");
+    }
+  });
+  it("Download all opens its dialog without verifying when no code is required", async () => {
+    policy = { codeRequired: false };
+    extra = (url) => (url === `/d/api/links/${LINK}/session` ? json({ ...SESSION, link: { ...SESSION.link, allow: { ...SESSION.link.allow, download: true } } }) : url.endsWith("/downloads") ? json({ included: [], leftOut: [], totalBytes: 0, tooLarge: false, archive: { state: "ready", pending: 0 } }) : undefined);
+    await open();
+    await click(byId("guest-download-all") ?? undefined);
+    expect(document.querySelectorAll('[data-testid="guest-verify-dialog"]')).toHaveLength(0);
+    expect(document.querySelector('[data-testid="guest-download-all-dialog"]')).not.toBeNull();
   });
 });
