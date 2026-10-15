@@ -15,13 +15,13 @@ mechanics of spawning them.
 | **The session** | runs in Claude Code| whichever Claude model the user started on: Sonnet, Opus, Fable, any | Orchestrates: plans, decomposes, delegates, synthesizes, at its own discretion |
 | **fast-worker** | `Agent` tool, `subagent_type: fast-worker` (`~/.claude/agents/fast-worker.md`) | Claude Opus 5.5, medium effort | **Default builder** — mechanical, well-specified work: boilerplate, tests, formatting, straightforward edits. Stops and reports back on anything ambiguous or design-level rather than guessing |
 | **deep-reasoner** | `Agent` tool, `subagent_type: deep-reasoner` (`~/.claude/agents/deep-reasoner.md`) | Claude Opus 5.5, high effort | Reasoning-heavy phases: architecture decisions, hard debugging, algorithm design, tradeoff analysis. Returns a concise, actionable conclusion |
-| **design-reviewer** | `Agent` tool, `subagent_type: design-reviewer` (`~/.claude/agents/design-reviewer.md`) | Claude Opus 5.5, medium effort | Second stage of every UI browser pass ([§2a](#2a-the-browser-pass-two-stages)): judges the screenshots as a designer against the design tokens and the rest of the Portal, audits Agy's PASS/FAIL table. Read-only |
+| **design-reviewer** | `Agent` tool, `subagent_type: design-reviewer` (`~/.claude/agents/design-reviewer.md`) | Claude Opus 5.5, medium effort | Second stage of every UI browser pass ([§2a](#2a-the-browser-pass-two-stages)): judges the screenshots as a designer against the design tokens, the rest of the Portal and, when one is the spec, the prototype frame; audits the session's PASS/FAIL table. Read-only |
 | **Sol** | `codex exec` — [§3](codex-cli.md) | `gpt-6.1-sol`, always high effort | Diff reviewer |
-| **Luna** | `codex exec` — [§3](codex-cli.md) | `gpt-6-luna`, always xhigh effort | Test code and non-browser QA: diagnosis, authoring and fixing tests. Fallback browser-pass measurer only when Agy is down ([§2a](#2a-the-browser-pass-two-stages)) |
+| **Luna** | `codex exec` — [§3](codex-cli.md) | `gpt-6-luna`, always xhigh effort | Test code and non-browser QA: diagnosis, authoring and fixing tests. No browser-pass role |
 | **Codex (peer)** | `/codex:rescue --background` | shared Codex runtime | A second, independent-model-family opinion on high-stakes decisions — a peer worked in parallel with Opus/deep-reasoner, not a reviewer of their output |
 | **Terra** | `codex exec` — [§3](codex-cli.md) | `gpt-5.6-terra` | No default role — available as an on-request builder when the user asks for a Codex-driven build by name |
 | **Astra** | `codex exec` — [§3](codex-cli.md) | `gpt-6-astra` | No default role — available on request; pass `-m gpt-6-astra` explicitly, the account default doesn't reliably select it |
-| **Agy** | `agy` CLI subprocess — [§3a](agy-cli.md) | `gemini-3.8-flash-medium`, `--effort medium`, always | Browser-pass measurer, driving the owner's Chrome through `huashu-chrome` (fallback: `chrome-devtools-mcp`): stage 1 of every UI browser pass ([§2a](#2a-the-browser-pass-two-stages)). Never planning or building |
+| **Agy** | `agy` CLI subprocess — [§3a](agy-cli.md) | `gemini-3.8-flash-medium` | **Retired from the browser pass** (owner decision, 2026-10-15) after the #879/#884 passes approved a phone composer the iOS keyboard covered. No default role |
 
 
 **"The session" means whoever is reading this**, acting directly with its own file tools. The
@@ -65,25 +65,20 @@ system prompts.
 Every UI change runs both stages, in order. Measurement and judgement are different skills, so
 they are different agents, and the second is blind to the first's verdicts until it has looked.
 
-1. **Agy measures** (`agy` CLI, `huashu-chrome`, [agy-cli.md](agy-cli.md)): each viewport
-   the ticket names, each open state (popover, menu, sheet), hit areas, gaps, overflow, tab order.
-   Its report contract: screenshots as files in one folder named per viewport and state, and a
-   PASS/FAIL table where every row carries the measurement and the screenshot that shows it.
-   Agy is the measurer (owner decision, 2026-09-28): Luna's earlier passes ran one to two hours and
-   outlasted timed UI such as a 10 s toast. **Luna is the fallback when Agy is down** (quota, auth,
-   outage; owner decision, 2026-10-04), run through `huashu-chrome` with the same brief and report
-   contract, an unsandboxed `codex exec` the owner approved in chat ([codex-cli.md](codex-cli.md)).
-   Its #522 trial finished in 22 min inside a 40-min time-box, kept to labelled tabs and flagged
-   two of its own bad screenshots, but measured the wrong element for six token rows and missed a
-   duplicate screenshot. So a Luna brief carries a time-box, names the exact selector for every
-   row that measures a token value, and requires a FAIL on a token value to be cross-checked
-   against its screenshot before it is reported. Every Luna screenshot is verified as for Agy's.
-   huashu's input is synthetic, so its drag, keyboard,
-   focus, hover and narrow-viewport rows rerun as a `chrome-devtools-mcp` fallback pass (native
-   `drag`, trusted keys, real viewports). The session still re-runs every row that stays
-   synthetic, and every row whose measurement contradicts its verdict, with trusted input before
-   the gate ([agy-cli.md §Browser pass](agy-cli.md)).
-2. **design-reviewer judges** (Opus, `Agent` tool): given the design tokens, the measurer's
+1. **The session measures** (owner decision, 2026-10-15, replacing Agy): in the built-in browser
+   or the owner's Chrome for desktop and tablet widths, and **in Safari on the iOS Simulator for
+   every phone row** — a narrow desktop window cannot raise the on-screen keyboard, rotate, or
+   reproduce iOS's visual viewport, which is how #879 shipped a composer hidden behind the
+   keyboard. Phone briefs carry keyboard rows: the field being typed into stays visible, the
+   film stays visible where the spec says so, and the page does not scroll away. The session may
+   hand mechanical capture (navigating, resizing, saving screenshots) to a Sonnet subagent; it
+   writes and judges every PASS/FAIL row itself, on Opus. Report contract unchanged: screenshots
+   as files in one folder named per viewport and state, and every row carries its measurement
+   and screenshot.
+   **When a prototype is the spec** (AGENTS.md, "Prototype as spec"), capture the prototype frame
+   at the same size and state beside each build screenshot, and a row passes only when the two
+   match in layout, hierarchy, copy and behaviour.
+2. **design-reviewer judges** (Opus, `Agent` tool): given the design tokens, the prototype frames when one is the spec, the measurer's
    screenshot folder, its report and the diff range, it looks at every screenshot before reading
    the table, writes designer's notes per screenshot (hierarchy, spacing, typography, colour, wrap,
    states, fit with the rest of the Portal), maps each deviation to a token or a literal, then
@@ -98,7 +93,7 @@ captured with `hasFocus` false is re-measured, not reported as a FAIL.
 **Serving and the report header.** QA serves only through `scripts/agents/serve-branch.sh <ref>`,
 from the dedicated worktree `~/quincy-wt/serve` — never from the main checkout, whose branch other
 sessions switch (a pass once ran against a checkout that changed under it). Every browser-pass
-report, Agy's, Luna's and design-reviewer's, starts with the server's **pid, cwd, HEAD and bundle**
+report, the session's and design-reviewer's, starts with the server's **pid, cwd, HEAD and bundle**
 (`index-*.js`), read before the pass and again after it; a pass whose server changed in between is
 void. `scripts/agents/agy-pass.sh` writes both into the report; `scripts/agents/preflight.sh`
 prints them on its `serve` line for any other runner.
@@ -126,7 +121,7 @@ its own flags, sandboxing, and file access, output read back from a file. There 
 "Codex subagent" tool. fast-worker and deep-reasoner go through the `Agent` tool instead (§1),
 and Codex-as-peer goes through `/codex:rescue --background`.
 
-- **§3a — Agy (the browser pass): [agy-cli.md](agy-cli.md)** — the browser-pass invocation on
+- **§3a — Agy: [agy-cli.md](agy-cli.md)** — historical since Agy left the browser pass (2026-10-15); the invocation on
   `huashu-chrome`, the `chrome-devtools-mcp` fallback (drag, keyboard Adjust, viewports), what the
   session still re-checks, the Option A setup for the dedicated debugging Chrome, why the
   Antigravity IDE's built-in browser agent is not usable headlessly, the print-mode shutdown hang
@@ -181,7 +176,7 @@ here directly:
 - **Read the security- and correctness-critical diff yourself** — auth checks, author-only guards,
   money, migrations, deletion.
 
-- **Open the browser-pass screenshots yourself** (§2a) — every Agy/design-reviewer disagreement
+- **Open the browser-pass screenshots yourself** (§2a) — every measurer/design-reviewer disagreement
   is settled by the image, and a PASS with no measurement beside it is a FAIL.
 
 - If an agent is spawned and a danger-mode task touched production, confirm it was genuinely passive —
@@ -213,8 +208,7 @@ injection broke its assertion math while the code under test was correct.
   not policy-driven. Where an authenticated CLI can do the write instead (`wrangler` for
   Cloudflare), fall back to that rather than tuning the invocation. The **one** case with no such
   fallback is `chrome-devtools-mcp`'s `evaluate_script`, which a browser measurement needs — one
-  reason the pass runs on Agy, which has no such per-tool gate under
-  `--dangerously-skip-permissions` ([agy-cli.md](agy-cli.md)).
+  reason the session runs the pass itself rather than through Codex.
   See `../lessons.md` for the related MCP tool-list staleness issue.
 - **`chrome-devtools-mcp` cannot save screenshots.** `take_screenshot` into the repo fails with
   `… is not within any of the configured workspace roots` unless the server is started with
