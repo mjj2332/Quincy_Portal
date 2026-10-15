@@ -127,12 +127,13 @@ describe("QuincyRichTextEditorBase", () => {
     };
     const rect = (top: number, w: number) => ({ top, bottom: top + 24, left: 0, right: w, width: w, height: 24, x: 0, y: top, toJSON: () => ({}) });
     afterEach(() => { restore.splice(0).reverse().forEach((undo) => undo()); lines = 1; width = 50; });
-    const setUp = async () => {
+    const pillProps = { pill: true, toolbarContainer: null, inlineStart: <span>+ TC</span>, inlineEnd: <span>pen</span>, value: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "a" }] }] } as RichTextDoc };
+    const setUp = async (extra: { pillWrap?: boolean } = {}) => {
       stub(Range.prototype, "getClientRects", () => function (this: Range) { return Array.from({ length: lines }, (_, i) => rect(i * 24, width)); }, "value");
       stub(Range.prototype, "getBoundingClientRect", () => function (this: Range) { return rect(0, width); }, "value");
       stub(HTMLElement.prototype, "clientWidth", function (this: HTMLElement) { return this.dataset.testid === "rich-text-field" ? 300 : 0; } as () => number);
       stub(HTMLElement.prototype, "offsetWidth", function (this: HTMLElement) { return this.dataset.align === "inline-start" ? 80 : this.dataset.align === "inline-end" ? 40 : 0; } as () => number);
-      const host = await mount({ pill: true, toolbarContainer: null, inlineStart: <span>+ TC</span>, inlineEnd: <span>pen</span>, value: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "a" }] }] } });
+      const host = await mount({ ...pillProps, ...extra });
       const field = host.querySelector<HTMLElement>('[data-testid="rich-text-field"]')!;
       const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
       editor.style.paddingLeft = "12px"; editor.style.paddingRight = "12px";
@@ -167,6 +168,33 @@ describe("QuincyRichTextEditorBase", () => {
       expect(field.dataset.wrapped).toBe("true");
       width = 150;
       await typeAt(editor, "z");
+      expect(field.dataset.wrapped).toBeUndefined();
+    });
+
+    it("pillWrap false (the composer at rest, #879 fix r10): the inline row whatever the draft, the text back at its first line; true again wraps in the same commit", async () => {
+      const rerender = async (pillWrap: boolean) => act(async () => { root!.render(<QuincyRichTextEditorBase preset="composer" onChange={() => undefined} limit={2_000} {...pillProps} pillWrap={pillWrap} />); await Promise.resolve(); });
+      const { field, editor } = await setUp();
+      lines = 3;
+      await typeAt(editor, " more words");
+      expect(field.dataset.wrapped).toBe("true");
+      const scroller = editor.parentElement!;
+      scroller.scrollTop = 48;
+      expect(scroller.scrollTop).toBe(48);
+      await rerender(false);
+      expect(field.dataset.wrapped).toBeUndefined();
+      expect(scroller.scrollTop).toBe(0);
+      // Off, a transaction or a resize does not wrap it again.
+      await typeAt(editor, "!");
+      expect(field.dataset.wrapped).toBeUndefined();
+      await rerender(true);
+      expect(field.dataset.wrapped).toBe("true");
+    });
+
+    it("pillWrap false from the start never wraps a long draft", async () => {
+      lines = 3;
+      const { field, editor } = await setUp({ pillWrap: false });
+      expect(field.dataset.wrapped).toBeUndefined();
+      await typeAt(editor, " x");
       expect(field.dataset.wrapped).toBeUndefined();
     });
 

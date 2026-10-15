@@ -171,6 +171,9 @@ export type QuincyRichTextEditorBaseProps = {
   contentAttributes?: Readonly<Record<`data-${string}`, string>>;
   /** The field as one row on the pill radius (the phone note composer, owner decision C5). */
   pill?: boolean;
+  /** Whether the pill may take its wrapped layout (#879 fix r10; default true). The phone composer passes false at rest: browse shows the inline row
+   * with the draft clamped to its first line, and the wrapped layout comes back when compose mode does. */
+  pillWrap?: boolean;
 };
 
 type UploadingMedia = EmbeddedUpload;
@@ -203,6 +206,7 @@ export function QuincyRichTextEditorBase({
   contentClassName,
   contentAttributes,
   pill = false,
+  pillWrap = true,
 }: QuincyRichTextEditorBaseProps) {
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -363,7 +367,7 @@ export function QuincyRichTextEditorBase({
   editorRef.current = editor;
   const state = useRichTextState(editor);
   const fieldRef = useRef<HTMLDivElement>(null);
-  usePillWrap(pill ? editor : null, fieldRef);
+  usePillWrap(pill ? editor : null, fieldRef, pillWrap);
   // Below 721px the table controls are a toolbar group and the floating bar is not mounted; on a desktop the group
   // takes over too when the bar has no room around the table (tier "none": the bar stays mounted but inert) (#535).
   const phone = useMediaQuery(RICH_TEXT_PHONE_QUERY);
@@ -718,12 +722,21 @@ export function QuincyRichTextEditorBase({
  *
  * Hysteresis, so it cannot flip-flop: inline, it wraps once the text takes a second line. Wrapped, it unwraps only when the text is one line
  * AND that line would fit the inline row's text width (the field less both addons and the text's own inline padding).
+ *
+ * Off (`allowed` false, the phone composer at rest, #879 fix r10) the pill is the inline row whatever the draft, and the text's scroller goes
+ * back to its top so the one-line clamp shows the draft's first line. A wrapped pill at rest is a row taller than the sheet's browse stop
+ * allows for, and it squeezed the notes list (and its head row) out of sight.
  */
-function usePillWrap(editor: Editor | null, fieldRef: RefObject<HTMLDivElement | null>) {
+function usePillWrap(editor: Editor | null, fieldRef: RefObject<HTMLDivElement | null>, allowed: boolean) {
   useLayoutEffect(() => {
     const field = fieldRef.current;
     if (!editor || editor.isDestroyed || !field) return undefined;
     const dom = editor.view.dom as HTMLElement;
+    if (!allowed) {
+      delete field.dataset.wrapped;
+      if (dom.parentElement) dom.parentElement.scrollTop = 0;
+      return undefined;
+    }
     const measure = () => {
       if (editor.isDestroyed) return;
       const wrapped = field.dataset.wrapped === "true";
@@ -737,7 +750,7 @@ function usePillWrap(editor: Editor | null, fieldRef: RefObject<HTMLDivElement |
     observer?.observe(dom);
     measure();
     return () => { editor.off("transaction", onTransaction); observer?.disconnect(); delete field.dataset.wrapped; };
-  }, [editor, fieldRef]);
+  }, [editor, fieldRef, allowed]);
 }
 
 /** Whether the pill's text needs the wrapped layout; `wrapped` is the layout it is in now (see `usePillWrap`). */

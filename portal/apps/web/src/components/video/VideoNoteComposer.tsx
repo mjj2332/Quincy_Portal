@@ -257,7 +257,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     >
       <VideoNoteEditor key={editorKey} id="video-note-body" projectId={rich.projectId} role={rich.role} value={draftDoc(composer.content, composer.body)} disabled={frozen} placeholder={phone ? (drawingNow ? "Add a note with this drawing…" : "Add a note…") : "Add a note at this frame… Use @ to mention a colleague."}
         onChange={(doc) => { if (!frozen) store.setContent(assetId, doc, clock ? frameOnScreen(clock.getState()) : 0); }} onSubmit={send} onUploadingChange={setUploading}
-        {...(phone ? { pill: true, toolbarContainer: trayToolbar, inlineStart: <>{plus}{chip}</>, ...(penSlot ? { inlineEnd: penSlot } : {}), contentClassName: composing ? COMPOSE_CLAMP : REST_CLAMP, contentAttributes: SHEET_TEXT } : {})}
+        {...(phone ? { pill: true, pillWrap: composing, toolbarContainer: trayToolbar, inlineStart: <>{plus}{chip}</>, ...(penSlot ? { inlineEnd: penSlot } : {}), contentClassName: composing ? COMPOSE_CLAMP : REST_CLAMP, contentAttributes: SHEET_TEXT } : {})}
       />
     </div>
     {!phone && tooLong && <Notice tone="critical" role="alert">{`Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.`}</Notice>}

@@ -105,8 +105,11 @@ describe("VideoNoteComposer on a phone: the pill at rest (P1)", () => {
   it("a draft left behind after the keyboard goes stays in the one-line pill: the strip does not come back for it", async () => {
     await render();
     await focusField(); await type("first line\nsecond line");
+    // The wrapped layout is compose mode's alone (#879 fix r10): at rest the pill is the inline row, so it never outgrows the browse stop and squeezes the notes' head row away.
+    expect(by("stub-field")!.dataset.pillWrap).toBe("true");
     await blurTo(outside);
     expect(sheetMode()).toBe("browse");
+    expect(by("stub-field")!.dataset.pillWrap).toBe("false");
     expect(by("video-note-composer")!.dataset.compose).toBe("false");
     expect(by("video-note-stamp")).toBeNull();
     expect(by("video-note-cancel")).toBeNull();
