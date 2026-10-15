@@ -44,6 +44,8 @@ export type VideoPlayerControl = {
 };
 
 export const COARSE = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[721px]:min-h-11 max-[721px]:min-w-11";
+/** An icon control inside the phone note pill (#879 fix, kit.jsx `ibtn sm`): drawn at 32px so the text keeps the room, with a 44px hit area from a transparent pseudo-element. */
+export const PILL_ICON = "relative size-8 after:absolute after:-inset-1.5 after:content-['']";
 const MONO = "[font:var(--type-mono)] tabular-nums";
 // These chips keep the Lightbox's SHORTCUT_KBD skin (bordered, bg-secondary) rather than the Kbd primitive, to match the Lightbox legend.
 export const LEGEND_KBD = "rounded-[var(--radius-xs)] border border-solid border-[length:var(--border-width-hair)] border-border bg-secondary px-[var(--space-1)] text-foreground [font:var(--weight-regular)_var(--text-2xs)/1.4_var(--font-mono)]";

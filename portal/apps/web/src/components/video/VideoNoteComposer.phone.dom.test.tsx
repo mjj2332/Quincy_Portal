@@ -218,6 +218,46 @@ describe("VideoNoteComposer on a phone: the compose strip (P6)", () => {
     expect(by("video-note-cancel")).toBeNull();
   });
 
+  it("Cancel with the tray open is one press: it keeps the field's focus on press, so the keyboard and the strip stay put until it discards (#879 fix)", async () => {
+    await render();
+    await focusField(); await type("draft");
+    await press(by("video-note-extras")!);
+    expect(await press(by("video-note-cancel")!)).toBe(true);
+    expect(store.slot("a").composer.body).toBe("");
+    expect(store.slot("a").extras).toBe(false);
+    expect(sheetMode()).toBe("browse");
+    expect(by("video-note-cancel")).toBeNull();
+  });
+
+  it("the tray is two short rows: visibility, frame steps and Set in / out on one sideways-scrolling row, then the toolbar; no visibility description on a phone (#879 fix)", async () => {
+    await render();
+    await focusField();
+    await press(by("video-note-extras")!);
+    expect([...tray().children].map((el) => el.getAttribute("data-testid"))).toEqual(["video-note-tray-row", "video-note-tray-toolbar"]);
+    const row = by("video-note-tray-row")!;
+    for (const id of ["video-note-visibility-internal", "video-note-visibility-public", "video-note-step-back", "video-note-step-forward", "video-note-set-in", "video-note-set-out"]) expect(row.contains(by(id))).toBe(true);
+    expect(row.className).toContain("flex-nowrap");
+    expect(row.className).toContain("overflow-x-auto");
+    expect(by("video-note-visibility-hint")).toBeNull();
+    expect(by("video-note-stamp")!.textContent).toMatch(/^Internal · /);
+  });
+
+  it("the pill leaves the text its width: a small mono chip and a 32px + with a 44px hit area; the hint's clamp sits inside its row so it never clips (#879 fix)", async () => {
+    await render();
+    await focusField();
+    const chip = by("video-note-anchor")!;
+    expect(chip.className).toContain("[font:var(--weight-regular)_var(--text-xs)/1_var(--font-mono)]");
+    expect(chip.className).toContain("whitespace-nowrap");
+    const plus = by("video-note-extras")!;
+    expect(plus.className).toContain("size-8");
+    expect(plus.className).toContain("after:-inset-1.5");
+    expect(plus.className).not.toContain("min-h-11");
+    const stamp = by("video-note-stamp")!;
+    expect(stamp.parentElement).not.toBe(by("video-note-composer"));
+    expect(stamp.parentElement!.className).not.toContain("line-clamp");
+    expect(by("video-note-cancel")!.className).toContain("after:-inset-y-1.5");
+  });
+
   it("Cancel throws the whole draft away: the next note starts clean, with no old drawing and its own anchor frame", async () => {
     const f = await render();
     await focusField();

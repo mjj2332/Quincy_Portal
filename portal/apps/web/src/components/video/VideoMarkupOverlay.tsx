@@ -9,7 +9,7 @@ import { preloadSavedDrawing, type DrawForm } from "../../lib/video-note-form-st
 import { Button } from "../reui/button";
 import { Kbd } from "../reui/kbd";
 import { cn } from "@/lib/utils";
-import { COARSE, LEGEND_KBD } from "../quincy/VideoPlayer";
+import { COARSE, LEGEND_KBD, PILL_ICON } from "../quincy/VideoPlayer";
 import { IconTip } from "../quincy/IconTip";
 import { MarkupToolbar } from "../quincy/markup-toolbar";
 import { MarkupLayer, StrokeVisible } from "../quincy/freehand-strokes";
@@ -172,7 +172,7 @@ export function useVideoMarkup(session: VideoNotesSession): { overlay: ((box: Bo
   const penDown = compact && drawing && form === "composer";
   const transportActions = restShows || penDown
     ? <IconTip label="Draw">
-      <Button ref={drawButton} type="button" variant="ghost" size="icon" aria-label="Draw" data-testid="video-markup-toolbar-draw" disabled={confirming} {...(penDown ? { "aria-pressed": true } : {})} className={cn("size-8 aria-pressed:bg-secondary", COARSE)} onClick={penDown ? done : expand}><PencilIcon aria-hidden="true" /></Button>
+      <Button ref={drawButton} type="button" variant="ghost" size="icon" aria-label="Draw" data-testid="video-markup-toolbar-draw" disabled={confirming} {...(penDown ? { "aria-pressed": true } : {})} className={cn("size-8 aria-pressed:bg-secondary", compact ? PILL_ICON : COARSE)} onClick={penDown ? done : expand}><PencilIcon aria-hidden="true" /></Button>
     </IconTip>
     : null;
 

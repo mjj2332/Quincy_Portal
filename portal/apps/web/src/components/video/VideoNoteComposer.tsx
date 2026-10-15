@@ -10,7 +10,7 @@ import { useMediaQuery } from "../../lib/use-media-query";
 import { Button } from "../quincy/Button";
 import { Notice } from "../quincy/Notice";
 import { SheetModeContext } from "../quincy/ReviewSheet";
-import { COARSE } from "../quincy/VideoPlayer";
+import { PILL_ICON } from "../quincy/VideoPlayer";
 import { Button as ReuiButton } from "../reui/button";
 import { Collapsible, CollapsibleContent } from "../reui/collapsible";
 import { Spinner } from "../reui/spinner";
@@ -34,8 +34,12 @@ const SMALL_BUTTON = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[7
 /** The phone pill's text box (C4): one line at rest (the draft clamped to its first line), up to four while writing, then it scrolls. Line 24px + the field's 8px padding top and bottom. */
 const REST_CLAMP = "max-h-[calc(var(--space-6)+var(--space-2))] overflow-hidden";
 const COMPOSE_CLAMP = "max-h-[calc(var(--space-9)+var(--space-4))] overflow-y-auto";
-/** The phone line under the film (hint, lock, problem): one meta line, two at most. */
-const PHONE_LINE = "col-span-2 row-start-1 [font:var(--type-label)]";
+/** The phone line under the film (hint, lock, problem): one meta line, two at most, at P6's 12px. */
+const PHONE_LINE = "col-span-2 row-start-1 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)]";
+/** The pill's timecode chip (quincy.css `.tc-chip`): small mono, so the text keeps the pill's width (#879 fix). */
+const PILL_CHIP = "shrink-0 whitespace-nowrap rounded-md bg-muted px-[var(--space-2)] py-[var(--space-1)] text-foreground [font:var(--weight-regular)_var(--text-xs)/1_var(--font-mono)] tabular-nums";
+/** A text control in the phone strip (Cancel, kit.jsx `ibtn sm`): drawn 32px tall, with a 44px hit area from a transparent pseudo-element. */
+const STRIP_TEXT_BUTTON = "relative min-h-8 px-[var(--space-2)] after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-['']";
 /** Keeps the focus where it is: a press on these controls must not take it from the field, or iOS drops the keyboard (#879 fix, §3.4). */
 const keepFocus = (event: { preventDefault: () => void }) => { event.preventDefault(); };
 
@@ -159,7 +163,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     ? marks.in !== null && marks.out !== null ? shortRange(timecode(marks.in), timecode(marks.out)) : anchorText
     : timecode(stampFrame);
   const lineShown = composing || problem !== null || tooLong || otherForm !== null || clock === null;
-  const chip = <span data-testid="video-note-anchor" aria-live="off" className={cn(ANCHOR_CHIP, "shrink-0 whitespace-nowrap")}>
+  const chip = <span data-testid="video-note-anchor" aria-live="off" className={PILL_CHIP}>
     {!pendingFrames && <span className="sr-only">{merged ? "Note with a drawing at " : "Note at "}</span>}
     {pendingFrames && <span className="sr-only">{`Note from ${anchorText}: `}</span>}
     {merged && <PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />}
@@ -167,7 +171,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   </span>;
   const plus = <ReuiButton
     type="button" variant="ghost" size="icon" data-testid="video-note-extras" aria-label="Note options" aria-expanded={trayOpen} aria-controls={trayId}
-    disabled={otherForm !== null || frozen} className={cn("size-8 aria-expanded:bg-muted", COARSE)}
+    disabled={otherForm !== null || frozen} className={cn("aria-expanded:bg-muted", PILL_ICON)}
     onPointerDown={keepFocus} onMouseDown={keepFocus} onClick={() => { store.setExtras(assetId, !trayOpen); }}
   ><Plus aria-hidden="true" /></ReuiButton>;
   const penSlot = pen !== undefined ? <span data-testid="video-note-pen" className="contents" onClickCapture={() => { store.setExtras(assetId, false); const active = document.activeElement; if (active instanceof HTMLElement && active !== document.body) active.blur(); }}>{pen}</span> : null;
@@ -201,11 +205,13 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
         <span className="min-w-0 flex-1 line-clamp-2">{tooLong ? `Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : problem!.text}</span>
         {!tooLong && problem!.refresh && <Button type="button" variant="text" data-testid="video-note-refresh" className={SMALL_BUTTON} onClick={onRefresh}>Refresh notes</Button>}
       </div>
-      : <p data-testid="video-note-stamp" className={cn(PHONE_LINE, "m-0 line-clamp-2 text-foreground-secondary")}>{hintText}</p>)}
+      // The clamp lives on an inner node: a grid item that clips (line-clamp) may shrink to nothing when the strip runs short, and the hint must render whole (#879 fix).
+      : <div className={PHONE_LINE}><p data-testid="video-note-stamp" className="m-0 line-clamp-2 text-foreground-secondary">{hintText}</p></div>)}
     {/* Phone: the + tray (Q1, C1), inline above the pill and inside the strip, so it is always above the keyboard. Mounted for the whole phone layout (the toolbar's portal target stays put); only it shrinks and scrolls when room runs out. */}
     {phone && <Collapsible open={trayOpen} className="col-span-2 row-start-2 min-h-0 overflow-y-auto">
-      <CollapsibleContent ref={trayRef} keepMounted id={trayId} role="region" aria-label="Note options" data-testid="video-note-tray" inert={!trayOpen} className="grid gap-[var(--space-3)] [&[hidden]]:hidden">
-        <div className="grid gap-[var(--space-1)]">
+      {/* Two rows at most, each one line that scrolls sideways rather than wraps, so the tray fits above the keyboard (#879 fix). The visibility's description is the hint line's job here. */}
+      <CollapsibleContent ref={trayRef} keepMounted id={trayId} role="region" aria-label="Note options" data-testid="video-note-tray" inert={!trayOpen} className="grid gap-[var(--space-2)] [&[hidden]]:hidden">
+        <div data-testid="video-note-tray-row" className="flex flex-nowrap items-center gap-[var(--space-2)] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0">
           <ToggleGroup
             variant="outline" size="sm" spacing={0} aria-label="Who can see this note"
             value={[visibility]} disabled={frozen}
@@ -214,15 +220,12 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
             <ToggleGroupItem value="internal" data-testid="video-note-visibility-internal">Internal</ToggleGroupItem>
             <ToggleGroupItem value="public" data-testid="video-note-visibility-public">Client-visible</ToggleGroupItem>
           </ToggleGroup>
-          <span data-testid="video-note-visibility-hint" className="text-foreground-secondary [font:var(--type-label)]">{HINT[visibility]}</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-[var(--space-2)]">
           <Button type="button" variant="secondary" data-testid="video-note-step-back" aria-label="Back one frame" className="min-h-11 min-w-11" disabled={stepDisabled} onClick={() => { frameStep(-1); }}><StepBack aria-hidden="true" /></Button>
           <Button type="button" variant="secondary" data-testid="video-note-step-forward" aria-label="Forward one frame" className="min-h-11 min-w-11" disabled={stepDisabled} onClick={() => { frameStep(1); }}><StepForward aria-hidden="true" /></Button>
           <Button type="button" variant="secondary" data-testid="video-note-set-in" className={SMALL_BUTTON} disabled={stepDisabled} onClick={() => { mark("in"); }}>Set in</Button>
           <Button type="button" variant="secondary" data-testid="video-note-set-out" className={SMALL_BUTTON} disabled={stepDisabled} onClick={() => { mark("out"); }}>Set out</Button>
           {pendingFrames && <Button type="button" variant="text" data-testid="video-note-clear-marks" className={SMALL_BUTTON} disabled={frozen || drawingNow} onClick={() => { store.clearMarks(assetId); }}>Clear marks</Button>}
-          {drawn && !merged && <span data-testid="video-note-drawing-chip" className={ANCHOR_CHIP}><span className="sr-only">Drawing on </span><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />{timecode(drawn.drawingFrame!)}</span>}
+          {drawn && !merged && <span data-testid="video-note-drawing-chip" className={PILL_CHIP}><span className="sr-only">Drawing on </span><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />{timecode(drawn.drawingFrame!)}</span>}
           {drawn && <Button type="button" variant="text" data-testid="video-note-remove-drawing" className={SMALL_BUTTON} disabled={frozen} onClick={() => { store.clearMarkup(assetId); }}>Remove drawing</Button>}
         </div>
         <div ref={setTrayToolbar} data-testid="video-note-tray-toolbar" className="min-w-0" />
@@ -266,7 +269,8 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
       {frozen ? <Spinner aria-hidden="true" /> : <SendHorizontal aria-hidden="true" />}
     </ReuiButton>}
     {phone && composing && <div className="col-span-2 row-start-4 flex justify-end">
-      <Button type="button" variant="text" data-testid="video-note-cancel" className={SMALL_BUTTON} disabled={frozen} onClick={cancel}>Cancel</Button>
+      {/* Cancel keeps the field's focus on press like Send: a blur first would drop the keyboard and move the strip under the finger, and the tap would miss (#879 fix). */}
+      <Button type="button" variant="text" data-testid="video-note-cancel" className={STRIP_TEXT_BUTTON} disabled={frozen} onPointerDown={keepFocus} onMouseDown={keepFocus} onClick={cancel}>Cancel</Button>
     </div>}
   </form>;
 }

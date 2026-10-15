@@ -77,6 +77,10 @@ describe("QuincyRichTextEditorBase", () => {
     expect(field.getAttribute("data-variant")).toBe("pill");
     expect(field.className).toContain("rounded-[var(--radius-pill)]");
     expect(field.className).toContain("flex-row items-center");
+    // In the pill the text takes whatever the addons leave (#879 fix): it flexes rather than claiming the full width.
+    const text = [...field.children].find((el) => el.querySelector('[contenteditable="true"]') !== null)!;
+    expect(text.className).toContain("flex-1");
+    expect(text.className).not.toContain("w-full");
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await act(async () => { editor.focus(); document.getSelection()!.selectAllChildren(editor.querySelector("p")!); document.dispatchEvent(new Event("selectionchange")); await Promise.resolve(); });
     await act(async () => { tray.querySelector<HTMLButtonElement>('[aria-label="Bold"]')!.click(); await Promise.resolve(); });

@@ -25,3 +25,16 @@ widget role).
 | Cancel | `VideoNoteComposer.tsx` (`video-note-cancel`) | `components/quincy/Button.tsx` `variant="text"` (existing). |
 | Compose-mode context and holds | `components/quincy/ReviewSheet.tsx` (`SheetModeContext`, `setHold`) | Quincy-owned; no UI. |
 | Transport hidden in compose | `components/quincy/VideoPlayer.tsx` (`transportHidden`) | The existing transport block, `hidden` (still mounted). |
+
+## Round 2 (after the iOS Simulator pass on 698c2d51)
+
+No new elements; existing ones restyled to the prototype (P6, kit.jsx `Composer`, quincy.css `.tc-chip` / `.ibtn.sm`).
+
+| Element | Where | Change |
+|---|---|---|
+| Timecode chip (in the pill) | `VideoNoteComposer.tsx` (`PILL_CHIP`) | Small mono, `--text-xs` (12px, the `.tc-chip` size and the smallest the design rules allow; no mono-small token exists). The desktop `ANCHOR_CHIP` is unchanged. The tray's drawing chip uses the same class. |
+| Pill text column | `QuincyRichTextEditorBase.tsx` | In `pill` only: the text box is `flex-1 min-w-0` and the inline addons take `--space-1` padding. Default layout unchanged. |
+| + and pen (in the pill) | `VideoNoteComposer.tsx`, `VideoMarkupOverlay.tsx` (`PILL_ICON` in `quincy/VideoPlayer.tsx`) | Same ghost icon `reui/button`, drawn at 32px (`.ibtn.sm`) with a transparent `after:` pseudo-element keeping the 44px hit area, in place of `COARSE`'s 44px box. The desktop pen keeps `COARSE`. |
+| + tray | `VideoNoteComposer.tsx` (`video-note-tray-row`) | Two rows: visibility, frame steps, Set in / out (and Clear marks, drawing chip, Remove drawing when present) on one `flex-nowrap overflow-x-auto` row; the toolbar (already a sideways scroller) on the second. The visibility description is dropped on the phone; the hint line names the visibility. |
+| Hint line | `VideoNoteComposer.tsx` | 12px per P6; the `line-clamp` moves to an inner `<p>` so the grid row cannot shrink it to nothing. |
+| Cancel | `VideoNoteComposer.tsx` | Same `quincy/Button` `variant="text"`, drawn 32px (`.ibtn.sm`) with a vertical `after:` hit area; keeps the field's focus on press, like Send. |

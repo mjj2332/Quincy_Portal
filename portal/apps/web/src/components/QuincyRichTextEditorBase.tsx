@@ -646,12 +646,12 @@ export function QuincyRichTextEditorBase({
       {toolbarContainer === undefined ? <InputGroupAddon ref={addonRef} align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
         {toolbar}
       </InputGroupAddon> : null}
-      {inlineStart !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-start" className="cursor-default">{inlineStart}</InputGroupAddon> : null}
-      <div ref={pageRef} className={cn("relative w-full min-w-0", contentClassName)}>
+      {inlineStart !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-start" className={cn("cursor-default", pill && "gap-[var(--space-1)] pl-[var(--space-1)]")}>{inlineStart}</InputGroupAddon> : null}
+      <div ref={pageRef} className={cn("relative min-w-0", pill ? "flex-1" : "w-full", contentClassName)}>
         <EditorContent editor={editor} className="w-full min-w-0" />
         {isDocument && outline.length >= 2 && <RichTextOutlineRail outline={outline} activeIndex={activeHeading} onSelect={(index) => scrollToRichTextHeading(editor, index)} className="absolute end-1 top-2 z-[1] max-[721px]:hidden" />}
       </div>
-      {inlineEnd !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-end" className="cursor-default">{inlineEnd}</InputGroupAddon> : null}
+      {inlineEnd !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-end" className={cn("cursor-default", pill && "pr-[var(--space-1)]")}>{inlineEnd}</InputGroupAddon> : null}
     </InputGroup>
     {toolbarContainer ? createPortal(toolbar, toolbarContainer) : null}
     {isDocument && <>
