@@ -214,6 +214,22 @@ describe("Video Trash dialog (#776 E)", () => {
     expect(getToasts().filter((candidate) => /Restored/.test(candidate.message))).toEqual([]);
   });
 
+  it("returns focus to the icon button after Escape, even when the click never focused it (Safari) and the dialog is the one thing open (R7.2)", async () => {
+    await mount();
+    expect(opener()!.getAttribute("aria-label")).toBe("Trash");
+    expect(document.activeElement).not.toBe(opener());
+    await act(async () => { opener()!.click(); });
+    const deadline = Date.now() + 10_000;
+    while (!trashDialog()) { if (Date.now() > deadline) throw new Error("the Trash dialog never mounted"); await flush(1); }
+    await flush(6);
+    await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    const sheet = document.body.appendChild(document.createElement("div")); sheet.tabIndex = -1; sheet.setAttribute("data-testid", "project-sheet");
+    sheet.focus(); // what the browser did: focus settled on the surrounding sheet
+    await new Promise((resolve) => setTimeout(resolve, 100)); await flush(4);
+    expect(trashDialog()).toBeNull();
+    expect(document.activeElement).toBe(opener());
+  });
+
   it("reads the list afresh on every opening, and Escape closes it with focus back on the Trash button", async () => {
     await mount();
     await openTrash();
