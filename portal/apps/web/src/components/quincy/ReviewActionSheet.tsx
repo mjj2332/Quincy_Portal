@@ -20,10 +20,12 @@ export function ReviewActionSheet({ container, triggerTestId = "video-header-men
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const handOff = useRef(false);
-  const close = (hand = false) => { handOff.current = hand; setOpen(false); };
+  // The viewer Dialog's `restoreFocus: "popup"` reclaims homeless focus a frame after a nested sheet closes, ahead of the sheet's own return (lessons, P3 / #669): so the trigger takes focus synchronously, before the close.
+  const close = (hand = false) => { handOff.current = hand; if (!hand) triggerRef.current?.focus({ preventScroll: true }); setOpen(false); };
+  const changeOpen = (next: boolean) => { if (!next && !handOff.current) triggerRef.current?.focus({ preventScroll: true }); setOpen(next); };
   return <>
     <IconButton ref={triggerRef} type="button" aria-label={triggerLabel} aria-haspopup="dialog" data-testid={triggerTestId} className="rounded-lg border border-solid border-border bg-background text-foreground" onClick={() => { handOff.current = false; setOpen(true); }}><span aria-hidden="true">⋯</span></IconButton>
-    <Sheet open={open} onOpenChange={setOpen}>
+    <Sheet open={open} onOpenChange={changeOpen}>
       <SheetContent side="bottom" container={container} showCloseButton={false} overlayProps={{ className: SHEET_SCRIM, forceRender: true, "data-testid": "review-sheet-overlay" }} finalFocus={() => (handOff.current ? false : triggerRef.current)} data-testid="review-action-sheet" className="max-h-[80dvh] p-[var(--space-4)]">
         <SheetHeader className={`p-0 ${SHEET_CLOSE_CLEARANCE}`}><SheetTitle className="m-0 text-foreground [font:var(--type-h3)]">{title}</SheetTitle></SheetHeader>
         <ItemGroup role="group" aria-label={title} className="min-h-0 gap-0 overflow-y-auto">{children(close)}</ItemGroup>

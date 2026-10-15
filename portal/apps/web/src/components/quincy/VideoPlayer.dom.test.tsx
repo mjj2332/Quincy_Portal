@@ -610,6 +610,9 @@ describe("the phone control bar (#879)", () => {
       expect(byTestId("video-range-button")).toBeNull();
       expect(byTestId("video-scrubber")!.parentElement!.className).toContain("max-[721px]:px-[var(--space-3)]");
       expect(byTestId("video-marker-lane")).toBeNull();
+      const row = byTestId("video-controls-row")!;
+      expect(row.className).toContain("max-[721px]:flex-nowrap");
+      expect([...row.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual(["Play", "Mute"]);
     } finally { viewport.restore(); }
   });
   it("a wide window keeps the desktop two-row transport", async () => {

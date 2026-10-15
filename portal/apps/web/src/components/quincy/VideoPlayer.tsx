@@ -199,7 +199,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
       {markers !== undefined && (!phone || markers.length > 0) && <VideoTimelineMarkers markers={markers} frameCount={version.frameCount} {...(onMarkerSelect ? { onSelect: onMarkerSelect } : {})} />}
     </div>
 
-    <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+    <div data-testid="video-controls-row" className="flex flex-wrap items-center gap-[var(--space-2)] max-[721px]:flex-nowrap">
       {!phone && <IconTip label="Previous frame" keys="←">
         <Button type="button" variant="outline" size="icon" aria-label="Previous frame" className={COARSE} disabled={transportLocked} onClick={() => { clock.step(-1); }}><StepBack aria-hidden="true" /></Button>
       </IconTip>}
@@ -209,7 +209,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
       {!phone && <IconTip label="Next frame" keys="→">
         <Button type="button" variant="outline" size="icon" aria-label="Next frame" className={COARSE} disabled={transportLocked} onClick={() => { clock.step(1); }}><StepForward aria-hidden="true" /></Button>
       </IconTip>}
-      <output data-testid="video-readout" aria-live={clock.playing || !clock.confirmed ? "off" : "polite"} className={cn("px-[var(--space-2)] max-[721px]:px-0", MONO)}>
+      <output data-testid="video-readout" aria-live={clock.playing || !clock.confirmed ? "off" : "polite"} className={cn("px-[var(--space-2)] max-[721px]:min-w-0 max-[721px]:px-0 max-[721px]:text-xs max-[721px]:whitespace-nowrap", MONO)}>
         <span>{timecode(clock.frame)}</span><span className="text-foreground-secondary">{` / ${timecode(version.frameCount)}`}</span>
       </output>
       {!phone && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><TimeFormatMenu /></OverlayContainerContext.Provider>}

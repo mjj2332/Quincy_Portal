@@ -32,7 +32,7 @@ let root: Root | null = null; let host: HTMLElement;
 async function flush(times = 6) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
 const tid = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const onCreate = vi.fn();
-async function mount(props: { shown?: (v: number) => void; deepLink?: boolean; download?: boolean; reviewLinks?: boolean; trash?: boolean; social?: boolean; status?: boolean; notes?: boolean; exportOff?: boolean; onClose?: () => void } = {}) {
+async function mount(props: { shown?: (v: number) => void; deepLink?: boolean; download?: boolean; reviewLinks?: boolean; trash?: boolean; social?: boolean; status?: boolean; delivery?: boolean; notes?: boolean; exportOff?: boolean; onClose?: () => void } = {}) {
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   await act(async () => {
     root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><VideoReviewViewer
@@ -45,6 +45,7 @@ async function mount(props: { shown?: (v: number) => void; deepLink?: boolean; d
       {...(props.trash ? { trash: { projectId: PROJECT, archived: false } } : {})}
       {...(props.social ? { social: { projectId: PROJECT, role: "editor" as const } } : {})}
       {...(props.notes ? { notes: { projectId: PROJECT, role: "editor" as const, userId: auth.userId, archived: false, forms: createNoteFormStore("phone-test"), exportEnabled: props.exportOff !== true } } : {})}
+      {...(props.delivery ? { delivery: { projectId: PROJECT, role: "editor" as const, archived: false, store: {} as never } } : {})}
       {...(props.status ? { reviewStatus: { projectId: PROJECT, role: "editor" as const, archived: false } } : {})}
     /></QuincyQueryProvider>);
   });
@@ -153,7 +154,9 @@ describe("D4 and focus", () => {
     expect(document.querySelector("video")).toBe(film);
   });
 
-  const esc = async () => { await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); }); await flush(6); };
+  const esc = async () => { await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); }); await flush(6); await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); }); };
+
+  const escNow = async () => { await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); }); };
 
   it("Escape with the ⋯ action sheet open closes only the sheet, and the focus goes back to the ⋯", async () => {
     const onClose = vi.fn();
@@ -206,5 +209,13 @@ describe("D4 and focus", () => {
     const deadline = Date.now() + 5000; while (!tid("video-details-button") && Date.now() < deadline) await flush(1);
     expect(tid("video-notes-list")!.contains(tid("video-details-button"))).toBe(true);
     expect(tid("video-notes-counts")!.className).not.toContain("sr-only");
+  });
+
+  it("with Delivery, the phone tab row is 44px and the underline sits on its bottom edge", async () => {
+    await mount({ delivery: true });
+    const main = tid("video-pane-tab-main")!;
+    expect(main.closest("[role=tablist]")!.className).toContain("max-[721px]:!h-11");
+    expect(main.className).toContain("max-[721px]:after:!bottom-0");
+    expect(tid("video-pane-tab-delivery")!.className).toContain("max-[721px]:after:!bottom-0");
   });
 });

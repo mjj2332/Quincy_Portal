@@ -474,9 +474,9 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     const sidePane = tabbed
       ? <Tabs value={sideTab} onValueChange={(next) => { setSideTab(next === "delivery" ? "delivery" : "main"); }} className="min-h-0 flex-1 gap-0">
         <div data-sheet-part="head" className="flex shrink-0 items-center border-l border-b border-border bg-card pe-[var(--space-2)] max-[721px]:border-l-0">
-          <TabsList variant="line" className="min-w-0 flex-1 rounded-none bg-card px-[var(--space-3)] max-[721px]:h-11">
-            <TabsTrigger value="main" data-testid="video-pane-tab-main" className="max-[721px]:min-h-11" onClick={openSheet}>{notesLabel}{phone && slots?.openCount != null && <span className="ms-[var(--space-1)] text-foreground-secondary tabular-nums">{slots.openCount}</span>}</TabsTrigger>
-            <TabsTrigger value="delivery" data-testid="video-pane-tab-delivery" className="max-[721px]:min-h-11" onClick={openSheet}>Delivery</TabsTrigger>
+          <TabsList variant="line" className="min-w-0 flex-1 rounded-none bg-card px-[var(--space-3)] max-[721px]:!h-11 max-[721px]:!p-0">
+            <TabsTrigger value="main" data-testid="video-pane-tab-main" className="max-[721px]:!h-11 max-[721px]:after:!bottom-0" onClick={openSheet}>{notesLabel}{phone && slots?.openCount != null && <span className="ms-[var(--space-1)] text-foreground-secondary tabular-nums">{slots.openCount}</span>}</TabsTrigger>
+            <TabsTrigger value="delivery" data-testid="video-pane-tab-delivery" className="max-[721px]:!h-11 max-[721px]:after:!bottom-0" onClick={openSheet}>Delivery</TabsTrigger>
           </TabsList>
           {!phone && paneControls.hideButton}
         </div>

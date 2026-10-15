@@ -365,6 +365,9 @@ describe("the video screen", () => {
     expect(byId("guest-notes-heading")!.getAttribute("role")).toBe("tab");
     expect(byId("guest-notes-heading")!.closest("[role=tablist]")).not.toBeNull();
     expect(host.querySelectorAll("[role=tab]")).toHaveLength(1);
+    // The list's own height utility out-ranks a plain one, so the phone height is forced; the underline sits on the list's bottom edge.
+    expect(byId("guest-notes-heading")!.closest("[role=tablist]")!.className).toContain("max-[721px]:!h-11");
+    expect(byId("guest-notes-heading")!.className).toContain("max-[721px]:after:!bottom-0");
     expect(document.body.textContent).toContain("Trim the opening");
     expect(byId("guest-notes-heading")!.textContent).toBe("Notes 1");
   });
