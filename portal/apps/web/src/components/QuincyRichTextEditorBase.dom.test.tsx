@@ -150,6 +150,10 @@ describe("QuincyRichTextEditorBase", () => {
       expect(box.className).toContain("group-data-[wrapped=true]/input-group:basis-full");
       expect(field.className).toContain("data-[wrapped=true]:flex-wrap");
       expect(field.querySelector('[data-align="inline-end"]')!.className).toContain("group-data-[wrapped=true]/input-group:ms-auto");
+      // One row under the text (#879 fix r10): base-nova's inline-start addon is itself `order-first`, which tied with the text box and kept + and the chip on a row above it.
+      const start = field.querySelector<HTMLElement>('[data-align="inline-start"]')!;
+      expect(start.className).toContain("order-first");
+      expect(start.className).toContain("group-data-[wrapped=true]/input-group:order-none");
     });
 
     it("wrapped, one line at full width stays wrapped while it is wider than the inline row would give it (no flip-flop), and unwraps once it fits", async () => {

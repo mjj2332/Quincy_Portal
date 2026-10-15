@@ -119,6 +119,7 @@ const PILL_GROUP =
   "data-[wrapped=true]:flex-wrap";
 /** The pill's text box (#879 fix r9): the field's block padding sits on this box and the scroll is the inner node, so scrolled text clips inside the
  * padding rather than at the hairline. The host's clamp (max height, overflow) goes on the box; it reaches the scroller as `[&>*]:overflow-*`. */
+// Wrapped, the text box is `order-first`; the inline-start addon is `order-first` too (base-nova's addon), and a tie keeps DOM order, so the addon drops to `order-none` (#879 fix r10).
 const PILL_TEXT = "flex flex-1 flex-col py-[var(--space-2)] group-data-[wrapped=true]/input-group:order-first group-data-[wrapped=true]/input-group:basis-full";
 const PILL_SCROLLER = "min-h-0 w-full min-w-0 flex-1";
 
@@ -685,7 +686,7 @@ export function QuincyRichTextEditorBase({
       {toolbarContainer === undefined ? <InputGroupAddon ref={addonRef} align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
         {toolbar}
       </InputGroupAddon> : null}
-      {inlineStart !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-start" className={cn("cursor-default", pill && "gap-[var(--space-1)] pb-[calc(var(--space-1)*1.5)] pl-[var(--space-1)]")}>{inlineStart}</InputGroupAddon> : null}
+      {inlineStart !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-start" className={cn("cursor-default", pill && "gap-[var(--space-1)] pb-[calc(var(--space-1)*1.5)] pl-[var(--space-1)] group-data-[wrapped=true]/input-group:order-none")}>{inlineStart}</InputGroupAddon> : null}
       <div ref={pageRef} {...contentAttributes} className={cn("relative min-w-0", pill ? PILL_TEXT : "w-full", contentClassName)}>
         <EditorContent editor={editor} className={pill ? PILL_SCROLLER : "w-full min-w-0"} />
         {isDocument && outline.length >= 2 && <RichTextOutlineRail outline={outline} activeIndex={activeHeading} onSelect={(index) => scrollToRichTextHeading(editor, index)} className="absolute end-1 top-2 z-[1] max-[721px]:hidden" />}
