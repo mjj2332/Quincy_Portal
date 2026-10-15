@@ -14,13 +14,14 @@ describe("review sheet geometry (#879)", () => {
     // film area = 390/(16/9) + 90 = 309.1 -> 309; the sheet is what is left
     expect(s.half).toBe(700 - 309);
     expect(s.collapsed).toBe(127);
-    expect(s.full).toBe(700 - (PICTURE_MIN + 12 + 90));
+    // The phone player has no gap between the picture and the transport (#879 PR 3a), so the floor is the picture and the transport alone.
+    expect(s.full).toBe(700 - (PICTURE_MIN + 90));
   });
 
   it("the full stop leaves the picture at least PICTURE_MIN above the measured transport", () => {
     const s = sheetStops({ ...base, available: 844 - 77, transport: 100 });
-    expect(844 - 77 - s.full).toBe(PICTURE_MIN + 12 + 100);
-    expect(844 - 77 - s.full - 12 - 100).toBeGreaterThanOrEqual(110);
+    expect(844 - 77 - s.full).toBe(PICTURE_MIN + 100);
+    expect(844 - 77 - s.full - 100).toBeGreaterThanOrEqual(110);
   });
 
   it("caps the landscape film area at 65% of the space", () => {

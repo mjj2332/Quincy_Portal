@@ -652,8 +652,75 @@ describe("the phone control bar's frame step and Social row (#879 review)", () =
     } finally { viewport.restore(); }
   });
 
-  it("without frame steps on a phone the readout keeps its total", async () => {
+  it("on a phone the readout is the current time only, with or without frame steps (#879 PR 3a, P1's ControlBar)", async () => {
     const viewport = mockViewport({ width: 375 });
-    try { await mount(); await load(); expect(byTestId("video-readout-total")).not.toBeNull(); } finally { viewport.restore(); }
+    try { await mount(); await load(); expect(byTestId("video-readout")).not.toBeNull(); expect(byTestId("video-readout-total")).toBeNull(); } finally { viewport.restore(); }
+  });
+});
+
+describe("the phone transport band (#879 PR 3a, P1 ControlBar: scrubber band, 44px row, plain icons)", () => {
+  const sliderControl = () => host.querySelector<HTMLElement>('[data-slot="slider"] > div')!;
+  it("on a phone: no gaps, a --space-6 scrubber band with the marker lane inside it, a 44px row of plain 32px icons with 44px hit areas, a --space-1 bottom", async () => {
+    const viewport = mockViewport({ width: 390 });
+    try {
+      await mount(versionOf(), { markers: [{ id: "m1", startFrame: 10, endFrame: null, tone: "public", selected: false }] as never });
+      await load();
+      const section = byTestId("video-player")!;
+      expect(section.className).toContain("max-[721px]:gap-0");
+      const transport = byTestId("video-scrubber")!.parentElement!;
+      expect(transport.className).toContain("max-[721px]:gap-0");
+      expect(transport.className).toContain("max-[721px]:pb-[var(--space-1)]");
+      const scrubber = byTestId("video-scrubber")!;
+      expect(scrubber.className).toContain("h-[var(--space-6)]");
+      expect(scrubber.className).toContain("relative");
+      expect(host.querySelector('[data-slot="slider"]')!.getAttribute("data-size")).toBe("band");
+      expect(sliderControl().className).toContain("h-[var(--space-6)]");
+      expect(sliderControl().className).not.toContain("min-h-11");
+      // The touch band reaches 44px on a pseudo-element painted under the track and thumb.
+      expect(sliderControl().className).toContain("before:-inset-y-1.5");
+      const lane = byTestId("video-marker-lane")!;
+      expect(scrubber.contains(lane)).toBe(true);
+      expect(lane.className).toContain("absolute");
+      expect(lane.className).toContain("top-0");
+      const row = byTestId("video-controls-row")!;
+      expect(row.className).toContain("max-[721px]:h-11");
+      for (const name of ["Play", "Mute"]) {
+        const control = host.querySelector<HTMLElement>(`[aria-label="${name}"]`)!;
+        expect(control.className, name).toContain("size-8");
+        expect(control.className, name).toContain("after:-inset-1.5");
+        expect(control.className, name).not.toContain("min-h-11");
+      }
+      // Play is plain (ghost), not the cream primary fill.
+      expect(button("Play")!.className).not.toContain("bg-primary");
+      expect(button("Play")!.className).toContain("hover:bg-muted");
+    } finally { viewport.restore(); }
+  });
+
+  it("frame steps on a phone (no composer) are plain 32px icons too", async () => {
+    const viewport = mockViewport({ width: 390 });
+    try {
+      await mount(versionOf(), { phoneFrameStep: true });
+      await load();
+      for (const name of ["Previous frame", "Next frame"]) {
+        const control = host.querySelector<HTMLElement>(`[aria-label="${name}"]`)!;
+        expect(control.className, name).toContain("size-8");
+        expect(control.className, name).toContain("hover:bg-muted");
+        expect(control.className, name).not.toContain("border-border");
+      }
+    } finally { viewport.restore(); }
+  });
+
+  it("a wide window keeps the desktop transport: the default slider, the cream Play, the total in the readout", async () => {
+    const viewport = mockViewport({ width: 1280 });
+    try {
+      await mount(versionOf(), { markers: [{ id: "m1", startFrame: 10, endFrame: null, tone: "public", selected: false }] as never });
+      await load();
+      expect(host.querySelector('[data-slot="slider"]')!.getAttribute("data-size")).toBe("default");
+      expect(sliderControl().className).not.toContain("before:-inset-y-1.5");
+      expect(byTestId("video-scrubber")!.className).not.toContain("h-[var(--space-6)]");
+      expect(byTestId("video-marker-lane")!.className).not.toContain("absolute");
+      expect(button("Play")!.className).toContain("bg-primary");
+      expect(byTestId("video-readout-total")).not.toBeNull();
+    } finally { viewport.restore(); }
   });
 });

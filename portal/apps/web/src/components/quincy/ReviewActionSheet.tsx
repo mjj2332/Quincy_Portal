@@ -1,5 +1,6 @@
 import { useRef, useState, type ReactNode } from "react";
-import { IconButton } from "./icon-button";
+import { Ellipsis } from "lucide-react";
+import { Button } from "../reui/button";
 import { Item, ItemContent, ItemGroup, ItemMedia, ItemSeparator, ItemTitle } from "../reui/item";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../reui/sheet";
 import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "./SheetCloseButton";
@@ -8,6 +9,7 @@ import { cn } from "@/lib/utils";
 /**
  * The phone ⋯ (#879, D5, P9/P10): a bottom action sheet, not a menu. The rows are `reui/item`s; the sheet portals into the viewer's slot so it sits inside the dark scope and the
  * viewer's focus trap. `children` gets `close`, so a row that hands focus on (Create Review link, a Remove confirmation) can close the sheet first.
+ * The trigger is P1's plain `ibtn` (#879 PR 3a): a ghost `reui/button` with lucide's Ellipsis, 44px, no border.
  */
 export function ReviewActionSheet({ container, triggerTestId = "video-header-menu", triggerLabel = "Video actions", title = "Video actions", children }: {
   container: HTMLElement | null;
@@ -24,7 +26,7 @@ export function ReviewActionSheet({ container, triggerTestId = "video-header-men
   const close = (hand = false) => { handOff.current = hand; if (!hand) triggerRef.current?.focus({ preventScroll: true }); setOpen(false); };
   const changeOpen = (next: boolean) => { if (!next && !handOff.current) triggerRef.current?.focus({ preventScroll: true }); setOpen(next); };
   return <>
-    <IconButton ref={triggerRef} type="button" aria-label={triggerLabel} aria-haspopup="dialog" data-testid={triggerTestId} className="rounded-lg border border-solid border-border bg-background text-foreground" onClick={() => { handOff.current = false; setOpen(true); }}><span aria-hidden="true">⋯</span></IconButton>
+    <Button ref={triggerRef} type="button" variant="ghost" size="icon" aria-label={triggerLabel} aria-haspopup="dialog" data-testid={triggerTestId} className="min-h-11 min-w-11 flex-none text-foreground" onClick={() => { handOff.current = false; setOpen(true); }}><Ellipsis aria-hidden="true" className="size-5" /></Button>
     <Sheet open={open} onOpenChange={changeOpen}>
       <SheetContent side="bottom" container={container} showCloseButton={false} overlayProps={{ className: SHEET_SCRIM, forceRender: true, "data-testid": "review-sheet-overlay" }} finalFocus={() => (handOff.current ? false : triggerRef.current)} data-testid="review-action-sheet" className="max-h-[80dvh] p-[var(--space-4)]">
         <SheetHeader className={`p-0 ${SHEET_CLOSE_CLEARANCE}`}><SheetTitle className="m-0 text-foreground [font:var(--type-h3)]">{title}</SheetTitle></SheetHeader>

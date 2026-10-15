@@ -170,6 +170,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const stepLabel = step === "in" ? "Set in point" : step === "out" ? "Set out point" : "Clear in and out";
 
   // A phone gets the single-row control bar (#879, the prototype's ControlBar): scrubber, play, timecode, mute, full screen. Frame step and in / out live in the composer there.
+  // #879 PR 3a: the bar is P1's 78pt band: the scrubber band, a 44px row of plain (ghost) 32px icons with 44px hit areas (`PILL_ICON`), the current time only.
   const phone = useMediaQuery(PHONE_QUERY);
   const toggleMuted = (next: boolean) => { setMutedState(next); clock.setMuted(next); onMutedChange?.(next); };
   const playLabel = clock.playing ? "Pause" : "Play";
@@ -180,23 +181,25 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     data-testid="video-player"
     tabIndex={-1}
     onKeyDown={keyboard === "self" ? (event) => { handleKeyDown(event); } : undefined}
-    className={cn("@container flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", className)}
+    className={cn("@container flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] max-[721px]:gap-0 focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", className)}
   >
     <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} {...(social ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})} />
 
     {/* The replacement sits ABOVE the transport, which stays mounted and hidden under it (#879 PR 2): unmounted, the slider came back as a new node, measured its thumb inside whatever
         box hid it next (a phone's Done lands in compose mode, where the transport is hidden) and drew no thumb until the frame moved. */}
     {transportReplacement != null && <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div>}
-    <div ref={transportRef} hidden={transportHidden || transportReplacement != null} className="flex flex-col gap-[var(--space-3)] max-[721px]:px-[var(--space-3)] [&[hidden]]:hidden">
-    {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}
-    <div data-testid="video-scrubber">
+    <div ref={transportRef} hidden={transportHidden || transportReplacement != null} className="flex flex-col gap-[var(--space-3)] max-[721px]:gap-0 max-[721px]:px-[var(--space-3)] max-[721px]:pb-[var(--space-1)] [&[hidden]]:hidden">
+    {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track.
+        A phone draws it as P1's `.scrub` band (#879 PR 3a): `--space-6` tall, the marker lane laid inside it along the top, the track through its middle, a 44px touch band from the slider's `band` size. */}
+    <div data-testid="video-scrubber" className={phone ? "relative h-[var(--space-6)]" : undefined}>
       {/* The band is placed against the slider alone: inside the same box as the marker lane it would sit centred on the whole scrubber, 6px below the track. */}
-      <div className="relative">
+      <div className={phone ? "relative h-full" : "relative"}>
         {pendingRange !== undefined && <VideoPendingRangeBand range={pendingRange} frameCount={version.frameCount} />}
         <Slider
           value={[Math.min(shownFrame, Math.max(1, lastFrame))]}
           min={0}
           max={Math.max(1, lastFrame)}
+          size={phone ? "band" : "default"}
           step={1}
           disabled={transportLocked}
           largeStep={Math.max(1, Math.round(rationalToNumber(version.fps)))}
@@ -205,21 +208,21 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         />
         {range !== undefined && <VideoRangeHandles marks={range.marks} frameCount={version.frameCount} label={timecode} largeStep={Math.max(1, Math.round(rationalToNumber(version.fps)))} interactive={marksTaken} onMove={moveHandle} onGrab={clock.pause} />}
       </div>
-      {markers !== undefined && (!phone || markers.length > 0) && <VideoTimelineMarkers markers={markers} frameCount={version.frameCount} {...(onMarkerSelect ? { onSelect: onMarkerSelect } : {})} />}
+      {markers !== undefined && (!phone || markers.length > 0) && <VideoTimelineMarkers markers={markers} frameCount={version.frameCount} {...(onMarkerSelect ? { onSelect: onMarkerSelect } : {})} {...(phone ? { className: "absolute inset-x-0 top-0" } : {})} />}
     </div>
 
-    <div data-testid="video-controls-row" className="flex flex-wrap items-center gap-[var(--space-2)] max-[721px]:flex-nowrap">
+    <div data-testid="video-controls-row" className="flex flex-wrap items-center gap-[var(--space-2)] max-[721px]:h-11 max-[721px]:flex-nowrap max-[721px]:gap-[var(--space-1)]">
       {(!phone || phoneFrameStep) && <IconTip label="Previous frame" keys="←">
-        <Button type="button" variant="outline" size="icon" aria-label="Previous frame" className={COARSE} disabled={transportLocked} onClick={() => { clock.step(-1); }}><StepBack aria-hidden="true" /></Button>
+        <Button type="button" variant={phone ? "ghost" : "outline"} size="icon" aria-label="Previous frame" className={phone ? PILL_ICON : COARSE} disabled={transportLocked} onClick={() => { clock.step(-1); }}><StepBack aria-hidden="true" /></Button>
       </IconTip>}
       <IconTip label={playLabel} keys="Space">
-        <Button type="button" variant="default" size="icon" aria-label={playLabel} className={cn("w-[var(--space-7)]", COARSE)} disabled={transportLocked} onClick={() => { if (clock.playing) clock.pause(); else clock.play(); }}>{clock.playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}</Button>
+        <Button type="button" variant={phone ? "ghost" : "default"} size="icon" aria-label={playLabel} className={phone ? PILL_ICON : cn("w-[var(--space-7)]", COARSE)} disabled={transportLocked} onClick={() => { if (clock.playing) clock.pause(); else clock.play(); }}>{clock.playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}</Button>
       </IconTip>
       {(!phone || phoneFrameStep) && <IconTip label="Next frame" keys="→">
-        <Button type="button" variant="outline" size="icon" aria-label="Next frame" className={COARSE} disabled={transportLocked} onClick={() => { clock.step(1); }}><StepForward aria-hidden="true" /></Button>
+        <Button type="button" variant={phone ? "ghost" : "outline"} size="icon" aria-label="Next frame" className={phone ? PILL_ICON : COARSE} disabled={transportLocked} onClick={() => { clock.step(1); }}><StepForward aria-hidden="true" /></Button>
       </IconTip>}
       <output data-testid="video-readout" aria-live={clock.playing || !clock.confirmed ? "off" : "polite"} className={cn("px-[var(--space-2)] max-[721px]:min-w-0 max-[721px]:px-0 max-[721px]:text-xs max-[721px]:whitespace-nowrap", MONO)}>
-        <span>{timecode(clock.frame)}</span>{!(phone && phoneFrameStep) && <span data-testid="video-readout-total" className="text-foreground-secondary">{` / ${timecode(version.frameCount)}`}</span>}
+        <span>{timecode(clock.frame)}</span>{!phone && <span data-testid="video-readout-total" className="text-foreground-secondary">{` / ${timecode(version.frameCount)}`}</span>}
       </output>
       {!phone && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><TimeFormatMenu /></OverlayContainerContext.Provider>}
       {social && !phone && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><SocialPreviewControls social={social} imageFailed={socialImage.failed} /></OverlayContainerContext.Provider>}
@@ -237,13 +240,14 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         <span className="inline-flex items-center gap-[var(--space-1)]"><Kbd className={LEGEND_KBD}>Space</Kbd>play</span>
         {onMark && <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>I</Kbd><Kbd className={LEGEND_KBD}>O</Kbd></KbdGroup>in/out</span>}
       </div>}
-      <div className="ml-auto flex items-center gap-[var(--space-1)]">
+      {/* On a phone the 32px icons sit --space-3 apart, so their 44px hit areas meet without overlapping. */}
+      <div className="ml-auto flex items-center gap-[var(--space-1)] max-[721px]:gap-[var(--space-3)]">
         {transportActions}
         <IconTip label={muted ? "Unmute" : "Mute"}>
-          <Toggle variant="default" size="default" pressed={muted} onPressedChange={toggleMuted} aria-label="Mute" className={cn("size-8", COARSE)}>{muted ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}</Toggle>
+          <Toggle variant="default" size="default" pressed={muted} onPressedChange={toggleMuted} aria-label="Mute" className={phone ? PILL_ICON : cn("size-8", COARSE)}>{muted ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}</Toggle>
         </IconTip>
         {fullscreenAvailable && <IconTip label="Full screen">
-          <Button type="button" variant="ghost" size="icon" aria-label="Full screen" className={cn("size-8", COARSE)} onClick={() => { void playerRef.current?.requestFullscreen?.(); }}><Maximize aria-hidden="true" /></Button>
+          <Button type="button" variant="ghost" size="icon" aria-label="Full screen" className={phone ? PILL_ICON : cn("size-8", COARSE)} onClick={() => { void playerRef.current?.requestFullscreen?.(); }}><Maximize aria-hidden="true" /></Button>
         </IconTip>}
       </div>
     </div>

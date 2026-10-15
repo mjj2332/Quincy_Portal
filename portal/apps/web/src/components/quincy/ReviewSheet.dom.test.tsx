@@ -75,6 +75,27 @@ describe("ReviewSheet (#879)", () => {
     expect(pane().getAttribute("data-stop")).toBe("half");
   });
 
+  it("the grabber is P1's 22px bar (--space-5 less the bold border), its touch band reaching only the transport's bottom gutter, and the collapsed stop counts its measured height (#879 PR 3a)", async () => {
+    const observed: Array<() => void> = [];
+    vi.stubGlobal("ResizeObserver", class { constructor(cb: () => void) { observed.push(cb); } observe() {} unobserve() {} disconnect() {} });
+    try {
+      await mount();
+      expect(grabber().className).toContain("h-[calc(var(--space-5)-var(--border-width-bold))]");
+      expect(grabber().className).not.toContain("h-6");
+      expect(grabber().className).toContain("before:-top-1");
+      const size = (el: HTMLElement, key: "clientHeight" | "clientWidth" | "offsetHeight", value: number) => { Object.defineProperty(el, key, { configurable: true, get: () => value }); };
+      size(q("video-review-split"), "clientHeight", 700);
+      size(q("video-review-split"), "clientWidth", 390);
+      size(q("head"), "offsetHeight", 45);
+      size(q("composer"), "offsetHeight", 100);
+      size(grabber(), "offsetHeight", 22);
+      await act(async () => { observed.forEach((cb) => { cb(); }); });
+      await key(grabber(), "Home");
+      // 22 + 45 + 100: the grabber as measured, not a fixed 24.
+      expect(pane().style.height).toBe("167px");
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("collapsed makes the body inert but keeps every node: the head and the composer stay reachable", async () => {
     await mount();
     const nodes = [q("film"), q("panel"), q("head"), q("body"), q("composer"), q("editor")];

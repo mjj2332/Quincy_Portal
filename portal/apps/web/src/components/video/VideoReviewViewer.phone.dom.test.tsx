@@ -102,9 +102,9 @@ describe("the phone header", () => {
   it("Approve (internal) shows at in_review for an Editor and is absent without a Review status", async () => {
     await mount({ status: true });
     const approve = tid("video-phone-approve")!;
-    expect(approve.textContent).toBe("Approve");
-    expect(approve.getAttribute("aria-label")).toBe("Approve (internal)");
-    expect(approve.getAttribute("title")).toBe("Approve (internal)");
+    // P1: the staff label is drawn in full (owner decision, PR 3a); its words are its name.
+    expect(approve.textContent).toBe("Approve (internal)");
+    expect(approve.getAttribute("aria-label")).toBeNull();
     const chip = tid("video-version-chip")!;
     expect(chip.className).toContain("flex-none");
     expect(chip.textContent).toContain("latest");
@@ -119,6 +119,91 @@ describe("the phone header", () => {
     await click(trigger()!);
     expect(tid("review-action-sheet")).not.toBeNull();
     for (const id of ["video-social-toggle", "video-download", "video-menu-copy-link", "video-create-review-link"]) expect(tid(id), id).not.toBeNull();
+  });
+});
+
+describe("the phone header's 56pt bar (#879 PR 3a, P1)", () => {
+  it("is --space-7 + --space-2 tall with no vertical padding and --space-1 gutters; the title truncates", async () => {
+    await mount({ status: true });
+    const bar = tid("review-phone-bar")!;
+    expect(bar.className).toContain("h-[calc(var(--space-7)+var(--space-2))]");
+    expect(bar.className).toContain("px-[var(--space-1)]");
+    expect(bar.className).toContain("gap-x-[var(--space-1)]");
+    expect(bar.className).not.toMatch(/(^|\s)py-/);
+    expect(bar.className).not.toContain("min-h-12");
+    expect(bar.querySelector("h2, [id]")!.className).toContain("truncate");
+  });
+
+  it("the Version chip is drawn 20px tall at 12px, with a 44px hit area reaching up over the title", async () => {
+    await mount({ status: true });
+    const chip = tid("video-version-chip")!;
+    expect(chip.className).toContain("h-5");
+    expect(chip.className).not.toContain("min-h-11");
+    expect(chip.className).toContain("text-xs");
+    expect(chip.className).not.toContain("--type-body-sm");
+    expect(chip.className).toContain("after:-top-[var(--space-5)]");
+    expect(chip.className).toContain("after:bottom-0");
+  });
+
+  it("Approve (internal) is drawn 32px with a 44px hit area (the strip's text-button pattern)", async () => {
+    await mount({ status: true });
+    const approve = tid("video-phone-approve")!;
+    expect(approve.className).toContain("min-h-8");
+    expect(approve.className).toContain("after:-inset-y-1.5");
+    expect(approve.className).not.toContain("min-h-11");
+  });
+
+  it("the ⋯ is a plain ghost icon button (lucide Ellipsis), 44px, with no border", async () => {
+    await mount({ status: true, download: true, shown: () => {} });
+    const more = trigger()!;
+    expect(more.getAttribute("data-slot")).toBe("button");
+    expect(more.className).toContain("min-h-11");
+    expect(more.className).toContain("min-w-11");
+    expect(more.className).not.toContain("border-border");
+    expect(more.querySelector("svg")?.getAttribute("class")).toContain("lucide-ellipsis");
+    expect(more.textContent).toBe("");
+  });
+});
+
+describe("the phone sheet head (#879 PR 3a, P1)", () => {
+  it("with Delivery the tabs sit left, each its own width, and the Notes count is a secondary Badge of the open notes (hidden tombstones left out)", async () => {
+    const T = "2026-10-10T00:00:00.000Z";
+    const base = { assetId: ids.asset2, parentId: null, author: { kind: "staff", person: mia }, authorRole: "editor", visibility: "internal", startFrame: 10, endFrame: null, drawingFrame: null, hasMarkup: false, body: "A note", deleted: false, resolved: null, revision: 1, createdAt: T, editedAt: null, copiedFrom: null, replies: [] };
+    const notes = [
+      { ...base, id: "00000000-0000-4000-8000-000000000001" },
+      { ...base, id: "00000000-0000-4000-8000-000000000002", startFrame: 20 },
+      { ...base, id: "00000000-0000-4000-8000-000000000003", startFrame: 30, resolved: { at: T, by: mia } },
+      // A deleted root nobody replied to: never listed or counted.
+      { ...base, id: "00000000-0000-4000-8000-000000000004", startFrame: 40, deleted: true, body: "" },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const body = /\/notes$/.test(String(input)) ? { notes } : {};
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    await mount({ delivery: true, notes: true });
+    const deadline = Date.now() + 5000; while (!tid("video-pane-tab-count") && Date.now() < deadline) await flush(1);
+    const main = tid("video-pane-tab-main")!;
+    expect(main.closest("[role=tablist]")!.className).toContain("max-[721px]:justify-start");
+    expect(main.className).toContain("max-[721px]:flex-none");
+    expect(tid("video-pane-tab-delivery")!.className).toContain("max-[721px]:flex-none");
+    const count = tid("video-pane-tab-count")!;
+    expect(main.contains(count)).toBe(true);
+    expect(count.getAttribute("data-slot")).toBe("badge");
+    expect(count.textContent).toBe("2");
+  });
+});
+
+describe("the phone composer band (#879 PR 3a, P1)", () => {
+  it("in browse mode the panel has no top or bottom padding and no gap, the composer owns one border and --space-2 around the pill, and the list keeps its rows clear on its own", async () => {
+    await mount({ notes: true });
+    const deadline = Date.now() + 5000; while (!tid("video-notes-panel") && Date.now() < deadline) await flush(1);
+    const panel = tid("video-notes-panel")!;
+    for (const name of ["in-data-[mode=browse]:py-0", "in-data-[mode=browse]:gap-0", "in-data-[mode=compose]:py-[var(--space-2)]"]) expect(panel.className, name).toContain(name);
+    const composer = panel.querySelector<HTMLElement>('[data-sheet-part="composer"]')!;
+    expect(composer.className).toContain("border-t");
+    expect(composer.className).toContain("in-data-[mode=browse]:py-[var(--space-2)]");
+    expect(composer.className).toContain("in-data-[mode=compose]:pt-0");
+    expect(tid("video-notes-list-body")!.className).toContain("in-data-[mode=browse]:py-[var(--space-3)]");
   });
 });
 
@@ -203,10 +288,10 @@ describe("D4 and focus", () => {
     expect(tid("video-marker-export-row")).toBeNull();
   });
 
-  it("the phone sheets dim the film with the stronger scrim, the Version chip is lowercase body-sm, and Approve is an outline button", async () => {
+  it("the phone sheets dim the film with the stronger scrim, the Version chip is lowercase, and Approve is an outline button", async () => {
     await mount({ shown: () => {}, status: true, download: true });
     expect(tid("video-version-chip")!.className).toContain("normal-case");
-    expect(tid("video-phone-approve")!.className).toContain("min-h-11");
+    expect(tid("video-phone-approve")!.className).toContain("border-border");
     await click(trigger()!);
     expect(tid("review-sheet-overlay")).not.toBeNull(); // Base UI leaves a nested dialog's backdrop out unless it is forced
   });
