@@ -105,4 +105,31 @@ describe("VideoTile", () => {
     expect(el.textContent).toContain("Premium");
     expect(el.textContent).toContain("On a Review link");
   });
+
+  it("paper tone (#882): a light tile with a hairline border, no inverse surface, and the poster stays black", async () => {
+    const el = await mount(<VideoTile {...base} tone="paper" />);
+    const tile = el.querySelector<HTMLElement>('[data-testid="video-tile"]')!;
+    expect(tile.dataset.tone).toBe("paper"); expect(tile.hasAttribute("data-surface")).toBe(false);
+    expect(tile.className).toContain("data-[tone=paper]:border-[var(--border-hairline)]");
+    expect(el.querySelector('[data-testid="video-tile-poster"]')!.className).toContain("bg-invert");
+  });
+
+  it("with no Version and no duration (a film with no review to open) draws neither chip and says neither", async () => {
+    const el = await mount(<VideoTile {...base} tone="paper" version={null} durationMs={null} openNotes={null} />);
+    expect(el.querySelector('[data-testid="video-tile-version"]')).toBeNull();
+    expect(el.textContent).not.toMatch(/\bv\d|\d:\d\d/);
+    const open = el.querySelector('[data-testid="video-tile-open"]')!;
+    expect(el.ownerDocument.getElementById(open.getAttribute("aria-describedby")!)!.textContent).toBe("");
+  });
+
+  it("locked (D37): a light box with a lock and 'Film · locked', no poster, Version, duration or count, and the menu slot for the Premium badge", async () => {
+    const el = await mount(<VideoTile {...base} tone="paper" locked version={null} durationMs={null} openNotes={null} menu={<span data-testid="badge">Premium</span>} />);
+    expect(el.querySelector('[data-testid="video-tile-locked"]')!.textContent).toBe("Film · locked");
+    expect(el.querySelector('[data-testid="video-tile-poster"]')!.className).toContain("bg-surface-sunken");
+    expect(el.querySelector("img")).toBeNull();
+    expect(el.querySelector('[data-testid="video-tile-version"]')).toBeNull(); expect(el.querySelector('[data-testid="video-tile-open-notes"]')).toBeNull();
+    expect(el.querySelector('[data-testid="badge"]')).not.toBeNull();
+    const open = el.querySelector('[data-testid="video-tile-open"]')!;
+    expect(el.ownerDocument.getElementById(open.getAttribute("aria-describedby")!)!.textContent).toBe("Film, locked: Premium");
+  });
 });

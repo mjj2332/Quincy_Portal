@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from "react";
-import { Link2, Upload } from "lucide-react";
+import { Link2, Lock, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LazyImage } from "../LazyImage";
 import { Badge } from "../reui/badge";
@@ -12,7 +12,8 @@ import type { StatusTone } from "./StatusPill";
 /**
  * The one poster-first Video tile (#884; prototype T1-T5, D20-D28), staff and guest. It takes plain values rather than a DTO, so the Delivery page (#882) can hand it a published Version.
  * Staff-only pieces arrive as props (`status`, `linked`, `select`, `menu`, `drop`, `footer`); a tile given none of them is the guest tile. It imports nothing staff-only
- * (`guest/guest-boundary.guard.test.ts`). `tone="paper"` is the #882 seam: only the ink look is built.
+ * (`guest/guest-boundary.guard.test.ts`). `tone="paper"` (#882, D30) is the light tile for the light Delivery page: a hairline border, the same black poster. `locked` (D37) is a Premium film the viewer has not unlocked:
+ * a light box with a lock and "Film · locked" and no Version, duration or count (`version` and `durationMs` are null there, and also on a film with no review to open, D36).
  *
  * The whole tile opens: the title is the one `<button>` and stretches over the tile (`after:inset-0`); the tick, the menu and the footer sit above it (`z-10`), so each is its own control.
  */
@@ -24,16 +25,19 @@ const CHIP = "border-transparent bg-[var(--scrim-badge)] text-invert-foreground"
 const TICK = "appearance-none relative rounded-[var(--radius-sm)] border-[length:var(--border-width-bold)] border-solid border-invert-foreground bg-[color-mix(in_srgb,var(--ink-900)_35%,transparent)] checked:bg-invert-foreground checked:before:absolute checked:before:left-[5px] checked:before:top-[1px] checked:before:h-[10px] checked:before:w-[5px] checked:before:rotate-45 checked:before:border-solid checked:before:border-b-2 checked:before:border-r-2 checked:before:border-invert checked:before:content-['']";
 const MONO = "[font-family:var(--font-mono)]";
 
-export function VideoTile({ title, posterUrl, version, durationMs, openNotes, onOpen, tone = "ink", status, linked, premium, select, menu, drop, footer, testId = "video-tile", openTestId = "video-tile-open", dataVideoId }: {
+export function VideoTile({ title, posterUrl, version, durationMs, openNotes, onOpen, tone = "ink", locked = false, status, linked, premium, select, menu, drop, footer, testId = "video-tile", openTestId = "video-tile-open", dataVideoId }: {
   title: string;
   posterUrl: string | null;
-  version: number;
-  durationMs: number;
+  /** Null where the page does not know or must not say (a locked film, or no review to open on the Delivery page): no chip, no words. */
+  version: number | null;
+  durationMs: number | null;
   /** Open root notes on `version`; null when unknown. Shown only above zero. */
   openNotes: number | null;
   /** `trigger` is the open control, where focus returns when the viewer closes. */
   onOpen: (trigger: HTMLElement) => void;
   tone?: "ink" | "paper";
+  /** A locked Premium film (D37): no poster, no facts; `premium` is implied and drawn in the menu's place unless a `menu` is given. */
+  locked?: boolean;
   status?: VideoTileStatus;
   /** On an active Review link (staff). */
   linked?: boolean;
@@ -50,9 +54,12 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, on
   dataVideoId?: string;
 }) {
   const summaryId = useId();
-  const noteWords = openNotes !== null && openNotes > 0 ? `${openNotes} open ${openNotes === 1 ? "note" : "notes"} on v${version}` : null;
-  const summary = [`v${version}`, formatDuration(durationMs), noteWords, status?.full].filter((part): part is string => part !== null && part !== undefined).join(", ");
-  const posterBody = <>
+  const noteWords = !locked && version !== null && openNotes !== null && openNotes > 0 ? `${openNotes} open ${openNotes === 1 ? "note" : "notes"} on v${version}` : null;
+  const summary = [locked ? "Film, locked: Premium" : null, !locked && version !== null ? `v${version}` : null, !locked && durationMs !== null ? formatDuration(durationMs) : null, noteWords, status?.full].filter((part): part is string => part !== null && part !== undefined).join(", ");
+  const lockedBody = <div data-testid={`${testId}-locked`} className="flex h-full w-full flex-col items-center justify-center gap-[var(--space-2)] bg-surface-sunken text-foreground-secondary">
+    <Lock aria-hidden="true" className="size-6" /><span className="[font:var(--type-label)]">Film · locked</span>
+  </div>;
+  const posterBody = locked ? lockedBody : <>
     {posterUrl
       ? <LazyImage src={posterUrl} alt={`Poster of ${title}`} className="h-full w-full object-contain !bg-invert !text-invert-foreground" />
       : <div data-testid={`${testId}-no-poster`} className="flex h-full w-full items-center justify-center [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] opacity-70">No poster</div>}
@@ -64,18 +71,18 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, on
       <div className="flex shrink-0 items-center gap-[var(--space-1)]">
         {premium && <Badge variant="invert" className={CHIP}>Premium</Badge>}
         {linked && <Badge variant="invert" data-testid={`${testId}-linked`} className={CHIP}><Link2 aria-hidden="true" /><span className="sr-only">On a Review link</span></Badge>}
-        <Badge variant="invert" data-testid={`${testId}-version`} className={cn(CHIP, MONO, "normal-case")}>{`v${version}`}</Badge>
+        {version !== null && <Badge variant="invert" data-testid={`${testId}-version`} className={cn(CHIP, MONO, "normal-case")}>{`v${version}`}</Badge>}
       </div>
     </div>
     <div className="pointer-events-none absolute inset-x-[var(--space-2)] bottom-[var(--space-2)] flex items-end justify-between gap-[var(--space-2)]">
       {openNotes !== null && openNotes > 0 ? <Badge variant="invert" data-testid={`${testId}-open-notes`} className={cn(CHIP, "tabular-nums")}>{openNotes}</Badge> : <span />}
-      <Badge variant="invert" className={cn(CHIP, MONO)}>{formatDuration(durationMs)}</Badge>
+      {durationMs !== null ? <Badge variant="invert" className={cn(CHIP, MONO)}>{formatDuration(durationMs)}</Badge> : <span />}
     </div>
   </>;
-  const posterClass = "relative aspect-video overflow-hidden bg-invert text-invert-foreground";
+  const posterClass = cn("relative aspect-video overflow-hidden", locked ? "bg-surface-sunken text-foreground-secondary" : "bg-invert text-invert-foreground");
   return <Frame
     data-testid={testId} data-video-id={dataVideoId} data-selected={select?.selected ? "true" : "false"} data-tone={tone} {...(tone === "ink" ? { "data-surface": "inverse" } : {})}
-    className="group/tile gap-0 bg-background p-0 text-foreground [--frame-radius:var(--radius-md)] [--frame-panel-radius:var(--radius-md)] data-[selected=true]:border-[var(--border-strong)]"
+    className="group/tile gap-0 bg-background p-0 text-foreground data-[tone=paper]:border data-[tone=paper]:border-solid data-[tone=paper]:border-[var(--border-hairline)] [--frame-radius:var(--radius-md)] [--frame-panel-radius:var(--radius-md)] data-[selected=true]:border-[var(--border-strong)]"
   >
     <FramePanel className="flex flex-col gap-0 border-0 bg-transparent p-0">
       <Zone drop={drop} testId={testId}>

@@ -34,6 +34,8 @@ class ViewerBoundary extends Component<{ onClose: () => void; children: ReactNod
 
 export type DeliveryPageProps = {
   dto: DeliveryPageDto;
+  /** The page's own address segment (#882): a film tile's review link carries it so the review's Back returns here. Absent in Preview. */
+  pageSlug?: string | null;
   /** Item links. `null` (Preview) offers no download of any kind. */
   hrefs: DeliveryHrefs | null;
   onRequestUnlock: (handle: string) => void;
@@ -84,7 +86,7 @@ function Groups({ items, props, onOpen, headings }: { items: DeliveryItemDto[]; 
   const heading = (text: string, n: number) => headings ? <h3 className="m-0 mb-[var(--space-3)] flex items-baseline gap-[var(--space-2)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">{text}<span className="tabular-nums">{n}</span></h3> : null;
   return <div className="grid gap-[var(--space-6)]">
     {photos.length > 0 && <section aria-label="Photos">{heading("Photos", photos.length)}<PhotoGrid items={photos} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} onOpen={onOpen} /></section>}
-    {films.length > 0 && <section aria-label="Film">{heading("Film", films.length)}<FilmList items={films} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} /></section>}
+    {films.length > 0 && <section aria-label="Film">{heading("Film", films.length)}<FilmList items={films} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} pageSlug={props.pageSlug ?? null} /></section>}
     {plans.length > 0 && <section aria-label="Floorplan">{heading("Floorplan", plans.length)}<DocRows items={plans} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} label="Floorplan" /></section>}
     {copy.length > 0 && <section aria-label="Copywriting">{heading("Copywriting", copy.length)}<DocRows items={copy} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} label="Copywriting" /></section>}
   </div>;
