@@ -205,6 +205,8 @@ describe("Collection header (T3, #879 PR 3a)", () => {
     await flush();
     expect(header().querySelector('[data-testid="video-films-count-loading"]')?.getAttribute("aria-hidden")).toBe("true");
     expect(count()).toBeNull();
+    // The re-cut line waits for the list: it is for a collection that has films (#879 PR 3a).
+    expect(host.querySelector('[data-testid="new-film-recut-hint"]')).toBeNull();
     await unmount();
     const { ApiError } = await import("../../lib/api");
     apiGetMock.mockImplementation(async () => { throw new ApiError("Films could not be loaded.", 404, { code: "not_found" }); }); // a 4xx is not retried
@@ -230,6 +232,25 @@ describe("Uploader (#741 4d-i)", () => {
     expect(uploader).toContain("H.264 MP4 or MOV");
     // The upload help moved out of the T3 header into the drop box, said once there.
     expect(uploader).toContain("A re-cut becomes a new version of the same film; notes stay with the version they were made on.");
+    expect(host.textContent!.split("re-cut").length - 1).toBe(1);
+  });
+
+  it("keeps a quiet re-cut line in the uploader once films exist, not in the T3 header (#879 PR 3a)", async () => {
+    const RECUT = "A re-cut becomes a new version of the same film; notes stay with the version they were made on.";
+    await mount([videoOf()], ["upload"]);
+    const uploader = host.querySelector('[data-testid="new-film-uploader"]')!;
+    const line = uploader.querySelector<HTMLElement>('[data-testid="new-film-recut-hint"]');
+    expect(line?.textContent).toBe(RECUT);
+    expect(line?.className).toMatch(/\btext-xs\b/);
+    expect(line?.className).toMatch(/\btext-foreground-secondary\b/);
+    expect(host.textContent!.split("re-cut").length - 1).toBe(1);
+    expect(host.querySelector('[data-testid="video-films-header"]')!.textContent).not.toContain("re-cut");
+    expect(host.querySelector('[data-testid="new-film-dropzone"]')).toBeNull();
+    await unmount();
+    // No films: the drop box carries the sentence, and the quiet line is not drawn as well.
+    await mount([], ["upload"]);
+    expect(host.querySelector('[data-testid="new-film-recut-hint"]')).toBeNull();
+    expect(host.querySelector('[data-testid="new-film-dropzone"]')!.textContent).toContain(RECUT);
     expect(host.textContent!.split("re-cut").length - 1).toBe(1);
   });
 

@@ -221,7 +221,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     {/* The body is the drop target for new films (#884): a drop between tiles must not navigate the browser to the file. A tile's own poster takes its drop alone. */}
     <FileDropzone multiple={true} onFiles={receiveNewFilms} disabled={!canUpload} className="grid gap-[var(--space-5)] p-[var(--space-6)] pb-[calc(var(--space-6)+var(--review-bar-clearance,0px))]" data-testid="video-collection-body">
       <ReviewLinksHost ui={reviewLinks} videos={videos.data ?? []} {...(setBarHeight ? { onBarHeight: setBarHeight } : {})} {...(downloadEnabled ? { onDownload: setDownloadIds } : {})} />
-      {canUpload && <NewFilmUploader userId={userId} projectId={projectId} receive={receiveNewFilms} empty={videos.data?.length === 0} />}
+      {canUpload && <NewFilmUploader userId={userId} projectId={projectId} receive={receiveNewFilms} films={videos.data?.length} />}
       <EmbeddedUploadTray uploads={rows} errors={[]} onCancel={(key) => void cancelVideoUpload(key, queryClient)} onRemove={(key) => removeVideoUpload(key)} onRetry={(key) => retryVideoUpload(key)} testId="video-upload-tray" pluralCaution={pluralCaution} />
       {videos.isError && !videos.data && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{videos.error.message || "Films could not be loaded."}</span><Button type="button" variant="text" onClick={() => { terminate(videos.error); void videos.refetch(); }}>Retry</Button></Notice>}
       {videos.data && videos.data.length === 0 && <EmptyState title="No films yet.">{canUpload ? "Drop the first MP4 or MOV above to begin." : "Uploaded films will appear here."}</EmptyState>}
