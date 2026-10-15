@@ -7,6 +7,7 @@ import { installLocalStorageShim } from "../testing/local-storage";
 import { resetUiPrefMemory } from "../lib/ui-prefs";
 import { TIME_FORMAT_KEY } from "../lib/time-format-prefs";
 import { mockViewport, type MockViewport } from "../testing/viewport";
+import { installSliderLayout, scrubberThumbShown } from "../testing/slider-layout";
 import { GuestApp } from "./GuestApp";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -1380,6 +1381,30 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     expect(byId("guest-paste-open")).not.toBeNull();
   });
 
+  // Fix round 2 (row 17): after Pen → Done → Cancel the scrubber's thumb was gone. Done lands in compose mode, where the transport is hidden, and the transport came back
+  // from under the markup toolbar as a new subtree: the slider was mounted (and its thumb measured) inside the hidden box, and nothing measured it again.
+  it("the scrubber's thumb is still drawn after Pen → Done → Cancel, and the slider is the same node throughout", async () => {
+    const restore = installSliderLayout();
+    try {
+      await open();
+      await atSeconds(2);
+      await fieldReady();
+      expect(scrubberThumbShown()).toBe(true);
+      const slider = byId("video-scrubber")!.querySelector('[data-slot="slider"]');
+      await focusField();
+      await act(async () => { byId("guest-composer-draw")!.click(); });
+      await atSeconds(2);
+      expect(byId("guest-markup-toolbar")).not.toBeNull();
+      await act(async () => { byId("guest-composer-draw")!.click(); });
+      await flush(2);
+      expect(mode()).toBe("compose");
+      expect(await press(byId("guest-composer-cancel"))).toBe(true);
+      expect(mode()).toBe("browse");
+      expect(byId("video-scrubber")!.querySelector('[data-slot="slider"]')).toBe(slider);
+      expect(scrubberThumbShown()).toBe(true);
+    } finally { restore(); }
+  });
+
   // Fix round 1 (row 2): the keyboard dropped about a second after the code was accepted, and the pill went back to rest. The code field was disabled while the code was
   // checked, which blurred it and sent the keyboard down before the answer came; the pill's focus after the check (not a tap) could not bring it back.
   const verifyWithHeldAnswer = () => {
@@ -1801,7 +1826,8 @@ describe("In / Out range button and handles (#861)", () => {
     await atSeconds(2);
     await click(byId("guest-add-note"));
     await click(byId("guest-composer-draw"));
-    expect(rangeButton()).toBeNull();
+    // The transport stays mounted under the markup toolbar (PR 2 fix round 2), hidden: the range button is out of view, not gone.
+    expect(rangeButton()?.closest("[hidden]")).not.toBeNull();
   });
 
   it("Clear on a note being edited keeps its first frame as a point", async () => {

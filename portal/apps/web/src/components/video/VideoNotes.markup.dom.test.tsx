@@ -12,6 +12,8 @@ import { ArchivedFromCache } from "../../testing/archived-from-cache";
 import "../../testing/dom-polyfills";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
+import { mockViewport } from "../../testing/viewport";
+import { installSliderLayout, scrubberThumbShown } from "../../testing/slider-layout";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
 vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 
@@ -353,7 +355,8 @@ describe("Draw mode (#741 6b-ui)", () => {
     expect(stub.calls).toEqual([]);
     expect(stub.writes).toEqual([]);
     expect(tid("video-pending-band")).toBeNull();
-    for (const label of ["Play", "Previous frame", "Next frame"]) expect(dialog()!.querySelector(`button[aria-label="${label}"]`)).toBeNull(); // the transport is replaced, not just disabled
+    // The transport is replaced in view, not just disabled: it stays mounted under the toolbar, hidden (PR 2 fix round 2, so the scrubber's thumb survives).
+    for (const label of ["Play", "Previous frame", "Next frame"]) expect(dialog()!.querySelector(`button[aria-label="${label}"]`)!.closest("[hidden]")).not.toBeNull();
     expect((tid("video-note-set-in") as HTMLButtonElement).disabled).toBe(true);
     await click(doneButton()!);
     for (const label of ["Play", "Previous frame", "Next frame"]) expect(dialog()!.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.disabled).toBe(false);
@@ -981,9 +984,8 @@ describe("Drawing layout (#741 6b-ui design review)", () => {
   it("while drawing, the transport is replaced in place and the toolbar sits outside the picture; Done brings the transport back", async () => {
     await openFilm({ parts: ON }, 12);
     await startDrawing();
-    expect(tid("video-scrubber")).toBeNull();
-    expect(tid("video-readout")).toBeNull();
-    expect(tid("video-key-legend")).toBeNull();
+    // Replaced in view: the transport stays mounted under the toolbar, hidden (PR 2 fix round 2).
+    for (const id of ["video-scrubber", "video-readout", "video-key-legend"]) expect(tid(id)!.closest("[hidden]")).not.toBeNull();
     const toolbar = tid("video-markup-toolbar")!;
     expect(toolbar).not.toBeNull();
     expect(tid("video-stage")!.contains(toolbar)).toBe(false);
@@ -991,7 +993,7 @@ describe("Drawing layout (#741 6b-ui design review)", () => {
     expect(tid("video-stage")!.nextElementSibling!.contains(tid("video-markup-stack"))).toBe(true);
     expect(tid("video-markup-legend")!.textContent).toBe("⌘Z undo · ⇧⌘Z redo · Esc done");
     await click(doneButton()!);
-    expect(tid("video-scrubber")).not.toBeNull();
+    expect(tid("video-scrubber")!.closest("[hidden]")).toBeNull();
     expect(tid("video-markup-stack")).toBeNull();
     expect(drawButton()).not.toBeNull();
   });
@@ -1125,5 +1127,33 @@ describe("The markup-is-full warning (#741 6b-ui)", () => {
     await land(12);
     await flush(2);
     expect(full()).toBe(false);
+  });
+});
+
+describe("The scrubber after a phone drawing (#879 PR 2 fix round 2)", () => {
+  // Done on a phone hands the focus back to the pill's field in the same tap, so the transport comes back from under the markup toolbar in compose mode, hidden. It used to come
+  // back as a new subtree: the slider was mounted (and its thumb measured) inside the hidden box, and after Cancel the thumb stayed invisible until the frame changed.
+  it("the thumb is still drawn after Draw → Done → Cancel, and the slider is the same node throughout", async () => {
+    const viewport = mockViewport({ width: 390, coarse: true });
+    const restore = installSliderLayout();
+    try {
+      await openFilm({ parts: ON }, 12);
+      expect(scrubberThumbShown()).toBe(true);
+      const slider = tid("video-scrubber")!.querySelector('[data-slot="slider"]');
+      const field = () => document.getElementById("video-note-body") as HTMLTextAreaElement;
+      await act(async () => { field().focus(); });
+      await flush(2);
+      await startDrawing();
+      expect(doneButton()).not.toBeNull();
+      // The real field is contenteditable and Done focuses it; the stub is a textarea, so the test gives it the focus inside the same tap.
+      await act(async () => { doneButton()!.click(); field().focus(); });
+      await flush(2);
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("compose");
+      await act(async () => { tid("video-note-cancel")!.click(); field().blur(); });
+      await flush(4);
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+      expect(tid("video-scrubber")!.querySelector('[data-slot="slider"]')).toBe(slider);
+      expect(scrubberThumbShown()).toBe(true);
+    } finally { restore(); viewport.restore(); }
   });
 });
