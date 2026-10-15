@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Run one Agy stage-1 browser pass (docs/subagents/agy-cli.md §Browser pass). See --help.
+# Retired 2026-10-15 (owner decision): the session runs the browser pass itself. Kept for reference.
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/lib.sh"
 
