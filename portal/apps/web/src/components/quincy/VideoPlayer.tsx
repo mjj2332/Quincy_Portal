@@ -46,6 +46,9 @@ export type VideoPlayerControl = {
 export const COARSE = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[721px]:min-h-11 max-[721px]:min-w-11";
 /** An icon control inside the phone note pill (#879 fix, kit.jsx `ibtn sm`): drawn at 32px so the text keeps the room, with a 44px hit area from a transparent pseudo-element. */
 export const PILL_ICON = "relative size-8 after:absolute after:-inset-1.5 after:content-['']";
+/** The phone Play's row slot (P1's ControlBar: a 44px `ibtn`, then a 4px gap to the time): drawn as a 32px PILL_ICON with half a --space-3 either side, so its
+ *  44px hit area is its own slot in the row, the way Mute's sits in --space-3 gaps, and the readout starts at 12 + 44 + 4 = 60pt. */
+const PHONE_PLAY_SLOT = "mx-[calc(var(--space-3)/2)]";
 const MONO = "[font:var(--type-mono)] tabular-nums";
 /** P1's PlayBadge: a 60px round, translucent ink disc on the film (`--space-8` less `--space-1`), the inverse surface's paper icon. */
 const PLAY_BADGE = "pointer-events-auto size-[calc(var(--space-8)-var(--space-1))] rounded-[var(--radius-pill)] bg-[color-mix(in_srgb,var(--ink-900)_55%,transparent)] !text-foreground hover:bg-[color-mix(in_srgb,var(--ink-900)_70%,transparent)]";
@@ -223,7 +226,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         <Button type="button" variant={phone ? "ghost" : "outline"} size="icon" aria-label="Previous frame" className={phone ? PILL_ICON : COARSE} disabled={transportLocked} onClick={() => { clock.step(-1); }}><StepBack aria-hidden="true" /></Button>
       </IconTip>}
       <IconTip label={playLabel} keys="Space">
-        <Button type="button" variant={phone ? "ghost" : "default"} size="icon" aria-label={playLabel} className={phone ? PILL_ICON : cn("w-[var(--space-7)]", COARSE)} disabled={transportLocked} onClick={() => { if (clock.playing) clock.pause(); else clock.play(); }}>{clock.playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}</Button>
+        <Button type="button" variant={phone ? "ghost" : "default"} size="icon" aria-label={playLabel} className={phone ? cn(PILL_ICON, PHONE_PLAY_SLOT) : cn("w-[var(--space-7)]", COARSE)} disabled={transportLocked} onClick={() => { if (clock.playing) clock.pause(); else clock.play(); }}>{clock.playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}</Button>
       </IconTip>
       {(!phone || phoneFrameStep) && <IconTip label="Next frame" keys="→">
         <Button type="button" variant={phone ? "ghost" : "outline"} size="icon" aria-label="Next frame" className={phone ? PILL_ICON : COARSE} disabled={transportLocked} onClick={() => { clock.step(1); }}><StepForward aria-hidden="true" /></Button>

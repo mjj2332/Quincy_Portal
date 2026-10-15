@@ -696,6 +696,21 @@ describe("the phone transport band (#879 PR 3a, P1 ControlBar: scrubber band, 44
     } finally { viewport.restore(); }
   });
 
+  it("on a phone Play holds a full 44px slot, so the readout starts where P1's does: 12 inset + 44 + 4 = 60pt", async () => {
+    const viewport = mockViewport({ width: 375 });
+    try {
+      await mount();
+      await load();
+      // P1's ControlBar: 12px padding, a 44px ibtn, a 4px gap, then the time. Play is drawn at 32px with half a --space-3 either side,
+      // so its 44px hit area is its own slot in the row (the way Mute's sits in --space-3 gaps) and the readout clears it.
+      expect(byTestId("video-scrubber")!.parentElement!.className).toContain("max-[721px]:px-[var(--space-3)]");
+      expect(button("Play")!.className).toContain("size-8");
+      expect(button("Play")!.className).toContain("mx-[calc(var(--space-3)/2)]");
+      expect(byTestId("video-controls-row")!.className).toContain("max-[721px]:gap-[var(--space-1)]");
+      expect(byTestId("video-readout")!.className).toContain("max-[721px]:px-0");
+    } finally { viewport.restore(); }
+  });
+
   it("frame steps on a phone (no composer) are plain 32px icons too", async () => {
     const viewport = mockViewport({ width: 390 });
     try {
@@ -720,6 +735,7 @@ describe("the phone transport band (#879 PR 3a, P1 ControlBar: scrubber band, 44
       expect(byTestId("video-scrubber")!.className).not.toContain("h-[var(--space-6)]");
       expect(byTestId("video-marker-lane")!.className).not.toContain("absolute");
       expect(button("Play")!.className).toContain("bg-primary");
+      expect(button("Play")!.className).not.toContain("mx-[calc(var(--space-3)/2)]");
       expect(byTestId("video-readout-total")).not.toBeNull();
     } finally { viewport.restore(); }
   });
