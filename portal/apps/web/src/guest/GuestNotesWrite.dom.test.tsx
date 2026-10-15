@@ -1284,6 +1284,28 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     expect(area()!.value).toBe("Again");
   });
 
+  // Fix round 5 (iPhone at 8a03d404): + from rest, with the field not focused, did nothing. It opened a new draft and the tray in a commit still in browse mode (the tray's hold
+  // flips the sheet in an effect), and the at-rest release saw a pristine draft and closed it, tray and all. An open tray is not given back; the staff pill opens it the same way.
+  it("+ from rest, with the field not focused, opens the tray and enters compose; + again gives the untouched draft back", async () => {
+    await open();
+    await atSeconds(2);
+    await fieldReady();
+    expect(mode()).toBe("browse");
+    expect(document.activeElement).not.toBe(area());
+    const plus = byId("guest-composer-extras")!;
+    expect(await press(plus)).toBe(true);
+    await flush(2);
+    expect(plus.getAttribute("aria-expanded")).toBe("true");
+    expect(tray().hasAttribute("inert")).toBe(false);
+    expect(mode()).toBe("compose");
+    expect(byId("guest-compose-strip")!.dataset.open).toBe("true");
+    expect(await press(plus)).toBe(true);
+    await flush(2);
+    expect(tray().hasAttribute("inert")).toBe(true);
+    expect(mode()).toBe("browse");
+    expect(byId("guest-compose-strip")!.dataset.open).toBe("false");
+  });
+
   it("Cancel keeps the focus on press, then discards the draft, closes the tray, remounts the field and returns to browse", async () => {
     await open();
     await fieldReady();

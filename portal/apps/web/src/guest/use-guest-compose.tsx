@@ -68,7 +68,7 @@ export type GuestStrip = {
   clockReady: boolean;
   /** The + tray (an open tray is a compose hold). Opening it with no draft starts one. */
   tray: boolean; setTray: (open: boolean) => void;
-  /** Bumped by Cancel: the field remounts, which aborts its uploads. */
+  /** Bumped by Cancel, and by a close from the page while a picture is going up: the field remounts, which aborts its uploads. */
   editorKey: number;
   /** The field took the focus: pause, start a draft if none is open, and stamp a pristine one at the frame on screen (D10). */
   focusStamp: () => void;
@@ -200,6 +200,12 @@ export function useGuestCompose({ phone, clock, frameCount, timecode, markupAllo
     live.current = { open: true, editing: true };
   }, [reset]);
   const close = useCallback(() => { reset(); setOpen(false); live.current = { open: false, editing: false }; }, [reset]);
+  // The page closes the draft from outside (another Version, the project archived, the edited note gone). The phone pill keeps its field mounted across that, and the field's
+  // uploads abort only when it unmounts: a picture still going up would land in whatever draft the field holds when it arrives, another Version's included (fix round 5). So a
+  // close with an upload under way remounts the field, as Cancel does; without one the field stays (the page closes on mount too, and nothing is in flight then).
+  const uploadingNow = useRef(false);
+  uploadingNow.current = uploading;
+  const closeFromPage = useCallback(() => { const inFlight = uploadingNow.current; close(); if (inFlight) setEditorKey((key) => key + 1); }, [close]);
 
   const toPoint = useCallback((event: PointerSample): FreehandPoint => {
     const rect = svgRef.current?.getBoundingClientRect();
@@ -385,7 +391,9 @@ export function useGuestCompose({ phone, clock, frameCount, timecode, markupAllo
       // A pristine new draft is stamped again at the frame on screen; once there is text (or an edit) the anchor is frozen (D10).
       if (!live.current.editing && pristine) setMarks({ in: here(), out: null });
     },
-    releaseIfPristine: () => { if (pristine) close(); },
+    // An open tray holds its draft (fix round 5): + from rest opens a draft and the tray in a commit that is still in browse (the tray's hold flips the sheet in an effect), and
+    // releasing there closed the tray it had just opened. Closing the tray (+ again) drops the hold, and the untouched draft is given back on that browse commit.
+    releaseIfPristine: () => { if (pristine && !tray) close(); },
     step: (delta) => {
       if (!clock || pending || phase !== "off") return;
       const to = Math.min(Math.max(0, here() + delta), Math.max(0, frameCount - 1));
@@ -415,7 +423,7 @@ export function useGuestCompose({ phone, clock, frameCount, timecode, markupAllo
   const replacesSavedDrawing = useCallback((id: string | null) => replacing && id === editingId, [replacing, editingId]);
   const penDown = phase !== "off";
   // `strip` is rebuilt every render (its commands read the draft as rendered); the composer is the one reader and re-renders with the hook's owner anyway.
-  return { isOpen, editingId, drawing, penDown, strip, endDrawing, replacesSavedDrawing, begin, beginEdit, close, form, overlay, transportReplacement, onMark, marks, clearMarks };
+  return { isOpen, editingId, drawing, penDown, strip, endDrawing, replacesSavedDrawing, begin, beginEdit, close: closeFromPage, form, overlay, transportReplacement, onMark, marks, clearMarks };
 }
 
 /** The SVG on the picture box. A gesture never outlives draw mode or the picture it started on: leaving, or a resize, drops the stroke in progress and keeps the finished ones. */
