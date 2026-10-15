@@ -38,7 +38,9 @@ const KBD_HINT = "@max-[280px]:sr-only";
 const SMALL_BUTTON = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
 /** The phone pill's text box (C4): one line at rest (the draft clamped to its first line), up to four while writing, then it scrolls. Line 24px + the box's 8px padding top and bottom.
  * The padding is on the box and the scroll on its child (the editor's scroller, `[&>*]`), so scrolled text clips inside the padding, never at the pill's hairline (#879 fix r9). */
-const REST_CLAMP = "max-h-[calc(var(--space-6)+var(--space-2))] overflow-hidden [&>*]:overflow-hidden";
+/** At rest the draft is one unwrapped line that ends in an ellipsis at the field's edge, as the prototype's single-line `.composer-input input` clips (#879 fix r11):
+ * cut at a word break with no ellipsis, a long draft read as the whole note. `pre` rather than `nowrap`, so the draft's spaces stay as typed. */
+const REST_CLAMP = "max-h-[calc(var(--space-6)+var(--space-2))] overflow-hidden [&>*]:overflow-hidden [&_p]:overflow-hidden [&_p]:text-ellipsis [&_p]:whitespace-pre";
 /** In the review sheet the four lines give way to the film's floor first (#879 fix r9): the sheet publishes `--sheet-text-room` (`useSheetTextRoom`), clamped here to one line at least.
  * The room is rounded down to whole 24px lines (`--space-5`) inside the box's 16px of padding (#879 fix r10), so the window never shows a sliver of a line. */
 const COMPOSE_CLAMP = "max-h-[clamp(calc(var(--space-6)+var(--space-2)),calc(round(down,calc(var(--sheet-text-room,calc(var(--space-9)+var(--space-4)))-var(--space-4)),var(--space-5))+var(--space-4)),calc(var(--space-9)+var(--space-4)))] [&>*]:overflow-y-auto";

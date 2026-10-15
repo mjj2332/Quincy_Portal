@@ -110,6 +110,8 @@ describe("VideoNoteComposer on a phone: the pill at rest (P1)", () => {
     await blurTo(outside);
     expect(sheetMode()).toBe("browse");
     expect(by("stub-field")!.dataset.pillWrap).toBe("false");
+    // One unwrapped line ending in an ellipsis at the field's edge (#879 fix r11), not a cut at a word break.
+    for (const rule of ["[&_p]:overflow-hidden", "[&_p]:text-ellipsis", "[&_p]:whitespace-pre"]) expect(area().className).toContain(rule);
     expect(by("video-note-composer")!.dataset.compose).toBe("false");
     expect(by("video-note-stamp")).toBeNull();
     expect(by("video-note-cancel")).toBeNull();
@@ -135,6 +137,8 @@ describe("VideoNoteComposer on a phone: the compose strip (P6)", () => {
     expect(area().hasAttribute("data-sheet-text")).toBe(true);
     // Rounded down to whole 24px lines (--space-5) inside the 16px of padding (#879 fix r10).
     expect(area().className).toContain("max-h-[clamp(calc(var(--space-6)+var(--space-2)),calc(round(down,calc(var(--sheet-text-room,calc(var(--space-9)+var(--space-4)))-var(--space-4)),var(--space-5))+var(--space-4)),calc(var(--space-9)+var(--space-4)))]");
+    // Compose mode wraps as before: the rest line's ellipsis does not follow it in (#879 fix r11).
+    expect(area().className).not.toContain("[&_p]:whitespace-pre");
     expect(by("video-note-composer")!.dataset.compose).toBe("true");
   });
 
