@@ -643,7 +643,7 @@ export function QuincyRichTextEditorBase({
 
   return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
     <InputGroup data-testid="rich-text-field" variant={pill ? "pill" : "default"} className={pill ? PILL_GROUP : FIELD_GROUP} data-disabled={disabled || undefined}>
-      {toolbarContainer === undefined ? <InputGroupAddon ref={addonRef} data-testid="rich-text-addon" align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
+      {toolbarContainer === undefined ? <InputGroupAddon ref={addonRef} align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
         {toolbar}
       </InputGroupAddon> : null}
       {inlineStart !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-start" className="cursor-default">{inlineStart}</InputGroupAddon> : null}

@@ -59,8 +59,8 @@ describe("QuincyRichTextEditorBase", () => {
   it("with no placement props the field is as it was: the toolbar is its first child, no inline addons, the default radius", async () => {
     const host = await mount({});
     const field = host.querySelector<HTMLElement>('[data-testid="rich-text-field"]')!;
-    const addons = [...field.querySelectorAll(':scope > [data-testid="rich-text-addon"]')].map((el) => el.getAttribute("data-align"));
-    expect(addons).toEqual(["block-start"]);
+    expect(field.querySelector('[data-testid="rich-text-addon"]')).toBeNull();
+    expect(field.firstElementChild!.getAttribute("data-align")).toBe("block-start");
     expect(field.firstElementChild!.querySelector('[role="toolbar"][aria-label="Formatting"]')).not.toBeNull();
     expect(field.getAttribute("data-variant")).toBeNull();
     expect(field.className).toContain("flex-col items-stretch");
