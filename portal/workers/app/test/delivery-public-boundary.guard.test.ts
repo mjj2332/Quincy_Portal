@@ -40,6 +40,13 @@ describe("public Delivery surface boundary", () => {
     for (const [path, source] of Object.entries(sources)) expect(violations(source), path).toEqual([]);
   });
 
+  it("the film tile's note count (#882) is note activity on a public response, so it may only come from the PUBLIC open-root fragment", () => {
+    const entry = Object.entries(sources).find(([path]) => path.endsWith("lib/delivery-review-entry.ts"))![1];
+    expect(entry).toContain("OPEN_PUBLIC_ROOT_NOTE_SQL");
+    expect(entry).not.toMatch(/OPEN_ROOT_NOTE_SQL(?!\w)/); // the non-visibility-filtered fragment would count internal notes
+    expect(entry).not.toMatch(/visibility\s*=\s*'internal'|n\.body|content_json/);
+  });
+
   it("detects each forbidden reach on planted sources", () => {
     expect(violations('import { requireSession } from "../middleware/session";')).toContain("import ../middleware/session");
     expect(violations('import { hasProjectAccess } from "../middleware/capability";')).toContain("import ../middleware/capability");

@@ -1,7 +1,7 @@
 import { reachSql } from "../lib/guest-fence-sql";
 import { resolvedSocialOverlaysStatement } from "../lib/project-social-overlays";
 import { uuidOfKey } from "../lib/social-overlays";
-import { LIVE_VERSION, LIVE_VIDEO } from "../lib/video-live-sql";
+import { LIVE_VERSION, LIVE_VIDEO, OPEN_PUBLIC_ROOT_NOTE_SQL } from "../lib/video-live-sql";
 import {
   VIDEO_NOTE_RICH_TEXT_PROFILE, parseRichTextDoc, richTextMediaRefs, richTextMentionsToText, type RichTextDoc,
   guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNoteThreadDtoSchema, guestSocialOverlaysResponseSchema, guestVideoListResponseSchema, socialOverlayImagePath,
@@ -40,8 +40,7 @@ export async function listGuestVideos(db: D1Database, linkId: string, projectId:
       ORDER BY v.position, v.created_at, v.id`).bind(linkId, projectId),
     db.prepare(`SELECT a.id AS asset_id, m.video_id, a.version, m.fps_num, m.fps_den, m.frame_count, m.duration_ms, m.width, m.height, m.start_tc_frames, m.tc_nominal_fps, m.tc_drop_frame, m.has_audio,
         (m.poster_key IS NOT NULL) AS has_poster,
-        (SELECT COUNT(*) FROM video_notes n WHERE n.asset_id = a.id AND n.visibility = 'public' AND n.parent_id IS NULL AND n.resolved_at IS NULL
-           AND (n.deleted_at IS NULL OR EXISTS (SELECT 1 FROM video_notes r WHERE r.parent_id = n.id))) AS note_count
+        (SELECT COUNT(*) FROM video_notes n WHERE n.asset_id = a.id AND ${OPEN_PUBLIC_ROOT_NOTE_SQL}) AS note_count
       FROM review_link_version_grants g ${LIVE_ACCESS}
       WHERE g.link_id = ?1 AND g.revoked_at IS NULL ORDER BY a.version DESC`).bind(linkId, projectId),
     // The latest decision made ON THIS LINK per Version (14a): a staff-recorded event has no link and never matches. `self` is the viewing guest's own.

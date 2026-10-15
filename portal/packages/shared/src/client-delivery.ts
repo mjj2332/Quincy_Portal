@@ -67,6 +67,13 @@ export const deliveryItemDtoSchema = z.object({
    * Project has no open Delivery review link, when the guest gate is shut, and in staff Preview. The one field of this page that carries a credential and a Video id, by design (ADR 0023).
    */
   review: z.object({ url: z.string().max(2048) }).strict().nullable(),
+  /**
+   * The film tile's facts (#882), emitted ONLY by the public Delivery read and always present there: the published Version number and the count of open PUBLIC root notes on it (the same rule as the guest
+   * list). Both are null on a locked film, a non-film item and wherever `review` is null (no count for a review the page cannot open). Staff state, Preview and Publish OMIT the keys, which is why they
+   * are optional: an already-open staff tab still holds the strict schema without them (lesson #858).
+   */
+  version: z.number().int().positive().nullable().optional(),
+  openNotes: z.number().int().nonnegative().nullable().optional(),
 }).strict();
 export const deliveryPageDtoSchema = z.object({
   property: z.object({ street: z.string(), suburb: z.string().nullable(), postcode: z.string().nullable(), agency: z.string().nullable() }).strict(),
