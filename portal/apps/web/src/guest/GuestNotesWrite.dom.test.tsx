@@ -1535,7 +1535,13 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
   it("the placeholder at rest is one line ending in an ellipsis, as typed text is (P7's 'Add a note with this drawing…')", async () => {
     await open();
     await fieldReady();
-    for (const name of ["[&_[data-placeholder]]:before:max-w-full", "[&_[data-placeholder]]:before:overflow-hidden", "[&_[data-placeholder]]:before:text-ellipsis", "[&_[data-placeholder]]:before:whitespace-nowrap"]) expect(area()!.className.split(" ")).toContain(name);
+    const names = area()!.className.split(" ");
+    for (const name of ["[&_[data-placeholder]]:before:overflow-hidden", "[&_[data-placeholder]]:before:text-ellipsis", "[&_[data-placeholder]]:before:whitespace-nowrap"]) expect(names).toContain(name);
+    // Fix round 2: app.css draws the placeholder as a zero-height float, and `overflow: hidden` on a zero-height box clips all of it (the iPhone showed no placeholder at all).
+    // So the clipped placeholder is a one-line box of its own: absolute at its static (first-line) top, so the caret's line never moves, across the content box (the root's
+    // inline padding inherited), with its height freed from app.css's `height: 0` (whose `:has()` selector outranks a utility, hence `!`).
+    for (const name of ["[&_[data-placeholder]]:relative", "[&_[data-placeholder]]:before:absolute", "[&_[data-placeholder]]:before:inset-x-0", "[&_[data-placeholder]]:before:[padding-inline:inherit]", "[&_[data-placeholder]]:before:h-auto!"]) expect(names).toContain(name);
+    expect(names).not.toContain("[&_[data-placeholder]]:before:top-0");
   });
 });
 
