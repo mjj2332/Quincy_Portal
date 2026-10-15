@@ -114,7 +114,11 @@ const PILL_GROUP =
   "has-[[contenteditable=true]:focus]:outline-solid " +
   "has-[[contenteditable=true]:focus]:outline-border-hover " +
   "outline-offset-[calc(var(--border-width-hair)*-1)] has-[[contenteditable=true]:focus]:outline-offset-[calc(var(--border-width-hair)*-1)] " +
-  "[&_[contenteditable]]:min-h-0";
+  "[&_[contenteditable]]:min-h-0 [&_[contenteditable]]:py-0";
+/** The pill's text box (#879 fix r9): the field's block padding sits on this box and the scroll is the inner node, so scrolled text clips inside the
+ * padding rather than at the hairline. The host's clamp (max height, overflow) goes on the box; it reaches the scroller as `[&>*]:overflow-*`. */
+const PILL_TEXT = "flex flex-1 flex-col py-[var(--space-2)]";
+const PILL_SCROLLER = "min-h-0 w-full min-w-0 flex-1";
 
 /** The character counter appears only from 90% of the limit (or when over it). */
 const COUNTER_THRESHOLD = 0.9;
@@ -675,8 +679,8 @@ export function QuincyRichTextEditorBase({
         {toolbar}
       </InputGroupAddon> : null}
       {inlineStart !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-start" className={cn("cursor-default", pill && "gap-[var(--space-1)] pb-[calc(var(--space-1)*1.5)] pl-[var(--space-1)]")}>{inlineStart}</InputGroupAddon> : null}
-      <div ref={pageRef} className={cn("relative min-w-0", pill ? "flex-1" : "w-full", contentClassName)}>
-        <EditorContent editor={editor} className="w-full min-w-0" />
+      <div ref={pageRef} className={cn("relative min-w-0", pill ? PILL_TEXT : "w-full", contentClassName)}>
+        <EditorContent editor={editor} className={pill ? PILL_SCROLLER : "w-full min-w-0"} />
         {isDocument && outline.length >= 2 && <RichTextOutlineRail outline={outline} activeIndex={activeHeading} onSelect={(index) => scrollToRichTextHeading(editor, index)} className="absolute end-1 top-2 z-[1] max-[721px]:hidden" />}
       </div>
       {inlineEnd !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-end" className={cn("cursor-default", pill && "pb-[calc(var(--space-1)*1.5)] pr-[var(--space-1)]")}>{inlineEnd}</InputGroupAddon> : null}
@@ -697,3 +701,4 @@ export function QuincyRichTextEditorBase({
     <div className={liveMessage && liveMessage !== CANCELLED_MESSAGE ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>
   </div>;
 }
+

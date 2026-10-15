@@ -34,9 +34,10 @@ export const ANCHOR_CHIP = "rounded-md bg-muted px-[var(--space-2)] py-[var(--sp
 /** The key hint is visual only at panel widths from 280px (the form is a size container); below that it stays for assistive tech but takes no room. */
 const KBD_HINT = "@max-[280px]:sr-only";
 const SMALL_BUTTON = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
-/** The phone pill's text box (C4): one line at rest (the draft clamped to its first line), up to four while writing, then it scrolls. Line 24px + the field's 8px padding top and bottom. */
-const REST_CLAMP = "max-h-[calc(var(--space-6)+var(--space-2))] overflow-hidden";
-const COMPOSE_CLAMP = "max-h-[calc(var(--space-9)+var(--space-4))] overflow-y-auto";
+/** The phone pill's text box (C4): one line at rest (the draft clamped to its first line), up to four while writing, then it scrolls. Line 24px + the box's 8px padding top and bottom.
+ * The padding is on the box and the scroll on its child (the editor's scroller, `[&>*]`), so scrolled text clips inside the padding, never at the pill's hairline (#879 fix r9). */
+const REST_CLAMP = "max-h-[calc(var(--space-6)+var(--space-2))] overflow-hidden [&>*]:overflow-hidden";
+const COMPOSE_CLAMP = "max-h-[calc(var(--space-9)+var(--space-4))] [&>*]:overflow-y-auto";
 /** The phone line under the film (hint, lock, problem): one meta line, two at most, at P6's 12px. */
 const PHONE_LINE = "col-span-2 row-start-1 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)]";
 /** The pill's timecode chip (quincy.css `.tc-chip`): small mono, so the text keeps the pill's width (#879 fix). */

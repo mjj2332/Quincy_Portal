@@ -126,6 +126,8 @@ describe("VideoNoteComposer on a phone: the compose strip (P6)", () => {
     expect(by("video-note-extras")!.getAttribute("aria-expanded")).toBe("false");
     expect(by("video-note-cancel")).not.toBeNull();
     expect(area().className).toContain("overflow-y-auto");
+    // The scroll is the text box's child, inside the box's padding (#879 fix r9).
+    expect(area().className).toContain("[&>*]:overflow-y-auto");
     expect(by("video-note-composer")!.dataset.compose).toBe("true");
   });
 

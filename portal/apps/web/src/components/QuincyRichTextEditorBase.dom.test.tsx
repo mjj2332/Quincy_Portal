@@ -100,6 +100,22 @@ describe("QuincyRichTextEditorBase", () => {
     expect(editor.querySelector("strong")?.textContent).toBe("word");
   });
 
+  it("the pill's text box carries the block padding and its child scrolls, so scrolled text clips inside the padding, not at the hairline (#879 fix r9)", async () => {
+    const host = await mount({ pill: true, toolbarContainer: null, contentClassName: "max-h-28 [&>*]:overflow-y-auto" });
+    const field = host.querySelector<HTMLElement>('[data-testid="rich-text-field"]')!;
+    const box = [...field.children].find((el) => el.querySelector('[contenteditable="true"]') !== null)!;
+    expect(box.className).toContain("py-[var(--space-2)]");
+    expect(box.className).toContain("flex-col");
+    expect(box.className).toContain("max-h-28");
+    // The scroller is the box's only child, and it holds the field: its own block padding is gone (the box has it).
+    expect(box.children).toHaveLength(1);
+    const scroller = box.firstElementChild as HTMLElement;
+    expect(scroller.className).toContain("min-h-0");
+    expect(scroller.className).toContain("flex-1");
+    expect(scroller.querySelector('[contenteditable="true"]')).not.toBeNull();
+    expect(field.className).toContain("[&_[contenteditable]]:py-0");
+  });
+
   it("a null toolbarContainer renders no toolbar yet; inlineStart and inlineEnd sit inside the field around the text", async () => {
     const host = await mount({ toolbarContainer: null, inlineStart: <span data-testid="chip">TC</span>, inlineEnd: <span data-testid="pen">pen</span>, contentClassName: "max-h-28" });
     const field = host.querySelector<HTMLElement>('[data-testid="rich-text-field"]')!;
