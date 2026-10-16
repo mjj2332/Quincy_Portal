@@ -9,7 +9,7 @@ import { InputGroup, InputGroupAddon } from "../components/reui/input-group";
 import { SheetModeContext } from "../components/quincy/ReviewSheet";
 import { PILL_ICON } from "../components/quincy/VideoPlayer";
 import { SELECTED_HAIRLINE_PRESSED } from "../components/quincy/markup-toolbar";
-import { COMPOSE_CLAMP, ComposeTray, PHONE_LINE, PILL_CHIP, PILL_SHELL, PILL_SHELL_TEXT, PillPlus, PillSend, REST_CLAMP, SHEET_TEXT, STRIP_GRID, STRIP_TEXT_BUTTON, keepFocus, shortRange, useRestPlaceholder } from "../components/quincy/compose-strip";
+import { COMPOSE_CLAMP, ComposeTray, PHONE_LINE, PILL_CHIP, PILL_SHELL, PILL_SHELL_TEXT, PillPlus, PillSend, REST_CLAMP, SHEET_TEXT, STRIP_CANCEL_ROW, STRIP_GRID, STRIP_TEXT_BUTTON, keepFocus, shortRange, useRestPlaceholder } from "../components/quincy/compose-strip";
 import { GuestNoteField } from "./GuestNoteField";
 import type { GuestStrip } from "./use-guest-compose";
 
@@ -151,7 +151,7 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
         : shell(false)}
     </div>
     <PillSend testId="guest-composer-post" label={sendLabel} disabled={strip.pending || strip.penDown || strip.uploading || strip.empty || !strip.clockReady} pending={strip.pending} />
-    {composing && <div className="col-span-2 row-start-4 flex justify-end">
+    {composing && <div className={STRIP_CANCEL_ROW}>
       {/* Cancel keeps the field's focus on press like Send: a blur first would drop the keyboard and move the strip under the finger, and the tap would miss. */}
       <Button type="button" variant="text" data-testid="guest-composer-cancel" className={STRIP_TEXT_BUTTON} disabled={strip.pending} onPointerDown={keepFocus} onMouseDown={keepFocus} onClick={cancel}>Cancel</Button>
     </div>}

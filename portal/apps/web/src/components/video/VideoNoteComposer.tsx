@@ -10,7 +10,7 @@ import { useMediaQuery } from "../../lib/use-media-query";
 import { Button } from "../quincy/Button";
 import { Notice } from "../quincy/Notice";
 import { SheetModeContext } from "../quincy/ReviewSheet";
-import { COMPOSE_CLAMP, ComposeTray, PHONE_LINE, PILL_CHIP, PillPlus, PillSend, REST_CLAMP, SHEET_TEXT, STRIP_GRID, STRIP_TEXT_BUTTON, keepFocus, shortRange, useRestPlaceholder } from "../quincy/compose-strip";
+import { COMPOSE_CLAMP, ComposeTray, PHONE_LINE, PILL_CHIP, PillPlus, PillSend, REST_CLAMP, SHEET_TEXT, STRIP_CANCEL_ROW, STRIP_GRID, STRIP_TEXT_BUTTON, keepFocus, shortRange, useRestPlaceholder } from "../quincy/compose-strip";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
 import { Kbd } from "../reui/kbd";
 import { VideoNoteEditor } from "./VideoNoteEditor";
@@ -235,7 +235,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     {!phone && clock === null && <span className="text-foreground-secondary [font:var(--type-label)]">Loading the film…</span>}
     {/* Phone: the round Send (C5), icon-only; its phase is a spinner and its name. A press never takes the focus, so the keyboard stays and nothing jumps before the post. */}
     {phone && <PillSend testId="video-note-post" label={label} disabled={!canPost} pending={frozen} />}
-    {phone && composing && <div className="col-span-2 row-start-4 flex justify-end">
+    {phone && composing && <div className={STRIP_CANCEL_ROW}>
       {/* Cancel keeps the field's focus on press like Send: a blur first would drop the keyboard and move the strip under the finger, and the tap would miss (#879 fix). */}
       <Button type="button" variant="text" data-testid="video-note-cancel" className={STRIP_TEXT_BUTTON} disabled={frozen} onPointerDown={keepFocus} onMouseDown={keepFocus} onClick={cancel}>Cancel</Button>
     </div>}

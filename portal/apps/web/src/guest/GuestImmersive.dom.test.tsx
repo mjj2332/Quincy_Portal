@@ -227,6 +227,17 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     }
   });
 
+  it("on a phone, the Full screen strip's Cancel sits in its own hint row, so no row under the pill holds it alone (#880 review 6)", async () => {
+    if (!size.coarse) return;
+    await open();
+    await click(byId("video-fullscreen"));
+    await click(byId("video-immersive-add-note"));
+    expect(byId("guest-compose-strip")!.className.split(/\s+/)).toContain("in-data-[immersive=compose]:grid-rows-[auto_auto_auto]");
+    expect(byId("guest-composer-stamp")!.parentElement!.className.split(/\s+/)).toContain("in-data-[immersive=compose]:col-span-1");
+    const cancel = byId("guest-composer-cancel")!.parentElement!.className.split(/\s+/);
+    for (const name of ["in-data-[immersive=compose]:col-start-2", "in-data-[immersive=compose]:row-start-1"]) expect(cancel, name).toContain(name);
+  });
+
   it("Tab is held inside the layer: the focus manager's guards exist only while in Full screen, and the page's header is inert", async () => {
     await open();
     expect(document.querySelector("[data-floating-ui-focus-guard]")).toBeNull();

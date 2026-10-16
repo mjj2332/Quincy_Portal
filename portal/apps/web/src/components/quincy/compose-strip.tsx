@@ -21,7 +21,7 @@ import { Spinner } from "../reui/spinner";
 /** The strip's grid: the line, the tray, the pill and Send, Cancel. At rest (`data-compose="false"`) it has no row gap (#879 PR 3a round 2): the four tracks are explicit, so the
  * gaps between the empty ones (no hint, the closed tray, no Cancel) still rendered, 16px above the pill and 8px below it, an 85pt band where P1's is 61. The rows that can show at
  * rest (a problem line, the tray opened from rest) carry their own space below instead (`REST_ROW_SPACE`); compose mode keeps its gap, unchanged. */
-export const STRIP_GRID = "@container grid min-h-0 grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_auto_auto_auto] gap-x-[var(--space-2)] gap-y-[var(--space-2)] data-[compose=false]:gap-y-0";
+export const STRIP_GRID = "@container grid min-h-0 grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_auto_auto_auto] gap-x-[var(--space-2)] gap-y-[var(--space-2)] data-[compose=false]:gap-y-0 in-data-[immersive=compose]:grid-rows-[auto_auto_auto]";
 /** A rest row's space before the pill, in place of the row gap the rest grid drops. */
 const REST_ROW_SPACE = "in-data-[compose=false]:pb-[var(--space-2)]";
 /** Marks the pill's text box for the review sheet's film floor (#879 fix r9). */
@@ -38,7 +38,10 @@ export const REST_CLAMP = "max-h-[calc(var(--space-6)+var(--space-2))] overflow-
  * The room is rounded down to whole 24px lines (`--space-5`) inside the box's 16px of padding (#879 fix r10), so the window never shows a sliver of a line. */
 export const COMPOSE_CLAMP = "max-h-[clamp(calc(var(--space-6)+var(--space-2)),calc(round(down,calc(var(--sheet-text-room,calc(var(--space-9)+var(--space-4)))-var(--space-4)),var(--space-5))+var(--space-4)),calc(var(--space-9)+var(--space-4)))] [&>*]:overflow-y-auto";
 /** The phone line under the film (hint, lock, problem): one meta line, two at most, at P6's 12px. */
-export const PHONE_LINE = "col-span-2 row-start-1 in-data-[compose=false]:pb-[var(--space-2)] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)]";
+export const PHONE_LINE = "col-span-2 row-start-1 in-data-[compose=false]:pb-[var(--space-2)] in-data-[immersive=compose]:col-span-1 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)]";
+/** Cancel's row: its own under the pill (P6). In Full screen's composer it joins the hint row, at its end (#880 review 6): F1 floats a compact composer over the film, and a row
+ * holding Cancel alone left ~60pt of empty card under the pill. The grid drops its fourth track there, so no empty row keeps its gap. */
+export const STRIP_CANCEL_ROW = "col-span-2 row-start-4 flex justify-end in-data-[immersive=compose]:col-span-1 in-data-[immersive=compose]:col-start-2 in-data-[immersive=compose]:row-start-1 in-data-[immersive=compose]:self-start";
 /** The pill's timecode chip (quincy.css `.tc-chip`): small mono, so the text keeps the pill's width (#879 fix). */
 // The `.tc-chip` amber tint on the caution token: on the viewer's inverse surface `--warning-foreground` is `--signal-caution-on-inverse` (star-amber), elsewhere the caution text ochre.
 export const PILL_CHIP = "shrink-0 whitespace-nowrap rounded-md bg-[color-mix(in_oklch,var(--warning-foreground)_18%,transparent)] px-[var(--space-2)] py-[var(--space-1)] text-warning-foreground [font:var(--weight-regular)_var(--text-xs)/1_var(--font-mono)] tabular-nums";

@@ -404,6 +404,19 @@ describe("the Full screen composer drops the notes panel's sheet chrome (#880 fi
     const band = tid("video-note-composer")!.closest<HTMLElement>("[data-sheet-part=composer]")!.className.split(/\s+/);
     for (const name of ["in-data-[immersive=compose]:border-t-0", "in-data-[immersive=compose]:pt-0"]) expect(band, name).toContain(name);
   });
+  it("on a phone, Cancel sits in the strip's own hint row, so no row under the pill holds it alone (#880 review 6)", async () => {
+    viewport = mockViewport({ width: 390, height: 844, coarse: true });
+    await mount();
+    await click(tid("video-fullscreen")!);
+    await click(tid("video-immersive-add-note")!);
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    const strip = tid("video-note-composer")!.className.split(/\s+/);
+    expect(strip).toContain("in-data-[immersive=compose]:grid-rows-[auto_auto_auto]");
+    const hint = tid("video-note-stamp")!.parentElement!.className.split(/\s+/);
+    expect(hint).toContain("in-data-[immersive=compose]:col-span-1");
+    const cancel = tid("video-note-cancel")!.parentElement!.className.split(/\s+/);
+    for (const name of ["in-data-[immersive=compose]:col-start-2", "in-data-[immersive=compose]:row-start-1"]) expect(cancel, name).toContain(name);
+  });
 });
 
 describe("the keyboard in Full screen on a phone device (#880 S1)", () => {
