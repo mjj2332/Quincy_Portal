@@ -270,11 +270,14 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         <Button type="button" variant="ghost" size="icon" aria-label="Full screen" className={handheld ? PILL_ICON : cn("size-8", COARSE)} onClick={() => { void playerRef.current?.requestFullscreen?.(); }}><Maximize aria-hidden="true" /></Button>
       </IconTip>
       : null;
-  // In full screen the controls are a bottom overlay on a scrim, in the player's own tree (safe-area insets keep it off the notch and the home bar).
+  // The dock (#880 S2): one wrapper, always rendered, around the replacement and the transport, so entering Full screen or putting the pen down never swaps the node the controls
+  // live in (nor remounts the slider). Outside Full screen it lays out as nothing (`contents`); in Full screen it is the bottom overlay on a scrim, in the player's own tree
+  // (safe-area insets keep it off the notch and the home bar).
   const dockClass = imm
     ? cn("absolute inset-x-0 bottom-0 z-10 flex flex-col gap-[var(--space-2)] bg-[image:var(--scrim-chrome)] pt-[var(--space-6)] pr-[max(var(--space-3),env(safe-area-inset-right))] pb-[max(var(--space-2),env(safe-area-inset-bottom))] pl-[max(var(--space-3),env(safe-area-inset-left))]", FADE, fade)
-    : "flex flex-col gap-[var(--space-3)] max-[721px]:gap-0 max-[721px]:px-[var(--space-3)] max-[721px]:pb-[var(--space-1)]";
-  const dockProps = imm ? { "data-testid": "video-immersive-dock", inert: !chromeVisible } : {};
+    : "contents";
+  const transportClass = imm ? "flex flex-col gap-[var(--space-2)]" : "flex flex-col gap-[var(--space-3)] max-[721px]:gap-0 max-[721px]:px-[var(--space-3)] max-[721px]:pb-[var(--space-1)]";
+  const dockProps = imm ? { "data-testid": "video-immersive-dock", inert: !chromeVisible } : { "data-testid": "video-transport-dock" };
   const dockRef = useRef<HTMLDivElement | null>(null);
   // The composer floats just above the controls: publish their height on the split row (the pane is the player's sibling, not its child).
   useLayoutEffect(() => {
@@ -286,7 +289,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(write);
     if (observer && dockRef.current) observer.observe(dockRef.current);
     return () => { observer?.disconnect(); target.style.removeProperty("--immersive-controls-h"); };
-  }, [imm, section, transportReplacement != null]); // eslint-disable-line react-hooks/exhaustive-deps -- the dock is the same node either way; the replacement changes its height
+  }, [imm, section, transportReplacement != null]); // eslint-disable-line react-hooks/exhaustive-deps -- the dock is one node; the replacement changes its height
   const markerSelect = imm && immersive?.onMarkerTap ? immersive.onMarkerTap : onMarkerSelect;
   const noticeClass = imm ? "absolute inset-x-[var(--space-3)] top-[var(--space-7)] z-20" : "";
 
@@ -332,8 +335,9 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
 
     {/* The replacement sits ABOVE the transport, which stays mounted and hidden under it (#879 PR 2): unmounted, the slider came back as a new node, measured its thumb inside whatever
         box hid it next (a phone's Done lands in compose mode, where the transport is hidden) and drew no thumb until the frame moved. */}
-    {transportReplacement != null && <div ref={(element) => { if (element) dockRef.current = element; }} {...(imm ? dockProps : {})} className={imm ? dockClass : "flex flex-col justify-center"} style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div>}
-    <div ref={(element) => { transportRef.current = element; if (transportReplacement == null) dockRef.current = element; }} {...(imm && transportReplacement == null ? dockProps : {})} hidden={hidesTransport || transportReplacement != null} className={cn(dockClass, "[&[hidden]]:hidden")}>
+    <div ref={dockRef} {...dockProps} className={dockClass}>
+    {transportReplacement != null && <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div>}
+    <div ref={transportRef} hidden={hidesTransport || transportReplacement != null} className={cn(transportClass, "[&[hidden]]:hidden")}>
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track.
         A phone draws it as P1's `.scrub` band (#879 PR 3a): `--space-6` tall, the marker lane laid inside it along the top, the track through its middle, a 44px touch band from the slider's `band` size. */}
     <div data-testid="video-scrubber" className={handheld ? "relative h-[var(--space-6)]" : undefined} onPointerDownCapture={imm ? () => { setScrubbing(true); } : undefined}>
@@ -401,6 +405,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     </div>
     {/* On a phone the overlay selector gets its own row, so it never sits on the timecode. */}
     {social && handheld && <div data-testid="video-social-row" className="flex flex-wrap items-center gap-[var(--space-2)]"><OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><SocialPreviewControls social={social} imageFailed={socialImage.failed} /></OverlayContainerContext.Provider></div>}
+    </div>
     </div>
   </section>;
 }

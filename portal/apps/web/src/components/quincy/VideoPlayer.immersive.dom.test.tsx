@@ -225,6 +225,37 @@ describe("VideoPlayer full screen controls (#880, D13)", () => {
   });
 });
 
+describe("VideoPlayer Full screen dock (#880 S2)", () => {
+  const slider = () => host.querySelector<HTMLElement>('[data-testid="video-scrubber"] [role="slider"]');
+  it("is one wrapper around the replacement and the transport: the pen down neither swaps the dock nor remounts the slider", async () => {
+    await mount({ immersive: hostOf() });
+    const dock = byTestId("video-immersive-dock")!; const thumb = slider()!;
+    await rerender({ immersive: hostOf(), transportReplacement: <div data-testid="pen-tools">Pen</div> });
+    expect(byTestId("video-immersive-dock")).toBe(dock);
+    expect(dock.contains(byTestId("pen-tools"))).toBe(true);
+    expect(slider()).toBe(thumb);
+    await rerender({ immersive: hostOf() });
+    expect(byTestId("video-immersive-dock")).toBe(dock);
+    expect(slider()).toBe(thumb);
+  });
+  it("publishes --immersive-controls-h from the wrapper, with the replacement inside it", async () => {
+    const split = document.createElement("div"); split.setAttribute("data-testid", "video-review-split"); document.body.appendChild(split);
+    host = document.createElement("div"); split.appendChild(host); root = createRoot(host);
+    const heights = new WeakMap<Element, number>();
+    const spy = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) { return heights.get(this) ?? 0; });
+    await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" immersive={hostOf()} transportReplacement={<div>Pen</div>} />); });
+    heights.set(byTestId("video-immersive-dock")!, 132);
+    await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" immersive={hostOf()} />); });
+    expect(split.style.getPropertyValue("--immersive-controls-h")).toBe("132px");
+    spy.mockRestore();
+  });
+  it("outside Full screen the wrapper lays out as nothing (display: contents) and has no dock id", async () => {
+    await mount({ immersive: hostOf({ on: false }) });
+    expect(byTestId("video-immersive-dock")).toBeNull();
+    expect(byTestId("video-transport-dock")!.className).toContain("contents");
+  });
+});
+
 describe("VideoPlayer F key (#880)", () => {
   it("F toggles Full screen through the player's keys, and is not the player's without a host", async () => {
     const onToggle = vi.fn(); const control = createRef<VideoPlayerControl>();
