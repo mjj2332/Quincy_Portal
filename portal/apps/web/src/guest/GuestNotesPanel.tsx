@@ -51,7 +51,8 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
     <div data-sheet-part="body" className="flex min-h-0 flex-1 flex-col">
       <ScrollArea className="min-h-0 flex-1" data-testid="guest-notes-list" viewportProps={{ tabIndex: -1 }}>
         {/* The end gutter holds the overlay scrollbar (`w-2.5`) clear of the cards' right border (fix round 4); the start stays flush. */}
-        <div data-testid="guest-notes-list-body" className="grid gap-[var(--space-3)] pe-[var(--space-3)] in-data-[mode=browse]:py-[var(--space-3)]">
+        {/* The phone head opens the list on the tab row's hairline (P1 `NotesFilter`, #879 PR 3b F4): the list keeps its bottom padding and drops the top, which the head's own carries. */}
+        <div data-testid="guest-notes-list-body" className={`grid gap-[var(--space-3)] pe-[var(--space-3)] ${header ? "in-data-[mode=browse]:pt-0 in-data-[mode=browse]:pb-[var(--space-3)]" : "in-data-[mode=browse]:py-[var(--space-3)]"}`}>
           {header}
           {state ?? (threads && items(threads))}
           {footer}

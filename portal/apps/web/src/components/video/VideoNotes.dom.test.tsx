@@ -1719,6 +1719,15 @@ describe("the phone notes head (#879 PR 3b, P1)", () => {
     }
   });
 
+  it("the phone head opens the list with no list padding above it: P1's NotesFilter sits on the tab row's hairline (#879 PR 3b, F4)", async () => {
+    seed();
+    await openFilm();
+    const body = tid("video-notes-list-body")!;
+    expect(body.firstElementChild).toBe(tid("notes-filter-head"));
+    expect(body.className).toContain("in-data-[mode=browse]:pt-0");
+    expect(body.className).toContain("in-data-[mode=browse]:pb-[var(--space-3)]");
+  });
+
   it("opening search takes the sheet to full and closing it restores the stop it was at", async () => {
     await openFilm();
     expect(tid("video-review-pane")!.getAttribute("data-stop")).toBe("half");

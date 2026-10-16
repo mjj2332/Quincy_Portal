@@ -224,6 +224,15 @@ describe("the guest phone notes head (#879 PR 3b, P2)", () => {
     served = [mine, studio, done];
   });
 
+  it("the head opens the list with no list padding above it: P1's NotesFilter sits on the tab row's hairline (#879 PR 3b, F4)", async () => {
+    await openVideo();
+    await vi.waitFor(() => { expect(byId("notes-filter-head")).not.toBeNull(); });
+    const body = byId("notes-filter-head")!.parentElement!;
+    expect(body.firstElementChild).toBe(byId("notes-filter-head"));
+    expect(body.className).toContain("in-data-[mode=browse]:pt-0");
+    expect(body.className).toContain("in-data-[mode=browse]:pb-[var(--space-3)]");
+  });
+
   it("opens on the open notes, with the head at the top of the list in place of the delivery row's chips", async () => {
     await openVideo();
     await vi.waitFor(() => { expect(byId("notes-filter-head")).not.toBeNull(); });
