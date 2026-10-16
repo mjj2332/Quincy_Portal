@@ -158,13 +158,17 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   useDeviceOrientation((landscape) => { setImmersive((current) => rotate(current, { landscape, phoneDevice: readPhoneDevice() })); });
   const full = useImmersive({ rootRef, state: immersive, setState: setImmersive });
   const imm = immersive !== null;
+  // The phone's handling (#880 S1): a phone width, or a phone device in Full screen. A sideways iPhone is 844pt wide, so `phone` is off, yet its keyboard still pans the
+  // page: the root follows the visual viewport and the canvas is ink there too. In Full screen the keyboard going away blurs the composer's field and leaves the composer shown.
+  const [phoneDevice] = useState(readPhoneDevice);
+  const handheld = phone || (imm && phoneDevice);
   // The software keyboard went away without blurring the field (some iOS paths): blur it, so compose mode ends the ordinary way (#879 fix).
   // The guest column follows the visual viewport for as long as the phone screen is up (#879 PR 2, the staff viewer's r5 mechanism): the hook alone writes its height, transform
   // and transition, so the strip ends on the keyboard's top edge and the notices above the screen stay inside the box.
   // Searching too (#879 PR 3b, F1): the search field raises the keyboard without composing; its keyboard-gone fallback blurs the field and leaves search open.
-  useVisualViewport(phone && (sheetControl.composing || sheetControl.searching || (imm && composeShown)), () => { if (sheetControl.composing) { if (!sheetControl.held) blurComposerField(); } else blurNotesSearchField(); }, viewportRoot, phone);
+  useVisualViewport(handheld && (sheetControl.composing || sheetControl.searching || (imm && composeShown)), () => { if (sheetControl.composing || (imm && composeShown)) { if (!sheetControl.held) blurComposerField(); } else blurNotesSearchField(); }, viewportRoot, handheld);
   // Meanwhile the document's canvas is ink: iOS shows it under the page while it scrolls back as the keyboard drops (#879 fix r11).
-  useInkCanvas(phone);
+  useInkCanvas(handheld);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const chipRef = useRef<HTMLButtonElement | null>(null);
   const [summaries, setSummaries] = useState<{ videoId: string; rows: Parameters<typeof withSummaries>[1] } | null>(null);

@@ -206,6 +206,45 @@ describe("Full screen and rotation on a phone (#880, D14)", () => {
   });
 });
 
+describe("the keyboard in Full screen on a phone device (#880 S1)", () => {
+  class FakeViewport extends EventTarget { height = window.innerHeight; offsetTop = 0; scale = 1; }
+  let fake: FakeViewport; let original: PropertyDescriptor | undefined;
+  beforeEach(() => { fake = new FakeViewport(); original = Object.getOwnPropertyDescriptor(window, "visualViewport"); Object.defineProperty(window, "visualViewport", { configurable: true, value: fake }); });
+  afterEach(() => { if (original) Object.defineProperty(window, "visualViewport", original); else delete (window as unknown as Record<string, unknown>).visualViewport; });
+
+  it("a sideways iPhone (844 wide, so not the phone layout) is still tracked: the dialog follows the visual viewport and the canvas is ink", async () => {
+    viewport = mockViewport({ width: 844, height: 390, coarse: true });
+    await mount();
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(true);
+    const popup = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(document.documentElement.hasAttribute("data-ink-canvas")).toBe(true);
+    await act(async () => { fake.height = window.innerHeight - 200; fake.offsetTop = 12; fake.dispatchEvent(new Event("resize")); });
+    expect(popup.style.height).toBe(`${window.innerHeight - 200}px`);
+    expect(popup.style.transform).toBe("translateY(12px)");
+  });
+
+  it("the keyboard going away without a blur blurs the Full screen composer's field, and the composer stays shown", async () => {
+    viewport = mockViewport({ width: 844, height: 390, coarse: true });
+    await mount();
+    await click(tid("video-immersive-add-note")!);
+    const field = document.getElementById("video-note-body")!;
+    await act(async () => { field.focus(); });
+    await act(async () => { fake.height = window.innerHeight - 200; fake.dispatchEvent(new Event("resize")); });
+    await act(async () => { fake.height = window.innerHeight; fake.dispatchEvent(new Event("resize")); });
+    await flush(3);
+    expect(document.activeElement).not.toBe(field);
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+  });
+
+  it("leaving Full screen on the phone device stops tracking at 844 and gives the canvas back", async () => {
+    viewport = mockViewport({ width: 844, height: 390, coarse: true });
+    await mount();
+    await click(tid("video-exit-fullscreen")!);
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(false);
+    expect(document.documentElement.hasAttribute("data-ink-canvas")).toBe(false);
+  });
+});
+
 describe("the system player row (#880, D15)", () => {
   it("the phone action sheet labels the row by device and hands the film to webkitEnterFullscreen inside the press", async () => {
     viewport = mockViewport({ width: 390, height: 844, coarse: true });

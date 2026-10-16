@@ -197,6 +197,42 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
   });
 });
 
+describe("the guest page's Full screen and the keyboard on a phone device (#880 S1)", () => {
+  class FakeViewport extends EventTarget { height = window.innerHeight; offsetTop = 0; scale = 1; }
+  let fake: FakeViewport; let original: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    viewport.restore(); viewport = mockViewport({ width: 844, height: 390, coarse: true }); notes = { [asset(10)]: [note(1)] };
+    fake = new FakeViewport(); original = Object.getOwnPropertyDescriptor(window, "visualViewport"); Object.defineProperty(window, "visualViewport", { configurable: true, value: fake });
+  });
+  afterEach(() => { if (original) Object.defineProperty(window, "visualViewport", original); else delete (window as unknown as Record<string, unknown>).visualViewport; });
+
+  it("sideways (844 wide, not the phone layout) the column follows the visual viewport and carries its transform, so the layer's fixed inset-0 is the column's box; the canvas is ink", async () => {
+    await open();
+    expect(immersiveOn()).toBe(true);
+    const column = byId("guest-column")!;
+    expect(column.contains(screenRoot())).toBe(true);
+    expect(screenRoot().className).toContain("fixed");
+    expect(screenRoot().className).toContain("inset-0");
+    expect(document.documentElement.hasAttribute("data-ink-canvas")).toBe(true);
+    await act(async () => { fake.height = window.innerHeight - 200; fake.offsetTop = 12; fake.dispatchEvent(new Event("resize")); });
+    // A transform on the column makes it the containing block of its fixed descendants: the layer is the box above the keyboard, not the layout viewport.
+    expect(column.style.transform).toBe("translateY(12px)");
+    expect(column.style.height).toBe(`${window.innerHeight - 200}px`);
+  });
+
+  it("the keyboard going away without a blur blurs the Full screen composer's field, and the composer stays shown", async () => {
+    await open();
+    await click(byId("video-immersive-add-note"));
+    const editor = byId("video-review-pane")!.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => { editor.focus(); });
+    await act(async () => { fake.height = window.innerHeight - 200; fake.dispatchEvent(new Event("resize")); });
+    await act(async () => { fake.height = window.innerHeight; fake.dispatchEvent(new Event("resize")); });
+    await flush(3);
+    expect(document.activeElement).not.toBe(editor);
+    expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+  });
+});
+
 describe("the guest page's Full screen: unverified Add note (#880)", () => {
   it("asks to verify first, and opens no composer until the guest has", async () => {
     session = ANON; notes = {}; videos = [videoOf(1)];

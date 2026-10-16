@@ -185,6 +185,10 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const popupRef = useRef<HTMLDivElement | null>(null);
   const full = useImmersive({ rootRef: popupRef, state: immersive, setState: setImmersive });
   const imm = immersive !== null && mode === "single";
+  // The phone's handling (#880 S1): a phone width, or a phone device in Full screen. A sideways iPhone is 844pt wide, so `phone` is off, yet its keyboard still pans the
+  // page: the root follows the visual viewport and the canvas is ink there too. In Full screen the keyboard going away blurs the composer's field and leaves the composer shown.
+  const [phoneDevice] = useState(readPhoneDevice);
+  const handheld = phone || (imm && phoneDevice);
   const immRef = useRef(imm);
   immRef.current = imm;
   const composeRef = useRef(composeOpen);
@@ -457,9 +461,9 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   // The dialog follows the visual viewport for as long as the phone viewer is open, not only in compose mode (#879 fix r5): iOS scrolls the document by the keyboard height
   // on focus and the hook puts the dialog back in the same task, with no transition (fix r8). The ink backdrop (fix r7) is the floor under any frame that still shows through.
   // Searching too (#879 PR 3b, F1): the search field raises the keyboard without composing; its keyboard-gone fallback blurs the field and leaves search open.
-  useVisualViewport(phone && (sheetControl.composing || sheetControl.searching || (imm && composeOpen)), () => { if (sheetControl.composing) { if (!sheetControl.held) blurComposerField(); } else blurNotesSearchField(); }, popupElement, phone);
+  useVisualViewport(handheld && (sheetControl.composing || sheetControl.searching || (imm && composeOpen)), () => { if (sheetControl.composing || (imm && composeOpen)) { if (!sheetControl.held) blurComposerField(); } else blurNotesSearchField(); }, popupElement, handheld);
   // While the phone viewer is open the document's canvas is ink (#879 fix r11): iOS shows it below the viewer while it scrolls the document back as the keyboard drops.
-  useInkCanvas(phone);
+  useInkCanvas(handheld);
   const chipRef = useRef<HTMLButtonElement | null>(null);
   const summaries = useVideoVersionSummariesQuery(notes?.projectId ?? reviewStatus?.projectId ?? trash?.projectId ?? download?.projectId ?? "", video.id, phone && versionsOpen && (notes ?? reviewStatus ?? trash ?? download) !== undefined, notes?.role ?? reviewStatus?.role);
   const desktopHeader = <header className="@container flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-1)] text-card-foreground max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">
