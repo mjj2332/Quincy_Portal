@@ -385,8 +385,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       ["Start timecode", targetStart],
       ["Audio", target.hasAudio ? "Yes" : "None"],
     ];
-    if (layout === "line") return <ItemGroup className={ACTION_ROWS}>
-      {details.map(([label, value]) => <Item key={label} size="sm" className={`${ACTION_ROW_BOX} flex-nowrap`}>
+    if (layout === "line") return <ItemGroup data-testid="video-details-rows" className={ACTION_ROWS}>
+      {details.map(([label, value]) => <Item key={label} data-testid="video-detail-row" size="sm" className={`${ACTION_ROW_BOX} flex-nowrap`}>
         <ItemContent className="flex-none"><ItemTitle data-testid="video-detail-label" className={`${ACTION_ROW_TITLE} whitespace-nowrap text-foreground-secondary`}>{label}</ItemTitle></ItemContent>
         <ItemActions className="ms-auto min-w-0"><span data-testid="video-detail-value" className={`${ACTION_ROW_TITLE} block truncate text-foreground`}>{value}</span></ItemActions>
       </Item>)}

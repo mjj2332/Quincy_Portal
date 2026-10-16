@@ -104,7 +104,9 @@ describe("the phone header", () => {
     await click(trigger()!);
     const actions = tid("review-action-rows")!;
     expect(actions.className).toContain("has-data-[size=sm]:gap-0");
-    for (const row of actions.querySelectorAll<HTMLElement>('[data-slot="item"]')) {
+    const rows = [...actions.querySelectorAll<HTMLElement>(":scope > button, :scope > a")];
+    expect(rows.length).toBe(4);
+    for (const row of rows) {
       expect(row.className).toContain("py-[var(--space-3)]");
       expect(row.className, row.textContent ?? "").not.toMatch(/(^|\s)(py-2\.5|rounded-lg|px-3)(\s|$)/);
     }
@@ -560,9 +562,10 @@ describe("the P9 rows (#879 PR 3b)", () => {
     expect(title.className).toContain("[font:var(--type-label)]");
     expect(title.className).toContain("text-foreground-secondary");
     expect(title.className).not.toContain("--type-h3");
-    const group = sheet.querySelector<HTMLElement>('[role="list"]')!;
+    const group = tid("video-details-rows")!;
+    expect(sheet.contains(group)).toBe(true);
     expect(group.className).toContain("has-data-[size=sm]:gap-0");
-    const rows = [...group.querySelectorAll<HTMLElement>('[data-slot="item"]')];
+    const rows = [...group.querySelectorAll<HTMLElement>('[data-testid="video-detail-row"]')];
     expect(rows.length).toBe(10);
     for (const row of rows) {
       expect(row.getAttribute("data-size")).toBe("sm");
