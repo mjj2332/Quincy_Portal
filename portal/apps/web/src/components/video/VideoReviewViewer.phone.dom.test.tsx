@@ -99,6 +99,24 @@ describe("the phone header", () => {
     expect(shown).toHaveBeenCalledWith(1);
   });
 
+  it("P8/P9 rows are 50pt with no gap between them: the group zeroes ItemGroup's sm gap, and each row's padding replaces the sm size's rather than racing it (#879 PR 3b, F3)", async () => {
+    await mount({ shown: () => {}, download: true, reviewLinks: true, social: true });
+    await click(trigger()!);
+    const actions = tid("review-action-rows")!;
+    expect(actions.className).toContain("has-data-[size=sm]:gap-0");
+    for (const row of actions.querySelectorAll<HTMLElement>('[data-slot="item"]')) {
+      expect(row.className).toContain("py-[var(--space-3)]");
+      expect(row.className, row.textContent ?? "").not.toMatch(/(^|\s)(py-2\.5|rounded-lg|px-3)(\s|$)/);
+    }
+  });
+
+  it("the P8 Versions group zeroes ItemGroup's sm gap too (#879 PR 3b, F3)", async () => {
+    await mount({ shown: () => {} });
+    await click(tid("video-version-chip")!);
+    const versions = tid("video-versions-sheet")!.querySelector<HTMLElement>('[role="group"]')!;
+    expect(versions.className).toContain("has-data-[size=sm]:gap-0");
+  });
+
   it("Approve (internal) shows at in_review for an Editor and is absent without a Review status", async () => {
     await mount({ status: true });
     const approve = tid("video-phone-approve")!;

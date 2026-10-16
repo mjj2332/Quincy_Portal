@@ -44,7 +44,7 @@ export function VideoReviewHeaderMenu({ container, version, social, copyHref, do
       {downloadHref && <ActionRow testId="video-download" icon={<DownloadIcon aria-hidden="true" />} href={downloadHref} download onSelect={() => { close(); }}>{`Download v${version}`}</ActionRow>}
       {markerExport && exportOn && <Menu
         triggerLabel="Marker export…" label="Export markers" triggerTestId="video-marker-export-row" side="top" align="start" panelClassName={EXPORT_PANEL_WIDTH}
-        triggerRender={<Item size="sm" render={<Button type="button" variant="ghost" className={`${ACTION_ROW} h-auto justify-start font-normal`} />} />}
+        triggerRender={<Item size="sm" className={ACTION_ROW} render={<Button type="button" variant="ghost" className="h-auto justify-start font-normal" />} />}
         trigger={<><ItemMedia variant="icon"><FileDown aria-hidden="true" /></ItemMedia><ItemContent><ItemTitle className={ACTION_ROW_TITLE}>Marker export…</ItemTitle></ItemContent></>}
       >
         <MarkerExportMenuItems exp={{ ...markerExport, start: (format, options) => { close(); return markerExport.start(format, options); } }} />

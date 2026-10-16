@@ -33,7 +33,7 @@ export function ReviewActionSheet({ container, triggerTestId = "video-header-men
     <Sheet open={open} onOpenChange={changeOpen}>
       <SheetContent ref={popupRef} side="bottom" container={container} showCloseButton={false} overlayProps={{ className: SHEET_SCRIM, forceRender: true, "data-testid": "review-sheet-overlay" }} initialFocus={() => popupRef.current ?? true} finalFocus={() => (handOff.current ? false : triggerRef.current)} data-testid="review-action-sheet" className={`max-h-[80dvh] ${PHONE_SHEET_CHROME}`}>
         <SheetTitle data-testid="review-action-title" className="sr-only">{title}</SheetTitle>
-        <ItemGroup role="group" aria-label={title} data-testid="review-action-rows" className="min-h-0 gap-0 overflow-y-auto">{children(close)}</ItemGroup>
+        <ItemGroup role="group" aria-label={title} data-testid="review-action-rows" className={ACTION_ROWS}>{children(close)}</ItemGroup>
         <SheetCloseButton label="Close actions" data-testid="review-action-close" visuallyHidden />
       </SheetContent>
     </Sheet>
@@ -53,6 +53,12 @@ export const PHONE_SHEET_CHROME = "gap-0 rounded-t-[var(--radius-lg)] px-0 pt-[v
 /** P9's `.arow`: 50pt (a 24pt body line, `--space-3` above and below, and the item's 1px border), 20pt gutters (`--space-4` + `--space-1`), square, edge to edge. */
 export const ACTION_ROW = "min-h-11 w-full cursor-pointer gap-[var(--space-3)] rounded-none px-[calc(var(--space-4)+var(--space-1))] py-[var(--space-3)] text-start data-[disabled]:cursor-not-allowed data-[disabled]:opacity-60 aria-disabled:cursor-not-allowed aria-disabled:opacity-60";
 
+/**
+ * The rows' group: rows touch, as P8/P9's do. ItemGroup spaces `sm` items with `has-data-[size=sm]:gap-2.5`, which a plain `gap-0` cannot override (a different variant, so
+ * tailwind-merge keeps both and the `has-` rule wins): that 10px made every row read 60pt in the Simulator (#879 PR 3b, F3).
+ */
+export const ACTION_ROWS = "min-h-0 gap-0 has-data-[size=sm]:gap-0 overflow-y-auto";
+
 /** The row's label in body type (P9: 16pt, regular). */
 export const ACTION_ROW_TITLE = "text-[length:var(--text-base)] leading-[var(--leading-normal)] font-normal";
 
@@ -70,11 +76,11 @@ export function ActionRow({ icon, children, onSelect, href, download, danger = f
   testId?: string | undefined;
 }) {
   // The visible label is the accessible name (#879 PR 3b): no row speaks a different one.
-  const common = { "data-testid": testId, className: cn(ACTION_ROW, danger && "text-destructive-wash-foreground") };
+  // The geometry goes on the Item, whose `cn` merges it over the `sm` size (`px-3 py-2.5`, `rounded-lg`); on the rendered element it would only be concatenated beside them.
   const render = href !== undefined
-    ? <a {...common} href={href} {...(download ? { download: true } : {})} onClick={onSelect} />
-    : <button {...common} type="button" disabled={disabled} {...(pressed !== undefined ? { "aria-pressed": pressed } : {})} onClick={onSelect} />;
-  return <Item size="sm" render={render}>
+    ? <a data-testid={testId} href={href} {...(download ? { download: true } : {})} onClick={onSelect} />
+    : <button data-testid={testId} type="button" disabled={disabled} {...(pressed !== undefined ? { "aria-pressed": pressed } : {})} onClick={onSelect} />;
+  return <Item size="sm" className={cn(ACTION_ROW, danger && "text-destructive-wash-foreground")} render={render}>
     {icon && <ItemMedia variant="icon">{icon}</ItemMedia>}
     <ItemContent><ItemTitle data-testid="review-action-row-label" className={ACTION_ROW_TITLE}>{children}</ItemTitle></ItemContent>
   </Item>;
