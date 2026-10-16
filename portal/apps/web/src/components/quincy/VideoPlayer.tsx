@@ -16,7 +16,7 @@ import { VideoStage } from "./VideoStage";
 import { SocialPreviewControls, useOverlayImage, type SocialPreviewMode } from "./SocialPreviewControls";
 import { useMediaQuery } from "../../lib/use-media-query";
 import { CHROME_HIDE_MS, chromeHeld, readPhoneDevice } from "../../lib/immersive";
-import { nativePlayerSupported, openNativePlayer } from "../../lib/video-native-player";
+import { liftRemotePlayback, nativePlayerSupported, openNativePlayer } from "../../lib/video-native-player";
 import { Notice } from "./Notice";
 import { PHONE_QUERY } from "../../lib/review-pane-geometry";
 import { rangeStep, type NoteMarks } from "../../lib/video-note-marks";
@@ -230,7 +230,21 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   }, [scrubbing]);
   const keyDown = useCallback((event: KeyboardEvent | ReactKeyboardEvent): boolean => { wakeRef.current(); return handleKeyDown(event); }, [handleKeyDown]);
   const [nativeFailed, setNativeFailed] = useState(false);
-  const openSystemPlayer = useCallback(() => { void openNativePlayer(video).then((started) => { setNativeFailed(!started); }); }, [video]);
+  // AirPlay during the hand-off (owner decision 3, #880 S7): the restriction is lifted inside the press, before the native player is entered, and restored when that player
+  // closes (webkitendfullscreen, or the element full screen ending), when the device refuses, and when the film goes (a Version change re-keys the player, or it unmounts).
+  const restoreRemote = useRef<(() => void) | null>(null);
+  const restoreRemotePlayback = useCallback(() => { restoreRemote.current?.(); restoreRemote.current = null; }, []);
+  const openSystemPlayer = useCallback(() => {
+    if (video) { restoreRemotePlayback(); restoreRemote.current = liftRemotePlayback(video); }
+    void openNativePlayer(video).then((started) => { setNativeFailed(!started); if (!started) restoreRemotePlayback(); });
+  }, [video, restoreRemotePlayback]);
+  useEffect(() => {
+    if (!video) return undefined;
+    const onFullscreenChange = () => { if (document.fullscreenElement !== video) restoreRemotePlayback(); };
+    video.addEventListener("webkitendfullscreen", restoreRemotePlayback);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => { video.removeEventListener("webkitendfullscreen", restoreRemotePlayback); document.removeEventListener("fullscreenchange", onFullscreenChange); restoreRemotePlayback(); };
+  }, [video, restoreRemotePlayback]);
   const nativeSupported = useCallback(() => nativePlayerSupported(video), [video]);
   useImperativeHandle(controlRef, () => ({ handleKeyDown: keyDown, currentFrame, openSystemPlayer, nativePlayerSupported: nativeSupported }), [keyDown, currentFrame, openSystemPlayer, nativeSupported]);
   const chromeVisible = !imm || chromeShown;

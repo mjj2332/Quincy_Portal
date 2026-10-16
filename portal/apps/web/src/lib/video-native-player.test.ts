@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { nativePlayerLabel, nativePlayerSupported, openNativePlayer } from "./video-native-player";
+import { liftRemotePlayback, nativePlayerLabel, nativePlayerSupported, openNativePlayer } from "./video-native-player";
 
 const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
 const IPAD = "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
@@ -43,3 +43,30 @@ describe("native player hand-off (#880, D15)", () => {
     expect(nativePlayerSupported(videoWith({ webkitEnterFullscreen: () => undefined }))).toBe(true);
   });
 });
+
+/** A video element's attributes, enough for the lift (this suite runs without a DOM). */
+function attributesVideo(initial: Record<string, string>) {
+  const attrs = new Map(Object.entries(initial));
+  return { attrs, video: videoWith({ hasAttribute: (name: string) => attrs.has(name), getAttribute: (name: string) => attrs.get(name) ?? null, setAttribute: (name: string, value: string) => { attrs.set(name, value); }, removeAttribute: (name: string) => { attrs.delete(name); } }) };
+}
+
+describe("AirPlay through the system player (#880 S7, owner decision 3)", () => {
+  it("lifts only the remote-playback restriction, and the restore puts back exactly what was there, once", () => {
+    const { attrs, video } = attributesVideo({ disableremoteplayback: "", disablepictureinpicture: "", controlslist: "nodownload noremoteplayback" });
+    const restore = liftRemotePlayback(video);
+    expect(attrs.has("disableremoteplayback")).toBe(false);
+    expect(attrs.get("controlslist")).toBe("nodownload");
+    expect(attrs.has("disablepictureinpicture")).toBe(true);
+    restore();
+    expect(Object.fromEntries(attrs)).toEqual({ disableremoteplayback: "", disablepictureinpicture: "", controlslist: "nodownload noremoteplayback" });
+    attrs.delete("disableremoteplayback");
+    restore();
+    expect(attrs.has("disableremoteplayback")).toBe(false);
+  });
+  it("adds nothing that was not there", () => {
+    const { attrs, video } = attributesVideo({});
+    liftRemotePlayback(video)();
+    expect(attrs.size).toBe(0);
+  });
+});
+

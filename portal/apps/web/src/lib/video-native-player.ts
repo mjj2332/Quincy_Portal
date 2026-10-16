@@ -1,7 +1,8 @@
 /**
  * Hand the film to the device's own player (#880, D15): "Open in iPhone player" / "Open in system player". iOS Safari enters its native player with `webkitEnterFullscreen()` on the
  * video; elsewhere the standard `requestFullscreen()` on the video element is the nearest thing. Both must run synchronously inside the press (a user gesture): nothing awaits before them.
- * Nothing of Quincy shows there, which is expected. The player's own AirPlay and picture-in-picture controls come with it; this module adds no remote-playback handling.
+ * Nothing of Quincy shows there, which is expected. AirPlay is allowed there (owner decision 3, #880 S7): `liftRemotePlayback` lifts the film's remote-playback restriction for the
+ * hand-off; picture-in-picture and download stay off.
  */
 type WebkitVideo = HTMLVideoElement & { webkitEnterFullscreen?: () => void; webkitSupportsFullscreen?: boolean };
 
@@ -15,6 +16,25 @@ export function nativePlayerSupported(video: HTMLVideoElement | null): boolean {
   if (!video) return false;
   const element = video as WebkitVideo;
   return typeof element.webkitEnterFullscreen === "function" || typeof video.requestFullscreen === "function";
+}
+
+/**
+ * Lifts the film's remote-playback restriction for the hand-off to the system player (owner decision 3, #880 S7): the `disableremoteplayback` attribute and the `noremoteplayback`
+ * token of `controlslist`, nothing else (`nodownload` and `disablepictureinpicture` stay). Runs synchronously, before the native player is entered inside the press. Returns the
+ * restore, which puts back exactly what was there and runs once however often it is called (the player's exit, a refusal, a Version change, an unmount).
+ */
+export function liftRemotePlayback(video: HTMLVideoElement): () => void {
+  const disabled = video.hasAttribute("disableremoteplayback");
+  const list = video.getAttribute("controlslist");
+  video.removeAttribute("disableremoteplayback");
+  if (list !== null) video.setAttribute("controlslist", list.split(/\s+/).filter((token) => token !== "" && token !== "noremoteplayback").join(" "));
+  let restored = false;
+  return () => {
+    if (restored) return;
+    restored = true;
+    if (disabled) video.setAttribute("disableremoteplayback", "");
+    if (list !== null) video.setAttribute("controlslist", list);
+  };
 }
 
 /**

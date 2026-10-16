@@ -336,3 +336,61 @@ describe("VideoPlayer native player (#880, D15)", () => {
     expect(host.querySelector('[role="alert"]')!.textContent).toContain("system player");
   });
 });
+
+describe("VideoPlayer AirPlay through the system player (#880 S7, owner decision 3)", () => {
+  const restricted = (element: HTMLVideoElement) => element.hasAttribute("disableremoteplayback") && element.getAttribute("controlslist") === "nodownload noremoteplayback";
+  const lifted = (element: HTMLVideoElement) => !element.hasAttribute("disableremoteplayback") && element.getAttribute("controlslist") === "nodownload";
+  let seen: { lifted: boolean; pip: boolean } | null = null;
+  const enterSpy = () => vi.fn(function (this: HTMLVideoElement) { seen = { lifted: lifted(video()), pip: video().hasAttribute("disablepictureinpicture") }; });
+  beforeEach(() => { seen = null; });
+
+  it("is restricted at rest, and lifted (remote playback only: no download and no PiP stay) before the hand-off, inside the press", async () => {
+    const control = createRef<VideoPlayerControl>();
+    await mount({ controlRef: control });
+    expect(restricted(video())).toBe(true);
+    Object.assign(video(), { webkitEnterFullscreen: enterSpy() });
+    await act(async () => { control.current!.openSystemPlayer!(); });
+    expect(seen).toEqual({ lifted: true, pip: true });
+    expect(lifted(video())).toBe(true);
+  });
+  it("is restored when the iPhone player closes (webkitendfullscreen)", async () => {
+    const control = createRef<VideoPlayerControl>();
+    await mount({ controlRef: control });
+    Object.assign(video(), { webkitEnterFullscreen: enterSpy() });
+    await act(async () => { control.current!.openSystemPlayer!(); });
+    await act(async () => { video().dispatchEvent(new Event("webkitendfullscreen")); });
+    expect(restricted(video())).toBe(true);
+  });
+  it("is restored when the element full screen ends (fullscreenchange away from the film), not when it starts", async () => {
+    const control = createRef<VideoPlayerControl>();
+    await mount({ controlRef: control });
+    let element: Element | null = null;
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => element });
+    try {
+      Object.assign(video(), { requestFullscreen: () => { element = video(); document.dispatchEvent(new Event("fullscreenchange")); return Promise.resolve(); } });
+      await act(async () => { control.current!.openSystemPlayer!(); });
+      expect(lifted(video())).toBe(true);
+      await act(async () => { element = null; document.dispatchEvent(new Event("fullscreenchange")); });
+      expect(restricted(video())).toBe(true);
+    } finally { delete (document as unknown as Record<string, unknown>).fullscreenElement; }
+  });
+  it("is restored when the device refuses", async () => {
+    const control = createRef<VideoPlayerControl>();
+    await mount({ controlRef: control });
+    Object.assign(video(), { webkitEnterFullscreen: () => { throw new Error("no metadata"); } });
+    await act(async () => { control.current!.openSystemPlayer!(); });
+    expect(host.querySelector('[data-testid="video-native-failed"]')).not.toBeNull();
+    expect(restricted(video())).toBe(true);
+  });
+  it("is restored when the player goes (unmount, or a Version change: the screens key the player by Version)", async () => {
+    const control = createRef<VideoPlayerControl>();
+    await mount({ controlRef: control });
+    const film = video();
+    Object.assign(film, { webkitEnterFullscreen: enterSpy() });
+    await act(async () => { control.current!.openSystemPlayer!(); });
+    expect(lifted(film)).toBe(true);
+    await act(async () => { root!.render(<VideoPlayer key="v3" version={{ ...version, streamUrl: "/media/video/66666666-6666-4666-8666-666666666666" }} title="Main walkthrough" />); });
+    expect(restricted(film)).toBe(true);
+  });
+});
+
