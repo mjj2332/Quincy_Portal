@@ -33,7 +33,7 @@ import type { SocialPreviewMode } from "../quincy/SocialPreviewControls";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../reui/tabs";
 import { Badge } from "../reui/badge";
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
-import { useImmersive } from "../quincy/use-immersive";
+import { focusInImmersive, useImmersive } from "../quincy/use-immersive";
 import { useCloseOnPlay } from "../quincy/use-close-on-play";
 import type { VideoFrameClock } from "../../lib/video-frame-clock";
 import { VideoImmersiveNoteCard } from "./VideoImmersiveNoteCard";
@@ -219,8 +219,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   useEffect(() => { if (!imm && phone) syncComposing(isComposerField(document.activeElement)); }, [imm, phone, syncComposing]);
   useEffect(() => { setCardId(null); }, [assetId]);
   const closeCard = useCallback(() => { setCardId(null); }, []);
-  /** Put the floating composer away with focus already on Add note (lesson P3: move focus before the pane that holds it is hidden). */
-  const closeCompose = useCallback(() => { document.querySelector<HTMLElement>('[data-testid="video-immersive-add-note"]')?.focus({ preventScroll: true }); setComposeOpen(false); }, []);
+  /** Put the floating composer away with focus already on Add note, or the player on a touch device (lesson P3: move focus before the pane that holds it is hidden). */
+  const closeCompose = useCallback(() => { focusInImmersive(document, "video-immersive-add-note"); setComposeOpen(false); }, []);
   useLayoutEffect(() => { if (upright && composeOpen) { blurComposerField(); closeCompose(); askUpright(); } }, [upright, composeOpen, closeCompose, askUpright]);
   useEffect(() => { if (!upright) setPrompt(null); }, [upright]);
   // Base UI moves focus a frame after mount; a key typed in that gap (Enter, then Space) would still hit the opener. Take focus in the commit itself.

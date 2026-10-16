@@ -206,7 +206,8 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     if (!size.coarse) await act(async () => { byId("guest-composer-cancel")!.focus(); });
     await click(byId("guest-composer-cancel"));
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
-    expect(document.activeElement).toBe(byId("video-immersive-add-note"));
+    // A touch device's focus after Cancel is the player: a scripted focus on Add note opened its tooltip and a heavy ring there (#880 review 4's family). A desktop keeps Add note.
+    expect(document.activeElement).toBe(byId(size.coarse ? "video-player" : "video-immersive-add-note"));
     await click(byId("video-immersive-add-note"));
     expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("");
   });

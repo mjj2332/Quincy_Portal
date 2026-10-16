@@ -4,6 +4,18 @@ import type { ImmersiveState } from "../../lib/immersive";
 const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
 
 /**
+ * Places the focus by script inside Full screen (#880 review 4, and the composer's close after it): on `preferred` (a test id: Exit full screen on the way in, Add note when the
+ * composer closes), except on a touch device, where the player section takes it. There a focus placed by script opened the control's tooltip and drew WebKit's focus ring, both
+ * stuck until the next tap. The player is what the host's keys serve, and it draws no ring. A desktop keeps `preferred`, so keyboard users still see where they are.
+ */
+export function focusInImmersive(root: ParentNode | null, preferred: string): void {
+  const touch = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+  const wanted = root?.querySelector<HTMLElement>(`[data-testid="${preferred}"]`) ?? null;
+  const target = touch ? root?.querySelector<HTMLElement>('[data-testid="video-player"]') ?? wanted : wanted;
+  target?.focus({ preventScroll: true });
+}
+
+/**
  * The side effects of Quincy's Full screen (#880), shared by the staff viewer and the guest page. The screen owns the state (`null | "button" | "turn"`) and the layout it drives; this hook is
  * what the mode does to the page.
  *
@@ -75,10 +87,7 @@ export function useImmersive({ rootRef, state, setState }: { rootRef: RefObject<
     if (was === null && state !== null) {
       if (recorded.current === null) recorded.current = document.activeElement;
       const active = document.activeElement;
-      const touch = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
-      const exit = root?.querySelector<HTMLElement>('[data-testid="video-exit-fullscreen"]') ?? null;
-      const target = touch ? root?.querySelector<HTMLElement>('[data-testid="video-player"]') ?? exit : exit;
-      if (!(active instanceof Element && active.matches(EDITABLE))) target?.focus({ preventScroll: true });
+      if (!(active instanceof Element && active.matches(EDITABLE))) focusInImmersive(root, "video-exit-fullscreen");
     } else if (was !== null && state === null) {
       const back = recorded.current;
       recorded.current = null;

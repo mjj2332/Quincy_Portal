@@ -8,7 +8,7 @@ import { readLandscape, useDeviceOrientation, useLandscape } from "../lib/use-de
 import { NATIVE_PLAYER_UNAVAILABLE, nativePlayerLabel } from "../lib/video-native-player";
 import { hasOpenAlertDialog } from "../lib/alert-dialog-press";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../components/quincy/project-sheet-layers";
-import { useImmersive } from "../components/quincy/use-immersive";
+import { focusInImmersive, useImmersive } from "../components/quincy/use-immersive";
 import { useCloseOnPlay } from "../components/quincy/use-close-on-play";
 import { GuestImmersiveNoteCard } from "./GuestImmersiveNoteCard";
 import { OverlayContainerContext } from "../components/OverlayContainerContext";
@@ -388,8 +388,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   useEffect(() => { if (!imm && phone) syncComposing(isComposerField(document.activeElement)); }, [imm, phone, syncComposing]);
   useEffect(() => { if (!imm) setCardId(null); }, [imm]);
   useEffect(() => { setCardId(null); }, [version.assetId, video.id]);
-  /** Put the floating composer away (the draft stays) with focus already on Add note: lesson P3, focus moves before the pane holding it is hidden. */
-  const hideComposer = useCallback(() => { document.querySelector<HTMLElement>('[data-testid="video-immersive-add-note"]')?.focus({ preventScroll: true }); setComposeShown(false); }, []);
+  /** Put the floating composer away (the draft stays) with focus already on Add note, or the player on a touch device: lesson P3, focus moves before the pane holding it is hidden. */
+  const hideComposer = useCallback(() => { focusInImmersive(document, "video-immersive-add-note"); setComposeShown(false); }, []);
   // Leaving Full screen, a Version change or a finished/cancelled draft puts the floating composer away. A draft that closes in Full screen (Cancel, a post) hands the focus to
   // Add note before the pane hides, as the toggle does (#880 fix round 1, item 2; lesson P3): left in the closing pane it would fall to the page.
   useLayoutEffect(() => {

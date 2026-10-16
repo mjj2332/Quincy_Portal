@@ -134,7 +134,8 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
     await escape();
     expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
-    expect(document.activeElement).toBe(tid("video-immersive-add-note"));
+    // A desktop gives the focus back to Add note; a touch device to the player, since a scripted focus on Add note opened its tooltip and a heavy ring there (#880 review 4's family).
+    expect(document.activeElement).toBe(tid(size.coarse ? "video-player" : "video-immersive-add-note"));
     // Focus came back to an icon button, and its tooltip opened on that focus: Base UI gives the tooltip the next Escape (as it does anywhere in the viewer), then Full screen gets it.
     await escapeOutOfTooltip();
     await escape();
@@ -387,7 +388,8 @@ describe("Cancel in a phone's Full screen composer (#880 fix round 1, item 2)", 
       expect(forms.slot(ids.asset2).composer.body).toBe("");
       expect(forms.slot(ids.asset2).composer.anchorFrame).toBeNull();
       expect(tid("video-immersive-add-note")!.getAttribute("aria-pressed")).toBe("false");
-      expect(document.activeElement).toBe(tid("video-immersive-add-note"));
+      // A touch device's focus after Cancel is the player, not Add note: a scripted focus there opened Add note's tooltip and a heavy focus ring, both stuck (#880 review 4's family).
+      expect(document.activeElement).toBe(tid("video-player"));
     }
   });
 });
