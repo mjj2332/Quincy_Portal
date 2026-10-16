@@ -9,6 +9,7 @@ import { useMarkerExport, type MarkerExport } from "./VideoMarkerExportMenu";
 import { DEFAULT_NOTE_FILTERS, noteCounts } from "../../lib/video-note-view";
 import { VideoNotesPanel } from "./VideoNotesPanel";
 import { useNotesClipboard, type NotesClipboard } from "./use-notes-clipboard";
+import type { NotesSearchState } from "../quincy/NotesFilterHead";
 
 /**
  * Owns the notes session (query, marks, filters, the player's clock) for the Version on screen, one level above the player so the panel and
@@ -18,7 +19,7 @@ import { useNotesClipboard, type NotesClipboard } from "./use-notes-clipboard";
 /** What the notes host hands the viewer: the player's props, the panel, and (#879) what the phone header and sheet need from the session: the marker export, whether the pen is down, the open count. */
 export type NotesSlots = { playerProps: VideoNotesSession["playerProps"]; panel: ReactNode; markerExport: MarkerExport; drawing: boolean; openCount: number | null; /** Copy and paste notes (#879 PR 3b): one controller for the desktop notes ⋯ and the phone header's ⋯ sheet. */ clipboard: NotesClipboard };
 
-export default function VideoNotesHost({ notes, video, version, detailsRows, onSearchOpenChange, children }: {
+export default function VideoNotesHost({ notes, video, version, detailsRows, onSearchChange, children }: {
   notes: { projectId: string; role: Role; userId: string | null; archived: boolean; forms: NoteFormStore; /** The Project's `markup` part is on. */ markup?: boolean; /** The Project's `export` part is on (#741 9). */ exportEnabled?: boolean; /** #835: the note the link names. */ openNoteId?: string };
   /** The Video the Version belongs to: copy and paste work between its Versions. */
   video: VideoDto;
@@ -26,7 +27,7 @@ export default function VideoNotesHost({ notes, video, version, detailsRows, onS
   /** The Version details rows, which the panel shows behind a button. */
   detailsRows: ReactNode;
   /** The phone notes head's search opened or closed (#879 PR 3b): the viewer takes the sheet to full while it is open. */
-  onSearchOpenChange?: (open: boolean) => void;
+  onSearchChange?: (state: NotesSearchState) => void;
   children: (slots: NotesSlots) => ReactNode;
 }) {
   const phone = useMediaQuery(PHONE_QUERY);
@@ -41,7 +42,7 @@ export default function VideoNotesHost({ notes, video, version, detailsRows, onS
   const clipboard = useNotesClipboard({ session, video, phone });
   return <>{children({
     playerProps: { ...session.playerProps, ...(overlay ? { overlay } : {}), ...(transportActions && !phone ? { transportActions } : {}), ...(transportReplacement ? { transportReplacement } : {}) },
-    panel: <VideoNotesPanel key={version.assetId} session={session} detailsRows={detailsRows} exp={exp} clipboard={clipboard} phone={phone} {...(onSearchOpenChange ? { onSearchOpenChange } : {})} {...(pen ? { pen } : {})} />,
+    panel: <VideoNotesPanel key={version.assetId} session={session} detailsRows={detailsRows} exp={exp} clipboard={clipboard} phone={phone} {...(onSearchChange ? { onSearchChange } : {})} {...(pen ? { pen } : {})} />,
     // The open notes the list can show (#879 PR 3a): a deleted root nobody replied to is hidden, so it is not counted either.
     markerExport: exp, drawing, openCount: session.threads ? noteCounts(session.threads, DEFAULT_NOTE_FILTERS).totals.open : null,
     clipboard,

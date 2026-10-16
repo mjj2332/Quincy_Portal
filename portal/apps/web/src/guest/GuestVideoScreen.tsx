@@ -28,7 +28,7 @@ import { decisionFailureText, failureText, openThreadCount, removeThread, upsert
 import type { ActionOutcome, NoteActions, Writing } from "./GuestNoteItem";
 import { GuestNotesPanel } from "./GuestNotesPanel";
 import { EmptyState } from "../components/quincy/EmptyState";
-import { NotesFilterHead } from "../components/quincy/NotesFilterHead";
+import { NotesFilterHead, type NotesSearchState } from "../components/quincy/NotesFilterHead";
 import { GUEST_PHONE_FILTERS, guestNoteAuthors, guestNoteCounts, guestVisibleThreads, type GuestNoteFilters, type GuestNoteStatus } from "./guest-notes-filter";
 import { GuestSubscriptionRow } from "./GuestSubscriptionRow";
 import type { GuestSubscription } from "./guest-subscription";
@@ -366,8 +366,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const anyNotes = threads !== null && guestNoteCounts(threads, { status: "all", author: null, query: null }).all > 0;
   // Search takes the sheet to full while the keyboard is up, and back to the stop it was at when it closes (owner decision); a stop dragged to meanwhile is the guest's.
   const searchReturn = useRef<typeof sheetControl.stop | null>(null);
-  const onSearchOpenChange = useCallback((open: boolean) => {
-    if (open) { if (searchReturn.current === null) searchReturn.current = sheetStopRef.current; setSheetStop("full"); return; }
+  const onSearchChange = useCallback((state: NotesSearchState) => {
+    if (state !== "closed") { if (searchReturn.current === null) { searchReturn.current = sheetStopRef.current; setSheetStop("full"); } return; }
     const back = searchReturn.current;
     searchReturn.current = null;
     if (back !== null && sheetStopRef.current === "full") setSheetStop(back);
@@ -377,7 +377,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     authors={{ value: noteFilters.author, options: noteAuthorOptions, onChange: (author) => { setNoteFilters({ ...noteFilters, author }); } }}
     query={noteFilters.query}
     onQueryChange={(query) => { setNoteFilters({ ...noteFilters, query }); }}
-    onSearchOpenChange={onSearchOpenChange}
+    onSearchChange={onSearchChange}
   /> : null;
   const filteredEmpty = phone && anyNotes
     ? <EmptyState size="compact" data-testid="guest-notes-filtered-empty" title="No notes match."><Button type="button" variant="ghost" data-testid="guest-notes-reset-filters" className={TOUCH} onClick={() => { setNoteFilters(GUEST_PHONE_FILTERS); }}>Reset filters</Button></EmptyState>

@@ -16,7 +16,7 @@ afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); r
 
 type Status = "open" | "resolved" | "all";
 type Visibility = "all" | "public" | "internal";
-const reported: boolean[] = [];
+const reported: string[] = [];
 
 function Harness({ staff = true, initial = { status: "open" as Status, visibility: "all" as Visibility, author: null as string | null, query: null as string | null } }) {
   const [state, setState] = useState(initial);
@@ -27,7 +27,7 @@ function Harness({ staff = true, initial = { status: "open" as Status, visibilit
       authors={{ value: state.author, options: [{ key: "staff:1", name: "Ada" }, { key: "guest:2", name: "Ben" }], onChange: (author) => { setState({ ...state, author }); } }}
       query={state.query}
       onQueryChange={(query) => { setState({ ...state, query }); }}
-      onSearchOpenChange={(open) => { reported.push(open); }}
+      onSearchChange={(next) => { reported.push(next); }}
     />
     <span data-testid="state">{JSON.stringify(state)}</span>
   </>;
@@ -90,11 +90,11 @@ describe("NotesFilterHead (#879 PR 3b)", () => {
     const field = q("notes-search-field") as HTMLInputElement;
     expect(document.activeElement).toBe(field);
     expect(field.closest("[data-notes-search]")).not.toBeNull();
-    expect(reported).toEqual([true]);
+    expect(reported.at(-1)).toBe("typing");
     await click(q("notes-search-close")!);
     expect(state().query).toBeNull();
     expect(document.activeElement).toBe(q("notes-filter-search"));
-    expect(reported).toEqual([true, false]);
+    expect(reported.at(-1)).toBe("closed");
   });
 
   it("Escape in the field closes search and is not passed on", async () => {
@@ -112,9 +112,61 @@ describe("NotesFilterHead (#879 PR 3b)", () => {
   it("a reset from elsewhere closes search and reports it, without moving focus", async () => {
     await render(<Harness initial={{ status: "open", visibility: "all", author: null, query: "logo" }} />);
     expect((q("notes-search-field") as HTMLInputElement).value).toBe("logo");
-    expect(reported).toEqual([true]);
+    expect(reported).toEqual(["open"]);
     await act(async () => { root!.unmount(); });
     root = null;
-    expect(reported).toEqual([true, false]);
+    expect(reported).toEqual(["open", "closed"]);
+  });
+
+  it("the Search icon focuses the field inside its own click, so iOS raises the keyboard on the first tap", async () => {
+    await render(<Harness />);
+    let during: Element | null = null;
+    await act(async () => { q("notes-filter-search")!.click(); during = document.activeElement; });
+    expect(during).not.toBeNull();
+    expect(during).toBe(q("notes-search-field"));
+  });
+
+  it("reports typing while the field has the focus, open once it lets go, and closed when search closes", async () => {
+    await render(<Harness />);
+    await click(q("notes-filter-search")!);
+    expect(reported.at(-1)).toBe("typing");
+    const field = q("notes-search-field") as HTMLInputElement;
+    await act(async () => { field.blur(); });
+    expect(reported.at(-1)).toBe("open");
+    expect(state().query).toBe("");
+    await act(async () => { field.focus(); });
+    expect(reported.at(-1)).toBe("typing");
+    await click(q("notes-search-close")!);
+    expect(reported.at(-1)).toBe("closed");
+    expect(reported).not.toContain(undefined);
+  });
+
+  it("pressing X does not take the focus from the field first (the keyboard and the layout hold until it closes search)", async () => {
+    await render(<Harness />);
+    await click(q("notes-filter-search")!);
+    const x = q("notes-search-close")!;
+    for (const type of ["pointerdown", "mousedown"]) {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true });
+      await act(async () => { x.dispatchEvent(event); });
+      expect(event.defaultPrevented).toBe(true);
+    }
+  });
+
+  it("names the staff menu's two groups Status and Visibility, in label type; a guest's one group has no label", async () => {
+    await render(<Harness />);
+    await click(q("notes-filter-status")!);
+    const status = q("notes-filter-status-label")!;
+    const visibility = q("notes-filter-visibility-label")!;
+    expect([status.textContent, visibility.textContent]).toEqual(["Status", "Visibility"]);
+    for (const label of [status, visibility]) {
+      expect(label.className).toContain("[font:var(--type-label)]");
+      expect(label.className).toContain("text-foreground-secondary");
+    }
+    expect(status.compareDocumentPosition(radio("Open")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await act(async () => { root!.unmount(); });
+    root = createRoot(host);
+    await render(<Harness staff={false} />);
+    await click(q("notes-filter-status")!);
+    expect(q("notes-filter-status-label")).toBeNull();
   });
 });

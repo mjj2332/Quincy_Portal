@@ -12,7 +12,7 @@ import { ICON_BUTTON } from "../quincy/icon-button";
 import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
 import { EmptyState } from "../quincy/EmptyState";
 import { Notice } from "../quincy/Notice";
-import { NotesFilterHead } from "../quincy/NotesFilterHead";
+import { NotesFilterHead, type NotesSearchState } from "../quincy/NotesFilterHead";
 import { ReviewPaneHideContext } from "../quincy/ReviewPane";
 import { Popover, PopoverContent, PopoverTrigger } from "../reui/popover";
 import { ScrollArea } from "../reui/scroll-area";
@@ -45,7 +45,7 @@ function deleteCopy(tombstone: boolean, conflicted: boolean) {
  * 721px) nothing inside scrolls on its own: the whole dialog scrolls, with the composer directly under the player ahead of the list.
  * It holds no data of its own: `session` (from `useVideoNotes`) is shared with the player, which draws the markers and takes I and O.
  */
-export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, phone = false, onSearchOpenChange }: { session: VideoNotesSession; detailsRows: ReactNode; /** Copy and paste (#741 5c-ui), owned by the notes host (#879 PR 3b) so the phone header's ⋯ sheet drives the same controller and the paste dialog outlives this panel. */ clipboard: NotesClipboard; /** The marker export (#741 9), owned by the notes host so the phone header can reach it: `enabled` is the Project's `export` part and the role. */ exp: MarkerExport; /** The Draw button, handed to the composer on a phone (D11). */ pen?: ReactNode; /** The phone layout (#879): the panel is the sheet's body, its composer the sheet's foot. */ phone?: boolean; /** The phone head's search opened or closed (#879 PR 3b). */ onSearchOpenChange?: (open: boolean) => void; }) {
+export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, phone = false, onSearchChange }: { session: VideoNotesSession; detailsRows: ReactNode; /** Copy and paste (#741 5c-ui), owned by the notes host (#879 PR 3b) so the phone header's ⋯ sheet drives the same controller and the paste dialog outlives this panel. */ clipboard: NotesClipboard; /** The marker export (#741 9), owned by the notes host so the phone header can reach it: `enabled` is the Project's `export` part and the role. */ exp: MarkerExport; /** The Draw button, handed to the composer on a phone (D11). */ pen?: ReactNode; /** The phone layout (#879): the panel is the sheet's body, its composer the sheet's foot. */ phone?: boolean; /** The phone head's search opened or closed (#879 PR 3b). */ onSearchChange?: (state: NotesSearchState) => void; }) {
   const { query, threads, shown, filters, setFilters, selectedId, version } = session;
   const archived = session.readOnly;
   const readOnly = archived;
@@ -192,7 +192,7 @@ export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, pho
     authors={{ value: filters.author, options: authors, onChange: (author) => { setFilters({ ...filters, author }); } }}
     query={filters.query}
     onQueryChange={(query) => { setFilters({ ...filters, query }); }}
-    {...(onSearchOpenChange ? { onSearchOpenChange } : {})}
+    {...(onSearchChange ? { onSearchChange } : {})}
   />;
   // A phone filter that leaves nothing to show says so and offers the way back (#879 PR 3b); the desktop keeps its one quiet line.
   const filteredEmpty = phone && total > 0

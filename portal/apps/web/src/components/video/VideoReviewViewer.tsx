@@ -37,6 +37,7 @@ import type { VideoNotesSession } from "./use-video-notes";
 import { REVIEW_STATUS_LABEL, REVIEW_STATUS_TONE, VideoReviewStatusPill } from "./VideoReviewStatusPill";
 import { VideoReviewHeaderMenu } from "./VideoReviewHeaderMenu";
 import { VideoDetailsSheet } from "./VideoDetailsSheet";
+import type { NotesSearchState } from "../quincy/NotesFilterHead";
 
 /** The notes UI is its own chunk: a Project whose notes part is off never loads it. */
 const LazyNotesHost = lazy(() => import("./VideoNotesHost"));
@@ -147,8 +148,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   // Search in the phone notes head (#879 PR 3b, owner decision): the keyboard is about to take half the screen, so the sheet goes to full while the field is open and back to
   // the stop it was at when it closes. A stop the person drags to meanwhile is theirs: closing restores only if the sheet is still at full.
   const searchReturn = useRef<SheetStop | null>(null);
-  const onSearchOpenChange = useCallback((open: boolean) => {
-    if (open) { if (searchReturn.current === null) searchReturn.current = sheetStopRef.current; setSheetStop("full"); return; }
+  const onSearchChange = useCallback((state: NotesSearchState) => {
+    if (state !== "closed") { if (searchReturn.current === null) { searchReturn.current = sheetStopRef.current; setSheetStop("full"); } return; }
     const back = searchReturn.current;
     searchReturn.current = null;
     if (back !== null && sheetStopRef.current === "full") setSheetStop(back);
@@ -575,7 +576,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
             <LazyCompareView video={video} store={compareStore} social={socialMode} startFrame={startFrame} onChangeSide={changeSide} controlRef={compareRef} detailsFor={detailsFor} {...(notes ? { notes: { projectId: notes.projectId, role: notes.role, userId: notes.userId, archived: notes.archived, forms: notes.forms } } : {})} />
           </Suspense>
         </>
-        : notes ? <Suspense fallback={phone ? phoneHeader() : null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows} onSearchOpenChange={onSearchOpenChange}>{layout}</LazyNotesHost></Suspense> : layout(null)}
+        : notes ? <Suspense fallback={phone ? phoneHeader() : null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows} onSearchChange={onSearchChange}>{layout}</LazyNotesHost></Suspense> : layout(null)}
       </OverlayContainerContext.Provider>
       <div ref={setSlot} />
       <div ref={setToastSlot} />
