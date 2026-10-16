@@ -246,7 +246,7 @@ export function useGuestCompose({ phone, clock, frameCount, timecode, markupAllo
   useEffect(() => {
     if (!drawing) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing || event.altKey) return;
+      if (event.isComposing || event.altKey || event.defaultPrevented) return;
       const field = event.target instanceof Element && event.target.closest(FIELD) !== null;
       if (event.key === "Escape" && !field) { setPhase("off"); return; }
       if (field || !(event.metaKey || event.ctrlKey)) return;

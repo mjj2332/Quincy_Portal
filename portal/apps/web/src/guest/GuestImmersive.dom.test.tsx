@@ -309,6 +309,27 @@ describe("the guest page's Full screen keeps the focus when its controls hide (#
   });
 });
 
+describe("the guest page's Full screen Escape with the pen on the picture (#880 review 2)", () => {
+  it("the first Escape only puts the pen down, as the staff viewer's form owns it; the next hides the composer", async () => {
+    viewport.restore(); viewport = mockViewport({ width: 1200, height: 900, coarse: false }); notes = { [asset(10)]: [note(1)] };
+    await open();
+    await atSeconds(2);
+    await click(byId("video-fullscreen"));
+    await click(byId("video-immersive-add-note"));
+    await click(byId("guest-composer-draw"));
+    await atSeconds(2);
+    expect(byId("guest-markup-toolbar")).not.toBeNull();
+    await escapeOutOfTooltip();
+    await escape();
+    expect(byId("guest-markup-toolbar")).toBeNull();
+    expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    await escapeOutOfTooltip();
+    await escape();
+    expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+    expect(immersiveOn()).toBe(true);
+  });
+});
+
 describe("the guest ⋯ with nothing but the system player (#880 S6)", () => {
   beforeEach(() => { viewport.restore(); viewport = mockViewport({ width: 390, height: 844, coarse: true }); });
   it("still shows: its one row is the system player, disabled with its hint where the browser has none", async () => {

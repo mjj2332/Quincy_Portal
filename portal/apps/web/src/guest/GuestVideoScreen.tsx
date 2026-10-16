@@ -60,6 +60,8 @@ import { PremiumWatermark } from "./PremiumWatermark";
 
 const VERSION_SELECT_ID = "guest-version";
 const FIELD = "input, textarea, select, [contenteditable], [role=listbox], [role=combobox]";
+/** A text field: the compose hook leaves Escape typed into one to the ladder, so the pen is down only for an Escape typed elsewhere. */
+const TEXT_FIELD = "input, textarea, select, [contenteditable]:not([contenteditable='false'])";
 const NOTES_HEADING = "m-0 text-foreground [font:var(--type-h3)]";
 const MODAL = "[role=dialog], [role=alertdialog]";
 const POPUP = "[role=dialog], [role=alertdialog], [role=menu], [role=listbox], [role=combobox]";
@@ -626,13 +628,17 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     prompt,
     ...(cardThread ? { card: <GuestImmersiveNoteCard thread={cardThread} timecode={timecode} media={api.media} onClose={closeCard} onShowInNotes={() => { full.leave(); setPaneOpen(true); openSheet(); }} /> } : {}),
   };
-  // Escape: its own ladder (the page is not a dialog). A popup or modal that is open owns the key; then the card, then the floating composer (the draft stays), then Full screen itself. Decided at capture, before any popup handler has run.
+  // Escape: its own ladder (the page is not a dialog), in the staff viewer's order. A popup or modal that is open owns the key; then the pen on the picture (the compose hook puts
+  // it down, #880 review 2); then the card, then the floating composer (the draft stays), then Full screen itself. Decided at capture, before any popup handler has run.
+  const drawingRef = useRef(compose.drawing);
+  drawingRef.current = compose.drawing;
   useEffect(() => {
     if (!imm) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       const root = rootRef.current;
       if (hasOpenAlertDialog() || hasOpenFloatingPopup(root, slot) || hasOpenModalAbove(root, document)) return;
+      if (drawingRef.current && !(event.target instanceof Element && event.target.closest(TEXT_FIELD) !== null)) return;
       event.preventDefault();
       if (cardRef.current !== null) setCardId(null);
       else if (composeShownRef.current) hideComposer();
