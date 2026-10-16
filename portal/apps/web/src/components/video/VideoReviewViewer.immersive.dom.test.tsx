@@ -1,3 +1,4 @@
+import { createVideoApprovalStore } from "../../lib/video-approval-store";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,13 +44,14 @@ const film = () => dialog().querySelector("video")!;
 const click = async (element: HTMLElement) => { await act(async () => { element.click(); }); await flush(3); };
 async function escape() { await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); }); await flush(3); }
 const escapeOutOfTooltip = async () => { if ([...document.querySelectorAll("[data-open]")].some((popup) => popup.tagName === "DIV" && /^(Add note|Full screen|Exit full screen)$/.test(popup.textContent ?? ""))) await escape(); };
-async function mount(over: { markup?: boolean } = {}) {
+async function mount(over: { markup?: boolean; delivery?: boolean } = {}) {
   api.apiGet.mockImplementation(async (path) => { if (/\/notes$/.test(path)) return { notes: [NOTE] }; return {}; });
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); onClose = vi.fn<() => void>(); forms = createNoteFormStore("imm-test");
   await act(async () => {
     root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><VideoReviewViewer
       video={videoOf()} onClose={onClose}
       notes={{ projectId: PROJECT, role: "editor", userId: auth.userId, archived: false, forms, ...(over.markup ? { markup: true } : {}) }}
+      {...(over.delivery ? { delivery: { projectId: PROJECT, role: "editor" as const, archived: false, store: createVideoApprovalStore("imm-test") } } : {})}
     /></QuincyQueryProvider>);
   });
   // The notes host is a lazy chunk: wait on the film, not a fixed number of ticks.
@@ -369,6 +371,19 @@ describe("Add note on a sideways phone asks to turn upright (#880, owner decisio
     await click(tid("video-immersive-add-note")!);
     expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
     expect(forms.slot(ids.asset2).composer.body).toBe("Warmer");
+  });
+});
+
+describe("Add note from the Delivery tab (#880 Sol review)", () => {
+  it.each([["a phone", { width: 390, height: 844, coarse: true }], ["a desktop width", { width: 1200, height: 800, coarse: false }]] as const)("on %s: Add note selects the Notes tab, so the editor shows and takes the focus", async (_name, size) => {
+    viewport = mockViewport(size);
+    await mount({ delivery: true });
+    await click(tid("video-pane-tab-delivery")!);
+    expect(tid("video-pane-tab-delivery")!.getAttribute("aria-selected")).toBe("true");
+    await click(tid("video-fullscreen")!);
+    await click(tid("video-immersive-add-note")!);
+    expect(tid("video-pane-tab-main")!.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(document.getElementById("video-note-body"));
   });
 });
 

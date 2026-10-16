@@ -616,7 +616,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       if (!clock || !forms) return;
       clock.pause();
       setCardId(null);
-      flushSync(() => { setComposeOpen(true); });
+      // The Notes tab too: left on Delivery, the floated pane would show the delivery panel with the editor hidden, and the focus below would find nothing (#880 Sol review).
+      flushSync(() => { setSideTab("main"); setComposeOpen(true); });
       forms.stamp(assetId, frameOnScreen(clock.getState()));
       const field = document.getElementById("video-note-body");
       (field?.matches(NOTE_FIELD) ? field : field?.querySelector<HTMLElement>(NOTE_FIELD))?.focus({ preventScroll: true });
