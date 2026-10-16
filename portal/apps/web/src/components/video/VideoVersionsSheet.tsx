@@ -51,7 +51,7 @@ export function VideoVersionsSheet({ open, onOpenChange, container, rows, curren
   const changeOpen = (next: boolean) => { if (!next) returnFocusTo?.current?.focus({ preventScroll: true }); onOpenChange(next); };
   return <Sheet open={open} onOpenChange={changeOpen}>
     <SheetContent ref={popupRef} side="bottom" container={container} showCloseButton={false} overlayProps={{ className: SHEET_SCRIM, forceRender: true, "data-testid": "review-sheet-overlay" }} initialFocus={() => popupRef.current ?? true} {...(returnFocusTo ? { finalFocus: () => returnFocusTo.current ?? true } : {})} data-testid="video-versions-sheet" className={`max-h-[70dvh] ${PHONE_SHEET_CHROME}`}>
-      <SheetTitle className="m-0 px-[calc(var(--space-4)+var(--space-1))] pt-[var(--space-2)] pb-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">Version</SheetTitle>
+      <SheetTitle data-testid="video-versions-title" className="m-0 px-[calc(var(--space-4)+var(--space-1))] pt-[var(--space-2)] pb-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">Version</SheetTitle>
       <ItemGroup role="group" aria-label="Versions" className="min-h-0 gap-0 overflow-y-auto">
         {rows.map((row) => {
           const current = row.assetId === currentAssetId;
@@ -66,11 +66,11 @@ export function VideoVersionsSheet({ open, onOpenChange, container, rows, curren
             render={<Button type="button" variant="ghost" data-testid="video-version-row" data-asset-id={row.assetId} aria-current={current ? "true" : undefined} className="h-auto justify-start font-normal normal-case" onClick={() => { onChoose(row.assetId); changeOpen(false); }} />}
           >
             <ItemContent className="flex-none">
-              <ItemTitle className={`${ACTION_ROW_TITLE} whitespace-nowrap`}>{`v${row.version}${latest ? " · latest" : ""}`}</ItemTitle>
+              <ItemTitle data-testid="video-version-label" className={`${ACTION_ROW_TITLE} whitespace-nowrap`}>{`v${row.version}${latest ? " · latest" : ""}`}</ItemTitle>
             </ItemContent>
             <ItemActions className="ms-auto min-w-0 gap-[var(--space-2)]">
               {meta !== "" && <span data-testid="video-version-meta" className="truncate text-foreground-secondary tabular-nums [font:var(--type-label)]">{meta}</span>}
-              {current && <Check aria-hidden="true" className="size-4 flex-none" />}
+              {current && <Check aria-hidden="true" data-testid="video-version-check" className="size-4 flex-none" />}
             </ItemActions>
           </Item>;
         })}

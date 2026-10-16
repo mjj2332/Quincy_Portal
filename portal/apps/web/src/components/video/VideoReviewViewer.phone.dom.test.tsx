@@ -415,9 +415,10 @@ describe("the phone sheets' chrome (#879 PR 3b, P8/P9)", () => {
     await mount({ shown: () => {}, download: true, social: true });
     await click(trigger()!);
     const sheet = tid("review-action-sheet")!;
-    const title = sheet.querySelector<HTMLElement>('[data-slot="sheet-title"]')!;
+    const title = tid("review-action-title")!;
     expect(title.className).toContain("sr-only");
-    expect(sheet.querySelector('[data-slot="sheet-header"]')).toBeNull();
+    // No header wrapper (and so no header clearance): the title sits directly in the sheet.
+    expect(title.parentElement).toBe(sheet);
     expect(tid("review-action-close")!.className).toContain("[&:not(:focus-visible)]:sr-only");
     expect(document.activeElement).toBe(sheet);
     expect(sheet.className).toContain("focus-visible:!outline-none");
@@ -429,7 +430,7 @@ describe("the phone sheets' chrome (#879 PR 3b, P8/P9)", () => {
     const row = tid("video-social-toggle")!;
     expect(row.className).toContain("px-[calc(var(--space-4)+var(--space-1))]");
     expect(row.className).toContain("py-[var(--space-3)]");
-    expect(row.querySelector<HTMLElement>('[data-slot="item-title"]')!.className).toContain("text-[length:var(--text-base)]");
+    expect(row.querySelector<HTMLElement>('[data-testid="review-action-row-label"]')!.className).toContain("text-[length:var(--text-base)]");
   });
 
   it("the Versions sheet takes focus on itself, with its close shown only on keyboard focus", async () => {
@@ -446,7 +447,8 @@ describe("the P8 Versions sheet (#879 PR 3b)", () => {
   it("titles itself \"Version\" in label type and secondary ink, at the rows' 20pt gutter", async () => {
     await mount({ shown: () => {} });
     await click(tid("video-version-chip")!);
-    const title = tid("video-versions-sheet")!.querySelector<HTMLElement>('[data-slot="sheet-title"]')!;
+    const title = tid("video-versions-title")!;
+    expect(tid("video-versions-sheet")!.contains(title)).toBe(true);
     expect(title.textContent).toBe("Version");
     expect(title.className).toContain("[font:var(--type-label)]");
     expect(title.className).toContain("text-foreground-secondary");
@@ -458,15 +460,19 @@ describe("the P8 Versions sheet (#879 PR 3b)", () => {
     await mount({ shown: () => {}, status: true });
     await click(tid("video-version-chip")!);
     const [latest, older] = [...document.querySelectorAll<HTMLElement>('[data-testid="video-version-row"]')];
-    expect(latest!.querySelector('[data-slot="item-description"]')).toBeNull();
-    expect(latest!.querySelector('[data-slot="item-title"]')!.textContent).toBe("v2 · latest");
-    const meta = latest!.querySelector<HTMLElement>('[data-slot="item-actions"] [data-testid="video-version-meta"]')!;
+    const label = latest!.querySelector<HTMLElement>('[data-testid="video-version-label"]')!;
+    const meta = latest!.querySelector<HTMLElement>('[data-testid="video-version-meta"]')!;
+    const check = latest!.querySelector<HTMLElement>('[data-testid="video-version-check"]')!;
+    expect(label.textContent).toBe("v2 · latest");
     expect(meta.textContent).toMatch(/ · /);
     expect(meta.className).toContain("truncate");
-    expect(latest!.querySelector('[data-slot="item-actions"] svg')).not.toBeNull();
-    expect(older!.querySelector('[data-slot="item-actions"] svg')).toBeNull();
+    // One line: the row says nothing beyond the label and the meta (no description under the label), and reads label, meta, check in that order.
+    expect(latest!.textContent).toBe(`${label.textContent}${meta.textContent}`);
+    expect(label.compareDocumentPosition(meta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(meta.compareDocumentPosition(check) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(older!.querySelector('[data-testid="video-version-check"]')).toBeNull();
     expect(latest!.className).toContain("px-[calc(var(--space-4)+var(--space-1))]");
-    expect(latest!.querySelector<HTMLElement>('[data-slot="item-title"]')!.className).toContain("text-[length:var(--text-base)]");
+    expect(label.className).toContain("text-[length:var(--text-base)]");
     // The check marks the Version on screen; P8 draws no fill behind it.
     expect(latest!.getAttribute("data-variant")).not.toBe("muted");
   });
@@ -474,15 +480,14 @@ describe("the P8 Versions sheet (#879 PR 3b)", () => {
 
 describe("the P9 rows (#879 PR 3b)", () => {
   const untilNotes = async () => { const deadline = Date.now() + 5000; while (!tid("video-notes-panel") && Date.now() < deadline) await flush(1); };
-  const rowNames = () => [...document.querySelectorAll<HTMLElement>('[data-testid="review-action-sheet"] [data-slot="item-group"] > :is(button, a), [data-testid="review-action-sheet"] [data-slot="item-group"] > [data-slot="item"]')].map((row) => row.textContent);
+  const rowNames = () => [...tid("review-action-rows")!.children].filter((row) => (row as HTMLElement).dataset.testid !== "review-action-separator").map((row) => row.textContent);
 
   it("lists Social preview, Download v2, Marker export…, Copy link, Create Review link, Version details, Copy shown notes, a rule and Remove v2…, in that order", async () => {
     await mount({ shown: () => {}, download: true, reviewLinks: true, social: true, trash: true, notes: true });
     await untilNotes(); await untilVersionMenu();
     await click(trigger()!);
     expect(rowNames()).toEqual(["Social preview", "Download v2", "Marker export…", "Copy link", "Create Review link", "Version details", "Copy shown notes", "Remove v2…"]);
-    const group = document.querySelector('[data-testid="review-action-sheet"] [data-slot="item-group"]')!;
-    const sep = group.querySelector('[data-slot="item-separator"]')!;
+    const sep = tid("review-action-rows")!.querySelector('[data-testid="review-action-separator"]')!;
     expect(sep.nextElementSibling).toBe(tid("video-header-remove-version"));
   });
 

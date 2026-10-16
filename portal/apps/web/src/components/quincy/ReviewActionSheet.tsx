@@ -32,8 +32,8 @@ export function ReviewActionSheet({ container, triggerTestId = "video-header-men
     <Button ref={triggerRef} type="button" variant="ghost" size="icon" aria-label={triggerLabel} aria-haspopup="dialog" data-testid={triggerTestId} className="min-h-11 min-w-11 flex-none text-foreground" onClick={() => { handOff.current = false; setOpen(true); }}><Ellipsis aria-hidden="true" className="size-5" /></Button>
     <Sheet open={open} onOpenChange={changeOpen}>
       <SheetContent ref={popupRef} side="bottom" container={container} showCloseButton={false} overlayProps={{ className: SHEET_SCRIM, forceRender: true, "data-testid": "review-sheet-overlay" }} initialFocus={() => popupRef.current ?? true} finalFocus={() => (handOff.current ? false : triggerRef.current)} data-testid="review-action-sheet" className={`max-h-[80dvh] ${PHONE_SHEET_CHROME}`}>
-        <SheetTitle className="sr-only">{title}</SheetTitle>
-        <ItemGroup role="group" aria-label={title} className="min-h-0 gap-0 overflow-y-auto">{children(close)}</ItemGroup>
+        <SheetTitle data-testid="review-action-title" className="sr-only">{title}</SheetTitle>
+        <ItemGroup role="group" aria-label={title} data-testid="review-action-rows" className="min-h-0 gap-0 overflow-y-auto">{children(close)}</ItemGroup>
         <SheetCloseButton label="Close actions" data-testid="review-action-close" visuallyHidden />
       </SheetContent>
     </Sheet>
@@ -76,8 +76,11 @@ export function ActionRow({ icon, children, onSelect, href, download, danger = f
     : <button {...common} type="button" disabled={disabled} {...(pressed !== undefined ? { "aria-pressed": pressed } : {})} onClick={onSelect} />;
   return <Item size="sm" render={render}>
     {icon && <ItemMedia variant="icon">{icon}</ItemMedia>}
-    <ItemContent><ItemTitle className={ACTION_ROW_TITLE}>{children}</ItemTitle></ItemContent>
+    <ItemContent><ItemTitle data-testid="review-action-row-label" className={ACTION_ROW_TITLE}>{children}</ItemTitle></ItemContent>
   </Item>;
 }
 
-export const ActionSeparator = ItemSeparator;
+/** The rule between groups of rows (P9's `.asep`). */
+export function ActionSeparator() {
+  return <ItemSeparator data-testid="review-action-separator" />;
+}

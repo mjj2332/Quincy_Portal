@@ -302,7 +302,7 @@ describe("the guest phone ⋯ and delivery (#879 PR 3b, P10 / P2)", () => {
   const decided = (value: "approved" | "changes_requested") => ({ value, revision: 1, at: "2026-10-09T01:00:00.000Z", self: true });
   const released = { ...versionOf(11), released: true, downloadUrl: `${BASE}/versions/${asset(11)}/download` };
   const press = async (element: HTMLElement) => { await act(async () => { element.click(); }); await flush(4); };
-  const rows = () => [...byId("review-action-sheet")!.querySelectorAll<HTMLElement>('[data-slot="item"], [data-slot="item-separator"]')].map((row) => (row.dataset.slot === "item-separator" ? "—" : row.textContent));
+  const rows = () => [...byId("review-action-rows")!.children].map((row) => ((row as HTMLElement).dataset.testid === "review-action-separator" ? "—" : row.textContent));
   const menu = () => byId("video-header-menu")!;
   async function openFilm(decision: ReturnType<typeof decided> | null = null) {
     session = { ...SESSION, link: { ...SESSION.link, allow: { ...SESSION.link.allow, approve: true, download: true } } };
