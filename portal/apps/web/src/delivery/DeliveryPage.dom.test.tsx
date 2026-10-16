@@ -572,7 +572,7 @@ describe("film tiles (#882)", () => {
   it("lays the grid out as auto-fill 280 px columns, one column under 721 px, and a lone film across the row (D32, D33)", async () => {
     await showFilms([film(1), film(2)]);
     const grid = byTestId("delivery-film")!.className;
-    expect(grid).toContain("grid-cols-[repeat(auto-fill,minmax(280px,1fr))]"); expect(grid).toContain("max-[720px]:grid-cols-1"); expect(grid).toContain("has-[>li:only-child]:grid-cols-1");
+    expect(grid).toContain("grid-cols-[repeat(auto-fill,minmax(280px,1fr))]"); expect(grid).toContain("max-[721px]:grid-cols-1"); expect(grid).toContain("has-[>li:only-child]:grid-cols-1");
   });
 });
 
