@@ -7,10 +7,12 @@ import { useLayoutEffect, type RefObject } from "react";
  * the list's box. Not the whole text box: at rest its line-height overhangs the list's foot by a few px with nothing clipped. And not the row's own
  * box, which is taller than its text (its buttons' 44px hit area) and taller than the list at rest.
  * A ResizeObserver callback runs before the next paint, so the two change in the same frame; the list's scroll moves the text too.
+ * `text` is the element itself, not a ref (#879 PR 3b, S3): the head is conditional, so on an uncached load it mounts after the first run, and a ref's change re-runs nothing.
+ * The caller holds it in state through a callback ref, so its mount (or replacement) re-binds the hook.
  */
-export function useHairlineWithHead(on: boolean, listRef: RefObject<HTMLDivElement | null>, textRef: RefObject<HTMLElement | null>, composerRef: RefObject<HTMLDivElement | null>) {
+export function useHairlineWithHead(on: boolean, listRef: RefObject<HTMLDivElement | null>, text: HTMLElement | null, composerRef: RefObject<HTMLDivElement | null>) {
   useLayoutEffect(() => {
-    const list = listRef.current; const text = textRef.current; const composer = composerRef.current;
+    const list = listRef.current; const composer = composerRef.current;
     if (!composer) return undefined;
     if (!on || !list || !text) { delete composer.dataset.headCut; return undefined; }
     const update = () => {
@@ -25,5 +27,5 @@ export function useHairlineWithHead(on: boolean, listRef: RefObject<HTMLDivEleme
     observer?.observe(list);
     observer?.observe(text);
     return () => { observer?.disconnect(); list.removeEventListener("scroll", update, { capture: true }); delete composer.dataset.headCut; };
-  }, [on, listRef, textRef, composerRef]);
+  }, [on, listRef, text, composerRef]);
 }

@@ -52,9 +52,10 @@ export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, pho
   const now = useNow();
   const listRef = useRef<HTMLDivElement>(null);
   // On a phone the hairline above the composer follows the notes head (#879 PR 3b), the row that now opens the list.
-  const headRef = useRef<HTMLDivElement>(null);
+  // Held in state through a callback ref (S3): the head mounts only once there are notes, and its mount must re-bind the hook.
+  const [head, headRef] = useState<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLDivElement>(null);
-  useHairlineWithHead(phone, listRef, headRef, composerRef);
+  useHairlineWithHead(phone, listRef, head, composerRef);
   const [deleting, setDeleting] = useState<Deleting | null>(null);
   /** Where focus may land once the confirm closes: kept in a ref because `deleting` is already null by then. */
   const focusIds = useRef<string[]>([]);
