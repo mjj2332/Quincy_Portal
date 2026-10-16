@@ -36,6 +36,7 @@ import { versionSlot, videoSlot, type VideoApprovalStore } from "../../lib/video
 import type { VideoNotesSession } from "./use-video-notes";
 import { REVIEW_STATUS_LABEL, REVIEW_STATUS_TONE, VideoReviewStatusPill } from "./VideoReviewStatusPill";
 import { VideoReviewHeaderMenu } from "./VideoReviewHeaderMenu";
+import { VideoDetailsSheet } from "./VideoDetailsSheet";
 
 /** The notes UI is its own chunk: a Project whose notes part is off never loads it. */
 const LazyNotesHost = lazy(() => import("./VideoNotesHost"));
@@ -400,6 +401,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const copyHref = deepLink && !comparing ? deepLink.href(version.version) : undefined;
   const downloadHref = download && !comparing ? videoVersionDownloadUrl(download.projectId, version.assetId) : undefined;
   const [versionsOpen, setVersionsOpen] = useState(false);
+  // The phone Version details sheet (#879 PR 3b) is open for one Version: a Version change closes it.
+  const [detailsOpenFor, setDetailsOpenFor] = useState<string | null>(null);
   // With the keyboard up (the editor has focus on a phone) the dialog takes the visual viewport, so the film stays on top and the composer sits above the keyboard (D10).
   // The software keyboard went away without blurring the field (some iOS paths): blur it, so compose mode ends the ordinary way (#879 fix). A hold (the + tray, a post) keeps it.
   // The dialog follows the visual viewport for as long as the phone viewer is open, not only in compose mode (#879 fix r5): iOS scrolls the document by the keyboard height
@@ -464,7 +467,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       </div>
     </header>;
   const status = reviewStatus ? REVIEW_STATUS_TONE[video.reviewStatus] : undefined;
-  const phoneHeader = (markerExport?: NotesSlots["markerExport"]) => <>
+  const phoneHeader = (slots?: NotesSlots) => <>
     <ReviewPhoneBar
       back={<DialogClose render={<Button type="button" variant="ghost" className="min-h-11 min-w-11 shrink-0" />}><ChevronLeft aria-hidden="true" /><span className="sr-only">Video</span></DialogClose>}
       title={<DialogTitle title={video.title} className={`m-0 ${TITLE_FLOOR} w-full truncate [font:var(--type-body)]`}>{video.title}</DialogTitle>}
@@ -473,7 +476,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       actions={<VideoReviewHeaderMenu
         container={slot}
         {...(social ? { social: { on: socialOn, toggle: () => { setSocialOn(!socialOn); } } } : {})}
-        copyHref={copyHref} downloadHref={downloadHref} downloadLabel={`Download version ${version.version}`} onCreateReviewLink={createReviewLink} {...(markerExport ? { markerExport } : {})}
+        version={version.version} copyHref={copyHref} downloadHref={downloadHref} onCreateReviewLink={createReviewLink}
+        {...(slots ? { markerExport: slots.markerExport, clipboard: slots.clipboard, onVersionDetails: () => { setDetailsOpenFor(version.assetId); } } : {})}
         {...(removeVersionFromMenu ? { onRemoveVersion: removeVersionFromMenu, removeDisabled: !removeReady || trash?.archived === true || (video.uploading != null && video.versions.length === 1) } : {})}
       />}
     />
@@ -482,6 +486,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       rows={withSummaries([...video.versions].sort((x, y) => y.version - x.version), summaries.data?.versions)}
       latestStatus={reviewStatus ? REVIEW_STATUS_LABEL[video.reviewStatus] : undefined}
     />
+    {slots && <VideoDetailsSheet open={detailsOpenFor === version.assetId} onOpenChange={(next) => { setDetailsOpenFor(next ? version.assetId : null); }} container={slot} version={version.version}>{detailsRows}</VideoDetailsSheet>}
     {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} removeRef={bindRemove} hideTrigger /></Suspense>}
   </>;
   const layout = (slots: NotesSlots | null): ReactNode => {
@@ -539,7 +544,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       strip={paneControls.strip}
     />;
     // The phone header is part of the layout (it needs the notes host's marker export for its action sheet); Compare does not exist on a phone, so it never needs to outlive a mode switch.
-    return <>{phone ? phoneHeader(slots?.markerExport) : null}{split}</>;
+    return <>{phone ? phoneHeader(slots ?? undefined) : null}{split}</>;
   };
 
   return <Dialog open onOpenChange={handleOpenChange}>

@@ -9,7 +9,7 @@ import { installVideoElementStub, type VideoElementStub } from "../../testing/vi
 import { installLocalStorageShim } from "../../testing/local-storage";
 import { resetUiPrefMemory } from "../../lib/ui-prefs";
 import { mockViewport, type MockViewport } from "../../testing/viewport";
-import { createNoteFormStore } from "../../lib/video-note-form-store";
+import { createNoteFormStore, type NoteFormStore } from "../../lib/video-note-form-store";
 import { VideoReviewViewer } from "./VideoReviewViewer";
 vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 
@@ -33,7 +33,7 @@ let root: Root | null = null; let host: HTMLElement;
 async function flush(times = 6) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
 const tid = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const onCreate = vi.fn();
-async function mount(props: { shown?: (v: number) => void; deepLink?: boolean; download?: boolean; reviewLinks?: boolean; trash?: boolean; social?: boolean; status?: boolean; delivery?: boolean; notes?: boolean; exportOff?: boolean; onClose?: () => void } = {}) {
+async function mount(props: { shown?: (v: number) => void; deepLink?: boolean; download?: boolean; reviewLinks?: boolean; trash?: boolean; social?: boolean; status?: boolean; delivery?: boolean; notes?: boolean; exportOff?: boolean; onClose?: () => void; forms?: NoteFormStore } = {}) {
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   await act(async () => {
     root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><VideoReviewViewer
@@ -45,7 +45,7 @@ async function mount(props: { shown?: (v: number) => void; deepLink?: boolean; d
       {...(props.reviewLinks ? { reviewLinks: { onCreate } } : {})}
       {...(props.trash ? { trash: { projectId: PROJECT, archived: false } } : {})}
       {...(props.social ? { social: { projectId: PROJECT, role: "editor" as const } } : {})}
-      {...(props.notes ? { notes: { projectId: PROJECT, role: "editor" as const, userId: auth.userId, archived: false, forms: createNoteFormStore("phone-test"), exportEnabled: props.exportOff !== true } } : {})}
+      {...(props.notes ? { notes: { projectId: PROJECT, role: "editor" as const, userId: auth.userId, archived: false, forms: props.forms ?? createNoteFormStore("phone-test"), exportEnabled: props.exportOff !== true } } : {})}
       {...(props.delivery ? { delivery: { projectId: PROJECT, role: "editor" as const, archived: false, store: createVideoApprovalStore("phone-test") } } : {})}
       {...(props.status ? { reviewStatus: { projectId: PROJECT, role: "editor" as const, archived: false } } : {})}
     /></QuincyQueryProvider>);
@@ -439,5 +439,78 @@ describe("the phone sheets' chrome (#879 PR 3b, P8/P9)", () => {
     expect(document.activeElement).toBe(sheet);
     expect(sheet.className).toContain("focus-visible:!outline-none");
     expect(tid("video-versions-close")!.className).toContain("[&:not(:focus-visible)]:sr-only");
+  });
+});
+
+describe("the P9 rows (#879 PR 3b)", () => {
+  const untilNotes = async () => { const deadline = Date.now() + 5000; while (!tid("video-notes-panel") && Date.now() < deadline) await flush(1); };
+  const rowNames = () => [...document.querySelectorAll<HTMLElement>('[data-testid="review-action-sheet"] [data-slot="item-group"] > :is(button, a), [data-testid="review-action-sheet"] [data-slot="item-group"] > [data-slot="item"]')].map((row) => row.textContent);
+
+  it("lists Social preview, Download v2, Marker export…, Copy link, Create Review link, Version details, Copy shown notes, a rule and Remove v2…, in that order", async () => {
+    await mount({ shown: () => {}, download: true, reviewLinks: true, social: true, trash: true, notes: true });
+    await untilNotes(); await untilVersionMenu();
+    await click(trigger()!);
+    expect(rowNames()).toEqual(["Social preview", "Download v2", "Marker export…", "Copy link", "Create Review link", "Version details", "Copy shown notes", "Remove v2…"]);
+    const group = document.querySelector('[data-testid="review-action-sheet"] [data-slot="item-group"]')!;
+    const sep = group.querySelector('[data-slot="item-separator"]')!;
+    expect(sep.nextElementSibling).toBe(tid("video-header-remove-version"));
+  });
+
+  it("each row's visible label is its accessible name (no aria-label over it)", async () => {
+    await mount({ shown: () => {}, download: true, reviewLinks: true, social: true, trash: true, notes: true });
+    await untilNotes(); await untilVersionMenu();
+    await click(trigger()!);
+    for (const id of ["video-download", "video-header-remove-version", "video-version-details-row", "video-copy-shown-notes"]) expect(tid(id)!.hasAttribute("aria-label"), id).toBe(false);
+  });
+
+  it("Version details and the clipboard rows exist only once the notes host is up", async () => {
+    await mount({ shown: () => {}, download: true });
+    await click(trigger()!);
+    expect(tid("video-version-details-row")).toBeNull();
+    expect(tid("video-copy-shown-notes")).toBeNull();
+  });
+
+  it("Copy shown notes is disabled while nothing is shown", async () => {
+    await mount({ shown: () => {}, notes: true });
+    await untilNotes();
+    await click(trigger()!);
+    expect((tid("video-copy-shown-notes") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("Version details opens a sheet of the Version's details that takes focus on itself; Escape closes it and focus goes back to the ⋯", async () => {
+    await mount({ shown: () => {}, notes: true });
+    await untilNotes();
+    await click(trigger()!);
+    await click(tid("video-version-details-row")!);
+    await flush(4);
+    expect(tid("review-action-sheet")).toBeNull();
+    const sheet = tid("video-details-sheet")!;
+    expect(sheet).not.toBeNull();
+    expect(sheet.querySelectorAll('[data-testid="video-detail-label"]').length).toBeGreaterThan(0);
+    expect(document.activeElement).toBe(sheet);
+    expect(sheet.className).toContain("focus-visible:!outline-none");
+    expect(tid("video-details-close")!.className).toContain("[&:not(:focus-visible)]:sr-only");
+    await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    await flush(6); await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
+    expect(tid("video-details-sheet")).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it("Paste N notes from v1… opens the paste dialog, and closing it gives focus back to the ⋯", async () => {
+    const forms = createNoteFormStore("phone-paste");
+    forms.copyNotes(ids.video, { sourceAssetId: ids.asset1, sourceVersion: 1, noteIds: ["n1", "n2"] });
+    await mount({ shown: () => {}, notes: true, forms });
+    await untilNotes();
+    await click(trigger()!);
+    const paste = tid("video-paste-notes")!;
+    expect(paste.textContent).toBe("Paste 2 notes from v1…");
+    await click(paste);
+    await flush(4);
+    expect(tid("review-action-sheet")).toBeNull();
+    expect(tid("video-note-paste-dialog")).not.toBeNull();
+    await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    await flush(6); await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
+    expect(tid("video-note-paste-dialog")).toBeNull();
+    expect(document.activeElement).toBe(trigger());
   });
 });

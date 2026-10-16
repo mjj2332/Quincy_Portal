@@ -162,7 +162,7 @@ describe("the one-line top bar (#877 S2)", () => {
       expect(tid("video-version-menu")!.className).toContain("hidden");
       expect(trigger()).not.toBeNull();
       await openMenu();
-      expect(tid("video-header-remove-version")!.textContent).toBe("Remove version…");
+      expect(tid("video-header-remove-version")!.textContent).toBe("Remove v2…");
     });
 
     it("keeps the Version ⋯ trigger on a desktop bar", async () => {

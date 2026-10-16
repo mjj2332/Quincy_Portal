@@ -51,30 +51,32 @@ export const SHEET_SCRIM = "bg-[color-mix(in_srgb,var(--ink-900)_75%,transparent
 export const PHONE_SHEET_CHROME = "gap-0 rounded-t-[var(--radius-lg)] px-0 pt-[var(--space-2)] pb-[max(calc(var(--space-5)+var(--space-1)),env(safe-area-inset-bottom))] focus-visible:!outline-none";
 
 /** P9's `.arow`: 50pt (a 24pt body line, `--space-3` above and below, and the item's 1px border), 20pt gutters (`--space-4` + `--space-1`), square, edge to edge. */
-const ROW = "min-h-11 w-full cursor-pointer gap-[var(--space-3)] rounded-none px-[calc(var(--space-4)+var(--space-1))] py-[var(--space-3)] text-start data-[disabled]:cursor-not-allowed data-[disabled]:opacity-60 aria-disabled:cursor-not-allowed aria-disabled:opacity-60";
+export const ACTION_ROW = "min-h-11 w-full cursor-pointer gap-[var(--space-3)] rounded-none px-[calc(var(--space-4)+var(--space-1))] py-[var(--space-3)] text-start data-[disabled]:cursor-not-allowed data-[disabled]:opacity-60 aria-disabled:cursor-not-allowed aria-disabled:opacity-60";
+
+/** The row's label in body type (P9: 16pt, regular). */
+export const ACTION_ROW_TITLE = "text-[length:var(--text-base)] leading-[var(--leading-normal)] font-normal";
 
 /** One row of the action sheet: a button, or a real anchor (`href`, so the browser's own download runs on it). */
-export function ActionRow({ icon, children, onSelect, href, download, label, danger = false, disabled = false, pressed, testId }: {
+export function ActionRow({ icon, children, onSelect, href, download, danger = false, disabled = false, pressed, testId }: {
   icon?: ReactNode;
   children: ReactNode;
   onSelect?: ((event?: unknown) => void) | undefined;
   href?: string | undefined;
   download?: boolean;
-  /** Accessible name when it differs from the text. */
-  label?: string | undefined;
   danger?: boolean;
   disabled?: boolean;
   /** A toggle row (Social preview): its state, spoken as `aria-pressed`. */
   pressed?: boolean | undefined;
   testId?: string | undefined;
 }) {
-  const common = { "data-testid": testId, "aria-label": label, className: cn(ROW, danger && "text-destructive-wash-foreground") };
+  // The visible label is the accessible name (#879 PR 3b): no row speaks a different one.
+  const common = { "data-testid": testId, className: cn(ACTION_ROW, danger && "text-destructive-wash-foreground") };
   const render = href !== undefined
     ? <a {...common} href={href} {...(download ? { download: true } : {})} onClick={onSelect} />
     : <button {...common} type="button" disabled={disabled} {...(pressed !== undefined ? { "aria-pressed": pressed } : {})} onClick={onSelect} />;
   return <Item size="sm" render={render}>
     {icon && <ItemMedia variant="icon">{icon}</ItemMedia>}
-    <ItemContent><ItemTitle className="text-[length:var(--text-base)] leading-[var(--leading-normal)] font-normal">{children}</ItemTitle></ItemContent>
+    <ItemContent><ItemTitle className={ACTION_ROW_TITLE}>{children}</ItemTitle></ItemContent>
   </Item>;
 }
 
