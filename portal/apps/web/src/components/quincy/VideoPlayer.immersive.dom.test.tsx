@@ -466,6 +466,21 @@ describe("VideoPlayer Full screen prompt (#880, owner decision 2026-10-16)", () 
   });
 });
 
+describe("VideoPlayer Add note (#880 review 5)", () => {
+  it("is the installed reui Toggle, as Mute is: pressed from the host, and a press calls the host's toggle", async () => {
+    const onToggle = vi.fn();
+    await mount({ immersive: hostOf({ addNote: { pressed: false, onToggle } }) });
+    const add = () => byTestId("video-immersive-add-note")!;
+    expect(add().className.split(/\s+/)).toContain("group/toggle");
+    expect(add().getAttribute("aria-label")).toBe("Add note");
+    expect(add().getAttribute("aria-pressed")).toBe("false");
+    await act(async () => { add().click(); });
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    await rerender({ immersive: hostOf({ addNote: { pressed: true, onToggle } }) });
+    expect(add().getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
 describe("VideoPlayer F key (#880)", () => {
   it("F toggles Full screen through the player's keys, and is not the player's without a host", async () => {
     const onToggle = vi.fn(); const control = createRef<VideoPlayerControl>();

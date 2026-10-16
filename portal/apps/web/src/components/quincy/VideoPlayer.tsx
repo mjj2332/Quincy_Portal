@@ -482,7 +482,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         {fullscreenButton}
         {/* F1's row ends Mute, Add note: the label shows on a phone too. */}
         {imm && immersive?.addNote && <IconTip label="Add note">
-          <Button type="button" variant="outline" aria-label="Add note" aria-pressed={immersive.addNote.pressed} data-testid="video-immersive-add-note" className={cn(COARSE, "aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground")} onClick={immersive.addNote.onToggle}><SquarePen aria-hidden="true" /><span>Add note</span></Button>
+          <Toggle variant="outline" size="default" aria-label="Add note" pressed={immersive.addNote.pressed} onPressedChange={() => { immersive.addNote?.onToggle(); }} data-testid="video-immersive-add-note" className={COARSE}><SquarePen aria-hidden="true" /><span>Add note</span></Toggle>
         </IconTip>}
       </div>
     </div>
