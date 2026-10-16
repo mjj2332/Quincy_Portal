@@ -21,6 +21,7 @@ import { ReviewPaneHideContext, ReviewSplit, useReviewPane, useReviewPaneControl
 import { blurComposerField, useReviewSheet } from "../quincy/ReviewSheet";
 import { useVisualViewport } from "../../lib/use-visual-viewport";
 import { useInkCanvas } from "../../lib/use-ink-canvas";
+import type { SheetStop } from "../../lib/review-pane-geometry";
 import type { NotesSlots } from "./VideoNotesHost";
 import type { SocialPreviewMode } from "../quincy/SocialPreviewControls";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../reui/tabs";
@@ -142,6 +143,15 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const setSheetStop = sheetControl.onStop;
   // A phone's notes sheet opens at half whenever something sends the person to the notes (a marker, an I/O mark, a note link), and never persists (D6).
   const revealNotes = useCallback(() => { setPaneOpen(true); setSideTab("main"); if (sheetStopRef.current === "collapsed") setSheetStop("half"); }, [setPaneOpen, setSheetStop]);
+  // Search in the phone notes head (#879 PR 3b, owner decision): the keyboard is about to take half the screen, so the sheet goes to full while the field is open and back to
+  // the stop it was at when it closes. A stop the person drags to meanwhile is theirs: closing restores only if the sheet is still at full.
+  const searchReturn = useRef<SheetStop | null>(null);
+  const onSearchOpenChange = useCallback((open: boolean) => {
+    if (open) { if (searchReturn.current === null) searchReturn.current = sheetStopRef.current; setSheetStop("full"); return; }
+    const back = searchReturn.current;
+    searchReturn.current = null;
+    if (back !== null && sheetStopRef.current === "full") setSheetStop(back);
+  }, [setSheetStop]);
   const deepNoteId = notes?.openNoteId;
   useEffect(() => { if (deepNoteId !== undefined) revealNotes(); }, [deepNoteId, revealNotes]);
   // One mute choice for both views: the single player and compare each start from it, and report back on exit.
@@ -208,6 +218,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       if (layer || popup === null) { escapeSnapshot.current = { layer, form: false, compare: false, social: false }; return; }
       const active = document.activeElement;
       let consumed = false;
+      // The phone notes head's search field owns Escape (#879 PR 3b): it clears and closes the search itself, and nothing else may take that Escape (not a draft, not the viewer).
+      if (active instanceof Element && popup.contains(active) && active.closest("[data-notes-search]") !== null) { escapeSnapshot.current = { layer, form: true, compare: false, social: false }; return; }
       const inForm = active instanceof Element && popup.contains(active) && active.closest("[data-notes-form]") !== null;
       // In compare a form is only the Escape's when focus is inside that side's note form: a hidden or unfocused draft never swallows it.
       // The order is the form or the drawing first, then Social, then Compare, then the viewer (#877): Social leaves the forms visible, so a form that is open owns the key.
@@ -558,7 +570,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
             <LazyCompareView video={video} store={compareStore} social={socialMode} startFrame={startFrame} onChangeSide={changeSide} controlRef={compareRef} detailsFor={detailsFor} {...(notes ? { notes: { projectId: notes.projectId, role: notes.role, userId: notes.userId, archived: notes.archived, forms: notes.forms } } : {})} />
           </Suspense>
         </>
-        : notes ? <Suspense fallback={phone ? phoneHeader() : null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows}>{layout}</LazyNotesHost></Suspense> : layout(null)}
+        : notes ? <Suspense fallback={phone ? phoneHeader() : null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows} onSearchOpenChange={onSearchOpenChange}>{layout}</LazyNotesHost></Suspense> : layout(null)}
       </OverlayContainerContext.Provider>
       <div ref={setSlot} />
       <div ref={setToastSlot} />

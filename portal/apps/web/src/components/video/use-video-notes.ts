@@ -5,7 +5,7 @@ import type { TimelineMarker } from "../quincy/VideoTimelineMarkers";
 import type { VideoRangeControl } from "../quincy/VideoPlayer";
 import { useOptionalProjectQueryClient } from "../../lib/project-data";
 import type { VideoFrameClock } from "../../lib/video-frame-clock";
-import { DEFAULT_NOTE_FILTERS, visibleThreads, type NoteFilters } from "../../lib/video-note-view";
+import { DEFAULT_NOTE_FILTERS, noteAuthors, visibleThreads, type NoteFilters } from "../../lib/video-note-view";
 import { effectiveMarks, marksLocked, type NoteFormStore } from "../../lib/video-note-form-store";
 import { marksToFrames } from "../../lib/video-note-marks";
 import {
@@ -22,7 +22,7 @@ const fresh = (assetId: string): Local => ({ assetId, selectedId: null, scroll: 
  * (read from the form store), the clock handed up by the player, and the writes. The viewer calls this once
  * and gives the panel `session` and the player `playerProps`.
  */
-export function useVideoNotes({ projectId, version, role, userId, archived, forms, markup = false, seekFrame, openNoteId = null }: {
+export function useVideoNotes({ projectId, version, role, userId, archived, forms, markup = false, seekFrame, openNoteId = null, phone = false }: {
   projectId: string;
   version: VideoVersionDto;
   role: Role;
@@ -36,11 +36,20 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
   seekFrame?: (frame: number) => void;
   /** #835: the note a link names (`&note=`). Once the list and the clock are ready it is selected, scrolled to and sought to, once per Version and note. */
   openNoteId?: string | null;
+  /** The phone layout (#879 PR 3b): only its notes head sets an author or a search, and both go when the layout does. */
+  phone?: boolean;
 }) {
   const assetId = version.assetId;
   const queryClient = useOptionalProjectQueryClient();
   const query = useVideoNotesQuery(projectId, assetId, true, role);
-  const [filters, setFilters] = useState<NoteFilters>(DEFAULT_NOTE_FILTERS);
+  const [held, setFilters] = useState<NoteFilters>(DEFAULT_NOTE_FILTERS);
+  // The author and the search belong to one Version on a phone (#879 PR 3b): switching Version or leaving the phone layout clears them; status and visibility carry over.
+  // Cleared in render, not in an effect, so no frame shows the old Version's search over the new one's notes (lesson "Escape needs an order…").
+  const [scope, setScope] = useState({ assetId, phone });
+  if (scope.assetId !== assetId || scope.phone !== phone) {
+    setScope({ assetId, phone });
+    if (held.author !== null || held.query !== null) setFilters({ ...held, author: null, query: null });
+  }
   const [local, setLocal] = useState<Local>(() => fresh(assetId));
   // The Version on screen changed: the selection belongs to the one just left, and must not come back with it.
   if (local.assetId !== assetId) setLocal(fresh(assetId));
@@ -60,6 +69,11 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
   const readOnly = archived;
 
   const threads = query.data;
+  // An author whose notes have all gone (deleted, or moved by a refetch) reads as Everyone rather than an empty list behind a chip nobody can pick again.
+  const filters = useMemo<NoteFilters>(() => {
+    const scoped = scope.assetId === assetId && scope.phone === phone ? held : { ...held, author: null, query: null };
+    return scoped.author !== null && threads && !noteAuthors(threads).some((author) => author.key === scoped.author) ? { ...scoped, author: null } : scoped;
+  }, [held, scope, assetId, phone, threads]);
   const shown = useMemo(() => (threads ? visibleThreads(threads, filters) : []), [threads, filters]);
   const marks = useSyncExternalStore(forms.subscribe, () => forms.slot(assetId).marks);
   // Draw mode locks the transport, seeks and marks; with the part off there is no draw mode, whatever a stale slot says.
@@ -115,7 +129,12 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
   }, [openNoteId, assetId, clock, threads, filters, onMarkerSelect]);
 
   // A note posted with a drawing becomes the selected one, so its drawing stays on the picture (the display rule shows the selected note's).
-  const post = useCallback((input: VideoNoteCreateInput) => withCtx((context) => createVideoNote(context, input)).then((created) => { if (markup && input.markup !== undefined) select(created.id); return created; }), [withCtx, markup, select]);
+  // A sent note is listed (#879 PR 3b, C7): the post clears the author and the search, which could hide it. Status and visibility stay the person's choice.
+  const post = useCallback((input: VideoNoteCreateInput) => withCtx((context) => createVideoNote(context, input)).then((created) => {
+    if (assetIdRef.current === assetId) setFilters((current) => (current.author === null && current.query === null ? current : { ...current, author: null, query: null }));
+    if (markup && input.markup !== undefined) select(created.id);
+    return created;
+  }), [withCtx, markup, select, assetId]);
   const actions = useMemo<ThreadActions>(() => ({
     reply: (rootId, content) => withCtx((context) => replyToVideoNote(context, rootId, content)),
     edit: (noteId: string, input: VideoNoteEditInput) => withCtx((context) => editVideoNote(context, noteId, input)),

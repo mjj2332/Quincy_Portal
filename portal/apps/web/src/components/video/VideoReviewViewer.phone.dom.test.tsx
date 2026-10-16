@@ -296,11 +296,11 @@ describe("D4 and focus", () => {
     expect(tid("review-sheet-overlay")).not.toBeNull(); // Base UI leaves a nested dialog's backdrop out unless it is forced
   });
 
-  it("on a phone the Version details row and the filters scroll inside the notes list", async () => {
+  it("on a phone the notes list has no title row: no Version details button, counts or notes ⋯ (the head and the header's ⋯ sheet carry them, #879 PR 3b)", async () => {
     await mount({ notes: true });
-    const deadline = Date.now() + 5000; while (!tid("video-details-button") && Date.now() < deadline) await flush(1);
-    expect(tid("video-notes-list")!.contains(tid("video-details-button"))).toBe(true);
-    expect(tid("video-notes-counts")!.className).not.toContain("sr-only");
+    const deadline = Date.now() + 5000; while (!tid("video-notes-list") && Date.now() < deadline) await flush(1);
+    expect(tid("video-notes-list")).not.toBeNull();
+    for (const gone of ["video-details-button", "video-notes-counts", "video-notes-menu", "video-notes-title"]) expect(tid(gone), gone).toBeNull();
   });
 
   it("with Delivery, the phone tab row is 44px and the underline sits on its bottom edge", async () => {

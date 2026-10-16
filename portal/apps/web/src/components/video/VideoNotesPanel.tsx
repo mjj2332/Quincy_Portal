@@ -3,7 +3,7 @@ import { type VideoNoteDto, type VideoNoteThreadDto } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
 import { useHairlineWithHead } from "../../lib/use-hairline-with-head";
 import { useNow } from "../../lib/use-now";
-import { noteCounts, type NoteStatusFilter, type NoteVisibilityFilter } from "../../lib/video-note-view";
+import { DEFAULT_NOTE_FILTERS, noteAuthors, noteCounts, type NoteStatusFilter, type NoteVisibilityFilter } from "../../lib/video-note-view";
 import { classifyVideoNoteError } from "../../lib/video-notes-data";
 import { ARCHIVED_NOTICE_CLASS } from "../archived-notice";
 import { ConfirmDeleteDialog } from "../ConfirmDeleteDialog";
@@ -12,6 +12,7 @@ import { ICON_BUTTON } from "../quincy/icon-button";
 import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
 import { EmptyState } from "../quincy/EmptyState";
 import { Notice } from "../quincy/Notice";
+import { NotesFilterHead } from "../quincy/NotesFilterHead";
 import { ReviewPaneHideContext } from "../quincy/ReviewPane";
 import { Popover, PopoverContent, PopoverTrigger } from "../reui/popover";
 import { ScrollArea } from "../reui/scroll-area";
@@ -44,15 +45,16 @@ function deleteCopy(tombstone: boolean, conflicted: boolean) {
  * 721px) nothing inside scrolls on its own: the whole dialog scrolls, with the composer directly under the player ahead of the list.
  * It holds no data of its own: `session` (from `useVideoNotes`) is shared with the player, which draws the markers and takes I and O.
  */
-export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, phone = false }: { session: VideoNotesSession; detailsRows: ReactNode; /** Copy and paste (#741 5c-ui), owned by the notes host (#879 PR 3b) so the phone header's ⋯ sheet drives the same controller and the paste dialog outlives this panel. */ clipboard: NotesClipboard; /** The marker export (#741 9), owned by the notes host so the phone header can reach it: `enabled` is the Project's `export` part and the role. */ exp: MarkerExport; /** The Draw button, handed to the composer on a phone (D11). */ pen?: ReactNode; /** The phone layout (#879): the panel is the sheet's body, its composer the sheet's foot. */ phone?: boolean; }) {
+export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, phone = false, onSearchOpenChange }: { session: VideoNotesSession; detailsRows: ReactNode; /** Copy and paste (#741 5c-ui), owned by the notes host (#879 PR 3b) so the phone header's ⋯ sheet drives the same controller and the paste dialog outlives this panel. */ clipboard: NotesClipboard; /** The marker export (#741 9), owned by the notes host so the phone header can reach it: `enabled` is the Project's `export` part and the role. */ exp: MarkerExport; /** The Draw button, handed to the composer on a phone (D11). */ pen?: ReactNode; /** The phone layout (#879): the panel is the sheet's body, its composer the sheet's foot. */ phone?: boolean; /** The phone head's search opened or closed (#879 PR 3b). */ onSearchOpenChange?: (open: boolean) => void; }) {
   const { query, threads, shown, filters, setFilters, selectedId, version } = session;
   const archived = session.readOnly;
   const readOnly = archived;
   const now = useNow();
   const listRef = useRef<HTMLDivElement>(null);
-  const countsRef = useRef<HTMLSpanElement>(null);
+  // On a phone the hairline above the composer follows the notes head (#879 PR 3b), the row that now opens the list.
+  const headRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
-  useHairlineWithHead(phone, listRef, countsRef, composerRef);
+  useHairlineWithHead(phone, listRef, headRef, composerRef);
   const [deleting, setDeleting] = useState<Deleting | null>(null);
   /** Where focus may land once the confirm closes: kept in a ref because `deleting` is already null by then. */
   const focusIds = useRef<string[]>([]);
@@ -152,7 +154,7 @@ export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, pho
     <div data-sheet-part="body" className="flex flex-wrap items-baseline justify-between max-[721px]:flex-nowrap max-[721px]:items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)]">
       <div className="grid gap-[var(--space-1)]">
         <h3 data-testid="video-notes-title" className="m-0 max-[721px]:sr-only text-[length:var(--text-lg)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{`Notes on v${version.version}`}</h3>
-        <span ref={countsRef} data-testid="video-notes-counts" className="text-foreground-secondary [font:var(--type-label)]">{`${counts.totals.open} open · ${counts.totals.resolved} resolved`}</span>
+        <span data-testid="video-notes-counts" className="text-foreground-secondary [font:var(--type-label)]">{`${counts.totals.open} open · ${counts.totals.resolved} resolved`}</span>
       </div>
       <div className="flex items-center gap-[var(--space-1)]">
         <Popover>
@@ -179,6 +181,24 @@ export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, pho
     </div>}</>
   );
 
+  const statusOptions = [{ value: "open" as const, label: "Open", count: counts.status.open }, { value: "resolved" as const, label: "Resolved", count: counts.status.resolved }, { value: "all" as const, label: "All", count: counts.status.all }];
+  const visibilityOptions = [{ value: "all" as const, label: "All", count: counts.visibility.all }, { value: "public" as const, label: "Client-visible", count: counts.visibility.public }, { value: "internal" as const, label: "Internal", count: counts.visibility.internal }];
+  // The phone head (#879 PR 3b, P1 `NotesFilter`) in place of the title row, the two toggle groups and the notes ⋯ (whose Copy and Paste move to the header's ⋯ sheet).
+  const authors = useMemo(() => noteAuthors(threads ?? []), [threads]);
+  const phoneHead = total > 0 && <NotesFilterHead<NoteStatusFilter, NoteVisibilityFilter>
+    headRef={headRef}
+    status={{ label: "Show notes that are", value: filters.status, options: statusOptions, onChange: (status) => { setFilters({ ...filters, status }); } }}
+    visibility={{ label: "Show notes visible to", value: filters.visibility, options: visibilityOptions, onChange: (visibility) => { setFilters({ ...filters, visibility }); } }}
+    authors={{ value: filters.author, options: authors, onChange: (author) => { setFilters({ ...filters, author }); } }}
+    query={filters.query}
+    onQueryChange={(query) => { setFilters({ ...filters, query }); }}
+    {...(onSearchOpenChange ? { onSearchOpenChange } : {})}
+  />;
+  // A phone filter that leaves nothing to show says so and offers the way back (#879 PR 3b); the desktop keeps its one quiet line.
+  const filteredEmpty = phone && total > 0
+    ? <EmptyState size="compact" data-testid="video-notes-empty" title="No notes match."><Button type="button" variant="text" data-testid="video-notes-reset-filters" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={() => { setFilters(DEFAULT_NOTE_FILTERS); }}>Reset filters</Button></EmptyState>
+    : null;
+
   return <aside
     aria-label="Notes"
     data-testid="video-notes-panel"
@@ -202,11 +222,10 @@ export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, pho
     <div ref={listRef} data-sheet-part="body" className="flex flex-1 flex-col min-[721px]:min-h-32 max-[721px]:min-h-0">
       <ScrollArea className="min-h-0 flex-1" data-testid="video-notes-list" viewportProps={{ tabIndex: -1 }}>
         <div data-testid="video-notes-list-body" className="grid gap-[var(--space-2)] pe-[var(--space-1)] in-data-[mode=browse]:py-[var(--space-3)]">
-          {phone && headerRow}
-          {phone && filtersBlock}
+          {phone && phoneHead}
           {loading && <span data-testid="video-notes-loading" role="status" className="text-foreground-secondary [font:var(--type-label)]">Loading notes…</span>}
           {failed && <Notice tone="critical" role="alert" data-testid="video-notes-error" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>Notes could not be loaded.</span><Button type="button" variant="text" data-testid="video-notes-retry" onClick={session.refresh}>Retry</Button></Notice>}
-          {!loading && !failed && listed.length === 0 && <EmptyState size="compact" data-testid="video-notes-empty" title={total === 0 ? "No notes on this version yet." : "No notes match these filters."} />}
+          {!loading && !failed && listed.length === 0 && (filteredEmpty ?? <EmptyState size="compact" data-testid="video-notes-empty" title={total === 0 ? "No notes on this version yet." : "No notes match these filters."} />)}
           {listed.map((thread) => <VideoNoteThread
             key={thread.id}
             thread={thread}
