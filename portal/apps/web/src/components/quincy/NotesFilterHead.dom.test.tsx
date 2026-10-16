@@ -118,6 +118,13 @@ describe("NotesFilterHead (#879 PR 3b)", () => {
     expect(reported).toEqual(["open", "closed"]);
   });
 
+  it("the head keeps --space-1 inline padding, room for the field's focus ring (2px offset + 2px line) inside the list's clip (#879 PR 3b, D1)", async () => {
+    await render(<Harness />);
+    expect(q("notes-filter-head")!.className).toContain("px-[var(--space-1)]");
+    await click(q("notes-filter-search")!);
+    expect(q("notes-filter-head")!.className).toContain("px-[var(--space-1)]");
+  });
+
   it("the Search icon focuses the field inside its own click, so iOS raises the keyboard on the first tap", async () => {
     await render(<Harness />);
     let during: Element | null = null;
