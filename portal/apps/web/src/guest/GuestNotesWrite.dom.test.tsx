@@ -1156,6 +1156,36 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     return down.defaultPrevented;
   };
 
+  it("a sent note is listed: the post clears the author and the search, which could hide it; the status stays (#879 PR 3b, S1)", async () => {
+    notes = { [asset(10)]: [note(1), mine(2, { startFrame: 80 })] };
+    extra = (url, init) => (url === `${BASE}/versions/${asset(10)}/notes` && init?.method === "POST" ? json(mine(5, { body: "Too dark here", startFrame: 50 }), 201) : undefined);
+    const tap = async (element: HTMLElement) => { await act(async () => { element.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); element.click(); }); await flush(2); };
+    const radio = (name: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((item) => item.textContent?.startsWith(name))!;
+    const listed = () => allById("guest-note").map((row) => row.dataset.noteId);
+    await open();
+    await atSeconds(2);
+    await fieldReady();
+    await tap(byId("notes-filter-author")!);
+    await tap(radio("Mia Chen"));
+    expect(listed()).toEqual([noteId(1)]);
+    await tap(byId("notes-filter-search")!);
+    await typeInto(byId("notes-search-field"), "Trim");
+    await flush(2);
+    expect(listed()).toEqual([noteId(1)]);
+    // The keyboard goes from the search field first (search mode puts the pill away), as on the phone.
+    await act(async () => { byId("notes-search-field")!.blur(); });
+    await flush(2);
+    await focusField();
+    await typeInto(area(), "Too dark here");
+    await press(byId("guest-composer-post"));
+    await flush(4);
+    expect(requests("POST")).toHaveLength(1);
+    expect(byId("notes-search-field")).toBeNull();
+    expect(byId("notes-filter-author")!.textContent).not.toContain("Mia Chen");
+    expect(byId("notes-filter-status")!.textContent).toContain("Open");
+    expect(listed()).toContain(noteId(5));
+  });
+
   it("a verified guest's sheet ends in the pill at rest: +, chip, field, pen and a disabled round Send; no Add a note, hint or Cancel", async () => {
     await open();
     await atSeconds(2);

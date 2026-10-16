@@ -302,7 +302,15 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     return result.kind === "conflict" ? { ok: false, message, conflict: result.thread } : { ok: false, message };
   }, [resync]);
   const assetForWrites = version.assetId;
-  const post = useCallback(async (input: Parameters<GuestApi["createNote"]>[1]) => settle(await writer.run(`new:${assetForWrites}`, () => api.createNote(assetForWrites, input)), null), [api, writer, settle, assetForWrites]);
+  // The phone notes filter's state (read further down). Declared here so a post can clear it.
+  const [heldFilters, setNoteFilters] = useState<GuestNoteFilters>(GUEST_PHONE_FILTERS);
+  // A sent note is listed (#879 PR 3b, S1, as the staff post): success clears the author and the search, which could hide it; the status stays the guest's choice. A post that lands
+  // after a Version change clears nothing that matters: the filter scope has already cleared both for the new Version.
+  const post = useCallback(async (input: Parameters<GuestApi["createNote"]>[1]) => {
+    const outcome = settle(await writer.run(`new:${assetForWrites}`, () => api.createNote(assetForWrites, input)), null);
+    if (outcome.ok) setNoteFilters((current) => (current.author === null && current.query === null ? current : { ...current, author: null, query: null }));
+    return outcome;
+  }, [api, writer, settle, assetForWrites]);
   const editRoot = useCallback(async (id: string, patch: EditPatch, expectedRevision: number): Promise<ActionOutcome> => {
     const current = threadsRef.current?.find((thread) => thread.id === id);
     if (current === undefined || current.deleted) return { ok: false, message: "This note was deleted." };
@@ -343,7 +351,6 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
 
   // The phone notes filter (#879 PR 3b, P2 `NotesFilter`): status, author and search, phone only (a desktop guest sees every note, as before). A phone guest starts on Open. The author
   // and the search belong to one Version and one layout: they clear in render when either changes, so no frame shows them over another Version's notes. Status carries over.
-  const [heldFilters, setNoteFilters] = useState<GuestNoteFilters>(GUEST_PHONE_FILTERS);
   const [filterScope, setFilterScope] = useState({ assetId: version.assetId, phone });
   const scopeMoved = filterScope.assetId !== version.assetId || filterScope.phone !== phone;
   if (scopeMoved) {
