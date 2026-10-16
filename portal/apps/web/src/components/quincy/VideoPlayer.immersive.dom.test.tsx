@@ -1,4 +1,5 @@
 import { act, createRef } from "react";
+import { createPortal } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
@@ -190,6 +191,42 @@ describe("VideoPlayer controls auto-hide (#880, D13)", () => {
     await act(async () => { pointerUp(window); });
     await advance(3000);
     expect(chrome()).toBe("hidden");
+  });
+
+  // Fix round 2: the staff viewer hosts the player in a modal dialog (role="dialog"). A popup hold that looked up past the player found that host, so every focus in the
+  // player (the Exit focus at entry among them) held the controls for good.
+  it("inside a dialog host, the entry focus on Exit does not hold the controls: they hide 3000ms after play", async () => {
+    const dialogHost = document.createElement("div"); dialogHost.setAttribute("role", "dialog"); document.body.appendChild(dialogHost);
+    host = document.createElement("div"); dialogHost.appendChild(host); root = createRoot(host);
+    await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" immersive={hostOf()} />); });
+    await act(async () => { stub.loadMetadata(video(), { duration: 3000 / 25, videoWidth: 1920, videoHeight: 1080 }); });
+    await act(async () => { stub.finishSeek(video()); stub.presentFrame(video(), 0); });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await act(async () => { button("Exit full screen")!.focus(); });
+    const badge = byTestId("video-play-badge")!;
+    await act(async () => { pointerDown(badge); pointerUp(badge); badge.click(); });
+    await advance(2900);
+    expect(chrome()).toBe("shown");
+    await advance(100);
+    expect(chrome()).toBe("hidden");
+  });
+
+  it("a menu of the player's own still holds the controls, in place or portalled out of the player, inside a dialog host or not", async () => {
+    for (const portalled of [false, true]) {
+      const dialogHost = document.createElement("div"); dialogHost.setAttribute("role", "dialog"); document.body.appendChild(dialogHost);
+      host = document.createElement("div"); dialogHost.appendChild(host); root = createRoot(host);
+      const menu = <div role="menu" data-testid="the-menu"><button type="button" role="menuitem" data-testid="the-item">Copy</button></div>;
+      await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" immersive={hostOf({ card: portalled ? createPortal(menu, document.body) : menu })} />); });
+      await act(async () => { stub.loadMetadata(video(), { duration: 3000 / 25, videoWidth: 1920, videoHeight: 1080 }); });
+      await act(async () => { stub.finishSeek(video()); stub.presentFrame(video(), 0); });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      await play();
+      await act(async () => { const item = document.querySelector<HTMLElement>('[data-testid="the-item"]')!; pointerDown(item); item.focus(); });
+      await advance(10_000);
+      expect(chrome(), portalled ? "portalled" : "in place").toBe("shown");
+      vi.useRealTimers();
+      await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
+    }
   });
 
   it("a tap on the film toggles the controls, even while paused, and does not play or pause", async () => {

@@ -77,6 +77,14 @@ export const PILL_ICON = "relative size-8 after:absolute after:-inset-1.5 after:
 const PHONE_PLAY_SLOT = "mx-[calc(var(--space-3)/2)]";
 const MONO = "[font:var(--type-mono)] tabular-nums";
 /** P1's PlayBadge: a 60px round, translucent ink disc on the film (`--space-8` less `--space-1`), the inverse surface's paper icon. */
+/**
+ * Whether the focus is in a menu, list or dialog of the player's own (#880 fix round 2): one inside the player, or portalled out of it (React still bubbles its focus here).
+ * Never one the player sits in: the staff viewer is a modal dialog, and counting it held the controls on every focus in the player, the Exit focus at entry included.
+ */
+function ownPopup(target: Element, player: Element): boolean {
+  const popup = target.closest('[role="menu"], [role="listbox"], [role="dialog"]');
+  return popup !== null && !popup.contains(player);
+}
 /** Full screen's dock while Add note is open (#880 fix round 1, F1): the scrim's top padding plus the composer's published height and the space under it, so the scrim runs behind the composer. */
 const COMPOSING_SCRIM = "pt-[calc(var(--space-6)+var(--immersive-composer-h,0px)+var(--space-2))]";
 const PLAY_BADGE = "pointer-events-auto size-[calc(var(--space-8)-var(--space-1))] rounded-[var(--radius-pill)] bg-[color-mix(in_srgb,var(--ink-900)_55%,transparent)] !text-foreground hover:bg-[color-mix(in_srgb,var(--ink-900)_70%,transparent)]";
@@ -344,9 +352,8 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     tabIndex={-1}
     onKeyDown={keyboard === "self" ? (event) => { keyDown(event); } : undefined}
     onFocus={imm ? (event) => {
-      const target = event.target as Element;
       setFocusHeld(keyboardInput.current);
-      setPopupOpen(target.closest('[role="menu"], [role="listbox"], [role="dialog"]') !== null);
+      setPopupOpen(ownPopup(event.target as Element, event.currentTarget));
     } : undefined}
     onBlur={imm ? () => { setFocusHeld(false); setPopupOpen(false); } : undefined}
     onPointerMove={imm ? (event) => {

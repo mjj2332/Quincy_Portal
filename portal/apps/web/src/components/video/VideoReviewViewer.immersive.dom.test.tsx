@@ -243,6 +243,24 @@ describe("Add note in a phone's Full screen (#880 S4, owner decision 1)", () => 
   });
 });
 
+describe("auto-hide in the staff viewer's Full screen (#880 fix round 2)", () => {
+  it.each([["a phone", { width: 390, height: 844, coarse: true }], ["a desktop width", { width: 1200, height: 800, coarse: false }]] as const)("on %s: after ⤢ and the centre Play, the controls hide 3000ms into play", async (_name, size) => {
+    viewport = mockViewport(size);
+    await mount();
+    await click(tid("video-fullscreen")!);
+    expect(document.activeElement).toBe(tid("video-exit-fullscreen"));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const badge = tid("video-play-badge")!;
+      await act(async () => { badge.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); badge.dispatchEvent(new MouseEvent("pointerup", { bubbles: true })); badge.click(); });
+      await act(async () => { vi.advanceTimersByTime(2900); });
+      expect(tid("video-player")!.dataset.chrome).toBe("shown");
+      await act(async () => { vi.advanceTimersByTime(100); });
+      expect(tid("video-player")!.dataset.chrome).toBe("hidden");
+    } finally { vi.useRealTimers(); }
+  });
+});
+
 describe("Cancel in a phone's Full screen composer (#880 fix round 1, item 2)", () => {
   beforeEach(() => { viewport = mockViewport({ width: 390, height: 844, coarse: true }); });
   it("discards the draft and closes the composer, as the Add note toggle does, with the keyboard up or down; the stamp goes back", async () => {
