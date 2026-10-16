@@ -13,7 +13,8 @@ import { IconButton } from "../quincy/icon-button";
 import type { VersionRemovalHandle } from "./VideoVersionMenu";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "../reui/dialog";
 import { IconTip } from "../quincy/IconTip";
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
+import { ACTION_ROW_BOX, ACTION_ROW_TITLE, ACTION_ROWS } from "../quincy/ReviewActionSheet";
 import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
@@ -369,7 +370,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   }, [assetId, compareStore, exitCompare]);
   const newest = Math.max(...video.versions.map((candidate) => candidate.version));
   const optionLabel = (candidate: VideoDto["versions"][number]) => `v${candidate.version}${candidate.version === newest ? " · latest" : ""} · ${candidate.uploadedBy.name} · ${formatVideoDate(candidate.createdAt)}`;
-  const detailsFor = (target: VideoVersionDto): ReactNode => {
+  /** The Version's details: `stacked` (label over value) beside the notes and in Compare; `line` (P8's one-line rows, label left, value right) in the phone sheet (#879 PR 3b, F5). */
+  const detailsFor = (target: VideoVersionDto, layout: "stacked" | "line" = "stacked"): ReactNode => {
     const targetStart = framesToTimecode(0, { nominalFps: target.tcNominalFps, dropFrame: target.tcDropFrame }, target.startTimecodeFrames ?? 0);
     const details: Array<[string, string]> = [
       ["Uploaded by", target.uploadedBy.name],
@@ -383,6 +385,12 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       ["Start timecode", targetStart],
       ["Audio", target.hasAudio ? "Yes" : "None"],
     ];
+    if (layout === "line") return <ItemGroup className={ACTION_ROWS}>
+      {details.map(([label, value]) => <Item key={label} size="sm" className={`${ACTION_ROW_BOX} flex-nowrap`}>
+        <ItemContent className="flex-none"><ItemTitle data-testid="video-detail-label" className={`${ACTION_ROW_TITLE} whitespace-nowrap text-foreground-secondary`}>{label}</ItemTitle></ItemContent>
+        <ItemActions className="ms-auto min-w-0"><span data-testid="video-detail-value" className={`${ACTION_ROW_TITLE} block truncate text-foreground`}>{value}</span></ItemActions>
+      </Item>)}
+    </ItemGroup>;
     return <ItemGroup>
       {details.map(([label, value]) => <Item key={label} size="xs">
         <ItemContent>
@@ -491,7 +499,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       rows={withSummaries([...video.versions].sort((x, y) => y.version - x.version), summaries.data?.versions)}
       latestStatus={reviewStatus ? REVIEW_STATUS_LABEL[video.reviewStatus] : undefined}
     />
-    {slots && <VideoDetailsSheet open={detailsOpenFor === version.assetId} onOpenChange={(next) => { setDetailsOpenFor(next ? version.assetId : null); }} container={slot} version={version.version}>{detailsRows}</VideoDetailsSheet>}
+    {slots && <VideoDetailsSheet open={detailsOpenFor === version.assetId} onOpenChange={(next) => { setDetailsOpenFor(next ? version.assetId : null); }} container={slot} version={version.version}>{detailsFor(version, "line")}</VideoDetailsSheet>}
     {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} removeRef={bindRemove} hideTrigger /></Suspense>}
   </>;
   const layout = (slots: NotesSlots | null): ReactNode => {

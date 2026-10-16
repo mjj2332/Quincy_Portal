@@ -549,6 +549,33 @@ describe("the P9 rows (#879 PR 3b)", () => {
     expect(document.activeElement).toBe(trigger());
   });
 
+  it("the details sheet draws P8: a quiet label-type title, and one-line rows (label left, value right) at the P8 row height (#879 PR 3b, F5)", async () => {
+    await mount({ shown: () => {}, notes: true });
+    await untilNotes();
+    await click(trigger()!);
+    await click(tid("video-version-details-row")!);
+    await flush(4);
+    const sheet = tid("video-details-sheet")!;
+    const title = tid("video-details-title")!;
+    expect(title.className).toContain("[font:var(--type-label)]");
+    expect(title.className).toContain("text-foreground-secondary");
+    expect(title.className).not.toContain("--type-h3");
+    const group = sheet.querySelector<HTMLElement>('[role="list"]')!;
+    expect(group.className).toContain("has-data-[size=sm]:gap-0");
+    const rows = [...group.querySelectorAll<HTMLElement>('[data-slot="item"]')];
+    expect(rows.length).toBe(10);
+    for (const row of rows) {
+      expect(row.getAttribute("data-size")).toBe("sm");
+      expect(row.className).toContain("py-[var(--space-3)]");
+      expect(row.className).toContain("flex-nowrap");
+      const label = row.querySelector('[data-testid="video-detail-label"]')!;
+      const value = row.querySelector('[data-testid="video-detail-value"]')!;
+      // Siblings on one line: the value is not stacked under the label inside one content column.
+      expect(label.parentElement!.contains(value)).toBe(false);
+      expect(value.className).toContain("truncate");
+    }
+  });
+
   it("Paste N notes from v1… opens the paste dialog, and closing it gives focus back to the ⋯", async () => {
     const forms = createNoteFormStore("phone-paste");
     forms.copyNotes(ids.video, { sourceAssetId: ids.asset1, sourceVersion: 1, noteIds: ["n1", "n2"] });

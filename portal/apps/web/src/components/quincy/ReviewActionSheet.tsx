@@ -50,8 +50,14 @@ export const SHEET_SCRIM = "bg-[color-mix(in_srgb,var(--ink-900)_75%,transparent
  */
 export const PHONE_SHEET_CHROME = "gap-0 rounded-t-[var(--radius-lg)] px-0 pt-[var(--space-2)] pb-[max(calc(var(--space-5)+var(--space-1)),env(safe-area-inset-bottom))] focus-visible:!outline-none";
 
-/** P9's `.arow`: 50pt (a 24pt body line, `--space-3` above and below, and the item's 1px border), 20pt gutters (`--space-4` + `--space-1`), square, edge to edge. */
-export const ACTION_ROW = "min-h-11 w-full cursor-pointer gap-[var(--space-3)] rounded-none px-[calc(var(--space-4)+var(--space-1))] py-[var(--space-3)] text-start data-[disabled]:cursor-not-allowed data-[disabled]:opacity-60 aria-disabled:cursor-not-allowed aria-disabled:opacity-60";
+/** P9's `.arow` box: 50pt (a 24pt body line, `--space-3` above and below, and the item's 1px border), 20pt gutters (`--space-4` + `--space-1`), square, edge to edge. A display row (Version details) takes the box alone. */
+export const ACTION_ROW_BOX = "min-h-11 w-full gap-[var(--space-3)] rounded-none px-[calc(var(--space-4)+var(--space-1))] py-[var(--space-3)] text-start";
+
+/** P9's `.arow`: the box, and a pointer that says it acts. */
+export const ACTION_ROW = `${ACTION_ROW_BOX} cursor-pointer data-[disabled]:cursor-not-allowed data-[disabled]:opacity-60 aria-disabled:cursor-not-allowed aria-disabled:opacity-60`;
+
+/** P8's quiet sheet title (`.ash-title`): label type in secondary ink, on the rows' gutter, `--space-2` above and below. */
+export const PHONE_SHEET_TITLE = "m-0 px-[calc(var(--space-4)+var(--space-1))] pt-[var(--space-2)] pb-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]";
 
 /**
  * The rows' group: rows touch, as P8/P9's do. ItemGroup spaces `sm` items with `has-data-[size=sm]:gap-2.5`, which a plain `gap-0` cannot override (a different variant, so

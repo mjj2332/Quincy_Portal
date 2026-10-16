@@ -3,7 +3,7 @@ import { Button } from "../reui/button";
 import { Check } from "lucide-react";
 import { Item, ItemActions, ItemContent, ItemGroup, ItemTitle } from "../reui/item";
 import { Sheet, SheetContent, SheetTitle } from "../reui/sheet";
-import { ACTION_ROW, ACTION_ROWS, ACTION_ROW_TITLE, PHONE_SHEET_CHROME, SHEET_SCRIM } from "../quincy/ReviewActionSheet";
+import { ACTION_ROW, ACTION_ROWS, ACTION_ROW_TITLE, PHONE_SHEET_CHROME, PHONE_SHEET_TITLE, SHEET_SCRIM } from "../quincy/ReviewActionSheet";
 import { SheetCloseButton } from "../quincy/SheetCloseButton";
 import { formatVideoDate } from "./video-format";
 
@@ -51,7 +51,7 @@ export function VideoVersionsSheet({ open, onOpenChange, container, rows, curren
   const changeOpen = (next: boolean) => { if (!next) returnFocusTo?.current?.focus({ preventScroll: true }); onOpenChange(next); };
   return <Sheet open={open} onOpenChange={changeOpen}>
     <SheetContent ref={popupRef} side="bottom" container={container} showCloseButton={false} overlayProps={{ className: SHEET_SCRIM, forceRender: true, "data-testid": "review-sheet-overlay" }} initialFocus={() => popupRef.current ?? true} {...(returnFocusTo ? { finalFocus: () => returnFocusTo.current ?? true } : {})} data-testid="video-versions-sheet" className={`max-h-[70dvh] ${PHONE_SHEET_CHROME}`}>
-      <SheetTitle data-testid="video-versions-title" className="m-0 px-[calc(var(--space-4)+var(--space-1))] pt-[var(--space-2)] pb-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">Version</SheetTitle>
+      <SheetTitle data-testid="video-versions-title" className={PHONE_SHEET_TITLE}>Version</SheetTitle>
       <ItemGroup role="group" aria-label="Versions" className={ACTION_ROWS}>
         {rows.map((row) => {
           const current = row.assetId === currentAssetId;
