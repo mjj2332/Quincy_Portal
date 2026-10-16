@@ -406,18 +406,23 @@ describe("the Full screen composer drops the notes panel's sheet chrome (#880 fi
     const band = tid("video-note-composer")!.closest<HTMLElement>("[data-sheet-part=composer]")!.className.split(/\s+/);
     for (const name of ["in-data-[immersive=compose]:border-t-0", "in-data-[immersive=compose]:pt-0"]) expect(band, name).toContain(name);
   });
-  it("on a phone, Cancel sits in the strip's own hint row, so no row under the pill holds it alone (#880 review 6)", async () => {
+  it("on a phone, Cancel ends the strip's hint line in one head row spanning both columns, so the pill keeps its width and Send its edge (#880 review 6)", async () => {
     viewport = mockViewport({ width: 390, height: 844, coarse: true });
     await mount();
     await click(tid("video-fullscreen")!);
     await click(tid("video-immersive-add-note")!);
-    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
-    // The rules as compiled, against the rendered tree: a class with no [data-immersive=compose] ancestor would do nothing on the device.
-    expect(tid("video-note-composer")!.closest('[data-immersive="compose"]')).toBe(tid("video-review-pane"));
-    expect(composeRuleApplies(tid("video-note-composer")!, "grid-rows-[auto_auto_auto]")).toBe(true);
-    expect(composeRuleApplies(tid("video-note-stamp")!.parentElement!, "col-span-1")).toBe(true);
-    const cancel = tid("video-note-cancel")!.parentElement!;
-    for (const utility of ["col-start-2", "row-start-1"]) expect(composeRuleApplies(cancel, utility), utility).toBe(true);
+    const composer = tid("video-note-composer")!;
+    expect(composer.closest('[data-immersive="compose"]')).toBe(tid("video-review-pane"));
+    // The rendered structure: the head row is a grid item spanning both columns, holding the hint line and then Cancel. Cancel is no grid item of its own, so it sizes no column.
+    const head = tid("video-note-head")!;
+    expect(head.parentElement).toBe(composer);
+    expect(head.classList.contains("col-span-2")).toBe(true);
+    expect(head.contains(tid("video-note-stamp"))).toBe(true);
+    expect(tid("video-note-cancel")!.parentElement).toBe(head);
+    expect(head.lastElementChild).toBe(tid("video-note-cancel"));
+    expect([...composer.children].some((child) => child.contains(tid("video-note-cancel")) && child !== head)).toBe(false);
+    // No fourth row: the grid drops its track, under the [data-immersive=compose] ancestor.
+    expect(composeRuleApplies(composer, "grid-rows-[auto_auto_auto]")).toBe(true);
   });
 });
 

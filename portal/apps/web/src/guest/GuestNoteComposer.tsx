@@ -9,7 +9,7 @@ import { InputGroup, InputGroupAddon } from "../components/reui/input-group";
 import { SheetModeContext } from "../components/quincy/ReviewSheet";
 import { PILL_ICON } from "../components/quincy/VideoPlayer";
 import { SELECTED_HAIRLINE_PRESSED } from "../components/quincy/markup-toolbar";
-import { COMPOSE_CLAMP, ComposeTray, PHONE_LINE, PILL_CHIP, PILL_SHELL, PILL_SHELL_TEXT, PillPlus, PillSend, REST_CLAMP, SHEET_TEXT, STRIP_CANCEL_ROW, STRIP_GRID, STRIP_TEXT_BUTTON, keepFocus, shortRange, useRestPlaceholder } from "../components/quincy/compose-strip";
+import { COMPOSE_CLAMP, ComposeTray, PHONE_LINE, PILL_CHIP, PILL_SHELL, PILL_SHELL_TEXT, PillPlus, PillSend, REST_CLAMP, SHEET_TEXT, STRIP_CANCEL_ROW, STRIP_GRID, STRIP_HEAD_LINE, STRIP_HEAD_ROW, STRIP_TEXT_BUTTON, keepFocus, shortRange, useRestPlaceholder } from "../components/quincy/compose-strip";
 import { GuestNoteField } from "./GuestNoteField";
 import type { GuestStrip } from "./use-guest-compose";
 
@@ -94,6 +94,15 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
     : ranged ? `From ${from} to ${to}`
     : `Paused at ${timecode(point)} · the note is stamped here`;
   const lineShown = composing || strip.problem !== null || (strip.open && strip.editing) || !strip.clockReady || strip.latest !== null;
+  const floating = sheet?.floating === true;
+  // Cancel keeps the field's focus on press like Send: a blur first would drop the keyboard and move the strip under the finger, and the tap would miss.
+  const cancelButton = <Button type="button" variant="text" data-testid="guest-composer-cancel" className={STRIP_TEXT_BUTTON} disabled={strip.pending} onPointerDown={keepFocus} onMouseDown={keepFocus} onClick={cancel}>Cancel</Button>;
+  const line = !lineShown ? null : <div className={cn(PHONE_LINE, floating && STRIP_HEAD_LINE, "grid gap-[var(--space-1)]")}>
+    {strip.problem !== null
+      ? <p role="alert" data-testid="guest-composer-problem" className="m-0 max-h-[var(--space-9)] overflow-y-auto text-destructive-wash-foreground">{strip.problem}</p>
+      : <p data-testid="guest-composer-stamp" className="m-0 line-clamp-2 text-foreground-secondary">{hint}</p>}
+    {strip.latest !== null && <p data-testid="guest-composer-latest" className="m-0 max-h-[var(--space-9)] overflow-y-auto whitespace-pre-wrap text-foreground-secondary [overflow-wrap:anywhere]">{`Latest saved version: ${strip.latest}`}</p>}
+  </div>;
 
   const chip = <span data-testid="guest-composer-anchor" aria-live="off" className={PILL_CHIP}>
     <span className="sr-only">{ranged ? `Note from ${from} to ${to}: ` : merged ? "Note with a drawing at " : "Note at "}</span>
@@ -118,13 +127,9 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
     aria-label={strip.editing ? "Edit note" : "New note"} noValidate className={STRIP_GRID}
     onSubmit={(event) => { event.preventDefault(); send(); }}
   >
-    {/* The line above the pill. A problem takes its place (and shows at rest too); after an edit conflict the latest saved text follows it, whole, in its own scroll. */}
-    {lineShown && <div className={cn(PHONE_LINE, "grid gap-[var(--space-1)]")}>
-      {strip.problem !== null
-        ? <p role="alert" data-testid="guest-composer-problem" className="m-0 max-h-[var(--space-9)] overflow-y-auto text-destructive-wash-foreground">{strip.problem}</p>
-        : <p data-testid="guest-composer-stamp" className="m-0 line-clamp-2 text-foreground-secondary">{hint}</p>}
-      {strip.latest !== null && <p data-testid="guest-composer-latest" className="m-0 max-h-[var(--space-9)] overflow-y-auto whitespace-pre-wrap text-foreground-secondary [overflow-wrap:anywhere]">{`Latest saved version: ${strip.latest}`}</p>}
-    </div>}
+    {/* The line above the pill. A problem takes its place (and shows at rest too); after an edit conflict the latest saved text follows it, whole, in its own scroll. In Full
+        screen the strip floats over the film (F1, #880 review 6): the line and Cancel share one head row there, so Cancel never sizes the pill's columns. */}
+    {floating && (line !== null || composing) ? <div data-testid="guest-composer-head" className={STRIP_HEAD_ROW}>{line}{composing && cancelButton}</div> : line}
     {/* The + tray (C1), inline above the pill, so it is always above the keyboard. Mounted for the whole phone layout: the toolbar's portal target stays put. */}
     <ComposeTray open={strip.tray} id={trayId} testId="guest-composer-tray" toolbarRef={setTrayToolbar}>
       <Button type="button" variant="secondary" data-testid="guest-composer-step-back" aria-label="Back one frame" className="min-h-11 min-w-11" disabled={stepDisabled} onClick={() => { strip.step(-1); }}><StepBack aria-hidden="true" /></Button>
@@ -151,10 +156,7 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
         : shell(false)}
     </div>
     <PillSend testId="guest-composer-post" label={sendLabel} disabled={strip.pending || strip.penDown || strip.uploading || strip.empty || !strip.clockReady} pending={strip.pending} />
-    {composing && <div className={STRIP_CANCEL_ROW}>
-      {/* Cancel keeps the field's focus on press like Send: a blur first would drop the keyboard and move the strip under the finger, and the tap would miss. */}
-      <Button type="button" variant="text" data-testid="guest-composer-cancel" className={STRIP_TEXT_BUTTON} disabled={strip.pending} onPointerDown={keepFocus} onMouseDown={keepFocus} onClick={cancel}>Cancel</Button>
-    </div>}
+    {composing && !floating && <div className={STRIP_CANCEL_ROW}>{cancelButton}</div>}
   </form>;
 }
 

@@ -10,7 +10,7 @@ import { useMediaQuery } from "../../lib/use-media-query";
 import { Button } from "../quincy/Button";
 import { Notice } from "../quincy/Notice";
 import { SheetModeContext } from "../quincy/ReviewSheet";
-import { COMPOSE_CLAMP, ComposeTray, PHONE_LINE, PILL_CHIP, PillPlus, PillSend, REST_CLAMP, SHEET_TEXT, STRIP_CANCEL_ROW, STRIP_GRID, STRIP_TEXT_BUTTON, keepFocus, shortRange, useRestPlaceholder } from "../quincy/compose-strip";
+import { COMPOSE_CLAMP, ComposeTray, PHONE_LINE, PILL_CHIP, PillPlus, PillSend, REST_CLAMP, SHEET_TEXT, STRIP_CANCEL_ROW, STRIP_GRID, STRIP_HEAD_LINE, STRIP_HEAD_ROW, STRIP_TEXT_BUTTON, keepFocus, shortRange, useRestPlaceholder } from "../quincy/compose-strip";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
 import { Kbd } from "../reui/kbd";
 import { VideoNoteEditor } from "./VideoNoteEditor";
@@ -140,7 +140,18 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   const chipText = pendingFrames
     ? marks.in !== null && marks.out !== null ? shortRange(timecode(marks.in), timecode(marks.out)) : anchorText
     : timecode(stampFrame);
+  const floating = sheet?.floating === true;
+  // Cancel keeps the field's focus on press like Send: a blur first would drop the keyboard and move the strip under the finger, and the tap would miss (#879 fix).
+  const cancelButton = <Button type="button" variant="text" data-testid="video-note-cancel" className={STRIP_TEXT_BUTTON} disabled={frozen} onPointerDown={keepFocus} onMouseDown={keepFocus} onClick={cancel}>Cancel</Button>;
   const lineShown = composing || problem !== null || tooLong || otherForm !== null || clock === null;
+  const cancelShown = phone && composing;
+  const line = !phone || !lineShown ? null : (problem !== null || tooLong
+    ? <div role="alert" data-testid="video-note-problem" className={cn(PHONE_LINE, floating && STRIP_HEAD_LINE, "flex items-center gap-[var(--space-2)] text-destructive")}>
+      <span className="min-w-0 flex-1 line-clamp-2">{tooLong ? `Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : problem!.text}</span>
+      {!tooLong && problem!.refresh && <Button type="button" variant="text" data-testid="video-note-refresh" className={SMALL_BUTTON} onClick={onRefresh}>Refresh notes</Button>}
+    </div>
+    // The clamp lives on an inner node: a grid item that clips (line-clamp) may shrink to nothing when the strip runs short, and the hint must render whole (#879 fix).
+    : <div className={cn(PHONE_LINE, floating && STRIP_HEAD_LINE)}><p data-testid="video-note-stamp" className="m-0 line-clamp-2 text-foreground-secondary">{hintText}</p></div>);
   const chip = <span data-testid="video-note-anchor" aria-live="off" className={PILL_CHIP}>
     {!pendingFrames && <span className="sr-only">{merged ? "Note with a drawing at " : "Note at "}</span>}
     {pendingFrames && <span className="sr-only">{`Note from ${anchorText}: `}</span>}
@@ -173,14 +184,9 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
       {!merged && <span data-testid="video-note-drawing-chip" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}><span className="sr-only">Drawing on </span><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />{timecode(drawn.drawingFrame!)}</span>}
       <Button type="button" variant="text" data-testid="video-note-remove-drawing" className={SMALL_BUTTON} disabled={frozen} onClick={() => { store.clearMarkup(assetId); }}>Remove drawing</Button>
     </div>}
-    {/* Phone: the line above the pill. A problem takes its place (and shows at rest too), so the strip never grows a row for it. */}
-    {phone && lineShown && (problem !== null || tooLong
-      ? <div role="alert" data-testid="video-note-problem" className={cn(PHONE_LINE, "flex items-center gap-[var(--space-2)] text-destructive")}>
-        <span className="min-w-0 flex-1 line-clamp-2">{tooLong ? `Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : problem!.text}</span>
-        {!tooLong && problem!.refresh && <Button type="button" variant="text" data-testid="video-note-refresh" className={SMALL_BUTTON} onClick={onRefresh}>Refresh notes</Button>}
-      </div>
-      // The clamp lives on an inner node: a grid item that clips (line-clamp) may shrink to nothing when the strip runs short, and the hint must render whole (#879 fix).
-      : <div className={PHONE_LINE}><p data-testid="video-note-stamp" className="m-0 line-clamp-2 text-foreground-secondary">{hintText}</p></div>)}
+    {/* Phone: the line above the pill. A problem takes its place (and shows at rest too), so the strip never grows a row for it. A phone's Full screen strip floats over the
+        film (F1, #880 review 6): the line and Cancel share one head row there, so Cancel never sizes the pill's columns. */}
+    {floating && (line !== null || cancelShown) ? <div data-testid="video-note-head" className={STRIP_HEAD_ROW}>{line}{cancelShown && cancelButton}</div> : line}
     {/* Phone: the + tray (Q1, C1), inline above the pill and inside the strip, so it is always above the keyboard. Mounted for the whole phone layout (the toolbar's portal target stays put). */}
     {phone && <ComposeTray open={trayOpen} id={trayId} testId="video-note-tray" toolbarRef={setTrayToolbar}>
         <ToggleGroup
@@ -235,9 +241,6 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     {!phone && clock === null && <span className="text-foreground-secondary [font:var(--type-label)]">Loading the film…</span>}
     {/* Phone: the round Send (C5), icon-only; its phase is a spinner and its name. A press never takes the focus, so the keyboard stays and nothing jumps before the post. */}
     {phone && <PillSend testId="video-note-post" label={label} disabled={!canPost} pending={frozen} />}
-    {phone && composing && <div className={STRIP_CANCEL_ROW}>
-      {/* Cancel keeps the field's focus on press like Send: a blur first would drop the keyboard and move the strip under the finger, and the tap would miss (#879 fix). */}
-      <Button type="button" variant="text" data-testid="video-note-cancel" className={STRIP_TEXT_BUTTON} disabled={frozen} onPointerDown={keepFocus} onMouseDown={keepFocus} onClick={cancel}>Cancel</Button>
-    </div>}
+    {cancelShown && !floating && <div className={STRIP_CANCEL_ROW}>{cancelButton}</div>}
   </form>;
 }

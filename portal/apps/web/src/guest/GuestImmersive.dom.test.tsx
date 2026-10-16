@@ -229,17 +229,20 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     }
   });
 
-  it("on a phone, the Full screen strip's Cancel sits in its own hint row, so no row under the pill holds it alone (#880 review 6)", async () => {
+  it("on a phone, the Full screen strip's Cancel ends its hint line in one head row spanning both columns, so the pill keeps its width (#880 review 6)", async () => {
     if (!size.coarse) return;
     await open();
     await click(byId("video-fullscreen"));
     await click(byId("video-immersive-add-note"));
-    // The rules as compiled, against the rendered tree (the class alone proves nothing without the [data-immersive=compose] ancestor).
-    expect(byId("guest-compose-strip")!.closest('[data-immersive="compose"]')).toBe(byId("video-review-pane"));
-    expect(composeRuleApplies(byId("guest-compose-strip")!, "grid-rows-[auto_auto_auto]")).toBe(true);
-    expect(composeRuleApplies(byId("guest-composer-stamp")!.parentElement!, "col-span-1")).toBe(true);
-    const cancel = byId("guest-composer-cancel")!.parentElement!;
-    for (const utility of ["col-start-2", "row-start-1"]) expect(composeRuleApplies(cancel, utility), utility).toBe(true);
+    const strip = byId("guest-compose-strip")!;
+    expect(strip.closest('[data-immersive="compose"]')).toBe(byId("video-review-pane"));
+    // The rendered structure: one grid item spanning both columns, the hint line then Cancel; Cancel sizes no column of its own.
+    const head = byId("guest-composer-head")!;
+    expect(head.parentElement).toBe(strip);
+    expect(head.classList.contains("col-span-2")).toBe(true);
+    expect(head.contains(byId("guest-composer-stamp"))).toBe(true);
+    expect(head.lastElementChild).toBe(byId("guest-composer-cancel"));
+    expect(composeRuleApplies(strip, "grid-rows-[auto_auto_auto]")).toBe(true);
   });
 
   it("Tab is held inside the layer: the focus manager's guards exist only while in Full screen, and the page's header is inert", async () => {

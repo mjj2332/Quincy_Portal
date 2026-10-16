@@ -183,7 +183,8 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
   const sheetMode = phoneSheet ? sheet.mode : full && immersive === "compose" && stacked && sheet !== undefined ? (sheet.mode === "draw" ? "draw" : "compose") : null;
   const setHold = sheet?.setHold;
   const cancelCompose = full && !phoneSheet ? onImmersiveCancel : undefined;
-  const modeValue = useMemo<SheetModeValue | null>(() => (sheetMode !== null && setHold ? { mode: sheetMode, setHold, ...(cancelCompose ? { onCancel: cancelCompose } : {}) } : null), [sheetMode, setHold, cancelCompose]);
+  const floatingStrip = full && !phoneSheet;
+  const modeValue = useMemo<SheetModeValue | null>(() => (sheetMode !== null && setHold ? { mode: sheetMode, setHold, ...(floatingStrip ? { floating: true as const } : {}), ...(cancelCompose ? { onCancel: cancelCompose } : {}) } : null), [sheetMode, setHold, floatingStrip, cancelCompose]);
   // The dock's scrim reaches up behind the composer (F1: the composer sits inside the bottom scrim): its height is published on the row, which the player reads.
   const composerShown = full && immersive === "compose";
   useLayoutEffect(() => {
