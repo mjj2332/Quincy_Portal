@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CHROME_HIDE_MS, chromeHeld, isPhoneDevice, leaveImmersive, rotate, type ChromeHolds } from "./immersive";
+import { CHROME_HIDE_MS, chromeHeld, isPhoneDevice, rotate, type ChromeHolds } from "./immersive";
 
 describe("rotate (D14)", () => {
   const phone = { phoneDevice: true };
@@ -27,8 +27,8 @@ describe("rotate (D14)", () => {
   it("minimising in landscape does not re-enter until the next portrait-to-landscape turn", () => {
     let state = rotate(null, { ...phone, landscape: true });
     expect(state).toBe("turn");
-    state = leaveImmersive();
-    expect(state).toBeNull();
+    // Minimise (or Escape): out, whatever the way in.
+    state = null;
     // Nothing turned: the screen asks `rotate` only on a change of orientation, so landscape is not re-evaluated.
     state = rotate(state, { ...phone, landscape: false });
     expect(state).toBeNull();

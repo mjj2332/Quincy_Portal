@@ -43,9 +43,6 @@ export type ImmersivePrompt = { key: number; text: string };
 /** The next prompt after `previous`, so a second press shows it again. */
 export const nextPrompt = (previous: ImmersivePrompt | null, text: string): ImmersivePrompt => ({ key: (previous?.key ?? 0) + 1, text });
 
-/** Minimise (or Escape): out, whatever the way in. */
-export const leaveImmersive = (): ImmersiveState => null;
-
 export type ChromeHolds = { playing: boolean; composing: boolean; drawing: boolean; card: boolean; focusWithin: boolean; popupOpen: boolean; scrubbing: boolean };
 
 /** Whether the controls must stay up instead of hiding after `CHROME_HIDE_MS`: paused, or anything the person is in the middle of. */
