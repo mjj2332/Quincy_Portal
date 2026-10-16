@@ -275,9 +275,15 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     window.addEventListener("pointerup", done, true); window.addEventListener("pointercancel", done, true);
   }, [stopListeningForScrubEnd]);
   useEffect(() => stopListeningForScrubEnd, [stopListeningForScrubEnd]);
-  useEffect(() => { if (!imm) { setChromeShown(true); setFocusHeld(false); setPopupOpen(false); setScrubbing(false); stopListeningForScrubEnd(); } }, [imm, stopListeningForScrubEnd]);
+  // The system player's refusal (a count, so each refusal starts its own PROMPT_MS): it clears after PROMPT_MS, as the host's prompt does, and on leaving Full screen (#880 review 3).
+  const [nativeFailed, setNativeFailed] = useState(0);
+  useEffect(() => {
+    if (nativeFailed === 0) return undefined;
+    const timer = setTimeout(() => { setNativeFailed(0); }, PROMPT_MS);
+    return () => { clearTimeout(timer); };
+  }, [nativeFailed]);
+  useEffect(() => { if (!imm) { setChromeShown(true); setFocusHeld(false); setPopupOpen(false); setScrubbing(false); setNativeFailed(0); stopListeningForScrubEnd(); } }, [imm, stopListeningForScrubEnd]);
   const keyDown = useCallback((event: KeyboardEvent | ReactKeyboardEvent): boolean => { wakeRef.current(); return handleKeyDown(event); }, [handleKeyDown]);
-  const [nativeFailed, setNativeFailed] = useState(false);
   // The host's prompt shows for PROMPT_MS from each new key, in Full screen only.
   const promptKey = imm ? immersive?.prompt?.key ?? null : null;
   const [promptDone, setPromptDone] = useState<number | null>(null);
@@ -293,7 +299,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const restoreRemotePlayback = useCallback(() => { restoreRemote.current?.(); restoreRemote.current = null; }, []);
   const openSystemPlayer = useCallback(() => {
     if (video) { restoreRemotePlayback(); restoreRemote.current = liftRemotePlayback(video); }
-    void openNativePlayer(video).then((started) => { setNativeFailed(!started); if (!started) restoreRemotePlayback(); });
+    void openNativePlayer(video).then((started) => { setNativeFailed((count) => (started ? 0 : count + 1)); if (!started) restoreRemotePlayback(); });
   }, [video, restoreRemotePlayback]);
   useEffect(() => {
     if (!video) return undefined;
@@ -408,7 +414,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     </div>}
     {imm && immersive?.card != null && <div data-testid="video-immersive-card" data-immersive-chrome="" inert={!chromeVisible} className={cn("pointer-events-none absolute inset-x-[var(--space-3)] top-[var(--space-7)] z-10 flex justify-center", FADE, fade)}><div className="pointer-events-auto w-full max-w-[var(--note-card-width)]">{immersive.card}</div></div>}
     {promptText !== null && <Notice tone="caution" role="status" data-testid="video-immersive-prompt" className={cn("bg-card", noticeClass)}>{promptText}</Notice>}
-    {nativeFailed && <Notice tone="caution" role="alert" data-testid="video-native-failed" className={cn("bg-card", noticeClass)}>The system player couldn't open this film on this device.</Notice>}
+    {nativeFailed > 0 && <Notice tone="caution" role="alert" data-testid="video-native-failed" className={cn("bg-card", noticeClass)}>The system player couldn't open this film on this device.</Notice>}
 
     {/* The replacement sits ABOVE the transport, which stays mounted and hidden under it (#879 PR 2): unmounted, the slider came back as a new node, measured its thumb inside whatever
         box hid it next (a phone's Done lands in compose mode, where the transport is hidden) and drew no thumb until the frame moved. */}

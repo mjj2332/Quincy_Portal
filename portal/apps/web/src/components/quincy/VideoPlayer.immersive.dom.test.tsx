@@ -508,6 +508,27 @@ describe("VideoPlayer native player (#880, D15)", () => {
     await act(async () => { control.current!.openSystemPlayer!(); });
     expect(host.querySelector('[role="alert"]')!.textContent).toContain("system player");
   });
+  it("the refusal notice clears after PROMPT_MS, as the upright prompt does, so it never holds the transport down for good (#880 review 3)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const control = createRef<VideoPlayerControl>();
+    await mount({ controlRef: control });
+    Object.assign(video(), { webkitEnterFullscreen: () => { throw new Error("no metadata"); } });
+    await act(async () => { control.current!.openSystemPlayer!(); });
+    expect(byTestId("video-native-failed")).not.toBeNull();
+    await advance(PROMPT_MS - 1);
+    expect(byTestId("video-native-failed")).not.toBeNull();
+    await advance(1);
+    expect(byTestId("video-native-failed")).toBeNull();
+  });
+  it("the refusal notice clears on leaving Full screen (#880 review 3)", async () => {
+    const control = createRef<VideoPlayerControl>();
+    await mount({ controlRef: control, immersive: hostOf() });
+    Object.assign(video(), { webkitEnterFullscreen: () => { throw new Error("no metadata"); } });
+    await act(async () => { control.current!.openSystemPlayer!(); });
+    expect(byTestId("video-native-failed")).not.toBeNull();
+    await rerender({ controlRef: control, immersive: hostOf({ on: false }) });
+    expect(byTestId("video-native-failed")).toBeNull();
+  });
 });
 
 describe("VideoPlayer AirPlay through the system player (#880 S7, owner decision 3)", () => {
