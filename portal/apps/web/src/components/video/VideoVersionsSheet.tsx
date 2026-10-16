@@ -1,9 +1,9 @@
 import { useRef, type RefObject } from "react";
 import { Button } from "../reui/button";
 import { Check } from "lucide-react";
-import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
+import { Item, ItemActions, ItemContent, ItemGroup, ItemTitle } from "../reui/item";
 import { Sheet, SheetContent, SheetTitle } from "../reui/sheet";
-import { PHONE_SHEET_CHROME, SHEET_SCRIM } from "../quincy/ReviewActionSheet";
+import { ACTION_ROW, ACTION_ROW_TITLE, PHONE_SHEET_CHROME, SHEET_SCRIM } from "../quincy/ReviewActionSheet";
 import { SheetCloseButton } from "../quincy/SheetCloseButton";
 import { formatVideoDate } from "./video-format";
 
@@ -28,6 +28,8 @@ export function withSummaries<Row extends { assetId: string; version: number; cr
  * The phone's Version chooser (#879, D16, P8): a bottom sheet of Versions, newest first, each an easy-to-tap row with its number, upload date and open-note count, and a check on the
  * one on screen. Staff also see the latest Version's Review status. Choosing a row hands the Asset id to the screen's own Version path, so the URL and the deep link are unchanged.
  * Reuse: `reui/sheet` (`side="bottom"`, portalled into the viewer's slot as the guest drawer was), `reui/item` rows, lucide `Check`.
+ * P8 (#879 PR 3b): "Version" in label type and secondary ink above rows of P9's size (`ACTION_ROW`), each one line: the number left; the date, the open count and (staff, latest)
+ * the Review status right, truncating first, then the check on the Version on screen. No fill marks the current row; the check and `aria-current` do.
  */
 export function VideoVersionsSheet({ open, onOpenChange, container, rows, currentAssetId, onChoose, latestStatus, returnFocusTo }: {
   /** What takes focus when the sheet closes (the Version chip). */
@@ -49,24 +51,26 @@ export function VideoVersionsSheet({ open, onOpenChange, container, rows, curren
   const changeOpen = (next: boolean) => { if (!next) returnFocusTo?.current?.focus({ preventScroll: true }); onOpenChange(next); };
   return <Sheet open={open} onOpenChange={changeOpen}>
     <SheetContent ref={popupRef} side="bottom" container={container} showCloseButton={false} overlayProps={{ className: SHEET_SCRIM, forceRender: true, "data-testid": "review-sheet-overlay" }} initialFocus={() => popupRef.current ?? true} {...(returnFocusTo ? { finalFocus: () => returnFocusTo.current ?? true } : {})} data-testid="video-versions-sheet" className={`max-h-[70dvh] ${PHONE_SHEET_CHROME}`}>
-      <SheetTitle className="m-0 px-[var(--space-4)] text-foreground [font:var(--type-h3)]">Version</SheetTitle>
-      <ItemGroup role="group" aria-label="Versions" className="min-h-0 gap-[var(--space-1)] overflow-y-auto px-[var(--space-4)]">
+      <SheetTitle className="m-0 px-[calc(var(--space-4)+var(--space-1))] pt-[var(--space-2)] pb-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">Version</SheetTitle>
+      <ItemGroup role="group" aria-label="Versions" className="min-h-0 gap-0 overflow-y-auto">
         {rows.map((row) => {
           const current = row.assetId === currentAssetId;
           const latest = row.version === newest;
+          const meta = [row.createdAt !== undefined ? formatVideoDate(row.createdAt) : null, typeof row.openNoteCount === "number" ? `${row.openNoteCount} open` : null, latest ? latestStatus ?? null : null]
+            .filter((part): part is string => part !== null).join(" · ");
           return <Item
             key={row.assetId}
             size="sm"
-            variant={current ? "muted" : "default"}
-            render={<Button type="button" variant="ghost" data-testid="video-version-row" data-asset-id={row.assetId} aria-current={current ? "true" : undefined} className="h-auto min-h-11 w-full cursor-pointer justify-start text-start font-normal normal-case" onClick={() => { onChoose(row.assetId); changeOpen(false); }} />}
+            // The row's geometry sits on the Item: its `sm` padding and wrap are merged after whatever the rendered Button carries.
+            className={`${ACTION_ROW} flex-nowrap`}
+            render={<Button type="button" variant="ghost" data-testid="video-version-row" data-asset-id={row.assetId} aria-current={current ? "true" : undefined} className="h-auto justify-start font-normal normal-case" onClick={() => { onChoose(row.assetId); changeOpen(false); }} />}
           >
-            <ItemContent>
-              <ItemTitle>{`v${row.version}${latest ? " · latest" : ""}`}</ItemTitle>
-              {(row.createdAt !== undefined || (latest && latestStatus !== undefined)) && <ItemDescription>{[row.createdAt !== undefined ? formatVideoDate(row.createdAt) : null, latest ? latestStatus : null].filter((part) => part !== null && part !== undefined).join(" · ")}</ItemDescription>}
+            <ItemContent className="flex-none">
+              <ItemTitle className={`${ACTION_ROW_TITLE} whitespace-nowrap`}>{`v${row.version}${latest ? " · latest" : ""}`}</ItemTitle>
             </ItemContent>
-            <ItemActions>
-              {typeof row.openNoteCount === "number" && <span data-testid="video-version-open" className="text-foreground-secondary tabular-nums [font:var(--type-label)]">{`${row.openNoteCount} open`}</span>}
-              {current && <Check aria-hidden="true" className="size-4" />}
+            <ItemActions className="ms-auto min-w-0 gap-[var(--space-2)]">
+              {meta !== "" && <span data-testid="video-version-meta" className="truncate text-foreground-secondary tabular-nums [font:var(--type-label)]">{meta}</span>}
+              {current && <Check aria-hidden="true" className="size-4 flex-none" />}
             </ItemActions>
           </Item>;
         })}

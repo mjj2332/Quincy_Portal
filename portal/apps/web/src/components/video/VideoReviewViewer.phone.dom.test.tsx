@@ -442,6 +442,36 @@ describe("the phone sheets' chrome (#879 PR 3b, P8/P9)", () => {
   });
 });
 
+describe("the P8 Versions sheet (#879 PR 3b)", () => {
+  it("titles itself \"Version\" in label type and secondary ink, at the rows' 20pt gutter", async () => {
+    await mount({ shown: () => {} });
+    await click(tid("video-version-chip")!);
+    const title = tid("video-versions-sheet")!.querySelector<HTMLElement>('[data-slot="sheet-title"]')!;
+    expect(title.textContent).toBe("Version");
+    expect(title.className).toContain("[font:var(--type-label)]");
+    expect(title.className).toContain("text-foreground-secondary");
+    expect(title.className).toContain("px-[calc(var(--space-4)+var(--space-1))]");
+    expect(title.className).not.toContain("sr-only");
+  });
+
+  it("draws each Version on one line: the number left, the date and the rest right before the check, at P9's row size", async () => {
+    await mount({ shown: () => {}, status: true });
+    await click(tid("video-version-chip")!);
+    const [latest, older] = [...document.querySelectorAll<HTMLElement>('[data-testid="video-version-row"]')];
+    expect(latest!.querySelector('[data-slot="item-description"]')).toBeNull();
+    expect(latest!.querySelector('[data-slot="item-title"]')!.textContent).toBe("v2 · latest");
+    const meta = latest!.querySelector<HTMLElement>('[data-slot="item-actions"] [data-testid="video-version-meta"]')!;
+    expect(meta.textContent).toMatch(/ · /);
+    expect(meta.className).toContain("truncate");
+    expect(latest!.querySelector('[data-slot="item-actions"] svg')).not.toBeNull();
+    expect(older!.querySelector('[data-slot="item-actions"] svg')).toBeNull();
+    expect(latest!.className).toContain("px-[calc(var(--space-4)+var(--space-1))]");
+    expect(latest!.querySelector<HTMLElement>('[data-slot="item-title"]')!.className).toContain("text-[length:var(--text-base)]");
+    // The check marks the Version on screen; P8 draws no fill behind it.
+    expect(latest!.getAttribute("data-variant")).not.toBe("muted");
+  });
+});
+
 describe("the P9 rows (#879 PR 3b)", () => {
   const untilNotes = async () => { const deadline = Date.now() + 5000; while (!tid("video-notes-panel") && Date.now() < deadline) await flush(1); };
   const rowNames = () => [...document.querySelectorAll<HTMLElement>('[data-testid="review-action-sheet"] [data-slot="item-group"] > :is(button, a), [data-testid="review-action-sheet"] [data-slot="item-group"] > [data-slot="item"]')].map((row) => row.textContent);
