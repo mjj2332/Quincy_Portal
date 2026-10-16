@@ -269,6 +269,20 @@ describe("the guest page's Full screen: unverified Add note (#880)", () => {
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
   });
+  it("the verify dialog takes the focus from Full screen's trap, and Tab stays in the dialog (#880, test g)", async () => {
+    viewport.restore(); viewport = mockViewport({ width: 390, height: 844, coarse: true });
+    session = ANON; notes = {}; videos = [videoOf(1)];
+    await open();
+    await click(byId("video-fullscreen"));
+    await click(byId("video-immersive-add-note"));
+    await flush(4);
+    const dialog = byId("guest-verify-dialog")!;
+    expect(dialog).not.toBeNull();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    await act(async () => { byId("guest-verify-email")!.focus(); });
+    await flush(2);
+    expect(document.activeElement).toBe(byId("guest-verify-email"));
+  });
 });
 
 describe("the guest page's Full screen and rotation (#880, D14)", () => {
