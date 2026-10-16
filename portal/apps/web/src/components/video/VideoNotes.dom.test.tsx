@@ -1677,7 +1677,7 @@ describe("the phone notes head (#879 PR 3b, P1)", () => {
     expect(noteIds()).toEqual([s.n6.id]);
   });
 
-  it("search matches bodies, replies and author names; it stays browse, and I typed in it marks nothing", async () => {
+  it("search matches bodies, replies and author names; typing is search mode, never compose, and I typed in it marks nothing", async () => {
     const s = seed();
     await openFilm({}, 12);
     await search("WARM");
@@ -1687,9 +1687,36 @@ describe("the phone notes head (#879 PR 3b, P1)", () => {
     await search("gina");
     expect(noteIds()).toEqual([s.n6.id]);
     const field = tid("notes-search-field")!;
-    expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+    // F1 (#879 PR 3b): the sheet's search mode keeps the head and the list above the keyboard; the composer is put away, not entered.
+    expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("search");
     await dispatchKey(field, "i");
     expect(tid("video-pending-band")).toBeNull();
+  });
+
+  it("typing in search makes room above the keyboard; the keyboard going away blurs the field and leaves search open (#879 PR 3b, F1)", async () => {
+    class FakeViewport extends EventTarget { height = window.innerHeight; offsetTop = 0; scale = 1; }
+    const fake = new FakeViewport();
+    const original = Object.getOwnPropertyDescriptor(window, "visualViewport");
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: fake });
+    try {
+      seed();
+      await openFilm();
+      await act(async () => { tid("notes-filter-search")!.click(); });
+      const field = tid("notes-search-field")!;
+      expect(document.activeElement).toBe(field);
+      await act(async () => { fake.height = window.innerHeight - 320; fake.dispatchEvent(new Event("resize")); });
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("search");
+      expect(tid("video-review-player")!.className).toContain("h-[var(--space-9)]");
+      expect(tid("notes-filter-head")!.closest("[inert]")).toBeNull();
+      await act(async () => { fake.height = window.innerHeight; fake.dispatchEvent(new Event("resize")); });
+      await flush(4);
+      expect(document.activeElement).not.toBe(field);
+      expect(tid("notes-search-field")).not.toBeNull();
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+      expect(tid("video-review-pane")!.getAttribute("data-stop")).toBe("full");
+    } finally {
+      if (original) Object.defineProperty(window, "visualViewport", original); else delete (window as unknown as Record<string, unknown>).visualViewport;
+    }
   });
 
   it("opening search takes the sheet to full and closing it restores the stop it was at", async () => {

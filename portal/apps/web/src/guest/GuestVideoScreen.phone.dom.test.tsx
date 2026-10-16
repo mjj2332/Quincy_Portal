@@ -256,12 +256,29 @@ describe("the guest phone notes head (#879 PR 3b, P2)", () => {
     expect(byId("video-review-pane")!.getAttribute("data-stop")).toBe("half");
     await search("sky");
     expect(byId("video-review-pane")!.getAttribute("data-stop")).toBe("full");
-    expect(mode()).toBe("browse");
+    // Typing is search mode, never compose (#879 PR 3b, F1): the head, the field and the results stay; the pill goes until the keyboard does.
+    expect(mode()).toBe("search");
+    expect(byId("guest-notes-list")!.closest("[inert]")).toBeNull();
+    expect(byId("guest-compose-strip")!.closest("[inert]")).not.toBeNull();
     await act(async () => { byId("notes-search-field")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
     await flush(2);
     expect(byId("notes-search-field")).toBeNull();
     expect(document.activeElement).toBe(byId("notes-filter-search"));
     expect(byId("video-review-pane")!.getAttribute("data-stop")).toBe("half");
+  });
+
+  it("the keyboard going away without a blur blurs the search field: search stays open, at full, back in browse (#879 PR 3b, F1)", async () => {
+    await openVideo();
+    await vi.waitFor(() => { expect(byId("notes-filter-head")).not.toBeNull(); });
+    await search("sky");
+    await act(async () => { fake.height = window.innerHeight - 320; fake.dispatchEvent(new Event("resize")); });
+    expect(mode()).toBe("search");
+    await act(async () => { fake.height = window.innerHeight; fake.dispatchEvent(new Event("resize")); });
+    await flush(4);
+    expect(document.activeElement).not.toBe(byId("notes-search-field"));
+    expect((byId("notes-search-field") as HTMLInputElement).value).toBe("sky");
+    expect(mode()).toBe("browse");
+    expect(byId("video-review-pane")!.getAttribute("data-stop")).toBe("full");
   });
 
   it("nothing matching says so and Reset filters brings the open notes back", async () => {

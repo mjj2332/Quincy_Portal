@@ -187,10 +187,12 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
   const rowClass = phoneSheet
     ? "flex min-h-0 flex-1 flex-col flex-nowrap overflow-hidden"
     : "flex min-h-0 flex-1 flex-wrap min-[721px]:flex-nowrap min-[721px]:overflow-hidden";
+  // In search mode (#879 PR 3b, F1) the film is held at compose's floor (`SHEET_FILM_FLOOR`, spelled out for Tailwind) and the sheet fills the rest, so the field and the results
+  // stand above the keyboard; the transport is hidden by the screen, as in compose.
   // In compose mode the strip is fixed and the film flexes (plan §3, #879 fix r4): the sheet may take the whole split, so the hint, tray, pill and Cancel always fit whole above
   // the keyboard, and the film (its transport hidden) gives up its height first, never painting past its cell.
   const playerClass = phoneSheet
-    ? `flex min-h-0 min-w-0 flex-1 flex-col p-0${sheet.mode === "compose" ? " overflow-hidden" : ""}`
+    ? `flex min-w-0 flex-col p-0${sheet.mode === "compose" ? " min-h-0 flex-1 overflow-hidden" : sheet.mode === "search" ? " h-[var(--space-9)] flex-none overflow-hidden" : " min-h-0 flex-1"}`
     : "flex min-h-0 min-w-0 flex-[999_1_640px] flex-col p-[var(--space-5)] min-[721px]:flex-1";
   return <div ref={rowRef} data-testid="video-review-split" className={`${rowClass} ${rowClassName ?? ""}`}>
     <div data-testid="video-review-player" className={`${playerClass} ${playerClassName ?? ""}`}>{player}</div>
@@ -225,7 +227,7 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
       onBlurCapture={phoneSheet ? onPaneBlur : undefined}
       style={{ ...(stacked ? {} : { [REVIEW_PANE_WIDTH_VAR]: `${shown}px` }), ...sheetStyle, ...(showPane ? {} : { display: "none" }) } as CSSProperties}
       className={phoneSheet
-        ? "relative flex min-h-0 flex-none flex-col overflow-hidden border-t border-border bg-card motion-safe:transition-[height] motion-safe:duration-[var(--dur-base)] motion-safe:ease-[var(--ease-entrance)] data-[dragging=true]:transition-none data-[mode=compose]:max-h-full [&_[data-sheet-part][inert]]:hidden"
+        ? "relative flex min-h-0 flex-none flex-col overflow-hidden border-t border-border bg-card motion-safe:transition-[height] motion-safe:duration-[var(--dur-base)] motion-safe:ease-[var(--ease-entrance)] data-[dragging=true]:transition-none data-[mode=compose]:max-h-full data-[mode=search]:flex-1 [&_[data-sheet-part][inert]]:hidden"
         : "flex min-h-0 flex-col max-[721px]:flex-[1_1_360px] min-[721px]:w-[var(--review-pane-w)] min-[721px]:flex-none min-[721px]:overflow-hidden"}
     >
       {phoneSheet && <SheetGrabber control={sheet} stops={sheetPane.stops} getHeight={() => sheetPane.drag ?? sheetPane.stops[sheet.stop]} onDrag={sheetPane.setDrag} />}

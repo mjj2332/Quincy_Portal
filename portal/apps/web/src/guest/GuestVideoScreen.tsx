@@ -28,7 +28,7 @@ import { decisionFailureText, failureText, openThreadCount, removeThread, upsert
 import type { ActionOutcome, NoteActions, Writing } from "./GuestNoteItem";
 import { GuestNotesPanel } from "./GuestNotesPanel";
 import { EmptyState } from "../components/quincy/EmptyState";
-import { NotesFilterHead, type NotesSearchState } from "../components/quincy/NotesFilterHead";
+import { NotesFilterHead, blurNotesSearchField, type NotesSearchState } from "../components/quincy/NotesFilterHead";
 import { GUEST_PHONE_FILTERS, guestNoteAuthors, guestNoteCounts, guestVisibleThreads, type GuestNoteFilters, type GuestNoteStatus } from "./guest-notes-filter";
 import { GuestSubscriptionRow } from "./GuestSubscriptionRow";
 import type { GuestSubscription } from "./guest-subscription";
@@ -143,7 +143,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   // The software keyboard went away without blurring the field (some iOS paths): blur it, so compose mode ends the ordinary way (#879 fix).
   // The guest column follows the visual viewport for as long as the phone screen is up (#879 PR 2, the staff viewer's r5 mechanism): the hook alone writes its height, transform
   // and transition, so the strip ends on the keyboard's top edge and the notices above the screen stay inside the box.
-  useVisualViewport(phone && sheetControl.composing, () => { if (!sheetControl.held) blurComposerField(); }, viewportRoot, phone);
+  // Searching too (#879 PR 3b, F1): the search field raises the keyboard without composing; its keyboard-gone fallback blurs the field and leaves search open.
+  useVisualViewport(phone && (sheetControl.composing || sheetControl.searching), () => { if (sheetControl.composing) { if (!sheetControl.held) blurComposerField(); } else blurNotesSearchField(); }, viewportRoot, phone);
   // Meanwhile the document's canvas is ink: iOS shows it under the page while it scrolls back as the keyboard drops (#879 fix r11).
   useInkCanvas(phone);
   const [versionsOpen, setVersionsOpen] = useState(false);
@@ -366,12 +367,15 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const anyNotes = threads !== null && guestNoteCounts(threads, { status: "all", author: null, query: null }).all > 0;
   // Search takes the sheet to full while the keyboard is up, and back to the stop it was at when it closes (owner decision); a stop dragged to meanwhile is the guest's.
   const searchReturn = useRef<typeof sheetControl.stop | null>(null);
+  const onSearching = sheetControl.onSearching;
   const onSearchChange = useCallback((state: NotesSearchState) => {
+    // Typing is the sheet's search mode (F1): the film gives way so the field and the results stand above the keyboard.
+    onSearching(state === "typing");
     if (state !== "closed") { if (searchReturn.current === null) { searchReturn.current = sheetStopRef.current; setSheetStop("full"); } return; }
     const back = searchReturn.current;
     searchReturn.current = null;
     if (back !== null && sheetStopRef.current === "full") setSheetStop(back);
-  }, [setSheetStop]);
+  }, [setSheetStop, onSearching]);
   const notesHead = phone && anyNotes ? <NotesFilterHead<GuestNoteStatus, never>
     status={{ label: "Show notes that are", value: noteFilters.status, onChange: (status) => { setNoteFilters({ ...noteFilters, status }); }, options: [{ value: "open", label: "Open", count: noteCountsByStatus.open }, { value: "resolved", label: "Resolved", count: noteCountsByStatus.resolved }, { value: "all", label: "All", count: noteCountsByStatus.all }] }}
     authors={{ value: noteFilters.author, options: noteAuthorOptions, onChange: (author) => { setNoteFilters({ ...noteFilters, author }); } }}
@@ -600,7 +604,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       stacked={phone}
       {...(sheet ? { sheet } : {})}
       strip={paneControls.strip}
-      player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" phoneFrameStep={!canWrite} version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} transportHidden={phone && sheetControl.mode === "compose" && !compose.penDown} /></OverlayContainerContext.Provider>}
+      player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" phoneFrameStep={!canWrite} version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} transportHidden={phone && (sheetControl.mode === "search" || (sheetControl.mode === "compose" && !compose.penDown))} /></OverlayContainerContext.Provider>}
       // The pane's popups (a note's ⋯ menu) portal into the same slot as the player's, inside the inverse scope (fix round 1: they drew light on the dark viewer).
       pane={<OverlayContainerContext.Provider value={slot}><aside className="flex min-h-0 flex-1 flex-col bg-card text-card-foreground min-[721px]:overflow-hidden min-[721px]:border-l min-[721px]:border-border min-[721px]:p-[var(--space-5)]"><div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-3)] min-[721px]:hidden" onClick={openSheet}>{phone && <Tabs value="notes" className="w-full"><TabsList variant="line" className="w-full justify-start rounded-none bg-card px-0 max-[721px]:!h-11 max-[721px]:!p-0"><TabsTrigger value="notes" data-testid="guest-notes-heading" className="max-[721px]:!h-11 max-[721px]:flex-none max-[721px]:px-[var(--space-3)] max-[721px]:after:!bottom-0">{tabContent}</TabsTrigger></TabsList></Tabs>}</div><div className="flex min-h-0 flex-1 flex-col max-[721px]:p-[var(--space-4)] max-[721px]:in-data-[mode=browse]:py-0 max-[721px]:in-data-[mode=compose]:py-[var(--space-2)]">{panel}</div></aside></OverlayContainerContext.Provider>}
     />

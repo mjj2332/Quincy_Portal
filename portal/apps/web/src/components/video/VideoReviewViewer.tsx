@@ -37,7 +37,7 @@ import type { VideoNotesSession } from "./use-video-notes";
 import { REVIEW_STATUS_LABEL, REVIEW_STATUS_TONE, VideoReviewStatusPill } from "./VideoReviewStatusPill";
 import { VideoReviewHeaderMenu } from "./VideoReviewHeaderMenu";
 import { VideoDetailsSheet } from "./VideoDetailsSheet";
-import type { NotesSearchState } from "../quincy/NotesFilterHead";
+import { blurNotesSearchField, type NotesSearchState } from "../quincy/NotesFilterHead";
 
 /** The notes UI is its own chunk: a Project whose notes part is off never loads it. */
 const LazyNotesHost = lazy(() => import("./VideoNotesHost"));
@@ -148,12 +148,15 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   // Search in the phone notes head (#879 PR 3b, owner decision): the keyboard is about to take half the screen, so the sheet goes to full while the field is open and back to
   // the stop it was at when it closes. A stop the person drags to meanwhile is theirs: closing restores only if the sheet is still at full.
   const searchReturn = useRef<SheetStop | null>(null);
+  const onSearching = sheetControl.onSearching;
   const onSearchChange = useCallback((state: NotesSearchState) => {
+    // Typing is the sheet's search mode (F1): the film gives way so the field and the results stand above the keyboard.
+    onSearching(state === "typing");
     if (state !== "closed") { if (searchReturn.current === null) { searchReturn.current = sheetStopRef.current; setSheetStop("full"); } return; }
     const back = searchReturn.current;
     searchReturn.current = null;
     if (back !== null && sheetStopRef.current === "full") setSheetStop(back);
-  }, [setSheetStop]);
+  }, [setSheetStop, onSearching]);
   const deepNoteId = notes?.openNoteId;
   useEffect(() => { if (deepNoteId !== undefined) revealNotes(); }, [deepNoteId, revealNotes]);
   // One mute choice for both views: the single player and compare each start from it, and report back on exit.
@@ -408,7 +411,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   // The software keyboard went away without blurring the field (some iOS paths): blur it, so compose mode ends the ordinary way (#879 fix). A hold (the + tray, a post) keeps it.
   // The dialog follows the visual viewport for as long as the phone viewer is open, not only in compose mode (#879 fix r5): iOS scrolls the document by the keyboard height
   // on focus and the hook puts the dialog back in the same task, with no transition (fix r8). The ink backdrop (fix r7) is the floor under any frame that still shows through.
-  useVisualViewport(phone && sheetControl.composing, () => { if (!sheetControl.held) blurComposerField(); }, popupElement, phone);
+  // Searching too (#879 PR 3b, F1): the search field raises the keyboard without composing; its keyboard-gone fallback blurs the field and leaves search open.
+  useVisualViewport(phone && (sheetControl.composing || sheetControl.searching), () => { if (sheetControl.composing) { if (!sheetControl.held) blurComposerField(); } else blurNotesSearchField(); }, popupElement, phone);
   // While the phone viewer is open the document's canvas is ink (#879 fix r11): iOS shows it below the viewer while it scrolls the document back as the keyboard drops.
   useInkCanvas(phone);
   const chipRef = useRef<HTMLButtonElement | null>(null);
@@ -539,7 +543,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       {...(phone ? { sheet: { ...sheetControl, mode: slots?.drawing ? "draw" as const : sheetControl.mode } } : {})}
       {...(phone ? {} : { rowClassName: "overflow-y-auto", playerClassName: "overflow-y-auto" })}
       player={<>
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" phoneFrameStep={forms === undefined || formOpen} transportHidden={phone && sheetControl.mode === "compose" && !slots?.drawing} initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1 max-[721px]:min-h-0" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} />
+        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" phoneFrameStep={forms === undefined || formOpen} transportHidden={phone && (sheetControl.mode === "search" || (sheetControl.mode === "compose" && !slots?.drawing))} initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1 max-[721px]:min-h-0" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} />
       </>}
       pane={sidePane}
       strip={paneControls.strip}
