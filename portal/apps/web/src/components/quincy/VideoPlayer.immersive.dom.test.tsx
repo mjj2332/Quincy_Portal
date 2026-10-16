@@ -187,6 +187,13 @@ describe("VideoPlayer full screen controls (#880, D13)", () => {
     expect(byTestId("video-immersive-bar")!.parentElement!.contains(byTestId("the-card"))).toBe(true);
   });
 
+  it("the card is at most F3's 420px, through the named token (--note-card-width in tokens/spacing.css), never a raw width", async () => {
+    await mount({ immersive: hostOf({ card: <div data-testid="the-card">A note</div> }) });
+    const box = byTestId("the-card")!.parentElement!;
+    expect(box.className).toContain("max-w-[var(--note-card-width)]");
+    expect(box.className).not.toMatch(/max-w-\[\d/);
+  });
+
   it("a marker press goes to the host's marker tap, with the lane in touch mode; outside full screen it is the ordinary select", async () => {
     const onMarkerTap = vi.fn(); const onMarkerSelect = vi.fn();
     await mount({ markers, onMarkerSelect, immersive: hostOf({ onMarkerTap }) });

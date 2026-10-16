@@ -330,7 +330,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
       </IconTip>
       <span data-testid="video-immersive-title" title={immersive.heading} className="min-w-0 flex-1 truncate [font:var(--type-body)]">{immersive.heading}</span>
     </div>}
-    {imm && immersive?.card != null && <div data-testid="video-immersive-card" inert={!chromeVisible} className={cn("pointer-events-none absolute inset-x-[var(--space-3)] top-[var(--space-7)] z-10 flex justify-center", FADE, fade)}><div className="pointer-events-auto w-full max-w-[420px]">{immersive.card}</div></div>}
+    {imm && immersive?.card != null && <div data-testid="video-immersive-card" inert={!chromeVisible} className={cn("pointer-events-none absolute inset-x-[var(--space-3)] top-[var(--space-7)] z-10 flex justify-center", FADE, fade)}><div className="pointer-events-auto w-full max-w-[var(--note-card-width)]">{immersive.card}</div></div>}
     {nativeFailed && <Notice tone="caution" role="alert" data-testid="video-native-failed" className={cn("bg-card", noticeClass)}>The system player couldn't open this film on this device.</Notice>}
 
     {/* The replacement sits ABOVE the transport, which stays mounted and hidden under it (#879 PR 2): unmounted, the slider came back as a new node, measured its thumb inside whatever
