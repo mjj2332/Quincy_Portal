@@ -263,14 +263,15 @@ describe("Add note in a phone's Full screen (#880 S4, owner decision 1)", () => 
 });
 
 describe("auto-hide in the staff viewer's Full screen (#880 fix round 2)", () => {
-  it.each([["a phone", { width: 390, height: 844, coarse: true }], ["a desktop width", { width: 1200, height: 800, coarse: false }]] as const)("on %s: after ⤢ and the centre Play, the controls hide 3000ms into play", async (_name, size) => {
+  it.each([["a phone", { width: 390, height: 844, coarse: true }], ["a desktop width", { width: 1200, height: 800, coarse: false }]] as const)("on %s: after ⤢ and Play (a phone's centre Play), the controls hide 3000ms into play", async (_name, size) => {
     viewport = mockViewport(size);
     await mount();
     await click(tid("video-fullscreen")!);
     expect(document.activeElement).toBe(tid(size.coarse ? "video-player" : "video-exit-fullscreen"));
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
-      const badge = tid("video-play-badge")!;
+      // A phone presses the centre Play; a desktop has none (owner decision, #880 review 10) and presses the controls row's.
+      const badge = size.coarse ? tid("video-play-badge")! : tid("video-immersive-dock")!.querySelector<HTMLButtonElement>('button[aria-label="Play"]')!;
       await act(async () => { badge.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); badge.dispatchEvent(new MouseEvent("pointerup", { bubbles: true })); badge.click(); });
       await act(async () => { vi.advanceTimersByTime(2900); });
       expect(tid("video-player")!.dataset.chrome).toBe("shown");
@@ -317,7 +318,8 @@ describe("the focus never leaves the viewer when Full screen's controls hide (#8
     expect(playButton().getAttribute("aria-label")).toBe("Pause");
     expect(dialog().contains(document.activeElement)).toBe(true);
   });
-  it("the centre Play, which goes once playing, leaves the focus on the player", async () => {
+  it("a phone's centre Play, which goes once playing, leaves the focus on the player", async () => {
+    viewport.restore(); viewport = mockViewport({ width: 390, height: 844, coarse: true });
     await mount();
     await click(tid("video-fullscreen")!);
     await press(tid("video-play-badge")!);

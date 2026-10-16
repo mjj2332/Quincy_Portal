@@ -142,6 +142,7 @@ describe("VideoPlayer controls auto-hide (#880, D13)", () => {
   const pointerUp = (target: EventTarget) => { target.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true })); };
 
   it("hides 3000ms after play with nothing else happening, the entry focus on Exit and a tap on the centre Play included", async () => {
+    viewport = mockViewport({ width: 390, height: 844, coarse: true });
     await mount({ immersive: hostOf() });
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     // The tap on ⤢, then the focus use-immersive places on Exit at entry.
@@ -197,6 +198,7 @@ describe("VideoPlayer controls auto-hide (#880, D13)", () => {
   // Fix round 2: the staff viewer hosts the player in a modal dialog (role="dialog"). A popup hold that looked up past the player found that host, so every focus in the
   // player (the Exit focus at entry among them) held the controls for good.
   it("inside a dialog host, the entry focus on Exit does not hold the controls: they hide 3000ms after play", async () => {
+    viewport = mockViewport({ width: 390, height: 844, coarse: true });
     const dialogHost = document.createElement("div"); dialogHost.setAttribute("role", "dialog"); document.body.appendChild(dialogHost);
     host = document.createElement("div"); dialogHost.appendChild(host); root = createRoot(host);
     await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" immersive={hostOf()} />); });
@@ -261,7 +263,8 @@ describe("VideoPlayer controls auto-hide (#880, D13)", () => {
     expect(chrome()).toBe("shown");
   });
 
-  it("the centre Play is P1's play badge (F1), on any width: it shows while paused, plays without toggling the controls, and goes while playing", async () => {
+  it("the centre Play is P1's play badge (F1), a phone's only: it shows while paused, plays without toggling the controls, and goes while playing", async () => {
+    viewport = mockViewport({ width: 390, height: 844, coarse: true });
     await mount({ immersive: hostOf() });
     expect(byTestId("video-immersive-play")).toBeNull();
     const centre = byTestId("video-play-badge")!;
@@ -270,6 +273,13 @@ describe("VideoPlayer controls auto-hide (#880, D13)", () => {
     expect(stub.calls).toContain("play");
     expect(byTestId("video-player")!.dataset.chrome).toBe("shown");
     expect(byTestId("video-play-badge")).toBeNull();
+  });
+
+  it("a desktop's Full screen has no centre Play: Play stays in the controls row (owner decision, #880 review 10)", async () => {
+    viewport = mockViewport({ width: 1400, height: 900, coarse: false });
+    await mount({ immersive: hostOf() });
+    expect(byTestId("video-play-badge")).toBeNull();
+    expect(button("Play")).not.toBeNull();
   });
 });
 

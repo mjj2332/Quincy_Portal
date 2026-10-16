@@ -334,7 +334,8 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const fade = chromeVisible ? "opacity-100" : "pointer-events-none opacity-0";
   const FADE = "motion-safe:transition-opacity motion-safe:duration-[var(--dur-base)] motion-safe:ease-[var(--ease-entrance)]";
   // In Full screen (#880) the badge is F1's centre Play, on every width, and it fades with the rest of the controls.
-  const badge = (handheld || imm) && !clock.playing && !hidesTransport && !transportLocked && transportReplacement == null
+  // P1's centre Play is a phone's (owner decision, #880 review 10): a desktop's Full screen has none; Play stays in the controls row and on Space.
+  const badge = handheld && !clock.playing && !hidesTransport && !transportLocked && transportReplacement == null
     ? <Button type="button" variant="ghost" size="icon" tabIndex={-1} aria-hidden="true" data-testid="video-play-badge" data-immersive-chrome="" inert={!chromeVisible} className={cn(PLAY_BADGE, imm && FADE, imm && fade)} onClick={() => { parkFocus(); clock.play(); }}><Play aria-hidden="true" className="size-6" /></Button>
     : null;
   // The press target for Full screen: the host's mode, else the browser's element full screen where it has one (Compare and every other host).
