@@ -341,11 +341,13 @@ describe("the guest phone ⋯ and delivery (#879 PR 3b, P10 / P2)", () => {
     await vi.waitFor(() => { expect(area()).not.toBeNull(); });
   }
 
-  it("lists P10's rows in order, with the decisions under a rule, and no delivery row above the notes", async () => {
+  it("lists P10's rows in order, with the decisions under a rule, and no delivery row above the notes; undecided, Approve is the header's alone (#879 PR 3b, F6)", async () => {
     await openFilm();
     expect(byId("guest-delivery")).toBeNull();
+    expect(byId("review-phone-bar")!.querySelector('[data-testid="guest-approve"]')).not.toBeNull();
     await press(menu());
-    expect(rows()).toEqual(["Download v11", "Download all…", "Copy my notes…", "—", "Approve", "Request changes…"]);
+    expect(rows()).toEqual(["Download v11", "Download all…", "Copy my notes…", "—", "Request changes…"]);
+    expect(byId("guest-approve-row")).toBeNull();
   });
 
   it("a recorded decision takes the Approve slot as its badge; after Changes requested the ⋯ still offers Approve", async () => {

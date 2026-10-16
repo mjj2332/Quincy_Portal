@@ -524,13 +524,12 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     {decisionNoticeLine}
   </div>;
   const panel = <GuestNotesPanel threads={listedThreads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} {...(filteredEmpty ? { filteredEmpty } : {})} header={phone ? notesHead : <div className="flex items-center justify-between gap-[var(--space-2)]">{heading}{paneControls.hideButton}</div>} top={addNote} footer={footer} writing={writing} phone={phone} />;
-  const approved = version.decision?.value === "approved";
   const openSheet = () => { if (sheetStopRef.current === "collapsed") setSheetStop("half"); };
   // Draw mode from the moment the pen goes down (its frame confirm included), so the sheet does not flash back to its browse stop meanwhile (#879 PR 2).
   const sheet = phone ? { ...sheetControl, mode: compose.penDown ? "draw" as const : sheetControl.mode } : undefined;
   const latestLabel = `v${version.version}${version.version === newest ? " · latest" : ""}`;
-  // P10's rows (#879 PR 3b), in the settled order: Social preview, Download vN, Download all…, Copy my notes…, then the decisions under a rule. Approve stays a row until the
-  // Version is approved (owner decision: after Changes requested the header shows that badge, so the ⋯ is where Approve lives).
+  // P10's rows (#879 PR 3b), in the settled order: Social preview, Download vN, Download all…, Copy my notes…, then the decisions under a rule. Approve is a row only while
+  // the header's slot holds the Changes requested badge (owner decision; F6: undecided, the header's Approve is the one way in, and an approval leaves nothing to approve).
   const downloadRow = allowDownload && version.downloadUrl !== null;
   const downloadAllRow = offerDownloadAll && downloadAll.state === "ready";
   const sheetHasActions = socialOverlays.length > 0 || downloadRow || downloadAllRow || canPaste;
@@ -551,7 +550,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
           {canPaste && <ActionRow testId="guest-paste-open" icon={<Copy aria-hidden="true" />} onSelect={() => { close(true); openPaste(); }}>Copy my notes…</ActionRow>}
           {canDecide && <>
             {sheetHasActions && <ActionSeparator />}
-            {!approved && <ActionRow testId="guest-approve-row" icon={<Check aria-hidden="true" />} onSelect={() => { close(true); startDecision("approved", true); }}>Approve</ActionRow>}
+            {/* Approve here only when the header's slot holds the Changes requested badge (#879 PR 3b, F6): undecided, the header's Approve button is the one way in, and approved has nothing to approve. */}
+            {version.decision?.value === "changes_requested" && <ActionRow testId="guest-approve-row" icon={<Check aria-hidden="true" />} onSelect={() => { close(true); startDecision("approved", true); }}>Approve</ActionRow>}
             <ActionRow testId="guest-request-changes" icon={<MessageSquareWarning aria-hidden="true" />} onSelect={() => { close(true); startDecision("changes_requested", true); }}>Request changes…</ActionRow>
           </>}
         </>}
