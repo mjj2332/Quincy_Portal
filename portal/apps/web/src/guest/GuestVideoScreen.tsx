@@ -461,8 +461,9 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   // What the guest was doing when verification was asked for, so a successful code lands them where they were going. Each request carries its own, and the page's verify owner keeps only the newest active one.
   const afterVerify = useRef<(then: "compose" | "download" | DecisionValue) => void>(() => undefined);
   const requestVerify = useCallback((then: "compose" | "download" | "none" | DecisionValue, active: () => boolean = () => true) => {
-    // On a phone, verifying for a note ends in the pill's field with the focus, which the closing dialog must leave there (#879 PR 2).
-    verify.request({ active, keepFocus: phone && then === "compose", done: (verified) => {
+    // On a phone, verifying for a note ends in the pill's field with the focus, which the closing dialog must leave there (#879 PR 2); in Full screen too at any width, where the
+    // field is the floating composer's (#880 Sol review).
+    verify.request({ active, keepFocus: (phone || immRef.current) && then === "compose", done: (verified) => {
       if (verified && then !== "none") afterVerify.current(then);
     } });
   }, [verify, phone]);
@@ -545,9 +546,16 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     // On a phone the code lands the guest in the pill's field (the focus starts the draft) when the keyboard is still up: the code field kept the focus through the check, and iOS
     // keeps the keyboard for a focus moving from one field to another. A focus after the check with the keyboard gone (the guest put it away) is not a tap, so iOS would show a caret
     // with no keyboard and then drop compose mode: the guest lands at rest instead, and one tap on the pill starts the note (PR 2 fix round 1).
-    // In Full screen (#880) the floating composer is shown first, in the same commit, so the field it focuses is not inside a hidden pane.
+    // In Full screen (#880) the draft begins in the same commit that shows the floating composer, as Add note does: shown with no draft open, the layout effect that puts a closed
+    // draft away would hide it at once (Sol review). The focus follows the rule above: a phone with the keyboard up lands in the pill; otherwise it goes where Add note leaves it
+    // (Add note on a desktop, the player on a touch device), so a phone with the keyboard gone sees the open strip, stamped and empty, and taps the pill.
     if (then === "compose" && uprightRef.current) askUpright();
-    else if (then === "compose") { if (immRef.current) flushSync(() => { setComposeShown(true); }); if (!phone) startDraft(compose.begin); else if (keyboardField(document.activeElement)) focusField(); }
+    else if (then === "compose" && immRef.current) {
+      clock?.pause();
+      flushSync(() => { if (!compose.isOpen) compose.begin(); setComposeShown(true); });
+      if (phone && keyboardField(document.activeElement)) focusField(); else focusInImmersive(document, "video-immersive-add-note");
+    }
+    else if (then === "compose") { if (!phone) startDraft(compose.begin); else if (keyboardField(document.activeElement)) focusField(); }
     else if (then === "download") setDownloadHint(true);
     else openDecision(then);
   };

@@ -381,6 +381,30 @@ describe("the guest page's Full screen: unverified Add note (#880)", () => {
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
   });
+  it.each([["a desktop width", { width: 1200, height: 800, coarse: false }], ["a phone", { width: 390, height: 844, coarse: true }]] as const)("on %s, verifying lands in the floating composer with the draft begun (#880 Sol review)", async (_name, size) => {
+    viewport.restore(); viewport = mockViewport(size);
+    session = ANON; notes = {}; videos = [videoOf(1)];
+    extra = (url, init) => {
+      if (url === `${BASE}/email/code` && init?.method === "POST") return json({ sent: true, resendAfterSeconds: 60 }, 202);
+      if (url === `${BASE}/email/verify` && init?.method === "POST") { session = VERIFIED; return json(VERIFIED); }
+      return undefined;
+    };
+    await open();
+    await click(byId("video-fullscreen"));
+    await click(byId("video-immersive-add-note"));
+    await typeInto(byId("guest-verify-email"), "sam@example.com");
+    await typeInto(byId("guest-verify-name"), "Sam");
+    await submit("guest-verify-identity-form");
+    await typeInto(byId("guest-verify-code"), "123456");
+    await flush();
+    expect(byId("guest-verify-dialog")).toBeNull();
+    expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    expect(byId("video-immersive-add-note")!.getAttribute("aria-pressed")).toBe("true");
+    if (size.coarse) expect(byId("guest-compose-strip")!.getAttribute("data-open")).toBe("true");
+    else expect(byId("guest-composer")).not.toBeNull();
+    // The focus stays in the viewer where Add note leaves it: Add note on a desktop, the player on a touch device (the keyboard is gone once the code is checked).
+    expect(document.activeElement).toBe(byId(size.coarse ? "video-player" : "video-immersive-add-note"));
+  });
   it("the verify dialog takes the focus from Full screen's trap, and Tab stays in the dialog (#880, test g)", async () => {
     viewport.restore(); viewport = mockViewport({ width: 390, height: 844, coarse: true });
     session = ANON; notes = {}; videos = [videoOf(1)];
