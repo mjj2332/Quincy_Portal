@@ -559,4 +559,13 @@ describe("the system player row (#880, D15)", () => {
     await click(tid("video-header-menu")!);
     expect(tid("video-open-system-player")!.textContent).toContain("Open in system player");
   });
+  it("disabled where the browser has no player of its own, its hint says where it works (owner decision, #880 review 12)", async () => {
+    viewport = mockViewport({ width: 390, height: 844, coarse: true });
+    await mount();
+    await click(tid("video-header-menu")!);
+    const row = tid("video-open-system-player")!;
+    expect(row.getAttribute("aria-disabled") === "true" || row.hasAttribute("data-disabled") || (row as HTMLButtonElement).disabled).toBe(true);
+    const described = row.getAttribute("aria-describedby");
+    expect(document.getElementById(described!)!.textContent).toBe("Only available in Safari on iPhone or iPad.");
+  });
 });

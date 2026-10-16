@@ -1,5 +1,6 @@
 import { ClipboardCopy, ClipboardPaste, DownloadIcon, FileDown, Info, Link2, Maximize, Smartphone, Trash2 } from "lucide-react";
 import { copyText } from "../../lib/clipboard";
+import { NATIVE_PLAYER_UNAVAILABLE } from "../../lib/video-native-player";
 import { Item, ItemContent, ItemMedia, ItemTitle } from "../reui/item";
 import { Button } from "../reui/button";
 import { ACTION_ROW, ACTION_ROW_TITLE, ActionRow, ActionSeparator, ReviewActionSheet } from "../quincy/ReviewActionSheet";
@@ -55,7 +56,7 @@ export function VideoReviewHeaderMenu({ container, version, social, copyHref, do
       {onCreateReviewLink && <ActionRow testId="video-create-review-link" icon={<Link2 aria-hidden="true" />} onSelect={() => { close(true); onCreateReviewLink(); }}>Create Review link</ActionRow>}
       {systemPlayer && (() => {
         const supported = systemPlayer.supported();
-        return <ActionRow testId="video-open-system-player" icon={<Maximize aria-hidden="true" />} disabled={!supported} hint={supported ? undefined : "This browser has no player of its own to open the film in."} onSelect={() => { systemPlayer.open(); close(); }}>{systemPlayer.label}</ActionRow>;
+        return <ActionRow testId="video-open-system-player" icon={<Maximize aria-hidden="true" />} disabled={!supported} hint={supported ? undefined : NATIVE_PLAYER_UNAVAILABLE} onSelect={() => { systemPlayer.open(); close(); }}>{systemPlayer.label}</ActionRow>;
       })()}
       {onVersionDetails && <ActionRow testId="video-version-details-row" icon={<Info aria-hidden="true" />} onSelect={() => { close(true); onVersionDetails(); }}>Version details</ActionRow>}
       {clipboard && copyOn && <ActionRow testId="video-copy-shown-notes" icon={<ClipboardCopy aria-hidden="true" />} disabled={clipboard.copyDisabled} onSelect={() => { clipboard.copyShown(); close(); }}>Copy shown notes</ActionRow>}

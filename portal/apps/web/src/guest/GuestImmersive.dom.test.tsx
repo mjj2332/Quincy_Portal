@@ -341,11 +341,11 @@ describe("the guest ⋯ with nothing but the system player (#880 S6)", () => {
     const row = byId("guest-open-system-player")!;
     expect(row.textContent).toContain("Open in system player");
     expect(row.getAttribute("aria-disabled") === "true" || row.hasAttribute("data-disabled") || (row as HTMLButtonElement).disabled).toBe(true);
-    expect(row.textContent).toContain("This browser has no player of its own");
+    expect(row.textContent).toContain("Only available in Safari on iPhone or iPad.");
     // The hint describes the row; it is not part of its name.
     const described = row.getAttribute("aria-describedby");
     expect(described).not.toBeNull();
-    expect(document.getElementById(described!)!.textContent).toBe("This browser has no player of its own to open the film in.");
+    expect(document.getElementById(described!)!.textContent).toBe("Only available in Safari on iPhone or iPad.");
     expect(row.querySelector('[data-testid="review-action-row-label"]')!.textContent).toBe("Open in system player");
     expect(byId("guest-download")).toBeNull();
     expect(byId("guest-paste-open")).toBeNull();

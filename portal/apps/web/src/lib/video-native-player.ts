@@ -11,6 +11,9 @@ export function nativePlayerLabel(userAgent: string = typeof navigator === "unde
   return /iPhone|iPod/.test(userAgent) ? "Open in iPhone player" : "Open in system player";
 }
 
+/** The Menu row's hint while it is disabled (no native player here), shared by the staff and guest menus (owner decision, #880 review 12). */
+export const NATIVE_PLAYER_UNAVAILABLE = "Only available in Safari on iPhone or iPad.";
+
 /** Whether this video element has a native full screen to hand over to. */
 export function nativePlayerSupported(video: HTMLVideoElement | null): boolean {
   if (!video) return false;

@@ -5,7 +5,7 @@ import { Check, ChevronLeft, ChevronRight, Copy, DownloadIcon, FolderDown, Maxim
 import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto } from "@quincy/shared";
 import { mustTurnUpright, nextPrompt, rotate, readPhoneDevice, UPRIGHT_PROMPT, type ImmersivePrompt, type ImmersiveState } from "../lib/immersive";
 import { readLandscape, useDeviceOrientation, useLandscape } from "../lib/use-device-orientation";
-import { nativePlayerLabel } from "../lib/video-native-player";
+import { NATIVE_PLAYER_UNAVAILABLE, nativePlayerLabel } from "../lib/video-native-player";
 import { hasOpenAlertDialog } from "../lib/alert-dialog-press";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../components/quincy/project-sheet-layers";
 import { useImmersive } from "../components/quincy/use-immersive";
@@ -672,7 +672,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
             ? <ActionRow testId="guest-download" icon={<DownloadIcon aria-hidden="true" />} href={version.downloadUrl ?? undefined} download onSelect={() => { close(); }}>{`Download v${version.version}`}</ActionRow>
             : <ActionRow testId="guest-download" icon={<DownloadIcon aria-hidden="true" />} onSelect={() => { close(true); requestVerify("download"); }}>{`Download v${version.version}`}</ActionRow>)}
           {downloadAllRow && <ActionRow testId="guest-download-all" icon={<FolderDown aria-hidden="true" />} onSelect={() => { close(true); downloadAll.start(); }}>Download all…</ActionRow>}
-          <ActionRow testId="guest-open-system-player" icon={<Maximize aria-hidden="true" />} disabled={!(playerRef.current?.nativePlayerSupported?.() ?? false)} hint={(playerRef.current?.nativePlayerSupported?.() ?? false) ? undefined : "This browser has no player of its own to open the film in."} onSelect={() => { playerRef.current?.openSystemPlayer?.(); close(); }}>{nativePlayerLabel()}</ActionRow>
+          <ActionRow testId="guest-open-system-player" icon={<Maximize aria-hidden="true" />} disabled={!(playerRef.current?.nativePlayerSupported?.() ?? false)} hint={(playerRef.current?.nativePlayerSupported?.() ?? false) ? undefined : NATIVE_PLAYER_UNAVAILABLE} onSelect={() => { playerRef.current?.openSystemPlayer?.(); close(); }}>{nativePlayerLabel()}</ActionRow>
           {canPaste && <ActionRow testId="guest-paste-open" icon={<Copy aria-hidden="true" />} onSelect={() => { close(true); openPaste(); }}>Copy my notes…</ActionRow>}
           {canDecide && <>
             <ActionSeparator />
