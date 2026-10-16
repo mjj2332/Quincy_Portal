@@ -5,7 +5,11 @@ import type { GuestSessionResponse } from "@quincy/shared";
  * What an action wants done once the guest has verified. `active` says whether the action that asked is still wanted (a cancelled decision is not); `done` runs exactly once when the dialog
  * closes: `true` after a verification the action is still waiting on, `false` on Cancel, on being replaced, or when the action is no longer active.
  */
-export type VerifyRequest = { active: () => boolean; done: (verified: boolean) => void };
+export type VerifyRequest = {
+  active: () => boolean; done: (verified: boolean) => void;
+  /** After a verification, `done` puts the focus where the action goes on (the phone pill's field, #879 PR 2): the dialog must not take it back to its opener as it closes. */
+  keepFocus?: boolean;
+};
 /** The page's one verify dialog. `request()` with nothing only opens it (a write found the session unverified); a request also becomes the one continuation. */
 export type GuestVerify = { request: (req?: VerifyRequest) => void };
 
@@ -16,7 +20,10 @@ export type GuestVerify = { request: (req?: VerifyRequest) => void };
 export function useGuestVerify(onSession: (next: GuestSessionResponse) => void, onUnavailable: () => void) {
   const [open, setOpen] = useState(false);
   const pending = useRef<VerifyRequest | null>(null);
+  // Whether the closing dialog leaves the focus where its continuation put it.
+  const keepFocus = useRef(false);
   const request = useCallback((req?: VerifyRequest) => {
+    keepFocus.current = false;
     const held = pending.current;
     if (req !== undefined) {
       if (!req.active()) return;
@@ -31,6 +38,7 @@ export function useGuestVerify(onSession: (next: GuestSessionResponse) => void, 
   const finish = useCallback((verified: boolean) => {
     const held = pending.current;
     pending.current = null;
+    keepFocus.current = verified && held?.keepFocus === true;
     setOpen(false);
     if (held !== null) held.done(verified && held.active());
   }, []);
@@ -40,6 +48,7 @@ export function useGuestVerify(onSession: (next: GuestSessionResponse) => void, 
     verify: verify.current,
     dialog: {
       open,
+      finalFocus: () => (keepFocus.current ? false : true),
       onOpenChange: (next: boolean) => { if (next) setOpen(true); else finish(false); },
       onVerified: (next: GuestSessionResponse) => { onSession(next); finish(true); },
       onGone: () => { finish(false); onUnavailable(); },

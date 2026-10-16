@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GuestNoteThreadDto, MarkupItem, RichTextDoc } from "@quincy/shared";
-import { composeInput, editPatch, failureText, removeThread, upsertThread } from "./guest-compose";
+import { composeInput, editPatch, failureText, openThreadCount, removeThread, upsertThread } from "./guest-compose";
 
 const thread = (id: string, startFrame: number, over: Partial<GuestNoteThreadDto> = {}): GuestNoteThreadDto => ({
   id, parentId: null, author: { kind: "studio", name: "Mia" }, startFrame, endFrame: null, drawingFrame: null, hasMarkup: false, body: id, deleted: false, resolved: false, revision: 1,
@@ -106,5 +106,19 @@ describe("editPatch", () => {
   });
   it("refuses a drawing outside the note's frames", () => {
     expect(editPatch({ ...base, items: [stroke], drawingFrame: 51 })).toMatchObject({ ok: false, problem: expect.stringMatching(/drawing/i) });
+  });
+});
+
+describe("openThreadCount", () => {
+  it("counts the open roots: not resolved, and either not deleted or a tombstone that kept its replies; replies never count", () => {
+    const reply = thread("r", 0, { parentId: "a", startFrame: null });
+    expect(openThreadCount([])).toBe(0);
+    expect(openThreadCount([
+      thread("a", 10, { replies: [reply] as never }),
+      thread("b", 20, { resolved: true }),
+      thread("c", 30, { deleted: true, replies: [reply] as never }),
+      thread("d", 40, { deleted: true }),
+      thread("e", 50, { deleted: true, resolved: true, replies: [reply] as never }),
+    ])).toBe(2);
   });
 });

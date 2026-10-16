@@ -2,7 +2,7 @@
 
 Per AGENTS.md "Reuse ledger": one line per UI element added or changed on `fix/gantt-256-257-258`. Copy into the PR body.
 
-Searches ran against the local `tmp/ReUI_Full_Source_Code/` copy: the ReUI MCP was not connected on 2026-09-28, so this ledger may lag the live registry.
+Searches ran against the local `~/quincy-ref/reui/` copy: the ReUI MCP was not connected on 2026-09-28, so this ledger may lag the live registry.
 
 | Element | Source | Notes |
 |---|---|---|

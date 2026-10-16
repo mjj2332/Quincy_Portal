@@ -70,7 +70,14 @@ export type VideoImmersiveHost = {
 };
 
 export const COARSE = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[721px]:min-h-11 max-[721px]:min-w-11";
+/** An icon control inside the phone note pill (#879 fix, kit.jsx `ibtn sm`): drawn at 32px so the text keeps the room, with a 44px hit area from a transparent pseudo-element. */
+export const PILL_ICON = "relative size-8 after:absolute after:-inset-1.5 after:content-['']";
+/** The phone Play's row slot (P1's ControlBar: a 44px `ibtn`, then a 4px gap to the time): drawn as a 32px PILL_ICON with half a --space-3 either side, so its
+ *  44px hit area is its own slot in the row, the way Mute's sits in --space-3 gaps, and the readout starts at 12 + 44 + 4 = 60pt. */
+const PHONE_PLAY_SLOT = "mx-[calc(var(--space-3)/2)]";
 const MONO = "[font:var(--type-mono)] tabular-nums";
+/** P1's PlayBadge: a 60px round, translucent ink disc on the film (`--space-8` less `--space-1`), the inverse surface's paper icon. */
+const PLAY_BADGE = "pointer-events-auto size-[calc(var(--space-8)-var(--space-1))] rounded-[var(--radius-pill)] bg-[color-mix(in_srgb,var(--ink-900)_55%,transparent)] !text-foreground hover:bg-[color-mix(in_srgb,var(--ink-900)_70%,transparent)]";
 // These chips keep the Lightbox's SHORTCUT_KBD skin (bordered, bg-secondary) rather than the Kbd primitive, to match the Lightbox legend.
 export const LEGEND_KBD = "rounded-[var(--radius-xs)] border border-solid border-[length:var(--border-width-hair)] border-border bg-secondary px-[var(--space-1)] text-foreground [font:var(--weight-regular)_var(--text-2xs)/1.4_var(--font-mono)]";
 const LEGEND = "flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)] text-foreground-secondary [font:var(--type-label)] pointer-coarse:hidden max-[721px]:hidden @max-[64rem]:hidden";
@@ -85,7 +92,7 @@ const LEGEND = "flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--
  * surface (`data-surface="inverse"`) around it, like the Lightbox. `keyboard="self"` listens on the player; `"host"` leaves the
  * scope to the caller, who forwards events to `controlRef.handleKeyDown`.
  */
-export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, watermark, onMediaError, transportLocked = false, transportActions, transportReplacement, social, phoneFrameStep = false, immersive }: {
+export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, watermark, onMediaError, transportLocked = false, transportActions, transportReplacement, social, phoneFrameStep = false, transportHidden = false, immersive }: {
   version: VideoPlayerVersion;
   title: string;
   controlRef?: Ref<VideoPlayerControl>;
@@ -127,6 +134,8 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   social?: SocialPreviewMode;
   /** The phone control bar drops frame step because the notes composer carries it (#879). A host with no such composer (the guest screen, a staff edit in progress) turns it back on. */
   phoneFrameStep?: boolean;
+  /** The phone compose mode (#879 fix, P6): the transport block is hidden (still mounted), so the film takes the room above the compose strip. Ignored in Full screen, where F1 keeps the controls under the composer. */
+  transportHidden?: boolean;
   /** Quincy's Full screen (#880). */
   immersive?: VideoImmersiveHost;
 }) {
@@ -136,7 +145,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   // The transport block's height, kept while it shows so its replacement (drawing) takes at least the same room: the picture above never moves when Draw is pressed.
   const transportRef = useRef<HTMLDivElement | null>(null);
   const transportHeight = useRef<number | null>(null);
-  useLayoutEffect(() => { if (transportReplacement == null && transportRef.current) transportHeight.current = transportRef.current.offsetHeight; });
+  useLayoutEffect(() => { if (transportReplacement == null && !transportHidden && transportRef.current) transportHeight.current = transportRef.current.offsetHeight; });
   const clock = useVideoFrameClock(video, version, initialFrame === undefined ? {} : { initialFrame });
 
   const timecode = useFrameLabel(version);
@@ -186,6 +195,10 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const [phoneDevice] = useState(readPhoneDevice);
   const phone = useMediaQuery(PHONE_QUERY);
   const compact = imm && (phone || phoneDevice);
+  // The phone's styling (P1's single row, the band scrubber, the play badge): a phone width, or a phone device in Full screen.
+  const handheld = phone || compact;
+  // F1 keeps the controls under the composer: a host's compose-mode hide does not apply in Full screen.
+  const hidesTransport = transportHidden && !imm;
   const [chromeShown, setChromeShown] = useState(true);
   const [activity, setActivity] = useState(0);
   const [focusHeld, setFocusHeld] = useState(false);
@@ -235,25 +248,32 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const stepLabel = step === "in" ? "Set in point" : step === "out" ? "Set out point" : "Clear in and out";
 
   // A phone gets the single-row control bar (#879, the prototype's ControlBar): scrubber, play, timecode, mute, full screen. Frame step and in / out live in the composer there.
+  // #879 PR 3a: the bar is P1's 78pt band: the scrubber band, a 44px row of plain (ghost) 32px icons with 44px hit areas (`PILL_ICON`), the current time only. `handheld` (#880) is the
+  // phone width or a phone device in Full screen, so a landscape iPhone (844pt) in Full screen gets the same bar.
   const toggleMuted = (next: boolean) => { setMutedState(next); clock.setMuted(next); onMutedChange?.(next); };
   const playLabel = clock.playing ? "Pause" : "Play";
-
+  // P1's PlayBadge (#879 PR 3a, owner decision): the paused phone film carries a centred play button, gone while playing, drawing or composing. It is a pointer shortcut for the
+  // transport's Play, which keeps the name and the keyboard: so it is out of the tab order and the accessibility tree.
   const fade = chromeVisible ? "opacity-100" : "pointer-events-none opacity-0";
   const FADE = "motion-safe:transition-opacity motion-safe:duration-[var(--dur-base)] motion-safe:ease-[var(--ease-entrance)]";
+  // In Full screen (#880) the badge is F1's centre Play, on every width, and it fades with the rest of the controls.
+  const badge = (handheld || imm) && !clock.playing && !hidesTransport && !transportLocked && transportReplacement == null
+    ? <Button type="button" variant="ghost" size="icon" tabIndex={-1} aria-hidden="true" data-testid="video-play-badge" inert={!chromeVisible} className={cn(PLAY_BADGE, imm && FADE, imm && fade)} onClick={() => { clock.play(); }}><Play aria-hidden="true" className="size-6" /></Button>
+    : null;
   // The press target for Full screen: the host's mode, else the browser's element full screen where it has one (Compare and every other host).
   const fullscreenButton = immersive && !imm
     ? <IconTip label="Full screen">
-      <Button type="button" variant="ghost" size="icon" aria-label="Full screen" data-testid="video-fullscreen" className={cn("size-8", COARSE)} onClick={immersive.onToggle}><Maximize aria-hidden="true" /></Button>
+      <Button type="button" variant="ghost" size="icon" aria-label="Full screen" data-testid="video-fullscreen" className={handheld ? PILL_ICON : cn("size-8", COARSE)} onClick={immersive.onToggle}><Maximize aria-hidden="true" /></Button>
     </IconTip>
     : !immersive && fullscreenAvailable
       ? <IconTip label="Full screen">
-        <Button type="button" variant="ghost" size="icon" aria-label="Full screen" className={cn("size-8", COARSE)} onClick={() => { void playerRef.current?.requestFullscreen?.(); }}><Maximize aria-hidden="true" /></Button>
+        <Button type="button" variant="ghost" size="icon" aria-label="Full screen" className={handheld ? PILL_ICON : cn("size-8", COARSE)} onClick={() => { void playerRef.current?.requestFullscreen?.(); }}><Maximize aria-hidden="true" /></Button>
       </IconTip>
       : null;
   // In full screen the controls are a bottom overlay on a scrim, in the player's own tree (safe-area insets keep it off the notch and the home bar).
   const dockClass = imm
     ? cn("absolute inset-x-0 bottom-0 z-10 flex flex-col gap-[var(--space-2)] bg-[image:var(--scrim-chrome)] pt-[var(--space-6)] pr-[max(var(--space-3),env(safe-area-inset-right))] pb-[max(var(--space-2),env(safe-area-inset-bottom))] pl-[max(var(--space-3),env(safe-area-inset-left))]", FADE, fade)
-    : "flex flex-col gap-[var(--space-3)] max-[721px]:px-[var(--space-3)]";
+    : "flex flex-col gap-[var(--space-3)] max-[721px]:gap-0 max-[721px]:px-[var(--space-3)] max-[721px]:pb-[var(--space-1)]";
   const dockProps = imm ? { "data-testid": "video-immersive-dock", inert: !chromeVisible } : {};
   const dockRef = useRef<HTMLDivElement | null>(null);
   // The composer floats just above the controls: publish their height on the split row (the pane is the player's sibling, not its child).
@@ -291,15 +311,15 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
       if (now - lastWake.current > 250) { lastWake.current = now; wake(); }
     } : undefined}
     onClick={imm ? (event) => {
-      // A tap on the film shows or hides the controls and never plays or pauses (D13). Taps on the controls are theirs, and the pen and the composer keep the controls up.
+      // A tap on the film shows or hides the controls and never plays or pauses (D13). Taps on the controls (the play badge among them) are theirs, and the pen and the composer keep the controls up.
       const target = event.target as Element;
-      if (!target.closest('[data-testid="video-stage"]') || composing || drawing) return;
+      if (!target.closest('[data-testid="video-stage"]') || target.closest('[data-testid="video-play-badge"]') || composing || drawing) return;
       setChromeShown((shown) => !shown);
       setActivity((count) => count + 1);
     } : undefined}
-    className={cn("group/player @container flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", imm && "relative flex-1 gap-0 bg-invert", className)}
+    className={cn("group/player @container flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] max-[721px]:gap-0 focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", imm && "relative flex-1 gap-0 bg-invert", className)}
   >
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} {...(social ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})} />
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} badge={badge} {...(social ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})} />
 
     {imm && immersive && <div data-testid="video-immersive-bar" inert={!chromeVisible} className={cn("absolute inset-x-0 top-0 z-10 flex items-center gap-[var(--space-2)] bg-[image:var(--scrim-chrome-top)] pt-[max(var(--space-2),env(safe-area-inset-top))] pr-[max(var(--space-3),env(safe-area-inset-right))] pb-[var(--space-5)] pl-[max(var(--space-3),env(safe-area-inset-left))] text-invert-foreground", FADE, fade)}>
       <IconTip label="Exit full screen">
@@ -308,21 +328,23 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
       <span data-testid="video-immersive-title" title={immersive.heading} className="min-w-0 flex-1 truncate [font:var(--type-body)]">{immersive.heading}</span>
     </div>}
     {imm && immersive?.card != null && <div data-testid="video-immersive-card" inert={!chromeVisible} className={cn("pointer-events-none absolute inset-x-[var(--space-3)] top-[var(--space-7)] z-10 flex justify-center", FADE, fade)}><div className="pointer-events-auto w-full max-w-[420px]">{immersive.card}</div></div>}
-    {imm && paused && <div className={cn("pointer-events-none absolute inset-0 z-[5] flex items-center justify-center", FADE, fade)}>
-      <Button type="button" variant="default" size="icon" aria-hidden="true" tabIndex={-1} data-testid="video-immersive-play" inert={!chromeVisible} className="pointer-events-auto size-16 rounded-full" onClick={() => { clock.play(); }}><Play aria-hidden="true" className="size-8" /></Button>
-    </div>}
     {nativeFailed && <Notice tone="caution" role="alert" data-testid="video-native-failed" className={cn("bg-card", noticeClass)}>The system player couldn't open this film on this device.</Notice>}
 
-    {transportReplacement != null ? <div ref={(element) => { dockRef.current = element; }} {...dockProps} className={cn(imm ? dockClass : "flex flex-col justify-center")} style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div> : <div ref={(element) => { transportRef.current = element; dockRef.current = element; }} {...dockProps} className={dockClass}>
-    {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track. */}
-    <div data-testid="video-scrubber" onPointerDownCapture={imm ? () => { setScrubbing(true); } : undefined}>
+    {/* The replacement sits ABOVE the transport, which stays mounted and hidden under it (#879 PR 2): unmounted, the slider came back as a new node, measured its thumb inside whatever
+        box hid it next (a phone's Done lands in compose mode, where the transport is hidden) and drew no thumb until the frame moved. */}
+    {transportReplacement != null && <div ref={(element) => { if (element) dockRef.current = element; }} {...(imm ? dockProps : {})} className={imm ? dockClass : "flex flex-col justify-center"} style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div>}
+    <div ref={(element) => { transportRef.current = element; if (transportReplacement == null) dockRef.current = element; }} {...(imm && transportReplacement == null ? dockProps : {})} hidden={hidesTransport || transportReplacement != null} className={cn(dockClass, "[&[hidden]]:hidden")}>
+    {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track.
+        A phone draws it as P1's `.scrub` band (#879 PR 3a): `--space-6` tall, the marker lane laid inside it along the top, the track through its middle, a 44px touch band from the slider's `band` size. */}
+    <div data-testid="video-scrubber" className={handheld ? "relative h-[var(--space-6)]" : undefined} onPointerDownCapture={imm ? () => { setScrubbing(true); } : undefined}>
       {/* The band is placed against the slider alone: inside the same box as the marker lane it would sit centred on the whole scrubber, 6px below the track. */}
-      <div className="relative">
+      <div className={handheld ? "relative h-full" : "relative"}>
         {pendingRange !== undefined && <VideoPendingRangeBand range={pendingRange} frameCount={version.frameCount} />}
         <Slider
           value={[Math.min(shownFrame, Math.max(1, lastFrame))]}
           min={0}
           max={Math.max(1, lastFrame)}
+          size={handheld ? "band" : "default"}
           step={1}
           disabled={transportLocked}
           largeStep={Math.max(1, Math.round(rationalToNumber(version.fps)))}
@@ -331,24 +353,24 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         />
         {range !== undefined && !compact && <VideoRangeHandles marks={range.marks} frameCount={version.frameCount} label={timecode} largeStep={Math.max(1, Math.round(rationalToNumber(version.fps)))} interactive={marksTaken} onMove={moveHandle} onGrab={clock.pause} />}
       </div>
-      {markers !== undefined && (!phone || markers.length > 0) && <VideoTimelineMarkers markers={markers} frameCount={version.frameCount} touch={imm} {...(markerSelect ? { onSelect: markerSelect } : {})} />}
+      {markers !== undefined && (!handheld || markers.length > 0) && <VideoTimelineMarkers markers={markers} frameCount={version.frameCount} touch={imm} {...(markerSelect ? { onSelect: markerSelect } : {})} {...(handheld ? { className: "absolute inset-x-0 top-0" } : {})} />}
     </div>
 
-    <div data-testid="video-controls-row" className="flex flex-wrap items-center gap-[var(--space-2)] max-[721px]:flex-nowrap">
-      {((!phone && !compact) || phoneFrameStep && !compact) && <IconTip label="Previous frame" keys="←">
-        <Button type="button" variant="outline" size="icon" aria-label="Previous frame" className={COARSE} disabled={transportLocked} onClick={() => { clock.step(-1); }}><StepBack aria-hidden="true" /></Button>
+    <div data-testid="video-controls-row" className={cn("flex flex-wrap items-center gap-[var(--space-2)] max-[721px]:h-11 max-[721px]:flex-nowrap max-[721px]:gap-[var(--space-1)]", handheld && "h-11 flex-nowrap gap-[var(--space-1)]")}>
+      {!compact && (!handheld || phoneFrameStep) && <IconTip label="Previous frame" keys="←">
+        <Button type="button" variant={handheld ? "ghost" : "outline"} size="icon" aria-label="Previous frame" className={handheld ? PILL_ICON : COARSE} disabled={transportLocked} onClick={() => { clock.step(-1); }}><StepBack aria-hidden="true" /></Button>
       </IconTip>}
       <IconTip label={playLabel} keys="Space">
-        <Button type="button" variant="default" size="icon" aria-label={playLabel} className={cn("w-[var(--space-7)]", COARSE)} disabled={transportLocked} onClick={() => { if (clock.playing) clock.pause(); else clock.play(); }}>{clock.playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}</Button>
+        <Button type="button" variant={handheld ? "ghost" : "default"} size="icon" aria-label={playLabel} className={handheld ? cn(PILL_ICON, PHONE_PLAY_SLOT) : cn("w-[var(--space-7)]", COARSE)} disabled={transportLocked} onClick={() => { if (clock.playing) clock.pause(); else clock.play(); }}>{clock.playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}</Button>
       </IconTip>
-      {((!phone && !compact) || phoneFrameStep && !compact) && <IconTip label="Next frame" keys="→">
-        <Button type="button" variant="outline" size="icon" aria-label="Next frame" className={COARSE} disabled={transportLocked} onClick={() => { clock.step(1); }}><StepForward aria-hidden="true" /></Button>
+      {!compact && (!handheld || phoneFrameStep) && <IconTip label="Next frame" keys="→">
+        <Button type="button" variant={handheld ? "ghost" : "outline"} size="icon" aria-label="Next frame" className={handheld ? PILL_ICON : COARSE} disabled={transportLocked} onClick={() => { clock.step(1); }}><StepForward aria-hidden="true" /></Button>
       </IconTip>}
-      <output data-testid="video-readout" aria-live={clock.playing || !clock.confirmed ? "off" : "polite"} className={cn("px-[var(--space-2)] max-[721px]:min-w-0 max-[721px]:px-0 max-[721px]:text-xs max-[721px]:whitespace-nowrap", MONO)}>
-        <span>{timecode(clock.frame)}</span>{!(phone && phoneFrameStep) && <span data-testid="video-readout-total" className="text-foreground-secondary">{` / ${timecode(version.frameCount)}`}</span>}
+      <output data-testid="video-readout" aria-live={clock.playing || !clock.confirmed ? "off" : "polite"} className={cn("px-[var(--space-2)] max-[721px]:min-w-0 max-[721px]:px-0 max-[721px]:text-xs max-[721px]:whitespace-nowrap", handheld && "min-w-0 px-0 text-xs whitespace-nowrap", MONO)}>
+        <span>{timecode(clock.frame)}</span>{!handheld && <span data-testid="video-readout-total" className="text-foreground-secondary">{` / ${timecode(version.frameCount)}`}</span>}
       </output>
       {!phone && !compact && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><TimeFormatMenu /></OverlayContainerContext.Provider>}
-      {social && !phone && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><SocialPreviewControls social={social} imageFailed={socialImage.failed} /></OverlayContainerContext.Provider>}
+      {social && !handheld && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><SocialPreviewControls social={social} imageFailed={socialImage.failed} /></OverlayContainerContext.Provider>}
       {!phone && !compact && range !== undefined && (() => {
         const rangeButton = <Button type="button" variant="outline" size="icon" aria-label={stepLabel} data-testid="video-range-button" data-step={step} className={COARSE} disabled={rangeLocked} onClick={pressRange}>
           {step === "in" ? <ArrowRightFromLine aria-hidden="true" /> : step === "out" ? <ArrowRightToLine aria-hidden="true" /> : <X aria-hidden="true" />}
@@ -364,19 +386,21 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         {onMark && <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>I</Kbd><Kbd className={LEGEND_KBD}>O</Kbd></KbdGroup>in/out</span>}
         {immersive && <span className="inline-flex items-center gap-[var(--space-1)]"><Kbd className={LEGEND_KBD}>F</Kbd>full screen</span>}
       </div>}
-      <div className="ml-auto flex items-center gap-[var(--space-1)]">
-        {imm && immersive?.addNote && <IconTip label="Add note">
-          <Button type="button" variant="outline" aria-label="Add note" aria-pressed={immersive.addNote.pressed} data-testid="video-immersive-add-note" className={cn(COARSE, "aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground")} onClick={immersive.addNote.onToggle}><SquarePen aria-hidden="true" /><span className="max-[721px]:sr-only">Add note</span></Button>
-        </IconTip>}
+      {/* On a phone the 32px icons sit --space-3 apart, so their 44px hit areas meet without overlapping. */}
+      <div className={cn("ml-auto flex items-center gap-[var(--space-1)] max-[721px]:gap-[var(--space-3)]", handheld && "gap-[var(--space-3)]")}>
         {transportActions}
         <IconTip label={muted ? "Unmute" : "Mute"}>
-          <Toggle variant="default" size="default" pressed={muted} onPressedChange={toggleMuted} aria-label="Mute" className={cn("size-8", COARSE)}>{muted ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}</Toggle>
+          <Toggle variant="default" size="default" pressed={muted} onPressedChange={toggleMuted} aria-label="Mute" className={handheld ? PILL_ICON : cn("size-8", COARSE)}>{muted ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}</Toggle>
         </IconTip>
         {fullscreenButton}
+        {/* F1's row ends Mute, Add note: the label shows on a phone too. */}
+        {imm && immersive?.addNote && <IconTip label="Add note">
+          <Button type="button" variant="outline" aria-label="Add note" aria-pressed={immersive.addNote.pressed} data-testid="video-immersive-add-note" className={cn(COARSE, "aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:!text-foreground")} onClick={immersive.addNote.onToggle}><SquarePen aria-hidden="true" /><span>Add note</span></Button>
+        </IconTip>}
       </div>
     </div>
     {/* On a phone the overlay selector gets its own row, so it never sits on the timecode. */}
-    {social && phone && <div data-testid="video-social-row" className="flex flex-wrap items-center gap-[var(--space-2)]"><OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><SocialPreviewControls social={social} imageFailed={socialImage.failed} /></OverlayContainerContext.Provider></div>}
-    </div>}
+    {social && handheld && <div data-testid="video-social-row" className="flex flex-wrap items-center gap-[var(--space-2)]"><OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><SocialPreviewControls social={social} imageFailed={socialImage.failed} /></OverlayContainerContext.Provider></div>}
+    </div>
   </section>;
 }

@@ -9,6 +9,9 @@
 @layer base {
   html, body { margin: 0; }
   body { background: var(--bg-canvas); color: var(--text-primary); font: var(--type-body); }
+  /* While the phone video viewer is open (#879 fix r11): iOS shows the document's canvas below the fixed viewer while it scrolls the document back after
+     the keyboard drops, so the canvas is the viewer's ink (its sheet's --card, ink-800 on the inverse surface) rather than a cream band. Set and cleared by the viewer. */
+  html[data-ink-canvas], html[data-ink-canvas] body { background: var(--ink-800); }
   * { box-sizing: border-box; }
   img { display: block; max-width: 100%; }
 }

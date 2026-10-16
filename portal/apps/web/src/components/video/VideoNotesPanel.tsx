@@ -1,8 +1,9 @@
 import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { roleHasCapability, VIDEO_NOTE_PASTE_MAX, type VideoDto, type VideoNoteDto, type VideoNoteThreadDto } from "@quincy/shared";
+import { type VideoNoteDto, type VideoNoteThreadDto } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
+import { useHairlineWithHead } from "../../lib/use-hairline-with-head";
 import { useNow } from "../../lib/use-now";
-import { noteCounts, type NoteStatusFilter, type NoteVisibilityFilter } from "../../lib/video-note-view";
+import { DEFAULT_NOTE_FILTERS, noteAuthors, noteCounts, type NoteStatusFilter, type NoteVisibilityFilter } from "../../lib/video-note-view";
 import { classifyVideoNoteError } from "../../lib/video-notes-data";
 import { ARCHIVED_NOTICE_CLASS } from "../archived-notice";
 import { ConfirmDeleteDialog } from "../ConfirmDeleteDialog";
@@ -11,15 +12,16 @@ import { ICON_BUTTON } from "../quincy/icon-button";
 import { MENU_ITEM, Menu, MenuPrimitive } from "../quincy/menu";
 import { EmptyState } from "../quincy/EmptyState";
 import { Notice } from "../quincy/Notice";
+import { NotesFilterHead, type NotesSearchState } from "../quincy/NotesFilterHead";
 import { ReviewPaneHideContext } from "../quincy/ReviewPane";
 import { Popover, PopoverContent, PopoverTrigger } from "../reui/popover";
 import { ScrollArea } from "../reui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
 import { EXPORT_PANEL_WIDTH, MarkerExportMenuItems, MarkerExportNotices, type MarkerExport } from "./VideoMarkerExportMenu";
 import { VideoNoteComposer } from "./VideoNoteComposer";
-import { VideoNotePasteDialog } from "./VideoNotePasteDialog";
 import { VideoNoteThread } from "./VideoNoteThread";
 import type { VideoNotesSession } from "./use-video-notes";
+import type { NotesClipboard } from "./use-notes-clipboard";
 
 const FILTER_ITEM = "min-h-8 pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const COUNT = "ms-[var(--space-1)] text-foreground-secondary tabular-nums";
@@ -43,44 +45,23 @@ function deleteCopy(tombstone: boolean, conflicted: boolean) {
  * 721px) nothing inside scrolls on its own: the whole dialog scrolls, with the composer directly under the player ahead of the list.
  * It holds no data of its own: `session` (from `useVideoNotes`) is shared with the player, which draws the markers and takes I and O.
  */
-export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone = false }: { session: VideoNotesSession; video: VideoDto; detailsRows: ReactNode; /** The marker export (#741 9), owned by the notes host so the phone header can reach it: `enabled` is the Project's `export` part and the role. */ exp: MarkerExport; /** The Draw button, handed to the composer on a phone (D11). */ pen?: ReactNode; /** The phone layout (#879): the panel is the sheet's body, its composer the sheet's foot. */ phone?: boolean; }) {
+export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, phone = false, onSearchChange }: { session: VideoNotesSession; detailsRows: ReactNode; /** Copy and paste (#741 5c-ui), owned by the notes host (#879 PR 3b) so the phone header's ⋯ sheet drives the same controller and the paste dialog outlives this panel. */ clipboard: NotesClipboard; /** The marker export (#741 9), owned by the notes host so the phone header can reach it: `enabled` is the Project's `export` part and the role. */ exp: MarkerExport; /** The Draw button, handed to the composer on a phone (D11). */ pen?: ReactNode; /** The phone layout (#879): the panel is the sheet's body, its composer the sheet's foot. */ phone?: boolean; /** The phone head's search opened or closed (#879 PR 3b). */ onSearchChange?: (state: NotesSearchState) => void; }) {
   const { query, threads, shown, filters, setFilters, selectedId, version } = session;
   const archived = session.readOnly;
   const readOnly = archived;
   const now = useNow();
   const listRef = useRef<HTMLDivElement>(null);
+  // On a phone the hairline above the composer follows the notes head (#879 PR 3b), the row that now opens the list.
+  // Held in state through a callback ref (S3): the head mounts only once there are notes, and its mount must re-bind the hook.
+  const [head, headRef] = useState<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  useHairlineWithHead(phone, listRef, head, composerRef);
   const [deleting, setDeleting] = useState<Deleting | null>(null);
   /** Where focus may land once the confirm closes: kept in a ref because `deleting` is already null by then. */
   const focusIds = useRef<string[]>([]);
   /** The ⋯ that opened the confirm, and how it closed: only a successful delete uses the current destination, Cancel and Escape go back to the trigger. */
   const deleteTrigger = useRef<HTMLElement | null>(null);
   const deleteDone = useRef(false);
-
-  // Copy and paste (#741 5c-ui): the ⋯ menu exists only where the person can write notes. The clipboard is the form store's, per Video, so it
-  // outlives this panel (switching Version remounts it) and the paste dialog's offset and ticks outlive the dialog.
-  const canCopy = !readOnly && roleHasCapability(session.role, "annotateVideo");
-  const clipboard = useSyncExternalStore(session.forms.subscribe, () => session.forms.clipboard(video.id));
-  const pasteFrom = clipboard && clipboard.sourceAssetId !== session.assetId ? clipboard : null;
-  const pasteOpen = useSyncExternalStore(session.forms.subscribe, () => session.forms.pasteOpen(session.assetId));
-  const pasteResult = useSyncExternalStore(session.forms.subscribe, () => session.forms.pasteResult(session.assetId));
-  const setPasteOpen = (next: boolean) => { session.forms.setPasteOpen(session.assetId, next); };
-  const [pasted, setPasted] = useState<string | null>(null);
-  useEffect(() => {
-    if (pasted === null) return;
-    const timer = setTimeout(() => { setPasted(null); }, 6000);
-    return () => { clearTimeout(timer); };
-  }, [pasted]);
-  useEffect(() => {
-    if (pasteResult === null) return;
-    const timer = setTimeout(() => { session.forms.clearPasteResult(session.assetId); }, 6000);
-    return () => { clearTimeout(timer); };
-  }, [pasteResult, session.forms, session.assetId]);
-  const copyShown = () => {
-    const ids = shown.map((thread) => thread.id);
-    if (ids.length === 0) { setPasted("No notes to copy"); return; }
-    session.forms.copyNotes(video.id, { sourceAssetId: session.assetId, sourceVersion: version.version, noteIds: ids });
-    setPasted(ids.length > VIDEO_NOTE_PASTE_MAX ? `Copied the first ${VIDEO_NOTE_PASTE_MAX} of ${ids.length} notes` : `Copied ${ids.length} ${ids.length === 1 ? "note" : "notes"}`);
-  };
 
   // NLE marker export (#741 9): its options and request live in the hook, keyed by this Version; the ⋯ menu shows for anyone who can copy or export.
   const canExport = exp.enabled;
@@ -181,10 +162,10 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
           <PopoverTrigger render={<Button type="button" variant="text" data-testid="video-details-button" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}>Version details</PopoverTrigger>
           <PopoverContent align="end" className="w-[min(320px,calc(100vw-var(--space-5)))] max-h-[min(70dvh,520px)] overflow-y-auto" data-testid="video-details-popover">{detailsRows}</PopoverContent>
         </Popover>
-        {(canCopy || (canExport && !phone)) && <Menu triggerLabel="Notes actions" label="Notes actions" triggerClassName={ICON_BUTTON} panelClassName={canExport ? EXPORT_PANEL_WIDTH : undefined} triggerTestId="video-notes-menu" trigger={<span aria-hidden="true">⋯</span>}>
-          {canCopy && <MenuPrimitive.Item className={MENU_ITEM} disabled={shown.length === 0} onClick={copyShown}>Copy shown notes</MenuPrimitive.Item>}
-          {canCopy && pasteFrom && <MenuPrimitive.Item className={MENU_ITEM} onClick={() => { setPasteOpen(true); }}>{`Paste ${pasteFrom.noteIds.length} ${pasteFrom.noteIds.length === 1 ? "note" : "notes"} from v${pasteFrom.sourceVersion}…`}</MenuPrimitive.Item>}
-          {canExport && !phone && <MarkerExportMenuItems exp={exp} separated={canCopy} />}
+        {(clipboard.canCopy || (canExport && !phone)) && <Menu triggerLabel="Notes actions" label="Notes actions" triggerClassName={ICON_BUTTON} panelClassName={canExport ? EXPORT_PANEL_WIDTH : undefined} triggerTestId="video-notes-menu" trigger={<span aria-hidden="true">⋯</span>}>
+          {clipboard.canCopy && <MenuPrimitive.Item className={MENU_ITEM} disabled={clipboard.copyDisabled} onClick={clipboard.copyShown}>Copy shown notes</MenuPrimitive.Item>}
+          {clipboard.pasteLabel !== null && <MenuPrimitive.Item className={MENU_ITEM} onClick={clipboard.openPaste}>{clipboard.pasteLabel}</MenuPrimitive.Item>}
+          {canExport && !phone && <MarkerExportMenuItems exp={exp} separated={clipboard.canCopy} />}
         </Menu>}
         {hideButton}
       </div>
@@ -201,16 +182,36 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
     </div>}</>
   );
 
+  const statusOptions = [{ value: "open" as const, label: "Open", count: counts.status.open }, { value: "resolved" as const, label: "Resolved", count: counts.status.resolved }, { value: "all" as const, label: "All", count: counts.status.all }];
+  const visibilityOptions = [{ value: "all" as const, label: "All", count: counts.visibility.all }, { value: "public" as const, label: "Client-visible", count: counts.visibility.public }, { value: "internal" as const, label: "Internal", count: counts.visibility.internal }];
+  // The phone head (#879 PR 3b, P1 `NotesFilter`) in place of the title row, the two toggle groups and the notes ⋯ (whose Copy and Paste move to the header's ⋯ sheet).
+  const authors = useMemo(() => noteAuthors(threads ?? []), [threads]);
+  const phoneHead = total > 0 && <NotesFilterHead<NoteStatusFilter, NoteVisibilityFilter>
+    headRef={headRef}
+    status={{ label: "Show notes that are", value: filters.status, options: statusOptions, onChange: (status) => { setFilters({ ...filters, status }); } }}
+    visibility={{ label: "Show notes visible to", value: filters.visibility, options: visibilityOptions, onChange: (visibility) => { setFilters({ ...filters, visibility }); } }}
+    authors={{ value: filters.author, options: authors, onChange: (author) => { setFilters({ ...filters, author }); } }}
+    query={filters.query}
+    onQueryChange={(query) => { setFilters({ ...filters, query }); }}
+    {...(onSearchChange ? { onSearchChange } : {})}
+  />;
+  // A phone filter that leaves nothing to show says so and offers the way back (#879 PR 3b); the desktop keeps its one quiet line.
+  const filteredEmpty = phone && total > 0
+    ? <EmptyState size="compact" data-testid="video-notes-empty" title="No notes match."><Button type="button" variant="text" data-testid="video-notes-reset-filters" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={() => { setFilters(DEFAULT_NOTE_FILTERS); }}>Reset filters</Button></EmptyState>
+    : null;
+
   return <aside
     aria-label="Notes"
     data-testid="video-notes-panel"
-    className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)] min-[721px]:overflow-clip max-[721px]:overflow-clip border-l border-border bg-card p-[var(--space-4)] text-card-foreground max-[721px]:border-l-0"
+    // In the phone sheet's compose mode only the composer shows, with a tighter top and bottom; the side gutter stays the browse one, so the pill and Send never shift (#879 fix r3).
+    // Browse mode's composer band is P1's (#879 PR 3a): no padding above the list or below the pill and no gap above the composer, which owns one border and `--space-2` around the pill.
+    className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)] min-[721px]:overflow-clip max-[721px]:overflow-clip border-l border-border bg-card p-[var(--space-4)] text-card-foreground max-[721px]:border-l-0 in-data-[mode=browse]:gap-0 in-data-[mode=browse]:py-0 in-data-[mode=compose]:py-[var(--space-2)]"
   >
     {!phone && headerRow}
 
     <div data-sheet-part="body" className="contents"><MarkerExportNotices exp={exp} /></div>
 
-    {(pasteResult ?? pasted) && <Notice tone="positive" role="status" data-testid="video-notes-paste-status" data-sheet-part="body">{pasteResult ?? pasted}</Notice>}
+    {clipboard.status !== null && <Notice tone="positive" role="status" data-testid="video-notes-paste-status" data-sheet-part="body">{clipboard.status}</Notice>}
 
     {!phone && filtersBlock}
 
@@ -221,12 +222,13 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
 
     <div ref={listRef} data-sheet-part="body" className="flex flex-1 flex-col min-[721px]:min-h-32 max-[721px]:min-h-0">
       <ScrollArea className="min-h-0 flex-1" data-testid="video-notes-list" viewportProps={{ tabIndex: -1 }}>
-        <div className="grid gap-[var(--space-2)] pe-[var(--space-1)]">
-          {phone && headerRow}
-          {phone && filtersBlock}
+        {/* On a phone the end gutter holds the overlay scrollbar clear of the head and the cards, as the guest list's does (#879 PR 3b, D2); the desktop keeps --space-1. */}
+        {/* The phone head opens the list on the tab row's hairline (P1 `NotesFilter`, #879 PR 3b F4): the list keeps its bottom padding and drops the top, which the head's own carries. */}
+        <div data-testid="video-notes-list-body" className={`grid gap-[var(--space-2)] pe-[var(--space-1)] max-[721px]:pe-[var(--space-3)] ${phone && phoneHead ? "in-data-[mode=browse]:pt-0 in-data-[mode=browse]:pb-[var(--space-3)]" : "in-data-[mode=browse]:py-[var(--space-3)]"}`}>
+          {phone && phoneHead}
           {loading && <span data-testid="video-notes-loading" role="status" className="text-foreground-secondary [font:var(--type-label)]">Loading notes…</span>}
           {failed && <Notice tone="critical" role="alert" data-testid="video-notes-error" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>Notes could not be loaded.</span><Button type="button" variant="text" data-testid="video-notes-retry" onClick={session.refresh}>Retry</Button></Notice>}
-          {!loading && !failed && listed.length === 0 && <EmptyState size="compact" data-testid="video-notes-empty" title={total === 0 ? "No notes on this version yet." : "No notes match these filters."} />}
+          {!loading && !failed && listed.length === 0 && (filteredEmpty ?? <EmptyState size="compact" data-testid="video-notes-empty" title={total === 0 ? "No notes on this version yet." : "No notes match these filters."} />)}
           {listed.map((thread) => <VideoNoteThread
             key={thread.id}
             thread={thread}
@@ -249,24 +251,12 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
       </ScrollArea>
     </div>
 
-    <div data-sheet-part="composer" className="shrink-0 border-t border-border pt-[var(--space-3)]">
+    {/* In compose mode the composer is the strip: it may shrink (only its + tray gives way), and the sheet's own top border is the strip's. */}
+    <div ref={composerRef} data-sheet-part="composer" className="shrink-0 border-t border-border data-[head-cut=true]:border-t-transparent pt-[var(--space-3)] in-data-[mode=browse]:py-[var(--space-2)] in-data-[mode=compose]:flex in-data-[mode=compose]:min-h-0 in-data-[mode=compose]:shrink in-data-[mode=compose]:flex-col in-data-[mode=compose]:border-t-0 in-data-[mode=compose]:pt-0">
       {archived
         ? <p data-testid="video-notes-archived" className={ARCHIVED_NOTICE_CLASS}>Read-only while archived. Restore the project before adding or changing notes.</p>
         : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} markup={session.markup} rich={{ projectId: session.projectId, role: session.role }} {...(pen !== undefined ? { pen } : {})} />}
     </div>
-
-    {canCopy && pasteFrom && <VideoNotePasteDialog
-      open={pasteOpen}
-      onOpenChange={setPasteOpen}
-      finalFocus={() => document.querySelector<HTMLElement>('[data-testid="video-notes-menu"]')}
-      store={session.forms}
-      assetId={session.assetId}
-      target={version}
-      source={video.versions.find((candidate) => candidate.assetId === pasteFrom.sourceAssetId)}
-      clipboard={pasteFrom}
-      previewPaste={session.previewPaste}
-      commitPaste={session.commitPaste}
-    />}
 
     <ConfirmDeleteDialog
       open={deleting !== null}

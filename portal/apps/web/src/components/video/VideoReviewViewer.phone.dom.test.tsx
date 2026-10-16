@@ -9,7 +9,7 @@ import { installVideoElementStub, type VideoElementStub } from "../../testing/vi
 import { installLocalStorageShim } from "../../testing/local-storage";
 import { resetUiPrefMemory } from "../../lib/ui-prefs";
 import { mockViewport, type MockViewport } from "../../testing/viewport";
-import { createNoteFormStore } from "../../lib/video-note-form-store";
+import { createNoteFormStore, type NoteFormStore } from "../../lib/video-note-form-store";
 import { VideoReviewViewer } from "./VideoReviewViewer";
 vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 
@@ -33,7 +33,7 @@ let root: Root | null = null; let host: HTMLElement;
 async function flush(times = 6) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
 const tid = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const onCreate = vi.fn();
-async function mount(props: { shown?: (v: number) => void; deepLink?: boolean; download?: boolean; reviewLinks?: boolean; trash?: boolean; social?: boolean; status?: boolean; delivery?: boolean; notes?: boolean; exportOff?: boolean; onClose?: () => void } = {}) {
+async function mount(props: { shown?: (v: number) => void; deepLink?: boolean; download?: boolean; reviewLinks?: boolean; trash?: boolean; social?: boolean; status?: boolean; delivery?: boolean; notes?: boolean; exportOff?: boolean; onClose?: () => void; forms?: NoteFormStore } = {}) {
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   await act(async () => {
     root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><VideoReviewViewer
@@ -45,7 +45,7 @@ async function mount(props: { shown?: (v: number) => void; deepLink?: boolean; d
       {...(props.reviewLinks ? { reviewLinks: { onCreate } } : {})}
       {...(props.trash ? { trash: { projectId: PROJECT, archived: false } } : {})}
       {...(props.social ? { social: { projectId: PROJECT, role: "editor" as const } } : {})}
-      {...(props.notes ? { notes: { projectId: PROJECT, role: "editor" as const, userId: auth.userId, archived: false, forms: createNoteFormStore("phone-test"), exportEnabled: props.exportOff !== true } } : {})}
+      {...(props.notes ? { notes: { projectId: PROJECT, role: "editor" as const, userId: auth.userId, archived: false, forms: props.forms ?? createNoteFormStore("phone-test"), exportEnabled: props.exportOff !== true } } : {})}
       {...(props.delivery ? { delivery: { projectId: PROJECT, role: "editor" as const, archived: false, store: createVideoApprovalStore("phone-test") } } : {})}
       {...(props.status ? { reviewStatus: { projectId: PROJECT, role: "editor" as const, archived: false } } : {})}
     /></QuincyQueryProvider>);
@@ -99,12 +99,33 @@ describe("the phone header", () => {
     expect(shown).toHaveBeenCalledWith(1);
   });
 
+  it("P8/P9 rows are 50pt with no gap between them: the group zeroes ItemGroup's sm gap, and each row's padding replaces the sm size's rather than racing it (#879 PR 3b, F3)", async () => {
+    await mount({ shown: () => {}, download: true, reviewLinks: true, social: true });
+    await click(trigger()!);
+    const actions = tid("review-action-rows")!;
+    expect(actions.className).toContain("has-data-[size=sm]:gap-0");
+    const rows = [...actions.querySelectorAll<HTMLElement>(":scope > button, :scope > a")];
+    // Social preview, Download, Copy link, Create Review link and #880's Open in system player.
+    expect(rows.length).toBe(5);
+    for (const row of rows) {
+      expect(row.className).toContain("py-[var(--space-3)]");
+      expect(row.className, row.textContent ?? "").not.toMatch(/(^|\s)(py-2\.5|rounded-lg|px-3)(\s|$)/);
+    }
+  });
+
+  it("the P8 Versions group zeroes ItemGroup's sm gap too (#879 PR 3b, F3)", async () => {
+    await mount({ shown: () => {} });
+    await click(tid("video-version-chip")!);
+    const versions = tid("video-versions-sheet")!.querySelector<HTMLElement>('[role="group"]')!;
+    expect(versions.className).toContain("has-data-[size=sm]:gap-0");
+  });
+
   it("Approve (internal) shows at in_review for an Editor and is absent without a Review status", async () => {
     await mount({ status: true });
     const approve = tid("video-phone-approve")!;
-    expect(approve.textContent).toBe("Approve");
-    expect(approve.getAttribute("aria-label")).toBe("Approve (internal)");
-    expect(approve.getAttribute("title")).toBe("Approve (internal)");
+    // P1: the staff label is drawn in full (owner decision, PR 3a); its words are its name.
+    expect(approve.textContent).toBe("Approve (internal)");
+    expect(approve.getAttribute("aria-label")).toBeNull();
     const chip = tid("video-version-chip")!;
     expect(chip.className).toContain("flex-none");
     expect(chip.textContent).toContain("latest");
@@ -119,6 +140,91 @@ describe("the phone header", () => {
     await click(trigger()!);
     expect(tid("review-action-sheet")).not.toBeNull();
     for (const id of ["video-social-toggle", "video-download", "video-menu-copy-link", "video-create-review-link"]) expect(tid(id), id).not.toBeNull();
+  });
+});
+
+describe("the phone header's 56pt bar (#879 PR 3a, P1)", () => {
+  it("is --space-7 + --space-2 tall with no vertical padding and --space-1 gutters; the title truncates", async () => {
+    await mount({ status: true });
+    const bar = tid("review-phone-bar")!;
+    expect(bar.className).toContain("h-[calc(var(--space-7)+var(--space-2))]");
+    expect(bar.className).toContain("px-[var(--space-1)]");
+    expect(bar.className).toContain("gap-x-[var(--space-1)]");
+    expect(bar.className).not.toMatch(/(^|\s)py-/);
+    expect(bar.className).not.toContain("min-h-12");
+    expect(bar.querySelector("h2, [id]")!.className).toContain("truncate");
+  });
+
+  it("the Version chip is drawn 20px tall at 12px, with a 44px hit area reaching up over the title", async () => {
+    await mount({ status: true });
+    const chip = tid("video-version-chip")!;
+    expect(chip.className).toContain("h-5");
+    expect(chip.className).not.toContain("min-h-11");
+    expect(chip.className).toContain("text-xs");
+    expect(chip.className).not.toContain("--type-body-sm");
+    expect(chip.className).toContain("after:-top-[var(--space-5)]");
+    expect(chip.className).toContain("after:bottom-0");
+  });
+
+  it("Approve (internal) is drawn 32px with a 44px hit area (the strip's text-button pattern)", async () => {
+    await mount({ status: true });
+    const approve = tid("video-phone-approve")!;
+    expect(approve.className).toContain("min-h-8");
+    expect(approve.className).toContain("after:-inset-y-1.5");
+    expect(approve.className).not.toContain("min-h-11");
+  });
+
+  it("the ⋯ is a plain ghost icon button (lucide Ellipsis), 44px, with no border", async () => {
+    await mount({ status: true, download: true, shown: () => {} });
+    const more = trigger()!;
+    expect(more.getAttribute("data-slot")).toBe("button");
+    expect(more.className).toContain("min-h-11");
+    expect(more.className).toContain("min-w-11");
+    expect(more.className).not.toContain("border-border");
+    expect(more.querySelector("svg")?.getAttribute("class")).toContain("lucide-ellipsis");
+    expect(more.textContent).toBe("");
+  });
+});
+
+describe("the phone sheet head (#879 PR 3a, P1)", () => {
+  it("with Delivery the tabs sit left, each its own width, and the Notes count is a secondary Badge of the open notes (hidden tombstones left out)", async () => {
+    const T = "2026-10-10T00:00:00.000Z";
+    const base = { assetId: ids.asset2, parentId: null, author: { kind: "staff", person: mia }, authorRole: "editor", visibility: "internal", startFrame: 10, endFrame: null, drawingFrame: null, hasMarkup: false, body: "A note", deleted: false, resolved: null, revision: 1, createdAt: T, editedAt: null, copiedFrom: null, replies: [] };
+    const notes = [
+      { ...base, id: "00000000-0000-4000-8000-000000000001" },
+      { ...base, id: "00000000-0000-4000-8000-000000000002", startFrame: 20 },
+      { ...base, id: "00000000-0000-4000-8000-000000000003", startFrame: 30, resolved: { at: T, by: mia } },
+      // A deleted root nobody replied to: never listed or counted.
+      { ...base, id: "00000000-0000-4000-8000-000000000004", startFrame: 40, deleted: true, body: "" },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const body = /\/notes$/.test(String(input)) ? { notes } : {};
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    await mount({ delivery: true, notes: true });
+    const deadline = Date.now() + 5000; while (!tid("video-pane-tab-count") && Date.now() < deadline) await flush(1);
+    const main = tid("video-pane-tab-main")!;
+    expect(main.closest("[role=tablist]")!.className).toContain("max-[721px]:justify-start");
+    expect(main.className).toContain("max-[721px]:flex-none");
+    expect(tid("video-pane-tab-delivery")!.className).toContain("max-[721px]:flex-none");
+    const count = tid("video-pane-tab-count")!;
+    expect(main.contains(count)).toBe(true);
+    expect(count.getAttribute("data-slot")).toBe("badge");
+    expect(count.textContent).toBe("2");
+  });
+});
+
+describe("the phone composer band (#879 PR 3a, P1)", () => {
+  it("in browse mode the panel has no top or bottom padding and no gap, the composer owns one border and --space-2 around the pill, and the list keeps its rows clear on its own", async () => {
+    await mount({ notes: true });
+    const deadline = Date.now() + 5000; while (!tid("video-notes-panel") && Date.now() < deadline) await flush(1);
+    const panel = tid("video-notes-panel")!;
+    for (const name of ["in-data-[mode=browse]:py-0", "in-data-[mode=browse]:gap-0", "in-data-[mode=compose]:py-[var(--space-2)]"]) expect(panel.className, name).toContain(name);
+    const composer = panel.querySelector<HTMLElement>('[data-sheet-part="composer"]')!;
+    expect(composer.className).toContain("border-t");
+    expect(composer.className).toContain("in-data-[mode=browse]:py-[var(--space-2)]");
+    expect(composer.className).toContain("in-data-[mode=compose]:pt-0");
+    expect(tid("video-notes-list-body")!.className).toContain("in-data-[mode=browse]:py-[var(--space-3)]");
   });
 });
 
@@ -205,19 +311,19 @@ describe("D4 and focus", () => {
     expect(tid("video-marker-export-row")).toBeNull();
   });
 
-  it("the phone sheets dim the film with the stronger scrim, the Version chip is lowercase body-sm, and Approve is an outline button", async () => {
+  it("the phone sheets dim the film with the stronger scrim, the Version chip is lowercase, and Approve is an outline button", async () => {
     await mount({ shown: () => {}, status: true, download: true });
     expect(tid("video-version-chip")!.className).toContain("normal-case");
-    expect(tid("video-phone-approve")!.className).toContain("min-h-11");
+    expect(tid("video-phone-approve")!.className).toContain("border-border");
     await click(trigger()!);
     expect(tid("review-sheet-overlay")).not.toBeNull(); // Base UI leaves a nested dialog's backdrop out unless it is forced
   });
 
-  it("on a phone the Version details row and the filters scroll inside the notes list", async () => {
+  it("on a phone the notes list has no title row: no Version details button, counts or notes ⋯ (the head and the header's ⋯ sheet carry them, #879 PR 3b)", async () => {
     await mount({ notes: true });
-    const deadline = Date.now() + 5000; while (!tid("video-details-button") && Date.now() < deadline) await flush(1);
-    expect(tid("video-notes-list")!.contains(tid("video-details-button"))).toBe(true);
-    expect(tid("video-notes-counts")!.className).not.toContain("sr-only");
+    const deadline = Date.now() + 5000; while (!tid("video-notes-list") && Date.now() < deadline) await flush(1);
+    expect(tid("video-notes-list")).not.toBeNull();
+    for (const gone of ["video-details-button", "video-notes-counts", "video-notes-menu", "video-notes-title"]) expect(tid(gone), gone).toBeNull();
   });
 
   it("with Delivery, the phone tab row is 44px and the underline sits on its bottom edge", async () => {
@@ -243,5 +349,254 @@ describe("D4 and focus", () => {
     expect(row.className).toContain("normal-case");
     expect(row.textContent).toContain("latest");
   });
+
+  it("on a phone the viewer's backdrop is solid ink, the inverse surface's background with no blur, never the scrim over the Project page (#879 fix r7)", async () => {
+    await mount();
+    const overlay = tid("video-review-backdrop")!;
+    expect(overlay).not.toBeNull();
+    expect(overlay.getAttribute("data-surface")).toBe("inverse");
+    expect(overlay.className).toContain("bg-background");
+    expect(overlay.className).not.toContain("--scrim-overlay");
+    expect(overlay.className).toContain("supports-backdrop-filter:backdrop-blur-none");
+    expect(overlay.className).not.toContain("backdrop-blur-[3px]");
+    // Still the dialog's own backdrop: its stacking (#493) is kept.
+    expect(overlay.className).toContain("z-[var(--z-dialog)]");
+  });
+
+  it("while the phone viewer is open the document's canvas is ink, and closing it gives the canvas back (#879 fix r11)", async () => {
+    await mount();
+    expect(document.documentElement.hasAttribute("data-ink-canvas")).toBe(true);
+    await act(async () => { root!.unmount(); }); root = null;
+    expect(document.documentElement.hasAttribute("data-ink-canvas")).toBe(false);
+  });
+
+  it("the phone dialog follows the visual viewport from the moment it opens, so a rise before compose mode is applied; compose hides the transport, leaving the field shows it (#879 fix r5)", async () => {
+    class FakeViewport extends EventTarget { height = window.innerHeight - 340; offsetTop = 24; scale = 1; }
+    const original = Object.getOwnPropertyDescriptor(window, "visualViewport");
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: new FakeViewport() });
+    try {
+      await mount({ notes: true });
+      const deadline = Date.now() + 5000; while (!document.querySelector("textarea") && Date.now() < deadline) await flush(1);
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+      const transport = () => tid("video-scrubber")!.parentElement!;
+      // Already following before any focus: the fake viewport (keyboard-sized) is on the dialog in browse mode.
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+      expect(dialog.style.height).toBe(`${window.innerHeight - 340}px`);
+      // The popup's `duration-100` (transition-property `all`) must not ease these writes: that easing was the first-focus flash (#879 fix r8).
+      expect(dialog.style.transition).toBe("none");
+      expect(transport().hasAttribute("hidden")).toBe(false);
+      // A pan that lands before React turns compose mode on is applied inside the event.
+      const early = window.visualViewport as unknown as FakeViewport;
+      early.offsetTop = 30; early.dispatchEvent(new Event("scroll"));
+      expect(dialog.style.transform).toBe("translateY(30px)");
+      early.offsetTop = 24; early.dispatchEvent(new Event("scroll"));
+      await act(async () => { document.querySelector<HTMLTextAreaElement>("textarea")!.focus(); });
+      await flush(2);
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("compose");
+      expect(dialog.style.height).toBe(`${window.innerHeight - 340}px`);
+      expect(dialog.style.transform).toBe("translateY(24px)");
+      expect(transport().hasAttribute("hidden")).toBe(true);
+      expect(tid("video-review-player")!.className).toContain("overflow-hidden");
+      const viewportNow = window.visualViewport as unknown as FakeViewport;
+      viewportNow.height = window.innerHeight; viewportNow.offsetTop = 0;
+      await act(async () => { document.querySelector<HTMLTextAreaElement>("textarea")!.blur(); });
+      await flush(4);
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+      viewportNow.dispatchEvent(new Event("resize"));
+      expect(dialog.style.height).toBe(`${window.innerHeight}px`);
+      expect(dialog.style.transform).toBe("translateY(0px)");
+      expect(transport().hasAttribute("hidden")).toBe(false);
+    } finally {
+      if (original) Object.defineProperty(window, "visualViewport", original); else delete (window as unknown as Record<string, unknown>).visualViewport;
+    }
+  });
+
+  it("the software keyboard going away without a blur ends compose mode: the field is blurred for it (#879 fix)", async () => {
+    class FakeViewport extends EventTarget { height = window.innerHeight; offsetTop = 0; scale = 1; }
+    const fake = new FakeViewport();
+    const original = Object.getOwnPropertyDescriptor(window, "visualViewport");
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: fake });
+    try {
+      await mount({ notes: true });
+      const deadline = Date.now() + 5000; while (!document.querySelector("textarea") && Date.now() < deadline) await flush(1);
+      const field = document.querySelector<HTMLTextAreaElement>("textarea")!;
+      await act(async () => { field.focus(); });
+      await act(async () => { fake.height = window.innerHeight - 320; fake.dispatchEvent(new Event("resize")); });
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("compose");
+      await act(async () => { fake.height = window.innerHeight; fake.dispatchEvent(new Event("resize")); });
+      await flush(4);
+      expect(document.activeElement).not.toBe(field);
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+    } finally {
+      if (original) Object.defineProperty(window, "visualViewport", original); else delete (window as unknown as Record<string, unknown>).visualViewport;
+    }
+  });
 });
 
+describe("the phone sheets' chrome (#879 PR 3b, P8/P9)", () => {
+  it("the ⋯ sheet has no visible title or close: the title is for screen readers, the close shows only on keyboard focus, and the sheet itself takes focus on open", async () => {
+    await mount({ shown: () => {}, download: true, social: true });
+    await click(trigger()!);
+    const sheet = tid("review-action-sheet")!;
+    const title = tid("review-action-title")!;
+    expect(title.className).toContain("sr-only");
+    // No header wrapper (and so no header clearance): the title sits directly in the sheet.
+    expect(title.parentElement).toBe(sheet);
+    expect(tid("review-action-close")!.className).toContain("[&:not(:focus-visible)]:sr-only");
+    expect(document.activeElement).toBe(sheet);
+    expect(sheet.className).toContain("focus-visible:!outline-none");
+  });
+
+  it("the ⋯ rows are P9's: body type, 20pt gutters, --space-3 above and below", async () => {
+    await mount({ shown: () => {}, download: true, social: true });
+    await click(trigger()!);
+    const row = tid("video-social-toggle")!;
+    expect(row.className).toContain("px-[calc(var(--space-4)+var(--space-1))]");
+    expect(row.className).toContain("py-[var(--space-3)]");
+    expect(row.querySelector<HTMLElement>('[data-testid="review-action-row-label"]')!.className).toContain("text-[length:var(--text-base)]");
+  });
+
+  it("the Versions sheet takes focus on itself, with its close shown only on keyboard focus", async () => {
+    await mount({ shown: () => {} });
+    await click(tid("video-version-chip")!);
+    const sheet = tid("video-versions-sheet")!;
+    expect(document.activeElement).toBe(sheet);
+    expect(sheet.className).toContain("focus-visible:!outline-none");
+    expect(tid("video-versions-close")!.className).toContain("[&:not(:focus-visible)]:sr-only");
+  });
+});
+
+describe("the P8 Versions sheet (#879 PR 3b)", () => {
+  it("titles itself \"Version\" in label type and secondary ink, at the rows' 20pt gutter", async () => {
+    await mount({ shown: () => {} });
+    await click(tid("video-version-chip")!);
+    const title = tid("video-versions-title")!;
+    expect(tid("video-versions-sheet")!.contains(title)).toBe(true);
+    expect(title.textContent).toBe("Version");
+    expect(title.className).toContain("[font:var(--type-label)]");
+    expect(title.className).toContain("text-foreground-secondary");
+    expect(title.className).toContain("px-[calc(var(--space-4)+var(--space-1))]");
+    expect(title.className).not.toContain("sr-only");
+  });
+
+  it("draws each Version on one line: the number left, the date and the rest right before the check, at P9's row size", async () => {
+    await mount({ shown: () => {}, status: true });
+    await click(tid("video-version-chip")!);
+    const [latest, older] = [...document.querySelectorAll<HTMLElement>('[data-testid="video-version-row"]')];
+    const label = latest!.querySelector<HTMLElement>('[data-testid="video-version-label"]')!;
+    const meta = latest!.querySelector<HTMLElement>('[data-testid="video-version-meta"]')!;
+    const check = latest!.querySelector<HTMLElement>('[data-testid="video-version-check"]')!;
+    expect(label.textContent).toBe("v2 · latest");
+    expect(meta.textContent).toMatch(/ · /);
+    expect(meta.className).toContain("truncate");
+    // One line: the row says nothing beyond the label and the meta (no description under the label), and reads label, meta, check in that order.
+    expect(latest!.textContent).toBe(`${label.textContent}${meta.textContent}`);
+    expect(label.compareDocumentPosition(meta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(meta.compareDocumentPosition(check) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(older!.querySelector('[data-testid="video-version-check"]')).toBeNull();
+    expect(latest!.className).toContain("px-[calc(var(--space-4)+var(--space-1))]");
+    expect(label.className).toContain("text-[length:var(--text-base)]");
+    // The check marks the Version on screen; P8 draws no fill behind it.
+    expect(latest!.getAttribute("data-variant")).not.toBe("muted");
+  });
+});
+
+describe("the P9 rows (#879 PR 3b)", () => {
+  const untilNotes = async () => { const deadline = Date.now() + 5000; while (!tid("video-notes-panel") && Date.now() < deadline) await flush(1); };
+  const rowNames = () => [...tid("review-action-rows")!.children].filter((row) => (row as HTMLElement).dataset.testid !== "review-action-separator").map((row) => (row.querySelector('[data-testid="review-action-row-label"]') ?? row).textContent);
+
+  it("lists Social preview, Download v2, Marker export…, Copy link, Create Review link, Open in system player (#880), Version details, Copy shown notes, a rule and Remove v2…, in that order", async () => {
+    await mount({ shown: () => {}, download: true, reviewLinks: true, social: true, trash: true, notes: true });
+    await untilNotes(); await untilVersionMenu();
+    await click(trigger()!);
+    expect(rowNames()).toEqual(["Social preview", "Download v2", "Marker export…", "Copy link", "Create Review link", "Open in system player", "Version details", "Copy shown notes", "Remove v2…"]);
+    const sep = tid("review-action-rows")!.querySelector('[data-testid="review-action-separator"]')!;
+    expect(sep.nextElementSibling).toBe(tid("video-header-remove-version"));
+  });
+
+  it("each row's visible label is its accessible name (no aria-label over it)", async () => {
+    await mount({ shown: () => {}, download: true, reviewLinks: true, social: true, trash: true, notes: true });
+    await untilNotes(); await untilVersionMenu();
+    await click(trigger()!);
+    for (const id of ["video-download", "video-header-remove-version", "video-version-details-row", "video-copy-shown-notes"]) expect(tid(id)!.hasAttribute("aria-label"), id).toBe(false);
+  });
+
+  it("Version details and the clipboard rows exist only once the notes host is up", async () => {
+    await mount({ shown: () => {}, download: true });
+    await click(trigger()!);
+    expect(tid("video-version-details-row")).toBeNull();
+    expect(tid("video-copy-shown-notes")).toBeNull();
+  });
+
+  it("Copy shown notes is disabled while nothing is shown", async () => {
+    await mount({ shown: () => {}, notes: true });
+    await untilNotes();
+    await click(trigger()!);
+    expect((tid("video-copy-shown-notes") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("Version details opens a sheet of the Version's details that takes focus on itself; Escape closes it and focus goes back to the ⋯", async () => {
+    await mount({ shown: () => {}, notes: true });
+    await untilNotes();
+    await click(trigger()!);
+    await click(tid("video-version-details-row")!);
+    await flush(4);
+    expect(tid("review-action-sheet")).toBeNull();
+    const sheet = tid("video-details-sheet")!;
+    expect(sheet).not.toBeNull();
+    expect(sheet.querySelectorAll('[data-testid="video-detail-label"]').length).toBeGreaterThan(0);
+    expect(document.activeElement).toBe(sheet);
+    expect(sheet.className).toContain("focus-visible:!outline-none");
+    expect(tid("video-details-close")!.className).toContain("[&:not(:focus-visible)]:sr-only");
+    await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    await flush(6); await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
+    expect(tid("video-details-sheet")).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it("the details sheet draws P8: a quiet label-type title, and one-line rows (label left, value right) at the P8 row height (#879 PR 3b, F5)", async () => {
+    await mount({ shown: () => {}, notes: true });
+    await untilNotes();
+    await click(trigger()!);
+    await click(tid("video-version-details-row")!);
+    await flush(4);
+    const sheet = tid("video-details-sheet")!;
+    const title = tid("video-details-title")!;
+    expect(title.className).toContain("[font:var(--type-label)]");
+    expect(title.className).toContain("text-foreground-secondary");
+    expect(title.className).not.toContain("--type-h3");
+    const group = tid("video-details-rows")!;
+    expect(sheet.contains(group)).toBe(true);
+    expect(group.className).toContain("has-data-[size=sm]:gap-0");
+    const rows = [...group.querySelectorAll<HTMLElement>('[data-testid="video-detail-row"]')];
+    expect(rows.length).toBe(10);
+    for (const row of rows) {
+      expect(row.getAttribute("data-size")).toBe("sm");
+      expect(row.className).toContain("py-[var(--space-3)]");
+      expect(row.className).toContain("flex-nowrap");
+      const label = row.querySelector('[data-testid="video-detail-label"]')!;
+      const value = row.querySelector('[data-testid="video-detail-value"]')!;
+      // Siblings on one line: the value is not stacked under the label inside one content column.
+      expect(label.parentElement!.contains(value)).toBe(false);
+      expect(value.className).toContain("truncate");
+    }
+  });
+
+  it("Paste N notes from v1… opens the paste dialog, and closing it gives focus back to the ⋯", async () => {
+    const forms = createNoteFormStore("phone-paste");
+    forms.copyNotes(ids.video, { sourceAssetId: ids.asset1, sourceVersion: 1, noteIds: ["n1", "n2"] });
+    await mount({ shown: () => {}, notes: true, forms });
+    await untilNotes();
+    await click(trigger()!);
+    const paste = tid("video-paste-notes")!;
+    expect(paste.textContent).toBe("Paste 2 notes from v1…");
+    await click(paste);
+    await flush(4);
+    expect(tid("review-action-sheet")).toBeNull();
+    expect(tid("video-note-paste-dialog")).not.toBeNull();
+    await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    await flush(6); await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
+    expect(tid("video-note-paste-dialog")).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+});

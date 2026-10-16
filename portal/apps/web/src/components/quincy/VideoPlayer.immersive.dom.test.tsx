@@ -164,13 +164,15 @@ describe("VideoPlayer controls auto-hide (#880, D13)", () => {
     expect(chrome()).toBe("shown");
   });
 
-  it("a centre Play button shows while paused, plays, and goes while playing", async () => {
+  it("the centre Play is P1's play badge (F1), on any width: it shows while paused, plays without toggling the controls, and goes while playing", async () => {
     await mount({ immersive: hostOf() });
-    const centre = byTestId("video-immersive-play")!;
+    expect(byTestId("video-immersive-play")).toBeNull();
+    const centre = byTestId("video-play-badge")!;
     expect(centre).not.toBeNull();
     await act(async () => { centre.click(); });
     expect(stub.calls).toContain("play");
-    expect(byTestId("video-immersive-play")).toBeNull();
+    expect(byTestId("video-player")!.dataset.chrome).toBe("shown");
+    expect(byTestId("video-play-badge")).toBeNull();
   });
 });
 

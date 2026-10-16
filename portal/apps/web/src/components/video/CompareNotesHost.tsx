@@ -7,6 +7,7 @@ import type { CompareNotesProps, CompareNotesSlots } from "./CompareView";
 import { useVideoNotes } from "./use-video-notes";
 import { useMarkerExport } from "./VideoMarkerExportMenu";
 import { VideoNotesPanel } from "./VideoNotesPanel";
+import { useNotesClipboard } from "./use-notes-clipboard";
 
 /**
  * The notes of both sides of a compare (#741 7c), a sibling of the compare body (which never remounts when this comes or goes) and publishes its sessions to it. Both
@@ -32,6 +33,8 @@ export default function CompareNotesHost({ notes, video, versionA, versionB, sto
   const session = active === "a" ? a : b;
   // Marker export is a single-view feature: off in Compare, but the panel takes the same prop.
   const exp = useMarkerExport({ enabled: false, projectId: notes.projectId, assetId: session.assetId, userId: notes.userId, title: video.title, version: session.version.version, threads: session.threads });
+  // Copy and paste follow the tab on show; the paste dialog returns focus to the panel's notes ⋯.
+  const clipboard = useNotesClipboard({ session, video, phone: false });
 
   const panel = <div data-compare-side={active} data-testid="video-compare-notes" className="grid grid-rows-[auto_minmax(0,1fr)] border-l border-border bg-card text-card-foreground min-w-0 flex-1 min-[721px]:min-h-0">
     <Tabs value={active} onValueChange={(next) => { if (next === "a" || next === "b") store.setActiveTab(next); }} className="contents">
@@ -44,10 +47,11 @@ export default function CompareNotesHost({ notes, video, versionA, versionB, sto
       </div>
       <TabsContent value={active} className="grid min-h-0">
         <ReviewPaneHideContext.Provider value={null}>
-          <VideoNotesPanel key={`${active}:${session.assetId}`} session={session} video={video} detailsRows={detailsFor(session.version)} exp={exp} />
+          <VideoNotesPanel key={`${active}:${session.assetId}`} session={session} detailsRows={detailsFor(session.version)} exp={exp} clipboard={clipboard} />
         </ReviewPaneHideContext.Provider>
       </TabsContent>
     </Tabs>
+    {clipboard.dialog}
   </div>;
   useLayoutEffect(() => { publish({ a, b, panel }); });
   useEffect(() => () => { publish(null); }, [publish]);

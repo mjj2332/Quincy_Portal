@@ -94,12 +94,12 @@ describe("the one-line top bar (#877 S2)", () => {
     expect(tid("video-version-label")!.textContent).toBe("v2 · latest");
   });
 
-  it("gives the phone ⋯ trigger the outline treatment of its neighbours (#878)", async () => {
+  it("gives the phone ⋯ trigger P1's plain treatment: a ghost icon button with no border (#879 PR 3a, superseding #878's outline)", async () => {
     viewport.restore(); viewport = mockViewport({ width: 390 });
     await mount({ deepLink: true });
-    expect(trigger()!.className).toContain("border-border");
-    expect(trigger()!.className).toContain("bg-background");
-    expect(trigger()!.className).not.toContain("border-0");
+    expect(trigger()!.className).not.toContain("border-border");
+    expect(trigger()!.className).toContain("hover:bg-muted");
+    expect(trigger()!.className).toContain("min-h-11");
   });
 
   it("desktop keeps Copy link, Download and Create Review link inline, with no ⋯ menu", async () => {
@@ -162,7 +162,7 @@ describe("the one-line top bar (#877 S2)", () => {
       expect(tid("video-version-menu")!.className).toContain("hidden");
       expect(trigger()).not.toBeNull();
       await openMenu();
-      expect(tid("video-header-remove-version")!.textContent).toBe("Remove version…");
+      expect(tid("video-header-remove-version")!.textContent).toBe("Remove v2…");
     });
 
     it("keeps the Version ⋯ trigger on a desktop bar", async () => {

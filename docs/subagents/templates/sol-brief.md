@@ -9,8 +9,7 @@ Judge against: the ticket/spec below, AGENTS.md rules, `docs/lessons.md` traps i
 the ADRs in `docs/adr/`, and the repo's guard tests.
 
 Report ONLY real defects, most severe first, at most 15, each with: severity (blocker/major/minor),
-`file:line`, the defect, a concrete failure scenario, the fix. Then one line for UI diffs:
-"Reuse ledger: complete" or "Reuse ledger: missing for X". Then a final verdict line: SHIP or
+`file:line`, the defect, a concrete failure scenario, the fix. Then a final verdict line: SHIP or
 FIX FIRST. If there are no defects, write "No findings." and the verdict. No praise and no summary of
 what the diff does. Under 80 lines.
 

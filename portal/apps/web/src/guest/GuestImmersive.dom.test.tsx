@@ -169,7 +169,8 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     byId("video-fullscreen")!.focus();
     await click(byId("video-fullscreen"));
     await click(byId("video-immersive-add-note"));
-    expect(byId("guest-composer")).not.toBeNull();
+    // A phone's composer is the strip (#879 PR 2), the same node the sheet showed; a desktop's is the form.
+    expect(byId(size.coarse ? "guest-compose-strip" : "guest-composer")).not.toBeNull();
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
     await tapMarker();
     expect(byId("review-note-card")).not.toBeNull();
@@ -178,7 +179,7 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
     await escape();
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
-    expect(byId("guest-composer")).not.toBeNull();
+    expect(byId(size.coarse ? "guest-compose-strip" : "guest-composer")).not.toBeNull();
     await escapeOutOfTooltip();
     await escape();
     expect(immersiveOn()).toBe(false);
@@ -202,7 +203,7 @@ describe("the guest page's Full screen: unverified Add note (#880)", () => {
     await open();
     await click(byId("video-fullscreen"));
     await click(byId("video-immersive-add-note"));
-    expect(byId("guest-composer")).toBeNull();
+    expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
   });
 });
