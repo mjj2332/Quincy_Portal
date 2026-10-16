@@ -330,9 +330,12 @@ describe("the guest phone ⋯ and delivery (#879 PR 3b, P10 / P2)", () => {
   const press = async (element: HTMLElement) => { await act(async () => { element.click(); }); await flush(4); };
   const rows = () => [...byId("review-action-rows")!.children].map((row) => ((row as HTMLElement).dataset.testid === "review-action-separator" ? "—" : row.textContent));
   const menu = () => byId("video-header-menu")!;
-  async function openFilm(decision: ReturnType<typeof decided> | null = null) {
+  async function openFilm(decision: ReturnType<typeof decided> | null = null, { locked = false } = {}) {
     session = { ...SESSION, link: { ...SESSION.link, allow: { ...SESSION.link.allow, approve: true, download: true } } };
-    videos = [{ ...videoOf(1), versions: [{ ...released, decision }, versionOf(10)] }, videoOf(2)];
+    // `locked`: a released premium film the studio has not unlocked (the server sends no download URL for it).
+    videos = [locked
+      ? { ...videoOf(1), premium: true, unlocked: false, versions: [{ ...released, downloadUrl: null, decision }, versionOf(10)] }
+      : { ...videoOf(1), versions: [{ ...released, decision }, versionOf(10)] }, videoOf(2)];
     const base = globalThis.fetch;
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => (String(input) === `${BASE}/downloads` ? json(MANIFEST) : base(input, init))) as unknown as typeof fetch;
     await open();
@@ -393,6 +396,20 @@ describe("the guest phone ⋯ and delivery (#879 PR 3b, P10 / P2)", () => {
     await flush(6);
     expect(byId("guest-download-all-dialog")).toBeNull();
     expect(document.activeElement).toBe(menu());
+  });
+
+  it("a released premium film the studio has not unlocked says so in the quiet line, as the desktop delivery row does (#879 PR 3b, S2)", async () => {
+    await openFilm(null, { locked: true });
+    const hint = byId("guest-download-locked")!;
+    expect(hint.textContent).toBe("Premium video: the download opens once the studio unlocks it.");
+    expect(hint.closest('[data-testid="guest-quiet-line"]')).not.toBeNull();
+    expect(byId("guest-download")).toBeNull();
+  });
+
+  it("an unlocked film has no locked hint in the quiet line (#879 PR 3b, S2)", async () => {
+    await openFilm();
+    expect(byId("guest-quiet-line")).not.toBeNull();
+    expect(byId("guest-download-locked")).toBeNull();
   });
 
   it("Released opens the quiet line at the end of the notes scroll, above who is reviewing", async () => {

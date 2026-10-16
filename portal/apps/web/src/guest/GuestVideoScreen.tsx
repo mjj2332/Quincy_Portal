@@ -35,7 +35,7 @@ import type { GuestSubscription } from "./guest-subscription";
 import { GuestPasteDialog } from "./GuestPasteDialog";
 import { GuestDecisionDialog, decisionDraftKey, type DecisionOutcome, type DecisionValue } from "./GuestDecisionDialog";
 import { DecisionBadge, GuestDeliveryChips, ReleasedBadge } from "./GuestDeliveryChips";
-import { GuestDownload } from "./GuestDownload";
+import { GuestDownload, GuestDownloadLocked } from "./GuestDownload";
 import { GuestDownloadAllButton } from "./GuestDownloadAll";
 import { useGuestDownloadAll } from "./use-guest-download-all";
 import type { GuestDrafts } from "./guest-drafts";
@@ -509,6 +509,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   // P2's quiet line (#879 PR 3b) at the end of the phone's notes scroll: Released first (a session default, no frame), then the hints and notices the delivery row held, then who is reviewing and email updates.
   const quietLine = <div data-testid="guest-quiet-line" className="flex flex-wrap items-center gap-[var(--space-2)] empty:hidden">
     {version.released && <ReleasedBadge />}
+    <GuestDownloadLocked video={video} version={version} allowDownload={allowDownload} />
     {downloadHintLine}
     {decisionNoticeLine}
     {pasteStatus}

@@ -19,8 +19,14 @@ export function GuestDownload({ video, version, allowDownload, verified, onNeedV
   if (version.downloadUrl !== null) {
     return <Button variant="outline" nativeButton={false} data-testid="guest-download" className={TOUCH} render={<a href={version.downloadUrl} download />}><DownloadIcon aria-hidden="true" />Download</Button>;
   }
-  if (version.released && video.premium && !video.unlocked) {
-    return <span data-testid="guest-download-locked" className="inline-flex items-center gap-[var(--space-1)] text-foreground-secondary [font:var(--type-label)]"><LockIcon aria-hidden="true" className="size-3" />Premium video: the download opens once the studio unlocks it.</span>;
-  }
-  return null;
+  return <GuestDownloadLocked video={video} version={version} allowDownload={allowDownload} />;
+}
+
+/**
+ * The reason a released premium Video has no Download: the studio has not unlocked it. The desktop delivery row shows it in Download's place (`GuestDownload`); a phone, which has
+ * no delivery row, shows it in the quiet line at the end of the notes (#879 PR 3b, S2). The same gates either way: downloads allowed, no URL, released, premium, not unlocked.
+ */
+export function GuestDownloadLocked({ video, version, allowDownload }: { video: Pick<GuestVideoDto, "premium" | "unlocked">; version: Pick<GuestVersionDto, "released" | "downloadUrl">; allowDownload: boolean }) {
+  if (!allowDownload || version.downloadUrl !== null || !version.released || !video.premium || video.unlocked) return null;
+  return <span data-testid="guest-download-locked" className="inline-flex items-center gap-[var(--space-1)] text-foreground-secondary [font:var(--type-label)]"><LockIcon aria-hidden="true" className="size-3" />Premium video: the download opens once the studio unlocks it.</span>;
 }
