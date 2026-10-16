@@ -79,7 +79,6 @@ export const PILL_ICON = "relative size-8 after:absolute after:-inset-1.5 after:
  *  44px hit area is its own slot in the row, the way Mute's sits in --space-3 gaps, and the readout starts at 12 + 44 + 4 = 60pt. */
 const PHONE_PLAY_SLOT = "mx-[calc(var(--space-3)/2)]";
 const MONO = "[font:var(--type-mono)] tabular-nums";
-/** P1's PlayBadge: a 60px round, translucent ink disc on the film (`--space-8` less `--space-1`), the inverse surface's paper icon. */
 /**
  * Whether the focus is in a menu, list or dialog of the player's own (#880 fix round 2): one inside the player, or portalled out of it (React still bubbles its focus here).
  * Never one the player sits in: the staff viewer is a modal dialog, and counting it held the controls on every focus in the player, the Exit focus at entry included.
@@ -95,6 +94,7 @@ function ownPopup(target: Element, player: Element): boolean {
 const SIDEWAYS_DOCK_BOTTOM = "pb-[max(var(--space-5),env(safe-area-inset-bottom))]";
 /** Full screen's dock while Add note is open (#880 fix round 1, F1): the scrim's top padding plus the composer's published height and the space under it, so the scrim runs behind the composer. */
 const COMPOSING_SCRIM = "pt-[calc(var(--space-6)+var(--immersive-composer-h,0px)+var(--space-2))]";
+/** P1's PlayBadge: a 60px round, translucent ink disc on the film (`--space-8` less `--space-1`), the inverse surface's paper icon. */
 const PLAY_BADGE = "pointer-events-auto size-[calc(var(--space-8)-var(--space-1))] rounded-[var(--radius-pill)] bg-[color-mix(in_srgb,var(--ink-900)_55%,transparent)] !text-foreground hover:bg-[color-mix(in_srgb,var(--ink-900)_70%,transparent)]";
 // These chips keep the Lightbox's SHORTCUT_KBD skin (bordered, bg-secondary) rather than the Kbd primitive, to match the Lightbox legend.
 export const LEGEND_KBD = "rounded-[var(--radius-xs)] border border-solid border-[length:var(--border-width-hair)] border-border bg-secondary px-[var(--space-1)] text-foreground [font:var(--weight-regular)_var(--text-2xs)/1.4_var(--font-mono)]";
