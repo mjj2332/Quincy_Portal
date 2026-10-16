@@ -689,7 +689,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
             <LazyCompareView video={video} store={compareStore} social={socialMode} startFrame={startFrame} onChangeSide={changeSide} controlRef={compareRef} detailsFor={detailsFor} {...(notes ? { notes: { projectId: notes.projectId, role: notes.role, userId: notes.userId, archived: notes.archived, forms: notes.forms } } : {})} />
           </Suspense>
         </>
-        : notes ? <Suspense fallback={phone ? phoneHeader() : null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows} onSearchChange={onSearchChange}>{layout}</LazyNotesHost></Suspense> : layout(null)}
+        : notes ? <Suspense fallback={phone ? phoneHeader() : null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows} onSearchChange={onSearchChange} handheld={phone || (imm && phoneDevice)}>{layout}</LazyNotesHost></Suspense> : layout(null)}
       </OverlayContainerContext.Provider>
       <div ref={setSlot} />
       <div ref={setToastSlot} />

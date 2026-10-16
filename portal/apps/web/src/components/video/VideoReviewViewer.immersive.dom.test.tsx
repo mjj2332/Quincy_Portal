@@ -43,13 +43,13 @@ const film = () => dialog().querySelector("video")!;
 const click = async (element: HTMLElement) => { await act(async () => { element.click(); }); await flush(3); };
 async function escape() { await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); }); await flush(3); }
 const escapeOutOfTooltip = async () => { if ([...document.querySelectorAll("[data-open]")].some((popup) => popup.tagName === "DIV" && /^(Add note|Full screen|Exit full screen)$/.test(popup.textContent ?? ""))) await escape(); };
-async function mount() {
+async function mount(over: { markup?: boolean } = {}) {
   api.apiGet.mockImplementation(async (path) => { if (/\/notes$/.test(path)) return { notes: [NOTE] }; return {}; });
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); onClose = vi.fn<() => void>(); forms = createNoteFormStore("imm-test");
   await act(async () => {
     root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><VideoReviewViewer
       video={videoOf()} onClose={onClose}
-      notes={{ projectId: PROJECT, role: "editor", userId: auth.userId, archived: false, forms }}
+      notes={{ projectId: PROJECT, role: "editor", userId: auth.userId, archived: false, forms, ...(over.markup ? { markup: true } : {}) }}
     /></QuincyQueryProvider>);
   });
   // The notes host is a lazy chunk: wait on the film, not a fixed number of ticks.
@@ -468,6 +468,17 @@ describe("entering Full screen from the sheet's modes (#880 S5)", () => {
     expect(field()).toBe(editor);
     expect(forms.slot(ids.asset2).composer.body).toBe("Lift the shadows");
     expect(forms.slot(ids.asset2).composer.anchorFrame).toBe(stamp);
+  });
+  it("a turn mid-compose with markup on puts no Draw in the sideways Full screen dock: F2 has none, and its composer is blocked sideways (#880 review 1)", async () => {
+    await mount({ markup: true });
+    await act(async () => { field().focus(); });
+    await act(async () => { forms.setBody(ids.asset2, "Lift the shadows", 0); });
+    await flush(2);
+    expect(tid("video-markup-toolbar-draw")).not.toBeNull();
+    await viewport.set({ width: 750, height: 292 });
+    await flush(2);
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(true);
+    expect(tid("video-immersive-dock")!.querySelector('[data-testid="video-markup-toolbar-draw"]')).toBeNull();
   });
   it("turning back with the field left in Full screen gives the sheet browse, not a stale compose", async () => {
     await mount();
