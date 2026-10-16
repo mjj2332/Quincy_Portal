@@ -28,7 +28,7 @@ function Harness({ drawing = false, stacked = true }: { drawing?: boolean; stack
     player={<video data-testid="film" />}
     pane={<div data-testid="panel">
       <div data-sheet-part="head" data-testid="head"><button type="button" onClick={() => { setTick(tick + 1); }}>Notes</button></div>
-      <div data-sheet-part="body" data-testid="body"><button type="button">Thread</button></div>
+      <div data-sheet-part="body" data-testid="body"><button type="button">Thread</button><input data-testid="search" aria-label="Search notes" onFocus={() => { sheet.onSearching(true); }} onBlur={() => { sheet.onSearching(false); }} /></div>
       <form data-sheet-part="composer" data-testid="composer" onSubmit={(e) => { e.preventDefault(); }}><div data-sheet-text="" data-testid="text-box"><textarea data-testid="editor" aria-label="Add a note" /></div><button type="submit" data-testid="post">Post</button><HoldButton /></form>
     </div>}
   />;
@@ -208,6 +208,30 @@ describe("ReviewSheet (#879)", () => {
     await act(async () => { q("editor").blur(); });
     await frame();
     expect(q("video-review-player").className).not.toContain("overflow-hidden");
+  });
+
+  it("typing in the notes search is search mode: the head and the list stay, the composer and grabber go, the sheet fills the split and the film keeps compose's floor (#879 PR 3b)", async () => {
+    await mount();
+    await key(grabber(), "End");
+    await act(async () => { q("search").focus(); });
+    expect(pane().getAttribute("data-mode")).toBe("search");
+    expect(q("head").hasAttribute("inert")).toBe(false);
+    expect(q("body").hasAttribute("inert")).toBe(false);
+    expect(q("composer").hasAttribute("inert")).toBe(true);
+    expect(grabber().className).toContain("hidden");
+    // No stop height: the sheet takes what the film leaves, and the film keeps only compose's floor, clipped, so the field and the results fit above the keyboard.
+    expect(pane().style.height).toBe("");
+    expect(pane().className).toContain("data-[mode=search]:flex-1");
+    const film = q("video-review-player");
+    expect(film.className).toContain("flex-none");
+    expect(film.className).toContain("h-[var(--space-9)]");
+    expect(film.className).toContain("overflow-hidden");
+    // The editor's focus still wins: the field is not the composer, and composing is its own mode.
+    await act(async () => { q("search").blur(); });
+    expect(pane().getAttribute("data-mode")).toBe("browse");
+    expect(pane().getAttribute("data-stop")).toBe("full");
+    expect(q("composer").hasAttribute("inert")).toBe(false);
+    expect(q("video-review-player").className).not.toContain("h-[var(--space-9)]");
   });
 
   it("drawing is draw mode, whatever the stop, with the same nodes", async () => {

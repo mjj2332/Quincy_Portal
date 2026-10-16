@@ -10,6 +10,9 @@ import { releaseVelocity, settleSheet, sheetStops, type SheetStop, type SheetSto
  * - collapsed: the head (tab row) and the composer show; the body is `inert`.
  * - half / full: all three show.
  * - compose (the editor has focus, the keyboard is up) and draw (the picture is the canvas): only the composer shows; the sheet takes its own height.
+ * - search (#879 PR 3b, F1: the notes search field has the focus, the keyboard is up): the head and the body show, the composer does not; the sheet takes the split less
+ *   compose's film floor. The full stop cannot hold the field and a result above a keyboard (with the viewport at ~384pt the stop is the collapsed floor), so the film gives
+ *   way as it does for compose. The composer is not composing: its field never had the focus.
  *
  * The mode is the one switch for the phone composer's layout too (#879 fix): `useReviewSheet` computes it from the field's focus and the composer's holds (its + tray is
  * open, a post is out), and `ReviewSplit` hands it to the composer through `SheetModeContext`. Nothing else decides whether the composer is the compose strip or the pill
@@ -17,7 +20,7 @@ import { releaseVelocity, settleSheet, sheetStops, type SheetStop, type SheetSto
  *
  * The stop is the screen's state (`useReviewSheet`), opens at half every time and is never persisted (D6). The numbers live in `lib/review-pane-geometry.ts` (#881 adds the rail clamp there).
  */
-export type SheetMode = "browse" | "compose" | "draw";
+export type SheetMode = "browse" | "compose" | "draw" | "search";
 
 export type ReviewSheetControl = {
   stop: SheetStop;
@@ -31,6 +34,10 @@ export type ReviewSheetControl = {
   held: boolean;
   /** Takes or releases a hold on compose mode, by name. */
   setHold: (reason: string, on: boolean) => void;
+  /** Search mode: the notes search field has the focus (the keyboard is up). The screen sizes its root to the visual viewport for it too. */
+  searching: boolean;
+  /** The notes search field took or lost the focus (the screen hears it from `NotesFilterHead`'s "typing" state). */
+  onSearching: (searching: boolean) => void;
   /** Width / height of the film on show, for the stops (portrait films take 65% of the space, D7). */
   filmAspect: number;
   /** Names the grabber: "Notes". */
@@ -41,6 +48,8 @@ export type ReviewSheetControl = {
 export function useReviewSheet({ drawing, filmAspect, label = "Notes" }: { drawing: boolean; filmAspect: number; label?: string }): ReviewSheetControl {
   const [stop, setStop] = useState<SheetStop>("half");
   const [focused, setFocused] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const onSearching = useCallback((next: boolean) => { setSearching(next); }, []);
   const [holds, setHolds] = useState<ReadonlySet<string>>(NO_HOLDS);
   const onStop = useCallback((next: SheetStop) => { setStop(next); }, []);
   const onComposing = useCallback((next: boolean) => { setFocused(next); }, []);
@@ -54,7 +63,7 @@ export function useReviewSheet({ drawing, filmAspect, label = "Notes" }: { drawi
   }, []);
   const held = holds.size > 0;
   const composing = focused || held;
-  return { stop, onStop, mode: drawing ? "draw" : composing ? "compose" : "browse", composing, onComposing, held, setHold, filmAspect, label };
+  return { stop, onStop, mode: drawing ? "draw" : composing ? "compose" : searching ? "search" : "browse", composing, onComposing, held, setHold, searching, onSearching, filmAspect, label };
 }
 const NO_HOLDS: ReadonlySet<string> = new Set();
 
@@ -93,7 +102,8 @@ export function useSheetPane({ enabled, control, room, paneRef }: { enabled: boo
     if (!pane) return;
     for (const element of pane.querySelectorAll(PART)) {
       const part = element.getAttribute("data-sheet-part");
-      const hide = active && ((part === "body" && (stop === "collapsed" || mode !== "browse")) || (part === "head" && mode !== "browse"));
+      const typing = mode === "compose" || mode === "draw";
+      const hide = active && (part === "body" ? typing || (mode === "browse" && stop === "collapsed") : part === "head" ? typing : part === "composer" && mode === "search");
       setInert(element, hide);
     }
   });

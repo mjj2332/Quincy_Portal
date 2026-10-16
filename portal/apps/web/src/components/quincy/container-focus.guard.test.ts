@@ -54,6 +54,18 @@ describe("programmatically focused containers carry focus-visible:!outline-none"
     expect(tag).toContain(RING_OFF);
   });
 
+  it("the phone review sheets' PHONE_SHEET_CHROME, on the ⋯ and Versions sheets (open focused on the sheet itself, #879 PR 3b)", () => {
+    const init = constInitialiser(read("components/quincy/ReviewActionSheet.tsx"), "PHONE_SHEET_CHROME");
+    expect(init, "PHONE_SHEET_CHROME not found").not.toBeNull();
+    expect(init).toContain(RING_OFF);
+    const action = openingTag(read("components/quincy/ReviewActionSheet.tsx"), "SheetContent", 'data-testid="review-action-sheet"');
+    expect(action, "ReviewActionSheet's SheetContent not found").not.toBeNull();
+    expect(action).toContain("PHONE_SHEET_CHROME");
+    const versions = openingTag(read("components/video/VideoVersionsSheet.tsx"), "SheetContent", 'data-testid="video-versions-sheet"');
+    expect(versions, "VideoVersionsSheet's SheetContent not found").not.toBeNull();
+    expect(versions).toContain("PHONE_SHEET_CHROME");
+  });
+
   describe("function-body extractor fixtures", () => {
     const BROKEN = 'function panelClasses(a: X | undefined, b: boolean): string {\n  return cn("w-full", "focus:outline-none");\n}\nfunction other() { return "focus-visible:!outline-none"; }';
     const FIXED = 'function panelClasses(a: X | undefined, b: boolean): string {\n  return cn("w-full", "focus-visible:!outline-none");\n}';

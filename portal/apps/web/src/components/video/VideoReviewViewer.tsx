@@ -13,7 +13,8 @@ import { IconButton } from "../quincy/icon-button";
 import type { VersionRemovalHandle } from "./VideoVersionMenu";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "../reui/dialog";
 import { IconTip } from "../quincy/IconTip";
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
+import { ACTION_ROW_BOX, ACTION_ROW_TITLE, ACTION_ROWS } from "../quincy/ReviewActionSheet";
 import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
@@ -21,6 +22,7 @@ import { ReviewPaneHideContext, ReviewSplit, useReviewPane, useReviewPaneControl
 import { blurComposerField, useReviewSheet } from "../quincy/ReviewSheet";
 import { useVisualViewport } from "../../lib/use-visual-viewport";
 import { useInkCanvas } from "../../lib/use-ink-canvas";
+import type { SheetStop } from "../../lib/review-pane-geometry";
 import type { NotesSlots } from "./VideoNotesHost";
 import type { SocialPreviewMode } from "../quincy/SocialPreviewControls";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../reui/tabs";
@@ -35,6 +37,8 @@ import { versionSlot, videoSlot, type VideoApprovalStore } from "../../lib/video
 import type { VideoNotesSession } from "./use-video-notes";
 import { REVIEW_STATUS_LABEL, REVIEW_STATUS_TONE, VideoReviewStatusPill } from "./VideoReviewStatusPill";
 import { VideoReviewHeaderMenu } from "./VideoReviewHeaderMenu";
+import { VideoDetailsSheet } from "./VideoDetailsSheet";
+import { blurNotesSearchField, type NotesSearchState } from "../quincy/NotesFilterHead";
 
 /** The notes UI is its own chunk: a Project whose notes part is off never loads it. */
 const LazyNotesHost = lazy(() => import("./VideoNotesHost"));
@@ -142,6 +146,18 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const setSheetStop = sheetControl.onStop;
   // A phone's notes sheet opens at half whenever something sends the person to the notes (a marker, an I/O mark, a note link), and never persists (D6).
   const revealNotes = useCallback(() => { setPaneOpen(true); setSideTab("main"); if (sheetStopRef.current === "collapsed") setSheetStop("half"); }, [setPaneOpen, setSheetStop]);
+  // Search in the phone notes head (#879 PR 3b, owner decision): the keyboard is about to take half the screen, so the sheet goes to full while the field is open and back to
+  // the stop it was at when it closes. A stop the person drags to meanwhile is theirs: closing restores only if the sheet is still at full.
+  const searchReturn = useRef<SheetStop | null>(null);
+  const onSearching = sheetControl.onSearching;
+  const onSearchChange = useCallback((state: NotesSearchState) => {
+    // Typing is the sheet's search mode (F1): the film gives way so the field and the results stand above the keyboard.
+    onSearching(state === "typing");
+    if (state !== "closed") { if (searchReturn.current === null) { searchReturn.current = sheetStopRef.current; setSheetStop("full"); } return; }
+    const back = searchReturn.current;
+    searchReturn.current = null;
+    if (back !== null && sheetStopRef.current === "full") setSheetStop(back);
+  }, [setSheetStop, onSearching]);
   const deepNoteId = notes?.openNoteId;
   useEffect(() => { if (deepNoteId !== undefined) revealNotes(); }, [deepNoteId, revealNotes]);
   // One mute choice for both views: the single player and compare each start from it, and report back on exit.
@@ -208,6 +224,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       if (layer || popup === null) { escapeSnapshot.current = { layer, form: false, compare: false, social: false }; return; }
       const active = document.activeElement;
       let consumed = false;
+      // The phone notes head's search field owns Escape (#879 PR 3b): it clears and closes the search itself, and nothing else may take that Escape (not a draft, not the viewer).
+      if (active instanceof Element && popup.contains(active) && active.closest("[data-notes-search]") !== null) { escapeSnapshot.current = { layer, form: true, compare: false, social: false }; return; }
       const inForm = active instanceof Element && popup.contains(active) && active.closest("[data-notes-form]") !== null;
       // In compare a form is only the Escape's when focus is inside that side's note form: a hidden or unfocused draft never swallows it.
       // The order is the form or the drawing first, then Social, then Compare, then the viewer (#877): Social leaves the forms visible, so a form that is open owns the key.
@@ -352,7 +370,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   }, [assetId, compareStore, exitCompare]);
   const newest = Math.max(...video.versions.map((candidate) => candidate.version));
   const optionLabel = (candidate: VideoDto["versions"][number]) => `v${candidate.version}${candidate.version === newest ? " · latest" : ""} · ${candidate.uploadedBy.name} · ${formatVideoDate(candidate.createdAt)}`;
-  const detailsFor = (target: VideoVersionDto): ReactNode => {
+  /** The Version's details: `stacked` (label over value) beside the notes and in Compare; `line` (P8's one-line rows, label left, value right) in the phone sheet (#879 PR 3b, F5). */
+  const detailsFor = (target: VideoVersionDto, layout: "stacked" | "line" = "stacked"): ReactNode => {
     const targetStart = framesToTimecode(0, { nominalFps: target.tcNominalFps, dropFrame: target.tcDropFrame }, target.startTimecodeFrames ?? 0);
     const details: Array<[string, string]> = [
       ["Uploaded by", target.uploadedBy.name],
@@ -366,6 +385,12 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       ["Start timecode", targetStart],
       ["Audio", target.hasAudio ? "Yes" : "None"],
     ];
+    if (layout === "line") return <ItemGroup data-testid="video-details-rows" className={ACTION_ROWS}>
+      {details.map(([label, value]) => <Item key={label} data-testid="video-detail-row" size="sm" className={`${ACTION_ROW_BOX} flex-nowrap`}>
+        <ItemContent className="flex-none"><ItemTitle data-testid="video-detail-label" className={`${ACTION_ROW_TITLE} whitespace-nowrap text-foreground-secondary`}>{label}</ItemTitle></ItemContent>
+        <ItemActions className="ms-auto min-w-0"><span data-testid="video-detail-value" className={`${ACTION_ROW_TITLE} block truncate text-foreground`}>{value}</span></ItemActions>
+      </Item>)}
+    </ItemGroup>;
     return <ItemGroup>
       {details.map(([label, value]) => <Item key={label} size="xs">
         <ItemContent>
@@ -388,11 +413,14 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const copyHref = deepLink && !comparing ? deepLink.href(version.version) : undefined;
   const downloadHref = download && !comparing ? videoVersionDownloadUrl(download.projectId, version.assetId) : undefined;
   const [versionsOpen, setVersionsOpen] = useState(false);
+  // The phone Version details sheet (#879 PR 3b) is open for one Version: a Version change closes it.
+  const [detailsOpenFor, setDetailsOpenFor] = useState<string | null>(null);
   // With the keyboard up (the editor has focus on a phone) the dialog takes the visual viewport, so the film stays on top and the composer sits above the keyboard (D10).
   // The software keyboard went away without blurring the field (some iOS paths): blur it, so compose mode ends the ordinary way (#879 fix). A hold (the + tray, a post) keeps it.
   // The dialog follows the visual viewport for as long as the phone viewer is open, not only in compose mode (#879 fix r5): iOS scrolls the document by the keyboard height
   // on focus and the hook puts the dialog back in the same task, with no transition (fix r8). The ink backdrop (fix r7) is the floor under any frame that still shows through.
-  useVisualViewport(phone && sheetControl.composing, () => { if (!sheetControl.held) blurComposerField(); }, popupElement, phone);
+  // Searching too (#879 PR 3b, F1): the search field raises the keyboard without composing; its keyboard-gone fallback blurs the field and leaves search open.
+  useVisualViewport(phone && (sheetControl.composing || sheetControl.searching), () => { if (sheetControl.composing) { if (!sheetControl.held) blurComposerField(); } else blurNotesSearchField(); }, popupElement, phone);
   // While the phone viewer is open the document's canvas is ink (#879 fix r11): iOS shows it below the viewer while it scrolls the document back as the keyboard drops.
   useInkCanvas(phone);
   const chipRef = useRef<HTMLButtonElement | null>(null);
@@ -452,7 +480,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       </div>
     </header>;
   const status = reviewStatus ? REVIEW_STATUS_TONE[video.reviewStatus] : undefined;
-  const phoneHeader = (markerExport?: NotesSlots["markerExport"]) => <>
+  const phoneHeader = (slots?: NotesSlots) => <>
     <ReviewPhoneBar
       back={<DialogClose render={<Button type="button" variant="ghost" className="min-h-11 min-w-11 shrink-0" />}><ChevronLeft aria-hidden="true" /><span className="sr-only">Video</span></DialogClose>}
       title={<DialogTitle title={video.title} className={`m-0 ${TITLE_FLOOR} w-full truncate [font:var(--type-body)]`}>{video.title}</DialogTitle>}
@@ -461,7 +489,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       actions={<VideoReviewHeaderMenu
         container={slot}
         {...(social ? { social: { on: socialOn, toggle: () => { setSocialOn(!socialOn); } } } : {})}
-        copyHref={copyHref} downloadHref={downloadHref} downloadLabel={`Download version ${version.version}`} onCreateReviewLink={createReviewLink} {...(markerExport ? { markerExport } : {})}
+        version={version.version} copyHref={copyHref} downloadHref={downloadHref} onCreateReviewLink={createReviewLink}
+        {...(slots ? { markerExport: slots.markerExport, clipboard: slots.clipboard, onVersionDetails: () => { setDetailsOpenFor(version.assetId); } } : {})}
         {...(removeVersionFromMenu ? { onRemoveVersion: removeVersionFromMenu, removeDisabled: !removeReady || trash?.archived === true || (video.uploading != null && video.versions.length === 1) } : {})}
       />}
     />
@@ -470,6 +499,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       rows={withSummaries([...video.versions].sort((x, y) => y.version - x.version), summaries.data?.versions)}
       latestStatus={reviewStatus ? REVIEW_STATUS_LABEL[video.reviewStatus] : undefined}
     />
+    {slots && <VideoDetailsSheet open={detailsOpenFor === version.assetId} onOpenChange={(next) => { setDetailsOpenFor(next ? version.assetId : null); }} container={slot} version={version.version}>{detailsFor(version, "line")}</VideoDetailsSheet>}
     {trash && <Suspense fallback={null}><LazyVersionMenu projectId={trash.projectId} archived={trash.archived} video={video} version={version} hasDraft={hasDraft} captureDrafts={captureDrafts} onRemoved={onVersionRemoved} removeRef={bindRemove} hideTrigger /></Suspense>}
   </>;
   const layout = (slots: NotesSlots | null): ReactNode => {
@@ -521,13 +551,13 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       {...(phone ? { sheet: { ...sheetControl, mode: slots?.drawing ? "draw" as const : sheetControl.mode } } : {})}
       {...(phone ? {} : { rowClassName: "overflow-y-auto", playerClassName: "overflow-y-auto" })}
       player={<>
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" phoneFrameStep={forms === undefined || formOpen} transportHidden={phone && sheetControl.mode === "compose" && !slots?.drawing} initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1 max-[721px]:min-h-0" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} />
+        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" phoneFrameStep={forms === undefined || formOpen} transportHidden={phone && (sheetControl.mode === "search" || (sheetControl.mode === "compose" && !slots?.drawing))} initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1 max-[721px]:min-h-0" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} />
       </>}
       pane={sidePane}
       strip={paneControls.strip}
     />;
     // The phone header is part of the layout (it needs the notes host's marker export for its action sheet); Compare does not exist on a phone, so it never needs to outlive a mode switch.
-    return <>{phone ? phoneHeader(slots?.markerExport) : null}{split}</>;
+    return <>{phone ? phoneHeader(slots ?? undefined) : null}{split}</>;
   };
 
   return <Dialog open onOpenChange={handleOpenChange}>
@@ -558,7 +588,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
             <LazyCompareView video={video} store={compareStore} social={socialMode} startFrame={startFrame} onChangeSide={changeSide} controlRef={compareRef} detailsFor={detailsFor} {...(notes ? { notes: { projectId: notes.projectId, role: notes.role, userId: notes.userId, archived: notes.archived, forms: notes.forms } } : {})} />
           </Suspense>
         </>
-        : notes ? <Suspense fallback={phone ? phoneHeader() : null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows}>{layout}</LazyNotesHost></Suspense> : layout(null)}
+        : notes ? <Suspense fallback={phone ? phoneHeader() : null}><LazyNotesHost notes={notes} video={video} version={version} detailsRows={detailsRows} onSearchChange={onSearchChange}>{layout}</LazyNotesHost></Suspense> : layout(null)}
       </OverlayContainerContext.Provider>
       <div ref={setSlot} />
       <div ref={setToastSlot} />

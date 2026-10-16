@@ -482,7 +482,7 @@ describe("the notes pane (#859)", () => {
     expect(byId("guest-bar")!.contains(byId("guest-delivery"))).toBe(false);
   });
 
-  it("a phone gets the shared header: Back (icon), the title with the Version chip, no Select, no prev/next, and the delivery row moves into the sheet (#879)", async () => {
+  it("a phone gets the shared header: Back (icon), the title with the Version chip, no Select, no prev/next, and no delivery row: its parts are the ⋯ rows and the quiet line (#879 PR 3b)", async () => {
     await viewport.set({ width: 390, coarse: true });
     videos = [videoOf(1)];
     await open();
@@ -491,8 +491,8 @@ describe("the notes pane (#859)", () => {
     expect(byId("guest-bar")).toBeNull();
     expect(byId("guest-version-trigger")).toBeNull();
     expect(byId("video-version-chip")!.textContent).toMatch(/^v\d+/);
-    expect(bar.contains(byId("guest-delivery"))).toBe(false);
-    expect(byId("video-review-pane")!.contains(byId("guest-delivery"))).toBe(true);
+    expect(byId("guest-delivery")).toBeNull();
+    expect(byId("video-review-pane")!.contains(byId("guest-quiet-line"))).toBe(true);
     expect(byId("guest-video-title")!.textContent).toBeTruthy();
   });
 
@@ -1297,12 +1297,13 @@ describe("the phone review screen (#879)", () => {
     expect(button("Next video") ?? null).toBeNull();
   });
 
-  it("reads \"✓ Approved\" once the Version carries an approval", async () => {
+  it("reads \"✓ Approved\" as the decision badge once the Version carries an approval (#879 PR 3b)", async () => {
     serve(withAllow({ approve: true }, { verified: true, email: "g@example.com", name: "Gina" }));
     videos = [videoOf(1, { versions: [versionOf(10, { decision: { value: "approved", revision: 1, at: "2026-10-09T01:00:00.000Z", self: true } })] })];
     await open(`?link=${LINK}`);
-    expect(byId("guest-approved")!.textContent).toContain("Approved");
-    expect(byId("guest-approved")!.querySelector("svg")).not.toBeNull();
+    expect(byId("review-phone-bar")!.contains(byId("guest-decision-chip"))).toBe(true);
+    expect(byId("guest-decision-chip")!.textContent).toBe("Approved");
+    expect(byId("guest-decision-chip")!.querySelector("svg")).not.toBeNull();
     expect(byId("guest-approve")).toBeNull();
   });
 

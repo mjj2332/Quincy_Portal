@@ -15,6 +15,7 @@ import { installVideoElementStub, type VideoElementStub } from "../../testing/vi
 import { installLocalStorageShim } from "../../testing/local-storage";
 import { resetUiPrefMemory } from "../../lib/ui-prefs";
 import { TIME_FORMAT_KEY } from "../../lib/time-format-prefs";
+import { mockViewport } from "../../testing/viewport";
 import { VideoCollectionPanel } from "./VideoCollectionPanel";
 vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 
@@ -1625,5 +1626,195 @@ describe("In / Out range button and handles (#861)", () => {
   it("with the notes part off there is no range button", async () => {
     await openFilm({ parts: [] });
     expect(rangeButton()).toBeNull();
+  });
+});
+
+describe("the phone notes head (#879 PR 3b, P1)", () => {
+  let viewport: ReturnType<typeof mockViewport>;
+  beforeEach(() => { viewport = mockViewport({ width: 390 }); });
+  afterEach(() => { viewport.restore(); });
+  const radio = (name: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((item) => item.textContent?.startsWith(name))!;
+  const open = async (chip: string) => { const trigger = tid(chip)!; await act(async () => { trigger.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); trigger.click(); }); await flush(2); };
+  const choose = async (chip: string, name: string) => { await open(chip); await click(radio(name)); await flush(2); };
+  const search = async (text: string) => {
+    if (!tid("notes-search-field")) { await click(tid("notes-filter-search")!); await flush(2); }
+    const field = tid("notes-search-field") as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(field, text); field.dispatchEvent(new Event("input", { bubbles: true })); });
+    await flush(2);
+  };
+  const sorted = (...list: VideoNoteThreadDto[]) => list.map((n) => n.id).sort();
+
+  it("the head replaces the title row, the two toggle groups and the notes ⋯, inside the list; the chip counts the open notes", async () => {
+    await openFilm();
+    const head = tid("notes-filter-head")!;
+    expect(tid("video-notes-list")!.contains(head)).toBe(true);
+    expect(tid("notes-filter-status")!.textContent).toBe("Open · 5");
+    expect(tid("notes-filter-author")!.textContent).toBe("Everyone");
+    for (const gone of ["video-notes-filters", "video-notes-title", "video-notes-counts", "video-notes-menu", "video-details-button"]) expect(tid(gone), gone).toBeNull();
+  });
+
+  it("the status menu sets status and visibility; the chip names a set visibility, and the list and markers follow", async () => {
+    const s = seed();
+    await openFilm();
+    await choose("notes-filter-status", "Internal");
+    expect(tid("notes-filter-status")!.textContent).toBe("Open · Internal · 3");
+    expect([...noteIds()].sort()).toEqual(sorted(s.n1, s.n3, s.n5));
+    expect([...document.querySelectorAll<HTMLElement>("[data-marker-id]")].map((m) => m.dataset.markerId!).sort()).toEqual(sorted(s.n1, s.n3, s.n5));
+    expect(tid("notes-filter-status")!.getAttribute("aria-expanded")).toBe("false"); // a choice closes the menu
+    await open("notes-filter-status");
+    await click(radio("All")); await flush(2);
+    expect(tid("notes-filter-status")!.textContent).toBe("All · Internal · 3");
+  });
+
+  it("the author menu lists live roots' authors once each, by name, and narrows the list", async () => {
+    const s = seed();
+    await openFilm();
+    await click(tid("notes-filter-author")!); await flush(2);
+    expect([...document.querySelectorAll('[role="menuitemradio"]')].map((item) => item.textContent)).toEqual(["Everyone", "Gina Client", "Mia Chen", "Terry"]);
+    await click(radio("Gina Client")); await flush(2);
+    expect(tid("notes-filter-author")!.textContent).toBe("Gina Client");
+    expect(noteIds()).toEqual([s.n6.id]);
+  });
+
+  it("search matches bodies, replies and author names; typing is search mode, never compose, and I typed in it marks nothing", async () => {
+    const s = seed();
+    await openFilm({}, 12);
+    await search("WARM");
+    expect(noteIds()).toEqual([s.n2.id]);
+    await search("agreed");
+    expect(noteIds()).toEqual([s.n2.id]);
+    await search("gina");
+    expect(noteIds()).toEqual([s.n6.id]);
+    const field = tid("notes-search-field")!;
+    // F1 (#879 PR 3b): the sheet's search mode keeps the head and the list above the keyboard; the composer is put away, not entered.
+    expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("search");
+    await dispatchKey(field, "i");
+    expect(tid("video-pending-band")).toBeNull();
+  });
+
+  it("typing in search makes room above the keyboard; the keyboard going away blurs the field and leaves search open (#879 PR 3b, F1)", async () => {
+    class FakeViewport extends EventTarget { height = window.innerHeight; offsetTop = 0; scale = 1; }
+    const fake = new FakeViewport();
+    const original = Object.getOwnPropertyDescriptor(window, "visualViewport");
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: fake });
+    try {
+      seed();
+      await openFilm();
+      await act(async () => { tid("notes-filter-search")!.click(); });
+      const field = tid("notes-search-field")!;
+      expect(document.activeElement).toBe(field);
+      await act(async () => { fake.height = window.innerHeight - 320; fake.dispatchEvent(new Event("resize")); });
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("search");
+      expect(tid("video-review-player")!.className).toContain("h-[var(--space-9)]");
+      expect(tid("notes-filter-head")!.closest("[inert]")).toBeNull();
+      await act(async () => { fake.height = window.innerHeight; fake.dispatchEvent(new Event("resize")); });
+      await flush(4);
+      expect(document.activeElement).not.toBe(field);
+      expect(tid("notes-search-field")).not.toBeNull();
+      expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+      expect(tid("video-review-pane")!.getAttribute("data-stop")).toBe("full");
+    } finally {
+      if (original) Object.defineProperty(window, "visualViewport", original); else delete (window as unknown as Record<string, unknown>).visualViewport;
+    }
+  });
+
+  it("the phone head opens the list with no list padding above it: P1's NotesFilter sits on the tab row's hairline (#879 PR 3b, F4)", async () => {
+    seed();
+    await openFilm();
+    const body = tid("video-notes-list-body")!;
+    expect(body.firstElementChild).toBe(tid("notes-filter-head"));
+    expect(body.className).toContain("in-data-[mode=browse]:pt-0");
+    expect(body.className).toContain("in-data-[mode=browse]:pb-[var(--space-3)]");
+    // D2: the guest's end gutter for the scroll thumb, on the phone only.
+    expect(body.className).toContain("max-[721px]:pe-[var(--space-3)]");
+  });
+
+  it("opening search takes the sheet to full and closing it restores the stop it was at", async () => {
+    await openFilm();
+    expect(tid("video-review-pane")!.getAttribute("data-stop")).toBe("half");
+    await click(tid("notes-filter-search")!); await flush(2);
+    expect(tid("video-review-pane")!.getAttribute("data-stop")).toBe("full");
+    await click(tid("notes-search-close")!); await flush(2);
+    expect(tid("video-review-pane")!.getAttribute("data-stop")).toBe("half");
+  });
+
+  it("Escape in search closes only the search: the viewer stays and focus is on the Search icon", async () => {
+    await openFilm();
+    await search("warm");
+    await dispatchKey(tid("notes-search-field")!, "Escape");
+    await settle(200);
+    expect(dialog()).not.toBeNull();
+    expect(tid("notes-search-field")).toBeNull();
+    expect(document.activeElement).toBe(tid("notes-filter-search"));
+    expect(noteIds().length).toBe(5);
+  });
+
+  it("a filtered list with nothing to show says so and offers Reset filters, which shows the open notes again", async () => {
+    await openFilm();
+    await search("nothing like this");
+    expect(tid("video-notes-empty")!.textContent).toContain("No notes match.");
+    await click(tid("video-notes-reset-filters")!); await flush(2);
+    expect(tid("notes-search-field")).toBeNull();
+    expect(noteIds().length).toBe(5);
+  });
+
+  it("switching Version clears the author and the search but keeps status and visibility", async () => {
+    await openFilm();
+    await choose("notes-filter-status", "Internal");
+    await choose("notes-filter-author", "Terry");
+    await click(tid("video-version-chip")!); await flush(2);
+    await click([...document.querySelectorAll<HTMLElement>('[data-testid="video-version-row"]')].find((row) => row.getAttribute("data-asset-id") === ids.asset1)!);
+    await flush(6);
+    expect(tid("notes-filter-author")!.textContent).toBe("Everyone");
+    expect(tid("notes-filter-status")!.textContent).toBe("Open · Internal · 1");
+  });
+
+  it("crossing to the desktop width clears the author and the search", async () => {
+    const s = seed();
+    await openFilm();
+    await choose("notes-filter-author", "Gina Client");
+    await viewport.set({ width: 1280 });
+    await flush(4);
+    expect([...noteIds()].sort()).toEqual(sorted(s.n1, s.n2, s.n3, s.n5, s.n6));
+    await viewport.set({ width: 390 });
+    await flush(4);
+    expect(tid("notes-filter-author")!.textContent).toBe("Everyone");
+  });
+
+  it("a sent note is listed: posting clears the author and the search", async () => {
+    await openFilm({}, 12);
+    await choose("notes-filter-author", "Gina Client");
+    await search("client");
+    api.apiPost.mockResolvedValue(commit(note({ startFrame: 12, body: "Posted on a phone" })));
+    await type(composerText(), "Posted on a phone");
+    await click(tid("video-note-post")!);
+    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 12 / 25); });
+    await flush(6);
+    expect(api.apiPost).toHaveBeenCalled();
+    expect(tid("notes-search-field")).toBeNull();
+    expect(tid("notes-filter-author")!.textContent).toBe("Everyone");
+    expect(threads().some((thread) => thread.textContent?.includes("Posted on a phone"))).toBe(true);
+  });
+
+  it("a link to a resolved note lands through the phone head's filters: status opens to All and the chip says so", async () => {
+    const s = seed();
+    await mount({ link: { note: s.n4.id } });
+    const deadline = Date.now() + 10_000;
+    while (!playerVideo()) { if (Date.now() > deadline) throw new Error("the review player never mounted"); await flush(1); }
+    await flush(4);
+    await loadFilm(0);
+    await flush(6);
+    expect(noteIds()).toContain(s.n4.id);
+    expect(tid("notes-filter-status")!.textContent).toBe("All · 6");
+    expect(tid("notes-filter-author")!.textContent).toBe("Everyone");
+  });
+
+  it("an open reply stays listed when search leaves its thread out", async () => {
+    const s = seed();
+    await openFilm();
+    await click(tid("video-note-reply-button", threadOf(s.n1.id))!); await flush(2);
+    await search("warm");
+    expect([...noteIds()].sort()).toEqual(sorted(s.n1, s.n2));
   });
 });

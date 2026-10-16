@@ -1,4 +1,4 @@
-import { act, useRef } from "react";
+import { act, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useHairlineWithHead } from "./use-hairline-with-head";
@@ -24,9 +24,15 @@ afterEach(async () => {
 
 // The list box from 100; the head row's text (the counts) from 110 to 130. Its 44px row box is taller than the text, which is what the hook reads.
 function Panel({ on, listBottom }: { on: boolean; listBottom: number }) {
-  const listRef = useRef<HTMLDivElement>(null); const textRef = useRef<HTMLSpanElement>(null); const composerRef = useRef<HTMLDivElement>(null);
-  useHairlineWithHead(on, listRef, textRef, composerRef);
+  const listRef = useRef<HTMLDivElement>(null); const [text, textRef] = useState<HTMLSpanElement | null>(null); const composerRef = useRef<HTMLDivElement>(null);
+  useHairlineWithHead(on, listRef, text, composerRef);
   return <><div ref={listRef} data-testid="list" data-top={100} data-bottom={listBottom}><span ref={textRef} data-testid="counts" data-top={110} data-bottom={130} /></div><div ref={composerRef} data-testid="composer" /></>;
+}
+// The head row is conditional (#879 PR 3b, S3): on an uncached load it mounts after the hook's first run, once the notes arrive.
+function LatePanel({ head }: { head: boolean }) {
+  const listRef = useRef<HTMLDivElement>(null); const [text, textRef] = useState<HTMLSpanElement | null>(null); const composerRef = useRef<HTMLDivElement>(null);
+  useHairlineWithHead(true, listRef, text, composerRef);
+  return <><div ref={listRef} data-testid="list" data-top={100} data-bottom={160}>{head && <span ref={textRef} data-testid="counts" data-top={110} data-bottom={130} />}</div><div ref={composerRef} data-testid="composer" /></>;
 }
 async function render(on: boolean, listBottom: number) {
   if (!root) { const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
@@ -53,6 +59,16 @@ describe("useHairlineWithHead (#879 fix r11): the composer's top line goes with 
 
   it("a list scrolled past the text hides the line too", async () => {
     await render(true, 160);
+    el("counts").dataset.top = "80"; el("counts").dataset.bottom = "98";
+    await act(async () => { el("list").dispatchEvent(new Event("scroll")); });
+    expect(el("composer").dataset.headCut).toBe("true");
+  });
+
+  it("binds to a head that mounts after its first run: scrolling past it then hides the line (#879 PR 3b, S3)", async () => {
+    const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => { root!.render(<LatePanel head={false} />); });
+    await act(async () => { root!.render(<LatePanel head />); });
+    expect(el("composer").dataset.headCut).toBeUndefined();
     el("counts").dataset.top = "80"; el("counts").dataset.bottom = "98";
     await act(async () => { el("list").dispatchEvent(new Event("scroll")); });
     expect(el("composer").dataset.headCut).toBe("true");

@@ -51,7 +51,7 @@ const covered = (planIds: string | null, ticked: readonly string[], unticked: Re
  *   The dialog adds a generation: closing, or the Version changing, moves it on, and a completion that started under an earlier one changes nothing.
  * - The commit is idempotent on the server, so after a dropped connection the guest may press Paste again; the list is read again meanwhile.
  */
-export function GuestPasteDialog({ api, writer, open, onOpenChange, video, target, markupAllowed, onPasted, onGone }: {
+export function GuestPasteDialog({ api, writer, open, onOpenChange, video, target, markupAllowed, onPasted, onGone, finalFocus }: {
   api: GuestApi;
   writer: GuestWriter;
   open: boolean;
@@ -63,6 +63,8 @@ export function GuestPasteDialog({ api, writer, open, onOpenChange, video, targe
   /** A commit landed (`copied` notes from `sourceVersion`), or may have (null: the connection dropped, so read the list again). */
   onPasted: (landed: { copied: number; sourceVersion: number } | null) => void;
   onGone: () => void;
+  /** Where focus goes when it closes; absent, back to what opened it. Opened from a phone ⋯ row, which is gone by then, the screen names the ⋯ (#879 PR 3b). */
+  finalFocus?: (() => HTMLElement | null) | undefined;
 }) {
   const generation = useRef(0);
   const committing = useRef(false);
@@ -76,7 +78,7 @@ export function GuestPasteDialog({ api, writer, open, onOpenChange, video, targe
   if (open && !wasOpen.current) setOpening((n) => n + 1);
   wasOpen.current = open;
   return <Dialog open={open} onOpenChange={(next) => { if (!committing.current || next) onOpenChange(next); }}>
-    <DialogContent data-testid="guest-paste-dialog" showCloseButton={false} onKeyDown={(event) => { if (event.key !== "Escape") event.stopPropagation(); }} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col gap-[var(--space-3)] sm:max-w-3xl">
+    <DialogContent data-testid="guest-paste-dialog" showCloseButton={false} {...(finalFocus ? { finalFocus: () => finalFocus() ?? true } : {})} onKeyDown={(event) => { if (event.key !== "Escape") event.stopPropagation(); }} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col gap-[var(--space-3)] sm:max-w-3xl">
       <PasteFlow key={opening} opening={opening} api={api} writer={writer} video={video} target={target} markupAllowed={markupAllowed} generation={generation} committing={committing} onClose={() => { onOpenChange(false); }} onPasted={onPasted} onGone={onGone} />
     </DialogContent>
   </Dialog>;
