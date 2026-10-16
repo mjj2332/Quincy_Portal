@@ -8,6 +8,7 @@ import { resetUiPrefMemory } from "../lib/ui-prefs";
 import { TIME_FORMAT_KEY } from "../lib/time-format-prefs";
 import { mockViewport, type MockViewport } from "../testing/viewport";
 import { minHeightFloors } from "../testing/min-height-floor";
+import { installInertFocusFixup, pressSpace } from "../testing/inert-focus-fixup";
 import { GuestApp } from "./GuestApp";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -281,6 +282,30 @@ describe("the guest page's Full screen fits a short sideways viewport (#880, Sim
     await open();
     expect(immersiveOn()).toBe(true);
     expect(minHeightFloors(byId("video-player")!, screenRoot())).toEqual([]);
+  });
+});
+
+describe("the guest page's Full screen keeps the focus when its controls hide (#880, desktop pass at 4c6f8703)", () => {
+  it("the transport's Play pressed, the controls hide 3s in: the focus moves to the player, not <body>, and Space pauses", async () => {
+    viewport.restore(); viewport = mockViewport({ width: 1200, height: 900, coarse: false }); notes = { [asset(10)]: [note(1)] };
+    const undoFixup = installInertFocusFixup();
+    try {
+      await open();
+      await atSeconds(0);
+      await click(byId("video-fullscreen"));
+      expect(immersiveOn()).toBe(true);
+      const play = () => byId("video-immersive-dock")!.querySelector<HTMLButtonElement>('button[aria-label="Play"], button[aria-label="Pause"]')!;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      await act(async () => { const target = play(); target.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); target.focus(); target.dispatchEvent(new MouseEvent("pointerup", { bubbles: true })); target.click(); });
+      expect(play().getAttribute("aria-label")).toBe("Pause");
+      await act(async () => { vi.advanceTimersByTime(3000); });
+      await act(async () => { await Promise.resolve(); });
+      expect(byId("video-player")!.dataset.chrome).toBe("hidden");
+      expect(document.activeElement).toBe(byId("video-player"));
+      await act(async () => { pressSpace(); });
+      expect(play().getAttribute("aria-label")).toBe("Play");
+      expect(screenRoot().contains(document.activeElement)).toBe(true);
+    } finally { vi.useRealTimers(); undoFixup(); }
   });
 });
 

@@ -10,6 +10,7 @@ import { resetUiPrefMemory } from "../../lib/ui-prefs";
 import { mockViewport, type MockViewport } from "../../testing/viewport";
 import { createNoteFormStore } from "../../lib/video-note-form-store";
 import { minHeightFloors } from "../../testing/min-height-floor";
+import { installInertFocusFixup, pressSpace } from "../../testing/inert-focus-fixup";
 import { VideoReviewViewer } from "./VideoReviewViewer";
 vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 
@@ -275,6 +276,54 @@ describe("auto-hide in the staff viewer's Full screen (#880 fix round 2)", () =>
       await act(async () => { vi.advanceTimersByTime(100); });
       expect(tid("video-player")!.dataset.chrome).toBe("hidden");
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("the focus never leaves the viewer when Full screen's controls hide (#880, desktop pass at 4c6f8703)", () => {
+  // Chromium drops the focus to <body> when the control holding it goes inert; the dialog's keys never see <body>, so Space did nothing.
+  let undoFixup: () => void = () => undefined;
+  beforeEach(() => { viewport = mockViewport({ width: 1200, height: 800, coarse: false }); undoFixup = installInertFocusFixup(); });
+  afterEach(() => { undoFixup(); vi.useRealTimers(); });
+  const playButton = () => tid("video-immersive-dock")!.querySelector<HTMLButtonElement>('button[aria-label="Play"], button[aria-label="Pause"]')!;
+  const press = async (element: HTMLElement) => { await act(async () => { element.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); element.focus(); element.dispatchEvent(new MouseEvent("pointerup", { bubbles: true })); element.click(); }); };
+  const space = async () => { await act(async () => { pressSpace(); }); };
+
+  it("the transport's Play pressed, the controls hide 3s in: the focus moves to the player, and Space pauses and plays again", async () => {
+    await mount();
+    await click(tid("video-fullscreen")!);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await press(playButton());
+    expect(playButton().getAttribute("aria-label")).toBe("Pause");
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    await act(async () => { await Promise.resolve(); });
+    expect(tid("video-player")!.dataset.chrome).toBe("hidden");
+    expect(document.activeElement).toBe(tid("video-player"));
+    await space();
+    expect(playButton().getAttribute("aria-label")).toBe("Play");
+    expect(dialog().contains(document.activeElement)).toBe(true);
+    await space();
+    expect(playButton().getAttribute("aria-label")).toBe("Pause");
+    expect(dialog().contains(document.activeElement)).toBe(true);
+  });
+  it("Space on the focused Pause, then on the Play it becomes, toggles each time and the focus stays in the viewer", async () => {
+    await mount();
+    await click(tid("video-fullscreen")!);
+    await press(playButton());
+    await space();
+    expect(playButton().getAttribute("aria-label")).toBe("Play");
+    expect(dialog().contains(document.activeElement)).toBe(true);
+    await space();
+    expect(playButton().getAttribute("aria-label")).toBe("Pause");
+    expect(dialog().contains(document.activeElement)).toBe(true);
+  });
+  it("the centre Play, which goes once playing, leaves the focus on the player", async () => {
+    await mount();
+    await click(tid("video-fullscreen")!);
+    await press(tid("video-play-badge")!);
+    expect(tid("video-play-badge")).toBeNull();
+    expect(document.activeElement).toBe(tid("video-player"));
+    await space();
+    expect(playButton().getAttribute("aria-label")).toBe("Play");
   });
 });
 

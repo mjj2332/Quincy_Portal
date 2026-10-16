@@ -232,12 +232,20 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const wake = useCallback(() => { setChromeShown(true); setActivity((count) => count + 1); }, []);
   const wakeRef = useRef(wake);
   wakeRef.current = wake;
+  // A control that goes inert, or unmounts, while it has the focus drops it to <body> (Chromium's focus fixup), outside the dialog and its keys: Space then does nothing (#880).
+  // So the focus is parked on the player itself, which the host's keys already serve, first. A keyboard focus in the controls holds them, so this is a pointer's focus.
+  const parkFocus = useCallback(() => {
+    const section = playerRef.current;
+    const active = document.activeElement;
+    if (section && active instanceof Element && active !== section && section.contains(active) && active.closest("[data-immersive-chrome]")) section.focus({ preventScroll: true });
+  }, []);
+  const hideChrome = useCallback(() => { parkFocus(); setChromeShown(false); }, [parkFocus]);
   // Hide 3s after playback starts, unless something holds the controls (D13). Any activity starts the count again.
   useEffect(() => {
     if (!imm || !chromeShown || held) return undefined;
-    const timer = setTimeout(() => { setChromeShown(false); }, CHROME_HIDE_MS);
+    const timer = setTimeout(hideChrome, CHROME_HIDE_MS);
     return () => { clearTimeout(timer); };
-  }, [imm, chromeShown, held, activity]);
+  }, [imm, chromeShown, held, activity, hideChrome]);
   // Whatever needs the controls brings them back: pausing, a card, the composer, the pen.
   useEffect(() => { if (imm && (paused || cardOpen || composing || drawing)) setChromeShown(true); }, [imm, paused, cardOpen, composing, drawing]);
   // Focus holds the controls only when a key moved it (#880 fix round 1). `:focus-visible` cannot say so on iOS: WebKit marks a scripted focus() visible unless the last focus
@@ -321,7 +329,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const FADE = "motion-safe:transition-opacity motion-safe:duration-[var(--dur-base)] motion-safe:ease-[var(--ease-entrance)]";
   // In Full screen (#880) the badge is F1's centre Play, on every width, and it fades with the rest of the controls.
   const badge = (handheld || imm) && !clock.playing && !hidesTransport && !transportLocked && transportReplacement == null
-    ? <Button type="button" variant="ghost" size="icon" tabIndex={-1} aria-hidden="true" data-testid="video-play-badge" inert={!chromeVisible} className={cn(PLAY_BADGE, imm && FADE, imm && fade)} onClick={() => { clock.play(); }}><Play aria-hidden="true" className="size-6" /></Button>
+    ? <Button type="button" variant="ghost" size="icon" tabIndex={-1} aria-hidden="true" data-testid="video-play-badge" data-immersive-chrome="" inert={!chromeVisible} className={cn(PLAY_BADGE, imm && FADE, imm && fade)} onClick={() => { parkFocus(); clock.play(); }}><Play aria-hidden="true" className="size-6" /></Button>
     : null;
   // The press target for Full screen: the host's mode, else the browser's element full screen where it has one (Compare and every other host).
   const fullscreenButton = immersive && !imm
@@ -342,7 +350,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     ? cn("absolute inset-x-0 bottom-0 z-10 flex flex-col gap-[var(--space-2)] bg-[image:var(--scrim-chrome)] pr-[max(var(--space-3),env(safe-area-inset-right))] pl-[max(var(--space-3),env(safe-area-inset-left))]", sideways ? SIDEWAYS_DOCK_BOTTOM : "pb-[max(var(--space-2),env(safe-area-inset-bottom))]", composing ? COMPOSING_SCRIM : "pt-[var(--space-6)]", FADE, fade)
     : "contents";
   const transportClass = imm ? "flex flex-col gap-[var(--space-2)]" : "flex flex-col gap-[var(--space-3)] max-[721px]:gap-0 max-[721px]:px-[var(--space-3)] max-[721px]:pb-[var(--space-1)]";
-  const dockProps = imm ? { "data-testid": "video-immersive-dock", inert: !chromeVisible } : { "data-testid": "video-transport-dock" };
+  const dockProps = imm ? { "data-testid": "video-immersive-dock", "data-immersive-chrome": "", inert: !chromeVisible } : { "data-testid": "video-transport-dock" };
   const dockRef = useRef<HTMLDivElement | null>(null);
   // The composer floats a space above the scrubber, inside the scrim (F1): publish the controls' height without the scrim's top padding on the split row (the pane is the
   // player's sibling, not its child). The scrim's padding grows by the composer's height while it shows, so this stays the controls' own.
@@ -385,20 +393,20 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
       // A tap on the film shows or hides the controls and never plays or pauses (D13). Taps on the controls (the play badge among them) are theirs, and the pen and the composer keep the controls up.
       const target = event.target as Element;
       if (!target.closest('[data-testid="video-stage"]') || target.closest('[data-testid="video-play-badge"]') || composing || drawing) return;
-      setChromeShown((shown) => !shown);
+      if (chromeShown) hideChrome(); else setChromeShown(true);
       setActivity((count) => count + 1);
     } : undefined}
     className={cn("group/player @container flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] max-[721px]:gap-0 focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", imm && "relative flex-1 gap-0 bg-invert", className)}
   >
     <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} badge={badge} chip={!imm} {...(social ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})} />
 
-    {imm && immersive && <div data-testid="video-immersive-bar" inert={!chromeVisible} className={cn("absolute inset-x-0 top-0 z-10 flex items-center gap-[var(--space-2)] bg-[image:var(--scrim-chrome-top)] pt-[max(var(--space-2),env(safe-area-inset-top))] pr-[max(var(--space-3),env(safe-area-inset-right))] pb-[var(--space-5)] pl-[max(var(--space-3),env(safe-area-inset-left))] text-invert-foreground", FADE, fade)}>
+    {imm && immersive && <div data-testid="video-immersive-bar" data-immersive-chrome="" inert={!chromeVisible} className={cn("absolute inset-x-0 top-0 z-10 flex items-center gap-[var(--space-2)] bg-[image:var(--scrim-chrome-top)] pt-[max(var(--space-2),env(safe-area-inset-top))] pr-[max(var(--space-3),env(safe-area-inset-right))] pb-[var(--space-5)] pl-[max(var(--space-3),env(safe-area-inset-left))] text-invert-foreground", FADE, fade)}>
       <IconTip label="Exit full screen">
         <Button type="button" variant="ghost" size="icon" aria-label="Exit full screen" data-testid="video-exit-fullscreen" className={cn("size-8 shrink-0", COARSE)} onClick={immersive.onToggle}><Minimize aria-hidden="true" /></Button>
       </IconTip>
       <span data-testid="video-immersive-title" title={immersive.heading} className="min-w-0 flex-1 truncate [font:var(--type-body)]">{immersive.heading}</span>
     </div>}
-    {imm && immersive?.card != null && <div data-testid="video-immersive-card" inert={!chromeVisible} className={cn("pointer-events-none absolute inset-x-[var(--space-3)] top-[var(--space-7)] z-10 flex justify-center", FADE, fade)}><div className="pointer-events-auto w-full max-w-[var(--note-card-width)]">{immersive.card}</div></div>}
+    {imm && immersive?.card != null && <div data-testid="video-immersive-card" data-immersive-chrome="" inert={!chromeVisible} className={cn("pointer-events-none absolute inset-x-[var(--space-3)] top-[var(--space-7)] z-10 flex justify-center", FADE, fade)}><div className="pointer-events-auto w-full max-w-[var(--note-card-width)]">{immersive.card}</div></div>}
     {promptText !== null && <Notice tone="caution" role="status" data-testid="video-immersive-prompt" className={cn("bg-card", noticeClass)}>{promptText}</Notice>}
     {nativeFailed && <Notice tone="caution" role="alert" data-testid="video-native-failed" className={cn("bg-card", noticeClass)}>The system player couldn't open this film on this device.</Notice>}
 
