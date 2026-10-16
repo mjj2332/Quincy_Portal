@@ -110,7 +110,7 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
     landedNote.current = key;
     // A note resolved or made internal since the link was sent is hidden by the default filters; open them so the thread the link names is listed to be selected and scrolled to.
     const target = threads.find((thread) => thread.id === openNoteId)!;
-    if (!visibleThreads([target], filters).length) setFilters({ status: "all", visibility: "all" });
+    if (!visibleThreads([target], filters).length) setFilters({ status: "all", visibility: "all", author: null, query: null });
     onMarkerSelect(openNoteId!);
   }, [openNoteId, assetId, clock, threads, filters, onMarkerSelect]);
 
