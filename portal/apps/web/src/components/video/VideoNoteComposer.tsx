@@ -119,7 +119,12 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   useEffect(() => { if (phone && !composing && composer.body === "" && composer.anchorFrame !== null) store.stamp(assetId, null); }, [phone, composing, composer.body, composer.anchorFrame, store, assetId]);
   useEffect(() => { if (!phone && slot.extras) store.setExtras(assetId, false); }, [phone, slot.extras, store, assetId]);
 
-  const cancel = () => { store.discardComposer(assetId); setEditorKey((k) => k + 1); const active = document.activeElement; if (active instanceof HTMLElement && active !== document.body) active.blur(); };
+  // Cancel discards and ends compose: in the sheet its blur does that; in a phone's Full screen the screen's close does (it puts the focus on Add note, as the toggle does).
+  const cancel = () => {
+    store.discardComposer(assetId); setEditorKey((k) => k + 1);
+    if (sheet?.onCancel) { sheet.onCancel(); return; }
+    const active = document.activeElement; if (active instanceof HTMLElement && active !== document.body) active.blur();
+  };
   const frameStep = (delta: number) => {
     if (!clock) return;
     const target = Math.min(Math.max(0, frameOnScreen(clock.getState()) + delta), Math.max(0, frameCount - 1));

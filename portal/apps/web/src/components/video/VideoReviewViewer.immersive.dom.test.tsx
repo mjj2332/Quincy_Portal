@@ -243,6 +243,27 @@ describe("Add note in a phone's Full screen (#880 S4, owner decision 1)", () => 
   });
 });
 
+describe("Cancel in a phone's Full screen composer (#880 fix round 1, item 2)", () => {
+  beforeEach(() => { viewport = mockViewport({ width: 390, height: 844, coarse: true }); });
+  it("discards the draft and closes the composer, as the Add note toggle does, with the keyboard up or down; the stamp goes back", async () => {
+    await mount();
+    await click(tid("video-fullscreen")!);
+    for (const keyboardUp of [true, false]) {
+      await click(tid("video-immersive-add-note")!);
+      await act(async () => { forms.setBody(ids.asset2, "Lift the shadows", 0); });
+      // The keyboard going away blurs the field and leaves the composer shown (S1).
+      if (!keyboardUp) { await act(async () => { (document.activeElement as HTMLElement).blur(); }); await flush(2); }
+      expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+      await click(tid("video-note-cancel")!);
+      expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+      expect(forms.slot(ids.asset2).composer.body).toBe("");
+      expect(forms.slot(ids.asset2).composer.anchorFrame).toBeNull();
+      expect(tid("video-immersive-add-note")!.getAttribute("aria-pressed")).toBe("false");
+      expect(document.activeElement).toBe(tid("video-immersive-add-note"));
+    }
+  });
+});
+
 describe("the keyboard in Full screen on a phone device (#880 S1)", () => {
   class FakeViewport extends EventTarget { height = window.innerHeight; offsetTop = 0; scale = 1; }
   let fake: FakeViewport; let original: PropertyDescriptor | undefined;

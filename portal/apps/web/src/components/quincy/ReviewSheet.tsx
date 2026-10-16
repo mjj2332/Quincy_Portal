@@ -68,7 +68,12 @@ export function useReviewSheet({ drawing, filmAspect, label = "Notes" }: { drawi
 const NO_HOLDS: ReadonlySet<string> = new Set();
 
 /** What the phone composer reads of the sheet it sits in: the mode, and its own holds. Absent (null) outside a phone sheet: the composer is the desktop form. */
-export type SheetModeValue = { mode: SheetMode; setHold: (reason: string, on: boolean) => void };
+export type SheetModeValue = {
+  mode: SheetMode; setHold: (reason: string, on: boolean) => void;
+  /** A phone's Full screen compose only (#880 fix round 1): the screen's close for the floating composer, the Add note toggle's own. Cancel calls it after discarding, since a blur
+   *  there leaves the composer shown (the keyboard going away blurs the field too). Absent in the sheet, where Cancel's blur ends compose mode. */
+  onCancel?: () => void;
+};
 export const SheetModeContext = createContext<SheetModeValue | null>(null);
 
 export const SHEET_COLLAPSED_MIN = 127;

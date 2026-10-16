@@ -1,6 +1,6 @@
 import { flushSync } from "react-dom";
 import { FloatingFocusManager, useFloating } from "@floating-ui/react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { Check, ChevronLeft, ChevronRight, Copy, DownloadIcon, FolderDown, Maximize, MessageSquareWarning, Smartphone } from "lucide-react";
 import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto } from "@quincy/shared";
 import { rotate, readPhoneDevice, type ImmersiveState } from "../lib/immersive";
@@ -372,8 +372,6 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   } : {};
   // A draft belongs to the Version it was made on; an archived Project takes it away.
   const { close: closeComposer, editingId } = compose;
-  // Leaving Full screen, a Version change or a finished/cancelled draft puts the floating composer and the card away.
-  useEffect(() => { if (!imm || !compose.isOpen) setComposeShown(false); }, [imm, compose.isOpen]);
   // Back in the sheet (#880 S5), compose mode follows where the focus really is: in Full screen nothing reported the field's blur (the sheet's blur check is off there).
   const syncComposing = sheetControl.onComposing;
   useEffect(() => { if (!imm && phone) syncComposing(isComposerField(document.activeElement)); }, [imm, phone, syncComposing]);
@@ -381,6 +379,15 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   useEffect(() => { setCardId(null); }, [version.assetId, video.id]);
   /** Put the floating composer away (the draft stays) with focus already on Add note: lesson P3, focus moves before the pane holding it is hidden. */
   const hideComposer = useCallback(() => { document.querySelector<HTMLElement>('[data-testid="video-immersive-add-note"]')?.focus({ preventScroll: true }); setComposeShown(false); }, []);
+  // Leaving Full screen, a Version change or a finished/cancelled draft puts the floating composer away. A draft that closes in Full screen (Cancel, a post) hands the focus to
+  // Add note before the pane hides, as the toggle does (#880 fix round 1, item 2; lesson P3): left in the closing pane it would fall to the page.
+  useLayoutEffect(() => {
+    if (!composeShown || (imm && compose.isOpen)) return;
+    if (!imm) { setComposeShown(false); return; }
+    const active = document.activeElement;
+    const pane = rootRef.current?.querySelector('[data-testid="video-review-pane"]');
+    if (active === null || active === document.body || (pane?.contains(active) ?? false)) hideComposer(); else setComposeShown(false);
+  }, [imm, compose.isOpen, composeShown, hideComposer]);
   useEffect(() => { closeComposer(); }, [version.assetId, closeComposer]);
   useEffect(() => { if (archived) closeComposer(); }, [archived, closeComposer]);
   // A paste belongs to the Version it was made for.

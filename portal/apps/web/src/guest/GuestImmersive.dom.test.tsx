@@ -191,6 +191,21 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     expect(document.activeElement).toBe(byId("video-fullscreen"));
   });
 
+  it("Cancel discards the draft and closes the composer, as the Add note toggle does (#880 fix round 1, item 2)", async () => {
+    await open();
+    await click(byId("video-fullscreen"));
+    await click(byId("video-immersive-add-note"));
+    await typeInto(byId("guest-composer-body"), "Trim the opening");
+    expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    // A desktop click focuses the button first (a phone's Cancel keeps the field's focus instead).
+    if (!size.coarse) await act(async () => { byId("guest-composer-cancel")!.focus(); });
+    await click(byId("guest-composer-cancel"));
+    expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+    expect(document.activeElement).toBe(byId("video-immersive-add-note"));
+    await click(byId("video-immersive-add-note"));
+    expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("");
+  });
+
   it("Tab is held inside the layer: the focus manager's guards exist only while in Full screen, and the page's header is inert", async () => {
     await open();
     expect(document.querySelector("[data-floating-ui-focus-guard]")).toBeNull();

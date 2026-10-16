@@ -68,7 +68,7 @@ export function useReviewPane(phone: boolean) {
 const STEP = 16;
 const STEP_BIG = 64;
 
-export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarrow, paneId, handleLabel, stacked, sheet, immersive = "off", rowClassName, playerClassName }: {
+export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarrow, paneId, handleLabel, stacked, sheet, immersive = "off", onImmersiveCancel, rowClassName, playerClassName }: {
   player: ReactNode;
   /** The slim column that stands in for a collapsed pane (`useReviewPaneControls().strip`); the row's last child while the pane is hidden on a wide screen. */
   strip?: ReactNode;
@@ -90,6 +90,8 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
    * controls with only the composer showing while a note is written. Nothing is reparented, so the film's clock and the editor are the same nodes throughout.
    */
   immersive?: "off" | "watch" | "compose";
+  /** Closes the Full screen composer (the screen's Add note close): a phone strip's Cancel calls it there (#880 fix round 1). */
+  onImmersiveCancel?: () => void;
   rowClassName?: string;
   playerClassName?: string;
 }) {
@@ -180,7 +182,8 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
   // (the + tray, a post) are the sheet's, and its give-back of an untouched stamp cannot run while it is shown. Watch, and a desktop width's Full screen, provide none.
   const sheetMode = phoneSheet ? sheet.mode : full && immersive === "compose" && stacked && sheet !== undefined ? (sheet.mode === "draw" ? "draw" : "compose") : null;
   const setHold = sheet?.setHold;
-  const modeValue = useMemo<SheetModeValue | null>(() => (sheetMode !== null && setHold ? { mode: sheetMode, setHold } : null), [sheetMode, setHold]);
+  const cancelCompose = full && !phoneSheet ? onImmersiveCancel : undefined;
+  const modeValue = useMemo<SheetModeValue | null>(() => (sheetMode !== null && setHold ? { mode: sheetMode, setHold, ...(cancelCompose ? { onCancel: cancelCompose } : {}) } : null), [sheetMode, setHold, cancelCompose]);
   const onComposing = sheet?.onComposing;
   // Leaving the field ends compose mode unless the focus went somewhere inside the composer (its tray, Send, Cancel). iOS often reports no `relatedTarget` even then,
   // so with none the check waits a frame and looks at where the focus actually is. Ending it never touches the draft: the composer and its editor stay mounted.

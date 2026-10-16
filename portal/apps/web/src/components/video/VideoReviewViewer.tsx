@@ -636,6 +636,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       handleLabel="Resize notes"
       stacked={phone}
       immersive={imm ? (composeOpen ? "compose" : "watch") : "off"}
+      onImmersiveCancel={closeCompose}
       {...(phone ? { sheet: { ...sheetControl, mode: slots?.drawing ? "draw" as const : sheetControl.mode } } : {})}
       {...(phone ? {} : { rowClassName: "overflow-y-auto", playerClassName: "overflow-y-auto" })}
       player={<>
