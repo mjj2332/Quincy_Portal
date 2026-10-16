@@ -78,7 +78,10 @@ export function useImmersive({ rootRef, state, setState }: { rootRef: RefObject<
     } else if (was !== null && state === null) {
       const back = recorded.current;
       recorded.current = null;
-      const target = back instanceof HTMLElement && back.isConnected && back !== document.body && back !== root ? back : root?.querySelector<HTMLElement>('[data-testid="video-fullscreen"]') ?? null;
+      // A field recorded at the way in (a turn made while typing) gets the focus back only if it still has it (#880 S5): one the person left in Full screen is not refocused,
+      // since iOS would not raise the keyboard for a focus outside a gesture and the sheet would sit in compose mode with none.
+      const leftField = back instanceof Element && back.matches(EDITABLE) && document.activeElement !== back;
+      const target = back instanceof HTMLElement && back.isConnected && back !== document.body && back !== root && !leftField ? back : root?.querySelector<HTMLElement>('[data-testid="video-fullscreen"]') ?? null;
       target?.focus({ preventScroll: true });
     }
   }, [state, rootRef]);

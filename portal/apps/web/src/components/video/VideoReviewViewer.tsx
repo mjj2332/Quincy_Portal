@@ -24,7 +24,7 @@ import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
 import { ReviewPaneHideContext, ReviewSplit, useReviewPane, useReviewPaneControls } from "../quincy/ReviewPane";
-import { blurComposerField, useReviewSheet } from "../quincy/ReviewSheet";
+import { blurComposerField, isComposerField, useReviewSheet } from "../quincy/ReviewSheet";
 import { useVisualViewport } from "../../lib/use-visual-viewport";
 import { useInkCanvas } from "../../lib/use-ink-canvas";
 import type { SheetStop } from "../../lib/review-pane-geometry";
@@ -150,7 +150,16 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const [immersive, setImmersive] = useState<ImmersiveState>(() => rotate(null, { landscape: readLandscape(), phoneDevice: readPhoneDevice() }));
   const [composeOpen, setComposeOpen] = useState(false);
   const [cardId, setCardId] = useState<string | null>(null);
-  useDeviceOrientation((landscape) => { setImmersive((current) => rotate(current, { landscape, phoneDevice: readPhoneDevice() })); });
+  useDeviceOrientation((landscape) => {
+    const phoneDevice = readPhoneDevice();
+    // A turn that enters Full screen carries the sheet's mode in (#880 S5): mid-compose the composer floats in the same commit (the same editor node keeps the focus and the
+    // keyboard); mid-search the field is left and search mode ends (the query stays). Read at the turn, from this render's state.
+    if (immersive === null && modeRef.current === "single" && rotate(null, { landscape, phoneDevice }) !== null) {
+      if (sheetControl.composing) setComposeOpen(true);
+      else if (sheetControl.searching) { blurNotesSearchField(); sheetControl.onSearching(false); }
+    }
+    setImmersive((current) => rotate(current, { landscape, phoneDevice }));
+  });
   // The side pane (#859): open / width are a per-browser preference shared with the guest page. `sideTab` picks Notes (or Details) or Delivery inside it.
   const pane = useReviewPane(phone);
   const paneId = useId();
@@ -199,6 +208,9 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   cardRef.current = cardId;
   // Leaving Full screen (or Compare, or a Version change) puts the card and the floating composer away.
   useEffect(() => { if (!imm) { setComposeOpen(false); setCardId(null); } }, [imm]);
+  // Back in the sheet (#880 S5), compose mode follows where the focus really is: in Full screen nothing reported the field's blur (the sheet's blur check is off there).
+  const syncComposing = sheetControl.onComposing;
+  useEffect(() => { if (!imm && phone) syncComposing(isComposerField(document.activeElement)); }, [imm, phone, syncComposing]);
   useEffect(() => { setCardId(null); }, [assetId]);
   const closeCard = useCallback(() => { setCardId(null); }, []);
   /** Put the floating composer away with focus already on Add note (lesson P3: move focus before the pane that holds it is hidden). */

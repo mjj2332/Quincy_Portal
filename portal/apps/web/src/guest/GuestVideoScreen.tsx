@@ -23,7 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Tabs, TabsList, TabsTrigger } from "../components/reui/tabs";
 import { ReviewPhoneBar, VersionChip } from "../components/quincy/ReviewPhoneBar";
 import { ActionRow, ActionSeparator, ReviewActionSheet } from "../components/quincy/ReviewActionSheet";
-import { blurComposerField, useReviewSheet } from "../components/quincy/ReviewSheet";
+import { blurComposerField, isComposerField, useReviewSheet } from "../components/quincy/ReviewSheet";
 import { PHONE_QUERY } from "../lib/review-pane-geometry";
 import { useVisualViewport } from "../lib/use-visual-viewport";
 import { useInkCanvas } from "../lib/use-ink-canvas";
@@ -155,7 +155,16 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const [immersive, setImmersive] = useState<ImmersiveState>(() => rotate(null, { landscape: readLandscape(), phoneDevice: readPhoneDevice() }));
   const [composeShown, setComposeShown] = useState(false);
   const [cardId, setCardId] = useState<string | null>(null);
-  useDeviceOrientation((landscape) => { setImmersive((current) => rotate(current, { landscape, phoneDevice: readPhoneDevice() })); });
+  useDeviceOrientation((landscape) => {
+    const phoneDevice = readPhoneDevice();
+    // A turn that enters Full screen carries the sheet's mode in (#880 S5): mid-compose the composer floats in the same commit (the same editor node keeps the focus and the
+    // keyboard); mid-search the field is left and search mode ends (the query stays). Read at the turn, from this render's state.
+    if (immersive === null && rotate(null, { landscape, phoneDevice }) !== null) {
+      if (sheetControl.composing) setComposeShown(true);
+      else if (sheetControl.searching) { blurNotesSearchField(); sheetControl.onSearching(false); }
+    }
+    setImmersive((current) => rotate(current, { landscape, phoneDevice }));
+  });
   const full = useImmersive({ rootRef, state: immersive, setState: setImmersive });
   const imm = immersive !== null;
   // The phone's handling (#880 S1): a phone width, or a phone device in Full screen. A sideways iPhone is 844pt wide, so `phone` is off, yet its keyboard still pans the
@@ -365,6 +374,9 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const { close: closeComposer, editingId } = compose;
   // Leaving Full screen, a Version change or a finished/cancelled draft puts the floating composer and the card away.
   useEffect(() => { if (!imm || !compose.isOpen) setComposeShown(false); }, [imm, compose.isOpen]);
+  // Back in the sheet (#880 S5), compose mode follows where the focus really is: in Full screen nothing reported the field's blur (the sheet's blur check is off there).
+  const syncComposing = sheetControl.onComposing;
+  useEffect(() => { if (!imm && phone) syncComposing(isComposerField(document.activeElement)); }, [imm, phone, syncComposing]);
   useEffect(() => { if (!imm) setCardId(null); }, [imm]);
   useEffect(() => { setCardId(null); }, [version.assetId, video.id]);
   /** Put the floating composer away (the draft stays) with focus already on Add note: lesson P3, focus moves before the pane holding it is hidden. */

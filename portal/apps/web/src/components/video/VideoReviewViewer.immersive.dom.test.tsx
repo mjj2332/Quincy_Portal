@@ -282,6 +282,76 @@ describe("the keyboard in Full screen on a phone device (#880 S1)", () => {
   });
 });
 
+describe("entering Full screen from the sheet's modes (#880 S5)", () => {
+  beforeEach(() => { viewport = mockViewport({ width: 390, height: 844, coarse: true }); });
+  const field = () => document.getElementById("video-note-body")!;
+  it("a turn mid-compose enters Full screen's compose with the same editor node, still focused", async () => {
+    await mount();
+    const editor = field();
+    await act(async () => { editor.focus(); });
+    await flush(2);
+    expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("compose");
+    await viewport.set({ width: 844, height: 390 });
+    await flush(2);
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(true);
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    expect(field()).toBe(editor);
+    expect(document.activeElement).toBe(editor);
+  });
+  it("turning back with the field left in Full screen gives the sheet browse, not a stale compose", async () => {
+    await mount();
+    await act(async () => { field().focus(); });
+    await flush(2);
+    await viewport.set({ width: 844, height: 390 });
+    await act(async () => { field().blur(); });
+    await viewport.set({ width: 390, height: 844 });
+    await flush(2);
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(false);
+    expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+  });
+  const openSearch = async (text: string) => {
+    await click(tid("notes-filter-search")!);
+    const search = tid("notes-search-field") as HTMLInputElement;
+    await act(async () => { search.focus(); });
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, text); search.dispatchEvent(new Event("input", { bubbles: true })); });
+    await flush(2);
+    return search;
+  };
+  it("a turn mid-search leaves the search field and search mode; sideways is not the phone layout, so main's rule (#879 PR 3b) drops the phone-only search", async () => {
+    await mount();
+    const search = await openSearch("shadows");
+    expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("search");
+    await viewport.set({ width: 844, height: 390 });
+    await flush(2);
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(true);
+    expect(document.activeElement).not.toBe(search);
+    await viewport.set({ width: 390, height: 844 });
+    await flush(2);
+    expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+    expect(tid("notes-search-field")).toBeNull();
+  });
+  it("the Full screen button mid-search keeps the query: the phone layout never went", async () => {
+    await mount();
+    await openSearch("shadows");
+    await click(tid("video-fullscreen")!);
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(true);
+    await click(tid("video-exit-fullscreen")!);
+    expect(tid("video-review-pane")!.getAttribute("data-mode")).not.toBe("compose");
+    expect((tid("notes-search-field") as HTMLInputElement).value).toBe("shadows");
+  });
+  it("a marker press in Full screen never moves the sheet's stop (D19)", async () => {
+    await mount();
+    await act(async () => { tid("review-sheet-grabber")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true })); });
+    await flush(2);
+    expect(tid("video-review-pane")!.getAttribute("data-stop")).toBe("collapsed");
+    await click(tid("video-fullscreen")!);
+    await tapMarker();
+    expect(tid("review-note-card")).not.toBeNull();
+    await click(tid("video-exit-fullscreen")!);
+    expect(tid("video-review-pane")!.getAttribute("data-stop")).toBe("collapsed");
+  });
+});
+
 describe("the system player row (#880, D15)", () => {
   it("the phone action sheet labels the row by device and hands the film to webkitEnterFullscreen inside the press", async () => {
     viewport = mockViewport({ width: 390, height: 844, coarse: true });

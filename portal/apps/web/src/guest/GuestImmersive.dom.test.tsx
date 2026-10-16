@@ -265,6 +265,33 @@ describe("the guest page's Full screen and rotation (#880, D14)", () => {
     await viewport.set({ width: 390, height: 844 });
     expect(immersiveOn()).toBe(true);
   });
+  it("a turn mid-compose enters Full screen's compose, the draft carried (#880 S5); the field is the desktop form's, main's second composer, so it is a new node", async () => {
+    notes = { [asset(10)]: [note(1)] };
+    await open();
+    const strip = byId("video-review-pane")!.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => { strip.focus(); });
+    await typeInto(strip, "Brighter sky");
+    await flush(2);
+    expect(byId("video-review-pane")!.getAttribute("data-mode")).toBe("compose");
+    await viewport.set({ width: 844, height: 390 });
+    await flush(2);
+    expect(immersiveOn()).toBe(true);
+    expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    expect(byId("guest-composer")).not.toBeNull();
+    expect((byId("video-review-pane")!.querySelector<HTMLTextAreaElement>('[data-testid="guest-composer-body"]'))!.value).toBe("Brighter sky");
+  });
+  it("turning back with the field left in Full screen gives the sheet browse, not a stale compose (#880 S5)", async () => {
+    notes = { [asset(10)]: [note(1)] };
+    await open();
+    await act(async () => { byId("video-review-pane")!.querySelector<HTMLTextAreaElement>("textarea")!.focus(); });
+    await flush(2);
+    await viewport.set({ width: 844, height: 390 });
+    await act(async () => { (document.activeElement as HTMLElement).blur(); });
+    await viewport.set({ width: 390, height: 844 });
+    await flush(2);
+    expect(immersiveOn()).toBe(false);
+    expect(byId("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+  });
   it("the action sheet labels the row by device and hands the film to webkitEnterFullscreen", async () => {
     vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)");
     await open();

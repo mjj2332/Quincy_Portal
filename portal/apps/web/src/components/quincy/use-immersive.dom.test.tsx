@@ -109,6 +109,20 @@ describe("useImmersive (#880, D12)", () => {
     expect(document.activeElement).toBe(q("field"));
   });
 
+  it("a field left in Full screen is not given the focus back on the way out (#880 S5); one still typing in keeps it", async () => {
+    await mount();
+    q("field")!.focus();
+    await act(async () => { setExternal("turn"); });
+    await act(async () => { q("field")!.blur(); });
+    await act(async () => { setExternal(null); });
+    expect(document.activeElement).not.toBe(q("field"));
+    expect(document.activeElement).toBe(q("video-fullscreen"));
+    q("field")!.focus();
+    await act(async () => { setExternal("turn"); });
+    await act(async () => { setExternal(null); });
+    expect(document.activeElement).toBe(q("field"));
+  });
+
   it("the page's full screen is released if the screen goes away while it holds it", async () => {
     await mount();
     await press("video-fullscreen");
