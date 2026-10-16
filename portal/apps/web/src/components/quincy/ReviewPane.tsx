@@ -176,7 +176,9 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
   useSheetTextRoom(phoneSheet && sheet.mode === "compose", rowRef, paneRef);
   const sheetStyle = phoneSheet && sheetPane.height !== undefined ? { height: sheetPane.height } : undefined;
   // The composer reads the mode from here (#879 fix): one source for the sheet's layout and the composer's. Always provided (null off the phone sheet), so the pane's subtree never changes shape across the 721px crossing.
-  const sheetMode = phoneSheet ? sheet.mode : null;
+  // A phone's Full screen compose (#880 S4, owner decision 1) is the sheet's compose mode too (draw while the pen is down): the composer is P6's compose strip, its holds
+  // (the + tray, a post) are the sheet's, and its give-back of an untouched stamp cannot run while it is shown. Watch, and a desktop width's Full screen, provide none.
+  const sheetMode = phoneSheet ? sheet.mode : full && immersive === "compose" && stacked && sheet !== undefined ? (sheet.mode === "draw" ? "draw" : "compose") : null;
   const setHold = sheet?.setHold;
   const modeValue = useMemo<SheetModeValue | null>(() => (sheetMode !== null && setHold ? { mode: sheetMode, setHold } : null), [sheetMode, setHold]);
   const onComposing = sheet?.onComposing;

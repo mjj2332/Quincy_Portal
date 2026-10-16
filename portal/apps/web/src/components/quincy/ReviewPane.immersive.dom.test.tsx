@@ -5,7 +5,8 @@ import { installLocalStorageShim } from "../../testing/local-storage";
 import { resetUiPrefMemory } from "../../lib/ui-prefs";
 import "../../testing/dom-polyfills";
 import { ReviewSplit } from "./ReviewPane";
-import { useReviewSheet } from "./ReviewSheet";
+import { useContext } from "react";
+import { SheetModeContext, useReviewSheet } from "./ReviewSheet";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,8 +16,10 @@ beforeEach(() => { shim = installLocalStorageShim(); resetUiPrefMemory(); host =
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; shim.restore(); document.body.replaceChildren(); });
 
 type Mode = "off" | "watch" | "compose";
-function Harness({ immersive, stacked, open = true }: { immersive?: Mode; stacked: boolean; open?: boolean }) {
-  const sheet = useReviewSheet({ drawing: false, filmAspect: 16 / 9 });
+/** What the composer reads of the sheet (#880 S4): the mode it is given, or "none" off a phone sheet. */
+function ModeProbe() { const value = useContext(SheetModeContext); return <span data-testid="mode-probe" data-mode={value?.mode ?? "none"} />; }
+function Harness({ immersive, stacked, open = true, drawing = false }: { immersive?: Mode; stacked: boolean; open?: boolean; drawing?: boolean }) {
+  const sheet = useReviewSheet({ drawing, filmAspect: 16 / 9 });
   return <ReviewSplit
     open={open} width={360} onWidth={() => undefined} onNarrow={() => undefined} paneId="pane" handleLabel="Resize notes" stacked={stacked} {...(stacked ? { sheet } : {})} {...(immersive ? { immersive } : {})}
     strip={<div data-testid="video-review-strip" />}
@@ -25,7 +28,7 @@ function Harness({ immersive, stacked, open = true }: { immersive?: Mode; stacke
     pane={<div data-testid="panel">
       <div data-sheet-part="head" data-testid="head">Notes</div>
       <div data-sheet-part="body" data-testid="body">Thread</div>
-      <form data-sheet-part="composer" data-testid="composer"><textarea data-testid="editor" aria-label="Add a note" /></form>
+      <form data-sheet-part="composer" data-testid="composer"><textarea data-testid="editor" aria-label="Add a note" /><ModeProbe /></form>
     </div>}
   />;
 }
@@ -77,5 +80,23 @@ describe.each([["a phone (stacked, with the sheet)", true], ["a desktop width", 
     for (const id of ["head", "body", "composer"]) expect(q(id)!.hasAttribute("inert"), id).toBe(false);
     expect(q("video-review-pane")!.className).not.toContain("absolute");
     expect(q("video-review-split")!.className).toContain("overflow-y-auto");
+  });
+});
+
+describe("ReviewSplit Full screen gives the composer its mode (#880 S4, owner decision 1)", () => {
+  const mode = () => q("mode-probe")!.dataset.mode;
+  it("a phone's Full screen compose is the sheet's compose mode, so the composer is P6's compose strip and keeps its stamp", async () => {
+    await render({ stacked: true, immersive: "compose", open: false });
+    expect(mode()).toBe("compose");
+  });
+  it("with the pen down it is draw", async () => {
+    await render({ stacked: true, immersive: "compose", open: false, drawing: true });
+    expect(mode()).toBe("draw");
+  });
+  it("watch gives none (the composer is hidden at rest), and a desktop width's Full screen keeps the desktop form", async () => {
+    await render({ stacked: true, immersive: "watch", open: false });
+    expect(mode()).toBe("none");
+    await render({ stacked: false, immersive: "compose", open: false });
+    expect(mode()).toBe("none");
   });
 });

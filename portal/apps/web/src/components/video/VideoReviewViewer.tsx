@@ -85,6 +85,8 @@ const BAR_LABEL = "@max-[1400px]:sr-only";
 const noSubscribe = () => () => undefined;
 type EscapeSnapshot = { layer: boolean; form: boolean; compare: boolean; social: boolean; immersive: "card" | "compose" | "leave" | null };
 const NO_ESCAPE: EscapeSnapshot = { layer: false, form: false, compare: false, social: false, immersive: null };
+/** The note editor's typing surface under `#video-note-body`: the rich editor's contenteditable (or a plain field). */
+const NOTE_FIELD = '[contenteditable]:not([contenteditable="false"]), textarea';
 
 export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, reviewLinks, deepLink, reviewStatus, social }: {
   video: VideoDto;
@@ -582,8 +584,9 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       onMarkerSelect: (id: string) => { revealNotes(); slots.playerProps.onMarkerSelect(id); },
       ...(slots.playerProps.onMark ? { onMark: (kind: "in" | "out", frame: number) => { revealNotes(); slots.playerProps.onMark!(kind, frame); } } : {}),
     } : undefined;
-    // Full screen (#880). A marker press in it pauses and shows the root note as a card (the sheet stays where it is: D19); Add note pauses, stamps that frame and floats the composer, focusing the
-    // editor inside the press so a phone's keyboard comes up (the pane is shown in the same commit, by flushSync, because a hidden field cannot take focus).
+    // Full screen (#880). A marker press in it pauses and shows the root note as a card (the sheet stays where it is: D19). Add note pauses and floats the composer (shown by flushSync,
+    // because a hidden field cannot take focus; on a phone it is then the sheet's compose mode, so its give-back cannot eat the stamp: S4), stamps the frame on screen, and focuses
+    // the editor inside the press so a phone's keyboard comes up.
     const cardThread = cardId === null ? undefined : slots?.immersive.threads?.find((thread) => thread.id === cardId);
     const writable = notes !== undefined && !notes.archived && slots !== null && !slots.immersive.readOnly && slots.immersive.clock !== null;
     const toggleAddNote = () => {
@@ -592,10 +595,10 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       if (!clock || !forms) return;
       clock.pause();
       setCardId(null);
-      forms.stamp(assetId, frameOnScreen(clock.getState()));
       flushSync(() => { setComposeOpen(true); });
+      forms.stamp(assetId, frameOnScreen(clock.getState()));
       const field = document.getElementById("video-note-body");
-      (field?.matches("[contenteditable]") ? field : field?.querySelector<HTMLElement>("[contenteditable]"))?.focus({ preventScroll: true });
+      (field?.matches(NOTE_FIELD) ? field : field?.querySelector<HTMLElement>(NOTE_FIELD))?.focus({ preventScroll: true });
     };
     const immersiveHost = {
       on: imm,

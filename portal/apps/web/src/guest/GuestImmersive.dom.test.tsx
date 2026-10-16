@@ -172,6 +172,11 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     // A phone's composer is the strip (#879 PR 2), the same node the sheet showed; a desktop's is the form.
     expect(byId(size.coarse ? "guest-compose-strip" : "guest-composer")).not.toBeNull();
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    // A phone's Full screen composer is P6's compose strip (S4, owner decision 1): its hint names the stamp, and the field has the focus inside the tap.
+    if (size.coarse) {
+      expect(byId("guest-composer-stamp")!.textContent).toContain("the note is stamped here");
+      expect(byId("video-review-pane")!.contains(document.activeElement)).toBe(true);
+    }
     await tapMarker();
     expect(byId("review-note-card")).not.toBeNull();
     await escape();

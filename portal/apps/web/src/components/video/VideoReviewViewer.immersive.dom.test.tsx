@@ -33,7 +33,7 @@ const NOTE: VideoNoteThreadDto = {
 } as unknown as VideoNoteThreadDto;
 
 let stub: VideoElementStub; let viewport: MockViewport; let shim: ReturnType<typeof installLocalStorageShim>;
-let root: Root | null = null; let host: HTMLElement; let onClose: ReturnType<typeof vi.fn<() => void>>;
+let root: Root | null = null; let host: HTMLElement; let onClose: ReturnType<typeof vi.fn<() => void>>; let forms: ReturnType<typeof createNoteFormStore>;
 async function flush(times = 6) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
 const tid = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const dialog = () => tid("video-review-viewer")!;
@@ -43,11 +43,11 @@ async function escape() { await act(async () => { (document.activeElement ?? doc
 const escapeOutOfTooltip = async () => { if ([...document.querySelectorAll("[data-open]")].some((popup) => popup.tagName === "DIV" && /^(Add note|Full screen|Exit full screen)$/.test(popup.textContent ?? ""))) await escape(); };
 async function mount() {
   api.apiGet.mockImplementation(async (path) => { if (/\/notes$/.test(path)) return { notes: [NOTE] }; return {}; });
-  host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); onClose = vi.fn<() => void>();
+  host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); onClose = vi.fn<() => void>(); forms = createNoteFormStore("imm-test");
   await act(async () => {
     root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><VideoReviewViewer
       video={videoOf()} onClose={onClose}
-      notes={{ projectId: PROJECT, role: "editor", userId: auth.userId, archived: false, forms: createNoteFormStore("imm-test") }}
+      notes={{ projectId: PROJECT, role: "editor", userId: auth.userId, archived: false, forms }}
     /></QuincyQueryProvider>);
   });
   // The notes host is a lazy chunk: wait on the film, not a fixed number of ticks.
@@ -121,7 +121,10 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     tid("video-fullscreen")!.focus();
     await click(tid("video-fullscreen")!);
     await click(tid("video-immersive-add-note")!);
+    // Add note focuses the editor (S4); a press on the lane, a non-focusable part of the tabIndex=-1 player, moves the focus to the player in a browser (jsdom does not).
+    expect(document.activeElement).toBe(document.getElementById("video-note-body"));
     await tapMarker();
+    await act(async () => { tid("video-player")!.focus(); });
     expect(tid("review-note-card")).not.toBeNull();
     await escape();
     expect(tid("review-note-card")).toBeNull();
@@ -138,6 +141,17 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     await escapeOutOfTooltip();
     await escape();
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("while the editor has the focus the form owns the first Escape (main's ladder): it leaves the field, and the composer and Full screen stay", async () => {
+    await mount();
+    await click(tid("video-fullscreen")!);
+    await click(tid("video-immersive-add-note")!);
+    expect(document.activeElement).toBe(document.getElementById("video-note-body"));
+    await escape();
+    expect(document.activeElement).not.toBe(document.getElementById("video-note-body"));
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(true);
   });
 
   it("Show in notes leaves Full screen and closes the card", async () => {
@@ -203,6 +217,29 @@ describe("Full screen and rotation on a phone (#880, D14)", () => {
     await mount();
     await viewport.set({ width: 1180, height: 820 });
     expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(false);
+  });
+});
+
+describe("Add note in a phone's Full screen (#880 S4, owner decision 1)", () => {
+  beforeEach(() => { viewport = mockViewport({ width: 390, height: 844, coarse: true }); });
+  it("is P6's compose strip: the frame on screen is stamped and kept, the hint says so, and the editor has the focus inside the tap", async () => {
+    await mount();
+    await act(async () => { stub.presentFrame(film(), 3); });
+    await flush(2);
+    await click(tid("video-fullscreen")!);
+    await click(tid("video-immersive-add-note")!);
+    expect(forms.slot(ids.asset2).composer.anchorFrame).toBe(75);
+    expect(tid("video-note-composer")!.textContent).toContain("the note is stamped here");
+    expect(document.activeElement).toBe(document.getElementById("video-note-body"));
+  });
+  it("an untouched draft gives its stamp back when the composer goes", async () => {
+    await mount();
+    await click(tid("video-fullscreen")!);
+    await click(tid("video-immersive-add-note")!);
+    expect(forms.slot(ids.asset2).composer.anchorFrame).not.toBeNull();
+    await click(tid("video-immersive-add-note")!);
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+    expect(forms.slot(ids.asset2).composer.anchorFrame).toBeNull();
   });
 });
 
