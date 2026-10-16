@@ -33,8 +33,9 @@ export function VideoTimelineMarkers({ markers, frameCount, onSelect, className,
   onSelect?: (id: string) => void;
   className?: string;
   /**
-   * Full screen (#880): the lane takes touch. It drops the inert-on-touch rule, reaches 22px for a tap instead of 8, and grows a 44px hit band from the lane's top DOWN over 32px of space it
-   * reserves for it (lesson "Touch targets: grow a 44px box toward empty space"): never up into the slider, never over the controls row. Outside full screen the lane stays inert on touch.
+   * A phone's Full screen (#880 S3): the lane takes touch. It drops the inert-on-touch rule, reaches 22px for a tap instead of 8, and grows a 44px hit band UP from the lane's bottom.
+   * The lane runs along the top of P1's band, so up is the dock's scrim, which is empty (lesson "Touch targets: grow a 44px box toward empty space"); it reserves no room and never
+   * reaches the track through the band's middle, where a press still scrubs. Outside a phone's Full screen the lane stays inert on touch (a desktop keeps the click lane).
    */
   touch?: boolean;
 }) {
@@ -67,7 +68,7 @@ export function VideoTimelineMarkers({ markers, frameCount, onSelect, className,
       const id = nearestMarkerId(markerHitTargets(clusters), frameCount, event.clientX - rect.left, rect.width, half, touch ? TOUCH_REACH_PX : undefined);
       if (id) onSelect(id);
     } : undefined}
-    className={cn("relative h-3 w-full", THUMB_HALF, onSelect && "cursor-pointer", touch ? "mb-[var(--space-6)] before:absolute before:inset-x-0 before:top-0 before:h-11 before:content-['']" : "pointer-coarse:pointer-events-none max-[721px]:pointer-events-none", className)}
+    className={cn("relative h-3 w-full", THUMB_HALF, onSelect && "cursor-pointer", touch ? "before:absolute before:inset-x-0 before:bottom-0 before:h-11 before:content-['']" : "pointer-coarse:pointer-events-none max-[721px]:pointer-events-none", className)}
   >
     {clusters.map((cluster) => {
       const marker = cluster.first;

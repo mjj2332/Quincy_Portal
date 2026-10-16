@@ -194,7 +194,8 @@ describe("VideoPlayer full screen controls (#880, D13)", () => {
     expect(box.className).not.toMatch(/max-w-\[\d/);
   });
 
-  it("a marker press goes to the host's marker tap, with the lane in touch mode; outside full screen it is the ordinary select", async () => {
+  it("a marker press goes to the host's marker tap, with the lane in touch mode on a phone; outside full screen it is the ordinary select", async () => {
+    viewport = mockViewport({ width: 390, height: 844, coarse: true });
     const onMarkerTap = vi.fn(); const onMarkerSelect = vi.fn();
     await mount({ markers, onMarkerSelect, immersive: hostOf({ onMarkerTap }) });
     const lane = byTestId("video-marker-lane")!;
@@ -260,6 +261,35 @@ describe("VideoPlayer Full screen dock (#880 S2)", () => {
     await mount({ immersive: hostOf({ on: false }) });
     expect(byTestId("video-immersive-dock")).toBeNull();
     expect(byTestId("video-transport-dock")!.className).toContain("contents");
+  });
+});
+
+describe("VideoPlayer Full screen marker band (#880 S3)", () => {
+  it("on a phone the lane's touch band grows up into the scrim, inside the band and clear of the track's centre; the slider still seeks", async () => {
+    viewport = mockViewport({ width: 390, height: 844, coarse: true });
+    await mount({ immersive: hostOf({ onMarkerTap: vi.fn() }), markers });
+    const lane = byTestId("video-marker-lane")!;
+    expect(lane.dataset.touch).toBe("true");
+    expect(lane.className).toContain("before:bottom-0");
+    expect(lane.className).not.toContain("mb-[var(--space-6)]");
+    // The lane is the band's top 12px (`top-0`, `h-3`); the track runs through the band's middle, so a press there is the slider's.
+    expect(lane.className).toContain("top-0");
+    const thumb = host.querySelector<HTMLInputElement>('[data-testid="video-scrubber"] input[type="range"]')!;
+    expect(lane.contains(thumb)).toBe(false);
+    await act(async () => { thumb.focus(); thumb.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })); });
+    expect(stub.writes.length).toBeGreaterThan(0);
+  });
+  it("a desktop keeps the click lane: no touch band, no reserved room, and a press still goes to the host's marker tap", async () => {
+    viewport = mockViewport({ width: 1200, height: 800 });
+    const onMarkerTap = vi.fn();
+    await mount({ immersive: hostOf({ onMarkerTap }), markers });
+    const lane = byTestId("video-marker-lane")!;
+    expect(lane.dataset.touch).toBeUndefined();
+    expect(lane.className).not.toContain("before:h-11");
+    expect(lane.className).not.toContain("mb-[var(--space-6)]");
+    lane.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 12, right: 1000, bottom: 12, x: 0, y: 0, toJSON: () => ({}) });
+    await act(async () => { lane.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 6 + (988 * 1500) / 2999 })); });
+    expect(onMarkerTap).toHaveBeenCalledWith("n1");
   });
 });
 

@@ -357,7 +357,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
         />
         {range !== undefined && !compact && <VideoRangeHandles marks={range.marks} frameCount={version.frameCount} label={timecode} largeStep={Math.max(1, Math.round(rationalToNumber(version.fps)))} interactive={marksTaken} onMove={moveHandle} onGrab={clock.pause} />}
       </div>
-      {markers !== undefined && (!handheld || markers.length > 0) && <VideoTimelineMarkers markers={markers} frameCount={version.frameCount} touch={imm} {...(markerSelect ? { onSelect: markerSelect } : {})} {...(handheld ? { className: "absolute inset-x-0 top-0" } : {})} />}
+      {markers !== undefined && (!handheld || markers.length > 0) && <VideoTimelineMarkers markers={markers} frameCount={version.frameCount} touch={imm && handheld} {...(markerSelect ? { onSelect: markerSelect } : {})} {...(handheld ? { className: "absolute inset-x-0 top-0" } : {})} />}
     </div>
 
     <div data-testid="video-controls-row" className={cn("flex flex-wrap items-center gap-[var(--space-2)] max-[721px]:h-11 max-[721px]:flex-nowrap max-[721px]:gap-[var(--space-1)]", handheld && "h-11 flex-nowrap gap-[var(--space-1)]")}>

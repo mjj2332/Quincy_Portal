@@ -62,15 +62,16 @@ describe("VideoTimelineMarkers (#741 5b)", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it("touch (full screen, #880) takes the lane back from the pointer-coarse cascade, with a 44px hit band that grows below the track only", async () => {
+  it("touch (a phone's Full screen, #880 S3) takes the lane back from the pointer-coarse cascade, with a 44px band that rises from the lane's bottom into the scrim and reserves nothing below", async () => {
     await render(<VideoTimelineMarkers markers={markers} frameCount={300} onSelect={vi.fn()} touch />);
     const classes = lane().className;
     expect(classes).not.toContain("pointer-coarse:pointer-events-none");
     expect(classes).not.toContain("max-[721px]:pointer-events-none");
     expect(lane().dataset.touch).toBe("true");
     expect(classes).toContain("before:h-11");
-    expect(classes).toContain("before:top-0");
-    expect(classes).not.toContain("before:-top");
+    expect(classes).toContain("before:bottom-0");
+    expect(classes).not.toContain("before:top-0");
+    expect(classes).not.toContain("mb-[var(--space-6)]");
   });
 
   it("touch reaches 22px: a tap 18px off a marker selects it, 30px does not; without touch 18px is out of reach", async () => {
