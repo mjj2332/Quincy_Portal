@@ -1726,6 +1726,8 @@ describe("the phone notes head (#879 PR 3b, P1)", () => {
     expect(body.firstElementChild).toBe(tid("notes-filter-head"));
     expect(body.className).toContain("in-data-[mode=browse]:pt-0");
     expect(body.className).toContain("in-data-[mode=browse]:pb-[var(--space-3)]");
+    // D2: the guest's end gutter for the scroll thumb, on the phone only.
+    expect(body.className).toContain("max-[721px]:pe-[var(--space-3)]");
   });
 
   it("opening search takes the sheet to full and closing it restores the stop it was at", async () => {

@@ -221,8 +221,9 @@ export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, pho
 
     <div ref={listRef} data-sheet-part="body" className="flex flex-1 flex-col min-[721px]:min-h-32 max-[721px]:min-h-0">
       <ScrollArea className="min-h-0 flex-1" data-testid="video-notes-list" viewportProps={{ tabIndex: -1 }}>
+        {/* On a phone the end gutter holds the overlay scrollbar clear of the head and the cards, as the guest list's does (#879 PR 3b, D2); the desktop keeps --space-1. */}
         {/* The phone head opens the list on the tab row's hairline (P1 `NotesFilter`, #879 PR 3b F4): the list keeps its bottom padding and drops the top, which the head's own carries. */}
-        <div data-testid="video-notes-list-body" className={`grid gap-[var(--space-2)] pe-[var(--space-1)] ${phone && phoneHead ? "in-data-[mode=browse]:pt-0 in-data-[mode=browse]:pb-[var(--space-3)]" : "in-data-[mode=browse]:py-[var(--space-3)]"}`}>
+        <div data-testid="video-notes-list-body" className={`grid gap-[var(--space-2)] pe-[var(--space-1)] max-[721px]:pe-[var(--space-3)] ${phone && phoneHead ? "in-data-[mode=browse]:pt-0 in-data-[mode=browse]:pb-[var(--space-3)]" : "in-data-[mode=browse]:py-[var(--space-3)]"}`}>
           {phone && phoneHead}
           {loading && <span data-testid="video-notes-loading" role="status" className="text-foreground-secondary [font:var(--type-label)]">Loading notes…</span>}
           {failed && <Notice tone="critical" role="alert" data-testid="video-notes-error" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>Notes could not be loaded.</span><Button type="button" variant="text" data-testid="video-notes-retry" onClick={session.refresh}>Retry</Button></Notice>}
