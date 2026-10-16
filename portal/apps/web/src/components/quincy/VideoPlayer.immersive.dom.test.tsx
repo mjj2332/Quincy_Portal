@@ -526,6 +526,50 @@ describe("VideoPlayer native player (#880, D15)", () => {
     expect(standard).not.toHaveBeenCalled();
   });
 
+  // iOS, measured in the Simulator (#880 finding A): before the film has data (readyState 0 or 1: iOS loads at most the metadata before a play), webkitEnterFullscreen neither
+  // throws nor shows anything. It fires webkitbeginfullscreen and reports itself displaying, and no player ever appears. A play() inside the same press, first, makes it present.
+  it("a film with no data yet is played inside the press, before the native player is entered", async () => {
+    const control = createRef<VideoPlayerControl>();
+    await mount({ controlRef: control });
+    stub.setReadyState(video(), 1);
+    stub.calls.length = 0;
+    Object.assign(video(), { webkitEnterFullscreen: vi.fn(() => { stub.calls.push("enter"); }) });
+    await act(async () => { control.current!.openSystemPlayer!(); });
+    expect(stub.calls).toEqual(["play", "enter"]);
+  });
+  it("a film that has data is entered without playing it", async () => {
+    const control = createRef<VideoPlayerControl>();
+    await mount({ controlRef: control });
+    stub.setReadyState(video(), 4);
+    stub.calls.length = 0;
+    Object.assign(video(), { webkitEnterFullscreen: vi.fn(() => { stub.calls.push("enter"); }) });
+    await act(async () => { control.current!.openSystemPlayer!(); });
+    expect(stub.calls).toEqual(["enter"]);
+  });
+  it("back from the system player, a film that was paused before the hand-off is paused again", async () => {
+    const control = createRef<VideoPlayerControl>();
+    await mount({ controlRef: control });
+    stub.setReadyState(video(), 1);
+    Object.assign(video(), { webkitEnterFullscreen: vi.fn() });
+    await act(async () => { control.current!.openSystemPlayer!(); });
+    expect(video().paused).toBe(false);
+    stub.calls.length = 0;
+    await act(async () => { video().dispatchEvent(new Event("webkitendfullscreen")); });
+    expect(stub.calls).toContain("pause");
+    expect(video().paused).toBe(true);
+  });
+  it("a film that was playing before the hand-off is left to the system player's own state on return", async () => {
+    const control = createRef<VideoPlayerControl>();
+    await mount({ controlRef: control });
+    await act(async () => { byTestId("video-player")!.querySelector<HTMLButtonElement>('button[aria-label="Play"]')!.click(); });
+    expect(video().paused).toBe(false);
+    stub.setReadyState(video(), 4);
+    Object.assign(video(), { webkitEnterFullscreen: vi.fn() });
+    await act(async () => { control.current!.openSystemPlayer!(); });
+    stub.calls.length = 0;
+    await act(async () => { video().dispatchEvent(new Event("webkitendfullscreen")); });
+    expect(stub.calls).not.toContain("pause");
+  });
   it("says so in a visible notice when the device refuses", async () => {
     const control = createRef<VideoPlayerControl>();
     await mount({ controlRef: control });

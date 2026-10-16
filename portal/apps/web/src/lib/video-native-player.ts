@@ -22,6 +22,16 @@ export function nativePlayerSupported(video: HTMLVideoElement | null): boolean {
 }
 
 /**
+ * Whether the hand-off must play the film first, inside the same press (#880 finding A, measured in the iOS Simulator). Before the film has data (`readyState` below
+ * HAVE_CURRENT_DATA: iOS loads at most the metadata until a play), `webkitEnterFullscreen()` neither throws nor shows anything: it fires `webkitbeginfullscreen`, reports itself
+ * displaying, and no player ever appears. A `play()` just before it, in the same gesture, makes the player present as soon as the data arrives. Only the WebKit path needs it.
+ */
+export function nativePlayerNeedsPlay(video: HTMLVideoElement | null): boolean {
+  if (!video) return false;
+  return typeof (video as WebkitVideo).webkitEnterFullscreen === "function" && video.readyState < 2;
+}
+
+/**
  * Lifts the film's remote-playback restriction for the hand-off to the system player (owner decision 3, #880 S7): the `disableremoteplayback` attribute and the `noremoteplayback`
  * token of `controlslist`, nothing else (`nodownload` and `disablepictureinpicture` stay). Runs synchronously, before the native player is entered inside the press. Returns the
  * restore, which puts back exactly what was there and runs once however often it is called (the player's exit, a refusal, a Version change, an unmount).

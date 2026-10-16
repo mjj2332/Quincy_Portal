@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { liftRemotePlayback, nativePlayerLabel, nativePlayerSupported, openNativePlayer } from "./video-native-player";
+import { liftRemotePlayback, nativePlayerLabel, nativePlayerNeedsPlay, nativePlayerSupported, openNativePlayer } from "./video-native-player";
 
 const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
 const IPAD = "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
@@ -8,6 +8,14 @@ const MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.1
 const videoWith = (over: Record<string, unknown>) => over as unknown as HTMLVideoElement;
 
 describe("native player hand-off (#880, D15)", () => {
+  it("needs a play first only on the WebKit path, before the film has data (#880 finding A)", () => {
+    const enter = () => undefined;
+    expect(nativePlayerNeedsPlay(videoWith({ webkitEnterFullscreen: enter, readyState: 0 }))).toBe(true);
+    expect(nativePlayerNeedsPlay(videoWith({ webkitEnterFullscreen: enter, readyState: 1 }))).toBe(true);
+    expect(nativePlayerNeedsPlay(videoWith({ webkitEnterFullscreen: enter, readyState: 2 }))).toBe(false);
+    expect(nativePlayerNeedsPlay(videoWith({ requestFullscreen: () => Promise.resolve(), readyState: 0 }))).toBe(false);
+    expect(nativePlayerNeedsPlay(null)).toBe(false);
+  });
   it("labels the row per device: iPhone and iPod say iPhone, everything else (an iPad too) says system", () => {
     expect(nativePlayerLabel(IPHONE)).toBe("Open in iPhone player");
     expect(nativePlayerLabel("Mozilla/5.0 (iPod touch; CPU iPhone OS 15_0 like Mac OS X)")).toBe("Open in iPhone player");

@@ -17,7 +17,7 @@ import { SocialPreviewControls, useOverlayImage, type SocialPreviewMode } from "
 import { useMediaQuery } from "../../lib/use-media-query";
 import { CHROME_HIDE_MS, chromeHeld, PROMPT_MS, readPhoneDevice, type ImmersivePrompt } from "../../lib/immersive";
 import { useLandscape } from "../../lib/use-device-orientation";
-import { liftRemotePlayback, nativePlayerSupported, openNativePlayer } from "../../lib/video-native-player";
+import { liftRemotePlayback, nativePlayerNeedsPlay, nativePlayerSupported, openNativePlayer } from "../../lib/video-native-player";
 import { Notice } from "./Notice";
 import { PHONE_QUERY } from "../../lib/review-pane-geometry";
 import { rangeStep, type NoteMarks } from "../../lib/video-note-marks";
@@ -297,17 +297,28 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   // closes (webkitendfullscreen, or the element full screen ending), when the device refuses, and when the film goes (a Version change re-keys the player, or it unmounts).
   const restoreRemote = useRef<(() => void) | null>(null);
   const restoreRemotePlayback = useCallback(() => { restoreRemote.current?.(); restoreRemote.current = null; }, []);
+  // A film the hand-off had to play (it had no data yet, #880 finding A) and that was paused before: paused again on the way back, so the clock confirms the frame on screen.
+  const pauseOnReturn = useRef(false);
+  const pauseRef = useRef(clock.pause);
+  pauseRef.current = clock.pause;
+  const returnFromSystemPlayer = useCallback(() => {
+    restoreRemotePlayback();
+    if (pauseOnReturn.current) { pauseOnReturn.current = false; pauseRef.current(); }
+  }, [restoreRemotePlayback]);
   const openSystemPlayer = useCallback(() => {
     if (video) { restoreRemotePlayback(); restoreRemote.current = liftRemotePlayback(video); }
-    void openNativePlayer(video).then((started) => { setNativeFailed((count) => (started ? 0 : count + 1)); if (!started) restoreRemotePlayback(); });
-  }, [video, restoreRemotePlayback]);
+    // Synchronously, before the native player is entered, inside the press: iOS shows nothing for a film with no data (see `nativePlayerNeedsPlay`).
+    pauseOnReturn.current = nativePlayerNeedsPlay(video) && !clock.playing;
+    if (pauseOnReturn.current) clock.play();
+    void openNativePlayer(video).then((started) => { setNativeFailed((count) => (started ? 0 : count + 1)); if (!started) returnFromSystemPlayer(); });
+  }, [video, restoreRemotePlayback, returnFromSystemPlayer, clock]);
   useEffect(() => {
     if (!video) return undefined;
-    const onFullscreenChange = () => { if (document.fullscreenElement !== video) restoreRemotePlayback(); };
-    video.addEventListener("webkitendfullscreen", restoreRemotePlayback);
+    const onFullscreenChange = () => { if (document.fullscreenElement !== video) returnFromSystemPlayer(); };
+    video.addEventListener("webkitendfullscreen", returnFromSystemPlayer);
     document.addEventListener("fullscreenchange", onFullscreenChange);
-    return () => { video.removeEventListener("webkitendfullscreen", restoreRemotePlayback); document.removeEventListener("fullscreenchange", onFullscreenChange); restoreRemotePlayback(); };
-  }, [video, restoreRemotePlayback]);
+    return () => { video.removeEventListener("webkitendfullscreen", returnFromSystemPlayer); document.removeEventListener("fullscreenchange", onFullscreenChange); restoreRemotePlayback(); };
+  }, [video, restoreRemotePlayback, returnFromSystemPlayer]);
   const nativeSupported = useCallback(() => nativePlayerSupported(video), [video]);
   useImperativeHandle(controlRef, () => ({ handleKeyDown: keyDown, currentFrame, openSystemPlayer, nativePlayerSupported: nativeSupported }), [keyDown, currentFrame, openSystemPlayer, nativeSupported]);
   const chromeVisible = !imm || chromeShown;
