@@ -409,3 +409,35 @@ describe("D4 and focus", () => {
     }
   });
 });
+
+describe("the phone sheets' chrome (#879 PR 3b, P8/P9)", () => {
+  it("the ⋯ sheet has no visible title or close: the title is for screen readers, the close shows only on keyboard focus, and the sheet itself takes focus on open", async () => {
+    await mount({ shown: () => {}, download: true, social: true });
+    await click(trigger()!);
+    const sheet = tid("review-action-sheet")!;
+    const title = sheet.querySelector<HTMLElement>('[data-slot="sheet-title"]')!;
+    expect(title.className).toContain("sr-only");
+    expect(sheet.querySelector('[data-slot="sheet-header"]')).toBeNull();
+    expect(tid("review-action-close")!.className).toContain("[&:not(:focus-visible)]:sr-only");
+    expect(document.activeElement).toBe(sheet);
+    expect(sheet.className).toContain("focus-visible:!outline-none");
+  });
+
+  it("the ⋯ rows are P9's: body type, 20pt gutters, --space-3 above and below", async () => {
+    await mount({ shown: () => {}, download: true, social: true });
+    await click(trigger()!);
+    const row = tid("video-social-toggle")!;
+    expect(row.className).toContain("px-[calc(var(--space-4)+var(--space-1))]");
+    expect(row.className).toContain("py-[var(--space-3)]");
+    expect(row.querySelector<HTMLElement>('[data-slot="item-title"]')!.className).toContain("text-[length:var(--text-base)]");
+  });
+
+  it("the Versions sheet takes focus on itself, with its close shown only on keyboard focus", async () => {
+    await mount({ shown: () => {} });
+    await click(tid("video-version-chip")!);
+    const sheet = tid("video-versions-sheet")!;
+    expect(document.activeElement).toBe(sheet);
+    expect(sheet.className).toContain("focus-visible:!outline-none");
+    expect(tid("video-versions-close")!.className).toContain("[&:not(:focus-visible)]:sr-only");
+  });
+});

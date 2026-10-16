@@ -1,10 +1,10 @@
-import type { RefObject } from "react";
+import { useRef, type RefObject } from "react";
 import { Button } from "../reui/button";
 import { Check } from "lucide-react";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../reui/sheet";
-import { SHEET_SCRIM } from "../quincy/ReviewActionSheet";
-import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "../quincy/SheetCloseButton";
+import { Sheet, SheetContent, SheetTitle } from "../reui/sheet";
+import { PHONE_SHEET_CHROME, SHEET_SCRIM } from "../quincy/ReviewActionSheet";
+import { SheetCloseButton } from "../quincy/SheetCloseButton";
 import { formatVideoDate } from "./video-format";
 
 /** One Version in the phone Versions sheet. The date and the count fill in when the sheet's read answers; until then (or if it fails) the row shows what it has. */
@@ -43,12 +43,14 @@ export function VideoVersionsSheet({ open, onOpenChange, container, rows, curren
   latestStatus?: string | undefined;
 }) {
   const newest = Math.max(0, ...rows.map((row) => row.version));
+  // P8's chrome (#879 PR 3b): the sheet itself takes focus on open, and the close is drawn only on keyboard focus.
+  const popupRef = useRef<HTMLDivElement | null>(null);
   // The viewer Dialog's `restoreFocus: "popup"` reclaims homeless focus a frame after a nested sheet closes (lessons, P3 / #669): the chip takes focus synchronously, before the close.
   const changeOpen = (next: boolean) => { if (!next) returnFocusTo?.current?.focus({ preventScroll: true }); onOpenChange(next); };
   return <Sheet open={open} onOpenChange={changeOpen}>
-    <SheetContent side="bottom" container={container} showCloseButton={false} overlayProps={{ className: SHEET_SCRIM, forceRender: true, "data-testid": "review-sheet-overlay" }} {...(returnFocusTo ? { finalFocus: () => returnFocusTo.current ?? true } : {})} data-testid="video-versions-sheet" className="max-h-[70dvh] p-[var(--space-4)]">
-      <SheetHeader className={`p-0 ${SHEET_CLOSE_CLEARANCE}`}><SheetTitle className="m-0 text-foreground [font:var(--type-h3)]">Version</SheetTitle></SheetHeader>
-      <ItemGroup role="group" aria-label="Versions" className="min-h-0 gap-[var(--space-1)] overflow-y-auto">
+    <SheetContent ref={popupRef} side="bottom" container={container} showCloseButton={false} overlayProps={{ className: SHEET_SCRIM, forceRender: true, "data-testid": "review-sheet-overlay" }} initialFocus={() => popupRef.current ?? true} {...(returnFocusTo ? { finalFocus: () => returnFocusTo.current ?? true } : {})} data-testid="video-versions-sheet" className={`max-h-[70dvh] ${PHONE_SHEET_CHROME}`}>
+      <SheetTitle className="m-0 px-[var(--space-4)] text-foreground [font:var(--type-h3)]">Version</SheetTitle>
+      <ItemGroup role="group" aria-label="Versions" className="min-h-0 gap-[var(--space-1)] overflow-y-auto px-[var(--space-4)]">
         {rows.map((row) => {
           const current = row.assetId === currentAssetId;
           const latest = row.version === newest;
@@ -69,7 +71,7 @@ export function VideoVersionsSheet({ open, onOpenChange, container, rows, curren
           </Item>;
         })}
       </ItemGroup>
-      <SheetCloseButton label="Close versions" data-testid="video-versions-close" />
+      <SheetCloseButton label="Close versions" data-testid="video-versions-close" visuallyHidden />
     </SheetContent>
   </Sheet>;
 }
