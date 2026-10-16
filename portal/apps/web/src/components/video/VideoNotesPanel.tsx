@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { roleHasCapability, VIDEO_NOTE_PASTE_MAX, type VideoDto, type VideoNoteDto, type VideoNoteThreadDto } from "@quincy/shared";
+import { type VideoNoteDto, type VideoNoteThreadDto } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
 import { useHairlineWithHead } from "../../lib/use-hairline-with-head";
 import { useNow } from "../../lib/use-now";
@@ -18,9 +18,9 @@ import { ScrollArea } from "../reui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
 import { EXPORT_PANEL_WIDTH, MarkerExportMenuItems, MarkerExportNotices, type MarkerExport } from "./VideoMarkerExportMenu";
 import { VideoNoteComposer } from "./VideoNoteComposer";
-import { VideoNotePasteDialog } from "./VideoNotePasteDialog";
 import { VideoNoteThread } from "./VideoNoteThread";
 import type { VideoNotesSession } from "./use-video-notes";
+import type { NotesClipboard } from "./use-notes-clipboard";
 
 const FILTER_ITEM = "min-h-8 pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const COUNT = "ms-[var(--space-1)] text-foreground-secondary tabular-nums";
@@ -44,7 +44,7 @@ function deleteCopy(tombstone: boolean, conflicted: boolean) {
  * 721px) nothing inside scrolls on its own: the whole dialog scrolls, with the composer directly under the player ahead of the list.
  * It holds no data of its own: `session` (from `useVideoNotes`) is shared with the player, which draws the markers and takes I and O.
  */
-export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone = false }: { session: VideoNotesSession; video: VideoDto; detailsRows: ReactNode; /** The marker export (#741 9), owned by the notes host so the phone header can reach it: `enabled` is the Project's `export` part and the role. */ exp: MarkerExport; /** The Draw button, handed to the composer on a phone (D11). */ pen?: ReactNode; /** The phone layout (#879): the panel is the sheet's body, its composer the sheet's foot. */ phone?: boolean; }) {
+export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, phone = false }: { session: VideoNotesSession; detailsRows: ReactNode; /** Copy and paste (#741 5c-ui), owned by the notes host (#879 PR 3b) so the phone header's ⋯ sheet drives the same controller and the paste dialog outlives this panel. */ clipboard: NotesClipboard; /** The marker export (#741 9), owned by the notes host so the phone header can reach it: `enabled` is the Project's `export` part and the role. */ exp: MarkerExport; /** The Draw button, handed to the composer on a phone (D11). */ pen?: ReactNode; /** The phone layout (#879): the panel is the sheet's body, its composer the sheet's foot. */ phone?: boolean; }) {
   const { query, threads, shown, filters, setFilters, selectedId, version } = session;
   const archived = session.readOnly;
   const readOnly = archived;
@@ -59,32 +59,6 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
   /** The ⋯ that opened the confirm, and how it closed: only a successful delete uses the current destination, Cancel and Escape go back to the trigger. */
   const deleteTrigger = useRef<HTMLElement | null>(null);
   const deleteDone = useRef(false);
-
-  // Copy and paste (#741 5c-ui): the ⋯ menu exists only where the person can write notes. The clipboard is the form store's, per Video, so it
-  // outlives this panel (switching Version remounts it) and the paste dialog's offset and ticks outlive the dialog.
-  const canCopy = !readOnly && roleHasCapability(session.role, "annotateVideo");
-  const clipboard = useSyncExternalStore(session.forms.subscribe, () => session.forms.clipboard(video.id));
-  const pasteFrom = clipboard && clipboard.sourceAssetId !== session.assetId ? clipboard : null;
-  const pasteOpen = useSyncExternalStore(session.forms.subscribe, () => session.forms.pasteOpen(session.assetId));
-  const pasteResult = useSyncExternalStore(session.forms.subscribe, () => session.forms.pasteResult(session.assetId));
-  const setPasteOpen = (next: boolean) => { session.forms.setPasteOpen(session.assetId, next); };
-  const [pasted, setPasted] = useState<string | null>(null);
-  useEffect(() => {
-    if (pasted === null) return;
-    const timer = setTimeout(() => { setPasted(null); }, 6000);
-    return () => { clearTimeout(timer); };
-  }, [pasted]);
-  useEffect(() => {
-    if (pasteResult === null) return;
-    const timer = setTimeout(() => { session.forms.clearPasteResult(session.assetId); }, 6000);
-    return () => { clearTimeout(timer); };
-  }, [pasteResult, session.forms, session.assetId]);
-  const copyShown = () => {
-    const ids = shown.map((thread) => thread.id);
-    if (ids.length === 0) { setPasted("No notes to copy"); return; }
-    session.forms.copyNotes(video.id, { sourceAssetId: session.assetId, sourceVersion: version.version, noteIds: ids });
-    setPasted(ids.length > VIDEO_NOTE_PASTE_MAX ? `Copied the first ${VIDEO_NOTE_PASTE_MAX} of ${ids.length} notes` : `Copied ${ids.length} ${ids.length === 1 ? "note" : "notes"}`);
-  };
 
   // NLE marker export (#741 9): its options and request live in the hook, keyed by this Version; the ⋯ menu shows for anyone who can copy or export.
   const canExport = exp.enabled;
@@ -185,10 +159,10 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
           <PopoverTrigger render={<Button type="button" variant="text" data-testid="video-details-button" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}>Version details</PopoverTrigger>
           <PopoverContent align="end" className="w-[min(320px,calc(100vw-var(--space-5)))] max-h-[min(70dvh,520px)] overflow-y-auto" data-testid="video-details-popover">{detailsRows}</PopoverContent>
         </Popover>
-        {(canCopy || (canExport && !phone)) && <Menu triggerLabel="Notes actions" label="Notes actions" triggerClassName={ICON_BUTTON} panelClassName={canExport ? EXPORT_PANEL_WIDTH : undefined} triggerTestId="video-notes-menu" trigger={<span aria-hidden="true">⋯</span>}>
-          {canCopy && <MenuPrimitive.Item className={MENU_ITEM} disabled={shown.length === 0} onClick={copyShown}>Copy shown notes</MenuPrimitive.Item>}
-          {canCopy && pasteFrom && <MenuPrimitive.Item className={MENU_ITEM} onClick={() => { setPasteOpen(true); }}>{`Paste ${pasteFrom.noteIds.length} ${pasteFrom.noteIds.length === 1 ? "note" : "notes"} from v${pasteFrom.sourceVersion}…`}</MenuPrimitive.Item>}
-          {canExport && !phone && <MarkerExportMenuItems exp={exp} separated={canCopy} />}
+        {(clipboard.canCopy || (canExport && !phone)) && <Menu triggerLabel="Notes actions" label="Notes actions" triggerClassName={ICON_BUTTON} panelClassName={canExport ? EXPORT_PANEL_WIDTH : undefined} triggerTestId="video-notes-menu" trigger={<span aria-hidden="true">⋯</span>}>
+          {clipboard.canCopy && <MenuPrimitive.Item className={MENU_ITEM} disabled={clipboard.copyDisabled} onClick={clipboard.copyShown}>Copy shown notes</MenuPrimitive.Item>}
+          {clipboard.pasteLabel !== null && <MenuPrimitive.Item className={MENU_ITEM} onClick={clipboard.openPaste}>{clipboard.pasteLabel}</MenuPrimitive.Item>}
+          {canExport && !phone && <MarkerExportMenuItems exp={exp} separated={clipboard.canCopy} />}
         </Menu>}
         {hideButton}
       </div>
@@ -216,7 +190,7 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
 
     <div data-sheet-part="body" className="contents"><MarkerExportNotices exp={exp} /></div>
 
-    {(pasteResult ?? pasted) && <Notice tone="positive" role="status" data-testid="video-notes-paste-status" data-sheet-part="body">{pasteResult ?? pasted}</Notice>}
+    {clipboard.status !== null && <Notice tone="positive" role="status" data-testid="video-notes-paste-status" data-sheet-part="body">{clipboard.status}</Notice>}
 
     {!phone && filtersBlock}
 
@@ -261,19 +235,6 @@ export function VideoNotesPanel({ session, video, detailsRows, exp, pen, phone =
         ? <p data-testid="video-notes-archived" className={ARCHIVED_NOTICE_CLASS}>Read-only while archived. Restore the project before adding or changing notes.</p>
         : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} markup={session.markup} rich={{ projectId: session.projectId, role: session.role }} {...(pen !== undefined ? { pen } : {})} />}
     </div>
-
-    {canCopy && pasteFrom && <VideoNotePasteDialog
-      open={pasteOpen}
-      onOpenChange={setPasteOpen}
-      finalFocus={() => document.querySelector<HTMLElement>('[data-testid="video-notes-menu"]')}
-      store={session.forms}
-      assetId={session.assetId}
-      target={version}
-      source={video.versions.find((candidate) => candidate.assetId === pasteFrom.sourceAssetId)}
-      clipboard={pasteFrom}
-      previewPaste={session.previewPaste}
-      commitPaste={session.commitPaste}
-    />}
 
     <ConfirmDeleteDialog
       open={deleting !== null}
