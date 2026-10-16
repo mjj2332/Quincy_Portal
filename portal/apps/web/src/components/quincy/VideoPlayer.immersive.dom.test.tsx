@@ -7,6 +7,7 @@ import "../../testing/dom-polyfills";
 import { mockViewport, type MockViewport } from "../../testing/viewport";
 import { VideoPlayer, type VideoImmersiveHost, type VideoPlayerControl, type VideoPlayerVersion } from "./VideoPlayer";
 import type { TimelineMarker } from "./VideoTimelineMarkers";
+import { PROMPT_MS } from "../../lib/immersive";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -445,6 +446,23 @@ describe("VideoPlayer Full screen marker band (#880 S3)", () => {
     lane.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 12, right: 1000, bottom: 12, x: 0, y: 0, toJSON: () => ({}) });
     await act(async () => { lane.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 6 + (988 * 1500) / 2999 })); });
     expect(onMarkerTap).toHaveBeenCalledWith("n1");
+  });
+});
+
+describe("VideoPlayer Full screen prompt (#880, owner decision 2026-10-16)", () => {
+  it("shows the host's prompt as a status notice for PROMPT_MS, again for each new press, and never outside Full screen", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await mount({ immersive: hostOf({ prompt: { key: 1, text: "Turn your phone upright to add a note." } }) });
+    const prompt = () => byTestId("video-immersive-prompt");
+    expect(prompt()!.textContent).toBe("Turn your phone upright to add a note.");
+    expect(prompt()!.getAttribute("role")).toBe("status");
+    expect(prompt()!.className).toContain("[font:var(--weight-regular)_var(--text-sm)");
+    await advance(PROMPT_MS);
+    expect(prompt()).toBeNull();
+    await rerender({ immersive: hostOf({ prompt: { key: 2, text: "Turn your phone upright to add a note." } }) });
+    expect(prompt()).not.toBeNull();
+    await rerender({ immersive: hostOf({ on: false, prompt: { key: 2, text: "Turn your phone upright to add a note." } }) });
+    expect(prompt()).toBeNull();
   });
 });
 

@@ -1,9 +1,9 @@
 import { flushSync } from "react-dom";
-import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ChevronLeft, Columns2, DownloadIcon, Link2, Smartphone, Trash2 } from "lucide-react";
 import { framesToTimecode, videoVersionDownloadUrl, type Role, type VideoDto, type VideoVersionDto } from "@quincy/shared";
-import { rotate, type ImmersiveState, readPhoneDevice } from "../../lib/immersive";
-import { readLandscape, useDeviceOrientation } from "../../lib/use-device-orientation";
+import { mustTurnUpright, nextPrompt, rotate, UPRIGHT_PROMPT, type ImmersivePrompt, type ImmersiveState, readPhoneDevice } from "../../lib/immersive";
+import { readLandscape, useDeviceOrientation, useLandscape } from "../../lib/use-device-orientation";
 import { nativePlayerLabel } from "../../lib/video-native-player";
 import { frameOnScreen } from "../../lib/video-note-form-store";
 import { registerToastHost } from "../../lib/toast-host";
@@ -152,10 +152,11 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const [cardId, setCardId] = useState<string | null>(null);
   useDeviceOrientation((landscape) => {
     const phoneDevice = readPhoneDevice();
-    // A turn that enters Full screen carries the sheet's mode in (#880 S5): mid-compose the composer floats in the same commit (the same editor node keeps the focus and the
-    // keyboard); mid-search the field is left and search mode ends (the query stays). Read at the turn, from this render's state.
+    // A turn that enters Full screen (#880 S5) leaves the sheet's field: a turn is always sideways, and a sideways phone writes no note there (owner decision 2026-10-16), so
+    // mid-compose the field is left (the draft and its stamp stay in the composer) and the prompt asks to turn upright; mid-search search mode ends (the query stays).
+    // Read at the turn, from this render's state, while the sheet's own blur path still runs.
     if (immersive === null && modeRef.current === "single" && rotate(null, { landscape, phoneDevice }) !== null) {
-      if (sheetControl.composing) setComposeOpen(true);
+      if (sheetControl.composing) { blurComposerField(); askUpright(); }
       else if (sheetControl.searching) { blurNotesSearchField(); sheetControl.onSearching(false); }
     }
     setImmersive((current) => rotate(current, { landscape, phoneDevice }));
@@ -200,6 +201,11 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   // page: the root follows the visual viewport and the canvas is ink there too. In Full screen the keyboard going away blurs the composer's field and leaves the composer shown.
   const [phoneDevice] = useState(readPhoneDevice);
   const handheld = phone || (imm && phoneDevice);
+  // A sideways phone writes no note in Full screen (owner decision 2026-10-16): Add note shows the prompt instead, and a composer open when the phone turns closes, the draft kept.
+  const sideways = useLandscape();
+  const upright = mustTurnUpright({ immersive: imm, phoneDevice, landscape: sideways });
+  const [prompt, setPrompt] = useState<ImmersivePrompt | null>(null);
+  const askUpright = useCallback(() => { setPrompt((previous) => nextPrompt(previous, UPRIGHT_PROMPT)); }, []);
   const immRef = useRef(imm);
   immRef.current = imm;
   const composeRef = useRef(composeOpen);
@@ -215,6 +221,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const closeCard = useCallback(() => { setCardId(null); }, []);
   /** Put the floating composer away with focus already on Add note (lesson P3: move focus before the pane that holds it is hidden). */
   const closeCompose = useCallback(() => { document.querySelector<HTMLElement>('[data-testid="video-immersive-add-note"]')?.focus({ preventScroll: true }); setComposeOpen(false); }, []);
+  useLayoutEffect(() => { if (upright && composeOpen) { blurComposerField(); closeCompose(); askUpright(); } }, [upright, composeOpen, closeCompose, askUpright]);
+  useEffect(() => { if (!upright) setPrompt(null); }, [upright]);
   // Base UI moves focus a frame after mount; a key typed in that gap (Enter, then Space) would still hit the opener. Take focus in the commit itself.
   const [popupElement, setPopupElement] = useState<HTMLDivElement | null>(null);
   const takePopup = useCallback((element: HTMLDivElement | null) => { popupRef.current = element; setPopupElement(element); element?.focus({ preventScroll: true }); }, []);
@@ -603,6 +611,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     const writable = notes !== undefined && !notes.archived && slots !== null && !slots.immersive.readOnly && slots.immersive.clock !== null;
     const toggleAddNote = () => {
       if (composeOpen) { closeCompose(); return; }
+      if (upright) { askUpright(); return; }
       const clock = slots?.immersive.clock;
       if (!clock || !forms) return;
       clock.pause();
@@ -617,6 +626,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       onToggle: full.toggle,
       heading: `${video.title} · v${version.version}`,
       ...(writable ? { addNote: { pressed: composeOpen, onToggle: toggleAddNote } } : {}),
+      prompt,
       ...(slots ? {
         onMarkerTap: (id: string) => {
           if (forms && forms.slot(assetId).draw !== null) return;

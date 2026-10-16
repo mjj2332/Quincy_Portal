@@ -261,6 +261,45 @@ describe("auto-hide in the staff viewer's Full screen (#880 fix round 2)", () =>
   });
 });
 
+describe("Add note on a sideways phone asks to turn upright (#880, owner decision 2026-10-16)", () => {
+  it("opens no composer and stamps nothing; the prompt says to turn the phone upright, and Add note stays to press again", async () => {
+    viewport = mockViewport({ width: 844, height: 390, coarse: true });
+    await mount();
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(true);
+    for (let press = 0; press < 2; press += 1) {
+      await click(tid("video-immersive-add-note")!);
+      expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+      expect(tid("video-immersive-add-note")!.getAttribute("aria-pressed")).toBe("false");
+      expect(forms.slot(ids.asset2).composer.anchorFrame).toBeNull();
+      expect(document.activeElement).not.toBe(document.getElementById("video-note-body"));
+      const prompt = tid("video-immersive-prompt")!;
+      expect(prompt.textContent).toBe("Turn your phone upright to add a note.");
+      expect(prompt.getAttribute("role")).toBe("status");
+    }
+  });
+  it("a portrait Full screen composer closes when the phone turns sideways, keeping the draft, and asks to turn upright", async () => {
+    viewport = mockViewport({ width: 390, height: 844, coarse: true });
+    await mount();
+    await click(tid("video-fullscreen")!);
+    await click(tid("video-immersive-add-note")!);
+    await act(async () => { forms.setBody(ids.asset2, "Warmer", 0); });
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    await viewport.set({ width: 844, height: 390 });
+    await flush(2);
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+    expect(tid("video-immersive-prompt")).not.toBeNull();
+    expect(forms.slot(ids.asset2).composer.body).toBe("Warmer");
+    // Upright again: Full screen stays (a button entry), and the composer does not open by itself.
+    await viewport.set({ width: 390, height: 844 });
+    await flush(2);
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+    expect(tid("video-immersive-prompt")).toBeNull();
+    await click(tid("video-immersive-add-note")!);
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    expect(forms.slot(ids.asset2).composer.body).toBe("Warmer");
+  });
+});
+
 describe("Cancel in a phone's Full screen composer (#880 fix round 1, item 2)", () => {
   beforeEach(() => { viewport = mockViewport({ width: 390, height: 844, coarse: true }); });
   it("discards the draft and closes the composer, as the Add note toggle does, with the keyboard up or down; the stamp goes back", async () => {
@@ -313,9 +352,11 @@ describe("the keyboard in Full screen on a phone device (#880 S1)", () => {
     expect(popup.style.transform).toBe("translateY(12px)");
   });
 
+  // Portrait: a sideways phone opens no composer in Full screen (owner decision 2026-10-16).
   it("the keyboard going away without a blur blurs the Full screen composer's field, and the composer stays shown", async () => {
-    viewport = mockViewport({ width: 844, height: 390, coarse: true });
+    viewport = mockViewport({ width: 390, height: 844, coarse: true });
     await mount();
+    await click(tid("video-fullscreen")!);
     await click(tid("video-immersive-add-note")!);
     const field = document.getElementById("video-note-body")!;
     await act(async () => { field.focus(); });
@@ -338,18 +379,29 @@ describe("the keyboard in Full screen on a phone device (#880 S1)", () => {
 describe("entering Full screen from the sheet's modes (#880 S5)", () => {
   beforeEach(() => { viewport = mockViewport({ width: 390, height: 844, coarse: true }); });
   const field = () => document.getElementById("video-note-body")!;
-  it("a turn mid-compose enters Full screen's compose with the same editor node, still focused", async () => {
+  // Owner decision 2026-10-16 (option c) supersedes S5's carry: a sideways phone writes no note in Full screen.
+  it("a turn mid-compose enters Full screen watching: the field is left, the draft and its stamp are kept, and the prompt asks to turn upright; turning back opens no composer", async () => {
     await mount();
     const editor = field();
     await act(async () => { editor.focus(); });
+    await act(async () => { forms.setBody(ids.asset2, "Lift the shadows", 0); });
     await flush(2);
     expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("compose");
+    const stamp = forms.slot(ids.asset2).composer.anchorFrame;
+    expect(stamp).not.toBeNull();
     await viewport.set({ width: 844, height: 390 });
     await flush(2);
     expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(true);
-    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+    expect(document.activeElement).not.toBe(editor);
+    expect(tid("video-immersive-prompt")!.textContent).toBe("Turn your phone upright to add a note.");
+    await viewport.set({ width: 390, height: 844 });
+    await flush(2);
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(false);
+    expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
     expect(field()).toBe(editor);
-    expect(document.activeElement).toBe(editor);
+    expect(forms.slot(ids.asset2).composer.body).toBe("Lift the shadows");
+    expect(forms.slot(ids.asset2).composer.anchorFrame).toBe(stamp);
   });
   it("turning back with the field left in Full screen gives the sheet browse, not a stale compose", async () => {
     await mount();

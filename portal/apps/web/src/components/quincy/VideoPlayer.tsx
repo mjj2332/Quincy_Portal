@@ -15,7 +15,8 @@ import { TimeFormatMenu } from "./TimeFormatMenu";
 import { VideoStage } from "./VideoStage";
 import { SocialPreviewControls, useOverlayImage, type SocialPreviewMode } from "./SocialPreviewControls";
 import { useMediaQuery } from "../../lib/use-media-query";
-import { CHROME_HIDE_MS, chromeHeld, readPhoneDevice } from "../../lib/immersive";
+import { CHROME_HIDE_MS, chromeHeld, PROMPT_MS, readPhoneDevice, type ImmersivePrompt } from "../../lib/immersive";
+import { useLandscape } from "../../lib/use-device-orientation";
 import { liftRemotePlayback, nativePlayerSupported, openNativePlayer } from "../../lib/video-native-player";
 import { Notice } from "./Notice";
 import { PHONE_QUERY } from "../../lib/review-pane-geometry";
@@ -67,6 +68,8 @@ export type VideoImmersiveHost = {
   card?: ReactNode;
   /** A press on a marker while in full screen: the host pauses and shows that note as a card. Without it the ordinary `onMarkerSelect` runs. */
   onMarkerTap?(id: string): void;
+  /** A short line the host wants on the film (a sideways phone's Add note: turn upright). Shown for `PROMPT_MS`, again for each new `key`. */
+  prompt?: ImmersivePrompt | null;
 };
 
 export const COARSE = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[721px]:min-h-11 max-[721px]:min-w-11";
@@ -210,6 +213,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const [phoneDevice] = useState(readPhoneDevice);
   const phone = useMediaQuery(PHONE_QUERY);
   const compact = imm && (phone || phoneDevice);
+  const landscape = useLandscape();
   // The phone's styling (P1's single row, the band scrubber, the play badge): a phone width, or a phone device in Full screen.
   const handheld = phone || compact;
   // F1 keeps the controls under the composer: a host's compose-mode hide does not apply in Full screen.
@@ -266,6 +270,15 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   useEffect(() => { if (!imm) { setChromeShown(true); setFocusHeld(false); setPopupOpen(false); setScrubbing(false); stopListeningForScrubEnd(); } }, [imm, stopListeningForScrubEnd]);
   const keyDown = useCallback((event: KeyboardEvent | ReactKeyboardEvent): boolean => { wakeRef.current(); return handleKeyDown(event); }, [handleKeyDown]);
   const [nativeFailed, setNativeFailed] = useState(false);
+  // The host's prompt shows for PROMPT_MS from each new key, in Full screen only.
+  const promptKey = imm ? immersive?.prompt?.key ?? null : null;
+  const [promptDone, setPromptDone] = useState<number | null>(null);
+  useEffect(() => {
+    if (promptKey === null) return undefined;
+    const timer = setTimeout(() => { setPromptDone(promptKey); }, PROMPT_MS);
+    return () => { clearTimeout(timer); };
+  }, [promptKey]);
+  const promptText = promptKey !== null && promptDone !== promptKey ? immersive?.prompt?.text ?? null : null;
   // AirPlay during the hand-off (owner decision 3, #880 S7): the restriction is lifted inside the press, before the native player is entered, and restored when that player
   // closes (webkitendfullscreen, or the element full screen ending), when the device refuses, and when the film goes (a Version change re-keys the player, or it unmounts).
   const restoreRemote = useRef<(() => void) | null>(null);
@@ -323,8 +336,8 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   // The dock (#880 S2): one wrapper, always rendered, around the replacement and the transport, so entering Full screen or putting the pen down never swaps the node the controls
   // live in (nor remounts the slider). Outside Full screen it lays out as nothing (`contents`); in Full screen it is the bottom overlay on a scrim, in the player's own tree
   // (safe-area insets keep it off the notch and the home bar).
-  // A phone device in Full screen past the phone width is a sideways phone (F2).
-  const sideways = compact && !phone;
+  // A phone device in Full screen held sideways (F2).
+  const sideways = compact && landscape;
   const dockClass = imm
     ? cn("absolute inset-x-0 bottom-0 z-10 flex flex-col gap-[var(--space-2)] bg-[image:var(--scrim-chrome)] pr-[max(var(--space-3),env(safe-area-inset-right))] pl-[max(var(--space-3),env(safe-area-inset-left))]", sideways ? SIDEWAYS_DOCK_BOTTOM : "pb-[max(var(--space-2),env(safe-area-inset-bottom))]", composing ? COMPOSING_SCRIM : "pt-[var(--space-6)]", FADE, fade)
     : "contents";
@@ -386,6 +399,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
       <span data-testid="video-immersive-title" title={immersive.heading} className="min-w-0 flex-1 truncate [font:var(--type-body)]">{immersive.heading}</span>
     </div>}
     {imm && immersive?.card != null && <div data-testid="video-immersive-card" inert={!chromeVisible} className={cn("pointer-events-none absolute inset-x-[var(--space-3)] top-[var(--space-7)] z-10 flex justify-center", FADE, fade)}><div className="pointer-events-auto w-full max-w-[var(--note-card-width)]">{immersive.card}</div></div>}
+    {promptText !== null && <Notice tone="caution" role="status" data-testid="video-immersive-prompt" className={cn("bg-card", noticeClass)}>{promptText}</Notice>}
     {nativeFailed && <Notice tone="caution" role="alert" data-testid="video-native-failed" className={cn("bg-card", noticeClass)}>The system player couldn't open this film on this device.</Notice>}
 
     {/* The replacement sits ABOVE the transport, which stays mounted and hidden under it (#879 PR 2): unmounted, the slider came back as a new node, measured its thumb inside whatever

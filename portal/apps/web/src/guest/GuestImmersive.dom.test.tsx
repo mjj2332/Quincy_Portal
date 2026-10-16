@@ -258,8 +258,11 @@ describe("the guest page's Full screen and the keyboard on a phone device (#880 
     expect(column.style.height).toBe(`${window.innerHeight - 200}px`);
   });
 
+  // Portrait: a sideways phone opens no composer in Full screen (owner decision 2026-10-16).
   it("the keyboard going away without a blur blurs the Full screen composer's field, and the composer stays shown", async () => {
+    viewport.restore(); viewport = mockViewport({ width: 390, height: 844, coarse: true });
     await open();
+    await click(byId("video-fullscreen"));
     await click(byId("video-immersive-add-note"));
     const editor = byId("video-review-pane")!.querySelector<HTMLTextAreaElement>("textarea")!;
     await act(async () => { editor.focus(); });
@@ -334,7 +337,8 @@ describe("the guest page's Full screen and rotation (#880, D14)", () => {
     await viewport.set({ width: 390, height: 844 });
     expect(immersiveOn()).toBe(true);
   });
-  it("a turn mid-compose enters Full screen's compose, the draft carried (#880 S5); the field is the desktop form's, main's second composer, so it is a new node", async () => {
+  // Owner decision 2026-10-16 (option c) supersedes S5's carry: a sideways phone writes no note in Full screen.
+  it("a turn mid-compose enters Full screen watching, asks to turn upright, and keeps the draft for the strip when the phone comes back upright", async () => {
     notes = { [asset(10)]: [note(1)] };
     await open();
     const strip = byId("video-review-pane")!.querySelector<HTMLTextAreaElement>("textarea")!;
@@ -345,9 +349,24 @@ describe("the guest page's Full screen and rotation (#880, D14)", () => {
     await viewport.set({ width: 844, height: 390 });
     await flush(2);
     expect(immersiveOn()).toBe(true);
-    expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
-    expect(byId("guest-composer")).not.toBeNull();
-    expect((byId("video-review-pane")!.querySelector<HTMLTextAreaElement>('[data-testid="guest-composer-body"]'))!.value).toBe("Brighter sky");
+    expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+    expect(byId("video-immersive-prompt")!.textContent).toBe("Turn your phone upright to add a note.");
+    await viewport.set({ width: 390, height: 844 });
+    await flush(2);
+    expect(immersiveOn()).toBe(false);
+    expect(byId("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
+    expect(byId("video-review-pane")!.querySelector<HTMLTextAreaElement>('[data-testid="guest-composer-body"]')!.value).toBe("Brighter sky");
+  });
+  it("Add note on a sideways phone opens no composer and asks to turn upright (#880, owner decision 2026-10-16)", async () => {
+    await open();
+    await viewport.set({ width: 844, height: 390 });
+    await flush(2);
+    expect(immersiveOn()).toBe(true);
+    await click(byId("video-immersive-add-note"));
+    expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+    expect(byId("video-immersive-add-note")!.getAttribute("aria-pressed")).toBe("false");
+    expect(byId("guest-composer")).toBeNull();
+    expect(byId("video-immersive-prompt")!.textContent).toBe("Turn your phone upright to add a note.");
   });
   it("turning back with the field left in Full screen gives the sheet browse, not a stale compose (#880 S5)", async () => {
     notes = { [asset(10)]: [note(1)] };

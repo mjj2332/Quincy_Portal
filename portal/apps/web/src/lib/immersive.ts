@@ -28,6 +28,21 @@ export function rotate(state: ImmersiveState, { landscape, phoneDevice }: { land
   return state;
 }
 
+/**
+ * A phone held sideways writes no note in Full screen (owner decision 2026-10-16, #880 option c): with the keyboard up, Safari's toolbar and the keyboard leave the composer no room.
+ * Add note, and a turn mid-compose, show `UPRIGHT_PROMPT` instead; portrait Full screen (F1's composer) and a desktop are unchanged.
+ */
+export function mustTurnUpright({ immersive, phoneDevice, landscape }: { immersive: boolean; phoneDevice: boolean; landscape: boolean }): boolean {
+  return immersive && phoneDevice && landscape;
+}
+export const UPRIGHT_PROMPT = "Turn your phone upright to add a note.";
+/** How long a Full screen prompt stays on the film. */
+export const PROMPT_MS = 4000;
+/** The prompt a screen hands the player: a new `key` for each press shows it again. */
+export type ImmersivePrompt = { key: number; text: string };
+/** The next prompt after `previous`, so a second press shows it again. */
+export const nextPrompt = (previous: ImmersivePrompt | null, text: string): ImmersivePrompt => ({ key: (previous?.key ?? 0) + 1, text });
+
 /** Minimise (or Escape): out, whatever the way in. */
 export const leaveImmersive = (): ImmersiveState => null;
 

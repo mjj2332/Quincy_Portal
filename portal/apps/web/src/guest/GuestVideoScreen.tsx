@@ -3,8 +3,8 @@ import { FloatingFocusManager, useFloating } from "@floating-ui/react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { Check, ChevronLeft, ChevronRight, Copy, DownloadIcon, FolderDown, Maximize, MessageSquareWarning, Smartphone } from "lucide-react";
 import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto } from "@quincy/shared";
-import { rotate, readPhoneDevice, type ImmersiveState } from "../lib/immersive";
-import { readLandscape, useDeviceOrientation } from "../lib/use-device-orientation";
+import { mustTurnUpright, nextPrompt, rotate, readPhoneDevice, UPRIGHT_PROMPT, type ImmersivePrompt, type ImmersiveState } from "../lib/immersive";
+import { readLandscape, useDeviceOrientation, useLandscape } from "../lib/use-device-orientation";
 import { nativePlayerLabel } from "../lib/video-native-player";
 import { hasOpenAlertDialog } from "../lib/alert-dialog-press";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../components/quincy/project-sheet-layers";
@@ -157,10 +157,11 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const [cardId, setCardId] = useState<string | null>(null);
   useDeviceOrientation((landscape) => {
     const phoneDevice = readPhoneDevice();
-    // A turn that enters Full screen carries the sheet's mode in (#880 S5): mid-compose the composer floats in the same commit (the same editor node keeps the focus and the
-    // keyboard); mid-search the field is left and search mode ends (the query stays). Read at the turn, from this render's state.
+    // A turn that enters Full screen (#880 S5) leaves the sheet's field: a turn is always sideways, and a sideways phone writes no note there (owner decision 2026-10-16), so
+    // mid-compose the field is left (the draft stays in the composer) and the prompt asks to turn upright; mid-search search mode ends (the query stays).
+    // Read at the turn, from this render's state, while the sheet's own blur path still runs.
     if (immersive === null && rotate(null, { landscape, phoneDevice }) !== null) {
-      if (sheetControl.composing) setComposeShown(true);
+      if (sheetControl.composing) { blurComposerField(); askUpright(); }
       else if (sheetControl.searching) { blurNotesSearchField(); sheetControl.onSearching(false); }
     }
     setImmersive((current) => rotate(current, { landscape, phoneDevice }));
@@ -170,6 +171,14 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   // The phone's handling (#880 S1): a phone width, or a phone device in Full screen. A sideways iPhone is 844pt wide, so `phone` is off, yet its keyboard still pans the
   // page: the root follows the visual viewport and the canvas is ink there too. In Full screen the keyboard going away blurs the composer's field and leaves the composer shown.
   const [phoneDevice] = useState(readPhoneDevice);
+  // A sideways phone writes no note in Full screen (owner decision 2026-10-16): Add note shows the prompt instead, and a composer open when the phone turns closes, the draft kept.
+  const sideways = useLandscape();
+  const upright = mustTurnUpright({ immersive: imm, phoneDevice, landscape: sideways });
+  const uprightRef = useRef(upright);
+  uprightRef.current = upright;
+  const [prompt, setPrompt] = useState<ImmersivePrompt | null>(null);
+  const askUpright = useCallback(() => { setPrompt((previous) => nextPrompt(previous, UPRIGHT_PROMPT)); }, []);
+  useEffect(() => { if (!upright) setPrompt(null); }, [upright]);
   const handheld = phone || (imm && phoneDevice);
   // The software keyboard went away without blurring the field (some iOS paths): blur it, so compose mode ends the ordinary way (#879 fix).
   // The guest column follows the visual viewport for as long as the phone screen is up (#879 PR 2, the staff viewer's r5 mechanism): the hook alone writes its height, transform
@@ -382,12 +391,13 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   // Leaving Full screen, a Version change or a finished/cancelled draft puts the floating composer away. A draft that closes in Full screen (Cancel, a post) hands the focus to
   // Add note before the pane hides, as the toggle does (#880 fix round 1, item 2; lesson P3): left in the closing pane it would fall to the page.
   useLayoutEffect(() => {
+    if (composeShown && upright) { blurComposerField(); hideComposer(); askUpright(); return; }
     if (!composeShown || (imm && compose.isOpen)) return;
     if (!imm) { setComposeShown(false); return; }
     const active = document.activeElement;
     const pane = rootRef.current?.querySelector('[data-testid="video-review-pane"]');
     if (active === null || active === document.body || (pane?.contains(active) ?? false)) hideComposer(); else setComposeShown(false);
-  }, [imm, compose.isOpen, composeShown, hideComposer]);
+  }, [imm, compose.isOpen, composeShown, hideComposer, upright, askUpright]);
   useEffect(() => { closeComposer(); }, [version.assetId, closeComposer]);
   useEffect(() => { if (archived) closeComposer(); }, [archived, closeComposer]);
   // A paste belongs to the Version it was made for.
@@ -534,7 +544,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     // keeps the keyboard for a focus moving from one field to another. A focus after the check with the keyboard gone (the guest put it away) is not a tap, so iOS would show a caret
     // with no keyboard and then drop compose mode: the guest lands at rest instead, and one tap on the pill starts the note (PR 2 fix round 1).
     // In Full screen (#880) the floating composer is shown first, in the same commit, so the field it focuses is not inside a hidden pane.
-    if (then === "compose") { if (immRef.current) flushSync(() => { setComposeShown(true); }); if (!phone) startDraft(compose.begin); else if (keyboardField(document.activeElement)) focusField(); }
+    if (then === "compose" && uprightRef.current) askUpright();
+    else if (then === "compose") { if (immRef.current) flushSync(() => { setComposeShown(true); }); if (!phone) startDraft(compose.begin); else if (keyboardField(document.activeElement)) focusField(); }
     else if (then === "download") setDownloadHint(true);
     else openDecision(then);
   };
@@ -601,6 +612,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   };
   const toggleAddNote = () => {
     if (composeShown) { hideComposer(); return; }
+    if (upright) { askUpright(); return; }
     setCardId(null);
     if (!session.verified) { requestVerify("compose"); return; }
     clock?.pause();
@@ -611,6 +623,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     on: imm, onToggle: full.toggle, heading: `${video.title} · v${version.version}`,
     ...(canWrite ? { addNote: { pressed: composeShown, onToggle: toggleAddNote } } : {}),
     onMarkerTap,
+    prompt,
     ...(cardThread ? { card: <GuestImmersiveNoteCard thread={cardThread} timecode={timecode} media={api.media} onClose={closeCard} onShowInNotes={() => { full.leave(); setPaneOpen(true); openSheet(); }} /> } : {}),
   };
   // Escape: its own ladder (the page is not a dialog). A popup or modal that is open owns the key; then the card, then the floating composer (the draft stays), then Full screen itself. Decided at capture, before any popup handler has run.

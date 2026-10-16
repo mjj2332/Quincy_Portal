@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const LANDSCAPE_QUERY = "(orientation: landscape)";
 
@@ -38,4 +38,11 @@ export function useDeviceOrientation(onTurn: (landscape: boolean) => void): void
     query.addListener(changed);
     return () => { query.removeListener(changed); };
   }, []);
+}
+
+/** Whether the device is held sideways now (`readLandscape`), following its turns only: a keyboard reshaping the viewport is not a turn. */
+export function useLandscape(): boolean {
+  const [landscape, setLandscape] = useState(readLandscape);
+  useDeviceOrientation(setLandscape);
+  return landscape;
 }
