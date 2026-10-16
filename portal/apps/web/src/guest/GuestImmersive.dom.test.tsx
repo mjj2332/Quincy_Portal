@@ -206,6 +206,24 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("");
   });
 
+  it("the Full screen composer drops the notes pane's sheet chrome: no padding or side border around it (#880 fix round 1, item 3)", async () => {
+    await open();
+    await click(byId("video-fullscreen"));
+    await click(byId("video-immersive-add-note"));
+    const aside = byId("guest-notes-aside")!.className.split(/\s+/);
+    // On the breakpoints the sheet's own padding and border are set on, or they would win (same specificity, later in the sheet).
+    for (const name of ["min-[721px]:in-data-[immersive=compose]:p-0", "min-[721px]:in-data-[immersive=compose]:border-l-0"]) expect(aside, name).toContain(name);
+    const inner = byId("guest-notes-aside-body")!.className.split(/\s+/);
+    expect(inner).toContain("max-[721px]:in-data-[immersive=compose]:p-0");
+    if (size.coarse) {
+      const band = byId("guest-compose-strip")!.closest<HTMLElement>("[data-sheet-part=composer]")!.className.split(/\s+/);
+      for (const name of ["in-data-[immersive=compose]:border-t-0", "in-data-[immersive=compose]:pt-0"]) expect(band, name).toContain(name);
+    } else {
+      const form = byId("guest-composer")!.className.split(/\s+/);
+      for (const name of ["in-data-[immersive=compose]:border-b-0", "in-data-[immersive=compose]:pb-0"]) expect(form, name).toContain(name);
+    }
+  });
+
   it("Tab is held inside the layer: the focus manager's guards exist only while in Full screen, and the page's header is inert", async () => {
     await open();
     expect(document.querySelector("[data-floating-ui-focus-guard]")).toBeNull();

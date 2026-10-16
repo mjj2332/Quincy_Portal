@@ -316,6 +316,38 @@ describe("VideoPlayer Full screen dock (#880 S2)", () => {
     expect(split.style.getPropertyValue("--immersive-controls-h")).toBe("132px");
     spy.mockRestore();
   });
+  it("publishes the controls' height without the scrim's top padding, so the composer sits a space above the scrubber (fix round 1, item 3)", async () => {
+    const split = document.createElement("div"); split.setAttribute("data-testid", "video-review-split"); document.body.appendChild(split);
+    host = document.createElement("div"); split.appendChild(host); root = createRoot(host);
+    const heights = new WeakMap<Element, number>();
+    const spy = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) { return heights.get(this) ?? 0; });
+    await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" immersive={hostOf()} transportReplacement={<div>Pen</div>} />); });
+    const dock = byTestId("video-immersive-dock")!;
+    heights.set(dock, 132); dock.style.paddingTop = "40px";
+    await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" immersive={hostOf()} />); });
+    expect(split.style.getPropertyValue("--immersive-controls-h")).toBe("92px");
+    spy.mockRestore();
+  });
+
+  it("while Add note is open the dock's scrim reaches up behind the composer (its published height), and the frame chip is not drawn under it (fix round 1, item 3)", async () => {
+    // A laid-out film, so the stage has a picture box to draw the chip in.
+    const spies = (["offsetWidth", "offsetHeight"] as const).map((prop) => vi.spyOn(HTMLElement.prototype, prop, "get").mockReturnValue(800));
+    await mount({ immersive: hostOf() });
+    const dock = byTestId("video-immersive-dock")!;
+    expect(dock.className).toContain("pt-[var(--space-6)]");
+    expect(byTestId("video-timecode-chip")).not.toBeNull();
+    await rerender({ immersive: hostOf({ addNote: { pressed: true, onToggle: () => undefined } }) });
+    expect(dock.className).toContain("pt-[calc(var(--space-6)+var(--immersive-composer-h,0px)+var(--space-2))]");
+    expect(dock.className).not.toContain("pt-[var(--space-6)]");
+    expect(byTestId("video-timecode-chip")).toBeNull();
+    await rerender({ immersive: hostOf({ addNote: { pressed: false, onToggle: () => undefined } }) });
+    expect(byTestId("video-timecode-chip")).not.toBeNull();
+    // Outside Full screen the chip is the stage's as before.
+    await rerender({ immersive: hostOf({ on: false, addNote: { pressed: true, onToggle: () => undefined } }) });
+    expect(byTestId("video-timecode-chip")).not.toBeNull();
+    for (const spy of spies) spy.mockRestore();
+  });
+
   it("outside Full screen the wrapper lays out as nothing (display: contents) and has no dock id", async () => {
     await mount({ immersive: hostOf({ on: false }) });
     expect(byTestId("video-immersive-dock")).toBeNull();

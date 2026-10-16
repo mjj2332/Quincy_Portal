@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installLocalStorageShim } from "../../testing/local-storage";
 import { resetUiPrefMemory } from "../../lib/ui-prefs";
 import "../../testing/dom-polyfills";
@@ -54,12 +54,31 @@ describe.each([["a phone (stacked, with the sheet)", true], ["a desktop width", 
     expect(pane.hidden).toBe(false);
     expect(pane.hasAttribute("inert")).toBe(false);
     expect(pane.className).toContain("absolute");
-    expect(pane.className).toContain("bottom-[var(--immersive-controls-h,0px)]");
+    expect(pane.className).toContain("bottom-[calc(var(--immersive-controls-h,0px)+var(--space-2))]");
     expect(q("head")!.hasAttribute("inert")).toBe(true);
     expect(q("body")!.hasAttribute("inert")).toBe(true);
     expect(q("composer")!.hasAttribute("inert")).toBe(false);
     expect(pane.style.height).toBe("");
     expect(q("video-review-handle")).toBeNull();
+  });
+
+  it("compose is F1's composer (fix round 1, item 3): inside the dock's scrim, inset like the dock, a space above the scrubber; its own surface, rounded, with no border or padded panel", async () => {
+    await render({ stacked, immersive: "compose", open: false });
+    const classes = q("video-review-pane")!.className.split(/\s+/);
+    for (const name of ["left-[max(var(--space-3),env(safe-area-inset-left))]", "right-[max(var(--space-3),env(safe-area-inset-right))]", "rounded-[var(--radius-lg)]", "bg-card", "px-[var(--space-3)]", "py-[var(--space-2)]", "overflow-y-auto"]) expect(classes, name).toContain(name);
+    for (const name of ["border", "border-border", "p-[var(--space-3)]", "mb-[var(--space-2)]", "inset-x-[var(--space-3)]"]) expect(classes, name).not.toContain(name);
+  });
+
+  it("publishes the composer's height on the row while it shows, so the dock's scrim grows behind it", async () => {
+    const heights = new WeakMap<Element, number>();
+    const spy = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) { return heights.get(this) ?? 0; });
+    await render({ stacked, immersive: "watch" });
+    heights.set(q("video-review-pane")!, 140);
+    await render({ stacked, immersive: "compose" });
+    expect(q("video-review-split")!.style.getPropertyValue("--immersive-composer-h")).toBe("140px");
+    await render({ stacked, immersive: "watch" });
+    expect(q("video-review-split")!.style.getPropertyValue("--immersive-composer-h")).toBe("");
+    spy.mockRestore();
   });
 
   it("the player, the pane and the editor are the same nodes through off, watch, compose and off again", async () => {

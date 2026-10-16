@@ -184,6 +184,17 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
   const setHold = sheet?.setHold;
   const cancelCompose = full && !phoneSheet ? onImmersiveCancel : undefined;
   const modeValue = useMemo<SheetModeValue | null>(() => (sheetMode !== null && setHold ? { mode: sheetMode, setHold, ...(cancelCompose ? { onCancel: cancelCompose } : {}) } : null), [sheetMode, setHold, cancelCompose]);
+  // The dock's scrim reaches up behind the composer (F1: the composer sits inside the bottom scrim): its height is published on the row, which the player reads.
+  const composerShown = full && immersive === "compose";
+  useLayoutEffect(() => {
+    const row = rowRef.current; const floating = paneRef.current;
+    if (!composerShown || !row || !floating) return undefined;
+    const write = () => { row.style.setProperty("--immersive-composer-h", `${floating.offsetHeight}px`); };
+    write();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(write);
+    observer?.observe(floating);
+    return () => { observer?.disconnect(); row.style.removeProperty("--immersive-composer-h"); };
+  }, [composerShown]);
   const onComposing = sheet?.onComposing;
   // Leaving the field ends compose mode unless the focus went somewhere inside the composer (its tray, Send, Cancel). iOS often reports no `relatedTarget` even then,
   // so with none the check waits a frame and looks at where the focus actually is. Ending it never touches the draft: the composer and its editor stay mounted.
@@ -243,9 +254,10 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
       onBlurCapture={phoneSheet ? onPaneBlur : undefined}
       style={{ ...(stacked || full ? {} : { [REVIEW_PANE_WIDTH_VAR]: `${shown}px` }), ...sheetStyle, ...(showPane ? {} : { display: "none" }) } as CSSProperties}
       className={full
-        // The composer alone, floating just above the player's controls (`--immersive-controls-h` is measured and published by the player); every other part of the pane is inert and hidden.
-        // Its height is bounded by the room above the controls (no fixed share of the row: #879 retired the sheet's 60% cap).
-        ? "absolute inset-x-[var(--space-3)] bottom-[var(--immersive-controls-h,0px)] z-10 mb-[var(--space-2)] flex max-h-[calc(100%-var(--immersive-controls-h,0px)-var(--space-2))] min-h-0 flex-col overflow-y-auto rounded-[var(--radius-md)] border border-border bg-card p-[var(--space-3)] [&_[data-sheet-part][inert]]:hidden"
+        // The composer alone, F1's (#880 fix round 1): inside the dock's scrim, inset like the dock (safe areas included), a space above the scrubber (`--immersive-controls-h` is the
+        // controls' height without the scrim's top padding, published by the player), on its own surface rounded with no border or padded panel (F1's compact `.composer`, 12px
+        // radius: the nearer of the scale's 8 and 14 is --radius-lg). Every other part of the pane is inert and hidden. Its height is bounded by the room above the controls.
+        ? "absolute right-[max(var(--space-3),env(safe-area-inset-right))] bottom-[calc(var(--immersive-controls-h,0px)+var(--space-2))] left-[max(var(--space-3),env(safe-area-inset-left))] z-10 flex max-h-[calc(100%-var(--immersive-controls-h,0px)-var(--space-2))] min-h-0 flex-col overflow-y-auto rounded-[var(--radius-lg)] bg-card px-[var(--space-3)] py-[var(--space-2)] [&_[data-sheet-part][inert]]:hidden"
         : phoneSheet
         ? "relative flex min-h-0 flex-none flex-col overflow-hidden border-t border-border bg-card motion-safe:transition-[height] motion-safe:duration-[var(--dur-base)] motion-safe:ease-[var(--ease-entrance)] data-[dragging=true]:transition-none data-[mode=compose]:max-h-full data-[mode=search]:flex-1 [&_[data-sheet-part][inert]]:hidden"
         : "flex min-h-0 flex-col max-[721px]:flex-[1_1_360px] min-[721px]:w-[var(--review-pane-w)] min-[721px]:flex-none min-[721px]:overflow-hidden"}

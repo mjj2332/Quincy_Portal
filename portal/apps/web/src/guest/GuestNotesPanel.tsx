@@ -47,7 +47,7 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
 
   // Browse mode's composer band is P2's (#879 PR 3a): no gap above it, its own border, `--space-2` above and below the pill; the list's own padding keeps its first and last rows clear.
   if (phone) return <section data-testid="guest-notes-panel" aria-label="Notes" tabIndex={-1} className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-3)] overflow-clip in-data-[mode=browse]:gap-0">
-    {top && <div data-sheet-part="composer" className="order-last shrink-0 border-t border-border pt-[var(--space-3)] in-data-[mode=browse]:py-[var(--space-2)] in-data-[mode=compose]:flex in-data-[mode=compose]:min-h-0 in-data-[mode=compose]:shrink in-data-[mode=compose]:flex-col in-data-[mode=compose]:border-t-0 in-data-[mode=compose]:pt-0">{top}</div>}
+    {top && <div data-sheet-part="composer" className="order-last shrink-0 border-t border-border pt-[var(--space-3)] in-data-[mode=browse]:py-[var(--space-2)] in-data-[mode=compose]:flex in-data-[mode=compose]:min-h-0 in-data-[mode=compose]:shrink in-data-[mode=compose]:flex-col in-data-[mode=compose]:border-t-0 in-data-[mode=compose]:pt-0 in-data-[immersive=compose]:flex in-data-[immersive=compose]:min-h-0 in-data-[immersive=compose]:shrink in-data-[immersive=compose]:flex-col in-data-[immersive=compose]:border-t-0 in-data-[immersive=compose]:pt-0">{top}</div>}
     <div data-sheet-part="body" className="flex min-h-0 flex-1 flex-col">
       <ScrollArea className="min-h-0 flex-1" data-testid="guest-notes-list" viewportProps={{ tabIndex: -1 }}>
         {/* The end gutter holds the overlay scrollbar (`w-2.5`) clear of the cards' right border (fix round 4); the start stays flush. */}

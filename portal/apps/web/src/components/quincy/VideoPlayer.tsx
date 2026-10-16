@@ -77,6 +77,8 @@ export const PILL_ICON = "relative size-8 after:absolute after:-inset-1.5 after:
 const PHONE_PLAY_SLOT = "mx-[calc(var(--space-3)/2)]";
 const MONO = "[font:var(--type-mono)] tabular-nums";
 /** P1's PlayBadge: a 60px round, translucent ink disc on the film (`--space-8` less `--space-1`), the inverse surface's paper icon. */
+/** Full screen's dock while Add note is open (#880 fix round 1, F1): the scrim's top padding plus the composer's published height and the space under it, so the scrim runs behind the composer. */
+const COMPOSING_SCRIM = "pt-[calc(var(--space-6)+var(--immersive-composer-h,0px)+var(--space-2))]";
 const PLAY_BADGE = "pointer-events-auto size-[calc(var(--space-8)-var(--space-1))] rounded-[var(--radius-pill)] bg-[color-mix(in_srgb,var(--ink-900)_55%,transparent)] !text-foreground hover:bg-[color-mix(in_srgb,var(--ink-900)_70%,transparent)]";
 // These chips keep the Lightbox's SHORTCUT_KBD skin (bordered, bg-secondary) rather than the Kbd primitive, to match the Lightbox legend.
 export const LEGEND_KBD = "rounded-[var(--radius-xs)] border border-solid border-[length:var(--border-width-hair)] border-border bg-secondary px-[var(--space-1)] text-foreground [font:var(--weight-regular)_var(--text-2xs)/1.4_var(--font-mono)]";
@@ -309,22 +311,28 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   // live in (nor remounts the slider). Outside Full screen it lays out as nothing (`contents`); in Full screen it is the bottom overlay on a scrim, in the player's own tree
   // (safe-area insets keep it off the notch and the home bar).
   const dockClass = imm
-    ? cn("absolute inset-x-0 bottom-0 z-10 flex flex-col gap-[var(--space-2)] bg-[image:var(--scrim-chrome)] pt-[var(--space-6)] pr-[max(var(--space-3),env(safe-area-inset-right))] pb-[max(var(--space-2),env(safe-area-inset-bottom))] pl-[max(var(--space-3),env(safe-area-inset-left))]", FADE, fade)
+    ? cn("absolute inset-x-0 bottom-0 z-10 flex flex-col gap-[var(--space-2)] bg-[image:var(--scrim-chrome)] pr-[max(var(--space-3),env(safe-area-inset-right))] pb-[max(var(--space-2),env(safe-area-inset-bottom))] pl-[max(var(--space-3),env(safe-area-inset-left))]", composing ? COMPOSING_SCRIM : "pt-[var(--space-6)]", FADE, fade)
     : "contents";
   const transportClass = imm ? "flex flex-col gap-[var(--space-2)]" : "flex flex-col gap-[var(--space-3)] max-[721px]:gap-0 max-[721px]:px-[var(--space-3)] max-[721px]:pb-[var(--space-1)]";
   const dockProps = imm ? { "data-testid": "video-immersive-dock", inert: !chromeVisible } : { "data-testid": "video-transport-dock" };
   const dockRef = useRef<HTMLDivElement | null>(null);
-  // The composer floats just above the controls: publish their height on the split row (the pane is the player's sibling, not its child).
+  // The composer floats a space above the scrubber, inside the scrim (F1): publish the controls' height without the scrim's top padding on the split row (the pane is the
+  // player's sibling, not its child). The scrim's padding grows by the composer's height while it shows, so this stays the controls' own.
   useLayoutEffect(() => {
     if (!imm || !section) return undefined;
     const target = section.closest<HTMLElement>('[data-testid="video-review-split"]') ?? section.parentElement;
     if (!target) return undefined;
-    const write = () => { const dock = dockRef.current; if (dock) target.style.setProperty("--immersive-controls-h", `${dock.offsetHeight}px`); };
+    const write = () => {
+      const dock = dockRef.current;
+      if (!dock) return;
+      const scrimTop = Number.parseFloat(getComputedStyle(dock).paddingTop) || 0;
+      target.style.setProperty("--immersive-controls-h", `${Math.max(0, dock.offsetHeight - scrimTop)}px`);
+    };
     write();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(write);
     if (observer && dockRef.current) observer.observe(dockRef.current);
     return () => { observer?.disconnect(); target.style.removeProperty("--immersive-controls-h"); };
-  }, [imm, section, transportReplacement != null]); // eslint-disable-line react-hooks/exhaustive-deps -- the dock is one node; the replacement changes its height
+  }, [imm, section, transportReplacement != null, composing]); // eslint-disable-line react-hooks/exhaustive-deps -- the dock is one node; the replacement changes its height, the composer its top padding
   const markerSelect = imm && immersive?.onMarkerTap ? immersive.onMarkerTap : onMarkerSelect;
   const noticeClass = imm ? "absolute inset-x-[var(--space-3)] top-[var(--space-7)] z-20" : "";
 
@@ -355,7 +363,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     } : undefined}
     className={cn("group/player @container flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] max-[721px]:gap-0 focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", imm && "relative flex-1 gap-0 bg-invert", className)}
   >
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} badge={badge} {...(social ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})} />
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} badge={badge} chip={!(imm && composing)} {...(social ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})} />
 
     {imm && immersive && <div data-testid="video-immersive-bar" inert={!chromeVisible} className={cn("absolute inset-x-0 top-0 z-10 flex items-center gap-[var(--space-2)] bg-[image:var(--scrim-chrome-top)] pt-[max(var(--space-2),env(safe-area-inset-top))] pr-[max(var(--space-3),env(safe-area-inset-right))] pb-[var(--space-5)] pl-[max(var(--space-3),env(safe-area-inset-left))] text-invert-foreground", FADE, fade)}>
       <IconTip label="Exit full screen">

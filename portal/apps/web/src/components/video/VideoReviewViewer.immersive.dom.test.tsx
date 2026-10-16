@@ -264,6 +264,20 @@ describe("Cancel in a phone's Full screen composer (#880 fix round 1, item 2)", 
   });
 });
 
+describe("the Full screen composer drops the notes panel's sheet chrome (#880 fix round 1, item 3)", () => {
+  it.each([["portrait", { width: 390, height: 844, coarse: true }], ["a desktop width", { width: 1200, height: 800, coarse: false }]] as const)("on %s: no panel padding or side border, and the composer band has no top border or padding of its own", async (_name, size) => {
+    viewport = mockViewport(size);
+    await mount();
+    await click(tid("video-fullscreen")!);
+    await click(tid("video-immersive-add-note")!);
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    const panel = tid("video-notes-panel")!.className.split(/\s+/);
+    for (const name of ["in-data-[immersive=compose]:p-0", "in-data-[immersive=compose]:border-l-0"]) expect(panel, name).toContain(name);
+    const band = tid("video-note-composer")!.closest<HTMLElement>("[data-sheet-part=composer]")!.className.split(/\s+/);
+    for (const name of ["in-data-[immersive=compose]:border-t-0", "in-data-[immersive=compose]:pt-0"]) expect(band, name).toContain(name);
+  });
+});
+
 describe("the keyboard in Full screen on a phone device (#880 S1)", () => {
   class FakeViewport extends EventTarget { height = window.innerHeight; offsetTop = 0; scale = 1; }
   let fake: FakeViewport; let original: PropertyDescriptor | undefined;
