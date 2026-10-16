@@ -1,5 +1,6 @@
-import { ClipboardCopy, ClipboardPaste, DownloadIcon, FileDown, Info, Link2, Smartphone, Trash2 } from "lucide-react";
+import { ClipboardCopy, ClipboardPaste, DownloadIcon, FileDown, Info, Link2, Maximize, Smartphone, Trash2 } from "lucide-react";
 import { copyText } from "../../lib/clipboard";
+import { NATIVE_PLAYER_UNAVAILABLE } from "../../lib/video-native-player";
 import { Item, ItemContent, ItemMedia, ItemTitle } from "../reui/item";
 import { Button } from "../reui/button";
 import { ACTION_ROW, ACTION_ROW_TITLE, ActionRow, ActionSeparator, ReviewActionSheet } from "../quincy/ReviewActionSheet";
@@ -8,13 +9,13 @@ import { EXPORT_PANEL_WIDTH, MarkerExportMenuItems, type MarkerExport } from "./
 import { Menu } from "../quincy/menu";
 
 /**
- * The staff review viewer's ⋯ on a phone (#879, D5, P9): a bottom action sheet of Social preview, Download vN, Marker export…, Copy link, Create Review link, Version details,
- * Copy shown notes, Paste N notes from vX… and, below a rule, Remove vN… (#879 PR 3b; the last four were the notes list's details button and notes ⋯ on a phone). Each row exists only
- * when the viewer would have offered its desktop control, and the trigger is not rendered when none does; each row's visible label is its accessible name. "Open in iPhone player"
- * is #880's: add its row between Create Review link and the rule. Same pieces as before, re-homed: Download is a real anchor; Marker export opens the notes ⋯ menu's own export options (`MarkerExportMenuItems`) as a menu from its row.
+ * The staff review viewer's ⋯ on a phone (#879, D5, P9): a bottom action sheet of Social preview, Download vN, Marker export…, Copy link, Create Review link, Open in iPhone player
+ * (#880, D15), Version details, Copy shown notes, Paste N notes from vX… and, below a rule, Remove vN… (#879 PR 3b; the details and clipboard rows were the notes list's details button and
+ * notes ⋯ on a phone). Each row exists only when the viewer would have offered its desktop control, and the trigger is not rendered when none does; each row's visible label is its
+ * accessible name. Same pieces as before, re-homed: Download is a real anchor; Marker export opens the notes ⋯ menu's own export options (`MarkerExportMenuItems`) as a menu from its row.
  * Reuse: `quincy/ReviewActionSheet` (`reui/sheet` + `reui/item`), `quincy/menu` for the export options.
  */
-export function VideoReviewHeaderMenu({ container, version, social, copyHref, downloadHref, markerExport, onCreateReviewLink, onVersionDetails, clipboard, onRemoveVersion, removeDisabled = false }: {
+export function VideoReviewHeaderMenu({ container, version, social, copyHref, downloadHref, markerExport, onCreateReviewLink, systemPlayer, onVersionDetails, clipboard, onRemoveVersion, removeDisabled = false }: {
   /** The viewer's overlay slot: the sheet portals into it. */
   container: HTMLElement | null;
   /** The Version on screen: Download and Remove name it. */
@@ -26,6 +27,8 @@ export function VideoReviewHeaderMenu({ container, version, social, copyHref, do
   /** The notes host's marker export, lifted so the header can reach it. Absent when the `export` part is off or the notes are not loaded. */
   markerExport?: MarkerExport | undefined;
   onCreateReviewLink?: (() => void) | undefined;
+  /** "Open in iPhone player" / "Open in system player" (#880, D15): hands the film to the device's own player. `supported` is read when the sheet opens; `open` runs inside the press, before the sheet closes. */
+  systemPlayer?: { label: string; supported: () => boolean; open: () => void } | undefined;
   /** Opens the Version details sheet. Present only once the notes host is up (without notes, the details are the pane itself). */
   onVersionDetails?: (() => void) | undefined;
   /** The notes host's copy and paste. Absent until the notes host is up. */
@@ -37,7 +40,7 @@ export function VideoReviewHeaderMenu({ container, version, social, copyHref, do
   const exportOn = markerExport?.enabled === true;
   const copyOn = clipboard?.canCopy === true;
   const pasteLabel = clipboard?.pasteLabel ?? null;
-  if (!social && !copyHref && !downloadHref && !exportOn && !onCreateReviewLink && !onVersionDetails && !copyOn && !onRemoveVersion) return null;
+  if (!social && !copyHref && !downloadHref && !exportOn && !onCreateReviewLink && !systemPlayer && !onVersionDetails && !copyOn && !onRemoveVersion) return null;
   return <ReviewActionSheet container={container}>
     {(close) => <>
       {social && <ActionRow testId="video-social-toggle" icon={<Smartphone aria-hidden="true" />} pressed={social.on} onSelect={() => { social.toggle(); close(); }}>Social preview</ActionRow>}
@@ -51,11 +54,15 @@ export function VideoReviewHeaderMenu({ container, version, social, copyHref, do
       </Menu>}
       {copyHref && <ActionRow testId="video-menu-copy-link" icon={<Link2 aria-hidden="true" />} onSelect={() => { copyText(copyHref); close(); }}>Copy link</ActionRow>}
       {onCreateReviewLink && <ActionRow testId="video-create-review-link" icon={<Link2 aria-hidden="true" />} onSelect={() => { close(true); onCreateReviewLink(); }}>Create Review link</ActionRow>}
+      {systemPlayer && (() => {
+        const supported = systemPlayer.supported();
+        return <ActionRow testId="video-open-system-player" icon={<Maximize aria-hidden="true" />} disabled={!supported} hint={supported ? undefined : NATIVE_PLAYER_UNAVAILABLE} onSelect={() => { systemPlayer.open(); close(); }}>{systemPlayer.label}</ActionRow>;
+      })()}
       {onVersionDetails && <ActionRow testId="video-version-details-row" icon={<Info aria-hidden="true" />} onSelect={() => { close(true); onVersionDetails(); }}>Version details</ActionRow>}
       {clipboard && copyOn && <ActionRow testId="video-copy-shown-notes" icon={<ClipboardCopy aria-hidden="true" />} disabled={clipboard.copyDisabled} onSelect={() => { clipboard.copyShown(); close(); }}>Copy shown notes</ActionRow>}
       {clipboard && pasteLabel !== null && <ActionRow testId="video-paste-notes" icon={<ClipboardPaste aria-hidden="true" />} onSelect={() => { close(true); clipboard.openPaste(); }}>{pasteLabel}</ActionRow>}
       {onRemoveVersion && <>
-        {(social || copyHref || downloadHref || exportOn || onCreateReviewLink || onVersionDetails || copyOn) && <ActionSeparator />}
+        {(social || copyHref || downloadHref || exportOn || onCreateReviewLink || systemPlayer || onVersionDetails || copyOn) && <ActionSeparator />}
         <ActionRow testId="video-header-remove-version" icon={<Trash2 aria-hidden="true" />} danger disabled={removeDisabled} onSelect={() => { close(true); onRemoveVersion(); }}>{`Remove v${version}…`}</ActionRow>
       </>}
     </>}

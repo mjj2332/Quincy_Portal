@@ -205,7 +205,7 @@ export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, pho
     data-testid="video-notes-panel"
     // In the phone sheet's compose mode only the composer shows, with a tighter top and bottom; the side gutter stays the browse one, so the pill and Send never shift (#879 fix r3).
     // Browse mode's composer band is P1's (#879 PR 3a): no padding above the list or below the pill and no gap above the composer, which owns one border and `--space-2` around the pill.
-    className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)] min-[721px]:overflow-clip max-[721px]:overflow-clip border-l border-border bg-card p-[var(--space-4)] text-card-foreground max-[721px]:border-l-0 in-data-[mode=browse]:gap-0 in-data-[mode=browse]:py-0 in-data-[mode=compose]:py-[var(--space-2)]"
+    className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)] min-[721px]:overflow-clip max-[721px]:overflow-clip border-l border-border bg-card p-[var(--space-4)] text-card-foreground max-[721px]:border-l-0 in-data-[mode=browse]:gap-0 in-data-[mode=browse]:py-0 in-data-[mode=compose]:py-[var(--space-2)] in-data-[immersive=compose]:border-l-0 in-data-[immersive=compose]:p-0"
   >
     {!phone && headerRow}
 
@@ -252,7 +252,7 @@ export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, pho
     </div>
 
     {/* In compose mode the composer is the strip: it may shrink (only its + tray gives way), and the sheet's own top border is the strip's. */}
-    <div ref={composerRef} data-sheet-part="composer" className="shrink-0 border-t border-border data-[head-cut=true]:border-t-transparent pt-[var(--space-3)] in-data-[mode=browse]:py-[var(--space-2)] in-data-[mode=compose]:flex in-data-[mode=compose]:min-h-0 in-data-[mode=compose]:shrink in-data-[mode=compose]:flex-col in-data-[mode=compose]:border-t-0 in-data-[mode=compose]:pt-0">
+    <div ref={composerRef} data-sheet-part="composer" className="shrink-0 border-t border-border data-[head-cut=true]:border-t-transparent pt-[var(--space-3)] in-data-[mode=browse]:py-[var(--space-2)] in-data-[mode=compose]:flex in-data-[mode=compose]:min-h-0 in-data-[mode=compose]:shrink in-data-[mode=compose]:flex-col in-data-[mode=compose]:border-t-0 in-data-[mode=compose]:pt-0 in-data-[immersive=compose]:flex in-data-[immersive=compose]:min-h-0 in-data-[immersive=compose]:shrink in-data-[immersive=compose]:flex-col in-data-[immersive=compose]:border-t-0 in-data-[immersive=compose]:pt-0">
       {archived
         ? <p data-testid="video-notes-archived" className={ARCHIVED_NOTICE_CLASS}>Read-only while archived. Restore the project before adding or changing notes.</p>
         : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} markup={session.markup} rich={{ projectId: session.projectId, role: session.role }} {...(pen !== undefined ? { pen } : {})} />}

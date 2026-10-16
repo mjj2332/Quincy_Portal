@@ -182,7 +182,7 @@ describe("the one-line top bar (#877 S2)", () => {
       expect(tid("video-version-chip")!.textContent).toContain("Review status: In review");
     });
 
-    it("each item keeps its own condition, and the trigger is absent when nothing is allowed", async () => {
+    it("each item keeps its own condition, and with nothing allowed the menu carries only Open in system player (#880, D15)", async () => {
       await mount({ download: true });
       await openMenu();
       expect(tid("video-menu-copy-link")).toBeNull();
@@ -190,7 +190,9 @@ describe("the one-line top bar (#877 S2)", () => {
       expect(tid("video-download")).not.toBeNull();
       await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
       await mount();
-      expect(trigger()).toBeNull();
+      await openMenu();
+      expect(tid("video-open-system-player")).not.toBeNull();
+      for (const id of ["video-download", "video-menu-copy-link", "video-create-review-link", "video-social-toggle", "video-header-remove-version"]) expect(tid(id), id).toBeNull();
     });
   });
 });

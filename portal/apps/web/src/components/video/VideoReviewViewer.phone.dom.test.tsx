@@ -105,7 +105,8 @@ describe("the phone header", () => {
     const actions = tid("review-action-rows")!;
     expect(actions.className).toContain("has-data-[size=sm]:gap-0");
     const rows = [...actions.querySelectorAll<HTMLElement>(":scope > button, :scope > a")];
-    expect(rows.length).toBe(4);
+    // Social preview, Download, Copy link, Create Review link and #880's Open in system player.
+    expect(rows.length).toBe(5);
     for (const row of rows) {
       expect(row.className).toContain("py-[var(--space-3)]");
       expect(row.className, row.textContent ?? "").not.toMatch(/(^|\s)(py-2\.5|rounded-lg|px-3)(\s|$)/);
@@ -250,7 +251,9 @@ describe("D4 and focus", () => {
 
   it("the ⋯ sheet carries a Marker export row once the notes host is up and the Project's export part is on", async () => {
     await mount({ notes: true });
-    const deadline = Date.now() + 5000; while (!trigger() && Date.now() < deadline) await flush(1);
+    // The trigger is always there on a phone (the system-player row, #880), so wait on the notes host itself.
+    const deadline = Date.now() + 5000; while (!tid("video-notes-panel") && Date.now() < deadline) await flush(1);
+    await flush(4);
     await click(trigger()!);
     expect(tid("video-marker-export-row")).not.toBeNull();
   });
@@ -500,13 +503,13 @@ describe("the P8 Versions sheet (#879 PR 3b)", () => {
 
 describe("the P9 rows (#879 PR 3b)", () => {
   const untilNotes = async () => { const deadline = Date.now() + 5000; while (!tid("video-notes-panel") && Date.now() < deadline) await flush(1); };
-  const rowNames = () => [...tid("review-action-rows")!.children].filter((row) => (row as HTMLElement).dataset.testid !== "review-action-separator").map((row) => row.textContent);
+  const rowNames = () => [...tid("review-action-rows")!.children].filter((row) => (row as HTMLElement).dataset.testid !== "review-action-separator").map((row) => (row.querySelector('[data-testid="review-action-row-label"]') ?? row).textContent);
 
-  it("lists Social preview, Download v2, Marker export…, Copy link, Create Review link, Version details, Copy shown notes, a rule and Remove v2…, in that order", async () => {
+  it("lists Social preview, Download v2, Marker export…, Copy link, Create Review link, Open in system player (#880), Version details, Copy shown notes, a rule and Remove v2…, in that order", async () => {
     await mount({ shown: () => {}, download: true, reviewLinks: true, social: true, trash: true, notes: true });
     await untilNotes(); await untilVersionMenu();
     await click(trigger()!);
-    expect(rowNames()).toEqual(["Social preview", "Download v2", "Marker export…", "Copy link", "Create Review link", "Version details", "Copy shown notes", "Remove v2…"]);
+    expect(rowNames()).toEqual(["Social preview", "Download v2", "Marker export…", "Copy link", "Create Review link", "Open in system player", "Version details", "Copy shown notes", "Remove v2…"]);
     const sep = tid("review-action-rows")!.querySelector('[data-testid="review-action-separator"]')!;
     expect(sep.nextElementSibling).toBe(tid("video-header-remove-version"));
   });

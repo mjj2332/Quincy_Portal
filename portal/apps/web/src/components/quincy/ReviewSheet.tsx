@@ -68,7 +68,14 @@ export function useReviewSheet({ drawing, filmAspect, label = "Notes" }: { drawi
 const NO_HOLDS: ReadonlySet<string> = new Set();
 
 /** What the phone composer reads of the sheet it sits in: the mode, and its own holds. Absent (null) outside a phone sheet: the composer is the desktop form. */
-export type SheetModeValue = { mode: SheetMode; setHold: (reason: string, on: boolean) => void };
+export type SheetModeValue = {
+  mode: SheetMode; setHold: (reason: string, on: boolean) => void;
+  /** A phone's Full screen compose only (#880 review 6): the strip floats over the film (F1), so Cancel ends the hint row instead of taking a row under the pill. */
+  floating?: true;
+  /** A phone's Full screen compose only (#880 fix round 1): the screen's close for the floating composer, the Add note toggle's own. Cancel calls it after discarding, since a blur
+   *  there leaves the composer shown (the keyboard going away blurs the field too). Absent in the sheet, where Cancel's blur ends compose mode. */
+  onCancel?: () => void;
+};
 export const SheetModeContext = createContext<SheetModeValue | null>(null);
 
 export const SHEET_COLLAPSED_MIN = 127;
@@ -87,7 +94,7 @@ export type SheetRoom = { available: number; width: number; transport: number; c
  * Wires a pane `<div>` as the sheet: its stops, the live height while dragging, and the inert toggling of the screen's marked parts. `enabled` is the phone layout; off, every value is inert
  * and the pane is exactly the desktop pane.
  */
-export function useSheetPane({ enabled, control, room, paneRef }: { enabled: boolean; control: ReviewSheetControl | undefined; room: SheetRoom; paneRef: RefObject<HTMLDivElement | null> }) {
+export function useSheetPane({ enabled, control, room, paneRef, immersive = "off" }: { enabled: boolean; control: ReviewSheetControl | undefined; room: SheetRoom; paneRef: RefObject<HTMLDivElement | null>; /** Full screen (#880): while composing, only the composer shows, on a phone and on a desktop width alike. */ immersive?: "off" | "watch" | "compose" }) {
   const active = enabled && control !== undefined;
   const stop = control?.stop ?? "half";
   const mode = control?.mode ?? "browse";
@@ -103,7 +110,7 @@ export function useSheetPane({ enabled, control, room, paneRef }: { enabled: boo
     for (const element of pane.querySelectorAll(PART)) {
       const part = element.getAttribute("data-sheet-part");
       const typing = mode === "compose" || mode === "draw";
-      const hide = active && (part === "body" ? typing || (mode === "browse" && stop === "collapsed") : part === "head" ? typing : part === "composer" && mode === "search");
+      const hide = (active && (part === "body" ? typing || (mode === "browse" && stop === "collapsed") : part === "head" ? typing : part === "composer" && mode === "search")) || (immersive === "compose" && (part === "body" || part === "head"));
       setInert(element, hide);
     }
   });

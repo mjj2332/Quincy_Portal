@@ -246,7 +246,7 @@ export function useGuestCompose({ phone, clock, frameCount, timecode, markupAllo
   useEffect(() => {
     if (!drawing) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing || event.altKey) return;
+      if (event.isComposing || event.altKey || event.defaultPrevented) return;
       const field = event.target instanceof Element && event.target.closest(FIELD) !== null;
       if (event.key === "Escape" && !field) { setPhase("off"); return; }
       if (field || !(event.metaKey || event.ctrlKey)) return;
@@ -350,7 +350,7 @@ export function useGuestCompose({ phone, clock, frameCount, timecode, markupAllo
     : framesChanged && markupAllowed ? "Save the new frames before you draw."
     : null;
   const drawLabel = items.length > 0 ? "Edit drawing" : keptDrawing ? "Redraw" : "Draw";
-  const form = !isOpen ? null : <form data-testid="guest-composer" aria-label={target === null ? "New note" : "Edit note"} onSubmit={(event: FormEvent) => { event.preventDefault(); void submit(); }} noValidate className="flex flex-col gap-[var(--space-2)] border-b border-border pb-[var(--space-3)]">
+  const form = !isOpen ? null : <form data-testid="guest-composer" aria-label={target === null ? "New note" : "Edit note"} onSubmit={(event: FormEvent) => { event.preventDefault(); void submit(); }} noValidate className="flex flex-col gap-[var(--space-2)] border-b border-border pb-[var(--space-3)] in-data-[immersive=compose]:border-b-0 in-data-[immersive=compose]:pb-0">
     <p data-testid="guest-composer-anchor" className="m-0 text-foreground [font:var(--type-mono)] tabular-nums">{anchor}</p>
     <div className="flex flex-wrap gap-[var(--space-2)]">
       <Button type="button" variant="outline" size="sm" data-testid="guest-composer-mark-in" className={TOUCH} disabled={clock === null || marksLocked || pending} onClick={() => { if (!pending) setMarks((current) => markFrame(current, "in", here())); }}>Mark in</Button>

@@ -1,12 +1,13 @@
 import type { ShuttleKey } from "./video-shuttle";
 
-/** What a key press asks the player to do. I and O are marks (in / out points for a note) and only exist when the host passes `marks: true`. */
+/** What a key press asks the player to do. I and O are marks (in / out points for a note) and only exist when the host passes `marks: true`; F is Full screen (#880) and only exists when the host passes `fullscreen: true`. */
 export type PlayerKeyAction =
   | { type: ShuttleKey }
   | { type: "step"; delta: -1 | 1 }
   | { type: "home" }
   | { type: "end" }
-  | { type: "mark"; kind: "in" | "out" };
+  | { type: "mark"; kind: "in" | "out" }
+  | { type: "fullscreen" };
 
 type KeyLike = Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey" | "isComposing" | "keyCode" | "repeat" | "defaultPrevented" | "target">;
 
@@ -36,7 +37,7 @@ function isEditable(target: Element): boolean {
  * J and L step a frame instead of shuttling. With `held.marks`, I and O are in / out marks. A focused slider keeps
  * the arrows, Home and End (its step is one frame); a focused button keeps Space.
  */
-export function playerKeyAction(event: KeyLike, held: { k?: boolean; marks?: boolean } = {}): PlayerKeyAction | null {
+export function playerKeyAction(event: KeyLike, held: { k?: boolean; marks?: boolean; fullscreen?: boolean } = {}): PlayerKeyAction | null {
   if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return null;
   if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return null;
   const target = isElement(event.target) ? event.target : null;
@@ -63,6 +64,7 @@ export function playerKeyAction(event: KeyLike, held: { k?: boolean; marks?: boo
     case "End": return { type: "end" };
     case "i": case "I": return held.marks && !event.repeat ? { type: "mark", kind: "in" } : null;
     case "o": case "O": return held.marks && !event.repeat ? { type: "mark", kind: "out" } : null;
+    case "f": case "F": return held.fullscreen && !event.repeat ? { type: "fullscreen" } : null;
     default: return null;
   }
 }

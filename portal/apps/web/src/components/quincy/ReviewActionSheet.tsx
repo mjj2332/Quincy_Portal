@@ -1,7 +1,7 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import { Ellipsis } from "lucide-react";
 import { Button } from "../reui/button";
-import { Item, ItemContent, ItemGroup, ItemMedia, ItemSeparator, ItemTitle } from "../reui/item";
+import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemSeparator, ItemTitle } from "../reui/item";
 import { Sheet, SheetContent, SheetTitle } from "../reui/sheet";
 import { SheetCloseButton } from "./SheetCloseButton";
 import { cn } from "@/lib/utils";
@@ -69,7 +69,7 @@ export const ACTION_ROWS = "min-h-0 gap-0 has-data-[size=sm]:gap-0 overflow-y-au
 export const ACTION_ROW_TITLE = "text-[length:var(--text-base)] leading-[var(--leading-normal)] font-normal";
 
 /** One row of the action sheet: a button, or a real anchor (`href`, so the browser's own download runs on it). */
-export function ActionRow({ icon, children, onSelect, href, download, danger = false, disabled = false, pressed, testId }: {
+export function ActionRow({ icon, children, onSelect, href, download, danger = false, disabled = false, pressed, testId, hint }: {
   icon?: ReactNode;
   children: ReactNode;
   onSelect?: ((event?: unknown) => void) | undefined;
@@ -80,15 +80,23 @@ export function ActionRow({ icon, children, onSelect, href, download, danger = f
   /** A toggle row (Social preview): its state, spoken as `aria-pressed`. */
   pressed?: boolean | undefined;
   testId?: string | undefined;
+  /** A line under the title: why a row is disabled (#880: no native player here). */
+  hint?: string | undefined;
 }) {
   // The visible label is the accessible name (#879 PR 3b): no row speaks a different one.
   // The geometry goes on the Item, whose `cn` merges it over the `sm` size (`px-3 py-2.5`, `rounded-lg`); on the rendered element it would only be concatenated beside them.
+  const hintId = useId();
+  const described = hint ? { "aria-describedby": hintId } : {};
   const render = href !== undefined
-    ? <a data-testid={testId} href={href} {...(download ? { download: true } : {})} onClick={onSelect} />
-    : <button data-testid={testId} type="button" disabled={disabled} {...(pressed !== undefined ? { "aria-pressed": pressed } : {})} onClick={onSelect} />;
+    ? <a data-testid={testId} href={href} {...described} {...(download ? { download: true } : {})} onClick={onSelect} />
+    : <button data-testid={testId} type="button" disabled={disabled} {...described} {...(pressed !== undefined ? { "aria-pressed": pressed } : {})} onClick={onSelect} />;
   return <Item size="sm" className={cn(ACTION_ROW, danger && "text-destructive-wash-foreground")} render={render}>
     {icon && <ItemMedia variant="icon">{icon}</ItemMedia>}
-    <ItemContent><ItemTitle data-testid="review-action-row-label" className={ACTION_ROW_TITLE}>{children}</ItemTitle></ItemContent>
+    <ItemContent>
+      <ItemTitle data-testid="review-action-row-label" className={ACTION_ROW_TITLE}>{children}</ItemTitle>
+      {/* The hint is the row's description, not part of its name: hidden from the name computation, referenced by `aria-describedby`. */}
+      {hint && <ItemDescription id={hintId} aria-hidden="true" data-testid="review-action-row-hint">{hint}</ItemDescription>}
+    </ItemContent>
   </Item>;
 }
 

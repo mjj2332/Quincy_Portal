@@ -20,7 +20,7 @@ const CHIP_CHROME_PX = 40;
  * it is handed the picture box (the box the picture really occupies, null until measured) so markup can be mapped onto the picture and not
  * the letterbox bands (#741 6b-ui). Key it by Version like the player: a new Version is a new element.
  */
-export function VideoStage({ streamUrl, title, width, height, timecode, frame, frameSuffix = true, onVideo, overlay, watermark, onMediaError, social, frameStyle, badge }: {
+export function VideoStage({ streamUrl, title, width, height, timecode, frame, frameSuffix = true, onVideo, overlay, watermark, onMediaError, social, frameStyle, badge, chip: chipWanted = true }: {
   streamUrl: string;
   title: string;
   /** The stored size: the stage's shape on a phone, and the picture box's stand-in until the decoded size is known. */
@@ -52,6 +52,8 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, f
   frameStyle?: React.CSSProperties;
   /** Centred over the whole stage, above the picture and the overlay (#879 PR 3a: the phone player's play badge). Not drawn while the film cannot play. */
   badge?: ReactNode;
+  /** False leaves the timecode chip out: Full screen draws none (F1, F2), where the dock lies over the picture's bottom edge and shows the time itself (#880). */
+  chip?: boolean;
 }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [failed, setFailed] = useState(false);
@@ -64,7 +66,7 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, f
 
   /** A picture this short is mostly covered by its own chip: the transport already shows the time then. */
   const phone = useMediaQuery(PHONE_QUERY);
-  const chipHidden = phone && box !== null && box.height < CHIP_MIN_PICTURE_PX;
+  const chipHidden = !chipWanted || (phone && box !== null && box.height < CHIP_MIN_PICTURE_PX);
   const chipFull = frameSuffix ? `${timecode} · frame ${frame}` : `frame ${frame}`;
   const chip = box && box.width >= chipFull.length * CHIP_GLYPH_PX + CHIP_CHROME_PX ? chipFull : timecode;
 

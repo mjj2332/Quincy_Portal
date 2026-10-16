@@ -24,7 +24,7 @@ export type PlayerKeyTarget = {
 };
 
 /**
- * The player's keyboard (J / K / L shuttle, the K-held chord, Space, arrows, Home / End, I / O marks), bound to a `PlayerKeyTarget`.
+ * The player's keyboard (J / K / L shuttle, the K-held chord, Space, arrows, Home / End, I / O marks, F for Full screen), bound to a `PlayerKeyTarget`.
  * Returns a stable keydown handler: true when the key was the player's (and has been prevented). Without `onMark`, I and O are not bound.
  *
  * K is down: J / L step a frame (the NLE chord). K pauses at once when playing; from paused it waits, so a K + J / K + L chord never
@@ -32,7 +32,7 @@ export type PlayerKeyTarget = {
  * `locked` (drawing, #741 6b-ui) hands every key back: nothing moves the frame under the pen, and a K already held is forgotten so its
  * keyup cannot restart playback.
  */
-export function usePlayerKeys(target: PlayerKeyTarget, onMark?: (kind: "in" | "out", frame: number) => void, locked = false): (event: KeyboardEvent | ReactKeyboardEvent) => boolean {
+export function usePlayerKeys(target: PlayerKeyTarget, onMark?: (kind: "in" | "out", frame: number) => void, locked = false, onFullscreen?: () => void): (event: KeyboardEvent | ReactKeyboardEvent) => boolean {
   const targetRef = useRef(target);
   targetRef.current = target;
   const onMarkRef = useRef(onMark);
@@ -40,6 +40,12 @@ export function usePlayerKeys(target: PlayerKeyTarget, onMark?: (kind: "in" | "o
   const marksBound = onMark !== undefined;
   const marksBoundRef = useRef(marksBound);
   marksBoundRef.current = marksBound;
+  // F is Full screen (#880) where the host has one.
+  const onFullscreenRef = useRef(onFullscreen);
+  onFullscreenRef.current = onFullscreen;
+  const fullscreenBound = onFullscreen !== undefined;
+  const fullscreenBoundRef = useRef(fullscreenBound);
+  fullscreenBoundRef.current = fullscreenBound;
 
   const apply = useCallback((action: PlayerKeyAction) => {
     const t = targetRef.current;
@@ -82,9 +88,10 @@ export function usePlayerKeys(target: PlayerKeyTarget, onMark?: (kind: "in" | "o
     if (lockedRef.current) { kHeld.current = null; return false; }
     const t = targetRef.current;
     const native = "nativeEvent" in event ? event.nativeEvent : event;
-    const action = playerKeyAction(native, { k: kHeld.current !== null, marks: marksBoundRef.current });
+    const action = playerKeyAction(native, { k: kHeld.current !== null, marks: marksBoundRef.current, fullscreen: fullscreenBoundRef.current });
     if (!action) return false;
     event.preventDefault();
+    if (action.type === "fullscreen") { onFullscreenRef.current?.(); return true; }
     if (action.type === "mark") {
       onMarkRef.current?.(action.kind, t.markFrame());
       return true;

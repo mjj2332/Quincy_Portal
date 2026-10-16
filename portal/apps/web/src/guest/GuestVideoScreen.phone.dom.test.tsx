@@ -328,7 +328,8 @@ describe("the guest phone ⋯ and delivery (#879 PR 3b, P10 / P2)", () => {
   const decided = (value: "approved" | "changes_requested") => ({ value, revision: 1, at: "2026-10-09T01:00:00.000Z", self: true });
   const released = { ...versionOf(11), released: true, downloadUrl: `${BASE}/versions/${asset(11)}/download` };
   const press = async (element: HTMLElement) => { await act(async () => { element.click(); }); await flush(4); };
-  const rows = () => [...byId("review-action-rows")!.children].map((row) => ((row as HTMLElement).dataset.testid === "review-action-separator" ? "—" : row.textContent));
+  // Each row's title (#880: a disabled row's hint is its description, not its name).
+  const rows = () => [...byId("review-action-rows")!.children].map((row) => ((row as HTMLElement).dataset.testid === "review-action-separator" ? "—" : (row.querySelector('[data-testid="review-action-row-label"]') ?? row).textContent));
   const menu = () => byId("video-header-menu")!;
   async function openFilm(decision: ReturnType<typeof decided> | null = null, { locked = false } = {}) {
     session = { ...SESSION, link: { ...SESSION.link, allow: { ...SESSION.link.allow, approve: true, download: true } } };
@@ -349,7 +350,7 @@ describe("the guest phone ⋯ and delivery (#879 PR 3b, P10 / P2)", () => {
     expect(byId("guest-delivery")).toBeNull();
     expect(byId("review-phone-bar")!.querySelector('[data-testid="guest-approve"]')).not.toBeNull();
     await press(menu());
-    expect(rows()).toEqual(["Download v11", "Download all…", "Copy my notes…", "—", "Request changes…"]);
+    expect(rows()).toEqual(["Download v11", "Download all…", "Open in system player", "Copy my notes…", "—", "Request changes…"]);
     expect(byId("guest-approve-row")).toBeNull();
   });
 
@@ -359,7 +360,7 @@ describe("the guest phone ⋯ and delivery (#879 PR 3b, P10 / P2)", () => {
     expect(bar.querySelector('[data-testid="guest-approve"]')).toBeNull();
     expect(bar.querySelector('[data-testid="guest-decision-chip"]')!.textContent).toBe("Changes requested");
     await press(menu());
-    expect(rows()).toEqual(["Download v11", "Download all…", "Copy my notes…", "—", "Approve", "Request changes…"]);
+    expect(rows()).toEqual(["Download v11", "Download all…", "Open in system player", "Copy my notes…", "—", "Approve", "Request changes…"]);
     await press(byId("guest-approve-row")!);
     expect(byId("review-action-sheet")).toBeNull();
     expect(byId("guest-decision-dialog")).not.toBeNull();
@@ -371,7 +372,7 @@ describe("the guest phone ⋯ and delivery (#879 PR 3b, P10 / P2)", () => {
     expect(chip.textContent).toBe("Approved");
     expect(chip.querySelector("svg")).not.toBeNull();
     await press(menu());
-    expect(rows()).toEqual(["Download v11", "Download all…", "Copy my notes…", "—", "Request changes…"]);
+    expect(rows()).toEqual(["Download v11", "Download all…", "Open in system player", "Copy my notes…", "—", "Request changes…"]);
   });
 
   it("Request changes… closes the sheet for the decision dialog, and closing it returns focus to the ⋯", async () => {

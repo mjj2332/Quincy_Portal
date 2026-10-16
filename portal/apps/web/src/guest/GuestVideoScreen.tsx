@@ -1,6 +1,16 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
-import { Check, ChevronLeft, ChevronRight, Copy, DownloadIcon, FolderDown, MessageSquareWarning, Smartphone } from "lucide-react";
+import { flushSync } from "react-dom";
+import { FloatingFocusManager, useFloating } from "@floating-ui/react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
+import { Check, ChevronLeft, ChevronRight, Copy, DownloadIcon, FolderDown, Maximize, MessageSquareWarning, Smartphone } from "lucide-react";
 import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto } from "@quincy/shared";
+import { mustTurnUpright, nextPrompt, rotate, readPhoneDevice, UPRIGHT_PROMPT, type ImmersivePrompt, type ImmersiveState } from "../lib/immersive";
+import { readLandscape, useDeviceOrientation, useLandscape } from "../lib/use-device-orientation";
+import { NATIVE_PLAYER_UNAVAILABLE, nativePlayerLabel } from "../lib/video-native-player";
+import { hasOpenAlertDialog } from "../lib/alert-dialog-press";
+import { hasOpenFloatingPopup, hasOpenModalAbove } from "../components/quincy/project-sheet-layers";
+import { focusInImmersive, useImmersive } from "../components/quincy/use-immersive";
+import { useCloseOnPlay } from "../components/quincy/use-close-on-play";
+import { GuestImmersiveNoteCard } from "./GuestImmersiveNoteCard";
 import { OverlayContainerContext } from "../components/OverlayContainerContext";
 import { useFrameLabel } from "../lib/time-format-prefs";
 import { useMediaQuery } from "../lib/use-media-query";
@@ -13,7 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Tabs, TabsList, TabsTrigger } from "../components/reui/tabs";
 import { ReviewPhoneBar, VersionChip } from "../components/quincy/ReviewPhoneBar";
 import { ActionRow, ActionSeparator, ReviewActionSheet } from "../components/quincy/ReviewActionSheet";
-import { blurComposerField, useReviewSheet } from "../components/quincy/ReviewSheet";
+import { blurComposerField, isComposerField, useReviewSheet } from "../components/quincy/ReviewSheet";
 import { PHONE_QUERY } from "../lib/review-pane-geometry";
 import { useVisualViewport } from "../lib/use-visual-viewport";
 import { useInkCanvas } from "../lib/use-ink-canvas";
@@ -50,6 +60,8 @@ import { PremiumWatermark } from "./PremiumWatermark";
 
 const VERSION_SELECT_ID = "guest-version";
 const FIELD = "input, textarea, select, [contenteditable], [role=listbox], [role=combobox]";
+/** A text field: the compose hook leaves Escape typed into one to the ladder, so the pen is down only for an Escape typed elsewhere. */
+const TEXT_FIELD = "input, textarea, select, [contenteditable]:not([contenteditable='false'])";
 const NOTES_HEADING = "m-0 text-foreground [font:var(--type-h3)]";
 const MODAL = "[role=dialog], [role=alertdialog]";
 const POPUP = "[role=dialog], [role=alertdialog], [role=menu], [role=listbox], [role=combobox]";
@@ -140,13 +152,43 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const sheetStopRef = useRef(sheetControl.stop);
   sheetStopRef.current = sheetControl.stop;
   const setSheetStop = sheetControl.onStop;
+  // Full screen (#880; "immersive" is the code name): held here, above the layout, so it survives the 721px crossing a rotation makes. A phone that opens already sideways starts in it (D14).
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [immersive, setImmersive] = useState<ImmersiveState>(() => rotate(null, { landscape: readLandscape(), phoneDevice: readPhoneDevice() }));
+  const [composeShown, setComposeShown] = useState(false);
+  const [cardId, setCardId] = useState<string | null>(null);
+  useDeviceOrientation((landscape) => {
+    const phoneDevice = readPhoneDevice();
+    // A turn that enters Full screen (#880 S5) leaves the sheet's field: a turn is always sideways, and a sideways phone writes no note there (owner decision 2026-10-16), so
+    // mid-compose the field is left (the draft stays in the composer) and the prompt asks to turn upright; mid-search search mode ends (the query stays).
+    // Read at the turn, from this render's state, while the sheet's own blur path still runs.
+    if (immersive === null && rotate(null, { landscape, phoneDevice }) !== null) {
+      if (sheetControl.composing) { blurComposerField(); askUpright(); }
+      else if (sheetControl.searching) { blurNotesSearchField(); sheetControl.onSearching(false); }
+    }
+    setImmersive((current) => rotate(current, { landscape, phoneDevice }));
+  });
+  const full = useImmersive({ rootRef, state: immersive, setState: setImmersive });
+  const imm = immersive !== null;
+  // The phone's handling (#880 S1): a phone width, or a phone device in Full screen. A sideways iPhone is 844pt wide, so `phone` is off, yet its keyboard still pans the
+  // page: the root follows the visual viewport and the canvas is ink there too. In Full screen the keyboard going away blurs the composer's field and leaves the composer shown.
+  const [phoneDevice] = useState(readPhoneDevice);
+  // A sideways phone writes no note in Full screen (owner decision 2026-10-16): Add note shows the prompt instead, and a composer open when the phone turns closes, the draft kept.
+  const sideways = useLandscape();
+  const upright = mustTurnUpright({ immersive: imm, phoneDevice, landscape: sideways });
+  const uprightRef = useRef(upright);
+  uprightRef.current = upright;
+  const [prompt, setPrompt] = useState<ImmersivePrompt | null>(null);
+  const askUpright = useCallback(() => { setPrompt((previous) => nextPrompt(previous, UPRIGHT_PROMPT)); }, []);
+  useEffect(() => { if (!upright) setPrompt(null); }, [upright]);
+  const handheld = phone || (imm && phoneDevice);
   // The software keyboard went away without blurring the field (some iOS paths): blur it, so compose mode ends the ordinary way (#879 fix).
   // The guest column follows the visual viewport for as long as the phone screen is up (#879 PR 2, the staff viewer's r5 mechanism): the hook alone writes its height, transform
   // and transition, so the strip ends on the keyboard's top edge and the notices above the screen stay inside the box.
   // Searching too (#879 PR 3b, F1): the search field raises the keyboard without composing; its keyboard-gone fallback blurs the field and leaves search open.
-  useVisualViewport(phone && (sheetControl.composing || sheetControl.searching), () => { if (sheetControl.composing) { if (!sheetControl.held) blurComposerField(); } else blurNotesSearchField(); }, viewportRoot, phone);
+  useVisualViewport(handheld && (sheetControl.composing || sheetControl.searching || (imm && composeShown)), () => { if (sheetControl.composing || (imm && composeShown)) { if (!sheetControl.held) blurComposerField(); } else blurNotesSearchField(); }, viewportRoot, handheld);
   // Meanwhile the document's canvas is ink: iOS shows it under the page while it scrolls back as the keyboard drops (#879 fix r11).
-  useInkCanvas(phone);
+  useInkCanvas(handheld);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const chipRef = useRef<HTMLButtonElement | null>(null);
   const [summaries, setSummaries] = useState<{ videoId: string; rows: Parameters<typeof withSummaries>[1] } | null>(null);
@@ -154,6 +196,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const [notesAttempt, setNotesAttempt] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [clock, setClock] = useState<VideoFrameClock | null>(null);
+  const closeCard = useCallback(() => { setCardId(null); }, []);
+  useCloseOnPlay(imm ? clock : null, cardId !== null, closeCard);
   // The side pane (#859): open / width are the per-browser preference the staff viewer shares. A phone keeps the drawer and ignores them.
   const reviewPane = useReviewPane(phone);
   const paneId = useId();
@@ -339,6 +383,23 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   } : {};
   // A draft belongs to the Version it was made on; an archived Project takes it away.
   const { close: closeComposer, editingId } = compose;
+  // Back in the sheet (#880 S5), compose mode follows where the focus really is: in Full screen nothing reported the field's blur (the sheet's blur check is off there).
+  const syncComposing = sheetControl.onComposing;
+  useEffect(() => { if (!imm && phone) syncComposing(isComposerField(document.activeElement)); }, [imm, phone, syncComposing]);
+  useEffect(() => { if (!imm) setCardId(null); }, [imm]);
+  useEffect(() => { setCardId(null); }, [version.assetId, video.id]);
+  /** Put the floating composer away (the draft stays) with focus already on Add note, or the player on a touch device: lesson P3, focus moves before the pane holding it is hidden. */
+  const hideComposer = useCallback(() => { focusInImmersive(document, "video-immersive-add-note"); setComposeShown(false); }, []);
+  // Leaving Full screen, a Version change or a finished/cancelled draft puts the floating composer away. A draft that closes in Full screen (Cancel, a post) hands the focus to
+  // Add note before the pane hides, as the toggle does (#880 fix round 1, item 2; lesson P3): left in the closing pane it would fall to the page.
+  useLayoutEffect(() => {
+    if (composeShown && upright) { blurComposerField(); hideComposer(); askUpright(); return; }
+    if (!composeShown || (imm && compose.isOpen)) return;
+    if (!imm) { setComposeShown(false); return; }
+    const active = document.activeElement;
+    const pane = rootRef.current?.querySelector('[data-testid="video-review-pane"]');
+    if (active === null || active === document.body || (pane?.contains(active) ?? false)) hideComposer(); else setComposeShown(false);
+  }, [imm, compose.isOpen, composeShown, hideComposer, upright, askUpright]);
   useEffect(() => { closeComposer(); }, [version.assetId, closeComposer]);
   useEffect(() => { if (archived) closeComposer(); }, [archived, closeComposer]);
   // A paste belongs to the Version it was made for.
@@ -400,8 +461,9 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   // What the guest was doing when verification was asked for, so a successful code lands them where they were going. Each request carries its own, and the page's verify owner keeps only the newest active one.
   const afterVerify = useRef<(then: "compose" | "download" | DecisionValue) => void>(() => undefined);
   const requestVerify = useCallback((then: "compose" | "download" | "none" | DecisionValue, active: () => boolean = () => true) => {
-    // On a phone, verifying for a note ends in the pill's field with the focus, which the closing dialog must leave there (#879 PR 2).
-    verify.request({ active, keepFocus: phone && then === "compose", done: (verified) => {
+    // On a phone, verifying for a note ends in the pill's field with the focus, which the closing dialog must leave there (#879 PR 2); in Full screen too at any width, where the
+    // field is the floating composer's (#880 Sol review).
+    verify.request({ active, keepFocus: (phone || immRef.current) && then === "compose", done: (verified) => {
       if (verified && then !== "none") afterVerify.current(then);
     } });
   }, [verify, phone]);
@@ -440,6 +502,12 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const openDecision = useCallback((value: DecisionValue) => { opening.current += 1; setDecideFor(value); }, []);
   // After verifying for Download, the Download button becomes the anchor and the guest presses it again (a click made after the async verification would be blocked as a popup).
   const [downloadHint, setDownloadHint] = useState(false);
+  const immRef = useRef(imm);
+  immRef.current = imm;
+  const cardRef = useRef(cardId);
+  cardRef.current = cardId;
+  const composeShownRef = useRef(composeShown);
+  composeShownRef.current = composeShown;
   useEffect(() => { opening.current += 1; setDecideFor(null); setDecisionNotice(null); setDownloadHint(false); }, [version.assetId]);
   const canDecide = session.link.allow.approve && !archived;
   const sessionRef = useRef(session);
@@ -478,7 +546,16 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     // On a phone the code lands the guest in the pill's field (the focus starts the draft) when the keyboard is still up: the code field kept the focus through the check, and iOS
     // keeps the keyboard for a focus moving from one field to another. A focus after the check with the keyboard gone (the guest put it away) is not a tap, so iOS would show a caret
     // with no keyboard and then drop compose mode: the guest lands at rest instead, and one tap on the pill starts the note (PR 2 fix round 1).
-    if (then === "compose") { if (!phone) startDraft(compose.begin); else if (keyboardField(document.activeElement)) focusField(); }
+    // In Full screen (#880) the draft begins in the same commit that shows the floating composer, as Add note does: shown with no draft open, the layout effect that puts a closed
+    // draft away would hide it at once (Sol review). The focus follows the rule above: a phone with the keyboard up lands in the pill; otherwise it goes where Add note leaves it
+    // (Add note on a desktop, the player on a touch device), so a phone with the keyboard gone sees the open strip, stamped and empty, and taps the pill.
+    if (then === "compose" && uprightRef.current) askUpright();
+    else if (then === "compose" && immRef.current) {
+      clock?.pause();
+      flushSync(() => { if (!compose.isOpen) compose.begin(); setComposeShown(true); });
+      if (phone && keyboardField(document.activeElement)) focusField(); else focusInImmersive(document, "video-immersive-add-note");
+    }
+    else if (then === "compose") { if (!phone) startDraft(compose.begin); else if (keyboardField(document.activeElement)) focusField(); }
     else if (then === "download") setDownloadHint(true);
     else openDecision(then);
   };
@@ -531,6 +608,53 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     {downloadHintLine}
     {decisionNoticeLine}
   </div>;
+  // Full screen. A marker press pauses and shows the root note as a card (the drawer stays where it is: D19). Add note pauses, stamps the frame, floats the composer and focuses the editor inside the press.
+  const cardThread = cardId === null ? undefined : threads?.find((thread) => thread.id === cardId);
+  const onMarkerTap = (id: string) => {
+    const thread = threads?.find((candidate) => candidate.id === id);
+    if (!thread || compose.drawing) return;
+    clock?.pause();
+    noteGeneration.current += 1;
+    setSelectedId(thread.id); setSelectionCount((n) => n + 1);
+    const frame = thread.hasMarkup && thread.drawingFrame !== null ? thread.drawingFrame : thread.startFrame;
+    if (frame !== null) clock?.seekToFrame(frame);
+    setCardId(id);
+  };
+  const toggleAddNote = () => {
+    if (composeShown) { hideComposer(); return; }
+    if (upright) { askUpright(); return; }
+    setCardId(null);
+    if (!session.verified) { requestVerify("compose"); return; }
+    clock?.pause();
+    flushSync(() => { if (!compose.isOpen) compose.begin(); setComposeShown(true); });
+    focusField();
+  };
+  const immersiveHost = {
+    on: imm, onToggle: full.toggle, heading: `${video.title} · v${version.version}`,
+    ...(canWrite ? { addNote: { pressed: composeShown, onToggle: toggleAddNote } } : {}),
+    onMarkerTap,
+    prompt,
+    ...(cardThread ? { card: <GuestImmersiveNoteCard thread={cardThread} timecode={timecode} media={api.media} onClose={closeCard} /> } : {}),
+  };
+  // Escape: its own ladder (the page is not a dialog), in the staff viewer's order. A popup or modal that is open owns the key; then the pen on the picture (the compose hook puts
+  // it down, #880 review 2); then the card, then the floating composer (the draft stays), then Full screen itself. Decided at capture, before any popup handler has run.
+  const drawingRef = useRef(compose.drawing);
+  drawingRef.current = compose.drawing;
+  useEffect(() => {
+    if (!imm) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const root = rootRef.current;
+      if (hasOpenAlertDialog() || hasOpenFloatingPopup(root, slot) || hasOpenModalAbove(root, document)) return;
+      if (drawingRef.current && !(event.target instanceof Element && event.target.closest(TEXT_FIELD) !== null)) return;
+      event.preventDefault();
+      if (cardRef.current !== null) setCardId(null);
+      else if (composeShownRef.current) hideComposer();
+      else full.leave();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => { window.removeEventListener("keydown", onKeyDown, true); };
+  }, [imm, slot, hideComposer, full]);
   const panel = <GuestNotesPanel threads={listedThreads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} {...(filteredEmpty ? { filteredEmpty } : {})} header={phone ? notesHead : <div className="flex items-center justify-between gap-[var(--space-2)]">{heading}{paneControls.hideButton}</div>} top={addNote} footer={footer} writing={writing} phone={phone} />;
   const openSheet = () => { if (sheetStopRef.current === "collapsed") setSheetStop("half"); };
   // Draw mode from the moment the pen goes down (its frame confirm included), so the sheet does not flash back to its browse stop meanwhile (#879 PR 2).
@@ -540,7 +664,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   // the header's slot holds the Changes requested badge (owner decision; F6: undecided, the header's Approve is the one way in, and an approval leaves nothing to approve).
   const downloadRow = allowDownload && version.downloadUrl !== null;
   const downloadAllRow = offerDownloadAll && downloadAll.state === "ready";
-  const sheetHasActions = socialOverlays.length > 0 || downloadRow || downloadAllRow || canPaste;
+  // The system player row (#880 S6, F4) is always there (disabled, with its hint, where the browser has no player of its own), so the ⋯ always has an action, as the staff ⋯ does,
+  // and the decisions always sit under a rule.
   const phoneBar = <>
     <ReviewPhoneBar
       back={onBack ? <Button type="button" variant="ghost" className={`${TOUCH} shrink-0 max-[721px]:min-w-11`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span className="sr-only">All videos</span></Button> : null}
@@ -548,22 +673,23 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       chip={<VersionChip buttonRef={chipRef} label={latestLabel} onClick={() => { setVersionsOpen(true); }} />}
       // A recorded decision takes the Approve slot as its badge (P2), whether or not the link still lets the guest decide.
       approve={version.decision !== null ? <DecisionBadge decision={version.decision} icon /> : canDecide ? <Button type="button" size="sm" variant="outline" data-testid="guest-approve" className={STRIP_TEXT_BUTTON} onClick={() => { startDecision("approved"); }}>Approve</Button> : undefined}
-      actions={sheetHasActions || canDecide ? <ReviewActionSheet container={slot}>
+      actions={<ReviewActionSheet container={slot}>
         {(close) => <>
           {socialOverlays.length > 0 && <ActionRow testId="guest-social-toggle" icon={<Smartphone aria-hidden="true" />} pressed={socialOn} onSelect={() => { setSocial(!socialOn); close(); }}>Social preview</ActionRow>}
           {downloadRow && (session.verified
             ? <ActionRow testId="guest-download" icon={<DownloadIcon aria-hidden="true" />} href={version.downloadUrl ?? undefined} download onSelect={() => { close(); }}>{`Download v${version.version}`}</ActionRow>
             : <ActionRow testId="guest-download" icon={<DownloadIcon aria-hidden="true" />} onSelect={() => { close(true); requestVerify("download"); }}>{`Download v${version.version}`}</ActionRow>)}
           {downloadAllRow && <ActionRow testId="guest-download-all" icon={<FolderDown aria-hidden="true" />} onSelect={() => { close(true); downloadAll.start(); }}>Download all…</ActionRow>}
+          <ActionRow testId="guest-open-system-player" icon={<Maximize aria-hidden="true" />} disabled={!(playerRef.current?.nativePlayerSupported?.() ?? false)} hint={(playerRef.current?.nativePlayerSupported?.() ?? false) ? undefined : NATIVE_PLAYER_UNAVAILABLE} onSelect={() => { playerRef.current?.openSystemPlayer?.(); close(); }}>{nativePlayerLabel()}</ActionRow>
           {canPaste && <ActionRow testId="guest-paste-open" icon={<Copy aria-hidden="true" />} onSelect={() => { close(true); openPaste(); }}>Copy my notes…</ActionRow>}
           {canDecide && <>
-            {sheetHasActions && <ActionSeparator />}
+            <ActionSeparator />
             {/* Approve here only when the header's slot holds the Changes requested badge (#879 PR 3b, F6): undecided, the header's Approve button is the one way in, and approved has nothing to approve. */}
             {version.decision?.value === "changes_requested" && <ActionRow testId="guest-approve-row" icon={<Check aria-hidden="true" />} onSelect={() => { close(true); startDecision("approved", true); }}>Approve</ActionRow>}
             <ActionRow testId="guest-request-changes" icon={<MessageSquareWarning aria-hidden="true" />} onSelect={() => { close(true); startDecision("changes_requested", true); }}>Request changes…</ActionRow>
           </>}
         </>}
-      </ReviewActionSheet> : undefined}
+      </ReviewActionSheet>}
     />
     <VideoVersionsSheet
       open={versionsOpen} onOpenChange={setVersionsOpen} container={slot} returnFocusTo={chipRef} currentAssetId={version.assetId} onChoose={setAssetId}
@@ -571,7 +697,14 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     />
   </>;
 
-  return <div data-testid="guest-video-screen" data-surface="inverse" className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
+  // The page is not a dialog, so in Full screen the root becomes a fixed layer over it and floating-ui keeps Tab inside it (#880). Its containing block is the guest column, which the
+  // visual-viewport hook transforms while it tracks the keyboard: `fixed inset-0` then fills the visual viewport's box, not the layout viewport.
+  const { context: trapContext, refs: trapRefs } = useFloating({ open: imm });
+  const setRoot = useCallback((element: HTMLDivElement | null) => { rootRef.current = element; trapRefs.setFloating(element); }, [trapRefs]);
+  return <FloatingFocusManager context={trapContext} modal returnFocus={false} initialFocus={-1} disabled={!imm}>
+  <div ref={setRoot} data-testid="guest-video-screen" data-surface="inverse" {...(imm ? { "data-immersive": "" } : {})} className={`flex min-h-0 flex-1 flex-col bg-background text-foreground${imm ? " fixed inset-0 z-[var(--z-dialog)]" : ""}`}>
+    {/* The bar, the delivery row and the decision badge (the phone bar's Approve slot) go away in Full screen, hidden and inert but mounted. */}
+    <div data-testid="guest-header-hide" className={imm ? "hidden" : "contents"} inert={imm}>
     {phone ? phoneBar : <header className="flex flex-col border-b border-border bg-card text-card-foreground">
      <div data-testid="guest-bar" className="flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] px-[var(--space-4)] py-[var(--space-1)]">
       {onBack && <Button type="button" variant="ghost" className={`${TOUCH} shrink-0`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span>All videos</span></Button>}
@@ -602,6 +735,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
      </div>
       {deliveryRow}
     </header>}
+    </div>
     <ReviewSplit
       open={reviewPane.open}
       width={reviewPane.width}
@@ -610,11 +744,12 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       paneId={paneId}
       handleLabel="Resize notes"
       stacked={phone}
+      immersive={imm ? (composeShown ? "compose" : "watch") : "off"}
       {...(sheet ? { sheet } : {})}
       strip={paneControls.strip}
-      player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" phoneFrameStep={!canWrite} version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} transportHidden={phone && (sheetControl.mode === "search" || (sheetControl.mode === "compose" && !compose.penDown))} /></OverlayContainerContext.Provider>}
+      player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" phoneFrameStep={!canWrite} version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} transportHidden={phone && (sheetControl.mode === "search" || (sheetControl.mode === "compose" && !compose.penDown))} immersive={immersiveHost} /></OverlayContainerContext.Provider>}
       // The pane's popups (a note's ⋯ menu) portal into the same slot as the player's, inside the inverse scope (fix round 1: they drew light on the dark viewer).
-      pane={<OverlayContainerContext.Provider value={slot}><aside className="flex min-h-0 flex-1 flex-col bg-card text-card-foreground min-[721px]:overflow-hidden min-[721px]:border-l min-[721px]:border-border min-[721px]:p-[var(--space-5)]"><div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-3)] min-[721px]:hidden" onClick={openSheet}>{phone && <Tabs value="notes" className="w-full"><TabsList variant="line" className="w-full justify-start rounded-none bg-card px-0 max-[721px]:!h-11 max-[721px]:!p-0"><TabsTrigger value="notes" data-testid="guest-notes-heading" className="max-[721px]:!h-11 max-[721px]:flex-none max-[721px]:px-[var(--space-3)] max-[721px]:after:!bottom-0">{tabContent}</TabsTrigger></TabsList></Tabs>}</div><div className="flex min-h-0 flex-1 flex-col max-[721px]:p-[var(--space-4)] max-[721px]:in-data-[mode=browse]:py-0 max-[721px]:in-data-[mode=compose]:py-[var(--space-2)]">{panel}</div></aside></OverlayContainerContext.Provider>}
+      pane={<OverlayContainerContext.Provider value={slot}><aside data-testid="guest-notes-aside" className="flex min-h-0 flex-1 flex-col bg-card text-card-foreground min-[721px]:overflow-hidden min-[721px]:border-l min-[721px]:border-border min-[721px]:p-[var(--space-5)] min-[721px]:in-data-[immersive=compose]:border-l-0 min-[721px]:in-data-[immersive=compose]:p-0"><div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-3)] min-[721px]:hidden" onClick={openSheet}>{phone && <Tabs value="notes" className="w-full"><TabsList variant="line" className="w-full justify-start rounded-none bg-card px-0 max-[721px]:!h-11 max-[721px]:!p-0"><TabsTrigger value="notes" data-testid="guest-notes-heading" className="max-[721px]:!h-11 max-[721px]:flex-none max-[721px]:px-[var(--space-3)] max-[721px]:after:!bottom-0">{tabContent}</TabsTrigger></TabsList></Tabs>}</div><div data-testid="guest-notes-aside-body" className="flex min-h-0 flex-1 flex-col max-[721px]:p-[var(--space-4)] max-[721px]:in-data-[mode=browse]:py-0 max-[721px]:in-data-[mode=compose]:py-[var(--space-2)] max-[721px]:in-data-[immersive=compose]:p-0">{panel}</div></aside></OverlayContainerContext.Provider>}
     />
     {canPaste && <GuestPasteDialog api={api} writer={writer} open={pasteOpen} onOpenChange={changePasteOpen} video={video} target={version} markupAllowed={session.link.allow.markup} finalFocus={phone ? headerMenu : undefined}
       onGone={onUnavailable}
@@ -622,7 +757,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     {decideFor !== null && canDecide && <GuestDecisionDialog key={`${version.assetId}:${decideFor}`} value={decideFor} assetId={version.assetId} film={video.title} version={version.version} drafts={drafts} open onClose={() => { opening.current += 1; setDecideFor(null); }} onConfirm={(note) => confirmDecision(decideFor, note)} finalFocus={phone ? () => (decisionFromSheet.current ? headerMenu() : null) : undefined} />}
     {offerDownloadAll && downloadAll.dialog}
     <div ref={setSlot} />
-  </div>;
+  </div>
+  </FloatingFocusManager>;
 }
 
 /** Whether the focus is in a field that holds the on-screen keyboard (an enabled text input, textarea or editable element). */
