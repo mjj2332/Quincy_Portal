@@ -866,6 +866,15 @@ describe("empty-editor placeholder (#491)", () => {
     await appendText(editor, "x", onChange);
     expect(editor.firstElementChild!.querySelector("br")).toBeNull();
   });
+
+  it("a new placeholder prop is the root's new data-placeholder, on the same editor (#879 PR 3a: the phone pill refits its rest placeholder)", async () => {
+    const host = mount(); const onChange = vi.fn();
+    const { editor } = await render(host, empty(), onChange);
+    await act(async () => { root!.render(<EditorUnderTest value={empty()} onChange={onChange} onSubmit={vi.fn()} limit={2_000} loadMentionables={mentionables} placeholder="Add a…" />); await Promise.resolve(); });
+    const same = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    expect(same).toBe(editor);
+    expect(same.getAttribute("data-placeholder")).toBe("Add a…");
+  });
 });
 
 describe("QuincyRichTextEditor counter and field (#376)", () => {

@@ -6,6 +6,7 @@ import type { NoteFormStore } from "../../lib/video-note-form-store";
 import { useVideoNotes, type VideoNotesSession } from "./use-video-notes";
 import { useVideoMarkup } from "./VideoMarkupOverlay";
 import { useMarkerExport, type MarkerExport } from "./VideoMarkerExportMenu";
+import { DEFAULT_NOTE_FILTERS, noteCounts } from "../../lib/video-note-view";
 import { VideoNotesPanel } from "./VideoNotesPanel";
 
 /**
@@ -37,6 +38,7 @@ export default function VideoNotesHost({ notes, video, version, detailsRows, chi
   return <>{children({
     playerProps: { ...session.playerProps, ...(overlay ? { overlay } : {}), ...(transportActions && !phone ? { transportActions } : {}), ...(transportReplacement ? { transportReplacement } : {}) },
     panel: <VideoNotesPanel key={version.assetId} session={session} video={video} detailsRows={detailsRows} exp={exp} phone={phone} {...(pen ? { pen } : {})} />,
-    markerExport: exp, drawing, openCount: session.threads ? session.threads.filter((thread) => thread.resolved === null).length : null,
+    // The open notes the list can show (#879 PR 3a): a deleted root nobody replied to is hidden, so it is not counted either.
+    markerExport: exp, drawing, openCount: session.threads ? noteCounts(session.threads, DEFAULT_NOTE_FILTERS).totals.open : null,
   })}</>;
 }

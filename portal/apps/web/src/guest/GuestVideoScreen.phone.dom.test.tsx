@@ -40,6 +40,7 @@ class FakeViewport extends EventTarget { height = window.innerHeight; offsetTop 
 let fake: FakeViewport;
 let original: PropertyDescriptor | undefined;
 let videos: GuestVideoDto[];
+let session: GuestSessionResponse;
 let stub: VideoElementStub;
 let viewport: MockViewport;
 let root: Root | null = null;
@@ -66,12 +67,13 @@ beforeEach(async () => {
   stub = installVideoElementStub();
   viewport = mockViewport({ width: 390, coarse: true });
   videos = [videoOf(1)];
+  session = SESSION;
   fake = new FakeViewport();
   original = Object.getOwnPropertyDescriptor(window, "visualViewport");
   Object.defineProperty(window, "visualViewport", { configurable: true, value: fake });
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === `${BASE}/session`) return json(SESSION);
+    if (url === `${BASE}/session`) return json(session);
     if (url === `${BASE}/videos`) return json({ videos });
     if (/\/notes$/.test(url)) return json({ notes: [] as GuestNoteThreadDto[] });
     return new Response("Not found", { status: 404 });
@@ -141,5 +143,56 @@ describe("the guest phone page and the keyboard (#879 PR 2)", () => {
     expect(document.documentElement.hasAttribute("data-ink-canvas")).toBe(true);
     await act(async () => { root!.unmount(); }); root = null;
     expect(document.documentElement.hasAttribute("data-ink-canvas")).toBe(false);
+  });
+});
+
+describe("the guest phone chrome (#879 PR 3a, P2)", () => {
+  const withAllow = (allow: Partial<GuestSessionResponse["link"]["allow"]>) => { session = { ...SESSION, link: { ...SESSION.link, allow: { ...SESSION.link.allow, ...allow } } }; };
+
+  it("Approve is P2's outline button, drawn 32px with a 44px hit area", async () => {
+    withAllow({ approve: true });
+    await openVideo();
+    const approve = byId("guest-approve")!;
+    expect(byId("review-phone-bar")!.contains(approve)).toBe(true);
+    expect(approve.className).toContain("border-border");
+    expect(approve.className).not.toContain("bg-primary");
+    expect(approve.className).toContain("min-h-8");
+    expect(approve.className).toContain("after:-inset-y-1.5");
+    expect(approve.className).not.toContain("min-h-11");
+  });
+
+  it("the sheet head has no vertical padding, its tab sits left at its own width, and the open count is a secondary Badge", async () => {
+    await openVideo();
+    const tab = byId("guest-notes-heading")!;
+    const head = tab.closest<HTMLElement>('[data-sheet-part="head"]')!;
+    expect(head.className).not.toContain("py-[var(--space-2)]");
+    expect(head.className).toContain("px-[var(--space-3)]");
+    expect(tab.className).toContain("max-[721px]:flex-none");
+    const count = byId("guest-notes-count")!;
+    expect(tab.contains(count)).toBe(true);
+    expect(count.getAttribute("data-slot")).toBe("badge");
+    expect(count.textContent).toBe("0");
+  });
+
+  it("the composer band is tight in browse mode: no wrapper padding above or below, the composer owns one border and --space-2 around the pill", async () => {
+    await openVideo();
+    const composer = byId("guest-notes-panel")!.querySelector<HTMLElement>('[data-sheet-part="composer"]')!;
+    expect(composer.className).toContain("in-data-[mode=browse]:py-[var(--space-2)]");
+    expect(byId("guest-notes-panel")!.className).toContain("in-data-[mode=browse]:gap-0");
+    expect(byId("guest-notes-panel")!.parentElement!.className).toContain("in-data-[mode=browse]:py-0");
+    // The strip's empty rows add no gap around the pill at rest (#879 PR 3a round 2: 85pt band on the Simulator, P1/P2's is 61).
+    const strip = byId("guest-compose-strip")!;
+    expect(strip.dataset.compose).toBe("false");
+    expect(strip.className).toContain("data-[compose=false]:gap-y-0");
+  });
+
+  it("the transport drops frame step where the composer carries it, and keeps it for a guest who cannot write (C14)", async () => {
+    await openVideo();
+    expect(document.body.querySelector('[aria-label="Previous frame"]')).toBeNull();
+    await act(async () => { root!.unmount(); }); root = null; host.remove();
+    withAllow({ comments: false });
+    await open();
+    await vi.waitFor(() => { expect(byId("video-player")).not.toBeNull(); });
+    expect(document.body.querySelector('[aria-label="Previous frame"]')).not.toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { PencilIcon, StepBack, StepForward } from "lucide-react";
 import type { EditorMediaTransport } from "../lib/embedded-media-core";
 import { useFrameClockSelector, type VideoFrameClock } from "../lib/video-frame-clock";
@@ -9,7 +9,7 @@ import { InputGroup, InputGroupAddon } from "../components/reui/input-group";
 import { SheetModeContext } from "../components/quincy/ReviewSheet";
 import { PILL_ICON } from "../components/quincy/VideoPlayer";
 import { SELECTED_HAIRLINE_PRESSED } from "../components/quincy/markup-toolbar";
-import { COMPOSE_CLAMP, ComposeTray, PHONE_LINE, PILL_CHIP, PILL_SHELL, PILL_SHELL_TEXT, PillPlus, PillSend, REST_CLAMP, SHEET_TEXT, STRIP_GRID, STRIP_TEXT_BUTTON, keepFocus, shortRange } from "../components/quincy/compose-strip";
+import { COMPOSE_CLAMP, ComposeTray, PHONE_LINE, PILL_CHIP, PILL_SHELL, PILL_SHELL_TEXT, PillPlus, PillSend, REST_CLAMP, SHEET_TEXT, STRIP_GRID, STRIP_TEXT_BUTTON, keepFocus, shortRange, useRestPlaceholder } from "../components/quincy/compose-strip";
 import { GuestNoteField } from "./GuestNoteField";
 import type { GuestStrip } from "./use-guest-compose";
 
@@ -74,6 +74,12 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
     selection?.collapseToEnd();
   }, [strip.editing, fieldId]);
 
+  // The pill's placeholder at rest ends at a word (#879 PR 3a); compose mode shows it whole. The field's host is also the compose hook's (`strip.fieldHost`).
+  const restPlaceholder = useRestPlaceholder(strip.penDown ? "Add a note with this drawing…" : "Add a note…", !composing);
+  const { fieldHost } = strip;
+  const restRef = restPlaceholder.ref;
+  const fieldRef = useCallback((element: HTMLDivElement | null) => { fieldHost(element); restRef(element); }, [fieldHost, restRef]);
+
   const send = () => { fromCompose.current = composing; strip.send(); };
   const cancel = () => { blurInStrip(); strip.cancel(); };
 
@@ -131,13 +137,13 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
       {strip.canDraw && (strip.strokes > 0 || strip.keptDrawing) && <Button type="button" variant="text" data-testid="guest-composer-remove-drawing" className={SMALL_BUTTON} disabled={strip.pending || strip.penDown} onClick={strip.removeDrawing}>Remove drawing</Button>}
     </ComposeTray>
     <div
-      ref={strip.fieldHost} data-testid="guest-composer-field" className="col-start-1 row-start-3 min-w-0 [&_[contenteditable]]:text-[length:var(--text-base)]"
+      ref={fieldRef} data-testid="guest-composer-field" className="col-start-1 row-start-3 min-w-0 [&_[contenteditable]]:text-[length:var(--text-base)]"
       // A phone note is stamped when typing begins (D10): focusing the field pauses the film and stamps the frame on screen, so nothing moves it before the first keystroke.
       onFocusCapture={(event) => { if (event.target instanceof Element && event.target.matches(EDITABLE)) strip.focusStamp(); }}
     >
       {verified
         ? <GuestNoteField
-          key={strip.editorKey} testId="guest-composer-body" id={fieldId} label="Your note" placeholder={strip.penDown ? "Add a note with this drawing…" : "Add a note…"}
+          key={strip.editorKey} testId="guest-composer-body" id={fieldId} label="Your note" placeholder={restPlaceholder.text}
           media={media} value={strip.doc} disabled={strip.pending} onChange={strip.setDoc} onUploadingChange={strip.setUploading} onSubmit={send}
           pill pillWrap={composing} toolbarContainer={trayToolbar} inlineStart={<>{plus(strip.pending || strip.penDown)}{chip}</>} inlineEnd={pen(strip.penDisabled)}
           contentClassName={composing ? COMPOSE_CLAMP : REST_CLAMP} contentAttributes={SHEET_TEXT} fallback={shell(true)}

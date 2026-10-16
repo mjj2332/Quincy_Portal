@@ -327,7 +327,7 @@ describe("VideoReviewViewer layout (#859): full-height player, collapsible and r
       expect(toggle()).toBeNull();
       expect(handle()).toBeNull();
       expect(pane()!.querySelector('aside[aria-label="Notes"]')).not.toBeNull();
-      expect([...document.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent!.replace(/\d+$/, ""))).toEqual(["Notes", "Delivery"]);
+      expect([...document.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent!.replace(/ \d+ open$/, ""))).toEqual(["Notes", "Delivery"]);
       expect(pane()!.getAttribute("data-stop")).toBe("half");
       expect(document.querySelector('[data-testid="video-review-player"]')!.contains(panel())).toBe(false);
       expect(pane()!.contains(panel())).toBe(true);

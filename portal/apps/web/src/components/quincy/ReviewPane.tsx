@@ -22,7 +22,9 @@ export const REVIEW_PANE_WIDTH_VAR = "--review-pane-w";
 function collapsedHeight(row: HTMLElement): number {
   const pane = row.querySelector<HTMLElement>('[data-testid="video-review-pane"]');
   const px = (value: string) => { const n = parseFloat(value); return Number.isFinite(n) ? n : 0; };
-  let total = 24 + (pane ? px(getComputedStyle(pane).borderTopWidth) + px(getComputedStyle(pane).borderBottomWidth) : 0);
+  // The grabber as drawn (#879 PR 3a: it is a token height now, so it is measured rather than assumed).
+  const grabber = pane?.querySelector<HTMLElement>('[data-testid="review-sheet-grabber"]');
+  let total = (grabber?.offsetHeight ?? 0) + (pane ? px(getComputedStyle(pane).borderTopWidth) + px(getComputedStyle(pane).borderBottomWidth) : 0);
   if (!pane) return total;
   const parts = ["head", "composer"].map((name) => pane.querySelector<HTMLElement>(`[data-sheet-part="${name}"]`)).filter((part): part is HTMLElement => part !== null);
   const boxes = new Set<HTMLElement>();

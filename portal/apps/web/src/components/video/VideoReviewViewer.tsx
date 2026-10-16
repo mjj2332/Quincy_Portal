@@ -24,6 +24,7 @@ import { useInkCanvas } from "../../lib/use-ink-canvas";
 import type { NotesSlots } from "./VideoNotesHost";
 import type { SocialPreviewMode } from "../quincy/SocialPreviewControls";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../reui/tabs";
+import { Badge } from "../reui/badge";
 import { VideoPlayer, type VideoPlayerControl } from "../quincy/VideoPlayer";
 import { ReviewPhoneBar, VersionChip } from "../quincy/ReviewPhoneBar";
 import { VideoPhoneApprove } from "./VideoPhoneApprove";
@@ -56,6 +57,8 @@ const VERSION_SELECT_ID = "video-review-version";
 /** Below this bar width (a container query on the header) an action's label is spoken, not drawn, and a tooltip names it, so the title keeps its floor (`TITLE_FLOOR`) from 721px up (#878). */
 /** The title never shrinks below this many characters, so a crowded bar truncates it last, not to nothing (#878). */
 const TITLE_FLOOR = "min-w-[10ch]";
+/** A phone sheet tab (#879, P1 `.tab`): the head's 44px row, the underline on its bottom edge, its own width (PR 3a). */
+const PHONE_TAB = "max-[721px]:!h-11 max-[721px]:flex-none max-[721px]:px-[var(--space-3)] max-[721px]:after:!bottom-0";
 const BAR_LABEL = "@max-[1400px]:sr-only";
 
 /**
@@ -487,10 +490,11 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     const notesLabel = slots ? "Notes" : "Details";
     const sidePane = tabbed
       ? <Tabs value={sideTab} onValueChange={(next) => { setSideTab(next === "delivery" ? "delivery" : "main"); }} className="min-h-0 flex-1 gap-0">
-        <div data-sheet-part="head" className="flex shrink-0 items-center border-l border-b border-border bg-card pe-[var(--space-2)] max-[721px]:border-l-0">
-          <TabsList variant="line" className="min-w-0 flex-1 rounded-none bg-card px-[var(--space-3)] max-[721px]:!h-11 max-[721px]:!p-0">
-            <TabsTrigger value="main" data-testid="video-pane-tab-main" className="max-[721px]:!h-11 max-[721px]:after:!bottom-0" onClick={openSheet}>{notesLabel}{phone && slots?.openCount != null && <span className="ms-[var(--space-1)] text-foreground-secondary tabular-nums">{slots.openCount}</span>}</TabsTrigger>
-            <TabsTrigger value="delivery" data-testid="video-pane-tab-delivery" className="max-[721px]:!h-11 max-[721px]:after:!bottom-0" onClick={openSheet}>Delivery</TabsTrigger>
+        {/* A phone's tabs sit left, each its own width (#879 PR 3a, P1 `.tabs`), with the open-note count as a Badge beside Notes. */}
+        <div data-sheet-part="head" className="flex shrink-0 items-center border-l border-b border-border bg-card pe-[var(--space-2)] max-[721px]:border-l-0 max-[721px]:ps-[var(--space-3)]">
+          <TabsList variant="line" className="min-w-0 flex-1 rounded-none bg-card px-[var(--space-3)] max-[721px]:!h-11 max-[721px]:justify-start max-[721px]:!p-0">
+            <TabsTrigger value="main" data-testid="video-pane-tab-main" className={PHONE_TAB} onClick={openSheet}>{notesLabel}{phone && slots?.openCount != null && <><span className="sr-only"> </span><Badge variant="secondary" data-testid="video-pane-tab-count" className="tabular-nums">{slots.openCount}</Badge><span className="sr-only"> open</span></>}</TabsTrigger>
+            <TabsTrigger value="delivery" data-testid="video-pane-tab-delivery" className={PHONE_TAB} onClick={openSheet}>Delivery</TabsTrigger>
           </TabsList>
           {!phone && paneControls.hideButton}
         </div>

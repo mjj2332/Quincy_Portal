@@ -75,6 +75,21 @@ let outside: HTMLButtonElement;
 beforeEach(() => { store = createNoteFormStore("t"); drawing = false; outside = document.createElement("button"); outside.textContent = "film"; document.body.appendChild(outside); });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; viewport.restore(); document.body.replaceChildren(); });
 
+describe("VideoNoteComposer on a phone: the rest placeholder (#879 PR 3a)", () => {
+  it("at rest a placeholder too wide for the field ends at a word with one ellipsis; compose mode shows it whole", async () => {
+    // 8px a character; the field is 64px wide, so 8 characters fit: "Add a…", not "Add a no".
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((() => ({ font: "", measureText: (text: string) => ({ width: text.length * 8 }) })) as never);
+    Object.defineProperty(HTMLTextAreaElement.prototype, "clientWidth", { configurable: true, get: () => 64 });
+    try {
+      await render();
+      expect(area().getAttribute("placeholder")).toBe("Add a…");
+      await focusField();
+      expect(sheetMode()).toBe("compose");
+      expect(area().getAttribute("placeholder")).toBe("Add a note…");
+    } finally { delete (HTMLTextAreaElement.prototype as unknown as Record<string, unknown>).clientWidth; vi.mocked(HTMLCanvasElement.prototype.getContext).mockRestore(); }
+  });
+});
+
 describe("VideoNoteComposer on a phone: the pill at rest (P1)", () => {
   it("rests as the pill: +, chip, field, pen and a round Send, with no hint line, Cancel, visibility or toolbar on show", async () => {
     await render();
@@ -117,6 +132,22 @@ describe("VideoNoteComposer on a phone: the pill at rest (P1)", () => {
     expect(by("video-note-cancel")).toBeNull();
     expect(area().value).toBe("first line\nsecond line");
     expect(area().className).toContain("overflow-hidden");
+  });
+});
+
+describe("VideoNoteComposer on a phone: the rest band (#879 PR 3a round 2)", () => {
+  it("at rest the strip's grid has no row gap, so its empty rows add nothing around the pill; the rows that can show at rest carry their own space", async () => {
+    await render();
+    const strip = by("video-note-composer")!;
+    expect(strip.dataset.compose).toBe("false");
+    // The empty line, tray and Cancel tracks rendered 16px above the pill and 8px below it (85pt band, Simulator); at rest the row gap is gone.
+    expect(strip.className).toContain("data-[compose=false]:gap-y-0");
+    // The + tray can open at rest (round 5 of PR 2): its own bottom padding keeps it off the pill.
+    expect(tray().className).toContain("in-data-[compose=false]:pb-[var(--space-2)]");
+    await focusField();
+    // Compose mode keeps its row gap (P6 unchanged).
+    expect(strip.dataset.compose).toBe("true");
+    expect(strip.className).toContain("gap-y-[var(--space-2)]");
   });
 });
 

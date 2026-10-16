@@ -8,7 +8,8 @@ export const FILM_FLOOR = 200;
 const FILM_SHARE = 0.65;
 /** The shortest picture the full stop may leave (#879): the film area at full is this plus the measured transport and the gap between them, never less than `FILM_FLOOR`. */
 export const PICTURE_MIN = 110;
-const STAGE_GAP = 12;
+/** The phone player draws the transport flush under the picture (#879 PR 3a, P1: no gap between the film and the ControlBar). */
+const STAGE_GAP = 0;
 
 export type SheetStop = "collapsed" | "half" | "full";
 export type SheetStops = Record<SheetStop, number>;

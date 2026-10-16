@@ -135,7 +135,10 @@ export function useSheetTextRoom(active: boolean, rowRef: RefObject<HTMLDivEleme
   }, [active, rowRef, paneRef]);
 }
 
-/** The grabber: a horizontal window splitter between the picture and the sheet. */
+/**
+ * The grabber: a horizontal window splitter between the picture and the sheet. P1's `.grabber` is 22px (#879 PR 3a): `--space-5` less the bold border. Its touch band reaches up
+ * through the transport's `--space-1` bottom gutter and stops there, where the control row's 44px hit areas end, so the two never overlap.
+ */
 export function SheetGrabber({ control, stops, getHeight, onDrag }: {
   control: ReviewSheetControl;
   stops: SheetStops;
@@ -211,7 +214,7 @@ export function SheetGrabber({ control, stops, getHeight, onDrag }: {
     onPointerMove={onPointerMove}
     onPointerUp={finish}
     onPointerCancel={finish}
-    className={`relative flex h-6 flex-none ${control.mode !== "browse" ? "hidden " : ""} cursor-row-resize touch-none items-center justify-center before:absolute before:inset-x-0 before:-top-2 before:bottom-0 before:content-[''] focus-visible:outline-2 -outline-offset-2 focus-visible:!-outline-offset-2 focus-visible:outline-ring`}
+    className={`relative flex h-[calc(var(--space-5)-var(--border-width-bold))] flex-none ${control.mode !== "browse" ? "hidden " : ""} cursor-row-resize touch-none items-center justify-center before:absolute before:inset-x-0 before:-top-1 before:bottom-0 before:content-[''] focus-visible:outline-2 -outline-offset-2 focus-visible:!-outline-offset-2 focus-visible:outline-ring`}
   ><span aria-hidden="true" className="block h-1 w-10 rounded-full bg-border" /></div>;
 }
 

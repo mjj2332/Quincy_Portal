@@ -1,6 +1,7 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefCallback } from "react";
 import { Plus, Send } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { fitAtWord } from "../../lib/fit-at-word";
 import { SCROLL_FADE_MASK_CLASSES, useScrollFade } from "../../lib/use-scroll-fade";
 import { SHEET_TEXT_ATTR } from "./ReviewSheet";
 import { PILL_ICON } from "./VideoPlayer";
@@ -17,8 +18,12 @@ import { Spinner } from "../reui/spinner";
  * Send beside it, and Cancel.
  */
 
-/** The strip's grid: the line, the tray, the pill and Send, Cancel. */
-export const STRIP_GRID = "@container grid min-h-0 grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_auto_auto_auto] gap-x-[var(--space-2)] gap-y-[var(--space-2)]";
+/** The strip's grid: the line, the tray, the pill and Send, Cancel. At rest (`data-compose="false"`) it has no row gap (#879 PR 3a round 2): the four tracks are explicit, so the
+ * gaps between the empty ones (no hint, the closed tray, no Cancel) still rendered, 16px above the pill and 8px below it, an 85pt band where P1's is 61. The rows that can show at
+ * rest (a problem line, the tray opened from rest) carry their own space below instead (`REST_ROW_SPACE`); compose mode keeps its gap, unchanged. */
+export const STRIP_GRID = "@container grid min-h-0 grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_auto_auto_auto] gap-x-[var(--space-2)] gap-y-[var(--space-2)] data-[compose=false]:gap-y-0";
+/** A rest row's space before the pill, in place of the row gap the rest grid drops. */
+const REST_ROW_SPACE = "in-data-[compose=false]:pb-[var(--space-2)]";
 /** Marks the pill's text box for the review sheet's film floor (#879 fix r9). */
 export const SHEET_TEXT = { [SHEET_TEXT_ATTR]: "" } as const;
 /** The phone pill's text box (C4): one line at rest (the draft clamped to its first line), up to four while writing, then it scrolls. Line 24px + the box's 8px padding top and bottom.
@@ -33,7 +38,7 @@ export const REST_CLAMP = "max-h-[calc(var(--space-6)+var(--space-2))] overflow-
  * The room is rounded down to whole 24px lines (`--space-5`) inside the box's 16px of padding (#879 fix r10), so the window never shows a sliver of a line. */
 export const COMPOSE_CLAMP = "max-h-[clamp(calc(var(--space-6)+var(--space-2)),calc(round(down,calc(var(--sheet-text-room,calc(var(--space-9)+var(--space-4)))-var(--space-4)),var(--space-5))+var(--space-4)),calc(var(--space-9)+var(--space-4)))] [&>*]:overflow-y-auto";
 /** The phone line under the film (hint, lock, problem): one meta line, two at most, at P6's 12px. */
-export const PHONE_LINE = "col-span-2 row-start-1 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)]";
+export const PHONE_LINE = "col-span-2 row-start-1 in-data-[compose=false]:pb-[var(--space-2)] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)]";
 /** The pill's timecode chip (quincy.css `.tc-chip`): small mono, so the text keeps the pill's width (#879 fix). */
 // The `.tc-chip` amber tint on the caution token: on the viewer's inverse surface `--warning-foreground` is `--signal-caution-on-inverse` (star-amber), elsewhere the caution text ochre.
 export const PILL_CHIP = "shrink-0 whitespace-nowrap rounded-md bg-[color-mix(in_oklch,var(--warning-foreground)_18%,transparent)] px-[var(--space-2)] py-[var(--space-1)] text-warning-foreground [font:var(--weight-regular)_var(--text-xs)/1_var(--font-mono)] tabular-nums";
@@ -51,6 +56,50 @@ export const keepFocus = (event: { preventDefault: () => void }) => { event.prev
 export function shortRange(from: string, to: string): string {
   const same = /^\d{2}:\d{2}:/.test(from) && /^\d{2}:\d{2}:/.test(to) && from.slice(0, 3) === to.slice(0, 3);
   return `${from} – ${same ? to.slice(3) : to}`;
+}
+
+/** The field a pill host holds: the rich field's root (its placeholder is `data-placeholder`), or a native field. */
+const PLACEHOLDER_FIELD = "[data-placeholder], [placeholder]";
+let measureCanvas: HTMLCanvasElement | null = null;
+const px = (value: string) => { const n = parseFloat(value); return Number.isFinite(n) ? n : 0; };
+
+/** `full` as it fits the field's text room (its width less its inline padding) in its computed font, or `full` when there is nothing to measure yet. */
+function fitPlaceholder(host: HTMLElement, full: string): string {
+  const field = host.querySelector<HTMLElement>(PLACEHOLDER_FIELD);
+  if (!field) return full;
+  const style = getComputedStyle(field);
+  const room = field.clientWidth - px(style.paddingLeft) - px(style.paddingRight);
+  if (!(room > 0)) return full;
+  measureCanvas ??= document.createElement("canvas");
+  const context = measureCanvas.getContext("2d");
+  if (!context) return full;
+  context.font = style.font || `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  return fitAtWord(full, (candidate) => context.measureText(candidate).width <= room);
+}
+
+/**
+ * The pill's rest placeholder (#879 PR 3a): one line that ends at a word with one "…" (`fitAtWord`), where the CSS ellipsis cut P7's "Add a note with this drawing…" mid-word.
+ * `ref` goes on the element holding the field; the text is refitted when that element resizes, when the field arrives (the editor's chunk loads late) and when the fonts are in.
+ * Compose mode (`atRest` false) keeps `full`, as does a typed draft's line, which the CSS ellipsis still clips (the placeholder does not show then).
+ */
+export function useRestPlaceholder(full: string, atRest: boolean): { ref: RefCallback<HTMLElement>; text: string } {
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  // Kept with the text it was fitted from, so a new `full` never shows an old fit for a frame.
+  const [fitted, setFitted] = useState({ full, text: full });
+  useLayoutEffect(() => {
+    if (!atRest || !host) return undefined;
+    const update = () => { const text = fitPlaceholder(host, full); setFitted((held) => (held.full === full && held.text === text ? held : { full, text })); };
+    update();
+    let live = true;
+    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    resize?.observe(host);
+    // The field mounts inside the host after it (a lazy chunk): its arrival is a child-list change, not a resize, because the shell it replaces has the same size.
+    const arrival = typeof MutationObserver === "undefined" ? null : new MutationObserver(update);
+    arrival?.observe(host, { childList: true, subtree: true });
+    void document.fonts?.ready.then(() => { if (live) update(); });
+    return () => { live = false; resize?.disconnect(); arrival?.disconnect(); };
+  }, [host, full, atRest]);
+  return { ref: setHost, text: atRest && fitted.full === full ? fitted.text : full };
 }
 
 /** The pill's + (Note options): opens the tray. A press never takes the focus from the field. */
@@ -89,7 +138,7 @@ export function ComposeTray({ open, id, testId, toolbarRef, children }: { open: 
     return () => { tray.removeEventListener("pointerdown", keep); tray.removeEventListener("mousedown", keep); };
   }, []);
   return <Collapsible open={open} className="col-span-2 row-start-2 min-w-0">
-    <CollapsibleContent ref={trayRef} keepMounted id={id} role="region" aria-label="Note options" data-testid={testId} inert={!open} className="min-w-0 [&[hidden]]:hidden">
+    <CollapsibleContent ref={trayRef} keepMounted id={id} role="region" aria-label="Note options" data-testid={testId} inert={!open} className={cn("min-w-0 [&[hidden]]:hidden", REST_ROW_SPACE)}>
       <div ref={scroller} data-testid={`${testId}-scroller`} data-fade={fade} onScroll={onScroll} className={cn("min-w-0 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", SCROLL_FADE_MASK_CLASSES)}>
       <div data-testid={`${testId}-row`} className="flex w-max flex-nowrap items-center gap-[var(--space-2)] py-px [&>*]:shrink-0">
         {children}

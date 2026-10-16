@@ -15,6 +15,9 @@
  * - Control: `min-h-11` on coarse pointers and at <=721px so the whole strip is a 44px drag target.
  * - `thumbProps` (new): forwarded to every Thumb, because `getAriaLabel` / `getAriaValueText` live on the Thumb, not
  *   the Root, and the scrubber needs its timecode as `aria-valuetext`.
+ * - `size` (new, #879 PR 3a): `"band"` is the phone review transport's scrubber (P1 `ControlBar`, quincy.css `.scrub`): the Control is drawn as a
+ *   `--space-6` band instead of the 44px strip, and its touch target still reaches 44px through a transparent `before:` pseudo-element
+ *   (painted under the track and thumb, so the thumb stays on top). `"default"` renders exactly as before for every other caller.
  * Registry exports and behaviour are otherwise unchanged (multi-thumb by value array, `thumbAlignment="edge"`).
  */
 import { Slider as SliderPrimitive } from "@base-ui/react/slider"
@@ -27,8 +30,9 @@ function Slider({
   min = 0,
   max = 100,
   thumbProps,
+  size = "default",
   ...props
-}: SliderPrimitive.Root.Props & { thumbProps?: Omit<SliderPrimitive.Thumb.Props, "className" | "index"> }) {
+}: SliderPrimitive.Root.Props & { thumbProps?: Omit<SliderPrimitive.Thumb.Props, "className" | "index">; size?: "default" | "band" }) {
   const _values = Array.isArray(value)
     ? value
     : Array.isArray(defaultValue)
@@ -39,6 +43,7 @@ function Slider({
     <SliderPrimitive.Root
       className={cn("data-[orientation=horizontal]:w-full data-[orientation=vertical]:h-full", className)}
       data-slot="slider"
+      data-size={size}
       defaultValue={defaultValue}
       value={value}
       min={min}
@@ -46,7 +51,9 @@ function Slider({
       thumbAlignment="edge"
       {...props}
     >
-      <SliderPrimitive.Control className="relative flex w-full touch-none items-center select-none data-disabled:opacity-50 data-[orientation=horizontal]:min-h-6 data-[orientation=horizontal]:pointer-coarse:min-h-11 data-[orientation=horizontal]:max-[721px]:min-h-11 data-[orientation=vertical]:h-full data-[orientation=vertical]:min-h-40 data-[orientation=vertical]:w-auto data-[orientation=vertical]:flex-col">
+      <SliderPrimitive.Control className={cn("relative flex w-full touch-none items-center select-none data-disabled:opacity-50 data-[orientation=vertical]:h-full data-[orientation=vertical]:min-h-40 data-[orientation=vertical]:w-auto data-[orientation=vertical]:flex-col", size === "band"
+        ? "data-[orientation=horizontal]:h-[var(--space-6)] before:absolute before:inset-x-0 before:-inset-y-1.5 before:content-['']"
+        : "data-[orientation=horizontal]:min-h-6 data-[orientation=horizontal]:pointer-coarse:min-h-11 data-[orientation=horizontal]:max-[721px]:min-h-11")}>
         <SliderPrimitive.Track
           data-slot="slider-track"
           className="relative grow overflow-hidden rounded-none bg-border select-none data-[orientation=horizontal]:h-[2px] data-[orientation=horizontal]:w-full data-[orientation=vertical]:h-full data-[orientation=vertical]:w-[2px]"

@@ -183,6 +183,42 @@ describe("Video tiles (#884, was the #741 4d-i cards)", () => {
   });
 });
 
+describe("Collection header (T3, #879 PR 3a)", () => {
+  const header = () => host.querySelector<HTMLElement>('[data-testid="video-films-header"]')!;
+  const count = () => header().querySelector('[data-testid="video-films-count"]');
+  it("is titled Video with no eyebrow, and counts the films beside the title", async () => {
+    await mount([videoOf(), videoOf({ id: "55555555-5555-4555-8555-555555555555", title: "Twilight cut" })]);
+    expect(header().querySelector("#video-films-heading")?.textContent).toBe("Video");
+    expect(header().textContent).not.toContain("Video review");
+    // T3's header is only the title, the count and its actions: the upload help lives in the uploader's drop box.
+    expect(header().textContent).not.toMatch(/H\.264|re-cut/);
+    expect(count()?.textContent).toBe("2 films");
+    await unmount();
+    await mount([videoOf()]);
+    expect(count()?.textContent).toBe("1 film");
+  });
+
+  it("holds a skeleton while the list loads, and shows no count when it fails", async () => {
+    apiGetMock.mockImplementation(() => new Promise(() => undefined));
+    host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><VideoCollectionPanel projectId={PROJECT} role="editor" review={{ open: true, parts: ["upload"] }} /></QuincyQueryProvider>); });
+    await flush();
+    expect(header().querySelector('[data-testid="video-films-count-loading"]')?.getAttribute("aria-hidden")).toBe("true");
+    expect(count()).toBeNull();
+    // The re-cut line waits for the list: it is for a collection that has films (#879 PR 3a).
+    expect(host.querySelector('[data-testid="new-film-recut-hint"]')).toBeNull();
+    await unmount();
+    const { ApiError } = await import("../../lib/api");
+    apiGetMock.mockImplementation(async () => { throw new ApiError("Films could not be loaded.", 404, { code: "not_found" }); }); // a 4xx is not retried
+    host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => { root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><VideoCollectionPanel projectId={PROJECT} role="editor" review={{ open: true, parts: ["upload"] }} /></QuincyQueryProvider>); });
+    await flush(16);
+    expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    expect(count()).toBeNull();
+    expect(header().querySelector('[data-testid="video-films-count-loading"]')).toBeNull();
+  });
+});
+
 describe("Uploader (#741 4d-i)", () => {
   it("offers MP4 and MOV on both pickers and says so in its copy (#813)", async () => {
     await mount([videoOf()], ["upload"]);
@@ -193,7 +229,29 @@ describe("Uploader (#741 4d-i)", () => {
     await mount([], ["upload"]);
     const uploader = host.querySelector('[data-testid="new-film-uploader"]')!.textContent ?? "";
     expect(uploader).toContain("Drop MP4 or MOV films here");
-    expect(host.textContent).toContain("H.264 MP4 or MOV");
+    expect(uploader).toContain("H.264 MP4 or MOV");
+    // The upload help moved out of the T3 header into the drop box, said once there.
+    expect(uploader).toContain("A re-cut becomes a new version of the same film; notes stay with the version they were made on.");
+    expect(host.textContent!.split("re-cut").length - 1).toBe(1);
+  });
+
+  it("keeps a quiet re-cut line in the uploader once films exist, not in the T3 header (#879 PR 3a)", async () => {
+    const RECUT = "A re-cut becomes a new version of the same film; notes stay with the version they were made on.";
+    await mount([videoOf()], ["upload"]);
+    const uploader = host.querySelector('[data-testid="new-film-uploader"]')!;
+    const line = uploader.querySelector<HTMLElement>('[data-testid="new-film-recut-hint"]');
+    expect(line?.textContent).toBe(RECUT);
+    expect(line?.className).toMatch(/\btext-xs\b/);
+    expect(line?.className).toMatch(/\btext-foreground-secondary\b/);
+    expect(host.textContent!.split("re-cut").length - 1).toBe(1);
+    expect(host.querySelector('[data-testid="video-films-header"]')!.textContent).not.toContain("re-cut");
+    expect(host.querySelector('[data-testid="new-film-dropzone"]')).toBeNull();
+    await unmount();
+    // No films: the drop box carries the sentence, and the quiet line is not drawn as well.
+    await mount([], ["upload"]);
+    expect(host.querySelector('[data-testid="new-film-recut-hint"]')).toBeNull();
+    expect(host.querySelector('[data-testid="new-film-dropzone"]')!.textContent).toContain(RECUT);
+    expect(host.textContent!.split("re-cut").length - 1).toBe(1);
   });
 
   it("takes an H.264 .mov and reserves it as video/mp4 with its own name and no title (#813, #828)", async () => {
