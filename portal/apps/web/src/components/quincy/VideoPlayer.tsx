@@ -85,6 +85,11 @@ function ownPopup(target: Element, player: Element): boolean {
   const popup = target.closest('[role="menu"], [role="listbox"], [role="dialog"]');
   return popup !== null && !popup.contains(player);
 }
+/**
+ * A sideways phone's dock bottom (#880 landscape fix 1): the home bar lies over the page's bottom edge in landscape, and without `viewport-fit=cover` (lesson "the status-bar spike",
+ * not adopted) Safari reports no safe-area inset, so the inset alone is 0 there. --space-5 (24px) clears the 21pt landscape home-bar zone; the inset wins if it is ever reported larger.
+ */
+const SIDEWAYS_DOCK_BOTTOM = "pb-[max(var(--space-5),env(safe-area-inset-bottom))]";
 /** Full screen's dock while Add note is open (#880 fix round 1, F1): the scrim's top padding plus the composer's published height and the space under it, so the scrim runs behind the composer. */
 const COMPOSING_SCRIM = "pt-[calc(var(--space-6)+var(--immersive-composer-h,0px)+var(--space-2))]";
 const PLAY_BADGE = "pointer-events-auto size-[calc(var(--space-8)-var(--space-1))] rounded-[var(--radius-pill)] bg-[color-mix(in_srgb,var(--ink-900)_55%,transparent)] !text-foreground hover:bg-[color-mix(in_srgb,var(--ink-900)_70%,transparent)]";
@@ -318,8 +323,10 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   // The dock (#880 S2): one wrapper, always rendered, around the replacement and the transport, so entering Full screen or putting the pen down never swaps the node the controls
   // live in (nor remounts the slider). Outside Full screen it lays out as nothing (`contents`); in Full screen it is the bottom overlay on a scrim, in the player's own tree
   // (safe-area insets keep it off the notch and the home bar).
+  // A phone device in Full screen past the phone width is a sideways phone (F2).
+  const sideways = compact && !phone;
   const dockClass = imm
-    ? cn("absolute inset-x-0 bottom-0 z-10 flex flex-col gap-[var(--space-2)] bg-[image:var(--scrim-chrome)] pr-[max(var(--space-3),env(safe-area-inset-right))] pb-[max(var(--space-2),env(safe-area-inset-bottom))] pl-[max(var(--space-3),env(safe-area-inset-left))]", composing ? COMPOSING_SCRIM : "pt-[var(--space-6)]", FADE, fade)
+    ? cn("absolute inset-x-0 bottom-0 z-10 flex flex-col gap-[var(--space-2)] bg-[image:var(--scrim-chrome)] pr-[max(var(--space-3),env(safe-area-inset-right))] pl-[max(var(--space-3),env(safe-area-inset-left))]", sideways ? SIDEWAYS_DOCK_BOTTOM : "pb-[max(var(--space-2),env(safe-area-inset-bottom))]", composing ? COMPOSING_SCRIM : "pt-[var(--space-6)]", FADE, fade)
     : "contents";
   const transportClass = imm ? "flex flex-col gap-[var(--space-2)]" : "flex flex-col gap-[var(--space-3)] max-[721px]:gap-0 max-[721px]:px-[var(--space-3)] max-[721px]:pb-[var(--space-1)]";
   const dockProps = imm ? { "data-testid": "video-immersive-dock", inert: !chromeVisible } : { "data-testid": "video-transport-dock" };
@@ -370,7 +377,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     } : undefined}
     className={cn("group/player @container flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] max-[721px]:gap-0 focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", imm && "relative flex-1 gap-0 bg-invert", className)}
   >
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} badge={badge} chip={!(imm && composing)} {...(social ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})} />
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} badge={badge} chip={!imm} {...(social ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})} />
 
     {imm && immersive && <div data-testid="video-immersive-bar" inert={!chromeVisible} className={cn("absolute inset-x-0 top-0 z-10 flex items-center gap-[var(--space-2)] bg-[image:var(--scrim-chrome-top)] pt-[max(var(--space-2),env(safe-area-inset-top))] pr-[max(var(--space-3),env(safe-area-inset-right))] pb-[var(--space-5)] pl-[max(var(--space-3),env(safe-area-inset-left))] text-invert-foreground", FADE, fade)}>
       <IconTip label="Exit full screen">

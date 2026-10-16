@@ -52,7 +52,7 @@ export function VideoStage({ streamUrl, title, width, height, timecode, frame, f
   frameStyle?: React.CSSProperties;
   /** Centred over the whole stage, above the picture and the overlay (#879 PR 3a: the phone player's play badge). Not drawn while the film cannot play. */
   badge?: ReactNode;
-  /** False leaves the timecode chip out: Full screen's composer covers the picture's bottom edge, and its own stamp names the frame (#880 fix round 1). */
+  /** False leaves the timecode chip out: Full screen draws none (F1, F2), where the dock lies over the picture's bottom edge and shows the time itself (#880). */
   chip?: boolean;
 }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);

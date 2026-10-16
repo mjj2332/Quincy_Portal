@@ -322,6 +322,29 @@ describe("VideoPlayer full screen controls (#880, D13)", () => {
     expect(byTestId("video-key-legend")).not.toBeNull();
   });
 
+  it("a sideways phone's dock clears the home bar: its bottom padding is at least --space-5, or the safe area; portrait keeps --space-2 (landscape fix 1)", async () => {
+    const PORTRAIT_PB = "pb-[max(var(--space-2),env(safe-area-inset-bottom))]";
+    const SIDEWAYS_PB = "pb-[max(var(--space-5),env(safe-area-inset-bottom))]";
+    viewport = mockViewport({ width: 844, height: 390, coarse: true });
+    await mount({ immersive: hostOf() });
+    let classes = byTestId("video-immersive-dock")!.className.split(/\s+/);
+    expect(classes).toContain(SIDEWAYS_PB);
+    expect(classes).not.toContain(PORTRAIT_PB);
+    // The sides stay the safe area's, with --space-3 at least.
+    expect(classes).toContain("pl-[max(var(--space-3),env(safe-area-inset-left))]");
+    expect(classes).toContain("pr-[max(var(--space-3),env(safe-area-inset-right))]");
+    await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren(); viewport.restore();
+    for (const size of [{ width: 390, height: 844, coarse: true }, { width: 1400, height: 900, coarse: false }]) {
+      viewport = mockViewport(size);
+      await mount({ immersive: hostOf() });
+      classes = byTestId("video-immersive-dock")!.className.split(/\s+/);
+      expect(classes, `${size.width}`).toContain(PORTRAIT_PB);
+      expect(classes, `${size.width}`).not.toContain(SIDEWAYS_PB);
+      await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren(); viewport.restore();
+    }
+    viewport = null;
+  });
+
   it("a hidden control is not reachable: hidden controls are inert", async () => {
     await mount({ immersive: hostOf() });
     await tapStage();
@@ -366,21 +389,25 @@ describe("VideoPlayer Full screen dock (#880 S2)", () => {
     spy.mockRestore();
   });
 
-  it("while Add note is open the dock's scrim reaches up behind the composer (its published height), and the frame chip is not drawn under it (fix round 1, item 3)", async () => {
-    // A laid-out film, so the stage has a picture box to draw the chip in.
-    const spies = (["offsetWidth", "offsetHeight"] as const).map((prop) => vi.spyOn(HTMLElement.prototype, prop, "get").mockReturnValue(800));
+  it("while Add note is open the dock's scrim reaches up behind the composer (its published height) (fix round 1, item 3)", async () => {
     await mount({ immersive: hostOf() });
     const dock = byTestId("video-immersive-dock")!;
     expect(dock.className).toContain("pt-[var(--space-6)]");
-    expect(byTestId("video-timecode-chip")).not.toBeNull();
     await rerender({ immersive: hostOf({ addNote: { pressed: true, onToggle: () => undefined } }) });
     expect(dock.className).toContain("pt-[calc(var(--space-6)+var(--immersive-composer-h,0px)+var(--space-2))]");
     expect(dock.className).not.toContain("pt-[var(--space-6)]");
-    expect(byTestId("video-timecode-chip")).toBeNull();
-    await rerender({ immersive: hostOf({ addNote: { pressed: false, onToggle: () => undefined } }) });
+  });
+
+  it("F1 and F2 draw no frame chip on the film: Full screen leaves it out, watching or composing; outside Full screen it is the stage's as before (landscape fix 1)", async () => {
+    // A laid-out film, so the stage has a picture box to draw the chip in.
+    const spies = (["offsetWidth", "offsetHeight"] as const).map((prop) => vi.spyOn(HTMLElement.prototype, prop, "get").mockReturnValue(800));
+    await mount({ immersive: hostOf({ on: false }) });
     expect(byTestId("video-timecode-chip")).not.toBeNull();
-    // Outside Full screen the chip is the stage's as before.
-    await rerender({ immersive: hostOf({ on: false, addNote: { pressed: true, onToggle: () => undefined } }) });
+    await rerender({ immersive: hostOf() });
+    expect(byTestId("video-timecode-chip")).toBeNull();
+    await rerender({ immersive: hostOf({ addNote: { pressed: true, onToggle: () => undefined } }) });
+    expect(byTestId("video-timecode-chip")).toBeNull();
+    await rerender({ immersive: hostOf({ on: false }) });
     expect(byTestId("video-timecode-chip")).not.toBeNull();
     for (const spy of spies) spy.mockRestore();
   });
