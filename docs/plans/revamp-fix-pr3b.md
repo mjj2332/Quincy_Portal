@@ -79,7 +79,10 @@ Allowlist unchanged (no raw primitives). Desktop proof: `.header.dom.test.tsx`,
 Asked 2026-10-16:
 
 - **Guest approve after Changes requested:** the header shows the "Changes requested" badge; the
-  ⋯ sheet carries an **Approve** row whenever the decision is not Approved (under `canDecide`).
+  ⋯ sheet carries an **Approve** row only while that badge is showing (under `canDecide`).
+  Undecided, the header's Approve button is the one way in; approved, there is nothing to approve.
+  Owner decision, 2026-10-16 (confirmed F6 as built; this replaces "whenever the decision is not
+  Approved").
 - **Search with the keyboard up:** opening search snaps the sheet to **full**; closing search
   restores the previous stop (an `onSearchOpen`/`onSearchClose` from the viewer through the host;
   guest the same through `GuestVideoScreen`).
