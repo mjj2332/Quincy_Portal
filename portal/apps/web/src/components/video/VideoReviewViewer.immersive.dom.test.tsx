@@ -392,6 +392,8 @@ describe("Cancel in a phone's Full screen composer (#880 fix round 1, item 2)", 
   });
 });
 
+/** Whether Tailwind's compiled `in-data-[immersive=compose]:<utility>` rule (`:where([data-immersive=compose]) .<class>`) matches `element` in the rendered tree: the class is on it AND an ancestor carries the attribute. */
+const composeRuleApplies = (element: Element, utility: string) => element.matches(`[data-immersive="compose"] .${CSS.escape(`in-data-[immersive=compose]:${utility}`)}`);
 describe("the Full screen composer drops the notes panel's sheet chrome (#880 fix round 1, item 3)", () => {
   it.each([["portrait", { width: 390, height: 844, coarse: true }], ["a desktop width", { width: 1200, height: 800, coarse: false }]] as const)("on %s: no panel padding or side border, and the composer band has no top border or padding of its own", async (_name, size) => {
     viewport = mockViewport(size);
@@ -410,12 +412,12 @@ describe("the Full screen composer drops the notes panel's sheet chrome (#880 fi
     await click(tid("video-fullscreen")!);
     await click(tid("video-immersive-add-note")!);
     expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
-    const strip = tid("video-note-composer")!.className.split(/\s+/);
-    expect(strip).toContain("in-data-[immersive=compose]:grid-rows-[auto_auto_auto]");
-    const hint = tid("video-note-stamp")!.parentElement!.className.split(/\s+/);
-    expect(hint).toContain("in-data-[immersive=compose]:col-span-1");
-    const cancel = tid("video-note-cancel")!.parentElement!.className.split(/\s+/);
-    for (const name of ["in-data-[immersive=compose]:col-start-2", "in-data-[immersive=compose]:row-start-1"]) expect(cancel, name).toContain(name);
+    // The rules as compiled, against the rendered tree: a class with no [data-immersive=compose] ancestor would do nothing on the device.
+    expect(tid("video-note-composer")!.closest('[data-immersive="compose"]')).toBe(tid("video-review-pane"));
+    expect(composeRuleApplies(tid("video-note-composer")!, "grid-rows-[auto_auto_auto]")).toBe(true);
+    expect(composeRuleApplies(tid("video-note-stamp")!.parentElement!, "col-span-1")).toBe(true);
+    const cancel = tid("video-note-cancel")!.parentElement!;
+    for (const utility of ["col-start-2", "row-start-1"]) expect(composeRuleApplies(cancel, utility), utility).toBe(true);
   });
 });
 

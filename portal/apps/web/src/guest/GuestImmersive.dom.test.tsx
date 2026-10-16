@@ -141,6 +141,8 @@ async function escape() { await act(async () => { (document.activeElement ?? doc
 const escapeOutOfTooltip = async () => { if ([...document.querySelectorAll("[data-open]")].some((popup) => popup.tagName === "DIV" && /^(Add note|Full screen|Exit full screen)$/.test(popup.textContent ?? ""))) await escape(); };
 const immersiveOn = () => byId("video-player")!.hasAttribute("data-immersive");
 
+/** Whether Tailwind's compiled `in-data-[immersive=compose]:<utility>` rule (`:where([data-immersive=compose]) .<class>`) matches `element` in the rendered tree: the class is on it AND an ancestor carries the attribute. */
+const composeRuleApplies = (element: Element, utility: string) => element.matches(`[data-immersive="compose"] .${CSS.escape(`in-data-[immersive=compose]:${utility}`)}`);
 describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["a desktop at 1200", { width: 1200, height: 900, coarse: false }]] as const)("the guest page's Full screen on %s (#880)", (_name, size) => {
   beforeEach(() => { viewport.restore(); viewport = mockViewport(size); notes = { [asset(10)]: [note(1)] }; });
 
@@ -232,10 +234,12 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     await open();
     await click(byId("video-fullscreen"));
     await click(byId("video-immersive-add-note"));
-    expect(byId("guest-compose-strip")!.className.split(/\s+/)).toContain("in-data-[immersive=compose]:grid-rows-[auto_auto_auto]");
-    expect(byId("guest-composer-stamp")!.parentElement!.className.split(/\s+/)).toContain("in-data-[immersive=compose]:col-span-1");
-    const cancel = byId("guest-composer-cancel")!.parentElement!.className.split(/\s+/);
-    for (const name of ["in-data-[immersive=compose]:col-start-2", "in-data-[immersive=compose]:row-start-1"]) expect(cancel, name).toContain(name);
+    // The rules as compiled, against the rendered tree (the class alone proves nothing without the [data-immersive=compose] ancestor).
+    expect(byId("guest-compose-strip")!.closest('[data-immersive="compose"]')).toBe(byId("video-review-pane"));
+    expect(composeRuleApplies(byId("guest-compose-strip")!, "grid-rows-[auto_auto_auto]")).toBe(true);
+    expect(composeRuleApplies(byId("guest-composer-stamp")!.parentElement!, "col-span-1")).toBe(true);
+    const cancel = byId("guest-composer-cancel")!.parentElement!;
+    for (const utility of ["col-start-2", "row-start-1"]) expect(composeRuleApplies(cancel, utility), utility).toBe(true);
   });
 
   it("Tab is held inside the layer: the focus manager's guards exist only while in Full screen, and the page's header is inert", async () => {
