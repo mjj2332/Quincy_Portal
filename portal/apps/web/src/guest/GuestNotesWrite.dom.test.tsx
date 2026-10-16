@@ -1508,9 +1508,9 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     expect(list!.getAttribute("data-slot")).toBe("scroll-area");
     expect(list!.contains(byId("guest-identity"))).toBe(true);
     expect(list!.contains(byId("guest-subscription"))).toBe(true);
-    // The delivery row (Request changes) scrolls with the notes rather than taking its own fixed band above them.
-    expect(byId("guest-request-changes")).not.toBeNull();
-    expect(list!.contains(byId("guest-request-changes"))).toBe(true);
+    // The quiet line (Released, the hints and notices) scrolls with the notes rather than taking its own fixed band; Request changes is a ⋯ row now, not a list row (#879 PR 3b).
+    expect(list!.contains(byId("guest-quiet-line"))).toBe(true);
+    expect(byId("guest-request-changes")).toBeNull();
     const strip = byId("guest-compose-strip")!;
     expect(list!.contains(strip)).toBe(false);
     // The strip's part is the list's sibling in the panel's column, laid out after it: the list ends where the strip's top border begins.
@@ -1522,7 +1522,7 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
   };
   const withRows = () => { session = { ...VERIFIED, link: { ...VERIFIED.link, allow: { ...VERIFIED.link.allow, approve: true } }, notifications: { available: true, subscribed: false } } as GuestSessionResponse; };
 
-  it("with no notes, the empty state, the delivery row and the identity / email rows all scroll in the list above the pill", async () => {
+  it("with no notes, the empty state, the quiet line and the identity / email rows all scroll in the list above the pill", async () => {
     withRows();
     await open();
     await vi.waitFor(() => { expect(byId("guest-identity")).not.toBeNull(); });

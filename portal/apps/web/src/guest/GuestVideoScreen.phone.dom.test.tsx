@@ -296,3 +296,84 @@ describe("the guest phone notes head (#879 PR 3b, P2)", () => {
     expect(listed()).toEqual([mine.id, studio.id]);
   });
 });
+
+describe("the guest phone ⋯ and delivery (#879 PR 3b, P10 / P2)", () => {
+  const MANIFEST = { included: [{ videoId: vid(1), title: "Film 1", version: 11, bytes: 1024 }], leftOut: [], totalBytes: 1024, tooLarge: false, archive: { state: "ready", pending: 0 } };
+  const decided = (value: "approved" | "changes_requested") => ({ value, revision: 1, at: "2026-10-09T01:00:00.000Z", self: true });
+  const released = { ...versionOf(11), released: true, downloadUrl: `${BASE}/versions/${asset(11)}/download` };
+  const press = async (element: HTMLElement) => { await act(async () => { element.click(); }); await flush(4); };
+  const rows = () => [...byId("review-action-sheet")!.querySelectorAll<HTMLElement>('[data-slot="item"], [data-slot="item-separator"]')].map((row) => (row.dataset.slot === "item-separator" ? "—" : row.textContent));
+  const menu = () => byId("video-header-menu")!;
+  async function openFilm(decision: ReturnType<typeof decided> | null = null) {
+    session = { ...SESSION, link: { ...SESSION.link, allow: { ...SESSION.link.allow, approve: true, download: true } } };
+    videos = [{ ...videoOf(1), versions: [{ ...released, decision }, versionOf(10)] }, videoOf(2)];
+    const base = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => (String(input) === `${BASE}/downloads` ? json(MANIFEST) : base(input, init))) as unknown as typeof fetch;
+    await open();
+    await vi.waitFor(() => { expect(document.querySelector('[data-testid="guest-video-row"] button')).not.toBeNull(); });
+    await press(document.querySelector<HTMLElement>('[data-testid="guest-video-row"] button')!);
+    await vi.waitFor(() => { expect(area()).not.toBeNull(); });
+  }
+
+  it("lists P10's rows in order, with the decisions under a rule, and no delivery row above the notes", async () => {
+    await openFilm();
+    expect(byId("guest-delivery")).toBeNull();
+    await press(menu());
+    expect(rows()).toEqual(["Download v11", "Download all…", "Copy my notes…", "—", "Approve", "Request changes…"]);
+  });
+
+  it("a recorded decision takes the Approve slot as its badge; after Changes requested the ⋯ still offers Approve", async () => {
+    await openFilm(decided("changes_requested"));
+    const bar = byId("review-phone-bar")!;
+    expect(bar.querySelector('[data-testid="guest-approve"]')).toBeNull();
+    expect(bar.querySelector('[data-testid="guest-decision-chip"]')!.textContent).toBe("Changes requested");
+    await press(menu());
+    expect(rows()).toEqual(["Download v11", "Download all…", "Copy my notes…", "—", "Approve", "Request changes…"]);
+    await press(byId("guest-approve-row")!);
+    expect(byId("review-action-sheet")).toBeNull();
+    expect(byId("guest-decision-dialog")).not.toBeNull();
+  });
+
+  it("an approval reads Approved in the slot, and the ⋯ keeps only Request changes…", async () => {
+    await openFilm(decided("approved"));
+    const chip = byId("review-phone-bar")!.querySelector<HTMLElement>('[data-testid="guest-decision-chip"]')!;
+    expect(chip.textContent).toBe("Approved");
+    expect(chip.querySelector("svg")).not.toBeNull();
+    await press(menu());
+    expect(rows()).toEqual(["Download v11", "Download all…", "Copy my notes…", "—", "Request changes…"]);
+  });
+
+  it("Request changes… closes the sheet for the decision dialog, and closing it returns focus to the ⋯", async () => {
+    await openFilm();
+    await press(menu());
+    await press(byId("guest-request-changes")!);
+    expect(byId("review-action-sheet")).toBeNull();
+    expect(byId("guest-decision-dialog")).not.toBeNull();
+    await act(async () => { document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    await flush(6);
+    expect(byId("guest-decision-dialog")).toBeNull();
+    expect(document.activeElement).toBe(menu());
+  });
+
+  it("Download all… opens its dialog outside the closed sheet, and Close returns focus to the ⋯", async () => {
+    await openFilm();
+    await press(menu());
+    await press(byId("guest-download-all")!);
+    expect(byId("review-action-sheet")).toBeNull();
+    await vi.waitFor(() => { expect(byId("guest-download-all-start")).not.toBeNull(); });
+    await press(byId("guest-download-all-close")!);
+    await flush(6);
+    expect(byId("guest-download-all-dialog")).toBeNull();
+    expect(document.activeElement).toBe(menu());
+  });
+
+  it("Released opens the quiet line at the end of the notes scroll, above who is reviewing", async () => {
+    await openFilm();
+    const list = byId("guest-notes-list")!;
+    const releasedChip = byId("guest-released-chip")!;
+    expect(list.contains(releasedChip)).toBe(true);
+    expect(releasedChip.closest("[data-testid=\"guest-quiet-line\"]")).not.toBeNull();
+    expect(byId("review-phone-bar")!.contains(releasedChip)).toBe(false);
+    expect(releasedChip.compareDocumentPosition(byId("guest-identity")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});

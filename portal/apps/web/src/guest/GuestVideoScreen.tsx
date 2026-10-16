@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
-import { Check, ChevronLeft, ChevronRight, Copy, DownloadIcon, MessageSquareWarning, Smartphone } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Copy, DownloadIcon, FolderDown, MessageSquareWarning, Smartphone } from "lucide-react";
 import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto } from "@quincy/shared";
 import { OverlayContainerContext } from "../components/OverlayContainerContext";
 import { useFrameLabel } from "../lib/time-format-prefs";
@@ -12,7 +12,7 @@ import { Toggle } from "../components/reui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/reui/select";
 import { Tabs, TabsList, TabsTrigger } from "../components/reui/tabs";
 import { ReviewPhoneBar, VersionChip } from "../components/quincy/ReviewPhoneBar";
-import { ActionRow, ReviewActionSheet } from "../components/quincy/ReviewActionSheet";
+import { ActionRow, ActionSeparator, ReviewActionSheet } from "../components/quincy/ReviewActionSheet";
 import { blurComposerField, useReviewSheet } from "../components/quincy/ReviewSheet";
 import { PHONE_QUERY } from "../lib/review-pane-geometry";
 import { useVisualViewport } from "../lib/use-visual-viewport";
@@ -34,9 +34,10 @@ import { GuestSubscriptionRow } from "./GuestSubscriptionRow";
 import type { GuestSubscription } from "./guest-subscription";
 import { GuestPasteDialog } from "./GuestPasteDialog";
 import { GuestDecisionDialog, decisionDraftKey, type DecisionOutcome, type DecisionValue } from "./GuestDecisionDialog";
-import { GuestDeliveryChips } from "./GuestDeliveryChips";
+import { DecisionBadge, GuestDeliveryChips, ReleasedBadge } from "./GuestDeliveryChips";
 import { GuestDownload } from "./GuestDownload";
-import { GuestDownloadAll } from "./GuestDownloadAll";
+import { GuestDownloadAllButton } from "./GuestDownloadAll";
+import { useGuestDownloadAll } from "./use-guest-download-all";
 import type { GuestDrafts } from "./guest-drafts";
 import { useGuestCompose } from "./use-guest-compose";
 import { GuestNoteComposer } from "./GuestNoteComposer";
@@ -53,6 +54,8 @@ const NOTES_HEADING = "m-0 text-foreground [font:var(--type-h3)]";
 const MODAL = "[role=dialog], [role=alertdialog]";
 const POPUP = "[role=dialog], [role=alertdialog], [role=menu], [role=listbox], [role=combobox]";
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
+/** The phone header's ⋯ (`ReviewActionSheet`'s trigger): where focus returns from a dialog one of its rows opened, since the row is gone by then (#879 PR 3b). */
+const headerMenu = () => document.querySelector<HTMLElement>('[data-testid="video-header-menu"]');
 
 /** `[` and `]` step through the videos unless a field, list, modal or modifier owns the key. */
 function useVideoStepKeys(onStep: (delta: -1 | 1) => void) {
@@ -468,8 +471,13 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     else if (then === "download") setDownloadHint(true);
     else openDecision(then);
   };
-  const startDecision = (value: DecisionValue) => { if (session.verified) openDecision(value); else requestVerify(value); };
+  // Which control opened the decision: a ⋯ row is gone when its dialog closes, so focus goes back to the ⋯; the header's Approve keeps the default return.
+  const decisionFromSheet = useRef(false);
+  const startDecision = (value: DecisionValue, fromSheet = false) => { decisionFromSheet.current = fromSheet; if (session.verified) openDecision(value); else requestVerify(value); };
   const allowDownload = session.link.allow.download;
+  // Download all (#741 14-ui-guest) on a film of a multi-film link: one controller for both layouts, so a crossing keeps its dialog. A desktop draws its button in the delivery row; a phone, a ⋯ row (P10).
+  const downloadAll = useGuestDownloadAll({ api, verify, session, onSession, onUnavailable, finalFocus: phone ? headerMenu : undefined });
+  const offerDownloadAll = videos.length > 1;
 
   const savedHidden = compose.replacesSavedDrawing(selectedId);
   const overlay = useCallback((box: Box | null) => <>{!savedHidden && markupOverlay(box)}{compose.overlay(box)}</>, [savedHidden, markupOverlay, compose.overlay]); // eslint-disable-line react-hooks/exhaustive-deps -- compose.overlay is the dependency that matters
@@ -485,39 +493,63 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const subscriptionRow = session.verified && session.notifications?.available
     ? <GuestSubscriptionRow store={subscription} initial={session.notifications.subscribed} readOnly={archived} onToggle={toggleSubscription} />
     : null;
-  const footer = session.verified ? <>{identity}{subscriptionRow}</> : null;
-  // The delivery row (chips, Request changes, Download all, the hints). On a phone it is the top of the Notes tab (ruling 5), and Approve and Download live in the header and the action sheet instead.
+  const downloadHintLine = downloadHint && session.verified && version.downloadUrl !== null ? <p role="status" data-testid="guest-download-hint" className="m-0 text-foreground-secondary [font:var(--type-label)]">You're verified. Press Download to start it.</p> : null;
+  const decisionNoticeLine = decisionNotice !== null ? <p role="status" data-testid="guest-decision-notice" className="m-0 text-foreground-secondary [font:var(--type-label)]">{decisionNotice}</p> : null;
+  // P2's quiet line (#879 PR 3b) at the end of the phone's notes scroll: Released first (a session default, no frame), then the hints and notices the delivery row held, then who is reviewing and email updates.
+  const quietLine = <div data-testid="guest-quiet-line" className="flex flex-wrap items-center gap-[var(--space-2)] empty:hidden">
+    {version.released && <ReleasedBadge />}
+    {downloadHintLine}
+    {decisionNoticeLine}
+    {pasteStatus}
+    {offerDownloadAll && downloadAll.notice}
+  </div>;
+  const footer = phone
+    ? <>{quietLine}{session.verified && <>{identity}{subscriptionRow}</>}</>
+    : session.verified ? <>{identity}{subscriptionRow}</> : null;
+  // The desktop delivery row (chips, Approve, Request changes, Download, Download all, the hints). A phone has none (#879 PR 3b): the decision is in the header's Approve slot, the
+  // actions are ⋯ rows (P10), and the rest is the quiet line.
   const deliveryRow = <div data-testid="guest-delivery" className="flex flex-wrap items-center gap-[var(--space-2)] empty:hidden min-[721px]:px-[var(--space-4)] min-[721px]:pb-[var(--space-2)]">
     <GuestDeliveryChips version={version} />
     {canDecide && <>
-      {!phone && <Button type="button" variant={version.decision?.value === "approved" ? "outline" : "default"} data-testid="guest-approve" className={TOUCH} onClick={() => { startDecision("approved"); }}><Check aria-hidden="true" />Approve</Button>}
+      <Button type="button" variant={version.decision?.value === "approved" ? "outline" : "default"} data-testid="guest-approve" className={TOUCH} onClick={() => { startDecision("approved"); }}><Check aria-hidden="true" />Approve</Button>
       <Button type="button" variant="outline" data-testid="guest-request-changes" className={TOUCH} onClick={() => { startDecision("changes_requested"); }}><MessageSquareWarning aria-hidden="true" />Request changes</Button>
     </>}
-    {!phone && <GuestDownload video={video} version={version} allowDownload={allowDownload} verified={session.verified} onNeedVerify={() => { requestVerify("download"); }} />}
-    {videos.length > 1 && <GuestDownloadAll api={api} verify={verify} session={session} onSession={onSession} onUnavailable={onUnavailable} />}
-    {downloadHint && session.verified && version.downloadUrl !== null && <p role="status" data-testid="guest-download-hint" className="m-0 text-foreground-secondary [font:var(--type-label)]">You're verified. Press Download to start it.</p>}
-    {decisionNotice !== null && <p role="status" data-testid="guest-decision-notice" className="m-0 text-foreground-secondary [font:var(--type-label)]">{decisionNotice}</p>}
-    {phone && pasteStatus}
+    <GuestDownload video={video} version={version} allowDownload={allowDownload} verified={session.verified} onNeedVerify={() => { requestVerify("download"); }} />
+    {offerDownloadAll && <GuestDownloadAllButton controller={downloadAll} />}
+    {downloadHintLine}
+    {decisionNoticeLine}
   </div>;
-  const panel = <GuestNotesPanel threads={listedThreads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} {...(filteredEmpty ? { filteredEmpty } : {})} header={phone ? <>{notesHead}{deliveryRow}</> : <div className="flex items-center justify-between gap-[var(--space-2)]">{heading}{paneControls.hideButton}</div>} top={addNote} footer={footer} writing={writing} phone={phone} />;
+  const panel = <GuestNotesPanel threads={listedThreads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} {...(filteredEmpty ? { filteredEmpty } : {})} header={phone ? notesHead : <div className="flex items-center justify-between gap-[var(--space-2)]">{heading}{paneControls.hideButton}</div>} top={addNote} footer={footer} writing={writing} phone={phone} />;
   const approved = version.decision?.value === "approved";
   const openSheet = () => { if (sheetStopRef.current === "collapsed") setSheetStop("half"); };
   // Draw mode from the moment the pen goes down (its frame confirm included), so the sheet does not flash back to its browse stop meanwhile (#879 PR 2).
   const sheet = phone ? { ...sheetControl, mode: compose.penDown ? "draw" as const : sheetControl.mode } : undefined;
   const latestLabel = `v${version.version}${version.version === newest ? " · latest" : ""}`;
+  // P10's rows (#879 PR 3b), in the settled order: Social preview, Download vN, Download all…, Copy my notes…, then the decisions under a rule. Approve stays a row until the
+  // Version is approved (owner decision: after Changes requested the header shows that badge, so the ⋯ is where Approve lives).
+  const downloadRow = allowDownload && version.downloadUrl !== null;
+  const downloadAllRow = offerDownloadAll && downloadAll.state === "ready";
+  const sheetHasActions = socialOverlays.length > 0 || downloadRow || downloadAllRow || canPaste;
   const phoneBar = <>
     <ReviewPhoneBar
       back={onBack ? <Button type="button" variant="ghost" className={`${TOUCH} shrink-0 max-[721px]:min-w-11`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span className="sr-only">All videos</span></Button> : null}
       title={<h1 data-testid="guest-video-title" title={video.title} className="m-0 w-full min-w-[6rem] truncate [font:var(--type-body)]">{video.title}</h1>}
       chip={<VersionChip buttonRef={chipRef} label={latestLabel} onClick={() => { setVersionsOpen(true); }} />}
-      approve={canDecide ? approved ? <span data-testid="guest-approved" className="inline-flex min-h-11 flex-none items-center gap-[var(--space-1)] px-[var(--space-2)] text-foreground [font:var(--type-label)]"><Check aria-hidden="true" className="size-4" />Approved</span> : <Button type="button" size="sm" variant="outline" data-testid="guest-approve" className={STRIP_TEXT_BUTTON} onClick={() => { startDecision("approved"); }}>Approve</Button> : undefined}
-      actions={socialOverlays.length > 0 || (allowDownload && version.downloadUrl !== null) || canPaste ? <ReviewActionSheet container={slot}>
+      // A recorded decision takes the Approve slot as its badge (P2), whether or not the link still lets the guest decide.
+      approve={version.decision !== null ? <DecisionBadge decision={version.decision} icon /> : canDecide ? <Button type="button" size="sm" variant="outline" data-testid="guest-approve" className={STRIP_TEXT_BUTTON} onClick={() => { startDecision("approved"); }}>Approve</Button> : undefined}
+      actions={sheetHasActions || canDecide ? <ReviewActionSheet container={slot}>
         {(close) => <>
-          {canPaste && <ActionRow testId="guest-paste-open" icon={<Copy aria-hidden="true" />} onSelect={() => { close(true); openPaste(); }}>Copy my notes from another version</ActionRow>}
           {socialOverlays.length > 0 && <ActionRow testId="guest-social-toggle" icon={<Smartphone aria-hidden="true" />} pressed={socialOn} onSelect={() => { setSocial(!socialOn); close(); }}>Social preview</ActionRow>}
-          {allowDownload && version.downloadUrl !== null && (session.verified
-            ? <ActionRow testId="guest-download" icon={<DownloadIcon aria-hidden="true" />} href={version.downloadUrl} download onSelect={() => { close(); }}>Download</ActionRow>
-            : <ActionRow testId="guest-download" icon={<DownloadIcon aria-hidden="true" />} onSelect={() => { close(true); requestVerify("download"); }}>Download</ActionRow>)}
+          {downloadRow && (session.verified
+            ? <ActionRow testId="guest-download" icon={<DownloadIcon aria-hidden="true" />} href={version.downloadUrl ?? undefined} download onSelect={() => { close(); }}>{`Download v${version.version}`}</ActionRow>
+            : <ActionRow testId="guest-download" icon={<DownloadIcon aria-hidden="true" />} onSelect={() => { close(true); requestVerify("download"); }}>{`Download v${version.version}`}</ActionRow>)}
+          {downloadAllRow && <ActionRow testId="guest-download-all" icon={<FolderDown aria-hidden="true" />} onSelect={() => { close(true); downloadAll.start(); }}>Download all…</ActionRow>}
+          {canPaste && <ActionRow testId="guest-paste-open" icon={<Copy aria-hidden="true" />} onSelect={() => { close(true); openPaste(); }}>Copy my notes…</ActionRow>}
+          {canDecide && <>
+            {sheetHasActions && <ActionSeparator />}
+            {!approved && <ActionRow testId="guest-approve-row" icon={<Check aria-hidden="true" />} onSelect={() => { close(true); startDecision("approved", true); }}>Approve</ActionRow>}
+            <ActionRow testId="guest-request-changes" icon={<MessageSquareWarning aria-hidden="true" />} onSelect={() => { close(true); startDecision("changes_requested", true); }}>Request changes…</ActionRow>
+          </>}
         </>}
       </ReviewActionSheet> : undefined}
     />
@@ -572,10 +604,11 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       // The pane's popups (a note's ⋯ menu) portal into the same slot as the player's, inside the inverse scope (fix round 1: they drew light on the dark viewer).
       pane={<OverlayContainerContext.Provider value={slot}><aside className="flex min-h-0 flex-1 flex-col bg-card text-card-foreground min-[721px]:overflow-hidden min-[721px]:border-l min-[721px]:border-border min-[721px]:p-[var(--space-5)]"><div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-3)] min-[721px]:hidden" onClick={openSheet}>{phone && <Tabs value="notes" className="w-full"><TabsList variant="line" className="w-full justify-start rounded-none bg-card px-0 max-[721px]:!h-11 max-[721px]:!p-0"><TabsTrigger value="notes" data-testid="guest-notes-heading" className="max-[721px]:!h-11 max-[721px]:flex-none max-[721px]:px-[var(--space-3)] max-[721px]:after:!bottom-0">{tabContent}</TabsTrigger></TabsList></Tabs>}</div><div className="flex min-h-0 flex-1 flex-col max-[721px]:p-[var(--space-4)] max-[721px]:in-data-[mode=browse]:py-0 max-[721px]:in-data-[mode=compose]:py-[var(--space-2)]">{panel}</div></aside></OverlayContainerContext.Provider>}
     />
-    {canPaste && <GuestPasteDialog api={api} writer={writer} open={pasteOpen} onOpenChange={changePasteOpen} video={video} target={version} markupAllowed={session.link.allow.markup}
+    {canPaste && <GuestPasteDialog api={api} writer={writer} open={pasteOpen} onOpenChange={changePasteOpen} video={video} target={version} markupAllowed={session.link.allow.markup} finalFocus={phone ? headerMenu : undefined}
       onGone={onUnavailable}
       onPasted={(landed) => { if (landed !== null) setPasted(landed.copied === 0 ? `Nothing new to copy from v${landed.sourceVersion}.` : `Copied ${landed.copied} ${landed.copied === 1 ? "note" : "notes"} from v${landed.sourceVersion}.`); resync(); }} />}
-    {decideFor !== null && canDecide && <GuestDecisionDialog key={`${version.assetId}:${decideFor}`} value={decideFor} assetId={version.assetId} film={video.title} version={version.version} drafts={drafts} open onClose={() => { opening.current += 1; setDecideFor(null); }} onConfirm={(note) => confirmDecision(decideFor, note)} />}
+    {decideFor !== null && canDecide && <GuestDecisionDialog key={`${version.assetId}:${decideFor}`} value={decideFor} assetId={version.assetId} film={video.title} version={version.version} drafts={drafts} open onClose={() => { opening.current += 1; setDecideFor(null); }} onConfirm={(note) => confirmDecision(decideFor, note)} finalFocus={phone ? () => (decisionFromSheet.current ? headerMenu() : null) : undefined} />}
+    {offerDownloadAll && downloadAll.dialog}
     <div ref={setSlot} />
   </div>;
 }
