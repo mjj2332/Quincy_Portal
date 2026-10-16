@@ -20,6 +20,7 @@ function Harness() {
     <button type="button" data-testid="before">Before</button>
     {state === null ? <button type="button" data-testid="video-fullscreen" onClick={api.toggle}>Full screen</button> : <button type="button" data-testid="video-exit-fullscreen" onClick={api.toggle}>Exit full screen</button>}
     <textarea data-testid="field" />
+    <section data-testid="video-player" tabIndex={-1} />
   </div>;
 }
 const q = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
@@ -100,6 +101,21 @@ describe("useImmersive (#880, D12)", () => {
     await act(async () => { setExternal(null); });
     expect(exit).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(q("before"));
+  });
+
+  it("on a touch device the entry focus goes to the player, not Exit full screen, so no tooltip or focus ring is opened by script (#880 review 4)", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({ matches: query === "(pointer: coarse)", media: query, addEventListener: () => undefined, removeEventListener: () => undefined })) as unknown as typeof window.matchMedia;
+    try {
+      await mount();
+      q("before")!.focus();
+      await act(async () => { setExternal("turn"); });
+      expect(document.activeElement).toBe(q("video-player"));
+      await act(async () => { setExternal(null); });
+      expect(document.activeElement).toBe(q("before"));
+      await press("video-fullscreen");
+      expect(document.activeElement).toBe(q("video-player"));
+    } finally { window.matchMedia = original; }
   });
 
   it("a turn made while typing leaves the field focused (the keyboard stays up)", async () => {

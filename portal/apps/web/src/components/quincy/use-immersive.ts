@@ -10,7 +10,8 @@ const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditabl
  * - **Element full screen** (button entry only, where the browser has one: desktop, Android): the whole page, not the player, so every portalled popup and toast stays visible. A rotation never
  *   asks for it. A rejected request leaves the in-app layer working; the browser's own Escape arrives as `fullscreenchange` and leaves the mode, so nothing ever double-leaves.
  * - **Focus**: entering moves it to Exit full screen (unless the person is typing: a turn mid-note keeps the keyboard up); leaving puts it back, synchronously in the commit that drops the
- *   layer (lesson P3: never a timer), on what had it if that is still there, else on the Full screen button.
+ *   layer (lesson P3: never a timer), on what had it if that is still there, else on the Full screen button. On a touch device the entry focus goes to the player instead (#880
+ *   review 4): a focus placed by script there opened Exit full screen's tooltip and drew WebKit's focus ring, both stuck until the next tap. The player is what the keys serve.
  */
 export function useImmersive({ rootRef, state, setState }: { rootRef: RefObject<HTMLElement | null>; state: ImmersiveState; setState: (next: ImmersiveState) => void }): {
   /** The button or the F key: enter, or leave if already in. */
@@ -74,7 +75,10 @@ export function useImmersive({ rootRef, state, setState }: { rootRef: RefObject<
     if (was === null && state !== null) {
       if (recorded.current === null) recorded.current = document.activeElement;
       const active = document.activeElement;
-      if (!(active instanceof Element && active.matches(EDITABLE))) root?.querySelector<HTMLElement>('[data-testid="video-exit-fullscreen"]')?.focus({ preventScroll: true });
+      const touch = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+      const exit = root?.querySelector<HTMLElement>('[data-testid="video-exit-fullscreen"]') ?? null;
+      const target = touch ? root?.querySelector<HTMLElement>('[data-testid="video-player"]') ?? exit : exit;
+      if (!(active instanceof Element && active.matches(EDITABLE))) target?.focus({ preventScroll: true });
     } else if (was !== null && state === null) {
       const back = recorded.current;
       recorded.current = null;

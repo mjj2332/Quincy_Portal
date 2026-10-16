@@ -80,7 +80,7 @@ afterEach(async () => {
 describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["a desktop at 1200", { width: 1200, height: 800, coarse: false }]] as const)("Full screen on %s (#880)", (_name, size) => {
   beforeEach(() => { viewport = mockViewport(size); });
 
-  it("Full screen applies in place: data-immersive, the header inert, the markers lane present, focus on Exit full screen, the viewer still open", async () => {
+  it("Full screen applies in place: data-immersive, the header inert, the markers lane present, focus on Exit full screen (the player on touch), the viewer still open", async () => {
     await mount();
     const player = film(); const split = tid("video-review-split");
     expect(tid("video-review-header-hide")!.hasAttribute("inert")).toBe(false);
@@ -89,7 +89,8 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(true);
     expect(tid("video-review-header-hide")!.hasAttribute("inert")).toBe(true);
     expect(tid("video-marker-lane")).not.toBeNull();
-    expect(document.activeElement).toBe(tid("video-exit-fullscreen"));
+    // A touch device's entry focus is the player (#880 review 4): a scripted focus on Exit full screen opened its tooltip and a focus ring there.
+    expect(document.activeElement).toBe(tid(size.coarse ? "video-player" : "video-exit-fullscreen"));
     expect(film()).toBe(player);
     expect(tid("video-review-split")).toBe(split);
     expect(onClose).not.toHaveBeenCalled();
@@ -266,7 +267,7 @@ describe("auto-hide in the staff viewer's Full screen (#880 fix round 2)", () =>
     viewport = mockViewport(size);
     await mount();
     await click(tid("video-fullscreen")!);
-    expect(document.activeElement).toBe(tid("video-exit-fullscreen"));
+    expect(document.activeElement).toBe(tid(size.coarse ? "video-player" : "video-exit-fullscreen"));
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       const badge = tid("video-play-badge")!;

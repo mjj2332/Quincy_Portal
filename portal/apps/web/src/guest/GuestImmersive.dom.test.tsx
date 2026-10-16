@@ -144,7 +144,7 @@ const immersiveOn = () => byId("video-player")!.hasAttribute("data-immersive");
 describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["a desktop at 1200", { width: 1200, height: 900, coarse: false }]] as const)("the guest page's Full screen on %s (#880)", (_name, size) => {
   beforeEach(() => { viewport.restore(); viewport = mockViewport(size); notes = { [asset(10)]: [note(1)] }; });
 
-  it("Full screen is a fixed layer in place: the header inert, the markers lane there, focus on Exit full screen, the watermark and nodes unchanged", async () => {
+  it("Full screen is a fixed layer in place: the header inert, the markers lane there, focus on Exit full screen (the player on touch), the watermark and nodes unchanged", async () => {
     await open();
     const player = film();
     expect(byId("guest-header-hide")!.hasAttribute("inert")).toBe(false);
@@ -154,7 +154,8 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     expect(screenRoot().className).toContain("fixed");
     expect(byId("guest-header-hide")!.hasAttribute("inert")).toBe(true);
     expect(byId("video-marker-lane")).not.toBeNull();
-    expect(document.activeElement).toBe(byId("video-exit-fullscreen"));
+    // A touch device's entry focus is the player (#880 review 4).
+    expect(document.activeElement).toBe(byId(size.coarse ? "video-player" : "video-exit-fullscreen"));
     expect(film()).toBe(player);
   });
 
