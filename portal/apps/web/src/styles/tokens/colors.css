@@ -136,4 +136,7 @@
   --scrim-caption: linear-gradient(to top, color-mix(in srgb, var(--ink-900) 62%, transparent), transparent);
   /* #884: the Video tile's badge chips on a poster: ink at 72% reads on any frame. */
   --scrim-badge: color-mix(in srgb, var(--ink-900) 72%, transparent);
+  /* #880: Full screen's controls over the film. The dock rises from the bottom, the top bar falls from the top; image tokens, so use `bg-[image:var(--scrim-chrome)]`. */
+  --scrim-chrome: linear-gradient(to top, color-mix(in srgb, var(--ink-900) 78%, transparent), transparent);
+  --scrim-chrome-top: linear-gradient(to bottom, color-mix(in srgb, var(--ink-900) 78%, transparent), transparent);
 }

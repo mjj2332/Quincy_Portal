@@ -103,3 +103,9 @@ export function decisionFailureText(result: DecisionResult): string | null {
     case "rejected": return result.error === "payload_too_large" ? "That note is too long." : "That couldn't be sent. Check your note and try again.";
   }
 }
+
+/**
+ * The open notes among the threads the guest can see (#879 PR 2, owner decision: the phone tab and the desktop heading both show it, 0 included). The server's open-root rule
+ * (`OPEN_ROOT`, `publicNoteCount`): a root that is not resolved and is not deleted, or is a tombstone that kept its replies. Replies never count; the guest list is public only.
+ */
+export const openThreadCount = (threads: readonly GuestNoteThreadDto[]): number => threads.filter((thread) => !thread.resolved && (!thread.deleted || thread.replies.length > 0)).length;

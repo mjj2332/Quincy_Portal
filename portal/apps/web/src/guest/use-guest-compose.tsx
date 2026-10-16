@@ -1,15 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefCallback, type RefObject } from "react";
 import { PencilIcon } from "lucide-react";
 import { STROKE_LIMITS, VIDEO_MARKUP_MAX_BYTES, legacyBodyToRichTextDoc, type Box, type FreehandPoint, type GuestNoteCreateInput, type GuestNoteThreadDto, type MarkupItem, type RichTextDoc } from "@quincy/shared";
 import type { EditorMediaTransport } from "../lib/embedded-media-core";
 import { useFrameClockSelector, type FrameClockState, type VideoFrameClock } from "../lib/video-frame-clock";
-import { useMediaQuery } from "../lib/use-media-query";
 import { useMarkup, type MarkupTool, type PointerSample } from "../lib/use-markup";
 import { EMPTY_MARKS, markFrame, marksToFrames, type NoteMarks } from "../lib/video-note-marks";
 import { Button } from "../components/reui/button";
 import { MarkupToolbar } from "../components/quincy/markup-toolbar";
 import { MarkupLayer, StrokeVisible } from "../components/quincy/freehand-strokes";
-import { composeInput, editPatch, type EditBaseline, type EditPatch } from "./guest-compose";
+import { composeInput, editPatch, noteText, type EditBaseline, type EditPatch } from "./guest-compose";
 import { GuestNoteField } from "./GuestNoteField";
 
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
@@ -21,6 +20,10 @@ const docOf = (thread: Pick<GuestNoteThreadDto, "content" | "body">): RichTextDo
 const PEN: MarkupTool = { kind: "freehand", color: "#e64b3c", width: 4 };
 const FRAME_CONFIRM_TIMEOUT_MS = 10_000;
 const FIELD = "input, textarea, select, [contenteditable]:not([contenteditable='false'])";
+/** The pill's editable, inside the strip's field host: the real editor's contenteditable, or a test's textarea. */
+const PILL_FIELD = '[contenteditable="true"], textarea';
+/** How long a focus asked for before the field exists (the editor chunk still loading) waits for it (#879 PR 2). */
+const FOCUS_WAIT_MS = 5000;
 
 /** What the post came to: `message` is what to tell the guest, or null when the answer is not for this composer any more (a stale one). */
 export type PostOutcome = { ok: true } | { ok: false; message: string | null; saved?: boolean; conflict?: GuestNoteThreadDto };
@@ -38,16 +41,46 @@ async function confirmedFrame(clock: VideoFrameClock): Promise<number | "timeout
   try { return await Promise.race([clock.awaitConfirmedFrame(), timedOut]); } finally { clearTimeout(timer); }
 }
 
-/** A phone note is stamped when typing begins (#879, D10): the editor is a lazy chunk, so focus it as soon as it is in the form. Gives up after ~2s. */
-function focusEditorWhenReady(onFocused?: () => void) {
-  const started = Date.now();
-  const tick = () => {
-    const field = document.querySelector<HTMLElement>('[data-testid="guest-composer-body"]:is(textarea, input), [data-testid="guest-composer-body"] :is([contenteditable="true"], textarea, input)');
-    if (field) { field.focus({ preventScroll: true }); onFocused?.(); return; }
-    if (Date.now() - started < 2000) requestAnimationFrame(tick);
-  };
-  tick();
-}
+/**
+ * The phone pill's draft as the strip (`GuestNoteComposer`, #879 PR 2) renders it, and the commands it sends. The state stays in the hook, so it survives the 721px crossing and the
+ * desktop form reads the same draft.
+ */
+export type GuestStrip = {
+  /** A draft is open (a new note or an edit). */
+  open: boolean;
+  /** The open draft is an edit of the guest's own root note. */
+  editing: boolean;
+  doc: RichTextDoc; setDoc: (doc: RichTextDoc) => void; setUploading: (uploading: boolean) => void;
+  pending: boolean; problem: string | null;
+  /** Nothing to post: Send is disabled on the phone (the staff phone rule). */
+  empty: boolean; uploading: boolean;
+  /** The marks as frames (null with none), and whether they are a range of two marks. */
+  frames: { startFrame: number; endFrame: number | null } | null; ranged: boolean; marks: NoteMarks;
+  marksLocked: boolean;
+  /** Why the frames cannot change in an edit (the drawing), or null. */
+  lockHint: string | null;
+  /** The note's latest saved text after a conflict, or null. */
+  latest: string | null;
+  /** Strokes drawn in this draft; the edited note's drawing kept; its removal pending. */
+  strokes: number; drawFrame: number | null; keptDrawing: boolean; drawingRemoved: boolean;
+  /** The pen: on the picture or confirming its frame. */
+  penDown: boolean; confirming: boolean; canDraw: boolean; drawLabel: string; penDisabled: boolean;
+  clockReady: boolean;
+  /** The + tray (an open tray is a compose hold). Opening it with no draft starts one. */
+  tray: boolean; setTray: (open: boolean) => void;
+  /** Bumped by Cancel, and by a close from the page while a picture is going up: the field remounts, which aborts its uploads. */
+  editorKey: number;
+  /** The field took the focus: pause, start a draft if none is open, and stamp a pristine one at the frame on screen (D10). */
+  focusStamp: () => void;
+  /** An untouched new draft is released at rest, so the chip follows the film again. */
+  releaseIfPristine: () => void;
+  step: (delta: -1 | 1) => void; mark: (kind: "in" | "out") => void; clearMarks: () => void; removeDrawing: () => void;
+  /** The pen in the pill: starts a drawing (blurring the field first), or, while drawing, is Done and gives the field the focus back. */
+  pen: () => void;
+  send: () => void; cancel: () => void;
+  /** Where the field lives; `focusField` focuses it, or, while the chunk loads, as soon as it appears (5s at most). */
+  fieldHost: RefCallback<HTMLElement>; focusField: () => void;
+};
 
 /**
  * The guest's note composer (#741 13c): the draft (body, in / out marks, an optional drawing), the form that edits it, and the drawing layer on the picture. It is the guest twin of the
@@ -64,7 +97,9 @@ function focusEditorWhenReady(onFocused?: () => void) {
  *   together with a drawing change, and frames on a note that has a drawing, so the two are never offered together. A redraw starts from a blank page (the old strokes are not loaded).
  * - `markupAllowed` is the Worker's `markup` part: with it off a note carrying a drawing, or a removal of one, is the stub, so no drawing control is shown.
  */
-export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, media, post, edit, latestOf, onDrawingChange }: {
+export function useGuestCompose({ phone, clock, frameCount, timecode, markupAllowed, media, post, edit, latestOf, onDrawingChange }: {
+  /** The phone layout (`PHONE_QUERY`): the pill strip instead of the form, the compact markup toolbar. */
+  phone: boolean;
   clock: VideoFrameClock | null;
   frameCount: number;
   timecode: (frame: number) => string;
@@ -84,6 +119,10 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
   replacesSavedDrawing: (id: string | null) => boolean;
   /** The pen is on the picture. */
   drawing: boolean;
+  /** The pen is down: on the picture, or confirming its frame first (the phone sheet's draw mode, #879 PR 2). */
+  penDown: boolean;
+  /** The phone pill's draft and commands (#879 PR 2). */
+  strip: GuestStrip;
   /** Puts the pen down (also from `confirming`: a late confirmation then does nothing); the strokes stay in the draft. Social preview (#872) ends a drawing this way on entry. */
   endDrawing: () => void;
   begin: () => void; beginEdit: (thread: GuestNoteThreadDto) => void; close: () => void; form: ReactNode; overlay: (box: Box | null) => ReactNode; transportReplacement: ReactNode;
@@ -106,7 +145,8 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
   const [refusedFor, setRefusedFor] = useState<readonly MarkupItem[] | null>(null);
   const [target, setTarget] = useState<{ id: string; baseline: EditBaseline; baseRevision: number; ackRevision: number | null } | null>(null);
   const [removed, setRemoved] = useState(false);
-  const compact = useMediaQuery("(max-width: 720px)");
+  const [tray, setTrayOpen] = useState(false);
+  const [editorKey, setEditorKey] = useState(0);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const opId = useRef(0);
   // Owns a drawing confirmation only. Post / Save own `opId`; ending a drawing (Social preview, #872) must never discard a submission's answer.
@@ -114,22 +154,42 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
   // The frame the drawing history was built on; it survives the off / confirming phases so a later start on another frame can tell.
   const drawingFor = useRef<number | null>(null);
 
+  // The pill's field (#879 PR 2): focused inside the tap that asks for it (iOS raises the keyboard only then), or, while the editor chunk is still loading, as soon as it appears.
+  // A scoped wait on the strip's own node, not a page-wide poll; the next ask, or unmounting, ends it.
+  const fieldHostRef = useRef<HTMLElement | null>(null);
+  const focusWait = useRef<(() => void) | null>(null);
+  const fieldHost = useCallback<RefCallback<HTMLElement>>((element) => { fieldHostRef.current = element; }, []);
+  const focusField = useCallback(() => {
+    focusWait.current?.();
+    const find = () => fieldHostRef.current?.querySelector<HTMLElement>(PILL_FIELD) ?? null;
+    const now = find();
+    if (now) { now.focus({ preventScroll: true }); return; }
+    const host = fieldHostRef.current;
+    if (!host) return;
+    const watch = new MutationObserver(() => { const found = find(); if (found) { stop(); found.focus({ preventScroll: true }); } });
+    const timer = setTimeout(() => { stop(); }, FOCUS_WAIT_MS);
+    const stop = () => { watch.disconnect(); clearTimeout(timer); if (focusWait.current === stop) focusWait.current = null; };
+    watch.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ["contenteditable"] });
+    focusWait.current = stop;
+  }, []);
+  useEffect(() => () => { focusWait.current?.(); }, []);
+
   const playing = useFrameClockSelector(clock, (state) => state.playing, false);
   const frameNow = useFrameClockSelector(clock, (state) => (state.targetFrame === null ? state.frame : -1), -1);
   const drawing = phase === "drawing";
   const here = useCallback(() => (clock ? frameOnScreen(clock.getState()) : 0), [clock]);
-  // A new note on a phone: pause on the frame it will anchor to and put the cursor in the field (the keyboard comes up), D10.
-  const opening = isOpen && target === null;
-  useEffect(() => { if (opening && compact) { clock?.pause(); focusEditorWhenReady(); } }, [opening]); // eslint-disable-line react-hooks/exhaustive-deps -- once per opening
+  // What a focus inside the same tap must see before React has rendered (⋯ Edit focuses the field in its click, #879 PR 2): whether a draft is open, and whether it is an edit.
+  const live = useRef({ open: false, editing: false });
+  live.current = { open: isOpen, editing: target !== null };
 
   // `useMarkup` is called below (it needs `items`), so `reset` reaches its history through a ref.
   const resetHistoryRef = useRef<() => void>(() => undefined);
   const reset = useCallback(() => {
     opId.current += 1; drawOp.current += 1;
     resetHistoryRef.current(); // a new draft starts with no undo / redo steps from the last one
-    setDoc(EMPTY_DOC); setUploading(false); setMarks(EMPTY_MARKS); setItems(NO_ITEMS); setDrawFrame(null); setPhase("off"); setProblem(null); setPending(false); setRefusedFor(null); setTarget(null); setRemoved(false); drawingFor.current = null;
+    setDoc(EMPTY_DOC); setUploading(false); setMarks(EMPTY_MARKS); setItems(NO_ITEMS); setDrawFrame(null); setPhase("off"); setProblem(null); setPending(false); setRefusedFor(null); setTarget(null); setRemoved(false); setTrayOpen(false); drawingFor.current = null;
   }, []);
-  const begin = useCallback(() => { reset(); setMarks({ in: here(), out: null }); setOpen(true); }, [reset, here]);
+  const begin = useCallback(() => { reset(); setMarks({ in: here(), out: null }); setOpen(true); live.current = { open: true, editing: false }; }, [reset, here]);
   const beginEdit = useCallback((thread: GuestNoteThreadDto) => {
     if (thread.startFrame === null) return;
     reset();
@@ -137,8 +197,15 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
     setDoc(docOf(thread));
     setMarks({ in: thread.startFrame, out: thread.endFrame === null ? null : thread.endFrame - 1 });
     setOpen(true);
+    live.current = { open: true, editing: true };
   }, [reset]);
-  const close = useCallback(() => { reset(); setOpen(false); }, [reset]);
+  const close = useCallback(() => { reset(); setOpen(false); live.current = { open: false, editing: false }; }, [reset]);
+  // The page closes the draft from outside (another Version, the project archived, the edited note gone). The phone pill keeps its field mounted across that, and the field's
+  // uploads abort only when it unmounts: a picture still going up would land in whatever draft the field holds when it arrives, another Version's included (fix round 5). So a
+  // close with an upload under way remounts the field, as Cancel does; without one the field stays (the page closes on mount too, and nothing is in flight then).
+  const uploadingNow = useRef(false);
+  uploadingNow.current = uploading;
+  const closeFromPage = useCallback(() => { const inFlight = uploadingNow.current; close(); if (inFlight) setEditorKey((key) => key + 1); }, [close]);
 
   const toPoint = useCallback((event: PointerSample): FreehandPoint => {
     const rect = svgRef.current?.getBoundingClientRect();
@@ -179,7 +246,7 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
   useEffect(() => {
     if (!drawing) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing || event.altKey) return;
+      if (event.isComposing || event.altKey || event.defaultPrevented) return;
       const field = event.target instanceof Element && event.target.closest(FIELD) !== null;
       if (event.key === "Escape" && !field) { setPhase("off"); return; }
       if (field || !(event.metaKey || event.ctrlKey)) return;
@@ -214,8 +281,7 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
     setPhase("drawing");
   };
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
+  const submit = async () => {
     if (pending || phase !== "off" || uploading) return;
     let send: () => Promise<PostOutcome>;
     if (target === null) {
@@ -264,13 +330,13 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
     ? <div className="flex min-w-0 flex-col items-center gap-[var(--space-1)]" data-testid="guest-markup-stack">
       {refused && <p role="status" className="m-0 text-foreground-secondary [font:var(--type-label)]">That is as much drawing as one note can hold. Undo a stroke to add more.</p>}
       <MarkupToolbar
-        label={compact ? null : "Markup"} tool={pen} compact={compact} testId="guest-markup-toolbar"
+        label={phone ? null : "Markup"} tool={pen} compact={phone} testId="guest-markup-toolbar"
         onToolChange={(kind) => { setPen((current) => ({ ...current, kind })); }}
         onColorChange={(color) => { setPen((current) => ({ ...current, color })); }}
         onWidthChange={(width) => { setPen((current) => ({ ...current, width })); }}
         canUndo={markup.canUndo} canRedo={markup.canRedo} canClear={items.length > 0}
         onUndo={markup.undo} onRedo={markup.redo} onClear={markup.clear}
-        trailing={<Button type="button" data-testid="guest-markup-done" className={TOUCH} onClick={() => { setPhase("off"); if (compact) focusEditorWhenReady(); }}>Done</Button>}
+        trailing={<Button type="button" data-testid="guest-markup-done" className={TOUCH} onClick={() => { setPhase("off"); if (phone) focusField(); }}>Done</Button>}
       />
     </div>
     : null;
@@ -284,12 +350,12 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
     : framesChanged && markupAllowed ? "Save the new frames before you draw."
     : null;
   const drawLabel = items.length > 0 ? "Edit drawing" : keptDrawing ? "Redraw" : "Draw";
-  const form = !isOpen ? null : <form data-testid="guest-composer" aria-label={target === null ? "New note" : "Edit note"} onSubmit={(event) => { void submit(event); }} noValidate className="flex flex-col gap-[var(--space-2)] border-b border-border pb-[var(--space-3)]">
+  const form = !isOpen ? null : <form data-testid="guest-composer" aria-label={target === null ? "New note" : "Edit note"} onSubmit={(event: FormEvent) => { event.preventDefault(); void submit(); }} noValidate className="flex flex-col gap-[var(--space-2)] border-b border-border pb-[var(--space-3)] in-data-[immersive=compose]:border-b-0 in-data-[immersive=compose]:pb-0">
     <p data-testid="guest-composer-anchor" className="m-0 text-foreground [font:var(--type-mono)] tabular-nums">{anchor}</p>
     <div className="flex flex-wrap gap-[var(--space-2)]">
       <Button type="button" variant="outline" size="sm" data-testid="guest-composer-mark-in" className={TOUCH} disabled={clock === null || marksLocked || pending} onClick={() => { if (!pending) setMarks((current) => markFrame(current, "in", here())); }}>Mark in</Button>
       <Button type="button" variant="outline" size="sm" data-testid="guest-composer-mark-out" className={TOUCH} disabled={clock === null || marksLocked || pending} onClick={() => { if (!pending) setMarks((current) => markFrame(current, "out", here())); }}>Mark out</Button>
-      {markupAllowed && <Button type="button" variant={drawing ? "default" : "outline"} size="sm" data-testid="guest-composer-draw" aria-pressed={drawing} className={TOUCH} disabled={pending || (!drawing && (clock === null || phase !== "off" || framesChanged))} onClick={() => { if (compact) { const active = document.activeElement; if (active instanceof HTMLElement && active !== document.body) active.blur(); } if (drawing) setPhase("off"); else void startDrawing(); }}><PencilIcon aria-hidden="true" />{drawLabel}</Button>}
+      {markupAllowed && <Button type="button" variant={drawing ? "default" : "outline"} size="sm" data-testid="guest-composer-draw" aria-pressed={drawing} className={TOUCH} disabled={pending || (!drawing && (clock === null || phase !== "off" || framesChanged))} onClick={() => { if (drawing) setPhase("off"); else void startDrawing(); }}><PencilIcon aria-hidden="true" />{drawLabel}</Button>}
     </div>
     {hint !== null && <p data-testid="guest-composer-hint" className="m-0 text-foreground-secondary [font:var(--type-label)]">{hint}</p>}
     {(items.length > 0 || keptDrawing || (removed && hadDrawing)) && <p data-testid="guest-composer-drawing" className="m-0 flex flex-wrap items-center gap-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">
@@ -298,17 +364,66 @@ export function useGuestCompose({ clock, frameCount, timecode, markupAllowed, me
     </p>}
     <div className="max-[721px]:[&_[contenteditable]]:text-[length:var(--text-base)]"><GuestNoteField testId="guest-composer-body" label="Your note" placeholder="Add a note at this frame…" media={media} value={doc} disabled={pending} onChange={setDoc} onUploadingChange={setUploading} /></div>
     {target !== null && latest !== null && latest.revision !== target.baseRevision && <p data-testid="guest-composer-latest" className="m-0 whitespace-pre-wrap text-foreground-secondary [font:var(--type-body-sm)] [overflow-wrap:anywhere]">{`Latest saved version: ${latest.body}`}</p>}
-    {problem !== null && <p role="alert" data-testid="guest-composer-problem" className="m-0 text-destructive [font:var(--type-body-sm)]">{problem}</p>}
+    {problem !== null && <p role="alert" data-testid="guest-composer-problem" className="m-0 text-destructive-wash-foreground [font:var(--type-body-sm)]">{problem}</p>}
     <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
       <Button type="button" variant="ghost" data-testid="guest-composer-cancel" className={TOUCH} disabled={pending} onClick={close}>Cancel</Button>
       <Button type="submit" data-testid="guest-composer-post" className={TOUCH} disabled={pending || phase !== "off" || uploading}>{target === null ? "Post note" : "Save"}</Button>
     </div>
   </form>;
 
+  // The phone pill's strip (#879 PR 2). Pristine: a new draft nothing has been put into, which a blur gives back.
+  const empty = noteText(doc) === "";
+  const pristine = isOpen && target === null && empty && marks.out === null && items.length === 0 && phase === "off" && !pending && problem === null && !uploading;
+  useEffect(() => { if (!phone) setTrayOpen(false); }, [phone]);
+  const setTray = useCallback((next: boolean) => { if (next && !live.current.open) begin(); setTrayOpen(next); }, [begin]);
+  const strip: GuestStrip = {
+    open: isOpen, editing: target !== null, doc, setDoc, setUploading, pending, problem, empty, uploading,
+    frames, ranged: marks.in !== null && marks.out !== null && frames?.endFrame != null, marks, marksLocked,
+    lockHint: hint, latest: target !== null && latest !== null && latest.revision !== target.baseRevision ? latest.body : null,
+    strokes: items.length, drawFrame, keptDrawing, drawingRemoved: removed && hadDrawing,
+    penDown: phase !== "off", confirming: phase === "confirming", canDraw: markupAllowed, drawLabel,
+    penDisabled: pending || phase === "confirming" || (!drawing && (clock === null || framesChanged)),
+    clockReady: clock !== null,
+    tray, setTray, editorKey,
+    focusStamp: () => {
+      clock?.pause();
+      if (!live.current.open) { begin(); return; }
+      // A pristine new draft is stamped again at the frame on screen; once there is text (or an edit) the anchor is frozen (D10).
+      if (!live.current.editing && pristine) setMarks({ in: here(), out: null });
+    },
+    // An open tray holds its draft (fix round 5): + from rest opens a draft and the tray in a commit that is still in browse (the tray's hold flips the sheet in an effect), and
+    // releasing there closed the tray it had just opened. Closing the tray (+ again) drops the hold, and the untouched draft is given back on that browse commit.
+    releaseIfPristine: () => { if (pristine && !tray) close(); },
+    step: (delta) => {
+      if (!clock || pending || phase !== "off") return;
+      const to = Math.min(Math.max(0, here() + delta), Math.max(0, frameCount - 1));
+      clock.step(delta);
+      // The strip's own frame step moves the stamp of an empty point draft (the hint follows it); once there is text it only steps the film.
+      if (isOpen && target === null && empty && marks.out === null && items.length === 0) setMarks({ in: to, out: null });
+    },
+    mark: (kind) => { if (clock && !pending && !marksLocked && phase === "off") setMarks((current) => markFrame(current, kind, here())); },
+    clearMarks,
+    removeDrawing: () => { if (pending) return; setItems(NO_ITEMS); setDrawFrame(null); if (hadDrawing) setRemoved(true); },
+    pen: () => {
+      setTrayOpen(false);
+      if (drawing) { setPhase("off"); focusField(); return; }
+      if (phase !== "off") return;
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== document.body) active.blur();
+      if (!live.current.open) begin();
+      void startDrawing();
+    },
+    send: () => { if (!empty) void submit(); },
+    cancel: () => { if (pending) return; close(); setEditorKey((key) => key + 1); },
+    fieldHost, focusField,
+  };
+
   const editingId = isOpen && target !== null ? target.id : null;
   const replacing = editingId !== null && (items.length > 0 || phase !== "off" || removed);
   const replacesSavedDrawing = useCallback((id: string | null) => replacing && id === editingId, [replacing, editingId]);
-  return useMemo(() => ({ isOpen, editingId, drawing, endDrawing, replacesSavedDrawing, begin, beginEdit, close, form, overlay, transportReplacement, onMark, marks, clearMarks }), [isOpen, editingId, drawing, endDrawing, replacesSavedDrawing, begin, beginEdit, close, form, overlay, transportReplacement, onMark, marks, clearMarks]);
+  const penDown = phase !== "off";
+  // `strip` is rebuilt every render (its commands read the draft as rendered); the composer is the one reader and re-renders with the hook's owner anyway.
+  return { isOpen, editingId, drawing, penDown, strip, endDrawing, replacesSavedDrawing, begin, beginEdit, close: closeFromPage, form, overlay, transportReplacement, onMark, marks, clearMarks };
 }
 
 /** The SVG on the picture box. A gesture never outlives draw mode or the picture it started on: leaving, or a resize, drops the stroke in progress and keeps the finished ones. */

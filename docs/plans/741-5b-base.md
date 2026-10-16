@@ -268,7 +268,7 @@ modified keys, so no conflict).
 ReUI MCP searches run 2026-10-09 (this plan):
 1. "comment thread panel with replies, resolve, filter tabs open resolved" (surface frame) → **`sheet-5`** (premium block: "Inset right
    comment thread Sheet with reply, react, resolve and open-only filter"; surface none; built from Badge, Item, Avatar, InputGroup,
-   DropdownMenu, ScrollArea, Tooltip, Sheet). Local copy read by import list only (`tmp/ReUI_Full_Source_Code/reui-blocks-main/blocks/sheet-5`).
+   DropdownMenu, ScrollArea, Tooltip, Sheet). Local copy read by import list only (`~/quincy-ref/reui/reui-blocks-main/blocks/sheet-5`).
 2. "segmented control radio two options visibility switch" → `c-toggle-group-5` (toggle group filter), `c-tabs-9` (segmented tabs),
    `c-button-group-34`, settings blocks (switch rows).
 3. "timeline markers range overlay on slider track" → weak match: only vertical event timelines (`timeline-1`, `c-timeline-6`, …).

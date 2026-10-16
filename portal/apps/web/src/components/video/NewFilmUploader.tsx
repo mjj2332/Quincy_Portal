@@ -11,6 +11,8 @@ import { VIDEO_ACCEPT } from "./VideoCard";
 import { formatDuration, formatFps } from "./video-format";
 
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
+/** Said once on the Video tab: inside the drop box while the collection is empty, as the uploader's quiet line once films exist (#879 PR 3a). */
+const RECUT_HINT = "A re-cut becomes a new version of the same film; notes stay with the version they were made on.";
 
 function facts(entry: NewFilmEntry) {
   const probe = entry.probe;
@@ -32,7 +34,8 @@ export function NewFilmPickButton({ receive }: { receive: (files: File[]) => voi
  * Every picked file is checked in the browser first; nothing is requested from the server until Upload. Each film is titled by its file name (#828), so there is no title to type.
  * The queue lives in the upload store, so it outlives this panel; a started film leaves the list for the upload tray. More films can be added while others are checking or uploading.
  */
-export function NewFilmUploader({ userId, projectId, receive, empty }: { userId: string | null; projectId: string; receive: (files: File[]) => void; /** No films yet: show the big drop box. */ empty: boolean }) {
+export function NewFilmUploader({ userId, projectId, receive, films }: { userId: string | null; projectId: string; receive: (files: File[]) => void; /** Live films in the collection; undefined while the list loads or has failed. 0 shows the big drop box. */ films: number | undefined }) {
+  const empty = films === 0;
   const rows = useNewFilmBatch(userId, projectId);
   const waiting = rows.filter((row) => row.status === "ready");
   // A caution several rows carry (the fast-start warning) is said once above the list; one unique to a row stays on it.
@@ -45,9 +48,12 @@ export function NewFilmUploader({ userId, projectId, receive, empty }: { userId:
     {empty && <FileDropzone multiple onFiles={receive} data-testid="new-film-dropzone" className="upload-zone">
       <div className="ey">New films</div>
       <h2 className="upload-zone__title">Drop MP4 or MOV films here</h2>
-      <p>H.264, constant frame rate, up to 2 GB each. Frame rate and timecode are read from each file.</p>
+      {/* The upload help moved here from the collection header (T3, #879 PR 3a), merged with this guidance so it is said once. */}
+      <p>H.264 MP4 or MOV, constant frame rate, up to 2 GB each. Frame rate and timecode are read from each file. {RECUT_HINT}</p>
       <FilePickButton multiple accept={VIDEO_ACCEPT} variant="secondary" className={`min-h-[44px] ${TOUCH}`} onFiles={receive}>Choose files</FilePickButton>
     </FileDropzone>}
+    {/* With films the drop box is gone and Upload sits in the T3 header, so the re-cut guidance stays here as one quiet line under it, not in the header (#879 PR 3a). */}
+    {films !== undefined && films > 0 && <p className="text-xs text-foreground-secondary" data-testid="new-film-recut-hint">{RECUT_HINT}</p>}
     {shared.length > 0 && <div className="grid gap-[var(--space-2)]" data-testid="new-film-shared-cautions">
       {shared.map((caution) => <Notice key={caution} tone="caution" role="status">{pluralCaution(caution)}</Notice>)}
     </div>}

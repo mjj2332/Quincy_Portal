@@ -17,6 +17,7 @@ import { Button } from "../quincy/Button";
 import { EmbeddedUploadTray, type EmbeddedUpload } from "../quincy/EmbeddedUploadTray";
 import { EmptyState } from "../quincy/EmptyState";
 import { Notice } from "../quincy/Notice";
+import { Skeleton } from "../reui/skeleton";
 import { FileDropzone } from "../quincy/FileDropzone";
 import { VideoDownloadDialog } from "./VideoDownloadDialog";
 import { NewFilmPickButton, NewFilmUploader, useReceiveNewFilms } from "./NewFilmUploader";
@@ -205,8 +206,12 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
 
   return <section aria-labelledby="video-films-heading" data-testid="video-films">
     <div className="workspace-intro workspace-intro--stack" data-testid="video-films-header">
-      <div><div className="ey">Video review</div><h1 className="serif" id="video-films-heading">Films</h1></div>
-      <div className="muted">Upload web-ready H.264 MP4 or MOV cuts. A re-cut becomes a new version of the same film; notes stay with the version they were made on.</div>
+      {/* T3 (#879 PR 3a): the title and the count share one baseline row, no eyebrow and no help line (it lives in the uploader's drop box). The count is every live film (not the filtered grid); a skeleton while the list loads, nothing when it fails (the body carries the error and Retry). */}
+      <div className="flex items-baseline gap-[var(--space-2)]">
+        <h1 className="serif" id="video-films-heading">Video</h1>
+        {videos.data ? <span className="text-sm text-foreground-secondary tabular-nums" data-testid="video-films-count">{videos.data.length === 1 ? "1 film" : `${videos.data.length} films`}</span>
+          : videos.isPending ? <Skeleton className="h-[var(--space-4)] w-[var(--space-8)] self-center" data-testid="video-films-count-loading" aria-hidden="true" /> : null}
+      </div>
       <div className="flex flex-wrap items-center gap-[var(--space-3)]">
         {canUpload && <NewFilmPickButton receive={receiveNewFilms} />}
         <ReviewLinksOpenButton ui={reviewLinks} />
@@ -216,7 +221,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     {/* The body is the drop target for new films (#884): a drop between tiles must not navigate the browser to the file. A tile's own poster takes its drop alone. */}
     <FileDropzone multiple={true} onFiles={receiveNewFilms} disabled={!canUpload} className="grid gap-[var(--space-5)] p-[var(--space-6)] pb-[calc(var(--space-6)+var(--review-bar-clearance,0px))]" data-testid="video-collection-body">
       <ReviewLinksHost ui={reviewLinks} videos={videos.data ?? []} {...(setBarHeight ? { onBarHeight: setBarHeight } : {})} {...(downloadEnabled ? { onDownload: setDownloadIds } : {})} />
-      {canUpload && <NewFilmUploader userId={userId} projectId={projectId} receive={receiveNewFilms} empty={videos.data?.length === 0} />}
+      {canUpload && <NewFilmUploader userId={userId} projectId={projectId} receive={receiveNewFilms} films={videos.data?.length} />}
       <EmbeddedUploadTray uploads={rows} errors={[]} onCancel={(key) => void cancelVideoUpload(key, queryClient)} onRemove={(key) => removeVideoUpload(key)} onRetry={(key) => retryVideoUpload(key)} testId="video-upload-tray" pluralCaution={pluralCaution} />
       {videos.isError && !videos.data && <Notice tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{videos.error.message || "Films could not be loaded."}</span><Button type="button" variant="text" onClick={() => { terminate(videos.error); void videos.refetch(); }}>Retry</Button></Notice>}
       {videos.data && videos.data.length === 0 && <EmptyState title="No films yet.">{canUpload ? "Drop the first MP4 or MOV above to begin." : "Uploaded films will appear here."}</EmptyState>}

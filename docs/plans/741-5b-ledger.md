@@ -1,6 +1,6 @@
 # #741 PR 5b reuse ledger
 
-One line per new UI element. Searches: installed `components/reui/` and `components/quincy/` first; ReUI MCP `search` run 2026-10-09 for "comment thread panel with replies, resolve, filter tabs open resolved" (best: premium block `sheet-5`, a right Sheet, with emoji reactions and premium adoption cost: its composition is adopted with installed items, the block is not), "segmented control radio two options visibility switch" (`c-toggle-group-5`, `c-tabs-9`) and "timeline markers range overlay on slider track" (only vertical event timelines). The local `tmp/ReUI_Full_Source_Code` copy was read for sheet-5's import list only.
+One line per new UI element. Searches: installed `components/reui/` and `components/quincy/` first; ReUI MCP `search` run 2026-10-09 for "comment thread panel with replies, resolve, filter tabs open resolved" (best: premium block `sheet-5`, a right Sheet, with emoji reactions and premium adoption cost: its composition is adopted with installed items, the block is not), "segmented control radio two options visibility switch" (`c-toggle-group-5`, `c-tabs-9`) and "timeline markers range overlay on slider track" (only vertical event timelines). The local `~/quincy-ref/reui` copy was read for sheet-5's import list only.
 
 | Element | Item used | Notes |
 |---|---|---|

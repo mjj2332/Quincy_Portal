@@ -69,13 +69,19 @@ import { Input } from "@/components/reui/input"
 //    dropped for the same reason and restored verbatim in #202, because `reui/combobox.tsx` (the
 //    registry's own source) composes it for its clear and trigger buttons; it renders Quincy's
 //    adapted `Button`, so it inherits every correction recorded in `reui/button.tsx`.
-function InputGroup({ className, ...props }: React.ComponentProps<"div">) {
+//
+// 6. `variant="pill"` (owner decision C5, 2026-10-15): the phone note composer's field, rounded at
+//    `--radius-pill` on one line (a stadium) and `--radius-lg`, the radius scale's 14px cap, once it wraps (`data-wrapped`, #879 fix r11). Scoped to that one call site; the default variant renders as before.
+function InputGroup({ className, variant = "default", ...props }: React.ComponentProps<"div"> & { variant?: "default" | "pill" }) {
   return (
     <div
       data-slot="input-group"
+      data-variant={variant === "pill" ? "pill" : undefined}
       role="group"
       className={cn(
         "group/input-group relative flex min-h-[38px] max-[721px]:min-h-[44px] w-full min-w-0 items-center rounded-[var(--radius-sm)] border border-border bg-card transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:border-border-hover has-[input:focus-visible]:outline-[length:var(--border-width-bold)] has-[input:focus-visible]:outline-solid has-[input:focus-visible]:outline-ring has-[input:focus-visible]:outline-offset-2 has-disabled:bg-surface-sunken has-disabled:cursor-not-allowed has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>textarea]:h-auto has-[>[data-align=block-end]]:[&>input]:pt-3 has-[>[data-align=block-start]]:[&>input]:pb-3",
+        // A stadium on one line; once the text wraps, the radius scale's cap rather than a 22px corner off the scale (#879 fix r11).
+        variant === "pill" && "rounded-[var(--radius-pill)] data-[wrapped=true]:rounded-[var(--radius-lg)]",
         className
       )}
       {...props}

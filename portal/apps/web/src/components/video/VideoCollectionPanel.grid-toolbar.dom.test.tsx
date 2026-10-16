@@ -57,6 +57,14 @@ beforeEach(() => {
 afterEach(async () => { await unmount(); resetVideoUploadStore(); resetUiPrefMemory(); storage.restore(); document.body.replaceChildren(); vi.unstubAllGlobals(); });
 
 describe("the toolbar", () => {
+  it("leaves the header count on every live film while a status filter narrows the grid (T3, #879 PR 3a)", async () => {
+    await mount();
+    expect(tid("video-films-count")?.textContent).toBe("3 films");
+    await pickOption("video-grid-status", "Published");
+    expect(titles()).toEqual(["Film 2"]);
+    expect(tid("video-films-count")?.textContent).toBe("3 films");
+  });
+
   it("is absent with no films", async () => {
     state.videos = [];
     await mount();

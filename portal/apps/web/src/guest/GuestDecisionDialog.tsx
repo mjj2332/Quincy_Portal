@@ -26,7 +26,7 @@ const COPY: Record<DecisionValue, { title: string; confirm: string; describe: (f
  * (it outlives this component), and its answer is applied by `onConfirm` only to the Version it was sent for. A fresh instance per Version and decision (the caller keys it), so pending
  * state never carries to another Version; `opId` makes an answer that arrives after this instance was closed or replaced change nothing here.
  */
-export function GuestDecisionDialog({ value, assetId, film, version, drafts, open, onClose, onConfirm }: {
+export function GuestDecisionDialog({ value, assetId, film, version, drafts, open, onClose, onConfirm, finalFocus }: {
   value: DecisionValue;
   assetId: string;
   film: string;
@@ -35,6 +35,8 @@ export function GuestDecisionDialog({ value, assetId, film, version, drafts, ope
   open: boolean;
   onClose: () => void;
   onConfirm: (note: string | undefined) => Promise<DecisionOutcome>;
+  /** Where focus goes when it closes; absent, back to what opened it. Opened from a phone ⋯ row, which is gone by then, the screen names the ⋯ (#879 PR 3b). */
+  finalFocus?: (() => HTMLElement | null) | undefined;
 }) {
   const key = decisionDraftKey(assetId, value);
   const draft = useNoteDraft(drafts, key);
@@ -59,7 +61,7 @@ export function GuestDecisionDialog({ value, assetId, film, version, drafts, ope
     if (!outcome.ok) setProblem(outcome.message);
   };
   return <AlertDialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-    <AlertDialogContent size="default" data-testid="guest-decision-dialog">
+    <AlertDialogContent size="default" data-testid="guest-decision-dialog" {...(finalFocus ? { finalFocus: () => finalFocus() ?? true } : {})}>
       <AlertDialogHeader>
         <AlertDialogTitle>{copy.title}</AlertDialogTitle>
         <AlertDialogDescription className="text-foreground-secondary">{copy.describe(film, version)}</AlertDialogDescription>

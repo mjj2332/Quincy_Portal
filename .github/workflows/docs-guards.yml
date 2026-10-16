@@ -1,0 +1,19 @@
+name: Docs guards
+
+# Repo-level checks that never touch portal/, so they run on every PR without building or
+# deploying the app (portal.yml owns that).
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stale-paths:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/check-stale-paths.sh

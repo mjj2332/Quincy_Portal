@@ -226,7 +226,7 @@ describe("Video tab mount (#741 4d-i)", () => {
   it("gate open: Films first, link tiles under a secondary heading, and neither the video assets query nor the RAW fetch runs", async () => {
     review = { open: true, parts: ["upload"] };
     const host = await openVideo("admin");
-    expect(host.querySelector("#video-films-heading")?.textContent).toBe("Films");
+    expect(host.querySelector("#video-films-heading")?.textContent).toBe("Video");
     expect(host.querySelectorAll('[data-testid="video-card"]')).toHaveLength(1);
     expect(host.querySelector("#video-links-heading")?.textContent).toBe("Video links");
     expect(host.textContent).toContain("Older external links (Vimeo, Frame.io) stay here until cutover.");

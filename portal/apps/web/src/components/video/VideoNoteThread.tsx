@@ -46,7 +46,7 @@ export function VisibilityBadge({ visibility }: { visibility: VideoNoteDto["visi
     : <StatusPill tone="info" data-testid="video-note-visibility-badge" data-visibility="public">Client-visible</StatusPill>;
 }
 
-const authorName = (note: VideoNoteDto) => (note.author.kind === "staff" ? note.author.person.name : note.author.name);
+export const authorName = (note: VideoNoteDto) => (note.author.kind === "staff" ? note.author.person.name : note.author.name);
 const roleLabel = (note: VideoNoteDto) => (note.author.kind === "staff" ? note.author.person.roleLabel : "Client");
 
 /**
@@ -65,7 +65,7 @@ function AuthorTag({ note }: { note: VideoNoteDto }) {
 }
 
 /** The note's text, or a muted line for a deleted one. */
-function NoteText({ note }: { note: VideoNoteDto }) {
+export function NoteText({ note }: { note: VideoNoteDto }) {
   if (note.deleted) return <p data-testid="video-note-tombstone" className="m-0 text-foreground-secondary [font:var(--type-body-sm)] italic">Note deleted</p>;
   // A rich note (#835) draws its document: mentions, images and videos. An older note is its plain text.
   return note.content
