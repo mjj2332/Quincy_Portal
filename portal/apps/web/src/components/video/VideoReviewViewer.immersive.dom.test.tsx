@@ -392,8 +392,8 @@ describe("Cancel in a phone's Full screen composer (#880 fix round 1, item 2)", 
   });
 });
 
-/** Whether Tailwind's compiled `in-data-[immersive=compose]:<utility>` rule (`:where([data-immersive=compose]) .<class>`) matches `element` in the rendered tree: the class is on it AND an ancestor carries the attribute. */
-const composeRuleApplies = (element: Element, utility: string) => element.matches(`[data-immersive="compose"] .${CSS.escape(`in-data-[immersive=compose]:${utility}`)}`);
+/** Whether Tailwind's compiled `in-data-[immersive=compose]:<utility>` rule (`:where([data-immersive=compose]) .<class>`) applies to `element` in the rendered tree: an ancestor carries the attribute AND the class is on it. */
+const composeRuleApplies = (element: Element, utility: string) => element.parentElement?.closest('[data-immersive="compose"]') != null && element.classList.contains(`in-data-[immersive=compose]:${utility}`);
 describe("the Full screen composer drops the notes panel's sheet chrome (#880 fix round 1, item 3)", () => {
   it.each([["portrait", { width: 390, height: 844, coarse: true }], ["a desktop width", { width: 1200, height: 800, coarse: false }]] as const)("on %s: no panel padding or side border, and the composer band has no top border or padding of its own", async (_name, size) => {
     viewport = mockViewport(size);

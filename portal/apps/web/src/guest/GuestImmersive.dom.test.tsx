@@ -141,8 +141,8 @@ async function escape() { await act(async () => { (document.activeElement ?? doc
 const escapeOutOfTooltip = async () => { if ([...document.querySelectorAll("[data-open]")].some((popup) => popup.tagName === "DIV" && /^(Add note|Full screen|Exit full screen)$/.test(popup.textContent ?? ""))) await escape(); };
 const immersiveOn = () => byId("video-player")!.hasAttribute("data-immersive");
 
-/** Whether Tailwind's compiled `in-data-[immersive=compose]:<utility>` rule (`:where([data-immersive=compose]) .<class>`) matches `element` in the rendered tree: the class is on it AND an ancestor carries the attribute. */
-const composeRuleApplies = (element: Element, utility: string) => element.matches(`[data-immersive="compose"] .${CSS.escape(`in-data-[immersive=compose]:${utility}`)}`);
+/** Whether Tailwind's compiled `in-data-[immersive=compose]:<utility>` rule (`:where([data-immersive=compose]) .<class>`) applies to `element` in the rendered tree: an ancestor carries the attribute AND the class is on it. */
+const composeRuleApplies = (element: Element, utility: string) => element.parentElement?.closest('[data-immersive="compose"]') != null && element.classList.contains(`in-data-[immersive=compose]:${utility}`);
 describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["a desktop at 1200", { width: 1200, height: 900, coarse: false }]] as const)("the guest page's Full screen on %s (#880)", (_name, size) => {
   beforeEach(() => { viewport.restore(); viewport = mockViewport(size); notes = { [asset(10)]: [note(1)] }; });
 
