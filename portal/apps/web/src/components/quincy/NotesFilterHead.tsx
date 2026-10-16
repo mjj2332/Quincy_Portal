@@ -91,9 +91,10 @@ export function NotesFilterHead<Status extends string, Visibility extends string
   const statusChip = [chosenStatus?.label, chosenVisibility?.label, String(chosenStatus?.count ?? 0)].filter(Boolean).join(" · ");
   const author = authors.options.find((option) => option.key === authors.value);
 
-  // `px-[var(--space-1)]` (#879 PR 3b, D1): the field's one focus line sits 4px outside it (input-group's 2px offset + `--border-width-bold`), and the list's scroll viewport
-  // clips; the inline padding keeps the whole ring inside the clip. The ring itself is input-group's, unchanged.
-  return <div ref={headRef} data-testid="notes-filter-head" className={`flex min-h-0 items-center gap-[var(--space-2)] border-b border-[color-mix(in_srgb,var(--border)_55%,transparent)] px-[var(--space-1)] py-[var(--space-2)]${className ? ` ${className}` : ""}`}>
+  // `px-[var(--space-1)]` while search is open (#879 PR 3b, D1): the field's one focus line sits 4px outside it (input-group's 2px offset + `--border-width-bold`), and the list's
+  // scroll viewport clips; the inline padding keeps the whole ring inside the clip. The ring itself is input-group's, unchanged. At rest there is no inset, so the chips start
+  // where the cards and this row's own hairline do (P1/P2); a negative margin instead would carry the hairline past the cards.
+  return <div ref={headRef} data-testid="notes-filter-head" className={`flex min-h-0 items-center gap-[var(--space-2)] border-b border-[color-mix(in_srgb,var(--border)_55%,transparent)] ${open ? "px-[var(--space-1)] " : ""}py-[var(--space-2)]${className ? ` ${className}` : ""}`}>
     {open
       ? <InputGroup data-notes-search="" className="h-7 min-h-7 max-[721px]:min-h-7 rounded-[var(--radius-pill)]">
         <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
