@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { Check, ChevronLeft, ChevronRight, Copy, DownloadIcon, MessageSquareWarning, Smartphone } from "lucide-react";
 import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto } from "@quincy/shared";
 import { OverlayContainerContext } from "../components/OverlayContainerContext";
@@ -27,6 +27,9 @@ import type { GuestApi, WriteResult } from "./guest-api";
 import { decisionFailureText, failureText, openThreadCount, removeThread, upsertThread, type EditPatch } from "./guest-compose";
 import type { ActionOutcome, NoteActions, Writing } from "./GuestNoteItem";
 import { GuestNotesPanel } from "./GuestNotesPanel";
+import { EmptyState } from "../components/quincy/EmptyState";
+import { NotesFilterHead } from "../components/quincy/NotesFilterHead";
+import { GUEST_PHONE_FILTERS, guestNoteAuthors, guestNoteCounts, guestVisibleThreads, type GuestNoteFilters, type GuestNoteStatus } from "./guest-notes-filter";
 import { GuestSubscriptionRow } from "./GuestSubscriptionRow";
 import type { GuestSubscription } from "./guest-subscription";
 import { GuestPasteDialog } from "./GuestPasteDialog";
@@ -246,8 +249,6 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     return () => { live = false; };
   }, [phone, versionsOpen, api, video.id]);
   const timecode = useFrameLabel(version);
-  const markers = useMemo<TimelineMarker[]>(() => (threads ?? []).filter((thread) => thread.startFrame !== null && !thread.deleted)
-    .map((thread) => ({ id: thread.id, startFrame: thread.startFrame!, endFrame: thread.endFrame, tone: "public" as const, selected: thread.id === selectedId, createdAt: thread.createdAt })), [threads, selectedId]);
   const selected = threads?.find((thread) => thread.id === selectedId) ?? null;
   const select = useCallback((thread: GuestNoteThreadDto) => {
     noteGeneration.current += 1;
@@ -335,6 +336,49 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   // Only a notes read that has completed can say so: while a re-read is out (after re-verifying) `threads` is null, which is "not known yet", not "gone".
   const editedGone = editingId !== null && threads !== null && (latestOf(editingId)?.deleted ?? true);
   useEffect(() => { if (editedGone) closeComposer(); }, [editedGone, closeComposer]);
+
+  // The phone notes filter (#879 PR 3b, P2 `NotesFilter`): status, author and search, phone only (a desktop guest sees every note, as before). A phone guest starts on Open. The author
+  // and the search belong to one Version and one layout: they clear in render when either changes, so no frame shows them over another Version's notes. Status carries over.
+  const [heldFilters, setNoteFilters] = useState<GuestNoteFilters>(GUEST_PHONE_FILTERS);
+  const [filterScope, setFilterScope] = useState({ assetId: version.assetId, phone });
+  const scopeMoved = filterScope.assetId !== version.assetId || filterScope.phone !== phone;
+  if (scopeMoved) {
+    setFilterScope({ assetId: version.assetId, phone });
+    if (heldFilters.author !== null || heldFilters.query !== null) setNoteFilters({ ...heldFilters, author: null, query: null });
+  }
+  const noteAuthorOptions = useMemo(() => guestNoteAuthors(threads ?? []), [threads]);
+  // An author with no notes left reads as Everyone.
+  const noteFilters = useMemo<GuestNoteFilters>(() => {
+    const scoped = scopeMoved ? { ...heldFilters, author: null, query: null } : heldFilters;
+    return scoped.author !== null && !noteAuthorOptions.some((option) => option.key === scoped.author) ? { ...scoped, author: null } : scoped;
+  }, [heldFilters, scopeMoved, noteAuthorOptions]);
+  // A root with an edit or a reply open on it stays listed whatever the filters say: the drafts store says which (it outlives the list), and the pill's edit is `editingId`.
+  const pinnedKey = useSyncExternalStore(drafts.subscribe, () => (threads ?? []).filter((thread) => thread.id === editingId || drafts.get(`edit:${thread.id}`) !== null || drafts.get(`reply:${thread.id}`) !== null).map((thread) => thread.id).join(","));
+  const pinned = useMemo(() => new Set(pinnedKey === "" ? [] : pinnedKey.split(",")), [pinnedKey]);
+  const listedThreads = useMemo(() => (threads === null || !phone ? threads : guestVisibleThreads(threads, noteFilters, pinned)), [threads, phone, noteFilters, pinned]);
+  // Markers follow the filters alone on a phone (a pinned root is not a filter result); a desktop marks every live note.
+  const markers = useMemo<TimelineMarker[]>(() => (phone && threads ? guestVisibleThreads(threads, noteFilters, new Set()) : threads ?? []).filter((thread) => thread.startFrame !== null && !thread.deleted)
+    .map((thread) => ({ id: thread.id, startFrame: thread.startFrame!, endFrame: thread.endFrame, tone: "public" as const, selected: thread.id === selectedId, createdAt: thread.createdAt })), [threads, phone, noteFilters, selectedId]);
+  const noteCountsByStatus = useMemo(() => guestNoteCounts(threads ?? [], noteFilters), [threads, noteFilters]);
+  const anyNotes = threads !== null && guestNoteCounts(threads, { status: "all", author: null, query: null }).all > 0;
+  // Search takes the sheet to full while the keyboard is up, and back to the stop it was at when it closes (owner decision); a stop dragged to meanwhile is the guest's.
+  const searchReturn = useRef<typeof sheetControl.stop | null>(null);
+  const onSearchOpenChange = useCallback((open: boolean) => {
+    if (open) { if (searchReturn.current === null) searchReturn.current = sheetStopRef.current; setSheetStop("full"); return; }
+    const back = searchReturn.current;
+    searchReturn.current = null;
+    if (back !== null && sheetStopRef.current === "full") setSheetStop(back);
+  }, [setSheetStop]);
+  const notesHead = phone && anyNotes ? <NotesFilterHead<GuestNoteStatus, never>
+    status={{ label: "Show notes that are", value: noteFilters.status, onChange: (status) => { setNoteFilters({ ...noteFilters, status }); }, options: [{ value: "open", label: "Open", count: noteCountsByStatus.open }, { value: "resolved", label: "Resolved", count: noteCountsByStatus.resolved }, { value: "all", label: "All", count: noteCountsByStatus.all }] }}
+    authors={{ value: noteFilters.author, options: noteAuthorOptions, onChange: (author) => { setNoteFilters({ ...noteFilters, author }); } }}
+    query={noteFilters.query}
+    onQueryChange={(query) => { setNoteFilters({ ...noteFilters, query }); }}
+    onSearchOpenChange={onSearchOpenChange}
+  /> : null;
+  const filteredEmpty = phone && anyNotes
+    ? <EmptyState size="compact" data-testid="guest-notes-filtered-empty" title="No notes match."><Button type="button" variant="ghost" data-testid="guest-notes-reset-filters" className={TOUCH} onClick={() => { setNoteFilters(GUEST_PHONE_FILTERS); }}>Reset filters</Button></EmptyState>
+    : undefined;
 
   // The phone sheet (#879): the film stays on top at every stop, so opening a draft needs no drawer dance; the composer is the sheet's foot (compose and draw modes follow the editor's focus and the pen).
   const startDraft = useCallback((start: () => void) => { start(); }, []);
@@ -455,7 +499,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     {decisionNotice !== null && <p role="status" data-testid="guest-decision-notice" className="m-0 text-foreground-secondary [font:var(--type-label)]">{decisionNotice}</p>}
     {phone && pasteStatus}
   </div>;
-  const panel = <GuestNotesPanel threads={threads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} header={phone ? deliveryRow : <div className="flex items-center justify-between gap-[var(--space-2)]">{heading}{paneControls.hideButton}</div>} top={addNote} footer={footer} writing={writing} phone={phone} />;
+  const panel = <GuestNotesPanel threads={listedThreads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} {...(filteredEmpty ? { filteredEmpty } : {})} header={phone ? <>{notesHead}{deliveryRow}</> : <div className="flex items-center justify-between gap-[var(--space-2)]">{heading}{paneControls.hideButton}</div>} top={addNote} footer={footer} writing={writing} phone={phone} />;
   const approved = version.decision?.value === "approved";
   const openSheet = () => { if (sheetStopRef.current === "collapsed") setSheetStop("half"); };
   // Draw mode from the moment the pen goes down (its frame confirm included), so the sheet does not flash back to its browse stop meanwhile (#879 PR 2).

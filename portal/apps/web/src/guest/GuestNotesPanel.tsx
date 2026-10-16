@@ -16,7 +16,7 @@ import { GuestThreadItem, type Writing } from "./GuestNoteItem";
  * in its list on a phone: the delivery row (`header`), the notes in whatever state they are (loading, failed, none, the cards), then the footer rows (who is reviewing,
  * email updates). The panel clips, so no state can overflow under the pill (fix round 1: with no notes the rows sat behind it and could not be scrolled to).
  */
-export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect, timecode, header, top, footer, writing, phone = false }: {
+export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect, timecode, header, top, footer, writing, phone = false, filteredEmpty }: {
   threads: readonly GuestNoteThreadDto[] | null;
   /** The notes read failed in transit (not a revoked link): say so in place and offer to repeat it. */
   failed: boolean;
@@ -33,6 +33,8 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
   writing: Writing;
   /** The phone sheet's layout (#879 PR 2). */
   phone?: boolean;
+  /** What an empty list says when the phone filters emptied it (#879 PR 3b): "No notes match." with Reset filters. Absent, an empty list has no notes at all. */
+  filteredEmpty?: ReactNode;
 }) {
   const items = (threads: readonly GuestNoteThreadDto[]) => <ItemGroup className="gap-[var(--space-2)]">
     {threads.map((thread) => <GuestThreadItem key={thread.id} thread={thread} selected={thread.id === selectedId} onSelect={onSelect} timecode={timecode} writing={writing} />)}
@@ -41,7 +43,7 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
     ? <EmptyState size="compact" tone="error" data-testid="guest-notes-unreachable" title="Couldn't reach Quincy. Check your connection and try again."><Button type="button" variant="outline" size="sm" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={onRetry}>Try again</Button></EmptyState>
     : threads === null
     ? <p className="m-0 text-foreground-secondary [font:var(--type-body-sm)]">Loading notes…</p>
-    : threads.length === 0 ? <EmptyState size="compact" title="No notes yet" /> : null;
+    : threads.length === 0 ? filteredEmpty ?? <EmptyState size="compact" title="No notes yet" /> : null;
 
   // Browse mode's composer band is P2's (#879 PR 3a): no gap above it, its own border, `--space-2` above and below the pill; the list's own padding keeps its first and last rows clear.
   if (phone) return <section data-testid="guest-notes-panel" aria-label="Notes" tabIndex={-1} className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-3)] overflow-clip in-data-[mode=browse]:gap-0">

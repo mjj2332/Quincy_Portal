@@ -41,6 +41,7 @@ let fake: FakeViewport;
 let original: PropertyDescriptor | undefined;
 let videos: GuestVideoDto[];
 let session: GuestSessionResponse;
+let served: GuestNoteThreadDto[] = [];
 let stub: VideoElementStub;
 let viewport: MockViewport;
 let root: Root | null = null;
@@ -68,6 +69,7 @@ beforeEach(async () => {
   viewport = mockViewport({ width: 390, coarse: true });
   videos = [videoOf(1)];
   session = SESSION;
+  served = [];
   fake = new FakeViewport();
   original = Object.getOwnPropertyDescriptor(window, "visualViewport");
   Object.defineProperty(window, "visualViewport", { configurable: true, value: fake });
@@ -75,7 +77,7 @@ beforeEach(async () => {
     const url = String(input);
     if (url === `${BASE}/session`) return json(session);
     if (url === `${BASE}/videos`) return json({ videos });
-    if (/\/notes$/.test(url)) return json({ notes: [] as GuestNoteThreadDto[] });
+    if (/\/notes$/.test(url)) return json({ notes: served });
     return new Response("Not found", { status: 404 });
   }) as unknown as typeof fetch;
 });
@@ -194,5 +196,103 @@ describe("the guest phone chrome (#879 PR 3a, P2)", () => {
     await open();
     await vi.waitFor(() => { expect(byId("video-player")).not.toBeNull(); });
     expect(document.body.querySelector('[aria-label="Previous frame"]')).not.toBeNull();
+  });
+});
+
+describe("the guest phone notes head (#879 PR 3b, P2)", () => {
+  let seq = 500;
+  const nid = () => `00000000-0000-4000-8000-${String(++seq).padStart(12, "0")}`;
+  const thread = (over: Partial<GuestNoteThreadDto> = {}): GuestNoteThreadDto => ({
+    id: nid(), parentId: null, author: { kind: "guest", name: "Sam", self: true }, startFrame: 10, endFrame: null, drawingFrame: null, hasMarkup: false,
+    body: "A note", deleted: false, revision: 1, resolved: false, createdAt: "2026-10-10T00:00:00.000Z", editedAt: null, replies: [], ...over,
+  });
+  const listed = () => [...document.querySelectorAll<HTMLElement>('[data-testid="guest-note"]')].map((item) => item.dataset.noteId);
+  const radio = (name: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((item) => item.textContent?.startsWith(name))!;
+  const press = async (element: HTMLElement) => { await act(async () => { element.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); element.click(); }); await flush(2); };
+  const search = async (text: string) => {
+    if (!byId("notes-search-field")) await press(byId("notes-filter-search")!);
+    const field = byId("notes-search-field") as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(field, text); field.dispatchEvent(new Event("input", { bubbles: true })); });
+    await flush(2);
+  };
+  let mine: GuestNoteThreadDto; let studio: GuestNoteThreadDto; let done: GuestNoteThreadDto;
+  beforeEach(() => {
+    mine = thread({ body: "Logo too small" });
+    studio = thread({ author: { kind: "studio", name: "Quincy" }, body: "Graded the sky", startFrame: 40 });
+    done = thread({ body: "Fixed already", resolved: true, startFrame: 80 });
+    served = [mine, studio, done];
+  });
+
+  it("opens on the open notes, with the head at the top of the list in place of the delivery row's chips", async () => {
+    await openVideo();
+    await vi.waitFor(() => { expect(byId("notes-filter-head")).not.toBeNull(); });
+    expect(byId("guest-notes-list")!.contains(byId("notes-filter-head"))).toBe(true);
+    expect(byId("notes-filter-status")!.textContent).toBe("Open · 2");
+    expect(listed()).toEqual([mine.id, studio.id]);
+    await press(byId("notes-filter-status")!);
+    expect([...document.querySelectorAll('[role="menuitemradio"]')].map((item) => item.textContent)).toEqual(["Open2", "Resolved1", "All3"]);
+    await press(radio("All"));
+    expect(listed()).toEqual([mine.id, studio.id, done.id]);
+  });
+
+  it("filters by author and by search, and markers follow", async () => {
+    await openVideo();
+    await vi.waitFor(() => { expect(byId("notes-filter-head")).not.toBeNull(); });
+    await press(byId("notes-filter-author")!);
+    expect([...document.querySelectorAll('[role="menuitemradio"]')].map((item) => item.textContent)).toEqual(["Everyone", "Quincy", "Sam"]);
+    await press(radio("Quincy"));
+    expect(listed()).toEqual([studio.id]);
+    expect([...document.querySelectorAll<HTMLElement>("[data-marker-id]")].map((marker) => marker.dataset.markerId)).toEqual([studio.id]);
+    await press(byId("notes-filter-author")!);
+    await press(radio("Everyone"));
+    await search("logo");
+    expect(listed()).toEqual([mine.id]);
+  });
+
+  it("search takes the sheet to full and back; Escape closes it and focus returns to Search", async () => {
+    await openVideo();
+    await vi.waitFor(() => { expect(byId("notes-filter-head")).not.toBeNull(); });
+    expect(byId("video-review-pane")!.getAttribute("data-stop")).toBe("half");
+    await search("sky");
+    expect(byId("video-review-pane")!.getAttribute("data-stop")).toBe("full");
+    expect(mode()).toBe("browse");
+    await act(async () => { byId("notes-search-field")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    await flush(2);
+    expect(byId("notes-search-field")).toBeNull();
+    expect(document.activeElement).toBe(byId("notes-filter-search"));
+    expect(byId("video-review-pane")!.getAttribute("data-stop")).toBe("half");
+  });
+
+  it("nothing matching says so and Reset filters brings the open notes back", async () => {
+    await openVideo();
+    await vi.waitFor(() => { expect(byId("notes-filter-head")).not.toBeNull(); });
+    await search("nothing like it");
+    expect(byId("guest-notes-filtered-empty")!.textContent).toContain("No notes match.");
+    await press(byId("guest-notes-reset-filters")!);
+    expect(listed()).toEqual([mine.id, studio.id]);
+  });
+
+  it("an open reply keeps its thread listed under a search that leaves it out", async () => {
+    await openVideo();
+    await vi.waitFor(() => { expect(byId("notes-filter-head")).not.toBeNull(); });
+    const item = document.querySelector<HTMLElement>(`[data-note-id="${mine.id}"]`)!;
+    await press(item.querySelector<HTMLElement>('[data-testid="guest-note-reply-button"]')!);
+    await search("sky");
+    expect(listed()).toEqual([mine.id, studio.id]);
+  });
+
+  it("crossing to a desktop shows every note, unfiltered, with no head", async () => {
+    await openVideo();
+    await vi.waitFor(() => { expect(byId("notes-filter-head")).not.toBeNull(); });
+    await search("sky");
+    await viewport.set({ width: 1280 });
+    await flush(4);
+    expect(byId("notes-filter-head")).toBeNull();
+    expect(listed()).toEqual([mine.id, studio.id, done.id]);
+    await viewport.set({ width: 390 });
+    await flush(4);
+    expect(byId("notes-search-field")).toBeNull();
+    expect(listed()).toEqual([mine.id, studio.id]);
   });
 });
