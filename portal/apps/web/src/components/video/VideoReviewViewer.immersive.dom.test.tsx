@@ -9,6 +9,7 @@ import { installLocalStorageShim } from "../../testing/local-storage";
 import { resetUiPrefMemory } from "../../lib/ui-prefs";
 import { mockViewport, type MockViewport } from "../../testing/viewport";
 import { createNoteFormStore } from "../../lib/video-note-form-store";
+import { minHeightFloors } from "../../testing/min-height-floor";
 import { VideoReviewViewer } from "./VideoReviewViewer";
 vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
 
@@ -167,6 +168,22 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     await mount();
     await act(async () => { dialog().dispatchEvent(new KeyboardEvent("keydown", { key: "f", bubbles: true })); });
     expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(true);
+  });
+});
+
+describe("Full screen fits a short sideways viewport (#880, Simulator 750x292)", () => {
+  // Measured: a sideways iPhone with Safari's toolbar is 750x292, and the player's desktop floor (20rem, 320px) held the layer 28px past the screen, the dock's bottom with it.
+  it("in Full screen nothing from the player up to the dialog carries a min-height floor", async () => {
+    viewport = mockViewport({ width: 750, height: 292, coarse: true });
+    await mount();
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(true);
+    expect(minHeightFloors(tid("video-player")!, dialog())).toEqual([]);
+  });
+  it("out of Full screen the desktop split keeps the player's floor", async () => {
+    viewport = mockViewport({ width: 1200, height: 800, coarse: false });
+    await mount();
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(false);
+    expect(minHeightFloors(tid("video-player")!, dialog())).toContain("min-h-[20rem]");
   });
 });
 

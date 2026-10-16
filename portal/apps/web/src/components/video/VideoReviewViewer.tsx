@@ -637,6 +637,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         ...(cardThread ? { card: <VideoImmersiveNoteCard thread={cardThread} timecode={slots.immersive.timecode} onClose={() => { setCardId(null); }} onShowInNotes={() => { full.leave(); revealNotes(); }} /> } : {}),
       } : {}),
     };
+    // The player's 20rem floor is the desktop split's; Full screen fills exactly the visible viewport, which a sideways phone with Safari's toolbar makes 292px tall (#880).
     const split = <ReviewSplit
       open={pane.open}
       width={pane.width}
@@ -650,7 +651,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       {...(phone ? { sheet: { ...sheetControl, mode: slots?.drawing ? "draw" as const : sheetControl.mode } } : {})}
       {...(phone ? {} : { rowClassName: "overflow-y-auto", playerClassName: "overflow-y-auto" })}
       player={<>
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" phoneFrameStep={forms === undefined || formOpen} transportHidden={phone && (sheetControl.mode === "search" || (sheetControl.mode === "compose" && !slots?.drawing))} initialMuted={muted} onMutedChange={setMuted} className="min-h-[20rem] flex-1 max-[721px]:min-h-0" {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} immersive={immersiveHost} />
+        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" phoneFrameStep={forms === undefined || formOpen} transportHidden={phone && (sheetControl.mode === "search" || (sheetControl.mode === "compose" && !slots?.drawing))} initialMuted={muted} onMutedChange={setMuted} className={imm ? "flex-1" : "min-h-[20rem] flex-1 max-[721px]:min-h-0"} {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} immersive={immersiveHost} />
         <CloseCardOnPlay clock={imm && slots ? slots.immersive.clock : null} active={cardId !== null} onClose={closeCard} />
       </>}
       pane={sidePane}

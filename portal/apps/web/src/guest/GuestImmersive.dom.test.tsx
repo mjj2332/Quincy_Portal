@@ -7,6 +7,7 @@ import { installLocalStorageShim } from "../testing/local-storage";
 import { resetUiPrefMemory } from "../lib/ui-prefs";
 import { TIME_FORMAT_KEY } from "../lib/time-format-prefs";
 import { mockViewport, type MockViewport } from "../testing/viewport";
+import { minHeightFloors } from "../testing/min-height-floor";
 import { GuestApp } from "./GuestApp";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -271,6 +272,15 @@ describe("the guest page's Full screen and the keyboard on a phone device (#880 
     await flush(3);
     expect(document.activeElement).not.toBe(editor);
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+  });
+});
+
+describe("the guest page's Full screen fits a short sideways viewport (#880, Simulator 750x292)", () => {
+  it("nothing from the player up to the screen's layer carries a min-height floor", async () => {
+    viewport.restore(); viewport = mockViewport({ width: 750, height: 292, coarse: true }); notes = { [asset(10)]: [note(1)] };
+    await open();
+    expect(immersiveOn()).toBe(true);
+    expect(minHeightFloors(byId("video-player")!, screenRoot())).toEqual([]);
   });
 });
 
