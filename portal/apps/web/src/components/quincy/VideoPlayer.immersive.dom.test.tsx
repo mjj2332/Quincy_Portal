@@ -125,11 +125,70 @@ describe("VideoPlayer controls auto-hide (#880, D13)", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await play();
     const mute = button("Mute")!;
-    await act(async () => { mute.focus(); });
+    // Keyboard focus: a key, then the focus it moves.
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })); mute.focus(); });
     await advance(10_000);
     expect(chrome()).toBe("shown");
     await act(async () => { mute.blur(); });
     await advance(3100);
+    expect(chrome()).toBe("hidden");
+  });
+
+  // Fix round 1, item 1: WebKit marks a scripted focus() :focus-visible unless the last focus came from a click, and an iOS tap never focuses a button. So the Exit focus
+  // placed at entry, and the thumb focus Base UI places on a scrubber press, both matched :focus-visible and held the controls up for good.
+  const pointerDown = (target: EventTarget) => { target.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true })); };
+  const pointerUp = (target: EventTarget) => { target.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true })); };
+
+  it("hides 3000ms after play with nothing else happening, the entry focus on Exit and a tap on the centre Play included", async () => {
+    await mount({ immersive: hostOf() });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // The tap on ⤢, then the focus use-immersive places on Exit at entry.
+    await act(async () => { pointerDown(document.body); pointerUp(document.body); button("Exit full screen")!.focus(); });
+    const badge = byTestId("video-play-badge")!;
+    await act(async () => { pointerDown(badge); pointerUp(badge); badge.click(); });
+    expect(stub.calls).toContain("play");
+    await advance(2900);
+    expect(chrome()).toBe("shown");
+    await advance(100);
+    expect(chrome()).toBe("hidden");
+  });
+
+  it("focus a tap puts on a control does not hold the controls, and a key after it does", async () => {
+    await mount({ immersive: hostOf() });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await play();
+    const mute = button("Mute")!;
+    await act(async () => { pointerDown(mute); mute.focus(); pointerUp(mute); });
+    await advance(3000);
+    expect(chrome()).toBe("hidden");
+    await tapStage();
+    expect(chrome()).toBe("shown");
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })); button("Exit full screen")!.focus(); });
+    await advance(10_000);
+    expect(chrome()).toBe("shown");
+  });
+
+  it("a scrubber press whose pointerup lands in the same task releases the scrub hold", async () => {
+    await mount({ immersive: hostOf() });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await play();
+    const thumb = host.querySelector<HTMLInputElement>('[data-testid="video-scrubber"] input[type="range"]')!;
+    // Base UI focuses the thumb from script on the press, as WebKit does.
+    await act(async () => { pointerDown(thumb); thumb.focus(); pointerUp(thumb); });
+    await advance(3000);
+    expect(chrome()).toBe("hidden");
+  });
+
+  it("a scrub holds the controls until the pointer lifts", async () => {
+    await mount({ immersive: hostOf() });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await play();
+    const thumb = host.querySelector<HTMLInputElement>('[data-testid="video-scrubber"] input[type="range"]')!;
+    await act(async () => { pointerDown(thumb); });
+    await advance(10_000);
+    expect(chrome()).toBe("shown");
+    await act(async () => { pointerUp(window); });
+    await advance(3000);
     expect(chrome()).toBe("hidden");
   });
 

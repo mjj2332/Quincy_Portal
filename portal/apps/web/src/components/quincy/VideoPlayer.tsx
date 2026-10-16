@@ -221,13 +221,34 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   }, [imm, chromeShown, held, activity]);
   // Whatever needs the controls brings them back: pausing, a card, the composer, the pen.
   useEffect(() => { if (imm && (paused || cardOpen || composing || drawing)) setChromeShown(true); }, [imm, paused, cardOpen, composing, drawing]);
-  useEffect(() => { if (!imm) { setChromeShown(true); setFocusHeld(false); setPopupOpen(false); setScrubbing(false); } }, [imm]);
+  // Focus holds the controls only when a key moved it (#880 fix round 1). `:focus-visible` cannot say so on iOS: WebKit marks a scripted focus() visible unless the last focus
+  // came from a click, and a tap never focuses a button there, so the Exit focus placed at entry and the thumb focus Base UI places on a scrubber press both matched it and
+  // held the controls for good. The last input decides instead: a key makes the next focus a keyboard focus, a pointer press makes it a pointer one (and drops the hold).
+  const keyboardInput = useRef(false);
   useEffect(() => {
-    if (!scrubbing) return undefined;
-    const done = () => { setScrubbing(false); };
-    window.addEventListener("pointerup", done); window.addEventListener("pointercancel", done);
-    return () => { window.removeEventListener("pointerup", done); window.removeEventListener("pointercancel", done); };
-  }, [scrubbing]);
+    const onKey = () => { keyboardInput.current = true; };
+    const onPointer = () => { keyboardInput.current = false; setFocusHeld(false); };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onPointer, true);
+    return () => { document.removeEventListener("keydown", onKey, true); document.removeEventListener("pointerdown", onPointer, true); };
+  }, []);
+  // The scrub hold ends on the pointer's release, listened for from inside the press itself: a quick tap's pointerup can land before any effect that would attach it.
+  const scrubRelease = useRef<(() => void) | null>(null);
+  const stopListeningForScrubEnd = useCallback(() => {
+    const done = scrubRelease.current;
+    if (!done) return;
+    scrubRelease.current = null;
+    window.removeEventListener("pointerup", done, true); window.removeEventListener("pointercancel", done, true);
+  }, []);
+  const startScrub = useCallback(() => {
+    setScrubbing(true);
+    if (scrubRelease.current) return;
+    const done = () => { stopListeningForScrubEnd(); setScrubbing(false); };
+    scrubRelease.current = done;
+    window.addEventListener("pointerup", done, true); window.addEventListener("pointercancel", done, true);
+  }, [stopListeningForScrubEnd]);
+  useEffect(() => stopListeningForScrubEnd, [stopListeningForScrubEnd]);
+  useEffect(() => { if (!imm) { setChromeShown(true); setFocusHeld(false); setPopupOpen(false); setScrubbing(false); stopListeningForScrubEnd(); } }, [imm, stopListeningForScrubEnd]);
   const keyDown = useCallback((event: KeyboardEvent | ReactKeyboardEvent): boolean => { wakeRef.current(); return handleKeyDown(event); }, [handleKeyDown]);
   const [nativeFailed, setNativeFailed] = useState(false);
   // AirPlay during the hand-off (owner decision 3, #880 S7): the restriction is lifted inside the press, before the native player is entered, and restored when that player
@@ -316,9 +337,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     onKeyDown={keyboard === "self" ? (event) => { keyDown(event); } : undefined}
     onFocus={imm ? (event) => {
       const target = event.target as Element;
-      let visible = true;
-      try { visible = target.matches(":focus-visible"); } catch { /* no :focus-visible here: hold, as keyboard focus would */ }
-      setFocusHeld(visible);
+      setFocusHeld(keyboardInput.current);
       setPopupOpen(target.closest('[role="menu"], [role="listbox"], [role="dialog"]') !== null);
     } : undefined}
     onBlur={imm ? () => { setFocusHeld(false); setPopupOpen(false); } : undefined}
@@ -354,7 +373,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     <div ref={transportRef} hidden={hidesTransport || transportReplacement != null} className={cn(transportClass, "[&[hidden]]:hidden")}>
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track.
         A phone draws it as P1's `.scrub` band (#879 PR 3a): `--space-6` tall, the marker lane laid inside it along the top, the track through its middle, a 44px touch band from the slider's `band` size. */}
-    <div data-testid="video-scrubber" className={handheld ? "relative h-[var(--space-6)]" : undefined} onPointerDownCapture={imm ? () => { setScrubbing(true); } : undefined}>
+    <div data-testid="video-scrubber" className={handheld ? "relative h-[var(--space-6)]" : undefined} onPointerDownCapture={imm ? startScrub : undefined}>
       {/* The band is placed against the slider alone: inside the same box as the marker lane it would sit centred on the whole scrubber, 6px below the track. */}
       <div className={handheld ? "relative h-full" : "relative"}>
         {pendingRange !== undefined && <VideoPendingRangeBand range={pendingRange} frameCount={version.frameCount} />}
