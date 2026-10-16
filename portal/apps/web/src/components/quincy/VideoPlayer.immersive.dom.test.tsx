@@ -476,6 +476,21 @@ describe("VideoPlayer Full screen prompt (#880, owner decision 2026-10-16)", () 
   });
 });
 
+describe("VideoPlayer Full screen prompt after the host resets it (#880 Sol review 3)", () => {
+  it("a prompt the host cleared and asks for again, from key 1, shows again", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const text = "Turn your phone upright to add a note.";
+    const prompt = () => byTestId("video-immersive-prompt");
+    await mount({ immersive: hostOf({ prompt: { key: 1, text } }) });
+    await advance(PROMPT_MS);
+    expect(prompt()).toBeNull();
+    // Turned upright: the host clears its prompt, so the next sideways press starts again at key 1.
+    await rerender({ immersive: hostOf({ prompt: null }) });
+    await rerender({ immersive: hostOf({ prompt: { key: 1, text } }) });
+    expect(prompt()?.textContent).toBe(text);
+  });
+});
+
 describe("VideoPlayer Add note (#880 review 5)", () => {
   it("is the installed reui Toggle, as Mute is: pressed from the host, and a press calls the host's toggle", async () => {
     const onToggle = vi.fn();

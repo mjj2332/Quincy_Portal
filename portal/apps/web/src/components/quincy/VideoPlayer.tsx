@@ -288,7 +288,8 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const promptKey = imm ? immersive?.prompt?.key ?? null : null;
   const [promptDone, setPromptDone] = useState<number | null>(null);
   useEffect(() => {
-    if (promptKey === null) return undefined;
+    // A cleared prompt forgets which key expired: the hosts start their keys again at 1 after clearing (turned upright, out of Full screen), so a kept key would hide the next ask.
+    if (promptKey === null) { setPromptDone(null); return undefined; }
     const timer = setTimeout(() => { setPromptDone(promptKey); }, PROMPT_MS);
     return () => { clearTimeout(timer); };
   }, [promptKey]);
