@@ -626,7 +626,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     ...(canWrite ? { addNote: { pressed: composeShown, onToggle: toggleAddNote } } : {}),
     onMarkerTap,
     prompt,
-    ...(cardThread ? { card: <GuestImmersiveNoteCard thread={cardThread} timecode={timecode} media={api.media} onClose={closeCard} onShowInNotes={() => { full.leave(); setPaneOpen(true); openSheet(); }} /> } : {}),
+    ...(cardThread ? { card: <GuestImmersiveNoteCard thread={cardThread} timecode={timecode} media={api.media} onClose={closeCard} /> } : {}),
   };
   // Escape: its own ladder (the page is not a dialog), in the staff viewer's order. A popup or modal that is open owns the key; then the pen on the picture (the compose hook puts
   // it down, #880 review 2); then the card, then the floating composer (the draft stays), then Full screen itself. Decided at capture, before any popup handler has run.

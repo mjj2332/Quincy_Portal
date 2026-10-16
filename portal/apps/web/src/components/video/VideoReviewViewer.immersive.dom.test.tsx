@@ -157,13 +157,15 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(true);
   });
 
-  it("Show in notes leaves Full screen and closes the card", async () => {
+  it("the marker card has Close and no Show in notes (F3; D13: no notes list in Full screen; owner decision, #880 review 11)", async () => {
     await mount();
     await click(tid("video-fullscreen")!);
     await tapMarker();
-    await click(tid("review-note-card-show")!);
-    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(false);
+    expect(tid("review-note-card")).not.toBeNull();
+    expect(tid("review-note-card-show")).toBeNull();
+    await click(tid("review-note-card-close")!);
     expect(tid("review-note-card")).toBeNull();
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(true);
   });
 
   it("F toggles Full screen", async () => {

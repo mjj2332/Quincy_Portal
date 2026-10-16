@@ -634,7 +634,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
           slots.playerProps.onMarkerSelect(id);
           setCardId(id);
         },
-        ...(cardThread ? { card: <VideoImmersiveNoteCard thread={cardThread} timecode={slots.immersive.timecode} onClose={() => { setCardId(null); }} onShowInNotes={() => { full.leave(); revealNotes(); }} /> } : {}),
+        ...(cardThread ? { card: <VideoImmersiveNoteCard thread={cardThread} timecode={slots.immersive.timecode} onClose={() => { setCardId(null); }} /> } : {}),
       } : {}),
     };
     // The player's 20rem floor is the desktop split's; Full screen fills exactly the visible viewport, which a sideways phone with Safari's toolbar makes 292px tall (#880).

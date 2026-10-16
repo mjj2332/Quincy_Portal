@@ -1,25 +1,23 @@
 import type { ReactNode } from "react";
 import { X } from "lucide-react";
-import { Button } from "../reui/button";
-import { Item, ItemContent, ItemFooter, ItemHeader, ItemMedia } from "../reui/item";
+import { Item, ItemContent, ItemHeader, ItemMedia } from "../reui/item";
 import { IconButton } from "./icon-button";
 import { InitialsAvatar } from "./InitialsAvatar";
 
 /**
- * The note a marker press shows over the film in Full screen (#880, F3, D13): the root note only (replies stay in the notes), read-only, with "Show in notes" to leave Full screen for it.
+ * The note a marker press shows over the film in Full screen (#880, F3, D13): the root note only (replies stay in the notes), read-only, with Close alone. F3 has no "Show in notes":
+ * Full screen has no notes list (D13; owner decision, #880 review 11).
  * Presentational: the screen hands over the author, the anchor and the body already drawn by the note renderers it already uses (so nothing about how a note renders changes). It is a
  * region, not a dialog: focus does not move into it on open (the film and its controls stay where they were), and the screen closes it on play, dismiss, exit and a Version change.
  * On the inverse surface like the rest of the viewer (ADR 0024).
  */
-export function ReviewNoteCard({ author, anchor, children, onClose, onShowInNotes }: {
+export function ReviewNoteCard({ author, anchor, children, onClose }: {
   author: string;
   /** The timecode (or range) the note is anchored to. */
   anchor: string;
   /** The note's body, drawn by the screen's own note renderer. */
   children: ReactNode;
   onClose: () => void;
-  /** Leaves Full screen and reveals the note in the notes. Absent where the screen has no notes to go to. */
-  onShowInNotes?: () => void;
 }) {
   return <Item variant="outline" size="sm" role="region" aria-label={`Note by ${author}`} data-testid="review-note-card" className="flex-nowrap items-start bg-card text-card-foreground">
     <ItemMedia><InitialsAvatar name={author} className="size-6" /></ItemMedia>
@@ -32,9 +30,6 @@ export function ReviewNoteCard({ author, anchor, children, onClose, onShowInNote
         <IconButton aria-label="Close note" data-testid="review-note-card-close" onClick={onClose}><X aria-hidden="true" className="size-4" /></IconButton>
       </ItemHeader>
       <div data-testid="review-note-card-body" className="max-h-[30dvh] overflow-y-auto text-foreground">{children}</div>
-      {onShowInNotes && <ItemFooter className="justify-start">
-        <Button type="button" variant="outline" size="sm" data-testid="review-note-card-show" className="pointer-coarse:min-h-11" onClick={onShowInNotes}>Show in notes</Button>
-      </ItemFooter>}
     </ItemContent>
   </Item>;
 }
