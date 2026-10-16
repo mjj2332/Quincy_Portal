@@ -630,7 +630,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   // the header's slot holds the Changes requested badge (owner decision; F6: undecided, the header's Approve is the one way in, and an approval leaves nothing to approve).
   const downloadRow = allowDownload && version.downloadUrl !== null;
   const downloadAllRow = offerDownloadAll && downloadAll.state === "ready";
-  const sheetHasActions = socialOverlays.length > 0 || downloadRow || downloadAllRow || canPaste;
+  // The system player row (#880 S6, F4) is always there (disabled, with its hint, where the browser has no player of its own), so the ⋯ always has an action, as the staff ⋯ does,
+  // and the decisions always sit under a rule.
   const phoneBar = <>
     <ReviewPhoneBar
       back={onBack ? <Button type="button" variant="ghost" className={`${TOUCH} shrink-0 max-[721px]:min-w-11`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span className="sr-only">All videos</span></Button> : null}
@@ -638,7 +639,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       chip={<VersionChip buttonRef={chipRef} label={latestLabel} onClick={() => { setVersionsOpen(true); }} />}
       // A recorded decision takes the Approve slot as its badge (P2), whether or not the link still lets the guest decide.
       approve={version.decision !== null ? <DecisionBadge decision={version.decision} icon /> : canDecide ? <Button type="button" size="sm" variant="outline" data-testid="guest-approve" className={STRIP_TEXT_BUTTON} onClick={() => { startDecision("approved"); }}>Approve</Button> : undefined}
-      actions={sheetHasActions || canDecide ? <ReviewActionSheet container={slot}>
+      actions={<ReviewActionSheet container={slot}>
         {(close) => <>
           {socialOverlays.length > 0 && <ActionRow testId="guest-social-toggle" icon={<Smartphone aria-hidden="true" />} pressed={socialOn} onSelect={() => { setSocial(!socialOn); close(); }}>Social preview</ActionRow>}
           {downloadRow && (session.verified
@@ -648,13 +649,13 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
           <ActionRow testId="guest-open-system-player" icon={<Maximize aria-hidden="true" />} disabled={!(playerRef.current?.nativePlayerSupported?.() ?? false)} hint={(playerRef.current?.nativePlayerSupported?.() ?? false) ? undefined : "This browser has no player of its own to open the film in."} onSelect={() => { playerRef.current?.openSystemPlayer?.(); close(); }}>{nativePlayerLabel()}</ActionRow>
           {canPaste && <ActionRow testId="guest-paste-open" icon={<Copy aria-hidden="true" />} onSelect={() => { close(true); openPaste(); }}>Copy my notes…</ActionRow>}
           {canDecide && <>
-            {sheetHasActions && <ActionSeparator />}
+            <ActionSeparator />
             {/* Approve here only when the header's slot holds the Changes requested badge (#879 PR 3b, F6): undecided, the header's Approve button is the one way in, and approved has nothing to approve. */}
             {version.decision?.value === "changes_requested" && <ActionRow testId="guest-approve-row" icon={<Check aria-hidden="true" />} onSelect={() => { close(true); startDecision("approved", true); }}>Approve</ActionRow>}
             <ActionRow testId="guest-request-changes" icon={<MessageSquareWarning aria-hidden="true" />} onSelect={() => { close(true); startDecision("changes_requested", true); }}>Request changes…</ActionRow>
           </>}
         </>}
-      </ReviewActionSheet> : undefined}
+      </ReviewActionSheet>}
     />
     <VideoVersionsSheet
       open={versionsOpen} onOpenChange={setVersionsOpen} container={slot} returnFocusTo={chipRef} currentAssetId={version.assetId} onChoose={setAssetId}

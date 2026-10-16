@@ -238,6 +238,28 @@ describe("the guest page's Full screen and the keyboard on a phone device (#880 
   });
 });
 
+describe("the guest ⋯ with nothing but the system player (#880 S6)", () => {
+  beforeEach(() => { viewport.restore(); viewport = mockViewport({ width: 390, height: 844, coarse: true }); });
+  it("still shows: its one row is the system player, disabled with its hint where the browser has none", async () => {
+    session = SESSION_OFF; socialOverlays = []; notes = {};
+    await open();
+    expect(byId("video-header-menu")).not.toBeNull();
+    await click(byId("video-header-menu"));
+    const row = byId("guest-open-system-player")!;
+    expect(row.textContent).toContain("Open in system player");
+    expect(row.getAttribute("aria-disabled") === "true" || row.hasAttribute("data-disabled") || (row as HTMLButtonElement).disabled).toBe(true);
+    expect(row.textContent).toContain("This browser has no player of its own");
+    // The hint describes the row; it is not part of its name.
+    const described = row.getAttribute("aria-describedby");
+    expect(described).not.toBeNull();
+    expect(document.getElementById(described!)!.textContent).toBe("This browser has no player of its own to open the film in.");
+    expect(row.querySelector('[data-testid="review-action-row-label"]')!.textContent).toBe("Open in system player");
+    expect(byId("guest-download")).toBeNull();
+    expect(byId("guest-paste-open")).toBeNull();
+    expect(byId("guest-request-changes")).toBeNull();
+  });
+});
+
 describe("the guest page's Full screen: unverified Add note (#880)", () => {
   it("asks to verify first, and opens no composer until the guest has", async () => {
     session = ANON; notes = {}; videos = [videoOf(1)];
