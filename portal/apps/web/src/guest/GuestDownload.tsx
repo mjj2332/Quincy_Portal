@@ -8,13 +8,13 @@ const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
  * Download for the Version on screen (#741 14-ui-guest). The server decides: `downloadUrl` is non-null only for a live Release on a link that allows downloads, with the Video not locked, so the
  * page never builds the URL. It is a plain anchor (the browser's own download, resumable, with the attachment name the server sends). A released premium Video that is not unlocked gets the reason
  * instead of a button; an unreleased Version, or a link that does not allow downloads, gets nothing.
- * Whether the route needs a verified guest is the link's download policy (ADR 0025): the Delivery review link needs no code, so there the caller passes `verified` as true and it is the anchor
- * straight away; on any other link an unverified guest gets a button that opens the verify dialog (`onNeedVerify`). Once verified it renders as the anchor and the guest presses it again (a click
+ * Whether the route needs a verified guest is the link's download policy (ADR 0025): the Delivery review link needs no code, so there `downloadOpen` is true and it is the anchor
+ * straight away; on any other link an unverified guest (`downloadOpen` false) gets a button that opens the verify dialog (`onNeedVerify`). Once verified it renders as the anchor and the guest presses it again (a click
  * made for them after the async verification would be blocked as a popup).
  */
-export function GuestDownload({ video, version, allowDownload, verified, onNeedVerify }: { video: Pick<GuestVideoDto, "premium" | "unlocked">; version: Pick<GuestVersionDto, "released" | "downloadUrl">; allowDownload: boolean; /** Verified, or on a link whose download policy needs no code. */ verified: boolean; onNeedVerify: () => void }) {
+export function GuestDownload({ video, version, allowDownload, downloadOpen, onNeedVerify }: { video: Pick<GuestVideoDto, "premium" | "unlocked">; version: Pick<GuestVersionDto, "released" | "downloadUrl">; allowDownload: boolean; /** A download needs no code now: the guest is verified, or the link's download policy needs none. */ downloadOpen: boolean; onNeedVerify: () => void }) {
   if (!allowDownload) return null;
-  if (version.downloadUrl !== null && !verified) {
+  if (version.downloadUrl !== null && !downloadOpen) {
     return <Button type="button" variant="outline" data-testid="guest-download" className={TOUCH} onClick={onNeedVerify}><DownloadIcon aria-hidden="true" />Download</Button>;
   }
   if (version.downloadUrl !== null) {

@@ -9,6 +9,7 @@ import { Notice } from "../components/quincy/Notice";
 import { NOTICE_SPINNER, PREPARE_TIMEOUT_COPY, READY_HINT_COPY, usePreparedDownload, type PrepareOutcome } from "../lib/use-prepared-download";
 import type { GuestApi } from "./guest-api";
 import { formatBytes } from "./guest-format";
+import { ZipListScroll } from "./ZipListScroll";
 import type { GuestVerify } from "./use-guest-verify";
 
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
@@ -122,7 +123,7 @@ export function useGuestDownloadAll({ api, verify, canDownloadWithoutCode = fals
           <DialogTitle>Download all</DialogTitle>
           {loaded.kind === "ok" && loaded.manifest.included.length > 0 && !loaded.manifest.tooLarge && <DialogDescription>One zip with the released films below.</DialogDescription>}
         </DialogHeader>
-        <div data-testid="guest-download-all-body" className="min-h-0 flex-1 overflow-y-auto"><DownloadAllBody loaded={loaded} onRetry={load} archive={archive} onCheckAgain={() => void startPrepared()} /></div>
+        <ZipListScroll testId="guest-download-all-body"><DownloadAllBody loaded={loaded} onRetry={load} archive={archive} onCheckAgain={() => void startPrepared()} /></ZipListScroll>
         <DialogFooter className="shrink-0">
           <Button type="button" variant="outline" data-testid="guest-download-all-close" className={TOUCH} onClick={close}>Close</Button>
           {canDownload

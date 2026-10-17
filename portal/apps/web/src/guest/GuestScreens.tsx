@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { ChevronLeft } from "lucide-react";
+import { GuestBackToPage } from "./GuestBackToPage";
 import { GUEST_PASSCODE_MAX, type GuestSessionResponse, type GuestVideoDto } from "@quincy/shared";
 import { Button } from "../components/reui/button";
 import { Field, FieldError, FieldGroup, FieldLabel } from "../components/reui/field";
@@ -95,7 +95,7 @@ export function PasscodeScreen({ error, retryAfterSeconds, pending, onSubmit }: 
  */
 export function VideoListScreen({ api, verify, canDownloadWithoutCode = false, pageHref = null, title, videos, session, onSession, onOpen, onUnavailable, identity }: { api: GuestApi; verify: GuestVerify; /** The Delivery review link (#882): Download all needs no code. */ canDownloadWithoutCode?: boolean; /** The Delivery page this review was opened from (#882, D34): a native link back, as on the video screen. A reload lands here, so it must be here too. */ pageHref?: string | null; title: string | null; videos: readonly GuestVideoDto[]; session: GuestSessionResponse; onSession: (next: GuestSessionResponse) => void; onOpen: (index: number) => void; onUnavailable: () => void; /** The "Reviewing as … / Not you? Sign out" row (#854), under the title row. */ identity: ReactNode }) {
   return <main data-testid="guest-list" className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col gap-[var(--space-4)] bg-background px-[var(--space-4)] py-[var(--space-6)] text-foreground">
-    {pageHref !== null && <Button variant="ghost" nativeButton={false} data-testid="guest-back-to-page" className={`${TOUCH} self-start`} render={<a href={pageHref} />}><ChevronLeft aria-hidden="true" /><span>Delivery page</span></Button>}
+    {pageHref !== null && <GuestBackToPage href={pageHref} className="self-start" />}
     <div className="flex flex-wrap items-center justify-between gap-[var(--space-3)]">
       <h1 className="m-0 min-w-0 text-[length:var(--text-xl)] leading-[var(--leading-snug)] font-normal font-[family-name:var(--font-display)]">{title ?? "Review"}</h1>
       {videos.length > 1 && <GuestDownloadAll api={api} verify={verify} canDownloadWithoutCode={canDownloadWithoutCode} session={session} onSession={onSession} onUnavailable={onUnavailable} />}

@@ -46,6 +46,7 @@ import { GuestPasteDialog } from "./GuestPasteDialog";
 import { GuestDecisionDialog, decisionDraftKey, type DecisionOutcome, type DecisionValue } from "./GuestDecisionDialog";
 import { DecisionBadge, GuestDeliveryChips, ReleasedBadge } from "./GuestDeliveryChips";
 import { GuestDownload, GuestDownloadLocked } from "./GuestDownload";
+import { GuestBackToPage } from "./GuestBackToPage";
 import { GuestDownloadAllButton } from "./GuestDownloadAll";
 import { useGuestDownloadAll } from "./use-guest-download-all";
 import type { GuestDrafts } from "./guest-drafts";
@@ -585,6 +586,8 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
   const subscriptionRow = session.verified && session.notifications?.available
     ? <GuestSubscriptionRow store={subscription} initial={session.notifications.subscribed} readOnly={archived} onToggle={toggleSubscription} />
     : null;
+  // Whether a download needs no code now: the guest is verified, or the link's download policy needs none (the Delivery review link, ADR 0025).
+  const downloadOpen = session.verified || canDownloadWithoutCode;
   const downloadHintLine = downloadHint && session.verified && version.downloadUrl !== null ? <p role="status" data-testid="guest-download-hint" className="m-0 text-foreground-secondary [font:var(--type-label)]">You're verified. Press Download to start it.</p> : null;
   const decisionNoticeLine = decisionNotice !== null ? <p role="status" data-testid="guest-decision-notice" className="m-0 text-foreground-secondary [font:var(--type-label)]">{decisionNotice}</p> : null;
   // P2's quiet line (#879 PR 3b) at the end of the phone's notes scroll: Released first (a session default, no frame), then the hints and notices the delivery row held, then who is reviewing and email updates.
@@ -607,7 +610,7 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
       <Button type="button" variant={version.decision?.value === "approved" ? "outline" : "default"} data-testid="guest-approve" className={TOUCH} onClick={() => { startDecision("approved"); }}><Check aria-hidden="true" />Approve</Button>
       <Button type="button" variant="outline" data-testid="guest-request-changes" className={TOUCH} onClick={() => { startDecision("changes_requested"); }}><MessageSquareWarning aria-hidden="true" />Request changes</Button>
     </>}
-    <GuestDownload video={video} version={version} allowDownload={allowDownload} verified={session.verified || canDownloadWithoutCode} onNeedVerify={() => { requestVerify("download"); }} />
+    <GuestDownload video={video} version={version} allowDownload={allowDownload} downloadOpen={downloadOpen} onNeedVerify={() => { requestVerify("download"); }} />
     {offerDownloadAll && <GuestDownloadAllButton controller={downloadAll} />}
     {downloadHintLine}
     {decisionNoticeLine}
@@ -672,7 +675,7 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
   // and the decisions always sit under a rule.
   const phoneBar = <>
     <ReviewPhoneBar
-      back={pageHref !== null ? <Button variant="ghost" nativeButton={false} data-testid="guest-back-to-page" className={`${TOUCH} shrink-0 max-[721px]:min-w-11`} render={<a href={pageHref} />}><ChevronLeft aria-hidden="true" /><span className="sr-only">Back to the delivery page</span></Button>
+      back={pageHref !== null ? <GuestBackToPage href={pageHref} iconOnly className="shrink-0 max-[721px]:min-w-11" />
         : onBack ? <Button type="button" variant="ghost" className={`${TOUCH} shrink-0 max-[721px]:min-w-11`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span className="sr-only">All videos</span></Button> : null}
       title={<h1 data-testid="guest-video-title" title={video.title} className="m-0 w-full min-w-[6rem] truncate [font:var(--type-body)]">{video.title}</h1>}
       chip={<VersionChip buttonRef={chipRef} label={latestLabel} onClick={() => { setVersionsOpen(true); }} />}
@@ -681,7 +684,7 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
       actions={<ReviewActionSheet container={slot}>
         {(close) => <>
           {socialOverlays.length > 0 && <ActionRow testId="guest-social-toggle" icon={<Smartphone aria-hidden="true" />} pressed={socialOn} onSelect={() => { setSocial(!socialOn); close(); }}>Social preview</ActionRow>}
-          {downloadRow && (session.verified || canDownloadWithoutCode
+          {downloadRow && (downloadOpen
             ? <ActionRow testId="guest-download" icon={<DownloadIcon aria-hidden="true" />} href={version.downloadUrl ?? undefined} download onSelect={() => { close(); }}>{`Download v${version.version}`}</ActionRow>
             : <ActionRow testId="guest-download" icon={<DownloadIcon aria-hidden="true" />} onSelect={() => { close(true); requestVerify("download"); }}>{`Download v${version.version}`}</ActionRow>)}
           {downloadAllRow && <ActionRow testId="guest-download-all" icon={<FolderDown aria-hidden="true" />} onSelect={() => { close(true); downloadAll.start(); }}>Download all…</ActionRow>}
@@ -712,7 +715,7 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
     <div data-testid="guest-header-hide" className={imm ? "hidden" : "contents"} inert={imm}>
     {phone ? phoneBar : <header className="flex flex-col border-b border-border bg-card text-card-foreground">
      <div data-testid="guest-bar" className="flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] px-[var(--space-4)] py-[var(--space-1)]">
-      {pageHref !== null ? <Button variant="ghost" nativeButton={false} data-testid="guest-back-to-page" className={`${TOUCH} shrink-0`} render={<a href={pageHref} />}><ChevronLeft aria-hidden="true" /><span>Delivery page</span></Button>
+      {pageHref !== null ? <GuestBackToPage href={pageHref} className="shrink-0" />
         : onBack && <Button type="button" variant="ghost" className={`${TOUCH} shrink-0`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span>All videos</span></Button>}
       <h1 data-testid="guest-video-title" title={video.title} className="m-0 min-w-0 flex-1 truncate [font:var(--type-body)]">{video.title}</h1>
       <div className="flex min-w-0 flex-none items-center gap-[var(--space-3)]">
