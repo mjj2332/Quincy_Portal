@@ -42,8 +42,12 @@ export function DeliveryDownloadAll({ api, onGone }: { api: Pick<DeliveryApi, "z
   return <>
     <Button type="button" variant="default" size="lg" data-testid="delivery-download-all" className={TOUCH} onClick={() => { setSize("web"); setOpening((n) => n + 1); setOpen(true); }}><DownloadIcon aria-hidden="true" />Download all</Button>
     <Dialog open={open} onOpenChange={(next) => { if (!next) close(); }}>
-      <DialogContent data-testid="delivery-download-all-dialog" showCloseButton={false} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col sm:max-w-[520px]">
-        <DialogHeader className="shrink-0">
+      {/* #907: below 520px of height (`POPUP_SHORT_QUERY`) the pinned header, radios and footer left the zip body ~3px. There the dialog itself is the one scroller and the
+          body stops scrolling (`flex-none`), never a scroller nested in a shrinking window (lesson "A nested scroller taller than its host's window traps the wheel (#686)").
+          The footer stays pinned by `sticky`, opaque: `bg-muted/50` composited over `bg-popover`. Its `bottom` is minus the dialog's padding (`p-4`, `--space-4`): the sticky
+          rectangle is the scroller less its padding, so `bottom-0` left a 16px band of scrolling content under the footer. At 520px and taller nothing changes. */}
+      <DialogContent data-testid="delivery-download-all-dialog" showCloseButton={false} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col sm:max-w-[520px] [@media(height<520px)]:overflow-y-auto [@media(height<520px)]:overscroll-contain">
+        <DialogHeader data-testid="delivery-zip-header" className="shrink-0">
           <DialogTitle>Download all photos</DialogTitle>
           <DialogDescription>One zip with every photo on this page that is unlocked.</DialogDescription>
         </DialogHeader>
@@ -114,8 +118,8 @@ function ZipPanel({ api, size, onClose, onGone }: { api: Pick<DeliveryApi, "zipM
   const archive = prepared.status === "idle" || prepared.status === "checking" ? (manifest?.archive.state ?? "ready") : prepared.status;
   const canDownload = manifest !== null && manifest.photos > 0 && !manifest.tooLarge && archive === "ready";
   return <>
-    <ZipListScroll testId="delivery-zip-body"><ZipBody loaded={loaded} archive={archive} prepareWait={prepareWait} pollWait={pollWait} onRetry={load} onCheckAgain={() => void startPrepared()} /></ZipListScroll>
-    <DialogFooter className="shrink-0">
+    <ZipListScroll testId="delivery-zip-body" className="[@media(height<520px)]:flex-none"><ZipBody loaded={loaded} archive={archive} prepareWait={prepareWait} pollWait={pollWait} onRetry={load} onCheckAgain={() => void startPrepared()} /></ZipListScroll>
+    <DialogFooter data-testid="delivery-zip-footer" className="shrink-0 [@media(height<520px)]:sticky [@media(height<520px)]:-bottom-[var(--space-4)] [@media(height<520px)]:bg-[color-mix(in_srgb,var(--color-muted)_50%,var(--color-popover))]">
       <Button type="button" variant="outline" data-testid="delivery-zip-close" className={TOUCH} onClick={onClose}>Close</Button>
       {!canDownload && manifest !== null && manifest.photos > 0 && !manifest.tooLarge && archive === "preparing" && <Button type="button" disabled data-testid="delivery-zip-start-pending" className={TOUCH}><Spinner aria-hidden="true" role="presentation" />Download zip</Button>}
       {canDownload && <Button nativeButton={false} data-testid="delivery-zip-start" className={TOUCH} render={<a href={api.zipUrl(size)} download />}><DownloadIcon aria-hidden="true" />Download zip</Button>}
