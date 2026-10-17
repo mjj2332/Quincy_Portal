@@ -44,8 +44,8 @@ export const DELIVERY_ITEM_KINDS = ["photo", "floorplan", "copy", "video"] as co
 export type DeliveryItemKind = (typeof DELIVERY_ITEM_KINDS)[number];
 
 /**
- * The page as a viewer sees it, built by one builder for staff Preview, the staff read and (slice 6) the public read. It carries random handles and labels such as "Photo 07", never an
- * Asset id, an R2 key, an original filename, a Video title, or anything about staff, agents, invoices or payment. The one people-adjacent field is `property.agency`: the agency, a business
+ * The page as a viewer sees it, built by one builder for staff Preview, the staff read and (slice 6) the public read. It carries random handles and labels such as "Photo 07", and for a FILM its own title (owner decision #882: the tile shows the real film title, locked or not), never an
+ * Asset id, an R2 key, an original filename, or anything about staff, agents, invoices or payment. The one people-adjacent field is `property.agency`: the agency, a business
  * (the directory name, else the Tonomo snapshot), shown in the hero meta line. Never an agent's name, email or phone, a photographer or any staff member. `url` and `thumbUrl` come from the caller's resolver: behind the staff
  * session for Preview, handle-based for the public page. `locked` is the live lock state, so a locked item is a preview the page must not offer as a download.
  */
@@ -53,6 +53,11 @@ export const deliveryItemDtoSchema = z.object({
   handle: z.string().length(DELIVERY_HANDLE_LENGTH),
   kind: z.enum(DELIVERY_ITEM_KINDS),
   label: z.string().min(1).max(40),
+  /**
+   * A film's own title (`videos.title`, at most 200 code points, `FILM_TITLE_MAX_CODE_POINTS`; zod counts UTF-16 units, so the cap is 400 to never reject a valid emoji-heavy title), the one Video field this page carries (#882). Null on every non-film item. `label` stays the fallback
+   * and what photos use. Optional for the same reason as `version`: an older Worker omits it, and a tab holding the strict schema must still parse (lesson #858).
+   */
+  title: z.string().min(1).max(400).nullable().optional(),
   position: z.number().int().nonnegative(),
   locked: z.boolean(),
   /** The item's own paid-extra flag, true before AND after an Unlock, so a viewer's Premium tab keeps listing an unlocked item. It says nothing about unlocks or payment; `locked` is the live answer. */
@@ -67,6 +72,13 @@ export const deliveryItemDtoSchema = z.object({
    * Project has no open Delivery review link, when the guest gate is shut, and in staff Preview. The one field of this page that carries a credential and a Video id, by design (ADR 0023).
    */
   review: z.object({ url: z.string().max(2048) }).strict().nullable(),
+  /**
+   * The film tile's facts (#882), emitted ONLY by the public Delivery read and always present there: the published Version number and the count of open PUBLIC root notes on it (the same rule as the guest
+   * list). Both are null on a locked film, a non-film item and wherever `review` is null (no count for a review the page cannot open). Staff state, Preview and Publish OMIT the keys, which is why they
+   * are optional: an already-open staff tab still holds the strict schema without them (lesson #858).
+   */
+  version: z.number().int().positive().nullable().optional(),
+  openNotes: z.number().int().nonnegative().nullable().optional(),
 }).strict();
 export const deliveryPageDtoSchema = z.object({
   property: z.object({ street: z.string(), suburb: z.string().nullable(), postcode: z.string().nullable(), agency: z.string().nullable() }).strict(),
@@ -112,6 +124,12 @@ export type DeliveryCandidateDto = z.infer<typeof deliveryCandidateSchema>;
 export type DeliveryCandidatesResponse = z.infer<typeof deliveryCandidatesResponseSchema>;
 
 /** The Publish response: the CURRENT state (the same shape as the staff read), the receipt for the operation, and whether this was a retry. `operationSetNumber` is the set the operation landed as, which on a replay may be older than `set.setNumber`. */
+/**
+ * Staff Preview's film titles (#882), keyed by item handle, for video items only (trimmed, empty omitted). They ride BESIDE `dto`, never inside it: a staff tab open across a deploy parses the item DTO `.strict()`, so a new item key would fail it (lesson #858),
+ * while the Preview wrapper is non-strict and drops this unknown top-level key. The client merges them back into the DTO before it renders.
+ */
+export const deliveryPreviewTitlesSchema = z.record(z.string().length(DELIVERY_HANDLE_LENGTH), z.string().min(1).max(400));
+export type DeliveryPreviewTitles = z.infer<typeof deliveryPreviewTitlesSchema>;
 export const deliveryPublishResponseSchema = deliveryStateSchema.extend({ replayed: z.boolean(), operationSetNumber: z.number().int().min(1) }).strict();
 export type DeliveryPublishResponse = z.infer<typeof deliveryPublishResponseSchema>;
 

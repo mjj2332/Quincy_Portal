@@ -100,7 +100,7 @@ function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
  * One Video on the guest page (#741 12b), read-only: the reused review player on the inverse surface, the granted-Versions select, previous / next Video, and the public notes (a
  * column beside the player, a bottom drawer below 721px). Moving between Videos never returns to the list. State is in memory; the URL does not change.
  */
-export function GuestVideoScreen({ api, verify, writer, drafts, subscription, session, onSession, archived, onArchived, videos, socialOverlays, index, onIndex, onBack, onUnavailable, onGrantsChanged, onDecided, onResyncDelivery, onShownVersion, identity = null, viewportRoot = null }: {
+export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, pageHref = null, writer, drafts, subscription, session, onSession, archived, onArchived, videos, socialOverlays, index, onIndex, onBack, onUnavailable, onGrantsChanged, onDecided, onResyncDelivery, onShownVersion, identity = null, viewportRoot = null }: {
   api: GuestApi;
   /** The element the phone keyboard box is written on (#879 PR 2): `GuestApp`'s guest column, which holds the notices above this screen too. */
   viewportRoot?: HTMLElement | null;
@@ -126,6 +126,10 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   onIndex: (next: number) => void;
   /** Present only when there is a list to go back to (a single-Video link has none). */
   onBack: (() => void) | null;
+  /** The Delivery page this link was opened from (#882, D34): Back is a native link to it, never router or history navigation. Takes the leading slot over `onBack`. */
+  pageHref?: string | null;
+  /** The Delivery review link (#882, ADR 0025): downloads need no code. */
+  canDownloadWithoutCode?: boolean;
   onUnavailable: () => void;
   /** The displayed Version is no longer granted: the freshly read list, for the page to show instead. */
   onGrantsChanged: (fresh: GuestVideoDto[]) => void;
@@ -564,7 +568,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   const startDecision = (value: DecisionValue, fromSheet = false) => { decisionFromSheet.current = fromSheet; if (session.verified) openDecision(value); else requestVerify(value); };
   const allowDownload = session.link.allow.download;
   // Download all (#741 14-ui-guest) on a film of a multi-film link: one controller for both layouts, so a crossing keeps its dialog. A desktop draws its button in the delivery row; a phone, a ⋯ row (P10).
-  const downloadAll = useGuestDownloadAll({ api, verify, session, onSession, onUnavailable, finalFocus: phone ? headerMenu : undefined });
+  const downloadAll = useGuestDownloadAll({ api, verify, canDownloadWithoutCode, session, onSession, onUnavailable, finalFocus: phone ? headerMenu : undefined });
   const offerDownloadAll = videos.length > 1;
 
   const savedHidden = compose.replacesSavedDrawing(selectedId);
@@ -603,7 +607,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       <Button type="button" variant={version.decision?.value === "approved" ? "outline" : "default"} data-testid="guest-approve" className={TOUCH} onClick={() => { startDecision("approved"); }}><Check aria-hidden="true" />Approve</Button>
       <Button type="button" variant="outline" data-testid="guest-request-changes" className={TOUCH} onClick={() => { startDecision("changes_requested"); }}><MessageSquareWarning aria-hidden="true" />Request changes</Button>
     </>}
-    <GuestDownload video={video} version={version} allowDownload={allowDownload} verified={session.verified} onNeedVerify={() => { requestVerify("download"); }} />
+    <GuestDownload video={video} version={version} allowDownload={allowDownload} verified={session.verified || canDownloadWithoutCode} onNeedVerify={() => { requestVerify("download"); }} />
     {offerDownloadAll && <GuestDownloadAllButton controller={downloadAll} />}
     {downloadHintLine}
     {decisionNoticeLine}
@@ -668,7 +672,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
   // and the decisions always sit under a rule.
   const phoneBar = <>
     <ReviewPhoneBar
-      back={onBack ? <Button type="button" variant="ghost" className={`${TOUCH} shrink-0 max-[721px]:min-w-11`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span className="sr-only">All videos</span></Button> : null}
+      back={pageHref !== null ? <Button variant="ghost" nativeButton={false} data-testid="guest-back-to-page" className={`${TOUCH} shrink-0 max-[721px]:min-w-11`} render={<a href={pageHref} />}><ChevronLeft aria-hidden="true" /><span className="sr-only">Back to the delivery page</span></Button>
+        : onBack ? <Button type="button" variant="ghost" className={`${TOUCH} shrink-0 max-[721px]:min-w-11`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span className="sr-only">All videos</span></Button> : null}
       title={<h1 data-testid="guest-video-title" title={video.title} className="m-0 w-full min-w-[6rem] truncate [font:var(--type-body)]">{video.title}</h1>}
       chip={<VersionChip buttonRef={chipRef} label={latestLabel} onClick={() => { setVersionsOpen(true); }} />}
       // A recorded decision takes the Approve slot as its badge (P2), whether or not the link still lets the guest decide.
@@ -676,7 +681,7 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
       actions={<ReviewActionSheet container={slot}>
         {(close) => <>
           {socialOverlays.length > 0 && <ActionRow testId="guest-social-toggle" icon={<Smartphone aria-hidden="true" />} pressed={socialOn} onSelect={() => { setSocial(!socialOn); close(); }}>Social preview</ActionRow>}
-          {downloadRow && (session.verified
+          {downloadRow && (session.verified || canDownloadWithoutCode
             ? <ActionRow testId="guest-download" icon={<DownloadIcon aria-hidden="true" />} href={version.downloadUrl ?? undefined} download onSelect={() => { close(); }}>{`Download v${version.version}`}</ActionRow>
             : <ActionRow testId="guest-download" icon={<DownloadIcon aria-hidden="true" />} onSelect={() => { close(true); requestVerify("download"); }}>{`Download v${version.version}`}</ActionRow>)}
           {downloadAllRow && <ActionRow testId="guest-download-all" icon={<FolderDown aria-hidden="true" />} onSelect={() => { close(true); downloadAll.start(); }}>Download all…</ActionRow>}
@@ -707,7 +712,8 @@ export function GuestVideoScreen({ api, verify, writer, drafts, subscription, se
     <div data-testid="guest-header-hide" className={imm ? "hidden" : "contents"} inert={imm}>
     {phone ? phoneBar : <header className="flex flex-col border-b border-border bg-card text-card-foreground">
      <div data-testid="guest-bar" className="flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] px-[var(--space-4)] py-[var(--space-1)]">
-      {onBack && <Button type="button" variant="ghost" className={`${TOUCH} shrink-0`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span>All videos</span></Button>}
+      {pageHref !== null ? <Button variant="ghost" nativeButton={false} data-testid="guest-back-to-page" className={`${TOUCH} shrink-0`} render={<a href={pageHref} />}><ChevronLeft aria-hidden="true" /><span>Delivery page</span></Button>
+        : onBack && <Button type="button" variant="ghost" className={`${TOUCH} shrink-0`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span>All videos</span></Button>}
       <h1 data-testid="guest-video-title" title={video.title} className="m-0 min-w-0 flex-1 truncate [font:var(--type-body)]">{video.title}</h1>
       <div className="flex min-w-0 flex-none items-center gap-[var(--space-3)]">
       {videos.length > 1 && <div className="flex items-center gap-[var(--space-2)]">

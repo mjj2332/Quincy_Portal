@@ -42,8 +42,10 @@ export type GuestDownloadAllController = {
  * A manifest 401 (verification lost) does the same, and is never the Unavailable page. A manifest 403 `download_disabled` (staff turned downloads off while the page was open) closes the dialog, sets
  * the session's `allow.download` false so every download control goes, and leaves a short notice where this button was; the review stays.
  */
-export function useGuestDownloadAll({ api, verify, session, onSession, onUnavailable, finalFocus }: {
+export function useGuestDownloadAll({ api, verify, canDownloadWithoutCode = false, session, onSession, onUnavailable, finalFocus }: {
   api: GuestApi; verify: GuestVerify; session: GuestSessionResponse; onSession: (next: GuestSessionResponse) => void; onUnavailable: () => void;
+  /** The Delivery review link (#882, ADR 0025): no code. The server decides; this only skips the dialog. */
+  canDownloadWithoutCode?: boolean | undefined;
   /** Where focus goes when the dialog closes; absent, back to what opened it. A phone ⋯ row is gone by then (#879 PR 3b), so the screen names the ⋯. */
   finalFocus?: (() => HTMLElement | null) | undefined;
 }): GuestDownloadAllController {
@@ -110,7 +112,7 @@ export function useGuestDownloadAll({ api, verify, session, onSession, onUnavail
   const archive = prepared.status === "idle" || prepared.status === "checking" ? (loaded.kind === "ok" ? loaded.manifest.archive.state : "ready") : prepared.status;
   const canDownload = loaded.kind === "ok" && loaded.manifest.included.length > 0 && !loaded.manifest.tooLarge && archive === "ready";
   const close = () => { generation.current += 1; setOpen(false); };
-  const start = () => { if (session.verified) { setOpen(true); load(); } else verify.request({ active: () => true, done: (verified) => { if (verified) openAndLoad.current(); } }); };
+  const start = () => { if (session.verified || canDownloadWithoutCode) { setOpen(true); load(); } else verify.request({ active: () => true, done: (verified) => { if (verified) openAndLoad.current(); } }); };
   const state = session.link.allow.download ? "ready" : turnedOff ? "off" : "hidden";
   const notice = state === "off" ? <p role="status" data-testid="guest-download-all-disabled" className="m-0 text-foreground-secondary [font:var(--type-label)]">Downloads are turned off for this review.</p> : null;
   const dialog = state !== "ready" ? null : (

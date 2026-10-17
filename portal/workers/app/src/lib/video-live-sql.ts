@@ -12,6 +12,14 @@ export const LIVE_VERSION = (metaAlias: string): string => `${metaAlias}.removed
 /** The Video is not in Trash. `videoAlias` is the alias of `videos`. */
 export const LIVE_VIDEO = (videoAlias: string): string => `${videoAlias}.removed_at IS NULL`;
 
+/**
+ * An OPEN ROOT note, for the alias `n` (`video_notes`): not a reply, not resolved, and either live or a tombstone that kept a reply. The one rule behind every "open notes" count (staff Version summaries, the
+ * guest list, the Delivery page's film tile), so they cannot drift.
+ */
+export const OPEN_ROOT_NOTE_SQL = `n.parent_id IS NULL AND n.resolved_at IS NULL AND (n.deleted_at IS NULL OR EXISTS (SELECT 1 FROM video_notes r WHERE r.parent_id = n.id))`;
+/** The same, for the notes a guest can read: PUBLIC open roots. */
+export const OPEN_PUBLIC_ROOT_NOTE_SQL = `n.visibility = 'public' AND ${OPEN_ROOT_NOTE_SQL}`;
+
 /** Both: a live Version of a live Video. */
 export const LIVE_VERSION_OF_VIDEO = (metaAlias: string, videoAlias: string): string => `${LIVE_VERSION(metaAlias)} AND ${LIVE_VIDEO(videoAlias)}`;
 

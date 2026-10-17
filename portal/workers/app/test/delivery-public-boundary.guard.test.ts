@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { deliveryItemDtoSchema } from "@quincy/shared";
 
 /**
  * The public Delivery page (#787 slice 6) shares a Worker with the staff app and nothing else. This scan keeps `src/delivery/**` from importing anything staff-only: the session and capability
@@ -38,6 +39,22 @@ describe("public Delivery surface boundary", () => {
     expect(Object.keys(sources).some((path) => path.endsWith("lib/delivery-review-entry.ts"))).toBe(true);
     expect(Object.keys(sources).some((path) => path.endsWith("lib/delivery-unlock-request.ts"))).toBe(true);
     for (const [path, source] of Object.entries(sources)) expect(violations(source), path).toEqual([]);
+  });
+
+  it("the film tile's note count (#882) is note activity on a public response, so it may only come from the PUBLIC open-root fragment", () => {
+    const entry = Object.entries(sources).find(([path]) => path.endsWith("lib/delivery-review-entry.ts"))![1];
+    expect(entry).toContain("OPEN_PUBLIC_ROOT_NOTE_SQL");
+    expect(entry).not.toMatch(/OPEN_ROOT_NOTE_SQL(?!\w)/); // the non-visibility-filtered fragment would count internal notes
+    expect(entry).not.toMatch(/visibility\s*=\s*'internal'|n\.body|content_json/);
+  });
+
+  it("the public item carries exactly these keys: a film's own `title` (owner decision #882) is the ONLY Video field, and no Asset id, R2 key, filename or staff field", () => {
+    expect(Object.keys(deliveryItemDtoSchema.shape).sort()).toEqual(["durationMs", "handle", "height", "kind", "label", "locked", "openNotes", "position", "premium", "review", "thumbUrl", "title", "url", "version", "width"]);
+    const builder = (import.meta.glob("../src/lib/delivery-dto.ts", { query: "?raw", import: "default", eager: true }) as Record<string, string>)["../src/lib/delivery-dto.ts"]!;
+    // `title` leaves the builder only for a film (never a photo or document) and only from the live Video title, never from a filename column.
+    expect(builder).toMatch(/title: row\.kind === "video" \? cleanTitle\(row\.title\) : null/);
+    expect(builder).toMatch(/const TITLE_SQL = `\(SELECT v\.title FROM video_version_meta vm JOIN videos v ON v\.id = vm\.video_id WHERE vm\.asset_id = a\.id AND \$\{LIVE_VERSION_OF_VIDEO\("vm", "v"\)\}\)`;/);
+    expect(builder).not.toMatch(/AS title[^`]*original_filename|original_filename[^`]*AS title/);
   });
 
   it("detects each forbidden reach on planted sources", () => {

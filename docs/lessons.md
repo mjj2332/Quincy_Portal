@@ -6335,6 +6335,13 @@ Tags: deploy-ci, testing-guards · #872
 - **Rule.** A response a deployed client parses strictly keeps its shape. New data goes in a new read with its own strict schema, and the client treats that read's failure as "no such feature", never as the link being gone. Compare the schema with `origin/main` before merging.
 - **Gate.** `workers/app/test/guest-social-overlays.test.ts` ("keeps the /videos body exactly the shape the deployed guest page parses") and `GuestSocial.dom.test.tsx` ("never marks the link unavailable when the overlays read fails").
 
+## A gate that widens for one kind of row must be re-read from the row at every fence, not from the cached session (#882)
+Tags: auth, permissions, deploy-ci · #882
+
+- **What bit (avoided).** The Delivery review link downloads without a code while every other Review link still needs one. The link's `delivery_review` flag was read once with the session; a staff edit that turned a link back into an ordinary one mid-download would have kept serving bytes and writing audit rows to an unverified session.
+- **Rule.** The cached flag only picks the cheap early 401. The audit INSERT, the last byte fence and every zip entry re-evaluate one SQL predicate (`credentialSql`) against the live row, so a link that stops qualifying is 401 with no audit and no bytes.
+- **Also.** A key added to a strictly parsed DTO breaks deployed staff clients that share the schema (their Delivery tab vanishes on a parse failure). New keys are optional in the shared schema and only the public read emits them; a key-set test pins that the staff DTO has none.
+- **Gate.** `workers/app/test/guest-download.test.ts` (the mid-request fence cases) and the Delivery DTO key-set test.
 ## A layout switched by two flags will disagree: the phone composer and its sheet (#879 fix)
 Tags: focus-overlays, css-tokens, qa-browser · #879
 

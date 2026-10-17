@@ -8,7 +8,7 @@ import { useGuestDownloadAll, type GuestDownloadAllController } from "./use-gues
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
 /** Download all as a button with its own dialog (the video list, #741 14-ui-guest). The behaviour is `useGuestDownloadAll`'s; a phone film screen draws it as a ⋯ row instead (#879 PR 3b). */
-export function GuestDownloadAll(props: { api: GuestApi; verify: GuestVerify; session: GuestSessionResponse; onSession: (next: GuestSessionResponse) => void; onUnavailable: () => void }) {
+export function GuestDownloadAll(props: { api: GuestApi; verify: GuestVerify; canDownloadWithoutCode?: boolean | undefined; session: GuestSessionResponse; onSession: (next: GuestSessionResponse) => void; onUnavailable: () => void }) {
   const controller = useGuestDownloadAll(props);
   return <><GuestDownloadAllButton controller={controller} />{controller.dialog}</>;
 }

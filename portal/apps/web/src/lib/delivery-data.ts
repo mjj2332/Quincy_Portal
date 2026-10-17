@@ -1,7 +1,7 @@
 import { useQuery, type QueryClient, type QueryFunctionContext, type UseQueryResult } from "@tanstack/react-query";
 import { z } from "zod";
 import {
-  assetPremiumResponseSchema, deliveryCandidatesResponseSchema, deliveryPageDtoSchema, deliveryPublishResponseSchema, deliveryStateSchema, videoPremiumResponseSchema,
+  assetPremiumResponseSchema, deliveryCandidatesResponseSchema, deliveryPageDtoSchema, deliveryPreviewTitlesSchema, deliveryPublishResponseSchema, deliveryStateSchema, videoPremiumResponseSchema,
   type AssetPremiumResponse, type DeliveryCandidatesResponse, type CollectionKind, type DeliveryPageDto, type DeliveryPublishResponse, type DeliveryState, type VideoDto,
 } from "@quincy/shared";
 import { ZodError } from "zod";
@@ -81,7 +81,11 @@ async function guarded<T>(queryClient: QueryClient, call: () => Promise<T>): Pro
 }
 
 export async function previewDelivery(queryClient: QueryClient, projectId: string, input: { assetIds: string[]; coverAssetId: string | null }): Promise<DeliveryPageDto> {
-  return guarded(queryClient, async () => z.object({ dto: deliveryPageDtoSchema }).parse(await apiPost<unknown, typeof input>(`${deliveryPath(projectId)}/preview`, input)).dto);
+  return guarded(queryClient, async () => {
+    // `titles` is optional: an older Worker omits it and the page falls back to the "Video 01" label. They are merged into the items here so the shared client page needs no Preview special case (#882).
+    const { dto, titles } = z.object({ dto: deliveryPageDtoSchema, titles: deliveryPreviewTitlesSchema.optional().default({}) }).parse(await apiPost<unknown, typeof input>(`${deliveryPath(projectId)}/preview`, input));
+    return { ...dto, items: dto.items.map((item) => (titles[item.handle] === undefined ? item : { ...item, title: titles[item.handle]! })) };
+  });
 }
 
 export type PublishInput = { assetIds: string[]; coverAssetId: string | null; expectedLatestSet: number | null; operationId: string };

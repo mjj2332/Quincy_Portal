@@ -66,6 +66,53 @@ describe("VideoTile", () => {
     expect(onOpen).toHaveBeenCalledWith(open);
   });
 
+  it("with an href the open control is a same-tab link that stretches over the tile, keeping the summary and the touch size (#882, story 28)", async () => {
+    const { onOpen: _unused, ...linkBase } = base;
+    const el = await mount(<VideoTile {...linkBase} href="/d/review?link=x#t=y" />);
+    const open = el.querySelector<HTMLElement>('[data-testid="video-tile-open"]')!;
+    expect(open.tagName).toBe("A");
+    expect(open.getAttribute("href")).toBe("/d/review?link=x#t=y");
+    expect(open.hasAttribute("target")).toBe(false);
+    expect(open.textContent).toBe("Kitchen walkthrough");
+    expect(el.ownerDocument.getElementById(open.getAttribute("aria-describedby")!)!.textContent).toBe("v3, 1:32, 2 open notes on v3");
+    for (const kept of ["min-h-11", "after:absolute", "after:inset-0", "items-center"]) expect(open.className).toContain(kept);
+    expect(open.querySelector("span")!.className).toContain("truncate");
+    expect(el.querySelector("button")).toBeNull();
+  });
+
+  it("an openLabel names the open control for what it does, keeping the title in the name", async () => {
+    const el = await mount(<VideoTile {...base} openLabel="Request unlock: Kitchen walkthrough" />);
+    const open = el.querySelector<HTMLElement>('[data-testid="video-tile-open"]')!;
+    expect(open.tagName).toBe("BUTTON");
+    expect(open.getAttribute("aria-label")).toBe("Request unlock: Kitchen walkthrough");
+  });
+
+  it("a caption is part of the tile's one control: it sits under the stretched open control, not raised above it like a footer (#882, V1)", async () => {
+    const el = await mount(<VideoTile {...base} locked caption={<p data-testid="cap">Request unlock</p>} footer={<p data-testid="foot">footer</p>} />);
+    const caption = el.querySelector('[data-testid="cap"]')!.parentElement!;
+    const footer = el.querySelector('[data-testid="foot"]')!.parentElement!;
+    expect(footer.className.split(" ")).toEqual(expect.arrayContaining(["relative", "z-10"]));
+    // A tap anywhere on the caption lands on the open control's ::after: no stacking context of its own, and no control inside.
+    expect(caption.className.split(" ")).not.toContain("z-10"); expect(caption.className.split(" ")).not.toContain("relative");
+    expect(caption.className).toContain("px-[var(--space-3)]"); expect(caption.className).toContain("pb-[var(--space-3)]");
+  });
+
+  it("openDisabled leaves the open control focusable but inert: aria-disabled, no open on click, no pointer cursor", async () => {
+    const onOpen = vi.fn();
+    const el = await mount(<VideoTile {...base} onOpen={onOpen} openLabel="Unlock requested: Kitchen walkthrough" openDisabled />);
+    const open = el.querySelector<HTMLButtonElement>('[data-testid="video-tile-open"]')!;
+    expect(open.getAttribute("aria-disabled")).toBe("true"); expect(open.disabled).toBe(false);
+    open.focus(); expect(document.activeElement).toBe(open);
+    await act(async () => { open.click(); });
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(open.className).toContain("aria-disabled:cursor-default");
+  });
+
+  it("without openDisabled the open control carries no aria-disabled", async () => {
+    const el = await mount(<VideoTile {...base} />);
+    expect(el.querySelector('[data-testid="video-tile-open"]')!.hasAttribute("aria-disabled")).toBe(false);
+  });
+
   it("ticks without opening, and the tick, a menu and a footer are separate controls", async () => {
     const onOpen = vi.fn(); const onToggle = vi.fn();
     const el = await mount(<VideoTile {...base} onOpen={onOpen} select={{ selected: false, onToggle }} menu={<button type="button">Menu</button>} footer={<p>footer</p>} />);
@@ -104,5 +151,32 @@ describe("VideoTile", () => {
     const el = await mount(<VideoTile {...base} premium linked />);
     expect(el.textContent).toContain("Premium");
     expect(el.textContent).toContain("On a Review link");
+  });
+
+  it("paper tone (#882): a light tile with a hairline border, no inverse surface, and the poster stays black", async () => {
+    const el = await mount(<VideoTile {...base} tone="paper" />);
+    const tile = el.querySelector<HTMLElement>('[data-testid="video-tile"]')!;
+    expect(tile.dataset.tone).toBe("paper"); expect(tile.hasAttribute("data-surface")).toBe(false);
+    expect(tile.className).toContain("data-[tone=paper]:border-[var(--border-hairline)]");
+    expect(el.querySelector('[data-testid="video-tile-poster"]')!.className).toContain("bg-invert");
+  });
+
+  it("with no Version and no duration (a film with no review to open) draws neither chip and says neither", async () => {
+    const el = await mount(<VideoTile {...base} tone="paper" version={null} durationMs={null} openNotes={null} />);
+    expect(el.querySelector('[data-testid="video-tile-version"]')).toBeNull();
+    expect(el.textContent).not.toMatch(/\bv\d|\d:\d\d/);
+    const open = el.querySelector('[data-testid="video-tile-open"]')!;
+    expect(el.ownerDocument.getElementById(open.getAttribute("aria-describedby")!)!.textContent).toBe("");
+  });
+
+  it("locked (D37): a light box with a lock and 'Film · locked', no poster, Version, duration or count, and the menu slot for the Premium badge", async () => {
+    const el = await mount(<VideoTile {...base} tone="paper" locked version={null} durationMs={null} openNotes={null} menu={<span data-testid="badge">Premium</span>} />);
+    expect(el.querySelector('[data-testid="video-tile-locked"]')!.textContent).toBe("Film · locked");
+    expect(el.querySelector('[data-testid="video-tile-poster"]')!.className).toContain("bg-surface-sunken");
+    expect(el.querySelector("img")).toBeNull();
+    expect(el.querySelector('[data-testid="video-tile-version"]')).toBeNull(); expect(el.querySelector('[data-testid="video-tile-open-notes"]')).toBeNull();
+    expect(el.querySelector('[data-testid="badge"]')).not.toBeNull();
+    const open = el.querySelector('[data-testid="video-tile-open"]')!;
+    expect(el.ownerDocument.getElementById(open.getAttribute("aria-describedby")!)!.textContent).toBe("Film, locked: Premium");
   });
 });

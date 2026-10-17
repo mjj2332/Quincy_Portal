@@ -455,98 +455,230 @@ describe("lightbox", () => {
   });
 });
 
-describe("film", () => {
-  it("is a native video with controls, no preload and the thumbnail as its poster, and an original download", async () => {
-    await show(page([film(1)])); await click(tab("Film"));
-    const video = document.querySelector("video")!;
-    expect(video.hasAttribute("controls")).toBe(true);
-    expect(video.getAttribute("preload")).toBe("none");
-    expect(video.hasAttribute("playsinline")).toBe(true);
-    expect(video.getAttribute("poster")).toBe(film(1).thumbUrl);
-    expect(video.getAttribute("src")).toBe(film(1).url);
-    expect(document.querySelector<HTMLAnchorElement>('a[aria-label="Download Video 01, original"]')!.getAttribute("href")).toBe(hrefs.download(handle(1)));
-  });
-  it("offers Review & feedback as a new-tab link only on an unlocked film that carries a review entry (#847)", async () => {
-    const url = "/d/review?link=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa#t=secret&v=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-    await show(page([film(1, { review: { url } }), film(2), locked(3, { kind: "video", review: null })])); await click(tab("Film"));
-    const links = [...document.querySelectorAll<HTMLAnchorElement>("a")].filter((a) => a.textContent === "Review & feedback");
-    expect(links).toHaveLength(1);
-    expect(links[0]!.getAttribute("href")).toBe(url);
-    expect(links[0]!.getAttribute("target")).toBe("_blank");
-    expect(links[0]!.getAttribute("rel")).toBe("noopener noreferrer");
-    expect(links[0]!.getAttribute("aria-label")).toBe("Review & feedback for Video 01, opens in a new tab");
-    expect(links[0]!.hasAttribute("download")).toBe(false);
-    expect(links[0]!.closest("li")!.querySelector("video")).not.toBeNull();
-    for (const tile of document.querySelectorAll('[data-testid="delivery-locked"]')) expect(tile.querySelector("a")).toBeNull();
-  });
-  it("pauses when the tab changes and when the page goes away", async () => {
-    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
-    try {
-      await show(page([photo(1), film(2)])); await click(tab("Film"));
-      const video = document.querySelector("video");
-      pause.mockClear();
-      await click(tab("Gallery"));
-      expect(pause.mock.contexts).toContain(video);
-      await click(tab("Film"));
-      const again = document.querySelector("video");
-      pause.mockClear();
-      await mounted!.unmount(); mounted = null;
-      expect(pause.mock.contexts).toContain(again);
-    } finally { pause.mockRestore(); }
-  });
-  it("starting one film pauses another", async () => {
-    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
-    try {
-      await show(page([film(1), film(2)])); await click(tab("Film"));
-      const [first, second] = [...document.querySelectorAll("video")];
-      pause.mockClear();
-      await act(async () => { second!.dispatchEvent(new Event("play", { bubbles: false })); });
-      expect(pause.mock.contexts).toContain(first);
-      expect(pause.mock.contexts).not.toContain(second);
-    } finally { pause.mockRestore(); }
-  });
-  it("falls back to a message and the original download when the film will not play", async () => {
-    await show(page([film(1)])); await click(tab("Film"));
-    await act(async () => { document.querySelector("video")!.dispatchEvent(new Event("error")); });
-    expect(document.querySelector("video")).toBeNull();
-    expect(byTestId("delivery-film-failed")!.textContent).toContain("This film can't be played here.");
-    expect(document.querySelector('a[aria-label="Download Video 01, original"]')).not.toBeNull();
-  });
-});
+describe("film tiles (#882)", () => {
+  const REVIEW = "/d/review?link=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa#t=secret&v=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const PAGE_SLUG = "12-example-st-23456b";
+  const tileOf = (n: number) => document.querySelector<HTMLElement>(`[data-testid="delivery-film-item"][data-handle="${handle(n)}"]`)!;
+  const openOf = (n: number) => tileOf(n).querySelector<HTMLElement>('[data-testid="delivery-film-open"]')!;
+  const showFilms = async (items: DeliveryPageDto["items"], props: Props = {}) => { await show(page(items), { pageSlug: PAGE_SLUG, ...props }); await click(tab("Film")); };
 
-describe("film frame (#848)", () => {
-  const ratio = (el: Element | null | undefined) => (el as HTMLElement).style.getPropertyValue("--film-ratio");
-  it("gives the video its own shape as a CSS variable, never an inline aspect-ratio that would beat the container rule", async () => {
-    await show(page([film(1, { width: 1080, height: 1920 }), film(2, { width: null, height: null })])); await click(tab("Film"));
-    const [vertical, unknown] = [...document.querySelectorAll("video")];
-    expect(ratio(vertical)).toBe("1080 / 1920");
-    expect(vertical!.style.getPropertyValue("aspect-ratio")).toBe("");
-    expect(ratio(unknown)).toBe("");
-    expect(unknown!.style.getPropertyValue("aspect-ratio")).toBe("");
+  it("is the guest poster tile in paper colours: poster, Version, duration, title and the open-note count, no inline player", async () => {
+    await showFilms([film(1, { review: { url: REVIEW }, version: 3, openNotes: 2 })]);
+    const tile = byTestId("delivery-film-tile")!;
+    expect(tile.dataset.tone).toBe("paper"); expect(tile.hasAttribute("data-surface")).toBe(false);
+    expect(tile.querySelector("img")!.getAttribute("src")).toBe(film(1).thumbUrl);
+    expect(tile.textContent).toContain("v3"); expect(tile.textContent).toContain("1:02");
+    expect(openOf(1).textContent).toBe("Video 01");
+    expect(byTestId("delivery-film-tile-open-notes")!.textContent).toBe("2");
+    expect(document.querySelector("video")).toBeNull();
+    const summary = document.getElementById(openOf(1).getAttribute("aria-describedby")!)!;
+    expect(summary.textContent).toBe("v3, 1:02, 2 open notes on v3");
   });
-  it("keeps the same frame after a playback error and on a locked film", async () => {
-    await show(page([film(1, { width: 1080, height: 1920 }), locked(2, { kind: "video", label: "Video 02", width: 1080, height: 1920, url: null, thumbUrl: null })]));
-    await click(tab("Film"));
-    await act(async () => { document.querySelector("video")!.dispatchEvent(new Event("error")); });
-    const failed = byTestId("delivery-film-failed")!;
-    expect(ratio(failed)).toBe("1080 / 1920");
-    expect(failed.style.getPropertyValue("aspect-ratio")).toBe("");
-    await click(tab("Premium"));
-    const frame = byTestId("delivery-locked")!.firstElementChild;
-    expect(ratio(frame)).toBe("1080 / 1920");
-    expect((frame as HTMLElement).style.getPropertyValue("aspect-ratio")).toBe("");
+  it("names a film by its own title (#882): the tile, the unlock control, the menu and the Download link, and a long title truncates; a page from an older Worker (no title) keeps the label", async () => {
+    const long = "A very long film title ".repeat(12).trim();
+    await showFilms([film(1, { review: { url: REVIEW }, title: "Harbour View Walkthrough" }), film(2, { review: { url: REVIEW }, title: long }), film(3, { review: { url: REVIEW } })]);
+    expect(openOf(1).textContent).toBe("Harbour View Walkthrough");
+    expect(openOf(2).textContent).toBe(long); expect(openOf(2).querySelector("span")!.className).toContain("truncate");
+    expect(openOf(3).textContent).toBe("Video 03");
+    const trigger = tileOf(1).querySelector<HTMLElement>('[data-testid="delivery-film-menu"]')!;
+    expect(trigger.getAttribute("aria-label")).toBe("Actions for Harbour View Walkthrough");
+    await click(trigger);
+    expect(document.querySelector('[data-testid="delivery-film-download"]')!.getAttribute("aria-label")).toBe("Download Harbour View Walkthrough, original");
   });
-  it("still renders every tile's content on a mixed page", async () => {
-    await show(page([film(1), film(2, { width: 1080, height: 1920 }), film(3, { url: null }), locked(4, { kind: "video", label: "Video 04", url: null, thumbUrl: null })]));
-    await click(tab("Film"));
-    expect(document.querySelectorAll("video")).toHaveLength(2);
-    expect(allByTestId("delivery-film-failed")).toHaveLength(1);
-    for (const label of ["Video 01", "Video 02", "Video 03"]) expect(document.querySelector(`a[aria-label="Download ${label}, original"]`), label).not.toBeNull();
-    expect(document.body.textContent).toContain("1:02");
+  it("a locked Premium film shows its title too, and the unlock control is named for it", async () => {
+    await show(page([locked(1, { kind: "video", label: "Video 01", title: "Sunset Cut", url: null, thumbUrl: null })]));
     await click(tab("Premium"));
-    const panel = byTestId("delivery-panel-premium")!;
-    expect(panel.textContent).toContain("Video 04"); expect(panel.textContent).toContain("Premium");
-    expect([...panel.querySelectorAll("button")].some((b) => b.textContent === "Request unlock")).toBe(true);
+    expect(openOf(1).textContent).toBe("Sunset Cut");
+    expect(openOf(1).getAttribute("aria-label")).toBe("Request unlock: Sunset Cut");
+  });
+  it("the plain player is titled with the film's title", async () => {
+    await showFilms([film(1, { title: "Harbour View Walkthrough" })]);
+    await click(openOf(1)); await flush();
+    const dialog = byTestId("delivery-film-player")!;
+    expect(dialog.textContent).toContain("Harbour View Walkthrough"); expect(dialog.textContent).not.toContain("Video 01");
+    expect(byTestId("delivery-film-player-download")!.getAttribute("aria-label")).toBe("Download Harbour View Walkthrough, original");
+  });
+  it("hides the count at 0 and shows no Version or count where there is no review (the page cannot point them anywhere)", async () => {
+    await showFilms([film(1, { review: { url: REVIEW }, version: 2, openNotes: 0 }), film(2, { version: null, openNotes: null })]);
+    expect(tileOf(1).querySelector('[data-testid="delivery-film-tile-open-notes"]')).toBeNull();
+    expect(tileOf(1).textContent).toContain("v2");
+    expect(tileOf(2).querySelector('[data-testid="delivery-film-tile-version"]')).toBeNull();
+    expect(tileOf(2).querySelector('[data-testid="delivery-film-tile-open-notes"]')).toBeNull();
+    expect(tileOf(2).textContent).toContain("1:02");
+  });
+  it("builds the same-tab address as the review link plus the page to return to (D34)", async () => {
+    const { reviewAddress } = await import("./FilmList");
+    expect(reviewAddress(REVIEW, PAGE_SLUG)).toBe(`${REVIEW}&p=${PAGE_SLUG}`);
+    expect(reviewAddress(REVIEW, null)).toBe(REVIEW);
+  });
+  it("opens the review through a real same-tab link to the review address and the slug (story 28), so open-in-new-tab works", async () => {
+    await showFilms([film(1, { review: { url: REVIEW } })]);
+    const open = openOf(1);
+    expect(open.tagName).toBe("A");
+    expect(open.getAttribute("href")).toBe(`${REVIEW}&p=${PAGE_SLUG}`);
+    expect(open.hasAttribute("target")).toBe(false); expect(open.hasAttribute("download")).toBe(false);
+    expect(open.textContent).toBe("Video 01");
+    expect(document.querySelector('[data-testid="delivery-film-player"]')).toBeNull();
+  });
+  it("keeps a button only where the tile acts rather than navigates: the plain player (no review) and a locked film", async () => {
+    await show(page([film(1), locked(2, { kind: "video", label: "Video 02", url: null, thumbUrl: null })]), { pageSlug: PAGE_SLUG });
+    await click(tab("Film"));
+    expect(openOf(1).tagName).toBe("BUTTON"); expect(openOf(1).hasAttribute("href")).toBe(false);
+    await click(tab("Premium"));
+    expect(openOf(2).tagName).toBe("BUTTON");
+  });
+  it("has no new-tab link and no Review & feedback button any more", async () => {
+    await showFilms([film(1, { review: { url: REVIEW } })]);
+    expect([...byTestId("delivery-film")!.querySelectorAll("a")].filter((a) => a.textContent === "Review & feedback" || a.getAttribute("target") === "_blank")).toHaveLength(0);
+    expect(byTestId("delivery-film")!.textContent).not.toContain("Review & feedback");
+  });
+  it("⋯ offers Download original (a download link to the original); Preview has no ⋯ at all", async () => {
+    await showFilms([film(1, { review: { url: REVIEW } })]);
+    await click(byTestId("delivery-film-menu"));
+    const link = document.querySelector<HTMLAnchorElement>('[data-testid="delivery-film-download"]')!;
+    expect(link.textContent).toContain("Download original"); expect(link.getAttribute("href")).toBe(hrefs.download(handle(1))); expect(link.hasAttribute("download")).toBe(true);
+    await mounted!.unmount(); mounted = null;
+    await show(page([film(1)]), { hrefs: null }); await click(tab("Film"));
+    expect(byTestId("delivery-film-menu")).toBeNull();
+    expect(document.querySelector("a[download]")).toBeNull();
+  });
+  it("with no review a tap plays the film in the plain player: title, Download original, close, no notes, no code", async () => {
+    await showFilms([film(1)]);
+    await click(openOf(1)); await flush();
+    const dialog = byTestId("delivery-film-player")!;
+    expect(dialog.getAttribute("data-surface")).toBe("inverse");
+    expect(dialog.textContent).toContain("Video 01");
+    const video = dialog.querySelector("video")!; expect(video.getAttribute("src")).toBe(film(1).url); expect(video.hasAttribute("controls")).toBe(true);
+    expect(byTestId("delivery-film-player-download")!.getAttribute("href")).toBe(hrefs.download(handle(1)));
+    expect(dialog.textContent).not.toMatch(/note|code|verify/i);
+    expect(window.location.pathname).not.toContain("/d/review");
+  });
+  it("the plain player in Preview has no Download, and closing it pauses the film and returns focus to the tile", async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    try {
+      await show(page([film(1)]), { hrefs: null }); await click(tab("Film"));
+      const opener = openOf(1); opener.focus();
+      await click(opener); await flush();
+      expect(byTestId("delivery-film-player-download")).toBeNull();
+      const video = document.querySelector("video")!; pause.mockClear();
+      await click(byTestId("delivery-film-player-close")); await flush();
+      expect(byTestId("delivery-film-player")).toBeNull();
+      expect(pause.mock.contexts).toContain(video);
+      expect(document.activeElement).toBe(opener);
+    } finally { pause.mockRestore(); }
+  });
+  it("the plain player pauses when the page goes away", async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    try {
+      await showFilms([film(1)]); await click(openOf(1)); await flush();
+      const video = document.querySelector("video")!; pause.mockClear();
+      await mounted!.unmount(); mounted = null;
+      expect(pause.mock.contexts).toContain(video);
+    } finally { pause.mockRestore(); }
+  });
+  it("the plain player shows a loading line until the film's metadata is in (iOS fetches no frames before play), then the film alone", async () => {
+    await showFilms([film(1)]); await click(openOf(1)); await flush();
+    const loading = byTestId("delivery-film-player-loading")!;
+    expect(loading.getAttribute("role")).toBe("status"); expect(loading.textContent).toContain("Loading");
+    await act(async () => { byTestId("delivery-film-player-video")!.dispatchEvent(new Event("loadedmetadata")); });
+    expect(byTestId("delivery-film-player-loading")).toBeNull();
+    expect(byTestId("delivery-film-player-error")).toBeNull();
+  });
+  it("a film that fails to load is an inline error with Try again, which loads it afresh", async () => {
+    await showFilms([film(1)]); await click(openOf(1)); await flush();
+    const first = byTestId("delivery-film-player-video")!;
+    await act(async () => { first.dispatchEvent(new Event("error")); });
+    const error = byTestId("delivery-film-player-error")!;
+    expect(error.getAttribute("role")).toBe("alert"); expect(error.textContent).toMatch(/Couldn't play this film/);
+    expect(byTestId("delivery-film-player-video")).toBeNull(); expect(byTestId("delivery-film-player-loading")).toBeNull();
+    // Download original and Close stay: a film that will not stream may still download.
+    expect(byTestId("delivery-film-player-download")).not.toBeNull(); expect(byTestId("delivery-film-player-close")).not.toBeNull();
+    await click(byTestId("delivery-film-player-retry"));
+    const second = byTestId("delivery-film-player-video")!;
+    expect(second).not.toBe(first); expect(second.getAttribute("src")).toBe(film(1).url);
+    expect(byTestId("delivery-film-player-error")).toBeNull(); expect(byTestId("delivery-film-player-loading")).not.toBeNull();
+  });
+  it("the plain player closes by itself when the film is relocked", async () => {
+    mounted = await render(<Harness initial={page([film(1)])} after={page([locked(1, { kind: "video", label: "Video 01", url: null, thumbUrl: null })])} />);
+    await click(tab("Film")); await click(openOf(1)); await flush();
+    expect(byTestId("delivery-film-player")).not.toBeNull();
+    await click(byTestId("swap")); await flush();
+    expect(byTestId("delivery-film-player")).toBeNull();
+  });
+  it("a locked film is a locked tile: lock, 'Film · locked', Premium in the menu's place, no Version, duration or count", async () => {
+    const onRequestUnlock = vi.fn();
+    await show(page([locked(1, { kind: "video", label: "Video 01", url: null, thumbUrl: null })]), { onRequestUnlock });
+    await click(tab("Premium"));
+    const tile = byTestId("delivery-film-tile")!;
+    expect(tile.textContent).toContain("Film · locked"); expect(tile.querySelector('[data-testid="delivery-premium-badge"]')!.textContent).toBe("Premium");
+    expect(tile.querySelector("img, video, a[href], [src]")).toBeNull();
+    expect(tile.textContent).not.toMatch(/\bv\d|\d:\d\d/);
+    expect(byTestId("delivery-film-menu")).toBeNull();
+    await click(openOf(1)); expect(onRequestUnlock).toHaveBeenCalledWith(handle(1));
+  });
+  it("names the locked tile's whole-tile control for what it does: it requests the unlock", async () => {
+    await show(page([locked(1, { kind: "video", label: "Video 01", url: null, thumbUrl: null })]));
+    await click(tab("Premium"));
+    expect(openOf(1).getAttribute("aria-label")).toBe("Request unlock: Video 01");
+  });
+  describe("the locked tile is one control (#882, V1/V3)", () => {
+    const lockedFilm = () => locked(1, { kind: "video", label: "Video 01", url: null, thumbUrl: null });
+    const controls = () => [...tileOf(1).querySelectorAll("button, a[href], input, [tabindex]")];
+    const line = () => tileOf(1).querySelector<HTMLElement>('[data-testid="delivery-unlock"]')!;
+    const status = () => tileOf(1).querySelector<HTMLElement>('[data-testid="delivery-unlock-status"]')!;
+    const showLocked = async (unlockState: UnlockStates = {}, onRequestUnlock = vi.fn()) => { await show(page([lockedFilm()]), { unlockState, onRequestUnlock }); await click(tab("Premium")); return onRequestUnlock; };
+
+    it("V1: the tile is the one control, and 'Request unlock' is a text line on it, not a second button", async () => {
+      const onRequestUnlock = await showLocked();
+      expect(controls()).toEqual([openOf(1)]);
+      expect(openOf(1).getAttribute("aria-label")).toBe("Request unlock: Video 01"); expect(openOf(1).hasAttribute("aria-disabled")).toBe(false);
+      // The visible line is the tile's affordance; the control's name already says it, so the line is not read twice.
+      const action = line().querySelector<HTMLElement>('[data-testid="delivery-unlock-action"]')!;
+      expect(action.textContent).toBe("Request unlock"); expect(action.className).toContain("underline"); expect(action.getAttribute("aria-hidden")).toBe("true");
+      expect(status().getAttribute("aria-live")).toBe("polite"); expect(status().textContent).toBe("");
+      await click(openOf(1));
+      expect(onRequestUnlock).toHaveBeenCalledTimes(1); expect(onRequestUnlock).toHaveBeenCalledWith(handle(1));
+    });
+    it("V3: once requested, the line is the studio's acknowledgement and the tile is inert, named for what happened", async () => {
+      const onRequestUnlock = await showLocked({ [handle(1)]: { kind: "requested" } });
+      expect(controls()).toEqual([openOf(1)]);
+      expect(openOf(1).getAttribute("aria-label")).toBe("Unlock requested: Video 01");
+      expect(openOf(1).getAttribute("aria-disabled")).toBe("true"); expect((openOf(1) as HTMLButtonElement).disabled).toBe(false);
+      expect(status().textContent).toBe("Requested. The studio will be in touch."); expect(status().getAttribute("aria-live")).toBe("polite");
+      expect(line().querySelector('[data-testid="delivery-unlock-action"]')).toBeNull();
+      expect(tileOf(1).textContent).not.toContain("Request unlock");
+      await click(openOf(1));
+      expect(onRequestUnlock).not.toHaveBeenCalled();
+    });
+    it("while sending the tile is inert and the line says Sending", async () => {
+      const onRequestUnlock = await showLocked({ [handle(1)]: { kind: "sending" } });
+      expect(openOf(1).getAttribute("aria-label")).toBe("Request unlock: Video 01"); expect(openOf(1).getAttribute("aria-disabled")).toBe("true");
+      expect(line().querySelector('[data-testid="delivery-unlock-action"]')!.textContent).toBe("Sending");
+      await click(openOf(1)); expect(onRequestUnlock).not.toHaveBeenCalled();
+    });
+    it("a failed request says so and stays retryable from the tile", async () => {
+      const onRequestUnlock = await showLocked({ [handle(1)]: { kind: "failed" } });
+      expect(status().textContent).toBe("Couldn't send. Try again.");
+      expect(openOf(1).getAttribute("aria-label")).toBe("Request unlock: Video 01"); expect(openOf(1).hasAttribute("aria-disabled")).toBe(false);
+      expect(line().querySelector('[data-testid="delivery-unlock-action"]')!.textContent).toBe("Request unlock");
+      await click(openOf(1)); expect(onRequestUnlock).toHaveBeenCalledWith(handle(1));
+    });
+    it("a rate-limit wait holds the tile inert and counts down, then the tile requests again", async () => {
+      vi.useFakeTimers();
+      const onRequestUnlock = await showLocked({ [handle(1)]: { kind: "limited", until: Date.now() + 2000 } });
+      expect(openOf(1).getAttribute("aria-disabled")).toBe("true");
+      expect(status().textContent).toBe("Too many requests. Try again in 2 seconds.");
+      await click(openOf(1)); expect(onRequestUnlock).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+      expect(openOf(1).hasAttribute("aria-disabled")).toBe(false); expect(status().textContent).toBe("");
+      await click(openOf(1)); expect(onRequestUnlock).toHaveBeenCalledWith(handle(1));
+    });
+  });
+  it("lays the grid out as auto-fill 280 px columns, one column at 721 px and under the page's container (not the window), and a lone film across the row (D32, D33)", async () => {
+    await showFilms([film(1), film(2)]);
+    const grid = byTestId("delivery-film")!.className;
+    expect(grid).toContain("grid-cols-[repeat(auto-fill,minmax(min(280px,100%),1fr))]"); expect(grid).toContain("@max-[721px]:grid-cols-1"); expect(grid).toContain("has-[>li:only-child]:grid-cols-1");
+    expect(grid.split(" ")).not.toContain("max-[721px]:grid-cols-1");
   });
 });
 
@@ -572,14 +704,16 @@ describe("premium", () => {
     const panel = byTestId("delivery-panel-premium")!;
     expect(panel.querySelector('[data-testid="delivery-tile"] img')!.getAttribute("src")).toBe(locked(1).thumbUrl);
     expect(panel.querySelector("video")).toBeNull();
-    const placeholder = byTestId("delivery-locked", panel)!;
+    const placeholder = byTestId("delivery-film-tile", panel)!;
     expect(placeholder.textContent).toContain("Video 02"); expect(placeholder.textContent).toContain("Premium");
     expect([...panel.querySelectorAll("[href], [src]")].map((el) => el.getAttribute("href") ?? el.getAttribute("src"))).toEqual([locked(1).thumbUrl]);
     expect(allByTestId("delivery-premium-badge", panel)).toHaveLength(3);
     const [onPhoto, , inRow] = allByTestId("delivery-premium-badge", panel);
     expect(onPhoto!.className).toContain("bg-warning "); expect(onPhoto!.className).not.toContain("bg-warning/10"); // solid over a photo
     expect(inRow!.className).toContain("bg-warning/10"); // tinted in a document row
-    expect([...panel.querySelectorAll("button")].filter((b) => b.textContent === "Request unlock")).toHaveLength(3);
+    // A photo and a document row each have their Request unlock button; the locked film's is the tile itself (#882, V1).
+    expect([...panel.querySelectorAll("button")].filter((b) => b.textContent === "Request unlock")).toHaveLength(2);
+    expect(byLabel("Request unlock: Video 02")).toBe(placeholder.querySelector('[data-testid="delivery-film-open"]'));
   });
   it("sends the handle to onRequestUnlock and nothing else", async () => {
     const onRequestUnlock = vi.fn();

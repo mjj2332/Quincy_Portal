@@ -263,6 +263,24 @@ describe("request unlock", () => {
     expect(status()).toBe("Couldn't send. Try again.");
     expect((byLabel("Request unlock: Photo 02") as HTMLButtonElement).disabled).toBe(false);
   });
+  it("a locked film is requested from its tile: a failure is retried from the same tile, which then reads as requested (#882, V3)", async () => {
+    const films = () => page([photo(1), locked(5, { kind: "video", label: "Video 05", url: null, thumbUrl: null })], { coverHandle: handle(1) });
+    let fail = true;
+    route = (url, init) => { if (init?.method !== "POST") return json(films()); return fail ? new Response("", { status: 500 }) : json({ status: "requested" }, 202); };
+    await open(); await click(tab("Premium"));
+    const tile = () => document.querySelector<HTMLElement>(`[data-testid="delivery-film-item"][data-handle="${handle(5)}"]`)!;
+    const control = () => tile().querySelector<HTMLElement>('[data-testid="delivery-film-open"]')!;
+    const tileStatus = () => tile().querySelector('[data-testid="delivery-unlock-status"]')!.textContent;
+    await click(control()); await flush();
+    expect(tileStatus()).toBe("Couldn't send. Try again."); expect(control().getAttribute("aria-label")).toBe("Request unlock: Video 05");
+    fail = false;
+    await click(control()); await flush();
+    expect(posts().map((call) => call.url)).toEqual([unlockUrl(5), unlockUrl(5)]);
+    expect(tileStatus()).toBe("Requested. The studio will be in touch.");
+    expect(control().getAttribute("aria-label")).toBe("Unlock requested: Video 05"); expect(control().getAttribute("aria-disabled")).toBe("true");
+    await click(control()); await flush();
+    expect(posts()).toHaveLength(2);
+  });
 });
 
 describe("download all slot (#787 slice 7)", () => {

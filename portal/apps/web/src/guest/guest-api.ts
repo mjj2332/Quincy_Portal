@@ -1,7 +1,7 @@
 import {
-  guestArchivePrepareResponseSchema, guestDecisionResponseSchema, guestDownloadManifestSchema, guestEmailCodeErrorSchema, guestEmailCodeResponseSchema, guestNoteConflictSchema, guestNoteDeleteResponseSchema, guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNotePasteCommitResponseSchema,
+  guestArchivePrepareResponseSchema, guestDecisionResponseSchema, guestDownloadManifestSchema, guestDownloadPolicySchema, guestEmailCodeErrorSchema, guestEmailCodeResponseSchema, guestNoteConflictSchema, guestNoteDeleteResponseSchema, guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNotePasteCommitResponseSchema,
   guestNotePastePreviewResponseSchema, guestNotePasteStaleSchema, guestNoteWriteResponseSchema, guestPasscodeErrorSchema, guestSessionResponseSchema, guestSocialOverlaysResponseSchema, guestSubscriptionResponseSchema, guestVideoListResponseSchema, videoVersionSummariesResponseSchema,
-  type GuestArchivePrepareResponse, type GuestDecision, type GuestDecisionInput, type GuestDownloadManifest, type GuestNoteCreateInput, type GuestNoteEditInput, type GuestNoteMarkupResponse, type GuestNotePasteCommitInput, type GuestNotePasteCommitResponse,
+  type GuestArchivePrepareResponse, type GuestDecision, type GuestDecisionInput, type GuestDownloadManifest, type GuestDownloadPolicy, type GuestNoteCreateInput, type GuestNoteEditInput, type GuestNoteMarkupResponse, type GuestNotePasteCommitInput, type GuestNotePasteCommitResponse,
   type GuestNotePastePreviewInput, type GuestNotePastePreviewResponse, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto,
   type RichTextDoc, type VideoVersionSummariesResponse,
 } from "@quincy/shared";
@@ -148,6 +148,8 @@ export type GuestApi = {
   videos(): Promise<Read<GuestVideoDto[]>>;
   /** The Project's Social overlays (#872), their own read: a failure here is never a statement about the link (callers treat it as "no overlays"). */
   socialOverlays(): Promise<Read<GuestSocialOverlay[]>>;
+  /** `GET .../download-policy` (#882, ADR 0025): whether a download needs the email code. Any failure (a 404, a bad body, a dropped connection) is `codeRequired: true`, the safe default, and only ever affects downloads: it never forces a code prompt for watching or marks the link gone. */
+  downloadPolicy(): Promise<GuestDownloadPolicy>;
   /** The phone Versions sheet's read (#879): the granted Versions of one Video with their upload date and public open-note count. Its own route, so `/videos` keeps its shape; a failure only hides the numbers. */
   versionSummaries(videoId: string): Promise<Read<VideoVersionSummariesResponse["versions"]>>;
   notes(assetId: string): Promise<Read<GuestNoteThreadDto[]>>;
@@ -345,6 +347,7 @@ export function createGuestApi(linkId: string): GuestApi {
     session: () => read("/session", (body) => learn(guestSessionResponseSchema.parse(body))),
     videos: () => read("/videos", (body) => guestVideoListResponseSchema.parse(body).videos),
     socialOverlays: () => read("/social-overlays", (body) => guestSocialOverlaysResponseSchema.parse(body).socialOverlays),
+    downloadPolicy: async () => { const result = await read("/download-policy", (body) => guestDownloadPolicySchema.parse(body)); return result.kind === "ok" ? result.value : { codeRequired: true }; },
     versionSummaries: (videoId) => read(`/videos/${videoId}/version-summaries`, (body) => videoVersionSummariesResponseSchema.parse(body).versions),
     notes: (assetId) => read(`/versions/${assetId}/notes`, (body) => guestNoteListResponseSchema.parse(body).notes),
     markup: (noteId) => read(`/notes/${noteId}/markup`, (body) => guestNoteMarkupResponseSchema.parse(body)),

@@ -15,6 +15,10 @@ export const GUEST_LIMITS = {
   decisionGuest: 20, decisionLink: 100,
   // Download all (#741 14b): a zip start costs the most, so a guest may start 10 in 15 minutes and a link 30. Single and Range downloads have no limit.
   zipGuest: 10, zipLink: 30,
+  // The same two, for an UNVERIFIED session on the Delivery review link (#882, ADR 0025). Such a session is free to mint, so it is limited by address, not by guest: the numbers of the Delivery page's own zips.
+  zipIp: 10, zipPrepareIp: 20,
+  // Anonymous callers get their OWN link pools (split from the verified ones above), so they can never exhaust the verified client's Download all. A check is a storage HEAD pass (manifest or zip GET), spent before assessZip: an address 60, an anonymous link 300.
+  zipAnonLink: 30, zipPrepareAnonLink: 60, zipCheckIp: 60, zipCheckAnonLink: 300,
   // Preparing Download all (#802): a prepare queues background work but streams nothing, and a page asks once per click, so a guest may ask 20 times in 15 minutes and a link 60. It never touches the zip quota above.
   zipPrepareGuest: 20, zipPrepareLink: 60,
   // Digest subscription (#741 15b): the unsubscribe link is 30 per address in 15 minutes (it carries no gate and no session), and a verified guest may flip the switch 30 times.
@@ -42,7 +46,7 @@ async function sha256Hex(value: string): Promise<string> {
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 export const clientAddress = (request: Request): string => request.headers.get("cf-connecting-ip") ?? "unknown";
-export const ipBucket = async (kind: "passcode" | "exchange" | "codesend" | "codeverify" | "unsubscribe" | "unlock" | "dlzip" | "dlprep" | "dlcheck", ip: string, start: number): Promise<string> => `${kind}:ip:${await sha256Hex(`${ip}|${start}`)}`;
+export const ipBucket = async (kind: "passcode" | "exchange" | "codesend" | "codeverify" | "unsubscribe" | "unlock" | "dlzip" | "dlprep" | "dlcheck" | "zip" | "zipprep" | "zipcheck", ip: string, start: number): Promise<string> => `${kind}:ip:${await sha256Hex(`${ip}|${start}`)}`;
 /** An email bucket is keyed by the SHA-256 of `email|window`, never the address itself (the table holds no address, raw or plain). `codesend24h` is the daily one. */
 export const emailBucket = async (kind: "codesend" | "codesend24h", email: string, start: number): Promise<string> => `${kind}:email:${await sha256Hex(`${email}|${start}`)}`;
 

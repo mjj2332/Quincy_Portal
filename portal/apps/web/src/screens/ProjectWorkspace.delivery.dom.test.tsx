@@ -180,6 +180,17 @@ describe("Preview", () => {
     expect(dialog.textContent).toContain("12 Example St: how the client page will look as set 1.");
     expect(dialog.querySelector("img")?.getAttribute("src")).toContain("/delivery/preview-media/");
   });
+  const filmDto = { property: { street: "12 Example St", suburb: null, postcode: null, agency: null }, setNumber: 1, publishedAt: null, coverHandle: null, items: [
+    { handle: handle(1), kind: "video", label: "Video 01", position: 0, locked: false, premium: false, review: null, width: 1920, height: 1080, durationMs: 1000, url: null, thumbUrl: null }] };
+  const previewFilm = async (response: unknown) => { apiPostMock.mockResolvedValue(response); await openDelivery(); await startEmpty(); await click(byLabel("Select 1.jpg")); await click(byId("delivery-preview")); return bodyById("delivery-preview-dialog")!; };
+  it("shows the real film title from the top-level `titles`", async () => {
+    const dialog = await previewFilm({ dto: filmDto, titles: { [handle(1)]: "Hero Walkthrough" } });
+    expect(dialog.textContent).toContain("Hero Walkthrough");
+  });
+  it("shows the Video 01 label when an older server sends no `titles`", async () => {
+    const dialog = await previewFilm({ dto: filmDto });
+    expect(dialog.textContent).toContain("Video 01"); expect(dialog.textContent).not.toContain("Hero Walkthrough");
+  });
   it("says why when the server refuses the selection, and names the items", async () => {
     apiPostMock.mockRejectedValue(api(400, { error: "x", code: "invalid_selection", assetIds: [ids.photo2] }));
     await openDelivery();
@@ -646,7 +657,7 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
     { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, premium: false, review: null, width: 10, height: 10, durationMs: null, url: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`, thumbUrl: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/thumb` },
     { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, premium: true, review: null, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null },
     { handle: handle(3), kind: "floorplan", label: "Floorplan 01", position: 2, locked: false, premium: false, review: null, width: null, height: null, durationMs: null, url: "/pdf/1", thumbUrl: null },
-    { handle: handle(4), kind: "video", label: "Video 01", position: 3, locked: false, premium: false, review: null, width: 1920, height: 1080, durationMs: 62000, url: "/video/1", thumbUrl: "/video/1/thumb" }] } };
+    { handle: handle(4), kind: "video", label: "Video 01", title: "Harbour Hero Film", position: 3, locked: false, premium: false, review: null, width: 1920, height: 1080, durationMs: 62000, url: "/video/1", thumbUrl: "/video/1/thumb" }] } };
   it("lets staff open an unlocked photo in the viewer, play a Video and view a PDF in a new tab, with no download and nothing to open for a locked item", async () => {
     apiPostMock.mockResolvedValue(lockedPreviewDto);
     await openDelivery(); await click(byId("delivery-preview"));
@@ -661,7 +672,11 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
     await click(lightbox.querySelector('[aria-label="Close"]')); await flush();
     expect(bodyById("delivery-lightbox")).toBeNull();
     await click(previewTab(dialog, "Film"));
-    expect(dialog.querySelector("video")?.getAttribute("src")).toBe("/video/1");
+    expect(dialog.querySelector('[data-testid="delivery-film-open"]')!.textContent).toBe("Harbour Hero Film"); // the film's own title (#882), not "Video 01"
+    await click(dialog.querySelector('[data-testid="delivery-film-open"]'));
+    expect(bodyById("delivery-film-player-video")?.getAttribute("src")).toBe("/video/1");
+    expect(bodyById("delivery-film-player")!.querySelectorAll("a[download]")).toHaveLength(0); // Preview offers no download
+    await click(bodyById("delivery-film-player-close")); await flush();
     await click(previewTab(dialog, "Floorplan"));
     const pdf = control("View Floorplan 01") as HTMLAnchorElement;
     expect(pdf.getAttribute("href")).toBe("/pdf/1"); expect(pdf.getAttribute("target")).toBe("_blank"); expect(pdf.getAttribute("rel")).toBe("noopener noreferrer");
@@ -677,23 +692,19 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
     expect(tile.querySelector('[data-testid="delivery-processing"]')).not.toBeNull();
     expect(tile.querySelector('[data-testid="delivery-premium-badge"]')?.textContent).toBe("Premium");
   });
-  it("pauses a playing Preview Video when the tab changes or Preview closes", async () => {
+  it("pauses a playing Preview film when its player closes", async () => {
     const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
     try {
       apiPostMock.mockResolvedValue(lockedPreviewDto);
       await openDelivery(); await click(byId("delivery-preview"));
       const dialog = bodyById("delivery-preview-dialog")!;
       await click(previewTab(dialog, "Film"));
-      const video = dialog.querySelector("video");
+      await click(dialog.querySelector('[data-testid="delivery-film-open"]'));
+      const video = bodyById("delivery-film-player-video");
       expect(video).not.toBeNull();
       pause.mockClear();
-      await click(previewTab(dialog, "Gallery"));
+      await click(bodyById("delivery-film-player-close")); await flush();
       expect(pause.mock.contexts).toContain(video);
-      await click(previewTab(dialog, "Film"));
-      const again = dialog.querySelector("video");
-      pause.mockClear();
-      await click(bodyById("delivery-preview-close")); await flush();
-      expect(pause.mock.contexts).toContain(again);
     } finally { pause.mockRestore(); }
   });
 });

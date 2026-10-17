@@ -138,6 +138,12 @@ export const guestDownloadManifestSchema = z.object({
   archive: guestArchiveStateSchema,
 }).strict();
 export type GuestDownloadManifest = z.infer<typeof guestDownloadManifestSchema>;
+/**
+ * `GET .../download-policy` (#882, ADR 0025): whether a download on this link needs a verified email. False only on the Delivery review link. A separate read on purpose: the session and videos
+ * payloads are strict and shared with the deployed client (lesson #858), so no key is added to them.
+ */
+export const guestDownloadPolicySchema = z.object({ codeRequired: z.boolean() }).strict();
+export type GuestDownloadPolicy = z.infer<typeof guestDownloadPolicySchema>;
 
 export const guestVideoDtoSchema = z.object({
   id: uuid,
