@@ -20,13 +20,17 @@ Only `changed` is written, and never on a dry run (a dry run writes nothing, aud
 
 ## Order (after merge and deploy)
 
-1. Dry run every page: `{ "dryRun": true }`, then `{ "cursor": "<nextCursor>" }` with `dryRun` still true, until `nextCursor` is null. Review with the owner. Expected: cfr-25 v2 498 to 500 and 19920 to 20000; zero `rejected`, `would_lower`, `facts_changed`, `object_changed`, `missing`, `unavailable`. Anything else is explained before a write.
+1. Dry run every page: `{ "dryRun": true }`, then `{ "cursor": "<nextCursor>" }` with `dryRun` still true, until `nextCursor` is null. Review with the owner. Expected: only `changed` (a small raise, +2 to +5 frames, with `durationMs` raised to match) and `unchanged`; zero `rejected`, `would_lower`, `facts_changed`, `object_changed`, `missing`, `unavailable`. Anything else is explained before a write.
 2. Take a D1 Time Travel bookmark.
 3. Real run in a quiet review window (metadata lengths are not covered by paste's freshness fence, so viewers reload afterwards): the same pages with `{ "dryRun": false }`.
-4. Dry run again: every item is `unchanged`.
+4. Dry run again: the list holds only the rows that were `unchanged`, all still `unchanged`. The `changed` rows are at `probe_version = 2` now and no longer listed.
 5. The backfill's own audit rows match the `changed` items, one per asset: `SELECT target_id FROM audit_log WHERE action = 'video.version.reprobe'` lists exactly the changed asset ids. (Not a count of `probe_version = 2`: every upload since the deploy stores 2 as well.)
-6. In the browser, cfr-25 v2 reaches frame 499 at the end.
+6. In the browser, a changed Version reaches its new last frame (`frameCount - 1`) at the end.
 
 ## Rollback
 
 Time Travel to the bookmark undoes the writes, along with every write since. Note ranges that ended on the old last frame stay valid and are not extended.
+
+## Run log
+
+- 2026-10-17, after #906: dry run 42 Versions, 19 `changed`, 23 `unchanged`. Real run wrote 19 `video.version.reprobe` rows and 5 page summaries; the second dry run listed the 23 `unchanged`. The cfr-25 Version above was not among the stored rows (#900).
