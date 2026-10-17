@@ -11,6 +11,10 @@ export function collectionLabel(value: string) {
   return value === "raw" ? "RAW" : value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+/** #914 D1: the selected tab's 2px indicator sits on the bar's hairline (prototype `.tab.on::after`, bottom -1px): the tablist has no
+ * block padding in the header (app.css), so the tab's own bottom is the bar's content edge. */
+const TAB_TRIGGER = "gap-[var(--space-2)] group-data-[orientation=horizontal]/tabs:after:bottom-[calc(var(--border-width-hair)*-1)]";
+
 export type WorkspaceTabsProps = {
   project: ProjectDetail;
   activeTab: WorkspaceTab;
@@ -94,19 +98,19 @@ export function WorkspaceTabs({ project, activeTab, availableTabs, deliveryOffer
       <Tabs value={activeTab} onValueChange={(next) => { if (typeof next === "string" && next !== activeTab) onActiveTabChange(next as WorkspaceTab); }}>
         <TabsList variant="line" aria-label="Workspace">
           {availableTabs.map((tab) => { const collection = project.collections.find((item) => item.kind === tab); return (
-            <TabsTrigger key={tab} value={tab} ref={tabRef(tab)} data-testid="project-overview-tab" className="gap-[var(--space-2)]">
+            <TabsTrigger key={tab} value={tab} ref={tabRef(tab)} data-testid="project-overview-tab" className={TAB_TRIGGER}>
               {collectionLabel(tab)}
               {/* #213: the active tab's count is the filled ink badge, the rest stay muted (prototype 2a). */}
               <Badge variant={tab === activeTab ? "default" : "primary-light"} size="sm" className="[font-family:var(--font-mono)] [font-variant-numeric:tabular-nums]">{collection ? collection.receivedCount : "—"}</Badge>
             </TabsTrigger>); })}
-          <TabsTrigger value="collaboration" id="project-workspace-tab-collaboration" aria-controls="project-workspace-panel-collaboration" ref={tabRef("collaboration")} data-testid="project-overview-tab" className="gap-[var(--space-2)]">
+          <TabsTrigger value="collaboration" id="project-workspace-tab-collaboration" aria-controls="project-workspace-panel-collaboration" ref={tabRef("collaboration")} data-testid="project-overview-tab" className={TAB_TRIGGER}>
             Collaboration
             {collaborationUnread > 0 && <>
               <Badge variant="destructive" size="sm" aria-hidden="true" data-testid="project-collaboration-tab-unread">{formatUnreadCount(collaborationUnread)}</Badge>
               <span className="sr-only">, {collaborationUnread} unread comment{collaborationUnread === 1 ? "" : "s"}</span>
             </>}
           </TabsTrigger>
-          {deliveryOffered && <TabsTrigger value="delivery" id="project-workspace-tab-delivery" aria-controls="project-workspace-panel-delivery" ref={tabRef("delivery")} data-testid="project-overview-tab" className="gap-[var(--space-2)]">Delivery</TabsTrigger>}
+          {deliveryOffered && <TabsTrigger value="delivery" id="project-workspace-tab-delivery" aria-controls="project-workspace-panel-delivery" ref={tabRef("delivery")} data-testid="project-overview-tab" className={TAB_TRIGGER}>Delivery</TabsTrigger>}
         </TabsList>
       </Tabs>
     </div>

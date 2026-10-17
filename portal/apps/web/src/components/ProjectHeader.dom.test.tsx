@@ -542,6 +542,79 @@ describe("Project header Stage control", () => {
     expect(info.querySelector('[data-testid="project-info-deadline-change"]')).toBeNull();
   });
 
+  describe("D5 condensed bar", () => {
+    class FakeIO {
+      static instances: FakeIO[] = [];
+      targets: Element[] = [];
+      disconnected = false;
+      constructor(public callback: IntersectionObserverCallback, public options?: IntersectionObserverInit) { FakeIO.instances.push(this); }
+      observe(target: Element) { this.targets.push(target); }
+      unobserve() {}
+      disconnect() { this.disconnected = true; }
+      takeRecords() { return []; }
+      /** Row A leaves the top of the scroller (`out`), or comes back. */
+      fire(out: boolean) {
+        act(() => { this.callback([{ target: this.targets[0]!, isIntersecting: !out, boundingClientRect: { top: out ? -200 : 0, bottom: out ? -10 : 120 } as DOMRectReadOnly, rootBounds: { top: 0 } as DOMRectReadOnly } as IntersectionObserverEntry], this as unknown as IntersectionObserver); });
+      }
+    }
+    const live = () => FakeIO.instances.filter((io) => !io.disconnected);
+    const tabbar = () => host.querySelector<HTMLElement>('[data-testid="project-header-tabbar"]')!;
+    beforeEach(() => { FakeIO.instances = []; vi.stubGlobal("IntersectionObserver", FakeIO); });
+    afterEach(() => { vi.unstubAllGlobals(); });
+
+    it("watches Row A only, and condenses Row B once Row A has scrolled out: the stage dot and title, the tabs, Whiteboard and Project info", () => {
+      render(<ProjectHeader {...baseProps(project())} onOpenWhiteboard={vi.fn()} />);
+      expect(live()).toHaveLength(1);
+      expect(live()[0]!.targets).toEqual([host.querySelector('[data-testid="project-header"]')]);
+      expect(tabbar().hasAttribute("data-header-condensed")).toBe(false);
+      expect(tabbar().querySelector('[data-testid="project-header-condensed-title"]')).toBeNull();
+      live()[0]!.fire(true);
+      expect(tabbar().hasAttribute("data-header-condensed")).toBe(true);
+      const title = tabbar().querySelector<HTMLElement>('[data-testid="project-header-condensed-title"]')!;
+      expect(title.textContent).toBe("12 Example St");
+      expect(title.querySelector('span[aria-hidden="true"][style*="background"]')).not.toBeNull();
+      // One tablist, inside Row B, between the title and the actions.
+      expect(host.querySelectorAll('[role="tablist"]')).toHaveLength(1);
+      expect(tabbar().querySelector('[role="tablist"]')).not.toBeNull();
+      expect(tabbar().querySelector('[aria-label="Open whiteboard"]')).not.toBeNull();
+      expect(tabbar().querySelector('[data-testid="project-header-condensed-info"]')!.textContent).toBe("Project info");
+      live()[0]!.fire(false);
+      expect(tabbar().hasAttribute("data-header-condensed")).toBe(false);
+      expect(tabbar().querySelector('[data-testid="project-header-condensed-info"]')).toBeNull();
+    });
+
+    it("does not condense while Row A is below the scroller's top (it has not scrolled out)", () => {
+      render(<ProjectHeader {...baseProps(project())} />);
+      act(() => { live()[0]!.callback([{ target: live()[0]!.targets[0]!, isIntersecting: false, boundingClientRect: { top: 900, bottom: 1000 } as DOMRectReadOnly, rootBounds: { top: 0 } as DOMRectReadOnly } as IntersectionObserverEntry], live()[0] as unknown as IntersectionObserver); });
+      expect(tabbar().hasAttribute("data-header-condensed")).toBe(false);
+    });
+
+    it("opens Project info from the condensed bar with focus returning there, and hands focus to Row A's twin when the bar un-condenses", async () => {
+      render(<ProjectHeader {...baseProps(project())} />);
+      live()[0]!.fire(true);
+      const condensedInfo = tabbar().querySelector<HTMLButtonElement>('[data-testid="project-header-condensed-info"]')!;
+      act(() => { condensedInfo.focus(); });
+      await act(async () => { condensedInfo.click(); await Promise.resolve(); await Promise.resolve(); });
+      expect(document.querySelector('[data-testid="project-info-sheet"]')).not.toBeNull();
+      await act(async () => { document.querySelector<HTMLElement>('[data-testid="project-info-close"]')!.click(); await Promise.resolve(); await Promise.resolve(); });
+      await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
+      expect(document.activeElement).toBe(condensedInfo);
+      live()[0]!.fire(false);
+      expect(document.activeElement).toBe(host.querySelector('[data-testid="project-info-open"]'));
+    });
+
+    it("disconnects on unmount and re-observes for another Project", () => {
+      render(<ProjectHeader {...baseProps(project())} />);
+      const first = live()[0]!;
+      render(<ProjectHeader {...baseProps(project({ id: "project-2" }))} />);
+      expect(first.disconnected).toBe(true);
+      expect(live()).toHaveLength(1);
+      act(() => root.unmount());
+      expect(live()).toHaveLength(0);
+      root = createRoot(host);
+    });
+  });
+
   it("D6: a read-only role gets the Stage as a flat value with no chevron and no combobox", () => {
     act(() => { roleState.role = "photographer"; });
     render(<ProjectHeader {...baseProps(project())} />);

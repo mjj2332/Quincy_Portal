@@ -483,21 +483,61 @@ describe("header-relative offsets derive from --shell-header-height (#113)", () 
     const tabbar = ruleBody(appCss, ".project-header__tabbar");
     expect(tabbar).toMatch(/border-bottom:\s*1px solid var\(--border-hairline\)/);
     expect(tabbar).toMatch(/padding-inline:\s*var\(--space-6\)/);
-    expect(tabbar).not.toMatch(/top:/);
+  });
+
+  // #914 D5: Row B is the condensed bar, so it is the sticky row (Row A, the labelled section, still is not: #201). It sticks under
+  // the shell header (0 inside the sheet), above `.worktools` (z 20), at a known rest height so condensing can keep its flow height.
+  it("makes Row B the sticky row, above the worktools, at its rest height (#914 D5)", () => {
+    const tabbar = ruleBody(appCss, ".project-header__tabbar") ?? "";
+    expect(tabbar).toMatch(/position:\s*sticky/);
+    expect(tabbar).toMatch(/top:\s*var\(--shell-header-height\)/);
+    expect(tabbar).toMatch(/z-index:\s*21\b/);
+    expect(tabbar).toMatch(/height:\s*var\(--project-tabbar-rest\)/);
+    expect(tabbar).toMatch(/--project-tabbar-rest:\s*calc\(44px \+ var\(--border-width-hair\)\)/);
+    // The tabs are the rest height's 44px: the tablist adds no block padding of its own.
+    expect(ruleBody(appCss, '.project-header__tabs [role="tablist"]')).toMatch(/padding-block:\s*0/);
+  });
+
+  // #914 D5: condensed, Row B is 60px (--project-chrome-stuck) and grows upward by exactly what it gains, so the work area below
+  // never moves (`overflow-anchor: none` on the body means no scroll compensation). It reserves the sheet's Close, which moves up
+  // to centre in it.
+  it("grows the condensed bar to --project-chrome-stuck with a matching negative margin, reserving the Close that centres in it (#914 D5)", () => {
+    const condensed = ruleBody(appCss, ".project-header__tabbar[data-header-condensed]") ?? "";
+    expect(condensed).toMatch(/height:\s*var\(--project-chrome-stuck\)/);
+    expect(condensed).toMatch(/margin-block-start:\s*calc\(var\(--project-tabbar-rest\) - var\(--project-chrome-stuck\)\)/);
+    expect(condensed).toMatch(/padding-inline-end:\s*calc\(var\(--space-4\) \+ 44px \+ var\(--space-4\)\)/);
+    expect(condensed).toMatch(/box-shadow:\s*var\(--shadow-sm\)/);
+    const close = ruleBody(appCss, '[data-testid="project-sheet"]:has([data-header-condensed]) [data-testid="project-sheet-close"]') ?? "";
+    // (60 - 44) / 2.
+    expect(close).toMatch(/top:\s*var\(--space-2\)/);
+  });
+
+  // #914 D5: what sticks inside the sheet sticks below the condensed bar, and focus is never scrolled under it (WCAG 2.4.11). Only
+  // with a header: the edit sheet and the Collaboration-only view keep the old offsets (0, and below the sheet's own Close).
+  it("offsets the sheet's sticky rows and scroll padding by --project-chrome-stuck only when the header is there (#914 D5)", () => {
+    expect(ruleBody(appCss, ".project-sheet__body")).toMatch(/--project-chrome-stuck:\s*0px/);
+    expect(ruleBody(appCss, ".project-sheet__body")).toMatch(/--collab-rail-top:\s*calc\(var\(--space-4\) \+ 44px \+ var\(--space-2\)\)/);
+    const withHeader = ruleBody(appCss, ".project-sheet__body:has(.project-header__tabbar)") ?? "";
+    expect(withHeader).toMatch(/--project-chrome-stuck:\s*60px/);
+    expect(withHeader).toMatch(/--collab-rail-top:\s*calc\(var\(--project-chrome-stuck\) \+ var\(--space-2\)\)/);
+    expect(withHeader).toMatch(/scroll-padding-top:\s*calc\(var\(--project-chrome-stuck\) \+ var\(--space-2\)\)/);
+    expect(ruleBody(appCss, ".project-sheet__body .worktools")).toMatch(/top:\s*var\(--project-chrome-stuck\)/);
+    expect(ruleBody(appCss, ".project-sheet__body .rich-text-toolbar-sticky")).toMatch(/top:\s*var\(--project-chrome-stuck\)/);
   });
 
   // #460 / #914 D1: the Project sheet's close x is absolute (right space-4, 44px, top space-3 on phones), so Row A stops short of it
   // ("Row A stops 36px short of it"). The tab bar sits below the close button and needs no reservation. The rules sit AFTER the
   // sheet's `.worktools` reservation so the phone override wins on source order.
-  it("reserves the sheet close button's width on Row A's inline end, and not on the tab bar (#460, #914)", () => {
+  it("reserves the sheet close button's width on Row A's inline end, and not on the rest tab bar or the worktools (#460, #914)", () => {
     const sel = ".project-sheet__body .project-header__row-a";
     const base = ruleBody(appCss, sel) ?? "";
     expect(base).toMatch(/padding-inline-end:\s*calc\(var\(--space-4\) \+ 44px \+ var\(--space-2\) - var\(--space-6\)\)/);
     const phone = mediaRule("720px", sel) ?? "";
     expect(phone).toMatch(/padding-inline-end:\s*calc\(var\(--space-4\) \+ 44px \+ var\(--space-2\) - var\(--space-4\)\)/);
-    expect(appCss.indexOf(`${sel} {`)).toBeGreaterThan(appCss.indexOf(".project-sheet__body .worktools {"));
     expect(appCss.indexOf(`@media (max-width: 720px) {\n  ${sel}`)).toBeGreaterThan(appCss.indexOf(`${sel} {`));
     expect(ruleBody(appCss, ".project-sheet__body .project-header__tabbar")).toBeNull();
+    // #914: the worktools stick below the condensed bar, which holds the Close, so they no longer reserve it.
+    expect(ruleBody(appCss, ".project-sheet__body .worktools")).not.toMatch(/padding-inline-end/);
   });
 });
 

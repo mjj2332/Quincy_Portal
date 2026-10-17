@@ -1,11 +1,14 @@
-import type { ReactNode } from "react";
-import { NotebookPenIcon } from "lucide-react";
+import type { ReactNode, Ref } from "react";
+import { NotebookPenIcon, PanelRightIcon } from "lucide-react";
+import { StageDot } from "../atoms";
 import { Button } from "@/components/reui/button";
 import { cn } from "../../lib/utils";
 import { INFO_LINK } from "./info-sections";
 import type { ProjectDetail } from "../../lib/project-data";
 import { deadlineTriggerText } from "../ProjectHeaderDeadline";
 import { StatusCluster, type StatusClusterProps } from "./StatusCluster";
+import { HEADER_CHIP } from "./header-styles";
+import { WhiteboardButton } from "./WhiteboardButton";
 
 /** The shoot date as D1's meta line reads it, "Tue 16 Sep": the Deadline's fixed name tables (no "Sept"), read off the civil date. */
 export function shootDateText(value: string | null): string {
@@ -24,12 +27,25 @@ const META_DOT = <span aria-hidden="true" className="text-muted-foreground">·</
  * #914 D1/T1 — the desktop header. Row A is the labelled section: the title in the display face with the suburb beside it, the
  * meta line (shoot date, client, and a Production notes link that opens Project info at the notes), and the status cluster. Row B, the Workspace tab bar, is its sibling (see app.css), passed in as
  * `tabs` so it is rendered exactly once.
+ *
+ * D5: Row B is sticky, and once Row A has scrolled out (`condensed`, from the owner's observer on `rowARef`) it is the condensed
+ * bar: the stage dot and title, the same tabs, then Whiteboard and Project info, so switching tabs never needs a scroll back up.
  */
-export function HeaderDesktop({ project, crumb, cluster, tabs, info }: { project: ProjectDetail; crumb?: ReactNode; cluster: StatusClusterProps; tabs: ReactNode; /** Project info (D2), rendered beside the rows. */ info?: ReactNode }) {
+export function HeaderDesktop({ project, crumb, cluster, tabs, info, condensed = false, rowARef, rowBRef }: {
+  project: ProjectDetail;
+  crumb?: ReactNode;
+  cluster: StatusClusterProps;
+  tabs: ReactNode;
+  /** Project info (D2), rendered beside the rows. */
+  info?: ReactNode;
+  condensed?: boolean;
+  rowARef?: Ref<HTMLElement>;
+  rowBRef?: Ref<HTMLDivElement>;
+}) {
   const client = clientText(project);
   const place = [project.suburb, project.postcode].filter(Boolean).join(" ");
   return <>
-    <section className="project-header" aria-label="Project Overview" data-testid="project-header">
+    <section ref={rowARef} className="project-header" aria-label="Project Overview" data-testid="project-header">
       {crumb}
       <div className="project-header__row-a">
         <div className="grid min-w-0 gap-[var(--space-1)]">
@@ -48,7 +64,19 @@ export function HeaderDesktop({ project, crumb, cluster, tabs, info }: { project
         <StatusCluster {...cluster} />
       </div>
     </section>
-    <div className="project-header__tabbar" data-testid="project-header-tabbar">{tabs}</div>
+    <div ref={rowBRef} className="project-header__tabbar" data-testid="project-header-tabbar" data-header-condensed={condensed ? "" : undefined}>
+      {/* The title repeats Row A's heading for sight only (Row A is still in the document). */}
+      {condensed && <span aria-hidden="true" data-testid="project-header-condensed-title"
+        className="flex h-7 min-w-0 max-w-[40%] shrink-0 items-center gap-[var(--space-2)] border-e-[length:var(--border-width-hair)] border-solid border-border pe-[var(--space-5)] text-foreground [font:var(--weight-regular)_var(--text-md)/1_var(--font-display)]">
+        <StageDot stageKey={cluster.currentStageKey} /><span className="truncate">{project.street}</span>
+      </span>}
+      {tabs}
+      {condensed && <div className="flex shrink-0 items-center gap-[var(--space-2)]">
+        {cluster.onOpenWhiteboard && <WhiteboardButton variant="header" condensedCopy onOpen={cluster.onOpenWhiteboard} />}
+        <Button type="button" variant="outline" size="header" data-testid="project-header-condensed-info" data-condensed-twin="project-info-open" className={HEADER_CHIP} aria-haspopup="dialog" aria-expanded={cluster.infoOpen}
+          onClick={(event) => cluster.onOpenInfo(event.currentTarget, null)}><PanelRightIcon aria-hidden="true" />Project info</Button>
+      </div>}
+    </div>
     {info}
   </>;
 }

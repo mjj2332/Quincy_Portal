@@ -10,6 +10,7 @@ import type { ProjectDetail } from "../lib/project-data";
 import type { CollectionKind } from "@quincy/shared";
 import type { WorkspaceTab } from "../lib/workspace-tab";
 import { ProjectInfoPanel, type InfoTarget } from "./project-header/ProjectInfoPanel";
+import { useCondensedHeader } from "./project-header/use-condensed-header";
 
 export { WhiteboardButton } from "./project-header/WhiteboardButton";
 
@@ -98,6 +99,10 @@ export function ProjectHeader({
   // #914 D2: Project info, open at the top or at a section, and the control that opened it (focus goes back there).
   const [info, setInfo] = useState<{ open: boolean; target: InfoTarget }>({ open: false, target: null });
   const infoOpener = useRef<HTMLElement | null>(null);
+  // #914 D5: Row A scrolled out of the sheet body condenses Row B.
+  const rowARef = useRef<HTMLElement>(null);
+  const rowBRef = useRef<HTMLDivElement>(null);
+  const condensed = useCondensedHeader(rowARef, rowBRef, project.id, !whiteboardOpen);
   const priorArchivedAt = useRef(Boolean(project.archivedAt));
   const priorProjectId = useRef(project.id);
   const focusAfterFlip = useRef<{ source: NonNullable<ArchivedLatch> } | null>(null);
@@ -145,6 +150,9 @@ export function ProjectHeader({
   }
   return <HeaderDesktop
     project={project}
+    condensed={condensed}
+    rowARef={rowARef}
+    rowBRef={rowBRef}
     crumb={!inSheet && <InternalLink className={DASHBOARD_CRUMB} {...dashboardReturn}>← Dashboard</InternalLink>}
     tabs={tabs}
     cluster={{
